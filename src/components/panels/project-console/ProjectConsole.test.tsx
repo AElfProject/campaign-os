@@ -21,6 +21,27 @@ describe("Project Console shell", () => {
       "aria-pressed",
       "true",
     );
+    expect(screen.getByRole("heading", { name: "Task template library" })).toBeInTheDocument();
+    for (const category of ["wallet", "bridge", "swap", "nft", "dao", "daipp", "social", "invite"]) {
+      expect(screen.getByText(category)).toBeInTheDocument();
+    }
+    expect(screen.getAllByText("AA + EOA").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Rewards and eligibility setup" })).toBeInTheDocument();
+    expect(screen.getByText("Campaign project")).toBeInTheDocument();
+    expect(screen.getByText("Task points")).toBeInTheDocument();
+    expect(screen.getByText("Top N")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("High-reward social-heavy campaigns need risk review.").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "i18n, contract, and review gates" })).toBeInTheDocument();
+    expect(screen.getByText("English source content")).toBeInTheDocument();
+    expect(screen.getByText("Chinese AI draft")).toBeInTheDocument();
+    expect(screen.getByText("High-impact manual review blocker")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Publish readiness" })).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Contract claim mode requires high-impact manual review.").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("Switch to Off-chain MVP or complete contract reviewer approval.")).toBeInTheDocument();
     expect(screen.getAllByText("Task Builder Preview")).toHaveLength(2);
     expect(screen.getByText("Rewards & Eligibility")).toBeInTheDocument();
     expect(screen.getByText("i18n Translation Review")).toBeInTheDocument();
@@ -48,6 +69,18 @@ describe("Project Console shell", () => {
       "aria-pressed",
       "true",
     );
+    expect(screen.getByRole("heading", { name: "任务模板库" })).toBeInTheDocument();
+    expect(screen.getAllByText("连接钱包").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "奖励与资格设置" })).toBeInTheDocument();
+    expect(screen.getByText("活动项目方")).toBeInTheDocument();
+    expect(screen.getByText("任务积分")).toBeInTheDocument();
+    expect(screen.getAllByText("高奖励且偏社交任务的活动需要风险审核。").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "多语言、合约与审核门禁" })).toBeInTheDocument();
+    expect(screen.getByText("英文源内容")).toBeInTheDocument();
+    expect(screen.getByText("中文 AI 草稿")).toBeInTheDocument();
+    expect(screen.getByText("高影响人工审核阻断")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "发布准备度" })).toBeInTheDocument();
+    expect(screen.getAllByText("合约领取模式需要高影响人工审核。").length).toBeGreaterThan(0);
     expect(screen.getByText("AI 活动策划")).toBeInTheDocument();
     expect(screen.getAllByText("任务构建预览")).toHaveLength(2);
     expect(screen.getByText("奖励与资格")).toBeInTheDocument();

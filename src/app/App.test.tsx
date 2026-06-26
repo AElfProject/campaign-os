@@ -35,6 +35,28 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("heading", { name: "Draft overview" })).toBeInTheDocument();
     expect(screen.getByText("Default and fallback: en-US. Supported: en-US and zh-CN.")).toBeInTheDocument();
     expect(screen.getAllByText("Draft setup combines AI brief and structured campaign fields").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Task template library" })).toBeInTheDocument();
+    for (const category of ["wallet", "bridge", "swap", "nft", "dao", "daipp", "social", "invite"]) {
+      expect(screen.getByText(category)).toBeInTheDocument();
+    }
+    expect(screen.getByRole("heading", { name: "Rewards and eligibility setup" })).toBeInTheDocument();
+    expect(screen.getAllByText("Rewards are provided by the campaign project. Campaign OS does not distribute rewards.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Exporting winners does not distribute rewards.").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "i18n, contract, and review gates" })).toBeInTheDocument();
+    expect(screen.getByText("English source content")).toBeInTheDocument();
+    expect(screen.getByText("Chinese AI draft")).toBeInTheDocument();
+    expect(screen.getByText("Off-chain MVP")).toBeInTheDocument();
+    expect(screen.getByText("V2 companion")).toBeInTheDocument();
+    expect(screen.getByText("Contract claim")).toBeInTheDocument();
+    expect(screen.getByText("High-impact manual review blocker")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Publish readiness" })).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Contract claim mode requires high-impact manual review.").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("Switch to Off-chain MVP or complete contract reviewer approval.")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Chinese AI draft falls back to English until reviewed.").length,
+    ).toBeGreaterThan(0);
     expect(screen.getAllByText("Task Builder Preview").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Rewards & Eligibility").length).toBeGreaterThan(0);
     expect(screen.getAllByText("i18n Translation Review").length).toBeGreaterThan(0);
@@ -50,6 +72,20 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("heading", { name: "草稿概览" })).toBeInTheDocument();
     expect(screen.getByText("默认与回退：en-US。支持：en-US 和 zh-CN。")).toBeInTheDocument();
     expect(screen.getAllByText("草稿设置结合 AI 简报与结构化活动字段").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "任务模板库" })).toBeInTheDocument();
+    expect(screen.getAllByText("连接钱包").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "奖励与资格设置" })).toBeInTheDocument();
+    expect(screen.getAllByText("奖励由活动项目方提供。Campaign OS 不负责自动发奖。").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("导出获奖名单不等于发放奖励。").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "多语言、合约与审核门禁" })).toBeInTheDocument();
+    expect(screen.getByText("英文源内容")).toBeInTheDocument();
+    expect(screen.getByText("中文 AI 草稿")).toBeInTheDocument();
+    expect(screen.getByText("V2 辅助合约")).toBeInTheDocument();
+    expect(screen.getByText("合约领取")).toBeInTheDocument();
+    expect(screen.getByText("高影响人工审核阻断")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "发布准备度" })).toBeInTheDocument();
+    expect(screen.getAllByText("合约领取模式需要高影响人工审核。").length).toBeGreaterThan(0);
+    expect(screen.getByText("切换到 Off-chain MVP，或完成合约审核人批准。")).toBeInTheDocument();
     expect(screen.getAllByText("任务构建预览").length).toBeGreaterThan(0);
     expect(screen.getAllByText("奖励与资格").length).toBeGreaterThan(0);
     expect(screen.getAllByText("i18n 翻译审核").length).toBeGreaterThan(0);

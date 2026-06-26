@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import {
   campaignDetail,
   getLocalizedText,
+  seededCampaignDraft,
   type CampaignShellDetail,
   type LocaleStatus,
   type SupportedLocale,
@@ -14,6 +15,10 @@ import {
   WalletCompatibilityBadge,
 } from "../../badges/Badges";
 import { CampaignBuilderPanel } from "./builder/CampaignBuilderPanel";
+import { I18nContractReadiness } from "./builder/I18nContractReadiness";
+import { PublishReadinessPanel } from "./builder/PublishReadinessPanel";
+import { RewardsEligibilityBuilder } from "./builder/RewardsEligibilityBuilder";
+import { TaskTemplateLibrary } from "./builder/TaskTemplateLibrary";
 import { projectConsoleCopy } from "./copy";
 
 interface ProjectConsoleProps {
@@ -75,6 +80,11 @@ const sectionGridStyle: CSSProperties = {
   display: "grid",
   gap: 12,
   gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+};
+
+const builderDetailsStyle: CSSProperties = {
+  display: "grid",
+  gap: 18,
 };
 
 const workflowStyle: CSSProperties = {
@@ -178,6 +188,7 @@ export const ProjectConsole = ({
   const exportReview = campaign.reviewItems.find((item) => item.type === "EXPORT_READY");
   const warningCount = campaign.publishReadiness.warnings.length;
   const blockerCount = campaign.publishReadiness.blockers.length;
+  const builderDraft = seededCampaignDraft;
 
   const stats = [
     {
@@ -339,7 +350,19 @@ export const ProjectConsole = ({
         </div>
       </section>
 
-      <CampaignBuilderPanel copy={copy} locale={locale} />
+      <CampaignBuilderPanel copy={copy} draft={builderDraft} locale={locale} />
+
+      <div
+        aria-label={
+          locale === "zh-CN" ? "活动构建器详情区块" : "Campaign Builder detail sections"
+        }
+        style={builderDetailsStyle}
+      >
+        <TaskTemplateLibrary locale={locale} />
+        <RewardsEligibilityBuilder draft={builderDraft} locale={locale} />
+        <I18nContractReadiness draft={builderDraft} locale={locale} />
+        <PublishReadinessPanel draft={builderDraft} locale={locale} />
+      </div>
 
       <section aria-label="Project Console workflow sections" style={sectionGridStyle}>
         {workflows.map((workflow) => (
