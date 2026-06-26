@@ -113,4 +113,28 @@ describe("Campaign OS app shell", () => {
 
     expect(screen.getByText("Export winners does not distribute rewards.")).toBeInTheDocument();
   });
+
+  it("keeps Mission 6 Admin/Ops live while other shell surfaces remain reachable", () => {
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: "Campaign operations shell" })).toBeInTheDocument();
+    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
+
+    expect(screen.getByText("Analytics overview")).toBeInTheDocument();
+    expect(screen.getByText("Risk dashboard")).toBeInTheDocument();
+    expect(screen.getByText("Bot/sybil review")).toBeInTheDocument();
+    expect(screen.getByText("AI Ops reports")).toBeInTheDocument();
+    expect(screen.getByText("Ecosystem metrics")).toBeInTheDocument();
+    expect(screen.getByText("Export batch: export-awaken-sprint-preview")).toBeInTheDocument();
+    expect(screen.getByText(/demo-task-bridge-3E9/)).toBeInTheDocument();
+    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Project Console" }));
+    expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+    expect(screen.getAllByText("Eligibility checker").length).toBeGreaterThan(0);
+  });
 });
