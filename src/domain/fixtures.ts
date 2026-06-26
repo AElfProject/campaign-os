@@ -1,0 +1,296 @@
+import { computePublishReadiness, createExportPreview } from "./campaign";
+import type {
+  CampaignShellDetail,
+  CampaignShellSummary,
+  CampaignTask,
+  ContentRevision,
+  NormalizedWalletSession,
+  ParticipantSnapshot,
+  ReviewItem,
+  WalletOption,
+} from "./types";
+
+export const walletOptions: WalletOption[] = [
+  {
+    id: "portkey-aa",
+    name: "Portkey AA Wallet",
+    accountType: "AA",
+    walletSource: "PORTKEY_AA",
+    recommended: true,
+    audience: "NORMAL_USER",
+    capabilities: ["SIGN_MESSAGE", "VIEW_BALANCE", "CONTRACT_VIEW"],
+  },
+  {
+    id: "portkey-eoa-app",
+    name: "Portkey EOA App",
+    accountType: "EOA",
+    walletSource: "PORTKEY_EOA_APP",
+    recommended: false,
+    audience: "EXISTING_USER",
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW"],
+  },
+  {
+    id: "portkey-eoa-extension",
+    name: "Portkey EOA Extension",
+    accountType: "EOA",
+    walletSource: "PORTKEY_EOA_EXTENSION",
+    recommended: false,
+    audience: "EXISTING_USER",
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW"],
+  },
+  {
+    id: "nightelf",
+    name: "NightElf Wallet",
+    accountType: "EOA",
+    walletSource: "NIGHTELF",
+    recommended: false,
+    audience: "EXISTING_USER",
+    capabilities: ["SIGN_MESSAGE", "CONTRACT_VIEW"],
+  },
+  {
+    id: "agent-skill",
+    name: "Agent Skill Wallet",
+    accountType: "EOA",
+    walletSource: "AGENT_SKILL",
+    recommended: false,
+    audience: "INTERNAL_AGENT",
+    capabilities: ["CONTRACT_VIEW", "CONTRACT_SEND"],
+  },
+];
+
+export const walletSessions: NormalizedWalletSession[] = [
+  {
+    id: "sess-aa-001",
+    address: "2F4...9aB",
+    accountType: "AA",
+    walletSource: "PORTKEY_AA",
+    walletName: "Portkey AA Wallet",
+    chainId: "AELF",
+    network: "mainnet",
+    capabilities: ["SIGN_MESSAGE", "VIEW_BALANCE", "CONTRACT_VIEW"],
+    connectedAt: "2026-06-20T08:00:00Z",
+  },
+  {
+    id: "sess-eoa-001",
+    address: "3E9...7cD",
+    accountType: "EOA",
+    walletSource: "PORTKEY_EOA_EXTENSION",
+    walletName: "Portkey EOA Extension",
+    chainId: "AELF",
+    network: "mainnet",
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW"],
+    connectedAt: "2026-06-21T09:00:00Z",
+  },
+  {
+    id: "sess-unknown-001",
+    address: "Unknown",
+    accountType: "UNKNOWN",
+    walletSource: "OTHER",
+    walletName: "Disconnected",
+    chainId: "AELF",
+    network: "mainnet",
+    capabilities: [],
+  },
+];
+
+export const campaignTasks: CampaignTask[] = [
+  {
+    id: "task-connect-wallet",
+    templateCode: "connect_wallet",
+    title: {
+      "en-US": "Connect wallet",
+      "zh-CN": "连接钱包",
+    },
+    instruction: {
+      "en-US": "Connect any supported AA or EOA wallet.",
+      "zh-CN": "连接任意受支持的 AA 或 EOA 钱包。",
+    },
+    verificationType: "WALLET",
+    walletCompatibility: "ANY",
+    points: 40,
+    required: true,
+    riskLevel: "low",
+    localeStatus: {
+      "en-US": "published",
+      "zh-CN": "reviewed",
+    },
+  },
+  {
+    id: "task-bridge",
+    templateCode: "bridge_ebridge",
+    title: {
+      "en-US": "Bridge via eBridge",
+      "zh-CN": "通过 eBridge 跨链",
+    },
+    instruction: {
+      "en-US": "Complete a bridge action with the connected address.",
+      "zh-CN": "使用已连接地址完成一次跨链操作。",
+    },
+    verificationType: "ON_CHAIN",
+    walletCompatibility: "ANY",
+    points: 120,
+    required: true,
+    riskLevel: "low",
+    localeStatus: {
+      "en-US": "published",
+      "zh-CN": "ai_draft",
+    },
+  },
+  {
+    id: "task-agent-review",
+    templateCode: "agent_wallet_action",
+    title: {
+      "en-US": "Agent review smoke check",
+      "zh-CN": "Agent 审核冒烟检查",
+    },
+    instruction: {
+      "en-US": "Internal automation only; not shown as a normal user default.",
+      "zh-CN": "仅内部自动化使用，不作为普通用户默认入口。",
+    },
+    verificationType: "MANUAL",
+    walletCompatibility: "EOA_ONLY",
+    points: 20,
+    required: false,
+    riskLevel: "medium",
+    localeStatus: {
+      "en-US": "ready",
+      "zh-CN": "fallback",
+    },
+  },
+];
+
+export const participants: ParticipantSnapshot[] = [
+  {
+    id: "part-aa-001",
+    campaignId: "camp-awaken-sprint",
+    walletAddress: "2F4...9aB",
+    accountType: "AA",
+    walletSource: "PORTKEY_AA",
+    localePreference: "en-US",
+    totalPoints: 160,
+    rank: 12,
+    completedTaskIds: ["task-connect-wallet", "task-bridge"],
+    eligible: true,
+    missingTaskIds: [],
+    riskFlags: [],
+  },
+  {
+    id: "part-eoa-001",
+    campaignId: "camp-awaken-sprint",
+    walletAddress: "3E9...7cD",
+    accountType: "EOA",
+    walletSource: "PORTKEY_EOA_EXTENSION",
+    localePreference: "zh-CN",
+    totalPoints: 40,
+    rank: 48,
+    completedTaskIds: ["task-connect-wallet"],
+    eligible: false,
+    missingTaskIds: ["task-bridge"],
+    riskFlags: ["referral_velocity_review"],
+  },
+];
+
+export const contentRevisions: ContentRevision[] = [
+  {
+    id: "rev-en-001",
+    campaignId: "camp-awaken-sprint",
+    locale: "en-US",
+    sourceLocale: "en-US",
+    title: "Awaken Sprint",
+    description: "Complete wallet-aware aelf ecosystem tasks.",
+    rewardDisclaimer: "Rewards are provided by the campaign project. Export winners does not distribute rewards.",
+    status: "published",
+    reviewer: "internal_operator",
+    updatedAt: "2026-06-23T10:00:00Z",
+  },
+  {
+    id: "rev-zh-001",
+    campaignId: "camp-awaken-sprint",
+    locale: "zh-CN",
+    sourceLocale: "en-US",
+    title: "Awaken 冲刺活动",
+    description: "完成支持钱包类型的 aelf 生态任务。",
+    rewardDisclaimer: "奖励由活动项目方提供。导出 winners 不等于发奖。",
+    status: "ai_draft",
+    updatedAt: "2026-06-23T10:05:00Z",
+  },
+];
+
+export const reviewItems: ReviewItem[] = [
+  {
+    id: "review-ai-001",
+    campaignId: "camp-awaken-sprint",
+    type: "AI_CONTENT",
+    severity: "warning",
+    status: "open",
+    title: "Chinese copy needs human review",
+    ownerRole: "project_owner",
+  },
+  {
+    id: "review-contract-001",
+    campaignId: "camp-awaken-sprint",
+    type: "CONTRACT_IMPACT",
+    severity: "info",
+    status: "approved",
+    title: "Off-chain MVP: no contract migration required",
+    ownerRole: "contract_reviewer",
+  },
+  {
+    id: "review-risk-001",
+    campaignId: "camp-awaken-sprint",
+    type: "RISK_FLAG",
+    severity: "warning",
+    status: "in_review",
+    title: "Referral velocity review",
+    ownerRole: "internal_operator",
+  },
+  {
+    id: "review-export-001",
+    campaignId: "camp-awaken-sprint",
+    type: "EXPORT_READY",
+    severity: "info",
+    status: "open",
+    title: "Export preview includes wallet and locale columns",
+    ownerRole: "internal_operator",
+  },
+];
+
+export const campaignSummary: CampaignShellSummary = {
+  id: "camp-awaken-sprint",
+  slug: "awaken-sprint",
+  projectName: "Awaken",
+  title: {
+    "en-US": "Awaken Sprint",
+    "zh-CN": "Awaken 冲刺活动",
+  },
+  subtitle: {
+    "en-US": "Bridge, swap, and prove activity with any supported wallet.",
+    "zh-CN": "使用任意受支持钱包完成跨链、Swap 与活动证明。",
+  },
+  status: "live",
+  defaultLocale: "en-US",
+  supportedLocales: ["en-US", "zh-CN"],
+  walletPolicy: "ANY",
+  contractMode: "OFF_CHAIN_MVP",
+  startTime: "2026-06-20T00:00:00Z",
+  endTime: "2026-07-04T00:00:00Z",
+  metrics: {
+    connectedWallets: 1284,
+    aaWallets: 812,
+    eoaWallets: 472,
+    completionRate: 0.42,
+    localeCoverage: 0.74,
+    riskReviewQueue: 12,
+    exportReadyWinners: 96,
+  },
+};
+
+export const campaignDetail: CampaignShellDetail = {
+  ...campaignSummary,
+  tasks: campaignTasks,
+  participants,
+  contentRevisions,
+  reviewItems,
+  publishReadiness: computePublishReadiness(campaignSummary, contentRevisions),
+  exportPreview: createExportPreview(campaignSummary.id, participants, campaignTasks),
+};
