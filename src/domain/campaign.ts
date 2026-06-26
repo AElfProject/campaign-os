@@ -79,8 +79,8 @@ const contractModeLabels: Record<ContractMode, LocalizedText> = {
 
 const contractModeDescriptions: Record<ContractMode, LocalizedText> = {
   CONTRACT_CLAIM: {
-    "en-US": "Blocked until high-impact manual review approves custody and claim risk.",
-    "zh-CN": "在高影响人工审核批准托管与领取风险前保持阻断。",
+    "en-US": "Blocked until high-impact manual review approves claim-mode risk.",
+    "zh-CN": "在高影响人工审核批准领取模式风险前保持阻断。",
   },
   OFF_CHAIN_MVP: {
     "en-US": "Safe default for MVP; no contract migration is required.",
