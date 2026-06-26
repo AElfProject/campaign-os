@@ -211,7 +211,15 @@ describe("Campaign OS domain foundation", () => {
     );
     expect(adminOps.localeSplit.map((row) => row.label)).toEqual(["en-US", "zh-CN"]);
     expect(adminOps.localeSplit.map((row) => row.label)).not.toContain("zh-TW");
-    expect(adminOps.riskSignals).toHaveLength(6);
+    expect(adminOps.riskSignals.map((signal) => signal.id)).toEqual([
+      "funding-source",
+      "referral-tree",
+      "referral-velocity",
+      "device-session",
+      "task-timing",
+      "bot-sybil-review",
+      "manual-review",
+    ]);
     expect(adminOps.aiReports).toHaveLength(4);
     expect(adminOps.exportBatch.disclaimer["en-US"]).toContain("does not distribute rewards");
   });

@@ -554,6 +554,23 @@ export const riskSignals: RiskSignal[] = [
     },
   },
   {
+    id: "bot-sybil-review",
+    label: {
+      "en-US": "Bot/sybil review",
+      "zh-CN": "机器人/女巫审核",
+    },
+    value: "14%",
+    severity: "medium",
+    evidence: {
+      "en-US": "Automation-style participation patterns are surfaced for human review only.",
+      "zh-CN": "自动化式参与模式仅展示给人工审核。",
+    },
+    nextAction: {
+      "en-US": "Compare task evidence and risk flags before changing export readiness.",
+      "zh-CN": "变更导出准备度前先对照任务证据与风险标记。",
+    },
+  },
+  {
     id: "manual-review",
     label: {
       "en-US": "Manual review queue",
