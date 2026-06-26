@@ -1,11 +1,15 @@
 import { computePublishReadiness, createExportPreview } from "./campaign";
 import type {
+  AiOpsReportCard,
   CampaignShellDetail,
   CampaignShellSummary,
   CampaignTask,
+  ConversionFunnelStep,
   ContentRevision,
+  EcosystemMetricRow,
   NormalizedWalletSession,
   ParticipantSnapshot,
+  RiskSignal,
   ReviewItem,
   WalletOption,
 } from "./types";
@@ -382,6 +386,422 @@ export const reviewItems: ReviewItem[] = [
   },
 ];
 
+export const conversionFunnel: ConversionFunnelStep[] = [
+  {
+    id: "campaign-views",
+    label: {
+      "en-US": "Campaign views",
+      "zh-CN": "活动浏览",
+    },
+    count: 52000,
+    conversionRate: 100,
+    dropOffNote: {
+      "en-US": "Top-of-funnel seeded reach.",
+      "zh-CN": "Seeded 顶层触达。",
+    },
+  },
+  {
+    id: "wallet-connect",
+    label: {
+      "en-US": "Wallet connect",
+      "zh-CN": "钱包连接",
+    },
+    count: 32000,
+    conversionRate: 62,
+    dropOffNote: {
+      "en-US": "Main entry drop-off before first verified action.",
+      "zh-CN": "首个有效行为前的主要流失点。",
+    },
+  },
+  {
+    id: "bridge",
+    label: {
+      "en-US": "Bridge",
+      "zh-CN": "跨链",
+    },
+    count: 24000,
+    conversionRate: 46,
+    dropOffNote: {
+      "en-US": "Bridge confirmation remains the largest task friction.",
+      "zh-CN": "跨链确认仍是最大的任务摩擦。",
+    },
+  },
+  {
+    id: "swap",
+    label: {
+      "en-US": "Swap",
+      "zh-CN": "Swap",
+    },
+    count: 16000,
+    conversionRate: 32,
+    dropOffNote: {
+      "en-US": "Awaken task validates post-bridge intent.",
+      "zh-CN": "Awaken 任务验证跨链后的真实意图。",
+    },
+  },
+  {
+    id: "qualified-invite",
+    label: {
+      "en-US": "Qualified invite",
+      "zh-CN": "合格邀请",
+    },
+    count: 8431,
+    conversionRate: 16,
+    dropOffNote: {
+      "en-US": "Only invitees with valid task completion are counted.",
+      "zh-CN": "仅完成有效任务的被邀请人计入。",
+    },
+  },
+  {
+    id: "eligible-winners",
+    label: {
+      "en-US": "Eligible winners",
+      "zh-CN": "合格 winners",
+    },
+    count: 500,
+    conversionRate: 5,
+    dropOffNote: {
+      "en-US": "Seeded export pool before project reward distribution.",
+      "zh-CN": "项目方发奖前的 seeded 导出池。",
+    },
+  },
+];
+
+export const riskSignals: RiskSignal[] = [
+  {
+    id: "funding-source",
+    label: {
+      "en-US": "Funding source review",
+      "zh-CN": "资金来源审核",
+    },
+    value: "38%",
+    severity: "medium",
+    evidence: {
+      "en-US": "Shared funding-source patterns are flagged for operator review.",
+      "zh-CN": "共享资金来源模式已标记给运营审核。",
+    },
+    nextAction: {
+      "en-US": "Review sample wallets before export approval.",
+      "zh-CN": "导出批准前抽样审核钱包。",
+    },
+  },
+  {
+    id: "referral-tree",
+    label: {
+      "en-US": "Referral tree review",
+      "zh-CN": "邀请树审核",
+    },
+    value: "52%",
+    severity: "high",
+    evidence: {
+      "en-US": "Qualified invite clusters need manual review before winner export.",
+      "zh-CN": "合格邀请聚类在导出 winners 前需要人工审核。",
+    },
+    nextAction: {
+      "en-US": "Keep referral points advisory until project owner approval.",
+      "zh-CN": "项目方批准前将邀请积分保持为建议状态。",
+    },
+  },
+  {
+    id: "referral-velocity",
+    label: {
+      "en-US": "Referral velocity review",
+      "zh-CN": "邀请速度审核",
+    },
+    value: "9 wallets",
+    severity: "medium",
+    evidence: {
+      "en-US": "Fast invite growth is visible but not automatically penalized.",
+      "zh-CN": "快速邀请增长可见，但不会自动处罚。",
+    },
+    nextAction: {
+      "en-US": "Ask project owner to confirm referral weighting.",
+      "zh-CN": "请项目方确认邀请权重。",
+    },
+  },
+  {
+    id: "device-session",
+    label: {
+      "en-US": "Device/session review",
+      "zh-CN": "设备/会话审核",
+    },
+    value: "24%",
+    severity: "medium",
+    evidence: {
+      "en-US": "Similar session patterns are grouped for review only.",
+      "zh-CN": "相似会话模式仅分组供审核。",
+    },
+    nextAction: {
+      "en-US": "Compare with verified on-chain actions.",
+      "zh-CN": "与已验证链上行为交叉检查。",
+    },
+  },
+  {
+    id: "task-timing",
+    label: {
+      "en-US": "Task timing review",
+      "zh-CN": "任务时序审核",
+    },
+    value: "18%",
+    severity: "low",
+    evidence: {
+      "en-US": "Repeated task order is a review signal, not a final decision.",
+      "zh-CN": "重复任务顺序是审核信号，不是最终判断。",
+    },
+    nextAction: {
+      "en-US": "Use task evidence before changing eligibility.",
+      "zh-CN": "变更资格前先查看任务证据。",
+    },
+  },
+  {
+    id: "manual-review",
+    label: {
+      "en-US": "Manual review queue",
+      "zh-CN": "人工审核队列",
+    },
+    value: "12 wallets",
+    severity: "high",
+    evidence: {
+      "en-US": "Wallets with combined signals wait for human review.",
+      "zh-CN": "多重信号钱包等待人工审核。",
+    },
+    nextAction: {
+      "en-US": "Hold export approval until review is complete.",
+      "zh-CN": "审核完成前暂缓导出批准。",
+    },
+  },
+];
+
+export const aiOpsReports: AiOpsReportCard[] = [
+  {
+    id: "daily-summary",
+    title: {
+      "en-US": "Daily AI Ops summary",
+      "zh-CN": "AI Ops 日报",
+    },
+    summary: {
+      "en-US": "Verified actions are healthy; bridge confirmation remains the main drop-off.",
+      "zh-CN": "有效行为健康；跨链确认仍是主要流失点。",
+    },
+    generatedAt: "2026-06-27 08:30",
+    recommendations: [
+      {
+        id: "explain-bridge-friction",
+        title: {
+          "en-US": "Clarify bridge confirmation steps",
+          "zh-CN": "说明跨链确认步骤",
+        },
+        expectedImpact: {
+          "en-US": "Protect wallet-connect to bridge conversion.",
+          "zh-CN": "保护钱包连接到跨链的转化。",
+        },
+        confidence: "medium",
+        riskLevel: "low",
+        requiresHumanReview: false,
+      },
+    ],
+  },
+  {
+    id: "user-quality",
+    title: {
+      "en-US": "User quality summary",
+      "zh-CN": "用户质量摘要",
+    },
+    summary: {
+      "en-US": "AA and EOA participants both contribute verified actions.",
+      "zh-CN": "AA 与 EOA 参与者都贡献了有效行为。",
+    },
+    generatedAt: "2026-06-27 08:35",
+    recommendations: [
+      {
+        id: "keep-aa-eoa-split-visible",
+        title: {
+          "en-US": "Keep wallet split visible in export review",
+          "zh-CN": "在导出审核中保留钱包拆分",
+        },
+        expectedImpact: {
+          "en-US": "Avoid AA-only interpretation of campaign quality.",
+          "zh-CN": "避免将活动质量误解为只看 AA。",
+        },
+        confidence: "high",
+        riskLevel: "low",
+        requiresHumanReview: false,
+      },
+    ],
+  },
+  {
+    id: "bot-pattern",
+    title: {
+      "en-US": "Bot pattern summary",
+      "zh-CN": "机器人模式摘要",
+    },
+    summary: {
+      "en-US": "Referral velocity and shared funding signals require operator review.",
+      "zh-CN": "邀请速度与共享资金信号需要运营审核。",
+    },
+    generatedAt: "2026-06-27 08:40",
+    recommendations: [
+      {
+        id: "hold-export-for-risk-review",
+        title: {
+          "en-US": "Hold export until risk review completes",
+          "zh-CN": "风险审核完成前暂缓导出",
+        },
+        expectedImpact: {
+          "en-US": "Reduces reward dispute risk before project distribution.",
+          "zh-CN": "在项目方发奖前降低奖励争议风险。",
+        },
+        confidence: "medium",
+        riskLevel: "high",
+        requiresHumanReview: true,
+      },
+    ],
+  },
+  {
+    id: "optimization",
+    title: {
+      "en-US": "Optimization suggestions",
+      "zh-CN": "优化建议",
+    },
+    summary: {
+      "en-US": "Referral weighting should stay tied to qualified invitees.",
+      "zh-CN": "邀请权重应继续绑定合格被邀请人。",
+    },
+    generatedAt: "2026-06-27 08:45",
+    recommendations: [
+      {
+        id: "review-referral-weight",
+        title: {
+          "en-US": "Review referral point weight",
+          "zh-CN": "审核邀请积分权重",
+        },
+        expectedImpact: {
+          "en-US": "Balances growth with qualified on-chain action quality.",
+          "zh-CN": "平衡增长与合格链上行为质量。",
+        },
+        confidence: "high",
+        riskLevel: "medium",
+        requiresHumanReview: true,
+      },
+    ],
+  },
+];
+
+export const ecosystemMetrics: EcosystemMetricRow[] = [
+  {
+    product: "eBridge",
+    verifiedActions: 24000,
+    conversionImpact: {
+      "en-US": "+46% of viewers reached bridge task.",
+      "zh-CN": "46% 浏览者到达跨链任务。",
+    },
+    qualitySignal: {
+      "en-US": "Strong onboarding intent.",
+      "zh-CN": "强 onboarding 意图。",
+    },
+    recommendedNextAction: {
+      "en-US": "Clarify bridge confirmation and retry states.",
+      "zh-CN": "说明跨链确认与重试状态。",
+    },
+  },
+  {
+    product: "Awaken",
+    verifiedActions: 16000,
+    conversionImpact: {
+      "en-US": "+32% of viewers reached swap task.",
+      "zh-CN": "32% 浏览者到达 Swap 任务。",
+    },
+    qualitySignal: {
+      "en-US": "Healthy post-bridge activation.",
+      "zh-CN": "跨链后激活健康。",
+    },
+    recommendedNextAction: {
+      "en-US": "Keep swap as the primary quality action.",
+      "zh-CN": "继续将 Swap 作为主要质量行为。",
+    },
+  },
+  {
+    product: "Forest",
+    verifiedActions: 3100,
+    conversionImpact: {
+      "en-US": "NFT intent appears after swap completion.",
+      "zh-CN": "NFT 意图出现在 Swap 完成后。",
+    },
+    qualitySignal: {
+      "en-US": "Medium quality signal for collectors.",
+      "zh-CN": "收藏者中等质量信号。",
+    },
+    recommendedNextAction: {
+      "en-US": "Test a holder follow-up campaign.",
+      "zh-CN": "测试 holder 后续活动。",
+    },
+  },
+  {
+    product: "TMRWDAO",
+    verifiedActions: 1800,
+    conversionImpact: {
+      "en-US": "Governance participation is smaller but high quality.",
+      "zh-CN": "治理参与较小但质量高。",
+    },
+    qualitySignal: {
+      "en-US": "High contribution signal.",
+      "zh-CN": "高贡献信号。",
+    },
+    recommendedNextAction: {
+      "en-US": "Create a voter-week segment.",
+      "zh-CN": "创建治理投票周分层。",
+    },
+  },
+  {
+    product: "daipp",
+    verifiedActions: 1240,
+    conversionImpact: {
+      "en-US": "AI agent coin actions need clearer onboarding.",
+      "zh-CN": "AI agent coin 行为需要更清晰的 onboarding。",
+    },
+    qualitySignal: {
+      "en-US": "Emerging product signal.",
+      "zh-CN": "新兴产品信号。",
+    },
+    recommendedNextAction: {
+      "en-US": "Pair daipp with tutorial content.",
+      "zh-CN": "将 daipp 与教程内容组合。",
+    },
+  },
+  {
+    product: "Pay",
+    verifiedActions: 740,
+    conversionImpact: {
+      "en-US": "Payment actions are low volume but high intent.",
+      "zh-CN": "支付行为量低但意图高。",
+    },
+    qualitySignal: {
+      "en-US": "High-value conversion signal.",
+      "zh-CN": "高价值转化信号。",
+    },
+    recommendedNextAction: {
+      "en-US": "Use pay task only for targeted campaigns.",
+      "zh-CN": "仅在定向活动中使用 Pay 任务。",
+    },
+  },
+  {
+    product: "Forecast",
+    verifiedActions: 920,
+    conversionImpact: {
+      "en-US": "Forecast participants respond to streak mechanics.",
+      "zh-CN": "Forecast 参与者对连续参与机制有响应。",
+    },
+    qualitySignal: {
+      "en-US": "Repeat engagement signal.",
+      "zh-CN": "重复参与信号。",
+    },
+    recommendedNextAction: {
+      "en-US": "Test streak-based leaderboard copy.",
+      "zh-CN": "测试连续参与排行榜文案。",
+    },
+  },
+];
+
 export const campaignSummary: CampaignShellSummary = {
   id: "camp-awaken-sprint",
   slug: "awaken-sprint",
@@ -420,4 +840,8 @@ export const campaignDetail: CampaignShellDetail = {
   reviewItems,
   publishReadiness: computePublishReadiness(campaignSummary, contentRevisions),
   exportPreview: createExportPreview(campaignSummary.id, participants, campaignTasks),
+  conversionFunnel,
+  riskSignals,
+  aiOpsReports,
+  ecosystemMetrics,
 };
