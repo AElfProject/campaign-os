@@ -1,14 +1,17 @@
 import type { CSSProperties } from "react";
 import {
   campaignDetail,
-  deriveParticipantTaskStates,
+  createParticipationReadModel,
+  getWalletBadgeLabel,
   getLocalizedText,
   walletOptions,
   walletSessions,
   type CampaignShellDetail,
+  type EligibilityStatus,
   type LocaleStatus,
   type ParticipantSnapshot,
   type SupportedLocale,
+  type TaskVerificationStatus,
 } from "../../../domain";
 import {
   ContractModeBadge,
@@ -99,10 +102,41 @@ const listItemStyle: CSSProperties = {
   listStyle: "none",
 };
 
+const metricGridStyle: CSSProperties = {
+  display: "grid",
+  gap: 10,
+  gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))",
+};
+
+const tableStyle: CSSProperties = {
+  borderCollapse: "collapse",
+  minWidth: 720,
+  width: "100%",
+};
+
+const thStyle: CSSProperties = {
+  borderBottom: "1px solid #dbe6f4",
+  color: "#64748b",
+  fontSize: 12,
+  padding: "10px 8px",
+  textAlign: "left",
+  textTransform: "uppercase",
+};
+
+const tdStyle: CSSProperties = {
+  borderBottom: "1px solid #eef2f7",
+  color: "#071426",
+  fontSize: 13,
+  padding: "10px 8px",
+  verticalAlign: "top",
+};
+
 const formatDate = (iso: string) =>
   new Intl.DateTimeFormat("en-US", { day: "2-digit", month: "short" }).format(new Date(iso));
 
 const contractModeLabel = (mode: CampaignShellDetail["contractMode"]) => mode.replace(/_/g, " ");
+
+const formatSource = (value: string) => value.replace(/_/g, " ");
 
 const localeStatusLabel = (status: LocaleStatus, locale: SupportedLocale) => {
   const labels = {
@@ -127,6 +161,60 @@ const localeStatusLabel = (status: LocaleStatus, locale: SupportedLocale) => {
   return labels[locale][status];
 };
 
+const eligibilityLabel = (
+  status: EligibilityStatus,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels: Record<EligibilityStatus, string> = {
+    eligible: copy.eligible,
+    ended: copy.ended,
+    not_eligible: copy.notEligible,
+    pending: copy.pending,
+    risk_flagged: copy.riskFlagged,
+  };
+
+  return labels[status];
+};
+
+const eligibilityBadgeState = (status: EligibilityStatus) => {
+  if (status === "eligible") {
+    return "ready";
+  }
+
+  if (status === "risk_flagged" || status === "not_eligible") {
+    return "warning";
+  }
+
+  return "blocker";
+};
+
+const taskStatusLabel = (
+  status: TaskVerificationStatus,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels: Record<TaskVerificationStatus, string> = {
+    completed: copy.completed,
+    failed: copy.failed,
+    manual_review: copy.manualReview,
+    pending: copy.pending,
+    ready: copy.ready,
+  };
+
+  return labels[status];
+};
+
+const taskBadgeState = (status: TaskVerificationStatus) => {
+  if (status === "completed") {
+    return "ready";
+  }
+
+  if (status === "pending" || status === "manual_review") {
+    return "warning";
+  }
+
+  return status === "failed" ? "blocker" : "warning";
+};
+
 export const UserAppPanel = ({
   campaign = campaignDetail,
   locale,
@@ -134,11 +222,15 @@ export const UserAppPanel = ({
 }: UserAppPanelProps) => {
   const copy = userAppCopy[locale];
   const disconnectedWallet = walletSessions.find((session) => session.accountType === "UNKNOWN");
-  const taskStates = deriveParticipantTaskStates(campaign.tasks, participant);
+  const participation = createParticipationReadModel(campaign, participant);
+  const taskStates = participation.taskStates;
   const completedCount = taskStates.filter((task) => task.completed).length;
   const title = getLocalizedText(campaign.title, locale);
   const subtitle = getLocalizedText(campaign.subtitle, locale);
   const selectedWallet = disconnectedWallet ?? walletSessions[2];
+  const missingTasks = campaign.tasks.filter((task) =>
+    participation.eligibility.missingTaskIds.includes(task.id),
+  );
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -187,7 +279,79 @@ export const UserAppPanel = ({
 
       <section style={panelStyle}>
         <div style={rowStyle}>
-          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.taskList}</h3>
+          <div>
+            <p style={labelStyle}>{copy.status}</p>
+            <h3 style={{ fontSize: 20, margin: "2px 0 0" }}>{copy.eligibility}</h3>
+          </div>
+          <PublishStateBadge
+            label={eligibilityLabel(participation.eligibility.status, copy)}
+            state={eligibilityBadgeState(participation.eligibility.status)}
+          />
+        </div>
+
+        <div style={metricGridStyle}>
+          <div style={cardStyle}>
+            <p style={labelStyle}>{copy.score}</p>
+            <p style={valueStyle}>{participation.eligibility.score}</p>
+            <span style={{ color: "#475569", fontSize: 13 }}>
+              {copy.pointsThreshold}: {participation.eligibility.pointsThreshold}
+            </span>
+          </div>
+          <div style={cardStyle}>
+            <p style={labelStyle}>{copy.completedRequired}</p>
+            <p style={valueStyle}>
+              {participation.metrics.completedRequiredTasks}/{participation.metrics.totalRequiredTasks}
+            </p>
+            <span style={{ color: "#475569", fontSize: 13 }}>
+              {copy.rank}: #{participation.metrics.participantRank}
+            </span>
+          </div>
+          <div style={cardStyle}>
+            <p style={labelStyle}>{copy.walletType}</p>
+            <WalletBadge
+              accountType={participant.accountType}
+              walletSource={participant.walletSource}
+            />
+            <span style={{ color: "#475569", fontSize: 13 }}>
+              {copy.walletAddress}: {participant.walletAddress}
+            </span>
+          </div>
+        </div>
+
+        <div style={gridStyle}>
+          <div style={cardStyle}>
+            <p style={labelStyle}>{copy.missingTasks}</p>
+            {missingTasks.length > 0 ? (
+              <ul style={{ display: "grid", gap: 6, margin: 0, paddingInlineStart: 18 }}>
+                {missingTasks.map((task) => (
+                  <li key={task.id}>
+                    <strong>{getLocalizedText(task.title, locale)}</strong>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <strong>{copy.noMissingTasks}</strong>
+            )}
+          </div>
+          <div style={cardStyle}>
+            <p style={labelStyle}>{copy.riskFlags}</p>
+            <strong>
+              {participation.eligibility.riskFlags.join(", ") || copy.riskClear}
+            </strong>
+          </div>
+          <div style={cardStyle}>
+            <p style={labelStyle}>{copy.nextAction}</p>
+            <strong>{getLocalizedText(participation.eligibility.nextAction, locale)}</strong>
+            <span style={{ color: "#475569", fontSize: 13 }}>
+              {getLocalizedText(participation.eligibility.reason, locale)}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <section style={panelStyle}>
+        <div style={rowStyle}>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.taskVerification}</h3>
           <span style={{ color: "#64748b", fontSize: 13, fontWeight: 800 }}>
             {completedCount}/{campaign.tasks.length} {copy.completed}
           </span>
@@ -206,8 +370,8 @@ export const UserAppPanel = ({
                     </span>
                   </div>
                   <PublishStateBadge
-                    label={state?.completed ? copy.completed : copy.missingTasks}
-                    state={state?.missingRequired ? "warning" : "ready"}
+                    label={state ? taskStatusLabel(state.status, copy) : copy.ready}
+                    state={taskBadgeState(state?.status ?? "ready")}
                   />
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -220,12 +384,18 @@ export const UserAppPanel = ({
                     {copy.verification}: {task.verificationType}
                   </span>
                   <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
-                    {copy.points}: {task.points}
+                    {copy.evidenceSource}: {state ? formatSource(state.evidenceSource) : "-"}
+                  </span>
+                  <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
+                    {copy.pointsAwarded}: {state?.pointsAwarded ?? 0}/{state?.pointsAvailable ?? task.points}
                   </span>
                   <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
                     Risk: {task.riskLevel}
                   </span>
                 </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.nextAction}: {state ? getLocalizedText(state.nextAction, locale) : "-"}
+                </p>
               </li>
             );
           })}
@@ -235,7 +405,7 @@ export const UserAppPanel = ({
       <section style={gridStyle}>
         <article style={panelStyle}>
           <h3 style={{ fontSize: 20, margin: 0 }}>{copy.rewards}</h3>
-          <div style={gridStyle}>
+          <div style={metricGridStyle}>
             <div style={cardStyle}>
               <p style={labelStyle}>{copy.points}</p>
               <p style={valueStyle}>{participant.totalPoints}</p>
@@ -246,34 +416,35 @@ export const UserAppPanel = ({
             </div>
             <div style={cardStyle}>
               <p style={labelStyle}>{copy.completed}</p>
-              <p style={valueStyle}>{completedCount}</p>
+              <p style={valueStyle}>
+                {participation.metrics.completedTasks}/{participation.metrics.totalTasks}
+              </p>
+            </div>
+            <div style={cardStyle}>
+              <p style={labelStyle}>{copy.eligibleCutoff}</p>
+              <p style={valueStyle}>#{participation.metrics.eligibleRankCutoff}</p>
             </div>
           </div>
-          <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
-            {copy.referral}: {copy.referralValue}
-          </p>
           <p style={{ color: "#92400e", fontSize: 13, fontWeight: 700, margin: 0 }}>
             {copy.noLiveLedger}
+          </p>
+          <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+            {getLocalizedText(participation.rewardBoundary, locale)}
           </p>
         </article>
 
         <article style={panelStyle}>
           <div style={rowStyle}>
-            <h3 style={{ fontSize: 20, margin: 0 }}>{copy.eligibility}</h3>
-            <PublishStateBadge
-              label={participant.eligible ? copy.eligible : copy.ineligible}
-              state={participant.eligible ? "ready" : "warning"}
-            />
+            <h3 style={{ fontSize: 20, margin: 0 }}>{copy.referral}</h3>
+            <PublishStateBadge label={copy.referralValue} state="warning" />
           </div>
           <dl style={{ display: "grid", gap: 10, margin: 0 }}>
             {[
-              [copy.walletAddress, participant.walletAddress],
-              [copy.walletType, participant.accountType],
-              [copy.walletSource, participant.walletSource],
-              [copy.localePreference, participant.localePreference],
-              [copy.missingTasks, participant.missingTaskIds.join(", ") || "-"],
-              [copy.riskFlags, participant.riskFlags.join(", ") || "-"],
-              [copy.nextAction, participant.eligible ? copy.eligible : copy.recoverMissing],
+              [copy.inviteLink, participation.referral.inviteLink],
+              [copy.invitedCount, String(participation.referral.invitedCount)],
+              [copy.qualifiedInvitees, String(participation.referral.qualifiedInvitees)],
+              [copy.referralPoints, String(participation.referral.referralPoints)],
+              [copy.riskFlags, participation.referral.riskFlags.join(", ") || copy.riskClear],
             ].map(([label, value]) => (
               <div key={label} style={rowStyle}>
                 <dt style={{ color: "#64748b", fontSize: 13, fontWeight: 800 }}>{label}</dt>
@@ -283,7 +454,45 @@ export const UserAppPanel = ({
               </div>
             ))}
           </dl>
+          <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+            {getLocalizedText(participation.referral.antiFarmRule, locale)}
+          </p>
         </article>
+      </section>
+
+      <section style={panelStyle}>
+        <div style={rowStyle}>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.leaderboard}</h3>
+          <span style={{ color: "#64748b", fontSize: 13, fontWeight: 800 }}>
+            {participation.leaderboard.length} rows
+          </span>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>{copy.rank}</th>
+                <th style={thStyle}>{copy.walletAddress}</th>
+                <th style={thStyle}>{copy.walletType}</th>
+                <th style={thStyle}>{copy.points}</th>
+                <th style={thStyle}>{copy.eligibility}</th>
+                <th style={thStyle}>{copy.riskFlags}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {participation.leaderboard.map((row) => (
+                <tr key={row.walletAddress}>
+                  <td style={tdStyle}>#{row.rank}</td>
+                  <td style={tdStyle}>{row.walletAddress}</td>
+                  <td style={tdStyle}>{getWalletBadgeLabel(row.accountType, row.walletSource)}</td>
+                  <td style={tdStyle}>{row.totalPoints}</td>
+                  <td style={tdStyle}>{row.eligible ? copy.eligible : copy.notEligible}</td>
+                  <td style={tdStyle}>{row.riskFlags.join(", ") || copy.riskClear}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
   );

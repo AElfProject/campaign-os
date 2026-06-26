@@ -102,6 +102,12 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByText("Portkey EOA App")).toBeInTheDocument();
     expect(screen.getByText("Portkey EOA Extension")).toBeInTheDocument();
     expect(screen.getAllByText("AA + EOA").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Eligibility checker").length).toBeGreaterThan(0);
+    expect(screen.getByText("Task verification states")).toBeInTheDocument();
+    expect(screen.getByText("Referral context")).toBeInTheDocument();
+    expect(screen.getByText("Leaderboard preview")).toBeInTheDocument();
+    expect(screen.getByText("Qualified invitees")).toBeInTheDocument();
+    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
 

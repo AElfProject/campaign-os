@@ -38,6 +38,9 @@ export type ReviewItemType = "AI_CONTENT" | "CONTRACT_IMPACT" | "RISK_FLAG" | "E
 export type ReviewSeverity = "info" | "warning" | "blocker";
 export type ReviewStatus = "open" | "in_review" | "approved" | "rejected";
 export type OwnerRole = "project_owner" | "internal_operator" | "contract_reviewer";
+export type EligibilityStatus = "eligible" | "not_eligible" | "pending" | "risk_flagged" | "ended";
+export type TaskVerificationStatus = "ready" | "pending" | "completed" | "failed" | "manual_review";
+export type EvidenceSource = "wallet" | "aefinder" | "aelfscan" | "dapp_api" | "social_api" | "manual";
 
 export type LocalizedText = Record<SupportedLocale, string>;
 
@@ -115,6 +118,9 @@ export interface ParticipantSnapshot {
   eligible: boolean;
   missingTaskIds: string[];
   riskFlags: string[];
+  taskVerificationOverrides?: Partial<Record<string, TaskVerificationStatus>>;
+  taskEvidenceSources?: Partial<Record<string, EvidenceSource>>;
+  referralSummary?: ReferralSummary;
 }
 
 export interface ContentRevision {
@@ -158,13 +164,70 @@ export interface ExportPreviewRow {
   riskFlags: string[];
 }
 
-export interface ParticipantTaskState {
+export interface EligibilityResult {
+  status: EligibilityStatus;
+  score: number;
+  pointsThreshold: number;
+  missingTaskIds: string[];
+  riskFlags: string[];
+  reason: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface TaskVerificationState {
   taskId: string;
   templateCode: string;
+  status: TaskVerificationStatus;
+  evidenceSource: EvidenceSource;
+  pointsAwarded: number;
+  pointsAvailable: number;
   completed: boolean;
   missingRequired: boolean;
-  points: number;
   walletCompatibility: WalletCompatibility;
+  nextAction: LocalizedText;
+}
+
+export type ParticipantTaskState = TaskVerificationState;
+
+export interface ReferralSummary {
+  inviteLink: string;
+  invitedCount: number;
+  qualifiedInvitees: number;
+  referralPoints: number;
+  antiFarmRule: LocalizedText;
+  riskFlags: string[];
+}
+
+export interface LeaderboardRow {
+  rank: number;
+  walletAddress: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  totalPoints: number;
+  eligible: boolean;
+  riskFlags: string[];
+  localePreference: SupportedLocale;
+}
+
+export interface ParticipationMetrics {
+  completedRequiredTasks: number;
+  totalRequiredTasks: number;
+  completedTasks: number;
+  totalTasks: number;
+  eligibleRankCutoff: number;
+  participantRank: number;
+  pointsThreshold: number;
+}
+
+export interface ParticipationReadModel {
+  campaignId: string;
+  participant: ParticipantSnapshot;
+  eligibility: EligibilityResult;
+  taskStates: TaskVerificationState[];
+  referral: ReferralSummary;
+  leaderboard: LeaderboardRow[];
+  metrics: ParticipationMetrics;
+  rewardBoundary: LocalizedText;
 }
 
 export interface ExportPreview {
