@@ -45,11 +45,12 @@ describe("Project Console shell", () => {
     expect(screen.getByText("中文内容在审核前回退展示英文。")).toBeInTheDocument();
   });
 
-  it("keeps User App and Admin/Ops as visible navigation placeholders", () => {
+  it("keeps User App and Admin/Ops reachable from navigation", () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "User App" }));
-    expect(screen.getByRole("heading", { name: "User App" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
     expect(screen.getByRole("heading", { name: "Admin/Ops" })).toBeInTheDocument();

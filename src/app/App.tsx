@@ -7,6 +7,7 @@ import {
   type SurfaceKey,
 } from "../components/layout/AppLayout";
 import { ProjectConsole } from "../components/panels/project-console/ProjectConsole";
+import { UserAppPanel } from "../components/panels/user-app/UserAppPanel";
 
 const surfaceCopy = {
   "en-US": {
@@ -18,9 +19,6 @@ const surfaceCopy = {
     localeLabel: "Language",
     project: "Project Console",
     shellTitle: "Campaign operations shell",
-    userAction: "Placeholder",
-    userDescription:
-      "User App implementation is reserved for WP04; wallet entry, task progress, and eligibility will land there.",
     userTitle: "User App",
   },
   "zh-CN": {
@@ -32,9 +30,6 @@ const surfaceCopy = {
     localeLabel: "语言",
     project: "项目控制台",
     shellTitle: "活动运营工作台",
-    userAction: "占位",
-    userDescription:
-      "User App 实现在 WP04 交付；钱包入口、任务进度和资格检查会在该 WP 落地。",
     userTitle: "用户应用",
   },
 } satisfies Record<SupportedLocale, Record<string, string>>;
@@ -66,11 +61,7 @@ export const App = () => {
       {activeSurface === "project" ? (
         <ProjectConsole locale={locale} />
       ) : activeSurface === "user" ? (
-        <SurfacePlaceholder
-          action={copy.userAction}
-          description={copy.userDescription}
-          title={copy.userTitle}
-        />
+        <UserAppPanel locale={locale} />
       ) : (
         <SurfacePlaceholder
           action={copy.adminAction}
