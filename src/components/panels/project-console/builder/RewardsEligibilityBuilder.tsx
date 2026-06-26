@@ -4,7 +4,11 @@ import {
   seededCampaignDraft,
   seededBuilderReadiness,
   type CampaignDraft,
+  type PointsRule,
+  type RewardProvider,
   type SupportedLocale,
+  type WalletPolicy,
+  type WinnerRule,
 } from "../../../../domain";
 import { PublishStateBadge } from "../../../badges/Badges";
 
@@ -16,6 +20,7 @@ interface RewardsEligibilityBuilderProps {
 const copy = {
   "en-US": {
     accepted: "Accepted",
+    disabled: "Off",
     eligibility: "Eligibility rules",
     exportDisclaimer: "Export disclaimer",
     manualReview: "Manual review",
@@ -30,6 +35,7 @@ const copy = {
   },
   "zh-CN": {
     accepted: "已确认",
+    disabled: "已关闭",
     eligibility: "资格规则",
     exportDisclaimer: "导出声明",
     manualReview: "人工审核",
@@ -43,6 +49,56 @@ const copy = {
     winnerRule: "获奖规则",
   },
 } satisfies Record<SupportedLocale, Record<string, string>>;
+
+const rewardProviderLabels = {
+  "en-US": {
+    campaign_project: "Campaign project",
+    partner: "Partner",
+  },
+  "zh-CN": {
+    campaign_project: "活动项目方",
+    partner: "合作伙伴",
+  },
+} satisfies Record<SupportedLocale, Record<RewardProvider, string>>;
+
+const walletPolicyLabels = {
+  "en-US": {
+    ANY: "Any wallet",
+    AA_ONLY: "AA only",
+    EOA_ONLY: "EOA only",
+  },
+  "zh-CN": {
+    ANY: "任意钱包",
+    AA_ONLY: "仅 AA 钱包",
+    EOA_ONLY: "仅 EOA 钱包",
+  },
+} satisfies Record<SupportedLocale, Record<WalletPolicy, string>>;
+
+const pointsRuleLabels = {
+  "en-US": {
+    task_points: "Task points",
+    daily_cap: "Daily cap",
+    referral_bonus: "Referral bonus",
+  },
+  "zh-CN": {
+    task_points: "任务积分",
+    daily_cap: "每日上限",
+    referral_bonus: "邀请奖励",
+  },
+} satisfies Record<SupportedLocale, Record<PointsRule, string>>;
+
+const winnerRuleLabels = {
+  "en-US": {
+    top_n: "Top N",
+    threshold: "Threshold",
+    manual_review: "Manual review",
+  },
+  "zh-CN": {
+    top_n: "前 N 名",
+    threshold: "门槛达标",
+    manual_review: "人工审核",
+  },
+} satisfies Record<SupportedLocale, Record<WinnerRule, string>>;
 
 const sectionStyle: CSSProperties = {
   display: "grid",
@@ -125,7 +181,7 @@ export const RewardsEligibilityBuilder = ({
       <div style={gridStyle}>
         <article style={cardStyle}>
           <p style={labelStyle}>{labels.provider}</p>
-          <p style={valueStyle}>{draft.rewardPlan.provider}</p>
+          <p style={valueStyle}>{rewardProviderLabels[locale][draft.rewardPlan.provider]}</p>
           <p style={bodyStyle}>{getLocalizedText(draft.rewardPlan.description, locale)}</p>
           <p style={labelStyle}>{labels.rewardDisclaimer}</p>
           <p style={bodyStyle}>{getLocalizedText(draft.rewardPlan.disclaimer, locale)}</p>
@@ -136,27 +192,27 @@ export const RewardsEligibilityBuilder = ({
           <ul style={listStyle}>
             <li style={listItemStyle}>
               <span>{labels.walletPolicy}</span>
-              <strong>{draft.eligibilityRule.walletPolicy}</strong>
+              <strong>{walletPolicyLabels[locale][draft.eligibilityRule.walletPolicy]}</strong>
             </li>
             <li style={listItemStyle}>
               <span>{labels.pointsRule}</span>
-              <strong>{draft.rewardPlan.pointsRule}</strong>
+              <strong>{pointsRuleLabels[locale][draft.rewardPlan.pointsRule]}</strong>
             </li>
             <li style={listItemStyle}>
               <span>{labels.winnerRule}</span>
-              <strong>{draft.rewardPlan.winnerRule}</strong>
+              <strong>{winnerRuleLabels[locale][draft.rewardPlan.winnerRule]}</strong>
             </li>
             <li style={listItemStyle}>
               <span>{labels.referralValidation}</span>
               <PublishStateBadge
-                label={draft.eligibilityRule.referralValidationEnabled ? labels.accepted : "Off"}
+                label={draft.eligibilityRule.referralValidationEnabled ? labels.accepted : labels.disabled}
                 state={draft.eligibilityRule.referralValidationEnabled ? "ready" : "warning"}
               />
             </li>
             <li style={listItemStyle}>
               <span>{labels.manualReview}</span>
               <PublishStateBadge
-                label={draft.eligibilityRule.manualReviewRequired ? labels.accepted : "Off"}
+                label={draft.eligibilityRule.manualReviewRequired ? labels.accepted : labels.disabled}
                 state={draft.eligibilityRule.manualReviewRequired ? "ready" : "warning"}
               />
             </li>
