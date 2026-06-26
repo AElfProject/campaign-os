@@ -1,11 +1,19 @@
 import type {
+  AdminOpsReadModel,
+  AnalyticsKpi,
+  ConversionFunnelStep,
   CampaignShellDetail,
   CampaignTask,
   ContentRevision,
+  DimensionSplit,
   EligibilityResult,
+  ExportBatchSummary,
+  ExportEvidenceRow,
   EvidenceSource,
   ExportPreview,
   ExportPreviewRow,
+  RiskSignal,
+  TaskEvidenceSummary,
   LeaderboardRow,
   LocalizedText,
   ParticipationMetrics,
@@ -19,6 +27,7 @@ import type {
 
 const defaultPointsThreshold = 160;
 const defaultEligibleRankCutoff = 100;
+const exportBatchId = "export-awaken-sprint-preview";
 
 const defaultReferralRule: LocalizedText = {
   "en-US": "Only qualified invitees who complete valid tasks count for referral points.",
@@ -252,6 +261,230 @@ const createLeaderboard = (participants: ParticipantSnapshot[]): LeaderboardRow[
       localePreference: participant.localePreference,
     }));
 
+const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
+
+const createAnalytics = (
+  campaign: CampaignShellDetail,
+  exportBatch: ExportBatchSummary,
+): AnalyticsKpi[] => {
+  const totalParticipants = campaign.participants.length;
+  const verifiedActions = campaign.participants.reduce(
+    (count, participant) => count + participant.completedTaskIds.length,
+    0,
+  );
+  const riskFlaggedParticipants = campaign.participants.filter(
+    (participant) => participant.riskFlags.length > 0,
+  ).length;
+  const invitedCount = campaign.participants.reduce(
+    (count, participant) => count + (participant.referralSummary?.invitedCount ?? 0),
+    0,
+  );
+  const qualifiedInvitees = campaign.participants.reduce(
+    (count, participant) => count + (participant.referralSummary?.qualifiedInvitees ?? 0),
+    0,
+  );
+  const referralConversion = invitedCount === 0 ? 0 : qualifiedInvitees / invitedCount;
+  const riskRate = totalParticipants === 0 ? 0 : riskFlaggedParticipants / totalParticipants;
+
+  return [
+    {
+      id: "participants",
+      label: {
+        "en-US": "Participants",
+        "zh-CN": "参与者",
+      },
+      value: totalParticipants.toLocaleString("en-US"),
+      trend: {
+        "en-US": "Seeded wallets in review sample.",
+        "zh-CN": "审核样本中的 seeded 钱包。",
+      },
+      tone: "neutral",
+      dimension: "audience",
+    },
+    {
+      id: "verified-actions",
+      label: {
+        "en-US": "Verified actions",
+        "zh-CN": "有效行为",
+      },
+      value: verifiedActions.toLocaleString("en-US"),
+      trend: {
+        "en-US": "Derived from local task completion fixtures.",
+        "zh-CN": "来自本地任务完成 fixtures。",
+      },
+      tone: "good",
+      dimension: "quality",
+    },
+    {
+      id: "eligible-winners",
+      label: {
+        "en-US": "Eligible winners",
+        "zh-CN": "合格 winners",
+      },
+      value: String(exportBatch.readyCount),
+      trend: {
+        "en-US": "Preview only; project distributes rewards.",
+        "zh-CN": "仅预览；由项目方发奖。",
+      },
+      tone: "good",
+      dimension: "export",
+    },
+    {
+      id: "risk-rate",
+      label: {
+        "en-US": "Risk rate",
+        "zh-CN": "风险比例",
+      },
+      value: formatPercent(riskRate),
+      trend: {
+        "en-US": "Risk flags are review signals.",
+        "zh-CN": "风险标记是审核信号。",
+      },
+      tone: riskRate > 0.2 ? "warning" : "neutral",
+      dimension: "risk",
+    },
+    {
+      id: "referral-conversion",
+      label: {
+        "en-US": "Referral conversion",
+        "zh-CN": "邀请转化",
+      },
+      value: formatPercent(referralConversion),
+      trend: {
+        "en-US": "Only qualified invitees count.",
+        "zh-CN": "仅合格被邀请人计入。",
+      },
+      tone: "warning",
+      dimension: "referral",
+    },
+    {
+      id: "retention",
+      label: {
+        "en-US": "Retention signal",
+        "zh-CN": "留存信号",
+      },
+      value: "31%",
+      trend: {
+        "en-US": "Seeded Day 7 repeat action signal.",
+        "zh-CN": "Seeded Day 7 重复行为信号。",
+      },
+      tone: "neutral",
+      dimension: "retention",
+    },
+    {
+      id: "export-readiness",
+      label: {
+        "en-US": "Export readiness",
+        "zh-CN": "导出准备度",
+      },
+      value: `${exportBatch.readyCount}/${campaign.participants.length}`,
+      trend: {
+        "en-US": `${exportBatch.blockedCount} rows need review before export approval.`,
+        "zh-CN": `${exportBatch.blockedCount} 行需要审核后再批准导出。`,
+      },
+      tone: exportBatch.blockedCount > 0 ? "warning" : "good",
+      dimension: "export",
+    },
+  ];
+};
+
+const createWalletSplit = (participants: ParticipantSnapshot[]): DimensionSplit[] => {
+  const aaCount = participants.filter((participant) => participant.accountType === "AA").length;
+  const eoaCount = participants.filter((participant) => participant.accountType === "EOA").length;
+  const total = participants.length || 1;
+
+  return [
+    {
+      id: "wallet-aa",
+      label: "AA",
+      count: aaCount,
+      percentage: Math.round((aaCount / total) * 100),
+    },
+    {
+      id: "wallet-eoa",
+      label: "EOA",
+      count: eoaCount,
+      percentage: Math.round((eoaCount / total) * 100),
+    },
+  ];
+};
+
+const createLocaleSplit = (participants: ParticipantSnapshot[]): DimensionSplit[] => {
+  const total = participants.length || 1;
+
+  return [
+    {
+      id: "locale-en-us",
+      label: "en-US",
+      count: participants.filter((participant) => participant.localePreference === "en-US").length,
+      percentage: Math.round(
+        (participants.filter((participant) => participant.localePreference === "en-US").length / total) * 100,
+      ),
+    },
+    {
+      id: "locale-zh-cn",
+      label: "zh-CN",
+      count: participants.filter((participant) => participant.localePreference === "zh-CN").length,
+      percentage: Math.round(
+        (participants.filter((participant) => participant.localePreference === "zh-CN").length / total) * 100,
+      ),
+    },
+  ];
+};
+
+const evidenceHashFor = (taskId: string, walletAddress: string) =>
+  `demo-${taskId}-${walletAddress.slice(0, 3)}`;
+
+const createTaskEvidence = (
+  tasks: CampaignTask[],
+  participant: ParticipantSnapshot,
+): TaskEvidenceSummary[] =>
+  deriveParticipantTaskStates(tasks, participant)
+    .map((taskState) => {
+      const task = tasks.find((candidate) => candidate.id === taskState.taskId);
+
+      return {
+        taskId: taskState.taskId,
+        label: task?.title ?? {
+          "en-US": taskState.templateCode,
+          "zh-CN": taskState.templateCode,
+        },
+        status: taskState.status === "ready" ? "pending" : taskState.status,
+        source: taskState.evidenceSource,
+        evidenceHash: evidenceHashFor(taskState.taskId, participant.walletAddress),
+      };
+    });
+
+const createExportEvidenceRows = (
+  participants: ParticipantSnapshot[],
+  tasks: CampaignTask[],
+): ExportEvidenceRow[] =>
+  participants.map((participant) => ({
+    walletAddress: participant.walletAddress,
+    accountType: participant.accountType,
+    walletSource: participant.walletSource,
+    localePreference: participant.localePreference,
+    totalPoints: participant.totalPoints,
+    rank: participant.rank ?? 0,
+    eligible: participant.eligible,
+    missingTasks: computeMissingTasks(tasks, participant).map((task) => task.templateCode),
+    riskFlags: participant.riskFlags,
+    taskEvidence: createTaskEvidence(tasks, participant),
+    exportBatchId,
+  }));
+
+const createExportBatch = (campaign: CampaignShellDetail): ExportBatchSummary => {
+  const rows = createExportEvidenceRows(campaign.participants, campaign.tasks);
+
+  return {
+    batchId: exportBatchId,
+    readyCount: rows.filter((row) => row.eligible && row.riskFlags.length === 0).length,
+    blockedCount: rows.filter((row) => !row.eligible || row.riskFlags.length > 0).length,
+    disclaimer: rewardBoundary,
+    rows,
+  };
+};
+
 export const createParticipationReadModel = (
   campaign: CampaignShellDetail,
   participant: ParticipantSnapshot,
@@ -289,6 +522,25 @@ export const createExportPreview = (
     riskFlags: participant.riskFlags,
   })),
 });
+
+export const createAdminOpsReadModel = (
+  campaign: CampaignShellDetail,
+): AdminOpsReadModel => {
+  const exportBatch = createExportBatch(campaign);
+
+  return {
+    campaignId: campaign.id,
+    reviewQueue: campaign.reviewItems,
+    analytics: createAnalytics(campaign, exportBatch),
+    funnel: campaign.conversionFunnel,
+    walletSplit: createWalletSplit(campaign.participants),
+    localeSplit: createLocaleSplit(campaign.participants),
+    riskSignals: campaign.riskSignals,
+    aiReports: campaign.aiOpsReports,
+    ecosystemMetrics: campaign.ecosystemMetrics,
+    exportBatch,
+  };
+};
 
 export const computePublishReadiness = (
   campaign: Pick<CampaignShellDetail, "contractMode">,

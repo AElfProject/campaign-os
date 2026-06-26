@@ -2,11 +2,16 @@ import type { CSSProperties } from "react";
 import {
   campaignDetail,
   computePublishReadiness,
+  createAdminOpsReadModel,
+  getLocalizedText,
   type CampaignShellDetail,
   type ContractMode,
+  type MetricTone,
+  type SignalSeverity,
   type SupportedLocale,
 } from "../../../domain";
 import {
+  Badge,
   ContractModeBadge,
   LocaleStatusBadge,
   PublishStateBadge,
@@ -35,12 +40,19 @@ const gridStyle: CSSProperties = {
   gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
 };
 
+const compactGridStyle: CSSProperties = {
+  display: "grid",
+  gap: 10,
+  gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+};
+
 const cardStyle: CSSProperties = {
   background: "#f8fbff",
   border: "1px solid #dbe6f4",
   borderRadius: 8,
   display: "grid",
   gap: 10,
+  minWidth: 0,
   padding: 14,
 };
 
@@ -52,6 +64,12 @@ const rowStyle: CSSProperties = {
   justifyContent: "space-between",
 };
 
+const stackStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+  minWidth: 0,
+};
+
 const labelStyle: CSSProperties = {
   color: "#64748b",
   fontSize: 12,
@@ -61,9 +79,24 @@ const labelStyle: CSSProperties = {
   textTransform: "uppercase",
 };
 
+const valueStyle: CSSProperties = {
+  color: "#071426",
+  fontSize: 28,
+  fontWeight: 900,
+  lineHeight: 1,
+  margin: 0,
+};
+
+const mutedTextStyle: CSSProperties = {
+  color: "#475569",
+  fontSize: 13,
+  lineHeight: 1.45,
+  margin: 0,
+};
+
 const tableStyle: CSSProperties = {
   borderCollapse: "collapse",
-  minWidth: 720,
+  minWidth: 980,
   width: "100%",
 };
 
@@ -84,13 +117,37 @@ const tdStyle: CSSProperties = {
   verticalAlign: "top",
 };
 
+const boundaryStyle: CSSProperties = {
+  background: "#fffbeb",
+  border: "1px solid #fcd34d",
+  borderRadius: 8,
+  color: "#92400e",
+  fontWeight: 800,
+  lineHeight: 1.45,
+  margin: 0,
+  padding: 12,
+};
+
 const modeLabel = (mode: ContractMode) => mode.replace(/_/g, " ");
+
+const metricToneState = (tone: MetricTone) =>
+  tone === "critical" ? "blocker" : tone === "warning" ? "warning" : "ready";
+
+const signalState = (severity: SignalSeverity) =>
+  severity === "high" || severity === "blocked"
+    ? "blocker"
+    : severity === "medium"
+      ? "warning"
+      : "ready";
+
+const formatEvidenceStatus = (status: string) => status.replace(/_/g, " ");
 
 export const AdminOpsPanel = ({
   campaign = campaignDetail,
   locale,
 }: AdminOpsPanelProps) => {
   const copy = adminOpsCopy[locale];
+  const adminOps = createAdminOpsReadModel(campaign);
   const contractClaimReadiness = computePublishReadiness(
     { contractMode: "CONTRACT_CLAIM" },
     campaign.contentRevisions,
@@ -131,22 +188,91 @@ export const AdminOpsPanel = ({
             <PublishStateBadge label={`${warningCount} ${copy.warning}`} state="warning" />
           </span>
         </div>
+        <p style={boundaryStyle}>{copy.seededBoundary}</p>
         <div style={gridStyle}>
-          {campaign.reviewItems.map((item) => (
+          {adminOps.reviewQueue.map((item) => (
             <article key={item.id} style={cardStyle}>
               <div style={rowStyle}>
                 <strong>{item.title}</strong>
                 <ReviewSeverityBadge label={item.severity} severity={item.severity} />
               </div>
-              <p style={{ color: "#475569", fontSize: 13, margin: 0 }}>
+              <p style={mutedTextStyle}>
                 {copy.status}: {item.status}
               </p>
-              <p style={{ color: "#475569", fontSize: 13, margin: 0 }}>
+              <p style={mutedTextStyle}>
                 {copy.owner}: {item.ownerRole}
               </p>
             </article>
           ))}
         </div>
+      </section>
+
+      <section style={panelStyle}>
+        <div style={rowStyle}>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.analyticsOverview}</h3>
+          <PublishStateBadge
+            label={`${adminOps.exportBatch.readyCount}/${adminOps.exportBatch.rows.length} ${copy.exportReady}`}
+            state={adminOps.exportBatch.blockedCount > 0 ? "warning" : "ready"}
+          />
+        </div>
+        <div style={gridStyle}>
+          {adminOps.analytics.map((metric) => (
+            <article key={metric.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <p style={labelStyle}>{getLocalizedText(metric.label, locale)}</p>
+                <PublishStateBadge
+                  label={metric.tone}
+                  state={metricToneState(metric.tone)}
+                />
+              </div>
+              <p style={valueStyle}>{metric.value}</p>
+              <p style={mutedTextStyle}>{getLocalizedText(metric.trend, locale)}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section style={gridStyle}>
+        <article style={panelStyle}>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.conversionFunnel}</h3>
+          <div style={stackStyle}>
+            {adminOps.funnel.map((step) => (
+              <div key={step.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <strong>{getLocalizedText(step.label, locale)}</strong>
+                  <Badge label={`${step.conversionRate}% ${copy.conversion}`} tone="info" />
+                </div>
+                <p style={mutedTextStyle}>
+                  {copy.count}: {step.count.toLocaleString("en-US")}
+                </p>
+                <p style={mutedTextStyle}>{getLocalizedText(step.dropOffNote, locale)}</p>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article style={panelStyle}>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.walletSplit}</h3>
+          <div style={compactGridStyle}>
+            {adminOps.walletSplit.map((row) => (
+              <div key={row.id} style={cardStyle}>
+                <p style={labelStyle}>{row.label}</p>
+                <p style={valueStyle}>{row.percentage}%</p>
+                <p style={mutedTextStyle}>{row.count} wallets</p>
+              </div>
+            ))}
+          </div>
+          <h3 style={{ fontSize: 20, margin: "4px 0 0" }}>{copy.localeSplit}</h3>
+          <div style={compactGridStyle}>
+            {adminOps.localeSplit.map((row) => (
+              <div key={row.id} style={cardStyle}>
+                <p style={labelStyle}>{row.label}</p>
+                <p style={valueStyle}>{row.percentage}%</p>
+                <p style={mutedTextStyle}>{row.count} wallets</p>
+              </div>
+            ))}
+          </div>
+        </article>
       </section>
 
       <section style={gridStyle}>
@@ -157,7 +283,7 @@ export const AdminOpsPanel = ({
               <strong>{copy.enPublished}</strong>
               <LocaleStatusBadge label="en-US published" status="published" />
             </div>
-            <p style={{ color: "#475569", fontSize: 13, margin: 0 }}>
+            <p style={mutedTextStyle}>
               {campaign.contentRevisions.find((revision) => revision.locale === "en-US")?.title}
             </p>
           </div>
@@ -166,7 +292,7 @@ export const AdminOpsPanel = ({
               <strong>{copy.zhDraft}</strong>
               <LocaleStatusBadge label="zh-CN AI draft" status="ai_draft" />
             </div>
-            <p style={{ color: "#92400e", fontSize: 13, fontWeight: 700, margin: 0 }}>
+            <p style={{ ...mutedTextStyle, color: "#92400e", fontWeight: 700 }}>
               {copy.autoPublishBlocked}
             </p>
             <ReviewSeverityBadge label={copy.humanReviewGate} severity="warning" />
@@ -192,24 +318,118 @@ export const AdminOpsPanel = ({
       </section>
 
       <section style={panelStyle}>
+        <h3 style={{ fontSize: 20, margin: 0 }}>{copy.riskDashboard}</h3>
+        <div style={gridStyle}>
+          {adminOps.riskSignals.map((signal) => (
+            <article key={signal.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <strong>{getLocalizedText(signal.label, locale)}</strong>
+                <PublishStateBadge
+                  label={signal.severity}
+                  state={signalState(signal.severity)}
+                />
+              </div>
+              <p style={valueStyle}>{signal.value}</p>
+              <p style={mutedTextStyle}>
+                {copy.evidence}: {getLocalizedText(signal.evidence, locale)}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.nextAction}: {getLocalizedText(signal.nextAction, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section style={panelStyle}>
+        <h3 style={{ fontSize: 20, margin: 0 }}>{copy.aiOpsReports}</h3>
+        <div style={gridStyle}>
+          {adminOps.aiReports.map((report) => (
+            <article key={report.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <strong>{getLocalizedText(report.title, locale)}</strong>
+                <Badge label={`${copy.generatedAt}: ${report.generatedAt}`} tone="ai" />
+              </div>
+              <p style={mutedTextStyle}>{getLocalizedText(report.summary, locale)}</p>
+              {report.recommendations.map((recommendation) => (
+                <div
+                  key={recommendation.id}
+                  style={{
+                    borderTop: "1px solid #dbe6f4",
+                    display: "grid",
+                    gap: 8,
+                    paddingTop: 10,
+                  }}
+                >
+                  <div style={rowStyle}>
+                    <strong>{getLocalizedText(recommendation.title, locale)}</strong>
+                    <PublishStateBadge
+                      label={
+                        recommendation.requiresHumanReview
+                          ? copy.humanReviewRequired
+                          : copy.noHumanReviewRequired
+                      }
+                      state={recommendation.requiresHumanReview ? "warning" : "ready"}
+                    />
+                  </div>
+                  <p style={mutedTextStyle}>
+                    {copy.expectedImpact}: {getLocalizedText(recommendation.expectedImpact, locale)}
+                  </p>
+                  <p style={mutedTextStyle}>
+                    {copy.confidence}: {recommendation.confidence} · {copy.riskLevel}:{" "}
+                    {recommendation.riskLevel}
+                  </p>
+                </div>
+              ))}
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section style={panelStyle}>
+        <h3 style={{ fontSize: 20, margin: 0 }}>{copy.ecosystemMetrics}</h3>
+        <div style={{ overflowX: "auto" }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>{copy.product}</th>
+                <th style={thStyle}>{copy.count}</th>
+                <th style={thStyle}>{copy.conversion}</th>
+                <th style={thStyle}>{copy.qualitySignal}</th>
+                <th style={thStyle}>{copy.nextAction}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {adminOps.ecosystemMetrics.map((row) => (
+                <tr key={row.product}>
+                  <td style={tdStyle}>
+                    <strong>{row.product}</strong>
+                  </td>
+                  <td style={tdStyle}>{row.verifiedActions.toLocaleString("en-US")}</td>
+                  <td style={tdStyle}>{getLocalizedText(row.conversionImpact, locale)}</td>
+                  <td style={tdStyle}>{getLocalizedText(row.qualitySignal, locale)}</td>
+                  <td style={tdStyle}>{getLocalizedText(row.recommendedNextAction, locale)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section style={panelStyle}>
         <div style={rowStyle}>
           <h3 style={{ fontSize: 20, margin: 0 }}>{copy.exportPreview}</h3>
-          <PublishStateBadge label={copy.exportReady} state="ready" />
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <PublishStateBadge label={copy.exportReady} state="ready" />
+            <Badge label={`${copy.exportBatch}: ${adminOps.exportBatch.batchId}`} tone="info" />
+          </span>
         </div>
-        <p
-          style={{
-            background: "#fffbeb",
-            border: "1px solid #fcd34d",
-            borderRadius: 8,
-            color: "#92400e",
-            fontWeight: 800,
-            lineHeight: 1.45,
-            margin: 0,
-            padding: 12,
-          }}
-        >
-          {copy.exportDisclaimer}
-        </p>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.exportDisclaimer}</p>
+          <p style={{ margin: "6px 0 0" }}>
+            {getLocalizedText(adminOps.exportBatch.disclaimer, locale)}
+          </p>
+        </div>
         <div style={{ overflowX: "auto" }}>
           <table style={tableStyle}>
             <thead>
@@ -220,13 +440,14 @@ export const AdminOpsPanel = ({
                 <th style={thStyle}>{copy.status}</th>
                 <th style={thStyle}>{copy.missingTasks}</th>
                 <th style={thStyle}>{copy.riskFlags}</th>
+                <th style={thStyle}>{copy.taskEvidence}</th>
               </tr>
             </thead>
             <tbody>
-              {campaign.exportPreview.rows.map((row) => (
+              {adminOps.exportBatch.rows.map((row) => (
                 <tr key={row.walletAddress}>
                   <td style={tdStyle}>
-                    <div style={{ display: "grid", gap: 6 }}>
+                    <div style={stackStyle}>
                       <span>{row.walletAddress}</span>
                       <WalletBadge accountType={row.accountType} walletSource={row.walletSource} />
                     </div>
@@ -243,6 +464,17 @@ export const AdminOpsPanel = ({
                   </td>
                   <td style={tdStyle}>{row.missingTasks.join(", ") || "-"}</td>
                   <td style={tdStyle}>{row.riskFlags.join(", ") || "-"}</td>
+                  <td style={tdStyle}>
+                    <div style={stackStyle}>
+                      {row.taskEvidence.map((evidence) => (
+                        <span key={evidence.taskId}>
+                          {getLocalizedText(evidence.label, locale)} ·{" "}
+                          {formatEvidenceStatus(evidence.status)} · {evidence.source} ·{" "}
+                          {evidence.evidenceHash}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

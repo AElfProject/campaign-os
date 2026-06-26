@@ -41,6 +41,17 @@ export type OwnerRole = "project_owner" | "internal_operator" | "contract_review
 export type EligibilityStatus = "eligible" | "not_eligible" | "pending" | "risk_flagged" | "ended";
 export type TaskVerificationStatus = "ready" | "pending" | "completed" | "failed" | "manual_review";
 export type EvidenceSource = "wallet" | "aefinder" | "aelfscan" | "dapp_api" | "social_api" | "manual";
+export type MetricTone = "neutral" | "good" | "warning" | "critical";
+export type SignalSeverity = "low" | "medium" | "high" | "blocked";
+export type AiConfidence = "low" | "medium" | "high";
+export type EcosystemProduct =
+  | "eBridge"
+  | "Awaken"
+  | "Forest"
+  | "TMRWDAO"
+  | "daipp"
+  | "Pay"
+  | "Forecast";
 
 export type LocalizedText = Record<SupportedLocale, string>;
 
@@ -164,6 +175,107 @@ export interface ExportPreviewRow {
   riskFlags: string[];
 }
 
+export interface AnalyticsKpi {
+  id: string;
+  label: LocalizedText;
+  value: string;
+  trend: LocalizedText;
+  tone: MetricTone;
+  dimension?: string;
+}
+
+export interface ConversionFunnelStep {
+  id: string;
+  label: LocalizedText;
+  count: number;
+  conversionRate: number;
+  dropOffNote: LocalizedText;
+}
+
+export interface DimensionSplit {
+  id: string;
+  label: "AA" | "EOA" | SupportedLocale;
+  count: number;
+  percentage: number;
+}
+
+export interface RiskSignal {
+  id: string;
+  label: LocalizedText;
+  value: string;
+  severity: SignalSeverity;
+  evidence: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface AiOpsRecommendation {
+  id: string;
+  title: LocalizedText;
+  expectedImpact: LocalizedText;
+  confidence: AiConfidence;
+  riskLevel: Exclude<SignalSeverity, "blocked">;
+  requiresHumanReview: boolean;
+}
+
+export interface AiOpsReportCard {
+  id: string;
+  title: LocalizedText;
+  summary: LocalizedText;
+  generatedAt: string;
+  recommendations: AiOpsRecommendation[];
+}
+
+export interface EcosystemMetricRow {
+  product: EcosystemProduct;
+  verifiedActions: number;
+  conversionImpact: LocalizedText;
+  qualitySignal: LocalizedText;
+  recommendedNextAction: LocalizedText;
+}
+
+export interface TaskEvidenceSummary {
+  taskId: string;
+  label: LocalizedText;
+  status: Exclude<TaskVerificationStatus, "ready">;
+  source: EvidenceSource;
+  evidenceHash: string;
+}
+
+export interface ExportEvidenceRow {
+  walletAddress: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  localePreference: SupportedLocale;
+  totalPoints: number;
+  rank: number;
+  eligible: boolean;
+  missingTasks: string[];
+  riskFlags: string[];
+  taskEvidence: TaskEvidenceSummary[];
+  exportBatchId: string;
+}
+
+export interface ExportBatchSummary {
+  batchId: string;
+  readyCount: number;
+  blockedCount: number;
+  disclaimer: LocalizedText;
+  rows: ExportEvidenceRow[];
+}
+
+export interface AdminOpsReadModel {
+  campaignId: string;
+  reviewQueue: ReviewItem[];
+  analytics: AnalyticsKpi[];
+  funnel: ConversionFunnelStep[];
+  walletSplit: DimensionSplit[];
+  localeSplit: DimensionSplit[];
+  riskSignals: RiskSignal[];
+  aiReports: AiOpsReportCard[];
+  ecosystemMetrics: EcosystemMetricRow[];
+  exportBatch: ExportBatchSummary;
+}
+
 export interface EligibilityResult {
   status: EligibilityStatus;
   score: number;
@@ -243,4 +355,8 @@ export interface CampaignShellDetail extends CampaignShellSummary {
   reviewItems: ReviewItem[];
   publishReadiness: PublishReadiness;
   exportPreview: ExportPreview;
+  conversionFunnel: ConversionFunnelStep[];
+  riskSignals: RiskSignal[];
+  aiOpsReports: AiOpsReportCard[];
+  ecosystemMetrics: EcosystemMetricRow[];
 }

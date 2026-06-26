@@ -3,6 +3,7 @@ import {
   campaignDetail,
   computeMissingTasks,
   computePublishReadiness,
+  createAdminOpsReadModel,
   createExportPreview,
   createParticipationReadModel,
   deriveParticipantTaskStates,
@@ -179,6 +180,122 @@ describe("Campaign OS domain foundation", () => {
     );
     expect(createParticipationReadModel(campaignDetail, pendingParticipant).eligibility.status).toBe(
       "pending",
+    );
+  });
+
+  it("creates an Admin/Ops read model for analytics, risk, AI reports, and export evidence", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+
+    expect(adminOps.analytics.map((metric) => metric.id)).toEqual([
+      "participants",
+      "verified-actions",
+      "eligible-winners",
+      "risk-rate",
+      "referral-conversion",
+      "retention",
+      "export-readiness",
+    ]);
+    expect(adminOps.funnel.map((step) => step.id)).toEqual([
+      "campaign-views",
+      "wallet-connect",
+      "bridge",
+      "swap",
+      "qualified-invite",
+      "eligible-winners",
+    ]);
+    expect(adminOps.walletSplit).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "AA" }),
+        expect.objectContaining({ label: "EOA" }),
+      ]),
+    );
+    expect(adminOps.localeSplit.map((row) => row.label)).toEqual(["en-US", "zh-CN"]);
+    expect(adminOps.localeSplit.map((row) => row.label)).not.toContain("zh-TW");
+    expect(adminOps.riskSignals.map((signal) => signal.id)).toEqual([
+      "funding-source",
+      "referral-tree",
+      "referral-velocity",
+      "device-session",
+      "task-timing",
+      "bot-sybil-review",
+      "manual-review",
+    ]);
+    expect(adminOps.aiReports).toHaveLength(4);
+    expect(adminOps.exportBatch.disclaimer["en-US"]).toContain("does not distribute rewards");
+  });
+
+  it("keeps Admin/Ops risk and AI guidance human-reviewed", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const riskText = adminOps.riskSignals
+      .flatMap((signal) => [
+        signal.label["en-US"],
+        signal.evidence["en-US"],
+        signal.nextAction["en-US"],
+      ])
+      .join(" ");
+    const recommendations = adminOps.aiReports.flatMap((report) => report.recommendations);
+
+    expect(riskText).toContain("review");
+    expect(riskText.toLowerCase()).not.toContain("ban");
+    expect(riskText.toLowerCase()).not.toContain("exclude automatically");
+    expect(recommendations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "review-referral-weight",
+          requiresHumanReview: true,
+          confidence: "high",
+          riskLevel: "medium",
+        }),
+        expect.objectContaining({
+          id: "hold-export-for-risk-review",
+          requiresHumanReview: true,
+          riskLevel: "high",
+        }),
+      ]),
+    );
+  });
+
+  it("keeps Admin/Ops ecosystem metrics and export evidence complete", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+
+    expect(adminOps.ecosystemMetrics.map((row) => row.product)).toEqual([
+      "eBridge",
+      "Awaken",
+      "Forest",
+      "TMRWDAO",
+      "daipp",
+      "Pay",
+      "Forecast",
+    ]);
+    expect(adminOps.exportBatch.rows).toHaveLength(campaignDetail.participants.length);
+    expect(adminOps.exportBatch.rows[1]).toMatchObject({
+      walletAddress: "3E9...7cD",
+      accountType: "EOA",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      localePreference: "zh-CN",
+      riskFlags: ["referral_velocity_review"],
+      missingTasks: ["bridge_ebridge"],
+      exportBatchId: "export-awaken-sprint-preview",
+    });
+    expect(adminOps.exportBatch.rows[1].taskEvidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          taskId: "task-bridge",
+          status: "pending",
+          source: "aelfscan",
+          evidenceHash: "demo-task-bridge-3E9",
+        }),
+        expect.objectContaining({
+          taskId: "task-social",
+          status: "failed",
+          source: "social_api",
+        }),
+        expect.objectContaining({
+          taskId: "task-agent-review",
+          status: "manual_review",
+          source: "manual",
+        }),
+      ]),
     );
   });
 });
