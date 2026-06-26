@@ -15,12 +15,19 @@ describe("Project Console shell", () => {
     expect(screen.getByText("Connected wallets")).toBeInTheDocument();
     expect(screen.getByText("AA · Portkey")).toBeInTheDocument();
     expect(screen.getByText("AI Campaign Planner")).toBeInTheDocument();
+    expect(screen.getAllByText("Campaign Builder")).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: "Draft overview" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Any wallet" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(screen.getAllByText("Task Builder Preview")).toHaveLength(2);
     expect(screen.getByText("Rewards & Eligibility")).toBeInTheDocument();
     expect(screen.getByText("i18n Translation Review")).toBeInTheDocument();
     expect(screen.getByText("Contract Impact Review")).toBeInTheDocument();
     expect(screen.getByText("Analytics and Export")).toBeInTheDocument();
     expect(screen.getByText("Export winners does not distribute rewards.")).toBeInTheDocument();
+    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
 
   it("switches major Project Console copy manually to zh-CN", () => {
@@ -35,6 +42,12 @@ describe("Project Console shell", () => {
     );
     expect(screen.getByText("Awaken 冲刺活动")).toBeInTheDocument();
     expect(screen.getByText("已连接钱包")).toBeInTheDocument();
+    expect(screen.getAllByText("活动构建器")).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: "草稿概览" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "任意钱包" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(screen.getByText("AI 活动策划")).toBeInTheDocument();
     expect(screen.getAllByText("任务构建预览")).toHaveLength(2);
     expect(screen.getByText("奖励与资格")).toBeInTheDocument();

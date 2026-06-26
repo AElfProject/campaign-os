@@ -13,6 +13,7 @@ import {
   ReviewSeverityBadge,
   WalletCompatibilityBadge,
 } from "../../badges/Badges";
+import { CampaignBuilderPanel } from "./builder/CampaignBuilderPanel";
 import { projectConsoleCopy } from "./copy";
 
 interface ProjectConsoleProps {
@@ -213,6 +214,12 @@ export const ProjectConsole = ({
 
   const workflows = [
     {
+      title: copy.builderEntryTitle,
+      state: copy.builderEntryState,
+      action: copy.builderEntryAction,
+      extra: <PublishStateBadge label={copy.builderNoMissingBasics} state="ready" />,
+    },
+    {
       title: copy.aiPlanner,
       state: copy.aiPlannerState,
       action: copy.aiPlannerAction,
@@ -331,6 +338,8 @@ export const ProjectConsole = ({
           </article>
         </div>
       </section>
+
+      <CampaignBuilderPanel copy={copy} locale={locale} />
 
       <section aria-label="Project Console workflow sections" style={sectionGridStyle}>
         {workflows.map((workflow) => (
