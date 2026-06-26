@@ -4,36 +4,51 @@ import { describe, expect, it } from "vitest";
 import { I18nContractReadiness } from "./I18nContractReadiness";
 
 describe("I18nContractReadiness", () => {
-  it("shows English source and Chinese AI draft fallback gates", () => {
+  it("shows English source and Chinese AI draft fallback gates in the Translation Manager", () => {
     render(<I18nContractReadiness locale="en-US" />);
 
-    expect(screen.getByText("English source content")).toBeInTheDocument();
-    expect(screen.getByText("Awaken Summer Sprint")).toBeInTheDocument();
-    expect(screen.getByText("Chinese AI draft")).toBeInTheDocument();
-    expect(screen.getByText("Awaken 夏季冲刺活动")).toBeInTheDocument();
-    expect(screen.getByText("AI draft")).toBeInTheDocument();
-    expect(screen.getByText("Falls back to English")).toBeInTheDocument();
-    expect(screen.getAllByText("Not published").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "i18n, contract, and review gates" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Translation Manager")).toBeInTheDocument();
+    expect(screen.getAllByText("English source content").length).toBeGreaterThan(0);
+    expect(screen.getByText("Awaken Sprint")).toBeInTheDocument();
+    expect(screen.getAllByText("Chinese AI draft").length).toBeGreaterThan(0);
+    expect(screen.getByText("Awaken 冲刺活动")).toBeInTheDocument();
+    expect(screen.getAllByText("AI generated translation cannot auto-publish before human review.").length).toBeGreaterThan(0);
+    expect(screen.getByText("Chinese draft falls back to English until a project owner completes human review.")).toBeInTheDocument();
+    expect(screen.getAllByText("Fallback").length).toBeGreaterThan(0);
+    for (const action of ["Generate with AI", "Mark reviewed", "Publish revision", "Use English fallback"]) {
+      expect(screen.getByRole("button", { name: action })).toBeInTheDocument();
+    }
   });
 
   it("shows localized reward disclaimers and only MVP locales", () => {
     render(<I18nContractReadiness locale="zh-CN" />);
 
-    expect(screen.getByText("按语言展示奖励声明")).toBeInTheDocument();
-    expect(screen.getByText("Rewards are provided by the campaign project. Campaign OS does not distribute rewards.")).toBeInTheDocument();
-    expect(screen.getByText("奖励由活动项目方提供。Campaign OS 不负责自动发奖。")).toBeInTheDocument();
-    expect(screen.getByText("中文 AI 草稿")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "多语言、合约与审核门禁" })).toBeInTheDocument();
+    expect(screen.getByLabelText("翻译管理")).toBeInTheDocument();
+    expect(screen.getByText("奖励声明审核")).toBeInTheDocument();
+    expect(screen.getByText("Rewards are provided by the campaign project. Export winners does not distribute rewards.")).toBeInTheDocument();
+    expect(screen.getAllByText("奖励由活动项目方提供。导出 winners 不等于发奖。").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("中文 AI 草稿").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("AI 生成翻译必须经过人工审核后才能发布。").length).toBeGreaterThan(0);
+    expect(screen.getByText("中文草稿在项目方完成人工审核前回退展示英文。")).toBeInTheDocument();
     expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
 
-  it("shows Off-chain MVP as default and contract claim as blocker", () => {
+  it("shows Off-chain MVP as default, V2 companion as planned, and contract claim as blocker", () => {
     render(<I18nContractReadiness locale="en-US" />);
 
+    expect(screen.getByLabelText("Contract Impact Review")).toBeInTheDocument();
     expect(screen.getByText("Off-chain MVP")).toBeInTheDocument();
+    expect(screen.getByText("Safe default for MVP; no contract migration is required.")).toBeInTheDocument();
     expect(screen.getAllByText("Safe default").length).toBeGreaterThan(0);
     expect(screen.getByText("V2 companion")).toBeInTheDocument();
+    expect(screen.getByText("Future / planned")).toBeInTheDocument();
     expect(screen.getByText("Contract claim")).toBeInTheDocument();
+    expect(screen.getByText("Blocked until high-impact manual review approves claim-mode risk.")).toBeInTheDocument();
     expect(screen.getByText("High-impact manual review blocker")).toBeInTheDocument();
     expect(screen.getByText("Blocker")).toBeInTheDocument();
+    expect(screen.getByText("This review workbench does not distribute rewards, take reward custody, or execute contract transactions.")).toBeInTheDocument();
+    expect(screen.getByText("Contract claim is not enabled in this MVP shell and does not execute reward distribution.")).toBeInTheDocument();
   });
 });

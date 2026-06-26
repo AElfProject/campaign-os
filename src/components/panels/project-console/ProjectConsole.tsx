@@ -360,7 +360,7 @@ export const ProjectConsole = ({
       >
         <TaskTemplateLibrary locale={locale} />
         <RewardsEligibilityBuilder draft={builderDraft} locale={locale} />
-        <I18nContractReadiness draft={builderDraft} locale={locale} />
+        <I18nContractReadiness campaign={campaign} locale={locale} />
         <PublishReadinessPanel draft={builderDraft} locale={locale} />
       </div>
 
