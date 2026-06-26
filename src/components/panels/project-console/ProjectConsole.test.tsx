@@ -53,6 +53,6 @@ describe("Project Console shell", () => {
     expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
-    expect(screen.getByRole("heading", { name: "Admin/Ops" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Review queue" })).toBeInTheDocument();
   });
 });

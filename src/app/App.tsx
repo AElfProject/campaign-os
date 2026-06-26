@@ -3,17 +3,14 @@ import { walletSessions, type SupportedLocale } from "../domain";
 import { useLocale } from "../i18n/useLocale";
 import {
   AppLayout,
-  SurfacePlaceholder,
   type SurfaceKey,
 } from "../components/layout/AppLayout";
+import { AdminOpsPanel } from "../components/panels/admin-ops/AdminOpsPanel";
 import { ProjectConsole } from "../components/panels/project-console/ProjectConsole";
 import { UserAppPanel } from "../components/panels/user-app/UserAppPanel";
 
 const surfaceCopy = {
   "en-US": {
-    adminAction: "Placeholder",
-    adminDescription:
-      "Admin/Ops implementation is reserved for WP05; this anchor keeps the surface discoverable without overclaiming review tooling.",
     adminTitle: "Admin/Ops",
     brand: "aelf Campaign OS",
     localeLabel: "Language",
@@ -22,9 +19,6 @@ const surfaceCopy = {
     userTitle: "User App",
   },
   "zh-CN": {
-    adminAction: "占位",
-    adminDescription:
-      "Admin/Ops 实现在 WP05 交付；当前只保留入口，避免过度声明审核工具已完成。",
     adminTitle: "管理员/Ops",
     brand: "aelf Campaign OS",
     localeLabel: "语言",
@@ -63,11 +57,7 @@ export const App = () => {
       ) : activeSurface === "user" ? (
         <UserAppPanel locale={locale} />
       ) : (
-        <SurfacePlaceholder
-          action={copy.adminAction}
-          description={copy.adminDescription}
-          title={copy.adminTitle}
-        />
+        <AdminOpsPanel locale={locale} />
       )}
     </AppLayout>
   );
