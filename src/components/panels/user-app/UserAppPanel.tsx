@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import {
   campaignDetail,
   createEcosystemNextActionReadModel,
@@ -29,6 +29,7 @@ import {
   WalletVerificationBadge,
 } from "../../badges/Badges";
 import { WalletOptionCards } from "../../wallet/WalletOptionCards";
+import { WalletConnectModal } from "../../wallet/WalletConnectModal";
 import { userAppCopy } from "./copy";
 
 interface UserAppPanelProps {
@@ -650,6 +651,7 @@ export const UserAppPanel = ({
   locale,
   participant = campaignDetail.participants[1],
 }: UserAppPanelProps) => {
+  const [isWalletModalOpen, setWalletModalOpen] = useState(false);
   const copy = userAppCopy[locale];
   const participation = createParticipationReadModel(campaign, participant);
   const ecosystemNextActions = createEcosystemNextActionReadModel(campaign, participant);
@@ -708,7 +710,7 @@ export const UserAppPanel = ({
               {copy.feedSubtitle}
             </p>
           </div>
-          <button style={buttonStyle} type="button">
+          <button onClick={() => setWalletModalOpen(true)} style={buttonStyle} type="button">
             {copy.connectWallet}
           </button>
         </div>
@@ -721,6 +723,14 @@ export const UserAppPanel = ({
           {copy.feedBoundary}
         </p>
       </section>
+
+      {isWalletModalOpen ? (
+        <WalletConnectModal
+          locale={locale}
+          onClose={() => setWalletModalOpen(false)}
+          options={walletOptions}
+        />
+      ) : null}
 
       <section style={panelStyle}>
         <div style={mobileHubGridStyle}>
