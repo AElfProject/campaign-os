@@ -19,6 +19,11 @@ import type {
   ContractEvolutionStep,
   DimensionSplit,
   EligibilityResult,
+  EcosystemNextActionProduct,
+  EcosystemNextActionRecommendation,
+  EcosystemNextActionReadModel,
+  EcosystemRecommendationPriority,
+  EcosystemRecommendationStatus,
   ExportConfirmation,
   ExportCsvColumn,
   ExportBatchSummary,
@@ -1159,6 +1164,343 @@ export const createParticipationReadModel = (
     leaderboard: createLeaderboard(campaign.participants),
     metrics: createParticipationMetrics(campaign.tasks, participant, taskStates),
     rewardBoundary,
+  };
+};
+
+const ecosystemProducts = {
+  Pay: {
+    id: "Pay",
+    label: {
+      "en-US": "Pay",
+      "zh-CN": "Pay",
+    },
+    description: {
+      "en-US": "Use aelf Pay after campaign eligibility work is understood.",
+      "zh-CN": "在理解活动资格后使用 aelf Pay。",
+    },
+    serviceState: "not_connected",
+  },
+  Forecast: {
+    id: "Forecast",
+    label: {
+      "en-US": "Forecast",
+      "zh-CN": "Forecast",
+    },
+    description: {
+      "en-US": "Explore Forecast only after campaign risk and eligibility are clear.",
+      "zh-CN": "在活动风险与资格清楚后再探索 Forecast。",
+    },
+    serviceState: "not_connected",
+  },
+  Portfolio: {
+    id: "Portfolio",
+    label: {
+      "en-US": "Portfolio",
+      "zh-CN": "Portfolio",
+    },
+    description: {
+      "en-US": "Review the seeded portfolio checkpoint before the next campaign.",
+      "zh-CN": "在进入下一个活动前查看 seeded Portfolio 检查点。",
+    },
+    serviceState: "not_connected",
+  },
+} satisfies Record<EcosystemNextActionProduct["id"], EcosystemNextActionProduct>;
+
+const ecosystemBoundary: LocalizedText = {
+  "en-US": "No live Pay, Forecast, or Portfolio service is connected; no wallet SDK, payment, prediction, portfolio sync, contract view, or contract send is executed.",
+  "zh-CN": "不会连接真实 Pay、Forecast 或 Portfolio 服务；不会执行钱包 SDK、支付、预测、Portfolio 同步、合约读取或合约发送。",
+};
+
+const productBoundary: Record<EcosystemNextActionProduct["id"], LocalizedText> = {
+  Pay: {
+    "en-US": "No live Pay service, wallet SDK, payment transaction, contract view, or contract send is executed.",
+    "zh-CN": "不会连接真实 Pay 服务、钱包 SDK、支付交易、合约读取或合约发送。",
+  },
+  Forecast: {
+    "en-US": "No live Forecast service, prediction transaction, wallet SDK, contract view, or contract send is executed.",
+    "zh-CN": "不会连接真实 Forecast 服务、预测交易、钱包 SDK、合约读取或合约发送。",
+  },
+  Portfolio: {
+    "en-US": "No live Portfolio service, wallet SDK, portfolio sync, contract view, or contract send is executed.",
+    "zh-CN": "不会连接真实 Portfolio 服务、钱包 SDK、Portfolio 同步、合约读取或合约发送。",
+  },
+};
+
+const priorityByIndex = (index: number): EcosystemRecommendationPriority =>
+  index === 0 ? "primary" : index === 1 ? "secondary" : "tertiary";
+
+const createProgressSignal = (
+  participation: ParticipationReadModel,
+) => ({
+  id: "required-progress",
+  label: {
+    "en-US": "Required progress",
+    "zh-CN": "必做进度",
+  },
+  value: {
+    "en-US": `${participation.metrics.completedRequiredTasks}/${participation.metrics.totalRequiredTasks}`,
+    "zh-CN": `${participation.metrics.completedRequiredTasks}/${participation.metrics.totalRequiredTasks}`,
+  },
+  tone: participation.eligibility.missingTaskIds.length > 0 ? "blocker" : "ready",
+} as const);
+
+const createEligibilitySignal = (
+  participation: ParticipationReadModel,
+) => ({
+  id: "eligibility",
+  label: {
+    "en-US": "Eligibility",
+    "zh-CN": "资格",
+  },
+  value: participation.eligibility.reason,
+  tone:
+    participation.eligibility.status === "eligible"
+      ? "ready"
+      : participation.eligibility.status === "risk_flagged"
+        ? "warning"
+        : "blocker",
+} as const);
+
+const createRiskSignal = (
+  participation: ParticipationReadModel,
+) => ({
+  id: "risk-context",
+  label: {
+    "en-US": "Risk context",
+    "zh-CN": "风险上下文",
+  },
+  value: {
+    "en-US": participation.eligibility.riskFlags.length > 0
+      ? participation.eligibility.riskFlags.join(", ")
+      : "No risk flags",
+    "zh-CN": participation.eligibility.riskFlags.length > 0
+      ? participation.eligibility.riskFlags.join(", ")
+      : "无风险标记",
+  },
+  tone: participation.eligibility.riskFlags.length > 0 ? "warning" : "ready",
+} as const);
+
+const createRankSignal = (
+  participation: ParticipationReadModel,
+) => ({
+  id: "rank-context",
+  label: {
+    "en-US": "Rank and points",
+    "zh-CN": "排名与积分",
+  },
+  value: {
+    "en-US": `#${participation.metrics.participantRank} · ${participation.participant.totalPoints} pts`,
+    "zh-CN": `#${participation.metrics.participantRank} · ${participation.participant.totalPoints} 积分`,
+  },
+  tone: "ready",
+} as const);
+
+const missingTaskGate = (
+  campaign: CampaignShellDetail,
+  participation: ParticipationReadModel,
+): LocalizedText | undefined => {
+  const missingTaskId = participation.eligibility.missingTaskIds[0];
+  const missingTask = campaign.tasks.find((task) => task.id === missingTaskId);
+
+  if (!missingTask) {
+    return undefined;
+  }
+
+  return {
+    "en-US": `Complete ${missingTask.title["en-US"]} before this ecosystem action.`,
+    "zh-CN": `先完成${missingTask.title["zh-CN"]}，再进入这个生态行动。`,
+  };
+};
+
+const createEcosystemRecommendationDrafts = (
+  campaign: CampaignShellDetail,
+  participation: ParticipationReadModel,
+): EcosystemNextActionRecommendation[] => {
+  const hasMissingRequiredTasks = participation.eligibility.missingTaskIds.length > 0;
+  const hasRiskContext = participation.eligibility.riskFlags.length > 0;
+  const fullyEligible = participation.eligibility.status === "eligible";
+  const gate = missingTaskGate(campaign, participation);
+  const progressSignal = createProgressSignal(participation);
+  const eligibilitySignal = createEligibilitySignal(participation);
+  const riskSignal = createRiskSignal(participation);
+  const rankSignal = createRankSignal(participation);
+
+  return [
+    {
+      id: "ecosystem-pay",
+      product: ecosystemProducts.Pay,
+      status: hasMissingRequiredTasks ? "locked" : "ready",
+      priority: "primary",
+      title: {
+        "en-US": "Use Pay after the campaign step is clear",
+        "zh-CN": "明确活动步骤后再使用 Pay",
+      },
+      reason: hasMissingRequiredTasks
+        ? {
+            "en-US": "Pay is recommended after the missing required campaign task is complete.",
+            "zh-CN": "完成缺失的必做活动任务后，再推荐进入 Pay。",
+          }
+        : {
+            "en-US": "Required campaign work is complete enough to explore a Pay follow-up.",
+            "zh-CN": "必做活动进度已足够，可以探索 Pay 后续行动。",
+          },
+      ctaLabel: hasMissingRequiredTasks
+        ? {
+            "en-US": "Finish campaign task",
+            "zh-CN": "完成活动任务",
+          }
+        : {
+            "en-US": "Preview Pay action",
+            "zh-CN": "预览 Pay 行动",
+          },
+      gatingReason: hasMissingRequiredTasks ? gate : undefined,
+      relatedSignals: [progressSignal, eligibilitySignal],
+      boundary: productBoundary.Pay,
+    },
+    {
+      id: "ecosystem-forecast",
+      product: ecosystemProducts.Forecast,
+      status: hasRiskContext ? "review" : "ready",
+      priority: "secondary",
+      title: {
+        "en-US": "Try Forecast with eligibility context",
+        "zh-CN": "结合资格上下文探索 Forecast",
+      },
+      reason: hasRiskContext
+        ? {
+            "en-US": "Forecast stays in review because this wallet has risk context in the campaign.",
+            "zh-CN": "由于该钱包在活动中存在风险上下文，Forecast 保持审核状态。",
+          }
+        : {
+            "en-US": "Campaign progress can lead into a Forecast follow-up without a live prediction transaction.",
+            "zh-CN": "活动进度可以衔接 Forecast 后续行动，但不会发起真实预测交易。",
+          },
+      ctaLabel: hasRiskContext
+        ? {
+            "en-US": "Review risk first",
+            "zh-CN": "先审核风险",
+          }
+        : {
+            "en-US": "Preview Forecast action",
+            "zh-CN": "预览 Forecast 行动",
+          },
+      gatingReason: hasRiskContext
+        ? {
+            "en-US": "Manual risk review is required before treating Forecast as a ready follow-up.",
+            "zh-CN": "在把 Forecast 视为就绪后续行动前，需要先完成人工风险审核。",
+          }
+        : undefined,
+      relatedSignals: [riskSignal, eligibilitySignal],
+      boundary: productBoundary.Forecast,
+    },
+    {
+      id: "ecosystem-portfolio",
+      product: ecosystemProducts.Portfolio,
+      status: fullyEligible ? "completed" : "ready",
+      priority: "tertiary",
+      title: {
+        "en-US": "Check Portfolio before the next campaign",
+        "zh-CN": "进入下一个活动前查看 Portfolio",
+      },
+      reason: fullyEligible
+        ? {
+            "en-US": "This wallet is eligible, so Portfolio becomes the primary post-campaign checkpoint.",
+            "zh-CN": "该钱包已符合资格，因此 Portfolio 成为活动后的主要检查点。",
+          }
+        : {
+            "en-US": "Portfolio is available as a local checkpoint while campaign eligibility is still progressing.",
+            "zh-CN": "活动资格仍在推进时，Portfolio 可作为本地检查点。",
+          },
+      ctaLabel: {
+        "en-US": "Preview Portfolio checkpoint",
+        "zh-CN": "预览 Portfolio 检查点",
+      },
+      relatedSignals: [rankSignal, progressSignal],
+      boundary: productBoundary.Portfolio,
+    },
+  ];
+};
+
+const scoreRecommendation = (
+  recommendation: EcosystemNextActionRecommendation,
+) => {
+  const statusScore: Record<EcosystemRecommendationStatus, number> = {
+    completed: 4,
+    ready: 3,
+    review: 2,
+    locked: 1,
+  };
+  const productTieBreak: Record<EcosystemNextActionProduct["id"], number> = {
+    Portfolio: 3,
+    Pay: 2,
+    Forecast: 1,
+  };
+
+  return statusScore[recommendation.status] * 10 + productTieBreak[recommendation.product.id];
+};
+
+const prioritizeRecommendations = (
+  recommendations: EcosystemNextActionRecommendation[],
+) => {
+  const hasLockedGate = recommendations.some((recommendation) => recommendation.status === "locked");
+  const orderedRecommendations = hasLockedGate
+    ? [...recommendations]
+    : [...recommendations].sort(
+        (left, right) => scoreRecommendation(right) - scoreRecommendation(left),
+      );
+
+  return orderedRecommendations.map((recommendation, index) => ({
+    ...recommendation,
+    priority: priorityByIndex(index),
+  }));
+};
+
+const createEcosystemSummary = (
+  recommendations: EcosystemNextActionRecommendation[],
+  participation: ParticipationReadModel,
+) => {
+  const readyCount = recommendations.filter((recommendation) => recommendation.status === "ready").length;
+  const lockedCount = recommendations.filter((recommendation) => recommendation.status === "locked").length;
+  const reviewCount = recommendations.filter((recommendation) => recommendation.status === "review").length;
+  const totalRequired = Math.max(1, participation.metrics.totalRequiredTasks);
+  const loopProgressPercent = Math.round(
+    (participation.metrics.completedRequiredTasks / totalRequired) * 100,
+  );
+
+  return {
+    totalRecommendations: recommendations.length,
+    readyCount,
+    lockedCount,
+    reviewCount,
+    topRecommendationId: recommendations[0]?.id ?? "",
+    loopProgressPercent,
+    headline: lockedCount > 0
+      ? {
+          "en-US": "Finish the campaign gate before the next ecosystem action.",
+          "zh-CN": "先完成活动门槛，再进入下一个生态行动。",
+        }
+      : {
+          "en-US": "Campaign progress is ready to continue across the aelf ecosystem.",
+          "zh-CN": "活动进度已可延展到 aelf 生态的下一步。",
+        },
+    boundary: ecosystemBoundary,
+  };
+};
+
+export const createEcosystemNextActionReadModel = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+): EcosystemNextActionReadModel => {
+  const participation = createParticipationReadModel(campaign, participant);
+  const prioritizedRecommendations = prioritizeRecommendations(
+    createEcosystemRecommendationDrafts(campaign, participation),
+  );
+
+  return {
+    campaignId: campaign.id,
+    participantWalletAddress: participant.walletAddress,
+    summary: createEcosystemSummary(prioritizedRecommendations, participation),
+    recommendations: prioritizedRecommendations,
   };
 };
 

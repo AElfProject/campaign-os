@@ -3,6 +3,7 @@ import {
   campaignDetail,
   createAiContentPackWorkbench,
   createContractImpactReviewModel,
+  createEcosystemNextActionReadModel,
   computeMissingTasks,
   computePublishReadiness,
   createAdminOpsReadModel,
@@ -535,6 +536,89 @@ describe("Campaign OS domain foundation", () => {
     );
     expect(participation.referral.antiFarmRule["en-US"]).toContain("Raw signups do not count");
     expect(participation.rewardBoundary["en-US"]).toContain("Export winners does not distribute rewards");
+  });
+
+  it("derives deterministic ecosystem next actions for Pay, Forecast, and Portfolio", () => {
+    const [, eoaParticipant] = campaignDetail.participants;
+    const firstReadModel = createEcosystemNextActionReadModel(campaignDetail, eoaParticipant);
+    const secondReadModel = createEcosystemNextActionReadModel(campaignDetail, eoaParticipant);
+
+    expect(firstReadModel).toEqual(secondReadModel);
+    expect(firstReadModel.recommendations.map((recommendation) => recommendation.product.id)).toEqual([
+      "Pay",
+      "Forecast",
+      "Portfolio",
+    ]);
+    expect(firstReadModel.summary).toMatchObject({
+      totalRecommendations: 3,
+      lockedCount: 1,
+      reviewCount: 1,
+      topRecommendationId: "ecosystem-pay",
+    });
+    expect(firstReadModel.summary.readyCount + firstReadModel.summary.lockedCount + firstReadModel.summary.reviewCount).toBe(3);
+    expect(firstReadModel.summary.loopProgressPercent).toBe(50);
+    expect(firstReadModel.recommendations[0]).toMatchObject({
+      id: "ecosystem-pay",
+      status: "locked",
+      priority: "primary",
+      gatingReason: expect.objectContaining({
+        "en-US": expect.stringContaining("Bridge via eBridge"),
+        "zh-CN": expect.stringContaining("通过 eBridge 跨链"),
+      }),
+    });
+    expect(firstReadModel.recommendations[1]).toMatchObject({
+      id: "ecosystem-forecast",
+      status: "review",
+      priority: "secondary",
+    });
+    expect(firstReadModel.recommendations[2]).toMatchObject({
+      id: "ecosystem-portfolio",
+      status: "ready",
+      priority: "tertiary",
+    });
+    expect(firstReadModel.recommendations.every((recommendation) => recommendation.relatedSignals.length > 0)).toBe(true);
+  });
+
+  it("keeps ecosystem next actions local, bilingual, and free of live service claims", () => {
+    const [eligibleParticipant] = campaignDetail.participants;
+    const readModel = createEcosystemNextActionReadModel(campaignDetail, eligibleParticipant);
+
+    expect(readModel.summary).toMatchObject({
+      totalRecommendations: 3,
+      readyCount: 2,
+      lockedCount: 0,
+      reviewCount: 0,
+      topRecommendationId: "ecosystem-portfolio",
+      loopProgressPercent: 100,
+    });
+    expect(readModel.summary.boundary["en-US"]).toContain("No live Pay, Forecast, or Portfolio service");
+    expect(readModel.summary.boundary["zh-CN"]).toContain("不会连接真实 Pay、Forecast 或 Portfolio 服务");
+    expect(readModel.recommendations.map((recommendation) => recommendation.priority)).toEqual([
+      "primary",
+      "secondary",
+      "tertiary",
+    ]);
+    expect(readModel.recommendations[0]).toMatchObject({
+      id: "ecosystem-portfolio",
+      product: expect.objectContaining({ id: "Portfolio" }),
+      status: "completed",
+    });
+
+    for (const recommendation of readModel.recommendations) {
+      expect(recommendation.title["en-US"]).toBeTruthy();
+      expect(recommendation.title["zh-CN"]).toBeTruthy();
+      expect(recommendation.reason["en-US"]).toBeTruthy();
+      expect(recommendation.reason["zh-CN"]).toBeTruthy();
+      expect(recommendation.ctaLabel["en-US"]).toBeTruthy();
+      expect(recommendation.ctaLabel["zh-CN"]).toBeTruthy();
+      expect(recommendation.boundary["en-US"]).toContain("No live");
+      expect(recommendation.boundary["zh-CN"]).toContain("不会");
+      expect(recommendation.boundary["en-US"]).not.toContain("private key");
+      expect(recommendation.boundary["en-US"]).not.toContain("seed phrase");
+    }
+
+    expect(supportedLocales).toEqual(["en-US", "zh-CN"]);
+    expect(isSupportedLocale("zh-TW")).toBe(false);
   });
 
   it("keeps participation leaderboard wallet-transparent across AA and EOA rows", () => {
