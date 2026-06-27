@@ -9,9 +9,12 @@ import {
   taskTemplateVerificationFilterOptions,
   taskTemplateWalletFilterOptions,
   type SupportedLocale,
+  type TaskTemplate,
   type TaskTemplateFilterOption,
   type TaskTemplateFilterState,
-  type TaskTemplate,
+  type TaskTemplateLanguageFilter,
+  type TaskTemplateVerificationFilter,
+  type TaskTemplateWalletFilter,
 } from "../../../../domain";
 import { LocaleStatusBadge, WalletCompatibilityBadge } from "../../../badges/Badges";
 
@@ -254,13 +257,24 @@ export const TaskTemplateLibrary = ({
   const summary = createTaskTemplateFilterSummary(templates, filteredTemplates, filters);
   const hasChangedFilters = !isSameFilterState(filters, defaultTaskTemplateFilters);
 
-  const updateFilterGroup = <TKey extends keyof TaskTemplateFilterState>(
-    key: TKey,
-    value: TaskTemplateFilterState[TKey][number],
-  ) => {
+  const toggleWalletFilter = (value: TaskTemplateWalletFilter) => {
     setFilters((currentFilters) => ({
       ...currentFilters,
-      [key]: toggleFilterValue(currentFilters[key], value),
+      wallet: toggleFilterValue(currentFilters.wallet, value),
+    }));
+  };
+
+  const toggleVerificationFilter = (value: TaskTemplateVerificationFilter) => {
+    setFilters((currentFilters) => ({
+      ...currentFilters,
+      verification: toggleFilterValue(currentFilters.verification, value),
+    }));
+  };
+
+  const toggleLanguageFilter = (value: TaskTemplateLanguageFilter) => {
+    setFilters((currentFilters) => ({
+      ...currentFilters,
+      language: toggleFilterValue(currentFilters.language, value),
     }));
   };
 
@@ -272,21 +286,21 @@ export const TaskTemplateLibrary = ({
           <FilterGroup
             legend={labels.walletCompatibility}
             locale={locale}
-            onToggle={(value) => updateFilterGroup("wallet", value)}
+            onToggle={toggleWalletFilter}
             options={taskTemplateWalletFilterOptions}
             selectedValues={filters.wallet}
           />
           <FilterGroup
             legend={labels.verification}
             locale={locale}
-            onToggle={(value) => updateFilterGroup("verification", value)}
+            onToggle={toggleVerificationFilter}
             options={taskTemplateVerificationFilterOptions}
             selectedValues={filters.verification}
           />
           <FilterGroup
             legend={labels.languageStatus}
             locale={locale}
-            onToggle={(value) => updateFilterGroup("language", value)}
+            onToggle={toggleLanguageFilter}
             options={taskTemplateLanguageFilterOptions}
             selectedValues={filters.language}
           />
