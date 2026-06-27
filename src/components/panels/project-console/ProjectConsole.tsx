@@ -1,17 +1,22 @@
 import type { CSSProperties } from "react";
 import {
+  createAiContentPackWorkbench,
   createApiSkillContractSurface,
   createCampaignOsLocalService,
   campaignDetail,
   createProjectCampaignCommandCenter,
   getLocalizedText,
   seededCampaignDraft,
+  type AiContentArtifactLifecycle,
+  type AiContentQualityGateStatus,
+  type AiContentReleaseActionState,
   type ApiSkillContractReadiness,
   type CampaignShellDetail,
   type LocaleStatus,
   type SupportedLocale,
 } from "../../../domain";
 import {
+  Badge,
   ContractModeBadge,
   LocaleStatusBadge,
   PublishStateBadge,
@@ -304,6 +309,57 @@ const serviceFieldGroupLabel = (group: string) => {
   return group;
 };
 
+const readableCode = (value: string) => value.replace(/_/g, " ");
+
+const aiContentLifecycleState = (lifecycle: AiContentArtifactLifecycle) =>
+  lifecycle === "human_approved" || lifecycle === "schedule_intent" || lifecycle === "publish_intent"
+    ? "ready"
+    : "warning";
+
+const aiContentQualityGateState = (status: AiContentQualityGateStatus) => {
+  if (status === "blocked") {
+    return "blocker";
+  }
+
+  return status === "warning" ? "warning" : "ready";
+};
+
+const aiContentReleaseState = (state: AiContentReleaseActionState) =>
+  state === "available" ? "ready" : "warning";
+
+const aiContentLifecycleLabel = (
+  lifecycle: AiContentArtifactLifecycle,
+  labels: {
+    aiContentLifecycleAiDraft: string;
+    aiContentLifecycleEdited: string;
+    aiContentLifecycleHumanApproved: string;
+    aiContentLifecyclePublishIntent: string;
+    aiContentLifecycleScheduleIntent: string;
+  },
+) => {
+  if (lifecycle === "ai_draft") {
+    return labels.aiContentLifecycleAiDraft;
+  }
+
+  if (lifecycle === "edited") {
+    return labels.aiContentLifecycleEdited;
+  }
+
+  if (lifecycle === "human_approved") {
+    return labels.aiContentLifecycleHumanApproved;
+  }
+
+  return lifecycle === "schedule_intent"
+    ? labels.aiContentLifecycleScheduleIntent
+    : labels.aiContentLifecyclePublishIntent;
+};
+
+const aiContentReleaseLabel = (
+  state: AiContentReleaseActionState,
+  readyLabel: string,
+  blockedLabel: string,
+) => (state === "available" ? readyLabel : blockedLabel);
+
 const serviceCoverageLabels = [
   "wallet coverage",
   "task verification",
@@ -335,6 +391,7 @@ export const ProjectConsole = ({
   const serviceCoverage = serviceCoverageResult.ok ? serviceCoverageResult.payload : undefined;
   const commandCenter = createProjectCampaignCommandCenter(campaign);
   const exportDecision = commandCenter.analyticsExport;
+  const aiContentPack = createAiContentPackWorkbench(campaign);
 
   const stats = [
     {
@@ -681,6 +738,159 @@ export const ProjectConsole = ({
         </div>
 
         <p style={boundaryStyle}>{getLocalizedText(exportDecision.boundary, locale)}</p>
+      </section>
+
+      <section aria-label={copy.aiContentPack} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.aiContent}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.aiContentPack}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.aiContentPackSubtitle}
+            </p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge label={`${aiContentPack.summary.totalArtifacts} ${copy.aiContentArtifacts}`} tone="ai" />
+            <PublishStateBadge
+              label={`${aiContentPack.summary.blockedReleaseActions} ${copy.aiContentPublishBlocked}`}
+              state={aiContentPack.summary.blockedReleaseActions > 0 ? "warning" : "ready"}
+            />
+          </span>
+        </div>
+
+        <p style={boundaryStyle}>{getLocalizedText(aiContentPack.boundary.body, locale)}</p>
+
+        <div aria-label={copy.aiContentSummary} style={gridStyle}>
+          {[
+            [copy.aiContentTotalArtifacts, String(aiContentPack.summary.totalArtifacts)],
+            [copy.aiContentHumanApproved, String(aiContentPack.summary.humanApproved)],
+            [copy.aiContentAiDrafts, String(aiContentPack.summary.aiDrafts)],
+            [copy.aiContentCopyReady, String(aiContentPack.summary.availableCopyActions)],
+            [copy.aiContentPublishBlocked, String(aiContentPack.summary.blockedReleaseActions)],
+            [copy.aiContentQualityBlockers, String(aiContentPack.summary.qualityGateBlockers)],
+          ].map(([label, value]) => (
+            <article key={label} style={cardStyle}>
+              <p style={statLabelStyle}>{label}</p>
+              <p style={statValueStyle}>{value}</p>
+            </article>
+          ))}
+        </div>
+
+        <div style={{ ...cardStyle, minHeight: 0 }}>
+          <p style={statLabelStyle}>{copy.aiContentNextAction}</p>
+          <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+            {getLocalizedText(aiContentPack.summary.nextAction, locale)}
+          </p>
+        </div>
+
+        <div style={sectionGridStyle}>
+          {aiContentPack.artifacts.map((artifact) => (
+            <article key={artifact.id} style={workflowStyle}>
+              <div style={headingRowStyle}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={statLabelStyle}>{readableCode(artifact.type)}</p>
+                  <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                    {getLocalizedText(artifact.title, locale)}
+                  </h4>
+                </div>
+                <PublishStateBadge
+                  label={aiContentLifecycleLabel(artifact.lifecycle, copy)}
+                  state={aiContentLifecycleState(artifact.lifecycle)}
+                />
+              </div>
+
+              <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                {getLocalizedText(artifact.purpose, locale)}
+              </p>
+              <p style={{ color: "#0f172a", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {getLocalizedText(artifact.body, locale)}
+              </p>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <Badge label={`${copy.aiContentChannel}: ${readableCode(artifact.channel)}`} tone="info" />
+                <Badge
+                  label={`${copy.aiContentRiskLevel}: ${artifact.riskLevel}`}
+                  tone={artifact.riskLevel === "high" ? "warning" : "neutral"}
+                />
+                <LocaleStatusBadge
+                  label={`en-US ${localeStatusLabel(artifact.localeStatus["en-US"], copy)}`}
+                  status={artifact.localeStatus["en-US"]}
+                />
+                <LocaleStatusBadge
+                  label={`zh-CN ${localeStatusLabel(artifact.localeStatus["zh-CN"], copy)}`}
+                  status={artifact.localeStatus["zh-CN"]}
+                />
+                <ReviewSeverityBadge
+                  label={artifact.reviewer ? `${copy.aiContentReviewer}: ${artifact.reviewer}` : copy.aiContentHumanReviewRequired}
+                  severity={artifact.reviewer ? "info" : "warning"}
+                />
+              </div>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <PublishStateBadge
+                  label={aiContentReleaseLabel(
+                    artifact.actionPolicy.copy,
+                    copy.aiContentCopyReady,
+                    copy.aiContentHumanReviewRequired,
+                  )}
+                  state={aiContentReleaseState(artifact.actionPolicy.copy)}
+                />
+                <PublishStateBadge
+                  label={aiContentReleaseLabel(
+                    artifact.actionPolicy.schedule,
+                    copy.aiContentScheduleReady,
+                    copy.aiContentPublishBlocked,
+                  )}
+                  state={aiContentReleaseState(artifact.actionPolicy.schedule)}
+                />
+                <PublishStateBadge
+                  label={aiContentReleaseLabel(
+                    artifact.actionPolicy.publish,
+                    copy.aiContentPublishReady,
+                    copy.aiContentPublishBlocked,
+                  )}
+                  state={aiContentReleaseState(artifact.actionPolicy.publish)}
+                />
+              </div>
+
+              <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                {copy.aiContentNextAction}: {getLocalizedText(artifact.actionPolicy.nextAction, locale)}
+              </p>
+              {artifact.actionPolicy.blockedReason ? (
+                <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(artifact.actionPolicy.blockedReason, locale)}
+                </p>
+              ) : null}
+            </article>
+          ))}
+        </div>
+
+        <div style={headingRowStyle}>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.aiContentQualityGates}</h3>
+          <PublishStateBadge
+            label={`${aiContentPack.summary.qualityGateBlockers} ${copy.blocker}`}
+            state={aiContentPack.summary.qualityGateBlockers > 0 ? "blocker" : "ready"}
+          />
+        </div>
+
+        <div style={sectionGridStyle}>
+          {aiContentPack.qualityGates.map((gate) => (
+            <article key={gate.id} style={{ ...cardStyle, minHeight: 0 }}>
+              <div style={headingRowStyle}>
+                <strong>{getLocalizedText(gate.label, locale)}</strong>
+                <PublishStateBadge
+                  label={readableCode(gate.status)}
+                  state={aiContentQualityGateState(gate.status)}
+                />
+              </div>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {getLocalizedText(gate.evidence, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
       </section>
 
       <CampaignBuilderPanel copy={copy} draft={builderDraft} locale={locale} />
