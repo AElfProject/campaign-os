@@ -152,7 +152,12 @@ export type EcosystemProduct =
   | "TMRWDAO"
   | "daipp"
   | "Pay"
-  | "Forecast";
+  | "Forecast"
+  | "Portfolio";
+export type EcosystemNextActionProductId = "Pay" | "Forecast" | "Portfolio";
+export type EcosystemRecommendationStatus = "ready" | "locked" | "review" | "completed";
+export type EcosystemRecommendationPriority = "primary" | "secondary" | "tertiary";
+export type EcosystemRecommendationSignalTone = "ready" | "warning" | "blocker";
 
 export type LocalizedText = Record<SupportedLocale, string>;
 
@@ -612,6 +617,51 @@ export interface EcosystemMetricRow {
   conversionImpact: LocalizedText;
   qualitySignal: LocalizedText;
   recommendedNextAction: LocalizedText;
+}
+
+export interface EcosystemNextActionProduct {
+  id: EcosystemNextActionProductId;
+  label: LocalizedText;
+  description: LocalizedText;
+  serviceState: "seeded_preview" | "not_connected";
+}
+
+export interface EcosystemRecommendationSignal {
+  id: string;
+  label: LocalizedText;
+  value: LocalizedText;
+  tone: EcosystemRecommendationSignalTone;
+}
+
+export interface EcosystemNextActionRecommendation {
+  id: string;
+  product: EcosystemNextActionProduct;
+  status: EcosystemRecommendationStatus;
+  priority: EcosystemRecommendationPriority;
+  title: LocalizedText;
+  reason: LocalizedText;
+  ctaLabel: LocalizedText;
+  gatingReason?: LocalizedText;
+  relatedSignals: EcosystemRecommendationSignal[];
+  boundary: LocalizedText;
+}
+
+export interface EcosystemNextActionSummary {
+  totalRecommendations: number;
+  readyCount: number;
+  lockedCount: number;
+  reviewCount: number;
+  topRecommendationId: string;
+  loopProgressPercent: number;
+  headline: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface EcosystemNextActionReadModel {
+  campaignId: string;
+  participantWalletAddress: string;
+  summary: EcosystemNextActionSummary;
+  recommendations: EcosystemNextActionRecommendation[];
 }
 
 export interface TaskEvidenceSummary {
