@@ -147,6 +147,62 @@ export interface WalletOption {
   capabilities: WalletCapability[];
 }
 
+export type WalletDiagnosticState = "ready" | "warning" | "blocker";
+export type WalletDiagnosticGroupId =
+  | "recommended-aa"
+  | "supported-eoa"
+  | "connection-issues"
+  | "address-only"
+  | "internal-agent";
+export type WalletQaChecklistId =
+  | "portkey-aa-connect"
+  | "eoa-extension-connect"
+  | "wrong-chain-error"
+  | "unsupported-wallet-error"
+  | "missing-signature"
+  | "account-policy-restriction";
+
+export interface WalletDiagnosticItem {
+  sessionId: string;
+  walletName: string;
+  displayAddress: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  verificationStatus: WalletVerificationStatus;
+  signatureStatus: WalletSignatureStatus;
+  statusMessage: LocalizedText;
+  nextAction: LocalizedText;
+  capabilities: WalletCapability[];
+  qaScenario: LocalizedText;
+}
+
+export interface WalletDiagnosticGroup {
+  id: WalletDiagnosticGroupId;
+  title: LocalizedText;
+  description: LocalizedText;
+  state: WalletDiagnosticState;
+  items: WalletDiagnosticItem[];
+}
+
+export interface WalletQaChecklistItem {
+  id: WalletQaChecklistId;
+  label: LocalizedText;
+  state: WalletDiagnosticState;
+  evidence: LocalizedText;
+  sessionIds: string[];
+}
+
+export interface WalletDiagnosticSummary {
+  totalSessions: number;
+  verifiedSessions: number;
+  issueSessions: number;
+  recommendedPathReady: boolean;
+  eoaPathsReady: number;
+  boundary: LocalizedText;
+  groups: WalletDiagnosticGroup[];
+  qaChecklist: WalletQaChecklistItem[];
+}
+
 export interface CampaignMetrics {
   connectedWallets: number;
   aaWallets: number;

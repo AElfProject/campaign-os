@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import {
   campaignDetail,
   createParticipationReadModel,
+  createWalletConnectionDiagnostics,
   getWalletBadgeLabel,
   getLocalizedText,
   walletOptions,
@@ -14,6 +15,7 @@ import {
   type ParticipantSnapshot,
   type SupportedLocale,
   type TaskVerificationStatus,
+  type WalletDiagnosticState,
 } from "../../../domain";
 import {
   ContractModeBadge,
@@ -282,6 +284,8 @@ const taskBadgeState = (status: TaskVerificationStatus) => {
   return status === "failed" ? "blocker" : "warning";
 };
 
+const diagnosticBadgeState = (state: WalletDiagnosticState) => state;
+
 const campaignStatusLabel = (status: CampaignStatus, copy: typeof userAppCopy["en-US"]) => {
   const labels: Record<CampaignStatus, string> = {
     draft: "Draft",
@@ -513,11 +517,26 @@ export const UserAppPanel = ({
   const title = getLocalizedText(campaign.title, locale);
   const subtitle = getLocalizedText(campaign.subtitle, locale);
   const selectedWallet = sessionForParticipant(campaign, participant);
+  const walletDiagnostics = createWalletConnectionDiagnostics(campaign.walletSessions);
   const missingTasks = campaign.tasks.filter((task) =>
     participation.eligibility.missingTaskIds.includes(task.id),
   );
   const campaignFeed = createCampaignFeed(campaign, participant);
   const appHubCampaign = campaignFeed[0];
+  const diagnosticMetrics: Array<[string, string, WalletDiagnosticState]> = [
+    [copy.diagnosticsTotal, String(walletDiagnostics.totalSessions), "ready"],
+    [copy.diagnosticsVerified, String(walletDiagnostics.verifiedSessions), "ready"],
+    [
+      copy.diagnosticsIssues,
+      String(walletDiagnostics.issueSessions),
+      walletDiagnostics.issueSessions > 0 ? "warning" : "ready",
+    ],
+    [
+      copy.diagnosticsEoaReady,
+      String(walletDiagnostics.eoaPathsReady),
+      walletDiagnostics.eoaPathsReady > 0 ? "ready" : "warning",
+    ],
+  ];
   const requiredProgress = Math.round(
     (participation.metrics.completedRequiredTasks /
       Math.max(1, participation.metrics.totalRequiredTasks)) *
@@ -748,6 +767,99 @@ export const UserAppPanel = ({
               session={session}
             />
           ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.diagnostics} style={panelStyle}>
+        <div style={rowStyle}>
+          <div>
+            <p style={labelStyle}>{copy.walletSessionStatus}</p>
+            <h3 style={{ fontSize: 20, margin: "2px 0 0" }}>{copy.diagnostics}</h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: "6px 0 0" }}>
+              {copy.diagnosticsSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={walletDiagnostics.recommendedPathReady ? copy.diagnosticsRecommendedReady : copy.diagnosticsIssues}
+            state={walletDiagnostics.recommendedPathReady ? "ready" : "warning"}
+          />
+        </div>
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+          {getLocalizedText(walletDiagnostics.boundary, locale)} {copy.diagnosticsNotLive}
+        </p>
+        <div style={metricGridStyle}>
+          {diagnosticMetrics.map(([label, value, state]) => (
+            <article key={label} style={cardStyle}>
+              <p style={labelStyle}>{label}</p>
+              <p style={valueStyle}>{value}</p>
+              <PublishStateBadge label={String(state)} state={state} />
+            </article>
+          ))}
+        </div>
+        <div style={gridStyle}>
+          {walletDiagnostics.groups.map((group) => (
+            <article key={group.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <strong>{getLocalizedText(group.title, locale)}</strong>
+                <PublishStateBadge
+                  label={group.state}
+                  state={diagnosticBadgeState(group.state)}
+                />
+              </div>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {getLocalizedText(group.description, locale)}
+              </p>
+              <ul style={{ display: "grid", gap: 8, margin: 0, padding: 0 }}>
+                {group.items.map((item) => (
+                  <li key={item.sessionId} style={{ display: "grid", gap: 6, listStyle: "none" }}>
+                    <div style={rowStyle}>
+                      <strong style={{ fontSize: 14 }}>{item.walletName}</strong>
+                      <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        <WalletBadge accountType={item.accountType} walletSource={item.walletSource} />
+                        <WalletVerificationBadge
+                          label={getLocalizedText(item.statusMessage, locale)}
+                          status={item.verificationStatus}
+                        />
+                      </span>
+                    </div>
+                    <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
+                      {copy.walletAddress}: {item.displayAddress}
+                    </span>
+                    <span style={{ color: "#475569", fontSize: 13, lineHeight: 1.45 }}>
+                      {copy.diagnosticsScenario}: {getLocalizedText(item.qaScenario, locale)}
+                    </span>
+                    <span style={{ color: "#475569", fontSize: 13, lineHeight: 1.45 }}>
+                      {copy.nextAction}: {getLocalizedText(item.nextAction, locale)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </article>
+          ))}
+        </div>
+        <div style={cardStyle}>
+          <div style={rowStyle}>
+            <strong>{copy.diagnosticsQa}</strong>
+            <span style={{ color: "#64748b", fontSize: 13, fontWeight: 800 }}>
+              {copy.diagnosticsSupported}
+            </span>
+          </div>
+          <ul style={listStyle}>
+            {walletDiagnostics.qaChecklist.map((item) => (
+              <li key={item.id} style={listItemStyle}>
+                <div style={rowStyle}>
+                  <strong>{getLocalizedText(item.label, locale)}</strong>
+                  <PublishStateBadge label={item.state} state={item.state} />
+                </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(item.evidence, locale)}
+                </p>
+                <span style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>
+                  {item.sessionIds.join(", ")}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       </section>
 
