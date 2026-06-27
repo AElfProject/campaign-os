@@ -2,6 +2,9 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
+import { EXPORT_CSV_COLUMNS } from "../../../domain";
+
+const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
 
 describe("Admin/Ops shell", () => {
   it("renders review gates, contract boundaries, and export preview", () => {
@@ -29,11 +32,22 @@ describe("Admin/Ops shell", () => {
     expect(screen.getAllByText("Human review required").length).toBeGreaterThan(0);
     expect(screen.getByText("Ecosystem metrics")).toBeInTheDocument();
     expect(screen.getByText("TMRWDAO")).toBeInTheDocument();
-    expect(screen.getByText("Export winners does not distribute rewards.")).toBeInTheDocument();
+    expect(screen.getAllByText("Export winners does not distribute rewards.").length).toBeGreaterThan(0);
+    expect(screen.getByText(exportColumnContract)).toBeInTheDocument();
+    expect(screen.getByText("Campaign OS exports verified records only.")).toBeInTheDocument();
+    expect(screen.getByText("Final reward distribution is handled by the campaign project.")).toBeInTheDocument();
+    expect(screen.getByText("Risk flags and eligibility results are review inputs; Campaign OS does not distribute rewards.")).toBeInTheDocument();
     expect(screen.getByText("Export batch: export-awaken-sprint-preview")).toBeInTheDocument();
     expect(screen.getByText("3E9...7cD")).toBeInTheDocument();
+    expect(screen.getAllByText("PORTKEY_EOA_EXTENSION").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("zh-CN").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("review_required").length).toBeGreaterThan(0);
+    expect(screen.getByText("REF...3E9")).toBeInTheDocument();
     expect(screen.getByText("referral_velocity_review")).toBeInTheDocument();
+    expect(screen.getByText(/task-bridge:pending:aelfscan/)).toBeInTheDocument();
+    expect(screen.getByText(/task-social:failed:social_api/)).toBeInTheDocument();
     expect(screen.getByText(/demo-task-bridge-3E9/)).toBeInTheDocument();
+    expect(screen.getByText(/demo-task-social-3E9/)).toBeInTheDocument();
     expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
 
@@ -56,7 +70,11 @@ describe("Admin/Ops shell", () => {
     expect(screen.getByText("禁止自动发布：中文草稿发布前必须经过人工审核。")).toBeInTheDocument();
     expect(screen.getByText("合约影响审核")).toBeInTheDocument();
     expect(screen.getByText("Contract claim 已阻断，等待高影响人工审核。")).toBeInTheDocument();
-    expect(screen.getByText("导出 winners 不等于发奖。")).toBeInTheDocument();
+    expect(screen.getAllByText("导出 winners 不等于发奖。").length).toBeGreaterThan(0);
+    expect(screen.getByText(exportColumnContract)).toBeInTheDocument();
+    expect(screen.getByText("Campaign OS 仅导出已验证记录。")).toBeInTheDocument();
+    expect(screen.getByText("最终奖励发放由活动项目方处理。")).toBeInTheDocument();
+    expect(screen.getByText("风险标记与资格结果仅作为审核输入；Campaign OS 不执行发奖。")).toBeInTheDocument();
     expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
 });
