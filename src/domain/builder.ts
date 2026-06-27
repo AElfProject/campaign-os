@@ -5,6 +5,10 @@ import type {
   OwnerRole,
   RiskLevel,
   SupportedLocale,
+  TemplateGovernanceConsole,
+  TemplateGovernanceRow,
+  TemplateGovernanceSignal,
+  TemplateGovernanceStatus,
   VerificationType,
   WalletCompatibility,
   WalletPolicy,
@@ -331,6 +335,199 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     localeReadiness: { "en-US": "ready", "zh-CN": "fallback" },
   },
 ];
+
+const templateGovernanceBoundary = text(
+  "Seeded/local Template Manager governance only. No live template registry, backend Template Service, external provider, or enable/disable mutation is connected.",
+  "仅 seeded/本地模板管理治理。不会连接实时模板 registry、后端 Template Service、外部 provider，也不会执行启停变更。",
+);
+
+const strongVerificationTypes = new Set<TaskTemplate["verificationType"]>([
+  "DAPP_API",
+  "ON_CHAIN",
+  "REFERRAL",
+  "WALLET",
+]);
+
+const needsLocalizationReview = (template: TaskTemplate) =>
+  template.localeReadiness["zh-CN"] === "ai_draft" || template.localeReadiness["zh-CN"] === "fallback";
+
+const needsRiskReview = (template: TaskTemplate) =>
+  template.riskLevel === "high" && (template.category === "social" || template.category === "invite");
+
+const createTemplateGovernanceSignals = (template: TaskTemplate): TemplateGovernanceSignal[] => {
+  const signals: TemplateGovernanceSignal[] = [];
+
+  if (needsRiskReview(template)) {
+    signals.push("risk_review");
+  }
+  if (needsLocalizationReview(template)) {
+    signals.push("localization_review");
+  }
+  if (template.walletCompatibility !== "ANY") {
+    signals.push("wallet_coverage");
+  }
+  if (!strongVerificationTypes.has(template.verificationType)) {
+    signals.push("verification_strength");
+  }
+
+  return signals;
+};
+
+const createTemplateGovernanceStatus = (
+  signals: TemplateGovernanceSignal[],
+): TemplateGovernanceStatus => {
+  if (signals.includes("verification_strength")) {
+    return "warning";
+  }
+  if (signals.includes("risk_review") || signals.includes("localization_review") || signals.includes("wallet_coverage")) {
+    return "warning";
+  }
+
+  return "ready";
+};
+
+const createTemplateGovernanceReason = (
+  template: TaskTemplate,
+  signals: TemplateGovernanceSignal[],
+): LocalizedText => {
+  if (signals.includes("risk_review")) {
+    return text(
+      "High-risk social/referral template requires human risk review before launch.",
+      "高风险社交/推荐模板上线前需要人工风险审核。",
+    );
+  }
+  if (signals.includes("localization_review")) {
+    return text(
+      "Chinese content is AI draft or fallback and needs localization review.",
+      "中文内容仍是 AI 草稿或英文回退，需要本地化审核。",
+    );
+  }
+  if (signals.includes("wallet_coverage")) {
+    return text(
+      `${template.walletCompatibility.replace(/_/g, " ")} wallet coverage must be visible before campaign selection.`,
+      `${template.walletCompatibility.replace(/_/g, " ")} 钱包覆盖边界需要在选模板前明确展示。`,
+    );
+  }
+  if (signals.includes("verification_strength")) {
+    return text(
+      "Semi-manual verification needs operator review before high-value use.",
+      "半自动验证在高价值活动中需要运营复核。",
+    );
+  }
+
+  return text(
+    "Template is ready for seeded governance review.",
+    "模板已可用于 seeded 治理审核。",
+  );
+};
+
+const createTemplateGovernanceNextAction = (
+  signals: TemplateGovernanceSignal[],
+): LocalizedText => {
+  if (signals.includes("risk_review")) {
+    return text(
+      "Run human risk review and keep social/referral rewards bounded.",
+      "执行人工风险审核，并控制社交/推荐奖励边界。",
+    );
+  }
+  if (signals.includes("localization_review")) {
+    return text(
+      "Complete zh-CN localization review before publishing campaigns with this template.",
+      "使用该模板发布活动前完成 zh-CN 本地化审核。",
+    );
+  }
+  if (signals.includes("wallet_coverage")) {
+    return text(
+      "Confirm selected campaign wallet policy matches this template coverage.",
+      "确认活动钱包策略与该模板覆盖范围一致。",
+    );
+  }
+  if (signals.includes("verification_strength")) {
+    return text(
+      "Pair this template with on-chain or dApp API verification for high-value campaigns.",
+      "高价值活动中将该模板与链上或 dApp API 验证搭配使用。",
+    );
+  }
+
+  return text(
+    "Keep template available in the seeded library.",
+    "保持模板在 seeded 模板库中可用。",
+  );
+};
+
+const createTemplateGovernanceRow = (template: TaskTemplate): TemplateGovernanceRow => {
+  const reviewSignals = createTemplateGovernanceSignals(template);
+
+  return {
+    category: template.category,
+    defaultPoints: template.defaultPoints,
+    description: template.description,
+    localeReadiness: template.localeReadiness,
+    nextAction: createTemplateGovernanceNextAction(reviewSignals),
+    requiredByDefault: template.requiredByDefault,
+    reviewSignals,
+    riskLevel: template.riskLevel,
+    status: createTemplateGovernanceStatus(reviewSignals),
+    statusReason: createTemplateGovernanceReason(template, reviewSignals),
+    templateId: template.id,
+    title: template.title,
+    verificationType: template.verificationType,
+    walletCompatibility: template.walletCompatibility,
+  };
+};
+
+export const createTemplateGovernanceConsole = (
+  templates: TaskTemplate[] = taskTemplateLibrary,
+): TemplateGovernanceConsole => {
+  const rows = templates.map(createTemplateGovernanceRow);
+
+  return {
+    boundary: templateGovernanceBoundary,
+    rows,
+    summary: rows.reduce<TemplateGovernanceConsole["summary"]>(
+      (summary, row) => {
+        summary.totalTemplates += 1;
+        if (row.status === "ready") {
+          summary.readyCount += 1;
+        } else if (row.status === "warning") {
+          summary.warningCount += 1;
+        } else {
+          summary.blockedCount += 1;
+        }
+        if (row.riskLevel === "high") {
+          summary.highRiskCount += 1;
+        }
+        if (row.reviewSignals.includes("localization_review")) {
+          summary.localizationReviewCount += 1;
+        }
+        if (row.walletCompatibility === "ANY") {
+          summary.anyWalletCount += 1;
+        } else if (row.walletCompatibility === "AA_ONLY") {
+          summary.aaOnlyCount += 1;
+        } else {
+          summary.eoaOnlyCount += 1;
+        }
+        if (strongVerificationTypes.has(row.verificationType)) {
+          summary.strongVerificationCount += 1;
+        }
+
+        return summary;
+      },
+      {
+        aaOnlyCount: 0,
+        anyWalletCount: 0,
+        blockedCount: 0,
+        eoaOnlyCount: 0,
+        highRiskCount: 0,
+        localizationReviewCount: 0,
+        readyCount: 0,
+        strongVerificationCount: 0,
+        totalTemplates: 0,
+        warningCount: 0,
+      },
+    ),
+  };
+};
 
 export const contractImpactOptions: ContractImpactSelection[] = [
   {

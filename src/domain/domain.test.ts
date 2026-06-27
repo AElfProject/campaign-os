@@ -21,6 +21,7 @@ import {
   isSupportedLocale,
   normalizeWalletSession,
   supportedLocales,
+  taskTemplateLibrary,
   walletAdapterFixtures,
   walletSessions,
 } from "./index";
@@ -598,6 +599,14 @@ describe("Campaign OS domain foundation", () => {
     );
     expect(adminOps.localeSplit.map((row) => row.label)).toEqual(["en-US", "zh-CN"]);
     expect(adminOps.localeSplit.map((row) => row.label)).not.toContain("zh-TW");
+    expect(adminOps.templateGovernance.summary.totalTemplates).toBe(taskTemplateLibrary.length);
+    expect(adminOps.templateGovernance.rows.map((row) => row.category)).toEqual(
+      expect.arrayContaining(["wallet", "bridge", "swap", "nft", "dao", "daipp", "social", "invite"]),
+    );
+    expect(adminOps.templateGovernance.summary.anyWalletCount).toBeGreaterThan(0);
+    expect(adminOps.templateGovernance.summary.eoaOnlyCount).toBeGreaterThan(0);
+    expect(adminOps.templateGovernance.summary.localizationReviewCount).toBeGreaterThan(0);
+    expect(adminOps.templateGovernance.boundary["en-US"]).toContain("No live template registry");
     expect(adminOps.riskSignals.map((signal) => signal.id)).toEqual([
       "funding-source",
       "referral-tree",
@@ -626,6 +635,32 @@ describe("Campaign OS domain foundation", () => {
     expect(adminOps.exportBatch.confirmation.noDistributionBoundary["en-US"]).toContain(
       "does not distribute rewards",
     );
+  });
+
+  it("derives template governance review signals from risk and locale readiness", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const socialTemplate = adminOps.templateGovernance.rows.find(
+      (row) => row.templateId === "tpl-social-share",
+    );
+    const inviteTemplate = adminOps.templateGovernance.rows.find(
+      (row) => row.templateId === "tpl-invite-friend",
+    );
+    const daoTemplate = adminOps.templateGovernance.rows.find((row) => row.templateId === "tpl-dao-vote");
+
+    expect(socialTemplate).toMatchObject({
+      status: "warning",
+      reviewSignals: expect.arrayContaining(["risk_review", "localization_review", "verification_strength"]),
+    });
+    expect(socialTemplate?.nextAction["en-US"]).toContain("risk review");
+    expect(inviteTemplate?.reviewSignals).toEqual(
+      expect.arrayContaining(["risk_review", "localization_review"]),
+    );
+    expect(inviteTemplate?.reviewSignals).not.toContain("verification_strength");
+    expect(daoTemplate).toMatchObject({
+      walletCompatibility: "EOA_ONLY",
+      reviewSignals: expect.arrayContaining(["wallet_coverage", "localization_review"]),
+    });
+    expect(JSON.stringify(adminOps.templateGovernance)).not.toContain("zh-TW");
   });
 
   it("keeps Admin/Ops risk and AI guidance human-reviewed", () => {

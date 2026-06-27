@@ -44,6 +44,7 @@ import type {
 } from "./types";
 import { deriveEligibilityWalletStatus, isWalletSessionVerified } from "./wallet";
 import { EXPORT_CSV_COLUMNS as exportCsvColumns } from "./types";
+import { createTemplateGovernanceConsole } from "./builder";
 
 const defaultPointsThreshold = 160;
 const defaultEligibleRankCutoff = 100;
@@ -1202,6 +1203,7 @@ export const createAdminOpsReadModel = (
     reviewQueue: campaign.reviewItems,
     contractReviewCenter: createAdminContractReviewCenter(campaign),
     aiContentPack: createAiContentPackWorkbench(campaign),
+    templateGovernance: createTemplateGovernanceConsole(),
     analytics: createAnalytics(campaign, exportBatch),
     funnel: campaign.conversionFunnel,
     walletSplit: createWalletSplit(campaign.participants),

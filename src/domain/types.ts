@@ -85,6 +85,12 @@ export type AiContentQualityGateCategory =
   | "cta"
   | "localization";
 export type AiContentQualityGateStatus = "passed" | "warning" | "blocked";
+export type TemplateGovernanceStatus = "ready" | "warning" | "blocked";
+export type TemplateGovernanceSignal =
+  | "risk_review"
+  | "localization_review"
+  | "wallet_coverage"
+  | "verification_strength";
 export type ReviewItemType = "AI_CONTENT" | "CONTRACT_IMPACT" | "RISK_FLAG" | "EXPORT_READY";
 export type ReviewSeverity = "info" | "warning" | "blocker";
 export type ReviewStatus = "open" | "in_review" | "approved" | "rejected";
@@ -612,11 +618,48 @@ export interface ExportBatchSummary {
   rows: ExportEvidenceRow[];
 }
 
+export interface TemplateGovernanceSummary {
+  totalTemplates: number;
+  readyCount: number;
+  warningCount: number;
+  blockedCount: number;
+  highRiskCount: number;
+  localizationReviewCount: number;
+  anyWalletCount: number;
+  aaOnlyCount: number;
+  eoaOnlyCount: number;
+  strongVerificationCount: number;
+}
+
+export interface TemplateGovernanceRow {
+  templateId: string;
+  category: string;
+  title: LocalizedText;
+  description: LocalizedText;
+  verificationType: VerificationType | "REFERRAL";
+  walletCompatibility: WalletCompatibility;
+  defaultPoints: number;
+  requiredByDefault: boolean;
+  riskLevel: RiskLevel;
+  localeReadiness: Record<SupportedLocale, LocaleStatus>;
+  status: TemplateGovernanceStatus;
+  statusReason: LocalizedText;
+  nextAction: LocalizedText;
+  reviewSignals: TemplateGovernanceSignal[];
+}
+
+export interface TemplateGovernanceConsole {
+  summary: TemplateGovernanceSummary;
+  rows: TemplateGovernanceRow[];
+  boundary: LocalizedText;
+}
+
 export interface AdminOpsReadModel {
   campaignId: string;
   reviewQueue: ReviewItem[];
   contractReviewCenter: AdminContractReviewCenter;
   aiContentPack: AiContentPackWorkbench;
+  templateGovernance: TemplateGovernanceConsole;
   analytics: AnalyticsKpi[];
   funnel: ConversionFunnelStep[];
   walletSplit: DimensionSplit[];
