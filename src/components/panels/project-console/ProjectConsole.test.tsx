@@ -51,7 +51,14 @@ describe("Project Console shell", () => {
     expect(
       screen.getAllByText("Contract claim mode requires high-impact manual review.").length,
     ).toBeGreaterThan(0);
-    expect(screen.getByText("Switch to Off-chain MVP or complete contract reviewer approval.")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Switch to Off-chain MVP or complete contract reviewer approval.").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Publish Gate Decision Center" })).toBeInTheDocument();
+    expect(screen.getAllByText("Launch gate").length).toBeGreaterThan(0);
+    expect(screen.getByText("Approval routing")).toBeInTheDocument();
+    expect(screen.getByText("Any wallet allows AA and EOA users to participate.")).toBeInTheDocument();
+    expect(screen.getByText(/No real publish/i)).toBeInTheDocument();
     expect(screen.getAllByText("Task Builder Preview")).toHaveLength(2);
     expect(screen.getByText("Rewards & Eligibility")).toBeInTheDocument();
     expect(screen.getByText("i18n Translation Review")).toBeInTheDocument();
@@ -98,6 +105,11 @@ describe("Project Console shell", () => {
     expect(screen.getByText("这个审核工作台不会发放奖励、托管奖励，也不会执行合约交易。")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "发布准备度" })).toBeInTheDocument();
     expect(screen.getAllByText("合约领取模式需要高影响人工审核。").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "发布门禁决策中心" })).toBeInTheDocument();
+    expect(screen.getAllByText("发布门禁").length).toBeGreaterThan(0);
+    expect(screen.getByText("审批路由")).toBeInTheDocument();
+    expect(screen.getByText("任意钱包允许 AA 与 EOA 用户参与。")).toBeInTheDocument();
+    expect(screen.getByText(/不执行真实发布/)).toBeInTheDocument();
     expect(screen.getByText("AI 活动策划")).toBeInTheDocument();
     expect(screen.getAllByText("任务构建预览")).toHaveLength(2);
     expect(screen.getByText("奖励与资格")).toBeInTheDocument();
@@ -106,6 +118,7 @@ describe("Project Console shell", () => {
     expect(screen.getByText("缺失任务")).toBeInTheDocument();
     expect(screen.getByText("导出 winners 不等于发奖。")).toBeInTheDocument();
     expect(screen.getByText("中文内容在审核前回退展示英文。")).toBeInTheDocument();
+    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
 
   it("keeps User App and Admin/Ops reachable from navigation", () => {

@@ -16,6 +16,7 @@ import {
 } from "../../badges/Badges";
 import { CampaignBuilderPanel } from "./builder/CampaignBuilderPanel";
 import { I18nContractReadiness } from "./builder/I18nContractReadiness";
+import { PublishGateDecisionCenter } from "./builder/PublishGateDecisionCenter";
 import { PublishReadinessPanel } from "./builder/PublishReadinessPanel";
 import { RewardsEligibilityBuilder } from "./builder/RewardsEligibilityBuilder";
 import { TaskTemplateLibrary } from "./builder/TaskTemplateLibrary";
@@ -362,6 +363,7 @@ export const ProjectConsole = ({
         <RewardsEligibilityBuilder draft={builderDraft} locale={locale} />
         <I18nContractReadiness campaign={campaign} locale={locale} />
         <PublishReadinessPanel draft={builderDraft} locale={locale} />
+        <PublishGateDecisionCenter draft={builderDraft} locale={locale} />
       </div>
 
       <section aria-label="Project Console workflow sections" style={sectionGridStyle}>
