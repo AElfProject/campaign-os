@@ -1,8 +1,10 @@
 import type { CSSProperties } from "react";
 import {
+  createApiSkillContractSurface,
   campaignDetail,
   getLocalizedText,
   seededCampaignDraft,
+  type ApiSkillContractReadiness,
   type CampaignShellDetail,
   type LocaleStatus,
   type SupportedLocale,
@@ -127,6 +129,27 @@ const listItemStyle: CSSProperties = {
   listStyle: "none",
 };
 
+const compactListStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 6,
+  margin: 0,
+  padding: 0,
+};
+
+const chipStyle: CSSProperties = {
+  background: "#eef6ff",
+  border: "1px solid #bfdbfe",
+  borderRadius: 8,
+  color: "#1e3a8a",
+  fontSize: 12,
+  fontWeight: 800,
+  lineHeight: 1.2,
+  listStyle: "none",
+  padding: "6px 8px",
+  wordBreak: "break-word",
+};
+
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
 
 const formatNumber = (value: number) => new Intl.NumberFormat("en-US").format(value);
@@ -176,6 +199,36 @@ const localeStatusLabel = (
   return labels.published;
 };
 
+const readinessState = (readiness: ApiSkillContractReadiness) => {
+  if (readiness === "blocked") {
+    return "blocker";
+  }
+
+  return readiness === "ready" ? "ready" : "warning";
+};
+
+const readinessLabel = (
+  readiness: ApiSkillContractReadiness,
+  labels: {
+    apiSkillReadinessBlocked: string;
+    apiSkillReadinessLocalOnly: string;
+    apiSkillReadinessReady: string;
+    apiSkillReadinessReviewRequired: string;
+  },
+) => {
+  if (readiness === "ready") {
+    return labels.apiSkillReadinessReady;
+  }
+
+  if (readiness === "local_only") {
+    return labels.apiSkillReadinessLocalOnly;
+  }
+
+  return readiness === "review_required"
+    ? labels.apiSkillReadinessReviewRequired
+    : labels.apiSkillReadinessBlocked;
+};
+
 export const ProjectConsole = ({
   campaign = campaignDetail,
   locale,
@@ -190,6 +243,7 @@ export const ProjectConsole = ({
   const warningCount = campaign.publishReadiness.warnings.length;
   const blockerCount = campaign.publishReadiness.blockers.length;
   const builderDraft = seededCampaignDraft;
+  const apiSkillSurface = createApiSkillContractSurface();
 
   const stats = [
     {
@@ -365,6 +419,136 @@ export const ProjectConsole = ({
         <PublishReadinessPanel draft={builderDraft} locale={locale} />
         <PublishGateDecisionCenter draft={builderDraft} locale={locale} />
       </div>
+
+      <section aria-label={copy.apiSkillContracts} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.apiSkillReadiness}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.apiSkillContracts}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.apiSkillContractsSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={
+              apiSkillSurface.summary.missingSkillIds.length === 0
+                ? copy.apiSkillReadinessReady
+                : copy.apiSkillReadinessBlocked
+            }
+            state={apiSkillSurface.summary.missingSkillIds.length === 0 ? "ready" : "blocker"}
+          />
+        </div>
+
+        <div aria-label="API skill contract summary" style={gridStyle}>
+          {[
+            {
+              detail: `${apiSkillSurface.summary.localOnlyCount} ${copy.apiSkillLocalOnly} / ${apiSkillSurface.summary.reviewRequiredCount} ${copy.apiSkillReview}`,
+              label: copy.apiSkillTotal,
+              value: String(apiSkillSurface.summary.totalContracts),
+            },
+            {
+              detail: `${apiSkillSurface.summary.externalEvidenceCount} ${copy.apiSkillExternalEvidence}`,
+              label: copy.apiSkillHighRisk,
+              value: String(apiSkillSurface.summary.highRiskCount),
+            },
+            {
+              detail: apiSkillSurface.coverage.coveredFieldGroups.join(", "),
+              label: copy.apiSkillCoveredGroups,
+              value: String(apiSkillSurface.coverage.coveredFieldGroups.length),
+            },
+            {
+              detail:
+                apiSkillSurface.summary.missingSkillIds.length === 0
+                  ? copy.apiSkillReadinessReady
+                  : apiSkillSurface.summary.missingSkillIds.join(", "),
+              label: copy.apiSkillMissing,
+              value: String(apiSkillSurface.summary.missingSkillIds.length),
+            },
+          ].map((stat) => (
+            <article key={stat.label} style={cardStyle}>
+              <p style={statLabelStyle}>{stat.label}</p>
+              <p style={statValueStyle}>{stat.value}</p>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                {stat.detail}
+              </p>
+            </article>
+          ))}
+        </div>
+
+        <div style={{ ...cardStyle, minHeight: 0 }}>
+          <p style={statLabelStyle}>{copy.apiSkillBoundary}</p>
+          <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+            {getLocalizedText(apiSkillSurface.boundary, locale)}
+          </p>
+        </div>
+
+        <div style={sectionGridStyle}>
+          {apiSkillSurface.contracts.map((contract) => (
+            <article key={contract.id} style={workflowStyle}>
+              <div style={headingRowStyle}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={statLabelStyle}>{contract.id}</p>
+                  <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                    {getLocalizedText(contract.title, locale)}
+                  </h4>
+                </div>
+                <PublishStateBadge
+                  label={readinessLabel(contract.readiness, copy)}
+                  state={readinessState(contract.readiness)}
+                />
+              </div>
+              <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                {getLocalizedText(contract.purpose, locale)}
+              </p>
+              <div style={{ display: "grid", gap: 8 }}>
+                <div>
+                  <p style={statLabelStyle}>{copy.apiSkillApiGroup}</p>
+                  <p style={{ ...statValueStyle, fontSize: 15 }}>
+                    {contract.apiGroup.replace(/_/g, " ")}
+                  </p>
+                </div>
+                <div>
+                  <p style={statLabelStyle}>{copy.apiSkillRisk}</p>
+                  <p style={{ ...statValueStyle, fontSize: 15 }}>{contract.riskLevel}</p>
+                </div>
+              </div>
+              <div>
+                <p style={statLabelStyle}>{copy.apiSkillInputFields}</p>
+                <ul style={compactListStyle}>
+                  {contract.inputFields.map((fieldDef) => (
+                    <li key={`${contract.id}-input-${fieldDef.name}`} style={chipStyle}>
+                      {fieldDef.name}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <p style={statLabelStyle}>{copy.apiSkillOutputFields}</p>
+                <ul style={compactListStyle}>
+                  {contract.outputFields.map((fieldDef) => (
+                    <li key={`${contract.id}-output-${fieldDef.name}`} style={chipStyle}>
+                      {fieldDef.name}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                <strong>{copy.apiSkillEvidence}: </strong>
+                {contract.evidenceSources.join(", ")}
+              </p>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                <strong>{copy.apiSkillBoundary}: </strong>
+                {getLocalizedText(contract.securityBoundary, locale)}
+              </p>
+              <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                {copy.apiSkillNextAction}: {getLocalizedText(contract.nextAction, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <section aria-label="Project Console workflow sections" style={sectionGridStyle}>
         {workflows.map((workflow) => (

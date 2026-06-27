@@ -91,6 +91,49 @@ export type TemplateGovernanceSignal =
   | "localization_review"
   | "wallet_coverage"
   | "verification_strength";
+export type ApiSkillId =
+  | "create_campaign"
+  | "generate_campaign_tasks"
+  | "verify_task"
+  | "check_eligibility"
+  | "get_campaign_analytics"
+  | "export_winners"
+  | "generate_campaign_posts"
+  | "summarize_campaign";
+export type ApiSkillContractReadiness =
+  | "ready"
+  | "local_only"
+  | "review_required"
+  | "blocked";
+export type ApiSkillRiskLevel = "low" | "medium" | "high";
+export type ApiSkillApiGroup =
+  | "wallet_session"
+  | "campaign_creation"
+  | "task_generation"
+  | "task_verification"
+  | "eligibility"
+  | "analytics"
+  | "export"
+  | "content_generation"
+  | "campaign_summary";
+export type ApiSkillFieldGroup =
+  | "campaign"
+  | "task"
+  | "wallet"
+  | "locale"
+  | "contract"
+  | "evidence"
+  | "analytics"
+  | "export"
+  | "content"
+  | "risk";
+export type ApiSkillEvidenceSource =
+  | "AEFINDER"
+  | "AELFSCAN"
+  | "DAPP_API"
+  | "SOCIAL_API"
+  | "MANUAL"
+  | "LOCAL_SEEDED";
 export type ReviewItemType = "AI_CONTENT" | "CONTRACT_IMPACT" | "RISK_FLAG" | "EXPORT_READY";
 export type ReviewSeverity = "info" | "warning" | "blocker";
 export type ReviewStatus = "open" | "in_review" | "approved" | "rejected";
@@ -651,6 +694,54 @@ export interface TemplateGovernanceRow {
 export interface TemplateGovernanceConsole {
   summary: TemplateGovernanceSummary;
   rows: TemplateGovernanceRow[];
+  boundary: LocalizedText;
+}
+
+export interface ApiSkillContractField {
+  name: string;
+  group: ApiSkillFieldGroup;
+  required: boolean;
+  label: LocalizedText;
+  description: LocalizedText;
+  example?: string;
+}
+
+export interface ApiSkillContract {
+  id: ApiSkillId;
+  title: LocalizedText;
+  purpose: LocalizedText;
+  apiGroup: ApiSkillApiGroup;
+  readiness: ApiSkillContractReadiness;
+  riskLevel: ApiSkillRiskLevel;
+  inputFields: ApiSkillContractField[];
+  outputFields: ApiSkillContractField[];
+  evidenceSources: ApiSkillEvidenceSource[];
+  securityBoundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface ApiSkillContractSummary {
+  totalContracts: number;
+  readyCount: number;
+  localOnlyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  highRiskCount: number;
+  externalEvidenceCount: number;
+  requiredSkillIds: readonly ApiSkillId[];
+  missingSkillIds: ApiSkillId[];
+}
+
+export interface ApiSkillContractCoverage {
+  requiredFieldGroups: readonly ApiSkillFieldGroup[];
+  coveredFieldGroups: ApiSkillFieldGroup[];
+  missingFieldGroups: ApiSkillFieldGroup[];
+}
+
+export interface ApiSkillContractSurface {
+  summary: ApiSkillContractSummary;
+  coverage: ApiSkillContractCoverage;
+  contracts: ApiSkillContract[];
   boundary: LocalizedText;
 }
 
