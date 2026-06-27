@@ -12,6 +12,8 @@ import {
   type MetricTone,
   type SignalSeverity,
   type SupportedLocale,
+  type TemplateGovernanceSignal,
+  type TemplateGovernanceStatus,
 } from "../../../domain";
 import {
   Badge,
@@ -188,6 +190,50 @@ const aiContentGateState = (status: AiContentQualityGateStatus) =>
 
 const readableCode = (value: string) => value.replace(/_/g, " ");
 
+const templateGovernanceState = (status: TemplateGovernanceStatus) =>
+  status === "blocked" ? "blocker" : status === "warning" ? "warning" : "ready";
+
+const templateSignalLabel = (
+  signal: TemplateGovernanceSignal,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<TemplateGovernanceSignal, string> = {
+    localization_review: copy.localizationReview,
+    risk_review: copy.riskReview,
+    verification_strength: copy.strongVerification,
+    wallet_coverage: copy.walletCoverage,
+  };
+
+  return labels[signal];
+};
+
+const templateStatusLabel = (
+  status: TemplateGovernanceStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<TemplateGovernanceStatus, string> = {
+    blocked: copy.templateStatusBlocked,
+    ready: copy.templateStatusReady,
+    warning: copy.templateStatusWarning,
+  };
+
+  return labels[status];
+};
+
+const walletCompatibilityLabel = (
+  value: string,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  if (value === "ANY") {
+    return copy.walletAny;
+  }
+  if (value === "AA_ONLY") {
+    return copy.walletAaOnly;
+  }
+
+  return copy.walletEoaOnly;
+};
+
 export const AdminOpsPanel = ({
   campaign = campaignDetail,
   locale,
@@ -195,6 +241,7 @@ export const AdminOpsPanel = ({
   const copy = adminOpsCopy[locale];
   const adminOps = createAdminOpsReadModel(campaign);
   const aiContentPack = adminOps.aiContentPack;
+  const templateGovernance = adminOps.templateGovernance;
   const contractClaimReadiness = computePublishReadiness(
     { contractMode: "CONTRACT_CLAIM" },
     campaign.contentRevisions,
@@ -283,6 +330,114 @@ export const AdminOpsPanel = ({
               </p>
               <p style={mutedTextStyle}>
                 {copy.owner}: {item.ownerRole}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.templateGovernanceSubtitle}</p>
+            <h3 style={{ fontSize: 20, margin: 0 }}>{copy.templateGovernance}</h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${templateGovernance.summary.totalTemplates} ${copy.templates}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${templateGovernance.summary.warningCount} ${copy.warning}`}
+              state={templateGovernance.summary.warningCount > 0 ? "warning" : "ready"}
+            />
+          </span>
+        </div>
+        <p style={boundaryStyle}>{getLocalizedText(templateGovernance.boundary, locale)}</p>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.templateStatusReady}</p>
+            <p style={valueStyle}>{templateGovernance.summary.readyCount}</p>
+            <p style={mutedTextStyle}>{copy.templateGovernanceBoundary}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.localizationReview}</p>
+            <p style={valueStyle}>{templateGovernance.summary.localizationReviewCount}</p>
+            <p style={mutedTextStyle}>zh-CN AI draft/fallback</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.riskReview}</p>
+            <p style={valueStyle}>{templateGovernance.summary.highRiskCount}</p>
+            <p style={mutedTextStyle}>social/referral</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.walletCoverage}</p>
+            <p style={valueStyle}>
+              {templateGovernance.summary.anyWalletCount}/{templateGovernance.summary.eoaOnlyCount}
+            </p>
+            <p style={mutedTextStyle}>
+              {copy.walletAny} / {copy.walletEoaOnly}
+            </p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.strongVerification}</p>
+            <p style={valueStyle}>{templateGovernance.summary.strongVerificationCount}</p>
+            <p style={mutedTextStyle}>ON_CHAIN / DAPP_API / WALLET / REFERRAL</p>
+          </article>
+        </div>
+        <div style={gridStyle}>
+          {templateGovernance.rows.map((row) => (
+            <article key={row.templateId} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{row.category}</p>
+                  <strong>{getLocalizedText(row.title, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={templateStatusLabel(row.status, copy)}
+                  state={templateGovernanceState(row.status)}
+                />
+              </div>
+              <p style={mutedTextStyle}>{getLocalizedText(row.description, locale)}</p>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.verification}</p>
+                  <p style={mutedTextStyle}>{row.verificationType}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.defaultPoints}</p>
+                  <p style={mutedTextStyle}>{row.defaultPoints}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.riskLevel}</p>
+                  <p style={mutedTextStyle}>{row.riskLevel}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{row.requiredByDefault ? copy.required : copy.optional}</p>
+                  <p style={mutedTextStyle}>{row.requiredByDefault ? copy.required : copy.optional}</p>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <Badge label={walletCompatibilityLabel(row.walletCompatibility, copy)} tone="info" />
+                <LocaleStatusBadge
+                  label={`en-US ${row.localeReadiness["en-US"]}`}
+                  status={row.localeReadiness["en-US"]}
+                />
+                <LocaleStatusBadge
+                  label={`zh-CN ${row.localeReadiness["zh-CN"]}`}
+                  status={row.localeReadiness["zh-CN"]}
+                />
+                {row.reviewSignals.map((signal) => (
+                  <ReviewSeverityBadge
+                    key={`${row.templateId}-${signal}`}
+                    label={templateSignalLabel(signal, copy)}
+                    severity={signal === "risk_review" ? "warning" : "info"}
+                  />
+                ))}
+              </div>
+              <p style={mutedTextStyle}>{getLocalizedText(row.statusReason, locale)}</p>
+              <p style={mutedTextStyle}>
+                {copy.nextAction}: {getLocalizedText(row.nextAction, locale)}
               </p>
             </article>
           ))}

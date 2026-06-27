@@ -130,5 +130,6 @@ describe("Project Console shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
     expect(screen.getByRole("heading", { name: "Review queue" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Template Governance" })).toBeInTheDocument();
   });
 });

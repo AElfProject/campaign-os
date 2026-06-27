@@ -120,6 +120,7 @@ describe("Campaign OS app shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
 
+    expect(screen.getByRole("heading", { name: "Template Governance" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "AI Content Pack Workbench" })).toBeInTheDocument();
     expect(screen.getAllByText("Publish blocked").length).toBeGreaterThan(0);
     expect(screen.getByText("Export winners does not distribute rewards.")).toBeInTheDocument();
