@@ -5,6 +5,9 @@ import type {
   CampaignShellDetail,
   CampaignTask,
   ContentRevision,
+  ContractImpactReviewModel,
+  ContractImpactReviewOption,
+  ContractMode,
   DimensionSplit,
   EligibilityResult,
   ExportBatchSummary,
@@ -20,9 +23,13 @@ import type {
   ParticipationReadModel,
   ParticipantSnapshot,
   ParticipantTaskState,
+  PublishState,
   PublishReadiness,
   ReferralSummary,
+  ReviewSeverity,
   TaskVerificationStatus,
+  TranslationManagerReadModel,
+  TranslationReviewPanel,
 } from "./types";
 
 const defaultPointsThreshold = 160;
@@ -39,6 +46,82 @@ const rewardBoundary: LocalizedText = {
   "zh-CN": "奖励由活动项目方提供。导出 winners 不等于发奖。",
 };
 
+const noAutoPublishNotice: LocalizedText = {
+  "en-US": "AI generated translation cannot auto-publish before human review.",
+  "zh-CN": "AI 生成翻译必须经过人工审核后才能发布。",
+};
+
+const localeLabels: Record<ContentRevision["locale"], LocalizedText> = {
+  "en-US": {
+    "en-US": "English source",
+    "zh-CN": "英文源内容",
+  },
+  "zh-CN": {
+    "en-US": "Chinese draft",
+    "zh-CN": "中文草稿",
+  },
+};
+
+const contractModeLabels: Record<ContractMode, LocalizedText> = {
+  CONTRACT_CLAIM: {
+    "en-US": "Contract claim",
+    "zh-CN": "合约领取",
+  },
+  OFF_CHAIN_MVP: {
+    "en-US": "Off-chain MVP",
+    "zh-CN": "Off-chain MVP",
+  },
+  V2_COMPANION: {
+    "en-US": "V2 companion",
+    "zh-CN": "V2 辅助合约",
+  },
+};
+
+const contractModeDescriptions: Record<ContractMode, LocalizedText> = {
+  CONTRACT_CLAIM: {
+    "en-US": "Blocked until high-impact manual review approves claim-mode risk.",
+    "zh-CN": "在高影响人工审核批准领取模式风险前保持阻断。",
+  },
+  OFF_CHAIN_MVP: {
+    "en-US": "Safe default for MVP; no contract migration is required.",
+    "zh-CN": "MVP 的安全默认模式；不需要合约迁移。",
+  },
+  V2_COMPANION: {
+    "en-US": "Future companion-contract path for auditable metadata and eligibility roots.",
+    "zh-CN": "未来通过辅助合约审计 metadata 与资格 root。",
+  },
+};
+
+const contractBoundaryByMode: Record<ContractMode, LocalizedText> = {
+  CONTRACT_CLAIM: {
+    "en-US": "Contract claim is not enabled in this MVP shell and does not execute reward distribution.",
+    "zh-CN": "当前 MVP shell 未启用合约领取，也不会执行奖励发放。",
+  },
+  OFF_CHAIN_MVP: {
+    "en-US": "Campaign OS verifies, ranks, and exports; the project remains responsible for rewards.",
+    "zh-CN": "Campaign OS 负责验证、排名与导出；奖励仍由项目方负责。",
+  },
+  V2_COMPANION: {
+    "en-US": "Companion contracts may record hashes later; full campaign copy and risk detail stay off-chain.",
+    "zh-CN": "辅助合约后续可记录 hash；活动全文与风控细节仍留在链下。",
+  },
+};
+
+const contractNextActionByMode: Record<ContractMode, LocalizedText> = {
+  CONTRACT_CLAIM: {
+    "en-US": "Keep blocked until a contract reviewer approves high-impact claim mode.",
+    "zh-CN": "保持阻断，直到合约审核人批准高影响领取模式。",
+  },
+  OFF_CHAIN_MVP: {
+    "en-US": "Use off-chain verification and winner export for MVP publish.",
+    "zh-CN": "MVP 发布使用链下验证与 winners 导出。",
+  },
+  V2_COMPANION: {
+    "en-US": "Plan verifier roles and metadata hashes before enabling this mode.",
+    "zh-CN": "启用前先规划 verifier role 与 metadata hash。",
+  },
+};
+
 const defaultReferralSummary: ReferralSummary = {
   inviteLink: "https://campaign.local/awaken-sprint?ref=preview",
   invitedCount: 0,
@@ -46,6 +129,74 @@ const defaultReferralSummary: ReferralSummary = {
   referralPoints: 0,
   antiFarmRule: defaultReferralRule,
   riskFlags: [],
+};
+
+const publishStateFromSeverity = (severity: ReviewSeverity): PublishState => {
+  if (severity === "blocker") {
+    return "blocker";
+  }
+
+  return severity === "warning" ? "warning" : "ready";
+};
+
+const revisionPublishState = (revision: ContentRevision): PublishState => {
+  if (revision.status === "published" || revision.status === "human_reviewed") {
+    return "ready";
+  }
+
+  return revision.locale === "en-US" ? "blocker" : "warning";
+};
+
+const nextActionForRevision = (revision: ContentRevision): LocalizedText => {
+  if (revision.status === "published") {
+    return {
+      "en-US": "Published source is ready for campaign pages.",
+      "zh-CN": "已发布源内容可用于活动页面。",
+    };
+  }
+
+  if (revision.status === "human_reviewed") {
+    return {
+      "en-US": "Human-reviewed translation can be published when the owner confirms.",
+      "zh-CN": "人工审核后的翻译可在项目方确认后发布。",
+    };
+  }
+
+  if (revision.status === "ai_draft") {
+    return noAutoPublishNotice;
+  }
+
+  return {
+    "en-US": "Use English fallback until localized content is reviewed.",
+    "zh-CN": "本地化内容审核前使用英文回退。",
+  };
+};
+
+const createTranslationPanel = (
+  revision: ContentRevision,
+): TranslationReviewPanel => {
+  const humanReviewed = revision.status === "human_reviewed" || revision.status === "published";
+  const published = revision.status === "published";
+  const fallbackToEnglish = revision.locale !== "en-US" && !humanReviewed;
+
+  return {
+    locale: revision.locale,
+    label: localeLabels[revision.locale],
+    sourceLocale: revision.sourceLocale,
+    title: revision.title,
+    description: revision.description,
+    socialPost: revision.socialPost,
+    rewardDisclaimer: revision.rewardDisclaimer,
+    status: revision.status,
+    aiDraft: revision.status === "ai_draft",
+    humanReviewed,
+    fallbackToEnglish,
+    published,
+    publishState: revisionPublishState(revision),
+    reviewer: revision.reviewer,
+    updatedAt: revision.updatedAt,
+    nextAction: nextActionForRevision(revision),
+  };
 };
 
 const evidenceSourceByVerificationType: Record<CampaignTask["verificationType"], EvidenceSource> = {
@@ -541,6 +692,70 @@ export const createAdminOpsReadModel = (
     exportBatch,
   };
 };
+
+export const createTranslationManagerReadModel = (
+  campaign: Pick<CampaignShellDetail, "id" | "defaultLocale" | "supportedLocales" | "contentRevisions">,
+): TranslationManagerReadModel => {
+  const panels = campaign.contentRevisions
+    .filter((revision) => campaign.supportedLocales.includes(revision.locale))
+    .map(createTranslationPanel);
+
+  return {
+    campaignId: campaign.id,
+    defaultLocale: campaign.defaultLocale,
+    fallbackLocale: "en-US",
+    supportedLocales: [...campaign.supportedLocales],
+    sourceLocale: "en-US",
+    panels,
+    rewardDisclaimers: panels.map((panel) => ({
+      locale: panel.locale,
+      disclaimer: panel.rewardDisclaimer,
+      reviewed: panel.humanReviewed,
+      fallbackToEnglish: panel.fallbackToEnglish,
+      publishState: panel.publishState,
+    })),
+    noAutoPublishNotice,
+  };
+};
+
+const createContractImpactOption = (
+  mode: ContractMode,
+  selectedMode: ContractMode,
+): ContractImpactReviewOption => {
+  const reviewSeverity: ReviewSeverity =
+    mode === "CONTRACT_CLAIM" ? "blocker" : mode === "V2_COMPANION" ? "warning" : "info";
+
+  return {
+    mode,
+    label: contractModeLabels[mode],
+    description: contractModeDescriptions[mode],
+    reviewSeverity,
+    publishState: publishStateFromSeverity(reviewSeverity),
+    requiresVerifierRole: mode !== "OFF_CHAIN_MVP",
+    requiresMetadataHash: mode !== "OFF_CHAIN_MVP",
+    requiresHighImpactReview: mode === "CONTRACT_CLAIM",
+    boundary:
+      mode === selectedMode && mode === "CONTRACT_CLAIM"
+        ? {
+            "en-US": "Selected contract claim remains blocked; no contract transaction is executed.",
+            "zh-CN": "已选择的合约领取仍被阻断；不会执行合约交易。",
+          }
+        : contractBoundaryByMode[mode],
+    nextAction: contractNextActionByMode[mode],
+  };
+};
+
+export const createContractImpactReviewModel = (
+  campaign: Pick<CampaignShellDetail, "id" | "contractMode">,
+): ContractImpactReviewModel => ({
+  campaignId: campaign.id,
+  selectedMode: campaign.contractMode,
+  safeDefaultMode: "OFF_CHAIN_MVP",
+  options: (["OFF_CHAIN_MVP", "V2_COMPANION", "CONTRACT_CLAIM"] as const).map((mode) =>
+    createContractImpactOption(mode, campaign.contractMode),
+  ),
+  rewardBoundary,
+});
 
 export const computePublishReadiness = (
   campaign: Pick<CampaignShellDetail, "contractMode">,

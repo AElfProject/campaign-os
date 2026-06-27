@@ -1,67 +1,97 @@
 import type { CSSProperties } from "react";
+import { CheckCircle2, Languages, RotateCcw, Sparkles, Upload } from "lucide-react";
 import {
-  contractImpactOptions,
+  campaignDetail,
+  createContractImpactReviewModel,
+  createTranslationManagerReadModel,
   getLocalizedText,
-  seededCampaignDraft,
-  type BuilderContentRevision,
-  type CampaignDraft,
-  type ContractImpactSelection,
-  type ContractMode,
+  type CampaignShellDetail,
+  type ContractImpactReviewOption,
+  type ContentRevisionStatus,
+  type PublishState,
   type ReviewSeverity,
   type SupportedLocale,
+  type TranslationReviewPanel,
 } from "../../../../domain";
-import { ContractModeBadge, PublishStateBadge, ReviewSeverityBadge } from "../../../badges/Badges";
+import { ContractModeBadge, LocaleStatusBadge, PublishStateBadge, ReviewSeverityBadge } from "../../../badges/Badges";
 
 interface I18nContractReadinessProps {
-  draft?: CampaignDraft;
+  campaign?: CampaignShellDetail;
   locale: SupportedLocale;
 }
 
 const copy = {
   "en-US": {
+    aiCannotPublish: "AI generated translation cannot auto-publish before human review.",
     aiDraft: "AI draft",
+    blockedHighImpact: "Blocked pending high-impact manual review",
+    boundary: "Boundary",
+    contractNoExecution: "This review workbench does not distribute rewards, take reward custody, or execute contract transactions.",
     contractImpact: "Contract impact",
-    contractReview: "Contract review",
+    contractReview: "Contract Impact Review",
     defaultMode: "Safe default",
+    draftPreview: "Draft preview",
     englishSource: "English source content",
-    fallback: "Falls back to English",
+    fallback: "Fallback",
+    fallbackLocale: "Fallback locale",
+    fallbackWarning: "Chinese draft falls back to English until a project owner completes human review.",
+    futurePlanned: "Future / planned",
+    generateWithAi: "Generate with AI",
     highImpactBlocker: "High-impact manual review blocker",
-    humanReview: "Human review gate",
+    markReviewed: "Mark reviewed",
+    nextAction: "Next action",
     notPublished: "Not published",
     published: "Published",
-    rewardDisclaimer: "Reward disclaimer by locale",
+    publishRevision: "Publish revision",
+    reviewStatus: "Review status",
+    reviewed: "Reviewed",
+    rewardBoundary: "Reward boundary",
+    rewardDisclaimer: "Reward disclaimer review",
+    selected: "Selected",
+    socialPost: "Social post",
+    sourceLocale: "Source locale",
+    supportedLocales: "Supported locales",
     title: "i18n, contract, and review gates",
+    translationManager: "Translation Manager",
+    useEnglishFallback: "Use English fallback",
     zhDraft: "Chinese AI draft",
   },
   "zh-CN": {
+    aiCannotPublish: "AI 生成翻译必须经过人工审核后才能发布。",
     aiDraft: "AI 草稿",
+    blockedHighImpact: "等待高影响人工审核，已阻断",
+    boundary: "边界",
+    contractNoExecution: "这个审核工作台不会发放奖励、托管奖励，也不会执行合约交易。",
     contractImpact: "合约影响",
-    contractReview: "合约审核",
+    contractReview: "合约影响审核",
     defaultMode: "安全默认模式",
+    draftPreview: "草稿预览",
     englishSource: "英文源内容",
-    fallback: "回退英文",
+    fallback: "回退",
+    fallbackLocale: "回退语言",
+    fallbackWarning: "中文草稿在项目方完成人工审核前回退展示英文。",
+    futurePlanned: "未来规划",
+    generateWithAi: "用 AI 生成",
     highImpactBlocker: "高影响人工审核阻断",
-    humanReview: "人工审核门禁",
+    markReviewed: "标记已审核",
+    nextAction: "下一步",
     notPublished: "未发布",
     published: "已发布",
-    rewardDisclaimer: "按语言展示奖励声明",
+    publishRevision: "发布版本",
+    reviewStatus: "审核状态",
+    reviewed: "已审核",
+    rewardBoundary: "奖励边界",
+    rewardDisclaimer: "奖励声明审核",
+    selected: "已选择",
+    socialPost: "社交文案",
+    sourceLocale: "源语言",
+    supportedLocales: "支持语言",
     title: "多语言、合约与审核门禁",
+    translationManager: "翻译管理",
+    useEnglishFallback: "使用英文回退",
     zhDraft: "中文 AI 草稿",
   },
 } satisfies Record<SupportedLocale, Record<string, string>>;
-
-const contractModeLabels = {
-  "en-US": {
-    CONTRACT_CLAIM: "Contract claim",
-    OFF_CHAIN_MVP: "Off-chain MVP",
-    V2_COMPANION: "V2 companion",
-  },
-  "zh-CN": {
-    CONTRACT_CLAIM: "合约领取",
-    OFF_CHAIN_MVP: "Off-chain MVP",
-    V2_COMPANION: "V2 辅助合约",
-  },
-} satisfies Record<SupportedLocale, Record<ContractMode, string>>;
 
 const reviewSeverityLabels = {
   "en-US": {
@@ -78,7 +108,7 @@ const reviewSeverityLabels = {
 
 const sectionStyle: CSSProperties = {
   display: "grid",
-  gap: 14,
+  gap: 16,
 };
 
 const gridStyle: CSSProperties = {
@@ -92,7 +122,7 @@ const cardStyle: CSSProperties = {
   border: "1px solid #dbe6f4",
   borderRadius: 8,
   display: "grid",
-  gap: 10,
+  gap: 12,
   minWidth: 0,
   padding: 14,
 };
@@ -121,112 +151,307 @@ const bodyStyle: CSSProperties = {
 };
 
 const badgeRowStyle: CSSProperties = {
+  alignItems: "center",
   display: "flex",
   flexWrap: "wrap",
   gap: 8,
 };
 
+const actionRowStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+};
+
+const actionButtonStyle: CSSProperties = {
+  alignItems: "center",
+  background: "#ffffff",
+  border: "1px solid #cbd5e1",
+  borderRadius: 8,
+  color: "#0f172a",
+  cursor: "pointer",
+  display: "inline-flex",
+  fontSize: 13,
+  fontWeight: 800,
+  gap: 6,
+  minHeight: 34,
+  padding: "0 10px",
+};
+
+const statStripStyle: CSSProperties = {
+  alignItems: "center",
+  background: "#f8fbff",
+  border: "1px solid #dbe6f4",
+  borderRadius: 8,
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  justifyContent: "space-between",
+  padding: 12,
+};
+
 const listStyle: CSSProperties = {
   display: "grid",
-  gap: 8,
+  gap: 0,
   margin: 0,
   padding: 0,
 };
 
-const getRevision = (
-  draft: CampaignDraft,
-  locale: SupportedLocale,
-): BuilderContentRevision | undefined =>
-  draft.contentRevisions.find((revision) => revision.locale === locale);
+const contractModeState = (option: ContractImpactReviewOption): PublishState =>
+  option.publishState;
 
-const contractModeState = (option: ContractImpactSelection) =>
-  option.reviewSeverity === "blocker" ? "blocker" : option.reviewSeverity === "warning" ? "warning" : "ready";
+const revisionStatusLabel = (
+  status: ContentRevisionStatus,
+  labels: (typeof copy)[SupportedLocale],
+) => {
+  if (status === "published") {
+    return labels.published;
+  }
+
+  if (status === "human_reviewed") {
+    return labels.reviewed;
+  }
+
+  if (status === "ai_draft") {
+    return labels.aiDraft;
+  }
+
+  return labels.notPublished;
+};
+
+const localeStatusFromRevision = (panel: TranslationReviewPanel) => {
+  if (panel.published) {
+    return "published";
+  }
+
+  if (panel.humanReviewed) {
+    return "reviewed";
+  }
+
+  if (panel.fallbackToEnglish) {
+    return "fallback";
+  }
+
+  return panel.aiDraft ? "ai_draft" : "missing";
+};
+
+const modeGateLabel = (
+  option: ContractImpactReviewOption,
+  selectedMode: CampaignShellDetail["contractMode"],
+  labels: (typeof copy)[SupportedLocale],
+) => {
+  if (option.mode === "OFF_CHAIN_MVP") {
+    return labels.defaultMode;
+  }
+
+  if (option.mode === "V2_COMPANION") {
+    return labels.futurePlanned;
+  }
+
+  if (option.mode === selectedMode) {
+    return labels.blockedHighImpact;
+  }
+
+  return labels.highImpactBlocker;
+};
+
+const reviewActions = (labels: (typeof copy)[SupportedLocale]) => [
+  { Icon: Sparkles, label: labels.generateWithAi },
+  { Icon: CheckCircle2, label: labels.markReviewed },
+  { Icon: Upload, label: labels.publishRevision },
+  { Icon: RotateCcw, label: labels.useEnglishFallback },
+];
+
+const WorkbenchActionButton = ({
+  Icon,
+  label,
+}: {
+  Icon: typeof Sparkles;
+  label: string;
+}) => (
+  <button style={actionButtonStyle} type="button">
+    <Icon aria-hidden="true" size={15} strokeWidth={2.4} />
+    {label}
+  </button>
+);
+
+const TranslationPanelCard = ({
+  labels,
+  locale,
+  panel,
+}: {
+  labels: (typeof copy)[SupportedLocale];
+  locale: SupportedLocale;
+  panel: TranslationReviewPanel;
+}) => (
+  <article style={cardStyle}>
+    <span style={badgeRowStyle}>
+      <PublishStateBadge
+        label={`${panel.locale} ${getLocalizedText(panel.label, locale)}`}
+        state={panel.publishState}
+      />
+      <LocaleStatusBadge
+        label={`${panel.locale} ${revisionStatusLabel(panel.status, labels)}`}
+        status={localeStatusFromRevision(panel)}
+      />
+      {panel.fallbackToEnglish ? (
+        <PublishStateBadge label={labels.fallback} state="warning" />
+      ) : null}
+    </span>
+    <div>
+      <p style={labelStyle}>
+        {panel.locale === "en-US" ? labels.englishSource : labels.zhDraft}
+      </p>
+      <p style={valueStyle}>{panel.title}</p>
+    </div>
+    <p style={bodyStyle}>{panel.description}</p>
+    <p style={labelStyle}>{labels.socialPost}</p>
+    <p style={bodyStyle}>{panel.socialPost}</p>
+    <p style={labelStyle}>{labels.nextAction}</p>
+    <p style={bodyStyle}>{getLocalizedText(panel.nextAction, locale)}</p>
+  </article>
+);
+
+const ContractModeRow = ({
+  labels,
+  locale,
+  option,
+  selectedMode,
+}: {
+  labels: (typeof copy)[SupportedLocale];
+  locale: SupportedLocale;
+  option: ContractImpactReviewOption;
+  selectedMode: CampaignShellDetail["contractMode"];
+}) => (
+  <li
+    style={{
+      borderTop: "1px solid #dbe6f4",
+      display: "grid",
+      gap: 8,
+      listStyle: "none",
+      padding: "12px 0",
+    }}
+  >
+    <span style={badgeRowStyle}>
+      <ContractModeBadge mode={option.mode} label={getLocalizedText(option.label, locale)} />
+      {option.mode === selectedMode ? (
+        <PublishStateBadge label={labels.selected} state={option.publishState} />
+      ) : null}
+      <ReviewSeverityBadge
+        severity={option.reviewSeverity}
+        label={reviewSeverityLabels[locale][option.reviewSeverity]}
+      />
+      <PublishStateBadge
+        label={modeGateLabel(option, selectedMode, labels)}
+        state={contractModeState(option)}
+      />
+    </span>
+    <p style={bodyStyle}>{getLocalizedText(option.description, locale)}</p>
+    <p style={labelStyle}>{labels.boundary}</p>
+    <p style={bodyStyle}>{getLocalizedText(option.boundary, locale)}</p>
+    <p style={labelStyle}>{labels.nextAction}</p>
+    <p style={bodyStyle}>{getLocalizedText(option.nextAction, locale)}</p>
+  </li>
+);
 
 export const I18nContractReadiness = ({
-  draft = seededCampaignDraft,
+  campaign = campaignDetail,
   locale,
 }: I18nContractReadinessProps) => {
   const labels = copy[locale];
-  const englishRevision = getRevision(draft, "en-US");
-  const chineseRevision = getRevision(draft, "zh-CN");
+  const translationManager = createTranslationManagerReadModel(campaign);
+  const contractReview = createContractImpactReviewModel(campaign);
+  const englishPanel = translationManager.panels.find((panel) => panel.locale === "en-US");
+  const chinesePanel = translationManager.panels.find((panel) => panel.locale === "zh-CN");
 
   return (
     <section aria-label={labels.title} style={sectionStyle}>
-      <h3 style={{ fontSize: 20, lineHeight: 1.2, margin: 0 }}>{labels.title}</h3>
-      <div style={gridStyle}>
-        <article style={cardStyle}>
-          <p style={labelStyle}>{labels.englishSource}</p>
-          <p style={valueStyle}>{englishRevision?.title ?? getLocalizedText(draft.campaignName, "en-US")}</p>
-          <p style={bodyStyle}>{englishRevision?.description}</p>
-          <p style={bodyStyle}>{englishRevision?.socialPost}</p>
-          <span style={badgeRowStyle}>
-            <PublishStateBadge
-              label={englishRevision?.published ? labels.published : labels.notPublished}
-              state={englishRevision?.published ? "ready" : "warning"}
-            />
-            <PublishStateBadge
-              label={englishRevision?.humanReviewed ? labels.humanReview : labels.aiDraft}
-              state={englishRevision?.humanReviewed ? "ready" : "warning"}
-            />
-          </span>
-        </article>
-
-        <article style={cardStyle}>
-          <p style={labelStyle}>{labels.zhDraft}</p>
-          <p style={valueStyle}>{chineseRevision?.title ?? getLocalizedText(draft.campaignName, "zh-CN")}</p>
-          <p style={bodyStyle}>{chineseRevision?.description}</p>
-          <span style={badgeRowStyle}>
-            <PublishStateBadge
-              label={chineseRevision?.aiDraft ? labels.aiDraft : labels.humanReview}
-              state={chineseRevision?.humanReviewed ? "ready" : "warning"}
-            />
-            <PublishStateBadge
-              label={chineseRevision?.fallbackToEnglish ? labels.fallback : labels.published}
-              state={chineseRevision?.fallbackToEnglish ? "warning" : "ready"}
-            />
-            <PublishStateBadge
-              label={chineseRevision?.published ? labels.published : labels.notPublished}
-              state={chineseRevision?.published ? "ready" : "warning"}
-            />
-          </span>
-        </article>
-
-        <article style={cardStyle}>
-          <p style={labelStyle}>{labels.rewardDisclaimer}</p>
-          <p style={valueStyle}>en-US</p>
-          <p style={bodyStyle}>{englishRevision?.rewardDisclaimer ?? draft.rewardPlan.disclaimer["en-US"]}</p>
-          <p style={valueStyle}>zh-CN</p>
-          <p style={bodyStyle}>{chineseRevision?.rewardDisclaimer ?? draft.rewardPlan.disclaimer["zh-CN"]}</p>
-        </article>
+      <div style={badgeRowStyle}>
+        <h3 style={{ fontSize: 20, lineHeight: 1.2, margin: 0 }}>{labels.title}</h3>
+        <PublishStateBadge label={labels.aiDraft} state="warning" />
+        <PublishStateBadge label={labels.defaultMode} state="ready" />
       </div>
 
-      <article style={cardStyle}>
-        <p style={labelStyle}>{labels.contractImpact}</p>
-        <ul style={listStyle}>
-          {contractImpactOptions.map((option) => (
-            <li key={option.mode} style={{ display: "grid", gap: 8, listStyle: "none" }}>
+      <article aria-label={labels.translationManager} style={cardStyle}>
+        <div style={statStripStyle}>
+          <span style={{ alignItems: "center", display: "inline-flex", gap: 8 }}>
+            <Languages aria-hidden="true" size={18} />
+            <strong>{labels.translationManager}</strong>
+          </span>
+          <span style={badgeRowStyle}>
+            <PublishStateBadge label={`${labels.sourceLocale}: ${translationManager.sourceLocale}`} state="ready" />
+            <PublishStateBadge label={`${labels.fallbackLocale}: ${translationManager.fallbackLocale}`} state="warning" />
+          </span>
+        </div>
+        <div>
+          <p style={labelStyle}>{labels.supportedLocales}</p>
+          <span style={badgeRowStyle}>
+            {translationManager.supportedLocales.map((supportedLocale) => (
+              <PublishStateBadge key={supportedLocale} label={supportedLocale} state="ready" />
+            ))}
+          </span>
+        </div>
+        <p style={bodyStyle}>{getLocalizedText(translationManager.noAutoPublishNotice, locale)}</p>
+        <p style={bodyStyle}>{labels.fallbackWarning}</p>
+        <div style={actionRowStyle}>
+          {reviewActions(labels).map((action) => (
+            <WorkbenchActionButton key={action.label} Icon={action.Icon} label={action.label} />
+          ))}
+        </div>
+      </article>
+
+      <div style={gridStyle}>
+        {englishPanel ? (
+          <TranslationPanelCard labels={labels} locale={locale} panel={englishPanel} />
+        ) : null}
+        {chinesePanel ? (
+          <TranslationPanelCard labels={labels} locale={locale} panel={chinesePanel} />
+        ) : null}
+      </div>
+
+      <article aria-label={labels.rewardDisclaimer} style={cardStyle}>
+        <p style={labelStyle}>{labels.rewardDisclaimer}</p>
+        <div style={gridStyle}>
+          {translationManager.rewardDisclaimers.map((row) => (
+            <div key={row.locale} style={{ display: "grid", gap: 8 }}>
               <span style={badgeRowStyle}>
-                <ContractModeBadge mode={option.mode} label={contractModeLabels[locale][option.mode]} />
-                <ReviewSeverityBadge
-                  severity={option.reviewSeverity}
-                  label={reviewSeverityLabels[locale][option.reviewSeverity]}
-                />
+                <PublishStateBadge label={row.locale} state={row.publishState} />
                 <PublishStateBadge
-                  label={option.mode === "OFF_CHAIN_MVP" ? labels.defaultMode : labels.contractReview}
-                  state={contractModeState(option)}
+                  label={row.reviewed ? labels.reviewed : labels.aiDraft}
+                  state={row.publishState}
                 />
-                {option.mode === "CONTRACT_CLAIM" ? (
-                  <PublishStateBadge label={labels.highImpactBlocker} state="blocker" />
+                {row.fallbackToEnglish ? (
+                  <PublishStateBadge label={labels.fallback} state="warning" />
                 ) : null}
               </span>
-              <p style={bodyStyle}>
-                {option.requiresVerifierRole
-                  ? labels.contractReview
-                  : labels.defaultMode}
-              </p>
-            </li>
+              <p style={bodyStyle}>{row.disclaimer}</p>
+            </div>
+          ))}
+        </div>
+      </article>
+
+      <article aria-label={labels.contractReview} style={cardStyle}>
+        <div style={statStripStyle}>
+          <span>
+            <p style={labelStyle}>{labels.contractImpact}</p>
+            <p style={valueStyle}>{labels.contractReview}</p>
+          </span>
+          <PublishStateBadge label={labels.defaultMode} state="ready" />
+        </div>
+        <p style={bodyStyle}>{labels.contractNoExecution}</p>
+        <ul style={listStyle}>
+          {contractReview.options.map((option) => (
+            <ContractModeRow
+              key={option.mode}
+              labels={labels}
+              locale={locale}
+              option={option}
+              selectedMode={contractReview.selectedMode}
+            />
           ))}
         </ul>
+        <p style={labelStyle}>{labels.rewardBoundary}</p>
+        <p style={bodyStyle}>{getLocalizedText(contractReview.rewardBoundary, locale)}</p>
       </article>
     </section>
   );

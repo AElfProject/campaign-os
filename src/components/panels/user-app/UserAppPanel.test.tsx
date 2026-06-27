@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
 
@@ -13,12 +13,22 @@ describe("User App shell", () => {
     expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
     expect(screen.getByText("Campaign OS never asks for private keys or seed phrases.")).toBeInTheDocument();
     expect(screen.getByText("Wallet connection is limited to connection and message signing in this shell.")).toBeInTheDocument();
-    expect(screen.getByText("Portkey AA Wallet")).toBeInTheDocument();
-    expect(screen.getByText("Portkey EOA App")).toBeInTheDocument();
-    expect(screen.getByText("Portkey EOA Extension")).toBeInTheDocument();
-    expect(screen.getByText("NightElf Wallet")).toBeInTheDocument();
-    expect(screen.getByText("Agent Skill Wallet")).toBeInTheDocument();
-    expect(screen.getByText("Internal/advanced")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recommended" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "EOA wallets" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Advanced / Agent" })).toBeInTheDocument();
+
+    const recommendedWallets = within(screen.getByTestId("wallet-group-recommended"));
+    expect(recommendedWallets.getByText("Portkey AA Wallet")).toBeInTheDocument();
+    expect(recommendedWallets.getAllByText("Recommended").length).toBeGreaterThan(0);
+
+    const eoaWallets = within(screen.getByTestId("wallet-group-eoa"));
+    expect(eoaWallets.getByText("Portkey EOA App")).toBeInTheDocument();
+    expect(eoaWallets.getByText("Portkey EOA Extension")).toBeInTheDocument();
+    expect(eoaWallets.getByText("NightElf Wallet")).toBeInTheDocument();
+
+    const advancedWallets = within(screen.getByTestId("wallet-group-advanced"));
+    expect(advancedWallets.getByText("Agent Skill Wallet")).toBeInTheDocument();
+    expect(advancedWallets.getAllByText("Internal/advanced").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Bridge via eBridge").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Eligibility checker").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Not eligible").length).toBeGreaterThan(0);
@@ -50,6 +60,13 @@ describe("User App shell", () => {
     expect(screen.getByRole("button", { name: "连接钱包" })).toBeInTheDocument();
     expect(screen.getByText("Campaign OS 永远不会索要私钥或助记词。")).toBeInTheDocument();
     expect(screen.getByText("钱包选项")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "推荐" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "EOA 钱包" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "高级 / Agent" })).toBeInTheDocument();
+    expect(within(screen.getByTestId("wallet-group-recommended")).getByText("Portkey AA Wallet")).toBeInTheDocument();
+    expect(within(screen.getByTestId("wallet-group-eoa")).getByText("NightElf Wallet")).toBeInTheDocument();
+    expect(within(screen.getByTestId("wallet-group-advanced")).getByText("Agent Skill Wallet")).toBeInTheDocument();
+    expect(screen.getAllByText("内部/高级").length).toBeGreaterThan(0);
     expect(screen.getAllByText("通过 eBridge 跨链").length).toBeGreaterThan(0);
     expect(screen.getAllByText("资格检查器").length).toBeGreaterThan(0);
     expect(screen.getAllByText("不符合资格").length).toBeGreaterThan(0);
@@ -62,5 +79,6 @@ describe("User App shell", () => {
     expect(screen.getByText("合格被邀请人")).toBeInTheDocument();
     expect(screen.getByText("排行榜预览")).toBeInTheDocument();
     expect(screen.getByText("仅注册不会计分；被邀请人必须完成有效任务后才会产生推荐积分。")).toBeInTheDocument();
+    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
 });

@@ -38,6 +38,7 @@ export type ReviewItemType = "AI_CONTENT" | "CONTRACT_IMPACT" | "RISK_FLAG" | "E
 export type ReviewSeverity = "info" | "warning" | "blocker";
 export type ReviewStatus = "open" | "in_review" | "approved" | "rejected";
 export type OwnerRole = "project_owner" | "internal_operator" | "contract_reviewer";
+export type PublishState = "ready" | "warning" | "blocker";
 export type EligibilityStatus = "eligible" | "not_eligible" | "pending" | "risk_flagged" | "ended";
 export type TaskVerificationStatus = "ready" | "pending" | "completed" | "failed" | "manual_review";
 export type EvidenceSource = "wallet" | "aefinder" | "aelfscan" | "dapp_api" | "social_api" | "manual";
@@ -141,6 +142,7 @@ export interface ContentRevision {
   sourceLocale: "en-US";
   title: string;
   description: string;
+  socialPost: string;
   rewardDisclaimer: string;
   status: ContentRevisionStatus;
   reviewer?: string;
@@ -161,6 +163,65 @@ export interface PublishReadiness {
   ready: boolean;
   blockers: string[];
   warnings: string[];
+}
+
+export interface TranslationReviewPanel {
+  locale: SupportedLocale;
+  label: LocalizedText;
+  sourceLocale: "en-US";
+  title: string;
+  description: string;
+  socialPost: string;
+  rewardDisclaimer: string;
+  status: ContentRevisionStatus;
+  aiDraft: boolean;
+  humanReviewed: boolean;
+  fallbackToEnglish: boolean;
+  published: boolean;
+  publishState: PublishState;
+  reviewer?: string;
+  updatedAt: string;
+  nextAction: LocalizedText;
+}
+
+export interface RewardDisclaimerReviewRow {
+  locale: SupportedLocale;
+  disclaimer: string;
+  reviewed: boolean;
+  fallbackToEnglish: boolean;
+  publishState: PublishState;
+}
+
+export interface TranslationManagerReadModel {
+  campaignId: string;
+  defaultLocale: "en-US";
+  fallbackLocale: "en-US";
+  supportedLocales: SupportedLocale[];
+  sourceLocale: "en-US";
+  panels: TranslationReviewPanel[];
+  rewardDisclaimers: RewardDisclaimerReviewRow[];
+  noAutoPublishNotice: LocalizedText;
+}
+
+export interface ContractImpactReviewOption {
+  mode: ContractMode;
+  label: LocalizedText;
+  description: LocalizedText;
+  reviewSeverity: ReviewSeverity;
+  publishState: PublishState;
+  requiresVerifierRole: boolean;
+  requiresMetadataHash: boolean;
+  requiresHighImpactReview: boolean;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface ContractImpactReviewModel {
+  campaignId: string;
+  selectedMode: ContractMode;
+  safeDefaultMode: "OFF_CHAIN_MVP";
+  options: ContractImpactReviewOption[];
+  rewardBoundary: LocalizedText;
 }
 
 export interface ExportPreviewRow {

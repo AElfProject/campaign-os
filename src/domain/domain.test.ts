@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   campaignDetail,
+  createContractImpactReviewModel,
   computeMissingTasks,
   computePublishReadiness,
   createAdminOpsReadModel,
   createExportPreview,
   createParticipationReadModel,
+  createTranslationManagerReadModel,
   deriveParticipantTaskStates,
   defaultLocale,
   fallbackLocale,
@@ -22,6 +24,93 @@ describe("Campaign OS domain foundation", () => {
     expect(fallbackLocale).toBe("en-US");
     expect(isSupportedLocale("zh-CN")).toBe(true);
     expect(isSupportedLocale("zh-TW")).toBe(false);
+  });
+
+  it("derives translation manager review state for supported MVP locales only", () => {
+    const translationManager = createTranslationManagerReadModel(campaignDetail);
+    const englishPanel = translationManager.panels.find((panel) => panel.locale === "en-US");
+    const chinesePanel = translationManager.panels.find((panel) => panel.locale === "zh-CN");
+
+    expect(translationManager.defaultLocale).toBe("en-US");
+    expect(translationManager.fallbackLocale).toBe("en-US");
+    expect(translationManager.supportedLocales).toEqual(["en-US", "zh-CN"]);
+    expect(translationManager.supportedLocales).not.toContain("zh-TW");
+    expect(translationManager.noAutoPublishNotice["en-US"]).toContain("cannot auto-publish");
+    expect(englishPanel).toMatchObject({
+      locale: "en-US",
+      sourceLocale: "en-US",
+      aiDraft: false,
+      fallbackToEnglish: false,
+      humanReviewed: true,
+      published: true,
+      publishState: "ready",
+    });
+    expect(englishPanel?.socialPost).toContain("Join Awaken Sprint");
+    expect(chinesePanel).toMatchObject({
+      locale: "zh-CN",
+      sourceLocale: "en-US",
+      aiDraft: true,
+      fallbackToEnglish: true,
+      humanReviewed: false,
+      published: false,
+      publishState: "warning",
+    });
+    expect(chinesePanel?.nextAction["en-US"]).toBe(
+      "AI generated translation cannot auto-publish before human review.",
+    );
+  });
+
+  it("derives reward disclaimer review rows from translation state", () => {
+    const translationManager = createTranslationManagerReadModel(campaignDetail);
+
+    expect(translationManager.rewardDisclaimers).toEqual([
+      expect.objectContaining({
+        locale: "en-US",
+        reviewed: true,
+        fallbackToEnglish: false,
+        publishState: "ready",
+      }),
+      expect.objectContaining({
+        locale: "zh-CN",
+        reviewed: false,
+        fallbackToEnglish: true,
+        publishState: "warning",
+      }),
+    ]);
+    expect(translationManager.rewardDisclaimers[0].disclaimer).toContain(
+      "does not distribute rewards",
+    );
+    expect(translationManager.rewardDisclaimers[1].disclaimer).toContain("不等于发奖");
+  });
+
+  it("derives contract impact review boundaries without enabling contract execution", () => {
+    const offChainReview = createContractImpactReviewModel(campaignDetail);
+    const claimReview = createContractImpactReviewModel({
+      ...campaignDetail,
+      contractMode: "CONTRACT_CLAIM",
+    });
+
+    expect(offChainReview.safeDefaultMode).toBe("OFF_CHAIN_MVP");
+    expect(offChainReview.rewardBoundary["en-US"]).toContain("Export winners does not distribute rewards");
+    expect(offChainReview.options.find((option) => option.mode === "OFF_CHAIN_MVP")).toMatchObject({
+      publishState: "ready",
+      reviewSeverity: "info",
+      requiresVerifierRole: false,
+      requiresHighImpactReview: false,
+    });
+    expect(offChainReview.options.find((option) => option.mode === "V2_COMPANION")).toMatchObject({
+      publishState: "warning",
+      reviewSeverity: "warning",
+      requiresMetadataHash: true,
+    });
+    expect(offChainReview.options.find((option) => option.mode === "CONTRACT_CLAIM")).toMatchObject({
+      publishState: "blocker",
+      reviewSeverity: "blocker",
+      requiresHighImpactReview: true,
+    });
+    expect(
+      claimReview.options.find((option) => option.mode === "CONTRACT_CLAIM")?.boundary["en-US"],
+    ).toBe("Selected contract claim remains blocked; no contract transaction is executed.");
   });
 
   it("labels AA and EOA wallet states", () => {
