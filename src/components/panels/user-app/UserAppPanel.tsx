@@ -2,14 +2,18 @@ import { useState, type CSSProperties } from "react";
 import {
   campaignDetail,
   createEcosystemNextActionReadModel,
+  createEligibilityCheckerReadModel,
+  createLeaderboardReadModel,
   createParticipationReadModel,
   createWalletConnectionDiagnostics,
+  getWalletCompatibilityLabel,
   getWalletBadgeLabel,
   getLocalizedText,
   walletOptions,
   type CampaignShellDetail,
   type CampaignStatus,
   type EligibilityStatus,
+  type LeaderboardModeId,
   type EcosystemRecommendationPriority,
   type EcosystemRecommendationStatus,
   type LocalizedText,
@@ -105,6 +109,18 @@ const buttonStyle: CSSProperties = {
   width: "fit-content",
 };
 
+const secondaryButtonStyle: CSSProperties = {
+  ...buttonStyle,
+  background: "#ffffff",
+  color: "#1c64f2",
+};
+
+const activeChoiceButtonStyle: CSSProperties = {
+  ...buttonStyle,
+  background: "#071426",
+  border: "1px solid #071426",
+};
+
 const listStyle: CSSProperties = {
   display: "grid",
   gap: 10,
@@ -171,7 +187,7 @@ const progressTrackStyle: CSSProperties = {
 
 const tableStyle: CSSProperties = {
   borderCollapse: "collapse",
-  minWidth: 720,
+  minWidth: 940,
   width: "100%",
 };
 
@@ -658,8 +674,14 @@ export const UserAppPanel = ({
   participant = campaignDetail.participants[1],
 }: UserAppPanelProps) => {
   const [isWalletModalOpen, setWalletModalOpen] = useState(false);
+  const [eligibilityAddressInput, setEligibilityAddressInput] = useState(participant.walletAddress);
+  const [checkedEligibilityAddress, setCheckedEligibilityAddress] = useState(participant.walletAddress);
+  const [leaderboardMode, setLeaderboardMode] = useState<LeaderboardModeId>("total_points");
   const copy = userAppCopy[locale];
   const participation = createParticipationReadModel(campaign, participant);
+  const eligibilityChecker = createEligibilityCheckerReadModel(campaign, checkedEligibilityAddress);
+  const eligibilityResult = eligibilityChecker.result;
+  const leaderboard = createLeaderboardReadModel(campaign, leaderboardMode);
   const ecosystemNextActions = createEcosystemNextActionReadModel(campaign, participant);
   const taskStates = participation.taskStates;
   const completedCount = taskStates.filter((task) => task.completed).length;
@@ -704,6 +726,9 @@ export const UserAppPanel = ({
       ecosystemNextActions.summary.reviewCount > 0 ? "warning" : "ready",
     ],
   ];
+  const submitEligibilityCheck = () => {
+    setCheckedEligibilityAddress(eligibilityAddressInput.trim());
+  };
 
   return (
     <div style={{ display: "grid", gap: 18, minWidth: 0 }}>
@@ -1070,67 +1095,153 @@ export const UserAppPanel = ({
 
       <WalletOptionCards copy={copy} options={walletOptions} />
 
-      <section style={panelStyle}>
+      <section aria-label={copy.eligibility} style={panelStyle}>
         <div style={rowStyle}>
           <div>
             <p style={labelStyle}>{copy.status}</p>
             <h3 style={{ fontSize: 20, margin: "2px 0 0" }}>{copy.eligibility}</h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: "6px 0 0" }}>
+              {getLocalizedText(eligibilityChecker.summary.description, locale)}
+            </p>
           </div>
           <PublishStateBadge
-            label={eligibilityLabel(participation.eligibility.status, copy)}
-            state={eligibilityBadgeState(participation.eligibility.status)}
+            label={eligibilityLabel(eligibilityResult.status, copy)}
+            state={eligibilityBadgeState(eligibilityResult.status)}
           />
+        </div>
+
+        <div style={{ ...cardStyle, background: "#ffffff" }}>
+          <label
+            htmlFor="eligibility-address"
+            style={{ ...labelStyle, color: "#334155" }}
+          >
+            {copy.eligibilityAddress}
+          </label>
+          <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 10 }}>
+            <input
+              id="eligibility-address"
+              onChange={(event) => setEligibilityAddressInput(event.target.value)}
+              style={{
+                border: "1px solid #cbd5e1",
+                borderRadius: 8,
+                color: "#071426",
+                flex: "1 1 220px",
+                fontSize: 15,
+                minHeight: 40,
+                minWidth: 0,
+                padding: "0 12px",
+              }}
+              type="text"
+              value={eligibilityAddressInput}
+            />
+            <button onClick={submitEligibilityCheck} style={buttonStyle} type="button">
+              {copy.checkAddressEligibility}
+            </button>
+          </div>
+          <div style={{ display: "grid", gap: 8 }}>
+            <p style={labelStyle}>{copy.seededParticipants}</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {eligibilityChecker.entries.map((entry) => {
+                const isSelected = entry.walletAddress === eligibilityResult.walletAddress;
+
+                return (
+                  <button
+                    aria-pressed={isSelected}
+                    key={entry.id}
+                    onClick={() => {
+                      setEligibilityAddressInput(entry.walletAddress);
+                      setCheckedEligibilityAddress(entry.walletAddress);
+                    }}
+                    style={isSelected ? activeChoiceButtonStyle : secondaryButtonStyle}
+                    type="button"
+                  >
+                    {entry.walletAddress} · {eligibilityLabel(entry.status, copy)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         <div style={metricGridStyle}>
           <div style={cardStyle}>
             <p style={labelStyle}>{copy.score}</p>
-            <p style={valueStyle}>{participation.eligibility.score}</p>
+            <p style={valueStyle}>{eligibilityResult.score}</p>
             <span style={{ color: "#475569", fontSize: 13 }}>
-              {copy.pointsThreshold}: {participation.eligibility.pointsThreshold}
+              {copy.pointsThreshold}: {eligibilityResult.pointsThreshold}
             </span>
           </div>
           <div style={cardStyle}>
             <p style={labelStyle}>{copy.completedRequired}</p>
             <p style={valueStyle}>
-              {participation.metrics.completedRequiredTasks}/{participation.metrics.totalRequiredTasks}
+              {eligibilityResult.completedRequiredTasks}/{eligibilityResult.totalRequiredTasks}
             </p>
             <span style={{ color: "#475569", fontSize: 13 }}>
-              {copy.rank}: #{participation.metrics.participantRank}
+              {eligibilityResult.progressPercent}%
             </span>
           </div>
           <div style={cardStyle}>
             <p style={labelStyle}>{copy.walletType}</p>
             <WalletBadge
-              accountType={participant.accountType}
-              walletSource={participant.walletSource}
+              accountType={eligibilityResult.accountType}
+              walletSource={eligibilityResult.walletSource}
             />
-            {participation.eligibility.walletStatus ? (
+            {eligibilityResult.walletStatus ? (
               <WalletVerificationBadge
-                label={getLocalizedText(participation.eligibility.walletStatus.statusMessage, locale)}
-                status={participation.eligibility.walletStatus.verificationStatus}
+                label={getLocalizedText(eligibilityResult.walletStatus.statusMessage, locale)}
+                status={eligibilityResult.walletStatus.verificationStatus}
               />
             ) : null}
             <span style={{ color: "#475569", fontSize: 13 }}>
-              {copy.walletAddress}: {participant.walletAddress}
+              {copy.checkedAddress}: {eligibilityResult.walletAddress}
             </span>
             <span style={{ color: "#475569", fontSize: 13 }}>
               {copy.walletTypeVerified}:{" "}
-              {participation.eligibility.walletStatus?.walletTypeVerified
+              {eligibilityResult.walletTypeVerified
                 ? copy.eligible
                 : copy.notEligible}
             </span>
+            {!eligibilityResult.knownParticipant ? (
+              <span style={{ color: "#92400e", fontSize: 13, fontWeight: 800 }}>
+                {copy.unknownWalletType}
+              </span>
+            ) : null}
           </div>
         </div>
 
         <div style={gridStyle}>
           <div style={cardStyle}>
             <p style={labelStyle}>{copy.missingTasks}</p>
-            {missingTasks.length > 0 ? (
-              <ul style={{ display: "grid", gap: 6, margin: 0, paddingInlineStart: 18 }}>
-                {missingTasks.map((task) => (
-                  <li key={task.id}>
-                    <strong>{getLocalizedText(task.title, locale)}</strong>
+            {eligibilityResult.missingTasks.length > 0 ? (
+              <ul style={listStyle}>
+                {eligibilityResult.missingTasks.map((task) => (
+                  <li key={task.taskId} style={listItemStyle}>
+                    <div style={rowStyle}>
+                      <strong>{getLocalizedText(task.title, locale)}</strong>
+                      <PublishStateBadge
+                        label={taskStatusLabel(task.status, copy)}
+                        state={taskBadgeState(task.status)}
+                      />
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
+                        {copy.points}: {task.points}
+                      </span>
+                      <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
+                        {copy.verification}: {task.verificationType}
+                      </span>
+                      <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
+                        {copy.compatibility}: {getWalletCompatibilityLabel(task.walletCompatibility)}
+                      </span>
+                      {task.evidenceSource ? (
+                        <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
+                          {copy.evidenceSource}: {formatSource(task.evidenceSource)}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                      {copy.nextAction}: {getLocalizedText(task.nextAction, locale)}
+                    </p>
                   </li>
                 ))}
               </ul>
@@ -1141,17 +1252,26 @@ export const UserAppPanel = ({
           <div style={cardStyle}>
             <p style={labelStyle}>{copy.riskFlags}</p>
             <strong>
-              {participation.eligibility.riskFlags.join(", ") || copy.riskClear}
+              {eligibilityResult.riskFlags.join(", ") || copy.riskClear}
             </strong>
+            {eligibilityResult.riskFlags.length > 0 ? (
+              <span style={{ color: "#92400e", fontSize: 13, fontWeight: 800 }}>
+                {copy.manualReview}
+              </span>
+            ) : null}
           </div>
           <div style={cardStyle}>
             <p style={labelStyle}>{copy.nextAction}</p>
-            <strong>{getLocalizedText(participation.eligibility.nextAction, locale)}</strong>
+            <strong>{getLocalizedText(eligibilityResult.nextAction, locale)}</strong>
             <span style={{ color: "#475569", fontSize: 13 }}>
-              {getLocalizedText(participation.eligibility.reason, locale)}
+              {getLocalizedText(eligibilityResult.reason, locale)}
             </span>
           </div>
         </div>
+
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+          {getLocalizedText(eligibilityResult.boundary, locale)} {copy.rewardBoundary}
+        </p>
       </section>
 
       <section style={panelStyle}>
@@ -1265,13 +1385,60 @@ export const UserAppPanel = ({
         </article>
       </section>
 
-      <section style={panelStyle}>
+      <section aria-label={copy.leaderboard} style={panelStyle}>
         <div style={rowStyle}>
-          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.leaderboard}</h3>
+          <div>
+            <p style={labelStyle}>{copy.leaderboardMode}</p>
+            <h3 style={{ fontSize: 20, margin: "2px 0 0" }}>{copy.leaderboard}</h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: "6px 0 0" }}>
+              {getLocalizedText(leaderboard.summary, locale)}
+            </p>
+          </div>
           <span style={{ color: "#64748b", fontSize: 13, fontWeight: 800 }}>
-            {participation.leaderboard.length} rows
+            {copy.rowCount}: {leaderboard.rows.length}
           </span>
         </div>
+
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {leaderboard.modes.map((mode) => {
+              const isSelected = mode.id === leaderboard.selectedMode;
+
+              return (
+                <button
+                  aria-pressed={isSelected}
+                  key={mode.id}
+                  onClick={() => setLeaderboardMode(mode.id)}
+                  style={isSelected ? activeChoiceButtonStyle : secondaryButtonStyle}
+                  type="button"
+                >
+                  {getLocalizedText(mode.label, locale)}
+                </button>
+              );
+            })}
+          </div>
+          <div style={cardStyle}>
+            <p style={labelStyle}>{copy.activeMode}</p>
+            <strong>
+              {getLocalizedText(
+                leaderboard.modes.find((mode) => mode.id === leaderboard.selectedMode)?.label ??
+                  leaderboard.modes[0].label,
+                locale,
+              )}
+            </strong>
+            <span style={{ color: "#475569", fontSize: 13, lineHeight: 1.45 }}>
+              {getLocalizedText(
+                leaderboard.modes.find((mode) => mode.id === leaderboard.selectedMode)?.description ??
+                  leaderboard.modes[0].description,
+                locale,
+              )}
+            </span>
+            <span style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45 }}>
+              {copy.qualityPolicy}: {getLocalizedText(leaderboard.qualityPolicy, locale)}
+            </span>
+          </div>
+        </div>
+
         <div style={{ maxWidth: "100%", minWidth: 0, overflowX: "auto" }}>
           <table style={tableStyle}>
             <thead>
@@ -1280,24 +1447,45 @@ export const UserAppPanel = ({
                 <th style={thStyle}>{copy.walletAddress}</th>
                 <th style={thStyle}>{copy.walletType}</th>
                 <th style={thStyle}>{copy.points}</th>
+                <th style={thStyle}>{copy.verifiedActions}</th>
+                <th style={thStyle}>{copy.onChainActions}</th>
+                <th style={thStyle}>
+                  {copy.referralPoints} / {copy.qualifiedInvitees}
+                </th>
                 <th style={thStyle}>{copy.eligibility}</th>
-                <th style={thStyle}>{copy.riskFlags}</th>
+                <th style={thStyle}>{copy.riskLevel}</th>
+                <th style={thStyle}>{copy.modeScore}</th>
               </tr>
             </thead>
             <tbody>
-              {participation.leaderboard.map((row) => (
+              {leaderboard.rows.map((row) => (
                 <tr key={row.walletAddress}>
                   <td style={tdStyle}>#{row.rank}</td>
                   <td style={tdStyle}>{row.walletAddress}</td>
                   <td style={tdStyle}>{getWalletBadgeLabel(row.accountType, row.walletSource)}</td>
                   <td style={tdStyle}>{row.totalPoints}</td>
+                  <td style={tdStyle}>{row.verifiedActionCount}</td>
+                  <td style={tdStyle}>{row.onChainActionCount}</td>
+                  <td style={tdStyle}>
+                    {row.referralPoints} / {row.qualifiedInvitees}
+                  </td>
                   <td style={tdStyle}>{row.eligible ? copy.eligible : copy.notEligible}</td>
-                  <td style={tdStyle}>{row.riskFlags.join(", ") || copy.riskClear}</td>
+                  <td style={tdStyle}>
+                    {row.riskLevel}
+                    <br />
+                    <span style={{ color: "#64748b" }}>
+                      {row.riskFlags.join(", ") || copy.riskClear}
+                    </span>
+                  </td>
+                  <td style={tdStyle}>{row.modeScore}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+          {getLocalizedText(leaderboard.boundary, locale)}
+        </p>
       </section>
     </div>
   );
