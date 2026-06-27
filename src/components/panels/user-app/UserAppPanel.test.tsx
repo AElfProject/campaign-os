@@ -95,6 +95,46 @@ describe("User App shell", () => {
     expect(screen.getAllByText("Rewards are provided by the campaign project. Export winners does not distribute rewards.").length).toBeGreaterThan(0);
   });
 
+  it("opens and closes the seeded wallet connect modal in en-US", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+
+    expect(within(dialog).getByTestId("wallet-modal-group-recommended")).toBeInTheDocument();
+    expect(within(dialog).getByTestId("wallet-modal-group-eoa")).toBeInTheDocument();
+    expect(within(dialog).getByTestId("wallet-modal-group-advanced")).toBeInTheDocument();
+
+    const recommendedWallets = within(within(dialog).getByTestId("wallet-modal-group-recommended"));
+    expect(recommendedWallets.getByText("Portkey AA Wallet")).toBeInTheDocument();
+    expect(recommendedWallets.getAllByText("Recommended").length).toBeGreaterThan(0);
+
+    const eoaWallets = within(within(dialog).getByTestId("wallet-modal-group-eoa"));
+    expect(eoaWallets.getByText("Portkey EOA App")).toBeInTheDocument();
+    expect(eoaWallets.getByText("Portkey EOA Extension")).toBeInTheDocument();
+    expect(eoaWallets.getByText("NightElf Wallet")).toBeInTheDocument();
+
+    const advancedWallets = within(within(dialog).getByTestId("wallet-modal-group-advanced"));
+    expect(advancedWallets.getByText("Agent Skill Wallet")).toBeInTheDocument();
+    expect(advancedWallets.getByText("Internal/advanced")).toBeInTheDocument();
+
+    expect(within(dialog).getByText("Campaign OS never asks for private keys, seed phrases, recovery phrases, or password exports.")).toBeInTheDocument();
+    expect(within(dialog).getAllByText("Seeded preview only: no live wallet SDK, no real signature, no transaction, and no contract read/write is executed.").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("Wrong chain: switch to AELF mainnet before continuing with campaign verification.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Unsupported wallet: choose Portkey AA, Portkey EOA App, Portkey EOA Extension, or NightElf for this seeded campaign flow.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Missing signature: sign the seeded verification message only after confirming the prompt; this preview does not request a real signature.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Account type restriction: if a campaign allows only AA or only EOA, switch to a wallet type accepted by that campaign policy.")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close wallet connect modal" }));
+
+    expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
+  });
+
   it("switches User App copy manually to zh-CN", () => {
     render(<App />);
 
@@ -165,6 +205,27 @@ describe("User App shell", () => {
     expect(screen.getByText("合格被邀请人")).toBeInTheDocument();
     expect(screen.getByText("排行榜预览")).toBeInTheDocument();
     expect(screen.getByText("仅注册不会计分；被邀请人必须完成有效任务后才会产生推荐积分。")).toBeInTheDocument();
+    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+  });
+
+  it("opens the seeded wallet connect modal in zh-CN without zh-TW copy", () => {
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh-CN" } });
+    fireEvent.click(screen.getByRole("button", { name: "用户应用" }));
+    fireEvent.click(screen.getByRole("button", { name: "连接钱包" }));
+
+    const dialog = screen.getByRole("dialog", { name: "连接钱包" });
+
+    expect(within(dialog).getByTestId("wallet-modal-group-recommended")).toBeInTheDocument();
+    expect(within(dialog).getByTestId("wallet-modal-group-eoa")).toBeInTheDocument();
+    expect(within(dialog).getByTestId("wallet-modal-group-advanced")).toBeInTheDocument();
+    expect(within(dialog).getByText("Campaign OS 永远不会索要私钥、助记词、恢复短语或密码导出。")).toBeInTheDocument();
+    expect(within(dialog).getAllByText("仅 seeded 预览：不会连接实时钱包 SDK，不会请求真实签名，不会发起交易，也不会读写合约。").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("链不匹配：请切换到 AELF mainnet 后再继续活动验证。")).toBeInTheDocument();
+    expect(within(dialog).getByText("不支持的钱包：请为该 seeded 活动流程选择 Portkey AA、Portkey EOA App、Portkey EOA Extension 或 NightElf。")).toBeInTheDocument();
+    expect(within(dialog).getByText("缺少签名：确认提示内容后只签署 seeded 验证消息；此预览不会请求真实签名。")).toBeInTheDocument();
+    expect(within(dialog).getByText("账户类型限制：如果活动只允许 AA 或只允许 EOA，请切换到该活动策略接受的钱包类型。")).toBeInTheDocument();
     expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
 });

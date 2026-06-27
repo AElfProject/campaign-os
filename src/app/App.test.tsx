@@ -138,6 +138,27 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByText("Campaign OS exports verified records only.")).toBeInTheDocument();
   });
 
+  it("opens the User App wallet connect modal from the app shell", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByText("Campaign OS never asks for private keys, seed phrases, recovery phrases, or password exports.")).toBeInTheDocument();
+    expect(screen.getAllByText("Seeded preview only: no live wallet SDK, no real signature, no transaction, and no contract read/write is executed.").length).toBeGreaterThan(0);
+    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close wallet connect modal" }));
+
+    expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
+  });
+
   it("keeps Mission 6 Admin/Ops live while other shell surfaces remain reachable", () => {
     render(<App />);
 
