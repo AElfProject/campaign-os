@@ -6,7 +6,9 @@ import {
   getLocalizedText,
   walletOptions,
   type CampaignShellDetail,
+  type CampaignStatus,
   type EligibilityStatus,
+  type LocalizedText,
   type LocaleStatus,
   type NormalizedWalletSession,
   type ParticipantSnapshot,
@@ -109,6 +111,52 @@ const metricGridStyle: CSSProperties = {
   gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))",
 };
 
+const feedGridStyle: CSSProperties = {
+  display: "grid",
+  gap: 12,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
+};
+
+const mobileHubGridStyle: CSSProperties = {
+  alignItems: "stretch",
+  display: "grid",
+  gap: 16,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(280px, 100%), 1fr))",
+};
+
+const phoneShellStyle: CSSProperties = {
+  background: "#071426",
+  border: "1px solid #1e293b",
+  borderRadius: 28,
+  boxShadow: "0 18px 38px rgba(7, 20, 38, 0.18)",
+  color: "#ffffff",
+  display: "grid",
+  gap: 12,
+  justifySelf: "center",
+  maxWidth: 390,
+  padding: 14,
+  width: "100%",
+};
+
+const phoneScreenStyle: CSSProperties = {
+  background: "#f8fbff",
+  borderRadius: 18,
+  color: "#071426",
+  display: "grid",
+  gap: 12,
+  minHeight: 520,
+  overflow: "hidden",
+  padding: 14,
+};
+
+const progressTrackStyle: CSSProperties = {
+  background: "#dbe6f4",
+  borderRadius: 999,
+  height: 8,
+  overflow: "hidden",
+  width: "100%",
+};
+
 const tableStyle: CSSProperties = {
   borderCollapse: "collapse",
   minWidth: 720,
@@ -134,6 +182,14 @@ const tdStyle: CSSProperties = {
 
 const formatDate = (iso: string) =>
   new Intl.DateTimeFormat("en-US", { day: "2-digit", month: "short" }).format(new Date(iso));
+
+const daysUntil = (iso: string) => {
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const now = Date.UTC(2026, 5, 27);
+  const end = new Date(iso).getTime();
+
+  return Math.max(0, Math.ceil((end - now) / msPerDay));
+};
 
 const contractModeLabel = (mode: CampaignShellDetail["contractMode"]) => mode.replace(/_/g, " ");
 
@@ -226,6 +282,31 @@ const taskBadgeState = (status: TaskVerificationStatus) => {
   return status === "failed" ? "blocker" : "warning";
 };
 
+const campaignStatusLabel = (status: CampaignStatus, copy: typeof userAppCopy["en-US"]) => {
+  const labels: Record<CampaignStatus, string> = {
+    draft: "Draft",
+    scheduled: copy.comingSoon,
+    live: copy.active,
+    paused: "Paused",
+    ended: copy.ended,
+    exported: "Exported",
+  };
+
+  return labels[status];
+};
+
+const campaignStatusState = (status: CampaignStatus) => {
+  if (status === "live") {
+    return "ready";
+  }
+
+  if (status === "scheduled" || status === "paused") {
+    return "warning";
+  }
+
+  return "blocker";
+};
+
 const sessionForParticipant = (
   campaign: CampaignShellDetail,
   participant: ParticipantSnapshot,
@@ -235,6 +316,85 @@ const sessionForParticipant = (
       session.sessionId === participant.walletSessionId ||
       session.address === participant.walletAddress,
   ) ?? campaign.walletSessions[0];
+
+interface CampaignFeedItem {
+  id: string;
+  title: LocalizedText;
+  campaignType: string;
+  status: CampaignStatus;
+  points: number;
+  endTime: string;
+  coreTasks: LocalizedText[];
+  cta: keyof Pick<typeof userAppCopy["en-US"], "checkEligibility" | "continueTasks" | "start">;
+}
+
+const createCampaignFeed = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+): CampaignFeedItem[] => [
+  {
+    id: campaign.id,
+    title: campaign.title,
+    campaignType: "Bridge / Swap / Invite",
+    status: campaign.status,
+    points: campaign.tasks.reduce((total, task) => total + task.points, 0),
+    endTime: campaign.endTime,
+    coreTasks: campaign.tasks.slice(0, 3).map((task) => task.title),
+    cta: participant.missingTaskIds.length > 0 ? "continueTasks" : "checkEligibility",
+  },
+  {
+    id: "camp-forest-nft-path",
+    title: {
+      "en-US": "Forest NFT Quest",
+      "zh-CN": "Forest NFT 任务",
+    },
+    campaignType: "NFT / DAO",
+    status: "scheduled",
+    points: 260,
+    endTime: "2026-07-12T00:00:00Z",
+    coreTasks: [
+      {
+        "en-US": "Hold Forest NFT",
+        "zh-CN": "持有 Forest NFT",
+      },
+      {
+        "en-US": "Vote on TMRWDAO",
+        "zh-CN": "参与 TMRWDAO 投票",
+      },
+      {
+        "en-US": "Invite one qualified friend",
+        "zh-CN": "邀请 1 位合格好友",
+      },
+    ],
+    cta: "start",
+  },
+  {
+    id: "camp-tmrwdao-streak",
+    title: {
+      "en-US": "TMRWDAO Governance Streak",
+      "zh-CN": "TMRWDAO 治理连续任务",
+    },
+    campaignType: "DAO / Referral",
+    status: "ended",
+    points: 180,
+    endTime: "2026-06-18T00:00:00Z",
+    coreTasks: [
+      {
+        "en-US": "Vote on proposal",
+        "zh-CN": "完成提案投票",
+      },
+      {
+        "en-US": "Review points",
+        "zh-CN": "查看积分",
+      },
+      {
+        "en-US": "Check winners export",
+        "zh-CN": "检查 winners 导出",
+      },
+    ],
+    cta: "checkEligibility",
+  },
+];
 
 const WalletSessionCard = ({
   copy,
@@ -287,6 +447,60 @@ const WalletSessionCard = ({
   </article>
 );
 
+const CampaignFeedCard = ({
+  copy,
+  item,
+  locale,
+}: {
+  copy: typeof userAppCopy["en-US"];
+  item: CampaignFeedItem;
+  locale: SupportedLocale;
+}) => (
+  <article style={{ ...cardStyle, alignContent: "space-between" }}>
+    <div style={rowStyle}>
+      <div style={{ display: "grid", gap: 4 }}>
+        <p style={labelStyle}>{item.campaignType}</p>
+        <strong style={{ color: "#071426", fontSize: 19 }}>
+          {getLocalizedText(item.title, locale)}
+        </strong>
+      </div>
+      <PublishStateBadge
+        label={campaignStatusLabel(item.status, copy)}
+        state={campaignStatusState(item.status)}
+      />
+    </div>
+    <div style={metricGridStyle}>
+      <div>
+        <p style={labelStyle}>{copy.pointsAvailable}</p>
+        <strong style={{ color: "#071426", fontSize: 20 }}>{item.points}</strong>
+      </div>
+      <div>
+        <p style={labelStyle}>{copy.timeWindow}</p>
+        <strong style={{ color: "#071426", fontSize: 20 }}>
+          {daysUntil(item.endTime)} {copy.daysLeft}
+        </strong>
+      </div>
+    </div>
+    <ol style={{ display: "grid", gap: 6, margin: 0, paddingInlineStart: 18 }}>
+      {item.coreTasks.map((task) => (
+        <li key={getLocalizedText(task, locale)} style={{ color: "#475569", fontSize: 13 }}>
+          {getLocalizedText(task, locale)}
+        </li>
+      ))}
+    </ol>
+    <button
+      style={{
+        ...buttonStyle,
+        background: item.status === "ended" ? "#ffffff" : buttonStyle.background,
+        color: item.status === "ended" ? "#1c64f2" : buttonStyle.color,
+      }}
+      type="button"
+    >
+      {copy[item.cta]}
+    </button>
+  </article>
+);
+
 export const UserAppPanel = ({
   campaign = campaignDetail,
   locale,
@@ -302,6 +516,13 @@ export const UserAppPanel = ({
   const missingTasks = campaign.tasks.filter((task) =>
     participation.eligibility.missingTaskIds.includes(task.id),
   );
+  const campaignFeed = createCampaignFeed(campaign, participant);
+  const appHubCampaign = campaignFeed[0];
+  const requiredProgress = Math.round(
+    (participation.metrics.completedRequiredTasks /
+      Math.max(1, participation.metrics.totalRequiredTasks)) *
+      100,
+  );
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -309,11 +530,169 @@ export const UserAppPanel = ({
         <div style={rowStyle}>
           <div>
             <p style={labelStyle}>{copy.feedTitle}</p>
+            <h2 style={{ fontSize: 30, lineHeight: 1.1, margin: "4px 0" }}>{copy.feedTitle}</h2>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.feedSubtitle}
+            </p>
+          </div>
+          <button style={buttonStyle} type="button">
+            {copy.connectWallet}
+          </button>
+        </div>
+        <div style={feedGridStyle}>
+          {campaignFeed.map((item) => (
+            <CampaignFeedCard copy={copy} item={item} key={item.id} locale={locale} />
+          ))}
+        </div>
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 700, margin: 0 }}>
+          {copy.feedBoundary}
+        </p>
+      </section>
+
+      <section style={panelStyle}>
+        <div style={mobileHubGridStyle}>
+          <div style={{ alignContent: "center", display: "grid", gap: 14 }}>
+            <div>
+              <p style={labelStyle}>{copy.appHubTitle}</p>
+              <h2 style={{ fontSize: 28, lineHeight: 1.1, margin: "4px 0" }}>
+                {copy.appHubSubtitle}
+              </h2>
+              <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                {copy.appHubBoundary}
+              </p>
+            </div>
+            <div style={gridStyle}>
+              {[
+                [copy.appHubCampaigns, `${campaignFeed.filter((item) => item.status === "live").length} ${copy.active}`],
+                [copy.eligibility, eligibilityLabel(participation.eligibility.status, copy)],
+                [copy.walletType, getWalletBadgeLabel(selectedWallet.accountType, selectedWallet.walletSource)],
+              ].map(([label, value]) => (
+                <article key={label} style={cardStyle}>
+                  <p style={labelStyle}>{label}</p>
+                  <strong style={{ color: "#071426", fontSize: 17 }}>{value}</strong>
+                </article>
+              ))}
+            </div>
+          </div>
+          <aside aria-label={copy.appHubTitle} style={phoneShellStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+              <span>9:41</span>
+              <span>5G 100%</span>
+            </div>
+            <div style={phoneScreenStyle}>
+              <div style={rowStyle}>
+                <strong style={{ fontSize: 18 }}>{copy.appHubTitle}</strong>
+                <WalletBadge
+                  accountType={selectedWallet.accountType}
+                  walletSource={selectedWallet.walletSource}
+                />
+              </div>
+              <article
+                style={{
+                  ...cardStyle,
+                  background: "#071426",
+                  borderColor: "#1c64f2",
+                  color: "#ffffff",
+                }}
+              >
+                <p style={{ ...labelStyle, color: "#93c5fd" }}>{copy.appHubGuide}</p>
+                <strong style={{ color: "#ffffff", fontSize: 20 }}>
+                  {copy.appHubGuideText}
+                </strong>
+              </article>
+              <article style={cardStyle}>
+                <p style={labelStyle}>{copy.appHubToday}</p>
+                <div style={rowStyle}>
+                  <strong>{getLocalizedText(appHubCampaign.title, locale)}</strong>
+                  <PublishStateBadge
+                    label={campaignStatusLabel(appHubCampaign.status, copy)}
+                    state={campaignStatusState(appHubCampaign.status)}
+                  />
+                </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {subtitle}
+                </p>
+                <div aria-label={copy.completedRequired} style={progressTrackStyle}>
+                  <span
+                    style={{
+                      background: "#16a34a",
+                      display: "block",
+                      height: "100%",
+                      width: `${requiredProgress}%`,
+                    }}
+                  />
+                </div>
+                <button style={{ ...buttonStyle, justifyContent: "center", width: "100%" }} type="button">
+                  {copy.continueTasks}
+                </button>
+              </article>
+              <article style={cardStyle}>
+                <div style={rowStyle}>
+                  <strong>{copy.eligibility}</strong>
+                  <PublishStateBadge
+                    label={eligibilityLabel(participation.eligibility.status, copy)}
+                    state={eligibilityBadgeState(participation.eligibility.status)}
+                  />
+                </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {missingTasks.length > 0
+                    ? `${copy.missingTasks}: ${missingTasks
+                        .map((task) => getLocalizedText(task.title, locale))
+                        .join(", ")}`
+                    : copy.noMissingTasks}
+                </p>
+              </article>
+              <article style={cardStyle}>
+                <p style={labelStyle}>{copy.appHubQuickActions}</p>
+                <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
+                  {[copy.appHubPay, copy.appHubPortfolio, copy.appHubForecast, copy.inviteLink].map(
+                    (action) => (
+                      <button
+                        key={action}
+                        style={{
+                          ...buttonStyle,
+                          background: "#ffffff",
+                          color: "#1c64f2",
+                          minHeight: 36,
+                          width: "100%",
+                        }}
+                        type="button"
+                      >
+                        {action}
+                      </button>
+                    ),
+                  )}
+                </div>
+              </article>
+              <nav
+                aria-label={copy.appHubTitle}
+                style={{
+                  display: "grid",
+                  gap: 6,
+                  gridTemplateColumns: "repeat(4, 1fr)",
+                  marginTop: "auto",
+                }}
+              >
+                {[copy.appHubHome, copy.appHubCampaigns, copy.appHubPay, copy.appHubMe].map((item) => (
+                  <span key={item} style={{ color: "#64748b", fontSize: 12, fontWeight: 800, textAlign: "center" }}>
+                    {item}
+                  </span>
+                ))}
+              </nav>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section style={panelStyle}>
+        <div style={rowStyle}>
+          <div>
+            <p style={labelStyle}>{copy.campaignDetail}</p>
             <h2 style={{ fontSize: 30, lineHeight: 1.1, margin: "4px 0" }}>{title}</h2>
             <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>{subtitle}</p>
           </div>
           <button style={buttonStyle} type="button">
-            {copy.connectWallet}
+            {copy.checkEligibility}
           </button>
         </div>
 
