@@ -52,6 +52,39 @@ export type ContentRevisionStatus =
   | "human_reviewed"
   | "published"
   | "archived";
+export type AiContentArtifactType =
+  | "x_thread"
+  | "telegram_announcement"
+  | "discord_message"
+  | "faq"
+  | "tutorial"
+  | "daily_report"
+  | "winner_report";
+export type AiContentArtifactChannel =
+  | "x"
+  | "telegram"
+  | "discord"
+  | "support"
+  | "tutorial"
+  | "internal_report"
+  | "winner_report";
+export type AiContentArtifactLifecycle =
+  | "ai_draft"
+  | "edited"
+  | "human_approved"
+  | "schedule_intent"
+  | "publish_intent";
+export type AiContentReleaseActionState = "available" | "blocked";
+export type AiContentRiskLevel = "low" | "medium" | "high";
+export type AiContentQualityGateCategory =
+  | "reward_responsibility"
+  | "eligibility"
+  | "winner_rules"
+  | "deadline"
+  | "risk_language"
+  | "cta"
+  | "localization";
+export type AiContentQualityGateStatus = "passed" | "warning" | "blocked";
 export type ReviewItemType = "AI_CONTENT" | "CONTRACT_IMPACT" | "RISK_FLAG" | "EXPORT_READY";
 export type ReviewSeverity = "info" | "warning" | "blocker";
 export type ReviewStatus = "open" | "in_review" | "approved" | "rejected";
@@ -276,6 +309,68 @@ export interface ContentRevision {
   status: ContentRevisionStatus;
   reviewer?: string;
   updatedAt: string;
+}
+
+export interface AiContentActionPolicy {
+  copy: AiContentReleaseActionState;
+  edit: AiContentReleaseActionState;
+  markReviewed: AiContentReleaseActionState;
+  schedule: AiContentReleaseActionState;
+  publish: AiContentReleaseActionState;
+  blockedReason?: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface AiContentArtifactDraft {
+  id: string;
+  campaignId: string;
+  type: AiContentArtifactType;
+  channel: AiContentArtifactChannel;
+  purpose: LocalizedText;
+  title: LocalizedText;
+  body: LocalizedText;
+  localeStatus: Record<SupportedLocale, LocaleStatus>;
+  lifecycle: AiContentArtifactLifecycle;
+  reviewer?: string;
+  updatedAt: string;
+  riskLevel: AiContentRiskLevel;
+  qualityGateRefs: string[];
+}
+
+export interface AiContentArtifact extends AiContentArtifactDraft {
+  actionPolicy: AiContentActionPolicy;
+}
+
+export interface AiContentQualityGate {
+  id: string;
+  category: AiContentQualityGateCategory;
+  label: LocalizedText;
+  status: AiContentQualityGateStatus;
+  evidence: LocalizedText;
+  affectedArtifactTypes: AiContentArtifactType[];
+}
+
+export interface AiContentPackSummary {
+  totalArtifacts: number;
+  aiDrafts: number;
+  humanApproved: number;
+  blockedReleaseActions: number;
+  availableCopyActions: number;
+  qualityGateBlockers: number;
+  nextAction: LocalizedText;
+}
+
+export interface AiContentPackWorkbench {
+  campaignId: string;
+  defaultLocale: "en-US";
+  supportedLocales: SupportedLocale[];
+  summary: AiContentPackSummary;
+  artifacts: AiContentArtifact[];
+  qualityGates: AiContentQualityGate[];
+  boundary: {
+    title: LocalizedText;
+    body: LocalizedText;
+  };
 }
 
 export interface ReviewItem {
@@ -521,6 +616,7 @@ export interface AdminOpsReadModel {
   campaignId: string;
   reviewQueue: ReviewItem[];
   contractReviewCenter: AdminContractReviewCenter;
+  aiContentPack: AiContentPackWorkbench;
   analytics: AnalyticsKpi[];
   funnel: ConversionFunnelStep[];
   walletSplit: DimensionSplit[];
@@ -625,6 +721,8 @@ export interface CampaignShellDetail extends CampaignShellSummary {
   participants: ParticipantSnapshot[];
   walletSessions: NormalizedWalletSession[];
   contentRevisions: ContentRevision[];
+  aiContentArtifacts: AiContentArtifactDraft[];
+  aiContentQualityGates: AiContentQualityGate[];
   reviewItems: ReviewItem[];
   publishReadiness: PublishReadiness;
   exportPreview: ExportPreview;

@@ -1,5 +1,11 @@
 import type {
   AdminOpsReadModel,
+  AiContentArtifact,
+  AiContentArtifactDraft,
+  AiContentArtifactLifecycle,
+  AiContentPackSummary,
+  AiContentPackWorkbench,
+  AiContentQualityGate,
   AnalyticsKpi,
   AdminContractReviewCenter,
   ConversionFunnelStep,
@@ -61,6 +67,37 @@ const exportRiskBoundary: LocalizedText = {
 const noAutoPublishNotice: LocalizedText = {
   "en-US": "AI generated translation cannot auto-publish before human review.",
   "zh-CN": "AI 生成翻译必须经过人工审核后才能发布。",
+};
+
+const aiContentBoundary = {
+  title: {
+    "en-US": "No auto-publish boundary",
+    "zh-CN": "禁止自动发布边界",
+  },
+  body: {
+    "en-US": "Seeded/local content pack only. No live AI provider, scheduler, channel bot, webhook, or external publish action is connected.",
+    "zh-CN": "仅 seeded/本地内容包。不会连接实时 AI、排期器、频道机器人、webhook 或外部发布动作。",
+  },
+};
+
+const aiContentDraftBlockedReason: LocalizedText = {
+  "en-US": "Human review required before copy can be scheduled or published.",
+  "zh-CN": "排期或发布前必须完成人工审核。",
+};
+
+const aiContentApprovedNextAction: LocalizedText = {
+  "en-US": "Copy ready; schedule/publish intent remains local until an operator confirms the external channel.",
+  "zh-CN": "可复制；排期/发布意图仍为本地状态，直到运营确认外部渠道。",
+};
+
+const aiContentDraftNextAction: LocalizedText = {
+  "en-US": "Edit and mark reviewed before release intent.",
+  "zh-CN": "先编辑并标记已审核，再进入发布意图。",
+};
+
+const aiContentEditedNextAction: LocalizedText = {
+  "en-US": "Human approval is still required before release intent.",
+  "zh-CN": "进入发布意图前仍需要人工批准。",
 };
 
 const localeLabels: Record<ContentRevision["locale"], LocalizedText> = {
@@ -208,6 +245,90 @@ const createTranslationPanel = (
     reviewer: revision.reviewer,
     updatedAt: revision.updatedAt,
     nextAction: nextActionForRevision(revision),
+  };
+};
+
+const releaseReadyLifecycles: AiContentArtifactLifecycle[] = [
+  "human_approved",
+  "schedule_intent",
+  "publish_intent",
+];
+
+const createAiContentActionPolicy = (
+  artifact: Pick<AiContentArtifactDraft, "lifecycle">,
+) => {
+  const releaseReady = releaseReadyLifecycles.includes(artifact.lifecycle);
+  const edited = artifact.lifecycle === "edited";
+
+  return {
+    copy: releaseReady || edited ? "available" : "blocked",
+    edit: artifact.lifecycle === "publish_intent" ? "blocked" : "available",
+    markReviewed: releaseReady ? "blocked" : "available",
+    schedule: releaseReady ? "available" : "blocked",
+    publish: releaseReady ? "available" : "blocked",
+    blockedReason: releaseReady ? undefined : aiContentDraftBlockedReason,
+    nextAction: releaseReady
+      ? aiContentApprovedNextAction
+      : edited
+        ? aiContentEditedNextAction
+        : aiContentDraftNextAction,
+  } satisfies AiContentArtifact["actionPolicy"];
+};
+
+const createAiContentPackSummary = (
+  artifacts: AiContentArtifact[],
+  qualityGates: AiContentQualityGate[],
+): AiContentPackSummary => {
+  const aiDrafts = artifacts.filter((artifact) => artifact.lifecycle === "ai_draft").length;
+  const humanApproved = artifacts.filter((artifact) =>
+    releaseReadyLifecycles.includes(artifact.lifecycle),
+  ).length;
+  const blockedReleaseActions = artifacts.filter(
+    (artifact) => artifact.actionPolicy.schedule === "blocked" || artifact.actionPolicy.publish === "blocked",
+  ).length;
+  const availableCopyActions = artifacts.filter((artifact) => artifact.actionPolicy.copy === "available").length;
+  const qualityGateBlockers = qualityGates.filter((gate) => gate.status === "blocked").length;
+
+  return {
+    totalArtifacts: artifacts.length,
+    aiDrafts,
+    humanApproved,
+    blockedReleaseActions,
+    availableCopyActions,
+    qualityGateBlockers,
+    nextAction:
+      blockedReleaseActions > 0 || qualityGateBlockers > 0
+        ? {
+            "en-US": "Finish human review before release intent.",
+            "zh-CN": "完成所有人工审核后再进入发布意图。",
+          }
+        : {
+            "en-US": "Approved content can be copied or prepared for local schedule/publish intent.",
+            "zh-CN": "已批准内容可以复制，或准备本地排期/发布意图。",
+          },
+  };
+};
+
+export const createAiContentPackWorkbench = (
+  campaign: Pick<
+    CampaignShellDetail,
+    "id" | "defaultLocale" | "supportedLocales" | "aiContentArtifacts" | "aiContentQualityGates"
+  >,
+): AiContentPackWorkbench => {
+  const artifacts = campaign.aiContentArtifacts.map<AiContentArtifact>((artifact) => ({
+    ...artifact,
+    actionPolicy: createAiContentActionPolicy(artifact),
+  }));
+  const qualityGates = [...campaign.aiContentQualityGates];
+
+  return {
+    campaignId: campaign.id,
+    defaultLocale: campaign.defaultLocale,
+    supportedLocales: [...campaign.supportedLocales],
+    summary: createAiContentPackSummary(artifacts, qualityGates),
+    artifacts,
+    qualityGates,
+    boundary: aiContentBoundary,
   };
 };
 
@@ -1080,6 +1201,7 @@ export const createAdminOpsReadModel = (
     campaignId: campaign.id,
     reviewQueue: campaign.reviewItems,
     contractReviewCenter: createAdminContractReviewCenter(campaign),
+    aiContentPack: createAiContentPackWorkbench(campaign),
     analytics: createAnalytics(campaign, exportBatch),
     funnel: campaign.conversionFunnel,
     walletSplit: createWalletSplit(campaign.participants),

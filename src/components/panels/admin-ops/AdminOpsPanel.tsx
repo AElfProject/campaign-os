@@ -7,6 +7,8 @@ import {
   type CampaignShellDetail,
   type ContractMode,
   type ContractReviewChecklistStatus,
+  type AiContentArtifactLifecycle,
+  type AiContentQualityGateStatus,
   type MetricTone,
   type SignalSeverity,
   type SupportedLocale,
@@ -178,6 +180,12 @@ const signalState = (severity: SignalSeverity) =>
 const checklistStatusState = (status: ContractReviewChecklistStatus) =>
   status === "blocked" ? "blocker" : status === "warning" ? "warning" : "ready";
 
+const aiContentLifecycleState = (lifecycle: AiContentArtifactLifecycle) =>
+  lifecycle === "ai_draft" || lifecycle === "edited" ? "warning" : "ready";
+
+const aiContentGateState = (status: AiContentQualityGateStatus) =>
+  status === "blocked" ? "blocker" : status === "warning" ? "warning" : "ready";
+
 const readableCode = (value: string) => value.replace(/_/g, " ");
 
 export const AdminOpsPanel = ({
@@ -186,6 +194,7 @@ export const AdminOpsPanel = ({
 }: AdminOpsPanelProps) => {
   const copy = adminOpsCopy[locale];
   const adminOps = createAdminOpsReadModel(campaign);
+  const aiContentPack = adminOps.aiContentPack;
   const contractClaimReadiness = computePublishReadiness(
     { contractMode: "CONTRACT_CLAIM" },
     campaign.contentRevisions,
@@ -441,28 +450,118 @@ export const AdminOpsPanel = ({
       </section>
 
       <section style={gridStyle}>
-        <article style={panelStyle}>
-          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.aiContent}</h3>
-          <div style={cardStyle}>
-            <div style={rowStyle}>
-              <strong>{copy.enPublished}</strong>
+        <section style={panelStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.aiContent}</p>
+              <h3 style={{ fontSize: 20, margin: 0 }}>{copy.aiContentPackWorkbench}</h3>
+            </div>
+            <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <Badge label={`${aiContentPack.summary.totalArtifacts} ${copy.artifacts}`} tone="ai" />
+              <PublishStateBadge
+                label={`${aiContentPack.summary.blockedReleaseActions} ${copy.publishBlocked}`}
+                state={aiContentPack.summary.blockedReleaseActions > 0 ? "warning" : "ready"}
+              />
+            </span>
+          </div>
+          <p style={boundaryStyle}>{getLocalizedText(aiContentPack.boundary.body, locale)}</p>
+          <div style={compactGridStyle}>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.enPublished}</p>
+              <p style={mutedTextStyle}>
+                {campaign.contentRevisions.find((revision) => revision.locale === "en-US")?.title}
+              </p>
               <LocaleStatusBadge label="en-US published" status="published" />
-            </div>
-            <p style={mutedTextStyle}>
-              {campaign.contentRevisions.find((revision) => revision.locale === "en-US")?.title}
-            </p>
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.zhDraft}</p>
+              <p style={{ ...mutedTextStyle, color: "#92400e", fontWeight: 800 }}>
+                {copy.autoPublishBlocked}
+              </p>
+              <ReviewSeverityBadge label={copy.humanReviewGate} severity="warning" />
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.humanApproved}</p>
+              <p style={valueStyle}>{aiContentPack.summary.humanApproved}</p>
+              <p style={mutedTextStyle}>{getLocalizedText(aiContentPack.summary.nextAction, locale)}</p>
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.humanReviewGate}</p>
+              <p style={valueStyle}>{aiContentPack.summary.aiDrafts}</p>
+              <p style={mutedTextStyle}>{copy.autoPublishBlocked}</p>
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.copyReady}</p>
+              <p style={valueStyle}>{aiContentPack.summary.availableCopyActions}</p>
+              <p style={mutedTextStyle}>{getLocalizedText(aiContentPack.boundary.title, locale)}</p>
+            </article>
           </div>
-          <div style={cardStyle}>
-            <div style={rowStyle}>
-              <strong>{copy.zhDraft}</strong>
-              <LocaleStatusBadge label="zh-CN AI draft" status="ai_draft" />
-            </div>
-            <p style={{ ...mutedTextStyle, color: "#92400e", fontWeight: 700 }}>
-              {copy.autoPublishBlocked}
-            </p>
-            <ReviewSeverityBadge label={copy.humanReviewGate} severity="warning" />
+          <div style={gridStyle}>
+            {aiContentPack.artifacts.map((artifact) => (
+              <article key={artifact.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <strong>{getLocalizedText(artifact.title, locale)}</strong>
+                  <PublishStateBadge
+                    label={readableCode(artifact.lifecycle)}
+                    state={aiContentLifecycleState(artifact.lifecycle)}
+                  />
+                </div>
+                <p style={mutedTextStyle}>{getLocalizedText(artifact.purpose, locale)}</p>
+                <p style={mutedTextStyle}>{getLocalizedText(artifact.body, locale)}</p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <Badge label={artifact.channel} tone="info" />
+                  <Badge label={`${copy.riskLevel}: ${artifact.riskLevel}`} tone={artifact.riskLevel === "high" ? "warning" : "neutral"} />
+                  <LocaleStatusBadge
+                    label={`en-US ${artifact.localeStatus["en-US"]}`}
+                    status={artifact.localeStatus["en-US"]}
+                  />
+                  <LocaleStatusBadge
+                    label={`zh-CN ${artifact.localeStatus["zh-CN"]}`}
+                    status={artifact.localeStatus["zh-CN"]}
+                  />
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge
+                    label={artifact.actionPolicy.copy === "available" ? copy.copyReady : copy.humanReviewRequired}
+                    state={artifact.actionPolicy.copy === "available" ? "ready" : "warning"}
+                  />
+                  <PublishStateBadge
+                    label={artifact.actionPolicy.schedule === "available" ? copy.scheduleReady : copy.publishBlocked}
+                    state={artifact.actionPolicy.schedule === "available" ? "ready" : "warning"}
+                  />
+                  <PublishStateBadge
+                    label={artifact.actionPolicy.publish === "available" ? copy.readiness : copy.publishBlocked}
+                    state={artifact.actionPolicy.publish === "available" ? "ready" : "warning"}
+                  />
+                </div>
+                <p style={mutedTextStyle}>{getLocalizedText(artifact.actionPolicy.nextAction, locale)}</p>
+                {artifact.actionPolicy.blockedReason ? (
+                  <p style={{ ...mutedTextStyle, color: "#92400e", fontWeight: 800 }}>
+                    {getLocalizedText(artifact.actionPolicy.blockedReason, locale)}
+                  </p>
+                ) : null}
+              </article>
+            ))}
           </div>
-        </article>
+          <div style={rowStyle}>
+            <h3 style={{ fontSize: 20, margin: 0 }}>{copy.qualityGates}</h3>
+            <PublishStateBadge
+              label={`${aiContentPack.summary.qualityGateBlockers} ${copy.blocker}`}
+              state={aiContentPack.summary.qualityGateBlockers > 0 ? "blocker" : "ready"}
+            />
+          </div>
+          <div style={gridStyle}>
+            {aiContentPack.qualityGates.map((gate) => (
+              <article key={gate.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <strong>{getLocalizedText(gate.label, locale)}</strong>
+                  <PublishStateBadge label={gate.status} state={aiContentGateState(gate.status)} />
+                </div>
+                <p style={mutedTextStyle}>{getLocalizedText(gate.evidence, locale)}</p>
+              </article>
+            ))}
+          </div>
+        </section>
 
         <article style={panelStyle}>
           <h3 style={{ fontSize: 20, margin: 0 }}>{copy.contractImpact}</h3>
