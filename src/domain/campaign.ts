@@ -1,13 +1,16 @@
 import type {
   AdminOpsReadModel,
   AnalyticsKpi,
+  AdminContractReviewCenter,
   ConversionFunnelStep,
   CampaignShellDetail,
   CampaignTask,
   ContentRevision,
   ContractImpactReviewModel,
   ContractImpactReviewOption,
+  ContractReviewChecklistItem,
   ContractMode,
+  ContractEvolutionStep,
   DimensionSplit,
   EligibilityResult,
   ExportConfirmation,
@@ -747,6 +750,278 @@ const createExportBatch = (campaign: CampaignShellDetail): ExportBatchSummary =>
   };
 };
 
+const createContractReviewChecklist = (
+  mode: ContractMode,
+): ContractReviewChecklistItem[] => {
+  const claimModeSelected = mode === "CONTRACT_CLAIM";
+
+  return [
+    {
+      id: "contract-address",
+      label: {
+        "en-US": "Contract address",
+        "zh-CN": "合约地址",
+      },
+      value: {
+        "en-US": claimModeSelected ? "Required before claim review" : "Not required for Off-chain MVP",
+        "zh-CN": claimModeSelected ? "领取审核前必须提供" : "Off-chain MVP 不需要",
+      },
+      status: claimModeSelected ? "blocked" : "passed",
+      ownerRole: "contract_reviewer",
+      requiredFor: "CONTRACT_CLAIM",
+      detail: {
+        "en-US": "MVP uses off-chain verification and winner export without contract migration.",
+        "zh-CN": "MVP 使用链下验证和 winners 导出，不需要合约迁移。",
+      },
+      nextAction: {
+        "en-US": "Keep contract address empty until a claim-mode review is opened.",
+        "zh-CN": "在领取模式审核开启前保持合约地址为空。",
+      },
+    },
+    {
+      id: "audit-status",
+      label: {
+        "en-US": "Audit status",
+        "zh-CN": "审计状态",
+      },
+      value: {
+        "en-US": claimModeSelected ? "Audit required before claim" : "Not required for MVP shell",
+        "zh-CN": claimModeSelected ? "领取前必须审计" : "MVP shell 不需要",
+      },
+      status: claimModeSelected ? "blocked" : "passed",
+      ownerRole: "contract_reviewer",
+      requiredFor: "CONTRACT_CLAIM",
+      detail: {
+        "en-US": "Claim mode is high impact because it can affect reward distribution.",
+        "zh-CN": "领取模式可能影响奖励发放，因此属于高影响模式。",
+      },
+      nextAction: {
+        "en-US": "Require audit evidence before any contract claim approval.",
+        "zh-CN": "任何合约领取批准前必须提供审计证据。",
+      },
+    },
+    {
+      id: "metadata-hash",
+      label: {
+        "en-US": "Metadata hash",
+        "zh-CN": "Metadata hash",
+      },
+      value: {
+        "en-US": "Optional for MVP; planned for CampaignRegistryV2",
+        "zh-CN": "MVP 可选；计划用于 CampaignRegistryV2",
+      },
+      status: "warning",
+      ownerRole: "internal_operator",
+      requiredFor: "P1",
+      detail: {
+        "en-US": "Store only metadata URI/hash later; full campaign copy stays off-chain.",
+        "zh-CN": "后续只记录 metadata URI/hash；活动全文仍留在链下。",
+      },
+      nextAction: {
+        "en-US": "Prepare metadata hash when moving to the P1 registry path.",
+        "zh-CN": "进入 P1 registry 路径时准备 metadata hash。",
+      },
+    },
+    {
+      id: "verifier-role",
+      label: {
+        "en-US": "Verifier role",
+        "zh-CN": "Verifier role",
+      },
+      value: {
+        "en-US": "Backend verifier only",
+        "zh-CN": "仅 backend verifier",
+      },
+      status: "passed",
+      ownerRole: "internal_operator",
+      requiredFor: "MVP",
+      detail: {
+        "en-US": "The MVP verifier records seeded verification inputs without contract write authority.",
+        "zh-CN": "MVP verifier 只记录 seeded 验证输入，不具备合约写权限。",
+      },
+      nextAction: {
+        "en-US": "Keep verifier role off-chain until V2 role design is approved.",
+        "zh-CN": "在 V2 role 设计批准前保持 verifier role 链下执行。",
+      },
+    },
+    {
+      id: "reward-custody",
+      label: {
+        "en-US": "Reward custody",
+        "zh-CN": "奖励托管",
+      },
+      value: {
+        "en-US": "Project-owned; None in Campaign OS",
+        "zh-CN": "项目方持有；Campaign OS 不托管",
+      },
+      status: "passed",
+      ownerRole: "project_owner",
+      requiredFor: "MVP",
+      detail: {
+        "en-US": "Campaign OS exports verified records only and never holds rewards.",
+        "zh-CN": "Campaign OS 只导出已验证记录，绝不托管奖励。",
+      },
+      nextAction: {
+        "en-US": "Confirm project reward responsibility before winner export.",
+        "zh-CN": "导出 winners 前确认项目方奖励责任。",
+      },
+    },
+    {
+      id: "contract-claim-gate",
+      label: {
+        "en-US": "Contract claim gate",
+        "zh-CN": "合约领取门禁",
+      },
+      value: {
+        "en-US": "Blocked until high-impact manual review",
+        "zh-CN": "高影响人工审核前保持阻断",
+      },
+      status: "blocked",
+      ownerRole: "contract_reviewer",
+      requiredFor: "CONTRACT_CLAIM",
+      detail: {
+        "en-US": "Claim mode needs contract address, audit status, verifier role, metadata hash, and reward custody review.",
+        "zh-CN": "领取模式需要合约地址、审计状态、verifier role、metadata hash 与奖励托管审核。",
+      },
+      nextAction: {
+        "en-US": "Do not enable claim mode in the MVP shell.",
+        "zh-CN": "不要在 MVP shell 启用领取模式。",
+      },
+    },
+  ];
+};
+
+const createContractEvolution = (): ContractEvolutionStep[] => [
+  {
+    id: "mvp-off-chain",
+    phase: {
+      "en-US": "MVP",
+      "zh-CN": "MVP",
+    },
+    title: {
+      "en-US": "Off-chain verification + winner export",
+      "zh-CN": "链下验证 + winners 导出",
+    },
+    description: {
+      "en-US": "No contract migration; existing Pixiepoints/backend ledger remains usable.",
+      "zh-CN": "不做合约迁移；继续使用现有 Pixiepoints/backend ledger。",
+    },
+    status: "ready",
+    contractSurface: {
+      "en-US": "No new contract surface",
+      "zh-CN": "无新增合约面",
+    },
+  },
+  {
+    id: "p1-campaign-registry",
+    phase: {
+      "en-US": "P1",
+      "zh-CN": "P1",
+    },
+    title: {
+      "en-US": "CampaignRegistryV2 metadata hash",
+      "zh-CN": "CampaignRegistryV2 metadata hash",
+    },
+    description: {
+      "en-US": "Record owner, status, wallet policy, supported locales, metadata URI, and metadata hash.",
+      "zh-CN": "记录 owner、status、wallet policy、supported locales、metadata URI 与 metadata hash。",
+    },
+    status: "warning",
+    contractSurface: {
+      "en-US": "CampaignRegistryV2",
+      "zh-CN": "CampaignRegistryV2",
+    },
+  },
+  {
+    id: "p1-points-referral-roots",
+    phase: {
+      "en-US": "P1",
+      "zh-CN": "P1",
+    },
+    title: {
+      "en-US": "Points and referral roots",
+      "zh-CN": "Points 与 referral roots",
+    },
+    description: {
+      "en-US": "Commit points batch roots and referral qualification roots without exposing risk strategy.",
+      "zh-CN": "提交积分批次 root 与推荐资格 root，但不暴露风控策略。",
+    },
+    status: "warning",
+    contractSurface: {
+      "en-US": "CampaignPointsLedgerV2 + ReferralRegistryV2",
+      "zh-CN": "CampaignPointsLedgerV2 + ReferralRegistryV2",
+    },
+  },
+  {
+    id: "p2-optional-claim",
+    phase: {
+      "en-US": "P2",
+      "zh-CN": "P2",
+    },
+    title: {
+      "en-US": "Optional contract claim",
+      "zh-CN": "可选合约领取",
+    },
+    description: {
+      "en-US": "Only after separate approval for claim contract, audit status, custody, and eligibility proof.",
+      "zh-CN": "仅在领取合约、审计状态、托管与资格证明单独批准后进入。",
+    },
+    status: "blocker",
+    contractSurface: {
+      "en-US": "EligibilityRootRegistryV2 + optional claim contract",
+      "zh-CN": "EligibilityRootRegistryV2 + 可选 claim contract",
+    },
+  },
+];
+
+const createAdminContractReviewCenter = (
+  campaign: Pick<CampaignShellDetail, "id" | "contractMode">,
+): AdminContractReviewCenter => {
+  const claimModeSelected = campaign.contractMode === "CONTRACT_CLAIM";
+
+  return {
+    campaignId: campaign.id,
+    selectedMode: campaign.contractMode,
+    v2CompanionNeeded: {
+      "en-US": "No for MVP; recommended for P1 transparency.",
+      "zh-CN": "MVP 不需要；建议 P1 用于透明度增强。",
+    },
+    metadataHash: {
+      "en-US": "Optional for MVP; planned for CampaignRegistryV2 metadata URI/hash.",
+      "zh-CN": "MVP 可选；计划用于 CampaignRegistryV2 metadata URI/hash。",
+    },
+    verifierRole: {
+      "en-US": "Backend verifier only; no contract write authority in MVP.",
+      "zh-CN": "仅 backend verifier；MVP 没有合约写权限。",
+    },
+    rewardCustody: {
+      "en-US": "Project-owned; None in Campaign OS.",
+      "zh-CN": "项目方持有；Campaign OS 不托管。",
+    },
+    publishState: claimModeSelected ? "blocker" : "ready",
+    highImpactMode: claimModeSelected,
+    summary: {
+      "en-US": "MVP stays off-chain: verification, ranking, and export are reviewed without contract migration.",
+      "zh-CN": "MVP 保持链下：审核验证、排名与导出，不进行合约迁移。",
+    },
+    boundary: {
+      "en-US": "Seeded review only. No live contract transaction, no backend call, no reward custody, and no reward distribution is executed.",
+      "zh-CN": "仅 seeded 审核。不执行真实合约交易、不调用后端、不托管奖励，也不发奖。",
+    },
+    nextAction: claimModeSelected
+      ? {
+          "en-US": "Block publish until contract reviewer approves high-impact claim mode.",
+          "zh-CN": "阻断发布，直到合约审核人批准高影响领取模式。",
+        }
+      : {
+          "en-US": "Approve Off-chain MVP and keep V2 companion planning in P1 backlog.",
+          "zh-CN": "批准 Off-chain MVP，并把 V2 companion 规划保留在 P1 backlog。",
+        },
+    checklist: createContractReviewChecklist(campaign.contractMode),
+    evolution: createContractEvolution(),
+  };
+};
+
 export const createParticipationReadModel = (
   campaign: CampaignShellDetail,
   participant: ParticipantSnapshot,
@@ -804,6 +1079,7 @@ export const createAdminOpsReadModel = (
   return {
     campaignId: campaign.id,
     reviewQueue: campaign.reviewItems,
+    contractReviewCenter: createAdminContractReviewCenter(campaign),
     analytics: createAnalytics(campaign, exportBatch),
     funnel: campaign.conversionFunnel,
     walletSplit: createWalletSplit(campaign.participants),

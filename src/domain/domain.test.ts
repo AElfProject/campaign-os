@@ -119,6 +119,52 @@ describe("Campaign OS domain foundation", () => {
     ).toBe("Selected contract claim remains blocked; no contract transaction is executed.");
   });
 
+  it("derives the admin contract review center for MVP and high-impact gates", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const reviewCenter = adminOps.contractReviewCenter;
+
+    expect(reviewCenter).toMatchObject({
+      campaignId: "camp-awaken-sprint",
+      selectedMode: "OFF_CHAIN_MVP",
+      publishState: "ready",
+      highImpactMode: false,
+    });
+    expect(reviewCenter.v2CompanionNeeded["en-US"]).toContain("No for MVP");
+    expect(reviewCenter.v2CompanionNeeded["en-US"]).toContain("recommended for P1");
+    expect(reviewCenter.metadataHash["en-US"]).toContain("Optional for MVP");
+    expect(reviewCenter.verifierRole["en-US"]).toContain("Backend verifier only");
+    expect(reviewCenter.rewardCustody["en-US"]).toContain("None in Campaign OS");
+    expect(reviewCenter.rewardCustody["en-US"]).not.toContain("Campaign OS custody");
+    expect(reviewCenter.boundary["en-US"]).toContain("No live contract transaction");
+    expect(reviewCenter.boundary["en-US"]).toContain("no reward custody");
+
+    expect(reviewCenter.checklist.map((item) => item.id)).toEqual([
+      "contract-address",
+      "audit-status",
+      "metadata-hash",
+      "verifier-role",
+      "reward-custody",
+      "contract-claim-gate",
+    ]);
+    expect(reviewCenter.checklist.find((item) => item.id === "contract-claim-gate")).toMatchObject({
+      status: "blocked",
+      ownerRole: "contract_reviewer",
+      requiredFor: "CONTRACT_CLAIM",
+    });
+    expect(reviewCenter.checklist.find((item) => item.id === "reward-custody")?.value["en-US"]).toContain(
+      "Project-owned",
+    );
+    expect(reviewCenter.evolution.map((step) => step.id)).toEqual([
+      "mvp-off-chain",
+      "p1-campaign-registry",
+      "p1-points-referral-roots",
+      "p2-optional-claim",
+    ]);
+    expect(reviewCenter.evolution[1].title["en-US"]).toContain("CampaignRegistryV2");
+    expect(reviewCenter.evolution[2].contractSurface["en-US"]).toContain("ReferralRegistryV2");
+    expect(reviewCenter.evolution[3]).toMatchObject({ status: "blocker" });
+  });
+
   it("labels AA and EOA wallet states", () => {
     expect(getWalletBadgeLabel("AA", "PORTKEY_AA")).toBe("AA · Portkey");
     expect(getWalletBadgeLabel("EOA", "PORTKEY_EOA_EXTENSION")).toBe("EOA · Extension");

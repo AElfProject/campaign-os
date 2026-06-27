@@ -6,6 +6,7 @@ import {
   getLocalizedText,
   type CampaignShellDetail,
   type ContractMode,
+  type ContractReviewChecklistStatus,
   type MetricTone,
   type SignalSeverity,
   type SupportedLocale,
@@ -174,6 +175,11 @@ const signalState = (severity: SignalSeverity) =>
       ? "warning"
       : "ready";
 
+const checklistStatusState = (status: ContractReviewChecklistStatus) =>
+  status === "blocked" ? "blocker" : status === "warning" ? "warning" : "ready";
+
+const readableCode = (value: string) => value.replace(/_/g, " ");
+
 export const AdminOpsPanel = ({
   campaign = campaignDetail,
   locale,
@@ -184,9 +190,43 @@ export const AdminOpsPanel = ({
     { contractMode: "CONTRACT_CLAIM" },
     campaign.contentRevisions,
   );
+  const contractReviewCenter = adminOps.contractReviewCenter;
   const columnContract = adminOps.exportBatch.columns.join(",");
   const warningCount = campaign.publishReadiness.warnings.length;
   const blockerCount = contractClaimReadiness.blockers.length;
+  const contractReviewSummary = [
+    {
+      id: "contract-mode",
+      label: copy.contractMode,
+      value: modeLabel(contractReviewCenter.selectedMode),
+      badge: (
+        <ContractModeBadge
+          label={modeLabel(contractReviewCenter.selectedMode)}
+          mode={contractReviewCenter.selectedMode}
+        />
+      ),
+    },
+    {
+      id: "v2-companion",
+      label: copy.v2CompanionNeeded,
+      value: getLocalizedText(contractReviewCenter.v2CompanionNeeded, locale),
+    },
+    {
+      id: "metadata-hash",
+      label: copy.metadataHash,
+      value: getLocalizedText(contractReviewCenter.metadataHash, locale),
+    },
+    {
+      id: "verifier-role",
+      label: copy.verifierRole,
+      value: getLocalizedText(contractReviewCenter.verifierRole, locale),
+    },
+    {
+      id: "reward-custody",
+      label: copy.rewardCustody,
+      value: getLocalizedText(contractReviewCenter.rewardCustody, locale),
+    },
+  ];
 
   const contractModes = [
     {
@@ -234,6 +274,98 @@ export const AdminOpsPanel = ({
               </p>
               <p style={mutedTextStyle}>
                 {copy.owner}: {item.ownerRole}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.adminContractReviewCenter}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {getLocalizedText(contractReviewCenter.summary, locale)}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <PublishStateBadge
+              label={contractReviewCenter.publishState}
+              state={contractReviewCenter.publishState}
+            />
+            {contractReviewCenter.highImpactMode ? (
+              <PublishStateBadge label={copy.contractClaim} state="blocker" />
+            ) : (
+              <ContractModeBadge label={copy.offChain} mode="OFF_CHAIN_MVP" />
+            )}
+          </span>
+        </div>
+        <p style={boundaryStyle}>{getLocalizedText(contractReviewCenter.boundary, locale)}</p>
+        <div style={gridStyle}>
+          {contractReviewSummary.map((item) => (
+            <article key={item.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <p style={labelStyle}>{item.label}</p>
+                {item.badge}
+              </div>
+              <p style={mutedTextStyle}>{item.value}</p>
+            </article>
+          ))}
+        </div>
+        <div style={rowStyle}>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.highImpactChecklist}</h3>
+          <PublishStateBadge label={contractReviewCenter.publishState} state={contractReviewCenter.publishState} />
+        </div>
+        <p style={mutedTextStyle}>{getLocalizedText(contractReviewCenter.nextAction, locale)}</p>
+        <div style={scrollContainerStyle}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>{copy.status}</th>
+                <th style={thStyle}>{copy.contractMode}</th>
+                <th style={thStyle}>{copy.currentValue}</th>
+                <th style={thStyle}>{copy.requiredFor}</th>
+                <th style={thStyle}>{copy.ownerRole}</th>
+                <th style={thStyle}>{copy.detail}</th>
+                <th style={thStyle}>{copy.nextAction}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {contractReviewCenter.checklist.map((item) => (
+                <tr key={item.id}>
+                  <td style={tdStyle}>
+                    <PublishStateBadge
+                      label={item.status}
+                      state={checklistStatusState(item.status)}
+                    />
+                  </td>
+                  <td style={tdStyle}>
+                    <strong>{getLocalizedText(item.label, locale)}</strong>
+                  </td>
+                  <td style={tdStyle}>{getLocalizedText(item.value, locale)}</td>
+                  <td style={tdStyle}>{item.requiredFor}</td>
+                  <td style={tdStyle}>{readableCode(item.ownerRole)}</td>
+                  <td style={tdStyle}>{getLocalizedText(item.detail, locale)}</td>
+                  <td style={tdStyle}>{getLocalizedText(item.nextAction, locale)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={rowStyle}>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.contractEvolution}</h3>
+        </div>
+        <div style={gridStyle}>
+          {contractReviewCenter.evolution.map((step) => (
+            <article key={step.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <Badge label={getLocalizedText(step.phase, locale)} tone="info" />
+                <PublishStateBadge label={step.status} state={step.status} />
+              </div>
+              <strong>{getLocalizedText(step.title, locale)}</strong>
+              <p style={mutedTextStyle}>{getLocalizedText(step.description, locale)}</p>
+              <p style={mutedTextStyle}>
+                {copy.contractSurface}: {getLocalizedText(step.contractSurface, locale)}
               </p>
             </article>
           ))}

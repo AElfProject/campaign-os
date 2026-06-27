@@ -297,6 +297,45 @@ export interface ContractImpactReviewModel {
   rewardBoundary: LocalizedText;
 }
 
+export type ContractReviewChecklistStatus = "passed" | "warning" | "blocked";
+export type ContractReviewRequiredFor = "MVP" | "P1" | "P2" | "CONTRACT_CLAIM";
+
+export interface ContractReviewChecklistItem {
+  id: string;
+  label: LocalizedText;
+  value: LocalizedText;
+  status: ContractReviewChecklistStatus;
+  ownerRole: OwnerRole;
+  requiredFor: ContractReviewRequiredFor;
+  detail: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface ContractEvolutionStep {
+  id: string;
+  phase: LocalizedText;
+  title: LocalizedText;
+  description: LocalizedText;
+  status: PublishState;
+  contractSurface: LocalizedText;
+}
+
+export interface AdminContractReviewCenter {
+  campaignId: string;
+  selectedMode: ContractMode;
+  v2CompanionNeeded: LocalizedText;
+  metadataHash: LocalizedText;
+  verifierRole: LocalizedText;
+  rewardCustody: LocalizedText;
+  publishState: PublishState;
+  highImpactMode: boolean;
+  summary: LocalizedText;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  checklist: ContractReviewChecklistItem[];
+  evolution: ContractEvolutionStep[];
+}
+
 export interface ExportPreviewRow {
   campaignId: string;
   walletAddress: string;
@@ -425,6 +464,7 @@ export interface ExportBatchSummary {
 export interface AdminOpsReadModel {
   campaignId: string;
   reviewQueue: ReviewItem[];
+  contractReviewCenter: AdminContractReviewCenter;
   analytics: AnalyticsKpi[];
   funnel: ConversionFunnelStep[];
   walletSplit: DimensionSplit[];
