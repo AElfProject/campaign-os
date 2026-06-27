@@ -44,7 +44,10 @@ const panelStyle: CSSProperties = {
   borderRadius: 8,
   display: "grid",
   gap: 16,
+  maxWidth: "100%",
+  minWidth: 0,
   padding: 18,
+  width: "100%",
 };
 
 const gridStyle: CSSProperties = {
@@ -59,6 +62,7 @@ const cardStyle: CSSProperties = {
   borderRadius: 8,
   display: "grid",
   gap: 10,
+  minWidth: 0,
   padding: 14,
 };
 
@@ -68,6 +72,8 @@ const rowStyle: CSSProperties = {
   flexWrap: "wrap",
   gap: 8,
   justifyContent: "space-between",
+  maxWidth: "100%",
+  minWidth: 0,
 };
 
 const labelStyle: CSSProperties = {
@@ -700,7 +706,7 @@ export const UserAppPanel = ({
   ];
 
   return (
-    <div style={{ display: "grid", gap: 18 }}>
+    <div style={{ display: "grid", gap: 18, minWidth: 0 }}>
       <section style={panelStyle}>
         <div style={rowStyle}>
           <div>
@@ -1266,7 +1272,7 @@ export const UserAppPanel = ({
             {participation.leaderboard.length} rows
           </span>
         </div>
-        <div style={{ overflowX: "auto" }}>
+        <div style={{ maxWidth: "100%", minWidth: 0, overflowX: "auto" }}>
           <table style={tableStyle}>
             <thead>
               <tr>
