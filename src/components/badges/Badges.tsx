@@ -2,12 +2,14 @@ import type { CSSProperties } from "react";
 import {
   getWalletBadgeLabel,
   getWalletCompatibilityLabel,
+  walletVerificationLabels,
   type AccountType,
   type ContractMode,
   type LocaleStatus,
   type ReviewSeverity,
   type WalletCompatibility,
   type WalletSource,
+  type WalletVerificationStatus,
 } from "../../domain";
 
 type Tone = "neutral" | "success" | "warning" | "danger" | "info" | "ai";
@@ -81,6 +83,23 @@ export const WalletBadge = ({
     tone={accountType === "UNKNOWN" ? "warning" : "info"}
   />
 );
+
+export const WalletVerificationBadge = ({
+  label,
+  status,
+}: {
+  label?: string;
+  status: WalletVerificationStatus;
+}) => {
+  const tone: Tone =
+    status === "verified"
+      ? "success"
+      : status === "internal_agent" || status === "address_only"
+        ? "warning"
+        : "danger";
+
+  return <Badge label={label ?? walletVerificationLabels[status]["en-US"]} tone={tone} />;
+};
 
 export const WalletCompatibilityBadge = ({
   compatibility,

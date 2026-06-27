@@ -5,10 +5,10 @@ import {
   getWalletBadgeLabel,
   getLocalizedText,
   walletOptions,
-  walletSessions,
   type CampaignShellDetail,
   type EligibilityStatus,
   type LocaleStatus,
+  type NormalizedWalletSession,
   type ParticipantSnapshot,
   type SupportedLocale,
   type TaskVerificationStatus,
@@ -19,6 +19,7 @@ import {
   PublishStateBadge,
   WalletBadge,
   WalletCompatibilityBadge,
+  WalletVerificationBadge,
 } from "../../badges/Badges";
 import { WalletOptionCards } from "../../wallet/WalletOptionCards";
 import { userAppCopy } from "./copy";
@@ -138,6 +139,16 @@ const contractModeLabel = (mode: CampaignShellDetail["contractMode"]) => mode.re
 
 const formatSource = (value: string) => value.replace(/_/g, " ");
 
+const formatTimestamp = (iso?: string) =>
+  iso
+    ? new Intl.DateTimeFormat("en-US", {
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        month: "short",
+      }).format(new Date(iso))
+    : "-";
+
 const localeStatusLabel = (status: LocaleStatus, locale: SupportedLocale) => {
   const labels = {
     "en-US": {
@@ -215,19 +226,79 @@ const taskBadgeState = (status: TaskVerificationStatus) => {
   return status === "failed" ? "blocker" : "warning";
 };
 
+const sessionForParticipant = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+) =>
+  campaign.walletSessions.find(
+    (session) =>
+      session.sessionId === participant.walletSessionId ||
+      session.address === participant.walletAddress,
+  ) ?? campaign.walletSessions[0];
+
+const WalletSessionCard = ({
+  copy,
+  locale,
+  session,
+}: {
+  copy: typeof userAppCopy["en-US"];
+  locale: SupportedLocale;
+  session: NormalizedWalletSession;
+}) => (
+  <article style={cardStyle}>
+    <div style={rowStyle}>
+      <div style={{ display: "grid", gap: 4 }}>
+        <strong>
+          {copy.walletSession}: {session.walletName}
+        </strong>
+        <span style={{ color: "#475569", fontSize: 13 }}>
+          {copy.walletAddress}: {session.displayAddress}
+        </span>
+      </div>
+      <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        <WalletBadge accountType={session.accountType} walletSource={session.walletSource} />
+        <WalletVerificationBadge
+          label={getLocalizedText(session.statusMessage, locale)}
+          status={session.verificationStatus}
+        />
+      </span>
+    </div>
+    <dl style={{ display: "grid", gap: 6, margin: 0 }}>
+      {[
+        [copy.walletSource, formatSource(session.walletSource)],
+        [copy.walletChain, `${session.chainId} / ${session.network}`],
+        [copy.walletSignature, formatSource(session.signatureStatus)],
+        [copy.walletLastSeen, formatTimestamp(session.lastSeenAt)],
+      ].map(([label, value]) => (
+        <div key={label} style={rowStyle}>
+          <dt style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>{label}</dt>
+          <dd style={{ color: "#071426", fontSize: 13, fontWeight: 700, margin: 0 }}>
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+    <p style={{ color: session.walletTypeVerified ? "#166534" : "#92400e", fontSize: 13, fontWeight: 800, margin: 0 }}>
+      {getLocalizedText(session.statusMessage, locale)}
+    </p>
+    <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+      {session.userAction ? getLocalizedText(session.userAction, locale) : copy.seededWalletBoundary}
+    </p>
+  </article>
+);
+
 export const UserAppPanel = ({
   campaign = campaignDetail,
   locale,
   participant = campaignDetail.participants[1],
 }: UserAppPanelProps) => {
   const copy = userAppCopy[locale];
-  const disconnectedWallet = walletSessions.find((session) => session.accountType === "UNKNOWN");
   const participation = createParticipationReadModel(campaign, participant);
   const taskStates = participation.taskStates;
   const completedCount = taskStates.filter((task) => task.completed).length;
   const title = getLocalizedText(campaign.title, locale);
   const subtitle = getLocalizedText(campaign.subtitle, locale);
-  const selectedWallet = disconnectedWallet ?? walletSessions[2];
+  const selectedWallet = sessionForParticipant(campaign, participant);
   const missingTasks = campaign.tasks.filter((task) =>
     participation.eligibility.missingTaskIds.includes(task.id),
   );
@@ -275,6 +346,32 @@ export const UserAppPanel = ({
         </div>
       </section>
 
+      <section style={panelStyle}>
+        <div style={rowStyle}>
+          <div>
+            <p style={labelStyle}>{copy.walletTypeVerified}</p>
+            <h3 style={{ fontSize: 20, margin: "2px 0 0" }}>{copy.walletSessionStatus}</h3>
+          </div>
+          <WalletVerificationBadge
+            label={getLocalizedText(selectedWallet.statusMessage, locale)}
+            status={selectedWallet.verificationStatus}
+          />
+        </div>
+        <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+          {copy.seededWalletBoundary}
+        </p>
+        <div style={gridStyle}>
+          {campaign.walletSessions.map((session) => (
+            <WalletSessionCard
+              copy={copy}
+              key={session.sessionId}
+              locale={locale}
+              session={session}
+            />
+          ))}
+        </div>
+      </section>
+
       <WalletOptionCards copy={copy} options={walletOptions} />
 
       <section style={panelStyle}>
@@ -312,8 +409,20 @@ export const UserAppPanel = ({
               accountType={participant.accountType}
               walletSource={participant.walletSource}
             />
+            {participation.eligibility.walletStatus ? (
+              <WalletVerificationBadge
+                label={getLocalizedText(participation.eligibility.walletStatus.statusMessage, locale)}
+                status={participation.eligibility.walletStatus.verificationStatus}
+              />
+            ) : null}
             <span style={{ color: "#475569", fontSize: 13 }}>
               {copy.walletAddress}: {participant.walletAddress}
+            </span>
+            <span style={{ color: "#475569", fontSize: 13 }}>
+              {copy.walletTypeVerified}:{" "}
+              {participation.eligibility.walletStatus?.walletTypeVerified
+                ? copy.eligible
+                : copy.notEligible}
             </span>
           </div>
         </div>
