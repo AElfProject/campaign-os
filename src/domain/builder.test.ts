@@ -2,9 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   builderSupportedLocales,
   computeBuilderPublishReadiness,
+  createTaskTemplateFilterSummary,
   createPublishGateDecisionCenter,
+  defaultTaskTemplateFilters,
+  filterTaskTemplates,
   seededCampaignDraft,
+  taskTemplateLanguageFilterOptions,
   taskTemplateLibrary,
+  taskTemplateVerificationFilterOptions,
+  taskTemplateWalletFilterOptions,
   walletPolicyOptions,
 } from "./builder";
 
@@ -46,6 +52,118 @@ describe("Campaign Builder domain foundation", () => {
       defaultSelected: true,
     });
     expect(walletPolicyOptions.map((option) => option.policy)).toEqual(["ANY", "AA_ONLY", "EOA_ONLY"]);
+  });
+
+  it("filters task templates by wallet compatibility semantics", () => {
+    const aaTemplates = filterTaskTemplates(taskTemplateLibrary, {
+      ...defaultTaskTemplateFilters,
+      wallet: ["aa"],
+    });
+    const eoaTemplates = filterTaskTemplates(taskTemplateLibrary, {
+      ...defaultTaskTemplateFilters,
+      wallet: ["eoa"],
+    });
+    const anyTemplates = filterTaskTemplates(taskTemplateLibrary, {
+      ...defaultTaskTemplateFilters,
+      wallet: ["any"],
+    });
+
+    expect(aaTemplates.every((template) => ["ANY", "AA_ONLY"].includes(template.walletCompatibility))).toBe(true);
+    expect(aaTemplates.map((template) => template.id)).toContain("tpl-wallet-connect");
+    expect(aaTemplates.map((template) => template.id)).not.toContain("tpl-dao-vote");
+
+    expect(eoaTemplates.every((template) => ["ANY", "EOA_ONLY"].includes(template.walletCompatibility))).toBe(true);
+    expect(eoaTemplates.map((template) => template.id)).toEqual(
+      expect.arrayContaining(["tpl-wallet-connect", "tpl-dao-vote"]),
+    );
+
+    expect(anyTemplates.every((template) => template.walletCompatibility === "ANY")).toBe(true);
+    expect(anyTemplates).toHaveLength(7);
+  });
+
+  it("filters task templates by verification type", () => {
+    expect(
+      filterTaskTemplates(taskTemplateLibrary, {
+        ...defaultTaskTemplateFilters,
+        verification: ["on_chain"],
+      }).map((template) => template.id),
+    ).toEqual(["tpl-bridge-ebridge", "tpl-nft-hold", "tpl-dao-vote"]);
+
+    expect(
+      filterTaskTemplates(taskTemplateLibrary, {
+        ...defaultTaskTemplateFilters,
+        verification: ["dapp_api"],
+      }).map((template) => template.id),
+    ).toEqual(["tpl-swap-awaken", "tpl-daipp-submit"]);
+
+    expect(
+      filterTaskTemplates(taskTemplateLibrary, {
+        ...defaultTaskTemplateFilters,
+        verification: ["social", "wallet", "referral"],
+      }).map((template) => template.id),
+    ).toEqual(["tpl-wallet-connect", "tpl-social-share", "tpl-invite-friend"]);
+
+    expect(
+      filterTaskTemplates(taskTemplateLibrary, {
+        ...defaultTaskTemplateFilters,
+        verification: ["manual"],
+      }),
+    ).toEqual([]);
+  });
+
+  it("filters task templates by language readiness without adding zh-TW", () => {
+    const missingTranslations = filterTaskTemplates(taskTemplateLibrary, {
+      ...defaultTaskTemplateFilters,
+      language: ["missing_translations"],
+    });
+    const zhReviewed = filterTaskTemplates(taskTemplateLibrary, {
+      ...defaultTaskTemplateFilters,
+      language: ["zh_reviewed"],
+    });
+
+    expect(missingTranslations.map((template) => template.id)).toEqual(
+      expect.arrayContaining(["tpl-bridge-ebridge", "tpl-dao-vote", "tpl-invite-friend"]),
+    );
+    expect(missingTranslations.map((template) => template.id)).not.toContain("tpl-wallet-connect");
+    expect(zhReviewed.map((template) => template.id)).toEqual(["tpl-wallet-connect"]);
+    expect(
+      JSON.stringify([
+        taskTemplateWalletFilterOptions,
+        taskTemplateVerificationFilterOptions,
+        taskTemplateLanguageFilterOptions,
+      ]),
+    ).not.toContain("zh-TW");
+  });
+
+  it("composes task template filters and summarizes empty states", () => {
+    const focusedTemplates = filterTaskTemplates(taskTemplateLibrary, {
+      ...defaultTaskTemplateFilters,
+      wallet: ["eoa"],
+      verification: ["on_chain"],
+      language: ["zh_fallback"],
+    });
+    const emptyTemplates = filterTaskTemplates(taskTemplateLibrary, {
+      ...defaultTaskTemplateFilters,
+      wallet: ["any"],
+      verification: ["manual"],
+      language: ["zh_reviewed"],
+    });
+    const summary = createTaskTemplateFilterSummary(taskTemplateLibrary, emptyTemplates, {
+      ...defaultTaskTemplateFilters,
+      wallet: ["any"],
+      verification: ["manual"],
+      language: ["zh_reviewed"],
+    });
+
+    expect(focusedTemplates.map((template) => template.id)).toEqual(["tpl-dao-vote"]);
+    expect(emptyTemplates).toEqual([]);
+    expect(summary).toEqual({
+      hasActiveFilters: true,
+      isEmpty: true,
+      selectedFilters: 3,
+      totalTemplates: 8,
+      visibleTemplates: 0,
+    });
   });
 
   it("separates readiness blockers, warnings, and passed checks", () => {

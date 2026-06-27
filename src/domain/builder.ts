@@ -34,6 +34,20 @@ export type PointsRule = "task_points" | "daily_cap" | "referral_bonus";
 export type WinnerRule = "top_n" | "threshold" | "manual_review";
 export type ReadinessGroup = "basics" | "wallet" | "tasks" | "rewards" | "i18n" | "contract" | "risk" | "export";
 export type ReadinessStatus = "blocker" | "warning" | "passed";
+export type TaskTemplateWalletFilter = "aa" | "eoa" | "any";
+export type TaskTemplateVerificationFilter =
+  | "on_chain"
+  | "dapp_api"
+  | "social"
+  | "manual"
+  | "wallet"
+  | "referral";
+export type TaskTemplateLanguageFilter =
+  | "en_ready"
+  | "missing_translations"
+  | "zh_draft"
+  | "zh_fallback"
+  | "zh_reviewed";
 
 export interface BuilderStep {
   id: BuilderStepId;
@@ -62,6 +76,26 @@ export interface TaskTemplate {
   requiredByDefault: boolean;
   riskLevel: RiskLevel;
   localeReadiness: Record<SupportedLocale, LocaleStatus>;
+}
+
+export interface TaskTemplateFilterState {
+  wallet: TaskTemplateWalletFilter[];
+  verification: TaskTemplateVerificationFilter[];
+  language: TaskTemplateLanguageFilter[];
+}
+
+export interface TaskTemplateFilterOption<TValue extends string> {
+  value: TValue;
+  label: LocalizedText;
+  description: LocalizedText;
+}
+
+export interface TaskTemplateFilterSummary {
+  totalTemplates: number;
+  visibleTemplates: number;
+  selectedFilters: number;
+  hasActiveFilters: boolean;
+  isEmpty: boolean;
 }
 
 export interface RewardPlan {
@@ -237,6 +271,103 @@ export const walletPolicyOptions: WalletPolicyOption[] = [
   },
 ];
 
+export const defaultTaskTemplateFilters: TaskTemplateFilterState = {
+  language: [],
+  verification: [],
+  wallet: [],
+};
+
+export const taskTemplateWalletFilterOptions: TaskTemplateFilterOption<TaskTemplateWalletFilter>[] = [
+  {
+    value: "aa",
+    label: text("AA", "AA"),
+    description: text(
+      "Show templates compatible with account abstraction wallets.",
+      "展示兼容账户抽象钱包的模板。",
+    ),
+  },
+  {
+    value: "eoa",
+    label: text("EOA", "EOA"),
+    description: text(
+      "Show templates compatible with externally owned accounts.",
+      "展示兼容外部拥有账户的钱包模板。",
+    ),
+  },
+  {
+    value: "any",
+    label: text("Any", "任意"),
+    description: text(
+      "Show templates explicitly marked for any wallet type.",
+      "展示明确标记为任意钱包类型的模板。",
+    ),
+  },
+];
+
+export const taskTemplateVerificationFilterOptions: TaskTemplateFilterOption<TaskTemplateVerificationFilter>[] = [
+  {
+    value: "on_chain",
+    label: text("On-chain", "链上"),
+    description: text("Verified from on-chain activity.", "通过链上活动验证。"),
+  },
+  {
+    value: "dapp_api",
+    label: text("DApp API", "DApp API"),
+    description: text("Verified from a dApp API integration.", "通过 DApp API 集成验证。"),
+  },
+  {
+    value: "social",
+    label: text("Social", "社交"),
+    description: text("Verified from a social action or review.", "通过社交行为或审核验证。"),
+  },
+  {
+    value: "manual",
+    label: text("Manual", "人工"),
+    description: text("Requires manual operator verification.", "需要运营人工验证。"),
+  },
+  {
+    value: "wallet",
+    label: text("Wallet", "钱包"),
+    description: text("Verified from wallet connection state.", "通过钱包连接状态验证。"),
+  },
+  {
+    value: "referral",
+    label: text("Referral", "推荐"),
+    description: text("Verified from qualified invite completion.", "通过合格邀请完成情况验证。"),
+  },
+];
+
+export const taskTemplateLanguageFilterOptions: TaskTemplateFilterOption<TaskTemplateLanguageFilter>[] = [
+  {
+    value: "en_ready",
+    label: text("English ready", "英文已就绪"),
+    description: text("English copy is ready for campaign use.", "英文文案已可用于活动。"),
+  },
+  {
+    value: "missing_translations",
+    label: text("Missing translations", "缺少翻译"),
+    description: text(
+      "At least one supported locale still needs review or fallback work.",
+      "至少一个受支持语言仍需要审核或回退处理。",
+    ),
+  },
+  {
+    value: "zh_draft",
+    label: text("zh-CN draft", "zh-CN 草稿"),
+    description: text("Chinese copy is still an AI draft.", "中文文案仍是 AI 草稿。"),
+  },
+  {
+    value: "zh_fallback",
+    label: text("zh-CN fallback", "zh-CN 回退"),
+    description: text("Chinese copy falls back to English.", "中文文案仍回退到英文。"),
+  },
+  {
+    value: "zh_reviewed",
+    label: text("zh-CN reviewed", "zh-CN 已审核"),
+    description: text("Chinese copy has completed human review.", "中文文案已完成人工审核。"),
+  },
+];
+
 export const taskTemplateLibrary: TaskTemplate[] = [
   {
     id: "tpl-wallet-connect",
@@ -335,6 +466,94 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     localeReadiness: { "en-US": "ready", "zh-CN": "fallback" },
   },
 ];
+
+const verificationFilterValues = {
+  dapp_api: "DAPP_API",
+  manual: "MANUAL",
+  on_chain: "ON_CHAIN",
+  referral: "REFERRAL",
+  social: "SOCIAL",
+  wallet: "WALLET",
+} as const satisfies Record<TaskTemplateVerificationFilter, TaskTemplate["verificationType"]>;
+
+const isLocaleReady = (status: LocaleStatus) => status === "ready" || status === "reviewed";
+
+const selectedGroupMatches = <TValue extends string>(
+  selectedValues: readonly TValue[],
+  predicate: (selectedValue: TValue) => boolean,
+) => selectedValues.length === 0 || selectedValues.some(predicate);
+
+const matchesWalletFilter = (
+  template: TaskTemplate,
+  selectedWallets: readonly TaskTemplateWalletFilter[],
+) =>
+  selectedGroupMatches(selectedWallets, (selectedWallet) => {
+    if (selectedWallet === "aa") {
+      return template.walletCompatibility === "ANY" || template.walletCompatibility === "AA_ONLY";
+    }
+    if (selectedWallet === "eoa") {
+      return template.walletCompatibility === "ANY" || template.walletCompatibility === "EOA_ONLY";
+    }
+
+    return template.walletCompatibility === "ANY";
+  });
+
+const matchesVerificationFilter = (
+  template: TaskTemplate,
+  selectedVerifications: readonly TaskTemplateVerificationFilter[],
+) =>
+  selectedGroupMatches(
+    selectedVerifications,
+    (selectedVerification) => template.verificationType === verificationFilterValues[selectedVerification],
+  );
+
+const matchesLanguageFilter = (
+  template: TaskTemplate,
+  selectedLanguages: readonly TaskTemplateLanguageFilter[],
+) =>
+  selectedGroupMatches(selectedLanguages, (selectedLanguage) => {
+    if (selectedLanguage === "en_ready") {
+      return template.localeReadiness["en-US"] === "ready";
+    }
+    if (selectedLanguage === "missing_translations") {
+      return builderSupportedLocales.some((locale) => !isLocaleReady(template.localeReadiness[locale]));
+    }
+    if (selectedLanguage === "zh_draft") {
+      return template.localeReadiness["zh-CN"] === "ai_draft";
+    }
+    if (selectedLanguage === "zh_fallback") {
+      return template.localeReadiness["zh-CN"] === "fallback";
+    }
+
+    return template.localeReadiness["zh-CN"] === "reviewed";
+  });
+
+export const filterTaskTemplates = (
+  templates: readonly TaskTemplate[],
+  filters: TaskTemplateFilterState = defaultTaskTemplateFilters,
+) =>
+  templates.filter(
+    (template) =>
+      matchesWalletFilter(template, filters.wallet) &&
+      matchesVerificationFilter(template, filters.verification) &&
+      matchesLanguageFilter(template, filters.language),
+  );
+
+export const createTaskTemplateFilterSummary = (
+  templates: readonly TaskTemplate[],
+  filteredTemplates: readonly TaskTemplate[],
+  filters: TaskTemplateFilterState,
+): TaskTemplateFilterSummary => {
+  const selectedFilters = filters.wallet.length + filters.verification.length + filters.language.length;
+
+  return {
+    hasActiveFilters: selectedFilters > 0,
+    isEmpty: filteredTemplates.length === 0,
+    selectedFilters,
+    totalTemplates: templates.length,
+    visibleTemplates: filteredTemplates.length,
+  };
+};
 
 const templateGovernanceBoundary = text(
   "Seeded/local Template Manager governance only. No live template registry, backend Template Service, external provider, or enable/disable mutation is connected.",
