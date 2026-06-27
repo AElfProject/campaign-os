@@ -106,6 +106,15 @@ describe("Campaign OS local API service facade", () => {
       rewardDescription: "Rewards remain project owned.",
       supportedLocales: ["en-US", "zh-CN", "zh-TW" as never],
     });
+    const invalidTask = service.addTask({
+      campaignId: campaignDetail.id,
+      evidenceRule: { source: "LOCAL_SEEDED" },
+      points: -1,
+      required: true,
+      templateCode: "",
+      verificationType: "MANUAL",
+      walletCompatibility: "ANY",
+    });
 
     expect(campaign.payload).toMatchObject({
       contractMode: "OFF_CHAIN_MVP",
@@ -126,6 +135,10 @@ describe("Campaign OS local API service facade", () => {
     expect(unsupportedLocale).toMatchObject({
       ok: false,
       error: expect.objectContaining({ code: "UNSUPPORTED_LOCALE", field: "supportedLocales" }),
+    });
+    expect(invalidTask).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "INVALID_REQUEST", field: "templateCode" }),
     });
   });
 
@@ -174,6 +187,17 @@ describe("Campaign OS local API service facade", () => {
       campaignId: campaignDetail.id,
       walletAddress: "7P8...2bE",
     });
+    const missingTask = service.verifyTask({
+      accountType: "AA",
+      campaignId: campaignDetail.id,
+      taskId: "missing-task",
+      walletAddress: "2F4...9aB",
+      walletSource: "PORTKEY_AA",
+    });
+    const missingParticipant = service.checkEligibility({
+      campaignId: campaignDetail.id,
+      walletAddress: "missing-wallet",
+    });
 
     expect(completed.payload).toMatchObject({
       accountType: "AA",
@@ -198,6 +222,14 @@ describe("Campaign OS local API service facade", () => {
     expect(eligible.payload).toMatchObject({ eligible: true, status: "eligible" });
     expect(riskFlagged.payload).toMatchObject({ eligible: false, status: "risk_flagged" });
     expect(pendingEligibility.payload).toMatchObject({ eligible: false, status: "pending" });
+    expect(missingTask).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "TASK_NOT_FOUND", field: "taskId" }),
+    });
+    expect(missingParticipant).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "PARTICIPANT_NOT_FOUND", field: "walletAddress" }),
+    });
   });
 
   it("generates i18n drafts and rejects unsupported locales", () => {
