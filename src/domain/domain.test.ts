@@ -4,6 +4,7 @@ import {
   createAiContentPackWorkbench,
   createContractImpactReviewModel,
   createEcosystemNextActionReadModel,
+  createProjectCampaignCommandCenter,
   computeMissingTasks,
   computePublishReadiness,
   createAdminOpsReadModel,
@@ -832,6 +833,71 @@ describe("Campaign OS domain foundation", () => {
         }),
       ]),
     );
+  });
+
+  it("derives a project campaign command center for owner operations", () => {
+    const commandCenter = createProjectCampaignCommandCenter(campaignDetail);
+    const byStatus = Object.fromEntries(
+      commandCenter.campaigns.map((item) => [item.status, item]),
+    );
+
+    expect(commandCenter.campaigns.length).toBeGreaterThanOrEqual(4);
+    expect(commandCenter.summary).toMatchObject({
+      totalCampaigns: commandCenter.campaigns.length,
+      liveCount: 1,
+      scheduledOrDraftCount: 1,
+      endedCount: 1,
+      exportedCount: 1,
+      exportReadyRows: 1,
+    });
+    expect(commandCenter.summary.nextPrimaryAction["en-US"]).toContain("Review live analytics");
+    expect(byStatus.live).toMatchObject({
+      id: "camp-awaken-sprint",
+      priority: "primary",
+      riskState: "warning",
+      exportState: "warning",
+    });
+    expect(byStatus.live.nextActionLabel["en-US"]).toBe("Review live analytics");
+    expect(byStatus.scheduled.nextActionLabel["en-US"]).toBe("Review launch readiness");
+    expect(byStatus.ended.nextActionLabel["en-US"]).toBe("Approve export preview");
+    expect(byStatus.exported.nextActionLabel["en-US"]).toBe("Archive final report");
+    expect(commandCenter.boundary["en-US"]).toContain("does not distribute rewards");
+    expect(commandCenter.boundary["en-US"]).toContain("No live analytics");
+    expect(commandCenter.boundary["zh-CN"]).toContain("不会连接实时数据");
+  });
+
+  it("derives analytics and export decision details for Project Console", () => {
+    const commandCenter = createProjectCampaignCommandCenter(campaignDetail);
+    const decision = commandCenter.analyticsExport;
+    const kpisById = Object.fromEntries(decision.kpis.map((kpi) => [kpi.id, kpi]));
+
+    expect(Object.keys(kpisById)).toEqual(
+      expect.arrayContaining([
+        "participants",
+        "verified-actions",
+        "referral-conversion",
+        "risk-rate",
+        "eligible-winners",
+        "export-readiness",
+      ]),
+    );
+    expect(decision.exportColumns).toEqual(EXPORT_CSV_COLUMNS);
+    expect(decision.readyRows + decision.reviewRequiredRows + decision.blockedRows).toBe(
+      campaignDetail.exportPreview.rows.length,
+    );
+    expect(decision).toMatchObject({
+      exportBatchId: "export-awaken-sprint-preview",
+      readyRows: 1,
+      reviewRequiredRows: 3,
+      blockedRows: 0,
+    });
+    expect(decision.walletSplit.map((split) => split.label).sort()).toEqual(["AA", "EOA"]);
+    expect(decision.localeSplit.map((split) => split.label).sort()).toEqual(["en-US", "zh-CN"]);
+    expect(JSON.stringify(decision.localeSplit)).not.toContain("zh-TW");
+    expect(decision.dropOffPoint["en-US"]).toContain("Largest drop-off");
+    expect(decision.evidenceCoverage["en-US"]).toContain("task evidence");
+    expect(decision.boundary["en-US"]).toContain("exports verified records only");
+    expect(decision.boundary["en-US"]).toContain("does not distribute rewards");
   });
 
   it("keeps wallet fixtures free of credential examples", () => {

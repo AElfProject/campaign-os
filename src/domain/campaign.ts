@@ -6,8 +6,12 @@ import type {
   AiContentPackSummary,
   AiContentPackWorkbench,
   AiContentQualityGate,
+  AnalyticsExportDecision,
   AnalyticsKpi,
   AdminContractReviewCenter,
+  CampaignCommandCenterSummary,
+  CampaignCommandItem,
+  CampaignCommandPriority,
   ConversionFunnelStep,
   CampaignShellDetail,
   CampaignTask,
@@ -39,6 +43,7 @@ import type {
   ParticipationReadModel,
   ParticipantSnapshot,
   ParticipantTaskState,
+  ProjectCampaignCommandCenter,
   PublishState,
   PublishReadiness,
   ReferralSummary,
@@ -874,6 +879,375 @@ const createExportBatch = (campaign: CampaignShellDetail): ExportBatchSummary =>
     disclaimer: rewardBoundary,
     confirmation: createExportConfirmation(),
     rows,
+  };
+};
+
+const commandCenterBoundary: LocalizedText = {
+  "en-US": "Seeded/local preview only. No live analytics, no real export file, no wallet SDK, no contract call, and export winners does not distribute rewards.",
+  "zh-CN": "仅 seeded/本地预览。不会连接实时数据，不生成真实导出文件，不调用钱包 SDK 或合约，导出 winners 不等于发奖。",
+};
+
+const exportDecisionBoundary: LocalizedText = {
+  "en-US": "Campaign OS exports verified records only and does not distribute rewards; the campaign project owns reward fulfillment.",
+  "zh-CN": "Campaign OS 只导出已验证记录，不执行发奖；奖励履约由活动项目方负责。",
+};
+
+const formatTimeWindow = (startTime: string, endTime: string): LocalizedText => {
+  const dateFormatter = new Intl.DateTimeFormat("en-US", { day: "2-digit", month: "short" });
+
+  return {
+    "en-US": `${dateFormatter.format(new Date(startTime))} - ${dateFormatter.format(new Date(endTime))}`,
+    "zh-CN": `${dateFormatter.format(new Date(startTime))} - ${dateFormatter.format(new Date(endTime))}`,
+  };
+};
+
+const createWalletSplitLabel = (aaWallets: number, eoaWallets: number): LocalizedText => ({
+  "en-US": `${aaWallets} AA / ${eoaWallets} EOA`,
+  "zh-CN": `${aaWallets} AA / ${eoaWallets} EOA`,
+});
+
+const createLocaleState = (localeCoverage: number): LocalizedText =>
+  localeCoverage >= 1
+    ? {
+        "en-US": "All supported locales reviewed",
+        "zh-CN": "所有支持语言已审核",
+      }
+    : {
+        "en-US": "zh-CN uses English fallback until review",
+        "zh-CN": "中文在审核前使用英文回退",
+      };
+
+const statusNextAction: Record<
+  CampaignCommandItem["status"],
+  Pick<CampaignCommandItem, "nextActionLabel" | "nextActionDetail">
+> = {
+  draft: {
+    nextActionLabel: {
+      "en-US": "Finish publish blockers",
+      "zh-CN": "完成发布阻断项",
+    },
+    nextActionDetail: {
+      "en-US": "Complete basics, reward disclaimers, and launch gates before scheduling.",
+      "zh-CN": "排期前完成基础信息、奖励声明和发布门禁。",
+    },
+  },
+  scheduled: {
+    nextActionLabel: {
+      "en-US": "Review launch readiness",
+      "zh-CN": "审核发布准备度",
+    },
+    nextActionDetail: {
+      "en-US": "Confirm locale fallback, wallet policy, and risk settings before go-live.",
+      "zh-CN": "上线前确认语言回退、钱包策略和风险设置。",
+    },
+  },
+  live: {
+    nextActionLabel: {
+      "en-US": "Review live analytics",
+      "zh-CN": "查看实时活动数据",
+    },
+    nextActionDetail: {
+      "en-US": "Monitor funnel drop-off, risk flags, and export readiness.",
+      "zh-CN": "监控漏斗流失、风险标记和导出准备度。",
+    },
+  },
+  paused: {
+    nextActionLabel: {
+      "en-US": "Resolve pause blocker",
+      "zh-CN": "处理暂停阻断项",
+    },
+    nextActionDetail: {
+      "en-US": "Clear the blocking review before resuming the campaign.",
+      "zh-CN": "恢复活动前先完成阻断审核。",
+    },
+  },
+  ended: {
+    nextActionLabel: {
+      "en-US": "Approve export preview",
+      "zh-CN": "批准导出预览",
+    },
+    nextActionDetail: {
+      "en-US": "Review ready, review-required, and blocked rows before winner export.",
+      "zh-CN": "导出 winners 前审核就绪、需复核和阻断行。",
+    },
+  },
+  exported: {
+    nextActionLabel: {
+      "en-US": "Archive final report",
+      "zh-CN": "归档最终报告",
+    },
+    nextActionDetail: {
+      "en-US": "Keep final evidence and remind the project that rewards remain project-owned.",
+      "zh-CN": "保留最终证据，并提醒项目方奖励仍由项目方负责。",
+    },
+  },
+};
+
+const priorityForCampaign = (
+  status: CampaignCommandItem["status"],
+  riskState: PublishState,
+  exportState: PublishState,
+): CampaignCommandPriority => {
+  if (riskState === "blocker" || exportState === "blocker") {
+    return "primary";
+  }
+
+  if (status === "live" || status === "ended") {
+    return "primary";
+  }
+
+  return status === "exported" ? "watch" : "secondary";
+};
+
+const createCampaignCommandItem = ({
+  aaWallets,
+  endTime,
+  eoaWallets,
+  exportState,
+  exportSummary,
+  id,
+  localeCoverage,
+  projectName,
+  riskReason,
+  riskState,
+  startTime,
+  status,
+  title,
+}: {
+  aaWallets: number;
+  endTime: string;
+  eoaWallets: number;
+  exportState: PublishState;
+  exportSummary: LocalizedText;
+  id: string;
+  localeCoverage: number;
+  projectName: string;
+  riskReason: LocalizedText;
+  riskState: PublishState;
+  startTime: string;
+  status: CampaignCommandItem["status"];
+  title: LocalizedText;
+}): CampaignCommandItem => {
+  const nextAction = statusNextAction[status];
+
+  return {
+    id,
+    projectName,
+    title,
+    status,
+    priority: priorityForCampaign(status, riskState, exportState),
+    timeWindow: formatTimeWindow(startTime, endTime),
+    walletSplitLabel: createWalletSplitLabel(aaWallets, eoaWallets),
+    localeState: createLocaleState(localeCoverage),
+    riskState,
+    riskReason,
+    exportState,
+    exportSummary,
+    ...nextAction,
+    boundary: commandCenterBoundary,
+  };
+};
+
+const createSeededCampaignCommandItems = (
+  campaign: CampaignShellDetail,
+  exportBatch: ExportBatchSummary,
+): CampaignCommandItem[] => [
+  createCampaignCommandItem({
+    aaWallets: campaign.metrics.aaWallets,
+    endTime: campaign.endTime,
+    eoaWallets: campaign.metrics.eoaWallets,
+    exportState: exportBatch.blockedCount > 0 ? "warning" : "ready",
+    exportSummary: {
+      "en-US": `${exportBatch.readyCount} ready / ${exportBatch.blockedCount} review rows`,
+      "zh-CN": `${exportBatch.readyCount} 行就绪 / ${exportBatch.blockedCount} 行需审核`,
+    },
+    id: campaign.id,
+    localeCoverage: campaign.metrics.localeCoverage,
+    projectName: campaign.projectName,
+    riskReason: {
+      "en-US": `${campaign.metrics.riskReviewQueue} risk reviews queued`,
+      "zh-CN": `${campaign.metrics.riskReviewQueue} 条风险审核排队`,
+    },
+    riskState: campaign.metrics.riskReviewQueue > 0 ? "warning" : "ready",
+    startTime: campaign.startTime,
+    status: campaign.status,
+    title: campaign.title,
+  }),
+  createCampaignCommandItem({
+    aaWallets: 420,
+    endTime: "2026-07-18T00:00:00Z",
+    eoaWallets: 260,
+    exportState: "warning",
+    exportSummary: {
+      "en-US": "Export disabled until campaign is live",
+      "zh-CN": "活动上线前不可导出",
+    },
+    id: "camp-forest-nft-path",
+    localeCoverage: 0.5,
+    projectName: "Forest",
+    riskReason: {
+      "en-US": "Launch risk settings need owner review",
+      "zh-CN": "上线风险设置需要项目方审核",
+    },
+    riskState: "warning",
+    startTime: "2026-07-05T00:00:00Z",
+    status: "scheduled",
+    title: {
+      "en-US": "Forest NFT Quest",
+      "zh-CN": "Forest NFT 任务",
+    },
+  }),
+  createCampaignCommandItem({
+    aaWallets: 610,
+    endTime: "2026-06-18T00:00:00Z",
+    eoaWallets: 510,
+    exportState: "warning",
+    exportSummary: {
+      "en-US": "184 ready / 26 review rows",
+      "zh-CN": "184 行就绪 / 26 行需审核",
+    },
+    id: "camp-tmrwdao-streak",
+    localeCoverage: 1,
+    projectName: "TMRWDAO",
+    riskReason: {
+      "en-US": "Referral velocity review remains open",
+      "zh-CN": "推荐速度审核仍未关闭",
+    },
+    riskState: "warning",
+    startTime: "2026-06-04T00:00:00Z",
+    status: "ended",
+    title: {
+      "en-US": "TMRWDAO Governance Streak",
+      "zh-CN": "TMRWDAO 治理连续任务",
+    },
+  }),
+  createCampaignCommandItem({
+    aaWallets: 300,
+    endTime: "2026-06-10T00:00:00Z",
+    eoaWallets: 180,
+    exportState: "ready",
+    exportSummary: {
+      "en-US": "Final export evidence archived",
+      "zh-CN": "最终导出证据已归档",
+    },
+    id: "camp-ebridge-onboarding",
+    localeCoverage: 1,
+    projectName: "eBridge",
+    riskReason: {
+      "en-US": "No active risk review",
+      "zh-CN": "无进行中的风险审核",
+    },
+    riskState: "ready",
+    startTime: "2026-05-27T00:00:00Z",
+    status: "exported",
+    title: {
+      "en-US": "eBridge Onboarding Wave",
+      "zh-CN": "eBridge 新手活动",
+    },
+  }),
+];
+
+const createCommandSummary = (
+  campaigns: CampaignCommandItem[],
+  exportReadyRows: number,
+): CampaignCommandCenterSummary => {
+  const primaryAction = campaigns.find((campaign) => campaign.priority === "primary") ?? campaigns[0];
+
+  return {
+    totalCampaigns: campaigns.length,
+    liveCount: campaigns.filter((campaign) => campaign.status === "live").length,
+    scheduledOrDraftCount: campaigns.filter(
+      (campaign) => campaign.status === "scheduled" || campaign.status === "draft",
+    ).length,
+    endedCount: campaigns.filter((campaign) => campaign.status === "ended").length,
+    exportedCount: campaigns.filter((campaign) => campaign.status === "exported").length,
+    warningCount: campaigns.filter(
+      (campaign) => campaign.riskState === "warning" || campaign.exportState === "warning",
+    ).length,
+    blockerCount: campaigns.filter(
+      (campaign) => campaign.riskState === "blocker" || campaign.exportState === "blocker",
+    ).length,
+    exportReadyRows,
+    nextPrimaryAction: primaryAction?.nextActionLabel ?? {
+      "en-US": "Review campaigns",
+      "zh-CN": "审核活动",
+    },
+  };
+};
+
+const createDropOffPoint = (funnel: ConversionFunnelStep[]): LocalizedText => {
+  const largestDropOff = funnel.slice(1).reduce(
+    (largest, step) => {
+      const previous = largest.previousCount;
+      const dropOff = previous - step.count;
+
+      return dropOff > largest.dropOff
+        ? { dropOff, previousCount: step.count, step }
+        : { ...largest, previousCount: step.count };
+    },
+    {
+      dropOff: 0,
+      previousCount: funnel[0]?.count ?? 0,
+      step: funnel[0],
+    },
+  );
+
+  const label = largestDropOff.step?.label ?? {
+    "en-US": "Campaign funnel",
+    "zh-CN": "活动漏斗",
+  };
+
+  return {
+    "en-US": `Largest drop-off: ${label["en-US"]} (${largestDropOff.dropOff.toLocaleString("en-US")} users).`,
+    "zh-CN": `最大流失点：${label["zh-CN"]}（${largestDropOff.dropOff.toLocaleString("en-US")} 位用户）。`,
+  };
+};
+
+const createAnalyticsExportDecision = (
+  campaign: CampaignShellDetail,
+  exportBatch: ExportBatchSummary,
+): AnalyticsExportDecision => {
+  const readyRows = exportBatch.rows.filter((row) => row.rowStatus === "ready").length;
+  const reviewRequiredRows = exportBatch.rows.filter(
+    (row) => row.rowStatus === "review_required",
+  ).length;
+  const blockedRows = exportBatch.rows.filter((row) => row.rowStatus === "blocked").length;
+  const evidenceCount = exportBatch.rows.reduce(
+    (count, row) => count + row.taskEvidence.length,
+    0,
+  );
+
+  return {
+    kpis: createAnalytics(campaign, exportBatch),
+    funnel: campaign.conversionFunnel,
+    walletSplit: createWalletSplit(campaign.participants),
+    localeSplit: createLocaleSplit(campaign.participants),
+    dropOffPoint: createDropOffPoint(campaign.conversionFunnel),
+    exportBatchId: exportBatch.batchId,
+    exportColumns: exportBatch.columns,
+    readyRows,
+    reviewRequiredRows,
+    blockedRows,
+    evidenceCoverage: {
+      "en-US": `${evidenceCount} task evidence records across ${exportBatch.rows.length} seeded export rows.`,
+      "zh-CN": `${exportBatch.rows.length} 行 seeded 导出记录包含 ${evidenceCount} 条任务证据。`,
+    },
+    boundary: exportDecisionBoundary,
+  };
+};
+
+export const createProjectCampaignCommandCenter = (
+  campaign: CampaignShellDetail,
+): ProjectCampaignCommandCenter => {
+  const exportBatch = createExportBatch(campaign);
+  const campaigns = createSeededCampaignCommandItems(campaign, exportBatch);
+  const analyticsExport = createAnalyticsExportDecision(campaign, exportBatch);
+
+  return {
+    summary: createCommandSummary(campaigns, analyticsExport.readyRows),
+    campaigns,
+    analyticsExport,
+    boundary: commandCenterBoundary,
   };
 };
 

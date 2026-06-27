@@ -585,6 +585,60 @@ export interface DimensionSplit {
   percentage: number;
 }
 
+export type CampaignCommandPriority = "primary" | "secondary" | "watch";
+
+export interface CampaignCommandItem {
+  id: string;
+  projectName: string;
+  title: LocalizedText;
+  status: CampaignStatus;
+  priority: CampaignCommandPriority;
+  timeWindow: LocalizedText;
+  walletSplitLabel: LocalizedText;
+  localeState: LocalizedText;
+  riskState: PublishState;
+  riskReason: LocalizedText;
+  exportState: PublishState;
+  exportSummary: LocalizedText;
+  nextActionLabel: LocalizedText;
+  nextActionDetail: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface CampaignCommandCenterSummary {
+  totalCampaigns: number;
+  liveCount: number;
+  scheduledOrDraftCount: number;
+  endedCount: number;
+  exportedCount: number;
+  warningCount: number;
+  blockerCount: number;
+  exportReadyRows: number;
+  nextPrimaryAction: LocalizedText;
+}
+
+export interface AnalyticsExportDecision {
+  kpis: AnalyticsKpi[];
+  funnel: ConversionFunnelStep[];
+  walletSplit: DimensionSplit[];
+  localeSplit: DimensionSplit[];
+  dropOffPoint: LocalizedText;
+  exportBatchId: string;
+  exportColumns: readonly ExportCsvColumn[];
+  readyRows: number;
+  reviewRequiredRows: number;
+  blockedRows: number;
+  evidenceCoverage: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface ProjectCampaignCommandCenter {
+  summary: CampaignCommandCenterSummary;
+  campaigns: CampaignCommandItem[];
+  analyticsExport: AnalyticsExportDecision;
+  boundary: LocalizedText;
+}
+
 export interface RiskSignal {
   id: string;
   label: LocalizedText;
