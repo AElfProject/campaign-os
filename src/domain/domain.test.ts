@@ -8,6 +8,7 @@ import {
   createExportPreview,
   createParticipationReadModel,
   createTranslationManagerReadModel,
+  createWalletConnectionDiagnostics,
   deriveEligibilityWalletStatus,
   deriveParticipantTaskStates,
   defaultLocale,
@@ -244,6 +245,56 @@ describe("Campaign OS domain foundation", () => {
       verificationStatus: "address_only",
       walletTypeVerified: false,
     });
+  });
+
+  it("creates wallet connection diagnostics from seeded wallet sessions", () => {
+    const diagnostics = createWalletConnectionDiagnostics(walletSessions);
+    const groupsById = Object.fromEntries(
+      diagnostics.groups.map((group) => [group.id, group]),
+    );
+    const checklistById = Object.fromEntries(
+      diagnostics.qaChecklist.map((item) => [item.id, item]),
+    );
+
+    expect(diagnostics).toMatchObject({
+      totalSessions: 10,
+      verifiedSessions: 4,
+      issueSessions: 6,
+      recommendedPathReady: true,
+      eoaPathsReady: 3,
+    });
+    expect(diagnostics.boundary["en-US"]).toContain("no live wallet SDK connection");
+    expect(groupsById["recommended-aa"].items.map((item) => item.sessionId)).toEqual([
+      "sess-aa-001",
+    ]);
+    expect(groupsById["supported-eoa"].items.map((item) => item.sessionId).sort()).toEqual([
+      "sess-eoa-001",
+      "sess-eoa-app-001",
+      "sess-nightelf-001",
+    ]);
+    expect(groupsById["connection-issues"]).toMatchObject({ state: "blocker" });
+    expect(groupsById["connection-issues"].items.map((item) => item.verificationStatus).sort()).toEqual([
+      "account_restricted",
+      "missing_signature",
+      "unsupported_wallet",
+      "wrong_chain",
+    ]);
+    expect(groupsById["address-only"].items[0]).toMatchObject({
+      sessionId: "sess-unknown-001",
+      verificationStatus: "address_only",
+    });
+    expect(groupsById["internal-agent"].items[0].nextAction["en-US"]).toContain(
+      "not normal campaign users",
+    );
+    expect(checklistById["portkey-aa-connect"]).toMatchObject({
+      state: "ready",
+      sessionIds: ["sess-aa-001"],
+    });
+    expect(checklistById["eoa-extension-connect"].sessionIds).toEqual(["sess-eoa-001"]);
+    expect(checklistById["wrong-chain-error"].evidence["en-US"]).toContain("AELF mainnet");
+    expect(checklistById["unsupported-wallet-error"].sessionIds).toEqual(["sess-unsupported-001"]);
+    expect(checklistById["missing-signature"].sessionIds).toEqual(["sess-missing-signature-001"]);
+    expect(checklistById["account-policy-restriction"].sessionIds).toEqual(["sess-account-restricted-001"]);
   });
 
   it("derives wallet policy eligibility without treating address-only input as verified", () => {

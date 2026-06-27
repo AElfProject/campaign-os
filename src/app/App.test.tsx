@@ -103,9 +103,12 @@ describe("Campaign OS app shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "User App" }));
 
-    expect(screen.getByText("Portkey AA Wallet")).toBeInTheDocument();
-    expect(screen.getByText("Portkey EOA App")).toBeInTheDocument();
-    expect(screen.getByText("Portkey EOA Extension")).toBeInTheDocument();
+    expect(screen.getAllByText("Portkey AA Wallet").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Portkey EOA App").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Portkey EOA Extension").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Wallet Connection Diagnostics" })).toBeInTheDocument();
+    expect(screen.getByText("Wallet QA checklist")).toBeInTheDocument();
+    expect(screen.getByText("Supported; AA is recommended, not mandatory.")).toBeInTheDocument();
     expect(screen.getAllByText("AA + EOA").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Wallet session status" })).toBeInTheDocument();
     expect(screen.getAllByText("Eligibility checker").length).toBeGreaterThan(0);
