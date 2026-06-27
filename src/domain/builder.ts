@@ -121,6 +121,45 @@ export interface PublishReadinessResult {
   lastReviewedAt: string;
 }
 
+export interface PublishGateCounts {
+  blockers: number;
+  warnings: number;
+  passed: number;
+  total: number;
+}
+
+export interface PublishGateItem {
+  id: string;
+  group: ReadinessGroup;
+  status: ReadinessStatus;
+  title: LocalizedText;
+  reason: LocalizedText;
+  nextAction: LocalizedText;
+  ownerRole: OwnerRole;
+  blocksPublish: boolean;
+}
+
+export interface PublishGateApprovalRoute {
+  ownerRole: OwnerRole;
+  label: LocalizedText;
+  status: "ready" | "warning" | "blocker";
+  gateIds: string[];
+  summary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface PublishGateDecisionCenter {
+  campaignDraftId: string;
+  launchState: "ready" | "warning" | "blocker";
+  ready: boolean;
+  summary: LocalizedText;
+  boundary: LocalizedText;
+  lastReviewedAt: string;
+  counts: PublishGateCounts;
+  gates: PublishGateItem[];
+  approvalRoutes: PublishGateApprovalRoute[];
+}
+
 export interface CampaignDraft {
   id: string;
   campaignName: LocalizedText;
@@ -476,6 +515,35 @@ const makeCheck = (
   ownerRole,
 });
 
+const gateTitles: Record<string, LocalizedText> = {
+  "basics-complete": text("Campaign basics", "活动基础信息"),
+  "contract-impact": text("Contract impact", "合约影响"),
+  "export-disclaimer": text("Export boundary", "导出边界"),
+  "i18n-human-review": text("i18n human review", "多语言人工审核"),
+  "reward-disclaimer": text("Reward disclaimer", "奖励声明"),
+  "risk-referral-controls": text("Referral and risk controls", "推荐与风险控制"),
+  "risk-social-reward": text("Social reward risk", "社交奖励风险"),
+  "task-verifiability": text("Task verifiability", "任务可验证性"),
+  "wallet-policy": text("Wallet policy", "钱包策略"),
+};
+
+const ownerRoleLabels: Record<OwnerRole, LocalizedText> = {
+  contract_reviewer: text("Contract reviewer", "合约审核人"),
+  internal_operator: text("Internal operator", "内部运营"),
+  project_owner: text("Project owner", "项目方"),
+};
+
+const publishBoundary = text(
+  "Seeded review only: no real publish, backend write, wallet signature, contract transaction, reward custody, reward distribution, export download, or live AI generation is executed.",
+  "仅 seeded 审核：不执行真实发布、后端写入、钱包签名、合约交易、奖励托管、奖励发放、导出下载或实时 AI 生成。",
+);
+
+const toGateItem = (check: ReadinessCheck): PublishGateItem => ({
+  ...check,
+  blocksPublish: check.status === "blocker",
+  title: gateTitles[check.id] ?? check.reason,
+});
+
 const hasRequiredBasics = (draft: CampaignDraft) =>
   Boolean(
     draft.campaignName["en-US"].trim() &&
@@ -510,6 +578,114 @@ const isHighRewardSocialOnly = (draft: CampaignDraft) => {
   );
 
   return hasHighRewardSocialTask && (hasOnlySocialVerification || draft.rewardPlan.estimatedRewardValueUsd >= 2000);
+};
+
+const selectedTaskTemplates = (draft: CampaignDraft) =>
+  taskTemplateLibrary.filter((template) => draft.selectedTaskTemplateIds.includes(template.id));
+
+const createWalletGate = (draft: CampaignDraft): PublishGateItem => {
+  if (draft.walletPolicy === "ANY") {
+    return toGateItem(
+      makeCheck(
+        "wallet-policy",
+        "wallet",
+        "passed",
+        text("Any wallet allows AA and EOA users to participate.", "任意钱包允许 AA 与 EOA 用户参与。"),
+        text("Keep Portkey AA recommended for new users without excluding EOA users.", "继续推荐新用户使用 Portkey AA，但不要排除 EOA 用户。"),
+        "project_owner",
+      ),
+    );
+  }
+
+  return toGateItem(
+    makeCheck(
+      "wallet-policy",
+      "wallet",
+      draft.formState.walletPolicyConfirmed ? "passed" : "warning",
+      draft.walletPolicy === "AA_ONLY"
+        ? text("Campaign is restricted to AA wallets.", "活动限制为 AA 钱包。")
+        : text("Campaign is restricted to EOA wallets.", "活动限制为 EOA 钱包。"),
+      text("Confirm the restriction is intentional before publishing.", "发布前确认该钱包限制是有意配置。"),
+      "project_owner",
+    ),
+  );
+};
+
+const createTaskGate = (draft: CampaignDraft): PublishGateItem => {
+  const templates = selectedTaskTemplates(draft);
+  const verifiableTemplates = templates.filter((template) =>
+    ["DAPP_API", "ON_CHAIN", "REFERRAL", "WALLET"].includes(template.verificationType),
+  );
+  const onChainOrDappTemplates = templates.filter((template) =>
+    ["DAPP_API", "ON_CHAIN"].includes(template.verificationType),
+  );
+
+  if (templates.length === 0) {
+    return toGateItem(
+      makeCheck(
+        "task-verifiability",
+        "tasks",
+        "blocker",
+        text("At least one campaign task is required before publish.", "发布前至少需要一个活动任务。"),
+        text("Add wallet, on-chain, dApp API, or referral templates.", "添加钱包、链上、dApp API 或推荐任务模板。"),
+        "project_owner",
+      ),
+    );
+  }
+
+  if (verifiableTemplates.length === 0 || onChainOrDappTemplates.length === 0) {
+    return toGateItem(
+      makeCheck(
+        "task-verifiability",
+        "tasks",
+        "warning",
+        text("Task mix needs at least one on-chain or dApp API verification anchor.", "任务组合需要至少一个链上或 dApp API 验证锚点。"),
+        text("Add bridge, swap, NFT, DAO, or dApp API task before high-value publish.", "高价值活动发布前加入 bridge、swap、NFT、DAO 或 dApp API 任务。"),
+        "internal_operator",
+      ),
+    );
+  }
+
+  return toGateItem(
+    makeCheck(
+      "task-verifiability",
+      "tasks",
+      "passed",
+      text("Selected tasks include wallet, bridge, and swap verification anchors.", "已选任务包含钱包、bridge 与 swap 验证锚点。"),
+      text("Keep on-chain or dApp API evidence visible in task review.", "在任务审核中保留链上或 dApp API 证据。"),
+      "internal_operator",
+    ),
+  );
+};
+
+const createRiskReferralGate = (draft: CampaignDraft): PublishGateItem => {
+  if (
+    draft.eligibilityRule.referralValidationEnabled &&
+    draft.eligibilityRule.riskFlagsEnabled &&
+    draft.eligibilityRule.manualReviewRequired
+  ) {
+    return toGateItem(
+      makeCheck(
+        "risk-referral-controls",
+        "risk",
+        "passed",
+        text("Referral validation, risk flags, and manual review are enabled.", "推荐验证、风险标记与人工审核已启用。"),
+        text("Keep internal operator review before winner export.", "在 winners 导出前保留内部运营审核。"),
+        "internal_operator",
+      ),
+    );
+  }
+
+  return toGateItem(
+    makeCheck(
+      "risk-referral-controls",
+      "risk",
+      "warning",
+      text("Referral validation, risk flags, or manual review is incomplete.", "推荐验证、风险标记或人工审核尚未完整配置。"),
+      text("Enable referral validation, risk flags, and manual review before publishing high-reward campaigns.", "发布高奖励活动前启用推荐验证、风险标记与人工审核。"),
+      "internal_operator",
+    ),
+  );
 };
 
 export const computeBuilderPublishReadiness = (draft: CampaignDraft): PublishReadinessResult => {
@@ -581,7 +757,10 @@ export const computeBuilderPublishReadiness = (draft: CampaignDraft): PublishRea
           "export-disclaimer",
           "export",
           "passed",
-          text("Export disclaimer is accepted.", "导出声明已确认。"),
+          text(
+            "Exporting winners does not distribute rewards disclaimer is accepted.",
+            "导出 winners 不等于发奖的声明已确认。",
+          ),
           text("Keep export boundary visible in publish readiness.", "在发布准备度中保留导出边界。"),
           "internal_operator",
         )
@@ -655,3 +834,116 @@ export const computeBuilderPublishReadiness = (draft: CampaignDraft): PublishRea
 };
 
 export const seededBuilderReadiness = computeBuilderPublishReadiness(seededCampaignDraft);
+
+const routeStatus = (gates: PublishGateItem[]): "ready" | "warning" | "blocker" => {
+  if (gates.some((gate) => gate.status === "blocker")) {
+    return "blocker";
+  }
+
+  if (gates.some((gate) => gate.status === "warning")) {
+    return "warning";
+  }
+
+  return "ready";
+};
+
+const routeNextAction = (ownerRole: OwnerRole): LocalizedText => {
+  if (ownerRole === "contract_reviewer") {
+    return text("Approve Off-chain MVP or keep contract claim blocked.", "批准 Off-chain MVP，或保持合约领取阻断。");
+  }
+
+  if (ownerRole === "internal_operator") {
+    return text("Review task risk, referral controls, and export boundaries.", "审核任务风险、推荐控制与导出边界。");
+  }
+
+  return text("Confirm reward disclaimer, wallet policy, and localized content before publish.", "发布前确认奖励声明、钱包策略与本地化内容。");
+};
+
+const routeSummary = (ownerRole: OwnerRole, gates: PublishGateItem[]): LocalizedText => {
+  const unresolvedCount = gates.filter((gate) => gate.status !== "passed").length;
+
+  if (unresolvedCount > 0) {
+    return text(
+      `${unresolvedCount} gate${unresolvedCount === 1 ? "" : "s"} need owner attention.`,
+      `${unresolvedCount} 个门禁需要负责人处理。`,
+    );
+  }
+
+  if (ownerRole === "internal_operator") {
+    return text("Risk/referral and export boundaries remain visible.", "风险/推荐与导出边界保持可见。");
+  }
+
+  return text("Owner checks are visible for final review.", "负责人检查项已展示，等待最终审核。");
+};
+
+const createApprovalRoutes = (gates: PublishGateItem[]): PublishGateApprovalRoute[] => {
+  const routeGateIds = new Set([
+    "contract-impact",
+    "export-disclaimer",
+    "i18n-human-review",
+    "reward-disclaimer",
+    "risk-referral-controls",
+    "risk-social-reward",
+    "wallet-policy",
+  ]);
+
+  return (["project_owner", "internal_operator", "contract_reviewer"] as const)
+    .map((ownerRole) => {
+      const routeGates = gates.filter(
+        (gate) =>
+          gate.ownerRole === ownerRole &&
+          (gate.status !== "passed" || routeGateIds.has(gate.id)),
+      );
+
+      return {
+        gateIds: routeGates.map((gate) => gate.id),
+        label: ownerRoleLabels[ownerRole],
+        nextAction: routeNextAction(ownerRole),
+        ownerRole,
+        status: routeStatus(routeGates),
+        summary: routeSummary(ownerRole, routeGates),
+      };
+    })
+    .filter((route) => route.gateIds.length > 0);
+};
+
+export const createPublishGateDecisionCenter = (
+  draft: CampaignDraft,
+): PublishGateDecisionCenter => {
+  const readiness = computeBuilderPublishReadiness(draft);
+  const gates = [
+    ...readiness.blockers.map(toGateItem),
+    ...readiness.warnings.map(toGateItem),
+    ...readiness.passed.map(toGateItem),
+    createWalletGate(draft),
+    createTaskGate(draft),
+    createRiskReferralGate(draft),
+  ];
+  const blockers = gates.filter((gate) => gate.status === "blocker");
+  const warnings = gates.filter((gate) => gate.status === "warning");
+  const passed = gates.filter((gate) => gate.status === "passed");
+  const launchState =
+    blockers.length > 0 ? "blocker" : warnings.length > 0 ? "warning" : "ready";
+
+  return {
+    approvalRoutes: createApprovalRoutes(gates),
+    boundary: publishBoundary,
+    campaignDraftId: draft.id,
+    counts: {
+      blockers: blockers.length,
+      passed: passed.length,
+      total: gates.length,
+      warnings: warnings.length,
+    },
+    gates,
+    lastReviewedAt: readiness.lastReviewedAt,
+    launchState,
+    ready: launchState === "ready",
+    summary:
+      launchState === "blocker"
+        ? text("Publish is blocked until high-impact gates are resolved.", "高影响门禁解决前不能发布。")
+        : launchState === "warning"
+          ? text("Publish has warnings that need owner review.", "发布前仍有警告需要负责人审核。")
+          : text("All seeded publish gates are ready.", "所有 seeded 发布门禁已就绪。"),
+  };
+};
