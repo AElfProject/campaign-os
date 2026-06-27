@@ -1,6 +1,8 @@
 import { computePublishReadiness, createExportPreview } from "./campaign";
 import { normalizeWalletSessions } from "./wallet";
 import type {
+  AiContentArtifactDraft,
+  AiContentQualityGate,
   AiOpsReportCard,
   CampaignShellDetail,
   CampaignShellSummary,
@@ -528,6 +530,276 @@ export const contentRevisions: ContentRevision[] = [
   },
 ];
 
+export const aiContentArtifacts: AiContentArtifactDraft[] = [
+  {
+    id: "content-x-thread",
+    campaignId: "camp-awaken-sprint",
+    type: "x_thread",
+    channel: "x",
+    purpose: {
+      "en-US": "Public launch thread",
+      "zh-CN": "对外宣发长帖",
+    },
+    title: {
+      "en-US": "X / Twitter thread",
+      "zh-CN": "X / Twitter 长帖",
+    },
+    body: {
+      "en-US": "Awaken Sprint is live: bridge to aelf, complete a swap, and climb a verified leaderboard. Rewards are provided by Awaken; Campaign OS verifies and exports.",
+      "zh-CN": "Awaken 冲刺活动已上线：跨链到 aelf，完成一次 Swap，并进入已验证排行榜。奖励由 Awaken 提供，Campaign OS 负责验证与导出。",
+    },
+    localeStatus: { "en-US": "reviewed", "zh-CN": "reviewed" },
+    lifecycle: "human_approved",
+    reviewer: "internal_operator",
+    updatedAt: "2026-06-27T08:00:00Z",
+    riskLevel: "low",
+    qualityGateRefs: ["gate-reward-responsibility", "gate-deadline", "gate-cta"],
+  },
+  {
+    id: "content-telegram-announcement",
+    campaignId: "camp-awaken-sprint",
+    type: "telegram_announcement",
+    channel: "telegram",
+    purpose: {
+      "en-US": "Community launch announcement",
+      "zh-CN": "社群启动公告",
+    },
+    title: {
+      "en-US": "Telegram announcement",
+      "zh-CN": "Telegram 公告",
+    },
+    body: {
+      "en-US": "AI draft: Join Awaken Sprint today. Complete verified on-chain tasks and check eligibility before the campaign ends.",
+      "zh-CN": "AI 草稿：今天加入 Awaken 冲刺活动。完成已验证链上任务，并在活动结束前检查资格。",
+    },
+    localeStatus: { "en-US": "ai_draft", "zh-CN": "ai_draft" },
+    lifecycle: "ai_draft",
+    updatedAt: "2026-06-27T08:05:00Z",
+    riskLevel: "medium",
+    qualityGateRefs: ["gate-deadline", "gate-localization", "gate-cta"],
+  },
+  {
+    id: "content-discord-message",
+    campaignId: "camp-awaken-sprint",
+    type: "discord_message",
+    channel: "discord",
+    purpose: {
+      "en-US": "Community sync message",
+      "zh-CN": "社区同步消息",
+    },
+    title: {
+      "en-US": "Discord message",
+      "zh-CN": "Discord 消息",
+    },
+    body: {
+      "en-US": "Reminder for community moderators: direct users to connect AA or EOA wallets, verify bridge/swap tasks, and avoid promising rewards from aelf.",
+      "zh-CN": "社区管理员提醒：引导用户连接 AA 或 EOA 钱包，验证跨链/Swap 任务，并避免承诺由 aelf 提供奖励。",
+    },
+    localeStatus: { "en-US": "reviewed", "zh-CN": "reviewed" },
+    lifecycle: "edited",
+    reviewer: "community_ops",
+    updatedAt: "2026-06-27T08:08:00Z",
+    riskLevel: "medium",
+    qualityGateRefs: ["gate-reward-responsibility", "gate-risk-language"],
+  },
+  {
+    id: "content-faq",
+    campaignId: "camp-awaken-sprint",
+    type: "faq",
+    channel: "support",
+    purpose: {
+      "en-US": "Explain rules and reward responsibility",
+      "zh-CN": "解释规则与奖励责任",
+    },
+    title: {
+      "en-US": "FAQ",
+      "zh-CN": "FAQ",
+    },
+    body: {
+      "en-US": "Q: Who provides rewards? A: Rewards are provided by Awaken. aelf Campaign OS provides campaign tooling, verification, ranking, analytics, and export only.",
+      "zh-CN": "问：奖励由谁提供？答：奖励由 Awaken 提供。aelf Campaign OS 仅提供活动工具、验证、排名、分析与导出。",
+    },
+    localeStatus: { "en-US": "published", "zh-CN": "reviewed" },
+    lifecycle: "human_approved",
+    reviewer: "legal_ops",
+    updatedAt: "2026-06-27T08:12:00Z",
+    riskLevel: "low",
+    qualityGateRefs: ["gate-reward-responsibility", "gate-eligibility"],
+  },
+  {
+    id: "content-tutorial",
+    campaignId: "camp-awaken-sprint",
+    type: "tutorial",
+    channel: "tutorial",
+    purpose: {
+      "en-US": "Help users bridge, swap, and verify",
+      "zh-CN": "帮助用户跨链、Swap 与验证",
+    },
+    title: {
+      "en-US": "Tutorial",
+      "zh-CN": "教程",
+    },
+    body: {
+      "en-US": "Connect a supported wallet, bridge via eBridge, complete one Awaken swap, then return to Campaign OS to verify your task state.",
+      "zh-CN": "连接受支持的钱包，通过 eBridge 跨链，完成一次 Awaken Swap，然后回到 Campaign OS 验证任务状态。",
+    },
+    localeStatus: { "en-US": "reviewed", "zh-CN": "reviewed" },
+    lifecycle: "schedule_intent",
+    reviewer: "growth_ops",
+    updatedAt: "2026-06-27T08:18:00Z",
+    riskLevel: "low",
+    qualityGateRefs: ["gate-cta", "gate-eligibility"],
+  },
+  {
+    id: "content-daily-report",
+    campaignId: "camp-awaken-sprint",
+    type: "daily_report",
+    channel: "internal_report",
+    purpose: {
+      "en-US": "Internal and project-owner daily report",
+      "zh-CN": "给内部与项目方看的日报",
+    },
+    title: {
+      "en-US": "Daily report",
+      "zh-CN": "日报",
+    },
+    body: {
+      "en-US": "Day 7: verified actions remain healthy. Bridge confirmation is the main drop-off. Risk review queue remains advisory until human approval.",
+      "zh-CN": "第 7 天：有效行为保持健康。跨链确认是主要流失点。风险审核队列在人工批准前仅作为建议。",
+    },
+    localeStatus: { "en-US": "reviewed", "zh-CN": "fallback" },
+    lifecycle: "publish_intent",
+    reviewer: "internal_operator",
+    updatedAt: "2026-06-27T08:24:00Z",
+    riskLevel: "medium",
+    qualityGateRefs: ["gate-risk-language", "gate-localization"],
+  },
+  {
+    id: "content-winner-report",
+    campaignId: "camp-awaken-sprint",
+    type: "winner_report",
+    channel: "winner_report",
+    purpose: {
+      "en-US": "Explain winner rules and risk-address review",
+      "zh-CN": "解释 winners 规则与风险地址审核",
+    },
+    title: {
+      "en-US": "Winner report",
+      "zh-CN": "Winner 报告",
+    },
+    body: {
+      "en-US": "AI draft: Winner export requires human confirmation. Risk-flagged addresses are review inputs, and final reward distribution remains the project team's responsibility.",
+      "zh-CN": "AI 草稿：Winner 导出需要人工确认。风险地址仅作为审核输入，最终奖励发放仍由项目方负责。",
+    },
+    localeStatus: { "en-US": "ai_draft", "zh-CN": "ai_draft" },
+    lifecycle: "ai_draft",
+    updatedAt: "2026-06-27T08:30:00Z",
+    riskLevel: "high",
+    qualityGateRefs: ["gate-winner-rules", "gate-risk-language", "gate-reward-responsibility"],
+  },
+];
+
+export const aiContentQualityGates: AiContentQualityGate[] = [
+  {
+    id: "gate-reward-responsibility",
+    category: "reward_responsibility",
+    label: {
+      "en-US": "Reward responsibility",
+      "zh-CN": "奖励责任",
+    },
+    status: "passed",
+    evidence: {
+      "en-US": "Copy states rewards are project-provided and Campaign OS does not distribute rewards.",
+      "zh-CN": "文案说明奖励由项目方提供，Campaign OS 不执行发奖。",
+    },
+    affectedArtifactTypes: ["x_thread", "faq", "winner_report"],
+  },
+  {
+    id: "gate-eligibility",
+    category: "eligibility",
+    label: {
+      "en-US": "Eligibility",
+      "zh-CN": "资格规则",
+    },
+    status: "passed",
+    evidence: {
+      "en-US": "FAQ and tutorial describe verified tasks before eligibility.",
+      "zh-CN": "FAQ 与教程说明需要先完成已验证任务才具备资格。",
+    },
+    affectedArtifactTypes: ["faq", "tutorial"],
+  },
+  {
+    id: "gate-winner-rules",
+    category: "winner_rules",
+    label: {
+      "en-US": "Winner rules",
+      "zh-CN": "Winner 规则",
+    },
+    status: "warning",
+    evidence: {
+      "en-US": "Winner report is drafted but still needs final owner confirmation.",
+      "zh-CN": "Winner 报告已起草，但仍需负责人最终确认。",
+    },
+    affectedArtifactTypes: ["winner_report"],
+  },
+  {
+    id: "gate-deadline",
+    category: "deadline",
+    label: {
+      "en-US": "Deadline clarity",
+      "zh-CN": "截止时间清晰度",
+    },
+    status: "warning",
+    evidence: {
+      "en-US": "Launch copy mentions campaign end but needs final timestamp before release.",
+      "zh-CN": "宣发文案提到活动结束，但发布前需要补充最终时间戳。",
+    },
+    affectedArtifactTypes: ["x_thread", "telegram_announcement"],
+  },
+  {
+    id: "gate-risk-language",
+    category: "risk_language",
+    label: {
+      "en-US": "Risk language",
+      "zh-CN": "风险表述",
+    },
+    status: "warning",
+    evidence: {
+      "en-US": "Risk flags are described as review inputs, not automatic exclusions.",
+      "zh-CN": "风险标记被描述为审核输入，而不是自动排除。",
+    },
+    affectedArtifactTypes: ["discord_message", "daily_report", "winner_report"],
+  },
+  {
+    id: "gate-cta",
+    category: "cta",
+    label: {
+      "en-US": "CTA completeness",
+      "zh-CN": "CTA 完整度",
+    },
+    status: "passed",
+    evidence: {
+      "en-US": "Primary copy includes connect wallet, bridge, swap, and verify actions.",
+      "zh-CN": "主要文案包含连接钱包、跨链、Swap 与验证动作。",
+    },
+    affectedArtifactTypes: ["x_thread", "telegram_announcement", "tutorial"],
+  },
+  {
+    id: "gate-localization",
+    category: "localization",
+    label: {
+      "en-US": "Localization readiness",
+      "zh-CN": "本地化准备度",
+    },
+    status: "blocked",
+    evidence: {
+      "en-US": "Telegram and Winner report Chinese drafts require human review before release.",
+      "zh-CN": "Telegram 与 Winner 报告中文草稿发布前必须人工审核。",
+    },
+    affectedArtifactTypes: ["telegram_announcement", "daily_report", "winner_report"],
+  },
+];
+
 export const reviewItems: ReviewItem[] = [
   {
     id: "review-ai-001",
@@ -1036,6 +1308,8 @@ export const campaignDetail: CampaignShellDetail = {
   participants,
   walletSessions,
   contentRevisions,
+  aiContentArtifacts,
+  aiContentQualityGates,
   reviewItems,
   publishReadiness: computePublishReadiness(campaignSummary, contentRevisions),
   exportPreview: createExportPreview(campaignSummary.id, participants, campaignTasks, walletSessions),

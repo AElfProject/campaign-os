@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   campaignDetail,
+  createAiContentPackWorkbench,
   createContractImpactReviewModel,
   computeMissingTasks,
   computePublishReadiness,
@@ -88,6 +89,78 @@ describe("Campaign OS domain foundation", () => {
       "does not distribute rewards",
     );
     expect(translationManager.rewardDisclaimers[1].disclaimer).toContain("不等于发奖");
+  });
+
+  it("creates the AI Content Pack workbench with all required artifacts and release gates", () => {
+    const workbench = createAiContentPackWorkbench(campaignDetail);
+    const artifactsByType = Object.fromEntries(
+      workbench.artifacts.map((artifact) => [artifact.type, artifact]),
+    );
+    const gatesByCategory = Object.fromEntries(
+      workbench.qualityGates.map((gate) => [gate.category, gate]),
+    );
+
+    expect(workbench.defaultLocale).toBe("en-US");
+    expect(workbench.supportedLocales).toEqual(["en-US", "zh-CN"]);
+    expect(workbench.summary).toMatchObject({
+      totalArtifacts: 7,
+      aiDrafts: 2,
+      humanApproved: 4,
+      blockedReleaseActions: 3,
+      availableCopyActions: 4,
+      qualityGateBlockers: 1,
+    });
+    expect(Object.keys(artifactsByType).sort()).toEqual([
+      "daily_report",
+      "discord_message",
+      "faq",
+      "telegram_announcement",
+      "tutorial",
+      "winner_report",
+      "x_thread",
+    ]);
+    expect(artifactsByType.x_thread).toMatchObject({
+      lifecycle: "human_approved",
+      actionPolicy: expect.objectContaining({
+        copy: "available",
+        schedule: "available",
+        publish: "available",
+      }),
+    });
+    expect(artifactsByType.telegram_announcement).toMatchObject({
+      lifecycle: "ai_draft",
+      actionPolicy: expect.objectContaining({
+        copy: "blocked",
+        schedule: "blocked",
+        publish: "blocked",
+      }),
+    });
+    expect(artifactsByType.discord_message).toMatchObject({
+      lifecycle: "edited",
+      actionPolicy: expect.objectContaining({
+        copy: "blocked",
+        schedule: "blocked",
+        publish: "blocked",
+      }),
+    });
+    expect(artifactsByType.telegram_announcement.actionPolicy.blockedReason?.["en-US"]).toContain(
+      "Human review required",
+    );
+    expect(artifactsByType.faq.body["en-US"]).toContain("Rewards are provided by Awaken");
+    expect(artifactsByType.winner_report.body["en-US"]).toContain("Winner export requires human confirmation");
+    expect(Object.keys(gatesByCategory).sort()).toEqual([
+      "cta",
+      "deadline",
+      "eligibility",
+      "localization",
+      "reward_responsibility",
+      "risk_language",
+      "winner_rules",
+    ]);
+    expect(gatesByCategory.reward_responsibility).toMatchObject({ status: "passed" });
+    expect(gatesByCategory.localization).toMatchObject({ status: "blocked" });
+    expect(workbench.boundary.body["en-US"]).toContain("No live AI provider");
+    expect(workbench.boundary.body["zh-CN"]).toContain("不会连接实时 AI");
   });
 
   it("derives contract impact review boundaries without enabling contract execution", () => {
@@ -535,6 +608,19 @@ describe("Campaign OS domain foundation", () => {
       "manual-review",
     ]);
     expect(adminOps.aiReports).toHaveLength(4);
+    expect(adminOps.aiContentPack.summary.totalArtifacts).toBe(7);
+    expect(adminOps.aiContentPack.artifacts.map((artifact) => artifact.type)).toEqual(
+      expect.arrayContaining([
+        "x_thread",
+        "telegram_announcement",
+        "discord_message",
+        "faq",
+        "tutorial",
+        "daily_report",
+        "winner_report",
+      ]),
+    );
+    expect(adminOps.aiContentPack.artifacts.find((artifact) => artifact.type === "telegram_announcement")?.actionPolicy.publish).toBe("blocked");
     expect(adminOps.exportBatch.disclaimer["en-US"]).toContain("does not distribute rewards");
     expect(adminOps.exportBatch.columns).toEqual(EXPORT_CSV_COLUMNS);
     expect(adminOps.exportBatch.confirmation.noDistributionBoundary["en-US"]).toContain(
