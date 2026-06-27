@@ -1,5 +1,6 @@
 import type {
   ContractMode,
+  AiConfidence,
   LocalizedText,
   LocaleStatus,
   OwnerRole,
@@ -196,6 +197,64 @@ export interface PublishGateDecisionCenter {
   counts: PublishGateCounts;
   gates: PublishGateItem[];
   approvalRoutes: PublishGateApprovalRoute[];
+}
+
+export type AiPlannerGroupId =
+  | "campaign_structure"
+  | "wallet_policy"
+  | "language_plan"
+  | "task_strategy"
+  | "risk_hints"
+  | "contract_recommendation";
+export type AiPlannerDecisionStatus =
+  | "ready"
+  | "review_required"
+  | "warning"
+  | "blocked";
+
+export interface AiPlannerDecisionItem {
+  id: string;
+  status: AiPlannerDecisionStatus;
+  ownerRole: OwnerRole;
+  confidence: AiConfidence;
+  label: LocalizedText;
+  rationale: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface AiPlannerRecommendationGroup {
+  id: AiPlannerGroupId;
+  title: LocalizedText;
+  summary: LocalizedText;
+  items: AiPlannerDecisionItem[];
+}
+
+export interface AiPlannerSummary {
+  prompt: string;
+  generatedOutline: string[];
+  reviewedByHuman: boolean;
+  defaultLocale: "en-US";
+  supportedLocales: SupportedLocale[];
+  walletPolicy: WalletPolicy;
+  recommendedWallet: LocalizedText;
+  contractMode: ContractMode;
+}
+
+export interface AiPlannerDecisionCounts {
+  blocked: number;
+  ready: number;
+  reviewRequired: number;
+  total: number;
+  warning: number;
+}
+
+export interface AiCampaignPlannerDecisionConsole {
+  draftId: string;
+  summary: AiPlannerSummary;
+  groups: AiPlannerRecommendationGroup[];
+  counts: AiPlannerDecisionCounts;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
 }
 
 export interface CampaignDraft {
@@ -913,6 +972,299 @@ export const seededCampaignDraft: CampaignDraft = {
   ],
   defaultContractImpact,
   contractImpact: contractClaimBlockedSample,
+};
+
+const aiPlannerBoundary = text(
+  "Seeded/local planner only. No live AI provider, no automatic publish, no backend mutation, no wallet signature, and no contract transaction is executed.",
+  "仅 seeded/本地 planner。不会执行实时 AI provider、自动发布、后端变更、钱包签名或合约交易。",
+);
+
+const aiPlannerNextAction = text(
+  "Review planner decisions, then confirm wallet policy, language review, task mix, risk controls, and contract mode before publish readiness.",
+  "先审核 planner 决策，再确认钱包策略、语言审核、任务组合、风险控制与合约模式，之后进入发布准备度。",
+);
+
+const plannerGroup = (
+  id: AiPlannerGroupId,
+  title: LocalizedText,
+  summary: LocalizedText,
+  items: AiPlannerDecisionItem[],
+): AiPlannerRecommendationGroup => ({
+  id,
+  items,
+  summary,
+  title,
+});
+
+const plannerItem = (
+  id: string,
+  status: AiPlannerDecisionStatus,
+  ownerRole: OwnerRole,
+  confidence: AiConfidence,
+  label: LocalizedText,
+  rationale: LocalizedText,
+  nextAction: LocalizedText,
+): AiPlannerDecisionItem => ({
+  confidence,
+  id,
+  label,
+  nextAction,
+  ownerRole,
+  rationale,
+  status,
+});
+
+const selectedPlannerTemplates = (draft: CampaignDraft) =>
+  taskTemplateLibrary.filter((template) => draft.selectedTaskTemplateIds.includes(template.id));
+
+const countPlannerDecisions = (
+  groups: readonly AiPlannerRecommendationGroup[],
+): AiPlannerDecisionCounts => {
+  const items = groups.flatMap((group) => group.items);
+
+  return {
+    blocked: items.filter((item) => item.status === "blocked").length,
+    ready: items.filter((item) => item.status === "ready").length,
+    reviewRequired: items.filter((item) => item.status === "review_required").length,
+    total: items.length,
+    warning: items.filter((item) => item.status === "warning").length,
+  };
+};
+
+export const createAiCampaignPlannerDecisionConsole = (
+  draft: CampaignDraft = seededCampaignDraft,
+): AiCampaignPlannerDecisionConsole => {
+  const templates = selectedPlannerTemplates(draft);
+  const hasOnChainOrDappAnchor = templates.some((template) =>
+    template.verificationType === "ON_CHAIN" || template.verificationType === "DAPP_API",
+  );
+  const hasHighRiskTemplate = templates.some((template) => template.riskLevel === "high");
+  const hasUnreviewedLocalizedContent = hasUnreviewedChineseAiDraft(draft);
+  const contractMode = draft.defaultContractImpact.mode;
+  const groups = [
+    plannerGroup(
+      "campaign_structure",
+      text("Campaign structure", "活动结构"),
+      text(
+        "AI planner starts from the confirmed campaign goal, audience, and time window.",
+        "AI planner 基于已确认的活动目标、用户分层与周期生成结构。",
+      ),
+      [
+        plannerItem(
+          "structure-activation-goal",
+          "ready",
+          "project_owner",
+          "high",
+          text("Activation campaign structure", "激活活动结构"),
+          text(
+            "Awaken activation focuses on wallet connection, bridge, swap, and approved social amplification.",
+            "Awaken 激活活动聚焦钱包连接、bridge、swap 与已审核社交扩散。",
+          ),
+          text("Keep the goal and target users visible before task selection.", "在选择任务前保持目标与用户分层可见。"),
+        ),
+        plannerItem(
+          "structure-human-reviewed-outline",
+          draft.aiPrompt.reviewedByHuman ? "ready" : "review_required",
+          "project_owner",
+          "medium",
+          text("Human-reviewed planner outline", "人工审核 planner 大纲"),
+          draft.aiPrompt.reviewedByHuman
+            ? text("The seeded AI outline is already marked as human reviewed.", "seeded AI 大纲已标记为人工审核。")
+            : text("The seeded AI outline still needs human review.", "seeded AI 大纲仍需要人工审核。"),
+          text("Use the outline as review input, not automatic publish approval.", "将大纲作为审核输入，而不是自动发布批准。"),
+        ),
+      ],
+    ),
+    plannerGroup(
+      "wallet_policy",
+      text("Wallet policy", "钱包策略"),
+      text(
+        "Any wallet maximizes conversion while Portkey AA remains the recommended onboarding path.",
+        "任意钱包最大化转化，同时 Portkey AA 仍是推荐的新手引导路径。",
+      ),
+      [
+        plannerItem(
+          "wallet-any-conversion",
+          draft.walletPolicy === "ANY" ? "ready" : "warning",
+          "project_owner",
+          "high",
+          text("Use Any wallet for conversion", "使用任意钱包提升转化"),
+          text(
+            "Any wallet lets AA and EOA users participate without forcing a single wallet source.",
+            "任意钱包允许 AA 与 EOA 用户参与，不强制单一钱包来源。",
+          ),
+          text("Keep Any wallet selected unless the campaign intentionally measures AA or EOA only.", "除非活动有意衡量 AA 或 EOA，否则保持任意钱包。"),
+        ),
+        plannerItem(
+          "wallet-portkey-aa-onboarding",
+          "ready",
+          "project_owner",
+          "high",
+          text("Recommend Portkey AA for onboarding", "推荐 Portkey AA 新手引导"),
+          text(
+            "Portkey AA is recommended for new users, while EOA app, extension, and NightElf users remain eligible.",
+            "Portkey AA 推荐给新用户，同时 EOA App、插件和 NightElf 用户仍可参与。",
+          ),
+          text("Present Portkey AA as recommended, not mandatory.", "将 Portkey AA 展示为推荐，而不是强制。"),
+        ),
+      ],
+    ),
+    plannerGroup(
+      "language_plan",
+      text("Language plan", "语言计划"),
+      text(
+        "English is the default source; Chinese content remains reviewed or safely falls back.",
+        "英文是默认源语言；中文内容需审核或安全回退。",
+      ),
+      [
+        plannerItem(
+          "language-default-en",
+          "ready",
+          "project_owner",
+          "high",
+          text("Default language is English", "默认语言为英文"),
+          text(
+            "Default language is English (en-US), with zh-CN as the only additional runtime locale.",
+            "默认语言是英文 (en-US)，zh-CN 是唯一额外运行时语言。",
+          ),
+          text("Keep en-US as source and fallback locale.", "保持 en-US 作为源语言与回退语言。"),
+        ),
+        plannerItem(
+          "language-zh-review",
+          hasUnreviewedLocalizedContent ? "review_required" : "ready",
+          "project_owner",
+          "medium",
+          text("Review Chinese AI draft", "审核中文 AI 草稿"),
+          hasUnreviewedLocalizedContent
+            ? text("Chinese AI draft falls back to English until a human review is complete.", "中文 AI 草稿在人工审核前回退英文。")
+            : text("Chinese content is reviewed or safely published.", "中文内容已审核或安全发布。"),
+          text("Complete human review before publishing localized Chinese content.", "发布中文本地化内容前完成人工审核。"),
+        ),
+      ],
+    ),
+    plannerGroup(
+      "task_strategy",
+      text("Task strategy", "任务策略"),
+      text(
+        "Task recommendations combine wallet onboarding with verified ecosystem actions.",
+        "任务推荐将钱包引导与可验证生态行为组合。",
+      ),
+      [
+        plannerItem(
+          "task-verified-anchors",
+          hasOnChainOrDappAnchor ? "ready" : "warning",
+          "internal_operator",
+          "high",
+          text("Use bridge and swap verification anchors", "使用 bridge 与 swap 验证锚点"),
+          text(
+            "Selected tasks include bridge and swap anchors so the campaign is not social-only.",
+            "已选任务包含 bridge 与 swap 锚点，因此活动不是纯社交任务。",
+          ),
+          text("Keep at least one on-chain or dApp API task before high-value publish.", "高价值发布前保留至少一个链上或 dApp API 任务。"),
+        ),
+        plannerItem(
+          "task-wallet-aware-mix",
+          "ready",
+          "internal_operator",
+          "medium",
+          text("Keep wallet-aware task mix", "保持钱包感知任务组合"),
+          text(
+            "The selected task mix covers wallet connection, bridge, swap, and social sharing with wallet compatibility visible.",
+            "已选任务组合覆盖钱包连接、bridge、swap 与社交分享，并展示钱包兼容性。",
+          ),
+          text("Review task wallet compatibility before publish readiness.", "发布准备度前审核任务钱包兼容性。"),
+        ),
+      ],
+    ),
+    plannerGroup(
+      "risk_hints",
+      text("Risk hints", "风险提示"),
+      text(
+        "Risk hints stay human-reviewed and do not become automatic reward decisions.",
+        "风险提示保持人工审核，不成为自动发奖决策。",
+      ),
+      [
+        plannerItem(
+          "risk-social-review",
+          hasHighRiskTemplate ? "warning" : "ready",
+          "internal_operator",
+          "medium",
+          text("Review high-reward social actions", "审核高奖励社交行为"),
+          hasHighRiskTemplate
+            ? text("High-reward social sharing needs risk review before launch.", "高奖励社交分享上线前需要风险审核。")
+            : text("No high-risk social template is selected.", "未选择高风险社交模板。"),
+          text("Keep referral validation, risk flags, and manual review enabled.", "保持推荐验证、风险标记与人工审核开启。"),
+        ),
+        plannerItem(
+          "risk-reward-boundary",
+          "review_required",
+          "internal_operator",
+          "medium",
+          text("Keep reward responsibility explicit", "明确奖励责任"),
+          text(
+            "Rewards are project-provided; Campaign OS previews, verifies, and exports but does not distribute rewards.",
+            "奖励由项目方提供；Campaign OS 负责预览、验证与导出，但不发奖。",
+          ),
+          text("Keep the reward disclaimer visible in planner and publish review.", "在 planner 与发布审核中保留奖励声明。"),
+        ),
+      ],
+    ),
+    plannerGroup(
+      "contract_recommendation",
+      text("Contract recommendation", "合约建议"),
+      text(
+        "Use Off-chain MVP now; keep V2 companion and contract claim behind review.",
+        "当前使用 Off-chain MVP；V2 companion 与合约领取保持审核路径。",
+      ),
+      [
+        plannerItem(
+          "contract-off-chain-mvp",
+          contractMode === "OFF_CHAIN_MVP" ? "ready" : "warning",
+          "contract_reviewer",
+          "high",
+          text("Recommend Off-chain MVP", "推荐 Off-chain MVP"),
+          text(
+            "Off-chain MVP requires no contract migration for this campaign shell.",
+            "当前活动 shell 使用 Off-chain MVP 不需要合约迁移。",
+          ),
+          text("Use off-chain verification and winner export for MVP publish.", "MVP 发布使用链下验证与 winners 导出。"),
+        ),
+        plannerItem(
+          "contract-claim-blocker",
+          "blocked",
+          "contract_reviewer",
+          "high",
+          text("Keep contract claim blocked", "保持合约领取阻断"),
+          text(
+            "Contract claim is not enabled in this MVP planner and requires high-impact manual approval.",
+            "当前 MVP planner 未启用合约领取，需要高影响人工批准。",
+          ),
+          text("Do not enable claim mode until audit, pause role, signer, and legal disclaimer are reviewed.", "在审计、暂停角色、签名方与法律声明审核前不要启用领取模式。"),
+        ),
+      ],
+    ),
+  ];
+
+  return {
+    boundary: aiPlannerBoundary,
+    counts: countPlannerDecisions(groups),
+    draftId: draft.id,
+    groups,
+    nextAction: aiPlannerNextAction,
+    summary: {
+      contractMode,
+      defaultLocale: draft.defaultLocale,
+      generatedOutline: draft.aiPrompt.generatedOutline,
+      prompt: draft.aiPrompt.prompt,
+      recommendedWallet: text(
+        "Portkey AA for new-user onboarding; Any wallet remains the campaign policy.",
+        "新用户引导推荐 Portkey AA；活动策略仍为任意钱包。",
+      ),
+      reviewedByHuman: draft.aiPrompt.reviewedByHuman,
+      supportedLocales: [...draft.supportedLocales],
+      walletPolicy: draft.walletPolicy,
+    },
+  };
 };
 
 const makeCheck = (
