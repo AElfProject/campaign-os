@@ -890,6 +890,65 @@ export interface EligibilityWalletStatus {
   verificationStatus: WalletVerificationStatus;
 }
 
+export interface EligibilityCheckEntry {
+  id: string;
+  label: LocalizedText;
+  walletAddress: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  localePreference: SupportedLocale;
+  status: EligibilityStatus;
+  score: number;
+  riskFlags: string[];
+  walletTypeVerified: boolean;
+}
+
+export interface EligibilityMissingTaskDetail {
+  taskId: string;
+  templateCode: string;
+  title: LocalizedText;
+  points: number;
+  verificationType: VerificationType;
+  walletCompatibility: WalletCompatibility;
+  status: TaskVerificationStatus;
+  evidenceSource?: EvidenceSource;
+  nextAction: LocalizedText;
+}
+
+export interface EligibilityCheckResult {
+  walletAddress: string;
+  knownParticipant: boolean;
+  participantId?: string;
+  status: EligibilityStatus;
+  score: number;
+  pointsThreshold: number;
+  progressPercent: number;
+  completedRequiredTasks: number;
+  totalRequiredTasks: number;
+  walletStatus?: EligibilityWalletStatus;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  walletTypeVerified: boolean;
+  missingTasks: EligibilityMissingTaskDetail[];
+  riskFlags: string[];
+  reason: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface EligibilityCheckerReadModel {
+  campaignId: string;
+  selectedAddress: string;
+  entries: EligibilityCheckEntry[];
+  result: EligibilityCheckResult;
+  summary: {
+    title: LocalizedText;
+    description: LocalizedText;
+    status: EligibilityStatus;
+  };
+  boundary: LocalizedText;
+}
+
 export interface TaskVerificationState {
   taskId: string;
   templateCode: string;
@@ -923,6 +982,46 @@ export interface LeaderboardRow {
   eligible: boolean;
   riskFlags: string[];
   localePreference: SupportedLocale;
+}
+
+export type LeaderboardModeId =
+  | "total_points"
+  | "on_chain"
+  | "referral"
+  | "low_risk_verified";
+
+export interface LeaderboardMode {
+  id: LeaderboardModeId;
+  label: LocalizedText;
+  description: LocalizedText;
+  qualityPolicy: LocalizedText;
+}
+
+export interface LeaderboardModeRow {
+  rank: number;
+  walletAddress: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  totalPoints: number;
+  verifiedActionCount: number;
+  onChainActionCount: number;
+  referralPoints: number;
+  qualifiedInvitees: number;
+  eligible: boolean;
+  riskFlags: string[];
+  riskLevel: RiskLevel;
+  modeScore: number;
+  localePreference: SupportedLocale;
+}
+
+export interface LeaderboardReadModel {
+  campaignId: string;
+  selectedMode: LeaderboardModeId;
+  modes: LeaderboardMode[];
+  rows: LeaderboardModeRow[];
+  summary: LocalizedText;
+  qualityPolicy: LocalizedText;
+  boundary: LocalizedText;
 }
 
 export interface ParticipationMetrics {

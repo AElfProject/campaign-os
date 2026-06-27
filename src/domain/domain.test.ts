@@ -3,7 +3,9 @@ import {
   campaignDetail,
   createAiContentPackWorkbench,
   createContractImpactReviewModel,
+  createEligibilityCheckerReadModel,
   createEcosystemNextActionReadModel,
+  createLeaderboardReadModel,
   createProjectCampaignCommandCenter,
   computeMissingTasks,
   computePublishReadiness,
@@ -21,6 +23,7 @@ import {
   getWalletCompatibilityLabel,
   isWalletSessionVerified,
   isSupportedLocale,
+  leaderboardModes,
   normalizeWalletSession,
   supportedLocales,
   taskTemplateLibrary,
@@ -643,6 +646,128 @@ describe("Campaign OS domain foundation", () => {
       eligibleRankCutoff: 100,
       participantRank: 48,
     });
+  });
+
+  it("creates wallet-aware eligibility checker results for seeded participants", () => {
+    const [eligibleParticipant, ineligibleParticipant, riskParticipant] = campaignDetail.participants;
+    const eligibleCheck = createEligibilityCheckerReadModel(campaignDetail, eligibleParticipant.walletAddress);
+    const ineligibleCheck = createEligibilityCheckerReadModel(campaignDetail, ineligibleParticipant.walletAddress);
+    const riskCheck = createEligibilityCheckerReadModel(campaignDetail, riskParticipant.walletAddress);
+
+    expect(eligibleCheck.entries).toHaveLength(campaignDetail.participants.length);
+    expect(eligibleCheck.result).toMatchObject({
+      accountType: "AA",
+      completedRequiredTasks: 2,
+      knownParticipant: true,
+      missingTasks: [],
+      progressPercent: 100,
+      score: 270,
+      status: "eligible",
+      walletAddress: "2F4...9aB",
+      walletSource: "PORTKEY_AA",
+      walletTypeVerified: true,
+    });
+    expect(eligibleCheck.result.boundary["en-US"]).toContain("No live wallet SDK");
+    expect(eligibleCheck.summary.title["zh-CN"]).toBe("资格检查器");
+
+    expect(ineligibleCheck.result).toMatchObject({
+      accountType: "EOA",
+      completedRequiredTasks: 1,
+      knownParticipant: true,
+      progressPercent: 50,
+      riskFlags: ["referral_velocity_review"],
+      score: 40,
+      status: "not_eligible",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
+    });
+    expect(ineligibleCheck.result.missingTasks).toEqual([
+      expect.objectContaining({
+        evidenceSource: "aelfscan",
+        points: 120,
+        status: "ready",
+        taskId: "task-bridge",
+        templateCode: "bridge_ebridge",
+        verificationType: "ON_CHAIN",
+        walletCompatibility: "ANY",
+      }),
+    ]);
+    expect(ineligibleCheck.result.missingTasks[0].nextAction["en-US"]).toContain(
+      "Complete Bridge via eBridge",
+    );
+
+    expect(riskCheck.result).toMatchObject({
+      knownParticipant: true,
+      missingTasks: [],
+      riskFlags: ["manual_review_queue"],
+      status: "risk_flagged",
+    });
+    expect(riskCheck.result.reason["en-US"]).toContain("manual risk review");
+    expect(riskCheck.result.boundary["en-US"]).toContain("reward distribution");
+    expect(JSON.stringify(riskCheck.result).toLowerCase()).not.toContain("aelf rejects");
+  });
+
+  it("keeps address-only eligibility checks safe and explicit", () => {
+    const readModel = createEligibilityCheckerReadModel(campaignDetail, "ELF_UNKNOWN_ADDRESS");
+
+    expect(readModel.selectedAddress).toBe("ELF_UNKNOWN_ADDRESS");
+    expect(readModel.result).toMatchObject({
+      accountType: "UNKNOWN",
+      knownParticipant: false,
+      missingTasks: [],
+      progressPercent: 0,
+      score: 0,
+      status: "pending",
+      walletAddress: "ELF_UNKNOWN_ADDRESS",
+      walletSource: "OTHER",
+      walletTypeVerified: false,
+    });
+    expect(readModel.result.reason["en-US"]).toContain("cannot infer AA or EOA");
+    expect(readModel.result.nextAction["en-US"]).toContain("Connect or verify");
+    expect(JSON.stringify(readModel)).not.toContain("zh-TW");
+  });
+
+  it("derives deterministic leaderboard modes without rewarding raw referral farming", () => {
+    expect(leaderboardModes.map((mode) => mode.id)).toEqual([
+      "total_points",
+      "on_chain",
+      "referral",
+      "low_risk_verified",
+    ]);
+
+    const totalPoints = createLeaderboardReadModel(campaignDetail, "total_points");
+    const onChain = createLeaderboardReadModel(campaignDetail, "on_chain");
+    const referral = createLeaderboardReadModel(campaignDetail, "referral");
+    const lowRisk = createLeaderboardReadModel(campaignDetail, "low_risk_verified");
+
+    expect(totalPoints.rows.map((row) => row.walletAddress)).toEqual([
+      "2F4...9aB",
+      "5N1...4fA",
+      "7P8...2bE",
+      "3E9...7cD",
+    ]);
+    expect(onChain.rows.map((row) => [row.walletAddress, row.onChainActionCount])).toEqual([
+      ["2F4...9aB", 3],
+      ["5N1...4fA", 3],
+      ["7P8...2bE", 2],
+      ["3E9...7cD", 1],
+    ]);
+    expect(referral.rows.map((row) => [row.walletAddress, row.referralPoints, row.qualifiedInvitees])).toEqual([
+      ["2F4...9aB", 80, 4],
+      ["5N1...4fA", 60, 3],
+      ["3E9...7cD", 40, 2],
+      ["7P8...2bE", 20, 1],
+    ]);
+    expect(referral.qualityPolicy["en-US"]).toContain("Only qualified invitees");
+    expect(lowRisk.rows[0]).toMatchObject({
+      eligible: true,
+      riskFlags: [],
+      riskLevel: "low",
+      walletAddress: "2F4...9aB",
+    });
+    expect(lowRisk.qualityPolicy["en-US"]).toContain("Risk flags are review inputs");
+    expect(totalPoints.boundary["en-US"]).toContain("does not distribute rewards");
+    expect(JSON.stringify([totalPoints, onChain, referral, lowRisk])).not.toContain("zh-TW");
   });
 
   it("derives pending and risk flagged eligibility states for seeded participants", () => {

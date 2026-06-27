@@ -82,8 +82,8 @@ describe("User App shell", () => {
     expect(screen.getByText("Task verification states")).toBeInTheDocument();
     expect(screen.getByText("Pending verification")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
-    expect(screen.getByText("Manual review")).toBeInTheDocument();
-    expect(screen.getByText("Referral context")).toBeInTheDocument();
+    expect(screen.getAllByText("Manual review").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Referral context").length).toBeGreaterThan(0);
     expect(screen.getByText("Raw signups do not count; invitees must complete valid tasks before referral points are awarded.")).toBeInTheDocument();
     expect(screen.getByText("Qualified invitees")).toBeInTheDocument();
     expect(screen.getByText("Leaderboard preview")).toBeInTheDocument();
@@ -200,8 +200,8 @@ describe("User App shell", () => {
     expect(screen.getByText("任务验证状态")).toBeInTheDocument();
     expect(screen.getByText("等待验证")).toBeInTheDocument();
     expect(screen.getByText("失败")).toBeInTheDocument();
-    expect(screen.getByText("人工审核")).toBeInTheDocument();
-    expect(screen.getByText("推荐关系")).toBeInTheDocument();
+    expect(screen.getAllByText("人工审核").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("推荐关系").length).toBeGreaterThan(0);
     expect(screen.getByText("合格被邀请人")).toBeInTheDocument();
     expect(screen.getByText("排行榜预览")).toBeInTheDocument();
     expect(screen.getByText("仅注册不会计分；被邀请人必须完成有效任务后才会产生推荐积分。")).toBeInTheDocument();
@@ -226,6 +226,86 @@ describe("User App shell", () => {
     expect(within(dialog).getByText("不支持的钱包：请为该 seeded 活动流程选择 Portkey AA、Portkey EOA App、Portkey EOA Extension 或 NightElf。")).toBeInTheDocument();
     expect(within(dialog).getByText("缺少签名：确认提示内容后只签署 seeded 验证消息；此预览不会请求真实签名。")).toBeInTheDocument();
     expect(within(dialog).getByText("账户类型限制：如果活动只允许 AA 或只允许 EOA，请切换到该活动策略接受的钱包类型。")).toBeInTheDocument();
+    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+  });
+
+  it("supports the eligibility checker workflow with seeded and unknown addresses", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    const checker = screen.getByRole("region", { name: "Eligibility checker" });
+
+    expect(within(checker).getByLabelText("Eligibility address")).toHaveValue("3E9...7cD");
+    expect(within(checker).getByText("Not eligible")).toBeInTheDocument();
+    expect(within(checker).getByText("EOA · Extension")).toBeInTheDocument();
+    expect(within(checker).getByText("1/2")).toBeInTheDocument();
+    expect(within(checker).getByText("50%")).toBeInTheDocument();
+    expect(within(checker).getByText("Bridge via eBridge")).toBeInTheDocument();
+    expect(within(checker).getByText(/ON_CHAIN/)).toBeInTheDocument();
+    expect(within(checker).getByText(/AA \+ EOA/)).toBeInTheDocument();
+    expect(within(checker).getByText("referral_velocity_review")).toBeInTheDocument();
+
+    fireEvent.click(within(checker).getByRole("button", { name: /5N1...4fA/ }));
+
+    expect(within(checker).getByText("Risk flagged")).toBeInTheDocument();
+    expect(within(checker).getByText("manual_review_queue")).toBeInTheDocument();
+    expect(within(checker).getByText(/manual risk review/i)).toBeInTheDocument();
+
+    fireEvent.change(within(checker).getByLabelText("Eligibility address"), {
+      target: { value: "ELF_UNKNOWN_ADDRESS" },
+    });
+    fireEvent.click(within(checker).getByRole("button", { name: "Check address eligibility" }));
+
+    expect(within(checker).getByText("Pending verification")).toBeInTheDocument();
+    expect(within(checker).getByText("Unknown · Other")).toBeInTheDocument();
+    expect(within(checker).getByText("Wallet type remains unknown until supported wallet/session verification.")).toBeInTheDocument();
+    expect(within(checker).getByText(/cannot infer AA or EOA/)).toBeInTheDocument();
+    expect(within(checker).getByText(/Connect or verify/)).toBeInTheDocument();
+    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+  });
+
+  it("switches leaderboard modes with active state and mode-specific values", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    const leaderboard = screen.getByRole("region", { name: "Leaderboard preview" });
+    const referralMode = within(leaderboard).getByRole("button", { name: "Referral" });
+
+    expect(within(leaderboard).getByRole("button", { name: "Total Points" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(leaderboard).getByText("Total Points ranks 4 seeded participants.")).toBeInTheDocument();
+
+    fireEvent.click(referralMode);
+
+    expect(referralMode).toHaveAttribute("aria-pressed", "true");
+    expect(within(leaderboard).getByText("Referral ranks 4 seeded participants.")).toBeInTheDocument();
+    expect(within(leaderboard).getByText("Ranks qualified referral value, not raw signup counts.")).toBeInTheDocument();
+    expect(within(leaderboard).getByText(/Only qualified invitees who complete valid tasks count/)).toBeInTheDocument();
+    expect(within(leaderboard).getByText("80 / 4")).toBeInTheDocument();
+    expect(within(leaderboard).getAllByText("low").length).toBeGreaterThan(0);
+    expect(within(leaderboard).getByText(/Seeded\/local leaderboard preview only/)).toBeInTheDocument();
+  });
+
+  it("renders zh-CN checker and leaderboard controls without zh-TW", () => {
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh-CN" } });
+    fireEvent.click(screen.getByRole("button", { name: "用户应用" }));
+
+    const checker = screen.getByRole("region", { name: "资格检查器" });
+    const leaderboard = screen.getByRole("region", { name: "排行榜预览" });
+
+    expect(within(checker).getByLabelText("资格地址")).toHaveValue("3E9...7cD");
+    expect(within(checker).getByRole("button", { name: "检查地址资格" })).toBeInTheDocument();
+    fireEvent.change(within(checker).getByLabelText("资格地址"), {
+      target: { value: "ELF_UNKNOWN_ADDRESS" },
+    });
+    fireEvent.click(within(checker).getByRole("button", { name: "检查地址资格" }));
+    expect(within(checker).getByText("钱包类型会保持未知，直到通过受支持的钱包/会话验证。")).toBeInTheDocument();
+    expect(within(leaderboard).getByRole("button", { name: "邀请" })).toBeInTheDocument();
+    expect(within(leaderboard).getByText("当前模式")).toBeInTheDocument();
+    expect(within(leaderboard).getByText(/仅 seeded\/本地排行榜预览/)).toBeInTheDocument();
     expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
 });

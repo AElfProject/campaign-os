@@ -35,8 +35,16 @@ import type {
   EvidenceSource,
   ExportPreview,
   ExportPreviewRow,
+  EligibilityCheckerReadModel,
+  EligibilityCheckEntry,
+  EligibilityCheckResult,
+  EligibilityMissingTaskDetail,
   RiskSignal,
   TaskEvidenceSummary,
+  LeaderboardMode,
+  LeaderboardModeId,
+  LeaderboardModeRow,
+  LeaderboardReadModel,
   LeaderboardRow,
   LocalizedText,
   ParticipationMetrics,
@@ -73,6 +81,16 @@ const rewardBoundary: LocalizedText = {
 const exportRiskBoundary: LocalizedText = {
   "en-US": "Risk flags and eligibility results are review inputs; Campaign OS does not distribute rewards.",
   "zh-CN": "风险标记与资格结果仅作为审核输入；Campaign OS 不执行发奖。",
+};
+
+const eligibilityCheckerBoundary: LocalizedText = {
+  "en-US": "Seeded/local eligibility preview only. No live wallet SDK, signature, indexer, dApp API, contract proof, export file, or reward distribution is executed.",
+  "zh-CN": "仅 seeded/本地资格预览。不会执行实时钱包 SDK、签名、indexer、dApp API、合约证明、导出文件或发奖。",
+};
+
+const leaderboardBoundary: LocalizedText = {
+  "en-US": "Seeded/local leaderboard preview only. Rankings are review inputs; Campaign OS does not distribute rewards and the campaign project owns fulfillment.",
+  "zh-CN": "仅 seeded/本地排行榜预览。排名是审核输入；Campaign OS 不执行发奖，奖励履约由活动项目方负责。",
 };
 
 const noAutoPublishNotice: LocalizedText = {
@@ -588,6 +606,348 @@ const createLeaderboard = (participants: ParticipantSnapshot[]): LeaderboardRow[
       riskFlags: participant.riskFlags,
       localePreference: participant.localePreference,
     }));
+
+const requiredProgressPercent = (metrics: ParticipationMetrics) =>
+  Math.round((metrics.completedRequiredTasks / Math.max(1, metrics.totalRequiredTasks)) * 100);
+
+const missingTaskDetails = (
+  tasks: CampaignTask[],
+  taskStates: ParticipantTaskState[],
+  missingTaskIds: string[],
+): EligibilityMissingTaskDetail[] =>
+  missingTaskIds.flatMap((taskId) => {
+    const task = tasks.find((candidate) => candidate.id === taskId);
+
+    if (!task) {
+      return [];
+    }
+
+    const state = taskStates.find((candidate) => candidate.taskId === task.id);
+
+    return {
+      evidenceSource: state?.evidenceSource,
+      nextAction: state?.nextAction ?? taskNextAction(task, "ready"),
+      points: task.points,
+      status: state?.status ?? "ready",
+      taskId: task.id,
+      templateCode: task.templateCode,
+      title: task.title,
+      verificationType: task.verificationType,
+      walletCompatibility: task.walletCompatibility,
+    };
+  });
+
+const createEligibilityEntry = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+): EligibilityCheckEntry => {
+  const participation = createParticipationReadModel(campaign, participant);
+
+  return {
+    accountType: participant.accountType,
+    id: participant.id,
+    label: {
+      "en-US": `${participant.walletAddress} · ${participation.eligibility.status.replace(/_/g, " ")}`,
+      "zh-CN": `${participant.walletAddress} · ${participation.eligibility.status.replace(/_/g, " ")}`,
+    },
+    localePreference: participant.localePreference,
+    riskFlags: participant.riskFlags,
+    score: participant.totalPoints,
+    status: participation.eligibility.status,
+    walletAddress: participant.walletAddress,
+    walletSource: participant.walletSource,
+    walletTypeVerified: participation.eligibility.walletStatus?.walletTypeVerified ?? false,
+  };
+};
+
+const addressOnlyEligibilityResult = (
+  campaign: CampaignShellDetail,
+  walletAddress: string,
+): EligibilityCheckResult => {
+  const requiredTaskCount = campaign.tasks.filter((task) => task.required).length;
+
+  return {
+    accountType: "UNKNOWN",
+    boundary: eligibilityCheckerBoundary,
+    completedRequiredTasks: 0,
+    knownParticipant: false,
+    missingTasks: [],
+    pointsThreshold: defaultPointsThreshold,
+    progressPercent: 0,
+    reason: {
+      "en-US": "Address-only checks cannot infer AA or EOA wallet type until a supported wallet verifies ownership.",
+      "zh-CN": "仅地址检查无法判断 AA 或 EOA 钱包类型，必须通过受支持的钱包验证归属。",
+    },
+    riskFlags: [],
+    score: 0,
+    status: "pending",
+    totalRequiredTasks: requiredTaskCount,
+    nextAction: {
+      "en-US": "Connect or verify a supported wallet before export eligibility can be trusted.",
+      "zh-CN": "请连接或验证受支持的钱包后，再判断导出资格。",
+    },
+    walletAddress,
+    walletSource: "OTHER",
+    walletTypeVerified: false,
+  };
+};
+
+const createKnownEligibilityResult = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+): EligibilityCheckResult => {
+  const participation = createParticipationReadModel(campaign, participant);
+  const metrics = participation.metrics;
+  const walletStatus = participation.eligibility.walletStatus;
+
+  return {
+    accountType: participant.accountType,
+    boundary: eligibilityCheckerBoundary,
+    completedRequiredTasks: metrics.completedRequiredTasks,
+    knownParticipant: true,
+    missingTasks: missingTaskDetails(
+      campaign.tasks,
+      participation.taskStates,
+      participation.eligibility.missingTaskIds,
+    ),
+    participantId: participant.id,
+    pointsThreshold: participation.eligibility.pointsThreshold,
+    progressPercent: requiredProgressPercent(metrics),
+    reason: participation.eligibility.reason,
+    riskFlags: participation.eligibility.riskFlags,
+    score: participation.eligibility.score,
+    status: participation.eligibility.status,
+    totalRequiredTasks: metrics.totalRequiredTasks,
+    nextAction: participation.eligibility.nextAction,
+    walletAddress: participant.walletAddress,
+    walletSource: participant.walletSource,
+    walletStatus,
+    walletTypeVerified: walletStatus?.walletTypeVerified ?? false,
+  };
+};
+
+export const createEligibilityCheckerReadModel = (
+  campaign: CampaignShellDetail,
+  selectedAddress?: string,
+): EligibilityCheckerReadModel => {
+  const defaultParticipant = campaign.participants[1] ?? campaign.participants[0];
+  const normalizedSelectedAddress = selectedAddress?.trim() || defaultParticipant?.walletAddress || "";
+  const participant = campaign.participants.find(
+    (candidate) => candidate.walletAddress.toLowerCase() === normalizedSelectedAddress.toLowerCase(),
+  );
+  const result = participant
+    ? createKnownEligibilityResult(campaign, participant)
+    : addressOnlyEligibilityResult(campaign, normalizedSelectedAddress);
+
+  return {
+    boundary: eligibilityCheckerBoundary,
+    campaignId: campaign.id,
+    entries: campaign.participants.map((entry) => createEligibilityEntry(campaign, entry)),
+    result,
+    selectedAddress: normalizedSelectedAddress,
+    summary: {
+      description: {
+        "en-US": "Check wallet-aware eligibility, missing tasks, risk review state, and next action before winners export.",
+        "zh-CN": "在导出 winners 前检查钱包感知资格、缺失任务、风险审核状态和下一步。",
+      },
+      status: result.status,
+      title: {
+        "en-US": "Eligibility checker",
+        "zh-CN": "资格检查器",
+      },
+    },
+  };
+};
+
+export const leaderboardModes: LeaderboardMode[] = [
+  {
+    id: "total_points",
+    label: {
+      "en-US": "Total Points",
+      "zh-CN": "总积分",
+    },
+    description: {
+      "en-US": "Ranks users by total campaign points.",
+      "zh-CN": "按活动总积分排序用户。",
+    },
+    qualityPolicy: {
+      "en-US": "Total points remain a review signal and do not distribute rewards.",
+      "zh-CN": "总积分仍是审核信号，不会触发发奖。",
+    },
+  },
+  {
+    id: "on_chain",
+    label: {
+      "en-US": "On-chain",
+      "zh-CN": "链上贡献",
+    },
+    description: {
+      "en-US": "Prioritizes verified wallet, on-chain, and dApp API actions.",
+      "zh-CN": "优先展示已验证的钱包、链上和 dApp API 行为。",
+    },
+    qualityPolicy: {
+      "en-US": "On-chain and dApp actions carry more quality weight than low-cost social tasks.",
+      "zh-CN": "链上和 dApp 行为比低成本社交任务具有更高质量权重。",
+    },
+  },
+  {
+    id: "referral",
+    label: {
+      "en-US": "Referral",
+      "zh-CN": "邀请",
+    },
+    description: {
+      "en-US": "Ranks qualified referral value, not raw signup counts.",
+      "zh-CN": "按合格邀请价值排序，而不是原始注册数量。",
+    },
+    qualityPolicy: defaultReferralRule,
+  },
+  {
+    id: "low_risk_verified",
+    label: {
+      "en-US": "Low-risk verified",
+      "zh-CN": "低风险已验证",
+    },
+    description: {
+      "en-US": "Prioritizes eligible users with verified actions and no risk flags.",
+      "zh-CN": "优先展示有已验证行为且无风险标记的合格用户。",
+    },
+    qualityPolicy: {
+      "en-US": "Risk flags are review inputs, not automatic exclusions or aelf reward decisions.",
+      "zh-CN": "风险标记是审核输入，不是自动排除或 aelf 发奖决定。",
+    },
+  },
+];
+
+const onChainVerificationTypes = new Set<CampaignTask["verificationType"]>([
+  "WALLET",
+  "ON_CHAIN",
+  "DAPP_API",
+]);
+
+const riskLevelFor = (participant: ParticipantSnapshot) =>
+  participant.riskFlags.length === 0 ? "low" : participant.riskFlags.length > 1 ? "high" : "medium";
+
+const createLeaderboardRow = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+): Omit<LeaderboardModeRow, "modeScore" | "rank"> & {
+  sourceRank: number;
+} => {
+  const taskStates = deriveParticipantTaskStates(campaign.tasks, participant);
+  const completedStates = taskStates.filter((state) => state.completed);
+  const onChainActionCount = completedStates.filter((state) => {
+    const task = campaign.tasks.find((candidate) => candidate.id === state.taskId);
+
+    return task ? onChainVerificationTypes.has(task.verificationType) : false;
+  }).length;
+  const referral = participant.referralSummary ?? defaultReferralSummary;
+
+  return {
+    accountType: participant.accountType,
+    eligible: participant.eligible,
+    localePreference: participant.localePreference,
+    onChainActionCount,
+    qualifiedInvitees: referral.qualifiedInvitees,
+    referralPoints: referral.referralPoints,
+    riskFlags: participant.riskFlags,
+    riskLevel: riskLevelFor(participant),
+    sourceRank: participant.rank ?? Number.MAX_SAFE_INTEGER,
+    totalPoints: participant.totalPoints,
+    verifiedActionCount: completedStates.length,
+    walletAddress: participant.walletAddress,
+    walletSource: participant.walletSource,
+  };
+};
+
+const modeScore = (
+  row: Omit<LeaderboardModeRow, "modeScore" | "rank"> & { sourceRank: number },
+  mode: LeaderboardModeId,
+) => {
+  if (mode === "on_chain") {
+    return row.onChainActionCount;
+  }
+
+  if (mode === "referral") {
+    return row.referralPoints;
+  }
+
+  if (mode === "low_risk_verified") {
+    return (row.eligible && row.riskFlags.length === 0 ? 1000 : 0) + row.verifiedActionCount;
+  }
+
+  return row.totalPoints;
+};
+
+const compareLeaderboardRows =
+  (mode: LeaderboardModeId) =>
+  (
+    left: Omit<LeaderboardModeRow, "modeScore" | "rank"> & { sourceRank: number },
+    right: Omit<LeaderboardModeRow, "modeScore" | "rank"> & { sourceRank: number },
+  ) => {
+    if (mode === "low_risk_verified") {
+      const leftLowRisk = left.eligible && left.riskFlags.length === 0 ? 1 : 0;
+      const rightLowRisk = right.eligible && right.riskFlags.length === 0 ? 1 : 0;
+
+      return (
+        rightLowRisk - leftLowRisk ||
+        right.verifiedActionCount - left.verifiedActionCount ||
+        right.totalPoints - left.totalPoints ||
+        left.sourceRank - right.sourceRank
+      );
+    }
+
+    if (mode === "on_chain") {
+      return (
+        right.onChainActionCount - left.onChainActionCount ||
+        right.verifiedActionCount - left.verifiedActionCount ||
+        right.totalPoints - left.totalPoints ||
+        left.sourceRank - right.sourceRank
+      );
+    }
+
+    if (mode === "referral") {
+      return (
+        right.referralPoints - left.referralPoints ||
+        right.qualifiedInvitees - left.qualifiedInvitees ||
+        right.totalPoints - left.totalPoints ||
+        left.sourceRank - right.sourceRank
+      );
+    }
+
+    return right.totalPoints - left.totalPoints || left.sourceRank - right.sourceRank;
+  };
+
+export const createLeaderboardReadModel = (
+  campaign: CampaignShellDetail,
+  mode: LeaderboardModeId = "total_points",
+): LeaderboardReadModel => {
+  const selectedMode = leaderboardModes.some((candidate) => candidate.id === mode)
+    ? mode
+    : "total_points";
+  const modeMetadata = leaderboardModes.find((candidate) => candidate.id === selectedMode) ?? leaderboardModes[0];
+  const rows = campaign.participants
+    .map((participant) => createLeaderboardRow(campaign, participant))
+    .sort(compareLeaderboardRows(selectedMode))
+    .map<LeaderboardModeRow>((row, index) => ({
+      ...row,
+      modeScore: modeScore(row, selectedMode),
+      rank: index + 1,
+    }));
+
+  return {
+    boundary: leaderboardBoundary,
+    campaignId: campaign.id,
+    modes: leaderboardModes,
+    qualityPolicy: modeMetadata.qualityPolicy,
+    rows,
+    selectedMode,
+    summary: {
+      "en-US": `${modeMetadata.label["en-US"]} ranks ${rows.length} seeded participants.`,
+      "zh-CN": `${modeMetadata.label["zh-CN"]}展示 ${rows.length} 个 seeded 参与者。`,
+    },
+  };
+};
 
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
 
