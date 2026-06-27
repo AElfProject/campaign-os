@@ -107,7 +107,7 @@ describe("Campaign OS domain foundation", () => {
       aiDrafts: 2,
       humanApproved: 4,
       blockedReleaseActions: 3,
-      availableCopyActions: 5,
+      availableCopyActions: 4,
       qualityGateBlockers: 1,
     });
     expect(Object.keys(artifactsByType).sort()).toEqual([
@@ -130,6 +130,15 @@ describe("Campaign OS domain foundation", () => {
     expect(artifactsByType.telegram_announcement).toMatchObject({
       lifecycle: "ai_draft",
       actionPolicy: expect.objectContaining({
+        copy: "blocked",
+        schedule: "blocked",
+        publish: "blocked",
+      }),
+    });
+    expect(artifactsByType.discord_message).toMatchObject({
+      lifecycle: "edited",
+      actionPolicy: expect.objectContaining({
+        copy: "blocked",
         schedule: "blocked",
         publish: "blocked",
       }),

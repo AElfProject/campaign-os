@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
 import { EXPORT_CSV_COLUMNS } from "../../../domain";
@@ -51,6 +51,11 @@ describe("Admin/Ops shell", () => {
     expect(screen.getByText("Reward responsibility")).toBeInTheDocument();
     expect(screen.getByText("Winner rules")).toBeInTheDocument();
     expect(screen.getByText("Localization readiness")).toBeInTheDocument();
+    expect(screen.getByText("Reviewer: legal_ops")).toBeInTheDocument();
+    expect(screen.getByText("Reviewer: community_ops")).toBeInTheDocument();
+    const telegramCard = screen.getByText("Telegram announcement").closest("article");
+    expect(telegramCard).not.toBeNull();
+    expect(within(telegramCard as HTMLElement).getAllByText("Human review required").length).toBeGreaterThan(0);
     expect(screen.getByText(/No live AI provider/)).toBeInTheDocument();
     expect(screen.getByText("CONTRACT CLAIM")).toBeInTheDocument();
     expect(screen.getByText("Contract claim is blocked pending high-impact manual review.")).toBeInTheDocument();
@@ -118,6 +123,11 @@ describe("Admin/Ops shell", () => {
     expect(screen.getByText("奖励责任")).toBeInTheDocument();
     expect(screen.getByText("Winner 规则")).toBeInTheDocument();
     expect(screen.getByText("本地化准备度")).toBeInTheDocument();
+    expect(screen.getByText("审核人: legal_ops")).toBeInTheDocument();
+    expect(screen.getByText("审核人: community_ops")).toBeInTheDocument();
+    const zhTelegramCard = screen.getByText("Telegram 公告").closest("article");
+    expect(zhTelegramCard).not.toBeNull();
+    expect(within(zhTelegramCard as HTMLElement).getAllByText("需要人工审核").length).toBeGreaterThan(0);
     expect(screen.getByText(/不会连接实时 AI/)).toBeInTheDocument();
     expect(screen.getByText("管理员合约审核中心")).toBeInTheDocument();
     expect(screen.getByText("是否需要 V2 companion")).toBeInTheDocument();

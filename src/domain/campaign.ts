@@ -261,7 +261,7 @@ const createAiContentActionPolicy = (
   const edited = artifact.lifecycle === "edited";
 
   return {
-    copy: releaseReady || edited ? "available" : "blocked",
+    copy: releaseReady ? "available" : "blocked",
     edit: artifact.lifecycle === "publish_intent" ? "blocked" : "available",
     markReviewed: releaseReady ? "blocked" : "available",
     schedule: releaseReady ? "available" : "blocked",

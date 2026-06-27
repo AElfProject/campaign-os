@@ -519,6 +519,10 @@ export const AdminOpsPanel = ({
                     label={`zh-CN ${artifact.localeStatus["zh-CN"]}`}
                     status={artifact.localeStatus["zh-CN"]}
                   />
+                  <ReviewSeverityBadge
+                    label={artifact.reviewer ? `${copy.reviewer}: ${artifact.reviewer}` : copy.humanReviewRequired}
+                    severity={artifact.reviewer ? "info" : "warning"}
+                  />
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   <PublishStateBadge
