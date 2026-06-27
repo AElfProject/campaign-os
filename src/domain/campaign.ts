@@ -10,6 +10,8 @@ import type {
   ContractMode,
   DimensionSplit,
   EligibilityResult,
+  ExportConfirmation,
+  ExportCsvColumn,
   ExportBatchSummary,
   ExportEvidenceRow,
   EvidenceSource,
@@ -31,6 +33,8 @@ import type {
   TranslationManagerReadModel,
   TranslationReviewPanel,
 } from "./types";
+import { deriveEligibilityWalletStatus, isWalletSessionVerified } from "./wallet";
+import { EXPORT_CSV_COLUMNS as exportCsvColumns } from "./types";
 
 const defaultPointsThreshold = 160;
 const defaultEligibleRankCutoff = 100;
@@ -44,6 +48,11 @@ const defaultReferralRule: LocalizedText = {
 const rewardBoundary: LocalizedText = {
   "en-US": "Rewards are provided by the campaign project. Export winners does not distribute rewards.",
   "zh-CN": "奖励由活动项目方提供。导出 winners 不等于发奖。",
+};
+
+const exportRiskBoundary: LocalizedText = {
+  "en-US": "Risk flags and eligibility results are review inputs; Campaign OS does not distribute rewards.",
+  "zh-CN": "风险标记与资格结果仅作为审核输入；Campaign OS 不执行发奖。",
 };
 
 const noAutoPublishNotice: LocalizedText = {
@@ -286,6 +295,17 @@ const createEligibilityResult = (
     (task) => task.status === "failed" || task.status === "manual_review",
   );
   const missingThreshold = participant.totalPoints < pointsThreshold;
+  const walletSession = campaign.walletSessions.find(
+    (session) => session.sessionId === participant.walletSessionId || session.address === participant.walletAddress,
+  );
+  const walletStatus = walletSession
+    ? deriveEligibilityWalletStatus(
+        walletSession,
+        campaign.walletPolicy,
+        missingTasks.map((task) => task.templateCode),
+        participant.riskFlags,
+      )
+    : undefined;
 
   if (campaign.status === "ended" || campaign.status === "exported") {
     return {
@@ -302,6 +322,24 @@ const createEligibilityResult = (
         "en-US": "Review final results without assuming reward distribution.",
         "zh-CN": "查看最终结果，但不要将其理解为自动发奖。",
       },
+      walletStatus,
+    };
+  }
+
+  if (walletStatus && !walletStatus.walletTypeVerified) {
+    return {
+      status: "not_eligible",
+      score: participant.totalPoints,
+      pointsThreshold,
+      missingTaskIds: missingTasks.map((task) => task.id),
+      riskFlags: participant.riskFlags,
+      reason: walletStatus.statusMessage,
+      nextAction:
+        walletStatus.nextAction ?? {
+          "en-US": "Verify wallet ownership before export eligibility.",
+          "zh-CN": "请先验证钱包归属，再进入导出资格。",
+        },
+      walletStatus,
     };
   }
 
@@ -320,6 +358,7 @@ const createEligibilityResult = (
         "en-US": "Complete the missing required tasks before export eligibility.",
         "zh-CN": "完成缺失的必做任务后再进入导出资格。",
       },
+      walletStatus,
     };
   }
 
@@ -338,6 +377,7 @@ const createEligibilityResult = (
         "en-US": "Wait for seeded verification to complete.",
         "zh-CN": "等待 seeded 验证完成。",
       },
+      walletStatus,
     };
   }
 
@@ -356,6 +396,7 @@ const createEligibilityResult = (
         "en-US": "Wait for manual review before winner export.",
         "zh-CN": "等待人工审核后再进入获奖名单导出。",
       },
+      walletStatus,
     };
   }
 
@@ -373,6 +414,7 @@ const createEligibilityResult = (
       "en-US": "Stay active until the campaign export window closes.",
       "zh-CN": "在活动导出窗口关闭前保持活跃。",
     },
+    walletStatus,
   };
 };
 
@@ -606,32 +648,101 @@ const createTaskEvidence = (
       };
     });
 
+const createTaskRecords = (taskEvidence: TaskEvidenceSummary[]) =>
+  taskEvidence.map((evidence) => `${evidence.taskId}:${evidence.status}:${evidence.source}`);
+
+const createExportConfirmation = (): ExportConfirmation => ({
+  includedFields: exportCsvColumns,
+  verifiedRecordsOnly: true,
+  rewardDistributionOwner: "campaign_project",
+  noDistributionBoundary: rewardBoundary,
+  riskBoundary: exportRiskBoundary,
+});
+
+const findMissingColumnValues = (
+  row: Record<ExportCsvColumn, string | number | boolean | string[] | undefined>,
+): ExportCsvColumn[] =>
+  exportCsvColumns.filter((column) => {
+    const value = row[column];
+
+    return value === undefined || value === "";
+  });
+
 const createExportEvidenceRows = (
+  campaignId: string,
   participants: ParticipantSnapshot[],
   tasks: CampaignTask[],
+  sessions: CampaignShellDetail["walletSessions"],
 ): ExportEvidenceRow[] =>
-  participants.map((participant) => ({
-    walletAddress: participant.walletAddress,
-    accountType: participant.accountType,
-    walletSource: participant.walletSource,
-    localePreference: participant.localePreference,
-    totalPoints: participant.totalPoints,
-    rank: participant.rank ?? 0,
-    eligible: participant.eligible,
-    missingTasks: computeMissingTasks(tasks, participant).map((task) => task.templateCode),
-    riskFlags: participant.riskFlags,
-    taskEvidence: createTaskEvidence(tasks, participant),
-    exportBatchId,
-  }));
+  participants.map((participant) => {
+    const taskEvidence = createTaskEvidence(tasks, participant);
+    const taskRecords = createTaskRecords(taskEvidence);
+    const evidenceHashes = taskEvidence.map((evidence) => evidence.evidenceHash);
+    const walletSession = sessions.find(
+      (session) => session.sessionId === participant.walletSessionId || session.address === participant.walletAddress,
+    );
+    const walletTypeVerified = walletSession ? isWalletSessionVerified(walletSession) : false;
+    const baseRow = {
+      campaign_id: campaignId,
+      wallet_address: participant.walletAddress,
+      account_type: participant.accountType,
+      wallet_source: participant.walletSource,
+      locale_preference: participant.localePreference,
+      total_points: participant.totalPoints,
+      rank: participant.rank ?? 0,
+      eligible: participant.eligible,
+      missing_tasks: computeMissingTasks(tasks, participant).map((task) => task.templateCode),
+      risk_flags: participant.riskFlags,
+      referrer_address: participant.referrerAddress,
+      task_records: taskRecords,
+      evidence_hashes: evidenceHashes,
+      export_batch_id: exportBatchId,
+    };
+    const missingColumnValues = findMissingColumnValues(baseRow);
+    const rowStatus =
+      !walletTypeVerified || missingColumnValues.length > 0
+        ? "blocked"
+        : participant.eligible && participant.riskFlags.length === 0
+          ? "ready"
+          : "review_required";
+
+    return {
+      campaignId,
+      walletAddress: participant.walletAddress,
+      accountType: participant.accountType,
+      walletSource: participant.walletSource,
+      localePreference: participant.localePreference,
+      totalPoints: participant.totalPoints,
+      rank: participant.rank ?? 0,
+      eligible: participant.eligible,
+      missingTasks: baseRow.missing_tasks,
+      riskFlags: participant.riskFlags,
+      referrerAddress: participant.referrerAddress,
+      taskEvidence,
+      taskRecords,
+      evidenceHashes,
+      exportBatchId,
+      walletTypeVerified,
+      rowStatus,
+      missingColumnValues,
+    };
+  });
 
 const createExportBatch = (campaign: CampaignShellDetail): ExportBatchSummary => {
-  const rows = createExportEvidenceRows(campaign.participants, campaign.tasks);
+  const rows = createExportEvidenceRows(
+    campaign.id,
+    campaign.participants,
+    campaign.tasks,
+    campaign.walletSessions,
+  );
 
   return {
     batchId: exportBatchId,
-    readyCount: rows.filter((row) => row.eligible && row.riskFlags.length === 0).length,
-    blockedCount: rows.filter((row) => !row.eligible || row.riskFlags.length > 0).length,
+    columns: exportCsvColumns,
+    readyCount: rows.filter((row) => row.rowStatus === "ready").length,
+    blockedCount: rows.filter((row) => row.rowStatus !== "ready").length,
     disclaimer: rewardBoundary,
+    confirmation: createExportConfirmation(),
     rows,
   };
 };
@@ -658,19 +769,30 @@ export const createExportPreview = (
   campaignId: string,
   participants: ParticipantSnapshot[],
   tasks: CampaignTask[],
+  sessions: CampaignShellDetail["walletSessions"] = [],
 ): ExportPreview => ({
   campaignId,
+  columns: exportCsvColumns,
   disclaimer: "Export winners does not distribute rewards.",
-  rows: participants.map<ExportPreviewRow>((participant) => ({
-    walletAddress: participant.walletAddress,
-    accountType: participant.accountType,
-    walletSource: participant.walletSource,
-    localePreference: participant.localePreference,
-    totalPoints: participant.totalPoints,
-    rank: participant.rank,
-    eligible: participant.eligible,
-    missingTasks: computeMissingTasks(tasks, participant).map((task) => task.templateCode),
-    riskFlags: participant.riskFlags,
+  confirmation: createExportConfirmation(),
+  rows: createExportEvidenceRows(campaignId, participants, tasks, sessions).map<ExportPreviewRow>((row) => ({
+    campaignId: row.campaignId,
+    walletAddress: row.walletAddress,
+    accountType: row.accountType,
+    walletSource: row.walletSource,
+    localePreference: row.localePreference,
+    totalPoints: row.totalPoints,
+    rank: row.rank,
+    eligible: row.eligible,
+    missingTasks: row.missingTasks,
+    riskFlags: row.riskFlags,
+    referrerAddress: row.referrerAddress,
+    taskRecords: row.taskRecords,
+    evidenceHashes: row.evidenceHashes,
+    exportBatchId: row.exportBatchId,
+    walletTypeVerified: row.walletTypeVerified,
+    rowStatus: row.rowStatus,
+    missingColumnValues: row.missingColumnValues,
   })),
 });
 

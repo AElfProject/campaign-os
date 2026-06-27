@@ -8,13 +8,19 @@ import {
   createExportPreview,
   createParticipationReadModel,
   createTranslationManagerReadModel,
+  deriveEligibilityWalletStatus,
   deriveParticipantTaskStates,
   defaultLocale,
+  EXPORT_CSV_COLUMNS,
   fallbackLocale,
   getWalletBadgeLabel,
   getWalletCompatibilityLabel,
+  isWalletSessionVerified,
   isSupportedLocale,
+  normalizeWalletSession,
   supportedLocales,
+  walletAdapterFixtures,
+  walletSessions,
 } from "./index";
 
 describe("Campaign OS domain foundation", () => {
@@ -119,6 +125,104 @@ describe("Campaign OS domain foundation", () => {
     expect(getWalletCompatibilityLabel("ANY")).toBe("AA + EOA");
   });
 
+  it("normalizes every seeded wallet adapter into explicit session states", () => {
+    const sessionsById = Object.fromEntries(
+      walletSessions.map((session) => [session.sessionId, session]),
+    );
+
+    expect(Object.keys(sessionsById).sort()).toEqual([
+      "sess-aa-001",
+      "sess-account-restricted-001",
+      "sess-agent-skill-001",
+      "sess-eoa-001",
+      "sess-eoa-app-001",
+      "sess-missing-signature-001",
+      "sess-nightelf-001",
+      "sess-unknown-001",
+      "sess-unsupported-001",
+      "sess-wrong-chain-001",
+    ]);
+    expect(sessionsById["sess-aa-001"]).toMatchObject({
+      accountType: "AA",
+      walletSource: "PORTKEY_AA",
+      verificationStatus: "verified",
+      signatureStatus: "signed",
+      walletTypeVerified: true,
+      normalUserRecommended: true,
+    });
+    expect(sessionsById["sess-eoa-app-001"]).toMatchObject({
+      accountType: "EOA",
+      walletSource: "PORTKEY_EOA_APP",
+      verificationStatus: "verified",
+      walletTypeVerified: true,
+    });
+    expect(sessionsById["sess-eoa-001"]).toMatchObject({
+      accountType: "EOA",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      verificationStatus: "verified",
+      walletTypeVerified: true,
+    });
+    expect(sessionsById["sess-nightelf-001"]).toMatchObject({
+      accountType: "EOA",
+      walletSource: "NIGHTELF",
+      verificationStatus: "verified",
+      walletTypeVerified: true,
+    });
+    expect(sessionsById["sess-agent-skill-001"]).toMatchObject({
+      accountType: "EOA",
+      walletSource: "AGENT_SKILL",
+      verificationStatus: "internal_agent",
+      walletTypeVerified: false,
+      normalUserRecommended: false,
+    });
+    expect(sessionsById["sess-unsupported-001"]).toMatchObject({
+      verificationStatus: "unsupported_wallet",
+      walletTypeVerified: false,
+    });
+    expect(sessionsById["sess-wrong-chain-001"]).toMatchObject({
+      chainId: "tDVV",
+      verificationStatus: "wrong_chain",
+      walletTypeVerified: false,
+    });
+    expect(sessionsById["sess-missing-signature-001"]).toMatchObject({
+      signatureStatus: "missing",
+      verificationStatus: "missing_signature",
+      walletTypeVerified: false,
+    });
+    expect(sessionsById["sess-account-restricted-001"]).toMatchObject({
+      verificationStatus: "account_restricted",
+      walletTypeVerified: false,
+    });
+    expect(sessionsById["sess-unknown-001"]).toMatchObject({
+      accountType: "UNKNOWN",
+      verificationStatus: "address_only",
+      walletTypeVerified: false,
+    });
+  });
+
+  it("derives wallet policy eligibility without treating address-only input as verified", () => {
+    const verifiedEoa = normalizeWalletSession(
+      walletAdapterFixtures.find((fixture) => fixture.id === "sess-eoa-001")!,
+      "ANY",
+    );
+    const restrictedEoa = deriveEligibilityWalletStatus(verifiedEoa, "AA_ONLY");
+    const addressOnly = walletSessions.find((session) => session.sessionId === "sess-unknown-001")!;
+
+    expect(isWalletSessionVerified(verifiedEoa)).toBe(true);
+    expect(restrictedEoa).toMatchObject({
+      campaignWalletPolicy: "AA_ONLY",
+      verificationStatus: "account_restricted",
+      walletTypeVerified: false,
+      eligible: false,
+    });
+    expect(deriveEligibilityWalletStatus(addressOnly, "ANY")).toMatchObject({
+      accountType: "UNKNOWN",
+      verificationStatus: "address_only",
+      walletTypeVerified: false,
+      eligible: false,
+    });
+  });
+
   it("computes publish readiness blockers and warnings", () => {
     const readiness = computePublishReadiness(
       { contractMode: "CONTRACT_CLAIM" },
@@ -135,19 +239,43 @@ describe("Campaign OS domain foundation", () => {
       campaignDetail.id,
       campaignDetail.participants,
       campaignDetail.tasks,
+      campaignDetail.walletSessions,
     );
 
+    expect(exportPreview.columns).toEqual(EXPORT_CSV_COLUMNS);
     expect(exportPreview.disclaimer).toContain("does not distribute rewards");
+    expect(exportPreview.confirmation).toMatchObject({
+      verifiedRecordsOnly: true,
+      rewardDistributionOwner: "campaign_project",
+    });
     expect(exportPreview.rows[0]).toMatchObject({
+      campaignId: "camp-awaken-sprint",
       accountType: "AA",
       walletSource: "PORTKEY_AA",
       localePreference: "en-US",
+      referrerAddress: "REF...2F4",
+      exportBatchId: "export-awaken-sprint-preview",
+      walletTypeVerified: true,
+      rowStatus: "ready",
     });
     expect(exportPreview.rows[1]).toMatchObject({
       accountType: "EOA",
       walletSource: "PORTKEY_EOA_EXTENSION",
       localePreference: "zh-CN",
+      referrerAddress: "REF...3E9",
+      riskFlags: ["referral_velocity_review"],
+      walletTypeVerified: true,
+      rowStatus: "review_required",
     });
+    expect(exportPreview.rows[1].taskRecords).toEqual(
+      expect.arrayContaining([
+        "task-bridge:pending:aelfscan",
+        "task-social:failed:social_api",
+      ]),
+    );
+    expect(exportPreview.rows[1].evidenceHashes).toEqual(
+      expect.arrayContaining(["demo-task-bridge-3E9", "demo-task-social-3E9"]),
+    );
     expect(exportPreview.rows).toHaveLength(4);
   });
 
@@ -311,6 +439,10 @@ describe("Campaign OS domain foundation", () => {
     ]);
     expect(adminOps.aiReports).toHaveLength(4);
     expect(adminOps.exportBatch.disclaimer["en-US"]).toContain("does not distribute rewards");
+    expect(adminOps.exportBatch.columns).toEqual(EXPORT_CSV_COLUMNS);
+    expect(adminOps.exportBatch.confirmation.noDistributionBoundary["en-US"]).toContain(
+      "does not distribute rewards",
+    );
   });
 
   it("keeps Admin/Ops risk and AI guidance human-reviewed", () => {
@@ -358,13 +490,25 @@ describe("Campaign OS domain foundation", () => {
     ]);
     expect(adminOps.exportBatch.rows).toHaveLength(campaignDetail.participants.length);
     expect(adminOps.exportBatch.rows[1]).toMatchObject({
+      campaignId: "camp-awaken-sprint",
       walletAddress: "3E9...7cD",
       accountType: "EOA",
       walletSource: "PORTKEY_EOA_EXTENSION",
       localePreference: "zh-CN",
       riskFlags: ["referral_velocity_review"],
       missingTasks: ["bridge_ebridge"],
+      referrerAddress: "REF...3E9",
       exportBatchId: "export-awaken-sprint-preview",
+      taskRecords: expect.arrayContaining([
+        "task-bridge:pending:aelfscan",
+        "task-social:failed:social_api",
+      ]),
+      evidenceHashes: expect.arrayContaining([
+        "demo-task-bridge-3E9",
+        "demo-task-social-3E9",
+      ]),
+      rowStatus: "review_required",
+      walletTypeVerified: true,
     });
     expect(adminOps.exportBatch.rows[1].taskEvidence).toEqual(
       expect.arrayContaining([
@@ -386,5 +530,21 @@ describe("Campaign OS domain foundation", () => {
         }),
       ]),
     );
+  });
+
+  it("keeps wallet fixtures free of credential examples", () => {
+    const fixtureText = JSON.stringify(walletAdapterFixtures).toLowerCase();
+
+    for (const unsafe of [
+      "private key",
+      "seed phrase",
+      "mnemonic",
+      "api_key",
+      "secret",
+      "access_token",
+      "bearer ",
+    ]) {
+      expect(fixtureText).not.toContain(unsafe);
+    }
   });
 });
