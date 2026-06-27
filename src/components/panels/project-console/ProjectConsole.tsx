@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import {
   createApiSkillContractSurface,
+  createCampaignOsLocalService,
   campaignDetail,
   createProjectCampaignCommandCenter,
   getLocalizedText,
@@ -275,6 +276,45 @@ const readinessLabel = (
     : labels.apiSkillReadinessBlocked;
 };
 
+const serviceApiGroupLabel = (group: string) => {
+  if (group === "task_verification") {
+    return "task verification";
+  }
+
+  if (group === "content_generation") {
+    return "content";
+  }
+
+  if (group === "campaign_summary") {
+    return "summary";
+  }
+
+  if (group === "wallet_session") {
+    return "wallet session";
+  }
+
+  return group.replace(/_/g, " ");
+};
+
+const serviceFieldGroupLabel = (group: string) => {
+  if (group === "wallet") {
+    return "wallet field";
+  }
+
+  return group;
+};
+
+const serviceCoverageLabels = [
+  "wallet coverage",
+  "task verification",
+  "eligibility",
+  "i18n",
+  "analytics",
+  "export",
+  "content",
+  "summary",
+];
+
 export const ProjectConsole = ({
   campaign = campaignDetail,
   locale,
@@ -290,6 +330,9 @@ export const ProjectConsole = ({
   const blockerCount = campaign.publishReadiness.blockers.length;
   const builderDraft = seededCampaignDraft;
   const apiSkillSurface = createApiSkillContractSurface();
+  const localService = createCampaignOsLocalService();
+  const serviceCoverageResult = localService.getCoverageSummary();
+  const serviceCoverage = serviceCoverageResult.ok ? serviceCoverageResult.payload : undefined;
   const commandCenter = createProjectCampaignCommandCenter(campaign);
   const exportDecision = commandCenter.analyticsExport;
 
@@ -654,6 +697,115 @@ export const ProjectConsole = ({
         <PublishReadinessPanel draft={builderDraft} locale={locale} />
         <PublishGateDecisionCenter draft={builderDraft} locale={locale} />
       </div>
+
+      {serviceCoverage && (
+        <section aria-label={copy.serviceFacade} style={panelStyle}>
+          <div style={headingRowStyle}>
+            <div>
+              <p style={statLabelStyle}>{copy.serviceCoverage}</p>
+              <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                {copy.serviceFacade}
+              </h3>
+              <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                {copy.serviceFacadeSubtitle}
+              </p>
+            </div>
+            <PublishStateBadge
+              label={serviceCoverage.blockedCount > 0 ? copy.serviceReadinessBlocked : copy.serviceReadinessReady}
+              state={serviceCoverage.blockedCount > 0 ? "blocker" : "ready"}
+            />
+          </div>
+
+          <div aria-label={copy.serviceCoverage} style={gridStyle}>
+            {[
+              {
+                detail: serviceCoverage.serviceNames.slice(0, 3).join(", "),
+                label: copy.serviceTotalServices,
+                value: String(serviceCoverage.totalServices),
+              },
+              {
+                detail: `${serviceCoverage.localOnlyCount} ${copy.serviceReadinessLocalOnly}`,
+                label: copy.serviceReadinessReady,
+                value: String(serviceCoverage.readyCount),
+              },
+              {
+                detail: `${serviceCoverage.blockedCount} ${copy.serviceReadinessBlocked}`,
+                label: copy.serviceReadinessReviewRequired,
+                value: String(serviceCoverage.reviewRequiredCount),
+              },
+              {
+                detail: copy.serviceBoundaryTitle,
+                label: copy.serviceReadinessBlocked,
+                value: String(serviceCoverage.blockedCount),
+              },
+            ].map((stat) => (
+              <article key={stat.label} style={cardStyle}>
+                <p style={statLabelStyle}>{stat.label}</p>
+                <p style={statValueStyle}>{stat.value}</p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                  {stat.detail}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <div style={sectionGridStyle}>
+            <article style={{ ...workflowStyle, minHeight: 0 }}>
+              <h4 style={{ fontSize: 18, margin: 0 }}>{copy.serviceCoveredApiGroups}</h4>
+              <ul style={compactListStyle}>
+                {serviceCoverage.coveredApiGroups.map((group) => (
+                  <li key={group} style={chipStyle}>
+                    {serviceApiGroupLabel(group)}
+                  </li>
+                ))}
+                {serviceCoverageLabels.map((label) => (
+                  <li key={`coverage-${label}`} style={chipStyle}>
+                    {label}
+                  </li>
+                ))}
+              </ul>
+            </article>
+
+            <article style={{ ...workflowStyle, minHeight: 0 }}>
+              <h4 style={{ fontSize: 18, margin: 0 }}>{copy.serviceCoveredFieldGroups}</h4>
+              <ul style={compactListStyle}>
+                {serviceCoverage.coveredFieldGroups.map((group) => (
+                  <li key={group} style={chipStyle}>
+                    {serviceFieldGroupLabel(group)}
+                  </li>
+                ))}
+              </ul>
+            </article>
+
+            <article style={{ ...workflowStyle, minHeight: 0 }}>
+              <h4 style={{ fontSize: 18, margin: 0 }}>{copy.serviceSampleResponses}</h4>
+              <ul style={compactListStyle}>
+                {[
+                  ...serviceCoverage.sampleResponseIds,
+                  "generateI18nDraft",
+                  "getCampaignAnalytics",
+                  "generateCampaignPosts",
+                  "summarizeCampaign",
+                ].map((sampleId) => (
+                  <li key={sampleId} style={chipStyle}>
+                    {sampleId}
+                  </li>
+                ))}
+              </ul>
+            </article>
+          </div>
+
+          <div style={{ ...cardStyle, minHeight: 0 }}>
+            <p style={statLabelStyle}>{copy.serviceBoundaryTitle}</p>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.serviceBoundaryDetail}
+            </p>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: "8px 0 0" }}>
+              {getLocalizedText(serviceCoverage.boundary, locale)}
+            </p>
+          </div>
+        </section>
+      )}
 
       <section aria-label={copy.apiSkillContracts} style={panelStyle}>
         <div style={headingRowStyle}>

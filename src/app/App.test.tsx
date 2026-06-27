@@ -97,7 +97,7 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByText("面向未来 agent 与 API 的只读 contract registry。")).toBeInTheDocument();
     expect(screen.getByText("创建活动草稿")).toBeInTheDocument();
     expect(screen.getByText("总结活动")).toBeInTheDocument();
-    expect(screen.getByText(/不会调用实时 API/)).toBeInTheDocument();
+    expect(screen.getAllByText(/不会调用实时 API/).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "发布准备度" })).toBeInTheDocument();
     expect(screen.getAllByText("合约领取模式需要高影响人工审核。").length).toBeGreaterThan(0);
     expect(screen.getByText("切换到 Off-chain MVP，或完成合约审核人批准。")).toBeInTheDocument();
