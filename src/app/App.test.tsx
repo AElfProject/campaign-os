@@ -160,5 +160,7 @@ describe("Campaign OS app shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "User App" }));
     expect(screen.getAllByText("Eligibility checker").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Ecosystem next actions").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("No live Pay service, wallet SDK, payment transaction, contract view, or contract send is executed.").length).toBeGreaterThan(0);
   });
 });

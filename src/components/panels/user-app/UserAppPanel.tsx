@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import {
   campaignDetail,
+  createEcosystemNextActionReadModel,
   createParticipationReadModel,
   createWalletConnectionDiagnostics,
   getWalletBadgeLabel,
@@ -9,6 +10,8 @@ import {
   type CampaignShellDetail,
   type CampaignStatus,
   type EligibilityStatus,
+  type EcosystemRecommendationPriority,
+  type EcosystemRecommendationStatus,
   type LocalizedText,
   type LocaleStatus,
   type NormalizedWalletSession,
@@ -286,6 +289,53 @@ const taskBadgeState = (status: TaskVerificationStatus) => {
 
 const diagnosticBadgeState = (state: WalletDiagnosticState) => state;
 
+const ecosystemStatusLabel = (
+  status: EcosystemRecommendationStatus,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels: Record<EcosystemRecommendationStatus, string> = {
+    completed: copy.ecosystemCompleted,
+    locked: copy.ecosystemLocked,
+    ready: copy.ecosystemReady,
+    review: copy.ecosystemReview,
+  };
+
+  return labels[status];
+};
+
+const ecosystemStatusState = (status: EcosystemRecommendationStatus) => {
+  if (status === "locked") {
+    return "blocker";
+  }
+
+  if (status === "review") {
+    return "warning";
+  }
+
+  return "ready";
+};
+
+const ecosystemPriorityLabel = (
+  priority: EcosystemRecommendationPriority,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels: Record<EcosystemRecommendationPriority, string> = {
+    primary: copy.ecosystemPrimary,
+    secondary: copy.ecosystemSecondary,
+    tertiary: copy.ecosystemTertiary,
+  };
+
+  return labels[priority];
+};
+
+const ecosystemSignalState = (tone: "ready" | "warning" | "blocker") =>
+  tone === "blocker" ? "blocker" : tone === "warning" ? "warning" : "ready";
+
+const ecosystemServiceStateLabel = (
+  state: "seeded_preview" | "not_connected",
+  copy: typeof userAppCopy["en-US"],
+) => (state === "seeded_preview" ? copy.ecosystemSeededPreview : copy.ecosystemNotConnected);
+
 const campaignStatusLabel = (status: CampaignStatus, copy: typeof userAppCopy["en-US"]) => {
   const labels: Record<CampaignStatus, string> = {
     draft: "Draft",
@@ -505,6 +555,96 @@ const CampaignFeedCard = ({
   </article>
 );
 
+const EcosystemRecommendationCard = ({
+  copy,
+  locale,
+  recommendation,
+}: {
+  copy: typeof userAppCopy["en-US"];
+  locale: SupportedLocale;
+  recommendation: ReturnType<typeof createEcosystemNextActionReadModel>["recommendations"][number];
+}) => (
+  <article style={{ ...cardStyle, alignContent: "space-between" }}>
+    <div style={rowStyle}>
+      <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+        <p style={labelStyle}>{getLocalizedText(recommendation.product.label, locale)}</p>
+        <strong style={{ color: "#071426", fontSize: 18, lineHeight: 1.2 }}>
+          {getLocalizedText(recommendation.title, locale)}
+        </strong>
+      </div>
+      <span style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" }}>
+        <PublishStateBadge
+          label={ecosystemPriorityLabel(recommendation.priority, copy)}
+          state="ready"
+        />
+        <PublishStateBadge
+          label={ecosystemStatusLabel(recommendation.status, copy)}
+          state={ecosystemStatusState(recommendation.status)}
+        />
+      </span>
+    </div>
+    <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+      {getLocalizedText(recommendation.reason, locale)}
+    </p>
+    {recommendation.gatingReason ? (
+      <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+        {getLocalizedText(recommendation.gatingReason, locale)}
+      </p>
+    ) : null}
+    <div style={{ display: "grid", gap: 8 }}>
+      {recommendation.relatedSignals.map((signal) => (
+        <div key={signal.id} style={rowStyle}>
+          <span style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>
+            {getLocalizedText(signal.label, locale)}
+          </span>
+          <PublishStateBadge
+            label={getLocalizedText(signal.value, locale)}
+            state={ecosystemSignalState(signal.tone)}
+          />
+        </div>
+      ))}
+    </div>
+    <div style={rowStyle}>
+      <span style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>
+        {copy.ecosystemServiceState}: {ecosystemServiceStateLabel(recommendation.product.serviceState, copy)}
+      </span>
+      <button style={buttonStyle} type="button">
+        {getLocalizedText(recommendation.ctaLabel, locale)}
+      </button>
+    </div>
+    <p style={{ color: "#92400e", fontSize: 12, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+      {getLocalizedText(recommendation.boundary, locale)}
+    </p>
+  </article>
+);
+
+const MobileEcosystemCard = ({
+  copy,
+  locale,
+  recommendation,
+}: {
+  copy: typeof userAppCopy["en-US"];
+  locale: SupportedLocale;
+  recommendation: ReturnType<typeof createEcosystemNextActionReadModel>["recommendations"][number];
+}) => (
+  <article style={{ ...cardStyle, gap: 8 }}>
+    <div style={rowStyle}>
+      <strong style={{ fontSize: 14 }}>{getLocalizedText(recommendation.product.label, locale)}</strong>
+      <PublishStateBadge
+        label={ecosystemStatusLabel(recommendation.status, copy)}
+        state={ecosystemStatusState(recommendation.status)}
+      />
+    </div>
+    <p style={{ color: "#475569", fontSize: 12, lineHeight: 1.4, margin: 0 }}>
+      {getLocalizedText(recommendation.title, locale)}
+    </p>
+    <p style={{ color: "#64748b", fontSize: 12, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
+      {getLocalizedText(recommendation.relatedSignals[0].label, locale)}:{" "}
+      {getLocalizedText(recommendation.relatedSignals[0].value, locale)}
+    </p>
+  </article>
+);
+
 export const UserAppPanel = ({
   campaign = campaignDetail,
   locale,
@@ -512,6 +652,7 @@ export const UserAppPanel = ({
 }: UserAppPanelProps) => {
   const copy = userAppCopy[locale];
   const participation = createParticipationReadModel(campaign, participant);
+  const ecosystemNextActions = createEcosystemNextActionReadModel(campaign, participant);
   const taskStates = participation.taskStates;
   const completedCount = taskStates.filter((task) => task.completed).length;
   const title = getLocalizedText(campaign.title, locale);
@@ -542,6 +683,19 @@ export const UserAppPanel = ({
       Math.max(1, participation.metrics.totalRequiredTasks)) *
       100,
   );
+  const ecosystemSummaryMetrics: Array<[string, string, "ready" | "warning" | "blocker"]> = [
+    [copy.ready, String(ecosystemNextActions.summary.readyCount), "ready"],
+    [
+      copy.ecosystemLocked,
+      String(ecosystemNextActions.summary.lockedCount),
+      ecosystemNextActions.summary.lockedCount > 0 ? "warning" : "ready",
+    ],
+    [
+      copy.ecosystemReview,
+      String(ecosystemNextActions.summary.reviewCount),
+      ecosystemNextActions.summary.reviewCount > 0 ? "warning" : "ready",
+    ],
+  ];
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -585,6 +739,7 @@ export const UserAppPanel = ({
                 [copy.appHubCampaigns, `${campaignFeed.filter((item) => item.status === "live").length} ${copy.active}`],
                 [copy.eligibility, eligibilityLabel(participation.eligibility.status, copy)],
                 [copy.walletType, getWalletBadgeLabel(selectedWallet.accountType, selectedWallet.walletSource)],
+                [copy.ecosystemLoopProgress, `${ecosystemNextActions.summary.loopProgressPercent}%`],
               ].map(([label, value]) => (
                 <article key={label} style={cardStyle}>
                   <p style={labelStyle}>{label}</p>
@@ -662,25 +817,16 @@ export const UserAppPanel = ({
                 </p>
               </article>
               <article style={cardStyle}>
-                <p style={labelStyle}>{copy.appHubQuickActions}</p>
-                <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
-                  {[copy.appHubPay, copy.appHubPortfolio, copy.appHubForecast, copy.inviteLink].map(
-                    (action) => (
-                      <button
-                        key={action}
-                        style={{
-                          ...buttonStyle,
-                          background: "#ffffff",
-                          color: "#1c64f2",
-                          minHeight: 36,
-                          width: "100%",
-                        }}
-                        type="button"
-                      >
-                        {action}
-                      </button>
-                    ),
-                  )}
+                <p style={labelStyle}>{copy.ecosystemNextActions}</p>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {ecosystemNextActions.recommendations.map((recommendation) => (
+                    <MobileEcosystemCard
+                      copy={copy}
+                      key={recommendation.id}
+                      locale={locale}
+                      recommendation={recommendation}
+                    />
+                  ))}
                 </div>
               </article>
               <nav
@@ -701,6 +847,49 @@ export const UserAppPanel = ({
             </div>
           </aside>
         </div>
+      </section>
+
+      <section aria-label={copy.ecosystemNextActions} style={panelStyle}>
+        <div style={rowStyle}>
+          <div>
+            <p style={labelStyle}>{copy.ecosystemNextActions}</p>
+            <h2 style={{ fontSize: 28, lineHeight: 1.1, margin: "4px 0" }}>
+              {copy.ecosystemNextActions}
+            </h2>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.ecosystemSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={`${copy.ecosystemLoopProgress}: ${ecosystemNextActions.summary.loopProgressPercent}%`}
+            state={ecosystemNextActions.summary.lockedCount > 0 ? "warning" : "ready"}
+          />
+        </div>
+        <div style={metricGridStyle}>
+          {ecosystemSummaryMetrics.map(([label, value, state]) => (
+            <article key={label} style={cardStyle}>
+              <p style={labelStyle}>{label}</p>
+              <p style={valueStyle}>{value}</p>
+              <PublishStateBadge label={String(state)} state={state} />
+            </article>
+          ))}
+        </div>
+        <p style={{ color: "#071426", fontSize: 15, fontWeight: 900, lineHeight: 1.45, margin: 0 }}>
+          {getLocalizedText(ecosystemNextActions.summary.headline, locale)}
+        </p>
+        <div style={feedGridStyle}>
+          {ecosystemNextActions.recommendations.map((recommendation) => (
+            <EcosystemRecommendationCard
+              copy={copy}
+              key={recommendation.id}
+              locale={locale}
+              recommendation={recommendation}
+            />
+          ))}
+        </div>
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+          {copy.ecosystemBoundary}
+        </p>
       </section>
 
       <section style={panelStyle}>
