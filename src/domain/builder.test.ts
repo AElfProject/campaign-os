@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   builderSupportedLocales,
   computeBuilderPublishReadiness,
+  createAiCampaignPlannerDecisionConsole,
   createTaskTemplateFilterSummary,
   createPublishGateDecisionCenter,
   defaultTaskTemplateFilters,
@@ -287,5 +288,70 @@ describe("Campaign Builder domain foundation", () => {
     );
     expect(seededCampaignDraft.supportedLocales).toEqual(["en-US", "zh-CN"]);
     expect(JSON.stringify(decisionCenter)).not.toContain("zh-TW");
+  });
+
+  it("creates the seeded AI campaign planner decision console", () => {
+    const planner = createAiCampaignPlannerDecisionConsole(seededCampaignDraft);
+
+    expect(planner.draftId).toBe(seededCampaignDraft.id);
+    expect(planner.summary).toMatchObject({
+      contractMode: "OFF_CHAIN_MVP",
+      defaultLocale: "en-US",
+      reviewedByHuman: true,
+      supportedLocales: ["en-US", "zh-CN"],
+      walletPolicy: "ANY",
+    });
+    expect(planner.summary.prompt).toContain("activation campaign");
+    expect(planner.summary.generatedOutline).toHaveLength(4);
+    expect(planner.summary.recommendedWallet["en-US"]).toContain("Portkey AA");
+    expect(planner.boundary["en-US"]).toContain("No live AI provider");
+    expect(planner.boundary["en-US"]).toContain("no automatic publish");
+    expect(planner.nextAction["en-US"]).toContain("Review");
+    expect(planner.groups.map((group) => group.id)).toEqual([
+      "campaign_structure",
+      "wallet_policy",
+      "language_plan",
+      "task_strategy",
+      "risk_hints",
+      "contract_recommendation",
+    ]);
+  });
+
+  it("surfaces wallet, locale, task, risk, and contract planner decisions", () => {
+    const planner = createAiCampaignPlannerDecisionConsole(seededCampaignDraft);
+    const itemsById = new Map(
+      planner.groups.flatMap((group) => group.items).map((item) => [item.id, item]),
+    );
+
+    expect(itemsById.get("wallet-any-conversion")).toMatchObject({
+      confidence: "high",
+      ownerRole: "project_owner",
+      status: "ready",
+    });
+    expect(itemsById.get("wallet-any-conversion")?.rationale["en-US"]).toContain("AA and EOA");
+    expect(itemsById.get("wallet-portkey-aa-onboarding")?.label["en-US"]).toContain("Portkey AA");
+    expect(itemsById.get("wallet-portkey-aa-onboarding")?.rationale["en-US"]).not.toContain("mandatory");
+
+    expect(itemsById.get("language-default-en")?.rationale["en-US"]).toContain("Default language is English");
+    expect(itemsById.get("language-zh-review")?.status).toBe("review_required");
+    expect(itemsById.get("task-verified-anchors")?.rationale["en-US"]).toContain("bridge");
+    expect(itemsById.get("risk-social-review")?.status).toBe("warning");
+    expect(itemsById.get("contract-off-chain-mvp")).toMatchObject({
+      ownerRole: "contract_reviewer",
+      status: "ready",
+    });
+    expect(itemsById.get("contract-claim-blocker")).toMatchObject({
+      ownerRole: "contract_reviewer",
+      status: "blocked",
+    });
+    expect(itemsById.get("contract-claim-blocker")?.rationale["en-US"]).toContain("not enabled");
+    expect(planner.counts).toEqual({
+      blocked: 1,
+      ready: 8,
+      reviewRequired: 2,
+      total: 12,
+      warning: 1,
+    });
+    expect(JSON.stringify(planner)).not.toContain("zh-TW");
   });
 });

@@ -1,9 +1,12 @@
 import type { CSSProperties } from "react";
 import {
   computeBuilderPublishReadiness,
+  createAiCampaignPlannerDecisionConsole,
   getLocalizedText,
   seededCampaignDraft,
+  type AiPlannerDecisionStatus,
   type CampaignDraft,
+  type OwnerRole,
   type SupportedLocale,
   walletPolicyOptions,
 } from "../../../../domain";
@@ -55,6 +58,12 @@ const compactGridStyle: CSSProperties = {
   gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
 };
 
+const plannerGridStyle: CSSProperties = {
+  display: "grid",
+  gap: 12,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))",
+};
+
 const labelStyle: CSSProperties = {
   color: "#64748b",
   fontSize: 12,
@@ -94,6 +103,11 @@ const listItemStyle: CSSProperties = {
   listStyle: "none",
 };
 
+const plannerItemStyle: CSSProperties = {
+  ...cardStyle,
+  background: "#ffffff",
+};
+
 const ghostButtonStyle: CSSProperties = {
   background: "#ffffff",
   border: "1px solid #cbd5e1",
@@ -127,12 +141,46 @@ const formStateRows = (draft: CampaignDraft, copy: ProjectConsoleCopy) => [
   { label: copy.formReward, ready: draft.formState.rewardPlanConfirmed },
 ];
 
+const ownerRoleLabels = {
+  "en-US": {
+    contract_reviewer: "Contract reviewer",
+    internal_operator: "Internal operator",
+    project_owner: "Project owner",
+  },
+  "zh-CN": {
+    contract_reviewer: "合约审核人",
+    internal_operator: "内部运营",
+    project_owner: "项目方",
+  },
+} satisfies Record<SupportedLocale, Record<OwnerRole, string>>;
+
+const plannerStatusLabel = (
+  status: AiPlannerDecisionStatus,
+  copy: ProjectConsoleCopy,
+) => {
+  if (status === "ready") {
+    return copy.aiPlannerReady;
+  }
+  if (status === "review_required") {
+    return copy.aiPlannerReviewRequired;
+  }
+  if (status === "warning") {
+    return copy.aiPlannerWarning;
+  }
+
+  return copy.aiPlannerBlocked;
+};
+
+const plannerStatusState = (status: AiPlannerDecisionStatus) =>
+  status === "blocked" ? "blocker" : status === "warning" || status === "review_required" ? "warning" : "ready";
+
 export const CampaignBuilderPanel = ({
   copy,
   draft = seededCampaignDraft,
   locale,
 }: CampaignBuilderPanelProps) => {
   const readiness = computeBuilderPublishReadiness(draft);
+  const planner = createAiCampaignPlannerDecisionConsole(draft);
   const missingBasics = readiness.blockers.filter((check) => check.group === "basics");
   const campaignName = getLocalizedText(draft.campaignName, locale);
   const activePolicy = draft.walletPolicy;
@@ -202,21 +250,117 @@ export const CampaignBuilderPanel = ({
         </article>
       </div>
 
-      <div style={compactGridStyle}>
-        <article style={cardStyle}>
-          <p style={labelStyle}>{copy.builderAiPrompt}</p>
-          <p style={bodyTextStyle}>{draft.aiPrompt.prompt}</p>
-          <p style={labelStyle}>{copy.builderAiOutline}</p>
-          <ul style={listStyle}>
-            {draft.aiPrompt.generatedOutline.slice(0, 3).map((item) => (
-              <li key={item} style={{ ...listItemStyle, alignItems: "start", justifyContent: "start" }}>
-                <span aria-hidden="true">-</span>
-                <span style={{ color: "#475569", fontSize: 13, lineHeight: 1.45 }}>{item}</span>
-              </li>
-            ))}
-          </ul>
-        </article>
+      <section aria-label={copy.aiPlanner} style={{ display: "grid", gap: 12 }}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={labelStyle}>{copy.aiPlanner}</p>
+            <h3 style={{ fontSize: 20, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.aiPlannerRecommendation}
+            </h3>
+            <p style={bodyTextStyle}>{getLocalizedText(planner.nextAction, locale)}</p>
+          </div>
+          <PublishStateBadge
+            label={`${planner.counts.blocked} ${copy.countBlockers}`}
+            state={planner.counts.blocked > 0 ? "blocker" : "ready"}
+          />
+        </div>
 
+        <div style={summaryGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.builderAiPrompt}</p>
+            <p style={bodyTextStyle}>{planner.summary.prompt}</p>
+            <p style={labelStyle}>{copy.builderAiOutline}</p>
+            <ul style={listStyle}>
+              {planner.summary.generatedOutline.map((item) => (
+                <li key={item} style={{ ...listItemStyle, alignItems: "start", justifyContent: "start" }}>
+                  <span aria-hidden="true">-</span>
+                  <span style={{ color: "#475569", fontSize: 13, lineHeight: 1.45 }}>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </article>
+
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.aiPlannerDecisionCounts}</p>
+            <div style={compactGridStyle}>
+              <span>
+                <p style={labelStyle}>{copy.aiPlannerReady}</p>
+                <p style={valueStyle}>{planner.counts.ready}</p>
+              </span>
+              <span>
+                <p style={labelStyle}>{copy.aiPlannerReviewRequired}</p>
+                <p style={valueStyle}>{planner.counts.reviewRequired}</p>
+              </span>
+              <span>
+                <p style={labelStyle}>{copy.aiPlannerWarning}</p>
+                <p style={valueStyle}>{planner.counts.warning}</p>
+              </span>
+              <span>
+                <p style={labelStyle}>{copy.aiPlannerBlocked}</p>
+                <p style={valueStyle}>{planner.counts.blocked}</p>
+              </span>
+            </div>
+            <p style={labelStyle}>{copy.aiPlannerDefaultLocale}</p>
+            <p style={valueStyle}>{planner.summary.defaultLocale}</p>
+            <p style={labelStyle}>{copy.aiPlannerSupportedLocales}</p>
+            <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {planner.summary.supportedLocales.map((supportedLocale) => (
+                <PublishStateBadge key={supportedLocale} label={supportedLocale} state="ready" />
+              ))}
+            </span>
+            <p style={labelStyle}>{copy.builderWalletPolicy}</p>
+            <p style={bodyTextStyle}>
+              {planner.summary.walletPolicy} · {getLocalizedText(planner.summary.recommendedWallet, locale)}
+            </p>
+          </article>
+        </div>
+
+        <div aria-label={copy.aiPlannerGroupList} style={plannerGridStyle}>
+          {planner.groups.map((group) => (
+            <article key={group.id} style={cardStyle}>
+              <div>
+                <p style={labelStyle}>{copy.aiPlannerRecommendation}</p>
+                <h4 style={{ fontSize: 18, lineHeight: 1.25, margin: "4px 0" }}>
+                  {getLocalizedText(group.title, locale)}
+                </h4>
+                <p style={bodyTextStyle}>{getLocalizedText(group.summary, locale)}</p>
+              </div>
+              <ul style={listStyle}>
+                {group.items.map((item) => (
+                  <li key={item.id} style={plannerItemStyle}>
+                    <div style={headingRowStyle}>
+                      <p style={valueStyle}>{getLocalizedText(item.label, locale)}</p>
+                      <PublishStateBadge
+                        label={plannerStatusLabel(item.status, copy)}
+                        state={plannerStatusState(item.status)}
+                      />
+                    </div>
+                    <p style={bodyTextStyle}>{getLocalizedText(item.rationale, locale)}</p>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <PublishStateBadge label={ownerRoleLabels[locale][item.ownerRole]} state="ready" />
+                      <PublishStateBadge
+                        label={`${copy.aiPlannerConfidence}: ${item.confidence}`}
+                        state="ready"
+                      />
+                    </div>
+                    <p style={bodyTextStyle}>
+                      <strong>{copy.aiPlannerNextAction}: </strong>
+                      {getLocalizedText(item.nextAction, locale)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </article>
+          ))}
+        </div>
+
+        <p style={{ ...bodyTextStyle, background: "#eef6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: 12 }}>
+          <strong>{copy.aiPlannerBoundary}: </strong>
+          {getLocalizedText(planner.boundary, locale)}
+        </p>
+      </section>
+
+      <div style={compactGridStyle}>
         <article style={cardStyle}>
           <p style={labelStyle}>{copy.builderFormState}</p>
           <ul style={listStyle}>
