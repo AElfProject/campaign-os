@@ -9,8 +9,21 @@ describe("User App shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "User App" }));
 
+    expect(screen.getByRole("heading", { name: "Campaign Feed" })).toBeInTheDocument();
+    expect(screen.getByText("Find live aelf campaigns, points, time left, core tasks, and eligibility entry points.")).toBeInTheDocument();
+    expect(screen.getByText("Forest NFT Quest")).toBeInTheDocument();
+    expect(screen.getByText("TMRWDAO Governance Streak")).toBeInTheDocument();
+    expect(screen.getByText("Seeded campaign feed preview; campaign discovery is not a live marketplace API.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Mobile entry for campaigns, points, pay, forecast, and portfolio." })).toBeInTheDocument();
+    expect(screen.getByText("Seeded mobile hub preview; no Telegram Mini App, payment, forecast, or portfolio service is connected.")).toBeInTheDocument();
+    expect(screen.getByText("What should I do today?")).toBeInTheDocument();
+    expect(screen.getByText("Quick actions")).toBeInTheDocument();
+    expect(screen.getAllByText("Pay").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Portfolio").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Forecast").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Check eligibility" }).length).toBeGreaterThan(0);
     expect(screen.getByText("Campaign OS never asks for private keys or seed phrases.")).toBeInTheDocument();
     expect(screen.getByText("Wallet connection is limited to connection and message signing in this shell.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Wallet session status" })).toBeInTheDocument();
@@ -65,8 +78,18 @@ describe("User App shell", () => {
     fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh-CN" } });
     fireEvent.click(screen.getByRole("button", { name: "用户应用" }));
 
+    expect(screen.getByRole("heading", { name: "活动 Feed" })).toBeInTheDocument();
+    expect(screen.getByText("展示进行中的 aelf 活动、可获得积分、剩余时间、核心任务与资格入口。")).toBeInTheDocument();
+    expect(screen.getByText("Forest NFT 任务")).toBeInTheDocument();
+    expect(screen.getByText("TMRWDAO 治理连续任务")).toBeInTheDocument();
+    expect(screen.getByText("仅 seeded 活动 Feed 预览；活动发现未接入实时 marketplace API。")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "移动端入口，聚合活动、积分、Pay、Forecast 与 Portfolio。" })).toBeInTheDocument();
+    expect(screen.getByText("仅 seeded 移动端 Hub 预览；未接入 Telegram Mini App、支付、Forecast 或 Portfolio 服务。")).toBeInTheDocument();
+    expect(screen.getByText("今天该做什么？")).toBeInTheDocument();
+    expect(screen.getByText("快捷入口")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Awaken 冲刺活动" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "连接钱包" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "检查资格" }).length).toBeGreaterThan(0);
     expect(screen.getByText("Campaign OS 永远不会索要私钥或助记词。")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "钱包会话状态" })).toBeInTheDocument();
     expect(screen.getAllByText("钱包类型已验证").length).toBeGreaterThan(0);
