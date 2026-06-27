@@ -100,6 +100,40 @@ const tableStyle: CSSProperties = {
   width: "100%",
 };
 
+const exportTableStyle: CSSProperties = {
+  ...tableStyle,
+  minWidth: 1580,
+};
+
+const scrollContainerStyle: CSSProperties = {
+  maxWidth: "100%",
+  overflowX: "auto",
+};
+
+const contractCodeStyle: CSSProperties = {
+  background: "#f8fbff",
+  border: "1px solid #dbe6f4",
+  borderRadius: 8,
+  color: "#071426",
+  display: "block",
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  fontSize: 12,
+  fontWeight: 800,
+  lineHeight: 1.45,
+  margin: 0,
+  minWidth: 980,
+  padding: 12,
+  whiteSpace: "nowrap",
+};
+
+const codeListStyle: CSSProperties = {
+  color: "#071426",
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  fontSize: 12,
+  lineHeight: 1.45,
+  wordBreak: "break-word",
+};
+
 const thStyle: CSSProperties = {
   borderBottom: "1px solid #dbe6f4",
   color: "#64748b",
@@ -140,8 +174,6 @@ const signalState = (severity: SignalSeverity) =>
       ? "warning"
       : "ready";
 
-const formatEvidenceStatus = (status: string) => status.replace(/_/g, " ");
-
 export const AdminOpsPanel = ({
   campaign = campaignDetail,
   locale,
@@ -152,6 +184,7 @@ export const AdminOpsPanel = ({
     { contractMode: "CONTRACT_CLAIM" },
     campaign.contentRevisions,
   );
+  const columnContract = adminOps.exportBatch.columns.join(",");
   const warningCount = campaign.publishReadiness.warnings.length;
   const blockerCount = contractClaimReadiness.blockers.length;
 
@@ -430,17 +463,46 @@ export const AdminOpsPanel = ({
             {getLocalizedText(adminOps.exportBatch.disclaimer, locale)}
           </p>
         </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={tableStyle}>
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.exportConfirmation}</p>
+            <p style={mutedTextStyle}>{copy.verifiedRecordsOnly}</p>
+            <p style={mutedTextStyle}>{copy.finalRewardOwner}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.blockersWarnings}</p>
+            <p style={mutedTextStyle}>
+              {getLocalizedText(adminOps.exportBatch.confirmation.noDistributionBoundary, locale)}
+            </p>
+            <p style={mutedTextStyle}>
+              {getLocalizedText(adminOps.exportBatch.confirmation.riskBoundary, locale)}
+            </p>
+          </article>
+        </div>
+        <div style={stackStyle}>
+          <p style={labelStyle}>{copy.exactColumnOrder}</p>
+          <div style={scrollContainerStyle}>
+            <code style={contractCodeStyle}>{columnContract}</code>
+          </div>
+        </div>
+        <div style={scrollContainerStyle}>
+          <table style={exportTableStyle}>
             <thead>
               <tr>
                 <th style={thStyle}>{copy.wallet}</th>
+                <th style={thStyle}>{copy.accountType}</th>
+                <th style={thStyle}>{copy.walletSource}</th>
                 <th style={thStyle}>{copy.localePreference}</th>
                 <th style={thStyle}>{copy.pointsRank}</th>
+                <th style={thStyle}>{copy.walletTypeVerified}</th>
                 <th style={thStyle}>{copy.status}</th>
+                <th style={thStyle}>{copy.rowCompleteness}</th>
                 <th style={thStyle}>{copy.missingTasks}</th>
                 <th style={thStyle}>{copy.riskFlags}</th>
-                <th style={thStyle}>{copy.taskEvidence}</th>
+                <th style={thStyle}>{copy.referrerAddress}</th>
+                <th style={thStyle}>{copy.taskRecords}</th>
+                <th style={thStyle}>{copy.evidenceHashes}</th>
+                <th style={thStyle}>{copy.exportBatch}</th>
               </tr>
             </thead>
             <tbody>
@@ -452,29 +514,52 @@ export const AdminOpsPanel = ({
                       <WalletBadge accountType={row.accountType} walletSource={row.walletSource} />
                     </div>
                   </td>
+                  <td style={tdStyle}>{row.accountType}</td>
+                  <td style={tdStyle}>{row.walletSource}</td>
                   <td style={tdStyle}>{row.localePreference}</td>
                   <td style={tdStyle}>
                     {row.totalPoints} / #{row.rank ?? "-"}
                   </td>
+                  <td style={tdStyle}>{row.walletTypeVerified ? "true" : "false"}</td>
                   <td style={tdStyle}>
                     <PublishStateBadge
                       label={row.eligible ? "eligible" : "ineligible"}
                       state={row.eligible ? "ready" : "warning"}
                     />
                   </td>
-                  <td style={tdStyle}>{row.missingTasks.join(", ") || "-"}</td>
-                  <td style={tdStyle}>{row.riskFlags.join(", ") || "-"}</td>
                   <td style={tdStyle}>
                     <div style={stackStyle}>
-                      {row.taskEvidence.map((evidence) => (
-                        <span key={evidence.taskId}>
-                          {getLocalizedText(evidence.label, locale)} ·{" "}
-                          {formatEvidenceStatus(evidence.status)} · {evidence.source} ·{" "}
-                          {evidence.evidenceHash}
+                      <PublishStateBadge
+                        label={row.rowStatus}
+                        state={row.rowStatus === "ready" ? "ready" : "warning"}
+                      />
+                      <span style={mutedTextStyle}>
+                        {row.missingColumnValues.join(", ") || "-"}
+                      </span>
+                    </div>
+                  </td>
+                  <td style={tdStyle}>{row.missingTasks.join(", ") || "-"}</td>
+                  <td style={tdStyle}>{row.riskFlags.join(", ") || "-"}</td>
+                  <td style={tdStyle}>{row.referrerAddress}</td>
+                  <td style={tdStyle}>
+                    <div style={stackStyle}>
+                      {row.taskRecords.map((record) => (
+                        <span key={record} style={codeListStyle}>
+                          {record}
                         </span>
                       ))}
                     </div>
                   </td>
+                  <td style={tdStyle}>
+                    <div style={stackStyle}>
+                      {row.evidenceHashes.map((hash) => (
+                        <span key={hash} style={codeListStyle}>
+                          {hash}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td style={tdStyle}>{row.exportBatchId}</td>
                 </tr>
               ))}
             </tbody>

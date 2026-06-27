@@ -10,6 +10,24 @@ export type WalletSource =
   | "AGENT_SKILL"
   | "OTHER";
 export type WalletPolicy = "ANY" | "AA_ONLY" | "EOA_ONLY";
+export type WalletVerificationStatus =
+  | "verified"
+  | "address_only"
+  | "unsupported_wallet"
+  | "wrong_chain"
+  | "missing_signature"
+  | "account_restricted"
+  | "internal_agent";
+export type WalletSignatureStatus = "signed" | "missing" | "not_required" | "not_available";
+export type WalletNetwork = "mainnet" | "testnet" | "unknown";
+export type WalletCapability =
+  | "SIGN_MESSAGE"
+  | "SEND_TRANSACTION"
+  | "CONTRACT_VIEW"
+  | "CONTRACT_SEND"
+  | "VIEW_BALANCE"
+  | "INTERNAL_AUTOMATION"
+  | "ADDRESS_ONLY";
 export type ContractMode = "OFF_CHAIN_MVP" | "V2_COMPANION" | "CONTRACT_CLAIM";
 export type WalletCompatibility = "ANY" | "AA_ONLY" | "EOA_ONLY";
 export type LocaleStatus =
@@ -56,16 +74,67 @@ export type EcosystemProduct =
 
 export type LocalizedText = Record<SupportedLocale, string>;
 
+export const EXPORT_CSV_COLUMNS = [
+  "campaign_id",
+  "wallet_address",
+  "account_type",
+  "wallet_source",
+  "locale_preference",
+  "total_points",
+  "rank",
+  "eligible",
+  "missing_tasks",
+  "risk_flags",
+  "referrer_address",
+  "task_records",
+  "evidence_hashes",
+  "export_batch_id",
+] as const;
+
+export type ExportCsvColumn = (typeof EXPORT_CSV_COLUMNS)[number];
+export type ExportRowStatus = "ready" | "review_required" | "blocked";
+
+export interface WalletAdapterFixture {
+  id: string;
+  adapterName: string;
+  walletName: string;
+  address?: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  chainId: "AELF" | "tDVV" | "tDVW" | string;
+  network: WalletNetwork;
+  capabilities: WalletCapability[];
+  connectedAt?: string;
+  lastSeenAt?: string;
+  signatureRequired: boolean;
+  signaturePresent: boolean;
+  supported: boolean;
+  allowedByCampaignPolicy: boolean;
+  addressOnly?: boolean;
+  recommended: boolean;
+  audience: "NORMAL_USER" | "EXISTING_USER" | "INTERNAL_AGENT";
+}
+
 export interface NormalizedWalletSession {
   id: string;
+  sessionId: string;
   address: string;
+  displayAddress: string;
   accountType: AccountType;
   walletSource: WalletSource;
   walletName: string;
   chainId: "AELF" | "tDVV" | "tDVW" | string;
-  network: "mainnet" | "testnet";
-  capabilities: string[];
+  network: WalletNetwork;
+  capabilities: WalletCapability[];
   connectedAt?: string;
+  lastSeenAt?: string;
+  verificationStatus: WalletVerificationStatus;
+  signatureStatus: WalletSignatureStatus;
+  walletTypeVerified: boolean;
+  normalUserRecommended: boolean;
+  errorReason?: string;
+  userAction?: LocalizedText;
+  statusMessage: LocalizedText;
 }
 
 export interface WalletOption {
@@ -75,7 +144,7 @@ export interface WalletOption {
   walletSource: WalletSource;
   recommended: boolean;
   audience: "NORMAL_USER" | "EXISTING_USER" | "INTERNAL_AGENT";
-  capabilities: string[];
+  capabilities: WalletCapability[];
 }
 
 export interface CampaignMetrics {
@@ -123,6 +192,9 @@ export interface ParticipantSnapshot {
   walletAddress: string;
   accountType: AccountType;
   walletSource: WalletSource;
+  walletSessionId?: string;
+  walletVerifiedAt?: string;
+  walletSignatureStatus?: WalletSignatureStatus;
   localePreference: SupportedLocale;
   totalPoints: number;
   rank?: number;
@@ -130,6 +202,7 @@ export interface ParticipantSnapshot {
   eligible: boolean;
   missingTaskIds: string[];
   riskFlags: string[];
+  referrerAddress: string;
   taskVerificationOverrides?: Partial<Record<string, TaskVerificationStatus>>;
   taskEvidenceSources?: Partial<Record<string, EvidenceSource>>;
   referralSummary?: ReferralSummary;
@@ -225,6 +298,7 @@ export interface ContractImpactReviewModel {
 }
 
 export interface ExportPreviewRow {
+  campaignId: string;
   walletAddress: string;
   accountType: AccountType;
   walletSource: WalletSource;
@@ -234,6 +308,13 @@ export interface ExportPreviewRow {
   eligible: boolean;
   missingTasks: string[];
   riskFlags: string[];
+  referrerAddress: string;
+  taskRecords: string[];
+  evidenceHashes: string[];
+  exportBatchId: string;
+  walletTypeVerified: boolean;
+  rowStatus: ExportRowStatus;
+  missingColumnValues: ExportCsvColumn[];
 }
 
 export interface AnalyticsKpi {
@@ -303,6 +384,7 @@ export interface TaskEvidenceSummary {
 }
 
 export interface ExportEvidenceRow {
+  campaignId: string;
   walletAddress: string;
   accountType: AccountType;
   walletSource: WalletSource;
@@ -312,15 +394,31 @@ export interface ExportEvidenceRow {
   eligible: boolean;
   missingTasks: string[];
   riskFlags: string[];
+  referrerAddress: string;
   taskEvidence: TaskEvidenceSummary[];
+  taskRecords: string[];
+  evidenceHashes: string[];
   exportBatchId: string;
+  walletTypeVerified: boolean;
+  rowStatus: ExportRowStatus;
+  missingColumnValues: ExportCsvColumn[];
+}
+
+export interface ExportConfirmation {
+  includedFields: readonly ExportCsvColumn[];
+  verifiedRecordsOnly: boolean;
+  rewardDistributionOwner: "campaign_project";
+  noDistributionBoundary: LocalizedText;
+  riskBoundary: LocalizedText;
 }
 
 export interface ExportBatchSummary {
   batchId: string;
+  columns: readonly ExportCsvColumn[];
   readyCount: number;
   blockedCount: number;
   disclaimer: LocalizedText;
+  confirmation: ExportConfirmation;
   rows: ExportEvidenceRow[];
 }
 
@@ -345,6 +443,21 @@ export interface EligibilityResult {
   riskFlags: string[];
   reason: LocalizedText;
   nextAction: LocalizedText;
+  walletStatus?: EligibilityWalletStatus;
+}
+
+export interface EligibilityWalletStatus {
+  walletAddress: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  walletTypeVerified: boolean;
+  campaignWalletPolicy: WalletPolicy;
+  eligible: boolean;
+  missingTasks: string[];
+  riskFlags: string[];
+  statusMessage: LocalizedText;
+  nextAction?: LocalizedText;
+  verificationStatus: WalletVerificationStatus;
 }
 
 export interface TaskVerificationState {
@@ -405,13 +518,16 @@ export interface ParticipationReadModel {
 
 export interface ExportPreview {
   campaignId: string;
+  columns: readonly ExportCsvColumn[];
   disclaimer: string;
+  confirmation: ExportConfirmation;
   rows: ExportPreviewRow[];
 }
 
 export interface CampaignShellDetail extends CampaignShellSummary {
   tasks: CampaignTask[];
   participants: ParticipantSnapshot[];
+  walletSessions: NormalizedWalletSession[];
   contentRevisions: ContentRevision[];
   reviewItems: ReviewItem[];
   publishReadiness: PublishReadiness;

@@ -1,9 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { EXPORT_CSV_COLUMNS } from "../domain";
 import { App } from "./App";
 
 describe("Campaign OS app shell", () => {
+  const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
+
   it("renders the default English shell with all surfaces exposed", () => {
     render(<App />);
 
@@ -13,6 +16,8 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("button", { name: "Admin/Ops" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
     expect(screen.getByText("Connected wallets")).toBeInTheDocument();
+    expect(screen.getAllByText("Wallet type verified").length).toBeGreaterThan(0);
+    expect(screen.getByText("2F4...9aB")).toBeInTheDocument();
   });
 
   it("switches major shell copy manually to zh-CN", () => {
@@ -102,6 +107,7 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByText("Portkey EOA App")).toBeInTheDocument();
     expect(screen.getByText("Portkey EOA Extension")).toBeInTheDocument();
     expect(screen.getAllByText("AA + EOA").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Wallet session status" })).toBeInTheDocument();
     expect(screen.getAllByText("Eligibility checker").length).toBeGreaterThan(0);
     expect(screen.getByText("Task verification states")).toBeInTheDocument();
     expect(screen.getByText("Referral context")).toBeInTheDocument();
@@ -112,6 +118,8 @@ describe("Campaign OS app shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
 
     expect(screen.getByText("Export winners does not distribute rewards.")).toBeInTheDocument();
+    expect(screen.getByText(exportColumnContract)).toBeInTheDocument();
+    expect(screen.getByText("Campaign OS exports verified records only.")).toBeInTheDocument();
   });
 
   it("keeps Mission 6 Admin/Ops live while other shell surfaces remain reachable", () => {

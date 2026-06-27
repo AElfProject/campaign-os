@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
-import type { NormalizedWalletSession, SupportedLocale } from "../../domain";
-import { WalletBadge } from "../badges/Badges";
+import { getLocalizedText, type NormalizedWalletSession, type SupportedLocale } from "../../domain";
+import { WalletBadge, WalletVerificationBadge } from "../badges/Badges";
 
 export type SurfaceKey = "project" | "user" | "admin";
 
@@ -168,6 +168,16 @@ export const AppLayout = ({
             accountType={walletSession.accountType}
             walletSource={walletSession.walletSource}
           />
+          <WalletVerificationBadge
+            label={getLocalizedText(walletSession.statusMessage, locale)}
+            status={walletSession.verificationStatus}
+          />
+          <span style={{ color: "#475569", fontSize: 12, fontWeight: 800 }}>
+            {walletSession.displayAddress}
+          </span>
+          <span style={{ color: "#475569", fontSize: 12, fontWeight: 700 }}>
+            {getLocalizedText(walletSession.statusMessage, locale)}
+          </span>
           <label>
             <span style={visuallyHiddenStyle}>{localeLabel}</span>
             <select
