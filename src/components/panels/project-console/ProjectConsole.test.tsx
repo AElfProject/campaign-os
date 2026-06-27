@@ -33,7 +33,12 @@ describe("Project Console shell", () => {
     expect(screen.getByText(EXPORT_CSV_COLUMNS.join(","))).toBeInTheDocument();
     expect(screen.getByText(/Campaign OS exports verified records only/)).toBeInTheDocument();
     expect(screen.getByText(/No live analytics, no real export file/)).toBeInTheDocument();
-    expect(screen.getByText("AI Campaign Planner")).toBeInTheDocument();
+    expect(screen.getAllByText("AI Campaign Planner").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Recommendation" })).toBeInTheDocument();
+    expect(screen.getByText("Use Any wallet for conversion")).toBeInTheDocument();
+    expect(screen.getByText("Recommend Portkey AA for onboarding")).toBeInTheDocument();
+    expect(screen.getByText("Recommend Off-chain MVP")).toBeInTheDocument();
+    expect(screen.getByText(/No live AI provider/)).toBeInTheDocument();
     expect(screen.getAllByText("Campaign Builder")).toHaveLength(2);
     expect(screen.getByRole("heading", { name: "Draft overview" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Any wallet" })).toHaveAttribute(
@@ -196,7 +201,12 @@ describe("Project Console shell", () => {
     expect(screen.getByText("验证任务")).toBeInTheDocument();
     expect(screen.getByText("导出 winners")).toBeInTheDocument();
     expect(screen.getAllByText(/不会调用实时 API/).length).toBeGreaterThan(0);
-    expect(screen.getByText("AI 活动策划")).toBeInTheDocument();
+    expect(screen.getAllByText("AI 活动策划").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "推荐" })).toBeInTheDocument();
+    expect(screen.getByText("使用任意钱包提升转化")).toBeInTheDocument();
+    expect(screen.getByText("推荐 Portkey AA 新手引导")).toBeInTheDocument();
+    expect(screen.getByText("推荐 Off-chain MVP")).toBeInTheDocument();
+    expect(screen.getByText(/不会执行实时 AI provider/)).toBeInTheDocument();
     expect(screen.getAllByText("任务构建预览")).toHaveLength(2);
     expect(screen.getByText("奖励与资格")).toBeInTheDocument();
     expect(screen.getAllByText("合约影响审核").length).toBeGreaterThan(0);
