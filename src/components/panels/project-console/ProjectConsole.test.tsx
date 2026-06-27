@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
 import { EXPORT_CSV_COLUMNS } from "../../../domain";
@@ -79,6 +79,22 @@ describe("Project Console shell", () => {
     expect(screen.getByText("Any wallet allows AA and EOA users to participate.")).toBeInTheDocument();
     expect(screen.getByText(/No real publish/i)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "API / Skill Contracts" })).toBeInTheDocument();
+    const serviceFacade = screen.getByLabelText("Local API Service Facade");
+
+    expect(within(serviceFacade).getByRole("heading", { name: "Local API Service Facade" })).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Service coverage")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Total services")).toBeInTheDocument();
+    expect(within(serviceFacade).getAllByText("Ready").length).toBeGreaterThan(0);
+    expect(within(serviceFacade).getByText("4 Local only")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Review required")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Blocked")).toBeInTheDocument();
+    for (const coverage of ["wallet coverage", "task verification", "eligibility", "i18n", "analytics", "export", "content", "summary"]) {
+      expect(within(serviceFacade).getAllByText(coverage).length).toBeGreaterThan(0);
+    }
+    expect(within(serviceFacade).getByText("generateI18nDraft")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("exportWinners")).toBeInTheDocument();
+    expect(within(serviceFacade).getAllByText(/No live backend\/API, wallet signature, secret storage, real export file, reward distribution, or contract root write/).length).toBeGreaterThan(0);
+    expect(within(serviceFacade).getByText(/No live API, wallet SDK, provider, secret storage/)).toBeInTheDocument();
     expect(screen.getByText("Read-only contract registry for future agents and APIs.")).toBeInTheDocument();
     expect(screen.getByText("Total contracts")).toBeInTheDocument();
     expect(screen.getByText("create_campaign")).toBeInTheDocument();
@@ -159,12 +175,27 @@ describe("Project Console shell", () => {
     expect(screen.getByText("任意钱包允许 AA 与 EOA 用户参与。")).toBeInTheDocument();
     expect(screen.getByText(/不执行真实发布/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "API / Skill Contracts" })).toBeInTheDocument();
+    const serviceFacade = screen.getByLabelText("本地 API Service Facade");
+
+    expect(within(serviceFacade).getByRole("heading", { name: "本地 API Service Facade" })).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Service 覆盖")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("服务总数")).toBeInTheDocument();
+    expect(within(serviceFacade).getAllByText("就绪").length).toBeGreaterThan(0);
+    expect(within(serviceFacade).getByText("4 仅本地")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("需要审核")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("阻断")).toBeInTheDocument();
+    for (const coverage of ["wallet coverage", "task verification", "eligibility", "i18n", "analytics", "export", "content", "summary"]) {
+      expect(within(serviceFacade).getAllByText(coverage).length).toBeGreaterThan(0);
+    }
+    expect(within(serviceFacade).getByText("generateI18nDraft")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("exportWinners")).toBeInTheDocument();
+    expect(within(serviceFacade).getAllByText(/不会调用 live backend\/API、钱包签名、secret 存储、真实导出文件、奖励发放或合约 root 写入/).length).toBeGreaterThan(0);
     expect(screen.getByText("面向未来 agent 与 API 的只读 contract registry。")).toBeInTheDocument();
     expect(screen.getByText("Contract 总数")).toBeInTheDocument();
     expect(screen.getByText("创建活动草稿")).toBeInTheDocument();
     expect(screen.getByText("验证任务")).toBeInTheDocument();
     expect(screen.getByText("导出 winners")).toBeInTheDocument();
-    expect(screen.getByText(/不会调用实时 API/)).toBeInTheDocument();
+    expect(screen.getAllByText(/不会调用实时 API/).length).toBeGreaterThan(0);
     expect(screen.getByText("AI 活动策划")).toBeInTheDocument();
     expect(screen.getAllByText("任务构建预览")).toHaveLength(2);
     expect(screen.getByText("奖励与资格")).toBeInTheDocument();
