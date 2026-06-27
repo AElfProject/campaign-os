@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import {
   createApiSkillContractSurface,
   campaignDetail,
+  createProjectCampaignCommandCenter,
   getLocalizedText,
   seededCampaignDraft,
   type ApiSkillContractReadiness,
@@ -137,6 +138,11 @@ const compactListStyle: CSSProperties = {
   padding: 0,
 };
 
+const tableWrapStyle: CSSProperties = {
+  overflowX: "auto",
+  width: "100%",
+};
+
 const chipStyle: CSSProperties = {
   background: "#eef6ff",
   border: "1px solid #bfdbfe",
@@ -150,9 +156,49 @@ const chipStyle: CSSProperties = {
   wordBreak: "break-word",
 };
 
+const boundaryStyle: CSSProperties = {
+  background: "#fff7ed",
+  border: "1px solid #fed7aa",
+  borderRadius: 8,
+  color: "#9a3412",
+  fontSize: 13,
+  fontWeight: 800,
+  lineHeight: 1.45,
+  margin: 0,
+  padding: 12,
+};
+
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
 
 const formatNumber = (value: number) => new Intl.NumberFormat("en-US").format(value);
+
+const commandStatusLabel = (
+  status: CampaignShellDetail["status"],
+  labels: {
+    active: string;
+    commandEnded: string;
+    commandExported: string;
+    commandScheduledDraft: string;
+  },
+) => {
+  if (status === "live") {
+    return labels.active;
+  }
+
+  if (status === "ended") {
+    return labels.commandEnded;
+  }
+
+  if (status === "exported") {
+    return labels.commandExported;
+  }
+
+  if (status === "scheduled" || status === "draft") {
+    return labels.commandScheduledDraft;
+  }
+
+  return status.replace(/_/g, " ");
+};
 
 const contractModeLabel = (
   mode: CampaignShellDetail["contractMode"],
@@ -244,6 +290,8 @@ export const ProjectConsole = ({
   const blockerCount = campaign.publishReadiness.blockers.length;
   const builderDraft = seededCampaignDraft;
   const apiSkillSurface = createApiSkillContractSurface();
+  const commandCenter = createProjectCampaignCommandCenter(campaign);
+  const exportDecision = commandCenter.analyticsExport;
 
   const stats = [
     {
@@ -403,6 +451,193 @@ export const ProjectConsole = ({
             </ul>
           </article>
         </div>
+      </section>
+
+      <section aria-label={copy.commandCenter} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.commandCenterSummary}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.commandCenter}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.commandCenterSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={`${commandCenter.summary.totalCampaigns} ${copy.commandCampaigns}`}
+            state={commandCenter.summary.blockerCount > 0 ? "blocker" : "ready"}
+          />
+        </div>
+
+        <div aria-label="Campaign Command Center summary" style={gridStyle}>
+          {[
+            [copy.commandLive, String(commandCenter.summary.liveCount)],
+            [copy.commandScheduledDraft, String(commandCenter.summary.scheduledOrDraftCount)],
+            [copy.commandEnded, String(commandCenter.summary.endedCount)],
+            [copy.commandExported, String(commandCenter.summary.exportedCount)],
+            [copy.commandWarnings, String(commandCenter.summary.warningCount)],
+            [copy.commandBlockers, String(commandCenter.summary.blockerCount)],
+          ].map(([label, value]) => (
+            <article key={label} style={cardStyle}>
+              <p style={statLabelStyle}>{label}</p>
+              <p style={statValueStyle}>{value}</p>
+            </article>
+          ))}
+        </div>
+
+        <div style={sectionGridStyle}>
+          {commandCenter.campaigns.map((item) => (
+            <article key={item.id} style={workflowStyle}>
+              <div style={headingRowStyle}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={statLabelStyle}>{item.projectName}</p>
+                  <strong style={{ color: "#071426", display: "block", fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                    {getLocalizedText(item.title, locale)}
+                  </strong>
+                </div>
+                <PublishStateBadge
+                  label={commandStatusLabel(item.status, copy)}
+                  state={item.status === "live" || item.status === "exported" ? "ready" : "warning"}
+                />
+              </div>
+              <div style={gridStyle}>
+                {[
+                  [copy.commandTimeWindow, getLocalizedText(item.timeWindow, locale)],
+                  [copy.commandWallet, getLocalizedText(item.walletSplitLabel, locale)],
+                  [copy.commandLocale, getLocalizedText(item.localeState, locale)],
+                  [copy.commandRisk, getLocalizedText(item.riskReason, locale)],
+                  [copy.commandExport, getLocalizedText(item.exportSummary, locale)],
+                  [copy.commandPriority, item.priority],
+                ].map(([label, value]) => (
+                  <div key={`${item.id}-${label}`} style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>{label}</p>
+                    <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
+                      {value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <p style={statLabelStyle}>{copy.commandNextAction}</p>
+                <strong style={{ display: "block", fontSize: 16, lineHeight: 1.35 }}>
+                  {getLocalizedText(item.nextActionLabel, locale)}
+                </strong>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: "4px 0 0" }}>
+                  {getLocalizedText(item.nextActionDetail, locale)}
+                </p>
+              </div>
+            </article>
+          ))}
+        </div>
+
+        <p style={boundaryStyle}>{getLocalizedText(commandCenter.boundary, locale)}</p>
+      </section>
+
+      <section aria-label={copy.analyticsExportDecision} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.analyticsExport}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.analyticsExportDecision}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.analyticsExportDecisionSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge label={copy.analyticsExportAction} state="warning" />
+        </div>
+
+        <div style={gridStyle}>
+          {exportDecision.kpis.map((kpi) => (
+            <article key={kpi.id} style={cardStyle}>
+              <p style={statLabelStyle}>{getLocalizedText(kpi.label, locale)}</p>
+              <p style={statValueStyle}>{kpi.value}</p>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                {getLocalizedText(kpi.trend, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
+
+        <div style={sectionGridStyle}>
+          <article style={workflowStyle}>
+            <h4 style={{ fontSize: 18, margin: 0 }}>{copy.dropOffPoint}</h4>
+            <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+              {getLocalizedText(exportDecision.dropOffPoint, locale)}
+            </p>
+            <ol style={{ display: "grid", gap: 8, margin: 0, paddingInlineStart: 18 }}>
+              {exportDecision.funnel.map((step) => (
+                <li key={step.id} style={{ color: "#475569", fontSize: 13 }}>
+                  <strong>{getLocalizedText(step.label, locale)}</strong>:{" "}
+                  {formatNumber(step.count)} / {step.conversionRate}%
+                </li>
+              ))}
+            </ol>
+          </article>
+
+          <article style={workflowStyle}>
+            <h4 style={{ fontSize: 18, margin: 0 }}>{copy.rowStatusCounts}</h4>
+            <p style={{ ...statValueStyle, fontSize: 22 }}>
+              {exportDecision.readyRows} / {exportDecision.reviewRequiredRows} / {exportDecision.blockedRows}
+            </p>
+            <div style={gridStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.readyRows}</p>
+                <PublishStateBadge label={String(exportDecision.readyRows)} state="ready" />
+              </div>
+              <div>
+                <p style={statLabelStyle}>{copy.reviewRequiredRows}</p>
+                <PublishStateBadge label={String(exportDecision.reviewRequiredRows)} state="warning" />
+              </div>
+              <div>
+                <p style={statLabelStyle}>{copy.blockedRows}</p>
+                <PublishStateBadge
+                  label={String(exportDecision.blockedRows)}
+                  state={exportDecision.blockedRows > 0 ? "blocker" : "ready"}
+                />
+              </div>
+            </div>
+            <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+              {copy.exportBatch}: {exportDecision.exportBatchId}
+            </p>
+          </article>
+
+          <article style={workflowStyle}>
+            <h4 style={{ fontSize: 18, margin: 0 }}>{copy.walletSplit}</h4>
+            {exportDecision.walletSplit.map((split) => (
+              <div key={split.id} style={listItemStyle}>
+                <span>{split.label}</span>
+                <strong>{split.count} / {split.percentage}%</strong>
+              </div>
+            ))}
+            <h4 style={{ fontSize: 18, margin: "8px 0 0" }}>{copy.localeCoverage}</h4>
+            {exportDecision.localeSplit.map((split) => (
+              <div key={split.id} style={listItemStyle}>
+                <span>{split.label}</span>
+                <strong>{split.count} / {split.percentage}%</strong>
+              </div>
+            ))}
+          </article>
+        </div>
+
+        <div style={{ ...cardStyle, minHeight: 0 }}>
+          <p style={statLabelStyle}>{copy.evidenceCoverage}</p>
+          <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+            {getLocalizedText(exportDecision.evidenceCoverage, locale)}
+          </p>
+        </div>
+
+        <div style={{ ...cardStyle, minHeight: 0 }}>
+          <p style={statLabelStyle}>{copy.csvColumns}</p>
+          <div style={tableWrapStyle}>
+            <p style={{ color: "#071426", fontSize: 12, fontWeight: 800, lineHeight: 1.45, margin: 0, minWidth: 680 }}>
+              {exportDecision.exportColumns.join(",")}
+            </p>
+          </div>
+        </div>
+
+        <p style={boundaryStyle}>{getLocalizedText(exportDecision.boundary, locale)}</p>
       </section>
 
       <CampaignBuilderPanel copy={copy} draft={builderDraft} locale={locale} />

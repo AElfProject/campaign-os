@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
+import { EXPORT_CSV_COLUMNS } from "../../../domain";
 
 describe("Project Console shell", () => {
   it("renders the default English Project Console with seeded operational data", () => {
@@ -14,6 +15,24 @@ describe("Project Console shell", () => {
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
     expect(screen.getByText("Connected wallets")).toBeInTheDocument();
     expect(screen.getByText("AA · Portkey")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Campaign Command Center" })).toBeInTheDocument();
+    expect(screen.getByText("4 campaigns")).toBeInTheDocument();
+    expect(screen.getByText("Review live analytics")).toBeInTheDocument();
+    expect(screen.getByText("Review launch readiness")).toBeInTheDocument();
+    expect(screen.getByText("Approve export preview")).toBeInTheDocument();
+    expect(screen.getByText("Archive final report")).toBeInTheDocument();
+    expect(screen.getByText("Forest NFT Quest")).toBeInTheDocument();
+    expect(screen.getByText("TMRWDAO Governance Streak")).toBeInTheDocument();
+    expect(screen.getByText("eBridge Onboarding Wave")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Analytics & Export Decision" })).toBeInTheDocument();
+    expect(screen.getByText("Largest drop-off")).toBeInTheDocument();
+    expect(screen.getByText("Ready rows")).toBeInTheDocument();
+    expect(screen.getByText("Review-required rows")).toBeInTheDocument();
+    expect(screen.getByText("Blocked rows")).toBeInTheDocument();
+    expect(screen.getByText("1 / 3 / 0")).toBeInTheDocument();
+    expect(screen.getByText(EXPORT_CSV_COLUMNS.join(","))).toBeInTheDocument();
+    expect(screen.getByText(/Campaign OS exports verified records only/)).toBeInTheDocument();
+    expect(screen.getByText(/No live analytics, no real export file/)).toBeInTheDocument();
     expect(screen.getByText("AI Campaign Planner")).toBeInTheDocument();
     expect(screen.getAllByText("Campaign Builder")).toHaveLength(2);
     expect(screen.getByRole("heading", { name: "Draft overview" })).toBeInTheDocument();
@@ -74,7 +93,7 @@ describe("Project Console shell", () => {
     expect(screen.getByText("Rewards & Eligibility")).toBeInTheDocument();
     expect(screen.getByText("i18n Translation Review")).toBeInTheDocument();
     expect(screen.getAllByText("Contract Impact Review").length).toBeGreaterThan(0);
-    expect(screen.getByText("Analytics and Export")).toBeInTheDocument();
+    expect(screen.getAllByText("Analytics and Export").length).toBeGreaterThan(0);
     expect(screen.getByText("Export winners does not distribute rewards.")).toBeInTheDocument();
     expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
@@ -91,6 +110,24 @@ describe("Project Console shell", () => {
     );
     expect(screen.getByRole("heading", { name: "Awaken 冲刺活动" })).toBeInTheDocument();
     expect(screen.getByText("已连接钱包")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "活动指挥中心" })).toBeInTheDocument();
+    expect(screen.getByText("4 个活动")).toBeInTheDocument();
+    expect(screen.getByText("查看实时活动数据")).toBeInTheDocument();
+    expect(screen.getByText("审核发布准备度")).toBeInTheDocument();
+    expect(screen.getByText("批准导出预览")).toBeInTheDocument();
+    expect(screen.getByText("归档最终报告")).toBeInTheDocument();
+    expect(screen.getByText("Forest NFT 任务")).toBeInTheDocument();
+    expect(screen.getByText("TMRWDAO 治理连续任务")).toBeInTheDocument();
+    expect(screen.getByText("eBridge 新手活动")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "分析与导出决策" })).toBeInTheDocument();
+    expect(screen.getByText("最大流失点")).toBeInTheDocument();
+    expect(screen.getByText("就绪行")).toBeInTheDocument();
+    expect(screen.getByText("需复核行")).toBeInTheDocument();
+    expect(screen.getByText("阻断行")).toBeInTheDocument();
+    expect(screen.getByText("1 / 3 / 0")).toBeInTheDocument();
+    expect(screen.getByText(EXPORT_CSV_COLUMNS.join(","))).toBeInTheDocument();
+    expect(screen.getByText(/只导出已验证记录/)).toBeInTheDocument();
+    expect(screen.getByText(/不会连接实时数据/)).toBeInTheDocument();
     expect(screen.getAllByText("活动构建器")).toHaveLength(2);
     expect(screen.getByRole("heading", { name: "草稿概览" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "任意钱包" })).toHaveAttribute(
