@@ -471,6 +471,35 @@ export interface RewardDisclaimerReviewRow {
   publishState: PublishState;
 }
 
+export type TranslationLocaleRole = "source" | "translation";
+export type TranslationCompareField = "title" | "description" | "socialPost" | "rewardDisclaimer";
+
+export interface TranslationLocaleItem {
+  locale: SupportedLocale;
+  label: LocalizedText;
+  role: TranslationLocaleRole;
+  isDefault: boolean;
+  isFallback: boolean;
+  status: ContentRevisionStatus;
+  publishState: PublishState;
+  fallbackToEnglish: boolean;
+  humanReviewed: boolean;
+}
+
+export interface TranslationComparisonRow {
+  id: TranslationCompareField;
+  label: LocalizedText;
+  sourceLocale: "en-US";
+  targetLocale: SupportedLocale;
+  sourceValue: string;
+  targetValue: string;
+  targetStatus: ContentRevisionStatus;
+  targetPublishState: PublishState;
+  fallbackToEnglish: boolean;
+  humanReviewed: boolean;
+  reviewNote: LocalizedText;
+}
+
 export interface TranslationManagerReadModel {
   campaignId: string;
   defaultLocale: "en-US";
@@ -478,7 +507,10 @@ export interface TranslationManagerReadModel {
   supportedLocales: SupportedLocale[];
   sourceLocale: "en-US";
   panels: TranslationReviewPanel[];
+  localeItems: TranslationLocaleItem[];
+  comparisonRows: TranslationComparisonRow[];
   rewardDisclaimers: RewardDisclaimerReviewRow[];
+  compareReviewPrompt: LocalizedText;
   noAutoPublishNotice: LocalizedText;
 }
 
