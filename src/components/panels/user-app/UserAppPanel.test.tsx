@@ -93,6 +93,19 @@ describe("User App shell", () => {
     expect(screen.getAllByText("referral_velocity_review").length).toBeGreaterThan(0);
     expect(screen.getByText("Seeded shell preview; points and rank are not a live ledger.")).toBeInTheDocument();
     expect(screen.getAllByText("Rewards are provided by the campaign project. Export winners does not distribute rewards.").length).toBeGreaterThan(0);
+
+    const exportStatus = screen.getByRole("region", { name: "Winners export status" });
+    expect(within(exportStatus).getByRole("heading", { name: "Winners export status" })).toBeInTheDocument();
+    expect(within(exportStatus).getAllByText("Blocked before export").length).toBeGreaterThan(0);
+    expect(within(exportStatus).getByText(/export-awaken-sprint-preview/)).toBeInTheDocument();
+    expect(within(exportStatus).getByText(/3E9\.\.\.7cD/)).toBeInTheDocument();
+    expect(within(exportStatus).getByText("EOA · Extension")).toBeInTheDocument();
+    expect(within(exportStatus).getByText("zh-CN")).toBeInTheDocument();
+    expect(within(exportStatus).getByText("bridge_ebridge")).toBeInTheDocument();
+    expect(within(exportStatus).getByText("task-bridge:pending:aelfscan")).toBeInTheDocument();
+    expect(within(exportStatus).getByText("demo-task-bridge-3E9")).toBeInTheDocument();
+    expect(within(exportStatus).getByText("Final reward distribution is handled by the campaign project.")).toBeInTheDocument();
+    expect(within(exportStatus).getByText(/Complete missing required tasks/)).toBeInTheDocument();
   });
 
   it("opens and closes the seeded wallet connect modal in en-US", () => {
@@ -204,6 +217,14 @@ describe("User App shell", () => {
     expect(screen.getAllByText("推荐关系").length).toBeGreaterThan(0);
     expect(screen.getByText("合格被邀请人")).toBeInTheDocument();
     expect(screen.getByText("排行榜预览")).toBeInTheDocument();
+    const exportStatus = screen.getByRole("region", { name: "Winners 导出状态" });
+    expect(within(exportStatus).getByRole("heading", { name: "Winners 导出状态" })).toBeInTheDocument();
+    expect(within(exportStatus).getAllByText("导出前阻断").length).toBeGreaterThan(0);
+    expect(within(exportStatus).getByText(/导出批次/)).toBeInTheDocument();
+    expect(within(exportStatus).getByText("任务记录")).toBeInTheDocument();
+    expect(within(exportStatus).getByText("证据哈希")).toBeInTheDocument();
+    expect(within(exportStatus).getByText("最终奖励发放由活动项目方处理。")).toBeInTheDocument();
+    expect(within(exportStatus).getByText(/请先完成缺失的必做任务/)).toBeInTheDocument();
     expect(screen.getByText("仅注册不会计分；被邀请人必须完成有效任务后才会产生推荐积分。")).toBeInTheDocument();
     expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });

@@ -5,6 +5,7 @@ import {
   createEligibilityCheckerReadModel,
   createLeaderboardReadModel,
   createParticipationReadModel,
+  createUserWinnersExportStatusReadModel,
   createWalletConnectionDiagnostics,
   getWalletCompatibilityLabel,
   getWalletBadgeLabel,
@@ -22,6 +23,7 @@ import {
   type ParticipantSnapshot,
   type SupportedLocale,
   type TaskVerificationStatus,
+  type UserWinnersExportStatus,
   type WalletDiagnosticState,
 } from "../../../domain";
 import {
@@ -139,6 +141,26 @@ const metricGridStyle: CSSProperties = {
   gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))",
 };
 
+const chipListStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  minWidth: 0,
+};
+
+const chipStyle: CSSProperties = {
+  background: "#ffffff",
+  border: "1px solid #cbd5e1",
+  borderRadius: 999,
+  color: "#334155",
+  fontSize: 12,
+  fontWeight: 800,
+  lineHeight: 1.2,
+  maxWidth: "100%",
+  overflowWrap: "anywhere",
+  padding: "6px 8px",
+};
+
 const feedGridStyle: CSSProperties = {
   display: "grid",
   gap: 12,
@@ -222,6 +244,20 @@ const daysUntil = (iso: string) => {
 const contractModeLabel = (mode: CampaignShellDetail["contractMode"]) => mode.replace(/_/g, " ");
 
 const formatSource = (value: string) => value.replace(/_/g, " ");
+
+const renderChips = (items: readonly string[], emptyLabel: string) => (
+  <span style={chipListStyle}>
+    {items.length > 0 ? (
+      items.map((item) => (
+        <span key={item} style={chipStyle}>
+          {item}
+        </span>
+      ))
+    ) : (
+      <span style={{ ...chipStyle, color: "#64748b" }}>{emptyLabel}</span>
+    )}
+  </span>
+);
 
 const formatTimestamp = (iso?: string) =>
   iso
@@ -308,6 +344,18 @@ const taskBadgeState = (status: TaskVerificationStatus) => {
   }
 
   return status === "failed" ? "blocker" : "warning";
+};
+
+const winnersExportBadgeState = (status: UserWinnersExportStatus) => {
+  if (status === "ready") {
+    return "ready";
+  }
+
+  if (status === "review_required" || status === "pending") {
+    return "warning";
+  }
+
+  return "blocker";
 };
 
 const diagnosticBadgeState = (state: WalletDiagnosticState) => state;
@@ -679,6 +727,7 @@ export const UserAppPanel = ({
   const [leaderboardMode, setLeaderboardMode] = useState<LeaderboardModeId>("total_points");
   const copy = userAppCopy[locale];
   const participation = createParticipationReadModel(campaign, participant);
+  const winnersExportStatus = createUserWinnersExportStatusReadModel(campaign, participant);
   const eligibilityChecker = createEligibilityCheckerReadModel(campaign, checkedEligibilityAddress);
   const eligibilityResult = eligibilityChecker.result;
   const leaderboard = createLeaderboardReadModel(campaign, leaderboardMode);
@@ -1271,6 +1320,109 @@ export const UserAppPanel = ({
 
         <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
           {getLocalizedText(eligibilityResult.boundary, locale)} {copy.rewardBoundary}
+        </p>
+      </section>
+
+      <section aria-label={copy.winnersExportStatus} style={panelStyle}>
+        <div style={rowStyle}>
+          <div>
+            <p style={labelStyle}>{copy.exportRowStatus}</p>
+            <h3 style={{ fontSize: 20, margin: "2px 0 0" }}>{copy.winnersExportStatus}</h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: "6px 0 0" }}>
+              {copy.winnersExportSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={getLocalizedText(winnersExportStatus.statusLabel, locale)}
+            state={winnersExportBadgeState(winnersExportStatus.status)}
+          />
+        </div>
+
+        <p style={{ color: "#071426", fontSize: 15, fontWeight: 900, lineHeight: 1.45, margin: 0 }}>
+          {getLocalizedText(winnersExportStatus.summary, locale)}
+        </p>
+        <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+          {getLocalizedText(winnersExportStatus.reason, locale)}
+        </p>
+
+        <div style={metricGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.status}</p>
+            <strong>{getLocalizedText(winnersExportStatus.statusLabel, locale)}</strong>
+            <span style={{ color: "#475569", fontSize: 13 }}>
+              {copy.exportBatch}: {winnersExportStatus.exportBatchId ?? "-"}
+            </span>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.walletType}</p>
+            {winnersExportStatus.row ? (
+              <WalletBadge
+                accountType={winnersExportStatus.row.accountType}
+                walletSource={winnersExportStatus.row.walletSource}
+              />
+            ) : (
+              <strong>{copy.unknownWalletType}</strong>
+            )}
+            <span style={{ color: "#475569", fontSize: 13 }}>
+              {copy.walletTypeVerified}:{" "}
+              {winnersExportStatus.row?.walletTypeVerified ? copy.eligible : copy.notEligible}
+            </span>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.localePreference}</p>
+            <strong>{winnersExportStatus.row?.localePreference ?? "-"}</strong>
+            <span style={{ color: "#475569", fontSize: 13 }}>
+              {copy.walletAddress}: {winnersExportStatus.walletAddress}
+            </span>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.points}</p>
+            <strong>{winnersExportStatus.row?.totalPoints ?? 0}</strong>
+            <span style={{ color: "#475569", fontSize: 13 }}>
+              {copy.rank}: #{winnersExportStatus.row?.rank ?? "-"}
+            </span>
+          </article>
+        </div>
+
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.missingTasks}</p>
+            {renderChips(winnersExportStatus.row?.missingTasks ?? [], copy.noMissingTasks)}
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.riskFlags}</p>
+            {renderChips(winnersExportStatus.row?.riskFlags ?? [], copy.riskClear)}
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.missingColumns}</p>
+            {renderChips(winnersExportStatus.row?.missingColumnValues ?? [], "-")}
+          </article>
+        </div>
+
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.taskRecords}</p>
+            {renderChips(winnersExportStatus.row?.taskRecords ?? [], copy.noTaskRecords)}
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.evidenceHashes}</p>
+            {renderChips(winnersExportStatus.row?.evidenceHashes ?? [], copy.noEvidenceHashes)}
+          </article>
+        </div>
+
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.nextAction}</p>
+            <strong>{getLocalizedText(winnersExportStatus.nextAction, locale)}</strong>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.fulfillmentOwner}</p>
+            <strong>{getLocalizedText(winnersExportStatus.fulfillmentOwner, locale)}</strong>
+          </article>
+        </div>
+
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+          {getLocalizedText(winnersExportStatus.rewardBoundary, locale)}
         </p>
       </section>
 
