@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
 import { EXPORT_CSV_COLUMNS } from "../../../domain";
 
@@ -11,6 +11,10 @@ const expectVisibleText = (text: string | RegExp) => {
 };
 
 describe("Admin/Ops shell", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
   it("renders review gates, contract boundaries, and export preview", () => {
     render(<App />);
 

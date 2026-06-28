@@ -9,9 +9,18 @@ interface SurfaceOption {
   label: string;
 }
 
+interface BrowserLocalePrompt {
+  dismissLabel: string;
+  message: string;
+  onDismiss: () => void;
+  onSwitch: () => void;
+  switchLabel: string;
+}
+
 interface AppLayoutProps {
   brand: string;
   activeSurface: SurfaceKey;
+  browserLocalePrompt?: BrowserLocalePrompt;
   children: ReactNode;
   locale: SupportedLocale;
   localeLabel: string;
@@ -116,6 +125,50 @@ const buttonBaseStyle: CSSProperties = {
   padding: "0 12px",
 };
 
+const promptStyle: CSSProperties = {
+  alignItems: "center",
+  background: "#eef5ff",
+  border: "1px solid #bfd5ff",
+  borderRadius: 8,
+  color: "#0f172a",
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 10,
+  justifyContent: "space-between",
+  padding: "12px 14px",
+};
+
+const promptTextStyle: CSSProperties = {
+  flex: "1 1 260px",
+  fontSize: 14,
+  fontWeight: 800,
+  lineHeight: 1.35,
+  margin: 0,
+  minWidth: 0,
+};
+
+const promptActionsStyle: CSSProperties = {
+  display: "flex",
+  flex: "0 1 auto",
+  flexWrap: "wrap",
+  gap: 8,
+};
+
+const promptSwitchButtonStyle: CSSProperties = {
+  ...buttonBaseStyle,
+  background: "#1c64f2",
+  color: "#ffffff",
+  minHeight: 36,
+};
+
+const promptDismissButtonStyle: CSSProperties = {
+  ...buttonBaseStyle,
+  background: "#ffffff",
+  borderColor: "#bfd5ff",
+  color: "#1e3a8a",
+  minHeight: 36,
+};
+
 const contentStyle: CSSProperties = {
   display: "grid",
   gap: 18,
@@ -146,6 +199,7 @@ const mediaStyle = `
 export const AppLayout = ({
   activeSurface,
   brand,
+  browserLocalePrompt,
   children,
   locale,
   localeLabel,
@@ -192,6 +246,28 @@ export const AppLayout = ({
           </label>
         </div>
       </header>
+
+      {browserLocalePrompt ? (
+        <aside aria-label={browserLocalePrompt.message} style={promptStyle}>
+          <p style={promptTextStyle}>{browserLocalePrompt.message}</p>
+          <div style={promptActionsStyle}>
+            <button
+              onClick={browserLocalePrompt.onSwitch}
+              style={promptSwitchButtonStyle}
+              type="button"
+            >
+              {browserLocalePrompt.switchLabel}
+            </button>
+            <button
+              onClick={browserLocalePrompt.onDismiss}
+              style={promptDismissButtonStyle}
+              type="button"
+            >
+              {browserLocalePrompt.dismissLabel}
+            </button>
+          </div>
+        </aside>
+      ) : null}
 
       <nav aria-label="Campaign OS surfaces" style={navStyle}>
         {surfaces.map((surface) => {

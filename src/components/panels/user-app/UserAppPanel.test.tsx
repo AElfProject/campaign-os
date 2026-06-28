@@ -1,9 +1,13 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
 
 describe("User App shell", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
   it("renders participant campaign detail, wallet options, tasks, and eligibility", () => {
     render(<App />);
 

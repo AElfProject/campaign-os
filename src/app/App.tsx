@@ -13,6 +13,9 @@ const surfaceCopy = {
   "en-US": {
     adminTitle: "Admin/Ops",
     brand: "aelf Campaign OS",
+    browserLocalePromptDismiss: "Keep English",
+    browserLocalePromptMessage: "Your browser language is Chinese. Switch to 简体中文?",
+    browserLocalePromptSwitch: "Switch to 简体中文",
     localeLabel: "Language",
     project: "Project Console",
     shellTitle: "Campaign operations shell",
@@ -21,6 +24,9 @@ const surfaceCopy = {
   "zh-CN": {
     adminTitle: "管理员/Ops",
     brand: "aelf Campaign OS",
+    browserLocalePromptDismiss: "继续使用 English",
+    browserLocalePromptMessage: "浏览器语言为中文。切换到简体中文？",
+    browserLocalePromptSwitch: "切换到简体中文",
     localeLabel: "语言",
     project: "项目控制台",
     shellTitle: "活动运营工作台",
@@ -29,7 +35,13 @@ const surfaceCopy = {
 } satisfies Record<SupportedLocale, Record<string, string>>;
 
 export const App = () => {
-  const { locale, setLocale } = useLocale();
+  const {
+    acceptBrowserLocalePrompt,
+    dismissBrowserLocalePrompt,
+    locale,
+    setLocale,
+    shouldShowBrowserLocalePrompt,
+  } = useLocale();
   const [activeSurface, setActiveSurface] = useState<SurfaceKey>("project");
   const copy = surfaceCopy[locale];
   const connectedWallet = walletSessions[0];
@@ -44,6 +56,17 @@ export const App = () => {
     <AppLayout
       activeSurface={activeSurface}
       brand={copy.brand}
+      browserLocalePrompt={
+        shouldShowBrowserLocalePrompt
+          ? {
+              dismissLabel: copy.browserLocalePromptDismiss,
+              message: copy.browserLocalePromptMessage,
+              onDismiss: dismissBrowserLocalePrompt,
+              onSwitch: acceptBrowserLocalePrompt,
+              switchLabel: copy.browserLocalePromptSwitch,
+            }
+          : undefined
+      }
       locale={locale}
       localeLabel={copy.localeLabel}
       onLocaleChange={setLocale}
