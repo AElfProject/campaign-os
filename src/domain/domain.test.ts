@@ -378,6 +378,84 @@ describe("Campaign OS domain foundation", () => {
     expect(JSON.stringify(matrix)).not.toContain("zh-TW");
   });
 
+  it("builds the delivery checklist readiness console with conservative v0.2 evidence", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const readiness = adminOps.deliveryChecklistReadiness;
+    const items = readiness.groups.flatMap((group) => group.items);
+    const itemsById = Object.fromEntries(items.map((item) => [item.id, item]));
+
+    expect(readiness.groups.map((group) => group.id)).toEqual([
+      "product",
+      "architecture",
+      "ui",
+      "contract",
+      "qa",
+    ]);
+    expect(readiness.summary).toMatchObject({
+      groupCount: 5,
+      totalItems: items.length,
+      coveredItems: items.filter((item) => item.status === "covered").length,
+      needsReviewItems: items.filter((item) => item.status === "needs_review").length,
+      blockedItems: items.filter((item) => item.status === "blocked").length,
+      deferredItems: items.filter((item) => item.status === "deferred").length,
+    });
+    expect(new Set(items.map((item) => item.status))).toEqual(
+      new Set(["covered", "needs_review", "blocked", "deferred"]),
+    );
+    expect(readiness.boundary["en-US"]).toContain("No live wallet SDK");
+    expect(readiness.boundary["en-US"]).toContain("contract transaction");
+    expect(readiness.boundary["en-US"]).toContain("reward distribution");
+
+    expect(itemsById["product-aa-eoa-support"]).toMatchObject({
+      groupId: "product",
+      status: "covered",
+      ownerRole: "project_owner",
+      blocksDelivery: false,
+    });
+    expect(itemsById["ui-wallet-modal-sections"]?.surface["en-US"]).toBe("Wallet Connect Modal");
+    expect(itemsById["architecture-wallet-normalization"]).toMatchObject({
+      groupId: "architecture",
+      status: "covered",
+    });
+    expect(itemsById["product-reward-disclaimer-locales"]).toMatchObject({
+      status: "needs_review",
+      blocksDelivery: true,
+      ownerRole: "project_owner",
+    });
+    expect(itemsById["product-contract-impact-review"]?.evidence["en-US"]).toContain("claim-mode blockers");
+    expect(itemsById["qa-wrong-chain-error"]).toMatchObject({
+      status: "needs_review",
+      blocksDelivery: false,
+    });
+    expect(itemsById["qa-export-csv-columns"]).toMatchObject({
+      status: "covered",
+      ownerRole: "project_owner",
+    });
+    expect(itemsById["qa-contract-claim-admin-approval"]).toMatchObject({
+      status: "blocked",
+      blocksDelivery: true,
+      ownerRole: "contract_reviewer",
+    });
+    expect(itemsById["contract-reward-custody-excluded"]?.nextAction["en-US"]).toContain(
+      "Block any reward custody",
+    );
+    expect(readiness.blockers.map((item) => item.id)).toEqual([
+      "contract-reward-custody-excluded",
+      "qa-contract-claim-admin-approval",
+    ]);
+    expect(readiness.needsReview.map((item) => item.id)).toEqual(
+      expect.arrayContaining([
+        "product-reward-disclaimer-locales",
+        "qa-portkey-aa-connect",
+        "qa-eoa-extension-connect",
+        "qa-wrong-chain-error",
+        "qa-unsupported-wallet-error",
+        "qa-reward-disclaimer-blocker",
+      ]),
+    );
+    expect(JSON.stringify(readiness)).not.toContain("zh-TW");
+  });
+
   it("labels AA and EOA wallet states", () => {
     expect(getWalletBadgeLabel("AA", "PORTKEY_AA")).toBe("AA · Portkey");
     expect(getWalletBadgeLabel("EOA", "PORTKEY_EOA_EXTENSION")).toBe("EOA · Extension");

@@ -27,6 +27,11 @@ import type {
   ContractInterfaceMethod,
   ContractInterfacePhase,
   ContractInterfaceReadiness,
+  DeliveryChecklistGroup,
+  DeliveryChecklistGroupId,
+  DeliveryChecklistItem,
+  DeliveryChecklistReadinessConsole,
+  DeliveryChecklistStatus,
   DimensionSplit,
   EligibilityResult,
   EcosystemNextActionProduct,
@@ -2032,6 +2037,11 @@ const noRewardCustodyBoundary: LocalizedText = {
   "zh-CN": "Campaign OS 不托管也不发放奖励；奖励履约由活动项目方负责。",
 };
 
+const deliveryChecklistBoundary: LocalizedText = {
+  "en-US": "Seeded/local delivery readiness evidence only. No live wallet SDK, API call, contract transaction, export file, reward custody, or reward distribution is executed.",
+  "zh-CN": "仅 seeded/本地交付 readiness 证据。不会执行实时钱包 SDK、API 调用、合约交易、导出文件、奖励托管或发奖。",
+};
+
 const createContractMethod = ({
   boundary = companionContractBoundary,
   name,
@@ -2763,6 +2773,803 @@ export const createContractInterfaceMatrixConsole = (): ContractInterfaceMatrixC
   };
 };
 
+const localized = (enUS: string, zhCN: string): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+});
+
+const deliveryChecklistStatusCount = (
+  items: DeliveryChecklistItem[],
+  status: DeliveryChecklistStatus,
+) => items.filter((item) => item.status === status).length;
+
+const deliveryChecklistCounts = (items: DeliveryChecklistItem[]) => ({
+  blocked: deliveryChecklistStatusCount(items, "blocked"),
+  covered: deliveryChecklistStatusCount(items, "covered"),
+  deferred: deliveryChecklistStatusCount(items, "deferred"),
+  needsReview: deliveryChecklistStatusCount(items, "needs_review"),
+});
+
+const deliveryChecklistItem = ({
+  blocksDelivery = false,
+  evidence,
+  groupId,
+  id,
+  label,
+  nextAction,
+  ownerRole = "internal_operator",
+  sourceRequirement,
+  status,
+  surface,
+}: {
+  blocksDelivery?: boolean;
+  evidence: LocalizedText;
+  groupId: DeliveryChecklistGroupId;
+  id: string;
+  label: LocalizedText;
+  nextAction: LocalizedText;
+  ownerRole?: DeliveryChecklistItem["ownerRole"];
+  sourceRequirement: string;
+  status: DeliveryChecklistStatus;
+  surface: LocalizedText;
+}): DeliveryChecklistItem => ({
+  blocksDelivery,
+  evidence,
+  groupId,
+  id,
+  label,
+  nextAction,
+  ownerRole,
+  sourceRequirement,
+  status,
+  surface,
+});
+
+const deliveryChecklistGroup = ({
+  id,
+  items,
+  sourceReference,
+  summary,
+  title,
+}: {
+  id: DeliveryChecklistGroupId;
+  items: DeliveryChecklistItem[];
+  sourceReference: string;
+  summary: LocalizedText;
+  title: LocalizedText;
+}): DeliveryChecklistGroup => ({
+  counts: deliveryChecklistCounts(items),
+  id,
+  items,
+  sourceReference,
+  summary,
+  title,
+});
+
+const createProductDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
+  const groupId = "product" as const;
+
+  return [
+    deliveryChecklistItem({
+      groupId,
+      id: "product-aa-eoa-support",
+      label: localized("AA + EOA wallet support", "AA + EOA 钱包支持"),
+      status: "covered",
+      ownerRole: "project_owner",
+      surface: localized("Wallet modal, header badge, task eligibility", "钱包弹窗、Header badge、任务资格"),
+      evidence: localized(
+        "Wallet sessions normalize Portkey AA, Portkey EOA App, Portkey EOA Extension, NightElf, and agent/internal sources.",
+        "钱包 session 已归一化 Portkey AA、Portkey EOA App、Portkey EOA Extension、NightElf 与 agent/internal 来源。",
+      ),
+      nextAction: localized(
+        "Keep live provider QA separated from seeded readiness evidence.",
+        "将真实 provider QA 与 seeded readiness 证据分开。",
+      ),
+      sourceRequirement: "Product checklist: AA and EOA support",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "product-portkey-aa-recommended",
+      label: localized("Portkey AA recommended, not mandatory", "Portkey AA 是推荐路径而非强制要求"),
+      status: "covered",
+      ownerRole: "project_owner",
+      surface: localized("Wallet Connect Modal", "钱包连接弹窗"),
+      evidence: localized(
+        "Recommended AA and existing-user EOA paths are rendered as separate wallet sections.",
+        "推荐 AA 与已有用户 EOA 路径以独立钱包分区展示。",
+      ),
+      nextAction: localized("Retain Any wallet as the default campaign policy.", "继续将任意钱包作为默认活动策略。"),
+      sourceRequirement: "Product checklist: Portkey AA recommended",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "product-wallet-flow-options",
+      label: localized("EOA app, extension, and NightElf wallet flow", "EOA App、Extension 与 NightElf 钱包流程"),
+      status: "covered",
+      surface: localized("Wallet modal sections", "钱包弹窗分区"),
+      evidence: localized(
+        "Recommended, EOA, and Advanced/Agent sections include unsupported and wrong-chain states.",
+        "Recommended、EOA、Advanced/Agent 分区包含 unsupported 与 wrong-chain 状态。",
+      ),
+      nextAction: localized("Use live wallet QA before production onboarding.", "生产 onboarding 前补真实钱包 QA。"),
+      sourceRequirement: "Product checklist: EOA App / Extension / NightElf represented",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "product-default-language",
+      label: localized("Default UI language is English", "默认 UI 语言为英文"),
+      status: "covered",
+      surface: localized("Global header and locale hook", "全局 Header 与 locale hook"),
+      evidence: localized(
+        "Default locale and fallback locale are en-US; language switching is manual.",
+        "默认语言和回退语言均为 en-US；语言切换为手动操作。",
+      ),
+      nextAction: localized(
+        "Keep browser language as a prompt only, not automatic override.",
+        "浏览器语言只作为提示，不自动覆盖。",
+      ),
+      sourceRequirement: "Product checklist: default en-US",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "product-language-selector",
+      label: localized("Language selector visible in global header", "语言选择器在全局 Header 可见"),
+      status: "covered",
+      surface: localized("App shell header", "App shell Header"),
+      evidence: localized(
+        "The global header exposes English and Simplified Chinese options.",
+        "全局 Header 暴露 English 与简体中文选项。",
+      ),
+      nextAction: localized(
+        "Keep only the approved runtime locales until a separate expansion is approved.",
+        "在单独批准扩展前仅保留已批准的运行时语言。",
+      ),
+      sourceRequirement: "Product checklist: language selector visible",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "product-campaign-builder-locales",
+      label: localized("Campaign builder default and supported locales", "Campaign Builder 默认与支持语言"),
+      status: "covered",
+      ownerRole: "project_owner",
+      surface: localized("Campaign Builder", "活动构建器"),
+      evidence: localized(
+        "Builder draft uses default/fallback en-US and supported en-US plus zh-CN.",
+        "Builder 草稿使用默认/回退 en-US，并支持 en-US 与 zh-CN。",
+      ),
+      nextAction: localized(
+        "Continue blocking publish when required locale review is incomplete.",
+        "在必要语言审核未完成时继续阻断发布。",
+      ),
+      sourceRequirement: "Product checklist: builder locale fields",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "product-task-wallet-compatibility",
+      label: localized("Task builder wallet compatibility", "Task Builder 钱包兼容性"),
+      status: "covered",
+      ownerRole: "project_owner",
+      surface: localized("Task Template Library", "任务模板库"),
+      evidence: localized(
+        "Task templates expose Any, AA-only, and EOA-only compatibility plus filters.",
+        "任务模板暴露 Any、AA-only、EOA-only 兼容性与过滤器。",
+      ),
+      nextAction: localized("Keep template governance review for wallet coverage drift.", "继续用模板治理审核钱包覆盖漂移。"),
+      sourceRequirement: "Product checklist: task builder wallet compatibility",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "product-reward-disclaimer-locales",
+      label: localized("Reward disclaimer per locale", "每个语言的奖励免责声明"),
+      status: "needs_review",
+      blocksDelivery: true,
+      ownerRole: "project_owner",
+      surface: localized("Rewards & Eligibility, Translation Manager", "奖励与资格、翻译管理"),
+      evidence: localized(
+        "English disclaimer is reviewed; Chinese draft falls back to English until human review.",
+        "英文免责声明已审核；中文草稿在人工审核前回退英文。",
+      ),
+      nextAction: localized("Review the Chinese disclaimer before publish.", "发布前审核中文免责声明。"),
+      sourceRequirement: "Product checklist: reward disclaimer per locale",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "product-contract-impact-review",
+      label: localized("Contract impact review before publish", "发布前合约影响审核"),
+      status: "covered",
+      ownerRole: "contract_reviewer",
+      surface: localized(
+        "Contract Impact Review and Admin Contract Review Center",
+        "合约影响审核与管理员合约审核中心",
+      ),
+      evidence: localized(
+        "Off-chain MVP, V2 companion, and contract claim modes are visible with claim-mode blockers.",
+        "Off-chain MVP、V2 companion 与 contract claim 模式可见，claim mode 有阻断。",
+      ),
+      nextAction: localized(
+        "Keep claim mode blocked until contract reviewer approval.",
+        "合约审核人批准前继续阻断 claim mode。",
+      ),
+      sourceRequirement: "Product checklist: contract impact review",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "product-future-locale-expansion",
+      label: localized("Additional locale expansion is deferred", "额外语言扩展已后置"),
+      status: "deferred",
+      ownerRole: "project_owner",
+      surface: localized("Locale governance", "语言治理"),
+      evidence: localized(
+        "Runtime support intentionally remains English and Simplified Chinese for this MVP.",
+        "当前 MVP 运行时有意仅支持 English 与简体中文。",
+      ),
+      nextAction: localized(
+        "Open a separate locale expansion mission if more locales become required.",
+        "若需要更多语言，单独开启语言扩展 mission。",
+      ),
+      sourceRequirement: "Product checklist: future locale expansion",
+    }),
+  ];
+};
+
+const createArchitectureDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
+  const groupId = "architecture" as const;
+
+  return [
+    deliveryChecklistItem({
+      groupId,
+      id: "architecture-wallet-normalization",
+      label: localized("Normalized wallet session schema", "归一化钱包 session schema"),
+      status: "covered",
+      surface: localized("NormalizedWalletSession", "NormalizedWalletSession"),
+      evidence: localized(
+        "Seeded fixtures normalize address, account type, wallet source, chain, network, capabilities, and signature status.",
+        "Seeded fixtures 归一化 address、account type、wallet source、chain、network、capabilities 与 signature status。",
+      ),
+      nextAction: localized(
+        "Bind the same shape to live adapters only after provider QA.",
+        "完成 provider QA 后再绑定真实 adapter。",
+      ),
+      sourceRequirement: "Architecture checklist: wallet adapter normalization",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "architecture-wallet-enums",
+      label: localized("WalletSource and AccountType enums", "WalletSource 与 AccountType 枚举"),
+      status: "covered",
+      surface: localized("Domain types", "Domain types"),
+      evidence: localized(
+        "Domain types include AA, EOA, UNKNOWN and Portkey AA, Portkey EOA App, extension, NightElf, agent, and other sources.",
+        "Domain types 包含 AA、EOA、UNKNOWN，以及 Portkey AA、Portkey EOA App、Extension、NightElf、Agent、Other 来源。",
+      ),
+      nextAction: localized("Keep enum expansion behind adapter review.", "枚举扩展必须经过 adapter review。"),
+      sourceRequirement: "Architecture checklist: wallet source/account type enums",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "architecture-i18n-content-service",
+      label: localized("i18n content service shape", "i18n 内容服务形态"),
+      status: "covered",
+      ownerRole: "project_owner",
+      surface: localized("Translation Manager read model", "翻译管理 read model"),
+      evidence: localized(
+        "English source, Chinese draft, fallback, reward disclaimer rows, and compare-review prompts are modeled.",
+        "英文源、中文草稿、fallback、奖励免责声明行与 compare-review prompt 已建模。",
+      ),
+      nextAction: localized(
+        "Replace seeded revisions with persistence only after content review workflow approval.",
+        "内容审核流程批准后再用持久化替换 seeded revisions。",
+      ),
+      sourceRequirement: "Architecture checklist: i18n content service",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "architecture-verification-aa-eoa",
+      label: localized("Verification accepts AA and EOA", "验证接受 AA 与 EOA"),
+      status: "covered",
+      surface: localized("Participation and eligibility read models", "参与与资格 read model"),
+      evidence: localized(
+        "Task and eligibility states carry account type, wallet source, wallet verification, missing tasks, and evidence source.",
+        "任务与资格状态携带 account type、wallet source、wallet verification、missing tasks 与 evidence source。",
+      ),
+      nextAction: localized(
+        "Connect live verifier services only behind service registry/config gates.",
+        "仅在 service registry/config gate 后接入真实 verifier 服务。",
+      ),
+      sourceRequirement: "Architecture checklist: verification service accepts AA and EOA",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "architecture-export-wallet-locale",
+      label: localized("Export includes wallet type and locale", "导出包含钱包类型与语言"),
+      status: "covered",
+      ownerRole: "project_owner",
+      surface: localized("Export preview", "导出预览"),
+      evidence: localized(
+        "Export columns include account type, wallet source, locale preference, risk flags, task records, and evidence hashes.",
+        "导出字段包含 account type、wallet source、locale preference、risk flags、task records 与 evidence hashes。",
+      ),
+      nextAction: localized(
+        "Keep export preview local until project owner confirms real file generation.",
+        "项目方确认真实文件生成前保持本地导出预览。",
+      ),
+      sourceRequirement: "Architecture checklist: export service wallet and locale columns",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "architecture-contract-modes",
+      label: localized(
+        "Contract mode supports off-chain MVP, V2 companion, and contract claim",
+        "合约模式支持 Off-chain MVP、V2 companion 与 contract claim",
+      ),
+      status: "covered",
+      ownerRole: "contract_reviewer",
+      surface: localized("Contract Impact Review", "合约影响审核"),
+      evidence: localized(
+        "Mode options are visible and contract claim is treated as a high-impact blocker.",
+        "模式选项可见，contract claim 被视为高影响阻断。",
+      ),
+      nextAction: localized("Keep Off-chain MVP as safe default.", "继续将 Off-chain MVP 作为安全默认值。"),
+      sourceRequirement: "Architecture checklist: contract modes",
+    }),
+  ];
+};
+
+const createUiDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
+  const groupId = "ui" as const;
+
+  return [
+    deliveryChecklistItem({
+      groupId,
+      id: "ui-wallet-modal-sections",
+      label: localized(
+        "Wallet modal has Recommended, EOA, and Advanced sections",
+        "钱包弹窗包含 Recommended、EOA 与 Advanced 分区",
+      ),
+      status: "covered",
+      surface: localized("Wallet Connect Modal", "钱包连接弹窗"),
+      evidence: localized(
+        "The modal groups Portkey AA, EOA wallets, and agent/internal options with safety copy.",
+        "弹窗将 Portkey AA、EOA wallets 与 agent/internal options 分组，并展示安全文案。",
+      ),
+      nextAction: localized(
+        "Keep agent skill wallets away from normal user recommendations.",
+        "避免把 agent skill 钱包推荐给普通用户。",
+      ),
+      sourceRequirement: "UI checklist: wallet modal sections",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "ui-header-wallet-badge",
+      label: localized("Header shows wallet type badge", "Header 显示钱包类型 badge"),
+      status: "covered",
+      surface: localized("App shell header", "App shell Header"),
+      evidence: localized(
+        "Connected wallet state shows AA/EOA source badge and verification status.",
+        "已连接钱包状态展示 AA/EOA 来源 badge 与验证状态。",
+      ),
+      nextAction: localized(
+        "Preserve compact header behavior during future shell changes.",
+        "未来 shell 变更时保留紧凑 Header 行为。",
+      ),
+      sourceRequirement: "UI checklist: header wallet badge",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "ui-task-compatibility-badge",
+      label: localized("Task cards show wallet compatibility", "任务卡显示钱包兼容性"),
+      status: "covered",
+      ownerRole: "project_owner",
+      surface: localized("Task Template Library and User App task list", "任务模板库与用户任务列表"),
+      evidence: localized(
+        "Task cards render Any wallet, AA-only, and EOA-only compatibility badges.",
+        "任务卡渲染 Any wallet、AA-only 与 EOA-only 兼容性 badge。",
+      ),
+      nextAction: localized("Keep compatibility visible in all future task layouts.", "后续任务布局继续显示兼容性。"),
+      sourceRequirement: "UI checklist: task card wallet compatibility badge",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "ui-eligibility-wallet-status",
+      label: localized("Eligibility checker shows wallet type status", "资格检查器显示钱包类型状态"),
+      status: "covered",
+      surface: localized("Eligibility checker", "资格检查器"),
+      evidence: localized(
+        "Eligibility read model differentiates verified AA/EOA sessions from address-only input.",
+        "资格 read model 区分已验证 AA/EOA session 与仅地址输入。",
+      ),
+      nextAction: localized(
+        "Keep address-only checks pending until connect or signature.",
+        "仅地址检查在连接或签名前保持 pending。",
+      ),
+      sourceRequirement: "UI checklist: eligibility wallet type status",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "ui-translation-manager-states",
+      label: localized(
+        "Translation manager has AI draft and human review states",
+        "翻译管理包含 AI 草稿与人工审核状态",
+      ),
+      status: "covered",
+      ownerRole: "project_owner",
+      surface: localized("Translation Manager", "翻译管理"),
+      evidence: localized(
+        "The manager shows English source, Chinese AI draft, fallback, compare rows, and reward disclaimer review.",
+        "管理器展示英文源、中文 AI 草稿、fallback、对照行与奖励免责声明审核。",
+      ),
+      nextAction: localized(
+        "Complete human review before publishing localized content.",
+        "发布本地化内容前完成人工审核。",
+      ),
+      sourceRequirement: "UI checklist: translation manager states",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "ui-admin-contract-impact",
+      label: localized("Admin review includes contract impact panel", "Admin 审核包含合约影响面板"),
+      status: "covered",
+      ownerRole: "contract_reviewer",
+      surface: localized("Admin Contract Review Center", "管理员合约审核中心"),
+      evidence: localized(
+        "Admin/Ops renders contract mode, metadata hash, verifier role, reward custody, checklist, and evolution.",
+        "Admin/Ops 渲染合约模式、metadata hash、verifier role、reward custody、清单与演进路线。",
+      ),
+      nextAction: localized(
+        "Keep claim-mode rows blocker until separate approval.",
+        "单独批准前保持 claim-mode 行为 blocker。",
+      ),
+      sourceRequirement: "UI checklist: admin contract impact panel",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "ui-english-default-screens",
+      label: localized("Screens default to English", "页面默认英文"),
+      status: "covered",
+      surface: localized("App shell and tests", "App shell 与测试"),
+      evidence: localized(
+        "Default render shows English shell, Project Console, User App, and Admin/Ops copy.",
+        "默认渲染展示英文 shell、Project Console、User App 与 Admin/Ops 文案。",
+      ),
+      nextAction: localized("Continue reviewing screenshots with English as default.", "继续以英文默认态做截图审核。"),
+      sourceRequirement: "UI checklist: English default screenshots",
+    }),
+  ];
+};
+
+const createContractDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
+  const groupId = "contract" as const;
+
+  return [
+    deliveryChecklistItem({
+      groupId,
+      id: "contract-mvp-no-migration",
+      label: localized("MVP does not require contract migration", "MVP 不需要合约迁移"),
+      status: "covered",
+      ownerRole: "contract_reviewer",
+      surface: localized("Contract Impact Review", "合约影响审核"),
+      evidence: localized(
+        "Off-chain MVP is the safe default and V2 companion is planned, not required.",
+        "Off-chain MVP 是安全默认；V2 companion 是规划项而非必需项。",
+      ),
+      nextAction: localized("Keep MVP publish path off-chain.", "保持 MVP 发布路径链下。"),
+      sourceRequirement: "Contract checklist: MVP no migration",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "contract-v2-plan",
+      label: localized("V2 companion contract plan exists", "V2 companion 合约计划存在"),
+      status: "covered",
+      ownerRole: "contract_reviewer",
+      surface: localized("Contract Interface Matrix Console", "合约接口矩阵控制台"),
+      evidence: localized(
+        "CampaignRegistryV2, points ledger, referral registry, and eligibility root registry are modeled.",
+        "CampaignRegistryV2、points ledger、referral registry 与 eligibility root registry 已建模。",
+      ),
+      nextAction: localized("Use the matrix as planning evidence, not an executable ABI.", "将矩阵作为规划证据，而非可执行 ABI。"),
+      sourceRequirement: "Contract checklist: V2 companion plan",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "contract-registry-methods",
+      label: localized("CampaignRegistryV2 methods defined", "CampaignRegistryV2 方法已定义"),
+      status: "covered",
+      ownerRole: "contract_reviewer",
+      surface: localized("Contract Interface Matrix Console", "合约接口矩阵控制台"),
+      evidence: localized(
+        "Create, metadata update, task config hash, status, wallet policy, locale, owner transfer, pause, and read methods are listed.",
+        "已列出创建、metadata 更新、task config hash、状态、钱包策略、语言、owner 转移、暂停与读取方法。",
+      ),
+      nextAction: localized("Review schema and authorization before implementation.", "实现前审核 schema 与授权。"),
+      sourceRequirement: "Contract checklist: CampaignRegistryV2 methods",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "contract-points-eligibility-root-plan",
+      label: localized("Points batch and eligibility root plan", "积分批次与资格 root 计划"),
+      status: "covered",
+      ownerRole: "contract_reviewer",
+      surface: localized("Contract Interface Matrix Console", "合约接口矩阵控制台"),
+      evidence: localized(
+        "Points batch commit/revoke/read and eligibility root set/update/read/verify methods are listed.",
+        "已列出 points batch commit/revoke/read 与 eligibility root set/update/read/verify 方法。",
+      ),
+      nextAction: localized("Define root formats before P1 contract work.", "P1 合约工作前定义 root 格式。"),
+      sourceRequirement: "Contract checklist: points batch / eligibility root plan",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "contract-referral-plan",
+      label: localized("Referral registry plan", "Referral registry 计划"),
+      status: "covered",
+      ownerRole: "contract_reviewer",
+      surface: localized("Contract Interface Matrix Console", "合约接口矩阵控制台"),
+      evidence: localized(
+        "Referral bind, qualify, remove, and read methods are modeled with off-chain anti-farm evidence.",
+        "Referral bind、qualify、remove、read 方法已建模，反刷证据保持链下。",
+      ),
+      nextAction: localized("Review duplicate, self, and circular referral policy.", "审核重复、自邀请与循环邀请策略。"),
+      sourceRequirement: "Contract checklist: referral registry plan",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "contract-i18n-off-chain",
+      label: localized("i18n text stays off-chain", "i18n 文本保持链下"),
+      status: "covered",
+      ownerRole: "project_owner",
+      surface: localized("Translation Manager and Contract Matrix", "翻译管理与合约矩阵"),
+      evidence: localized(
+        "Contract matrix keeps full translated copy off-chain and plans metadata hash only.",
+        "合约矩阵保持完整翻译文案链下，仅规划 metadata hash。",
+      ),
+      nextAction: localized("Hash reviewed artifacts only after human review.", "人工审核后仅 hash 已审核产物。"),
+      sourceRequirement: "Contract checklist: i18n off-chain",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "contract-reward-custody-excluded",
+      label: localized("Reward custody excluded from MVP", "奖励托管排除在 MVP 外"),
+      status: "blocked",
+      blocksDelivery: true,
+      ownerRole: "contract_reviewer",
+      surface: localized("Contract Impact Review and Export Confirmation", "合约影响审核与导出确认"),
+      evidence: localized(
+        "Campaign OS exports winners only; final reward distribution is handled by the campaign project.",
+        "Campaign OS 只导出 winners；最终奖励发放由活动项目方处理。",
+      ),
+      nextAction: localized(
+        "Block any reward custody or contract claim scope until separate security, legal, and audit approval.",
+        "在安全、法律与审计单独批准前，阻断任何奖励托管或合约领取范围。",
+      ),
+      sourceRequirement: "Contract checklist: reward custody excluded",
+    }),
+  ];
+};
+
+const createQaDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
+  const groupId = "qa" as const;
+
+  return [
+    deliveryChecklistItem({
+      groupId,
+      id: "qa-portkey-aa-connect",
+      label: localized("Portkey AA connect tested", "Portkey AA 连接测试"),
+      status: "needs_review",
+      surface: localized("Wallet QA diagnostics", "钱包 QA 诊断"),
+      evidence: localized(
+        "Seeded Portkey AA session is ready, but no live wallet provider was executed in this frontend foundation.",
+        "Seeded Portkey AA session 已就绪，但此前端基础未执行真实钱包 provider。",
+      ),
+      nextAction: localized("Run provider QA before production release.", "生产发布前执行 provider QA。"),
+      sourceRequirement: "QA checklist: Portkey AA connect",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "qa-eoa-extension-connect",
+      label: localized("EOA extension connect tested", "EOA extension 连接测试"),
+      status: "needs_review",
+      surface: localized("Wallet QA diagnostics", "钱包 QA 诊断"),
+      evidence: localized(
+        "Seeded EOA extension session is covered; live browser-extension QA remains manual.",
+        "Seeded EOA extension session 已覆盖；真实浏览器插件 QA 仍需人工执行。",
+      ),
+      nextAction: localized("Run live extension connect and disconnect scenarios.", "执行真实 extension 连接与断开场景。"),
+      sourceRequirement: "QA checklist: EOA extension connect",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "qa-wrong-chain-error",
+      label: localized("Wrong chain error tested", "错误链错误状态测试"),
+      status: "needs_review",
+      surface: localized("Wallet diagnostics error states", "钱包诊断错误状态"),
+      evidence: localized(
+        "Seeded wrong-chain state tells users to switch to AELF mainnet.",
+        "Seeded wrong-chain 状态提示用户切换到 AELF mainnet。",
+      ),
+      nextAction: localized("Validate with a real adapter chain-switch flow.", "用真实 adapter chain-switch 流程验证。"),
+      sourceRequirement: "QA checklist: wrong chain error",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "qa-unsupported-wallet-error",
+      label: localized("Unsupported wallet error tested", "不支持钱包错误状态测试"),
+      status: "needs_review",
+      surface: localized("Wallet diagnostics error states", "钱包诊断错误状态"),
+      evidence: localized(
+        "Seeded unsupported-wallet state blocks normal participation.",
+        "Seeded unsupported-wallet 状态会阻断普通参与。",
+      ),
+      nextAction: localized("Validate live unsupported provider fallback.", "验证真实 unsupported provider fallback。"),
+      sourceRequirement: "QA checklist: unsupported wallet error",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "qa-en-default",
+      label: localized("en-US default tested", "en-US 默认态测试"),
+      status: "covered",
+      surface: localized("App shell tests", "App shell 测试"),
+      evidence: localized(
+        "Default app render asserts English shell and product surfaces.",
+        "默认 app render 断言英文 shell 与产品 surface。",
+      ),
+      nextAction: localized("Keep default English screenshot review in each mission.", "每个 mission 继续做默认英文截图审核。"),
+      sourceRequirement: "QA checklist: en-US default",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "qa-zh-switch",
+      label: localized("Simplified Chinese switch tested", "简体中文切换测试"),
+      status: "covered",
+      surface: localized("Locale selector tests", "语言选择器测试"),
+      evidence: localized(
+        "App and panel tests switch to zh-CN and assert localized copy.",
+        "App 与 panel 测试切换到 zh-CN 并断言本地化文案。",
+      ),
+      nextAction: localized("Keep locale switch tests alongside new UI sections.", "新 UI section 继续补语言切换测试。"),
+      sourceRequirement: "QA checklist: zh-CN switch",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "qa-missing-translation-fallback",
+      label: localized("Missing translation fallback tested", "缺失翻译 fallback 测试"),
+      status: "covered",
+      ownerRole: "project_owner",
+      surface: localized("Translation Manager", "翻译管理"),
+      evidence: localized(
+        "Chinese AI draft falls back to English until reviewed.",
+        "中文 AI 草稿在审核前回退英文。",
+      ),
+      nextAction: localized("Keep fallback visible until human review is complete.", "人工审核完成前保持 fallback 可见。"),
+      sourceRequirement: "QA checklist: missing translation fallback",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "qa-export-csv-columns",
+      label: localized("Export CSV columns tested", "导出 CSV 字段测试"),
+      status: "covered",
+      ownerRole: "project_owner",
+      surface: localized("Export preview and API skill contracts", "导出预览与 API skill contracts"),
+      evidence: localized(
+        "Export column order includes wallet, locale, risk, task, evidence, and batch fields.",
+        "导出字段顺序包含 wallet、locale、risk、task、evidence 与 batch 字段。",
+      ),
+      nextAction: localized(
+        "Keep real file generation behind project-owner confirmation.",
+        "真实文件生成继续放在项目方确认之后。",
+      ),
+      sourceRequirement: "QA checklist: export CSV columns",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "qa-reward-disclaimer-blocker",
+      label: localized("Publish blocker for missing reward disclaimer", "缺失奖励免责声明发布阻断"),
+      status: "needs_review",
+      blocksDelivery: true,
+      ownerRole: "project_owner",
+      surface: localized("Publish gate decision center", "发布门禁决策中心"),
+      evidence: localized(
+        "Export disclaimer is accepted, while localized reward disclaimer review still needs owner attention.",
+        "导出免责声明已确认，但本地化奖励免责声明仍需要 owner 关注。",
+      ),
+      nextAction: localized(
+        "Complete localized reward disclaimer review before publish.",
+        "发布前完成本地化奖励免责声明审核。",
+      ),
+      sourceRequirement: "QA checklist: publish blocker for missing reward disclaimer",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "qa-contract-claim-admin-approval",
+      label: localized("Contract claim mode requires admin approval", "Contract claim 模式需要管理员批准"),
+      status: "blocked",
+      blocksDelivery: true,
+      ownerRole: "contract_reviewer",
+      surface: localized("Contract Impact Review", "合约影响审核"),
+      evidence: localized(
+        "Contract claim mode remains blocked until high-impact security, custody, legal, and audit approval.",
+        "Contract claim mode 在安全、托管、法律与审计批准前保持阻断。",
+      ),
+      nextAction: localized("Do not enable claim mode in MVP.", "MVP 不启用 claim mode。"),
+      sourceRequirement: "QA checklist: contract claim admin approval",
+    }),
+  ];
+};
+
+export const createDeliveryChecklistReadinessConsole = (): DeliveryChecklistReadinessConsole => {
+  const groups = [
+    deliveryChecklistGroup({
+      id: "product",
+      title: localized("Product Checklist", "产品清单"),
+      sourceReference: "09_delivery_checklist_v0.2.md#product-checklist",
+      summary: localized(
+        "Product-facing wallet, locale, builder, task, reward, and contract review requirements.",
+        "面向产品的钱包、语言、构建器、任务、奖励与合约审核要求。",
+      ),
+      items: createProductDeliveryChecklistItems(),
+    }),
+    deliveryChecklistGroup({
+      id: "architecture",
+      title: localized("Architecture Checklist", "架构清单"),
+      sourceReference: "09_delivery_checklist_v0.2.md#architecture-checklist",
+      summary: localized(
+        "Normalized wallet, i18n, verification, export, and contract-mode architecture surfaces.",
+        "归一化钱包、i18n、验证、导出与合约模式架构面。",
+      ),
+      items: createArchitectureDeliveryChecklistItems(),
+    }),
+    deliveryChecklistGroup({
+      id: "ui",
+      title: localized("UI Checklist", "UI 清单"),
+      sourceReference: "09_delivery_checklist_v0.2.md#ui-checklist",
+      summary: localized(
+        "Visible wallet, language, task, eligibility, translation, and contract review UI requirements.",
+        "可见的钱包、语言、任务、资格、翻译与合约审核 UI 要求。",
+      ),
+      items: createUiDeliveryChecklistItems(),
+    }),
+    deliveryChecklistGroup({
+      id: "contract",
+      title: localized("Contract Checklist", "合约清单"),
+      sourceReference: "09_delivery_checklist_v0.2.md#contract-checklist",
+      summary: localized(
+        "Off-chain MVP, V2 companion, root, referral, i18n, and reward custody contract boundaries.",
+        "Off-chain MVP、V2 companion、root、referral、i18n 与奖励托管合约边界。",
+      ),
+      items: createContractDeliveryChecklistItems(),
+    }),
+    deliveryChecklistGroup({
+      id: "qa",
+      title: localized("QA Checklist", "QA 清单"),
+      sourceReference: "09_delivery_checklist_v0.2.md#qa-checklist",
+      summary: localized(
+        "Seeded QA evidence and live-provider review gaps for wallet, locale, export, and contract claim flows.",
+        "钱包、语言、导出与 contract claim 流程的 seeded QA 证据与真实 provider 审核缺口。",
+      ),
+      items: createQaDeliveryChecklistItems(),
+    }),
+  ];
+  const items = groups.flatMap((group) => group.items);
+
+  return {
+    boundary: deliveryChecklistBoundary,
+    blockers: items.filter((item) => item.status === "blocked"),
+    groups,
+    needsReview: items.filter((item) => item.status === "needs_review"),
+    summary: {
+      blockedItems: deliveryChecklistStatusCount(items, "blocked"),
+      coveredItems: deliveryChecklistStatusCount(items, "covered"),
+      deferredItems: deliveryChecklistStatusCount(items, "deferred"),
+      groupCount: groups.length,
+      needsReviewItems: deliveryChecklistStatusCount(items, "needs_review"),
+      nextAction: localized(
+        "Resolve blocker and live-QA review rows before treating v0.2 delivery as complete.",
+        "在把 v0.2 交付视为完成前，先解决阻断与真实 QA review 行。",
+      ),
+      totalItems: items.length,
+    },
+  };
+};
+
 export const createParticipationReadModel = (
   campaign: CampaignShellDetail,
   participant: ParticipantSnapshot,
@@ -3292,6 +4099,7 @@ export const createAdminOpsReadModel = (
   return {
     campaignId: campaign.id,
     reviewQueue: campaign.reviewItems,
+    deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(),
     contractReviewCenter: createAdminContractReviewCenter(campaign),
     contractInterfaceMatrix: createContractInterfaceMatrixConsole(),
     aiContentPack: createAiContentPackWorkbench(campaign),
