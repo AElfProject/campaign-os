@@ -299,6 +299,85 @@ describe("Campaign OS domain foundation", () => {
     expect(reviewCenter.evolution[3]).toMatchObject({ status: "blocker" });
   });
 
+  it("builds the contract interface matrix console from v0.2 companion contract boundaries", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const matrix = adminOps.contractInterfaceMatrix;
+    const methodNames = matrix.groups.flatMap((group) =>
+      group.methods.map((method) => method.name),
+    );
+    const areas = matrix.changeMatrix.map((row) => row.area["en-US"]);
+
+    expect(matrix.summary).toMatchObject({
+      totalContracts: 4,
+      totalMethods: 22,
+      p1Rows: 7,
+      blockedRows: 1,
+    });
+    expect(matrix.groups.map((group) => group.contractName)).toEqual([
+      "CampaignRegistryV2",
+      "CampaignPointsLedgerV2",
+      "ReferralRegistryV2",
+      "EligibilityRootRegistryV2",
+    ]);
+    expect(methodNames).toEqual([
+      "CreateCampaign",
+      "UpdateCampaignMetadata",
+      "UpdateTaskConfigHash",
+      "SetCampaignStatus",
+      "SetWalletPolicy",
+      "SetSupportedLocales",
+      "TransferCampaignOwner",
+      "PauseCampaign",
+      "GetCampaign",
+      "CommitPointsBatch",
+      "RevokePointsBatch",
+      "GetPointsBatch",
+      "AwardTaskPoints",
+      "RevokeTaskPoints",
+      "BindReferral",
+      "MarkReferralQualified",
+      "RemoveReferral",
+      "GetReferral",
+      "SetEligibilityRoot",
+      "UpdateEligibilityRoot",
+      "GetEligibilityRoot",
+      "VerifyEligibilityProof",
+    ]);
+    expect(
+      matrix.groups
+        .find((group) => group.contractName === "CampaignPointsLedgerV2")
+        ?.methods.find((method) => method.name === "AwardTaskPoints"),
+    ).toMatchObject({
+      readiness: "warning",
+      phase: "P1",
+    });
+    expect(areas).toEqual([
+      "Campaign config",
+      "Task config",
+      "Points ledger",
+      "Referral",
+      "Eligibility/winners",
+      "Rewards",
+      "Multilingual content",
+      "Wallet type",
+      "Risk flags",
+    ]);
+    expect(matrix.changeMatrix.find((row) => row.area["en-US"] === "Rewards")).toMatchObject({
+      priority: "P2",
+      readiness: "blocker",
+      boundary: expect.objectContaining({
+        "en-US": expect.stringContaining("Campaign OS does not custody or distribute rewards"),
+      }),
+    });
+    expect(
+      matrix.changeMatrix.find((row) => row.area["en-US"] === "Multilingual content")?.boundary["en-US"],
+    ).toContain("Full translated copy stays off-chain");
+    expect(
+      matrix.changeMatrix.find((row) => row.area["en-US"] === "Risk flags")?.boundary["en-US"],
+    ).toContain("Risk detail stays off-chain");
+    expect(JSON.stringify(matrix)).not.toContain("zh-TW");
+  });
+
   it("labels AA and EOA wallet states", () => {
     expect(getWalletBadgeLabel("AA", "PORTKEY_AA")).toBe("AA · Portkey");
     expect(getWalletBadgeLabel("EOA", "PORTKEY_EOA_EXTENSION")).toBe("EOA · Extension");
