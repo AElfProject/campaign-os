@@ -8,6 +8,7 @@ import {
   type ContractInterfaceReadiness,
   type ContractMode,
   type ContractReviewChecklistStatus,
+  type DeliveryChecklistStatus,
   type AiContentArtifactLifecycle,
   type AiContentQualityGateStatus,
   type MetricTone,
@@ -186,6 +187,13 @@ const checklistStatusState = (status: ContractReviewChecklistStatus) =>
 const contractInterfaceReadinessState = (readiness: ContractInterfaceReadiness) =>
   readiness === "blocker" ? "blocker" : readiness === "warning" ? "warning" : "ready";
 
+const deliveryChecklistStatusState = (status: DeliveryChecklistStatus) =>
+  status === "blocked"
+    ? "blocker"
+    : status === "needs_review" || status === "deferred"
+      ? "warning"
+      : "ready";
+
 const aiContentLifecycleState = (lifecycle: AiContentArtifactLifecycle) =>
   lifecycle === "ai_draft" || lifecycle === "edited" ? "warning" : "ready";
 
@@ -224,6 +232,20 @@ const templateStatusLabel = (
   return labels[status];
 };
 
+const deliveryChecklistStatusLabel = (
+  status: DeliveryChecklistStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<DeliveryChecklistStatus, string> = {
+    blocked: copy.blocker,
+    covered: copy.covered,
+    deferred: copy.deferred,
+    needs_review: copy.needsReview,
+  };
+
+  return labels[status];
+};
+
 const walletCompatibilityLabel = (
   value: string,
   copy: typeof adminOpsCopy["en-US"],
@@ -246,6 +268,7 @@ export const AdminOpsPanel = ({
   const adminOps = createAdminOpsReadModel(campaign);
   const aiContentPack = adminOps.aiContentPack;
   const templateGovernance = adminOps.templateGovernance;
+  const deliveryChecklist = adminOps.deliveryChecklistReadiness;
   const contractClaimReadiness = computePublishReadiness(
     { contractMode: "CONTRACT_CLAIM" },
     campaign.contentRevisions,
@@ -336,6 +359,163 @@ export const AdminOpsPanel = ({
               <p style={mutedTextStyle}>
                 {copy.owner}: {item.ownerRole}
               </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.deliveryChecklistSubtitle}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.deliveryChecklistReadiness}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${deliveryChecklist.summary.totalItems} ${copy.totalItems}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${deliveryChecklist.summary.blockedItems} ${copy.blocker}`}
+              state={deliveryChecklist.summary.blockedItems > 0 ? "blocker" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${deliveryChecklist.summary.needsReviewItems} ${copy.needsReview}`}
+              state={deliveryChecklist.summary.needsReviewItems > 0 ? "warning" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.seededLocalReadinessBoundary}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {getLocalizedText(deliveryChecklist.boundary, locale)}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.totalItems}</p>
+            <p style={valueStyle}>{deliveryChecklist.summary.totalItems}</p>
+            <p style={mutedTextStyle}>{getLocalizedText(deliveryChecklist.summary.nextAction, locale)}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.covered}</p>
+            <p style={valueStyle}>{deliveryChecklist.summary.coveredItems}</p>
+            <p style={mutedTextStyle}>{copy.seededBoundary}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.needsReview}</p>
+            <p style={valueStyle}>{deliveryChecklist.summary.needsReviewItems}</p>
+            <p style={mutedTextStyle}>{copy.humanReviewRequired}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.blocker}</p>
+            <p style={valueStyle}>{deliveryChecklist.summary.blockedItems}</p>
+            <p style={mutedTextStyle}>{copy.noRewardCustodyDistribution}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.deferred}</p>
+            <p style={valueStyle}>{deliveryChecklist.summary.deferredItems}</p>
+            <p style={mutedTextStyle}>{copy.futurePlanned}</p>
+          </article>
+        </div>
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <div style={rowStyle}>
+              <strong>{copy.blocker}</strong>
+              <PublishStateBadge label={`${deliveryChecklist.blockers.length} ${copy.blocker}`} state="blocker" />
+            </div>
+            {deliveryChecklist.blockers.map((item) => (
+              <div key={item.id} style={{ borderTop: "1px solid #dbe6f4", display: "grid", gap: 6, paddingTop: 10 }}>
+                <strong>{getLocalizedText(item.label, locale)}</strong>
+                <p style={mutedTextStyle}>{getLocalizedText(item.evidence, locale)}</p>
+                <p style={mutedTextStyle}>{copy.nextAction}: {getLocalizedText(item.nextAction, locale)}</p>
+              </div>
+            ))}
+          </article>
+          <article style={cardStyle}>
+            <div style={rowStyle}>
+              <strong>{copy.needsReview}</strong>
+              <PublishStateBadge label={`${deliveryChecklist.needsReview.length} ${copy.needsReview}`} state="warning" />
+            </div>
+            {deliveryChecklist.needsReview.slice(0, 6).map((item) => (
+              <div key={item.id} style={{ borderTop: "1px solid #dbe6f4", display: "grid", gap: 6, paddingTop: 10 }}>
+                <strong>{getLocalizedText(item.label, locale)}</strong>
+                <p style={mutedTextStyle}>{getLocalizedText(item.surface, locale)}</p>
+                <p style={mutedTextStyle}>{copy.nextAction}: {getLocalizedText(item.nextAction, locale)}</p>
+              </div>
+            ))}
+          </article>
+        </div>
+        <div style={gridStyle}>
+          {deliveryChecklist.groups.map((group) => (
+            <article key={group.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{group.sourceReference}</p>
+                  <strong>{getLocalizedText(group.title, locale)}</strong>
+                </div>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge label={`${group.counts.covered} ${copy.covered}`} state="ready" />
+                  <PublishStateBadge
+                    label={`${group.counts.needsReview} ${copy.needsReview}`}
+                    state={group.counts.needsReview > 0 ? "warning" : "ready"}
+                  />
+                  <PublishStateBadge
+                    label={`${group.counts.blocked} ${copy.blocker}`}
+                    state={group.counts.blocked > 0 ? "blocker" : "ready"}
+                  />
+                  <Badge label={`${group.counts.deferred} ${copy.deferred}`} tone="info" />
+                </span>
+              </div>
+              <p style={mutedTextStyle}>{getLocalizedText(group.summary, locale)}</p>
+              <div style={stackStyle}>
+                {group.items.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      borderTop: "1px solid #dbe6f4",
+                      display: "grid",
+                      gap: 8,
+                      paddingTop: 10,
+                    }}
+                  >
+                    <div style={rowStyle}>
+                      <strong>{getLocalizedText(item.label, locale)}</strong>
+                      <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        <PublishStateBadge
+                          label={deliveryChecklistStatusLabel(item.status, copy)}
+                          state={deliveryChecklistStatusState(item.status)}
+                        />
+                        {item.blocksDelivery ? (
+                          <PublishStateBadge label={copy.publishBlocked} state="blocker" />
+                        ) : null}
+                      </span>
+                    </div>
+                    <div style={compactGridStyle}>
+                      <div>
+                        <p style={labelStyle}>{copy.linkedSurface}</p>
+                        <p style={mutedTextStyle}>{getLocalizedText(item.surface, locale)}</p>
+                      </div>
+                      <div>
+                        <p style={labelStyle}>{copy.ownerRole}</p>
+                        <p style={mutedTextStyle}>{readableCode(item.ownerRole)}</p>
+                      </div>
+                      <div>
+                        <p style={labelStyle}>{copy.sourceRequirement}</p>
+                        <p style={mutedTextStyle}>{item.sourceRequirement}</p>
+                      </div>
+                    </div>
+                    <p style={mutedTextStyle}>
+                      {copy.evidence}: {getLocalizedText(item.evidence, locale)}
+                    </p>
+                    <p style={mutedTextStyle}>
+                      {copy.nextAction}: {getLocalizedText(item.nextAction, locale)}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </article>
           ))}
         </div>
