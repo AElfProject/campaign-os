@@ -57,6 +57,9 @@ import type {
   ReferralSummary,
   ReviewSeverity,
   TaskVerificationStatus,
+  TranslationCompareField,
+  TranslationComparisonRow,
+  TranslationLocaleItem,
   TranslationManagerReadModel,
   TranslationReviewPanel,
   UserWinnersExportRow,
@@ -125,6 +128,11 @@ const noAutoPublishNotice: LocalizedText = {
   "zh-CN": "AI 生成翻译必须经过人工审核后才能发布。",
 };
 
+const compareReviewPrompt: LocalizedText = {
+  "en-US": "Compare the zh-CN draft with the English source before marking it reviewed or publishing a revision.",
+  "zh-CN": "标记已审核或发布版本前，先将 zh-CN 草稿与英文源内容对照。",
+};
+
 const aiContentBoundary = {
   title: {
     "en-US": "No auto-publish boundary",
@@ -165,6 +173,37 @@ const localeLabels: Record<ContentRevision["locale"], LocalizedText> = {
     "en-US": "Chinese draft",
     "zh-CN": "中文草稿",
   },
+};
+
+const comparisonFieldLabels: Record<TranslationCompareField, LocalizedText> = {
+  description: {
+    "en-US": "Description",
+    "zh-CN": "活动描述",
+  },
+  rewardDisclaimer: {
+    "en-US": "Reward disclaimer",
+    "zh-CN": "奖励声明",
+  },
+  socialPost: {
+    "en-US": "Social post",
+    "zh-CN": "社交文案",
+  },
+  title: {
+    "en-US": "Campaign title",
+    "zh-CN": "活动标题",
+  },
+};
+
+const comparisonFields: TranslationCompareField[] = [
+  "title",
+  "description",
+  "socialPost",
+  "rewardDisclaimer",
+];
+
+const missingTargetDraft: LocalizedText = {
+  "en-US": "Missing target draft; English fallback is active until translation review is complete.",
+  "zh-CN": "缺少目标语言草稿；翻译审核完成前使用英文回退。",
 };
 
 const contractModeLabels: Record<ContractMode, LocalizedText> = {
@@ -303,6 +342,68 @@ const createTranslationPanel = (
     nextAction: nextActionForRevision(revision),
   };
 };
+
+const humanReviewedNote: LocalizedText = {
+  "en-US": "Human review is complete; this translation can move toward publish revision.",
+  "zh-CN": "人工审核已完成；该翻译可进入发布版本流程。",
+};
+
+const fallbackReviewNote: LocalizedText = {
+  "en-US": "AI draft or missing translation falls back to English until human review is complete.",
+  "zh-CN": "AI 草稿或缺失翻译在人工审核完成前回退展示英文。",
+};
+
+const createTranslationLocaleItems = (
+  supportedLocales: readonly ContentRevision["locale"][],
+  panels: readonly TranslationReviewPanel[],
+): TranslationLocaleItem[] =>
+  supportedLocales.map((locale) => {
+    const panel = panels.find((candidate) => candidate.locale === locale);
+    const fallbackToEnglish = locale !== "en-US" && (panel?.fallbackToEnglish ?? true);
+    const humanReviewed = panel?.humanReviewed ?? false;
+
+    return {
+      locale,
+      label: localeLabels[locale],
+      role: locale === "en-US" ? "source" : "translation",
+      isDefault: locale === "en-US",
+      isFallback: locale === "en-US",
+      status: panel?.status ?? "empty",
+      publishState: panel?.publishState ?? (locale === "en-US" ? "blocker" : "warning"),
+      fallbackToEnglish,
+      humanReviewed,
+    };
+  });
+
+const valueForComparisonField = (
+  panel: TranslationReviewPanel | undefined,
+  field: TranslationCompareField,
+) => panel?.[field]?.trim() ?? "";
+
+const createTranslationComparisonRows = (
+  sourcePanel: TranslationReviewPanel | undefined,
+  targetPanel: TranslationReviewPanel | undefined,
+): TranslationComparisonRow[] =>
+  comparisonFields.map((field) => {
+    const sourceValue = valueForComparisonField(sourcePanel, field);
+    const targetValue = valueForComparisonField(targetPanel, field);
+    const fallbackToEnglish = targetPanel?.fallbackToEnglish ?? true;
+    const humanReviewed = targetPanel?.humanReviewed ?? false;
+
+    return {
+      id: field,
+      label: comparisonFieldLabels[field],
+      sourceLocale: "en-US",
+      targetLocale: targetPanel?.locale ?? "zh-CN",
+      sourceValue: sourceValue || missingTargetDraft["en-US"],
+      targetValue: targetValue || sourceValue || missingTargetDraft["en-US"],
+      targetStatus: targetPanel?.status ?? "empty",
+      targetPublishState: targetPanel?.publishState ?? "warning",
+      fallbackToEnglish,
+      humanReviewed,
+      reviewNote: humanReviewed ? humanReviewedNote : fallbackReviewNote,
+    };
+  });
 
 const releaseReadyLifecycles: AiContentArtifactLifecycle[] = [
   "human_approved",
@@ -2459,6 +2560,8 @@ export const createTranslationManagerReadModel = (
   const panels = campaign.contentRevisions
     .filter((revision) => campaign.supportedLocales.includes(revision.locale))
     .map(createTranslationPanel);
+  const englishPanel = panels.find((panel) => panel.locale === "en-US");
+  const targetPanel = panels.find((panel) => panel.locale === "zh-CN");
 
   return {
     campaignId: campaign.id,
@@ -2467,6 +2570,8 @@ export const createTranslationManagerReadModel = (
     supportedLocales: [...campaign.supportedLocales],
     sourceLocale: "en-US",
     panels,
+    localeItems: createTranslationLocaleItems(campaign.supportedLocales, panels),
+    comparisonRows: createTranslationComparisonRows(englishPanel, targetPanel),
     rewardDisclaimers: panels.map((panel) => ({
       locale: panel.locale,
       disclaimer: panel.rewardDisclaimer,
@@ -2474,6 +2579,7 @@ export const createTranslationManagerReadModel = (
       fallbackToEnglish: panel.fallbackToEnglish,
       publishState: panel.publishState,
     })),
+    compareReviewPrompt,
     noAutoPublishNotice,
   };
 };

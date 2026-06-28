@@ -51,6 +51,29 @@ describe("Campaign OS domain foundation", () => {
     expect(translationManager.supportedLocales).toEqual(["en-US", "zh-CN"]);
     expect(translationManager.supportedLocales).not.toContain("zh-TW");
     expect(translationManager.noAutoPublishNotice["en-US"]).toContain("cannot auto-publish");
+    expect(translationManager.compareReviewPrompt["en-US"]).toContain("Compare the zh-CN draft");
+    expect(translationManager.localeItems).toEqual([
+      expect.objectContaining({
+        locale: "en-US",
+        role: "source",
+        isDefault: true,
+        isFallback: true,
+        status: "published",
+        publishState: "ready",
+        fallbackToEnglish: false,
+        humanReviewed: true,
+      }),
+      expect.objectContaining({
+        locale: "zh-CN",
+        role: "translation",
+        isDefault: false,
+        isFallback: false,
+        status: "ai_draft",
+        publishState: "warning",
+        fallbackToEnglish: true,
+        humanReviewed: false,
+      }),
+    ]);
     expect(englishPanel).toMatchObject({
       locale: "en-US",
       sourceLocale: "en-US",
@@ -73,6 +96,36 @@ describe("Campaign OS domain foundation", () => {
     expect(chinesePanel?.nextAction["en-US"]).toBe(
       "AI generated translation cannot auto-publish before human review.",
     );
+  });
+
+  it("builds field-level translation comparison rows from English source and zh-CN draft", () => {
+    const translationManager = createTranslationManagerReadModel(campaignDetail);
+    const rowsById = Object.fromEntries(
+      translationManager.comparisonRows.map((row) => [row.id, row]),
+    );
+
+    expect(translationManager.comparisonRows.map((row) => row.id)).toEqual([
+      "title",
+      "description",
+      "socialPost",
+      "rewardDisclaimer",
+    ]);
+    expect(rowsById.title).toMatchObject({
+      sourceLocale: "en-US",
+      targetLocale: "zh-CN",
+      sourceValue: "Awaken Sprint",
+      targetValue: "Awaken 冲刺活动",
+      targetStatus: "ai_draft",
+      targetPublishState: "warning",
+      fallbackToEnglish: true,
+      humanReviewed: false,
+    });
+    expect(rowsById.rewardDisclaimer.sourceValue).toContain(
+      "Export winners does not distribute rewards",
+    );
+    expect(rowsById.rewardDisclaimer.targetValue).toContain("导出 winners 不等于发奖");
+    expect(rowsById.rewardDisclaimer.reviewNote["en-US"]).toContain("falls back to English");
+    expect(JSON.stringify(translationManager)).not.toContain("zh-TW");
   });
 
   it("derives reward disclaimer review rows from translation state", () => {

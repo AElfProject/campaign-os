@@ -88,7 +88,10 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText("Chinese AI draft").length).toBeGreaterThan(0);
     expect(screen.getAllByText("AI generated translation cannot auto-publish before human review.").length).toBeGreaterThan(0);
     expect(screen.getByText("Chinese draft falls back to English until a project owner completes human review.")).toBeInTheDocument();
-    for (const action of ["Generate with AI", "Mark reviewed", "Publish revision", "Use English fallback"]) {
+    expect(screen.getByLabelText("Compare with English")).toBeInTheDocument();
+    expect(screen.getByText("Source and draft comparison")).toBeInTheDocument();
+    expect(screen.getAllByText("Translation draft · zh-CN").length).toBeGreaterThan(0);
+    for (const action of ["Generate with AI", "Compare with English", "Mark reviewed", "Publish revision", "Use English fallback"]) {
       expect(screen.getByRole("button", { name: action })).toBeInTheDocument();
     }
     expect(screen.getByLabelText("Contract Impact Review")).toBeInTheDocument();
