@@ -576,6 +576,8 @@ export interface AdminContractReviewCenter {
 
 export type ContractInterfaceReadiness = "ready" | "warning" | "blocker" | "info";
 export type ContractInterfacePhase = "MVP" | "P1" | "P2" | "N/A";
+export type DeliveryChecklistStatus = "covered" | "needs_review" | "blocked" | "deferred";
+export type DeliveryChecklistGroupId = "product" | "architecture" | "ui" | "contract" | "qa";
 
 export interface ContractInterfaceMethod {
   name: string;
@@ -624,6 +626,53 @@ export interface ContractInterfaceMatrixConsole {
   summary: ContractInterfaceMatrixSummary;
   groups: ContractInterfaceGroup[];
   changeMatrix: ContractChangeMatrixRow[];
+}
+
+export interface DeliveryChecklistItem {
+  id: string;
+  groupId: DeliveryChecklistGroupId;
+  label: LocalizedText;
+  status: DeliveryChecklistStatus;
+  ownerRole: OwnerRole;
+  surface: LocalizedText;
+  evidence: LocalizedText;
+  nextAction: LocalizedText;
+  sourceRequirement: string;
+  blocksDelivery: boolean;
+}
+
+export interface DeliveryChecklistCounts {
+  covered: number;
+  needsReview: number;
+  blocked: number;
+  deferred: number;
+}
+
+export interface DeliveryChecklistGroup {
+  id: DeliveryChecklistGroupId;
+  title: LocalizedText;
+  sourceReference: string;
+  summary: LocalizedText;
+  counts: DeliveryChecklistCounts;
+  items: DeliveryChecklistItem[];
+}
+
+export interface DeliveryChecklistReadinessSummary {
+  totalItems: number;
+  coveredItems: number;
+  needsReviewItems: number;
+  blockedItems: number;
+  deferredItems: number;
+  groupCount: number;
+  nextAction: LocalizedText;
+}
+
+export interface DeliveryChecklistReadinessConsole {
+  summary: DeliveryChecklistReadinessSummary;
+  boundary: LocalizedText;
+  groups: DeliveryChecklistGroup[];
+  blockers: DeliveryChecklistItem[];
+  needsReview: DeliveryChecklistItem[];
 }
 
 export interface ExportPreviewRow {
@@ -971,6 +1020,7 @@ export interface ApiSkillContractSurface {
 export interface AdminOpsReadModel {
   campaignId: string;
   reviewQueue: ReviewItem[];
+  deliveryChecklistReadiness: DeliveryChecklistReadinessConsole;
   contractReviewCenter: AdminContractReviewCenter;
   contractInterfaceMatrix: ContractInterfaceMatrixConsole;
   aiContentPack: AiContentPackWorkbench;
