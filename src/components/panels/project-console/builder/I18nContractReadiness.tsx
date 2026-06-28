@@ -11,6 +11,8 @@ import {
   type PublishState,
   type ReviewSeverity,
   type SupportedLocale,
+  type TranslationComparisonRow,
+  type TranslationLocaleItem,
   type TranslationReviewPanel,
 } from "../../../../domain";
 import { ContractModeBadge, LocaleStatusBadge, PublishStateBadge, ReviewSeverityBadge } from "../../../badges/Badges";
@@ -26,6 +28,8 @@ const copy = {
     aiDraft: "AI draft",
     blockedHighImpact: "Blocked pending high-impact manual review",
     boundary: "Boundary",
+    compareReview: "Compare with English",
+    compareReviewPrompt: "Source and draft comparison",
     contractNoExecution: "This review workbench does not distribute rewards, take reward custody, or execute contract transactions.",
     contractImpact: "Contract impact",
     contractReview: "Contract Impact Review",
@@ -38,6 +42,8 @@ const copy = {
     futurePlanned: "Future / planned",
     generateWithAi: "Generate with AI",
     highImpactBlocker: "High-impact manual review blocker",
+    humanReview: "Human review",
+    localeList: "Locale list",
     markReviewed: "Mark reviewed",
     nextAction: "Next action",
     notPublished: "Not published",
@@ -47,12 +53,16 @@ const copy = {
     reviewed: "Reviewed",
     rewardBoundary: "Reward boundary",
     rewardDisclaimer: "Reward disclaimer review",
+    reviewNote: "Review note",
     selected: "Selected",
     socialPost: "Social post",
+    sourceColumn: "English source",
     sourceLocale: "Source locale",
     supportedLocales: "Supported locales",
+    targetColumn: "Translation draft",
     title: "i18n, contract, and review gates",
     translationManager: "Translation Manager",
+    translationRole: "Translation",
     useEnglishFallback: "Use English fallback",
     zhDraft: "Chinese AI draft",
   },
@@ -61,6 +71,8 @@ const copy = {
     aiDraft: "AI 草稿",
     blockedHighImpact: "等待高影响人工审核，已阻断",
     boundary: "边界",
+    compareReview: "对照英文",
+    compareReviewPrompt: "源内容与草稿对照",
     contractNoExecution: "这个审核工作台不会发放奖励、托管奖励，也不会执行合约交易。",
     contractImpact: "合约影响",
     contractReview: "合约影响审核",
@@ -73,6 +85,8 @@ const copy = {
     futurePlanned: "未来规划",
     generateWithAi: "用 AI 生成",
     highImpactBlocker: "高影响人工审核阻断",
+    humanReview: "人工审核",
+    localeList: "语言列表",
     markReviewed: "标记已审核",
     nextAction: "下一步",
     notPublished: "未发布",
@@ -82,12 +96,16 @@ const copy = {
     reviewed: "已审核",
     rewardBoundary: "奖励边界",
     rewardDisclaimer: "奖励声明审核",
+    reviewNote: "审核说明",
     selected: "已选择",
     socialPost: "社交文案",
+    sourceColumn: "英文源内容",
     sourceLocale: "源语言",
     supportedLocales: "支持语言",
+    targetColumn: "翻译草稿",
     title: "多语言、合约与审核门禁",
     translationManager: "翻译管理",
+    translationRole: "翻译",
     useEnglishFallback: "使用英文回退",
     zhDraft: "中文 AI 草稿",
   },
@@ -197,6 +215,32 @@ const listStyle: CSSProperties = {
   padding: 0,
 };
 
+const comparisonRowStyle: CSSProperties = {
+  borderTop: "1px solid #dbe6f4",
+  display: "grid",
+  gap: 10,
+  gridTemplateColumns: "minmax(120px, 0.8fr) minmax(180px, 1.4fr) minmax(180px, 1.4fr)",
+  padding: "12px 0",
+};
+
+const localeItemStyle: CSSProperties = {
+  background: "#f8fbff",
+  border: "1px solid #dbe6f4",
+  borderRadius: 8,
+  display: "grid",
+  gap: 8,
+  minWidth: 0,
+  padding: 10,
+};
+
+const mediaStyle = `
+@media (max-width: 720px) {
+  [data-translation-compare-row] {
+    grid-template-columns: 1fr !important;
+  }
+}
+`;
+
 const contractModeState = (option: ContractImpactReviewOption): PublishState =>
   option.publishState;
 
@@ -235,6 +279,22 @@ const localeStatusFromRevision = (panel: TranslationReviewPanel) => {
   return panel.aiDraft ? "ai_draft" : "missing";
 };
 
+const localeStatusFromItem = (item: TranslationLocaleItem) => {
+  if (item.status === "published") {
+    return "published";
+  }
+
+  if (item.humanReviewed) {
+    return "reviewed";
+  }
+
+  if (item.fallbackToEnglish) {
+    return "fallback";
+  }
+
+  return item.status === "ai_draft" ? "ai_draft" : "missing";
+};
+
 const modeGateLabel = (
   option: ContractImpactReviewOption,
   selectedMode: CampaignShellDetail["contractMode"],
@@ -257,6 +317,7 @@ const modeGateLabel = (
 
 const reviewActions = (labels: (typeof copy)[SupportedLocale]) => [
   { Icon: Sparkles, label: labels.generateWithAi },
+  { Icon: Languages, label: labels.compareReview },
   { Icon: CheckCircle2, label: labels.markReviewed },
   { Icon: Upload, label: labels.publishRevision },
   { Icon: RotateCcw, label: labels.useEnglishFallback },
@@ -309,6 +370,92 @@ const TranslationPanelCard = ({
     <p style={bodyStyle}>{panel.socialPost}</p>
     <p style={labelStyle}>{labels.nextAction}</p>
     <p style={bodyStyle}>{getLocalizedText(panel.nextAction, locale)}</p>
+  </article>
+);
+
+const TranslationLocaleList = ({
+  labels,
+  locale,
+  localeItems,
+}: {
+  labels: (typeof copy)[SupportedLocale];
+  locale: SupportedLocale;
+  localeItems: TranslationLocaleItem[];
+}) => (
+  <div>
+    <p style={labelStyle}>{labels.localeList}</p>
+    <div style={gridStyle}>
+      {localeItems.map((item) => (
+        <div key={item.locale} style={localeItemStyle}>
+          <span style={badgeRowStyle}>
+            <PublishStateBadge label={item.locale} state={item.publishState} />
+            <PublishStateBadge
+              label={item.role === "source" ? labels.sourceLocale : labels.translationRole}
+              state={item.role === "source" ? "ready" : item.publishState}
+            />
+            {item.fallbackToEnglish ? (
+              <PublishStateBadge label={labels.fallback} state="warning" />
+            ) : null}
+            <LocaleStatusBadge
+              label={revisionStatusLabel(item.status, labels)}
+              status={localeStatusFromItem(item)}
+            />
+          </span>
+          <p style={bodyStyle}>{`${item.locale} · ${getLocalizedText(item.label, locale)}`}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+const TranslationCompareConsole = ({
+  labels,
+  locale,
+  rows,
+  reviewPrompt,
+}: {
+  labels: (typeof copy)[SupportedLocale];
+  locale: SupportedLocale;
+  rows: TranslationComparisonRow[];
+  reviewPrompt: string;
+}) => (
+  <article aria-label={labels.compareReview} style={cardStyle}>
+    <div style={statStripStyle}>
+      <span>
+        <p style={labelStyle}>{labels.compareReviewPrompt}</p>
+        <p style={valueStyle}>{labels.compareReview}</p>
+      </span>
+      <PublishStateBadge label={labels.aiDraft} state="warning" />
+    </div>
+    <p style={bodyStyle}>{reviewPrompt}</p>
+    <div style={listStyle}>
+      {rows.map((row) => (
+        <div data-translation-compare-row key={row.id} style={comparisonRowStyle}>
+          <div>
+            <p style={labelStyle}>{getLocalizedText(row.label, locale)}</p>
+            <span style={badgeRowStyle}>
+              <LocaleStatusBadge
+                label={revisionStatusLabel(row.targetStatus, labels)}
+                status={row.fallbackToEnglish ? "fallback" : row.humanReviewed ? "reviewed" : "ai_draft"}
+              />
+              {row.fallbackToEnglish ? (
+                <PublishStateBadge label={labels.fallback} state="warning" />
+              ) : null}
+            </span>
+          </div>
+          <div>
+            <p style={labelStyle}>{`${labels.sourceColumn} · ${row.sourceLocale}`}</p>
+            <p style={bodyStyle}>{row.sourceValue}</p>
+          </div>
+          <div>
+            <p style={labelStyle}>{`${labels.targetColumn} · ${row.targetLocale}`}</p>
+            <p style={bodyStyle}>{row.targetValue}</p>
+            <p style={labelStyle}>{labels.reviewNote}</p>
+            <p style={bodyStyle}>{getLocalizedText(row.reviewNote, locale)}</p>
+          </div>
+        </div>
+      ))}
+    </div>
   </article>
 );
 
@@ -366,6 +513,7 @@ export const I18nContractReadiness = ({
 
   return (
     <section aria-label={labels.title} style={sectionStyle}>
+      <style>{mediaStyle}</style>
       <div style={badgeRowStyle}>
         <h3 style={{ fontSize: 20, lineHeight: 1.2, margin: 0 }}>{labels.title}</h3>
         <PublishStateBadge label={labels.aiDraft} state="warning" />
@@ -383,14 +531,11 @@ export const I18nContractReadiness = ({
             <PublishStateBadge label={`${labels.fallbackLocale}: ${translationManager.fallbackLocale}`} state="warning" />
           </span>
         </div>
-        <div>
-          <p style={labelStyle}>{labels.supportedLocales}</p>
-          <span style={badgeRowStyle}>
-            {translationManager.supportedLocales.map((supportedLocale) => (
-              <PublishStateBadge key={supportedLocale} label={supportedLocale} state="ready" />
-            ))}
-          </span>
-        </div>
+        <TranslationLocaleList
+          labels={labels}
+          locale={locale}
+          localeItems={translationManager.localeItems}
+        />
         <p style={bodyStyle}>{getLocalizedText(translationManager.noAutoPublishNotice, locale)}</p>
         <p style={bodyStyle}>{labels.fallbackWarning}</p>
         <div style={actionRowStyle}>
@@ -408,6 +553,13 @@ export const I18nContractReadiness = ({
           <TranslationPanelCard labels={labels} locale={locale} panel={chinesePanel} />
         ) : null}
       </div>
+
+      <TranslationCompareConsole
+        labels={labels}
+        locale={locale}
+        reviewPrompt={getLocalizedText(translationManager.compareReviewPrompt, locale)}
+        rows={translationManager.comparisonRows}
+      />
 
       <article aria-label={labels.rewardDisclaimer} style={cardStyle}>
         <p style={labelStyle}>{labels.rewardDisclaimer}</p>
