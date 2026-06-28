@@ -22,10 +22,13 @@ import {
   fallbackLocale,
   getWalletBadgeLabel,
   getWalletCompatibilityLabel,
+  isChineseBrowserLanguage,
   isWalletSessionVerified,
   isSupportedLocale,
   leaderboardModes,
   normalizeWalletSession,
+  resolveLocalePreference,
+  shouldRecommendChineseLocale,
   supportedLocales,
   taskTemplateLibrary,
   walletAdapterFixtures,
@@ -39,6 +42,68 @@ describe("Campaign OS domain foundation", () => {
     expect(fallbackLocale).toBe("en-US");
     expect(isSupportedLocale("zh-CN")).toBe(true);
     expect(isSupportedLocale("zh-TW")).toBe(false);
+  });
+
+  it("resolves locale preference with URL, profile, storage, and default precedence", () => {
+    expect(
+      resolveLocalePreference({
+        profileLocale: "en-US",
+        storedLocale: "en-US",
+        urlLocale: "zh-CN",
+      }),
+    ).toEqual({ locale: "zh-CN", source: "url" });
+
+    expect(
+      resolveLocalePreference({
+        profileLocale: "zh-CN",
+        storedLocale: "en-US",
+        urlLocale: "fr-FR",
+      }),
+    ).toEqual({ locale: "zh-CN", source: "profile" });
+
+    expect(
+      resolveLocalePreference({
+        profileLocale: "",
+        storedLocale: "zh-CN",
+        urlLocale: "zh-TW",
+      }),
+    ).toEqual({ locale: "zh-CN", source: "storage" });
+
+    expect(resolveLocalePreference({ storedLocale: "zh-TW" })).toEqual({
+      locale: "en-US",
+      source: "default",
+    });
+  });
+
+  it("keeps browser language as a recommendation without adding runtime locales", () => {
+    const defaultResolution = resolveLocalePreference({});
+    const storedResolution = resolveLocalePreference({ storedLocale: "zh-CN" });
+
+    expect(isChineseBrowserLanguage("zh")).toBe(true);
+    expect(isChineseBrowserLanguage("zh-Hans-CN")).toBe(true);
+    expect(isChineseBrowserLanguage("en-US")).toBe(false);
+    expect(
+      shouldRecommendChineseLocale({
+        browserLanguages: ["en-US", "zh-CN"],
+        promptDismissed: false,
+        resolution: defaultResolution,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRecommendChineseLocale({
+        browserLanguages: ["zh-CN"],
+        promptDismissed: false,
+        resolution: storedResolution,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRecommendChineseLocale({
+        browserLanguages: ["zh-CN"],
+        promptDismissed: true,
+        resolution: defaultResolution,
+      }),
+    ).toBe(false);
+    expect(JSON.stringify(defaultResolution)).not.toContain("zh-TW");
   });
 
   it("derives translation manager review state for supported MVP locales only", () => {

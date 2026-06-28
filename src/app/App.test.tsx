@@ -1,11 +1,31 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { EXPORT_CSV_COLUMNS } from "../domain";
+import {
+  browserLocalePromptDismissedStorageKey,
+  localePreferenceStorageKey,
+} from "../i18n/useLocale";
 import { App } from "./App";
 
 describe("Campaign OS app shell", () => {
   const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
+
+  const setNavigatorLanguages = (languages: readonly string[]) => {
+    Object.defineProperty(window.navigator, "languages", {
+      configurable: true,
+      value: languages,
+    });
+    Object.defineProperty(window.navigator, "language", {
+      configurable: true,
+      value: languages[0] ?? "en-US",
+    });
+  };
+
+  afterEach(() => {
+    window.localStorage.clear();
+    setNavigatorLanguages(["en-US"]);
+  });
 
   it("renders the default English shell with all surfaces exposed", () => {
     render(<App />);
@@ -18,6 +38,60 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByText("Connected wallets")).toBeInTheDocument();
     expect(screen.getAllByText("Wallet type verified").length).toBeGreaterThan(0);
     expect(screen.getByText("2F4...9aB")).toBeInTheDocument();
+  });
+
+  it("prompts Chinese browser users without changing the English default", () => {
+    setNavigatorLanguages(["zh-CN"]);
+
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: "Campaign operations shell" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Your browser language is Chinese. Switch to 简体中文?"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Language")).toHaveValue("en-US");
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to 简体中文" }));
+
+    expect(screen.getByRole("heading", { name: "活动运营工作台" })).toBeInTheDocument();
+    expect(screen.getByLabelText("语言")).toHaveValue("zh-CN");
+    expect(window.localStorage.getItem(localePreferenceStorageKey)).toBe("zh-CN");
+    expect(
+      screen.queryByText("Your browser language is Chinese. Switch to 简体中文?"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("dismisses the Chinese browser prompt without switching locale", () => {
+    setNavigatorLanguages(["zh-Hans-CN"]);
+
+    render(<App />);
+
+    expect(
+      screen.getByText("Your browser language is Chinese. Switch to 简体中文?"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep English" }));
+
+    expect(screen.getByRole("heading", { name: "Campaign operations shell" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Language")).toHaveValue("en-US");
+    expect(window.localStorage.getItem(browserLocalePromptDismissedStorageKey)).toBe("true");
+    expect(
+      screen.queryByText("Your browser language is Chinese. Switch to 简体中文?"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("restores saved zh-CN preference without showing the browser prompt", () => {
+    setNavigatorLanguages(["zh-CN"]);
+    window.localStorage.setItem(localePreferenceStorageKey, "zh-CN");
+
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: "活动运营工作台" })).toBeInTheDocument();
+    expect(screen.getByLabelText("语言")).toHaveValue("zh-CN");
+    expect(
+      screen.queryByText("Your browser language is Chinese. Switch to 简体中文?"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
 
   it("switches major shell copy manually to zh-CN", () => {

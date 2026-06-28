@@ -1,10 +1,14 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
 import { EXPORT_CSV_COLUMNS } from "../../../domain";
 
 describe("Project Console shell", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
   it("renders the default English Project Console with seeded operational data", () => {
     render(<App />);
 
