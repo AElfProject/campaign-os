@@ -5,6 +5,7 @@ import {
   createAdminOpsReadModel,
   getLocalizedText,
   type CampaignShellDetail,
+  type ContractInterfaceReadiness,
   type ContractMode,
   type ContractReviewChecklistStatus,
   type AiContentArtifactLifecycle,
@@ -182,6 +183,9 @@ const signalState = (severity: SignalSeverity) =>
 const checklistStatusState = (status: ContractReviewChecklistStatus) =>
   status === "blocked" ? "blocker" : status === "warning" ? "warning" : "ready";
 
+const contractInterfaceReadinessState = (readiness: ContractInterfaceReadiness) =>
+  readiness === "blocker" ? "blocker" : readiness === "warning" ? "warning" : "ready";
+
 const aiContentLifecycleState = (lifecycle: AiContentArtifactLifecycle) =>
   lifecycle === "ai_draft" || lifecycle === "edited" ? "warning" : "ready";
 
@@ -247,6 +251,7 @@ export const AdminOpsPanel = ({
     campaign.contentRevisions,
   );
   const contractReviewCenter = adminOps.contractReviewCenter;
+  const contractInterfaceMatrix = adminOps.contractInterfaceMatrix;
   const columnContract = adminOps.exportBatch.columns.join(",");
   const warningCount = campaign.publishReadiness.warnings.length;
   const blockerCount = contractClaimReadiness.blockers.length;
@@ -533,6 +538,165 @@ export const AdminOpsPanel = ({
               </p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.companionContracts}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.contractInterfaceMatrixConsole}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${contractInterfaceMatrix.summary.totalContracts} ${copy.totalContracts}`}
+              tone="info"
+            />
+            <Badge
+              label={`${contractInterfaceMatrix.summary.totalMethods} ${copy.totalMethods}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${contractInterfaceMatrix.summary.blockedRows} ${copy.blocker}`}
+              state={contractInterfaceMatrix.summary.blockedRows > 0 ? "blocker" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{getLocalizedText(contractInterfaceMatrix.summary.boundary, locale)}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.noAbiGeneration} · {copy.noLiveContractTransaction} ·{" "}
+            {copy.noRewardCustodyDistribution}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.companionContracts}</p>
+            <p style={valueStyle}>{contractInterfaceMatrix.summary.totalContracts}</p>
+            <p style={mutedTextStyle}>CampaignRegistryV2 / Points / Referral / Eligibility</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.contractMethods}</p>
+            <p style={valueStyle}>{contractInterfaceMatrix.summary.totalMethods}</p>
+            <p style={mutedTextStyle}>{copy.noLiveContractTransaction}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.priorityPhase}</p>
+            <p style={valueStyle}>{contractInterfaceMatrix.summary.p1Rows}</p>
+            <p style={mutedTextStyle}>P1 {copy.changeMatrix}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.blocker}</p>
+            <p style={valueStyle}>{contractInterfaceMatrix.summary.blockedRows}</p>
+            <p style={mutedTextStyle}>{copy.noRewardCustodyDistribution}</p>
+          </article>
+        </div>
+        <div style={gridStyle}>
+          {contractInterfaceMatrix.groups.map((group) => (
+            <article key={group.contractName} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.companionContracts}</p>
+                  <strong>{group.contractName}</strong>
+                </div>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <Badge label={group.phase} tone="info" />
+                  <PublishStateBadge
+                    label={group.readiness}
+                    state={contractInterfaceReadinessState(group.readiness)}
+                  />
+                </span>
+              </div>
+              <p style={mutedTextStyle}>{getLocalizedText(group.purpose, locale)}</p>
+              <p style={mutedTextStyle}>
+                {copy.onChainBoundary}: {getLocalizedText(group.boundary, locale)}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.nextAction}: {getLocalizedText(group.nextAction, locale)}
+              </p>
+              <div style={stackStyle}>
+                <p style={labelStyle}>{copy.contractMethods}</p>
+                {group.methods.map((method) => (
+                  <div
+                    key={`${group.contractName}-${method.name}`}
+                    style={{
+                      borderTop: "1px solid #dbe6f4",
+                      display: "grid",
+                      gap: 8,
+                      paddingTop: 10,
+                    }}
+                  >
+                    <div style={rowStyle}>
+                      <strong>{method.name}</strong>
+                      <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        <Badge label={method.phase} tone="info" />
+                        <PublishStateBadge
+                          label={method.readiness}
+                          state={contractInterfaceReadinessState(method.readiness)}
+                        />
+                      </span>
+                    </div>
+                    <code style={codeListStyle}>{method.signature}</code>
+                    <p style={mutedTextStyle}>{getLocalizedText(method.purpose, locale)}</p>
+                    <p style={mutedTextStyle}>
+                      {copy.onChainBoundary}: {getLocalizedText(method.boundary, locale)}
+                    </p>
+                    <p style={mutedTextStyle}>
+                      {copy.nextAction}: {getLocalizedText(method.nextAction, locale)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+        <div style={rowStyle}>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.changeMatrix}</h3>
+          <Badge
+            label={`${contractInterfaceMatrix.summary.p1Rows} P1 / ${contractInterfaceMatrix.summary.blockedRows} ${copy.blocker}`}
+            tone="warning"
+          />
+        </div>
+        <div style={scrollContainerStyle}>
+          <table style={{ ...tableStyle, minWidth: 1280 }}>
+            <thead>
+              <tr>
+                <th style={thStyle}>{copy.category}</th>
+                <th style={thStyle}>{copy.currentMvp}</th>
+                <th style={thStyle}>{copy.recommendedV2}</th>
+                <th style={thStyle}>{copy.priorityPhase}</th>
+                <th style={thStyle}>{copy.ownerRole}</th>
+                <th style={thStyle}>{copy.status}</th>
+                <th style={thStyle}>{copy.detail}</th>
+                <th style={thStyle}>{copy.nextAction}</th>
+                <th style={thStyle}>{copy.onChainBoundary}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {contractInterfaceMatrix.changeMatrix.map((row) => (
+                <tr key={row.area["en-US"]}>
+                  <td style={tdStyle}>
+                    <strong>{getLocalizedText(row.area, locale)}</strong>
+                  </td>
+                  <td style={tdStyle}>{getLocalizedText(row.currentMvp, locale)}</td>
+                  <td style={tdStyle}>{getLocalizedText(row.recommendedV2, locale)}</td>
+                  <td style={tdStyle}>{row.priority}</td>
+                  <td style={tdStyle}>{readableCode(row.ownerRole)}</td>
+                  <td style={tdStyle}>
+                    <PublishStateBadge
+                      label={row.readiness}
+                      state={contractInterfaceReadinessState(row.readiness)}
+                    />
+                  </td>
+                  <td style={tdStyle}>{getLocalizedText(row.notes, locale)}</td>
+                  <td style={tdStyle}>{getLocalizedText(row.nextAction, locale)}</td>
+                  <td style={tdStyle}>{getLocalizedText(row.boundary, locale)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
 

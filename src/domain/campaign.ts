@@ -18,9 +18,15 @@ import type {
   ContentRevision,
   ContractImpactReviewModel,
   ContractImpactReviewOption,
+  ContractChangeMatrixRow,
   ContractReviewChecklistItem,
   ContractMode,
   ContractEvolutionStep,
+  ContractInterfaceGroup,
+  ContractInterfaceMatrixConsole,
+  ContractInterfaceMethod,
+  ContractInterfacePhase,
+  ContractInterfaceReadiness,
   DimensionSplit,
   EligibilityResult,
   EcosystemNextActionProduct,
@@ -2011,6 +2017,752 @@ const createAdminContractReviewCenter = (
   };
 };
 
+const contractInterfaceBoundary: LocalizedText = {
+  "en-US": "Seeded/local contract interface matrix only. No ABI generation, live contract transaction, backend call, wallet signing, reward custody, or reward distribution is executed.",
+  "zh-CN": "仅 seeded/本地合约接口矩阵。不会生成 ABI、执行真实合约交易、调用后端、钱包签名、托管奖励或发奖。",
+};
+
+const companionContractBoundary: LocalizedText = {
+  "en-US": "Companion contracts are planning surfaces for auditability; Campaign OS remains off-chain for MVP operations.",
+  "zh-CN": "Companion contracts 仅作为透明度规划面；Campaign OS 的 MVP 操作仍保持链下。",
+};
+
+const noRewardCustodyBoundary: LocalizedText = {
+  "en-US": "Campaign OS does not custody or distribute rewards; the campaign project owns reward fulfillment.",
+  "zh-CN": "Campaign OS 不托管也不发放奖励；奖励履约由活动项目方负责。",
+};
+
+const createContractMethod = ({
+  boundary = companionContractBoundary,
+  name,
+  nextAction,
+  ownerRole,
+  phase,
+  purpose,
+  readiness,
+  signature,
+}: {
+  boundary?: LocalizedText;
+  name: string;
+  nextAction: LocalizedText;
+  ownerRole: ContractInterfaceMethod["ownerRole"];
+  phase: ContractInterfacePhase;
+  purpose: LocalizedText;
+  readiness: ContractInterfaceReadiness;
+  signature: string;
+}): ContractInterfaceMethod => ({
+  boundary,
+  name,
+  nextAction,
+  ownerRole,
+  phase,
+  purpose,
+  readiness,
+  signature,
+});
+
+const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
+  {
+    contractName: "CampaignRegistryV2",
+    phase: "P1",
+    readiness: "warning",
+    purpose: {
+      "en-US": "Records campaign owner, status, wallet policy, metadata URI/hash, and task config hash for later transparency.",
+      "zh-CN": "记录活动 owner、状态、钱包策略、metadata URI/hash 与任务配置 hash，用于后续透明度增强。",
+    },
+    ownerRole: "contract_reviewer",
+    boundary: {
+      "en-US": "Full campaign copy, AI drafts, and risk details stay off-chain; this console does not create a registry contract.",
+      "zh-CN": "活动全文、AI 草稿与风控明细保持链下；当前控制台不会创建 registry 合约。",
+    },
+    nextAction: {
+      "en-US": "Keep MVP off-chain and prepare metadata hash review before P1 companion-contract work.",
+      "zh-CN": "MVP 先保持链下，并在 P1 companion contract 前准备 metadata hash 审核。",
+    },
+    methods: [
+      createContractMethod({
+        name: "CreateCampaign",
+        signature: "CreateCampaign(CampaignInfo input) returns (CampaignId)",
+        purpose: {
+          "en-US": "Create an auditable campaign record with owner, status, wallet policy, locales, and metadata hash.",
+          "zh-CN": "创建可审计的活动记录，包含 owner、状态、钱包策略、语言与 metadata hash。",
+        },
+        ownerRole: "contract_reviewer",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Define CampaignInfo schema and authorization before implementation.",
+          "zh-CN": "实现前先定义 CampaignInfo schema 与授权边界。",
+        },
+      }),
+      createContractMethod({
+        name: "UpdateCampaignMetadata",
+        signature: "UpdateCampaignMetadata(UpdateCampaignMetadataInput input)",
+        purpose: {
+          "en-US": "Update metadata URI/hash while keeping translated copy off-chain.",
+          "zh-CN": "更新 metadata URI/hash，同时保持多语言全文链下。",
+        },
+        ownerRole: "contract_reviewer",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Review immutable hash semantics and owner-only update policy.",
+          "zh-CN": "审核 hash 语义与仅 owner 可更新策略。",
+        },
+      }),
+      createContractMethod({
+        name: "UpdateTaskConfigHash",
+        signature: "UpdateTaskConfigHash(UpdateTaskConfigHashInput input)",
+        purpose: {
+          "en-US": "Record a task config hash without storing full task text on-chain.",
+          "zh-CN": "记录任务配置 hash，不把完整任务文案上链。",
+        },
+        ownerRole: "contract_reviewer",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Define task hash canonicalization before contract design.",
+          "zh-CN": "合约设计前先定义任务 hash 规范化方式。",
+        },
+      }),
+      createContractMethod({
+        name: "SetCampaignStatus",
+        signature: "SetCampaignStatus(SetCampaignStatusInput input)",
+        purpose: {
+          "en-US": "Move campaign lifecycle through draft, scheduled, live, paused, ended, and archived states.",
+          "zh-CN": "管理 draft、scheduled、live、paused、ended、archived 等活动生命周期。",
+        },
+        ownerRole: "contract_reviewer",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Align lifecycle transitions with Admin/Ops publish gates.",
+          "zh-CN": "将生命周期流转与 Admin/Ops 发布门禁对齐。",
+        },
+      }),
+      createContractMethod({
+        name: "SetWalletPolicy",
+        signature: "SetWalletPolicy(SetWalletPolicyInput input)",
+        purpose: {
+          "en-US": "Set ANY, AA_ONLY, or EOA_ONLY policy for campaign eligibility context.",
+          "zh-CN": "设置 ANY、AA_ONLY 或 EOA_ONLY，用于活动资格上下文。",
+        },
+        ownerRole: "contract_reviewer",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Keep wallet type verification off-chain and store policy only.",
+          "zh-CN": "钱包类型验证保持链下，仅存储策略。",
+        },
+      }),
+      createContractMethod({
+        name: "SetSupportedLocales",
+        signature: "SetSupportedLocales(SetSupportedLocalesInput input)",
+        purpose: {
+          "en-US": "Record supported locale codes without storing localized campaign content.",
+          "zh-CN": "记录支持的语言代码，不存储本地化活动全文。",
+        },
+        ownerRole: "contract_reviewer",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Keep runtime locales limited to en-US and zh-CN until a separate locale expansion is approved.",
+          "zh-CN": "运行时语言保持 en-US 与 zh-CN，除非另行批准语言扩展。",
+        },
+      }),
+      createContractMethod({
+        name: "TransferCampaignOwner",
+        signature: "TransferCampaignOwner(TransferCampaignOwnerInput input)",
+        purpose: {
+          "en-US": "Transfer project-owner authority for a campaign registry record.",
+          "zh-CN": "转移活动 registry 记录的项目方 owner 权限。",
+        },
+        ownerRole: "contract_reviewer",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Require explicit owner transfer review and audit trail.",
+          "zh-CN": "需要明确的 owner 转移审核与审计记录。",
+        },
+      }),
+      createContractMethod({
+        name: "PauseCampaign",
+        signature: "PauseCampaign(CampaignId input)",
+        purpose: {
+          "en-US": "Pause campaign registry state for operational incidents or review holds.",
+          "zh-CN": "在运营事件或审核暂停时暂停活动 registry 状态。",
+        },
+        ownerRole: "internal_operator",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Map pause authority to Admin/Ops incident procedures before enabling.",
+          "zh-CN": "启用前将暂停权限映射到 Admin/Ops 事件流程。",
+        },
+      }),
+      createContractMethod({
+        name: "GetCampaign",
+        signature: "GetCampaign(CampaignId input) returns (CampaignInfo)",
+        purpose: {
+          "en-US": "Read the companion campaign registry record for audit review.",
+          "zh-CN": "读取 companion campaign registry 记录用于审计复核。",
+        },
+        ownerRole: "internal_operator",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Treat as future read-only contract view, not a live MVP dependency.",
+          "zh-CN": "作为未来只读合约视图，不作为 MVP 实时依赖。",
+        },
+      }),
+    ],
+  },
+  {
+    contractName: "CampaignPointsLedgerV2",
+    phase: "P1",
+    readiness: "warning",
+    purpose: {
+      "en-US": "Commits points batch roots for auditability while high-frequency point events remain off-chain by default.",
+      "zh-CN": "提交积分批次 root 用于审计；高频积分事件默认保持链下。",
+    },
+    ownerRole: "contract_reviewer",
+    boundary: {
+      "en-US": "Single-write points are high-transparency optional rows and are not MVP-ready execution paths.",
+      "zh-CN": "单条积分写链属于高透明度可选项，不是 MVP-ready 执行路径。",
+    },
+    nextAction: {
+      "en-US": "Prefer batch root commits; review throughput and dispute handling before single-write points.",
+      "zh-CN": "优先批次 root；单条积分写链前先评审吞吐与争议处理。",
+    },
+    methods: [
+      createContractMethod({
+        name: "CommitPointsBatch",
+        signature: "CommitPointsBatch(CommitPointsBatchInput input)",
+        purpose: {
+          "en-US": "Commit a periodic points root and task records hash for later audit.",
+          "zh-CN": "提交周期性 points root 与 task records hash 供后续审计。",
+        },
+        ownerRole: "internal_operator",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Define batch cadence, root format, and rollback semantics.",
+          "zh-CN": "定义批次周期、root 格式与回滚语义。",
+        },
+      }),
+      createContractMethod({
+        name: "RevokePointsBatch",
+        signature: "RevokePointsBatch(RevokePointsBatchInput input)",
+        purpose: {
+          "en-US": "Revoke a committed points batch using a reason hash.",
+          "zh-CN": "通过 reason hash 撤销已提交的积分批次。",
+        },
+        ownerRole: "contract_reviewer",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Require reviewer approval and dispute notes before revocation.",
+          "zh-CN": "撤销前需要审核人批准与争议说明。",
+        },
+      }),
+      createContractMethod({
+        name: "GetPointsBatch",
+        signature: "GetPointsBatch(GetPointsBatchInput input) returns (PointsBatchInfo)",
+        purpose: {
+          "en-US": "Read a committed points batch root for audit and reconciliation.",
+          "zh-CN": "读取已提交 points batch root 用于审计与对账。",
+        },
+        ownerRole: "internal_operator",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Keep as future read-only reconciliation view.",
+          "zh-CN": "作为未来只读对账视图保留。",
+        },
+      }),
+      createContractMethod({
+        name: "AwardTaskPoints",
+        signature: "AwardTaskPoints(AwardTaskPointsInput input)",
+        purpose: {
+          "en-US": "Optional high-transparency single-write points award for each task event.",
+          "zh-CN": "可选高透明度模式：每个任务事件单条写入积分。",
+        },
+        ownerRole: "contract_reviewer",
+        phase: "P1",
+        readiness: "warning",
+        boundary: {
+          "en-US": "Not MVP-ready; high-frequency O(n) writes can raise cost and dispute risk.",
+          "zh-CN": "非 MVP-ready；高频 O(n) 写入会增加成本与争议风险。",
+        },
+        nextAction: {
+          "en-US": "Use only after throughput, audit, and dispute procedures are approved.",
+          "zh-CN": "仅在吞吐、审计与争议流程批准后使用。",
+        },
+      }),
+      createContractMethod({
+        name: "RevokeTaskPoints",
+        signature: "RevokeTaskPoints(RevokeTaskPointsInput input)",
+        purpose: {
+          "en-US": "Optional high-transparency single-write point revocation for task events.",
+          "zh-CN": "可选高透明度模式：对任务事件单条撤销积分。",
+        },
+        ownerRole: "contract_reviewer",
+        phase: "P1",
+        readiness: "warning",
+        boundary: {
+          "en-US": "Not MVP-ready; use batch revocation unless single-write mode is separately approved.",
+          "zh-CN": "非 MVP-ready；除非单条写链模式单独批准，否则使用批次撤销。",
+        },
+        nextAction: {
+          "en-US": "Keep behind separate high-transparency approval.",
+          "zh-CN": "保留在单独的高透明度审批之后。",
+        },
+      }),
+    ],
+  },
+  {
+    contractName: "ReferralRegistryV2",
+    phase: "P1",
+    readiness: "warning",
+    purpose: {
+      "en-US": "Records referral bindings and qualification hashes to prevent duplicate or self-referral abuse.",
+      "zh-CN": "记录邀请绑定与资格 hash，防止重复邀请或 self-referral 滥用。",
+    },
+    ownerRole: "contract_reviewer",
+    boundary: {
+      "en-US": "Referral evidence and anti-farm details stay off-chain; the contract surface stores binding/hash context only.",
+      "zh-CN": "邀请证据与反刷细节保持链下；合约面仅存绑定/hash 上下文。",
+    },
+    nextAction: {
+      "en-US": "Review binding rules for duplicate, self, and circular referrals before P1.",
+      "zh-CN": "P1 前审核重复、自邀请与循环邀请绑定规则。",
+    },
+    methods: [
+      createContractMethod({
+        name: "BindReferral",
+        signature: "BindReferral(BindReferralInput input)",
+        purpose: {
+          "en-US": "Bind invitee and inviter for an auditable campaign referral relation.",
+          "zh-CN": "绑定 invitee 与 inviter，形成可审计的活动邀请关系。",
+        },
+        ownerRole: "internal_operator",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Validate duplicate, self, and circular referral constraints.",
+          "zh-CN": "验证重复、自邀请与循环邀请约束。",
+        },
+      }),
+      createContractMethod({
+        name: "MarkReferralQualified",
+        signature: "MarkReferralQualified(MarkReferralQualifiedInput input)",
+        purpose: {
+          "en-US": "Mark referral qualification using an evidence hash without exposing review detail.",
+          "zh-CN": "通过 evidence hash 标记邀请资格，不暴露审核细节。",
+        },
+        ownerRole: "internal_operator",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Keep qualification evidence canonicalization off-chain.",
+          "zh-CN": "资格证据规范化保持链下。",
+        },
+      }),
+      createContractMethod({
+        name: "RemoveReferral",
+        signature: "RemoveReferral(RemoveReferralInput input)",
+        purpose: {
+          "en-US": "Remove a referral binding with a reason hash after review.",
+          "zh-CN": "审核后通过 reason hash 移除邀请绑定。",
+        },
+        ownerRole: "contract_reviewer",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Require manual review before removal is reflected in companion state.",
+          "zh-CN": "移除写入 companion 状态前需要人工审核。",
+        },
+      }),
+      createContractMethod({
+        name: "GetReferral",
+        signature: "GetReferral(GetReferralInput input) returns (ReferralInfo)",
+        purpose: {
+          "en-US": "Read referral binding and qualification context for audit review.",
+          "zh-CN": "读取邀请绑定与资格上下文用于审计复核。",
+        },
+        ownerRole: "internal_operator",
+        phase: "P1",
+        readiness: "warning",
+        nextAction: {
+          "en-US": "Treat as future read-only referral review view.",
+          "zh-CN": "作为未来只读邀请审核视图。",
+        },
+      }),
+    ],
+  },
+  {
+    contractName: "EligibilityRootRegistryV2",
+    phase: "P1",
+    readiness: "warning",
+    purpose: {
+      "en-US": "Stores eligibility or winners roots for list-integrity review without distributing rewards.",
+      "zh-CN": "存储资格或 winners root，用于名单完整性审核，不执行发奖。",
+    },
+    ownerRole: "contract_reviewer",
+    boundary: {
+      "en-US": "Eligibility roots prove exported-list integrity only; reward custody and distribution remain outside Campaign OS.",
+      "zh-CN": "资格 root 仅证明导出名单完整性；奖励托管与发放不属于 Campaign OS。",
+    },
+    nextAction: {
+      "en-US": "Define root format, proof inputs, and manual review policy before P1.",
+      "zh-CN": "P1 前定义 root 格式、proof 输入与人工审核策略。",
+    },
+    methods: [
+      createContractMethod({
+        name: "SetEligibilityRoot",
+        signature: "SetEligibilityRoot(SetEligibilityRootInput input)",
+        purpose: {
+          "en-US": "Set an eligibility or winners root after export review.",
+          "zh-CN": "在导出审核后设置资格或 winners root。",
+        },
+        ownerRole: "internal_operator",
+        phase: "P1",
+        readiness: "warning",
+        boundary: noRewardCustodyBoundary,
+        nextAction: {
+          "en-US": "Require export approval and root reproducibility before setting.",
+          "zh-CN": "设置前需要导出批准与 root 可复现性。",
+        },
+      }),
+      createContractMethod({
+        name: "UpdateEligibilityRoot",
+        signature: "UpdateEligibilityRoot(UpdateEligibilityRootInput input)",
+        purpose: {
+          "en-US": "Update an eligibility root when review finds corrections.",
+          "zh-CN": "审核发现修正时更新资格 root。",
+        },
+        ownerRole: "contract_reviewer",
+        phase: "P1",
+        readiness: "warning",
+        boundary: noRewardCustodyBoundary,
+        nextAction: {
+          "en-US": "Require explicit correction reason and reviewer approval.",
+          "zh-CN": "需要明确修正原因与审核人批准。",
+        },
+      }),
+      createContractMethod({
+        name: "GetEligibilityRoot",
+        signature: "GetEligibilityRoot(CampaignId input) returns (EligibilityRootInfo)",
+        purpose: {
+          "en-US": "Read the eligibility root for audit and export reconciliation.",
+          "zh-CN": "读取资格 root 用于审计与导出对账。",
+        },
+        ownerRole: "internal_operator",
+        phase: "P1",
+        readiness: "warning",
+        boundary: noRewardCustodyBoundary,
+        nextAction: {
+          "en-US": "Keep as future read-only proof review view.",
+          "zh-CN": "作为未来只读 proof 审核视图。",
+        },
+      }),
+      createContractMethod({
+        name: "VerifyEligibilityProof",
+        signature: "VerifyEligibilityProof(VerifyEligibilityProofInput input) returns (BoolValue)",
+        purpose: {
+          "en-US": "Verify an eligibility proof against the stored root without running reward distribution.",
+          "zh-CN": "根据已存 root 验证资格 proof，但不执行发奖。",
+        },
+        ownerRole: "internal_operator",
+        phase: "P1",
+        readiness: "warning",
+        boundary: noRewardCustodyBoundary,
+        nextAction: {
+          "en-US": "Review privacy and proof UX before exposing to users.",
+          "zh-CN": "对用户开放前先审核隐私与 proof 体验。",
+        },
+      }),
+    ],
+  },
+];
+
+const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
+  {
+    area: {
+      "en-US": "Campaign config",
+      "zh-CN": "活动配置",
+    },
+    currentMvp: {
+      "en-US": "Off-chain DB",
+      "zh-CN": "链下 DB",
+    },
+    recommendedV2: {
+      "en-US": "CampaignRegistryV2",
+      "zh-CN": "CampaignRegistryV2",
+    },
+    priority: "P1",
+    ownerRole: "contract_reviewer",
+    readiness: "warning",
+    notes: {
+      "en-US": "Store owner, status, wallet policy, and metadata hash for auditability.",
+      "zh-CN": "存储 owner、状态、钱包策略与 metadata hash 用于审计。",
+    },
+    nextAction: {
+      "en-US": "Keep MVP off-chain; prepare registry schema and owner permissions for P1.",
+      "zh-CN": "MVP 保持链下；为 P1 准备 registry schema 与 owner 权限。",
+    },
+    boundary: {
+      "en-US": "Only hash/registry metadata is planned on-chain; campaign copy stays off-chain.",
+      "zh-CN": "仅规划 hash/registry metadata 上链；活动文案保持链下。",
+    },
+  },
+  {
+    area: {
+      "en-US": "Task config",
+      "zh-CN": "任务配置",
+    },
+    currentMvp: {
+      "en-US": "Off-chain DB",
+      "zh-CN": "链下 DB",
+    },
+    recommendedV2: {
+      "en-US": "Task config hash on CampaignRegistryV2",
+      "zh-CN": "CampaignRegistryV2 上的 task config hash",
+    },
+    priority: "P1",
+    ownerRole: "contract_reviewer",
+    readiness: "warning",
+    notes: {
+      "en-US": "Full task text remains off-chain while the hash can prove rule integrity.",
+      "zh-CN": "完整任务文本保持链下，hash 可证明规则完整性。",
+    },
+    nextAction: {
+      "en-US": "Define canonical task-config hashing before contract work.",
+      "zh-CN": "合约工作前定义任务配置 canonical hash。",
+    },
+    boundary: {
+      "en-US": "Task body, social copy, and verifier evidence stay off-chain.",
+      "zh-CN": "任务正文、社交文案与 verifier evidence 保持链下。",
+    },
+  },
+  {
+    area: {
+      "en-US": "Points ledger",
+      "zh-CN": "积分账本",
+    },
+    currentMvp: {
+      "en-US": "Pixiepoints/backend ledger",
+      "zh-CN": "Pixiepoints/backend ledger",
+    },
+    recommendedV2: {
+      "en-US": "Commit points batch root",
+      "zh-CN": "提交 points batch root",
+    },
+    priority: "P1",
+    ownerRole: "internal_operator",
+    readiness: "warning",
+    notes: {
+      "en-US": "Single-write points are optional only and require separate throughput and dispute review.",
+      "zh-CN": "单条积分写链只是可选项，需要单独评估吞吐与争议处理。",
+    },
+    nextAction: {
+      "en-US": "Use batch-root transparency first; do not add live points writes in MVP.",
+      "zh-CN": "先使用 batch-root 透明度；MVP 不增加实时积分写链。",
+    },
+    boundary: {
+      "en-US": "Points calculation and task evidence remain off-chain; only a future root is planned.",
+      "zh-CN": "积分计算与任务证据保持链下；仅规划未来 root。",
+    },
+  },
+  {
+    area: {
+      "en-US": "Referral",
+      "zh-CN": "邀请",
+    },
+    currentMvp: {
+      "en-US": "Backend referral table",
+      "zh-CN": "Backend referral table",
+    },
+    recommendedV2: {
+      "en-US": "ReferralRegistryV2",
+      "zh-CN": "ReferralRegistryV2",
+    },
+    priority: "P1",
+    ownerRole: "contract_reviewer",
+    readiness: "warning",
+    notes: {
+      "en-US": "Prevents self or duplicate referral on-chain while qualification evidence stays private.",
+      "zh-CN": "链上防止自邀请或重复邀请，资格证据保持私有。",
+    },
+    nextAction: {
+      "en-US": "Review duplicate, self, and circular referral rules.",
+      "zh-CN": "审核重复、自邀请与循环邀请规则。",
+    },
+    boundary: {
+      "en-US": "Anti-farm evidence and social account details stay off-chain.",
+      "zh-CN": "反刷证据与社交账号明细保持链下。",
+    },
+  },
+  {
+    area: {
+      "en-US": "Eligibility/winners",
+      "zh-CN": "资格/winners",
+    },
+    currentMvp: {
+      "en-US": "CSV export",
+      "zh-CN": "CSV 导出",
+    },
+    recommendedV2: {
+      "en-US": "EligibilityRootRegistryV2",
+      "zh-CN": "EligibilityRootRegistryV2",
+    },
+    priority: "P1",
+    ownerRole: "contract_reviewer",
+    readiness: "warning",
+    notes: {
+      "en-US": "Root proves exported-list integrity without distributing rewards.",
+      "zh-CN": "Root 证明导出名单完整性，但不发奖。",
+    },
+    nextAction: {
+      "en-US": "Define eligibility root format and review workflow before P1.",
+      "zh-CN": "P1 前定义资格 root 格式与审核流程。",
+    },
+    boundary: noRewardCustodyBoundary,
+  },
+  {
+    area: {
+      "en-US": "Rewards",
+      "zh-CN": "奖励",
+    },
+    currentMvp: {
+      "en-US": "Project handles off-chain",
+      "zh-CN": "项目方链下处理",
+    },
+    recommendedV2: {
+      "en-US": "Contract claim only after separate approval",
+      "zh-CN": "单独批准后才考虑合约领取",
+    },
+    priority: "P2",
+    ownerRole: "contract_reviewer",
+    readiness: "blocker",
+    notes: {
+      "en-US": "Not MVP. Claim mode needs separate security, custody, legal, and audit approval.",
+      "zh-CN": "不是 MVP。Claim mode 需要单独的安全、托管、法律与审计批准。",
+    },
+    nextAction: {
+      "en-US": "Keep reward custody outside Campaign OS and block claim-mode execution.",
+      "zh-CN": "奖励托管保持在 Campaign OS 外部，并阻断 claim-mode 执行。",
+    },
+    boundary: noRewardCustodyBoundary,
+  },
+  {
+    area: {
+      "en-US": "Multilingual content",
+      "zh-CN": "多语言内容",
+    },
+    currentMvp: {
+      "en-US": "DB/i18n service",
+      "zh-CN": "DB/i18n 服务",
+    },
+    recommendedV2: {
+      "en-US": "metadataUri + metadataHash",
+      "zh-CN": "metadataUri + metadataHash",
+    },
+    priority: "P1",
+    ownerRole: "project_owner",
+    readiness: "warning",
+    notes: {
+      "en-US": "Do not store full text on-chain; hashes can support later review.",
+      "zh-CN": "不要把全文上链；hash 可支持后续审核。",
+    },
+    nextAction: {
+      "en-US": "Keep content review in en-US and zh-CN and hash reviewed artifacts only.",
+      "zh-CN": "内容审核保持 en-US 与 zh-CN，仅 hash 已审核产物。",
+    },
+    boundary: {
+      "en-US": "Full translated copy stays off-chain; no additional runtime locale is introduced.",
+      "zh-CN": "完整翻译文案保持链下；不引入额外运行时语言。",
+    },
+  },
+  {
+    area: {
+      "en-US": "Wallet type",
+      "zh-CN": "钱包类型",
+    },
+    currentMvp: {
+      "en-US": "Session metadata",
+      "zh-CN": "Session metadata",
+    },
+    recommendedV2: {
+      "en-US": "WalletPolicy enum only",
+      "zh-CN": "仅 WalletPolicy enum",
+    },
+    priority: "P1",
+    ownerRole: "contract_reviewer",
+    readiness: "warning",
+    notes: {
+      "en-US": "AA/EOA verification remains off-chain while policy can be auditable.",
+      "zh-CN": "AA/EOA 验证保持链下，策略可审计。",
+    },
+    nextAction: {
+      "en-US": "Store policy only; keep wallet proof and session data in local/backend review.",
+      "zh-CN": "仅存储策略；钱包 proof 与 session 数据保留在本地/backend 审核。",
+    },
+    boundary: {
+      "en-US": "Wallet SDK connection, signature checks, and session metadata stay off-chain.",
+      "zh-CN": "钱包 SDK 连接、签名检查与 session metadata 保持链下。",
+    },
+  },
+  {
+    area: {
+      "en-US": "Risk flags",
+      "zh-CN": "风险标记",
+    },
+    currentMvp: {
+      "en-US": "Backend risk service",
+      "zh-CN": "Backend risk service",
+    },
+    recommendedV2: {
+      "en-US": "Do not store full risk details",
+      "zh-CN": "不存储完整风险细节",
+    },
+    priority: "N/A",
+    ownerRole: "internal_operator",
+    readiness: "info",
+    notes: {
+      "en-US": "Avoid leaking anti-sybil strategy; use risk output as review input only.",
+      "zh-CN": "避免泄露反女巫策略；风险输出仅作为审核输入。",
+    },
+    nextAction: {
+      "en-US": "Keep full risk detail off-chain and expose only reviewed outcomes.",
+      "zh-CN": "完整风险明细保持链下，仅展示已审核结果。",
+    },
+    boundary: {
+      "en-US": "Risk detail stays off-chain to protect anti-sybil strategy.",
+      "zh-CN": "风险明细保持链下，以保护反女巫策略。",
+    },
+  },
+];
+
+export const createContractInterfaceMatrixConsole = (): ContractInterfaceMatrixConsole => {
+  const groups = createContractInterfaceGroups();
+  const changeMatrix = createContractChangeMatrix();
+  const methods = groups.flatMap((group) => group.methods);
+
+  return {
+    summary: {
+      totalContracts: groups.length,
+      totalMethods: methods.length,
+      p1Rows: changeMatrix.filter((row) => row.priority === "P1").length,
+      blockedRows: changeMatrix.filter((row) => row.readiness === "blocker").length,
+      warningMethods: methods.filter((method) => method.readiness === "warning").length,
+      boundary: contractInterfaceBoundary,
+    },
+    groups,
+    changeMatrix,
+  };
+};
+
 export const createParticipationReadModel = (
   campaign: CampaignShellDetail,
   participant: ParticipantSnapshot,
@@ -2541,6 +3293,7 @@ export const createAdminOpsReadModel = (
     campaignId: campaign.id,
     reviewQueue: campaign.reviewItems,
     contractReviewCenter: createAdminContractReviewCenter(campaign),
+    contractInterfaceMatrix: createContractInterfaceMatrixConsole(),
     aiContentPack: createAiContentPackWorkbench(campaign),
     templateGovernance: createTemplateGovernanceConsole(),
     analytics: createAnalytics(campaign, exportBatch),

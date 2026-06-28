@@ -574,6 +574,58 @@ export interface AdminContractReviewCenter {
   evolution: ContractEvolutionStep[];
 }
 
+export type ContractInterfaceReadiness = "ready" | "warning" | "blocker" | "info";
+export type ContractInterfacePhase = "MVP" | "P1" | "P2" | "N/A";
+
+export interface ContractInterfaceMethod {
+  name: string;
+  signature: string;
+  purpose: LocalizedText;
+  ownerRole: OwnerRole;
+  readiness: ContractInterfaceReadiness;
+  phase: ContractInterfacePhase;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface ContractInterfaceGroup {
+  contractName: string;
+  phase: ContractInterfacePhase;
+  readiness: ContractInterfaceReadiness;
+  purpose: LocalizedText;
+  ownerRole: OwnerRole;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  methods: ContractInterfaceMethod[];
+}
+
+export interface ContractChangeMatrixRow {
+  area: LocalizedText;
+  currentMvp: LocalizedText;
+  recommendedV2: LocalizedText;
+  priority: ContractInterfacePhase;
+  ownerRole: OwnerRole;
+  readiness: ContractInterfaceReadiness;
+  notes: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface ContractInterfaceMatrixSummary {
+  totalContracts: number;
+  totalMethods: number;
+  p1Rows: number;
+  blockedRows: number;
+  warningMethods: number;
+  boundary: LocalizedText;
+}
+
+export interface ContractInterfaceMatrixConsole {
+  summary: ContractInterfaceMatrixSummary;
+  groups: ContractInterfaceGroup[];
+  changeMatrix: ContractChangeMatrixRow[];
+}
+
 export interface ExportPreviewRow {
   campaignId: string;
   walletAddress: string;
@@ -920,6 +972,7 @@ export interface AdminOpsReadModel {
   campaignId: string;
   reviewQueue: ReviewItem[];
   contractReviewCenter: AdminContractReviewCenter;
+  contractInterfaceMatrix: ContractInterfaceMatrixConsole;
   aiContentPack: AiContentPackWorkbench;
   templateGovernance: TemplateGovernanceConsole;
   analytics: AnalyticsKpi[];
