@@ -180,6 +180,7 @@ export const EXPORT_CSV_COLUMNS = [
 
 export type ExportCsvColumn = (typeof EXPORT_CSV_COLUMNS)[number];
 export type ExportRowStatus = "ready" | "review_required" | "blocked";
+export type UserWinnersExportStatus = ExportRowStatus | "pending";
 
 export interface WalletAdapterFixture {
   id: string;
@@ -559,6 +560,40 @@ export interface ExportPreviewRow {
   walletTypeVerified: boolean;
   rowStatus: ExportRowStatus;
   missingColumnValues: ExportCsvColumn[];
+}
+
+export interface UserWinnersExportRow {
+  rowStatus: ExportRowStatus;
+  walletAddress: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  localePreference: SupportedLocale;
+  totalPoints: number;
+  rank?: number;
+  eligible: boolean;
+  missingTasks: string[];
+  riskFlags: string[];
+  referrerAddress: string;
+  taskRecords: string[];
+  evidenceHashes: string[];
+  exportBatchId: string;
+  walletTypeVerified: boolean;
+  missingColumnValues: ExportCsvColumn[];
+}
+
+export interface UserWinnersExportStatusReadModel {
+  campaignId: string;
+  walletAddress: string;
+  participantId?: string;
+  status: UserWinnersExportStatus;
+  statusLabel: LocalizedText;
+  summary: LocalizedText;
+  reason: LocalizedText;
+  nextAction: LocalizedText;
+  rewardBoundary: LocalizedText;
+  fulfillmentOwner: LocalizedText;
+  exportBatchId?: string;
+  row?: UserWinnersExportRow;
 }
 
 export interface AnalyticsKpi {

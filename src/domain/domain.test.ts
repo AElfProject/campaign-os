@@ -7,6 +7,7 @@ import {
   createEcosystemNextActionReadModel,
   createLeaderboardReadModel,
   createProjectCampaignCommandCenter,
+  createUserWinnersExportStatusReadModel,
   computeMissingTasks,
   computePublishReadiness,
   createAdminOpsReadModel,
@@ -453,6 +454,96 @@ describe("Campaign OS domain foundation", () => {
       expect.arrayContaining(["demo-task-bridge-3E9", "demo-task-social-3E9"]),
     );
     expect(exportPreview.rows).toHaveLength(4);
+  });
+
+  it("derives ready user winners export status from the export preview row", () => {
+    const [readyParticipant] = campaignDetail.participants;
+    const status = createUserWinnersExportStatusReadModel(campaignDetail, readyParticipant);
+
+    expect(status).toMatchObject({
+      campaignId: "camp-awaken-sprint",
+      exportBatchId: "export-awaken-sprint-preview",
+      participantId: "part-aa-001",
+      status: "ready",
+      walletAddress: "2F4...9aB",
+    });
+    expect(status.statusLabel["en-US"]).toBe("Ready for export");
+    expect(status.row).toMatchObject({
+      accountType: "AA",
+      eligible: true,
+      localePreference: "en-US",
+      rank: 12,
+      rowStatus: "ready",
+      totalPoints: 270,
+      walletSource: "PORTKEY_AA",
+      walletTypeVerified: true,
+    });
+    expect(status.row?.taskRecords).toEqual(
+      expect.arrayContaining(["task-bridge:completed:aelfscan"]),
+    );
+    expect(status.row?.evidenceHashes).toEqual(
+      expect.arrayContaining(["demo-task-bridge-2F4"]),
+    );
+    expect(status.rewardBoundary["en-US"]).toContain("Export winners does not distribute rewards");
+    expect(status.fulfillmentOwner["en-US"]).toContain("campaign project");
+    expect(JSON.stringify(status)).not.toContain("zh-TW");
+  });
+
+  it("derives blocked user winners export status for missing required tasks", () => {
+    const [, blockedParticipant] = campaignDetail.participants;
+    const status = createUserWinnersExportStatusReadModel(campaignDetail, blockedParticipant);
+
+    expect(status).toMatchObject({
+      status: "blocked",
+      walletAddress: "3E9...7cD",
+    });
+    expect(status.row).toMatchObject({
+      accountType: "EOA",
+      localePreference: "zh-CN",
+      missingTasks: ["bridge_ebridge"],
+      riskFlags: ["referral_velocity_review"],
+      rowStatus: "review_required",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
+    expect(status.reason["en-US"]).toContain("bridge_ebridge");
+    expect(status.nextAction["en-US"]).toContain("Complete missing required tasks");
+    expect(status.reason["zh-CN"]).toContain("bridge_ebridge");
+  });
+
+  it("derives review-required user winners export status without automatic rejection", () => {
+    const [, , riskParticipant] = campaignDetail.participants;
+    const status = createUserWinnersExportStatusReadModel(campaignDetail, riskParticipant);
+
+    expect(status.status).toBe("review_required");
+    expect(status.row).toMatchObject({
+      missingTasks: [],
+      riskFlags: ["manual_review_queue"],
+      rowStatus: "review_required",
+      walletSource: "NIGHTELF",
+    });
+    expect(status.reason["en-US"]).toContain("not automatic reward rejection");
+    expect(status.nextAction["en-US"]).toContain("manual review");
+    expect(status.nextAction["zh-CN"]).toContain("人工审核");
+  });
+
+  it("keeps missing export rows pending and safe", () => {
+    const [readyParticipant] = campaignDetail.participants;
+    const unknownParticipant = {
+      ...readyParticipant,
+      id: "part-unknown-export-row",
+      walletAddress: "ELF_UNKNOWN_EXPORT_ROW",
+    };
+    const status = createUserWinnersExportStatusReadModel(campaignDetail, unknownParticipant);
+
+    expect(status).toMatchObject({
+      exportBatchId: undefined,
+      row: undefined,
+      status: "pending",
+      walletAddress: "ELF_UNKNOWN_EXPORT_ROW",
+    });
+    expect(status.reason["en-US"]).toContain("Campaign OS cannot show export evidence");
+    expect(status.nextAction["en-US"]).toContain("Connect or verify");
+    expect(status.fulfillmentOwner["zh-CN"]).toContain("活动项目方");
   });
 
   it("derives missing required tasks for participants", () => {

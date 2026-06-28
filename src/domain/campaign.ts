@@ -59,6 +59,9 @@ import type {
   TaskVerificationStatus,
   TranslationManagerReadModel,
   TranslationReviewPanel,
+  UserWinnersExportRow,
+  UserWinnersExportStatus,
+  UserWinnersExportStatusReadModel,
 } from "./types";
 import { deriveEligibilityWalletStatus, isWalletSessionVerified } from "./wallet";
 import { EXPORT_CSV_COLUMNS as exportCsvColumns } from "./types";
@@ -81,6 +84,30 @@ const rewardBoundary: LocalizedText = {
 const exportRiskBoundary: LocalizedText = {
   "en-US": "Risk flags and eligibility results are review inputs; Campaign OS does not distribute rewards.",
   "zh-CN": "风险标记与资格结果仅作为审核输入；Campaign OS 不执行发奖。",
+};
+
+const exportFulfillmentOwner: LocalizedText = {
+  "en-US": "Final reward distribution is handled by the campaign project.",
+  "zh-CN": "最终奖励发放由活动项目方处理。",
+};
+
+const userWinnersExportStatusLabels: Record<UserWinnersExportStatus, LocalizedText> = {
+  ready: {
+    "en-US": "Ready for export",
+    "zh-CN": "导出就绪",
+  },
+  review_required: {
+    "en-US": "Manual review required",
+    "zh-CN": "需要人工审核",
+  },
+  blocked: {
+    "en-US": "Blocked before export",
+    "zh-CN": "导出前阻断",
+  },
+  pending: {
+    "en-US": "Pending verification",
+    "zh-CN": "等待验证",
+  },
 };
 
 const eligibilityCheckerBoundary: LocalizedText = {
@@ -1898,6 +1925,141 @@ export const createParticipationReadModel = (
     leaderboard: createLeaderboard(campaign.participants),
     metrics: createParticipationMetrics(campaign.tasks, participant, taskStates),
     rewardBoundary,
+  };
+};
+
+const projectUserWinnersExportRow = (row: ExportPreviewRow): UserWinnersExportRow => ({
+  rowStatus: row.rowStatus,
+  walletAddress: row.walletAddress,
+  accountType: row.accountType,
+  walletSource: row.walletSource,
+  localePreference: row.localePreference,
+  totalPoints: row.totalPoints,
+  rank: row.rank,
+  eligible: row.eligible,
+  missingTasks: row.missingTasks,
+  riskFlags: row.riskFlags,
+  referrerAddress: row.referrerAddress,
+  taskRecords: row.taskRecords,
+  evidenceHashes: row.evidenceHashes,
+  exportBatchId: row.exportBatchId,
+  walletTypeVerified: row.walletTypeVerified,
+  missingColumnValues: row.missingColumnValues,
+});
+
+const deriveUserWinnersExportStatus = (row: ExportPreviewRow): UserWinnersExportStatus => {
+  if (!row.walletTypeVerified || row.missingColumnValues.length > 0 || row.missingTasks.length > 0) {
+    return "blocked";
+  }
+
+  if (row.riskFlags.length > 0 || row.rowStatus === "review_required") {
+    return "review_required";
+  }
+
+  return row.rowStatus;
+};
+
+const describeUserWinnersExportStatus = (
+  status: UserWinnersExportStatus,
+  row?: ExportPreviewRow,
+): Pick<UserWinnersExportStatusReadModel, "reason" | "nextAction" | "summary"> => {
+  if (!row) {
+    return {
+      summary: {
+        "en-US": "This wallet is not in the seeded winners export preview yet.",
+        "zh-CN": "该钱包尚未进入 seeded winners 导出预览。",
+      },
+      reason: {
+        "en-US": "Campaign OS cannot show export evidence until a supported wallet session or participant row is verified.",
+        "zh-CN": "在验证受支持的钱包会话或参与者记录前，Campaign OS 无法展示导出证据。",
+      },
+      nextAction: {
+        "en-US": "Connect or verify a supported wallet before checking winners export status.",
+        "zh-CN": "请先连接或验证受支持的钱包，再检查 winners 导出状态。",
+      },
+    };
+  }
+
+  if (status === "blocked") {
+    const missingTasks = row.missingTasks.join(", ");
+    const missingColumns = row.missingColumnValues.join(", ");
+
+    return {
+      summary: {
+        "en-US": "This row is blocked before winners export.",
+        "zh-CN": "该记录在 winners 导出前已被阻断。",
+      },
+      reason: {
+        "en-US":
+          missingTasks.length > 0
+            ? `Missing required export tasks: ${missingTasks}.`
+            : `Wallet type or export columns still need verification: ${missingColumns || "wallet_type"}.`,
+        "zh-CN":
+          missingTasks.length > 0
+            ? `仍缺少必做导出任务：${missingTasks}。`
+            : `钱包类型或导出字段仍需验证：${missingColumns || "wallet_type"}。`,
+      },
+      nextAction: {
+        "en-US": "Complete missing required tasks or verify wallet metadata before winners export can be trusted.",
+        "zh-CN": "请先完成缺失的必做任务或验证钱包元数据，再进入可信 winners 导出。",
+      },
+    };
+  }
+
+  if (status === "review_required") {
+    return {
+      summary: {
+        "en-US": "This row is present, but export approval needs manual review.",
+        "zh-CN": "该记录已存在，但导出批准需要人工审核。",
+      },
+      reason: {
+        "en-US": "Risk flags and eligibility gaps are review inputs, not automatic reward rejection.",
+        "zh-CN": "风险标记和资格缺口仅作为审核输入，不代表自动拒绝奖励。",
+      },
+      nextAction: {
+        "en-US": "Wait for manual review before winners export; Campaign OS does not distribute rewards.",
+        "zh-CN": "请等待人工审核后再进入 winners 导出；Campaign OS 不执行发奖。",
+      },
+    };
+  }
+
+  return {
+    summary: {
+      "en-US": "This row is ready for winners export review.",
+      "zh-CN": "该记录已准备进入 winners 导出审核。",
+    },
+    reason: {
+      "en-US": "Wallet metadata, eligibility, task records, and evidence hashes are present in the seeded export preview.",
+      "zh-CN": "seeded 导出预览中已包含钱包元数据、资格、任务记录与证据哈希。",
+    },
+    nextAction: {
+      "en-US": "Wait for the campaign project to handle final reward fulfillment after export.",
+      "zh-CN": "导出后等待活动项目方处理最终奖励履约。",
+    },
+  };
+};
+
+export const createUserWinnersExportStatusReadModel = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+): UserWinnersExportStatusReadModel => {
+  const row = campaign.exportPreview.rows.find(
+    (candidate) => candidate.walletAddress === participant.walletAddress,
+  );
+  const status = row ? deriveUserWinnersExportStatus(row) : "pending";
+  const statusDescription = describeUserWinnersExportStatus(status, row);
+
+  return {
+    campaignId: campaign.id,
+    walletAddress: participant.walletAddress,
+    participantId: participant.id,
+    status,
+    statusLabel: userWinnersExportStatusLabels[status],
+    ...statusDescription,
+    rewardBoundary,
+    fulfillmentOwner: exportFulfillmentOwner,
+    exportBatchId: row?.exportBatchId,
+    row: row ? projectUserWinnersExportRow(row) : undefined,
   };
 };
 
