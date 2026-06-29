@@ -82,11 +82,18 @@ import type {
   ReviewSeverity,
   TaskVerificationStatus,
   VerificationCoverageSummary,
+  VerificationAffectedOutcome,
   VerificationEvidence,
   VerificationEvidenceSource,
+  VerificationLiveEvidenceStatus,
+  VerificationPipelinePath,
+  VerificationPipelinePathId,
+  VerificationPipelineReadinessGate,
   VerificationProviderId,
   VerificationProviderReadiness,
   VerificationProviderState,
+  VerificationReleaseImpact,
+  VerificationSeededCoverageStatus,
   TranslationCompareField,
   TranslationComparisonRow,
   TranslationLocaleItem,
@@ -995,6 +1002,336 @@ export const createVerificationCoverageSummary = (
     evidenceSources: [...new Set(states.map((state) => state.canonicalEvidenceSource))],
     riskFlags: [...new Set(participants.flatMap((participant) => participant.riskFlags))],
     boundary: verificationBoundary,
+  };
+};
+
+const verificationPipelineLabels: Record<VerificationPipelinePathId, LocalizedText> = {
+  "aefinder-on-chain": {
+    "en-US": "AeFinder on-chain verification",
+    "zh-CN": "AeFinder 链上验证",
+    "zh-TW": "AeFinder on-chain verification",
+  },
+  "aelfscan-on-chain": {
+    "en-US": "AelfScan on-chain verification",
+    "zh-CN": "AelfScan 链上验证",
+    "zh-TW": "AelfScan on-chain verification",
+  },
+  "dapp-api": {
+    "en-US": "dApp API verification",
+    "zh-CN": "dApp API 验证",
+    "zh-TW": "dApp API verification",
+  },
+  "social-api": {
+    "en-US": "Social API verification",
+    "zh-CN": "社交 API 验证",
+    "zh-TW": "Social API verification",
+  },
+  "wallet-session": {
+    "en-US": "Wallet session verification",
+    "zh-CN": "钱包会话验证",
+    "zh-TW": "Wallet session verification",
+  },
+  "manual-review": {
+    "en-US": "Manual review",
+    "zh-CN": "人工审核",
+    "zh-TW": "Manual review",
+  },
+  "referral-qualification": {
+    "en-US": "Referral qualification",
+    "zh-CN": "邀请资格",
+    "zh-TW": "Referral qualification",
+  },
+};
+
+const verificationPipelineFallbacks: Record<VerificationPipelinePathId, LocalizedText> = {
+  "aefinder-on-chain": {
+    "en-US": "AeFinder is represented as a readiness path only; no live indexer query is executed.",
+    "zh-CN": "AeFinder 仅作为 readiness 路径展示；不会执行真实 indexer 查询。",
+    "zh-TW": "AeFinder is represented as a readiness path only; no live indexer query is executed.",
+  },
+  "aelfscan-on-chain": {
+    "en-US": "AelfScan evidence is seeded/local and cannot be treated as a live explorer lookup.",
+    "zh-CN": "AelfScan 证据为 seeded/本地数据，不能视为真实 explorer 查询。",
+    "zh-TW": "AelfScan evidence is seeded/local and cannot be treated as a live explorer lookup.",
+  },
+  "dapp-api": {
+    "en-US": "dApp API evidence is named for adapter planning; no external dApp endpoint is called.",
+    "zh-CN": "dApp API 证据仅用于 adapter 规划；不会调用外部 dApp endpoint。",
+    "zh-TW": "dApp API evidence is named for adapter planning; no external dApp endpoint is called.",
+  },
+  "social-api": {
+    "en-US": "Social API verification is blocked until platform API policy and review fallback are approved.",
+    "zh-CN": "社交 API 验证在平台 API 策略与审核 fallback 批准前保持阻断。",
+    "zh-TW": "Social API verification is blocked until platform API policy and review fallback are approved.",
+  },
+  "wallet-session": {
+    "en-US": "Wallet session evidence is seeded/local and does not request a live wallet signature.",
+    "zh-CN": "钱包会话证据为 seeded/本地数据，不会请求真实钱包签名。",
+    "zh-TW": "Wallet session evidence is seeded/local and does not request a live wallet signature.",
+  },
+  "manual-review": {
+    "en-US": "Manual review is a human queue boundary; it does not auto-complete verification or rewards.",
+    "zh-CN": "人工审核是人工队列边界；不会自动完成验证或发奖。",
+    "zh-TW": "Manual review is a human queue boundary; it does not auto-complete verification or rewards.",
+  },
+  "referral-qualification": {
+    "en-US": "Referral qualification is based on seeded invitee task completion, not raw signup counts.",
+    "zh-CN": "邀请资格基于 seeded 被邀请人任务完成情况，不按原始注册数计入。",
+    "zh-TW": "Referral qualification is based on seeded invitee task completion, not raw signup counts.",
+  },
+};
+
+const verificationPipelineNextActions: Record<VerificationPipelinePathId, LocalizedText> = {
+  "aefinder-on-chain": {
+    "en-US": "Attach live AeFinder QA evidence before treating bridge or contract events as production verified.",
+    "zh-CN": "在将跨链或合约事件视为生产验证前，先附上真实 AeFinder QA 证据。",
+    "zh-TW": "Attach live AeFinder QA evidence before treating bridge or contract events as production verified.",
+  },
+  "aelfscan-on-chain": {
+    "en-US": "Attach live AelfScan lookup evidence before release approval.",
+    "zh-CN": "发布批准前附上真实 AelfScan 查询证据。",
+    "zh-TW": "Attach live AelfScan lookup evidence before release approval.",
+  },
+  "dapp-api": {
+    "en-US": "Define dApp API adapter QA, timeout fallback, and manual-review handling before launch.",
+    "zh-CN": "上线前定义 dApp API adapter QA、超时 fallback 与人工审核处理。",
+    "zh-TW": "Define dApp API adapter QA, timeout fallback, and manual-review handling before launch.",
+  },
+  "social-api": {
+    "en-US": "Keep blocked until social API policy, review fallback, and low-reward weighting are approved.",
+    "zh-CN": "在社交 API 策略、审核 fallback 与低奖励权重批准前保持阻断。",
+    "zh-TW": "Keep blocked until social API policy, review fallback, and low-reward weighting are approved.",
+  },
+  "wallet-session": {
+    "en-US": "Review wallet provider QA evidence before trusting wallet session verification in production.",
+    "zh-CN": "在生产中信任钱包会话验证前，先审核钱包 provider QA 证据。",
+    "zh-TW": "Review wallet provider QA evidence before trusting wallet session verification in production.",
+  },
+  "manual-review": {
+    "en-US": "Keep queued items human-reviewed before awarding points or export eligibility.",
+    "zh-CN": "发放积分或导出资格前，保持队列项目由人工审核。",
+    "zh-TW": "Keep queued items human-reviewed before awarding points or export eligibility.",
+  },
+  "referral-qualification": {
+    "en-US": "Confirm qualified invitees completed required verified actions before counting referral points.",
+    "zh-CN": "确认合格被邀请人完成必需验证行为后，再计算邀请积分。",
+    "zh-TW": "Confirm qualified invitees completed required verified actions before counting referral points.",
+  },
+};
+
+const verificationPipelineEligibilityImpact: Record<VerificationPipelinePathId, LocalizedText> = {
+  "aefinder-on-chain": {
+    "en-US": "Bridge and contract-event checks affect required task eligibility and points.",
+    "zh-CN": "跨链与合约事件检查会影响必做任务资格和积分。",
+    "zh-TW": "Bridge and contract-event checks affect required task eligibility and points.",
+  },
+  "aelfscan-on-chain": {
+    "en-US": "Explorer evidence affects on-chain task completion, export review, and release approval.",
+    "zh-CN": "Explorer 证据会影响链上任务完成、导出审核与发布批准。",
+    "zh-TW": "Explorer evidence affects on-chain task completion, export review, and release approval.",
+  },
+  "dapp-api": {
+    "en-US": "dApp API checks affect swap task points and pending eligibility states.",
+    "zh-CN": "dApp API 检查会影响 Swap 任务积分和待验证资格状态。",
+    "zh-TW": "dApp API checks affect swap task points and pending eligibility states.",
+  },
+  "social-api": {
+    "en-US": "Social tasks stay low weight and blocked from high-reward eligibility until reviewed.",
+    "zh-CN": "社交任务保持低权重，审核前不能支撑高奖励资格。",
+    "zh-TW": "Social tasks stay low weight and blocked from high-reward eligibility until reviewed.",
+  },
+  "wallet-session": {
+    "en-US": "Wallet session readiness affects AA/EOA verification and export trust.",
+    "zh-CN": "钱包会话 readiness 会影响 AA/EOA 验证与导出可信度。",
+    "zh-TW": "Wallet session readiness affects AA/EOA verification and export trust.",
+  },
+  "manual-review": {
+    "en-US": "Manual review holds risk-flagged and queued tasks before winner export.",
+    "zh-CN": "人工审核会在 winners 导出前暂缓风险标记与队列任务。",
+    "zh-TW": "Manual review holds risk-flagged and queued tasks before winner export.",
+  },
+  "referral-qualification": {
+    "en-US": "Referral points require qualified invitees to complete verified required actions.",
+    "zh-CN": "邀请积分要求合格被邀请人完成已验证的必需行为。",
+    "zh-TW": "Referral points require qualified invitees to complete verified required actions.",
+  },
+};
+
+const verificationPipelineDefinitions: Array<{
+  id: VerificationPipelinePathId;
+  evidenceSource: VerificationEvidenceSource;
+  providerReadiness: VerificationProviderReadiness;
+  liveEvidenceStatus: VerificationLiveEvidenceStatus;
+  releaseImpact: VerificationReleaseImpact;
+  affectedOutcomes: VerificationAffectedOutcome[];
+  owner: OwnerRole;
+}> = [
+  {
+    id: "aefinder-on-chain",
+    evidenceSource: "AEFINDER",
+    providerReadiness: "unavailable",
+    liveEvidenceStatus: "missing",
+    releaseImpact: "needs_review",
+    affectedOutcomes: ["points", "eligibility", "release"],
+    owner: "internal_operator",
+  },
+  {
+    id: "aelfscan-on-chain",
+    evidenceSource: "AELFSCAN",
+    providerReadiness: "local_only",
+    liveEvidenceStatus: "missing",
+    releaseImpact: "needs_review",
+    affectedOutcomes: ["points", "eligibility", "export", "release"],
+    owner: "internal_operator",
+  },
+  {
+    id: "dapp-api",
+    evidenceSource: "DAPP_API",
+    providerReadiness: "unavailable",
+    liveEvidenceStatus: "missing",
+    releaseImpact: "needs_review",
+    affectedOutcomes: ["points", "eligibility", "user_next_action"],
+    owner: "project_owner",
+  },
+  {
+    id: "social-api",
+    evidenceSource: "SOCIAL_API",
+    providerReadiness: "blocked",
+    liveEvidenceStatus: "blocked",
+    releaseImpact: "blocker",
+    affectedOutcomes: ["points", "release", "user_next_action"],
+    owner: "internal_operator",
+  },
+  {
+    id: "wallet-session",
+    evidenceSource: "WALLET_SESSION",
+    providerReadiness: "local_only",
+    liveEvidenceStatus: "missing",
+    releaseImpact: "needs_review",
+    affectedOutcomes: ["eligibility", "export", "release"],
+    owner: "internal_operator",
+  },
+  {
+    id: "manual-review",
+    evidenceSource: "MANUAL_REVIEW",
+    providerReadiness: "review_required",
+    liveEvidenceStatus: "not_applicable",
+    releaseImpact: "needs_review",
+    affectedOutcomes: ["eligibility", "export", "user_next_action"],
+    owner: "internal_operator",
+  },
+  {
+    id: "referral-qualification",
+    evidenceSource: "LOCAL_SEEDED",
+    providerReadiness: "local_only",
+    liveEvidenceStatus: "missing",
+    releaseImpact: "needs_review",
+    affectedOutcomes: ["referral", "points", "eligibility"],
+    owner: "project_owner",
+  },
+];
+
+const createVerificationPipelinePath = (
+  definition: (typeof verificationPipelineDefinitions)[number],
+): VerificationPipelinePath => ({
+  ...definition,
+  boundary: verificationBoundary,
+  eligibilityImpact: verificationPipelineEligibilityImpact[definition.id],
+  fallbackReason: verificationPipelineFallbacks[definition.id],
+  label: verificationPipelineLabels[definition.id],
+  nextAction: verificationPipelineNextActions[definition.id],
+  seededCoverageStatus: "ready" satisfies VerificationSeededCoverageStatus,
+});
+
+const summarizeVerificationPipeline = (
+  paths: VerificationPipelinePath[],
+): VerificationPipelineReadinessGate["summary"] => ({
+  totalPaths: paths.length,
+  seededReadyPaths: paths.filter((path) => path.seededCoverageStatus === "ready").length,
+  liveEvidenceReadyPaths: paths.filter((path) => path.liveEvidenceStatus === "ready").length,
+  missingLiveEvidencePaths: paths.filter((path) => path.liveEvidenceStatus === "missing").length,
+  blockedPaths: paths.filter(
+    (path) => path.liveEvidenceStatus === "blocked" || path.providerReadiness === "blocked",
+  ).length,
+  manualReviewPaths: paths.filter((path) => path.providerReadiness === "review_required").length,
+});
+
+const referralQualificationStatusFor = (
+  participants: readonly ParticipantSnapshot[],
+): VerificationPipelineReadinessGate["eligibilityImpact"]["referralQualificationStatus"] => {
+  const referrals = participants.flatMap((participant) =>
+    participant.referralSummary ? [participant.referralSummary] : [],
+  );
+
+  if (referrals.length === 0) {
+    return "not_applicable";
+  }
+
+  if (referrals.some((referral) => referral.riskFlags.length > 0)) {
+    return "needs_verified_invitee";
+  }
+
+  return referrals.some(
+    (referral) => referral.invitedCount > referral.qualifiedInvitees,
+  )
+    ? "needs_verified_invitee"
+    : "qualified";
+};
+
+const createVerificationEligibilityImpact = (
+  tasks: readonly CampaignTask[],
+  participants: readonly ParticipantSnapshot[],
+): VerificationPipelineReadinessGate["eligibilityImpact"] => {
+  const missingRequiredTasks = [
+    ...new Set(
+      participants.flatMap((participant) =>
+        computeMissingTasks([...tasks], participant).map((task) => task.templateCode),
+      ),
+    ),
+  ];
+  const riskFlags = [...new Set(participants.flatMap((participant) => participant.riskFlags))];
+  const referralQualificationStatus = referralQualificationStatusFor(participants);
+
+  return {
+    missingRequiredTasks,
+    referralQualificationStatus,
+    riskFlags,
+    summary: {
+      "en-US": "Eligibility depends on required task verification, qualified invitees, risk review, and manual-review outcomes.",
+      "zh-CN": "资格取决于必做任务验证、合格被邀请人、风险审核与人工审核结果。",
+      "zh-TW": "Eligibility depends on required task verification, qualified invitees, risk review, and manual-review outcomes.",
+    },
+  };
+};
+
+export const createVerificationPipelineReadinessGate = (
+  campaign: Pick<CampaignShellDetail, "tasks" | "participants">,
+): VerificationPipelineReadinessGate => {
+  const paths = verificationPipelineDefinitions.map(createVerificationPipelinePath);
+  const coverage = createVerificationCoverageSummary(
+    [...campaign.tasks],
+    [...campaign.participants],
+  );
+
+  return {
+    summary: summarizeVerificationPipeline(paths),
+    taskOutcomeCoverage: {
+      completedCount: coverage.completedCount,
+      pendingCount: coverage.pendingCount,
+      failedCount: coverage.failedCount,
+      manualReviewCount: coverage.manualReviewCount,
+    },
+    eligibilityImpact: createVerificationEligibilityImpact(
+      campaign.tasks,
+      campaign.participants,
+    ),
+    paths,
+    boundary: verificationBoundary,
+    nextAction: {
+      "en-US": "Attach live provider evidence before treating seeded verification as production-ready.",
+      "zh-CN": "在将 seeded 验证视为生产就绪前，先附上真实 provider 证据。",
+      "zh-TW": "Attach live provider evidence before treating seeded verification as production-ready.",
+    },
   };
 };
 

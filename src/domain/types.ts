@@ -1370,6 +1370,82 @@ export interface VerificationCoverageSummary {
   boundary: LocalizedText;
 }
 
+export type VerificationPipelinePathId =
+  | "aefinder-on-chain"
+  | "aelfscan-on-chain"
+  | "dapp-api"
+  | "social-api"
+  | "wallet-session"
+  | "manual-review"
+  | "referral-qualification";
+export type VerificationSeededCoverageStatus = "ready" | "missing";
+export type VerificationLiveEvidenceStatus =
+  | "ready"
+  | "missing"
+  | "blocked"
+  | "not_applicable";
+export type VerificationReleaseImpact = "blocker" | "needs_review" | "informational";
+export type VerificationAffectedOutcome =
+  | "points"
+  | "eligibility"
+  | "referral"
+  | "export"
+  | "release"
+  | "user_next_action";
+export type ReferralQualificationStatus =
+  | "qualified"
+  | "needs_verified_invitee"
+  | "blocked"
+  | "not_applicable";
+
+export interface VerificationPipelinePath {
+  id: VerificationPipelinePathId;
+  label: LocalizedText;
+  evidenceSource: VerificationEvidenceSource;
+  seededCoverageStatus: VerificationSeededCoverageStatus;
+  liveEvidenceStatus: VerificationLiveEvidenceStatus;
+  providerReadiness: VerificationProviderReadiness;
+  releaseImpact: VerificationReleaseImpact;
+  affectedOutcomes: VerificationAffectedOutcome[];
+  eligibilityImpact: LocalizedText;
+  fallbackReason: LocalizedText;
+  nextAction: LocalizedText;
+  owner: OwnerRole;
+  boundary: LocalizedText;
+}
+
+export interface VerificationPipelineSummary {
+  totalPaths: number;
+  seededReadyPaths: number;
+  liveEvidenceReadyPaths: number;
+  missingLiveEvidencePaths: number;
+  blockedPaths: number;
+  manualReviewPaths: number;
+}
+
+export interface VerificationTaskOutcomeCoverage {
+  completedCount: number;
+  pendingCount: number;
+  failedCount: number;
+  manualReviewCount: number;
+}
+
+export interface VerificationPipelineEligibilityImpact {
+  missingRequiredTasks: string[];
+  referralQualificationStatus: ReferralQualificationStatus;
+  riskFlags: string[];
+  summary: LocalizedText;
+}
+
+export interface VerificationPipelineReadinessGate {
+  summary: VerificationPipelineSummary;
+  taskOutcomeCoverage: VerificationTaskOutcomeCoverage;
+  eligibilityImpact: VerificationPipelineEligibilityImpact;
+  paths: VerificationPipelinePath[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface TaskVerificationState {
   taskId: string;
   templateCode: string;
