@@ -198,7 +198,10 @@ describe("Campaign Builder domain foundation", () => {
     expect(seededCampaignDraft.defaultContractImpact.mode).toBe("OFF_CHAIN_MVP");
     expect(seededCampaignDraft.contractImpact.mode).toBe("CONTRACT_CLAIM");
     expect(readiness.ready).toBe(false);
-    expect(readiness.blockers.map((check) => check.id)).toEqual(["contract-impact"]);
+    expect(readiness.blockers.map((check) => check.id)).toEqual([
+      "localized-reward-disclaimer",
+      "contract-impact",
+    ]);
     expect(readiness.warnings.map((check) => check.id)).toEqual([
       "i18n-human-review",
       "risk-social-reward",
@@ -219,6 +222,20 @@ describe("Campaign Builder domain foundation", () => {
     expect(readiness.passed.map((check) => check.id)).toContain("export-disclaimer");
   });
 
+  it("blocks publish until localized reward disclaimers are reviewed per locale", () => {
+    const readiness = computeBuilderPublishReadiness(seededCampaignDraft);
+    const localizedDisclaimerGate = readiness.blockers.find((check) => check.id === "localized-reward-disclaimer");
+
+    expect(localizedDisclaimerGate).toMatchObject({
+      group: "rewards",
+      ownerRole: "project_owner",
+      status: "blocker",
+    });
+    expect(localizedDisclaimerGate?.reason["en-US"]).toContain("zh-CN");
+    expect(localizedDisclaimerGate?.reason["en-US"]).toContain("zh-TW");
+    expect(localizedDisclaimerGate?.nextAction["en-US"]).toContain("localized reward disclaimers");
+  });
+
   it("creates the seeded publish gate decision center read model", () => {
     const decisionCenter = createPublishGateDecisionCenter(seededCampaignDraft);
 
@@ -226,12 +243,13 @@ describe("Campaign Builder domain foundation", () => {
     expect(decisionCenter.ready).toBe(false);
     expect(decisionCenter.launchState).toBe("blocker");
     expect(decisionCenter.counts).toEqual({
-      blockers: 1,
+      blockers: 2,
       passed: 6,
-      total: 9,
+      total: 10,
       warnings: 2,
     });
     expect(decisionCenter.gates.map((gate) => gate.group)).toEqual([
+      "rewards",
       "contract",
       "i18n",
       "risk",
@@ -296,7 +314,7 @@ describe("Campaign Builder domain foundation", () => {
       "contract_reviewer",
     ]);
     expect(decisionCenter.approvalRoutes.map((route) => route.status)).toEqual([
-      "warning",
+      "blocker",
       "warning",
       "blocker",
     ]);
@@ -305,6 +323,7 @@ describe("Campaign Builder domain foundation", () => {
         "contract-impact",
         "export-disclaimer",
         "i18n-human-review",
+        "localized-reward-disclaimer",
         "reward-disclaimer",
         "risk-referral-controls",
         "risk-social-reward",

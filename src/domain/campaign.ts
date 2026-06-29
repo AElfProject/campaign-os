@@ -78,6 +78,7 @@ import type {
   PublishState,
   PublishReadiness,
   ReferralSummary,
+  RewardDisclaimerReviewRow,
   ReviewSeverity,
   TaskVerificationStatus,
   VerificationCoverageSummary,
@@ -448,6 +449,48 @@ const fallbackReviewNote: LocalizedText = {
   "zh-TW": "AI draft or missing translation falls back to English until human review is complete.",
 };
 
+const rewardDisclaimerReadyReason: LocalizedText = {
+  "en-US": "Reward responsibility disclaimer is reviewed for this locale.",
+  "zh-CN": "该语言的奖励责任免责声明已审核。",
+  "zh-TW": "Reward responsibility disclaimer is reviewed for this locale.",
+};
+
+const rewardDisclaimerDraftReason: LocalizedText = {
+  "en-US": "AI draft reward disclaimer requires project owner review before publish.",
+  "zh-CN": "AI 草稿奖励免责声明发布前需要项目方审核。",
+  "zh-TW": "AI draft reward disclaimer requires project owner review before publish.",
+};
+
+const rewardDisclaimerFallbackReason: LocalizedText = {
+  "en-US": "Fallback reward disclaimer is visible but is not approved localized copy.",
+  "zh-CN": "回退奖励免责声明可见，但不能视为已审核本地化文案。",
+  "zh-TW": "Fallback reward disclaimer is visible but is not approved localized copy.",
+};
+
+const rewardDisclaimerMissingReason: LocalizedText = {
+  "en-US": "Localized reward disclaimer is missing and blocks publish.",
+  "zh-CN": "本地化奖励免责声明缺失，会阻断发布。",
+  "zh-TW": "Localized reward disclaimer is missing and blocks publish.",
+};
+
+const rewardDisclaimerReadyAction: LocalizedText = {
+  "en-US": "Keep reward responsibility copy visible in publish review.",
+  "zh-CN": "在发布审核中继续展示奖励责任文案。",
+  "zh-TW": "Keep reward responsibility copy visible in publish review.",
+};
+
+const rewardDisclaimerReviewAction: LocalizedText = {
+  "en-US": "Project owner must review localized reward disclaimer before publish.",
+  "zh-CN": "项目方必须在发布前审核本地化奖励免责声明。",
+  "zh-TW": "Project owner must review localized reward disclaimer before publish.",
+};
+
+const rewardDisclaimerFallbackAction: LocalizedText = {
+  "en-US": "Provide or approve localized reward disclaimer instead of relying on English fallback.",
+  "zh-CN": "提供或批准本地化奖励免责声明，不要只依赖英文回退。",
+  "zh-TW": "Provide or approve localized reward disclaimer instead of relying on English fallback.",
+};
+
 const createTranslationLocaleItems = (
   supportedLocales: readonly ContentRevision["locale"][],
   panels: readonly TranslationReviewPanel[],
@@ -497,6 +540,74 @@ const createTranslationComparisonRows = (
       fallbackToEnglish,
       humanReviewed,
       reviewNote: humanReviewed ? humanReviewedNote : fallbackReviewNote,
+    };
+  });
+
+const rewardDisclaimerReviewState = (
+  panel: TranslationReviewPanel | undefined,
+): RewardDisclaimerReviewRow["reviewState"] => {
+  if (!panel || !panel.rewardDisclaimer.trim()) {
+    return "missing";
+  }
+
+  if (panel.humanReviewed && panel.published) {
+    return "reviewed";
+  }
+
+  if (panel.aiDraft) {
+    return "ai_draft";
+  }
+
+  return panel.fallbackToEnglish ? "fallback" : "missing";
+};
+
+const rewardDisclaimerBlockerReason = (
+  reviewState: RewardDisclaimerReviewRow["reviewState"],
+): LocalizedText => {
+  if (reviewState === "reviewed") {
+    return rewardDisclaimerReadyReason;
+  }
+
+  if (reviewState === "ai_draft") {
+    return rewardDisclaimerDraftReason;
+  }
+
+  return reviewState === "fallback" ? rewardDisclaimerFallbackReason : rewardDisclaimerMissingReason;
+};
+
+const rewardDisclaimerNextAction = (
+  reviewState: RewardDisclaimerReviewRow["reviewState"],
+): LocalizedText => {
+  if (reviewState === "reviewed") {
+    return rewardDisclaimerReadyAction;
+  }
+
+  return reviewState === "fallback" ? rewardDisclaimerFallbackAction : rewardDisclaimerReviewAction;
+};
+
+const createRewardDisclaimerRows = (
+  supportedLocaleList: readonly ContentRevision["locale"][],
+  panels: readonly TranslationReviewPanel[],
+  englishPanel: TranslationReviewPanel | undefined,
+): RewardDisclaimerReviewRow[] =>
+  supportedLocaleList.map((locale) => {
+    const panel = panels.find((candidate) => candidate.locale === locale);
+    const reviewState = rewardDisclaimerReviewState(panel);
+    const disclaimer = panel?.rewardDisclaimer.trim() || englishPanel?.rewardDisclaimer.trim() || missingTargetDraft["en-US"];
+
+    return {
+      locale,
+      sourceLocale: panel?.sourceLocale ?? "en-US",
+      disclaimer,
+      reviewed: reviewState === "reviewed",
+      fallbackToEnglish: locale !== "en-US" && (panel?.fallbackToEnglish ?? true),
+      reviewState,
+      blocksPublish: reviewState !== "reviewed",
+      blockerReason: rewardDisclaimerBlockerReason(reviewState),
+      nextAction: rewardDisclaimerNextAction(reviewState),
+      boundary: rewardBoundary,
+      ownerRole: "project_owner",
+      publishState: reviewState === "reviewed" ? "ready" : "blocker",
     };
   });
 
@@ -4026,15 +4137,17 @@ const createProductDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
       groupId,
       id: "product-reward-disclaimer-locales",
       label: localized("Reward disclaimer per locale", "每个语言的奖励免责声明"),
-      status: "needs_review",
-      blocksDelivery: true,
+      status: "covered",
       ownerRole: "project_owner",
       surface: localized("Rewards & Eligibility, Translation Manager", "奖励与资格、翻译管理"),
       evidence: localized(
-        "English disclaimer is reviewed; Chinese draft falls back to English until human review.",
-        "英文免责声明已审核；中文草稿在人工审核前回退英文。",
+        "The localized reward disclaimer gate lists reviewed, AI draft, fallback, missing, blocker, and next-action state per locale.",
+        "本地化奖励免责声明门禁按语言列出已审核、AI 草稿、回退、缺失、阻断与下一步状态。",
       ),
-      nextAction: localized("Review the Chinese disclaimer before publish.", "发布前审核中文免责声明。"),
+      nextAction: localized(
+        "Keep project-owner review required for any locale row that is not reviewed.",
+        "所有未审核语言行继续要求项目方审核。",
+      ),
       sourceRequirement: "Product checklist: reward disclaimer per locale",
     }),
     deliveryChecklistItem({
@@ -4528,17 +4641,16 @@ const createQaDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
       groupId,
       id: "qa-reward-disclaimer-blocker",
       label: localized("Publish blocker for missing reward disclaimer", "缺失奖励免责声明发布阻断"),
-      status: "needs_review",
-      blocksDelivery: true,
+      status: "covered",
       ownerRole: "project_owner",
       surface: localized("Publish gate decision center", "发布门禁决策中心"),
       evidence: localized(
-        "Export disclaimer is accepted, while localized reward disclaimer review still needs owner attention.",
-        "导出免责声明已确认，但本地化奖励免责声明仍需要 owner 关注。",
+        "Publish readiness exposes localized reward disclaimer blocker behavior for AI draft, fallback, and missing locale rows.",
+        "发布准备度已暴露 AI 草稿、回退与缺失语言行的本地化奖励免责声明阻断行为。",
       ),
       nextAction: localized(
-        "Complete localized reward disclaimer review before publish.",
-        "发布前完成本地化奖励免责声明审核。",
+        "Keep blocking publish until localized reward disclaimer rows are reviewed.",
+        "本地化奖励免责声明行完成审核前继续阻断发布。",
       ),
       sourceRequirement: "QA checklist: publish blocker for missing reward disclaimer",
     }),
@@ -5253,13 +5365,7 @@ export const createTranslationManagerReadModel = (
     panels,
     localeItems: createTranslationLocaleItems(campaign.supportedLocales, panels),
     comparisonRows: createTranslationComparisonRows(englishPanel, targetPanel),
-    rewardDisclaimers: panels.map((panel) => ({
-      locale: panel.locale,
-      disclaimer: panel.rewardDisclaimer,
-      reviewed: panel.humanReviewed,
-      fallbackToEnglish: panel.fallbackToEnglish,
-      publishState: panel.publishState,
-    })),
+    rewardDisclaimers: createRewardDisclaimerRows(campaign.supportedLocales, panels, englishPanel),
     compareReviewPrompt,
     noAutoPublishNotice,
   };

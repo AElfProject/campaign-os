@@ -538,9 +538,16 @@ export interface TranslationReviewPanel {
 
 export interface RewardDisclaimerReviewRow {
   locale: SupportedLocale;
+  sourceLocale: "en-US";
   disclaimer: string;
   reviewed: boolean;
   fallbackToEnglish: boolean;
+  reviewState: "reviewed" | "ai_draft" | "fallback" | "missing";
+  blocksPublish: boolean;
+  blockerReason: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+  ownerRole: OwnerRole;
   publishState: PublishState;
 }
 
