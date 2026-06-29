@@ -269,10 +269,12 @@ export const campaignTasks: CampaignTask[] = [
     title: {
       "en-US": "Connect wallet",
       "zh-CN": "连接钱包",
+      "zh-TW": "Connect wallet",
     },
     instruction: {
       "en-US": "Connect any supported AA or EOA wallet.",
       "zh-CN": "连接任意受支持的 AA 或 EOA 钱包。",
+      "zh-TW": "Connect any supported AA or EOA wallet.",
     },
     verificationType: "WALLET",
     walletCompatibility: "ANY",
@@ -282,6 +284,7 @@ export const campaignTasks: CampaignTask[] = [
     localeStatus: {
       "en-US": "published",
       "zh-CN": "reviewed",
+      "zh-TW": "fallback",
     },
   },
   {
@@ -290,10 +293,12 @@ export const campaignTasks: CampaignTask[] = [
     title: {
       "en-US": "Bridge via eBridge",
       "zh-CN": "通过 eBridge 跨链",
+      "zh-TW": "Bridge via eBridge",
     },
     instruction: {
       "en-US": "Complete a bridge action with the connected address.",
       "zh-CN": "使用已连接地址完成一次跨链操作。",
+      "zh-TW": "Complete a bridge action with the connected address.",
     },
     verificationType: "ON_CHAIN",
     walletCompatibility: "ANY",
@@ -303,6 +308,7 @@ export const campaignTasks: CampaignTask[] = [
     localeStatus: {
       "en-US": "published",
       "zh-CN": "ai_draft",
+      "zh-TW": "missing",
     },
   },
   {
@@ -311,10 +317,12 @@ export const campaignTasks: CampaignTask[] = [
     title: {
       "en-US": "Swap on Awaken",
       "zh-CN": "在 Awaken 上 Swap",
+      "zh-TW": "Swap on Awaken",
     },
     instruction: {
       "en-US": "Complete one seeded swap with the connected address.",
       "zh-CN": "使用已连接地址完成一次 seeded Swap。",
+      "zh-TW": "Complete one seeded swap with the connected address.",
     },
     verificationType: "DAPP_API",
     walletCompatibility: "ANY",
@@ -324,6 +332,7 @@ export const campaignTasks: CampaignTask[] = [
     localeStatus: {
       "en-US": "published",
       "zh-CN": "reviewed",
+      "zh-TW": "fallback",
     },
   },
   {
@@ -332,10 +341,12 @@ export const campaignTasks: CampaignTask[] = [
     title: {
       "en-US": "Follow social channel",
       "zh-CN": "关注社交频道",
+      "zh-TW": "Follow social channel",
     },
     instruction: {
       "en-US": "Complete the seeded social proof task.",
       "zh-CN": "完成 seeded 社交证明任务。",
+      "zh-TW": "Complete the seeded social proof task.",
     },
     verificationType: "SOCIAL",
     walletCompatibility: "ANY",
@@ -345,6 +356,7 @@ export const campaignTasks: CampaignTask[] = [
     localeStatus: {
       "en-US": "published",
       "zh-CN": "ai_draft",
+      "zh-TW": "missing",
     },
   },
   {
@@ -353,10 +365,12 @@ export const campaignTasks: CampaignTask[] = [
     title: {
       "en-US": "Agent review smoke check",
       "zh-CN": "Agent 审核冒烟检查",
+      "zh-TW": "Agent review smoke check",
     },
     instruction: {
       "en-US": "Internal automation only; not shown as a normal user default.",
       "zh-CN": "仅内部自动化使用，不作为普通用户默认入口。",
+      "zh-TW": "Internal automation only; not shown as a normal user default.",
     },
     verificationType: "MANUAL",
     walletCompatibility: "EOA_ONLY",
@@ -366,6 +380,7 @@ export const campaignTasks: CampaignTask[] = [
     localeStatus: {
       "en-US": "ready",
       "zh-CN": "fallback",
+      "zh-TW": "fallback",
     },
   },
 ];
@@ -396,6 +411,7 @@ export const participants: ParticipantSnapshot[] = [
       antiFarmRule: {
         "en-US": "Only qualified invitees who complete valid tasks count for referral points.",
         "zh-CN": "只有完成有效任务的合格被邀请人才会计入推荐积分。",
+        "zh-TW": "Only qualified invitees who complete valid tasks count for referral points.",
       },
       riskFlags: [],
     },
@@ -431,6 +447,7 @@ export const participants: ParticipantSnapshot[] = [
       antiFarmRule: {
         "en-US": "Raw signups do not count; invitees must complete valid tasks before referral points are awarded.",
         "zh-CN": "仅注册不会计分；被邀请人必须完成有效任务后才会产生推荐积分。",
+        "zh-TW": "Raw signups do not count; invitees must complete valid tasks before referral points are awarded.",
       },
       riskFlags: ["referral_velocity_review"],
     },
@@ -464,6 +481,7 @@ export const participants: ParticipantSnapshot[] = [
       antiFarmRule: {
         "en-US": "Only qualified invitees who complete valid tasks count for referral points.",
         "zh-CN": "只有完成有效任务的合格被邀请人才会计入推荐积分。",
+        "zh-TW": "Only qualified invitees who complete valid tasks count for referral points.",
       },
       riskFlags: ["manual_review_queue"],
     },
@@ -474,7 +492,7 @@ export const participants: ParticipantSnapshot[] = [
     walletAddress: "7P8...2bE",
     accountType: "AA",
     walletSource: "PORTKEY_AA",
-    localePreference: "zh-CN",
+    localePreference: "zh-TW",
     totalPoints: 190,
     rank: 31,
     completedTaskIds: ["task-connect-wallet", "task-bridge"],
@@ -496,6 +514,7 @@ export const participants: ParticipantSnapshot[] = [
       antiFarmRule: {
         "en-US": "Only qualified invitees who complete valid tasks count for referral points.",
         "zh-CN": "只有完成有效任务的合格被邀请人才会计入推荐积分。",
+        "zh-TW": "Only qualified invitees who complete valid tasks count for referral points.",
       },
       riskFlags: [],
     },
@@ -528,6 +547,18 @@ export const contentRevisions: ContentRevision[] = [
     status: "ai_draft",
     updatedAt: "2026-06-23T10:05:00Z",
   },
+  {
+    id: "rev-zh-tw-001",
+    campaignId: "camp-awaken-sprint",
+    locale: "zh-TW",
+    sourceLocale: "en-US",
+    title: "",
+    description: "",
+    socialPost: "",
+    rewardDisclaimer: "",
+    status: "empty",
+    updatedAt: "2026-06-23T10:06:00Z",
+  },
 ];
 
 export const aiContentArtifacts: AiContentArtifactDraft[] = [
@@ -539,16 +570,19 @@ export const aiContentArtifacts: AiContentArtifactDraft[] = [
     purpose: {
       "en-US": "Public launch thread",
       "zh-CN": "对外宣发长帖",
+      "zh-TW": "Public launch thread",
     },
     title: {
       "en-US": "X / Twitter thread",
       "zh-CN": "X / Twitter 长帖",
+      "zh-TW": "X / Twitter thread",
     },
     body: {
       "en-US": "Awaken Sprint is live: bridge to aelf, complete a swap, and climb a verified leaderboard. Rewards are provided by Awaken; Campaign OS verifies and exports.",
       "zh-CN": "Awaken 冲刺活动已上线：跨链到 aelf，完成一次 Swap，并进入已验证排行榜。奖励由 Awaken 提供，Campaign OS 负责验证与导出。",
+      "zh-TW": "Awaken Sprint is live: bridge to aelf, complete a swap, and climb a verified leaderboard. Rewards are provided by Awaken; Campaign OS verifies and exports.",
     },
-    localeStatus: { "en-US": "reviewed", "zh-CN": "reviewed" },
+    localeStatus: { "en-US": "reviewed", "zh-CN": "reviewed", "zh-TW": "fallback" },
     lifecycle: "human_approved",
     reviewer: "internal_operator",
     updatedAt: "2026-06-27T08:00:00Z",
@@ -563,16 +597,19 @@ export const aiContentArtifacts: AiContentArtifactDraft[] = [
     purpose: {
       "en-US": "Community launch announcement",
       "zh-CN": "社群启动公告",
+      "zh-TW": "Community launch announcement",
     },
     title: {
       "en-US": "Telegram announcement",
       "zh-CN": "Telegram 公告",
+      "zh-TW": "Telegram announcement",
     },
     body: {
       "en-US": "AI draft: Join Awaken Sprint today. Complete verified on-chain tasks and check eligibility before the campaign ends.",
       "zh-CN": "AI 草稿：今天加入 Awaken 冲刺活动。完成已验证链上任务，并在活动结束前检查资格。",
+      "zh-TW": "AI draft: Join Awaken Sprint today. Complete verified on-chain tasks and check eligibility before the campaign ends.",
     },
-    localeStatus: { "en-US": "ai_draft", "zh-CN": "ai_draft" },
+    localeStatus: { "en-US": "ai_draft", "zh-CN": "ai_draft", "zh-TW": "missing" },
     lifecycle: "ai_draft",
     updatedAt: "2026-06-27T08:05:00Z",
     riskLevel: "medium",
@@ -586,16 +623,19 @@ export const aiContentArtifacts: AiContentArtifactDraft[] = [
     purpose: {
       "en-US": "Community sync message",
       "zh-CN": "社区同步消息",
+      "zh-TW": "Community sync message",
     },
     title: {
       "en-US": "Discord message",
       "zh-CN": "Discord 消息",
+      "zh-TW": "Discord message",
     },
     body: {
       "en-US": "Reminder for community moderators: direct users to connect AA or EOA wallets, verify bridge/swap tasks, and avoid promising rewards from aelf.",
       "zh-CN": "社区管理员提醒：引导用户连接 AA 或 EOA 钱包，验证跨链/Swap 任务，并避免承诺由 aelf 提供奖励。",
+      "zh-TW": "Reminder for community moderators: direct users to connect AA or EOA wallets, verify bridge/swap tasks, and avoid promising rewards from aelf.",
     },
-    localeStatus: { "en-US": "reviewed", "zh-CN": "reviewed" },
+    localeStatus: { "en-US": "reviewed", "zh-CN": "reviewed", "zh-TW": "fallback" },
     lifecycle: "edited",
     reviewer: "community_ops",
     updatedAt: "2026-06-27T08:08:00Z",
@@ -610,16 +650,19 @@ export const aiContentArtifacts: AiContentArtifactDraft[] = [
     purpose: {
       "en-US": "Explain rules and reward responsibility",
       "zh-CN": "解释规则与奖励责任",
+      "zh-TW": "Explain rules and reward responsibility",
     },
     title: {
       "en-US": "FAQ",
       "zh-CN": "FAQ",
+      "zh-TW": "FAQ",
     },
     body: {
       "en-US": "Q: Who provides rewards? A: Rewards are provided by Awaken. aelf Campaign OS provides campaign tooling, verification, ranking, analytics, and export only.",
       "zh-CN": "问：奖励由谁提供？答：奖励由 Awaken 提供。aelf Campaign OS 仅提供活动工具、验证、排名、分析与导出。",
+      "zh-TW": "Q: Who provides rewards? A: Rewards are provided by Awaken. aelf Campaign OS provides campaign tooling, verification, ranking, analytics, and export only.",
     },
-    localeStatus: { "en-US": "published", "zh-CN": "reviewed" },
+    localeStatus: { "en-US": "published", "zh-CN": "reviewed", "zh-TW": "fallback" },
     lifecycle: "human_approved",
     reviewer: "legal_ops",
     updatedAt: "2026-06-27T08:12:00Z",
@@ -634,16 +677,19 @@ export const aiContentArtifacts: AiContentArtifactDraft[] = [
     purpose: {
       "en-US": "Help users bridge, swap, and verify",
       "zh-CN": "帮助用户跨链、Swap 与验证",
+      "zh-TW": "Help users bridge, swap, and verify",
     },
     title: {
       "en-US": "Tutorial",
       "zh-CN": "教程",
+      "zh-TW": "Tutorial",
     },
     body: {
       "en-US": "Connect a supported wallet, bridge via eBridge, complete one Awaken swap, then return to Campaign OS to verify your task state.",
       "zh-CN": "连接受支持的钱包，通过 eBridge 跨链，完成一次 Awaken Swap，然后回到 Campaign OS 验证任务状态。",
+      "zh-TW": "Connect a supported wallet, bridge via eBridge, complete one Awaken swap, then return to Campaign OS to verify your task state.",
     },
-    localeStatus: { "en-US": "reviewed", "zh-CN": "reviewed" },
+    localeStatus: { "en-US": "reviewed", "zh-CN": "reviewed", "zh-TW": "fallback" },
     lifecycle: "schedule_intent",
     reviewer: "growth_ops",
     updatedAt: "2026-06-27T08:18:00Z",
@@ -658,16 +704,19 @@ export const aiContentArtifacts: AiContentArtifactDraft[] = [
     purpose: {
       "en-US": "Internal and project-owner daily report",
       "zh-CN": "给内部与项目方看的日报",
+      "zh-TW": "Internal and project-owner daily report",
     },
     title: {
       "en-US": "Daily report",
       "zh-CN": "日报",
+      "zh-TW": "Daily report",
     },
     body: {
       "en-US": "Day 7: verified actions remain healthy. Bridge confirmation is the main drop-off. Risk review queue remains advisory until human approval.",
       "zh-CN": "第 7 天：有效行为保持健康。跨链确认是主要流失点。风险审核队列在人工批准前仅作为建议。",
+      "zh-TW": "Day 7: verified actions remain healthy. Bridge confirmation is the main drop-off. Risk review queue remains advisory until human approval.",
     },
-    localeStatus: { "en-US": "reviewed", "zh-CN": "fallback" },
+    localeStatus: { "en-US": "reviewed", "zh-CN": "fallback", "zh-TW": "fallback" },
     lifecycle: "publish_intent",
     reviewer: "internal_operator",
     updatedAt: "2026-06-27T08:24:00Z",
@@ -682,16 +731,19 @@ export const aiContentArtifacts: AiContentArtifactDraft[] = [
     purpose: {
       "en-US": "Explain winner rules and risk-address review",
       "zh-CN": "解释 winners 规则与风险地址审核",
+      "zh-TW": "Explain winner rules and risk-address review",
     },
     title: {
       "en-US": "Winner report",
       "zh-CN": "Winner 报告",
+      "zh-TW": "Winner report",
     },
     body: {
       "en-US": "AI draft: Winner export requires human confirmation. Risk-flagged addresses are review inputs, and final reward distribution remains the project team's responsibility.",
       "zh-CN": "AI 草稿：Winner 导出需要人工确认。风险地址仅作为审核输入，最终奖励发放仍由项目方负责。",
+      "zh-TW": "AI draft: Winner export requires human confirmation. Risk-flagged addresses are review inputs, and final reward distribution remains the project team's responsibility.",
     },
-    localeStatus: { "en-US": "ai_draft", "zh-CN": "ai_draft" },
+    localeStatus: { "en-US": "ai_draft", "zh-CN": "ai_draft", "zh-TW": "missing" },
     lifecycle: "ai_draft",
     updatedAt: "2026-06-27T08:30:00Z",
     riskLevel: "high",
@@ -706,11 +758,13 @@ export const aiContentQualityGates: AiContentQualityGate[] = [
     label: {
       "en-US": "Reward responsibility",
       "zh-CN": "奖励责任",
+      "zh-TW": "Reward responsibility",
     },
     status: "passed",
     evidence: {
       "en-US": "Copy states rewards are project-provided and Campaign OS does not distribute rewards.",
       "zh-CN": "文案说明奖励由项目方提供，Campaign OS 不执行发奖。",
+      "zh-TW": "Copy states rewards are project-provided and Campaign OS does not distribute rewards.",
     },
     affectedArtifactTypes: ["x_thread", "faq", "winner_report"],
   },
@@ -720,11 +774,13 @@ export const aiContentQualityGates: AiContentQualityGate[] = [
     label: {
       "en-US": "Eligibility",
       "zh-CN": "资格规则",
+      "zh-TW": "Eligibility",
     },
     status: "passed",
     evidence: {
       "en-US": "FAQ and tutorial describe verified tasks before eligibility.",
       "zh-CN": "FAQ 与教程说明需要先完成已验证任务才具备资格。",
+      "zh-TW": "FAQ and tutorial describe verified tasks before eligibility.",
     },
     affectedArtifactTypes: ["faq", "tutorial"],
   },
@@ -734,11 +790,13 @@ export const aiContentQualityGates: AiContentQualityGate[] = [
     label: {
       "en-US": "Winner rules",
       "zh-CN": "Winner 规则",
+      "zh-TW": "Winner rules",
     },
     status: "warning",
     evidence: {
       "en-US": "Winner report is drafted but still needs final owner confirmation.",
       "zh-CN": "Winner 报告已起草，但仍需负责人最终确认。",
+      "zh-TW": "Winner report is drafted but still needs final owner confirmation.",
     },
     affectedArtifactTypes: ["winner_report"],
   },
@@ -748,11 +806,13 @@ export const aiContentQualityGates: AiContentQualityGate[] = [
     label: {
       "en-US": "Deadline clarity",
       "zh-CN": "截止时间清晰度",
+      "zh-TW": "Deadline clarity",
     },
     status: "warning",
     evidence: {
       "en-US": "Launch copy mentions campaign end but needs final timestamp before release.",
       "zh-CN": "宣发文案提到活动结束，但发布前需要补充最终时间戳。",
+      "zh-TW": "Launch copy mentions campaign end but needs final timestamp before release.",
     },
     affectedArtifactTypes: ["x_thread", "telegram_announcement"],
   },
@@ -762,11 +822,13 @@ export const aiContentQualityGates: AiContentQualityGate[] = [
     label: {
       "en-US": "Risk language",
       "zh-CN": "风险表述",
+      "zh-TW": "Risk language",
     },
     status: "warning",
     evidence: {
       "en-US": "Risk flags are described as review inputs, not automatic exclusions.",
       "zh-CN": "风险标记被描述为审核输入，而不是自动排除。",
+      "zh-TW": "Risk flags are described as review inputs, not automatic exclusions.",
     },
     affectedArtifactTypes: ["discord_message", "daily_report", "winner_report"],
   },
@@ -776,11 +838,13 @@ export const aiContentQualityGates: AiContentQualityGate[] = [
     label: {
       "en-US": "CTA completeness",
       "zh-CN": "CTA 完整度",
+      "zh-TW": "CTA completeness",
     },
     status: "passed",
     evidence: {
       "en-US": "Primary copy includes connect wallet, bridge, swap, and verify actions.",
       "zh-CN": "主要文案包含连接钱包、跨链、Swap 与验证动作。",
+      "zh-TW": "Primary copy includes connect wallet, bridge, swap, and verify actions.",
     },
     affectedArtifactTypes: ["x_thread", "telegram_announcement", "tutorial"],
   },
@@ -790,11 +854,13 @@ export const aiContentQualityGates: AiContentQualityGate[] = [
     label: {
       "en-US": "Localization readiness",
       "zh-CN": "本地化准备度",
+      "zh-TW": "Localization readiness",
     },
     status: "blocked",
     evidence: {
       "en-US": "Telegram and Winner report Chinese drafts require human review before release.",
       "zh-CN": "Telegram 与 Winner 报告中文草稿发布前必须人工审核。",
+      "zh-TW": "Telegram and Winner report Chinese drafts require human review before release.",
     },
     affectedArtifactTypes: ["telegram_announcement", "daily_report", "winner_report"],
   },
@@ -845,12 +911,14 @@ export const conversionFunnel: ConversionFunnelStep[] = [
     label: {
       "en-US": "Campaign views",
       "zh-CN": "活动浏览",
+      "zh-TW": "Campaign views",
     },
     count: 52000,
     conversionRate: 100,
     dropOffNote: {
       "en-US": "Top-of-funnel seeded reach.",
       "zh-CN": "Seeded 顶层触达。",
+      "zh-TW": "Top-of-funnel seeded reach.",
     },
   },
   {
@@ -858,12 +926,14 @@ export const conversionFunnel: ConversionFunnelStep[] = [
     label: {
       "en-US": "Wallet connect",
       "zh-CN": "钱包连接",
+      "zh-TW": "Wallet connect",
     },
     count: 32000,
     conversionRate: 62,
     dropOffNote: {
       "en-US": "Main entry drop-off before first verified action.",
       "zh-CN": "首个有效行为前的主要流失点。",
+      "zh-TW": "Main entry drop-off before first verified action.",
     },
   },
   {
@@ -871,12 +941,14 @@ export const conversionFunnel: ConversionFunnelStep[] = [
     label: {
       "en-US": "Bridge",
       "zh-CN": "跨链",
+      "zh-TW": "Bridge",
     },
     count: 24000,
     conversionRate: 46,
     dropOffNote: {
       "en-US": "Bridge confirmation remains the largest task friction.",
       "zh-CN": "跨链确认仍是最大的任务摩擦。",
+      "zh-TW": "Bridge confirmation remains the largest task friction.",
     },
   },
   {
@@ -884,12 +956,14 @@ export const conversionFunnel: ConversionFunnelStep[] = [
     label: {
       "en-US": "Swap",
       "zh-CN": "Swap",
+      "zh-TW": "Swap",
     },
     count: 16000,
     conversionRate: 32,
     dropOffNote: {
       "en-US": "Awaken task validates post-bridge intent.",
       "zh-CN": "Awaken 任务验证跨链后的真实意图。",
+      "zh-TW": "Awaken task validates post-bridge intent.",
     },
   },
   {
@@ -897,12 +971,14 @@ export const conversionFunnel: ConversionFunnelStep[] = [
     label: {
       "en-US": "Qualified invite",
       "zh-CN": "合格邀请",
+      "zh-TW": "Qualified invite",
     },
     count: 8431,
     conversionRate: 16,
     dropOffNote: {
       "en-US": "Only invitees with valid task completion are counted.",
       "zh-CN": "仅完成有效任务的被邀请人计入。",
+      "zh-TW": "Only invitees with valid task completion are counted.",
     },
   },
   {
@@ -910,12 +986,14 @@ export const conversionFunnel: ConversionFunnelStep[] = [
     label: {
       "en-US": "Eligible winners",
       "zh-CN": "合格 winners",
+      "zh-TW": "Eligible winners",
     },
     count: 500,
     conversionRate: 5,
     dropOffNote: {
       "en-US": "Seeded export pool before project reward distribution.",
       "zh-CN": "项目方发奖前的 seeded 导出池。",
+      "zh-TW": "Seeded export pool before project reward distribution.",
     },
   },
 ];
@@ -926,16 +1004,19 @@ export const riskSignals: RiskSignal[] = [
     label: {
       "en-US": "Funding source review",
       "zh-CN": "资金来源审核",
+      "zh-TW": "Funding source review",
     },
     value: "38%",
     severity: "medium",
     evidence: {
       "en-US": "Shared funding-source patterns are flagged for operator review.",
       "zh-CN": "共享资金来源模式已标记给运营审核。",
+      "zh-TW": "Shared funding-source patterns are flagged for operator review.",
     },
     nextAction: {
       "en-US": "Review sample wallets before export approval.",
       "zh-CN": "导出批准前抽样审核钱包。",
+      "zh-TW": "Review sample wallets before export approval.",
     },
   },
   {
@@ -943,16 +1024,19 @@ export const riskSignals: RiskSignal[] = [
     label: {
       "en-US": "Referral tree review",
       "zh-CN": "邀请树审核",
+      "zh-TW": "Referral tree review",
     },
     value: "52%",
     severity: "high",
     evidence: {
       "en-US": "Qualified invite clusters need manual review before winner export.",
       "zh-CN": "合格邀请聚类在导出 winners 前需要人工审核。",
+      "zh-TW": "Qualified invite clusters need manual review before winner export.",
     },
     nextAction: {
       "en-US": "Keep referral points advisory until project owner approval.",
       "zh-CN": "项目方批准前将邀请积分保持为建议状态。",
+      "zh-TW": "Keep referral points advisory until project owner approval.",
     },
   },
   {
@@ -960,16 +1044,19 @@ export const riskSignals: RiskSignal[] = [
     label: {
       "en-US": "Referral velocity review",
       "zh-CN": "邀请速度审核",
+      "zh-TW": "Referral velocity review",
     },
     value: "9 wallets",
     severity: "medium",
     evidence: {
       "en-US": "Fast invite growth is visible but not automatically penalized.",
       "zh-CN": "快速邀请增长可见，但不会自动处罚。",
+      "zh-TW": "Fast invite growth is visible but not automatically penalized.",
     },
     nextAction: {
       "en-US": "Ask project owner to confirm referral weighting.",
       "zh-CN": "请项目方确认邀请权重。",
+      "zh-TW": "Ask project owner to confirm referral weighting.",
     },
   },
   {
@@ -977,16 +1064,19 @@ export const riskSignals: RiskSignal[] = [
     label: {
       "en-US": "Device/session review",
       "zh-CN": "设备/会话审核",
+      "zh-TW": "Device/session review",
     },
     value: "24%",
     severity: "medium",
     evidence: {
       "en-US": "Similar session patterns are grouped for review only.",
       "zh-CN": "相似会话模式仅分组供审核。",
+      "zh-TW": "Similar session patterns are grouped for review only.",
     },
     nextAction: {
       "en-US": "Compare with verified on-chain actions.",
       "zh-CN": "与已验证链上行为交叉检查。",
+      "zh-TW": "Compare with verified on-chain actions.",
     },
   },
   {
@@ -994,16 +1084,19 @@ export const riskSignals: RiskSignal[] = [
     label: {
       "en-US": "Task timing review",
       "zh-CN": "任务时序审核",
+      "zh-TW": "Task timing review",
     },
     value: "18%",
     severity: "low",
     evidence: {
       "en-US": "Repeated task order is a review signal, not a final decision.",
       "zh-CN": "重复任务顺序是审核信号，不是最终判断。",
+      "zh-TW": "Repeated task order is a review signal, not a final decision.",
     },
     nextAction: {
       "en-US": "Use task evidence before changing eligibility.",
       "zh-CN": "变更资格前先查看任务证据。",
+      "zh-TW": "Use task evidence before changing eligibility.",
     },
   },
   {
@@ -1011,16 +1104,19 @@ export const riskSignals: RiskSignal[] = [
     label: {
       "en-US": "Bot/sybil review",
       "zh-CN": "机器人/女巫审核",
+      "zh-TW": "Bot/sybil review",
     },
     value: "14%",
     severity: "medium",
     evidence: {
       "en-US": "Automation-style participation patterns are surfaced for human review only.",
       "zh-CN": "自动化式参与模式仅展示给人工审核。",
+      "zh-TW": "Automation-style participation patterns are surfaced for human review only.",
     },
     nextAction: {
       "en-US": "Compare task evidence and risk flags before changing export readiness.",
       "zh-CN": "变更导出准备度前先对照任务证据与风险标记。",
+      "zh-TW": "Compare task evidence and risk flags before changing export readiness.",
     },
   },
   {
@@ -1028,16 +1124,19 @@ export const riskSignals: RiskSignal[] = [
     label: {
       "en-US": "Manual review queue",
       "zh-CN": "人工审核队列",
+      "zh-TW": "Manual review queue",
     },
     value: "12 wallets",
     severity: "high",
     evidence: {
       "en-US": "Wallets with combined signals wait for human review.",
       "zh-CN": "多重信号钱包等待人工审核。",
+      "zh-TW": "Wallets with combined signals wait for human review.",
     },
     nextAction: {
       "en-US": "Hold export approval until review is complete.",
       "zh-CN": "审核完成前暂缓导出批准。",
+      "zh-TW": "Hold export approval until review is complete.",
     },
   },
 ];
@@ -1048,10 +1147,12 @@ export const aiOpsReports: AiOpsReportCard[] = [
     title: {
       "en-US": "Daily AI Ops summary",
       "zh-CN": "AI Ops 日报",
+      "zh-TW": "Daily AI Ops summary",
     },
     summary: {
       "en-US": "Verified actions are healthy; bridge confirmation remains the main drop-off.",
       "zh-CN": "有效行为健康；跨链确认仍是主要流失点。",
+      "zh-TW": "Verified actions are healthy; bridge confirmation remains the main drop-off.",
     },
     generatedAt: "2026-06-27 08:30",
     recommendations: [
@@ -1060,10 +1161,12 @@ export const aiOpsReports: AiOpsReportCard[] = [
         title: {
           "en-US": "Clarify bridge confirmation steps",
           "zh-CN": "说明跨链确认步骤",
+          "zh-TW": "Clarify bridge confirmation steps",
         },
         expectedImpact: {
           "en-US": "Protect wallet-connect to bridge conversion.",
           "zh-CN": "保护钱包连接到跨链的转化。",
+          "zh-TW": "Protect wallet-connect to bridge conversion.",
         },
         confidence: "medium",
         riskLevel: "low",
@@ -1076,10 +1179,12 @@ export const aiOpsReports: AiOpsReportCard[] = [
     title: {
       "en-US": "User quality summary",
       "zh-CN": "用户质量摘要",
+      "zh-TW": "User quality summary",
     },
     summary: {
       "en-US": "AA and EOA participants both contribute verified actions.",
       "zh-CN": "AA 与 EOA 参与者都贡献了有效行为。",
+      "zh-TW": "AA and EOA participants both contribute verified actions.",
     },
     generatedAt: "2026-06-27 08:35",
     recommendations: [
@@ -1088,10 +1193,12 @@ export const aiOpsReports: AiOpsReportCard[] = [
         title: {
           "en-US": "Keep wallet split visible in export review",
           "zh-CN": "在导出审核中保留钱包拆分",
+          "zh-TW": "Keep wallet split visible in export review",
         },
         expectedImpact: {
           "en-US": "Avoid AA-only interpretation of campaign quality.",
           "zh-CN": "避免将活动质量误解为只看 AA。",
+          "zh-TW": "Avoid AA-only interpretation of campaign quality.",
         },
         confidence: "high",
         riskLevel: "low",
@@ -1104,10 +1211,12 @@ export const aiOpsReports: AiOpsReportCard[] = [
     title: {
       "en-US": "Bot pattern summary",
       "zh-CN": "机器人模式摘要",
+      "zh-TW": "Bot pattern summary",
     },
     summary: {
       "en-US": "Referral velocity and shared funding signals require operator review.",
       "zh-CN": "邀请速度与共享资金信号需要运营审核。",
+      "zh-TW": "Referral velocity and shared funding signals require operator review.",
     },
     generatedAt: "2026-06-27 08:40",
     recommendations: [
@@ -1116,10 +1225,12 @@ export const aiOpsReports: AiOpsReportCard[] = [
         title: {
           "en-US": "Hold export until risk review completes",
           "zh-CN": "风险审核完成前暂缓导出",
+          "zh-TW": "Hold export until risk review completes",
         },
         expectedImpact: {
           "en-US": "Reduces reward dispute risk before project distribution.",
           "zh-CN": "在项目方发奖前降低奖励争议风险。",
+          "zh-TW": "Reduces reward dispute risk before project distribution.",
         },
         confidence: "medium",
         riskLevel: "high",
@@ -1132,10 +1243,12 @@ export const aiOpsReports: AiOpsReportCard[] = [
     title: {
       "en-US": "Optimization suggestions",
       "zh-CN": "优化建议",
+      "zh-TW": "Optimization suggestions",
     },
     summary: {
       "en-US": "Referral weighting should stay tied to qualified invitees.",
       "zh-CN": "邀请权重应继续绑定合格被邀请人。",
+      "zh-TW": "Referral weighting should stay tied to qualified invitees.",
     },
     generatedAt: "2026-06-27 08:45",
     recommendations: [
@@ -1144,10 +1257,12 @@ export const aiOpsReports: AiOpsReportCard[] = [
         title: {
           "en-US": "Review referral point weight",
           "zh-CN": "审核邀请积分权重",
+          "zh-TW": "Review referral point weight",
         },
         expectedImpact: {
           "en-US": "Balances growth with qualified on-chain action quality.",
           "zh-CN": "平衡增长与合格链上行为质量。",
+          "zh-TW": "Balances growth with qualified on-chain action quality.",
         },
         confidence: "high",
         riskLevel: "medium",
@@ -1164,14 +1279,17 @@ export const ecosystemMetrics: EcosystemMetricRow[] = [
     conversionImpact: {
       "en-US": "+46% of viewers reached bridge task.",
       "zh-CN": "46% 浏览者到达跨链任务。",
+      "zh-TW": "+46% of viewers reached bridge task.",
     },
     qualitySignal: {
       "en-US": "Strong onboarding intent.",
       "zh-CN": "强 onboarding 意图。",
+      "zh-TW": "Strong onboarding intent.",
     },
     recommendedNextAction: {
       "en-US": "Clarify bridge confirmation and retry states.",
       "zh-CN": "说明跨链确认与重试状态。",
+      "zh-TW": "Clarify bridge confirmation and retry states.",
     },
   },
   {
@@ -1180,14 +1298,17 @@ export const ecosystemMetrics: EcosystemMetricRow[] = [
     conversionImpact: {
       "en-US": "+32% of viewers reached swap task.",
       "zh-CN": "32% 浏览者到达 Swap 任务。",
+      "zh-TW": "+32% of viewers reached swap task.",
     },
     qualitySignal: {
       "en-US": "Healthy post-bridge activation.",
       "zh-CN": "跨链后激活健康。",
+      "zh-TW": "Healthy post-bridge activation.",
     },
     recommendedNextAction: {
       "en-US": "Keep swap as the primary quality action.",
       "zh-CN": "继续将 Swap 作为主要质量行为。",
+      "zh-TW": "Keep swap as the primary quality action.",
     },
   },
   {
@@ -1196,14 +1317,17 @@ export const ecosystemMetrics: EcosystemMetricRow[] = [
     conversionImpact: {
       "en-US": "NFT intent appears after swap completion.",
       "zh-CN": "NFT 意图出现在 Swap 完成后。",
+      "zh-TW": "NFT intent appears after swap completion.",
     },
     qualitySignal: {
       "en-US": "Medium quality signal for collectors.",
       "zh-CN": "收藏者中等质量信号。",
+      "zh-TW": "Medium quality signal for collectors.",
     },
     recommendedNextAction: {
       "en-US": "Test a holder follow-up campaign.",
       "zh-CN": "测试 holder 后续活动。",
+      "zh-TW": "Test a holder follow-up campaign.",
     },
   },
   {
@@ -1212,14 +1336,17 @@ export const ecosystemMetrics: EcosystemMetricRow[] = [
     conversionImpact: {
       "en-US": "Governance participation is smaller but high quality.",
       "zh-CN": "治理参与较小但质量高。",
+      "zh-TW": "Governance participation is smaller but high quality.",
     },
     qualitySignal: {
       "en-US": "High contribution signal.",
       "zh-CN": "高贡献信号。",
+      "zh-TW": "High contribution signal.",
     },
     recommendedNextAction: {
       "en-US": "Create a voter-week segment.",
       "zh-CN": "创建治理投票周分层。",
+      "zh-TW": "Create a voter-week segment.",
     },
   },
   {
@@ -1228,14 +1355,17 @@ export const ecosystemMetrics: EcosystemMetricRow[] = [
     conversionImpact: {
       "en-US": "AI agent coin actions need clearer onboarding.",
       "zh-CN": "AI agent coin 行为需要更清晰的 onboarding。",
+      "zh-TW": "AI agent coin actions need clearer onboarding.",
     },
     qualitySignal: {
       "en-US": "Emerging product signal.",
       "zh-CN": "新兴产品信号。",
+      "zh-TW": "Emerging product signal.",
     },
     recommendedNextAction: {
       "en-US": "Pair daipp with tutorial content.",
       "zh-CN": "将 daipp 与教程内容组合。",
+      "zh-TW": "Pair daipp with tutorial content.",
     },
   },
   {
@@ -1244,14 +1374,17 @@ export const ecosystemMetrics: EcosystemMetricRow[] = [
     conversionImpact: {
       "en-US": "Payment actions are low volume but high intent.",
       "zh-CN": "支付行为量低但意图高。",
+      "zh-TW": "Payment actions are low volume but high intent.",
     },
     qualitySignal: {
       "en-US": "High-value conversion signal.",
       "zh-CN": "高价值转化信号。",
+      "zh-TW": "High-value conversion signal.",
     },
     recommendedNextAction: {
       "en-US": "Use pay task only for targeted campaigns.",
       "zh-CN": "仅在定向活动中使用 Pay 任务。",
+      "zh-TW": "Use pay task only for targeted campaigns.",
     },
   },
   {
@@ -1260,14 +1393,17 @@ export const ecosystemMetrics: EcosystemMetricRow[] = [
     conversionImpact: {
       "en-US": "Forecast participants respond to streak mechanics.",
       "zh-CN": "Forecast 参与者对连续参与机制有响应。",
+      "zh-TW": "Forecast participants respond to streak mechanics.",
     },
     qualitySignal: {
       "en-US": "Repeat engagement signal.",
       "zh-CN": "重复参与信号。",
+      "zh-TW": "Repeat engagement signal.",
     },
     recommendedNextAction: {
       "en-US": "Test streak-based leaderboard copy.",
       "zh-CN": "测试连续参与排行榜文案。",
+      "zh-TW": "Test streak-based leaderboard copy.",
     },
   },
 ];
@@ -1279,14 +1415,16 @@ export const campaignSummary: CampaignShellSummary = {
   title: {
     "en-US": "Awaken Sprint",
     "zh-CN": "Awaken 冲刺活动",
+    "zh-TW": "Awaken Sprint",
   },
   subtitle: {
     "en-US": "Bridge, swap, and prove activity with any supported wallet.",
     "zh-CN": "使用任意受支持钱包完成跨链、Swap 与活动证明。",
+    "zh-TW": "Bridge, swap, and prove activity with any supported wallet.",
   },
   status: "live",
   defaultLocale: "en-US",
-  supportedLocales: ["en-US", "zh-CN"],
+  supportedLocales: ["en-US", "zh-CN", "zh-TW"],
   walletPolicy: "ANY",
   contractMode: "OFF_CHAIN_MVP",
   startTime: "2026-06-20T00:00:00Z",
