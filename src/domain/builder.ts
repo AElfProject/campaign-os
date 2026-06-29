@@ -1316,6 +1316,7 @@ const gateTitles: Record<string, LocalizedText> = {
   "contract-impact": text("Contract impact", "合约影响"),
   "export-disclaimer": text("Export boundary", "导出边界"),
   "i18n-human-review": text("i18n human review", "多语言人工审核"),
+  "localized-reward-disclaimer": text("Localized reward disclaimer", "本地化奖励声明"),
   "reward-disclaimer": text("Reward disclaimer", "奖励声明"),
   "risk-referral-controls": text("Referral and risk controls", "推荐与风险控制"),
   "risk-social-reward": text("Social reward risk", "社交奖励风险"),
@@ -1364,6 +1365,17 @@ const hasUnreviewedChineseAiDraft = (draft: CampaignDraft) =>
       !revision.humanReviewed &&
       (revision.aiDraft || revision.fallbackToEnglish),
   );
+
+const localizedRewardDisclaimerBlockerLocales = (draft: CampaignDraft) =>
+  draft.supportedLocales.filter((locale) => {
+    const revision = draft.contentRevisions.find((candidate) => candidate.locale === locale);
+
+    if (!revision?.rewardDisclaimer.trim()) {
+      return true;
+    }
+
+    return locale !== "en-US" && (!revision.humanReviewed || revision.fallbackToEnglish);
+  });
 
 const isHighRewardSocialOnly = (draft: CampaignDraft) => {
   const selectedTemplates = taskTemplateLibrary.filter((template) =>
@@ -1530,6 +1542,33 @@ export const computeBuilderPublishReadiness = (draft: CampaignDraft): PublishRea
         ),
   );
 
+  const localizedDisclaimerBlockers = localizedRewardDisclaimerBlockerLocales(draft);
+  checks.push(
+    localizedDisclaimerBlockers.length === 0
+      ? makeCheck(
+          "localized-reward-disclaimer",
+          "rewards",
+          "passed",
+          text("Localized reward disclaimers are reviewed for every supported locale.", "所有支持语言的奖励声明均已审核。"),
+          text("Keep per-locale reward responsibility copy visible in publish review.", "在发布审核中继续展示每个语言的奖励责任文案。"),
+          "project_owner",
+        )
+      : makeCheck(
+          "localized-reward-disclaimer",
+          "rewards",
+          "blocker",
+          text(
+            `Reward disclaimer review is required for ${localizedDisclaimerBlockers.join(", ")}.`,
+            `${localizedDisclaimerBlockers.join(", ")} 需要完成奖励免责声明审核。`,
+          ),
+          text(
+            "Review AI draft, fallback, or missing localized reward disclaimers before publish.",
+            "发布前审核 AI 草稿、回退或缺失的本地化奖励免责声明。",
+          ),
+          "project_owner",
+        ),
+  );
+
   checks.push(
     draft.contractImpact.mode === "CONTRACT_CLAIM"
       ? makeCheck(
@@ -1686,6 +1725,7 @@ const createApprovalRoutes = (gates: PublishGateItem[]): PublishGateApprovalRout
     "contract-impact",
     "export-disclaimer",
     "i18n-human-review",
+    "localized-reward-disclaimer",
     "reward-disclaimer",
     "risk-referral-controls",
     "risk-social-reward",

@@ -32,6 +32,15 @@ describe("I18nContractReadiness", () => {
     expect(within(compareConsole).getByText("Rewards are provided by the campaign project. Export winners does not distribute rewards.")).toBeInTheDocument();
     expect(within(compareConsole).getByText("奖励由活动项目方提供。导出 winners 不等于发奖。")).toBeInTheDocument();
     expect(within(compareConsole).getAllByText(/falls back to English/).length).toBeGreaterThan(0);
+
+    const rewardReviewGate = screen.getByLabelText("Reward disclaimer review");
+    expect(within(rewardReviewGate).getByText("Review every localized reward disclaimer before publish.")).toBeInTheDocument();
+    expect(within(rewardReviewGate).getByText("Ready for publish")).toBeInTheDocument();
+    expect(within(rewardReviewGate).getAllByText("Blocks publish").length).toBeGreaterThan(0);
+    expect(within(rewardReviewGate).getByText("AI draft reward disclaimer requires project owner review before publish.")).toBeInTheDocument();
+    expect(within(rewardReviewGate).getByText("Localized reward disclaimer is missing and blocks publish.")).toBeInTheDocument();
+    expect(within(rewardReviewGate).getAllByText("Project owner must review localized reward disclaimer before publish.").length).toBeGreaterThan(0);
+    expect(within(rewardReviewGate).getAllByText("Rewards are provided by the campaign project. Export winners does not distribute rewards.").length).toBeGreaterThan(0);
   });
 
   it("shows localized reward disclaimers and MVP locale readiness", () => {
@@ -42,6 +51,11 @@ describe("I18nContractReadiness", () => {
     expect(screen.getByText("奖励声明审核")).toBeInTheDocument();
     expect(screen.getAllByText("Rewards are provided by the campaign project. Export winners does not distribute rewards.").length).toBeGreaterThan(0);
     expect(screen.getAllByText("奖励由活动项目方提供。导出 winners 不等于发奖。").length).toBeGreaterThan(0);
+    const rewardReviewGate = screen.getByLabelText("奖励声明审核");
+    expect(within(rewardReviewGate).getByText("发布前逐一审核每个语言的奖励免责声明。")).toBeInTheDocument();
+    expect(within(rewardReviewGate).getAllByText("阻断发布").length).toBeGreaterThan(0);
+    expect(within(rewardReviewGate).getByText("本地化奖励免责声明缺失，会阻断发布。")).toBeInTheDocument();
+    expect(within(rewardReviewGate).getAllByText("项目方必须在发布前审核本地化奖励免责声明。").length).toBeGreaterThan(0);
     expect(screen.getAllByText("中文 AI 草稿").length).toBeGreaterThan(0);
     expect(screen.getAllByText("AI 生成翻译必须经过人工审核后才能发布。").length).toBeGreaterThan(0);
     expect(screen.getByText("中文草稿在项目方完成人工审核前回退展示英文。")).toBeInTheDocument();

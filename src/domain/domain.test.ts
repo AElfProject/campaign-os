@@ -290,25 +290,34 @@ describe("Campaign OS domain foundation", () => {
         locale: "en-US",
         reviewed: true,
         fallbackToEnglish: false,
+        reviewState: "reviewed",
+        blocksPublish: false,
         publishState: "ready",
       }),
       expect.objectContaining({
         locale: "zh-CN",
         reviewed: false,
         fallbackToEnglish: true,
-        publishState: "warning",
+        reviewState: "ai_draft",
+        blocksPublish: true,
+        publishState: "blocker",
       }),
       expect.objectContaining({
         locale: "zh-TW",
         reviewed: false,
         fallbackToEnglish: true,
-        publishState: "warning",
+        reviewState: "missing",
+        blocksPublish: true,
+        publishState: "blocker",
       }),
     ]);
     expect(translationManager.rewardDisclaimers[0].disclaimer).toContain(
       "does not distribute rewards",
     );
     expect(translationManager.rewardDisclaimers[1].disclaimer).toContain("不等于发奖");
+    expect(translationManager.rewardDisclaimers[1].nextAction["en-US"]).toContain("Project owner");
+    expect(translationManager.rewardDisclaimers[2].blockerReason["en-US"]).toContain("missing");
+    expect(translationManager.rewardDisclaimers[0].boundary["en-US"]).toContain("does not distribute rewards");
   });
 
   it("creates the AI Content Pack workbench with all required artifacts and release gates", () => {
@@ -584,10 +593,13 @@ describe("Campaign OS domain foundation", () => {
       status: "covered",
     });
     expect(itemsById["product-reward-disclaimer-locales"]).toMatchObject({
-      status: "needs_review",
-      blocksDelivery: true,
+      status: "covered",
+      blocksDelivery: false,
       ownerRole: "project_owner",
     });
+    expect(itemsById["product-reward-disclaimer-locales"]?.evidence["en-US"]).toContain(
+      "localized reward disclaimer gate",
+    );
     expect(itemsById["product-contract-impact-review"]?.evidence["en-US"]).toContain("claim-mode blockers");
     expect(itemsById["qa-wrong-chain-error"]).toMatchObject({
       status: "needs_review",
@@ -611,14 +623,20 @@ describe("Campaign OS domain foundation", () => {
     ]);
     expect(readiness.needsReview.map((item) => item.id)).toEqual(
       expect.arrayContaining([
-        "product-reward-disclaimer-locales",
         "qa-portkey-aa-connect",
         "qa-eoa-extension-connect",
         "qa-wrong-chain-error",
         "qa-unsupported-wallet-error",
-        "qa-reward-disclaimer-blocker",
       ]),
     );
+    expect(readiness.needsReview.map((item) => item.id)).not.toEqual(
+      expect.arrayContaining(["product-reward-disclaimer-locales", "qa-reward-disclaimer-blocker"]),
+    );
+    expect(itemsById["qa-reward-disclaimer-blocker"]).toMatchObject({
+      status: "covered",
+      blocksDelivery: false,
+      ownerRole: "project_owner",
+    });
     expect(readiness.boundary["zh-TW"]).toContain("No live wallet SDK");
     expect(itemsById["product-reward-disclaimer-locales"]).toMatchObject({
       label: expect.objectContaining({ "zh-TW": expect.any(String) }),
