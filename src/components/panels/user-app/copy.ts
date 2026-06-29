@@ -1,7 +1,6 @@
 import type { SupportedLocale } from "../../../domain";
 
-export const userAppCopy = {
-  "en-US": {
+const enUS = {
     active: "Live campaign",
     appHubTitle: "aelf App Hub",
     appHubSubtitle: "Mobile entry for campaigns, points, pay, forecast, and portfolio.",
@@ -148,8 +147,9 @@ export const userAppCopy = {
     taskVerification: "Task verification states",
     winnersExportStatus: "Winners export status",
     winnersExportSubtitle: "Participant-facing export row, evidence, and fulfillment boundary.",
-  },
-  "zh-CN": {
+} satisfies Record<string, string>;
+
+const zhCN = {
     active: "进行中的活动",
     appHubTitle: "aelf App Hub",
     appHubSubtitle: "移动端入口，聚合活动、积分、Pay、Forecast 与 Portfolio。",
@@ -296,7 +296,22 @@ export const userAppCopy = {
     taskVerification: "任务验证状态",
     winnersExportStatus: "Winners 导出状态",
     winnersExportSubtitle: "面向参与者展示导出行、证据与奖励履约边界。",
+} satisfies typeof enUS;
+
+export const userAppCopy = {
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": {
+    ...zhCN,
+    active: "進行中的活動",
+    campaignDetail: "活動詳情",
+    feedTitle: "活動 Feed",
+    localePreference: "語言偏好",
+    localeReadiness: "語言 readiness",
+    ready: "就緒",
+    seededWalletBoundary: "僅 seeded 預覽；不會執行即時錢包 SDK 連線或交易簽名。",
+    taskVerification: "任務驗證狀態",
   },
-} satisfies Record<SupportedLocale, Record<string, string>>;
+} satisfies Record<SupportedLocale, typeof enUS>;
 
 export type UserAppCopy = (typeof userAppCopy)["en-US"];

@@ -287,6 +287,14 @@ const localeStatusLabel = (status: LocaleStatus, locale: SupportedLocale) => {
       ready: "就绪",
       reviewed: "已审核",
     },
+    "zh-TW": {
+      ai_draft: "AI 草稿",
+      fallback: "回退",
+      missing: "缺失",
+      published: "已發布",
+      ready: "就緒",
+      reviewed: "已審核",
+    },
   } satisfies Record<SupportedLocale, Record<LocaleStatus, string>>;
 
   return labels[locale][status];
@@ -472,6 +480,7 @@ const createCampaignFeed = (
     title: {
       "en-US": "Forest NFT Quest",
       "zh-CN": "Forest NFT 任务",
+      "zh-TW": "Forest NFT 任務",
     },
     campaignType: "NFT / DAO",
     status: "scheduled",
@@ -481,14 +490,17 @@ const createCampaignFeed = (
       {
         "en-US": "Hold Forest NFT",
         "zh-CN": "持有 Forest NFT",
+        "zh-TW": "持有 Forest NFT",
       },
       {
         "en-US": "Vote on TMRWDAO",
         "zh-CN": "参与 TMRWDAO 投票",
+        "zh-TW": "參與 TMRWDAO 投票",
       },
       {
         "en-US": "Invite one qualified friend",
         "zh-CN": "邀请 1 位合格好友",
+        "zh-TW": "邀請 1 位合格好友",
       },
     ],
     cta: "start",
@@ -498,6 +510,7 @@ const createCampaignFeed = (
     title: {
       "en-US": "TMRWDAO Governance Streak",
       "zh-CN": "TMRWDAO 治理连续任务",
+      "zh-TW": "TMRWDAO 治理連續任務",
     },
     campaignType: "DAO / Referral",
     status: "ended",
@@ -507,14 +520,17 @@ const createCampaignFeed = (
       {
         "en-US": "Vote on proposal",
         "zh-CN": "完成提案投票",
+        "zh-TW": "完成提案投票",
       },
       {
         "en-US": "Review points",
         "zh-CN": "查看积分",
+        "zh-TW": "查看積分",
       },
       {
         "en-US": "Check winners export",
         "zh-CN": "检查 winners 导出",
+        "zh-TW": "檢查 winners 匯出",
       },
     ],
     cta: "checkEligibility",

@@ -19,7 +19,7 @@ describe("PublishGateDecisionCenter", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("localizes the decision center to zh-CN without exposing zh-TW", () => {
+  it("localizes the decision center to zh-CN", () => {
     render(<PublishGateDecisionCenter locale="zh-CN" />);
 
     expect(screen.getByRole("heading", { name: "发布门禁决策中心" })).toBeInTheDocument();
@@ -30,7 +30,17 @@ describe("PublishGateDecisionCenter", () => {
     expect(screen.getByText("合约领取模式需要高影响人工审核。")).toBeInTheDocument();
     expect(screen.getByText("导出 winners 不等于发奖的声明已确认。")).toBeInTheDocument();
     expect(screen.getByText(/不执行真实发布/)).toBeInTheDocument();
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+  });
+
+  it("localizes the decision center chrome to zh-TW", () => {
+    render(<PublishGateDecisionCenter locale="zh-TW" />);
+
+    expect(screen.getByRole("heading", { name: "發布門禁決策中心" })).toBeInTheDocument();
+    expect(screen.getAllByText("發布門禁").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("專案方").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("內部營運").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("合約審核人").length).toBeGreaterThan(0);
+    expect(screen.getByText(/高影响门禁/)).toBeInTheDocument();
   });
 
   it("shows project owner, internal operator, and contract reviewer approval route cards", () => {

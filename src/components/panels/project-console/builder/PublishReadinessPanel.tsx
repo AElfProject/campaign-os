@@ -35,6 +35,15 @@ const copy = {
     title: "发布准备度",
     warnings: "警告",
   },
+  "zh-TW": {
+    blockers: "阻斷項",
+    nextAction: "下一步",
+    passed: "已通過檢查",
+    ready: "可發布",
+    reason: "原因",
+    title: "發布準備度",
+    warnings: "警告",
+  },
 } satisfies Record<SupportedLocale, Record<string, string>>;
 
 const ownerRoleLabels = {
@@ -47,6 +56,11 @@ const ownerRoleLabels = {
     contract_reviewer: "合约审核人",
     internal_operator: "内部运营",
     project_owner: "项目方",
+  },
+  "zh-TW": {
+    contract_reviewer: "合約審核人",
+    internal_operator: "內部營運",
+    project_owner: "專案方",
   },
 } satisfies Record<SupportedLocale, Record<OwnerRole, string>>;
 
@@ -70,6 +84,16 @@ const readinessGroupLabels = {
     risk: "风险",
     tasks: "任务",
     wallet: "钱包",
+  },
+  "zh-TW": {
+    basics: "基礎資訊",
+    contract: "合約",
+    export: "匯出",
+    i18n: "多語言",
+    rewards: "獎勵",
+    risk: "風險",
+    tasks: "任務",
+    wallet: "錢包",
   },
 } satisfies Record<SupportedLocale, Record<ReadinessGroup, string>>;
 

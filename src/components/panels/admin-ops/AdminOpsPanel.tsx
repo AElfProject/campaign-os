@@ -666,7 +666,7 @@ export const AdminOpsPanel = ({
           <article style={cardStyle}>
             <p style={labelStyle}>{copy.localizationReview}</p>
             <p style={valueStyle}>{templateGovernance.summary.localizationReviewCount}</p>
-            <p style={mutedTextStyle}>zh-CN AI draft/fallback</p>
+            <p style={mutedTextStyle}>zh-CN / zh-TW AI draft/fallback</p>
           </article>
           <article style={cardStyle}>
             <p style={labelStyle}>{copy.riskReview}</p>
@@ -722,14 +722,13 @@ export const AdminOpsPanel = ({
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                 <Badge label={walletCompatibilityLabel(row.walletCompatibility, copy)} tone="info" />
-                <LocaleStatusBadge
-                  label={`en-US ${row.localeReadiness["en-US"]}`}
-                  status={row.localeReadiness["en-US"]}
-                />
-                <LocaleStatusBadge
-                  label={`zh-CN ${row.localeReadiness["zh-CN"]}`}
-                  status={row.localeReadiness["zh-CN"]}
-                />
+                {Object.entries(row.localeReadiness).map(([readinessLocale, status]) => (
+                  <LocaleStatusBadge
+                    key={readinessLocale}
+                    label={`${readinessLocale} ${status}`}
+                    status={status}
+                  />
+                ))}
                 {row.reviewSignals.map((signal) => (
                   <ReviewSeverityBadge
                     key={`${row.templateId}-${signal}`}
@@ -1128,14 +1127,13 @@ export const AdminOpsPanel = ({
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   <Badge label={artifact.channel} tone="info" />
                   <Badge label={`${copy.riskLevel}: ${artifact.riskLevel}`} tone={artifact.riskLevel === "high" ? "warning" : "neutral"} />
-                  <LocaleStatusBadge
-                    label={`en-US ${artifact.localeStatus["en-US"]}`}
-                    status={artifact.localeStatus["en-US"]}
-                  />
-                  <LocaleStatusBadge
-                    label={`zh-CN ${artifact.localeStatus["zh-CN"]}`}
-                    status={artifact.localeStatus["zh-CN"]}
-                  />
+                  {Object.entries(artifact.localeStatus).map(([statusLocale, status]) => (
+                    <LocaleStatusBadge
+                      key={statusLocale}
+                      label={`${statusLocale} ${status}`}
+                      status={status}
+                    />
+                  ))}
                   <ReviewSeverityBadge
                     label={artifact.reviewer ? `${copy.reviewer}: ${artifact.reviewer}` : copy.humanReviewRequired}
                     severity={artifact.reviewer ? "info" : "warning"}

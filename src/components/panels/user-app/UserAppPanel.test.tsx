@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
+import { UserAppPanel } from "./UserAppPanel";
 
 describe("User App shell", () => {
   afterEach(() => {
@@ -230,10 +231,9 @@ describe("User App shell", () => {
     expect(within(exportStatus).getByText("最终奖励发放由活动项目方处理。")).toBeInTheDocument();
     expect(within(exportStatus).getByText(/请先完成缺失的必做任务/)).toBeInTheDocument();
     expect(screen.getByText("仅注册不会计分；被邀请人必须完成有效任务后才会产生推荐积分。")).toBeInTheDocument();
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
 
-  it("opens the seeded wallet connect modal in zh-CN without zh-TW copy", () => {
+  it("opens the seeded wallet connect modal in zh-CN", () => {
     render(<App />);
 
     fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh-CN" } });
@@ -251,7 +251,6 @@ describe("User App shell", () => {
     expect(within(dialog).getByText("不支持的钱包：请为该 seeded 活动流程选择 Portkey AA、Portkey EOA App、Portkey EOA Extension 或 NightElf。")).toBeInTheDocument();
     expect(within(dialog).getByText("缺少签名：确认提示内容后只签署 seeded 验证消息；此预览不会请求真实签名。")).toBeInTheDocument();
     expect(within(dialog).getByText("账户类型限制：如果活动只允许 AA 或只允许 EOA，请切换到该活动策略接受的钱包类型。")).toBeInTheDocument();
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
 
   it("supports the eligibility checker workflow with seeded and unknown addresses", () => {
@@ -287,7 +286,6 @@ describe("User App shell", () => {
     expect(within(checker).getByText("Wallet type remains unknown until supported wallet/session verification.")).toBeInTheDocument();
     expect(within(checker).getByText(/cannot infer AA or EOA/)).toBeInTheDocument();
     expect(within(checker).getByText(/Connect or verify/)).toBeInTheDocument();
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
   });
 
   it("switches leaderboard modes with active state and mode-specific values", () => {
@@ -312,7 +310,7 @@ describe("User App shell", () => {
     expect(within(leaderboard).getByText(/Seeded\/local leaderboard preview only/)).toBeInTheDocument();
   });
 
-  it("renders zh-CN checker and leaderboard controls without zh-TW", () => {
+  it("renders zh-CN checker and leaderboard controls", () => {
     render(<App />);
 
     fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh-CN" } });
@@ -331,6 +329,15 @@ describe("User App shell", () => {
     expect(within(leaderboard).getByRole("button", { name: "邀请" })).toBeInTheDocument();
     expect(within(leaderboard).getByText("当前模式")).toBeInTheDocument();
     expect(within(leaderboard).getByText(/仅 seeded\/本地排行榜预览/)).toBeInTheDocument();
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+  });
+
+  it("renders zh-TW task readiness as active fallback state in the panel", () => {
+    render(<UserAppPanel locale="zh-TW" />);
+
+    expect(screen.getByRole("heading", { name: "活動 Feed" })).toBeInTheDocument();
+    expect(screen.getAllByText(/語言 readiness/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/回退|缺失/).length).toBeGreaterThan(0);
+    expect(screen.getByText("Forest NFT 任務")).toBeInTheDocument();
+    expect(screen.getByText("TMRWDAO 治理連續任務")).toBeInTheDocument();
   });
 });

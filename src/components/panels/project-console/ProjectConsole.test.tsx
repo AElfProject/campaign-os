@@ -153,7 +153,8 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText("Contract Impact Review").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Analytics and Export").length).toBeGreaterThan(0);
     expect(screen.getByText("Export winners does not distribute rewards.")).toBeInTheDocument();
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+    expect(screen.getByText("Default and fallback: en-US. Supported: en-US, zh-CN, and zh-TW fallback readiness.")).toBeInTheDocument();
+    expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
   });
 
   it("switches major Project Console copy manually to zh-CN", () => {
@@ -279,7 +280,8 @@ describe("Project Console shell", () => {
     expect(screen.getByText("缺失任务")).toBeInTheDocument();
     expect(screen.getByText("导出 winners 不等于发奖。")).toBeInTheDocument();
     expect(screen.getByText("中文内容在审核前回退展示英文。")).toBeInTheDocument();
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+    expect(screen.getByText("默认与回退：en-US。支持：en-US、zh-CN 与 zh-TW 回退 readiness。")).toBeInTheDocument();
+    expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
   });
 
   it("keeps User App and Admin/Ops reachable from navigation", () => {
