@@ -34,6 +34,9 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("button", { name: "Project Console" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "User App" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Admin/Ops" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "English" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "简体中文" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "繁體中文" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
     expect(screen.getByText("Connected wallets")).toBeInTheDocument();
     expect(screen.getAllByText("Wallet type verified").length).toBeGreaterThan(0);
@@ -91,7 +94,7 @@ describe("Campaign OS app shell", () => {
     expect(
       screen.queryByText("Your browser language is Chinese. Switch to 简体中文?"),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "繁體中文" })).toBeInTheDocument();
   });
 
   it("switches major shell copy manually to zh-CN", () => {
@@ -105,6 +108,32 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("button", { name: "管理员/Ops" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Awaken 冲刺活动" })).toBeInTheDocument();
     expect(screen.getByText("已连接钱包")).toBeInTheDocument();
+  });
+
+  it("switches the app shell manually to zh-TW while campaign content falls back safely", () => {
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh-TW" } });
+
+    expect(screen.getByRole("heading", { name: "活動營運工作台" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "專案控制台" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "使用者應用" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "管理員/Ops" })).toBeInTheDocument();
+    expect(screen.getByLabelText("語言")).toHaveValue("zh-TW");
+    expect(window.localStorage.getItem(localePreferenceStorageKey)).toBe("zh-TW");
+    expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
+  });
+
+  it("keeps zh-TW browser language as prompt-only on first load", () => {
+    setNavigatorLanguages(["zh-TW"]);
+
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: "Campaign operations shell" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Language")).toHaveValue("en-US");
+    expect(
+      screen.getByText("Your browser language is Chinese. Switch to 简体中文?"),
+    ).toBeInTheDocument();
   });
 
   it("exposes Campaign Builder core flow from the Project Console", () => {
@@ -179,7 +208,7 @@ describe("Campaign OS app shell", () => {
     expect(screen.getAllByText("奖励与资格").length).toBeGreaterThan(0);
     expect(screen.getAllByText("i18n 翻译审核").length).toBeGreaterThan(0);
     expect(screen.getAllByText("合约影响审核").length).toBeGreaterThan(0);
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "繁體中文" })).toBeInTheDocument();
   });
 
   it("exposes wallet options and export disclaimer across user and admin surfaces", () => {
@@ -204,7 +233,7 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByText("Referral context")).toBeInTheDocument();
     expect(screen.getByText("Leaderboard preview")).toBeInTheDocument();
     expect(screen.getByText("Qualified invitees")).toBeInTheDocument();
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "繁體中文" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
 
@@ -234,7 +263,7 @@ describe("Campaign OS app shell", () => {
     expect(dialog).toBeInTheDocument();
     expect(screen.getByText("Campaign OS never asks for private keys, seed phrases, recovery phrases, or password exports.")).toBeInTheDocument();
     expect(screen.getAllByText("Seeded preview only: no live wallet SDK, no real signature, no transaction, and no contract read/write is executed.").length).toBeGreaterThan(0);
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "繁體中文" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close wallet connect modal" }));
 
@@ -245,7 +274,7 @@ describe("Campaign OS app shell", () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "Campaign operations shell" })).toBeInTheDocument();
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "繁體中文" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
 
@@ -256,7 +285,7 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByText("Ecosystem metrics")).toBeInTheDocument();
     expect(screen.getByText("Export batch: export-awaken-sprint-preview")).toBeInTheDocument();
     expect(screen.getAllByText(/demo-task-bridge-3E9/).length).toBeGreaterThan(0);
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "繁體中文" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Project Console" }));
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();

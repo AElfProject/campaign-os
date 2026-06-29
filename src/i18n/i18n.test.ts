@@ -25,22 +25,25 @@ describe("i18n messages", () => {
     vi.restoreAllMocks();
   });
 
-  it("provides English and Chinese UI copy", () => {
+  it("provides English, Simplified Chinese, and Traditional Chinese UI copy", () => {
     expect(translate("en-US", "action.connectWallet")).toBe("Connect Wallet");
     expect(translate("zh-CN", "action.connectWallet")).toBe("连接钱包");
+    expect(translate("zh-TW", "action.connectWallet")).toBe("連接錢包");
+    expect(translate("zh-TW", "locale.traditionalChinese")).toBe("繁體中文");
   });
 
-  it("keeps export responsibility explicit in both locales", () => {
+  it("keeps export responsibility explicit in all MVP locales", () => {
     expect(translate("en-US", "export.disclaimer")).toContain("does not distribute rewards");
     expect(translate("zh-CN", "export.disclaimer")).toContain("不等于发奖");
+    expect(translate("zh-TW", "export.disclaimer")).toContain("不等於發獎");
   });
 
   it("restores and persists supported locale preferences", () => {
-    window.localStorage.setItem(localePreferenceStorageKey, "zh-CN");
+    window.localStorage.setItem(localePreferenceStorageKey, "zh-TW");
 
     const { result } = renderHook(() => useLocale());
 
-    expect(result.current.locale).toBe("zh-CN");
+    expect(result.current.locale).toBe("zh-TW");
     expect(result.current.localeSource).toBe("storage");
 
     act(() => result.current.setLocale("en-US"));
@@ -50,7 +53,7 @@ describe("i18n messages", () => {
   });
 
   it("keeps Chinese browser language as a prompt-only recommendation", () => {
-    setNavigatorLanguages(["zh-CN"]);
+    setNavigatorLanguages(["zh-TW"]);
 
     const { result } = renderHook(() => useLocale());
 
@@ -93,8 +96,8 @@ describe("i18n messages", () => {
 
     expect(result.current.locale).toBe("en-US");
 
-    act(() => result.current.setLocale("zh-CN"));
+    act(() => result.current.setLocale("zh-TW"));
 
-    expect(result.current.locale).toBe("zh-CN");
+    expect(result.current.locale).toBe("zh-TW");
   });
 });

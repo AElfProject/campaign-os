@@ -37,12 +37,13 @@ import {
 } from "./index";
 
 describe("Campaign OS domain foundation", () => {
-  it("limits MVP locales to en-US and zh-CN", () => {
-    expect(supportedLocales).toEqual(["en-US", "zh-CN"]);
+  it("defines exact v0.2 MVP locales with English default and fallback", () => {
+    expect(supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
     expect(defaultLocale).toBe("en-US");
     expect(fallbackLocale).toBe("en-US");
     expect(isSupportedLocale("zh-CN")).toBe(true);
-    expect(isSupportedLocale("zh-TW")).toBe(false);
+    expect(isSupportedLocale("zh-TW")).toBe(true);
+    expect(isSupportedLocale("ko-KR")).toBe(false);
   });
 
   it("resolves locale preference with URL, profile, storage, and default precedence", () => {
@@ -68,15 +69,20 @@ describe("Campaign OS domain foundation", () => {
         storedLocale: "zh-CN",
         urlLocale: "zh-TW",
       }),
-    ).toEqual({ locale: "zh-CN", source: "storage" });
+    ).toEqual({ locale: "zh-TW", source: "url" });
 
     expect(resolveLocalePreference({ storedLocale: "zh-TW" })).toEqual({
+      locale: "zh-TW",
+      source: "storage",
+    });
+
+    expect(resolveLocalePreference({ storedLocale: "ko-KR" })).toEqual({
       locale: "en-US",
       source: "default",
     });
   });
 
-  it("keeps browser language as a recommendation without adding runtime locales", () => {
+  it("keeps browser language as a recommendation without auto-switching locale", () => {
     const defaultResolution = resolveLocalePreference({});
     const storedResolution = resolveLocalePreference({ storedLocale: "zh-CN" });
 
@@ -104,6 +110,13 @@ describe("Campaign OS domain foundation", () => {
         resolution: defaultResolution,
       }),
     ).toBe(false);
+    expect(
+      shouldRecommendChineseLocale({
+        browserLanguages: ["zh-TW"],
+        promptDismissed: false,
+        resolution: defaultResolution,
+      }),
+    ).toBe(true);
     expect(JSON.stringify(defaultResolution)).not.toContain("zh-TW");
   });
 
@@ -1098,8 +1111,9 @@ describe("Campaign OS domain foundation", () => {
       expect(recommendation.boundary["en-US"]).not.toContain("seed phrase");
     }
 
-    expect(supportedLocales).toEqual(["en-US", "zh-CN"]);
-    expect(isSupportedLocale("zh-TW")).toBe(false);
+    expect(supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
+    expect(isSupportedLocale("zh-TW")).toBe(true);
+    expect(isSupportedLocale("ja-JP")).toBe(false);
   });
 
   it("keeps participation leaderboard wallet-transparent across AA and EOA rows", () => {
