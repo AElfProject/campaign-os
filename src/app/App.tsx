@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { walletSessions, type SupportedLocale } from "../domain";
+import { useEffect, useMemo, useState } from "react";
+import {
+  campaignDetail,
+  createCampaignShareCardReadiness,
+  parseCampaignRoutePath,
+  walletSessions,
+  type CampaignMetadataField,
+  type SupportedLocale,
+} from "../domain";
 import { useLocale } from "../i18n/useLocale";
 import {
   AppLayout,
@@ -45,18 +52,70 @@ const surfaceCopy = {
   },
 } satisfies Record<SupportedLocale, Record<string, string>>;
 
+const readBrowserPathname = () => {
+  if (typeof window === "undefined") {
+    return "/";
+  }
+
+  return window.location.pathname || "/";
+};
+
+const findMetadataTag = (
+  attributeName: "name" | "property",
+  attributeValue: string,
+) =>
+  Array.from(document.head.querySelectorAll("meta")).find(
+    (meta) => meta.getAttribute(attributeName) === attributeValue,
+  );
+
+const applyCampaignMetadata = (fields: readonly CampaignMetadataField[]) => {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  for (const field of fields) {
+    if (field.kind === "document-title") {
+      document.title = field.content;
+      continue;
+    }
+
+    const attributeName = field.kind === "meta-property" ? "property" : "name";
+    const meta =
+      findMetadataTag(attributeName, field.name) ?? document.createElement("meta");
+
+    meta.setAttribute(attributeName, field.name);
+    meta.setAttribute("content", field.content);
+
+    if (!meta.parentElement) {
+      document.head.appendChild(meta);
+    }
+  }
+};
+
 export const App = () => {
+  const routeContext = useMemo(
+    () => parseCampaignRoutePath(readBrowserPathname()),
+    [],
+  );
   const {
     acceptBrowserLocalePrompt,
     dismissBrowserLocalePrompt,
     locale,
     setLocale,
     shouldShowBrowserLocalePrompt,
-  } = useLocale();
+  } = useLocale(routeContext.urlLocale ?? undefined);
   const [activeSurface, setActiveSurface] = useState<SurfaceKey>("project");
   const copy = surfaceCopy[locale];
   const contentLocale: SupportedLocale = locale === "zh-TW" ? "en-US" : locale;
   const connectedWallet = walletSessions[0];
+  const shareCard = useMemo(
+    () => createCampaignShareCardReadiness(campaignDetail, locale),
+    [locale],
+  );
+
+  useEffect(() => {
+    applyCampaignMetadata(shareCard.metadataFields);
+  }, [shareCard]);
 
   const surfaces = [
     { key: "project" as const, label: copy.project },
