@@ -11,6 +11,11 @@ import type {
   WalletDiagnosticState,
   WalletDiagnosticSummary,
   WalletPolicy,
+  WalletProviderQaLiveEvidenceStatus,
+  WalletProviderQaReadinessGate,
+  WalletProviderQaReleaseImpact,
+  WalletProviderQaScenario,
+  WalletProviderQaScenarioId,
   WalletQaChecklistId,
   WalletQaChecklistItem,
   WalletSignatureStatus,
@@ -127,6 +132,12 @@ const walletDiagnosticsBoundary = text(
   "僅 seeded 診斷；不會執行即時錢包 SDK 連接、簽名請求、交易或合約呼叫。",
 );
 
+export const walletProviderQaBoundary = text(
+  "Readiness gate only; no live wallet SDK connection, real signature, transaction, contract call, reward custody, or reward distribution is executed.",
+  "仅准备度门禁；不会执行实时钱包 SDK 连接、真实签名、交易、合约调用、奖励托管或奖励发放。",
+  "僅準備度門禁；不會執行即時錢包 SDK 連接、真實簽名、交易、合約呼叫、獎勵託管或獎勵發放。",
+);
+
 const groupCopy: Record<WalletDiagnosticGroupId, { description: LocalizedText; title: LocalizedText }> = {
   "address-only": {
     description: text(
@@ -177,6 +188,136 @@ const qaLabels: Record<WalletQaChecklistId, LocalizedText> = {
   "portkey-aa-connect": text("Portkey AA connect", "Portkey AA 连接", "Portkey AA 連接"),
   "unsupported-wallet-error": text("Unsupported wallet error", "不支持钱包错误", "不支援錢包錯誤"),
   "wrong-chain-error": text("Wrong-chain error", "错误链错误", "錯誤鏈錯誤"),
+};
+
+const providerQaLabels: Record<WalletProviderQaScenarioId, LocalizedText> = {
+  "eoa-extension-connect": text("EOA extension connect", "EOA 插件连接", "EOA 擴充套件連接"),
+  "portkey-aa-connect": text("Portkey AA connect", "Portkey AA 连接", "Portkey AA 連接"),
+  "unsupported-wallet-error": text("Unsupported wallet recovery", "不支持钱包恢复", "不支援錢包恢復"),
+  "wrong-chain-error": text("Wrong-chain recovery", "错误链恢复", "錯誤鏈恢復"),
+};
+
+const providerQaSeededEvidence: Record<
+  WalletProviderQaScenarioId,
+  { missing: LocalizedText; ready: LocalizedText }
+> = {
+  "eoa-extension-connect": {
+    missing: text(
+      "No seeded EOA extension session is available.",
+      "缺少 seeded EOA 插件会话。",
+      "缺少 seeded EOA 擴充套件會話。",
+    ),
+    ready: text(
+      "Seeded EOA extension session covers the existing-user connect path.",
+      "Seeded EOA 插件会话覆盖已有用户连接路径。",
+      "Seeded EOA 擴充套件會話覆蓋既有使用者連接路徑。",
+    ),
+  },
+  "portkey-aa-connect": {
+    missing: text(
+      "No seeded Portkey AA session is available.",
+      "缺少 seeded Portkey AA 会话。",
+      "缺少 seeded Portkey AA 會話。",
+    ),
+    ready: text(
+      "Seeded Portkey AA session covers the recommended AA connect path.",
+      "Seeded Portkey AA 会话覆盖推荐 AA 连接路径。",
+      "Seeded Portkey AA 會話覆蓋推薦 AA 連接路徑。",
+    ),
+  },
+  "unsupported-wallet-error": {
+    missing: text(
+      "No seeded unsupported-wallet recovery session is available.",
+      "缺少 seeded 不支持钱包恢复会话。",
+      "缺少 seeded 不支援錢包恢復會話。",
+    ),
+    ready: text(
+      "Seeded unsupported-wallet session keeps unsupported providers out of normal participation.",
+      "Seeded 不支持钱包会话阻止不支持 provider 进入普通参与流程。",
+      "Seeded 不支援錢包會話阻止不支援 provider 進入一般參與流程。",
+    ),
+  },
+  "wrong-chain-error": {
+    missing: text(
+      "No seeded wrong-chain recovery session is available.",
+      "缺少 seeded 错误链恢复会话。",
+      "缺少 seeded 錯誤鏈恢復會話。",
+    ),
+    ready: text(
+      "Seeded wrong-chain session shows the AELF mainnet recovery message.",
+      "Seeded 错误链会话展示 AELF mainnet 恢复提示。",
+      "Seeded 錯誤鏈會話展示 AELF mainnet 恢復提示。",
+    ),
+  },
+};
+
+const providerQaLiveMissingEvidence: Record<WalletProviderQaScenarioId, LocalizedText> = {
+  "eoa-extension-connect": text(
+    "Live EOA browser-extension evidence is not attached yet.",
+    "尚未附上真实 EOA 浏览器插件证据。",
+    "尚未附上真實 EOA 瀏覽器擴充套件證據。",
+  ),
+  "portkey-aa-connect": text(
+    "Live Portkey AA provider evidence is not attached yet.",
+    "尚未附上真实 Portkey AA provider 证据。",
+    "尚未附上真實 Portkey AA provider 證據。",
+  ),
+  "unsupported-wallet-error": text(
+    "Live unsupported-wallet provider fallback evidence is not attached yet.",
+    "尚未附上真实不支持钱包 provider fallback 证据。",
+    "尚未附上真實不支援錢包 provider fallback 證據。",
+  ),
+  "wrong-chain-error": text(
+    "Live wrong-chain recovery evidence is not attached yet.",
+    "尚未附上真实错误链恢复证据。",
+    "尚未附上真實錯誤鏈恢復證據。",
+  ),
+};
+
+const providerQaLiveReadyEvidence: Record<WalletProviderQaScenarioId, LocalizedText> = {
+  "eoa-extension-connect": text(
+    "Live EOA browser-extension evidence has been reviewed.",
+    "真实 EOA 浏览器插件证据已审核。",
+    "真實 EOA 瀏覽器擴充套件證據已審核。",
+  ),
+  "portkey-aa-connect": text(
+    "Live Portkey AA provider evidence has been reviewed.",
+    "真实 Portkey AA provider 证据已审核。",
+    "真實 Portkey AA provider 證據已審核。",
+  ),
+  "unsupported-wallet-error": text(
+    "Live unsupported-wallet provider fallback evidence has been reviewed.",
+    "真实不支持钱包 provider fallback 证据已审核。",
+    "真實不支援錢包 provider fallback 證據已審核。",
+  ),
+  "wrong-chain-error": text(
+    "Live wrong-chain recovery evidence has been reviewed.",
+    "真实错误链恢复证据已审核。",
+    "真實錯誤鏈恢復證據已審核。",
+  ),
+};
+
+const providerQaNextActions: Record<WalletProviderQaScenarioId, LocalizedText> = {
+  "eoa-extension-connect": text(
+    "Attach Chrome extension connect and disconnect evidence before release approval.",
+    "发布批准前附上 Chrome 插件连接与断开证据。",
+    "發布批准前附上 Chrome 擴充套件連接與斷開證據。",
+  ),
+  "portkey-aa-connect": text(
+    "Attach live Portkey AA connect evidence before release approval.",
+    "发布批准前附上真实 Portkey AA 连接证据。",
+    "發布批准前附上真實 Portkey AA 連接證據。",
+  ),
+  "unsupported-wallet-error": text(
+    "Attach live unsupported-provider fallback evidence before release approval.",
+    "发布批准前附上真实不支持 provider fallback 证据。",
+    "發布批准前附上真實不支援 provider fallback 證據。",
+  ),
+  "wrong-chain-error": text(
+    "Attach live wrong-chain switch/recovery evidence before release approval.",
+    "发布批准前附上真实错误链切换/恢复证据。",
+    "發布批准前附上真實錯誤鏈切換/恢復證據。",
+  ),
 };
 
 const qaEvidenceText = (
@@ -308,6 +449,132 @@ export const normalizeWalletSessions = (
 
 export const isWalletSessionVerified = (session: NormalizedWalletSession) =>
   session.verificationStatus === "verified" && session.walletTypeVerified;
+
+const providerQaScenarioOrder: WalletProviderQaScenarioId[] = [
+  "portkey-aa-connect",
+  "eoa-extension-connect",
+  "wrong-chain-error",
+  "unsupported-wallet-error",
+];
+
+const isAuditableProviderQaSession = (session: NormalizedWalletSession) =>
+  session.verificationStatus !== "address_only" &&
+  session.verificationStatus !== "internal_agent" &&
+  session.walletSource !== "AGENT_SKILL";
+
+const providerQaSessionMatches = (
+  scenarioId: WalletProviderQaScenarioId,
+  session: NormalizedWalletSession,
+) => {
+  if (!isAuditableProviderQaSession(session)) {
+    return false;
+  }
+
+  if (scenarioId === "portkey-aa-connect") {
+    return session.walletSource === "PORTKEY_AA" && session.verificationStatus === "verified";
+  }
+
+  if (scenarioId === "eoa-extension-connect") {
+    return session.walletSource === "PORTKEY_EOA_EXTENSION" && session.verificationStatus === "verified";
+  }
+
+  if (scenarioId === "wrong-chain-error") {
+    return session.verificationStatus === "wrong_chain";
+  }
+
+  return session.verificationStatus === "unsupported_wallet";
+};
+
+const providerQaReleaseImpact = (
+  liveEvidenceStatus: WalletProviderQaLiveEvidenceStatus,
+): WalletProviderQaReleaseImpact => {
+  if (liveEvidenceStatus === "ready") {
+    return "ready";
+  }
+
+  if (liveEvidenceStatus === "not_applicable") {
+    return "informational";
+  }
+
+  return liveEvidenceStatus === "blocked" ? "release_blocker" : "needs_review";
+};
+
+const providerQaEvidence = (
+  scenarioId: WalletProviderQaScenarioId,
+  seededReady: boolean,
+  liveEvidenceStatus: WalletProviderQaLiveEvidenceStatus,
+) => {
+  if (liveEvidenceStatus === "ready") {
+    return providerQaLiveReadyEvidence[scenarioId];
+  }
+
+  if (liveEvidenceStatus === "blocked") {
+    return text(
+      `${providerQaLiveMissingEvidence[scenarioId]["en-US"]} Provider QA is currently blocked.`,
+      `${providerQaLiveMissingEvidence[scenarioId]["zh-CN"]} Provider QA 当前被阻断。`,
+      `${providerQaLiveMissingEvidence[scenarioId]["zh-TW"]} Provider QA 目前被阻斷。`,
+    );
+  }
+
+  if (liveEvidenceStatus === "not_applicable") {
+    return text(
+      "Live provider evidence is not applicable for this scenario.",
+      "该场景不适用真实 provider 证据。",
+      "該場景不適用真實 provider 證據。",
+    );
+  }
+
+  const seededEvidence = seededReady
+    ? providerQaSeededEvidence[scenarioId].ready
+    : providerQaSeededEvidence[scenarioId].missing;
+
+  return text(
+    `${seededEvidence["en-US"]} ${providerQaLiveMissingEvidence[scenarioId]["en-US"]}`,
+    `${seededEvidence["zh-CN"]} ${providerQaLiveMissingEvidence[scenarioId]["zh-CN"]}`,
+    `${seededEvidence["zh-TW"]} ${providerQaLiveMissingEvidence[scenarioId]["zh-TW"]}`,
+  );
+};
+
+export const createWalletProviderQaReadinessGate = (
+  sessions: NormalizedWalletSession[],
+  liveEvidence: Partial<Record<WalletProviderQaScenarioId, WalletProviderQaLiveEvidenceStatus>> = {},
+): WalletProviderQaReadinessGate => {
+  const scenarios: WalletProviderQaScenario[] = providerQaScenarioOrder.map((id) => {
+    const matchedSessionIds = sessions
+      .filter((session) => providerQaSessionMatches(id, session))
+      .map((session) => session.sessionId);
+    const seededReady = matchedSessionIds.length > 0;
+    const liveEvidenceStatus = liveEvidence[id] ?? "missing";
+
+    return {
+      evidence: providerQaEvidence(id, seededReady, liveEvidenceStatus),
+      id,
+      label: providerQaLabels[id],
+      liveEvidenceStatus,
+      matchedSessionIds,
+      nextAction: providerQaNextActions[id],
+      releaseImpact: providerQaReleaseImpact(liveEvidenceStatus),
+      seededStatus: seededReady ? "ready" : "missing",
+    };
+  });
+
+  return {
+    boundary: walletProviderQaBoundary,
+    scenarios,
+    summary: {
+      liveEvidenceReadyScenarios: scenarios.filter(
+        (scenario) => scenario.liveEvidenceStatus === "ready",
+      ).length,
+      missingLiveEvidenceScenarios: scenarios.filter(
+        (scenario) => scenario.liveEvidenceStatus === "missing",
+      ).length,
+      releaseBlockers: scenarios.filter((scenario) => scenario.releaseImpact === "release_blocker")
+        .length,
+      seededReadyScenarios: scenarios.filter((scenario) => scenario.seededStatus === "ready").length,
+      totalScenarios: scenarios.length,
+    },
+  };
+};
 
 const groupIdForSession = (session: NormalizedWalletSession): WalletDiagnosticGroupId => {
   if (session.verificationStatus === "address_only") {
