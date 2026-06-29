@@ -68,6 +68,12 @@ import type {
   ReferralSummary,
   ReviewSeverity,
   TaskVerificationStatus,
+  VerificationCoverageSummary,
+  VerificationEvidence,
+  VerificationEvidenceSource,
+  VerificationProviderId,
+  VerificationProviderReadiness,
+  VerificationProviderState,
   TranslationCompareField,
   TranslationComparisonRow,
   TranslationLocaleItem,
@@ -127,6 +133,13 @@ const userWinnersExportStatusLabels: Record<UserWinnersExportStatus, LocalizedTe
 const eligibilityCheckerBoundary: LocalizedText = {
   "en-US": "Seeded/local eligibility preview only. No live wallet SDK, signature, indexer, dApp API, contract proof, export file, or reward distribution is executed.",
   "zh-CN": "仅 seeded/本地资格预览。不会执行实时钱包 SDK、签名、indexer、dApp API、合约证明、导出文件或发奖。",
+};
+
+export const verificationBoundary: LocalizedText = {
+  "en-US":
+    "Seeded/local verification boundary only. No live AeFinder, AelfScan, dApp API, social API, wallet SDK, reward distribution, export file, secret storage, or contract write is executed.",
+  "zh-CN":
+    "仅 seeded/本地验证边界。不会执行实时 AeFinder、AelfScan、dApp API、社交 API、钱包 SDK、发奖、导出文件、secret 存储或合约写入。",
 };
 
 const leaderboardBoundary: LocalizedText = {
@@ -508,6 +521,166 @@ const evidenceSourceByVerificationType: Record<CampaignTask["verificationType"],
   WALLET: "wallet",
 };
 
+const canonicalEvidenceBySource: Record<EvidenceSource, VerificationEvidenceSource> = {
+  aefinder: "AEFINDER",
+  aelfscan: "AELFSCAN",
+  dapp_api: "DAPP_API",
+  manual: "MANUAL_REVIEW",
+  social_api: "SOCIAL_API",
+  wallet: "WALLET_SESSION",
+};
+
+const providerByEvidenceSource: Record<EvidenceSource, VerificationProviderId> = {
+  aefinder: "aefinder",
+  aelfscan: "aelfscan",
+  dapp_api: "dapp_api",
+  manual: "manual_review",
+  social_api: "social_api",
+  wallet: "wallet_session",
+};
+
+const verificationEvidenceLabels: Record<VerificationEvidenceSource, LocalizedText> = {
+  AEFINDER: {
+    "en-US": "AeFinder evidence",
+    "zh-CN": "AeFinder 证据",
+  },
+  AELFSCAN: {
+    "en-US": "AelfScan evidence",
+    "zh-CN": "AelfScan 证据",
+  },
+  DAPP_API: {
+    "en-US": "dApp API evidence",
+    "zh-CN": "dApp API 证据",
+  },
+  LOCAL_SEEDED: {
+    "en-US": "Local seeded evidence",
+    "zh-CN": "本地 seeded 证据",
+  },
+  MANUAL_REVIEW: {
+    "en-US": "Manual review evidence",
+    "zh-CN": "人工审核证据",
+  },
+  SOCIAL_API: {
+    "en-US": "Social API evidence",
+    "zh-CN": "社交 API 证据",
+  },
+  WALLET_SESSION: {
+    "en-US": "Wallet session evidence",
+    "zh-CN": "钱包会话证据",
+  },
+};
+
+const unavailableProviderFallback = (task: CampaignTask): LocalizedText => ({
+  "en-US": `${task.title["en-US"]} depends on a provider path that is named for evidence only in this seeded runtime.`,
+  "zh-CN": `${task.title["zh-CN"]} 依赖的 provider 路径在当前 seeded 运行时仅作为 evidence 名称展示。`,
+});
+
+const nextAdapterStep = (
+  source: EvidenceSource,
+  readiness: VerificationProviderReadiness,
+): LocalizedText => {
+  if (readiness === "local_only") {
+    return {
+      "en-US": "Keep the seeded result as local proof until live provider QA is added.",
+      "zh-CN": "在接入真实 provider QA 前，将 seeded 结果作为本地证明。",
+    };
+  }
+
+  if (readiness === "review_required") {
+    return {
+      "en-US": "Review this outcome manually before any completion or reward decision.",
+      "zh-CN": "在完成或奖励判断前，先人工审核该结果。",
+    };
+  }
+
+  return {
+    "en-US": `Connect and QA the ${providerByEvidenceSource[source]} adapter before treating this path as live verification.`,
+    "zh-CN": `接入并 QA ${providerByEvidenceSource[source]} adapter 后，才能将该路径视为真实验证。`,
+  };
+};
+
+const providerReadinessFor = (
+  source: EvidenceSource,
+  status: TaskVerificationStatus,
+  completed: boolean,
+): VerificationProviderReadiness => {
+  if (source === "manual" || status === "manual_review") {
+    return "review_required";
+  }
+
+  if (source === "wallet" || completed) {
+    return "local_only";
+  }
+
+  if (status === "failed") {
+    return "blocked";
+  }
+
+  return "unavailable";
+};
+
+const evidenceHashFor = (taskId: string, walletAddress: string) =>
+  `demo-${taskId}-${walletAddress.slice(0, 3)}`;
+
+export const createVerificationEvidence = (
+  taskId: string,
+  walletAddress: string,
+  source: EvidenceSource,
+): VerificationEvidence => {
+  const canonicalSource = canonicalEvidenceBySource[source] ?? "LOCAL_SEEDED";
+  const evidenceHash = evidenceHashFor(taskId, walletAddress);
+
+  return {
+    source: canonicalSource,
+    sourceLabel: verificationEvidenceLabels[canonicalSource],
+    evidenceId: evidenceHash,
+    evidenceHash,
+    live: false,
+  };
+};
+
+export const createVerificationProviderState = (
+  task: CampaignTask,
+  source: EvidenceSource,
+  status: TaskVerificationStatus,
+  completed: boolean,
+): VerificationProviderState => {
+  const readiness = providerReadinessFor(source, status, completed);
+
+  return {
+    providerId: providerByEvidenceSource[source],
+    readiness,
+    fallbackReason:
+      readiness === "ready" || readiness === "local_only"
+        ? undefined
+        : unavailableProviderFallback(task),
+    nextAdapterStep: nextAdapterStep(source, readiness),
+  };
+};
+
+const createManualReviewState = (
+  task: CampaignTask,
+  participant: ParticipantSnapshot,
+  status: TaskVerificationStatus,
+) => {
+  const queued =
+    status === "manual_review" ||
+    participant.riskFlags.includes("manual_review_queue") ||
+    task.riskLevel === "high";
+
+  return {
+    queued,
+    reason: queued
+      ? {
+          "en-US": `${task.title["en-US"]} requires human review before completion is accepted.`,
+          "zh-CN": `${task.title["zh-CN"]} 需要人工审核后才能接受完成状态。`,
+        }
+      : undefined,
+    severity: queued ? ("warning" as ReviewSeverity) : ("info" as ReviewSeverity),
+    queueId: queued ? `review-${task.id}-${participant.walletAddress.slice(0, 3)}` : undefined,
+  };
+};
+
 const taskNextAction = (
   task: CampaignTask,
   status: TaskVerificationStatus,
@@ -559,13 +732,21 @@ export const deriveParticipantTaskStates = (
     const completed = participant.completedTaskIds.includes(task.id);
     const overrideStatus = participant.taskVerificationOverrides?.[task.id];
     const status: TaskVerificationStatus = completed ? "completed" : overrideStatus ?? "ready";
+    const evidenceSource =
+      participant.taskEvidenceSources?.[task.id] ?? evidenceSourceByVerificationType[task.verificationType];
+    const evidence = createVerificationEvidence(task.id, participant.walletAddress, evidenceSource);
+    const provider = createVerificationProviderState(task, evidenceSource, status, completed);
 
     return {
       taskId: task.id,
       templateCode: task.templateCode,
       status,
-      evidenceSource:
-        participant.taskEvidenceSources?.[task.id] ?? evidenceSourceByVerificationType[task.verificationType],
+      evidenceSource,
+      canonicalEvidenceSource: evidence.source,
+      evidence,
+      provider,
+      manualReview: createManualReviewState(task, participant, status),
+      riskFlags: [...participant.riskFlags],
       pointsAwarded: status === "completed" ? task.points : 0,
       pointsAvailable: task.points,
       completed,
@@ -574,6 +755,41 @@ export const deriveParticipantTaskStates = (
       nextAction: taskNextAction(task, status),
     };
   });
+
+const emptyProviderReadinessCounts = (): Record<VerificationProviderReadiness, number> => ({
+  blocked: 0,
+  local_only: 0,
+  ready: 0,
+  review_required: 0,
+  unavailable: 0,
+});
+
+export const createVerificationCoverageSummary = (
+  tasks: CampaignTask[],
+  participants: ParticipantSnapshot[],
+): VerificationCoverageSummary => {
+  const states = participants.flatMap((participant) =>
+    deriveParticipantTaskStates(tasks, participant),
+  );
+  const providerReadinessCounts = emptyProviderReadinessCounts();
+
+  for (const state of states) {
+    providerReadinessCounts[state.provider.readiness] += 1;
+  }
+
+  return {
+    totalTasks: tasks.length,
+    totalTaskStates: states.length,
+    completedCount: states.filter((state) => state.status === "completed").length,
+    pendingCount: states.filter((state) => state.status === "ready" || state.status === "pending").length,
+    failedCount: states.filter((state) => state.status === "failed").length,
+    manualReviewCount: states.filter((state) => state.status === "manual_review").length,
+    providerReadinessCounts,
+    evidenceSources: [...new Set(states.map((state) => state.canonicalEvidenceSource))],
+    riskFlags: [...new Set(participants.flatMap((participant) => participant.riskFlags))],
+    boundary: verificationBoundary,
+  };
+};
 
 const createEligibilityResult = (
   campaign: CampaignShellDetail,
@@ -1258,9 +1474,6 @@ const createLocaleSplit = (participants: ParticipantSnapshot[]): DimensionSplit[
     },
   ];
 };
-
-const evidenceHashFor = (taskId: string, walletAddress: string) =>
-  `demo-${taskId}-${walletAddress.slice(0, 3)}`;
 
 const createTaskEvidence = (
   tasks: CampaignTask[],

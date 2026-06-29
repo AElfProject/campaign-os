@@ -201,14 +201,54 @@ describe("Campaign OS local API service facade", () => {
 
     expect(completed.payload).toMatchObject({
       accountType: "AA",
+      canonicalEvidenceSource: "AELFSCAN",
+      evidence: expect.objectContaining({
+        evidenceHash: "demo-task-bridge-2F4",
+        evidenceId: "demo-task-bridge-2F4",
+        live: false,
+        source: "AELFSCAN",
+      }),
       evidenceSource: "aelfscan",
+      manualReview: expect.objectContaining({
+        queued: false,
+        severity: "info",
+      }),
+      nextAction: expect.objectContaining({
+        "en-US": expect.stringContaining("verified"),
+        "zh-CN": expect.stringContaining("已验证"),
+      }),
       pointsAwarded: 120,
+      provider: expect.objectContaining({
+        providerId: "aelfscan",
+        readiness: "local_only",
+      }),
+      riskFlags: [],
       status: "completed",
       walletSource: "PORTKEY_AA",
     });
-    expect(pending.payload).toMatchObject({ status: "pending", evidenceSource: "dapp_api" });
-    expect(failed.payload).toMatchObject({ status: "failed", evidenceSource: "social_api" });
-    expect(manualReview.payload).toMatchObject({ status: "manual_review", evidenceSource: "manual" });
+    expect(pending.payload).toMatchObject({
+      evidenceSource: "dapp_api",
+      pointsAwarded: 0,
+      provider: expect.objectContaining({ readiness: "unavailable" }),
+      status: "pending",
+    });
+    expect(failed.payload).toMatchObject({
+      evidenceSource: "social_api",
+      pointsAwarded: 0,
+      provider: expect.objectContaining({ readiness: "blocked" }),
+      status: "failed",
+    });
+    expect(manualReview.payload).toMatchObject({
+      evidenceSource: "manual",
+      manualReview: expect.objectContaining({
+        queued: true,
+        queueId: "review-task-agent-review-3E9",
+      }),
+      pointsAwarded: 0,
+      provider: expect.objectContaining({ readiness: "review_required" }),
+      status: "manual_review",
+    });
+    expect(manualReview.payload?.nextAction["en-US"]).toContain("manual review");
     expect(notEligible.payload).toMatchObject({
       accountType: "EOA",
       eligible: false,
@@ -354,8 +394,9 @@ describe("Campaign OS local API service facade", () => {
       totalServices: 10,
     });
     expect(coverage.payload?.sampleResponseIds).toEqual(
-      expect.arrayContaining(["createWalletSession", "checkEligibility", "exportWinners"]),
+      expect.arrayContaining(["createWalletSession", "verifyTask", "checkEligibility", "exportWinners"]),
     );
+    expect(coverage.payload?.verificationBoundary["en-US"]).toContain("No live AeFinder");
     expect(serviceBoundary["en-US"]).toContain("No live API");
   });
 });

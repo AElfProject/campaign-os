@@ -36,8 +36,8 @@ const liveApiBoundary = text(
 );
 
 const verificationBoundary = text(
-  "Verification contract only. AeFinder, AelfScan, dApp APIs, social APIs, and manual review are named as evidence sources but are not called from this UI.",
-  "仅验证 contract。AeFinder、AelfScan、dApp API、社交 API 与人工审核只作为 evidence source 展示，本 UI 不会调用。",
+  "Verification contract only. Local seeded, AeFinder, AelfScan, dApp APIs, social APIs, wallet session, and manual review are named as evidence categories; no live provider, wallet SDK, secret, reward, export file, or contract write is executed.",
+  "仅验证 contract。Local seeded、AeFinder、AelfScan、dApp API、社交 API、钱包会话与人工审核只作为 evidence category 展示；不会执行真实 provider、钱包 SDK、secret、发奖、导出文件或合约写入。",
 );
 
 const exportBoundary = text(
@@ -70,6 +70,7 @@ const externalEvidenceSources = new Set<ApiSkillEvidenceSource>([
   "DAPP_API",
   "SOCIAL_API",
   "MANUAL",
+  "WALLET_SESSION",
 ]);
 
 export const apiSkillContractRegistry: ApiSkillContract[] = [
@@ -135,7 +136,15 @@ export const apiSkillContractRegistry: ApiSkillContract[] = [
   },
   {
     apiGroup: "task_verification",
-    evidenceSources: ["AEFINDER", "AELFSCAN", "DAPP_API", "SOCIAL_API", "MANUAL"],
+    evidenceSources: [
+      "LOCAL_SEEDED",
+      "AEFINDER",
+      "AELFSCAN",
+      "DAPP_API",
+      "SOCIAL_API",
+      "WALLET_SESSION",
+      "MANUAL",
+    ],
     id: "verify_task",
     inputFields: [
       field("campaignId", "campaign", true, "Campaign identifier.", "活动标识。"),
@@ -145,14 +154,22 @@ export const apiSkillContractRegistry: ApiSkillContract[] = [
       field("walletSource", "wallet", true, "Normalized wallet source.", "标准化钱包来源。", "PORTKEY_EOA_EXTENSION"),
     ],
     nextAction: text(
-      "Wire provider adapters only after traceable evidence and fallback states are defined.",
-      "只有在可追踪 evidence 与 fallback 状态定义完成后再接 provider adapter。",
+      "Wire provider adapters only after traceable evidence, provider QA, fallback states, and manual-review handling are defined.",
+      "只有在可追踪 evidence、provider QA、fallback 状态与人工审核处理定义完成后再接 provider adapter。",
     ),
     outputFields: [
       field("status", "task", true, "completed, failed, pending, or manual_review.", "completed、failed、pending 或 manual_review。"),
-      field("evidenceSource", "evidence", true, "Source used to verify the task.", "用于验证任务的来源。", "AEFINDER"),
-      field("evidenceHash", "evidence", false, "Optional hash of verification evidence.", "可选的验证证据 hash。"),
+      field("pointsAvailable", "task", true, "Task points available before verification.", "验证前可获得的任务积分。"),
       field("pointsAwarded", "task", true, "Points awarded after verification.", "验证后授予积分。"),
+      field("evidenceSource", "evidence", true, "Legacy source label used by current UI surfaces.", "当前 UI 使用的旧 source label。", "aelfscan"),
+      field("canonicalEvidenceSource", "evidence", true, "Canonical evidence category.", "标准 evidence category。", "AELFSCAN"),
+      field("evidenceId", "evidence", true, "Deterministic local evidence identifier.", "确定性的本地 evidence 标识。"),
+      field("evidenceHash", "evidence", true, "Deterministic local hash/id of verification evidence.", "确定性的本地验证 evidence hash/id。"),
+      field("providerReadiness", "evidence", true, "ready, local_only, review_required, unavailable, or blocked.", "ready、local_only、review_required、unavailable 或 blocked。"),
+      field("fallbackReason", "risk", false, "Why the path cannot be treated as live verification.", "该路径为什么不能视为真实验证。"),
+      field("riskFlags", "risk", true, "Participant or task risk flags affecting verification.", "影响验证的参与者或任务风险标记。"),
+      field("manualReview", "risk", true, "Manual review queue projection.", "人工审核队列投影。"),
+      field("nextAction", "task", true, "Localized user/operator next action.", "本地化的用户/运营下一步。"),
     ],
     purpose: text(
       "Verify one participant task while preserving wallet and evidence provenance.",

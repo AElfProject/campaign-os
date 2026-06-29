@@ -171,6 +171,12 @@ export const projectConsoleCopy = {
     serviceReadinessReviewRequired: "Review required",
     serviceSampleResponses: "Sample responses",
     serviceTotalServices: "Total services",
+    verificationBoundary: "Verification boundary",
+    verificationCoverage: "Verification coverage",
+    verificationEvidenceCategories: "Evidence categories",
+    verificationManualReview: "Manual review",
+    verificationProviderReadiness: "Provider readiness",
+    verificationRiskStates: "Risk-sensitive states",
   },
   "zh-CN": {
     active: "进行中",
@@ -342,6 +348,12 @@ export const projectConsoleCopy = {
     serviceReadinessReviewRequired: "需要审核",
     serviceSampleResponses: "示例响应",
     serviceTotalServices: "服务总数",
+    verificationBoundary: "验证边界",
+    verificationCoverage: "验证覆盖",
+    verificationEvidenceCategories: "Evidence 分类",
+    verificationManualReview: "人工审核",
+    verificationProviderReadiness: "Provider readiness",
+    verificationRiskStates: "风险敏感状态",
   },
 } satisfies Record<SupportedLocale, Record<string, string>>;
 

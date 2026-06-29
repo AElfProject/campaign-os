@@ -8,6 +8,7 @@ import {
   createLeaderboardReadModel,
   createProjectCampaignCommandCenter,
   createUserWinnersExportStatusReadModel,
+  createVerificationCoverageSummary,
   computeMissingTasks,
   computePublishReadiness,
   createAdminOpsReadModel,
@@ -838,6 +839,22 @@ describe("Campaign OS domain foundation", () => {
         taskId: "task-connect-wallet",
         status: "completed",
         evidenceSource: "wallet",
+        canonicalEvidenceSource: "WALLET_SESSION",
+        evidence: expect.objectContaining({
+          evidenceHash: "demo-task-connect-wallet-3E9",
+          evidenceId: "demo-task-connect-wallet-3E9",
+          live: false,
+          source: "WALLET_SESSION",
+        }),
+        provider: expect.objectContaining({
+          providerId: "wallet_session",
+          readiness: "local_only",
+        }),
+        manualReview: expect.objectContaining({
+          queued: false,
+          severity: "info",
+        }),
+        riskFlags: ["referral_velocity_review"],
         pointsAwarded: 40,
         completed: true,
         missingRequired: false,
@@ -847,6 +864,15 @@ describe("Campaign OS domain foundation", () => {
         taskId: "task-bridge",
         status: "ready",
         evidenceSource: "aelfscan",
+        canonicalEvidenceSource: "AELFSCAN",
+        provider: expect.objectContaining({
+          providerId: "aelfscan",
+          readiness: "unavailable",
+          fallbackReason: expect.objectContaining({
+            "en-US": expect.stringContaining("provider path"),
+            "zh-CN": expect.stringContaining("provider"),
+          }),
+        }),
         pointsAwarded: 0,
         completed: false,
         missingRequired: true,
@@ -856,23 +882,108 @@ describe("Campaign OS domain foundation", () => {
         taskId: "task-swap",
         status: "pending",
         evidenceSource: "dapp_api",
+        provider: expect.objectContaining({
+          providerId: "dapp_api",
+          readiness: "unavailable",
+        }),
+        pointsAwarded: 0,
         missingRequired: false,
       }),
       expect.objectContaining({
         taskId: "task-social",
         status: "failed",
         evidenceSource: "social_api",
+        provider: expect.objectContaining({
+          providerId: "social_api",
+          readiness: "blocked",
+        }),
+        pointsAwarded: 0,
         missingRequired: false,
       }),
       expect.objectContaining({
         taskId: "task-agent-review",
         status: "manual_review",
         evidenceSource: "manual",
+        canonicalEvidenceSource: "MANUAL_REVIEW",
+        provider: expect.objectContaining({
+          providerId: "manual_review",
+          readiness: "review_required",
+        }),
+        manualReview: expect.objectContaining({
+          queued: true,
+          queueId: "review-task-agent-review-3E9",
+          severity: "warning",
+        }),
+        pointsAwarded: 0,
         completed: false,
         missingRequired: false,
         walletCompatibility: "EOA_ONLY",
       }),
     ]));
+  });
+
+  it("builds deterministic verification coverage without live provider claims", () => {
+    const firstSummary = createVerificationCoverageSummary(
+      campaignDetail.tasks,
+      campaignDetail.participants,
+    );
+    const secondSummary = createVerificationCoverageSummary(
+      campaignDetail.tasks,
+      campaignDetail.participants,
+    );
+    const unknownParticipant = {
+      ...campaignDetail.participants[0],
+      accountType: "UNKNOWN" as const,
+      walletAddress: "ADR...000",
+      walletSource: "OTHER" as const,
+    };
+    const unknownStates = deriveParticipantTaskStates(campaignDetail.tasks, unknownParticipant);
+
+    expect(firstSummary).toEqual(secondSummary);
+    expect(firstSummary).toMatchObject({
+      completedCount: 10,
+      failedCount: 1,
+      manualReviewCount: 3,
+      pendingCount: 6,
+      totalTasks: 5,
+      totalTaskStates: 20,
+    });
+    expect(firstSummary.providerReadinessCounts).toMatchObject({
+      blocked: 1,
+      local_only: 10,
+      ready: 0,
+      review_required: 5,
+      unavailable: 4,
+    });
+    expect(firstSummary.evidenceSources).toEqual(
+      expect.arrayContaining([
+        "AELFSCAN",
+        "DAPP_API",
+        "MANUAL_REVIEW",
+        "SOCIAL_API",
+        "WALLET_SESSION",
+      ]),
+    );
+    expect(firstSummary.riskFlags).toEqual(
+      expect.arrayContaining(["manual_review_queue", "referral_velocity_review"]),
+    );
+    expect(firstSummary.boundary["en-US"]).toContain("No live AeFinder");
+    expect(firstSummary.boundary["zh-CN"]).toContain("不会执行实时 AeFinder");
+    expect(unknownStates[0].riskFlags).toEqual([]);
+    expect(unknownParticipant.accountType).toBe("UNKNOWN");
+  });
+
+  it("derives verification boundary under the seeded performance threshold", () => {
+    const startedAt = performance.now();
+    const summary = createVerificationCoverageSummary(
+      campaignDetail.tasks,
+      campaignDetail.participants,
+    );
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(summary.totalTasks).toBe(5);
+    expect(summary.totalTaskStates).toBe(20);
+    expect(elapsedMs).toBeLessThan(100);
   });
 
   it("creates a participation read model with actionable eligibility and referral rules", () => {
