@@ -19,6 +19,7 @@ import {
   createTranslationManagerReadModel,
   createLocaleAnalyticsReadiness,
   createWalletConnectionDiagnostics,
+  createWalletProviderQaReadinessGate,
   deriveEligibilityWalletStatus,
   deriveParticipantTaskStates,
   defaultLocale,
@@ -605,6 +606,17 @@ describe("Campaign OS domain foundation", () => {
       status: "needs_review",
       blocksDelivery: false,
     });
+    expect(itemsById["qa-portkey-aa-connect"]?.surface["en-US"]).toBe("Wallet Provider QA Gate");
+    expect(itemsById["qa-portkey-aa-connect"]?.evidence["en-US"]).toContain(
+      "Live Portkey AA provider evidence is not attached yet",
+    );
+    expect(itemsById["qa-eoa-extension-connect"]?.evidence["en-US"]).toContain(
+      "Live EOA browser-extension evidence is not attached yet",
+    );
+    expect(itemsById["qa-wrong-chain-error"]?.nextAction["en-US"]).toContain("live wrong-chain");
+    expect(itemsById["qa-unsupported-wallet-error"]?.evidence["zh-TW"]).toContain(
+      "真實不支援錢包",
+    );
     expect(itemsById["qa-export-csv-columns"]).toMatchObject({
       status: "covered",
       ownerRole: "project_owner",
@@ -642,6 +654,33 @@ describe("Campaign OS domain foundation", () => {
       label: expect.objectContaining({ "zh-TW": expect.any(String) }),
       nextAction: expect.objectContaining({ "zh-TW": expect.any(String) }),
     });
+  });
+
+  it("includes the wallet provider QA gate in the Admin/Ops read model", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const readinessItems = adminOps.deliveryChecklistReadiness.groups.flatMap((group) => group.items);
+    const readinessById = Object.fromEntries(readinessItems.map((item) => [item.id, item]));
+
+    expect(adminOps.walletProviderQaGate.summary).toMatchObject({
+      totalScenarios: 4,
+      seededReadyScenarios: 4,
+      liveEvidenceReadyScenarios: 0,
+      missingLiveEvidenceScenarios: 4,
+    });
+    expect(adminOps.walletProviderQaGate.scenarios.map((scenario) => scenario.id)).toEqual([
+      "portkey-aa-connect",
+      "eoa-extension-connect",
+      "wrong-chain-error",
+      "unsupported-wallet-error",
+    ]);
+    expect(readinessById["qa-portkey-aa-connect"]).toMatchObject({
+      status: "needs_review",
+      evidence: adminOps.walletProviderQaGate.scenarios[0].evidence,
+      nextAction: adminOps.walletProviderQaGate.scenarios[0].nextAction,
+    });
+    expect(adminOps.walletProviderQaGate.boundary["en-US"]).toContain("no live wallet SDK connection");
+    expect(adminOps.walletProviderQaGate.boundary["zh-CN"]).toContain("奖励发放");
+    expect(adminOps.walletProviderQaGate.boundary["zh-TW"]).toContain("獎勵發放");
   });
 
   it("labels AA and EOA wallet states", () => {
@@ -773,6 +812,57 @@ describe("Campaign OS domain foundation", () => {
     expect(checklistById["unsupported-wallet-error"].sessionIds).toEqual(["sess-unsupported-001"]);
     expect(checklistById["missing-signature"].sessionIds).toEqual(["sess-missing-signature-001"]);
     expect(checklistById["account-policy-restriction"].sessionIds).toEqual(["sess-account-restricted-001"]);
+  });
+
+  it("exposes wallet provider QA readiness separately from seeded wallet diagnostics", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const scenariosById = Object.fromEntries(gate.scenarios.map((scenario) => [scenario.id, scenario]));
+
+    expect(gate.scenarios).toHaveLength(4);
+    expect(gate.summary).toEqual({
+      totalScenarios: 4,
+      seededReadyScenarios: 4,
+      liveEvidenceReadyScenarios: 0,
+      missingLiveEvidenceScenarios: 4,
+      releaseBlockers: 0,
+    });
+    expect(scenariosById["portkey-aa-connect"]).toMatchObject({
+      seededStatus: "ready",
+      liveEvidenceStatus: "missing",
+      matchedSessionIds: ["sess-aa-001"],
+    });
+    expect(scenariosById["eoa-extension-connect"]).toMatchObject({
+      seededStatus: "ready",
+      liveEvidenceStatus: "missing",
+      matchedSessionIds: ["sess-eoa-001"],
+    });
+    expect(scenariosById["wrong-chain-error"].evidence["en-US"]).toContain(
+      "Live wrong-chain recovery evidence is not attached yet",
+    );
+    expect(scenariosById["unsupported-wallet-error"].nextAction["zh-CN"]).toContain("真实不支持");
+    expect(gate.boundary["en-US"]).toContain("reward distribution");
+    expect(gate.boundary["zh-CN"]).toContain("奖励托管");
+    expect(gate.boundary["zh-TW"]).toContain("獎勵託管");
+
+    const liveReadyGate = createWalletProviderQaReadinessGate(walletSessions, {
+      "portkey-aa-connect": "ready",
+      "wrong-chain-error": "blocked",
+    });
+
+    expect(liveReadyGate.summary).toMatchObject({
+      liveEvidenceReadyScenarios: 1,
+      missingLiveEvidenceScenarios: 2,
+      releaseBlockers: 1,
+      seededReadyScenarios: 4,
+    });
+    expect(liveReadyGate.scenarios.find((scenario) => scenario.id === "portkey-aa-connect")).toMatchObject({
+      liveEvidenceStatus: "ready",
+      releaseImpact: "ready",
+    });
+    expect(liveReadyGate.scenarios.find((scenario) => scenario.id === "wrong-chain-error")).toMatchObject({
+      liveEvidenceStatus: "blocked",
+      releaseImpact: "release_blocker",
+    });
   });
 
   it("derives wallet policy eligibility without treating address-only input as verified", () => {

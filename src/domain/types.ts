@@ -272,6 +272,18 @@ export type WalletQaChecklistId =
   | "unsupported-wallet-error"
   | "missing-signature"
   | "account-policy-restriction";
+export type WalletProviderQaScenarioId =
+  | "portkey-aa-connect"
+  | "eoa-extension-connect"
+  | "wrong-chain-error"
+  | "unsupported-wallet-error";
+export type WalletProviderQaSeededStatus = "ready" | "missing";
+export type WalletProviderQaLiveEvidenceStatus = "missing" | "ready" | "blocked" | "not_applicable";
+export type WalletProviderQaReleaseImpact =
+  | "release_blocker"
+  | "needs_review"
+  | "ready"
+  | "informational";
 
 export interface WalletDiagnosticItem {
   sessionId: string;
@@ -301,6 +313,31 @@ export interface WalletQaChecklistItem {
   state: WalletDiagnosticState;
   evidence: LocalizedText;
   sessionIds: string[];
+}
+
+export interface WalletProviderQaScenario {
+  id: WalletProviderQaScenarioId;
+  label: LocalizedText;
+  seededStatus: WalletProviderQaSeededStatus;
+  liveEvidenceStatus: WalletProviderQaLiveEvidenceStatus;
+  releaseImpact: WalletProviderQaReleaseImpact;
+  evidence: LocalizedText;
+  nextAction: LocalizedText;
+  matchedSessionIds: string[];
+}
+
+export interface WalletProviderQaSummary {
+  totalScenarios: number;
+  seededReadyScenarios: number;
+  liveEvidenceReadyScenarios: number;
+  missingLiveEvidenceScenarios: number;
+  releaseBlockers: number;
+}
+
+export interface WalletProviderQaReadinessGate {
+  boundary: LocalizedText;
+  summary: WalletProviderQaSummary;
+  scenarios: WalletProviderQaScenario[];
 }
 
 export interface WalletDiagnosticSummary {
@@ -1180,6 +1217,7 @@ export interface AdminOpsReadModel {
   campaignId: string;
   reviewQueue: ReviewItem[];
   deliveryChecklistReadiness: DeliveryChecklistReadinessConsole;
+  walletProviderQaGate: WalletProviderQaReadinessGate;
   contractReviewCenter: AdminContractReviewCenter;
   contractInterfaceMatrix: ContractInterfaceMatrixConsole;
   aiContentPack: AiContentPackWorkbench;

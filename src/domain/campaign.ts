@@ -95,8 +95,14 @@ import type {
   UserWinnersExportRow,
   UserWinnersExportStatus,
   UserWinnersExportStatusReadModel,
+  WalletProviderQaReadinessGate,
+  WalletProviderQaScenarioId,
 } from "./types";
-import { deriveEligibilityWalletStatus, isWalletSessionVerified } from "./wallet";
+import {
+  createWalletProviderQaReadinessGate,
+  deriveEligibilityWalletStatus,
+  isWalletSessionVerified,
+} from "./wallet";
 import { EXPORT_CSV_COLUMNS as exportCsvColumns, supportedLocales } from "./types";
 import { createTemplateGovernanceConsole } from "./builder";
 import { createLocalizedCampaignPath } from "./locale";
@@ -4524,62 +4530,69 @@ const createContractDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
   ];
 };
 
-const createQaDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
+const liveWalletQaChecklistItemIds: Record<WalletProviderQaScenarioId, string> = {
+  "eoa-extension-connect": "qa-eoa-extension-connect",
+  "portkey-aa-connect": "qa-portkey-aa-connect",
+  "unsupported-wallet-error": "qa-unsupported-wallet-error",
+  "wrong-chain-error": "qa-wrong-chain-error",
+};
+
+const liveWalletQaSourceRequirements: Record<WalletProviderQaScenarioId, string> = {
+  "eoa-extension-connect": "QA checklist: EOA extension connect",
+  "portkey-aa-connect": "QA checklist: Portkey AA connect",
+  "unsupported-wallet-error": "QA checklist: unsupported wallet error",
+  "wrong-chain-error": "QA checklist: wrong chain error",
+};
+
+const liveWalletQaSurfaces: Record<WalletProviderQaScenarioId, LocalizedText> = {
+  "eoa-extension-connect": localized("Wallet Provider QA Gate", "钱包 Provider QA 门禁"),
+  "portkey-aa-connect": localized("Wallet Provider QA Gate", "钱包 Provider QA 门禁"),
+  "unsupported-wallet-error": localized(
+    "Wallet Provider QA Gate error recovery",
+    "钱包 Provider QA 门禁错误恢复",
+  ),
+  "wrong-chain-error": localized(
+    "Wallet Provider QA Gate error recovery",
+    "钱包 Provider QA 门禁错误恢复",
+  ),
+};
+
+const liveWalletQaLabels: Record<WalletProviderQaScenarioId, LocalizedText> = {
+  "eoa-extension-connect": localized("EOA extension connect tested", "EOA extension 连接测试"),
+  "portkey-aa-connect": localized("Portkey AA connect tested", "Portkey AA 连接测试"),
+  "unsupported-wallet-error": localized("Unsupported wallet error tested", "不支持钱包错误状态测试"),
+  "wrong-chain-error": localized("Wrong chain error tested", "错误链错误状态测试"),
+};
+
+const createLiveWalletQaDeliveryChecklistItems = (
+  walletProviderQaGate: WalletProviderQaReadinessGate,
+): DeliveryChecklistItem[] =>
+  walletProviderQaGate.scenarios.map((scenario) =>
+    deliveryChecklistItem({
+      groupId: "qa",
+      id: liveWalletQaChecklistItemIds[scenario.id],
+      label: liveWalletQaLabels[scenario.id],
+      status: scenario.liveEvidenceStatus === "ready" ? "covered" : "needs_review",
+      surface: liveWalletQaSurfaces[scenario.id],
+      evidence: scenario.evidence,
+      nextAction:
+        scenario.liveEvidenceStatus === "ready"
+          ? localized(
+              "Keep reviewed live-provider evidence attached for release audit.",
+              "保留已审核的真实 provider 证据用于发布审计。",
+            )
+          : scenario.nextAction,
+      sourceRequirement: liveWalletQaSourceRequirements[scenario.id],
+    }),
+  );
+
+const createQaDeliveryChecklistItems = (
+  walletProviderQaGate: WalletProviderQaReadinessGate = createWalletProviderQaReadinessGate([]),
+): DeliveryChecklistItem[] => {
   const groupId = "qa" as const;
 
   return [
-    deliveryChecklistItem({
-      groupId,
-      id: "qa-portkey-aa-connect",
-      label: localized("Portkey AA connect tested", "Portkey AA 连接测试"),
-      status: "needs_review",
-      surface: localized("Wallet QA diagnostics", "钱包 QA 诊断"),
-      evidence: localized(
-        "Seeded Portkey AA session is ready, but no live wallet provider was executed in this frontend foundation.",
-        "Seeded Portkey AA session 已就绪，但此前端基础未执行真实钱包 provider。",
-      ),
-      nextAction: localized("Run provider QA before production release.", "生产发布前执行 provider QA。"),
-      sourceRequirement: "QA checklist: Portkey AA connect",
-    }),
-    deliveryChecklistItem({
-      groupId,
-      id: "qa-eoa-extension-connect",
-      label: localized("EOA extension connect tested", "EOA extension 连接测试"),
-      status: "needs_review",
-      surface: localized("Wallet QA diagnostics", "钱包 QA 诊断"),
-      evidence: localized(
-        "Seeded EOA extension session is covered; live browser-extension QA remains manual.",
-        "Seeded EOA extension session 已覆盖；真实浏览器插件 QA 仍需人工执行。",
-      ),
-      nextAction: localized("Run live extension connect and disconnect scenarios.", "执行真实 extension 连接与断开场景。"),
-      sourceRequirement: "QA checklist: EOA extension connect",
-    }),
-    deliveryChecklistItem({
-      groupId,
-      id: "qa-wrong-chain-error",
-      label: localized("Wrong chain error tested", "错误链错误状态测试"),
-      status: "needs_review",
-      surface: localized("Wallet diagnostics error states", "钱包诊断错误状态"),
-      evidence: localized(
-        "Seeded wrong-chain state tells users to switch to AELF mainnet.",
-        "Seeded wrong-chain 状态提示用户切换到 AELF mainnet。",
-      ),
-      nextAction: localized("Validate with a real adapter chain-switch flow.", "用真实 adapter chain-switch 流程验证。"),
-      sourceRequirement: "QA checklist: wrong chain error",
-    }),
-    deliveryChecklistItem({
-      groupId,
-      id: "qa-unsupported-wallet-error",
-      label: localized("Unsupported wallet error tested", "不支持钱包错误状态测试"),
-      status: "needs_review",
-      surface: localized("Wallet diagnostics error states", "钱包诊断错误状态"),
-      evidence: localized(
-        "Seeded unsupported-wallet state blocks normal participation.",
-        "Seeded unsupported-wallet 状态会阻断普通参与。",
-      ),
-      nextAction: localized("Validate live unsupported provider fallback.", "验证真实 unsupported provider fallback。"),
-      sourceRequirement: "QA checklist: unsupported wallet error",
-    }),
+    ...createLiveWalletQaDeliveryChecklistItems(walletProviderQaGate),
     deliveryChecklistItem({
       groupId,
       id: "qa-en-default",
@@ -4672,7 +4685,9 @@ const createQaDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
   ];
 };
 
-export const createDeliveryChecklistReadinessConsole = (): DeliveryChecklistReadinessConsole => {
+export const createDeliveryChecklistReadinessConsole = (
+  walletProviderQaGate: WalletProviderQaReadinessGate = createWalletProviderQaReadinessGate([]),
+): DeliveryChecklistReadinessConsole => {
   const groups = [
     deliveryChecklistGroup({
       id: "product",
@@ -4722,7 +4737,7 @@ export const createDeliveryChecklistReadinessConsole = (): DeliveryChecklistRead
         "Seeded QA evidence and live-provider review gaps for wallet, locale, export, and contract claim flows.",
         "钱包、语言、导出与 contract claim 流程的 seeded QA 证据与真实 provider 审核缺口。",
       ),
-      items: createQaDeliveryChecklistItems(),
+      items: createQaDeliveryChecklistItems(walletProviderQaGate),
     }),
   ];
   const items = groups.flatMap((group) => group.items);
@@ -5325,11 +5340,13 @@ export const createAdminOpsReadModel = (
 ): AdminOpsReadModel => {
   const exportBatch = createExportBatch(campaign);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
+  const walletProviderQaGate = createWalletProviderQaReadinessGate(campaign.walletSessions);
 
   return {
     campaignId: campaign.id,
     reviewQueue: campaign.reviewItems,
-    deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(),
+    deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
+    walletProviderQaGate,
     contractReviewCenter: createAdminContractReviewCenter(campaign),
     contractInterfaceMatrix: createContractInterfaceMatrixConsole(),
     aiContentPack: createAiContentPackWorkbench(campaign),
