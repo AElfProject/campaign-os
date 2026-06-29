@@ -142,6 +142,28 @@ export type PublishState = "ready" | "warning" | "blocker";
 export type EligibilityStatus = "eligible" | "not_eligible" | "pending" | "risk_flagged" | "ended";
 export type TaskVerificationStatus = "ready" | "pending" | "completed" | "failed" | "manual_review";
 export type EvidenceSource = "wallet" | "aefinder" | "aelfscan" | "dapp_api" | "social_api" | "manual";
+export type VerificationEvidenceSource =
+  | "LOCAL_SEEDED"
+  | "AEFINDER"
+  | "AELFSCAN"
+  | "DAPP_API"
+  | "SOCIAL_API"
+  | "WALLET_SESSION"
+  | "MANUAL_REVIEW";
+export type VerificationProviderId =
+  | "local_seeded"
+  | "aefinder"
+  | "aelfscan"
+  | "dapp_api"
+  | "social_api"
+  | "wallet_session"
+  | "manual_review";
+export type VerificationProviderReadiness =
+  | "ready"
+  | "local_only"
+  | "review_required"
+  | "unavailable"
+  | "blocked";
 export type MetricTone = "neutral" | "good" | "warning" | "critical";
 export type SignalSeverity = "low" | "medium" | "high" | "blocked";
 export type AiConfidence = "low" | "medium" | "high";
@@ -1119,11 +1141,69 @@ export interface EligibilityCheckerReadModel {
   boundary: LocalizedText;
 }
 
+export interface VerificationEvidence {
+  source: VerificationEvidenceSource;
+  sourceLabel: LocalizedText;
+  evidenceId: string;
+  evidenceHash: string;
+  live: boolean;
+  capturedAt?: string;
+}
+
+export interface VerificationProviderState {
+  providerId: VerificationProviderId;
+  readiness: VerificationProviderReadiness;
+  fallbackReason?: LocalizedText;
+  nextAdapterStep: LocalizedText;
+}
+
+export interface VerificationManualReviewState {
+  queued: boolean;
+  reason?: LocalizedText;
+  severity: ReviewSeverity;
+  queueId?: string;
+}
+
+export interface VerificationResult {
+  campaignId: string;
+  taskId: string;
+  walletAddress: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  status: Exclude<TaskVerificationStatus, "ready">;
+  pointsAvailable: number;
+  pointsAwarded: number;
+  evidence: VerificationEvidence;
+  provider: VerificationProviderState;
+  riskFlags: string[];
+  manualReview: VerificationManualReviewState;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface VerificationCoverageSummary {
+  totalTasks: number;
+  totalTaskStates: number;
+  completedCount: number;
+  pendingCount: number;
+  failedCount: number;
+  manualReviewCount: number;
+  providerReadinessCounts: Record<VerificationProviderReadiness, number>;
+  evidenceSources: VerificationEvidenceSource[];
+  riskFlags: string[];
+  boundary: LocalizedText;
+}
+
 export interface TaskVerificationState {
   taskId: string;
   templateCode: string;
   status: TaskVerificationStatus;
   evidenceSource: EvidenceSource;
+  canonicalEvidenceSource: VerificationEvidenceSource;
+  evidence: VerificationEvidence;
+  provider: VerificationProviderState;
+  manualReview: VerificationManualReviewState;
+  riskFlags: string[];
   pointsAwarded: number;
   pointsAvailable: number;
   completed: boolean;
