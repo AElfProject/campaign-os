@@ -67,6 +67,20 @@ const copy = {
     verification: "验证方式",
     walletCompatibility: "钱包兼容性",
   },
+  "zh-TW": {
+    clearFilters: "重置篩選",
+    defaultPoints: "預設積分",
+    emptyState: "沒有任務模板符合目前篩選條件。",
+    filterResults: (visible: number, total: number) => `${visible} / ${total} 個模板`,
+    filters: "篩選",
+    languageStatus: "語言狀態",
+    optional: "可選",
+    required: "必做",
+    risk: "風險",
+    title: "任務模板庫",
+    verification: "驗證方式",
+    walletCompatibility: "錢包相容性",
+  },
 } satisfies Record<SupportedLocale, TaskTemplateLibraryCopy>;
 
 const sectionStyle: CSSProperties = {
@@ -353,14 +367,13 @@ export const TaskTemplateLibrary = ({
             </div>
             <span style={badgeRowStyle}>
               <WalletCompatibilityBadge compatibility={template.walletCompatibility} />
-              <LocaleStatusBadge
-                label={`en-US ${template.localeReadiness["en-US"]}`}
-                status={template.localeReadiness["en-US"]}
-              />
-              <LocaleStatusBadge
-                label={`zh-CN ${template.localeReadiness["zh-CN"]}`}
-                status={template.localeReadiness["zh-CN"]}
-              />
+              {Object.entries(template.localeReadiness).map(([readinessLocale, status]) => (
+                <LocaleStatusBadge
+                  key={readinessLocale}
+                  label={`${readinessLocale} ${status}`}
+                  status={status}
+                />
+              ))}
             </span>
           </article>
         ))}

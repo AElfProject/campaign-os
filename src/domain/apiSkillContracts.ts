@@ -9,9 +9,10 @@ import type {
   LocalizedText,
 } from "./types";
 
-const text = (enUS: string, zhCN: string): LocalizedText => ({
+const text = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
   "en-US": enUS,
   "zh-CN": zhCN,
+  "zh-TW": zhTW,
 });
 
 const field = (
@@ -83,7 +84,14 @@ export const apiSkillContractRegistry: ApiSkillContract[] = [
       field("goal", "campaign", true, "Campaign growth goal.", "活动增长目标。", "activation"),
       field("duration", "campaign", true, "Start and end time window.", "开始与结束时间窗口。", "2026-07-01/2026-07-14"),
       field("defaultLocale", "locale", true, "Default runtime locale. MVP default is en-US.", "默认运行语言。MVP 默认为 en-US。", "en-US"),
-      field("supportedLocales", "locale", true, "Supported runtime locales limited to en-US and zh-CN.", "运行时仅支持 en-US 与 zh-CN。", "en-US,zh-CN"),
+      field(
+        "supportedLocales",
+        "locale",
+        true,
+        "Supported runtime locales are the exact MVP set en-US, zh-CN, and zh-TW.",
+        "运行时支持完整 MVP 语言集合 en-US、zh-CN 与 zh-TW。",
+        "en-US,zh-CN,zh-TW",
+      ),
       field("walletPolicy", "wallet", true, "Allowed wallet policy for participants.", "参与者允许的钱包策略。", "ANY"),
       field("contractMode", "contract", true, "Campaign contract mode.", "活动合约模式。", "OFF_CHAIN_MVP"),
       field("rewardDescription", "campaign", true, "Human-readable reward responsibility and disclaimer.", "面向用户的奖励责任与免责声明。"),
@@ -278,7 +286,14 @@ export const apiSkillContractRegistry: ApiSkillContract[] = [
       field("campaignId", "campaign", true, "Campaign identifier.", "活动标识。"),
       field("channel", "content", true, "Distribution channel.", "分发渠道。", "x"),
       field("sourceLocale", "locale", true, "Source copy locale defaults to en-US.", "源文案语言默认 en-US。", "en-US"),
-      field("targetLocales", "locale", false, "Optional target locales limited to zh-CN.", "可选目标语言限定 zh-CN。", "zh-CN"),
+      field(
+        "targetLocales",
+        "locale",
+        false,
+        "Optional target locales limited to zh-CN and zh-TW.",
+        "可选目标语言限定 zh-CN 与 zh-TW。",
+        "zh-CN,zh-TW",
+      ),
     ],
     nextAction: text(
       "Require human review before any schedule or publish intent leaves the local UI.",

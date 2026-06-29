@@ -242,6 +242,7 @@ export const AppLayout = ({
             >
               <option value="en-US">English</option>
               <option value="zh-CN">简体中文</option>
+              <option value="zh-TW">繁體中文</option>
             </select>
           </label>
         </div>

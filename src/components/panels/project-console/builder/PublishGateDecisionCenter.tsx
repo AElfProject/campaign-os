@@ -50,6 +50,22 @@ const copy = {
     title: "发布门禁决策中心",
     warnings: "警告",
   },
+  "zh-TW": {
+    approvalRoutes: "審批路徑",
+    approvalRouting: "審批路由",
+    blockers: "阻斷項",
+    boundary: "邊界",
+    gates: "門禁審核",
+    launchGate: "發布門禁",
+    nextAction: "下一步",
+    ownerRole: "負責人角色",
+    passed: "已通過",
+    reason: "原因",
+    routeCount: "審批路徑",
+    summary: "摘要",
+    title: "發布門禁決策中心",
+    warnings: "警告",
+  },
 } satisfies Record<SupportedLocale, Record<string, string>>;
 
 const ownerRoleLabels = {
@@ -62,6 +78,11 @@ const ownerRoleLabels = {
     contract_reviewer: "合约审核人",
     internal_operator: "内部运营",
     project_owner: "项目方",
+  },
+  "zh-TW": {
+    contract_reviewer: "合約審核人",
+    internal_operator: "內部營運",
+    project_owner: "專案方",
   },
 } satisfies Record<SupportedLocale, Record<OwnerRole, string>>;
 
@@ -86,6 +107,16 @@ const groupLabels = {
     tasks: "任务",
     wallet: "钱包",
   },
+  "zh-TW": {
+    basics: "基礎資訊",
+    contract: "合約",
+    export: "匯出",
+    i18n: "多語言",
+    rewards: "獎勵",
+    risk: "風險",
+    tasks: "任務",
+    wallet: "錢包",
+  },
 } satisfies Record<SupportedLocale, Record<ReadinessGroup, string>>;
 
 const statusLabels = {
@@ -97,6 +128,11 @@ const statusLabels = {
   "zh-CN": {
     blocker: "阻断",
     passed: "已通过",
+    warning: "警告",
+  },
+  "zh-TW": {
+    blocker: "阻斷",
+    passed: "已通過",
     warning: "警告",
   },
 } satisfies Record<SupportedLocale, Record<PublishGateItem["status"], string>>;

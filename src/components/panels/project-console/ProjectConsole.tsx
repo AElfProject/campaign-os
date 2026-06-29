@@ -417,7 +417,7 @@ export const ProjectConsole = ({
     {
       label: copy.localeCoverage,
       value: formatPercent(campaign.metrics.localeCoverage),
-      detail: "en-US / zh-CN",
+      detail: campaign.supportedLocales.join(" / "),
     },
     {
       label: copy.riskQueue,
@@ -475,6 +475,7 @@ export const ProjectConsole = ({
         <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           <LocaleStatusBadge label={`en-US ${copy.published}`} status="published" />
           <LocaleStatusBadge label={`zh-CN ${copy.aiDraft}`} status="ai_draft" />
+          <LocaleStatusBadge label={`zh-TW ${copy.fallback}`} status="fallback" />
         </span>
       ),
     },
@@ -548,7 +549,7 @@ export const ProjectConsole = ({
               {campaign.publishReadiness.warnings.slice(0, 1).map((warning) => (
                 <li key={warning} style={listItemStyle}>
                   <span style={{ color: "#475569", fontSize: 13 }}>
-                    {locale === "zh-CN" ? copy.zhFallbackWarning : warning}
+                  {locale === "zh-CN" || locale === "zh-TW" ? copy.zhFallbackWarning : warning}
                   </span>
                   <PublishStateBadge label={copy.warning} state="warning" />
                 </li>
@@ -819,14 +820,13 @@ export const ProjectConsole = ({
                   label={`${copy.aiContentRiskLevel}: ${artifact.riskLevel}`}
                   tone={artifact.riskLevel === "high" ? "warning" : "neutral"}
                 />
-                <LocaleStatusBadge
-                  label={`en-US ${localeStatusLabel(artifact.localeStatus["en-US"], copy)}`}
-                  status={artifact.localeStatus["en-US"]}
-                />
-                <LocaleStatusBadge
-                  label={`zh-CN ${localeStatusLabel(artifact.localeStatus["zh-CN"], copy)}`}
-                  status={artifact.localeStatus["zh-CN"]}
-                />
+                {Object.entries(artifact.localeStatus).map(([statusLocale, status]) => (
+                  <LocaleStatusBadge
+                    key={statusLocale}
+                    label={`${statusLocale} ${localeStatusLabel(status, copy)}`}
+                    status={status}
+                  />
+                ))}
                 <ReviewSeverityBadge
                   label={artifact.reviewer ? `${copy.aiContentReviewer}: ${artifact.reviewer}` : copy.aiContentHumanReviewRequired}
                   severity={artifact.reviewer ? "info" : "warning"}
@@ -902,7 +902,7 @@ export const ProjectConsole = ({
 
       <div
         aria-label={
-          locale === "zh-CN" ? "活动构建器详情区块" : "Campaign Builder detail sections"
+          locale === "en-US" ? "Campaign Builder detail sections" : "活动构建器详情区块"
         }
         style={builderDetailsStyle}
       >
@@ -1227,10 +1227,13 @@ export const ProjectConsole = ({
               </span>
               <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 <WalletCompatibilityBadge compatibility={task.walletCompatibility} />
-                <LocaleStatusBadge
-                  label={`zh-CN ${localeStatusLabel(task.localeStatus["zh-CN"], copy)}`}
-                  status={task.localeStatus["zh-CN"]}
-                />
+                {Object.entries(task.localeStatus).map(([statusLocale, status]) => (
+                  <LocaleStatusBadge
+                    key={statusLocale}
+                    label={`${statusLocale} ${localeStatusLabel(status, copy)}`}
+                    status={status}
+                  />
+                ))}
               </span>
             </li>
           ))}

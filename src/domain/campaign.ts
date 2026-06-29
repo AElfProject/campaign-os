@@ -84,7 +84,7 @@ import type {
   UserWinnersExportStatusReadModel,
 } from "./types";
 import { deriveEligibilityWalletStatus, isWalletSessionVerified } from "./wallet";
-import { EXPORT_CSV_COLUMNS as exportCsvColumns } from "./types";
+import { EXPORT_CSV_COLUMNS as exportCsvColumns, supportedLocales } from "./types";
 import { createTemplateGovernanceConsole } from "./builder";
 
 const defaultPointsThreshold = 160;
@@ -94,45 +94,54 @@ const exportBatchId = "export-awaken-sprint-preview";
 const defaultReferralRule: LocalizedText = {
   "en-US": "Only qualified invitees who complete valid tasks count for referral points.",
   "zh-CN": "只有完成有效任务的合格被邀请人才会计入推荐积分。",
+  "zh-TW": "Only qualified invitees who complete valid tasks count for referral points.",
 };
 
 const rewardBoundary: LocalizedText = {
   "en-US": "Rewards are provided by the campaign project. Export winners does not distribute rewards.",
   "zh-CN": "奖励由活动项目方提供。导出 winners 不等于发奖。",
+  "zh-TW": "Rewards are provided by the campaign project. Export winners does not distribute rewards.",
 };
 
 const exportRiskBoundary: LocalizedText = {
   "en-US": "Risk flags and eligibility results are review inputs; Campaign OS does not distribute rewards.",
   "zh-CN": "风险标记与资格结果仅作为审核输入；Campaign OS 不执行发奖。",
+  "zh-TW": "Risk flags and eligibility results are review inputs; Campaign OS does not distribute rewards.",
 };
 
 const exportFulfillmentOwner: LocalizedText = {
   "en-US": "Final reward distribution is handled by the campaign project.",
   "zh-CN": "最终奖励发放由活动项目方处理。",
+  "zh-TW": "Final reward distribution is handled by the campaign project.",
 };
 
 const userWinnersExportStatusLabels: Record<UserWinnersExportStatus, LocalizedText> = {
   ready: {
     "en-US": "Ready for export",
     "zh-CN": "导出就绪",
+    "zh-TW": "Ready for export",
   },
   review_required: {
     "en-US": "Manual review required",
     "zh-CN": "需要人工审核",
+    "zh-TW": "Manual review required",
   },
   blocked: {
     "en-US": "Blocked before export",
     "zh-CN": "导出前阻断",
+    "zh-TW": "Blocked before export",
   },
   pending: {
     "en-US": "Pending verification",
     "zh-CN": "等待验证",
+    "zh-TW": "Pending verification",
   },
 };
 
 const eligibilityCheckerBoundary: LocalizedText = {
   "en-US": "Seeded/local eligibility preview only. No live wallet SDK, signature, indexer, dApp API, contract proof, export file, or reward distribution is executed.",
   "zh-CN": "仅 seeded/本地资格预览。不会执行实时钱包 SDK、签名、indexer、dApp API、合约证明、导出文件或发奖。",
+  "zh-TW": "Seeded/local eligibility preview only. No live wallet SDK, signature, indexer, dApp API, contract proof, export file, or reward distribution is executed.",
 };
 
 export const verificationBoundary: LocalizedText = {
@@ -140,62 +149,80 @@ export const verificationBoundary: LocalizedText = {
     "Seeded/local verification boundary only. No live AeFinder, AelfScan, dApp API, social API, wallet SDK, reward distribution, export file, secret storage, or contract write is executed.",
   "zh-CN":
     "仅 seeded/本地验证边界。不会执行实时 AeFinder、AelfScan、dApp API、社交 API、钱包 SDK、发奖、导出文件、secret 存储或合约写入。",
+  "zh-TW":
+    "Seeded/local verification boundary only. No live AeFinder, AelfScan, dApp API, social API, wallet SDK, reward distribution, export file, secret storage, or contract write is executed.",
 };
 
 const leaderboardBoundary: LocalizedText = {
   "en-US": "Seeded/local leaderboard preview only. Rankings are review inputs; Campaign OS does not distribute rewards and the campaign project owns fulfillment.",
   "zh-CN": "仅 seeded/本地排行榜预览。排名是审核输入；Campaign OS 不执行发奖，奖励履约由活动项目方负责。",
+  "zh-TW": "Seeded/local leaderboard preview only. Rankings are review inputs; Campaign OS does not distribute rewards and the campaign project owns fulfillment.",
 };
 
 const noAutoPublishNotice: LocalizedText = {
   "en-US": "AI generated translation cannot auto-publish before human review.",
   "zh-CN": "AI 生成翻译必须经过人工审核后才能发布。",
+  "zh-TW": "AI generated translation cannot auto-publish before human review.",
 };
 
 const compareReviewPrompt: LocalizedText = {
-  "en-US": "Compare the zh-CN draft with the English source before marking it reviewed or publishing a revision.",
-  "zh-CN": "标记已审核或发布版本前，先将 zh-CN 草稿与英文源内容对照。",
+  "en-US": "Compare Chinese locale drafts with the English source before marking them reviewed or publishing a revision.",
+  "zh-CN": "标记已审核或发布版本前，先将中文语言草稿与英文源内容对照。",
+  "zh-TW": "Compare Chinese locale drafts with the English source before marking them reviewed or publishing a revision.",
 };
 
 const aiContentBoundary = {
   title: {
     "en-US": "No auto-publish boundary",
     "zh-CN": "禁止自动发布边界",
+    "zh-TW": "No auto-publish boundary",
   },
   body: {
     "en-US": "Seeded/local content pack only. No live AI provider, scheduler, channel bot, webhook, or external publish action is connected.",
     "zh-CN": "仅 seeded/本地内容包。不会连接实时 AI、排期器、频道机器人、webhook 或外部发布动作。",
+    "zh-TW": "Seeded/local content pack only. No live AI provider, scheduler, channel bot, webhook, or external publish action is connected.",
   },
 };
 
 const aiContentDraftBlockedReason: LocalizedText = {
   "en-US": "Human review required before copy can be scheduled or published.",
   "zh-CN": "排期或发布前必须完成人工审核。",
+  "zh-TW": "Human review required before copy can be scheduled or published.",
 };
 
 const aiContentApprovedNextAction: LocalizedText = {
   "en-US": "Copy ready; schedule/publish intent remains local until an operator confirms the external channel.",
   "zh-CN": "可复制；排期/发布意图仍为本地状态，直到运营确认外部渠道。",
+  "zh-TW": "Copy ready; schedule/publish intent remains local until an operator confirms the external channel.",
 };
 
 const aiContentDraftNextAction: LocalizedText = {
   "en-US": "Edit and mark reviewed before release intent.",
   "zh-CN": "先编辑并标记已审核，再进入发布意图。",
+  "zh-TW": "Edit and mark reviewed before release intent.",
 };
 
 const aiContentEditedNextAction: LocalizedText = {
   "en-US": "Human approval is still required before release intent.",
   "zh-CN": "进入发布意图前仍需要人工批准。",
+  "zh-TW": "Human approval is still required before release intent.",
 };
 
 const localeLabels: Record<ContentRevision["locale"], LocalizedText> = {
   "en-US": {
     "en-US": "English source",
     "zh-CN": "英文源内容",
+    "zh-TW": "English source",
   },
   "zh-CN": {
     "en-US": "Chinese draft",
     "zh-CN": "中文草稿",
+    "zh-TW": "Chinese draft",
+  },
+  "zh-TW": {
+    "en-US": "Traditional Chinese fallback",
+    "zh-CN": "繁体中文回退",
+    "zh-TW": "Traditional Chinese fallback",
   },
 };
 
@@ -203,18 +230,22 @@ const comparisonFieldLabels: Record<TranslationCompareField, LocalizedText> = {
   description: {
     "en-US": "Description",
     "zh-CN": "活动描述",
+    "zh-TW": "Description",
   },
   rewardDisclaimer: {
     "en-US": "Reward disclaimer",
     "zh-CN": "奖励声明",
+    "zh-TW": "Reward disclaimer",
   },
   socialPost: {
     "en-US": "Social post",
     "zh-CN": "社交文案",
+    "zh-TW": "Social post",
   },
   title: {
     "en-US": "Campaign title",
     "zh-CN": "活动标题",
+    "zh-TW": "Campaign title",
   },
 };
 
@@ -228,20 +259,24 @@ const comparisonFields: TranslationCompareField[] = [
 const missingTargetDraft: LocalizedText = {
   "en-US": "Missing target draft; English fallback is active until translation review is complete.",
   "zh-CN": "缺少目标语言草稿；翻译审核完成前使用英文回退。",
+  "zh-TW": "Missing target draft; English fallback is active until translation review is complete.",
 };
 
 const contractModeLabels: Record<ContractMode, LocalizedText> = {
   CONTRACT_CLAIM: {
     "en-US": "Contract claim",
     "zh-CN": "合约领取",
+    "zh-TW": "Contract claim",
   },
   OFF_CHAIN_MVP: {
     "en-US": "Off-chain MVP",
     "zh-CN": "Off-chain MVP",
+    "zh-TW": "Off-chain MVP",
   },
   V2_COMPANION: {
     "en-US": "V2 companion",
     "zh-CN": "V2 辅助合约",
+    "zh-TW": "V2 companion",
   },
 };
 
@@ -249,14 +284,17 @@ const contractModeDescriptions: Record<ContractMode, LocalizedText> = {
   CONTRACT_CLAIM: {
     "en-US": "Blocked until high-impact manual review approves claim-mode risk.",
     "zh-CN": "在高影响人工审核批准领取模式风险前保持阻断。",
+    "zh-TW": "Blocked until high-impact manual review approves claim-mode risk.",
   },
   OFF_CHAIN_MVP: {
     "en-US": "Safe default for MVP; no contract migration is required.",
     "zh-CN": "MVP 的安全默认模式；不需要合约迁移。",
+    "zh-TW": "Safe default for MVP; no contract migration is required.",
   },
   V2_COMPANION: {
     "en-US": "Future companion-contract path for auditable metadata and eligibility roots.",
     "zh-CN": "未来通过辅助合约审计 metadata 与资格 root。",
+    "zh-TW": "Future companion-contract path for auditable metadata and eligibility roots.",
   },
 };
 
@@ -264,14 +302,17 @@ const contractBoundaryByMode: Record<ContractMode, LocalizedText> = {
   CONTRACT_CLAIM: {
     "en-US": "Contract claim is not enabled in this MVP shell and does not execute reward distribution.",
     "zh-CN": "当前 MVP shell 未启用合约领取，也不会执行奖励发放。",
+    "zh-TW": "Contract claim is not enabled in this MVP shell and does not execute reward distribution.",
   },
   OFF_CHAIN_MVP: {
     "en-US": "Campaign OS verifies, ranks, and exports; the project remains responsible for rewards.",
     "zh-CN": "Campaign OS 负责验证、排名与导出；奖励仍由项目方负责。",
+    "zh-TW": "Campaign OS verifies, ranks, and exports; the project remains responsible for rewards.",
   },
   V2_COMPANION: {
     "en-US": "Companion contracts may record hashes later; full campaign copy and risk detail stay off-chain.",
     "zh-CN": "辅助合约后续可记录 hash；活动全文与风控细节仍留在链下。",
+    "zh-TW": "Companion contracts may record hashes later; full campaign copy and risk detail stay off-chain.",
   },
 };
 
@@ -279,14 +320,17 @@ const contractNextActionByMode: Record<ContractMode, LocalizedText> = {
   CONTRACT_CLAIM: {
     "en-US": "Keep blocked until a contract reviewer approves high-impact claim mode.",
     "zh-CN": "保持阻断，直到合约审核人批准高影响领取模式。",
+    "zh-TW": "Keep blocked until a contract reviewer approves high-impact claim mode.",
   },
   OFF_CHAIN_MVP: {
     "en-US": "Use off-chain verification and winner export for MVP publish.",
     "zh-CN": "MVP 发布使用链下验证与 winners 导出。",
+    "zh-TW": "Use off-chain verification and winner export for MVP publish.",
   },
   V2_COMPANION: {
     "en-US": "Plan verifier roles and metadata hashes before enabling this mode.",
     "zh-CN": "启用前先规划 verifier role 与 metadata hash。",
+    "zh-TW": "Plan verifier roles and metadata hashes before enabling this mode.",
   },
 };
 
@@ -320,6 +364,7 @@ const nextActionForRevision = (revision: ContentRevision): LocalizedText => {
     return {
       "en-US": "Published source is ready for campaign pages.",
       "zh-CN": "已发布源内容可用于活动页面。",
+      "zh-TW": "Published source is ready for campaign pages.",
     };
   }
 
@@ -327,6 +372,7 @@ const nextActionForRevision = (revision: ContentRevision): LocalizedText => {
     return {
       "en-US": "Human-reviewed translation can be published when the owner confirms.",
       "zh-CN": "人工审核后的翻译可在项目方确认后发布。",
+      "zh-TW": "Human-reviewed translation can be published when the owner confirms.",
     };
   }
 
@@ -337,6 +383,7 @@ const nextActionForRevision = (revision: ContentRevision): LocalizedText => {
   return {
     "en-US": "Use English fallback until localized content is reviewed.",
     "zh-CN": "本地化内容审核前使用英文回退。",
+    "zh-TW": "Use English fallback until localized content is reviewed.",
   };
 };
 
@@ -370,11 +417,13 @@ const createTranslationPanel = (
 const humanReviewedNote: LocalizedText = {
   "en-US": "Human review is complete; this translation can move toward publish revision.",
   "zh-CN": "人工审核已完成；该翻译可进入发布版本流程。",
+  "zh-TW": "Human review is complete; this translation can move toward publish revision.",
 };
 
 const fallbackReviewNote: LocalizedText = {
   "en-US": "AI draft or missing translation falls back to English until human review is complete.",
   "zh-CN": "AI 草稿或缺失翻译在人工审核完成前回退展示英文。",
+  "zh-TW": "AI draft or missing translation falls back to English until human review is complete.",
 };
 
 const createTranslationLocaleItems = (
@@ -482,10 +531,12 @@ const createAiContentPackSummary = (
         ? {
             "en-US": "Finish human review before release intent.",
             "zh-CN": "完成所有人工审核后再进入发布意图。",
+            "zh-TW": "Finish human review before release intent.",
           }
         : {
             "en-US": "Approved content can be copied or prepared for local schedule/publish intent.",
             "zh-CN": "已批准内容可以复制，或准备本地排期/发布意图。",
+            "zh-TW": "Approved content can be copied or prepared for local schedule/publish intent.",
           },
   };
 };
@@ -543,36 +594,44 @@ const verificationEvidenceLabels: Record<VerificationEvidenceSource, LocalizedTe
   AEFINDER: {
     "en-US": "AeFinder evidence",
     "zh-CN": "AeFinder 证据",
+    "zh-TW": "AeFinder evidence",
   },
   AELFSCAN: {
     "en-US": "AelfScan evidence",
     "zh-CN": "AelfScan 证据",
+    "zh-TW": "AelfScan evidence",
   },
   DAPP_API: {
     "en-US": "dApp API evidence",
     "zh-CN": "dApp API 证据",
+    "zh-TW": "dApp API evidence",
   },
   LOCAL_SEEDED: {
     "en-US": "Local seeded evidence",
     "zh-CN": "本地 seeded 证据",
+    "zh-TW": "Local seeded evidence",
   },
   MANUAL_REVIEW: {
     "en-US": "Manual review evidence",
     "zh-CN": "人工审核证据",
+    "zh-TW": "Manual review evidence",
   },
   SOCIAL_API: {
     "en-US": "Social API evidence",
     "zh-CN": "社交 API 证据",
+    "zh-TW": "Social API evidence",
   },
   WALLET_SESSION: {
     "en-US": "Wallet session evidence",
     "zh-CN": "钱包会话证据",
+    "zh-TW": "Wallet session evidence",
   },
 };
 
 const unavailableProviderFallback = (task: CampaignTask): LocalizedText => ({
   "en-US": `${task.title["en-US"]} depends on a provider path that is named for evidence only in this seeded runtime.`,
   "zh-CN": `${task.title["zh-CN"]} 依赖的 provider 路径在当前 seeded 运行时仅作为 evidence 名称展示。`,
+  "zh-TW": `${task.title["en-US"]} depends on a provider path that is named for evidence only in this seeded runtime.`,
 });
 
 const nextAdapterStep = (
@@ -583,6 +642,7 @@ const nextAdapterStep = (
     return {
       "en-US": "Keep the seeded result as local proof until live provider QA is added.",
       "zh-CN": "在接入真实 provider QA 前，将 seeded 结果作为本地证明。",
+      "zh-TW": "Keep the seeded result as local proof until live provider QA is added.",
     };
   }
 
@@ -590,12 +650,14 @@ const nextAdapterStep = (
     return {
       "en-US": "Review this outcome manually before any completion or reward decision.",
       "zh-CN": "在完成或奖励判断前，先人工审核该结果。",
+      "zh-TW": "Review this outcome manually before any completion or reward decision.",
     };
   }
 
   return {
     "en-US": `Connect and QA the ${providerByEvidenceSource[source]} adapter before treating this path as live verification.`,
     "zh-CN": `接入并 QA ${providerByEvidenceSource[source]} adapter 后，才能将该路径视为真实验证。`,
+    "zh-TW": `Connect and QA the ${providerByEvidenceSource[source]} adapter before treating this path as live verification.`,
   };
 };
 
@@ -674,6 +736,7 @@ const createManualReviewState = (
       ? {
           "en-US": `${task.title["en-US"]} requires human review before completion is accepted.`,
           "zh-CN": `${task.title["zh-CN"]} 需要人工审核后才能接受完成状态。`,
+          "zh-TW": `${task.title["en-US"]} requires human review before completion is accepted.`,
         }
       : undefined,
     severity: queued ? ("warning" as ReviewSeverity) : ("info" as ReviewSeverity),
@@ -689,6 +752,7 @@ const taskNextAction = (
     return {
       "en-US": `${task.title["en-US"]} is verified and points are counted.`,
       "zh-CN": `${task.title["zh-CN"]} 已验证，积分已计入。`,
+      "zh-TW": `${task.title["en-US"]} is verified and points are counted.`,
     };
   }
 
@@ -696,6 +760,7 @@ const taskNextAction = (
     return {
       "en-US": `${task.title["en-US"]} is waiting for seeded verification.`,
       "zh-CN": `${task.title["zh-CN"]} 正在等待 seeded 验证。`,
+      "zh-TW": `${task.title["en-US"]} is waiting for seeded verification.`,
     };
   }
 
@@ -703,6 +768,7 @@ const taskNextAction = (
     return {
       "en-US": `${task.title["en-US"]} needs a fresh valid completion.`,
       "zh-CN": `${task.title["zh-CN"]} 需要重新完成一次有效操作。`,
+      "zh-TW": `${task.title["en-US"]} needs a fresh valid completion.`,
     };
   }
 
@@ -710,12 +776,14 @@ const taskNextAction = (
     return {
       "en-US": `${task.title["en-US"]} is queued for manual review.`,
       "zh-CN": `${task.title["zh-CN"]} 已进入人工审核队列。`,
+      "zh-TW": `${task.title["en-US"]} is queued for manual review.`,
     };
   }
 
   return {
     "en-US": `Complete ${task.title["en-US"]} to recover eligibility.`,
     "zh-CN": `完成${task.title["zh-CN"]}以恢复资格。`,
+    "zh-TW": `Complete ${task.title["en-US"]} to recover eligibility.`,
   };
 };
 
@@ -825,10 +893,12 @@ const createEligibilityResult = (
       reason: {
         "en-US": "Campaign has ended; winner export review is closed for this seeded view.",
         "zh-CN": "活动已结束；当前 seeded 视图的获奖名单审核已关闭。",
+        "zh-TW": "Campaign has ended; winner export review is closed for this seeded view.",
       },
       nextAction: {
         "en-US": "Review final results without assuming reward distribution.",
         "zh-CN": "查看最终结果，但不要将其理解为自动发奖。",
+        "zh-TW": "Review final results without assuming reward distribution.",
       },
       walletStatus,
     };
@@ -846,6 +916,7 @@ const createEligibilityResult = (
         walletStatus.nextAction ?? {
           "en-US": "Verify wallet ownership before export eligibility.",
           "zh-CN": "请先验证钱包归属，再进入导出资格。",
+          "zh-TW": "Verify wallet ownership before export eligibility.",
         },
       walletStatus,
     };
@@ -861,10 +932,12 @@ const createEligibilityResult = (
       reason: {
         "en-US": "Required tasks or minimum points are still missing.",
         "zh-CN": "仍缺少必做任务或最低积分。",
+        "zh-TW": "Required tasks or minimum points are still missing.",
       },
       nextAction: {
         "en-US": "Complete the missing required tasks before export eligibility.",
         "zh-CN": "完成缺失的必做任务后再进入导出资格。",
+        "zh-TW": "Complete the missing required tasks before export eligibility.",
       },
       walletStatus,
     };
@@ -880,10 +953,12 @@ const createEligibilityResult = (
       reason: {
         "en-US": "All required work is present, but verification is still pending.",
         "zh-CN": "必做任务已满足，但验证仍在等待中。",
+        "zh-TW": "All required work is present, but verification is still pending.",
       },
       nextAction: {
         "en-US": "Wait for seeded verification to complete.",
         "zh-CN": "等待 seeded 验证完成。",
+        "zh-TW": "Wait for seeded verification to complete.",
       },
       walletStatus,
     };
@@ -899,10 +974,12 @@ const createEligibilityResult = (
       reason: {
         "en-US": "Eligibility is held for manual risk review.",
         "zh-CN": "资格因风险审核暂缓。",
+        "zh-TW": "Eligibility is held for manual risk review.",
       },
       nextAction: {
         "en-US": "Wait for manual review before winner export.",
         "zh-CN": "等待人工审核后再进入获奖名单导出。",
+        "zh-TW": "Wait for manual review before winner export.",
       },
       walletStatus,
     };
@@ -917,10 +994,12 @@ const createEligibilityResult = (
     reason: {
       "en-US": "Required tasks and minimum points are satisfied.",
       "zh-CN": "必做任务和最低积分均已满足。",
+      "zh-TW": "Required tasks and minimum points are satisfied.",
     },
     nextAction: {
       "en-US": "Stay active until the campaign export window closes.",
       "zh-CN": "在活动导出窗口关闭前保持活跃。",
+      "zh-TW": "Stay active until the campaign export window closes.",
     },
     walletStatus,
   };
@@ -1004,6 +1083,7 @@ const createEligibilityEntry = (
     label: {
       "en-US": `${participant.walletAddress} · ${participation.eligibility.status.replace(/_/g, " ")}`,
       "zh-CN": `${participant.walletAddress} · ${participation.eligibility.status.replace(/_/g, " ")}`,
+      "zh-TW": `${participant.walletAddress} · ${participation.eligibility.status.replace(/_/g, " ")}`,
     },
     localePreference: participant.localePreference,
     riskFlags: participant.riskFlags,
@@ -1032,6 +1112,7 @@ const addressOnlyEligibilityResult = (
     reason: {
       "en-US": "Address-only checks cannot infer AA or EOA wallet type until a supported wallet verifies ownership.",
       "zh-CN": "仅地址检查无法判断 AA 或 EOA 钱包类型，必须通过受支持的钱包验证归属。",
+      "zh-TW": "Address-only checks cannot infer AA or EOA wallet type until a supported wallet verifies ownership.",
     },
     riskFlags: [],
     score: 0,
@@ -1040,6 +1121,7 @@ const addressOnlyEligibilityResult = (
     nextAction: {
       "en-US": "Connect or verify a supported wallet before export eligibility can be trusted.",
       "zh-CN": "请连接或验证受支持的钱包后，再判断导出资格。",
+      "zh-TW": "Connect or verify a supported wallet before export eligibility can be trusted.",
     },
     walletAddress,
     walletSource: "OTHER",
@@ -1104,11 +1186,13 @@ export const createEligibilityCheckerReadModel = (
       description: {
         "en-US": "Check wallet-aware eligibility, missing tasks, risk review state, and next action before winners export.",
         "zh-CN": "在导出 winners 前检查钱包感知资格、缺失任务、风险审核状态和下一步。",
+        "zh-TW": "Check wallet-aware eligibility, missing tasks, risk review state, and next action before winners export.",
       },
       status: result.status,
       title: {
         "en-US": "Eligibility checker",
         "zh-CN": "资格检查器",
+        "zh-TW": "Eligibility checker",
       },
     },
   };
@@ -1120,14 +1204,17 @@ export const leaderboardModes: LeaderboardMode[] = [
     label: {
       "en-US": "Total Points",
       "zh-CN": "总积分",
+      "zh-TW": "Total Points",
     },
     description: {
       "en-US": "Ranks users by total campaign points.",
       "zh-CN": "按活动总积分排序用户。",
+      "zh-TW": "Ranks users by total campaign points.",
     },
     qualityPolicy: {
       "en-US": "Total points remain a review signal and do not distribute rewards.",
       "zh-CN": "总积分仍是审核信号，不会触发发奖。",
+      "zh-TW": "Total points remain a review signal and do not distribute rewards.",
     },
   },
   {
@@ -1135,14 +1222,17 @@ export const leaderboardModes: LeaderboardMode[] = [
     label: {
       "en-US": "On-chain",
       "zh-CN": "链上贡献",
+      "zh-TW": "On-chain",
     },
     description: {
       "en-US": "Prioritizes verified wallet, on-chain, and dApp API actions.",
       "zh-CN": "优先展示已验证的钱包、链上和 dApp API 行为。",
+      "zh-TW": "Prioritizes verified wallet, on-chain, and dApp API actions.",
     },
     qualityPolicy: {
       "en-US": "On-chain and dApp actions carry more quality weight than low-cost social tasks.",
       "zh-CN": "链上和 dApp 行为比低成本社交任务具有更高质量权重。",
+      "zh-TW": "On-chain and dApp actions carry more quality weight than low-cost social tasks.",
     },
   },
   {
@@ -1150,10 +1240,12 @@ export const leaderboardModes: LeaderboardMode[] = [
     label: {
       "en-US": "Referral",
       "zh-CN": "邀请",
+      "zh-TW": "Referral",
     },
     description: {
       "en-US": "Ranks qualified referral value, not raw signup counts.",
       "zh-CN": "按合格邀请价值排序，而不是原始注册数量。",
+      "zh-TW": "Ranks qualified referral value, not raw signup counts.",
     },
     qualityPolicy: defaultReferralRule,
   },
@@ -1162,14 +1254,17 @@ export const leaderboardModes: LeaderboardMode[] = [
     label: {
       "en-US": "Low-risk verified",
       "zh-CN": "低风险已验证",
+      "zh-TW": "Low-risk verified",
     },
     description: {
       "en-US": "Prioritizes eligible users with verified actions and no risk flags.",
       "zh-CN": "优先展示有已验证行为且无风险标记的合格用户。",
+      "zh-TW": "Prioritizes eligible users with verified actions and no risk flags.",
     },
     qualityPolicy: {
       "en-US": "Risk flags are review inputs, not automatic exclusions or aelf reward decisions.",
       "zh-CN": "风险标记是审核输入，不是自动排除或 aelf 发奖决定。",
+      "zh-TW": "Risk flags are review inputs, not automatic exclusions or aelf reward decisions.",
     },
   },
 ];
@@ -1300,6 +1395,7 @@ export const createLeaderboardReadModel = (
     summary: {
       "en-US": `${modeMetadata.label["en-US"]} ranks ${rows.length} seeded participants.`,
       "zh-CN": `${modeMetadata.label["zh-CN"]}展示 ${rows.length} 个 seeded 参与者。`,
+      "zh-TW": `${modeMetadata.label["en-US"]} ranks ${rows.length} seeded participants.`,
     },
   };
 };
@@ -1335,11 +1431,13 @@ const createAnalytics = (
       label: {
         "en-US": "Participants",
         "zh-CN": "参与者",
+        "zh-TW": "Participants",
       },
       value: totalParticipants.toLocaleString("en-US"),
       trend: {
         "en-US": "Seeded wallets in review sample.",
         "zh-CN": "审核样本中的 seeded 钱包。",
+        "zh-TW": "Seeded wallets in review sample.",
       },
       tone: "neutral",
       dimension: "audience",
@@ -1349,11 +1447,13 @@ const createAnalytics = (
       label: {
         "en-US": "Verified actions",
         "zh-CN": "有效行为",
+        "zh-TW": "Verified actions",
       },
       value: verifiedActions.toLocaleString("en-US"),
       trend: {
         "en-US": "Derived from local task completion fixtures.",
         "zh-CN": "来自本地任务完成 fixtures。",
+        "zh-TW": "Derived from local task completion fixtures.",
       },
       tone: "good",
       dimension: "quality",
@@ -1363,11 +1463,13 @@ const createAnalytics = (
       label: {
         "en-US": "Eligible winners",
         "zh-CN": "合格 winners",
+        "zh-TW": "Eligible winners",
       },
       value: String(exportBatch.readyCount),
       trend: {
         "en-US": "Preview only; project distributes rewards.",
         "zh-CN": "仅预览；由项目方发奖。",
+        "zh-TW": "Preview only; project distributes rewards.",
       },
       tone: "good",
       dimension: "export",
@@ -1377,11 +1479,13 @@ const createAnalytics = (
       label: {
         "en-US": "Risk rate",
         "zh-CN": "风险比例",
+        "zh-TW": "Risk rate",
       },
       value: formatPercent(riskRate),
       trend: {
         "en-US": "Risk flags are review signals.",
         "zh-CN": "风险标记是审核信号。",
+        "zh-TW": "Risk flags are review signals.",
       },
       tone: riskRate > 0.2 ? "warning" : "neutral",
       dimension: "risk",
@@ -1391,11 +1495,13 @@ const createAnalytics = (
       label: {
         "en-US": "Referral conversion",
         "zh-CN": "邀请转化",
+        "zh-TW": "Referral conversion",
       },
       value: formatPercent(referralConversion),
       trend: {
         "en-US": "Only qualified invitees count.",
         "zh-CN": "仅合格被邀请人计入。",
+        "zh-TW": "Only qualified invitees count.",
       },
       tone: "warning",
       dimension: "referral",
@@ -1405,11 +1511,13 @@ const createAnalytics = (
       label: {
         "en-US": "Retention signal",
         "zh-CN": "留存信号",
+        "zh-TW": "Retention signal",
       },
       value: "31%",
       trend: {
         "en-US": "Seeded Day 7 repeat action signal.",
         "zh-CN": "Seeded Day 7 重复行为信号。",
+        "zh-TW": "Seeded Day 7 repeat action signal.",
       },
       tone: "neutral",
       dimension: "retention",
@@ -1419,11 +1527,13 @@ const createAnalytics = (
       label: {
         "en-US": "Export readiness",
         "zh-CN": "导出准备度",
+        "zh-TW": "Export readiness",
       },
       value: `${exportBatch.readyCount}/${campaign.participants.length}`,
       trend: {
         "en-US": `${exportBatch.blockedCount} rows need review before export approval.`,
         "zh-CN": `${exportBatch.blockedCount} 行需要审核后再批准导出。`,
+        "zh-TW": `${exportBatch.blockedCount} rows need review before export approval.`,
       },
       tone: exportBatch.blockedCount > 0 ? "warning" : "good",
       dimension: "export",
@@ -1455,24 +1565,16 @@ const createWalletSplit = (participants: ParticipantSnapshot[]): DimensionSplit[
 const createLocaleSplit = (participants: ParticipantSnapshot[]): DimensionSplit[] => {
   const total = participants.length || 1;
 
-  return [
-    {
-      id: "locale-en-us",
-      label: "en-US",
-      count: participants.filter((participant) => participant.localePreference === "en-US").length,
-      percentage: Math.round(
-        (participants.filter((participant) => participant.localePreference === "en-US").length / total) * 100,
-      ),
-    },
-    {
-      id: "locale-zh-cn",
-      label: "zh-CN",
-      count: participants.filter((participant) => participant.localePreference === "zh-CN").length,
-      percentage: Math.round(
-        (participants.filter((participant) => participant.localePreference === "zh-CN").length / total) * 100,
-      ),
-    },
-  ];
+  return supportedLocales.map((locale) => {
+    const count = participants.filter((participant) => participant.localePreference === locale).length;
+
+    return {
+      id: `locale-${locale.toLowerCase()}`,
+      label: locale,
+      count,
+      percentage: Math.round((count / total) * 100),
+    };
+  });
 };
 
 const createTaskEvidence = (
@@ -1488,6 +1590,7 @@ const createTaskEvidence = (
         label: task?.title ?? {
           "en-US": taskState.templateCode,
           "zh-CN": taskState.templateCode,
+          "zh-TW": taskState.templateCode,
         },
         status: taskState.status === "ready" ? "pending" : taskState.status,
         source: taskState.evidenceSource,
@@ -1597,11 +1700,13 @@ const createExportBatch = (campaign: CampaignShellDetail): ExportBatchSummary =>
 const commandCenterBoundary: LocalizedText = {
   "en-US": "Seeded/local preview only. No live analytics, no real export file, no wallet SDK, no contract call, and export winners does not distribute rewards.",
   "zh-CN": "仅 seeded/本地预览。不会连接实时数据，不生成真实导出文件，不调用钱包 SDK 或合约，导出 winners 不等于发奖。",
+  "zh-TW": "Seeded/local preview only. No live analytics, no real export file, no wallet SDK, no contract call, and export winners does not distribute rewards.",
 };
 
 const exportDecisionBoundary: LocalizedText = {
   "en-US": "Campaign OS exports verified records only and does not distribute rewards; the campaign project owns reward fulfillment.",
   "zh-CN": "Campaign OS 只导出已验证记录，不执行发奖；奖励履约由活动项目方负责。",
+  "zh-TW": "Campaign OS exports verified records only and does not distribute rewards; the campaign project owns reward fulfillment.",
 };
 
 const formatTimeWindow = (startTime: string, endTime: string): LocalizedText => {
@@ -1610,12 +1715,14 @@ const formatTimeWindow = (startTime: string, endTime: string): LocalizedText => 
   return {
     "en-US": `${dateFormatter.format(new Date(startTime))} - ${dateFormatter.format(new Date(endTime))}`,
     "zh-CN": `${dateFormatter.format(new Date(startTime))} - ${dateFormatter.format(new Date(endTime))}`,
+    "zh-TW": `${dateFormatter.format(new Date(startTime))} - ${dateFormatter.format(new Date(endTime))}`,
   };
 };
 
 const createWalletSplitLabel = (aaWallets: number, eoaWallets: number): LocalizedText => ({
   "en-US": `${aaWallets} AA / ${eoaWallets} EOA`,
   "zh-CN": `${aaWallets} AA / ${eoaWallets} EOA`,
+  "zh-TW": `${aaWallets} AA / ${eoaWallets} EOA`,
 });
 
 const createLocaleState = (localeCoverage: number): LocalizedText =>
@@ -1623,10 +1730,12 @@ const createLocaleState = (localeCoverage: number): LocalizedText =>
     ? {
         "en-US": "All supported locales reviewed",
         "zh-CN": "所有支持语言已审核",
+        "zh-TW": "All supported locales reviewed",
       }
     : {
         "en-US": "zh-CN uses English fallback until review",
         "zh-CN": "中文在审核前使用英文回退",
+        "zh-TW": "zh-CN uses English fallback until review",
       };
 
 const statusNextAction: Record<
@@ -1637,60 +1746,72 @@ const statusNextAction: Record<
     nextActionLabel: {
       "en-US": "Finish publish blockers",
       "zh-CN": "完成发布阻断项",
+      "zh-TW": "Finish publish blockers",
     },
     nextActionDetail: {
       "en-US": "Complete basics, reward disclaimers, and launch gates before scheduling.",
       "zh-CN": "排期前完成基础信息、奖励声明和发布门禁。",
+      "zh-TW": "Complete basics, reward disclaimers, and launch gates before scheduling.",
     },
   },
   scheduled: {
     nextActionLabel: {
       "en-US": "Review launch readiness",
       "zh-CN": "审核发布准备度",
+      "zh-TW": "Review launch readiness",
     },
     nextActionDetail: {
       "en-US": "Confirm locale fallback, wallet policy, and risk settings before go-live.",
       "zh-CN": "上线前确认语言回退、钱包策略和风险设置。",
+      "zh-TW": "Confirm locale fallback, wallet policy, and risk settings before go-live.",
     },
   },
   live: {
     nextActionLabel: {
       "en-US": "Review live analytics",
       "zh-CN": "查看实时活动数据",
+      "zh-TW": "Review live analytics",
     },
     nextActionDetail: {
       "en-US": "Monitor funnel drop-off, risk flags, and export readiness.",
       "zh-CN": "监控漏斗流失、风险标记和导出准备度。",
+      "zh-TW": "Monitor funnel drop-off, risk flags, and export readiness.",
     },
   },
   paused: {
     nextActionLabel: {
       "en-US": "Resolve pause blocker",
       "zh-CN": "处理暂停阻断项",
+      "zh-TW": "Resolve pause blocker",
     },
     nextActionDetail: {
       "en-US": "Clear the blocking review before resuming the campaign.",
       "zh-CN": "恢复活动前先完成阻断审核。",
+      "zh-TW": "Clear the blocking review before resuming the campaign.",
     },
   },
   ended: {
     nextActionLabel: {
       "en-US": "Approve export preview",
       "zh-CN": "批准导出预览",
+      "zh-TW": "Approve export preview",
     },
     nextActionDetail: {
       "en-US": "Review ready, review-required, and blocked rows before winner export.",
       "zh-CN": "导出 winners 前审核就绪、需复核和阻断行。",
+      "zh-TW": "Review ready, review-required, and blocked rows before winner export.",
     },
   },
   exported: {
     nextActionLabel: {
       "en-US": "Archive final report",
       "zh-CN": "归档最终报告",
+      "zh-TW": "Archive final report",
     },
     nextActionDetail: {
       "en-US": "Keep final evidence and remind the project that rewards remain project-owned.",
       "zh-CN": "保留最终证据，并提醒项目方奖励仍由项目方负责。",
+      "zh-TW": "Keep final evidence and remind the project that rewards remain project-owned.",
     },
   },
 };
@@ -1772,6 +1893,7 @@ const createSeededCampaignCommandItems = (
     exportSummary: {
       "en-US": `${exportBatch.readyCount} ready / ${exportBatch.blockedCount} review rows`,
       "zh-CN": `${exportBatch.readyCount} 行就绪 / ${exportBatch.blockedCount} 行需审核`,
+      "zh-TW": `${exportBatch.readyCount} ready / ${exportBatch.blockedCount} review rows`,
     },
     id: campaign.id,
     localeCoverage: campaign.metrics.localeCoverage,
@@ -1779,6 +1901,7 @@ const createSeededCampaignCommandItems = (
     riskReason: {
       "en-US": `${campaign.metrics.riskReviewQueue} risk reviews queued`,
       "zh-CN": `${campaign.metrics.riskReviewQueue} 条风险审核排队`,
+      "zh-TW": `${campaign.metrics.riskReviewQueue} risk reviews queued`,
     },
     riskState: campaign.metrics.riskReviewQueue > 0 ? "warning" : "ready",
     startTime: campaign.startTime,
@@ -1793,6 +1916,7 @@ const createSeededCampaignCommandItems = (
     exportSummary: {
       "en-US": "Export disabled until campaign is live",
       "zh-CN": "活动上线前不可导出",
+      "zh-TW": "Export disabled until campaign is live",
     },
     id: "camp-forest-nft-path",
     localeCoverage: 0.5,
@@ -1800,6 +1924,7 @@ const createSeededCampaignCommandItems = (
     riskReason: {
       "en-US": "Launch risk settings need owner review",
       "zh-CN": "上线风险设置需要项目方审核",
+      "zh-TW": "Launch risk settings need owner review",
     },
     riskState: "warning",
     startTime: "2026-07-05T00:00:00Z",
@@ -1807,6 +1932,7 @@ const createSeededCampaignCommandItems = (
     title: {
       "en-US": "Forest NFT Quest",
       "zh-CN": "Forest NFT 任务",
+      "zh-TW": "Forest NFT Quest",
     },
   }),
   createCampaignCommandItem({
@@ -1817,6 +1943,7 @@ const createSeededCampaignCommandItems = (
     exportSummary: {
       "en-US": "184 ready / 26 review rows",
       "zh-CN": "184 行就绪 / 26 行需审核",
+      "zh-TW": "184 ready / 26 review rows",
     },
     id: "camp-tmrwdao-streak",
     localeCoverage: 1,
@@ -1824,6 +1951,7 @@ const createSeededCampaignCommandItems = (
     riskReason: {
       "en-US": "Referral velocity review remains open",
       "zh-CN": "推荐速度审核仍未关闭",
+      "zh-TW": "Referral velocity review remains open",
     },
     riskState: "warning",
     startTime: "2026-06-04T00:00:00Z",
@@ -1831,6 +1959,7 @@ const createSeededCampaignCommandItems = (
     title: {
       "en-US": "TMRWDAO Governance Streak",
       "zh-CN": "TMRWDAO 治理连续任务",
+      "zh-TW": "TMRWDAO Governance Streak",
     },
   }),
   createCampaignCommandItem({
@@ -1841,6 +1970,7 @@ const createSeededCampaignCommandItems = (
     exportSummary: {
       "en-US": "Final export evidence archived",
       "zh-CN": "最终导出证据已归档",
+      "zh-TW": "Final export evidence archived",
     },
     id: "camp-ebridge-onboarding",
     localeCoverage: 1,
@@ -1848,6 +1978,7 @@ const createSeededCampaignCommandItems = (
     riskReason: {
       "en-US": "No active risk review",
       "zh-CN": "无进行中的风险审核",
+      "zh-TW": "No active risk review",
     },
     riskState: "ready",
     startTime: "2026-05-27T00:00:00Z",
@@ -1855,6 +1986,7 @@ const createSeededCampaignCommandItems = (
     title: {
       "en-US": "eBridge Onboarding Wave",
       "zh-CN": "eBridge 新手活动",
+      "zh-TW": "eBridge Onboarding Wave",
     },
   }),
 ];
@@ -1883,6 +2015,7 @@ const createCommandSummary = (
     nextPrimaryAction: primaryAction?.nextActionLabel ?? {
       "en-US": "Review campaigns",
       "zh-CN": "审核活动",
+      "zh-TW": "Review campaigns",
     },
   };
 };
@@ -1907,11 +2040,13 @@ const createDropOffPoint = (funnel: ConversionFunnelStep[]): LocalizedText => {
   const label = largestDropOff.step?.label ?? {
     "en-US": "Campaign funnel",
     "zh-CN": "活动漏斗",
+    "zh-TW": "Campaign funnel",
   };
 
   return {
     "en-US": `Largest drop-off: ${label["en-US"]} (${largestDropOff.dropOff.toLocaleString("en-US")} users).`,
     "zh-CN": `最大流失点：${label["zh-CN"]}（${largestDropOff.dropOff.toLocaleString("en-US")} 位用户）。`,
+    "zh-TW": `Largest drop-off: ${label["en-US"]} (${largestDropOff.dropOff.toLocaleString("en-US")} users).`,
   };
 };
 
@@ -1943,6 +2078,7 @@ const createAnalyticsExportDecision = (
     evidenceCoverage: {
       "en-US": `${evidenceCount} task evidence records across ${exportBatch.rows.length} seeded export rows.`,
       "zh-CN": `${exportBatch.rows.length} 行 seeded 导出记录包含 ${evidenceCount} 条任务证据。`,
+      "zh-TW": `${evidenceCount} task evidence records across ${exportBatch.rows.length} seeded export rows.`,
     },
     boundary: exportDecisionBoundary,
   };
@@ -1974,10 +2110,12 @@ const createContractReviewChecklist = (
       label: {
         "en-US": "Contract address",
         "zh-CN": "合约地址",
+        "zh-TW": "Contract address",
       },
       value: {
         "en-US": claimModeSelected ? "Required before claim review" : "Not required for Off-chain MVP",
         "zh-CN": claimModeSelected ? "领取审核前必须提供" : "Off-chain MVP 不需要",
+        "zh-TW": claimModeSelected ? "Required before claim review" : "Not required for Off-chain MVP",
       },
       status: claimModeSelected ? "blocked" : "passed",
       ownerRole: "contract_reviewer",
@@ -1985,10 +2123,12 @@ const createContractReviewChecklist = (
       detail: {
         "en-US": "MVP uses off-chain verification and winner export without contract migration.",
         "zh-CN": "MVP 使用链下验证和 winners 导出，不需要合约迁移。",
+        "zh-TW": "MVP uses off-chain verification and winner export without contract migration.",
       },
       nextAction: {
         "en-US": "Keep contract address empty until a claim-mode review is opened.",
         "zh-CN": "在领取模式审核开启前保持合约地址为空。",
+        "zh-TW": "Keep contract address empty until a claim-mode review is opened.",
       },
     },
     {
@@ -1996,10 +2136,12 @@ const createContractReviewChecklist = (
       label: {
         "en-US": "Audit status",
         "zh-CN": "审计状态",
+        "zh-TW": "Audit status",
       },
       value: {
         "en-US": claimModeSelected ? "Audit required before claim" : "Not required for MVP shell",
         "zh-CN": claimModeSelected ? "领取前必须审计" : "MVP shell 不需要",
+        "zh-TW": claimModeSelected ? "Audit required before claim" : "Not required for MVP shell",
       },
       status: claimModeSelected ? "blocked" : "passed",
       ownerRole: "contract_reviewer",
@@ -2007,10 +2149,12 @@ const createContractReviewChecklist = (
       detail: {
         "en-US": "Claim mode is high impact because it can affect reward distribution.",
         "zh-CN": "领取模式可能影响奖励发放，因此属于高影响模式。",
+        "zh-TW": "Claim mode is high impact because it can affect reward distribution.",
       },
       nextAction: {
         "en-US": "Require audit evidence before any contract claim approval.",
         "zh-CN": "任何合约领取批准前必须提供审计证据。",
+        "zh-TW": "Require audit evidence before any contract claim approval.",
       },
     },
     {
@@ -2018,10 +2162,12 @@ const createContractReviewChecklist = (
       label: {
         "en-US": "Metadata hash",
         "zh-CN": "Metadata hash",
+        "zh-TW": "Metadata hash",
       },
       value: {
         "en-US": "Optional for MVP; planned for CampaignRegistryV2",
         "zh-CN": "MVP 可选；计划用于 CampaignRegistryV2",
+        "zh-TW": "Optional for MVP; planned for CampaignRegistryV2",
       },
       status: "warning",
       ownerRole: "internal_operator",
@@ -2029,10 +2175,12 @@ const createContractReviewChecklist = (
       detail: {
         "en-US": "Store only metadata URI/hash later; full campaign copy stays off-chain.",
         "zh-CN": "后续只记录 metadata URI/hash；活动全文仍留在链下。",
+        "zh-TW": "Store only metadata URI/hash later; full campaign copy stays off-chain.",
       },
       nextAction: {
         "en-US": "Prepare metadata hash when moving to the P1 registry path.",
         "zh-CN": "进入 P1 registry 路径时准备 metadata hash。",
+        "zh-TW": "Prepare metadata hash when moving to the P1 registry path.",
       },
     },
     {
@@ -2040,10 +2188,12 @@ const createContractReviewChecklist = (
       label: {
         "en-US": "Verifier role",
         "zh-CN": "Verifier role",
+        "zh-TW": "Verifier role",
       },
       value: {
         "en-US": "Backend verifier only",
         "zh-CN": "仅 backend verifier",
+        "zh-TW": "Backend verifier only",
       },
       status: "passed",
       ownerRole: "internal_operator",
@@ -2051,10 +2201,12 @@ const createContractReviewChecklist = (
       detail: {
         "en-US": "The MVP verifier records seeded verification inputs without contract write authority.",
         "zh-CN": "MVP verifier 只记录 seeded 验证输入，不具备合约写权限。",
+        "zh-TW": "The MVP verifier records seeded verification inputs without contract write authority.",
       },
       nextAction: {
         "en-US": "Keep verifier role off-chain until V2 role design is approved.",
         "zh-CN": "在 V2 role 设计批准前保持 verifier role 链下执行。",
+        "zh-TW": "Keep verifier role off-chain until V2 role design is approved.",
       },
     },
     {
@@ -2062,10 +2214,12 @@ const createContractReviewChecklist = (
       label: {
         "en-US": "Reward custody",
         "zh-CN": "奖励托管",
+        "zh-TW": "Reward custody",
       },
       value: {
         "en-US": "Project-owned; None in Campaign OS",
         "zh-CN": "项目方持有；Campaign OS 不托管",
+        "zh-TW": "Project-owned; None in Campaign OS",
       },
       status: "passed",
       ownerRole: "project_owner",
@@ -2073,10 +2227,12 @@ const createContractReviewChecklist = (
       detail: {
         "en-US": "Campaign OS exports verified records only and never holds rewards.",
         "zh-CN": "Campaign OS 只导出已验证记录，绝不托管奖励。",
+        "zh-TW": "Campaign OS exports verified records only and never holds rewards.",
       },
       nextAction: {
         "en-US": "Confirm project reward responsibility before winner export.",
         "zh-CN": "导出 winners 前确认项目方奖励责任。",
+        "zh-TW": "Confirm project reward responsibility before winner export.",
       },
     },
     {
@@ -2084,10 +2240,12 @@ const createContractReviewChecklist = (
       label: {
         "en-US": "Contract claim gate",
         "zh-CN": "合约领取门禁",
+        "zh-TW": "Contract claim gate",
       },
       value: {
         "en-US": "Blocked until high-impact manual review",
         "zh-CN": "高影响人工审核前保持阻断",
+        "zh-TW": "Blocked until high-impact manual review",
       },
       status: "blocked",
       ownerRole: "contract_reviewer",
@@ -2095,10 +2253,12 @@ const createContractReviewChecklist = (
       detail: {
         "en-US": "Claim mode needs contract address, audit status, verifier role, metadata hash, and reward custody review.",
         "zh-CN": "领取模式需要合约地址、审计状态、verifier role、metadata hash 与奖励托管审核。",
+        "zh-TW": "Claim mode needs contract address, audit status, verifier role, metadata hash, and reward custody review.",
       },
       nextAction: {
         "en-US": "Do not enable claim mode in the MVP shell.",
         "zh-CN": "不要在 MVP shell 启用领取模式。",
+        "zh-TW": "Do not enable claim mode in the MVP shell.",
       },
     },
   ];
@@ -2110,19 +2270,23 @@ const createContractEvolution = (): ContractEvolutionStep[] => [
     phase: {
       "en-US": "MVP",
       "zh-CN": "MVP",
+      "zh-TW": "MVP",
     },
     title: {
       "en-US": "Off-chain verification + winner export",
       "zh-CN": "链下验证 + winners 导出",
+      "zh-TW": "Off-chain verification + winner export",
     },
     description: {
       "en-US": "No contract migration; existing Pixiepoints/backend ledger remains usable.",
       "zh-CN": "不做合约迁移；继续使用现有 Pixiepoints/backend ledger。",
+      "zh-TW": "No contract migration; existing Pixiepoints/backend ledger remains usable.",
     },
     status: "ready",
     contractSurface: {
       "en-US": "No new contract surface",
       "zh-CN": "无新增合约面",
+      "zh-TW": "No new contract surface",
     },
   },
   {
@@ -2130,19 +2294,23 @@ const createContractEvolution = (): ContractEvolutionStep[] => [
     phase: {
       "en-US": "P1",
       "zh-CN": "P1",
+      "zh-TW": "P1",
     },
     title: {
       "en-US": "CampaignRegistryV2 metadata hash",
       "zh-CN": "CampaignRegistryV2 metadata hash",
+      "zh-TW": "CampaignRegistryV2 metadata hash",
     },
     description: {
       "en-US": "Record owner, status, wallet policy, supported locales, metadata URI, and metadata hash.",
       "zh-CN": "记录 owner、status、wallet policy、supported locales、metadata URI 与 metadata hash。",
+      "zh-TW": "Record owner, status, wallet policy, supported locales, metadata URI, and metadata hash.",
     },
     status: "warning",
     contractSurface: {
       "en-US": "CampaignRegistryV2",
       "zh-CN": "CampaignRegistryV2",
+      "zh-TW": "CampaignRegistryV2",
     },
   },
   {
@@ -2150,19 +2318,23 @@ const createContractEvolution = (): ContractEvolutionStep[] => [
     phase: {
       "en-US": "P1",
       "zh-CN": "P1",
+      "zh-TW": "P1",
     },
     title: {
       "en-US": "Points and referral roots",
       "zh-CN": "Points 与 referral roots",
+      "zh-TW": "Points and referral roots",
     },
     description: {
       "en-US": "Commit points batch roots and referral qualification roots without exposing risk strategy.",
       "zh-CN": "提交积分批次 root 与推荐资格 root，但不暴露风控策略。",
+      "zh-TW": "Commit points batch roots and referral qualification roots without exposing risk strategy.",
     },
     status: "warning",
     contractSurface: {
       "en-US": "CampaignPointsLedgerV2 + ReferralRegistryV2",
       "zh-CN": "CampaignPointsLedgerV2 + ReferralRegistryV2",
+      "zh-TW": "CampaignPointsLedgerV2 + ReferralRegistryV2",
     },
   },
   {
@@ -2170,19 +2342,23 @@ const createContractEvolution = (): ContractEvolutionStep[] => [
     phase: {
       "en-US": "P2",
       "zh-CN": "P2",
+      "zh-TW": "P2",
     },
     title: {
       "en-US": "Optional contract claim",
       "zh-CN": "可选合约领取",
+      "zh-TW": "Optional contract claim",
     },
     description: {
       "en-US": "Only after separate approval for claim contract, audit status, custody, and eligibility proof.",
       "zh-CN": "仅在领取合约、审计状态、托管与资格证明单独批准后进入。",
+      "zh-TW": "Only after separate approval for claim contract, audit status, custody, and eligibility proof.",
     },
     status: "blocker",
     contractSurface: {
       "en-US": "EligibilityRootRegistryV2 + optional claim contract",
       "zh-CN": "EligibilityRootRegistryV2 + 可选 claim contract",
+      "zh-TW": "EligibilityRootRegistryV2 + optional claim contract",
     },
   },
 ];
@@ -2198,37 +2374,45 @@ const createAdminContractReviewCenter = (
     v2CompanionNeeded: {
       "en-US": "No for MVP; recommended for P1 transparency.",
       "zh-CN": "MVP 不需要；建议 P1 用于透明度增强。",
+      "zh-TW": "No for MVP; recommended for P1 transparency.",
     },
     metadataHash: {
       "en-US": "Optional for MVP; planned for CampaignRegistryV2 metadata URI/hash.",
       "zh-CN": "MVP 可选；计划用于 CampaignRegistryV2 metadata URI/hash。",
+      "zh-TW": "Optional for MVP; planned for CampaignRegistryV2 metadata URI/hash.",
     },
     verifierRole: {
       "en-US": "Backend verifier only; no contract write authority in MVP.",
       "zh-CN": "仅 backend verifier；MVP 没有合约写权限。",
+      "zh-TW": "Backend verifier only; no contract write authority in MVP.",
     },
     rewardCustody: {
       "en-US": "Project-owned; None in Campaign OS.",
       "zh-CN": "项目方持有；Campaign OS 不托管。",
+      "zh-TW": "Project-owned; None in Campaign OS.",
     },
     publishState: claimModeSelected ? "blocker" : "ready",
     highImpactMode: claimModeSelected,
     summary: {
       "en-US": "MVP stays off-chain: verification, ranking, and export are reviewed without contract migration.",
       "zh-CN": "MVP 保持链下：审核验证、排名与导出，不进行合约迁移。",
+      "zh-TW": "MVP stays off-chain: verification, ranking, and export are reviewed without contract migration.",
     },
     boundary: {
       "en-US": "Seeded review only. No live contract transaction, no backend call, no reward custody, and no reward distribution is executed.",
       "zh-CN": "仅 seeded 审核。不执行真实合约交易、不调用后端、不托管奖励，也不发奖。",
+      "zh-TW": "Seeded review only. No live contract transaction, no backend call, no reward custody, and no reward distribution is executed.",
     },
     nextAction: claimModeSelected
       ? {
           "en-US": "Block publish until contract reviewer approves high-impact claim mode.",
           "zh-CN": "阻断发布，直到合约审核人批准高影响领取模式。",
+          "zh-TW": "Block publish until contract reviewer approves high-impact claim mode.",
         }
       : {
           "en-US": "Approve Off-chain MVP and keep V2 companion planning in P1 backlog.",
           "zh-CN": "批准 Off-chain MVP，并把 V2 companion 规划保留在 P1 backlog。",
+          "zh-TW": "Approve Off-chain MVP and keep V2 companion planning in P1 backlog.",
         },
     checklist: createContractReviewChecklist(campaign.contractMode),
     evolution: createContractEvolution(),
@@ -2238,21 +2422,25 @@ const createAdminContractReviewCenter = (
 const contractInterfaceBoundary: LocalizedText = {
   "en-US": "Seeded/local contract interface matrix only. No ABI generation, live contract transaction, backend call, wallet signing, reward custody, or reward distribution is executed.",
   "zh-CN": "仅 seeded/本地合约接口矩阵。不会生成 ABI、执行真实合约交易、调用后端、钱包签名、托管奖励或发奖。",
+  "zh-TW": "Seeded/local contract interface matrix only. No ABI generation, live contract transaction, backend call, wallet signing, reward custody, or reward distribution is executed.",
 };
 
 const companionContractBoundary: LocalizedText = {
   "en-US": "Companion contracts are planning surfaces for auditability; Campaign OS remains off-chain for MVP operations.",
   "zh-CN": "Companion contracts 仅作为透明度规划面；Campaign OS 的 MVP 操作仍保持链下。",
+  "zh-TW": "Companion contracts are planning surfaces for auditability; Campaign OS remains off-chain for MVP operations.",
 };
 
 const noRewardCustodyBoundary: LocalizedText = {
   "en-US": "Campaign OS does not custody or distribute rewards; the campaign project owns reward fulfillment.",
   "zh-CN": "Campaign OS 不托管也不发放奖励；奖励履约由活动项目方负责。",
+  "zh-TW": "Campaign OS does not custody or distribute rewards; the campaign project owns reward fulfillment.",
 };
 
 const deliveryChecklistBoundary: LocalizedText = {
   "en-US": "Seeded/local delivery readiness evidence only. No live wallet SDK, API call, contract transaction, export file, reward custody, or reward distribution is executed.",
   "zh-CN": "仅 seeded/本地交付 readiness 证据。不会执行实时钱包 SDK、API 调用、合约交易、导出文件、奖励托管或发奖。",
+  "zh-TW": "Seeded/local delivery readiness evidence only. No live wallet SDK, API call, contract transaction, export file, reward custody, or reward distribution is executed.",
 };
 
 const createContractMethod = ({
@@ -2292,15 +2480,18 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
     purpose: {
       "en-US": "Records campaign owner, status, wallet policy, metadata URI/hash, and task config hash for later transparency.",
       "zh-CN": "记录活动 owner、状态、钱包策略、metadata URI/hash 与任务配置 hash，用于后续透明度增强。",
+      "zh-TW": "Records campaign owner, status, wallet policy, metadata URI/hash, and task config hash for later transparency.",
     },
     ownerRole: "contract_reviewer",
     boundary: {
       "en-US": "Full campaign copy, AI drafts, and risk details stay off-chain; this console does not create a registry contract.",
       "zh-CN": "活动全文、AI 草稿与风控明细保持链下；当前控制台不会创建 registry 合约。",
+      "zh-TW": "Full campaign copy, AI drafts, and risk details stay off-chain; this console does not create a registry contract.",
     },
     nextAction: {
       "en-US": "Keep MVP off-chain and prepare metadata hash review before P1 companion-contract work.",
       "zh-CN": "MVP 先保持链下，并在 P1 companion contract 前准备 metadata hash 审核。",
+      "zh-TW": "Keep MVP off-chain and prepare metadata hash review before P1 companion-contract work.",
     },
     methods: [
       createContractMethod({
@@ -2309,6 +2500,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Create an auditable campaign record with owner, status, wallet policy, locales, and metadata hash.",
           "zh-CN": "创建可审计的活动记录，包含 owner、状态、钱包策略、语言与 metadata hash。",
+          "zh-TW": "Create an auditable campaign record with owner, status, wallet policy, locales, and metadata hash.",
         },
         ownerRole: "contract_reviewer",
         phase: "P1",
@@ -2316,6 +2508,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Define CampaignInfo schema and authorization before implementation.",
           "zh-CN": "实现前先定义 CampaignInfo schema 与授权边界。",
+          "zh-TW": "Define CampaignInfo schema and authorization before implementation.",
         },
       }),
       createContractMethod({
@@ -2324,6 +2517,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Update metadata URI/hash while keeping translated copy off-chain.",
           "zh-CN": "更新 metadata URI/hash，同时保持多语言全文链下。",
+          "zh-TW": "Update metadata URI/hash while keeping translated copy off-chain.",
         },
         ownerRole: "contract_reviewer",
         phase: "P1",
@@ -2331,6 +2525,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Review immutable hash semantics and owner-only update policy.",
           "zh-CN": "审核 hash 语义与仅 owner 可更新策略。",
+          "zh-TW": "Review immutable hash semantics and owner-only update policy.",
         },
       }),
       createContractMethod({
@@ -2339,6 +2534,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Record a task config hash without storing full task text on-chain.",
           "zh-CN": "记录任务配置 hash，不把完整任务文案上链。",
+          "zh-TW": "Record a task config hash without storing full task text on-chain.",
         },
         ownerRole: "contract_reviewer",
         phase: "P1",
@@ -2346,6 +2542,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Define task hash canonicalization before contract design.",
           "zh-CN": "合约设计前先定义任务 hash 规范化方式。",
+          "zh-TW": "Define task hash canonicalization before contract design.",
         },
       }),
       createContractMethod({
@@ -2354,6 +2551,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Move campaign lifecycle through draft, scheduled, live, paused, ended, and archived states.",
           "zh-CN": "管理 draft、scheduled、live、paused、ended、archived 等活动生命周期。",
+          "zh-TW": "Move campaign lifecycle through draft, scheduled, live, paused, ended, and archived states.",
         },
         ownerRole: "contract_reviewer",
         phase: "P1",
@@ -2361,6 +2559,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Align lifecycle transitions with Admin/Ops publish gates.",
           "zh-CN": "将生命周期流转与 Admin/Ops 发布门禁对齐。",
+          "zh-TW": "Align lifecycle transitions with Admin/Ops publish gates.",
         },
       }),
       createContractMethod({
@@ -2369,6 +2568,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Set ANY, AA_ONLY, or EOA_ONLY policy for campaign eligibility context.",
           "zh-CN": "设置 ANY、AA_ONLY 或 EOA_ONLY，用于活动资格上下文。",
+          "zh-TW": "Set ANY, AA_ONLY, or EOA_ONLY policy for campaign eligibility context.",
         },
         ownerRole: "contract_reviewer",
         phase: "P1",
@@ -2376,6 +2576,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Keep wallet type verification off-chain and store policy only.",
           "zh-CN": "钱包类型验证保持链下，仅存储策略。",
+          "zh-TW": "Keep wallet type verification off-chain and store policy only.",
         },
       }),
       createContractMethod({
@@ -2384,6 +2585,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Record supported locale codes without storing localized campaign content.",
           "zh-CN": "记录支持的语言代码，不存储本地化活动全文。",
+          "zh-TW": "Record supported locale codes without storing localized campaign content.",
         },
         ownerRole: "contract_reviewer",
         phase: "P1",
@@ -2391,6 +2593,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Keep runtime locales limited to en-US and zh-CN until a separate locale expansion is approved.",
           "zh-CN": "运行时语言保持 en-US 与 zh-CN，除非另行批准语言扩展。",
+          "zh-TW": "Keep runtime locales limited to en-US and zh-CN until a separate locale expansion is approved.",
         },
       }),
       createContractMethod({
@@ -2399,6 +2602,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Transfer project-owner authority for a campaign registry record.",
           "zh-CN": "转移活动 registry 记录的项目方 owner 权限。",
+          "zh-TW": "Transfer project-owner authority for a campaign registry record.",
         },
         ownerRole: "contract_reviewer",
         phase: "P1",
@@ -2406,6 +2610,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Require explicit owner transfer review and audit trail.",
           "zh-CN": "需要明确的 owner 转移审核与审计记录。",
+          "zh-TW": "Require explicit owner transfer review and audit trail.",
         },
       }),
       createContractMethod({
@@ -2414,6 +2619,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Pause campaign registry state for operational incidents or review holds.",
           "zh-CN": "在运营事件或审核暂停时暂停活动 registry 状态。",
+          "zh-TW": "Pause campaign registry state for operational incidents or review holds.",
         },
         ownerRole: "internal_operator",
         phase: "P1",
@@ -2421,6 +2627,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Map pause authority to Admin/Ops incident procedures before enabling.",
           "zh-CN": "启用前将暂停权限映射到 Admin/Ops 事件流程。",
+          "zh-TW": "Map pause authority to Admin/Ops incident procedures before enabling.",
         },
       }),
       createContractMethod({
@@ -2429,6 +2636,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Read the companion campaign registry record for audit review.",
           "zh-CN": "读取 companion campaign registry 记录用于审计复核。",
+          "zh-TW": "Read the companion campaign registry record for audit review.",
         },
         ownerRole: "internal_operator",
         phase: "P1",
@@ -2436,6 +2644,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Treat as future read-only contract view, not a live MVP dependency.",
           "zh-CN": "作为未来只读合约视图，不作为 MVP 实时依赖。",
+          "zh-TW": "Treat as future read-only contract view, not a live MVP dependency.",
         },
       }),
     ],
@@ -2447,15 +2656,18 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
     purpose: {
       "en-US": "Commits points batch roots for auditability while high-frequency point events remain off-chain by default.",
       "zh-CN": "提交积分批次 root 用于审计；高频积分事件默认保持链下。",
+      "zh-TW": "Commits points batch roots for auditability while high-frequency point events remain off-chain by default.",
     },
     ownerRole: "contract_reviewer",
     boundary: {
       "en-US": "Single-write points are high-transparency optional rows and are not MVP-ready execution paths.",
       "zh-CN": "单条积分写链属于高透明度可选项，不是 MVP-ready 执行路径。",
+      "zh-TW": "Single-write points are high-transparency optional rows and are not MVP-ready execution paths.",
     },
     nextAction: {
       "en-US": "Prefer batch root commits; review throughput and dispute handling before single-write points.",
       "zh-CN": "优先批次 root；单条积分写链前先评审吞吐与争议处理。",
+      "zh-TW": "Prefer batch root commits; review throughput and dispute handling before single-write points.",
     },
     methods: [
       createContractMethod({
@@ -2464,6 +2676,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Commit a periodic points root and task records hash for later audit.",
           "zh-CN": "提交周期性 points root 与 task records hash 供后续审计。",
+          "zh-TW": "Commit a periodic points root and task records hash for later audit.",
         },
         ownerRole: "internal_operator",
         phase: "P1",
@@ -2471,6 +2684,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Define batch cadence, root format, and rollback semantics.",
           "zh-CN": "定义批次周期、root 格式与回滚语义。",
+          "zh-TW": "Define batch cadence, root format, and rollback semantics.",
         },
       }),
       createContractMethod({
@@ -2479,6 +2693,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Revoke a committed points batch using a reason hash.",
           "zh-CN": "通过 reason hash 撤销已提交的积分批次。",
+          "zh-TW": "Revoke a committed points batch using a reason hash.",
         },
         ownerRole: "contract_reviewer",
         phase: "P1",
@@ -2486,6 +2701,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Require reviewer approval and dispute notes before revocation.",
           "zh-CN": "撤销前需要审核人批准与争议说明。",
+          "zh-TW": "Require reviewer approval and dispute notes before revocation.",
         },
       }),
       createContractMethod({
@@ -2494,6 +2710,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Read a committed points batch root for audit and reconciliation.",
           "zh-CN": "读取已提交 points batch root 用于审计与对账。",
+          "zh-TW": "Read a committed points batch root for audit and reconciliation.",
         },
         ownerRole: "internal_operator",
         phase: "P1",
@@ -2501,6 +2718,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Keep as future read-only reconciliation view.",
           "zh-CN": "作为未来只读对账视图保留。",
+          "zh-TW": "Keep as future read-only reconciliation view.",
         },
       }),
       createContractMethod({
@@ -2509,6 +2727,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Optional high-transparency single-write points award for each task event.",
           "zh-CN": "可选高透明度模式：每个任务事件单条写入积分。",
+          "zh-TW": "Optional high-transparency single-write points award for each task event.",
         },
         ownerRole: "contract_reviewer",
         phase: "P1",
@@ -2516,10 +2735,12 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         boundary: {
           "en-US": "Not MVP-ready; high-frequency O(n) writes can raise cost and dispute risk.",
           "zh-CN": "非 MVP-ready；高频 O(n) 写入会增加成本与争议风险。",
+          "zh-TW": "Not MVP-ready; high-frequency O(n) writes can raise cost and dispute risk.",
         },
         nextAction: {
           "en-US": "Use only after throughput, audit, and dispute procedures are approved.",
           "zh-CN": "仅在吞吐、审计与争议流程批准后使用。",
+          "zh-TW": "Use only after throughput, audit, and dispute procedures are approved.",
         },
       }),
       createContractMethod({
@@ -2528,6 +2749,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Optional high-transparency single-write point revocation for task events.",
           "zh-CN": "可选高透明度模式：对任务事件单条撤销积分。",
+          "zh-TW": "Optional high-transparency single-write point revocation for task events.",
         },
         ownerRole: "contract_reviewer",
         phase: "P1",
@@ -2535,10 +2757,12 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         boundary: {
           "en-US": "Not MVP-ready; use batch revocation unless single-write mode is separately approved.",
           "zh-CN": "非 MVP-ready；除非单条写链模式单独批准，否则使用批次撤销。",
+          "zh-TW": "Not MVP-ready; use batch revocation unless single-write mode is separately approved.",
         },
         nextAction: {
           "en-US": "Keep behind separate high-transparency approval.",
           "zh-CN": "保留在单独的高透明度审批之后。",
+          "zh-TW": "Keep behind separate high-transparency approval.",
         },
       }),
     ],
@@ -2550,15 +2774,18 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
     purpose: {
       "en-US": "Records referral bindings and qualification hashes to prevent duplicate or self-referral abuse.",
       "zh-CN": "记录邀请绑定与资格 hash，防止重复邀请或 self-referral 滥用。",
+      "zh-TW": "Records referral bindings and qualification hashes to prevent duplicate or self-referral abuse.",
     },
     ownerRole: "contract_reviewer",
     boundary: {
       "en-US": "Referral evidence and anti-farm details stay off-chain; the contract surface stores binding/hash context only.",
       "zh-CN": "邀请证据与反刷细节保持链下；合约面仅存绑定/hash 上下文。",
+      "zh-TW": "Referral evidence and anti-farm details stay off-chain; the contract surface stores binding/hash context only.",
     },
     nextAction: {
       "en-US": "Review binding rules for duplicate, self, and circular referrals before P1.",
       "zh-CN": "P1 前审核重复、自邀请与循环邀请绑定规则。",
+      "zh-TW": "Review binding rules for duplicate, self, and circular referrals before P1.",
     },
     methods: [
       createContractMethod({
@@ -2567,6 +2794,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Bind invitee and inviter for an auditable campaign referral relation.",
           "zh-CN": "绑定 invitee 与 inviter，形成可审计的活动邀请关系。",
+          "zh-TW": "Bind invitee and inviter for an auditable campaign referral relation.",
         },
         ownerRole: "internal_operator",
         phase: "P1",
@@ -2574,6 +2802,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Validate duplicate, self, and circular referral constraints.",
           "zh-CN": "验证重复、自邀请与循环邀请约束。",
+          "zh-TW": "Validate duplicate, self, and circular referral constraints.",
         },
       }),
       createContractMethod({
@@ -2582,6 +2811,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Mark referral qualification using an evidence hash without exposing review detail.",
           "zh-CN": "通过 evidence hash 标记邀请资格，不暴露审核细节。",
+          "zh-TW": "Mark referral qualification using an evidence hash without exposing review detail.",
         },
         ownerRole: "internal_operator",
         phase: "P1",
@@ -2589,6 +2819,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Keep qualification evidence canonicalization off-chain.",
           "zh-CN": "资格证据规范化保持链下。",
+          "zh-TW": "Keep qualification evidence canonicalization off-chain.",
         },
       }),
       createContractMethod({
@@ -2597,6 +2828,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Remove a referral binding with a reason hash after review.",
           "zh-CN": "审核后通过 reason hash 移除邀请绑定。",
+          "zh-TW": "Remove a referral binding with a reason hash after review.",
         },
         ownerRole: "contract_reviewer",
         phase: "P1",
@@ -2604,6 +2836,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Require manual review before removal is reflected in companion state.",
           "zh-CN": "移除写入 companion 状态前需要人工审核。",
+          "zh-TW": "Require manual review before removal is reflected in companion state.",
         },
       }),
       createContractMethod({
@@ -2612,6 +2845,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Read referral binding and qualification context for audit review.",
           "zh-CN": "读取邀请绑定与资格上下文用于审计复核。",
+          "zh-TW": "Read referral binding and qualification context for audit review.",
         },
         ownerRole: "internal_operator",
         phase: "P1",
@@ -2619,6 +2853,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Treat as future read-only referral review view.",
           "zh-CN": "作为未来只读邀请审核视图。",
+          "zh-TW": "Treat as future read-only referral review view.",
         },
       }),
     ],
@@ -2630,15 +2865,18 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
     purpose: {
       "en-US": "Stores eligibility or winners roots for list-integrity review without distributing rewards.",
       "zh-CN": "存储资格或 winners root，用于名单完整性审核，不执行发奖。",
+      "zh-TW": "Stores eligibility or winners roots for list-integrity review without distributing rewards.",
     },
     ownerRole: "contract_reviewer",
     boundary: {
       "en-US": "Eligibility roots prove exported-list integrity only; reward custody and distribution remain outside Campaign OS.",
       "zh-CN": "资格 root 仅证明导出名单完整性；奖励托管与发放不属于 Campaign OS。",
+      "zh-TW": "Eligibility roots prove exported-list integrity only; reward custody and distribution remain outside Campaign OS.",
     },
     nextAction: {
       "en-US": "Define root format, proof inputs, and manual review policy before P1.",
       "zh-CN": "P1 前定义 root 格式、proof 输入与人工审核策略。",
+      "zh-TW": "Define root format, proof inputs, and manual review policy before P1.",
     },
     methods: [
       createContractMethod({
@@ -2647,6 +2885,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Set an eligibility or winners root after export review.",
           "zh-CN": "在导出审核后设置资格或 winners root。",
+          "zh-TW": "Set an eligibility or winners root after export review.",
         },
         ownerRole: "internal_operator",
         phase: "P1",
@@ -2655,6 +2894,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Require export approval and root reproducibility before setting.",
           "zh-CN": "设置前需要导出批准与 root 可复现性。",
+          "zh-TW": "Require export approval and root reproducibility before setting.",
         },
       }),
       createContractMethod({
@@ -2663,6 +2903,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Update an eligibility root when review finds corrections.",
           "zh-CN": "审核发现修正时更新资格 root。",
+          "zh-TW": "Update an eligibility root when review finds corrections.",
         },
         ownerRole: "contract_reviewer",
         phase: "P1",
@@ -2671,6 +2912,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Require explicit correction reason and reviewer approval.",
           "zh-CN": "需要明确修正原因与审核人批准。",
+          "zh-TW": "Require explicit correction reason and reviewer approval.",
         },
       }),
       createContractMethod({
@@ -2679,6 +2921,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Read the eligibility root for audit and export reconciliation.",
           "zh-CN": "读取资格 root 用于审计与导出对账。",
+          "zh-TW": "Read the eligibility root for audit and export reconciliation.",
         },
         ownerRole: "internal_operator",
         phase: "P1",
@@ -2687,6 +2930,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Keep as future read-only proof review view.",
           "zh-CN": "作为未来只读 proof 审核视图。",
+          "zh-TW": "Keep as future read-only proof review view.",
         },
       }),
       createContractMethod({
@@ -2695,6 +2939,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         purpose: {
           "en-US": "Verify an eligibility proof against the stored root without running reward distribution.",
           "zh-CN": "根据已存 root 验证资格 proof，但不执行发奖。",
+          "zh-TW": "Verify an eligibility proof against the stored root without running reward distribution.",
         },
         ownerRole: "internal_operator",
         phase: "P1",
@@ -2703,6 +2948,7 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         nextAction: {
           "en-US": "Review privacy and proof UX before exposing to users.",
           "zh-CN": "对用户开放前先审核隐私与 proof 体验。",
+          "zh-TW": "Review privacy and proof UX before exposing to users.",
         },
       }),
     ],
@@ -2714,14 +2960,17 @@ const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
     area: {
       "en-US": "Campaign config",
       "zh-CN": "活动配置",
+      "zh-TW": "Campaign config",
     },
     currentMvp: {
       "en-US": "Off-chain DB",
       "zh-CN": "链下 DB",
+      "zh-TW": "Off-chain DB",
     },
     recommendedV2: {
       "en-US": "CampaignRegistryV2",
       "zh-CN": "CampaignRegistryV2",
+      "zh-TW": "CampaignRegistryV2",
     },
     priority: "P1",
     ownerRole: "contract_reviewer",
@@ -2729,28 +2978,34 @@ const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
     notes: {
       "en-US": "Store owner, status, wallet policy, and metadata hash for auditability.",
       "zh-CN": "存储 owner、状态、钱包策略与 metadata hash 用于审计。",
+      "zh-TW": "Store owner, status, wallet policy, and metadata hash for auditability.",
     },
     nextAction: {
       "en-US": "Keep MVP off-chain; prepare registry schema and owner permissions for P1.",
       "zh-CN": "MVP 保持链下；为 P1 准备 registry schema 与 owner 权限。",
+      "zh-TW": "Keep MVP off-chain; prepare registry schema and owner permissions for P1.",
     },
     boundary: {
       "en-US": "Only hash/registry metadata is planned on-chain; campaign copy stays off-chain.",
       "zh-CN": "仅规划 hash/registry metadata 上链；活动文案保持链下。",
+      "zh-TW": "Only hash/registry metadata is planned on-chain; campaign copy stays off-chain.",
     },
   },
   {
     area: {
       "en-US": "Task config",
       "zh-CN": "任务配置",
+      "zh-TW": "Task config",
     },
     currentMvp: {
       "en-US": "Off-chain DB",
       "zh-CN": "链下 DB",
+      "zh-TW": "Off-chain DB",
     },
     recommendedV2: {
       "en-US": "Task config hash on CampaignRegistryV2",
       "zh-CN": "CampaignRegistryV2 上的 task config hash",
+      "zh-TW": "Task config hash on CampaignRegistryV2",
     },
     priority: "P1",
     ownerRole: "contract_reviewer",
@@ -2758,28 +3013,34 @@ const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
     notes: {
       "en-US": "Full task text remains off-chain while the hash can prove rule integrity.",
       "zh-CN": "完整任务文本保持链下，hash 可证明规则完整性。",
+      "zh-TW": "Full task text remains off-chain while the hash can prove rule integrity.",
     },
     nextAction: {
       "en-US": "Define canonical task-config hashing before contract work.",
       "zh-CN": "合约工作前定义任务配置 canonical hash。",
+      "zh-TW": "Define canonical task-config hashing before contract work.",
     },
     boundary: {
       "en-US": "Task body, social copy, and verifier evidence stay off-chain.",
       "zh-CN": "任务正文、社交文案与 verifier evidence 保持链下。",
+      "zh-TW": "Task body, social copy, and verifier evidence stay off-chain.",
     },
   },
   {
     area: {
       "en-US": "Points ledger",
       "zh-CN": "积分账本",
+      "zh-TW": "Points ledger",
     },
     currentMvp: {
       "en-US": "Pixiepoints/backend ledger",
       "zh-CN": "Pixiepoints/backend ledger",
+      "zh-TW": "Pixiepoints/backend ledger",
     },
     recommendedV2: {
       "en-US": "Commit points batch root",
       "zh-CN": "提交 points batch root",
+      "zh-TW": "Commit points batch root",
     },
     priority: "P1",
     ownerRole: "internal_operator",
@@ -2787,28 +3048,34 @@ const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
     notes: {
       "en-US": "Single-write points are optional only and require separate throughput and dispute review.",
       "zh-CN": "单条积分写链只是可选项，需要单独评估吞吐与争议处理。",
+      "zh-TW": "Single-write points are optional only and require separate throughput and dispute review.",
     },
     nextAction: {
       "en-US": "Use batch-root transparency first; do not add live points writes in MVP.",
       "zh-CN": "先使用 batch-root 透明度；MVP 不增加实时积分写链。",
+      "zh-TW": "Use batch-root transparency first; do not add live points writes in MVP.",
     },
     boundary: {
       "en-US": "Points calculation and task evidence remain off-chain; only a future root is planned.",
       "zh-CN": "积分计算与任务证据保持链下；仅规划未来 root。",
+      "zh-TW": "Points calculation and task evidence remain off-chain; only a future root is planned.",
     },
   },
   {
     area: {
       "en-US": "Referral",
       "zh-CN": "邀请",
+      "zh-TW": "Referral",
     },
     currentMvp: {
       "en-US": "Backend referral table",
       "zh-CN": "Backend referral table",
+      "zh-TW": "Backend referral table",
     },
     recommendedV2: {
       "en-US": "ReferralRegistryV2",
       "zh-CN": "ReferralRegistryV2",
+      "zh-TW": "ReferralRegistryV2",
     },
     priority: "P1",
     ownerRole: "contract_reviewer",
@@ -2816,28 +3083,34 @@ const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
     notes: {
       "en-US": "Prevents self or duplicate referral on-chain while qualification evidence stays private.",
       "zh-CN": "链上防止自邀请或重复邀请，资格证据保持私有。",
+      "zh-TW": "Prevents self or duplicate referral on-chain while qualification evidence stays private.",
     },
     nextAction: {
       "en-US": "Review duplicate, self, and circular referral rules.",
       "zh-CN": "审核重复、自邀请与循环邀请规则。",
+      "zh-TW": "Review duplicate, self, and circular referral rules.",
     },
     boundary: {
       "en-US": "Anti-farm evidence and social account details stay off-chain.",
       "zh-CN": "反刷证据与社交账号明细保持链下。",
+      "zh-TW": "Anti-farm evidence and social account details stay off-chain.",
     },
   },
   {
     area: {
       "en-US": "Eligibility/winners",
       "zh-CN": "资格/winners",
+      "zh-TW": "Eligibility/winners",
     },
     currentMvp: {
       "en-US": "CSV export",
       "zh-CN": "CSV 导出",
+      "zh-TW": "CSV export",
     },
     recommendedV2: {
       "en-US": "EligibilityRootRegistryV2",
       "zh-CN": "EligibilityRootRegistryV2",
+      "zh-TW": "EligibilityRootRegistryV2",
     },
     priority: "P1",
     ownerRole: "contract_reviewer",
@@ -2845,10 +3118,12 @@ const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
     notes: {
       "en-US": "Root proves exported-list integrity without distributing rewards.",
       "zh-CN": "Root 证明导出名单完整性，但不发奖。",
+      "zh-TW": "Root proves exported-list integrity without distributing rewards.",
     },
     nextAction: {
       "en-US": "Define eligibility root format and review workflow before P1.",
       "zh-CN": "P1 前定义资格 root 格式与审核流程。",
+      "zh-TW": "Define eligibility root format and review workflow before P1.",
     },
     boundary: noRewardCustodyBoundary,
   },
@@ -2856,14 +3131,17 @@ const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
     area: {
       "en-US": "Rewards",
       "zh-CN": "奖励",
+      "zh-TW": "Rewards",
     },
     currentMvp: {
       "en-US": "Project handles off-chain",
       "zh-CN": "项目方链下处理",
+      "zh-TW": "Project handles off-chain",
     },
     recommendedV2: {
       "en-US": "Contract claim only after separate approval",
       "zh-CN": "单独批准后才考虑合约领取",
+      "zh-TW": "Contract claim only after separate approval",
     },
     priority: "P2",
     ownerRole: "contract_reviewer",
@@ -2871,10 +3149,12 @@ const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
     notes: {
       "en-US": "Not MVP. Claim mode needs separate security, custody, legal, and audit approval.",
       "zh-CN": "不是 MVP。Claim mode 需要单独的安全、托管、法律与审计批准。",
+      "zh-TW": "Not MVP. Claim mode needs separate security, custody, legal, and audit approval.",
     },
     nextAction: {
       "en-US": "Keep reward custody outside Campaign OS and block claim-mode execution.",
       "zh-CN": "奖励托管保持在 Campaign OS 外部，并阻断 claim-mode 执行。",
+      "zh-TW": "Keep reward custody outside Campaign OS and block claim-mode execution.",
     },
     boundary: noRewardCustodyBoundary,
   },
@@ -2882,14 +3162,17 @@ const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
     area: {
       "en-US": "Multilingual content",
       "zh-CN": "多语言内容",
+      "zh-TW": "Multilingual content",
     },
     currentMvp: {
       "en-US": "DB/i18n service",
       "zh-CN": "DB/i18n 服务",
+      "zh-TW": "DB/i18n service",
     },
     recommendedV2: {
       "en-US": "metadataUri + metadataHash",
       "zh-CN": "metadataUri + metadataHash",
+      "zh-TW": "metadataUri + metadataHash",
     },
     priority: "P1",
     ownerRole: "project_owner",
@@ -2897,28 +3180,34 @@ const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
     notes: {
       "en-US": "Do not store full text on-chain; hashes can support later review.",
       "zh-CN": "不要把全文上链；hash 可支持后续审核。",
+      "zh-TW": "Do not store full text on-chain; hashes can support later review.",
     },
     nextAction: {
       "en-US": "Keep content review in en-US and zh-CN and hash reviewed artifacts only.",
       "zh-CN": "内容审核保持 en-US 与 zh-CN，仅 hash 已审核产物。",
+      "zh-TW": "Keep content review in en-US and zh-CN and hash reviewed artifacts only.",
     },
     boundary: {
       "en-US": "Full translated copy stays off-chain; no additional runtime locale is introduced.",
       "zh-CN": "完整翻译文案保持链下；不引入额外运行时语言。",
+      "zh-TW": "Full translated copy stays off-chain; no additional runtime locale is introduced.",
     },
   },
   {
     area: {
       "en-US": "Wallet type",
       "zh-CN": "钱包类型",
+      "zh-TW": "Wallet type",
     },
     currentMvp: {
       "en-US": "Session metadata",
       "zh-CN": "Session metadata",
+      "zh-TW": "Session metadata",
     },
     recommendedV2: {
       "en-US": "WalletPolicy enum only",
       "zh-CN": "仅 WalletPolicy enum",
+      "zh-TW": "WalletPolicy enum only",
     },
     priority: "P1",
     ownerRole: "contract_reviewer",
@@ -2926,28 +3215,34 @@ const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
     notes: {
       "en-US": "AA/EOA verification remains off-chain while policy can be auditable.",
       "zh-CN": "AA/EOA 验证保持链下，策略可审计。",
+      "zh-TW": "AA/EOA verification remains off-chain while policy can be auditable.",
     },
     nextAction: {
       "en-US": "Store policy only; keep wallet proof and session data in local/backend review.",
       "zh-CN": "仅存储策略；钱包 proof 与 session 数据保留在本地/backend 审核。",
+      "zh-TW": "Store policy only; keep wallet proof and session data in local/backend review.",
     },
     boundary: {
       "en-US": "Wallet SDK connection, signature checks, and session metadata stay off-chain.",
       "zh-CN": "钱包 SDK 连接、签名检查与 session metadata 保持链下。",
+      "zh-TW": "Wallet SDK connection, signature checks, and session metadata stay off-chain.",
     },
   },
   {
     area: {
       "en-US": "Risk flags",
       "zh-CN": "风险标记",
+      "zh-TW": "Risk flags",
     },
     currentMvp: {
       "en-US": "Backend risk service",
       "zh-CN": "Backend risk service",
+      "zh-TW": "Backend risk service",
     },
     recommendedV2: {
       "en-US": "Do not store full risk details",
       "zh-CN": "不存储完整风险细节",
+      "zh-TW": "Do not store full risk details",
     },
     priority: "N/A",
     ownerRole: "internal_operator",
@@ -2955,14 +3250,17 @@ const createContractChangeMatrix = (): ContractChangeMatrixRow[] => [
     notes: {
       "en-US": "Avoid leaking anti-sybil strategy; use risk output as review input only.",
       "zh-CN": "避免泄露反女巫策略；风险输出仅作为审核输入。",
+      "zh-TW": "Avoid leaking anti-sybil strategy; use risk output as review input only.",
     },
     nextAction: {
       "en-US": "Keep full risk detail off-chain and expose only reviewed outcomes.",
       "zh-CN": "完整风险明细保持链下，仅展示已审核结果。",
+      "zh-TW": "Keep full risk detail off-chain and expose only reviewed outcomes.",
     },
     boundary: {
       "en-US": "Risk detail stays off-chain to protect anti-sybil strategy.",
       "zh-CN": "风险明细保持链下，以保护反女巫策略。",
+      "zh-TW": "Risk detail stays off-chain to protect anti-sybil strategy.",
     },
   },
 ];
@@ -2986,9 +3284,10 @@ export const createContractInterfaceMatrixConsole = (): ContractInterfaceMatrixC
   };
 };
 
-const localized = (enUS: string, zhCN: string): LocalizedText => ({
+const localized = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
   "en-US": enUS,
   "zh-CN": zhCN,
+  "zh-TW": zhTW,
 });
 
 const deliveryChecklistStatusCount = (
@@ -3841,14 +4140,17 @@ const describeUserWinnersExportStatus = (
       summary: {
         "en-US": "This wallet is not in the seeded winners export preview yet.",
         "zh-CN": "该钱包尚未进入 seeded winners 导出预览。",
+        "zh-TW": "This wallet is not in the seeded winners export preview yet.",
       },
       reason: {
         "en-US": "Campaign OS cannot show export evidence until a supported wallet session or participant row is verified.",
         "zh-CN": "在验证受支持的钱包会话或参与者记录前，Campaign OS 无法展示导出证据。",
+        "zh-TW": "Campaign OS cannot show export evidence until a supported wallet session or participant row is verified.",
       },
       nextAction: {
         "en-US": "Connect or verify a supported wallet before checking winners export status.",
         "zh-CN": "请先连接或验证受支持的钱包，再检查 winners 导出状态。",
+        "zh-TW": "Connect or verify a supported wallet before checking winners export status.",
       },
     };
   }
@@ -3861,6 +4163,7 @@ const describeUserWinnersExportStatus = (
       summary: {
         "en-US": "This row is blocked before winners export.",
         "zh-CN": "该记录在 winners 导出前已被阻断。",
+        "zh-TW": "This row is blocked before winners export.",
       },
       reason: {
         "en-US":
@@ -3871,10 +4174,15 @@ const describeUserWinnersExportStatus = (
           missingTasks.length > 0
             ? `仍缺少必做导出任务：${missingTasks}。`
             : `钱包类型或导出字段仍需验证：${missingColumns || "wallet_type"}。`,
+        "zh-TW":
+          missingTasks.length > 0
+            ? `Missing required export tasks: ${missingTasks}.`
+            : `Wallet type or export columns still need verification: ${missingColumns || "wallet_type"}.`,
       },
       nextAction: {
         "en-US": "Complete missing required tasks or verify wallet metadata before winners export can be trusted.",
         "zh-CN": "请先完成缺失的必做任务或验证钱包元数据，再进入可信 winners 导出。",
+        "zh-TW": "Complete missing required tasks or verify wallet metadata before winners export can be trusted.",
       },
     };
   }
@@ -3884,14 +4192,17 @@ const describeUserWinnersExportStatus = (
       summary: {
         "en-US": "This row is present, but export approval needs manual review.",
         "zh-CN": "该记录已存在，但导出批准需要人工审核。",
+        "zh-TW": "This row is present, but export approval needs manual review.",
       },
       reason: {
         "en-US": "Risk flags and eligibility gaps are review inputs, not automatic reward rejection.",
         "zh-CN": "风险标记和资格缺口仅作为审核输入，不代表自动拒绝奖励。",
+        "zh-TW": "Risk flags and eligibility gaps are review inputs, not automatic reward rejection.",
       },
       nextAction: {
         "en-US": "Wait for manual review before winners export; Campaign OS does not distribute rewards.",
         "zh-CN": "请等待人工审核后再进入 winners 导出；Campaign OS 不执行发奖。",
+        "zh-TW": "Wait for manual review before winners export; Campaign OS does not distribute rewards.",
       },
     };
   }
@@ -3900,14 +4211,17 @@ const describeUserWinnersExportStatus = (
     summary: {
       "en-US": "This row is ready for winners export review.",
       "zh-CN": "该记录已准备进入 winners 导出审核。",
+      "zh-TW": "This row is ready for winners export review.",
     },
     reason: {
       "en-US": "Wallet metadata, eligibility, task records, and evidence hashes are present in the seeded export preview.",
       "zh-CN": "seeded 导出预览中已包含钱包元数据、资格、任务记录与证据哈希。",
+      "zh-TW": "Wallet metadata, eligibility, task records, and evidence hashes are present in the seeded export preview.",
     },
     nextAction: {
       "en-US": "Wait for the campaign project to handle final reward fulfillment after export.",
       "zh-CN": "导出后等待活动项目方处理最终奖励履约。",
+      "zh-TW": "Wait for the campaign project to handle final reward fulfillment after export.",
     },
   };
 };
@@ -3942,10 +4256,12 @@ const ecosystemProducts = {
     label: {
       "en-US": "Pay",
       "zh-CN": "Pay",
+      "zh-TW": "Pay",
     },
     description: {
       "en-US": "Use aelf Pay after campaign eligibility work is understood.",
       "zh-CN": "在理解活动资格后使用 aelf Pay。",
+      "zh-TW": "Use aelf Pay after campaign eligibility work is understood.",
     },
     serviceState: "not_connected",
   },
@@ -3954,10 +4270,12 @@ const ecosystemProducts = {
     label: {
       "en-US": "Forecast",
       "zh-CN": "Forecast",
+      "zh-TW": "Forecast",
     },
     description: {
       "en-US": "Explore Forecast only after campaign risk and eligibility are clear.",
       "zh-CN": "在活动风险与资格清楚后再探索 Forecast。",
+      "zh-TW": "Explore Forecast only after campaign risk and eligibility are clear.",
     },
     serviceState: "not_connected",
   },
@@ -3966,10 +4284,12 @@ const ecosystemProducts = {
     label: {
       "en-US": "Portfolio",
       "zh-CN": "Portfolio",
+      "zh-TW": "Portfolio",
     },
     description: {
       "en-US": "Review the seeded portfolio checkpoint before the next campaign.",
       "zh-CN": "在进入下一个活动前查看 seeded Portfolio 检查点。",
+      "zh-TW": "Review the seeded portfolio checkpoint before the next campaign.",
     },
     serviceState: "not_connected",
   },
@@ -3978,20 +4298,24 @@ const ecosystemProducts = {
 const ecosystemBoundary: LocalizedText = {
   "en-US": "No live Pay, Forecast, or Portfolio service is connected; no wallet SDK, payment, prediction, portfolio sync, contract view, or contract send is executed.",
   "zh-CN": "不会连接真实 Pay、Forecast 或 Portfolio 服务；不会执行钱包 SDK、支付、预测、Portfolio 同步、合约读取或合约发送。",
+  "zh-TW": "No live Pay, Forecast, or Portfolio service is connected; no wallet SDK, payment, prediction, portfolio sync, contract view, or contract send is executed.",
 };
 
 const productBoundary: Record<EcosystemNextActionProduct["id"], LocalizedText> = {
   Pay: {
     "en-US": "No live Pay service, wallet SDK, payment transaction, contract view, or contract send is executed.",
     "zh-CN": "不会连接真实 Pay 服务、钱包 SDK、支付交易、合约读取或合约发送。",
+    "zh-TW": "No live Pay service, wallet SDK, payment transaction, contract view, or contract send is executed.",
   },
   Forecast: {
     "en-US": "No live Forecast service, prediction transaction, wallet SDK, contract view, or contract send is executed.",
     "zh-CN": "不会连接真实 Forecast 服务、预测交易、钱包 SDK、合约读取或合约发送。",
+    "zh-TW": "No live Forecast service, prediction transaction, wallet SDK, contract view, or contract send is executed.",
   },
   Portfolio: {
     "en-US": "No live Portfolio service, wallet SDK, portfolio sync, contract view, or contract send is executed.",
     "zh-CN": "不会连接真实 Portfolio 服务、钱包 SDK、Portfolio 同步、合约读取或合约发送。",
+    "zh-TW": "No live Portfolio service, wallet SDK, portfolio sync, contract view, or contract send is executed.",
   },
 };
 
@@ -4005,10 +4329,12 @@ const createProgressSignal = (
   label: {
     "en-US": "Required progress",
     "zh-CN": "必做进度",
+    "zh-TW": "Required progress",
   },
   value: {
     "en-US": `${participation.metrics.completedRequiredTasks}/${participation.metrics.totalRequiredTasks}`,
     "zh-CN": `${participation.metrics.completedRequiredTasks}/${participation.metrics.totalRequiredTasks}`,
+    "zh-TW": `${participation.metrics.completedRequiredTasks}/${participation.metrics.totalRequiredTasks}`,
   },
   tone: participation.eligibility.missingTaskIds.length > 0 ? "blocker" : "ready",
 } as const);
@@ -4020,6 +4346,7 @@ const createEligibilitySignal = (
   label: {
     "en-US": "Eligibility",
     "zh-CN": "资格",
+    "zh-TW": "Eligibility",
   },
   value: participation.eligibility.reason,
   tone:
@@ -4037,6 +4364,7 @@ const createRiskSignal = (
   label: {
     "en-US": "Risk context",
     "zh-CN": "风险上下文",
+    "zh-TW": "Risk context",
   },
   value: {
     "en-US": participation.eligibility.riskFlags.length > 0
@@ -4045,6 +4373,9 @@ const createRiskSignal = (
     "zh-CN": participation.eligibility.riskFlags.length > 0
       ? participation.eligibility.riskFlags.join(", ")
       : "无风险标记",
+    "zh-TW": participation.eligibility.riskFlags.length > 0
+      ? participation.eligibility.riskFlags.join(", ")
+      : "No risk flags",
   },
   tone: participation.eligibility.riskFlags.length > 0 ? "warning" : "ready",
 } as const);
@@ -4056,10 +4387,12 @@ const createRankSignal = (
   label: {
     "en-US": "Rank and points",
     "zh-CN": "排名与积分",
+    "zh-TW": "Rank and points",
   },
   value: {
     "en-US": `#${participation.metrics.participantRank} · ${participation.participant.totalPoints} pts`,
     "zh-CN": `#${participation.metrics.participantRank} · ${participation.participant.totalPoints} 积分`,
+    "zh-TW": `#${participation.metrics.participantRank} · ${participation.participant.totalPoints} pts`,
   },
   tone: "ready",
 } as const);
@@ -4078,6 +4411,7 @@ const missingTaskGate = (
   return {
     "en-US": `Complete ${missingTask.title["en-US"]} before this ecosystem action.`,
     "zh-CN": `先完成${missingTask.title["zh-CN"]}，再进入这个生态行动。`,
+    "zh-TW": `Complete ${missingTask.title["en-US"]} before this ecosystem action.`,
   };
 };
 
@@ -4103,24 +4437,29 @@ const createEcosystemRecommendationDrafts = (
       title: {
         "en-US": "Use Pay after the campaign step is clear",
         "zh-CN": "明确活动步骤后再使用 Pay",
+        "zh-TW": "Use Pay after the campaign step is clear",
       },
       reason: hasMissingRequiredTasks
         ? {
             "en-US": "Pay is recommended after the missing required campaign task is complete.",
             "zh-CN": "完成缺失的必做活动任务后，再推荐进入 Pay。",
+            "zh-TW": "Pay is recommended after the missing required campaign task is complete.",
           }
         : {
             "en-US": "Required campaign work is complete enough to explore a Pay follow-up.",
             "zh-CN": "必做活动进度已足够，可以探索 Pay 后续行动。",
+            "zh-TW": "Required campaign work is complete enough to explore a Pay follow-up.",
           },
       ctaLabel: hasMissingRequiredTasks
         ? {
             "en-US": "Finish campaign task",
             "zh-CN": "完成活动任务",
+            "zh-TW": "Finish campaign task",
           }
         : {
             "en-US": "Preview Pay action",
             "zh-CN": "预览 Pay 行动",
+            "zh-TW": "Preview Pay action",
           },
       gatingReason: hasMissingRequiredTasks ? gate : undefined,
       relatedSignals: [progressSignal, eligibilitySignal],
@@ -4134,29 +4473,35 @@ const createEcosystemRecommendationDrafts = (
       title: {
         "en-US": "Try Forecast with eligibility context",
         "zh-CN": "结合资格上下文探索 Forecast",
+        "zh-TW": "Try Forecast with eligibility context",
       },
       reason: hasRiskContext
         ? {
             "en-US": "Forecast stays in review because this wallet has risk context in the campaign.",
             "zh-CN": "由于该钱包在活动中存在风险上下文，Forecast 保持审核状态。",
+            "zh-TW": "Forecast stays in review because this wallet has risk context in the campaign.",
           }
         : {
             "en-US": "Campaign progress can lead into a Forecast follow-up without a live prediction transaction.",
             "zh-CN": "活动进度可以衔接 Forecast 后续行动，但不会发起真实预测交易。",
+            "zh-TW": "Campaign progress can lead into a Forecast follow-up without a live prediction transaction.",
           },
       ctaLabel: hasRiskContext
         ? {
             "en-US": "Review risk first",
             "zh-CN": "先审核风险",
+            "zh-TW": "Review risk first",
           }
         : {
             "en-US": "Preview Forecast action",
             "zh-CN": "预览 Forecast 行动",
+            "zh-TW": "Preview Forecast action",
           },
       gatingReason: hasRiskContext
         ? {
             "en-US": "Manual risk review is required before treating Forecast as a ready follow-up.",
             "zh-CN": "在把 Forecast 视为就绪后续行动前，需要先完成人工风险审核。",
+            "zh-TW": "Manual risk review is required before treating Forecast as a ready follow-up.",
           }
         : undefined,
       relatedSignals: [riskSignal, eligibilitySignal],
@@ -4170,19 +4515,23 @@ const createEcosystemRecommendationDrafts = (
       title: {
         "en-US": "Check Portfolio before the next campaign",
         "zh-CN": "进入下一个活动前查看 Portfolio",
+        "zh-TW": "Check Portfolio before the next campaign",
       },
       reason: fullyEligible
         ? {
             "en-US": "This wallet is eligible, so Portfolio becomes the primary post-campaign checkpoint.",
             "zh-CN": "该钱包已符合资格，因此 Portfolio 成为活动后的主要检查点。",
+            "zh-TW": "This wallet is eligible, so Portfolio becomes the primary post-campaign checkpoint.",
           }
         : {
             "en-US": "Portfolio is available as a local checkpoint while campaign eligibility is still progressing.",
             "zh-CN": "活动资格仍在推进时，Portfolio 可作为本地检查点。",
+            "zh-TW": "Portfolio is available as a local checkpoint while campaign eligibility is still progressing.",
           },
       ctaLabel: {
         "en-US": "Preview Portfolio checkpoint",
         "zh-CN": "预览 Portfolio 检查点",
+        "zh-TW": "Preview Portfolio checkpoint",
       },
       relatedSignals: [rankSignal, progressSignal],
       boundary: productBoundary.Portfolio,
@@ -4247,10 +4596,12 @@ const createEcosystemSummary = (
       ? {
           "en-US": "Finish the campaign gate before the next ecosystem action.",
           "zh-CN": "先完成活动门槛，再进入下一个生态行动。",
+          "zh-TW": "Finish the campaign gate before the next ecosystem action.",
         }
       : {
           "en-US": "Campaign progress is ready to continue across the aelf ecosystem.",
           "zh-CN": "活动进度已可延展到 aelf 生态的下一步。",
+          "zh-TW": "Campaign progress is ready to continue across the aelf ecosystem.",
         },
     boundary: ecosystemBoundary,
   };
@@ -4335,7 +4686,8 @@ export const createTranslationManagerReadModel = (
     .filter((revision) => campaign.supportedLocales.includes(revision.locale))
     .map(createTranslationPanel);
   const englishPanel = panels.find((panel) => panel.locale === "en-US");
-  const targetPanel = panels.find((panel) => panel.locale === "zh-CN");
+  const targetPanel = panels.find((panel) => panel.locale === "zh-CN") ??
+    panels.find((panel) => panel.locale !== "en-US");
 
   return {
     campaignId: campaign.id,
@@ -4379,6 +4731,7 @@ const createContractImpactOption = (
         ? {
             "en-US": "Selected contract claim remains blocked; no contract transaction is executed.",
             "zh-CN": "已选择的合约领取仍被阻断；不会执行合约交易。",
+            "zh-TW": "Selected contract claim remains blocked; no contract transaction is executed.",
           }
         : contractBoundaryByMode[mode],
     nextAction: contractNextActionByMode[mode],
@@ -4404,7 +4757,7 @@ export const computePublishReadiness = (
   const blockers: string[] = [];
   const warnings: string[] = [];
   const englishContent = contentRevisions.find((revision) => revision.locale === "en-US");
-  const chineseContent = contentRevisions.find((revision) => revision.locale === "zh-CN");
+  const chineseContent = contentRevisions.filter((revision) => revision.locale.startsWith("zh-"));
 
   if (campaign.contractMode === "CONTRACT_CLAIM") {
     blockers.push("Contract claim mode requires high-impact manual review.");
@@ -4414,8 +4767,8 @@ export const computePublishReadiness = (
     blockers.push("English reward disclaimer is required before publish.");
   }
 
-  if (chineseContent && chineseContent.status !== "human_reviewed" && chineseContent.status !== "published") {
-    warnings.push("Chinese content falls back to English until reviewed.");
+  if (chineseContent.some((revision) => revision.status !== "human_reviewed" && revision.status !== "published")) {
+    warnings.push("Chinese locale content falls back to English until reviewed.");
   }
 
   return {

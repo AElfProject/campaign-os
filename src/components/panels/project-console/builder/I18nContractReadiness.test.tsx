@@ -34,7 +34,7 @@ describe("I18nContractReadiness", () => {
     expect(within(compareConsole).getAllByText(/falls back to English/).length).toBeGreaterThan(0);
   });
 
-  it("shows localized reward disclaimers and only MVP locales", () => {
+  it("shows localized reward disclaimers and MVP locale readiness", () => {
     render(<I18nContractReadiness locale="zh-CN" />);
 
     expect(screen.getByRole("heading", { name: "多语言、合约与审核门禁" })).toBeInTheDocument();
@@ -55,8 +55,17 @@ describe("I18nContractReadiness", () => {
       expect(within(zhCompareConsole).getByText(field)).toBeInTheDocument();
     }
     expect(screen.getAllByText("语言列表").length).toBeGreaterThan(0);
-    expect(screen.getByText("标记已审核或发布版本前，先将 zh-CN 草稿与英文源内容对照。")).toBeInTheDocument();
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+    expect(screen.getByText(/zh-TW ·/)).toBeInTheDocument();
+  });
+
+  it("renders zh-TW as a fallback readiness lane without claiming final translation", () => {
+    render(<I18nContractReadiness locale="zh-TW" />);
+
+    expect(screen.getByRole("heading", { name: "多語言、合約與審核門禁" })).toBeInTheDocument();
+    expect(screen.getByLabelText("翻譯管理")).toBeInTheDocument();
+    expect(screen.getByText(/繁中目前為 fallback\/readiness lane/)).toBeInTheDocument();
+    expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("回退").length).toBeGreaterThan(0);
   });
 
   it("shows Off-chain MVP as default, V2 companion as planned, and contract claim as blocker", () => {

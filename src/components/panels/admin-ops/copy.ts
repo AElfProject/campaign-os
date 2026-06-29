@@ -1,7 +1,6 @@
 import type { SupportedLocale } from "../../../domain";
 
-export const adminOpsCopy = {
-  "en-US": {
+const enUS = {
     aiContent: "AI content review",
     aiContentPackWorkbench: "AI Content Pack Workbench",
     aiOpsReports: "AI Ops reports",
@@ -132,8 +131,9 @@ export const adminOpsCopy = {
     warning: "Warning",
     zhDraft: "Chinese AI draft/fallback",
     enPublished: "English source published",
-  },
-  "zh-CN": {
+} satisfies Record<string, string>;
+
+const zhCN = {
     aiContent: "AI 内容审核",
     aiContentPackWorkbench: "AI 内容包工作台",
     aiOpsReports: "AI Ops 报告",
@@ -264,5 +264,16 @@ export const adminOpsCopy = {
     warning: "警告",
     zhDraft: "中文 AI 草稿/回退",
     enPublished: "英文源内容已发布",
+} satisfies typeof enUS;
+
+export const adminOpsCopy = {
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": {
+    ...zhCN,
+    autoPublishBlocked: "禁止自動發布：繁中目前為 fallback/readiness lane，發布前必須經過人工審核。",
+    localeSplit: "語言拆分",
+    localePreference: "語言",
+    zhDraft: "繁中 fallback/readiness",
   },
-} satisfies Record<SupportedLocale, Record<string, string>>;
+} satisfies Record<SupportedLocale, typeof enUS>;

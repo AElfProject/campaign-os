@@ -152,6 +152,11 @@ const ownerRoleLabels = {
     internal_operator: "内部运营",
     project_owner: "项目方",
   },
+  "zh-TW": {
+    contract_reviewer: "合約審核人",
+    internal_operator: "內部營運",
+    project_owner: "專案方",
+  },
 } satisfies Record<SupportedLocale, Record<OwnerRole, string>>;
 
 const plannerStatusLabel = (

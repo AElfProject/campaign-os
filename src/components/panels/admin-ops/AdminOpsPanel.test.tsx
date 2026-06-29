@@ -151,7 +151,8 @@ describe("Admin/Ops shell", () => {
     expectVisibleText(/task-social:failed:social_api/);
     expectVisibleText(/demo-task-bridge-3E9/);
     expectVisibleText(/demo-task-social-3E9/);
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+    expectVisibleText("zh-CN / zh-TW AI draft/fallback");
+    expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
   });
 
   it("switches Admin/Ops copy manually to zh-CN", () => {
@@ -272,6 +273,7 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Campaign OS 仅导出已验证记录。");
     expectVisibleText("最终奖励发放由活动项目方处理。");
     expectVisibleText("风险标记与资格结果仅作为审核输入；Campaign OS 不执行发奖。");
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+    expectVisibleText("zh-CN / zh-TW AI draft/fallback");
+    expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
   });
 });

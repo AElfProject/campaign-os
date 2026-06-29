@@ -10,7 +10,7 @@ describe("CampaignBuilderPanel", () => {
 
     expect(screen.getByRole("heading", { name: "Draft overview" })).toBeInTheDocument();
     expect(screen.getByText("Awaken Summer Sprint")).toBeInTheDocument();
-    expect(screen.getByText("Default and fallback: en-US. Supported: en-US and zh-CN.")).toBeInTheDocument();
+    expect(screen.getByText("Default and fallback: en-US. Supported: en-US, zh-CN, and zh-TW fallback readiness.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Any wallet" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "AA only" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "EOA only" })).toBeInTheDocument();
@@ -29,7 +29,7 @@ describe("CampaignBuilderPanel", () => {
     expect(screen.getByText("Keep contract claim blocked")).toBeInTheDocument();
     expect(screen.getByText(/No live AI provider/)).toBeInTheDocument();
     expect(screen.getByText(/no automatic publish/)).toBeInTheDocument();
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+    expect(screen.getAllByText("zh-TW").length).toBeGreaterThan(0);
   });
 
   it("renders localized zh-CN builder copy", () => {
@@ -37,7 +37,7 @@ describe("CampaignBuilderPanel", () => {
 
     expect(screen.getByRole("heading", { name: "草稿概览" })).toBeInTheDocument();
     expect(screen.getByText("Awaken 夏季冲刺活动")).toBeInTheDocument();
-    expect(screen.getByText("默认与回退：en-US。支持：en-US 和 zh-CN。")).toBeInTheDocument();
+    expect(screen.getByText("默认与回退：en-US。支持：en-US、zh-CN 与 zh-TW 回退 readiness。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "任意钱包" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "仅 AA 钱包" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "仅 EOA 钱包" })).toBeInTheDocument();

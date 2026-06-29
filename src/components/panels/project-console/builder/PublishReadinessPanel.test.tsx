@@ -13,7 +13,7 @@ describe("PublishReadinessPanel", () => {
     expect(screen.getAllByText("Passed checks").length).toBeGreaterThan(0);
     expect(screen.getByText("Contract claim mode requires high-impact manual review.")).toBeInTheDocument();
     expect(screen.getByText("Switch to Off-chain MVP or complete contract reviewer approval.")).toBeInTheDocument();
-    expect(screen.getByText("Chinese AI draft falls back to English until reviewed.")).toBeInTheDocument();
+    expect(screen.getByText("Review zh-CN and zh-TW content before presenting it as published content.")).toBeInTheDocument();
     expect(screen.getByText("Campaign basics are complete.")).toBeInTheDocument();
   });
 
@@ -26,16 +26,26 @@ describe("PublishReadinessPanel", () => {
     expect(screen.getAllByText("已通过检查").length).toBeGreaterThan(0);
     expect(screen.getByText("合约领取模式需要高影响人工审核。")).toBeInTheDocument();
     expect(screen.getByText("切换到 Off-chain MVP，或完成合约审核人批准。")).toBeInTheDocument();
-    expect(screen.getByText("中文 AI 草稿审核前回退到英文。")).toBeInTheDocument();
+    expect(screen.getByText("zh-CN 与 zh-TW 内容经人工审核后才可作为已发布内容展示。")).toBeInTheDocument();
     expect(screen.getAllByText("合约审核人").length).toBeGreaterThan(0);
-    expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
+  });
+
+  it("localizes readiness chrome to zh-TW and keeps i18n fallback risk visible", () => {
+    render(<PublishReadinessPanel locale="zh-TW" />);
+
+    expect(screen.getByRole("heading", { name: "發布準備度" })).toBeInTheDocument();
+    expect(screen.getAllByText("阻斷項").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("警告").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("已通過檢查").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("合約審核人").length).toBeGreaterThan(0);
+    expect(screen.getByText("zh-CN 与 zh-TW 内容经人工审核后才可作为已发布内容展示。")).toBeInTheDocument();
   });
 
   it("keeps severity groups visually separated", () => {
     render(<PublishReadinessPanel locale="en-US" />);
 
     const blockersSection = screen.getByText("Contract claim mode requires high-impact manual review.").closest("article");
-    const warningsSection = screen.getByText("Chinese AI draft falls back to English until reviewed.").closest("article");
+    const warningsSection = screen.getByText("Review zh-CN and zh-TW content before presenting it as published content.").closest("article");
     const passedSection = screen.getByText("Campaign basics are complete.").closest("article");
 
     expect(blockersSection).not.toBeNull();

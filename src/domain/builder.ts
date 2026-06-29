@@ -15,7 +15,7 @@ import type {
   WalletPolicy,
 } from "./types";
 
-export const builderSupportedLocales = ["en-US", "zh-CN"] as const satisfies readonly SupportedLocale[];
+export const builderSupportedLocales = ["en-US", "zh-CN", "zh-TW"] as const satisfies readonly SupportedLocale[];
 
 export type BuilderStepStatus = "incomplete" | "warning" | "blocked" | "ready" | "reviewed";
 export type BuilderStepId = "goal" | "tasks" | "rewards" | "i18n" | "contract" | "readiness";
@@ -292,10 +292,13 @@ export interface CampaignDraft {
   contractImpact: ContractImpactSelection;
 }
 
-const text = (enUS: string, zhCN: string): LocalizedText => ({
+const text = (enUS: string, zhCN: string, zhTW = zhCN): LocalizedText => ({
   "en-US": enUS,
   "zh-CN": zhCN,
+  "zh-TW": zhTW,
 });
+
+const chineseLocales = builderSupportedLocales.filter((locale) => locale.startsWith("zh-"));
 
 export const walletPolicyOptions: WalletPolicyOption[] = [
   {
@@ -412,18 +415,18 @@ export const taskTemplateLanguageFilterOptions: TaskTemplateFilterOption<TaskTem
   },
   {
     value: "zh_draft",
-    label: text("zh-CN draft", "zh-CN 草稿"),
-    description: text("Chinese copy is still an AI draft.", "中文文案仍是 AI 草稿。"),
+    label: text("Chinese draft", "中文草稿"),
+    description: text("At least one Chinese locale is still an AI draft.", "至少一个中文语言仍是 AI 草稿。"),
   },
   {
     value: "zh_fallback",
-    label: text("zh-CN fallback", "zh-CN 回退"),
-    description: text("Chinese copy falls back to English.", "中文文案仍回退到英文。"),
+    label: text("Chinese fallback", "中文回退"),
+    description: text("At least one Chinese locale falls back to English.", "至少一个中文语言仍回退到英文。"),
   },
   {
     value: "zh_reviewed",
-    label: text("zh-CN reviewed", "zh-CN 已审核"),
-    description: text("Chinese copy has completed human review.", "中文文案已完成人工审核。"),
+    label: text("Chinese reviewed", "中文已审核"),
+    description: text("All Chinese locales have completed human review.", "所有中文语言已完成人工审核。"),
   },
 ];
 
@@ -438,7 +441,7 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     defaultPoints: 40,
     requiredByDefault: true,
     riskLevel: "low",
-    localeReadiness: { "en-US": "ready", "zh-CN": "reviewed" },
+    localeReadiness: { "en-US": "ready", "zh-CN": "reviewed", "zh-TW": "fallback" },
   },
   {
     id: "tpl-bridge-ebridge",
@@ -450,7 +453,7 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     defaultPoints: 120,
     requiredByDefault: true,
     riskLevel: "low",
-    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft" },
+    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft", "zh-TW": "missing" },
   },
   {
     id: "tpl-swap-awaken",
@@ -462,7 +465,7 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     defaultPoints: 100,
     requiredByDefault: false,
     riskLevel: "medium",
-    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft" },
+    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft", "zh-TW": "missing" },
   },
   {
     id: "tpl-nft-hold",
@@ -474,7 +477,7 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     defaultPoints: 90,
     requiredByDefault: false,
     riskLevel: "medium",
-    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft" },
+    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft", "zh-TW": "missing" },
   },
   {
     id: "tpl-dao-vote",
@@ -486,7 +489,7 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     defaultPoints: 110,
     requiredByDefault: false,
     riskLevel: "medium",
-    localeReadiness: { "en-US": "ready", "zh-CN": "fallback" },
+    localeReadiness: { "en-US": "ready", "zh-CN": "fallback", "zh-TW": "fallback" },
   },
   {
     id: "tpl-daipp-submit",
@@ -498,7 +501,7 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     defaultPoints: 80,
     requiredByDefault: false,
     riskLevel: "low",
-    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft" },
+    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft", "zh-TW": "missing" },
   },
   {
     id: "tpl-social-share",
@@ -510,7 +513,7 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     defaultPoints: 180,
     requiredByDefault: false,
     riskLevel: "high",
-    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft" },
+    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft", "zh-TW": "missing" },
   },
   {
     id: "tpl-invite-friend",
@@ -522,7 +525,7 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     defaultPoints: 70,
     requiredByDefault: false,
     riskLevel: "high",
-    localeReadiness: { "en-US": "ready", "zh-CN": "fallback" },
+    localeReadiness: { "en-US": "ready", "zh-CN": "fallback", "zh-TW": "fallback" },
   },
 ];
 
@@ -578,13 +581,13 @@ const matchesLanguageFilter = (
       return builderSupportedLocales.some((locale) => !isLocaleReady(template.localeReadiness[locale]));
     }
     if (selectedLanguage === "zh_draft") {
-      return template.localeReadiness["zh-CN"] === "ai_draft";
+      return chineseLocales.some((locale) => template.localeReadiness[locale] === "ai_draft");
     }
     if (selectedLanguage === "zh_fallback") {
-      return template.localeReadiness["zh-CN"] === "fallback";
+      return chineseLocales.some((locale) => template.localeReadiness[locale] === "fallback");
     }
 
-    return template.localeReadiness["zh-CN"] === "reviewed";
+    return chineseLocales.every((locale) => template.localeReadiness[locale] === "reviewed");
   });
 
 export const filterTaskTemplates = (
@@ -627,7 +630,7 @@ const strongVerificationTypes = new Set<TaskTemplate["verificationType"]>([
 ]);
 
 const needsLocalizationReview = (template: TaskTemplate) =>
-  template.localeReadiness["zh-CN"] === "ai_draft" || template.localeReadiness["zh-CN"] === "fallback";
+  chineseLocales.some((locale) => !isLocaleReady(template.localeReadiness[locale]));
 
 const needsRiskReview = (template: TaskTemplate) =>
   template.riskLevel === "high" && (template.category === "social" || template.category === "invite");
@@ -676,8 +679,8 @@ const createTemplateGovernanceReason = (
   }
   if (signals.includes("localization_review")) {
     return text(
-      "Chinese content is AI draft or fallback and needs localization review.",
-      "中文内容仍是 AI 草稿或英文回退，需要本地化审核。",
+      "Chinese locale content is AI draft, fallback, or missing and needs localization review.",
+      "中文语言内容仍是 AI 草稿、英文回退或缺失，需要本地化审核。",
     );
   }
   if (signals.includes("wallet_coverage")) {
@@ -710,8 +713,8 @@ const createTemplateGovernanceNextAction = (
   }
   if (signals.includes("localization_review")) {
     return text(
-      "Complete zh-CN localization review before publishing campaigns with this template.",
-      "使用该模板发布活动前完成 zh-CN 本地化审核。",
+      "Complete zh-CN and zh-TW localization review before publishing campaigns with this template.",
+      "使用该模板发布活动前完成 zh-CN 与 zh-TW 本地化审核。",
     );
   }
   if (signals.includes("wallet_coverage")) {
@@ -855,7 +858,7 @@ export const seededCampaignDraft: CampaignDraft = {
       "Start from Any wallet so AA and EOA users can participate.",
       "Use bridge and swap tasks as verified activity anchors.",
       "Keep social sharing behind risk review because rewards are high.",
-      "Require human review before Chinese AI draft content can publish.",
+      "Require human review before zh-CN drafts or zh-TW fallback content can publish.",
     ],
     reviewedByHuman: true,
   },
@@ -891,7 +894,10 @@ export const seededCampaignDraft: CampaignDraft = {
       id: "i18n",
       title: text("i18n review", "多语言审核"),
       status: "warning",
-      summary: text("Chinese AI draft falls back to English until reviewed.", "中文 AI 草稿审核前回退到英文。"),
+      summary: text(
+        "zh-CN draft and zh-TW fallback content need human review before publish.",
+        "zh-CN 草稿与 zh-TW 回退内容发布前需要人工审核。",
+      ),
       ownerRole: "project_owner",
     },
     {
@@ -921,10 +927,12 @@ export const seededCampaignDraft: CampaignDraft = {
     disclaimer: text(
       "Rewards are provided by the campaign project. Campaign OS does not distribute rewards.",
       "奖励由活动项目方提供。Campaign OS 不负责自动发奖。",
+      "獎勵由活動專案方提供。Campaign OS 不負責自動發獎。",
     ),
     exportDisclaimer: text(
       "Exporting winners does not distribute rewards.",
       "导出获奖名单不等于发放奖励。",
+      "匯出獲獎名單不等於發放獎勵。",
     ),
     pointsRule: "task_points",
     winnerRule: "top_n",
@@ -965,6 +973,20 @@ export const seededCampaignDraft: CampaignDraft = {
       socialPost: "参与 Awaken 夏季冲刺活动，完成 aelf 生态验证任务。",
       rewardDisclaimer: "奖励由活动项目方提供。Campaign OS 不负责自动发奖。",
       aiDraft: true,
+      humanReviewed: false,
+      published: false,
+      fallbackToEnglish: true,
+    },
+    {
+      id: "builder-content-zh-tw",
+      locale: "zh-TW",
+      sourceLocale: "en-US",
+      title: "Awaken Summer Sprint",
+      description: "Complete wallet-aware activation tasks across the aelf ecosystem.",
+      faq: "Rewards are project-provided after winner export and project review.",
+      socialPost: "Join Awaken Summer Sprint and complete verified aelf ecosystem tasks.",
+      rewardDisclaimer: "Rewards are provided by the campaign project. Campaign OS does not distribute rewards.",
+      aiDraft: false,
       humanReviewed: false,
       published: false,
       fallbackToEnglish: true,
@@ -1113,8 +1135,8 @@ export const createAiCampaignPlannerDecisionConsole = (
       "language_plan",
       text("Language plan", "语言计划"),
       text(
-        "English is the default source; Chinese content remains reviewed or safely falls back.",
-        "英文是默认源语言；中文内容需审核或安全回退。",
+        "English is the default source; Chinese locale content remains reviewed or safely falls back.",
+        "英文是默认源语言；中文语言内容需审核或安全回退。",
       ),
       [
         plannerItem(
@@ -1124,8 +1146,8 @@ export const createAiCampaignPlannerDecisionConsole = (
           "high",
           text("Default language is English", "默认语言为英文"),
           text(
-            "Default language is English (en-US), with zh-CN as the only additional runtime locale.",
-            "默认语言是英文 (en-US)，zh-CN 是唯一额外运行时语言。",
+            "Default language is English (en-US), with zh-CN and zh-TW as MVP runtime locales.",
+            "默认语言是英文 (en-US)，zh-CN 与 zh-TW 是 MVP 运行时语言。",
           ),
           text("Keep en-US as source and fallback locale.", "保持 en-US 作为源语言与回退语言。"),
         ),
@@ -1136,9 +1158,15 @@ export const createAiCampaignPlannerDecisionConsole = (
           "medium",
           text("Review Chinese AI draft", "审核中文 AI 草稿"),
           hasUnreviewedLocalizedContent
-            ? text("Chinese AI draft falls back to English until a human review is complete.", "中文 AI 草稿在人工审核前回退英文。")
-            : text("Chinese content is reviewed or safely published.", "中文内容已审核或安全发布。"),
-          text("Complete human review before publishing localized Chinese content.", "发布中文本地化内容前完成人工审核。"),
+            ? text(
+                "Chinese locale draft or fallback content falls back to English until human review is complete.",
+                "中文语言草稿或回退内容在人工审核前回退英文。",
+              )
+            : text("Chinese locale content is reviewed or safely published.", "中文语言内容已审核或安全发布。"),
+          text(
+            "Complete human review before publishing localized Chinese content.",
+            "发布中文本地化内容前完成人工审核。",
+          ),
         ),
       ],
     ),
@@ -1331,7 +1359,10 @@ const hasExportDisclaimer = (draft: CampaignDraft) =>
 
 const hasUnreviewedChineseAiDraft = (draft: CampaignDraft) =>
   draft.contentRevisions.some(
-    (revision) => revision.locale === "zh-CN" && revision.aiDraft && !revision.humanReviewed,
+    (revision) =>
+      chineseLocales.includes(revision.locale) &&
+      !revision.humanReviewed &&
+      (revision.aiDraft || revision.fallbackToEnglish),
   );
 
 const isHighRewardSocialOnly = (draft: CampaignDraft) => {
@@ -1548,8 +1579,14 @@ export const computeBuilderPublishReadiness = (draft: CampaignDraft): PublishRea
         "i18n-human-review",
         "i18n",
         "warning",
-        text("Chinese AI draft falls back to English until reviewed.", "中文 AI 草稿审核前回退到英文。"),
-        text("Review Chinese draft before presenting it as published content.", "中文草稿经人工审核后才可作为已发布内容展示。"),
+        text(
+          "Chinese locale draft or fallback content falls back to English until reviewed.",
+          "中文语言草稿或回退内容审核前回退到英文。",
+        ),
+        text(
+          "Review zh-CN and zh-TW content before presenting it as published content.",
+          "zh-CN 与 zh-TW 内容经人工审核后才可作为已发布内容展示。",
+        ),
         "project_owner",
       ),
     );

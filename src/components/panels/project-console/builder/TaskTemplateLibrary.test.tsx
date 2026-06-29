@@ -22,6 +22,7 @@ describe("TaskTemplateLibrary", () => {
     expect(screen.getAllByText("Default points")).toHaveLength(8);
     expect(screen.getByText("40")).toBeInTheDocument();
     expect(screen.getAllByText("zh-CN ai_draft").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("high").length).toBeGreaterThan(0);
   });
 
@@ -51,13 +52,13 @@ describe("TaskTemplateLibrary", () => {
 
     fireEvent.click(screen.getByLabelText("EOA"));
     fireEvent.click(screen.getByLabelText("On-chain"));
-    fireEvent.click(screen.getByLabelText("zh-CN fallback"));
+    fireEvent.click(screen.getByLabelText("Chinese fallback"));
 
     expect(screen.getByText("1 of 8 templates")).toBeInTheDocument();
     expect(screen.getByText("Vote in DAO proposal")).toBeInTheDocument();
     expect(screen.queryByText("Invite a qualified friend")).not.toBeInTheDocument();
     expect(screen.getByText("EOA only")).toBeInTheDocument();
-    expect(screen.getAllByText("zh-CN fallback").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("Chinese fallback").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows an empty state and resets filters", () => {
@@ -65,7 +66,7 @@ describe("TaskTemplateLibrary", () => {
 
     fireEvent.click(screen.getByLabelText("Any"));
     fireEvent.click(screen.getByLabelText("Manual"));
-    fireEvent.click(screen.getByLabelText("zh-CN reviewed"));
+    fireEvent.click(screen.getByLabelText("Chinese reviewed"));
 
     expect(screen.getByText("0 of 8 templates")).toBeInTheDocument();
     expect(screen.getByText("No task templates match the selected filters.")).toBeInTheDocument();
@@ -77,19 +78,20 @@ describe("TaskTemplateLibrary", () => {
     expect(screen.getByText("Invite a qualified friend")).toBeInTheDocument();
   });
 
-  it("localizes filter controls and state for zh-CN without zh-TW copy", () => {
+  it("localizes filter controls and state for zh-CN while retaining zh-TW readiness badges", () => {
     render(<TaskTemplateLibrary locale="zh-CN" />);
     const filters = screen.getByRole("group", { name: "筛选" });
 
     expect(within(filters).getByText("钱包兼容性")).toBeInTheDocument();
     expect(within(filters).getByLabelText("链上")).toBeInTheDocument();
-    expect(within(filters).getByLabelText("zh-CN 回退")).toBeInTheDocument();
+    expect(within(filters).getByLabelText("中文回退")).toBeInTheDocument();
     expect(screen.getByText("8 / 8 个模板")).toBeInTheDocument();
 
     fireEvent.click(within(filters).getByLabelText("人工"));
 
     expect(screen.getByText("0 / 8 个模板")).toBeInTheDocument();
     expect(screen.getByText("没有任务模板匹配当前筛选条件。")).toBeInTheDocument();
-    expect(JSON.stringify(document.body.textContent)).not.toContain("zh-TW");
+    fireEvent.click(screen.getByRole("button", { name: "重置筛选" }));
+    expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
   });
 });

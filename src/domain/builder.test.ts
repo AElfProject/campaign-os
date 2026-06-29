@@ -14,13 +14,18 @@ import {
   taskTemplateWalletFilterOptions,
   walletPolicyOptions,
 } from "./builder";
+import { createTranslationManagerReadModel } from "./campaign";
+import type { ContentRevision, ContentRevisionStatus } from "./types";
 
 describe("Campaign Builder domain foundation", () => {
-  it("keeps builder locale support limited to en-US and zh-CN", () => {
-    expect(builderSupportedLocales).toEqual(["en-US", "zh-CN"]);
+  it("keeps builder locale support aligned to exact MVP locales", () => {
+    expect(builderSupportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
     expect(seededCampaignDraft.defaultLocale).toBe("en-US");
     expect(seededCampaignDraft.fallbackLocale).toBe("en-US");
-    expect(seededCampaignDraft.supportedLocales).toEqual(["en-US", "zh-CN"]);
+    expect(seededCampaignDraft.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
+    expect(seededCampaignDraft.supportedLocales).not.toEqual(
+      expect.arrayContaining(["ja-JP", "ko-KR", "vi-VN"]),
+    );
   });
 
   it("covers the required v0.1 task template categories", () => {
@@ -40,6 +45,7 @@ describe("Campaign Builder domain foundation", () => {
         expect.objectContaining({
           "en-US": expect.any(String),
           "zh-CN": expect.any(String),
+          "zh-TW": expect.any(String),
         }),
       );
       expect(template.defaultPoints).toBeGreaterThan(0);
@@ -112,10 +118,18 @@ describe("Campaign Builder domain foundation", () => {
     ).toEqual([]);
   });
 
-  it("filters task templates by language readiness without adding zh-TW", () => {
+  it("filters task templates by Chinese locale readiness including zh-TW fallback", () => {
     const missingTranslations = filterTaskTemplates(taskTemplateLibrary, {
       ...defaultTaskTemplateFilters,
       language: ["missing_translations"],
+    });
+    const zhDraft = filterTaskTemplates(taskTemplateLibrary, {
+      ...defaultTaskTemplateFilters,
+      language: ["zh_draft"],
+    });
+    const zhFallback = filterTaskTemplates(taskTemplateLibrary, {
+      ...defaultTaskTemplateFilters,
+      language: ["zh_fallback"],
     });
     const zhReviewed = filterTaskTemplates(taskTemplateLibrary, {
       ...defaultTaskTemplateFilters,
@@ -123,17 +137,28 @@ describe("Campaign Builder domain foundation", () => {
     });
 
     expect(missingTranslations.map((template) => template.id)).toEqual(
-      expect.arrayContaining(["tpl-bridge-ebridge", "tpl-dao-vote", "tpl-invite-friend"]),
+      taskTemplateLibrary.map((template) => template.id),
     );
-    expect(missingTranslations.map((template) => template.id)).not.toContain("tpl-wallet-connect");
-    expect(zhReviewed.map((template) => template.id)).toEqual(["tpl-wallet-connect"]);
+    expect(zhDraft.map((template) => template.id)).toEqual([
+      "tpl-bridge-ebridge",
+      "tpl-swap-awaken",
+      "tpl-nft-hold",
+      "tpl-daipp-submit",
+      "tpl-social-share",
+    ]);
+    expect(zhFallback.map((template) => template.id)).toEqual([
+      "tpl-wallet-connect",
+      "tpl-dao-vote",
+      "tpl-invite-friend",
+    ]);
+    expect(zhReviewed).toEqual([]);
     expect(
       JSON.stringify([
         taskTemplateWalletFilterOptions,
         taskTemplateVerificationFilterOptions,
         taskTemplateLanguageFilterOptions,
       ]),
-    ).not.toContain("zh-TW");
+    ).toContain("Chinese");
   });
 
   it("composes task template filters and summarizes empty states", () => {
@@ -245,7 +270,7 @@ describe("Campaign Builder domain foundation", () => {
       ownerRole: "project_owner",
       status: "warning",
     });
-    expect(gateById.get("i18n-human-review")?.reason["en-US"]).toContain("Chinese AI draft");
+    expect(gateById.get("i18n-human-review")?.reason["en-US"]).toContain("Chinese locale");
 
     expect(gateById.get("contract-impact")).toMatchObject({
       blocksPublish: true,
@@ -262,7 +287,7 @@ describe("Campaign Builder domain foundation", () => {
     expect(decisionCenter.boundary["en-US"]).toContain("reward distribution");
   });
 
-  it("routes publish gate approvals to required owner roles without zh-TW locale support", () => {
+  it("routes publish gate approvals while carrying zh-TW locale readiness", () => {
     const decisionCenter = createPublishGateDecisionCenter(seededCampaignDraft);
 
     expect(decisionCenter.approvalRoutes.map((route) => route.ownerRole)).toEqual([
@@ -286,8 +311,59 @@ describe("Campaign Builder domain foundation", () => {
         "wallet-policy",
       ]),
     );
-    expect(seededCampaignDraft.supportedLocales).toEqual(["en-US", "zh-CN"]);
-    expect(JSON.stringify(decisionCenter)).not.toContain("zh-TW");
+    expect(seededCampaignDraft.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
+    expect(JSON.stringify(decisionCenter)).toContain("zh-TW");
+  });
+
+  it("surfaces zh-TW fallback content in the translation manager read model", () => {
+    const contentRevisions: ContentRevision[] = seededCampaignDraft.contentRevisions.map((revision) => {
+      const status: ContentRevisionStatus = revision.published
+        ? "published"
+        : revision.humanReviewed
+          ? "human_reviewed"
+          : revision.aiDraft
+            ? "ai_draft"
+            : "empty";
+
+      return {
+        campaignId: seededCampaignDraft.id,
+        description: revision.description,
+        id: revision.id,
+        locale: revision.locale,
+        rewardDisclaimer: revision.rewardDisclaimer,
+        socialPost: revision.socialPost,
+        sourceLocale: revision.sourceLocale,
+        status,
+        title: revision.title,
+        updatedAt: "2026-06-29T12:00:00Z",
+      };
+    });
+    const translationManager = createTranslationManagerReadModel({
+      contentRevisions,
+      defaultLocale: seededCampaignDraft.defaultLocale,
+      id: seededCampaignDraft.id,
+      supportedLocales: seededCampaignDraft.supportedLocales,
+    });
+
+    expect(translationManager.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
+    expect(translationManager.localeItems.map((item) => item.locale)).toEqual(["en-US", "zh-CN", "zh-TW"]);
+    expect(translationManager.localeItems.find((item) => item.locale === "zh-TW")).toMatchObject({
+      fallbackToEnglish: true,
+      humanReviewed: false,
+      publishState: "warning",
+      status: "empty",
+    });
+    expect(translationManager.rewardDisclaimers.map((row) => row.locale)).toEqual([
+      "en-US",
+      "zh-CN",
+      "zh-TW",
+    ]);
+    expect(translationManager.panels.find((panel) => panel.locale === "zh-TW")).toMatchObject({
+      fallbackToEnglish: true,
+      humanReviewed: false,
+      publishState: "warning",
+      status: "empty",
+    });
   });
 
   it("creates the seeded AI campaign planner decision console", () => {
@@ -298,11 +374,12 @@ describe("Campaign Builder domain foundation", () => {
       contractMode: "OFF_CHAIN_MVP",
       defaultLocale: "en-US",
       reviewedByHuman: true,
-      supportedLocales: ["en-US", "zh-CN"],
+      supportedLocales: ["en-US", "zh-CN", "zh-TW"],
       walletPolicy: "ANY",
     });
     expect(planner.summary.prompt).toContain("activation campaign");
     expect(planner.summary.generatedOutline).toHaveLength(4);
+    expect(planner.summary.generatedOutline.join(" ")).toContain("zh-TW");
     expect(planner.summary.recommendedWallet["en-US"]).toContain("Portkey AA");
     expect(planner.boundary["en-US"]).toContain("No live AI provider");
     expect(planner.boundary["en-US"]).toContain("no automatic publish");
@@ -333,7 +410,9 @@ describe("Campaign Builder domain foundation", () => {
     expect(itemsById.get("wallet-portkey-aa-onboarding")?.rationale["en-US"]).not.toContain("mandatory");
 
     expect(itemsById.get("language-default-en")?.rationale["en-US"]).toContain("Default language is English");
+    expect(itemsById.get("language-default-en")?.rationale["en-US"]).toContain("zh-TW");
     expect(itemsById.get("language-zh-review")?.status).toBe("review_required");
+    expect(itemsById.get("language-zh-review")?.rationale["en-US"]).toContain("fallback");
     expect(itemsById.get("task-verified-anchors")?.rationale["en-US"]).toContain("bridge");
     expect(itemsById.get("risk-social-review")?.status).toBe("warning");
     expect(itemsById.get("contract-off-chain-mvp")).toMatchObject({
@@ -352,6 +431,6 @@ describe("Campaign Builder domain foundation", () => {
       total: 12,
       warning: 1,
     });
-    expect(JSON.stringify(planner)).not.toContain("zh-TW");
+    expect(JSON.stringify(planner)).toContain("zh-TW");
   });
 });

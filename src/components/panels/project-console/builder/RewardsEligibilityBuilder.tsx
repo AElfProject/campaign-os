@@ -48,6 +48,21 @@ const copy = {
     walletPolicy: "钱包策略",
     winnerRule: "获奖规则",
   },
+  "zh-TW": {
+    accepted: "已確認",
+    disabled: "已關閉",
+    eligibility: "資格規則",
+    exportDisclaimer: "匯出聲明",
+    manualReview: "人工審核",
+    pointsRule: "積分規則",
+    provider: "獎勵提供方",
+    referralValidation: "邀請驗證",
+    rewardDisclaimer: "獎勵責任",
+    risk: "風險設定",
+    title: "獎勵與資格設定",
+    walletPolicy: "錢包策略",
+    winnerRule: "獲獎規則",
+  },
 } satisfies Record<SupportedLocale, Record<string, string>>;
 
 const rewardProviderLabels = {
@@ -58,6 +73,10 @@ const rewardProviderLabels = {
   "zh-CN": {
     campaign_project: "活动项目方",
     partner: "合作伙伴",
+  },
+  "zh-TW": {
+    campaign_project: "活動專案方",
+    partner: "合作夥伴",
   },
 } satisfies Record<SupportedLocale, Record<RewardProvider, string>>;
 
@@ -72,6 +91,11 @@ const walletPolicyLabels = {
     AA_ONLY: "仅 AA 钱包",
     EOA_ONLY: "仅 EOA 钱包",
   },
+  "zh-TW": {
+    ANY: "任意錢包",
+    AA_ONLY: "僅 AA 錢包",
+    EOA_ONLY: "僅 EOA 錢包",
+  },
 } satisfies Record<SupportedLocale, Record<WalletPolicy, string>>;
 
 const pointsRuleLabels = {
@@ -85,6 +109,11 @@ const pointsRuleLabels = {
     daily_cap: "每日上限",
     referral_bonus: "邀请奖励",
   },
+  "zh-TW": {
+    task_points: "任務積分",
+    daily_cap: "每日上限",
+    referral_bonus: "邀請獎勵",
+  },
 } satisfies Record<SupportedLocale, Record<PointsRule, string>>;
 
 const winnerRuleLabels = {
@@ -97,6 +126,11 @@ const winnerRuleLabels = {
     top_n: "前 N 名",
     threshold: "门槛达标",
     manual_review: "人工审核",
+  },
+  "zh-TW": {
+    top_n: "前 N 名",
+    threshold: "門檻達標",
+    manual_review: "人工審核",
   },
 } satisfies Record<SupportedLocale, Record<WinnerRule, string>>;
 

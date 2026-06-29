@@ -32,6 +32,17 @@ const surfaceCopy = {
     shellTitle: "活动运营工作台",
     userTitle: "用户应用",
   },
+  "zh-TW": {
+    adminTitle: "管理員/Ops",
+    brand: "aelf Campaign OS",
+    browserLocalePromptDismiss: "繼續使用 English",
+    browserLocalePromptMessage: "瀏覽器語言為中文。切換到簡體中文？",
+    browserLocalePromptSwitch: "切換到簡體中文",
+    localeLabel: "語言",
+    project: "專案控制台",
+    shellTitle: "活動營運工作台",
+    userTitle: "使用者應用",
+  },
 } satisfies Record<SupportedLocale, Record<string, string>>;
 
 export const App = () => {
@@ -44,6 +55,7 @@ export const App = () => {
   } = useLocale();
   const [activeSurface, setActiveSurface] = useState<SurfaceKey>("project");
   const copy = surfaceCopy[locale];
+  const contentLocale: SupportedLocale = locale === "zh-TW" ? "en-US" : locale;
   const connectedWallet = walletSessions[0];
 
   const surfaces = [
@@ -76,11 +88,11 @@ export const App = () => {
       walletSession={connectedWallet}
     >
       {activeSurface === "project" ? (
-        <ProjectConsole locale={locale} />
+        <ProjectConsole locale={contentLocale} />
       ) : activeSurface === "user" ? (
-        <UserAppPanel locale={locale} />
+        <UserAppPanel locale={contentLocale} />
       ) : (
-        <AdminOpsPanel locale={locale} />
+        <AdminOpsPanel locale={contentLocale} />
       )}
     </AppLayout>
   );
