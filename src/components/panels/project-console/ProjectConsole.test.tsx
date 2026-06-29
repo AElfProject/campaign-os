@@ -259,9 +259,30 @@ describe("Project Console shell", () => {
     expect(within(serviceFacade).getByText("generateI18nDraft")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("exportWinners")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Verification coverage")).toBeInTheDocument();
-    expect(within(serviceFacade).getByText("Provider readiness")).toBeInTheDocument();
+    expect(within(serviceFacade).getAllByText("Provider readiness").length).toBeGreaterThan(0);
     expect(within(serviceFacade).getByText("Evidence categories")).toBeInTheDocument();
-    expect(within(serviceFacade).getByText("MANUAL_REVIEW")).toBeInTheDocument();
+    expect(within(serviceFacade).getAllByText("MANUAL_REVIEW").length).toBeGreaterThan(0);
+    expect(
+      within(serviceFacade).getByRole("heading", { name: "Verification pipeline readiness" }),
+    ).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Seeded/local coverage")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Live evidence")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Task outcome coverage")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Eligibility impact")).toBeInTheDocument();
+    for (const path of [
+      "AeFinder on-chain verification",
+      "AelfScan on-chain verification",
+      "dApp API verification",
+      "Social API verification",
+      "Wallet session verification",
+      "Manual review",
+      "Referral qualification",
+    ]) {
+      expect(within(serviceFacade).getAllByText(path).length).toBeGreaterThan(0);
+    }
+    expect(
+      within(serviceFacade).getByText("Eligibility depends on required task verification, qualified invitees, risk review, and manual-review outcomes."),
+    ).toBeInTheDocument();
     expect(
       within(serviceFacade).getAllByText(/No live backend\/API, wallet signature, secret storage, real export file, reward distribution, or contract root write/).length,
     ).toBeGreaterThan(0);
