@@ -58,6 +58,24 @@ describe("Project Console shell", () => {
     expect(screen.getByText("Recommend Portkey AA for onboarding")).toBeInTheDocument();
     expect(screen.getByText("Recommend Off-chain MVP")).toBeInTheDocument();
     expect(screen.getAllByText(/No live AI provider/).length).toBeGreaterThan(1);
+    const aiOptimizationSummary = screen.getByLabelText("AI Optimization summary");
+
+    expect(within(aiOptimizationSummary).getByRole("heading", { name: "AI Optimization summary" })).toBeInTheDocument();
+    expect(within(aiOptimizationSummary).getByText("Recommended action")).toBeInTheDocument();
+    expect(within(aiOptimizationSummary).getByText("Owner-safe next action")).toBeInTheDocument();
+    expect(within(aiOptimizationSummary).getAllByText("Review input / no auto-execution").length).toBeGreaterThan(0);
+    expect(within(aiOptimizationSummary).getByText("Clarify bridge confirmation steps")).toBeInTheDocument();
+    expect(within(aiOptimizationSummary).getByText(/Operator can review this recommendation/)).toBeInTheDocument();
+    expect(within(aiOptimizationSummary).getByText(/No live AI provider/)).toBeInTheDocument();
+    expect(within(aiOptimizationSummary).getAllByText(/automatic risk scoring/).length).toBeGreaterThan(0);
+    expect(within(aiOptimizationSummary).getAllByText(/export/).length).toBeGreaterThan(0);
+    expect(within(aiOptimizationSummary).getAllByText(/reward distribution/).length).toBeGreaterThan(0);
+    expect(within(aiOptimizationSummary).getAllByText(/wallet action/).length).toBeGreaterThan(0);
+    expect(within(aiOptimizationSummary).getAllByText(/contract execution/).length).toBeGreaterThan(0);
+    expect(within(aiOptimizationSummary).queryByText(/shared funding/i)).not.toBeInTheDocument();
+    expect(within(aiOptimizationSummary).queryByText(/\bban\b/i)).not.toBeInTheDocument();
+    expect(within(aiOptimizationSummary).queryByText(/anti-sybil/i)).not.toBeInTheDocument();
+    expect(within(aiOptimizationSummary).queryByText(/Risk signal/i)).not.toBeInTheDocument();
     const aiContentPack = screen.getByLabelText("AI Content Pack");
 
     expect(within(aiContentPack).getByRole("heading", { name: "AI Content Pack" })).toBeInTheDocument();
@@ -271,6 +289,24 @@ describe("Project Console shell", () => {
     expect(screen.getByText("推荐 Portkey AA 新手引导")).toBeInTheDocument();
     expect(screen.getByText("推荐 Off-chain MVP")).toBeInTheDocument();
     expect(screen.getAllByText(/不会执行实时 AI provider/).length).toBeGreaterThan(0);
+    const zhAiOptimizationSummary = screen.getByLabelText("AI 优化摘要");
+
+    expect(within(zhAiOptimizationSummary).getByRole("heading", { name: "AI 优化摘要" })).toBeInTheDocument();
+    expect(within(zhAiOptimizationSummary).getByText("推荐动作")).toBeInTheDocument();
+    expect(within(zhAiOptimizationSummary).getByText("项目方安全下一步")).toBeInTheDocument();
+    expect(within(zhAiOptimizationSummary).getAllByText("审核输入 / 不自动执行").length).toBeGreaterThan(0);
+    expect(within(zhAiOptimizationSummary).getByText("说明跨链确认步骤")).toBeInTheDocument();
+    expect(within(zhAiOptimizationSummary).getByText(/运营可将该建议作为本地优化输入/)).toBeInTheDocument();
+    expect(within(zhAiOptimizationSummary).getAllByText(/不会执行实时 AI/).length).toBeGreaterThan(0);
+    expect(within(zhAiOptimizationSummary).getAllByText(/自动风险评分/).length).toBeGreaterThan(0);
+    expect(within(zhAiOptimizationSummary).getAllByText(/导出/).length).toBeGreaterThan(0);
+    expect(within(zhAiOptimizationSummary).getAllByText(/发奖/).length).toBeGreaterThan(0);
+    expect(within(zhAiOptimizationSummary).getAllByText(/钱包动作/).length).toBeGreaterThan(0);
+    expect(within(zhAiOptimizationSummary).getAllByText(/合约执行/).length).toBeGreaterThan(0);
+    expect(within(zhAiOptimizationSummary).queryByText(/shared funding/i)).not.toBeInTheDocument();
+    expect(within(zhAiOptimizationSummary).queryByText(/封禁/)).not.toBeInTheDocument();
+    expect(within(zhAiOptimizationSummary).queryByText(/女巫/)).not.toBeInTheDocument();
+    expect(within(zhAiOptimizationSummary).queryByText(/风险信号/)).not.toBeInTheDocument();
     const aiContentPack = screen.getByLabelText("AI 内容包");
 
     expect(within(aiContentPack).getByRole("heading", { name: "AI 内容包" })).toBeInTheDocument();
