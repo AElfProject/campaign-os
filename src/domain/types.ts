@@ -133,6 +133,7 @@ export type ApiSkillEvidenceSource =
   | "DAPP_API"
   | "SOCIAL_API"
   | "MANUAL"
+  | "WALLET_SESSION"
   | "LOCAL_SEEDED";
 export type ReviewItemType = "AI_CONTENT" | "CONTRACT_IMPACT" | "RISK_FLAG" | "EXPORT_READY";
 export type ReviewSeverity = "info" | "warning" | "blocker";

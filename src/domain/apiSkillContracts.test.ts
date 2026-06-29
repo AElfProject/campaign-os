@@ -57,13 +57,29 @@ describe("API Skill Contract registry", () => {
         "walletAddress",
         "accountType",
         "walletSource",
+        "canonicalEvidenceSource",
         "evidenceSource",
+        "evidenceId",
         "evidenceHash",
+        "providerReadiness",
+        "fallbackReason",
+        "riskFlags",
+        "manualReview",
+        "nextAction",
       ]),
     );
     expect(contractsById.verify_task.evidenceSources).toEqual(
-      expect.arrayContaining(["AEFINDER", "AELFSCAN", "DAPP_API", "SOCIAL_API", "MANUAL"]),
+      expect.arrayContaining([
+        "LOCAL_SEEDED",
+        "AEFINDER",
+        "AELFSCAN",
+        "DAPP_API",
+        "SOCIAL_API",
+        "WALLET_SESSION",
+        "MANUAL",
+      ]),
     );
+    expect(contractsById.verify_task.securityBoundary["en-US"]).toContain("no live provider");
     expect(eligibilityFields.map((field) => field.name)).toEqual(
       expect.arrayContaining([
         "walletAddress",

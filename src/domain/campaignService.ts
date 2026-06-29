@@ -6,6 +6,7 @@ import {
   createProjectCampaignCommandCenter,
   createTranslationManagerReadModel,
   deriveParticipantTaskStates,
+  verificationBoundary,
 } from "./campaign";
 import { createApiSkillContractSurface } from "./apiSkillContracts";
 import {
@@ -31,6 +32,10 @@ import {
   type PublishReadiness,
   type SupportedLocale,
   type TaskVerificationStatus,
+  type VerificationEvidence,
+  type VerificationEvidenceSource,
+  type VerificationManualReviewState,
+  type VerificationProviderState,
   type VerificationType,
   type WalletCompatibility,
   type WalletPolicy,
@@ -120,11 +125,17 @@ export interface VerifyTaskRequest {
 
 export interface VerifyTaskResponse {
   accountType: AccountType;
+  canonicalEvidenceSource: VerificationEvidenceSource;
   campaignId: string;
+  evidence: VerificationEvidence;
   evidenceHash: string;
   evidenceSource: string;
+  manualReview: VerificationManualReviewState;
+  nextAction: LocalizedText;
   pointsAwarded: number;
   pointsAvailable: number;
+  provider: VerificationProviderState;
+  riskFlags: string[];
   status: Exclude<TaskVerificationStatus, "ready">;
   taskId: string;
   walletAddress: string;
@@ -217,6 +228,7 @@ export interface LocalServiceCoverageSummary {
   sampleResponseIds: string[];
   serviceNames: string[];
   totalServices: number;
+  verificationBoundary: LocalizedText;
   boundary: LocalizedText;
 }
 
@@ -264,9 +276,6 @@ const noAutoPublishNotice: LocalizedText = {
   "en-US": "AI generated translation cannot auto-publish before human review.",
   "zh-CN": "AI 生成翻译必须经过人工审核后才能发布。",
 };
-
-const evidenceHashFor = (taskId: string, walletAddress: string) =>
-  `demo-${taskId}-${walletAddress.slice(0, 3)}`;
 
 const success = <T>(payload: T): LocalServiceResult<T> => ({
   ok: true,
@@ -444,11 +453,17 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
 
     return success({
       accountType: request.accountType,
+      canonicalEvidenceSource: taskState.canonicalEvidenceSource,
       campaignId: campaign.id,
-      evidenceHash: evidenceHashFor(task.id, participant.walletAddress),
+      evidence: taskState.evidence,
+      evidenceHash: taskState.evidence.evidenceHash,
       evidenceSource: taskState.evidenceSource,
+      manualReview: taskState.manualReview,
+      nextAction: taskState.nextAction,
       pointsAwarded: taskState.pointsAwarded,
       pointsAvailable: taskState.pointsAvailable,
+      provider: taskState.provider,
+      riskFlags: taskState.riskFlags,
       status: toVerificationStatus(taskState.status),
       taskId: task.id,
       walletAddress: participant.walletAddress,
@@ -737,11 +752,13 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       sampleResponseIds: [
         "createWalletSession",
         "createCampaign",
+        "verifyTask",
         "checkEligibility",
         "exportWinners",
       ],
       serviceNames,
       totalServices: serviceNames.length,
+      verificationBoundary,
       boundary: serviceBoundary,
     });
   },
