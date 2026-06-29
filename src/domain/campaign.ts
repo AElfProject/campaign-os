@@ -49,13 +49,23 @@ import type {
   EcosystemNextActionReadModel,
   EcosystemRecommendationPriority,
   EcosystemRecommendationStatus,
+  ExportAcknowledgement,
   ExportConfirmation,
+  ExportConfirmationReadinessGate,
+  ExportContractRootReadiness,
+  ExportContractRootMode,
   ExportCsvColumn,
   ExportBatchSummary,
   ExportEvidenceRow,
+  ExportFieldCoverage,
   EvidenceSource,
+  ExportPreviewMode,
+  ExportPreviewModeReadiness,
   ExportPreview,
   ExportPreviewRow,
+  ExportReadinessState,
+  ExportRowReasonCode,
+  ExportRowStatusReason,
   EligibilityCheckerReadModel,
   EligibilityCheckEntry,
   EligibilityCheckResult,
@@ -2378,6 +2388,303 @@ const exportDecisionBoundary: LocalizedText = {
   "en-US": "Campaign OS exports verified records only and does not distribute rewards; the campaign project owns reward fulfillment.",
   "zh-CN": "Campaign OS 只导出已验证记录，不执行发奖；奖励履约由活动项目方负责。",
   "zh-TW": "Campaign OS exports verified records only and does not distribute rewards; the campaign project owns reward fulfillment.",
+};
+
+export const exportConfirmationReadinessBoundary: LocalizedText = {
+  "en-US":
+    "Seeded/local export confirmation only. No real CSV or JSON file, download URL, storage write, contract root, contract transaction, reward custody, or reward distribution is executed.",
+  "zh-CN":
+    "仅 seeded/本地导出确认。不会生成真实 CSV 或 JSON 文件、下载链接、存储写入、合约 root、合约交易、奖励托管或发奖。",
+  "zh-TW":
+    "Seeded/local export confirmation only. No real CSV or JSON file, download URL, storage write, contract root, contract transaction, reward custody, or reward distribution is executed.",
+};
+
+const exportReadinessNextAction: LocalizedText = {
+  "en-US": "Review row reasons, required acknowledgements, and root blockers before approving export readiness.",
+  "zh-CN": "批准导出准备度前，请审核行原因、必需确认项与 root 阻断项。",
+  "zh-TW": "Review row reasons, required acknowledgements, and root blockers before approving export readiness.",
+};
+
+const exportPreviewModeLabel: Record<ExportPreviewMode, LocalizedText> = {
+  csv: {
+    "en-US": "CSV preview",
+    "zh-CN": "CSV 预览",
+    "zh-TW": "CSV preview",
+  },
+  json: {
+    "en-US": "JSON preview",
+    "zh-CN": "JSON 预览",
+    "zh-TW": "JSON preview",
+  },
+};
+
+const createPreviewModeReadiness = (
+  mode: ExportPreviewMode,
+  includedFields: readonly ExportCsvColumn[],
+): ExportPreviewModeReadiness => ({
+  mode,
+  label: exportPreviewModeLabel[mode],
+  readiness: "ready",
+  generatesFile: false,
+  downloadAvailable: false,
+  includedFields,
+  boundary: {
+    "en-US": `${mode.toUpperCase()} is a local preview only; no file or download URL is generated.`,
+    "zh-CN": `${mode.toUpperCase()} 仅为本地预览；不会生成文件或下载链接。`,
+    "zh-TW": `${mode.toUpperCase()} is a local preview only; no file or download URL is generated.`,
+  },
+  nextAction: {
+    "en-US": "Use the preview for review; connect a backend export job in a later production workflow.",
+    "zh-CN": "仅用于审核预览；后续生产流程再接入后端导出任务。",
+    "zh-TW": "Use the preview for review; connect a backend export job in a later production workflow.",
+  },
+});
+
+const requiredExportConfirmationFields: readonly ExportCsvColumn[] = [
+  "wallet_address",
+  "account_type",
+  "wallet_source",
+  "task_records",
+  "total_points",
+  "referrer_address",
+  "risk_flags",
+  "locale_preference",
+  "export_batch_id",
+];
+
+const createExportFieldCoverage = (
+  columns: readonly ExportCsvColumn[],
+): ExportFieldCoverage => {
+  const presentFields = requiredExportConfirmationFields.filter((field) => columns.includes(field));
+  const missingFields = requiredExportConfirmationFields.filter((field) => !columns.includes(field));
+
+  return {
+    requiredFields: requiredExportConfirmationFields,
+    presentFields,
+    missingFields,
+    coverageReady: missingFields.length === 0,
+  };
+};
+
+const rowReasonCopy: Record<ExportRowReasonCode, { label: LocalizedText; nextAction: LocalizedText }> = {
+  eligible_verified: {
+    label: {
+      "en-US": "Eligible verified row",
+      "zh-CN": "合格且已验证行",
+      "zh-TW": "Eligible verified row",
+    },
+    nextAction: {
+      "en-US": "Keep row ready for project-owner export approval.",
+      "zh-CN": "保持该行可进入项目方导出批准。",
+      "zh-TW": "Keep row ready for project-owner export approval.",
+    },
+  },
+  risk_review_required: {
+    label: {
+      "en-US": "Risk review required",
+      "zh-CN": "需要风险审核",
+      "zh-TW": "Risk review required",
+    },
+    nextAction: {
+      "en-US": "Review risk flags as decision inputs; do not treat them as automatic reward rejection.",
+      "zh-CN": "将风险标记作为决策输入审核；不要自动视为拒绝发奖。",
+      "zh-TW": "Review risk flags as decision inputs; do not treat them as automatic reward rejection.",
+    },
+  },
+  missing_required_tasks: {
+    label: {
+      "en-US": "Missing required tasks",
+      "zh-CN": "缺少必做任务",
+      "zh-TW": "Missing required tasks",
+    },
+    nextAction: {
+      "en-US": "Keep row under review until required task evidence is complete.",
+      "zh-CN": "必做任务证据完成前保持该行待审核。",
+      "zh-TW": "Keep row under review until required task evidence is complete.",
+    },
+  },
+  wallet_metadata_unverified: {
+    label: {
+      "en-US": "Wallet metadata unverified",
+      "zh-CN": "钱包元数据未验证",
+      "zh-TW": "Wallet metadata unverified",
+    },
+    nextAction: {
+      "en-US": "Verify wallet type metadata before export approval.",
+      "zh-CN": "导出批准前先验证钱包类型元数据。",
+      "zh-TW": "Verify wallet type metadata before export approval.",
+    },
+  },
+  missing_export_fields: {
+    label: {
+      "en-US": "Missing export field values",
+      "zh-CN": "缺少导出字段值",
+      "zh-TW": "Missing export field values",
+    },
+    nextAction: {
+      "en-US": "Fill required export field values before approving the row.",
+      "zh-CN": "批准该行前先补齐必需导出字段值。",
+      "zh-TW": "Fill required export field values before approving the row.",
+    },
+  },
+};
+
+const createRowReason = (
+  rowStatus: ExportRowStatusReason["rowStatus"],
+  reasonCode: ExportRowReasonCode,
+  affectedRows: number,
+): ExportRowStatusReason => ({
+  rowStatus,
+  reasonCode,
+  affectedRows,
+  label: rowReasonCopy[reasonCode].label,
+  nextAction: rowReasonCopy[reasonCode].nextAction,
+});
+
+const createRowStatusCoverage = (
+  rows: readonly ExportPreviewRow[],
+): ExportRowStatusReason[] => {
+  const readyRows = rows.filter((row) => row.rowStatus === "ready").length;
+  const riskReviewRows = rows.filter((row) => row.rowStatus === "review_required" && row.riskFlags.length > 0).length;
+  const missingTaskRows = rows.filter((row) => row.rowStatus === "review_required" && row.missingTasks.length > 0).length;
+  const unverifiedWalletRows = rows.filter((row) => row.rowStatus === "blocked" && !row.walletTypeVerified).length;
+  const missingFieldRows = rows.filter((row) => row.rowStatus === "blocked" && row.missingColumnValues.length > 0).length;
+
+  return [
+    createRowReason("ready", "eligible_verified", readyRows),
+    createRowReason("review_required", "risk_review_required", riskReviewRows),
+    createRowReason("review_required", "missing_required_tasks", missingTaskRows),
+    createRowReason("blocked", "wallet_metadata_unverified", unverifiedWalletRows),
+    createRowReason("blocked", "missing_export_fields", missingFieldRows),
+  ];
+};
+
+const createExportAcknowledgements = (): ExportAcknowledgement[] => [
+  {
+    id: "verified-records-only",
+    label: {
+      "en-US": "Verified records only",
+      "zh-CN": "仅导出已验证记录",
+      "zh-TW": "Verified records only",
+    },
+    description: {
+      "en-US": "Campaign OS export readiness covers verified seeded records and review states.",
+      "zh-CN": "Campaign OS 导出准备度只覆盖已验证 seeded 记录与审核状态。",
+      "zh-TW": "Campaign OS export readiness covers verified seeded records and review states.",
+    },
+    required: true,
+    acknowledged: true,
+    ownerRole: "project_owner",
+  },
+  {
+    id: "project-owned-reward-distribution",
+    label: {
+      "en-US": "Project owns final reward distribution",
+      "zh-CN": "项目方负责最终发奖",
+      "zh-TW": "Project owns final reward distribution",
+    },
+    description: exportFulfillmentOwner,
+    required: true,
+    acknowledged: true,
+    ownerRole: "project_owner",
+  },
+  {
+    id: "no-reward-custody",
+    label: {
+      "en-US": "No reward custody",
+      "zh-CN": "不托管奖励",
+      "zh-TW": "No reward custody",
+    },
+    description: noRewardCustodyBoundary,
+    required: true,
+    acknowledged: true,
+    ownerRole: "internal_operator",
+  },
+  {
+    id: "no-reward-distribution",
+    label: {
+      "en-US": "No reward distribution",
+      "zh-CN": "不执行发奖",
+      "zh-TW": "No reward distribution",
+    },
+    description: rewardBoundary,
+    required: true,
+    acknowledged: true,
+    ownerRole: "project_owner",
+  },
+  {
+    id: "no-real-export-file",
+    label: {
+      "en-US": "No real export file",
+      "zh-CN": "不生成真实导出文件",
+      "zh-TW": "No real export file",
+    },
+    description: {
+      "en-US": "CSV and JSON are seeded/local previews only; no file, storage key, or download URL is created.",
+      "zh-CN": "CSV 和 JSON 仅为 seeded/本地预览；不会创建文件、存储 key 或下载链接。",
+      "zh-TW": "CSV and JSON are seeded/local previews only; no file, storage key, or download URL is created.",
+    },
+    required: true,
+    acknowledged: true,
+    ownerRole: "internal_operator",
+  },
+];
+
+const contractRootLabels: Record<ExportContractRootMode, LocalizedText> = {
+  none: {
+    "en-US": "No contract root",
+    "zh-CN": "无合约 root",
+    "zh-TW": "No contract root",
+  },
+  eligibility_root: {
+    "en-US": "Eligibility root",
+    "zh-CN": "资格 root",
+    "zh-TW": "Eligibility root",
+  },
+  winners_root: {
+    "en-US": "Winners root",
+    "zh-CN": "Winners root",
+    "zh-TW": "Winners root",
+  },
+  contract_claim: {
+    "en-US": "Contract claim",
+    "zh-CN": "合约 claim",
+    "zh-TW": "Contract claim",
+  },
+};
+
+const createContractRootReadiness = (
+  mode: ExportContractRootMode,
+): ExportContractRootReadiness => {
+  const safeDefault = mode === "none";
+  const contractClaim = mode === "contract_claim";
+  const readiness: ExportReadinessState = safeDefault ? "ready" : contractClaim ? "blocked" : "review_required";
+
+  return {
+    mode,
+    label: contractRootLabels[mode],
+    readiness,
+    safeDefault,
+    approvalRequired: !safeDefault,
+    boundary: noRewardCustodyBoundary,
+    nextAction: safeDefault
+      ? {
+          "en-US": "Use off-chain MVP export preview without root generation.",
+          "zh-CN": "使用链下 MVP 导出预览，不生成 root。",
+          "zh-TW": "Use off-chain MVP export preview without root generation.",
+        }
+      : contractClaim
+        ? {
+            "en-US": "Keep claim mode blocked until security, custody, legal, audit, and contract approvals exist.",
+            "zh-CN": "在安全、托管、法律、审计与合约批准前继续阻断 claim mode。",
+            "zh-TW": "Keep claim mode blocked until security, custody, legal, audit, and contract approvals exist.",
+          }
+        : {
+            "en-US": "Define root format, reproducibility checks, reviewer role, and rollback policy before P1 contract work.",
+            "zh-CN": "P1 合约工作前先定义 root 格式、可复现检查、审核角色与回滚策略。",
+            "zh-TW": "Define root format, reproducibility checks, reviewer role, and rollback policy before P1 contract work.",
+          },
+  };
 };
 
 const formatTimeWindow = (startTime: string, endTime: string): LocalizedText => {
@@ -5672,6 +5979,48 @@ export const createExportPreview = (
     missingColumnValues: row.missingColumnValues,
   })),
 });
+
+export const createExportConfirmationReadinessGate = (
+  campaign: CampaignShellDetail,
+): ExportConfirmationReadinessGate => {
+  const preview = createExportPreview(
+    campaign.id,
+    campaign.participants,
+    campaign.tasks,
+    campaign.walletSessions,
+  );
+  const rows = preview.rows;
+  const acknowledgements = createExportAcknowledgements();
+
+  return {
+    campaignId: campaign.id,
+    batchId: rows[0]?.exportBatchId ?? exportBatchId,
+    summary: {
+      totalRows: rows.length,
+      readyRows: rows.filter((row) => row.rowStatus === "ready").length,
+      reviewRequiredRows: rows.filter((row) => row.rowStatus === "review_required").length,
+      blockedRows: rows.filter((row) => row.rowStatus === "blocked").length,
+      requiredAcknowledgements: acknowledgements.filter((item) => item.required).length,
+      acknowledgedItems: acknowledgements.filter((item) => item.acknowledged).length,
+      previewModeCount: 2,
+    },
+    previewModes: [
+      createPreviewModeReadiness("csv", preview.columns),
+      createPreviewModeReadiness("json", preview.columns),
+    ],
+    fieldCoverage: createExportFieldCoverage(preview.columns),
+    rowStatusCoverage: createRowStatusCoverage(rows),
+    acknowledgements,
+    contractRootReadiness: [
+      createContractRootReadiness("none"),
+      createContractRootReadiness("eligibility_root"),
+      createContractRootReadiness("winners_root"),
+      createContractRootReadiness("contract_claim"),
+    ],
+    boundary: exportConfirmationReadinessBoundary,
+    nextAction: exportReadinessNextAction,
+  };
+};
 
 export const createAdminOpsReadModel = (
   campaign: CampaignShellDetail,
