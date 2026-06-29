@@ -69,10 +69,16 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("option", { name: "English" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "简体中文" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "繁體中文" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: "Project Console workspace navigation" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Campaigns" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
     expect(screen.getByText("Connected wallets")).toBeInTheDocument();
-    expect(screen.getAllByText("Wallet type verified").length).toBeGreaterThan(0);
-    expect(screen.getByText("2F4...9aB")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Campaign Command Center" })).toBeInTheDocument();
   });
 
   it("prompts Chinese browser users without changing the English default", () => {
@@ -255,6 +261,8 @@ describe("Campaign OS app shell", () => {
   it("exposes Campaign Builder core flow from the Project Console", () => {
     render(<App />);
 
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
     expect(screen.getAllByText("Campaign Builder").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Draft overview" })).toBeInTheDocument();
     expect(
@@ -263,10 +271,6 @@ describe("Campaign OS app shell", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getAllByText("Draft setup combines AI brief and structured campaign fields").length).toBeGreaterThan(0);
-    expect(screen.getByRole("heading", { name: "Task template library" })).toBeInTheDocument();
-    for (const category of ["wallet", "bridge", "swap", "nft", "dao", "daipp", "social", "invite"]) {
-      expect(screen.getByText(category)).toBeInTheDocument();
-    }
     expect(screen.getByRole("heading", { name: "Rewards and eligibility setup" })).toBeInTheDocument();
     expect(screen.getAllByText("Rewards are provided by the campaign project. Campaign OS does not distribute rewards.").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Exporting winners does not distribute rewards.").length).toBeGreaterThan(0);
@@ -277,11 +281,6 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByText("V2 companion")).toBeInTheDocument();
     expect(screen.getByText("Contract claim")).toBeInTheDocument();
     expect(screen.getByText("High-impact manual review blocker")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "API / Skill Contracts" })).toBeInTheDocument();
-    expect(screen.getByText("Read-only contract registry for future agents and APIs.")).toBeInTheDocument();
-    expect(screen.getByText("create_campaign")).toBeInTheDocument();
-    expect(screen.getByText("summarize_campaign")).toBeInTheDocument();
-    expect(screen.getByText(/does not call live APIs/i)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Publish readiness" })).toBeInTheDocument();
     expect(
       screen.getAllByText("Contract claim mode requires high-impact manual review.").length,
@@ -296,12 +295,26 @@ describe("Campaign OS app shell", () => {
     expect(screen.getAllByText("Rewards & Eligibility").length).toBeGreaterThan(0);
     expect(screen.getAllByText("i18n Translation Review").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Contract Impact Review").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+    expect(screen.getByRole("heading", { name: "Task template library" })).toBeInTheDocument();
+    for (const category of ["wallet", "bridge", "swap", "nft", "dao", "daipp", "social", "invite"]) {
+      expect(screen.getByText(category)).toBeInTheDocument();
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    expect(screen.getByRole("heading", { name: "API / Skill Contracts" })).toBeInTheDocument();
+    expect(screen.getByText("Read-only contract registry for future agents and APIs.")).toBeInTheDocument();
+    expect(screen.getByText("create_campaign")).toBeInTheDocument();
+    expect(screen.getByText("summarize_campaign")).toBeInTheDocument();
+    expect(screen.getByText(/does not call live APIs/i)).toBeInTheDocument();
   });
 
   it("updates Campaign Builder core copy when manually switched to zh-CN", () => {
     render(<App />);
 
     fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh-CN" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
 
     expect(screen.getAllByText("活动构建器").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "草稿概览" })).toBeInTheDocument();
@@ -309,8 +322,6 @@ describe("Campaign OS app shell", () => {
       screen.getByText("默认与回退：en-US。支持：en-US、zh-CN 与 zh-TW 回退 readiness。"),
     ).toBeInTheDocument();
     expect(screen.getAllByText("草稿设置结合 AI 简报与结构化活动字段").length).toBeGreaterThan(0);
-    expect(screen.getByRole("heading", { name: "任务模板库" })).toBeInTheDocument();
-    expect(screen.getAllByText("连接钱包").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "奖励与资格设置" })).toBeInTheDocument();
     expect(screen.getAllByText("奖励由活动项目方提供。Campaign OS 不负责自动发奖。").length).toBeGreaterThan(0);
     expect(screen.getAllByText("导出获奖名单不等于发放奖励。").length).toBeGreaterThan(0);
@@ -320,11 +331,6 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByText("V2 辅助合约")).toBeInTheDocument();
     expect(screen.getByText("合约领取")).toBeInTheDocument();
     expect(screen.getByText("高影响人工审核阻断")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "API / Skill Contracts" })).toBeInTheDocument();
-    expect(screen.getByText("面向未来 agent 与 API 的只读 contract registry。")).toBeInTheDocument();
-    expect(screen.getByText("创建活动草稿")).toBeInTheDocument();
-    expect(screen.getByText("总结活动")).toBeInTheDocument();
-    expect(screen.getAllByText(/不会调用实时 API/).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "发布准备度" })).toBeInTheDocument();
     expect(screen.getAllByText("合约领取模式需要高影响人工审核。").length).toBeGreaterThan(0);
     expect(screen.getByText("切换到 Off-chain MVP，或完成合约审核人批准。")).toBeInTheDocument();
@@ -333,6 +339,17 @@ describe("Campaign OS app shell", () => {
     expect(screen.getAllByText("i18n 翻译审核").length).toBeGreaterThan(0);
     expect(screen.getAllByText("合约影响审核").length).toBeGreaterThan(0);
     expect(screen.getByRole("option", { name: "繁體中文" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "模板" }));
+    expect(screen.getByRole("heading", { name: "任务模板库" })).toBeInTheDocument();
+    expect(screen.getAllByText("连接钱包").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "导出" }));
+    expect(screen.getByRole("heading", { name: "API / Skill Contracts" })).toBeInTheDocument();
+    expect(screen.getByText("面向未来 agent 与 API 的只读 contract registry。")).toBeInTheDocument();
+    expect(screen.getByText("创建活动草稿")).toBeInTheDocument();
+    expect(screen.getByText("总结活动")).toBeInTheDocument();
+    expect(screen.getAllByText(/不会调用实时 API/).length).toBeGreaterThan(0);
   });
 
   it("exposes wallet options and export disclaimer across user and admin surfaces", () => {

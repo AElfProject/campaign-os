@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import {
   createAiContentPackWorkbench,
   createApiSkillContractSurface,
@@ -377,17 +377,85 @@ const serviceCoverageLabels = [
   "summary",
 ];
 
+const projectWorkspaceKeys = [
+  "campaigns",
+  "create",
+  "templates",
+  "aiContent",
+  "analytics",
+  "export",
+] as const;
+
+type ProjectWorkspaceKey = (typeof projectWorkspaceKeys)[number];
+
+const workspaceShellStyle: CSSProperties = {
+  background: "#f8fbff",
+  border: "1px solid #dbe6f4",
+  borderRadius: 8,
+  display: "grid",
+  gap: 14,
+  padding: 14,
+};
+
+const workspaceNavStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 132px), 1fr))",
+};
+
+const workspaceButtonBaseStyle: CSSProperties = {
+  background: "#ffffff",
+  border: "1px solid #b8c7da",
+  borderRadius: 8,
+  color: "#0f172a",
+  cursor: "pointer",
+  fontSize: 13,
+  fontWeight: 900,
+  letterSpacing: 0,
+  lineHeight: 1.2,
+  minHeight: 42,
+  minWidth: 0,
+  padding: "8px 10px",
+  textAlign: "center",
+  wordBreak: "break-word",
+};
+
+const workspaceButtonStyle = (isActive: boolean): CSSProperties =>
+  isActive
+    ? {
+        ...workspaceButtonBaseStyle,
+        background: "#071426",
+        border: "1px solid #071426",
+        color: "#ffffff",
+      }
+    : workspaceButtonBaseStyle;
+
+const workspaceIntroStyle: CSSProperties = {
+  background: "#ffffff",
+  border: "1px solid #dbe6f4",
+  borderRadius: 8,
+  display: "grid",
+  gap: 4,
+  padding: 14,
+};
+
+const stepperStyle: CSSProperties = {
+  display: "grid",
+  gap: 10,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))",
+};
+
 export const ProjectConsole = ({
   campaign = campaignDetail,
   locale,
 }: ProjectConsoleProps) => {
   const copy = projectConsoleCopy[locale];
+  const [activeWorkspace, setActiveWorkspace] = useState<ProjectWorkspaceKey>("campaigns");
   const title = getLocalizedText(campaign.title, locale);
   const subtitle = getLocalizedText(campaign.subtitle, locale);
   const firstParticipant = campaign.participants[0];
   const secondParticipant = campaign.participants[1];
   const contractReview = campaign.reviewItems.find((item) => item.type === "CONTRACT_IMPACT");
-  const exportReview = campaign.reviewItems.find((item) => item.type === "EXPORT_READY");
   const warningCount = campaign.publishReadiness.warnings.length;
   const blockerCount = campaign.publishReadiness.blockers.length;
   const builderDraft = seededCampaignDraft;
@@ -497,21 +565,82 @@ export const ProjectConsole = ({
         />
       ),
     },
-    {
-      title: copy.analyticsExport,
-      state: copy.analyticsExportState,
-      action: copy.analyticsExportAction,
-      extra: (
-        <ReviewSeverityBadge
-          label={reviewStatusLabel(exportReview?.status, copy)}
-          severity={exportReview?.severity ?? "info"}
-        />
-      ),
-    },
+  ];
+
+  const workspaceLabels: Record<ProjectWorkspaceKey, string> = {
+    aiContent: copy.workspaceAiContent,
+    analytics: copy.workspaceAnalytics,
+    campaigns: copy.workspaceCampaigns,
+    create: copy.workspaceCreate,
+    export: copy.workspaceExport,
+    templates: copy.workspaceTemplates,
+  };
+
+  const workspaceSummaries: Record<ProjectWorkspaceKey, string> = {
+    aiContent: copy.workspaceAiContentSummary,
+    analytics: copy.workspaceAnalyticsSummary,
+    campaigns: copy.workspaceCampaignsSummary,
+    create: copy.workspaceCreateSummary,
+    export: copy.workspaceExportSummary,
+    templates: copy.workspaceTemplatesSummary,
+  };
+
+  const createSteps = [
+    { label: copy.createStepGoal, state: copy.builderNoMissingBasics, status: "ready" as const },
+    { label: copy.createStepTasks, state: copy.taskBuilderState, status: "ready" as const },
+    { label: copy.createStepRewardsEligibility, state: copy.rewardsEligibilityState, status: "warning" as const },
+    { label: copy.createStepI18n, state: copy.translationReviewState, status: "warning" as const },
+    { label: copy.createStepContract, state: copy.contractImpactState, status: "warning" as const },
+    { label: copy.createStepPublishReadiness, state: copy.builderCompletenessSummary, status: "warning" as const },
   ];
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
+      <section aria-label={copy.projectWorkspace} style={workspaceShellStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.dashboardTitle}</p>
+            <strong style={{ color: "#071426", display: "block", fontSize: 30, lineHeight: 1.1, margin: "4px 0" }}>
+              {title}
+            </strong>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>{subtitle}</p>
+          </div>
+          <span style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <PublishStateBadge label={copy.active} state="ready" />
+            <ContractModeBadge
+              label={contractModeLabel(campaign.contractMode, copy)}
+              mode={campaign.contractMode}
+            />
+          </span>
+        </div>
+
+        <nav aria-label={copy.projectWorkspaceNavigation} style={workspaceNavStyle}>
+          {projectWorkspaceKeys.map((workspaceKey) => (
+            <button
+              aria-pressed={activeWorkspace === workspaceKey}
+              key={workspaceKey}
+              onClick={() => setActiveWorkspace(workspaceKey)}
+              style={workspaceButtonStyle(activeWorkspace === workspaceKey)}
+              type="button"
+            >
+              {workspaceLabels[workspaceKey]}
+            </button>
+          ))}
+        </nav>
+
+        <article style={workspaceIntroStyle}>
+          <p style={statLabelStyle}>{copy.activeWorkspace}</p>
+          <h3 style={{ fontSize: 20, lineHeight: 1.2, margin: 0 }}>
+            {workspaceLabels[activeWorkspace]}
+          </h3>
+          <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+            {workspaceSummaries[activeWorkspace]}
+          </p>
+        </article>
+      </section>
+
+      {activeWorkspace === "campaigns" && (
+        <>
       <section style={panelStyle}>
         <div style={headingRowStyle}>
           <div>
@@ -647,6 +776,10 @@ export const ProjectConsole = ({
         <p style={boundaryStyle}>{getLocalizedText(commandCenter.boundary, locale)}</p>
       </section>
 
+        </>
+      )}
+
+      {activeWorkspace === "analytics" && (
       <section aria-label={copy.analyticsExportDecision} style={panelStyle}>
         <div style={headingRowStyle}>
           <div>
@@ -690,33 +823,6 @@ export const ProjectConsole = ({
           </article>
 
           <article style={workflowStyle}>
-            <h4 style={{ fontSize: 18, margin: 0 }}>{copy.rowStatusCounts}</h4>
-            <p style={{ ...statValueStyle, fontSize: 22 }}>
-              {exportDecision.readyRows} / {exportDecision.reviewRequiredRows} / {exportDecision.blockedRows}
-            </p>
-            <div style={gridStyle}>
-              <div>
-                <p style={statLabelStyle}>{copy.readyRows}</p>
-                <PublishStateBadge label={String(exportDecision.readyRows)} state="ready" />
-              </div>
-              <div>
-                <p style={statLabelStyle}>{copy.reviewRequiredRows}</p>
-                <PublishStateBadge label={String(exportDecision.reviewRequiredRows)} state="warning" />
-              </div>
-              <div>
-                <p style={statLabelStyle}>{copy.blockedRows}</p>
-                <PublishStateBadge
-                  label={String(exportDecision.blockedRows)}
-                  state={exportDecision.blockedRows > 0 ? "blocker" : "ready"}
-                />
-              </div>
-            </div>
-            <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
-              {copy.exportBatch}: {exportDecision.exportBatchId}
-            </p>
-          </article>
-
-          <article style={workflowStyle}>
             <h4 style={{ fontSize: 18, margin: 0 }}>{copy.walletSplit}</h4>
             {exportDecision.walletSplit.map((split) => (
               <div key={split.id} style={listItemStyle}>
@@ -732,13 +838,6 @@ export const ProjectConsole = ({
               </div>
             ))}
           </article>
-        </div>
-
-        <div style={{ ...cardStyle, minHeight: 0 }}>
-          <p style={statLabelStyle}>{copy.evidenceCoverage}</p>
-          <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
-            {getLocalizedText(exportDecision.evidenceCoverage, locale)}
-          </p>
         </div>
 
         <div
@@ -783,18 +882,12 @@ export const ProjectConsole = ({
           <p style={boundaryStyle}>{copy.localeAnalyticsBoundary}</p>
         </div>
 
-        <div style={{ ...cardStyle, minHeight: 0 }}>
-          <p style={statLabelStyle}>{copy.csvColumns}</p>
-          <div style={tableWrapStyle}>
-            <p style={{ color: "#071426", fontSize: 12, fontWeight: 800, lineHeight: 1.45, margin: 0, minWidth: 680 }}>
-              {exportDecision.exportColumns.join(",")}
-            </p>
-          </div>
-        </div>
-
-        <p style={boundaryStyle}>{getLocalizedText(exportDecision.boundary, locale)}</p>
+        <p style={boundaryStyle}>{getLocalizedText(commandCenter.boundary, locale)}</p>
       </section>
+      )}
 
+      {activeWorkspace === "aiContent" && (
+        <>
       <section aria-label={copy.aiOptimizationSummary} style={panelStyle}>
         <div style={headingRowStyle}>
           <div>
@@ -988,6 +1081,45 @@ export const ProjectConsole = ({
           ))}
         </div>
       </section>
+        </>
+      )}
+
+      {activeWorkspace === "create" && (
+        <>
+      <section aria-label={copy.createWorkspaceStepper} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.workspaceCreate}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.createWorkspaceStepper}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.createWorkspaceStepperSummary}
+            </p>
+          </div>
+          <PublishStateBadge label={copy.apiSkillReadinessLocalOnly} state="warning" />
+        </div>
+
+        <div aria-label={copy.createWorkspaceStepper} style={stepperStyle}>
+          {createSteps.map((step, index) => (
+            <article key={step.label} style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={statLabelStyle}>
+                {copy.createStepPrefix} {index + 1}
+              </p>
+              <div style={headingRowStyle}>
+                <strong>{step.label}</strong>
+                <PublishStateBadge
+                  label={step.status === "ready" ? copy.apiSkillReadinessReady : copy.warning}
+                  state={step.status}
+                />
+              </div>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {step.state}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <CampaignBuilderPanel copy={copy} draft={builderDraft} locale={locale} />
 
@@ -997,12 +1129,130 @@ export const ProjectConsole = ({
         }
         style={builderDetailsStyle}
       >
-        <TaskTemplateLibrary locale={locale} />
         <RewardsEligibilityBuilder draft={builderDraft} locale={locale} />
         <I18nContractReadiness campaign={campaign} locale={locale} />
         <PublishReadinessPanel draft={builderDraft} locale={locale} />
         <PublishGateDecisionCenter draft={builderDraft} locale={locale} />
       </div>
+        </>
+      )}
+
+      {activeWorkspace === "templates" && (
+        <>
+      <section aria-label={copy.workspaceTemplates} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.workspaceTemplates}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.workspaceTemplates}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.templatesWorkspaceBoundary}
+            </p>
+          </div>
+          <WalletCompatibilityBadge compatibility="ANY" />
+        </div>
+      </section>
+
+      <TaskTemplateLibrary locale={locale} />
+
+      <section aria-label="Task readiness preview" style={panelStyle}>
+        <div style={headingRowStyle}>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.taskBuilder}</h3>
+          <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
+            {campaign.tasks.length} tasks
+          </span>
+        </div>
+        <ul style={listStyle}>
+          {campaign.tasks.map((task) => (
+            <li key={task.id} style={listItemStyle}>
+              <span style={{ display: "grid", gap: 3 }}>
+                <strong>{getLocalizedText(task.title, locale)}</strong>
+                <span style={{ color: "#64748b", fontSize: 13 }}>
+                  {task.verificationType} · {task.points} pts · {task.riskLevel}
+                </span>
+              </span>
+              <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <WalletCompatibilityBadge compatibility={task.walletCompatibility} />
+                {Object.entries(task.localeStatus).map(([statusLocale, status]) => (
+                  <LocaleStatusBadge
+                    key={statusLocale}
+                    label={`${statusLocale} ${localeStatusLabel(status, copy)}`}
+                    status={status}
+                  />
+                ))}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+        </>
+      )}
+
+      {activeWorkspace === "export" && (
+        <>
+      <section aria-label={copy.exportWorkspaceDecision} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.workspaceExport}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.exportWorkspaceDecision}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.exportWorkspaceDecisionSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge label={copy.analyticsExportAction} state="warning" />
+        </div>
+
+        <div style={sectionGridStyle}>
+          <article style={workflowStyle}>
+            <h4 style={{ fontSize: 18, margin: 0 }}>{copy.rowStatusCounts}</h4>
+            <p style={{ ...statValueStyle, fontSize: 22 }}>
+              {exportDecision.readyRows} / {exportDecision.reviewRequiredRows} / {exportDecision.blockedRows}
+            </p>
+            <div style={gridStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.readyRows}</p>
+                <PublishStateBadge label={String(exportDecision.readyRows)} state="ready" />
+              </div>
+              <div>
+                <p style={statLabelStyle}>{copy.reviewRequiredRows}</p>
+                <PublishStateBadge label={String(exportDecision.reviewRequiredRows)} state="warning" />
+              </div>
+              <div>
+                <p style={statLabelStyle}>{copy.blockedRows}</p>
+                <PublishStateBadge
+                  label={String(exportDecision.blockedRows)}
+                  state={exportDecision.blockedRows > 0 ? "blocker" : "ready"}
+                />
+              </div>
+            </div>
+            <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+              {copy.exportBatch}: {exportDecision.exportBatchId}
+            </p>
+          </article>
+
+          <article style={workflowStyle}>
+            <h4 style={{ fontSize: 18, margin: 0 }}>{copy.evidenceCoverage}</h4>
+            <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+              {getLocalizedText(exportDecision.evidenceCoverage, locale)}
+            </p>
+          </article>
+        </div>
+
+        <div style={{ ...cardStyle, minHeight: 0 }}>
+          <p style={statLabelStyle}>{copy.csvColumns}</p>
+          <div style={tableWrapStyle}>
+            <p style={{ color: "#071426", fontSize: 12, fontWeight: 800, lineHeight: 1.45, margin: 0, minWidth: 680 }}>
+              {exportDecision.exportColumns.join(",")}
+            </p>
+          </div>
+        </div>
+
+        <p style={boundaryStyle}>{getLocalizedText(exportDecision.boundary, locale)}</p>
+        <p style={boundaryStyle}>{getLocalizedText(commandCenter.boundary, locale)}</p>
+      </section>
 
       {serviceCoverage && (
         <section aria-label={copy.serviceFacade} style={panelStyle}>
@@ -1284,7 +1534,10 @@ export const ProjectConsole = ({
           ))}
         </div>
       </section>
+        </>
+      )}
 
+      {activeWorkspace === "create" && (
       <section aria-label="Project Console workflow sections" style={sectionGridStyle}>
         {workflows.map((workflow) => (
           <article key={workflow.title} style={workflowStyle}>
@@ -1299,37 +1552,7 @@ export const ProjectConsole = ({
           </article>
         ))}
       </section>
-
-      <section aria-label="Task readiness preview" style={panelStyle}>
-        <div style={headingRowStyle}>
-          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.taskBuilder}</h3>
-          <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
-            {campaign.tasks.length} tasks
-          </span>
-        </div>
-        <ul style={listStyle}>
-          {campaign.tasks.map((task) => (
-            <li key={task.id} style={listItemStyle}>
-              <span style={{ display: "grid", gap: 3 }}>
-                <strong>{getLocalizedText(task.title, locale)}</strong>
-                <span style={{ color: "#64748b", fontSize: 13 }}>
-                  {task.verificationType} · {task.points} pts · {task.riskLevel}
-                </span>
-              </span>
-              <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                <WalletCompatibilityBadge compatibility={task.walletCompatibility} />
-                {Object.entries(task.localeStatus).map(([statusLocale, status]) => (
-                  <LocaleStatusBadge
-                    key={statusLocale}
-                    label={`${statusLocale} ${localeStatusLabel(status, copy)}`}
-                    status={status}
-                  />
-                ))}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
+      )}
     </div>
   );
 };
