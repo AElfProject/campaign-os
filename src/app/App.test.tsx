@@ -141,7 +141,11 @@ describe("Campaign OS app shell", () => {
 
     expect(screen.getAllByText("Campaign Builder").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Draft overview" })).toBeInTheDocument();
-    expect(screen.getByText("Default and fallback: en-US. Supported: en-US and zh-CN.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Default and fallback: en-US. Supported: en-US, zh-CN, and zh-TW fallback readiness.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("Draft setup combines AI brief and structured campaign fields").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Task template library" })).toBeInTheDocument();
     for (const category of ["wallet", "bridge", "swap", "nft", "dao", "daipp", "social", "invite"]) {
@@ -168,7 +172,9 @@ describe("Campaign OS app shell", () => {
     ).toBeGreaterThan(0);
     expect(screen.getByText("Switch to Off-chain MVP or complete contract reviewer approval.")).toBeInTheDocument();
     expect(
-      screen.getAllByText("Chinese AI draft falls back to English until reviewed.").length,
+      screen.getAllByText(
+        "Chinese draft falls back to English until a project owner completes human review.",
+      ).length,
     ).toBeGreaterThan(0);
     expect(screen.getAllByText("Task Builder Preview").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Rewards & Eligibility").length).toBeGreaterThan(0);
@@ -183,7 +189,9 @@ describe("Campaign OS app shell", () => {
 
     expect(screen.getAllByText("活动构建器").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "草稿概览" })).toBeInTheDocument();
-    expect(screen.getByText("默认与回退：en-US。支持：en-US 和 zh-CN。")).toBeInTheDocument();
+    expect(
+      screen.getByText("默认与回退：en-US。支持：en-US、zh-CN 与 zh-TW 回退 readiness。"),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("草稿设置结合 AI 简报与结构化活动字段").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "任务模板库" })).toBeInTheDocument();
     expect(screen.getAllByText("连接钱包").length).toBeGreaterThan(0);

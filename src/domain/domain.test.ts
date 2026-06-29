@@ -124,13 +124,13 @@ describe("Campaign OS domain foundation", () => {
     const translationManager = createTranslationManagerReadModel(campaignDetail);
     const englishPanel = translationManager.panels.find((panel) => panel.locale === "en-US");
     const chinesePanel = translationManager.panels.find((panel) => panel.locale === "zh-CN");
+    const traditionalChinesePanel = translationManager.panels.find((panel) => panel.locale === "zh-TW");
 
     expect(translationManager.defaultLocale).toBe("en-US");
     expect(translationManager.fallbackLocale).toBe("en-US");
-    expect(translationManager.supportedLocales).toEqual(["en-US", "zh-CN"]);
-    expect(translationManager.supportedLocales).not.toContain("zh-TW");
+    expect(translationManager.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
     expect(translationManager.noAutoPublishNotice["en-US"]).toContain("cannot auto-publish");
-    expect(translationManager.compareReviewPrompt["en-US"]).toContain("Compare the zh-CN draft");
+    expect(translationManager.compareReviewPrompt["en-US"]).toContain("Compare Chinese locale drafts");
     expect(translationManager.localeItems).toEqual([
       expect.objectContaining({
         locale: "en-US",
@@ -148,6 +148,16 @@ describe("Campaign OS domain foundation", () => {
         isDefault: false,
         isFallback: false,
         status: "ai_draft",
+        publishState: "warning",
+        fallbackToEnglish: true,
+        humanReviewed: false,
+      }),
+      expect.objectContaining({
+        locale: "zh-TW",
+        role: "translation",
+        isDefault: false,
+        isFallback: false,
+        status: "empty",
         publishState: "warning",
         fallbackToEnglish: true,
         humanReviewed: false,
@@ -175,6 +185,16 @@ describe("Campaign OS domain foundation", () => {
     expect(chinesePanel?.nextAction["en-US"]).toBe(
       "AI generated translation cannot auto-publish before human review.",
     );
+    expect(traditionalChinesePanel).toMatchObject({
+      locale: "zh-TW",
+      sourceLocale: "en-US",
+      aiDraft: false,
+      fallbackToEnglish: true,
+      humanReviewed: false,
+      published: false,
+      publishState: "warning",
+    });
+    expect(traditionalChinesePanel?.nextAction["zh-TW"]).toContain("English fallback");
   });
 
   it("builds field-level translation comparison rows from English source and zh-CN draft", () => {
@@ -204,7 +224,11 @@ describe("Campaign OS domain foundation", () => {
     );
     expect(rowsById.rewardDisclaimer.targetValue).toContain("导出 winners 不等于发奖");
     expect(rowsById.rewardDisclaimer.reviewNote["en-US"]).toContain("falls back to English");
-    expect(JSON.stringify(translationManager)).not.toContain("zh-TW");
+    expect(translationManager.localeItems.find((item) => item.locale === "zh-TW")).toMatchObject({
+      status: "empty",
+      fallbackToEnglish: true,
+      publishState: "warning",
+    });
   });
 
   it("derives reward disclaimer review rows from translation state", () => {
@@ -219,6 +243,12 @@ describe("Campaign OS domain foundation", () => {
       }),
       expect.objectContaining({
         locale: "zh-CN",
+        reviewed: false,
+        fallbackToEnglish: true,
+        publishState: "warning",
+      }),
+      expect.objectContaining({
+        locale: "zh-TW",
         reviewed: false,
         fallbackToEnglish: true,
         publishState: "warning",
@@ -240,7 +270,7 @@ describe("Campaign OS domain foundation", () => {
     );
 
     expect(workbench.defaultLocale).toBe("en-US");
-    expect(workbench.supportedLocales).toEqual(["en-US", "zh-CN"]);
+    expect(workbench.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
     expect(workbench.summary).toMatchObject({
       totalArtifacts: 7,
       aiDrafts: 2,
@@ -454,7 +484,13 @@ describe("Campaign OS domain foundation", () => {
     expect(
       matrix.changeMatrix.find((row) => row.area["en-US"] === "Risk flags")?.boundary["en-US"],
     ).toContain("Risk detail stays off-chain");
-    expect(JSON.stringify(matrix)).not.toContain("zh-TW");
+    expect(matrix.summary.boundary["zh-TW"]).toContain("No ABI generation");
+    expect(
+      matrix.changeMatrix.find((row) => row.area["en-US"] === "Multilingual content"),
+    ).toMatchObject({
+      area: expect.objectContaining({ "zh-TW": "Multilingual content" }),
+      boundary: expect.objectContaining({ "zh-TW": expect.stringContaining("translated copy") }),
+    });
   });
 
   it("builds the delivery checklist readiness console with conservative v0.2 evidence", () => {
@@ -532,7 +568,11 @@ describe("Campaign OS domain foundation", () => {
         "qa-reward-disclaimer-blocker",
       ]),
     );
-    expect(JSON.stringify(readiness)).not.toContain("zh-TW");
+    expect(readiness.boundary["zh-TW"]).toContain("No live wallet SDK");
+    expect(itemsById["product-reward-disclaimer-locales"]).toMatchObject({
+      label: expect.objectContaining({ "zh-TW": expect.any(String) }),
+      nextAction: expect.objectContaining({ "zh-TW": expect.any(String) }),
+    });
   });
 
   it("labels AA and EOA wallet states", () => {
@@ -697,7 +737,7 @@ describe("Campaign OS domain foundation", () => {
 
     expect(readiness.ready).toBe(false);
     expect(readiness.blockers).toContain("Contract claim mode requires high-impact manual review.");
-    expect(readiness.warnings).toContain("Chinese content falls back to English until reviewed.");
+    expect(readiness.warnings).toContain("Chinese locale content falls back to English until reviewed.");
   });
 
   it("keeps export preview wallet and locale fields", () => {
@@ -775,7 +815,8 @@ describe("Campaign OS domain foundation", () => {
     );
     expect(status.rewardBoundary["en-US"]).toContain("Export winners does not distribute rewards");
     expect(status.fulfillmentOwner["en-US"]).toContain("campaign project");
-    expect(JSON.stringify(status)).not.toContain("zh-TW");
+    expect(status.rewardBoundary["zh-TW"]).toContain("Export winners does not distribute rewards");
+    expect(status.fulfillmentOwner["zh-TW"]).toContain("campaign project");
   });
 
   it("derives blocked user winners export status for missing required tasks", () => {
@@ -1215,7 +1256,8 @@ describe("Campaign OS domain foundation", () => {
     });
     expect(readModel.result.reason["en-US"]).toContain("cannot infer AA or EOA");
     expect(readModel.result.nextAction["en-US"]).toContain("Connect or verify");
-    expect(JSON.stringify(readModel)).not.toContain("zh-TW");
+    expect(readModel.result.reason["zh-TW"]).toContain("cannot infer AA or EOA");
+    expect(readModel.result.nextAction["zh-TW"]).toContain("Connect or verify");
   });
 
   it("derives deterministic leaderboard modes without rewarding raw referral farming", () => {
@@ -1258,7 +1300,9 @@ describe("Campaign OS domain foundation", () => {
     });
     expect(lowRisk.qualityPolicy["en-US"]).toContain("Risk flags are review inputs");
     expect(totalPoints.boundary["en-US"]).toContain("does not distribute rewards");
-    expect(JSON.stringify([totalPoints, onChain, referral, lowRisk])).not.toContain("zh-TW");
+    expect(referral.qualityPolicy["zh-TW"]).toContain("Only qualified invitees");
+    expect(lowRisk.summary["zh-TW"]).toContain("Low-risk verified ranks");
+    expect(totalPoints.boundary["zh-TW"]).toContain("does not distribute rewards");
   });
 
   it("derives pending and risk flagged eligibility states for seeded participants", () => {
@@ -1298,8 +1342,7 @@ describe("Campaign OS domain foundation", () => {
         expect.objectContaining({ label: "EOA" }),
       ]),
     );
-    expect(adminOps.localeSplit.map((row) => row.label)).toEqual(["en-US", "zh-CN"]);
-    expect(adminOps.localeSplit.map((row) => row.label)).not.toContain("zh-TW");
+    expect(adminOps.localeSplit.map((row) => row.label)).toEqual(["en-US", "zh-CN", "zh-TW"]);
     expect(adminOps.templateGovernance.summary.totalTemplates).toBe(taskTemplateLibrary.length);
     expect(adminOps.templateGovernance.rows.map((row) => row.category)).toEqual(
       expect.arrayContaining(["wallet", "bridge", "swap", "nft", "dao", "daipp", "social", "invite"]),
@@ -1361,7 +1404,8 @@ describe("Campaign OS domain foundation", () => {
       walletCompatibility: "EOA_ONLY",
       reviewSignals: expect.arrayContaining(["wallet_coverage", "localization_review"]),
     });
-    expect(JSON.stringify(adminOps.templateGovernance)).not.toContain("zh-TW");
+    expect(adminOps.templateGovernance.boundary["zh-TW"]).toContain("模板管理治理");
+    expect(daoTemplate?.localeReadiness["zh-TW"]).toBe("fallback");
   });
 
   it("keeps Admin/Ops risk and AI guidance human-reviewed", () => {
@@ -1508,8 +1552,11 @@ describe("Campaign OS domain foundation", () => {
       blockedRows: 0,
     });
     expect(decision.walletSplit.map((split) => split.label).sort()).toEqual(["AA", "EOA"]);
-    expect(decision.localeSplit.map((split) => split.label).sort()).toEqual(["en-US", "zh-CN"]);
-    expect(JSON.stringify(decision.localeSplit)).not.toContain("zh-TW");
+    expect(decision.localeSplit.map((split) => split.label).sort()).toEqual([
+      "en-US",
+      "zh-CN",
+      "zh-TW",
+    ]);
     expect(decision.dropOffPoint["en-US"]).toContain("Largest drop-off");
     expect(decision.evidenceCoverage["en-US"]).toContain("task evidence");
     expect(decision.boundary["en-US"]).toContain("exports verified records only");
