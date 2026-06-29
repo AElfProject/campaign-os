@@ -14,6 +14,7 @@ import {
   type AiContentReleaseActionState,
   type ApiSkillContractReadiness,
   type CampaignShellDetail,
+  type ExportReadinessState,
   type LocaleStatus,
   type PublishState,
   type SupportedLocale,
@@ -318,6 +319,9 @@ const serviceFieldGroupLabel = (group: string) => {
 
 const readableCode = (value: string) => value.replace(/_/g, " ");
 
+const exportReadinessBadgeState = (readiness: ExportReadinessState) =>
+  readiness === "blocked" ? "blocker" : readiness === "review_required" ? "warning" : "ready";
+
 const pipelineSeededCoverageState = (status: VerificationSeededCoverageStatus) =>
   status === "ready" ? "ready" : "blocker";
 
@@ -499,6 +503,12 @@ export const ProjectConsole = ({
   });
   const verificationPipeline = verificationPipelineResult.ok
     ? verificationPipelineResult.payload
+    : undefined;
+  const exportReadinessResult = localService.getExportConfirmationReadiness({
+    campaignId: campaign.id,
+  });
+  const exportReadiness = exportReadinessResult.ok
+    ? exportReadinessResult.payload
     : undefined;
   const verificationCoverage = createVerificationCoverageSummary(
     campaign.tasks,
@@ -1290,6 +1300,204 @@ export const ProjectConsole = ({
         <p style={boundaryStyle}>{getLocalizedText(exportDecision.boundary, locale)}</p>
         <p style={boundaryStyle}>{getLocalizedText(commandCenter.boundary, locale)}</p>
       </section>
+
+      {exportReadiness && (
+        <section aria-label={copy.exportConfirmationReadiness} style={panelStyle}>
+          <div style={headingRowStyle}>
+            <div>
+              <p style={statLabelStyle}>{copy.exportConfirmationReadinessEyebrow}</p>
+              <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                {copy.exportConfirmationReadiness}
+              </h3>
+              <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                {copy.exportConfirmationReadinessSubtitle}
+              </p>
+            </div>
+            <PublishStateBadge
+              label={`${exportReadiness.summary.requiredAcknowledgements}/${exportReadiness.summary.acknowledgedItems} ${copy.exportAcknowledgements}`}
+              state={
+                exportReadiness.summary.requiredAcknowledgements === exportReadiness.summary.acknowledgedItems
+                  ? "ready"
+                  : "warning"
+              }
+            />
+          </div>
+
+          <div aria-label={copy.exportConfirmationSummary} style={gridStyle}>
+            {[
+              {
+                detail: `${copy.exportPreviewModes}: ${exportReadiness.summary.previewModeCount}`,
+                label: copy.readyRows,
+                state: "ready" as const,
+                value: String(exportReadiness.summary.readyRows),
+              },
+              {
+                detail: copy.exportRowReasonCoverage,
+                label: copy.reviewRequiredRows,
+                state: "warning" as const,
+                value: String(exportReadiness.summary.reviewRequiredRows),
+              },
+              {
+                detail: copy.exportRootClaimBlocked,
+                label: copy.blockedRows,
+                state: exportReadiness.summary.blockedRows > 0 ? "blocker" as const : "ready" as const,
+                value: String(exportReadiness.summary.blockedRows),
+              },
+              {
+                detail: `${exportReadiness.summary.totalRows} ${copy.exportTotalRows}`,
+                label: copy.exportAcknowledgements,
+                state: "ready" as const,
+                value: String(exportReadiness.summary.requiredAcknowledgements),
+              },
+            ].map((stat) => (
+              <article key={stat.label} style={cardStyle}>
+                <p style={statLabelStyle}>{stat.label}</p>
+                <p style={statValueStyle}>{stat.value}</p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                  {stat.detail}
+                </p>
+                <PublishStateBadge label={stat.state === "ready" ? copy.apiSkillReadinessReady : stat.state === "warning" ? copy.apiSkillReadinessReviewRequired : copy.apiSkillReadinessBlocked} state={stat.state} />
+              </article>
+            ))}
+          </div>
+
+          <div style={sectionGridStyle}>
+            <article style={{ ...workflowStyle, minHeight: 0 }}>
+              <h4 style={{ fontSize: 18, margin: 0 }}>{copy.exportPreviewModes}</h4>
+              <div style={gridStyle}>
+                {exportReadiness.previewModes.map((mode) => (
+                  <article key={mode.mode} style={{ ...cardStyle, minHeight: 0 }}>
+                    <div style={headingRowStyle}>
+                      <h5 style={{ fontSize: 16, lineHeight: 1.2, margin: 0 }}>
+                        {getLocalizedText(mode.label, locale)}
+                      </h5>
+                      <PublishStateBadge
+                        label={mode.generatesFile ? copy.exportRealFile : copy.exportLocalPreviewOnly}
+                        state={mode.generatesFile ? "blocker" : "ready"}
+                      />
+                    </div>
+                    <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                      {getLocalizedText(mode.boundary, locale)}
+                    </p>
+                    <p style={statLabelStyle}>{copy.exportIncludedFields}</p>
+                    <ul style={compactListStyle}>
+                      {mode.includedFields.map((field) => (
+                        <li key={`${mode.mode}-${field}`} style={chipStyle}>
+                          {field}
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+                ))}
+              </div>
+            </article>
+
+            <article style={{ ...workflowStyle, minHeight: 0 }}>
+              <h4 style={{ fontSize: 18, margin: 0 }}>{copy.exportRequiredFields}</h4>
+              <div style={gridStyle}>
+                <div>
+                  <p style={statLabelStyle}>{copy.exportCoveredFields}</p>
+                  <p style={{ ...statValueStyle, fontSize: 20 }}>
+                    {exportReadiness.fieldCoverage.presentFields.length}/{exportReadiness.fieldCoverage.requiredFields.length}
+                  </p>
+                </div>
+                <div>
+                  <p style={statLabelStyle}>{copy.exportMissingFields}</p>
+                  <PublishStateBadge
+                    label={exportReadiness.fieldCoverage.missingFields.length === 0 ? copy.verificationPipelineNone : String(exportReadiness.fieldCoverage.missingFields.length)}
+                    state={exportReadiness.fieldCoverage.coverageReady ? "ready" : "blocker"}
+                  />
+                </div>
+              </div>
+              <ul style={compactListStyle}>
+                {exportReadiness.fieldCoverage.requiredFields.map((field) => (
+                  <li key={field} style={chipStyle}>
+                    {field}
+                  </li>
+                ))}
+              </ul>
+            </article>
+          </div>
+
+          <div style={sectionGridStyle}>
+            <article style={{ ...workflowStyle, minHeight: 0 }}>
+              <h4 style={{ fontSize: 18, margin: 0 }}>{copy.exportRowReasonCoverage}</h4>
+              {exportReadiness.rowStatusCoverage.map((reason) => (
+                <div key={reason.reasonCode} style={listItemStyle}>
+                  <span style={{ minWidth: 0 }}>
+                    <strong>{getLocalizedText(reason.label, locale)}</strong>
+                    <span style={{ color: "#475569", display: "block", fontSize: 13, lineHeight: 1.4 }}>
+                      {getLocalizedText(reason.nextAction, locale)}
+                    </span>
+                  </span>
+                  <PublishStateBadge
+                    label={`${reason.affectedRows} ${readableCode(reason.rowStatus)}`}
+                    state={reason.rowStatus === "blocked" ? "blocker" : reason.rowStatus === "review_required" ? "warning" : "ready"}
+                  />
+                </div>
+              ))}
+            </article>
+
+            <article style={{ ...workflowStyle, minHeight: 0 }}>
+              <h4 style={{ fontSize: 18, margin: 0 }}>{copy.exportProjectAcknowledgements}</h4>
+              {exportReadiness.acknowledgements.map((acknowledgement) => (
+                <div key={acknowledgement.id} style={listItemStyle}>
+                  <span style={{ minWidth: 0 }}>
+                    <strong>{getLocalizedText(acknowledgement.label, locale)}</strong>
+                    <span style={{ color: "#475569", display: "block", fontSize: 13, lineHeight: 1.4 }}>
+                      {getLocalizedText(acknowledgement.description, locale)}
+                    </span>
+                  </span>
+                  <PublishStateBadge
+                    label={acknowledgement.acknowledged ? copy.approved : copy.open}
+                    state={acknowledgement.acknowledged ? "ready" : "warning"}
+                  />
+                </div>
+              ))}
+            </article>
+          </div>
+
+          <article style={{ ...workflowStyle, minHeight: 0 }}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.exportContractRootReadiness}</p>
+                <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                  {copy.exportRootClaimBlocked}
+                </h4>
+              </div>
+              <PublishStateBadge label={copy.exportSafeDefault} state="ready" />
+            </div>
+            <div style={sectionGridStyle}>
+              {exportReadiness.contractRootReadiness.map((rootMode) => (
+                <article key={rootMode.mode} style={{ ...cardStyle, minHeight: 0 }}>
+                  <div style={headingRowStyle}>
+                    <h5 style={{ fontSize: 16, lineHeight: 1.2, margin: 0 }}>
+                      {getLocalizedText(rootMode.label, locale)}
+                    </h5>
+                    <PublishStateBadge
+                      label={readableCode(rootMode.readiness)}
+                      state={exportReadinessBadgeState(rootMode.readiness)}
+                    />
+                  </div>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {rootMode.safeDefault ? copy.exportSafeDefault : getLocalizedText(rootMode.nextAction, locale)}
+                  </p>
+                  <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(rootMode.boundary, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </article>
+
+          <div style={boundaryStyle}>
+            <p style={{ margin: 0 }}>{getLocalizedText(exportReadiness.boundary, locale)}</p>
+            <p style={{ margin: "8px 0 0" }}>
+              {copy.verificationPipelineNextAction}: {getLocalizedText(exportReadiness.nextAction, locale)}
+            </p>
+          </div>
+        </section>
+      )}
 
       {serviceCoverage && (
         <section aria-label={copy.serviceFacade} style={panelStyle}>
