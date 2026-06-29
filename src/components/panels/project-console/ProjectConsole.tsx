@@ -5,6 +5,7 @@ import {
   createCampaignOsLocalService,
   campaignDetail,
   createProjectCampaignCommandCenter,
+  createVerificationCoverageSummary,
   getLocalizedText,
   seededCampaignDraft,
   type AiContentArtifactLifecycle,
@@ -389,6 +390,10 @@ export const ProjectConsole = ({
   const localService = createCampaignOsLocalService();
   const serviceCoverageResult = localService.getCoverageSummary();
   const serviceCoverage = serviceCoverageResult.ok ? serviceCoverageResult.payload : undefined;
+  const verificationCoverage = createVerificationCoverageSummary(
+    campaign.tasks,
+    campaign.participants,
+  );
   const commandCenter = createProjectCampaignCommandCenter(campaign);
   const exportDecision = commandCenter.analyticsExport;
   const aiContentPack = createAiContentPackWorkbench(campaign);
@@ -961,6 +966,45 @@ export const ProjectConsole = ({
 
           <div style={sectionGridStyle}>
             <article style={{ ...workflowStyle, minHeight: 0 }}>
+              <h4 style={{ fontSize: 18, margin: 0 }}>{copy.verificationCoverage}</h4>
+              <div style={gridStyle}>
+                <div>
+                  <p style={statLabelStyle}>{copy.verificationManualReview}</p>
+                  <p style={{ ...statValueStyle, fontSize: 18 }}>
+                    {verificationCoverage.manualReviewCount}
+                  </p>
+                </div>
+                <div>
+                  <p style={statLabelStyle}>{copy.verificationRiskStates}</p>
+                  <p style={{ ...statValueStyle, fontSize: 18 }}>
+                    {verificationCoverage.riskFlags.length}
+                  </p>
+                </div>
+              </div>
+              <p style={statLabelStyle}>{copy.verificationProviderReadiness}</p>
+              <ul style={compactListStyle}>
+                {Object.entries(verificationCoverage.providerReadinessCounts)
+                  .filter(([, count]) => count > 0)
+                  .map(([readiness, count]) => (
+                    <li key={readiness} style={chipStyle}>
+                      {count} {readableCode(readiness)}
+                    </li>
+                  ))}
+              </ul>
+              <p style={statLabelStyle}>{copy.verificationEvidenceCategories}</p>
+              <ul style={compactListStyle}>
+                {verificationCoverage.evidenceSources.map((source) => (
+                  <li key={source} style={chipStyle}>
+                    {source}
+                  </li>
+                ))}
+              </ul>
+              <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                {getLocalizedText(verificationCoverage.boundary, locale)}
+              </p>
+            </article>
+
+            <article style={{ ...workflowStyle, minHeight: 0 }}>
               <h4 style={{ fontSize: 18, margin: 0 }}>{copy.serviceCoveredApiGroups}</h4>
               <ul style={compactListStyle}>
                 {serviceCoverage.coveredApiGroups.map((group) => (
@@ -1012,6 +1056,9 @@ export const ProjectConsole = ({
             </p>
             <p style={{ color: "#475569", lineHeight: 1.5, margin: "8px 0 0" }}>
               {getLocalizedText(serviceCoverage.boundary, locale)}
+            </p>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: "8px 0 0" }}>
+              {getLocalizedText(serviceCoverage.verificationBoundary, locale)}
             </p>
           </div>
         </section>

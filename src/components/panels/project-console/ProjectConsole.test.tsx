@@ -130,8 +130,13 @@ describe("Project Console shell", () => {
     }
     expect(within(serviceFacade).getByText("generateI18nDraft")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("exportWinners")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Verification coverage")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Provider readiness")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Evidence categories")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("MANUAL_REVIEW")).toBeInTheDocument();
     expect(within(serviceFacade).getAllByText(/No live backend\/API, wallet signature, secret storage, real export file, reward distribution, or contract root write/).length).toBeGreaterThan(0);
     expect(within(serviceFacade).getByText(/No live API, wallet SDK, provider, secret storage/)).toBeInTheDocument();
+    expect(within(serviceFacade).getAllByText(/No live AeFinder, AelfScan, dApp API, social API, wallet SDK, reward distribution, export file, secret storage, or contract write/).length).toBeGreaterThan(0);
     expect(screen.getByText("Read-only contract registry for future agents and APIs.")).toBeInTheDocument();
     expect(screen.getByText("Total contracts")).toBeInTheDocument();
     expect(screen.getByText("create_campaign")).toBeInTheDocument();
@@ -140,7 +145,7 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText("walletAddress").length).toBeGreaterThan(0);
     expect(screen.getAllByText("accountType").length).toBeGreaterThan(0);
     expect(screen.getByText("contractRootMode")).toBeInTheDocument();
-    expect(screen.getAllByText("AEFINDER, AELFSCAN, DAPP_API, SOCIAL_API, MANUAL").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("LOCAL_SEEDED, AEFINDER, AELFSCAN, DAPP_API, SOCIAL_API, WALLET_SESSION, MANUAL").length).toBeGreaterThan(0);
     expect(screen.getByText(/does not call live APIs/i)).toBeInTheDocument();
     expect(screen.getAllByText("Task Builder Preview")).toHaveLength(2);
     expect(screen.getByText("Rewards & Eligibility")).toBeInTheDocument();
@@ -226,6 +231,9 @@ describe("Project Console shell", () => {
     }
     expect(within(serviceFacade).getByText("generateI18nDraft")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("exportWinners")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("验证覆盖")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Provider readiness")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("Evidence 分类")).toBeInTheDocument();
     expect(within(serviceFacade).getAllByText(/不会调用 live backend\/API、钱包签名、secret 存储、真实导出文件、奖励发放或合约 root 写入/).length).toBeGreaterThan(0);
     expect(screen.getByText("面向未来 agent 与 API 的只读 contract registry。")).toBeInTheDocument();
     expect(screen.getByText("Contract 总数")).toBeInTheDocument();

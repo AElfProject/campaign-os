@@ -1464,12 +1464,34 @@ export const UserAppPanel = ({
                     {copy.evidenceSource}: {state ? formatSource(state.evidenceSource) : "-"}
                   </span>
                   <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
+                    {copy.evidenceCategory}: {state?.canonicalEvidenceSource ?? "-"}
+                  </span>
+                  <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
                     {copy.pointsAwarded}: {state?.pointsAwarded ?? 0}/{state?.pointsAvailable ?? task.points}
                   </span>
                   <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
-                    Risk: {task.riskLevel}
+                    {copy.providerReadiness}: {state ? formatSource(state.provider.readiness) : "-"}
+                  </span>
+                  <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
+                    {copy.riskFlags}: {state?.riskFlags.join(", ") || copy.riskClear}
                   </span>
                 </div>
+                <p style={{ color: state?.provider.fallbackReason ? "#92400e" : "#475569", fontSize: 13, fontWeight: state?.provider.fallbackReason ? 800 : 700, lineHeight: 1.45, margin: 0 }}>
+                  {copy.fallbackReason}:{" "}
+                  {state?.provider.fallbackReason
+                    ? getLocalizedText(state.provider.fallbackReason, locale)
+                    : copy.noProviderFallback}
+                </p>
+                <p style={{ color: state?.manualReview.queued ? "#92400e" : "#475569", fontSize: 13, fontWeight: state?.manualReview.queued ? 800 : 700, lineHeight: 1.45, margin: 0 }}>
+                  {copy.manualReview}:{" "}
+                  {state?.manualReview.queued
+                    ? `${state.manualReview.queueId ?? copy.manualReview} · ${
+                        state.manualReview.reason
+                          ? getLocalizedText(state.manualReview.reason, locale)
+                          : copy.manualReview
+                      }`
+                    : copy.noManualReview}
+                </p>
                 <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
                   {copy.nextAction}: {state ? getLocalizedText(state.nextAction, locale) : "-"}
                 </p>

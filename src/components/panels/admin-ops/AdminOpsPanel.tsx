@@ -3,6 +3,7 @@ import {
   campaignDetail,
   computePublishReadiness,
   createAdminOpsReadModel,
+  createParticipationReadModel,
   getLocalizedText,
   type CampaignShellDetail,
   type ContractInterfaceReadiness,
@@ -202,6 +203,13 @@ const aiContentGateState = (status: AiContentQualityGateStatus) =>
 
 const readableCode = (value: string) => value.replace(/_/g, " ");
 
+const providerReadinessState = (readiness: string) =>
+  readiness === "blocked"
+    ? "blocker"
+    : readiness === "review_required" || readiness === "unavailable"
+      ? "warning"
+      : "ready";
+
 const templateGovernanceState = (status: TemplateGovernanceStatus) =>
   status === "blocked" ? "blocker" : status === "warning" ? "warning" : "ready";
 
@@ -276,6 +284,28 @@ export const AdminOpsPanel = ({
   const contractReviewCenter = adminOps.contractReviewCenter;
   const contractInterfaceMatrix = adminOps.contractInterfaceMatrix;
   const columnContract = adminOps.exportBatch.columns.join(",");
+  const verificationRows = campaign.participants.flatMap((participant) =>
+    createParticipationReadModel(campaign, participant).taskStates.map((state) => ({
+      participant,
+      state,
+    })),
+  );
+  const verificationProviderReadinessCounts = verificationRows.reduce<Record<string, number>>(
+    (counts, row) => {
+      counts[row.state.provider.readiness] = (counts[row.state.provider.readiness] ?? 0) + 1;
+      return counts;
+    },
+    {},
+  );
+  const verificationManualReviewRows = verificationRows.filter((row) => row.state.manualReview.queued);
+  const verificationRiskRows = verificationRows.filter((row) => row.state.riskFlags.length > 0);
+  const verificationActionRows = verificationRows.filter(
+    (row) =>
+      row.state.status !== "completed" ||
+      row.state.manualReview.queued ||
+      row.state.riskFlags.length > 0 ||
+      row.state.provider.readiness !== "local_only",
+  );
   const warningCount = campaign.publishReadiness.warnings.length;
   const blockerCount = contractClaimReadiness.blockers.length;
   const contractReviewSummary = [
@@ -358,6 +388,94 @@ export const AdminOpsPanel = ({
               </p>
               <p style={mutedTextStyle}>
                 {copy.owner}: {item.ownerRole}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={`${copy.taskEvidence} ${copy.reviewQueue}`} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.taskEvidence}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.humanReviewGate}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <PublishStateBadge
+              label={`${verificationManualReviewRows.length} ${copy.humanReviewRequired}`}
+              state={verificationManualReviewRows.length > 0 ? "warning" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${verificationRiskRows.length} ${copy.riskFlags}`}
+              state={verificationRiskRows.length > 0 ? "warning" : "ready"}
+            />
+          </span>
+        </div>
+        <p style={boundaryStyle}>{copy.seededLocalReadinessBoundary}</p>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.humanReviewRequired}</p>
+            <p style={valueStyle}>{verificationManualReviewRows.length}</p>
+            <p style={mutedTextStyle}>{copy.needsReview}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.riskFlags}</p>
+            <p style={valueStyle}>{verificationRiskRows.length}</p>
+            <p style={mutedTextStyle}>{copy.riskEligibilityBoundary}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.evidenceStatus}</p>
+            <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {Object.entries(verificationProviderReadinessCounts).map(([readiness, count]) => (
+                <PublishStateBadge
+                  key={readiness}
+                  label={`${count} ${readableCode(readiness)}`}
+                  state={providerReadinessState(readiness)}
+                />
+              ))}
+            </span>
+          </article>
+        </div>
+        <div style={gridStyle}>
+          {verificationActionRows.slice(0, 6).map(({ participant, state }) => (
+            <article key={`${participant.walletAddress}-${state.taskId}`} style={cardStyle}>
+              <div style={rowStyle}>
+                <strong>{state.templateCode}</strong>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge
+                    label={readableCode(state.status)}
+                    state={state.status === "failed" ? "blocker" : state.status === "completed" ? "ready" : "warning"}
+                  />
+                  <PublishStateBadge
+                    label={readableCode(state.provider.readiness)}
+                    state={providerReadinessState(state.provider.readiness)}
+                  />
+                </span>
+              </div>
+              <p style={mutedTextStyle}>
+                {copy.wallet}: {participant.walletAddress}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.evidenceSource}: {getLocalizedText(state.evidence.sourceLabel, locale)} · {state.evidence.evidenceHash}
+              </p>
+              {state.provider.fallbackReason ? (
+                <p style={mutedTextStyle}>
+                  {copy.detail}: {getLocalizedText(state.provider.fallbackReason, locale)}
+                </p>
+              ) : null}
+              {state.manualReview.queued ? (
+                <p style={mutedTextStyle}>
+                  {copy.humanReviewRequired}: {state.manualReview.queueId} ·{" "}
+                  {state.manualReview.reason ? getLocalizedText(state.manualReview.reason, locale) : copy.needsReview}
+                </p>
+              ) : null}
+              <p style={mutedTextStyle}>
+                {copy.riskFlags}: {state.riskFlags.join(", ") || "-"}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.nextAction}: {getLocalizedText(state.nextAction, locale)}
               </p>
             </article>
           ))}

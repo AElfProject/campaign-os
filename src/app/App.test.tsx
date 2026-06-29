@@ -197,6 +197,10 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("heading", { name: "Wallet session status" })).toBeInTheDocument();
     expect(screen.getAllByText("Eligibility checker").length).toBeGreaterThan(0);
     expect(screen.getByText("Task verification states")).toBeInTheDocument();
+    expect(screen.getAllByText(/Provider readiness/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Fallback reason/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/review-task-agent-review-3E9/)).toBeInTheDocument();
+    expect(screen.getAllByText(/queued for manual review/).length).toBeGreaterThan(0);
     expect(screen.getByText("Referral context")).toBeInTheDocument();
     expect(screen.getByText("Leaderboard preview")).toBeInTheDocument();
     expect(screen.getByText("Qualified invitees")).toBeInTheDocument();
@@ -204,6 +208,10 @@ describe("Campaign OS app shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
 
+    expect(screen.getByRole("heading", { name: "Human review gate" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Task evidence Review queue")).toBeInTheDocument();
+    expect(screen.getAllByText(/review-task-agent-review-3E9/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/review required/).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Template Governance" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "AI Content Pack Workbench" })).toBeInTheDocument();
     expect(screen.getAllByText("Publish blocked").length).toBeGreaterThan(0);
@@ -247,7 +255,7 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByText("AI Ops reports")).toBeInTheDocument();
     expect(screen.getByText("Ecosystem metrics")).toBeInTheDocument();
     expect(screen.getByText("Export batch: export-awaken-sprint-preview")).toBeInTheDocument();
-    expect(screen.getByText(/demo-task-bridge-3E9/)).toBeInTheDocument();
+    expect(screen.getAllByText(/demo-task-bridge-3E9/).length).toBeGreaterThan(0);
     expect(screen.queryByText("zh-TW")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Project Console" }));
