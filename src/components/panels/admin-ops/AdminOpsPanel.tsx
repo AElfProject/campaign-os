@@ -1254,7 +1254,6 @@ export const AdminOpsPanel = ({
       <section style={panelStyle}>
         <div style={rowStyle}>
           <div style={stackStyle}>
-            <p style={labelStyle}>{copy.aiOpsReports}</p>
             <h3 style={{ fontSize: 20, margin: 0 }}>{copy.aiOptimizationActionQueue}</h3>
           </div>
           <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
