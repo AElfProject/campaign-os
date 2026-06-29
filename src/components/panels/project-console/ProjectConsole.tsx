@@ -17,6 +17,10 @@ import {
   type LocaleStatus,
   type PublishState,
   type SupportedLocale,
+  type VerificationLiveEvidenceStatus,
+  type VerificationProviderReadiness,
+  type VerificationReleaseImpact,
+  type VerificationSeededCoverageStatus,
 } from "../../../domain";
 import {
   Badge,
@@ -314,6 +318,33 @@ const serviceFieldGroupLabel = (group: string) => {
 
 const readableCode = (value: string) => value.replace(/_/g, " ");
 
+const pipelineSeededCoverageState = (status: VerificationSeededCoverageStatus) =>
+  status === "ready" ? "ready" : "blocker";
+
+const pipelineLiveEvidenceState = (status: VerificationLiveEvidenceStatus) => {
+  if (status === "blocked") {
+    return "blocker";
+  }
+
+  return status === "ready" ? "ready" : "warning";
+};
+
+const pipelineProviderState = (readiness: VerificationProviderReadiness) => {
+  if (readiness === "blocked" || readiness === "unavailable") {
+    return "blocker";
+  }
+
+  return readiness === "ready" ? "ready" : "warning";
+};
+
+const pipelineReleaseImpactState = (impact: VerificationReleaseImpact) => {
+  if (impact === "blocker") {
+    return "blocker";
+  }
+
+  return impact === "needs_review" ? "warning" : "ready";
+};
+
 const publishStateBadgeState = (state: PublishState) =>
   state === "blocker" ? "blocker" : state === "warning" ? "warning" : "ready";
 
@@ -463,6 +494,12 @@ export const ProjectConsole = ({
   const localService = createCampaignOsLocalService();
   const serviceCoverageResult = localService.getCoverageSummary();
   const serviceCoverage = serviceCoverageResult.ok ? serviceCoverageResult.payload : undefined;
+  const verificationPipelineResult = localService.getVerificationPipelineReadiness({
+    campaignId: campaign.id,
+  });
+  const verificationPipeline = verificationPipelineResult.ok
+    ? verificationPipelineResult.payload
+    : undefined;
   const verificationCoverage = createVerificationCoverageSummary(
     campaign.tasks,
     campaign.participants,
@@ -1344,6 +1381,208 @@ export const ProjectConsole = ({
                 {getLocalizedText(verificationCoverage.boundary, locale)}
               </p>
             </article>
+
+            {verificationPipeline && (
+              <article
+                aria-label={copy.verificationPipelineReadiness}
+                style={{ ...workflowStyle, gridColumn: "1 / -1", minHeight: 0 }}
+              >
+                <div style={headingRowStyle}>
+                  <div>
+                    <p style={statLabelStyle}>{copy.verificationProviderReadiness}</p>
+                    <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                      {copy.verificationPipelineReadiness}
+                    </h4>
+                    <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                      {copy.verificationPipelineReadinessSubtitle}
+                    </p>
+                  </div>
+                  <PublishStateBadge
+                    label={`${verificationPipeline.summary.missingLiveEvidencePaths} ${copy.verificationPipelineMissingLiveEvidence}`}
+                    state={verificationPipeline.summary.blockedPaths > 0 ? "blocker" : "warning"}
+                  />
+                </div>
+
+                <div style={gridStyle}>
+                  {[
+                    {
+                      detail: `${verificationPipeline.summary.seededReadyPaths} ${copy.verificationPipelineSeededReady}`,
+                      label: copy.verificationPipelineTotalPaths,
+                      value: String(verificationPipeline.summary.totalPaths),
+                    },
+                    {
+                      detail: `${verificationPipeline.summary.seededReadyPaths}/${verificationPipeline.summary.totalPaths}`,
+                      label: copy.verificationPipelineSeededCoverage,
+                      value: String(verificationPipeline.summary.seededReadyPaths),
+                    },
+                    {
+                      detail: `${verificationPipeline.summary.missingLiveEvidencePaths} ${copy.verificationPipelineMissingLiveEvidence}`,
+                      label: copy.verificationPipelineLiveEvidence,
+                      value: String(verificationPipeline.summary.liveEvidenceReadyPaths),
+                    },
+                    {
+                      detail: `${verificationPipeline.summary.manualReviewPaths} ${copy.verificationPipelineManualReviewPaths}`,
+                      label: copy.verificationPipelineBlockedPaths,
+                      value: String(verificationPipeline.summary.blockedPaths),
+                    },
+                  ].map((stat) => (
+                    <article key={stat.label} style={{ ...cardStyle, minHeight: 0 }}>
+                      <p style={statLabelStyle}>{stat.label}</p>
+                      <p style={{ ...statValueStyle, fontSize: 20 }}>{stat.value}</p>
+                      <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                        {stat.detail}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+
+                <div style={sectionGridStyle}>
+                  <article style={{ ...cardStyle, minHeight: 0 }}>
+                    <h5 style={{ fontSize: 16, margin: 0 }}>
+                      {copy.verificationPipelineTaskOutcomeCoverage}
+                    </h5>
+                    <div style={gridStyle}>
+                      {[
+                        {
+                          label: copy.verificationPipelineCompleted,
+                          state: "ready" as const,
+                          value: verificationPipeline.taskOutcomeCoverage.completedCount,
+                        },
+                        {
+                          label: copy.verificationPipelinePending,
+                          state: "warning" as const,
+                          value: verificationPipeline.taskOutcomeCoverage.pendingCount,
+                        },
+                        {
+                          label: copy.verificationPipelineFailed,
+                          state: verificationPipeline.taskOutcomeCoverage.failedCount > 0
+                            ? "blocker" as const
+                            : "ready" as const,
+                          value: verificationPipeline.taskOutcomeCoverage.failedCount,
+                        },
+                        {
+                          label: copy.verificationManualReview,
+                          state: "warning" as const,
+                          value: verificationPipeline.taskOutcomeCoverage.manualReviewCount,
+                        },
+                      ].map(({ label, state, value }) => (
+                        <div key={label}>
+                          <p style={statLabelStyle}>{label}</p>
+                          <PublishStateBadge label={String(value)} state={state} />
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+
+                  <article style={{ ...cardStyle, minHeight: 0 }}>
+                    <h5 style={{ fontSize: 16, margin: 0 }}>
+                      {copy.verificationPipelineEligibilityImpact}
+                    </h5>
+                    <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                      {getLocalizedText(verificationPipeline.eligibilityImpact.summary, locale)}
+                    </p>
+                    <div>
+                      <p style={statLabelStyle}>{copy.verificationPipelineMissingRequiredTasks}</p>
+                      <ul style={compactListStyle}>
+                        {(verificationPipeline.eligibilityImpact.missingRequiredTasks.length > 0
+                          ? verificationPipeline.eligibilityImpact.missingRequiredTasks
+                          : [copy.verificationPipelineNone]
+                        ).map((task) => (
+                          <li key={task} style={chipStyle}>
+                            {task}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <p style={statLabelStyle}>{copy.verificationPipelineReferralQualification}</p>
+                      <PublishStateBadge
+                        label={readableCode(verificationPipeline.eligibilityImpact.referralQualificationStatus)}
+                        state={
+                          verificationPipeline.eligibilityImpact.referralQualificationStatus === "qualified"
+                            ? "ready"
+                            : "warning"
+                        }
+                      />
+                    </div>
+                    <div>
+                      <p style={statLabelStyle}>{copy.verificationPipelineRiskFlags}</p>
+                      <ul style={compactListStyle}>
+                        {(verificationPipeline.eligibilityImpact.riskFlags.length > 0
+                          ? verificationPipeline.eligibilityImpact.riskFlags
+                          : [copy.verificationPipelineNone]
+                        ).map((riskFlag) => (
+                          <li key={riskFlag} style={chipStyle}>
+                            {riskFlag}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </article>
+                </div>
+
+                <div style={sectionGridStyle}>
+                  {verificationPipeline.paths.map((path) => (
+                    <article key={path.id} style={{ ...cardStyle, minHeight: 0 }}>
+                      <div style={headingRowStyle}>
+                        <div style={{ minWidth: 0 }}>
+                          <p style={statLabelStyle}>{path.evidenceSource}</p>
+                          <h5 style={{ fontSize: 16, lineHeight: 1.2, margin: "4px 0" }}>
+                            {getLocalizedText(path.label, locale)}
+                          </h5>
+                        </div>
+                        <PublishStateBadge
+                          label={readableCode(path.releaseImpact)}
+                          state={pipelineReleaseImpactState(path.releaseImpact)}
+                        />
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        <PublishStateBadge
+                          label={`${copy.verificationPipelineSeededCoverage}: ${readableCode(path.seededCoverageStatus)}`}
+                          state={pipelineSeededCoverageState(path.seededCoverageStatus)}
+                        />
+                        <PublishStateBadge
+                          label={`${copy.verificationPipelineLiveEvidence}: ${readableCode(path.liveEvidenceStatus)}`}
+                          state={pipelineLiveEvidenceState(path.liveEvidenceStatus)}
+                        />
+                        <PublishStateBadge
+                          label={`${copy.verificationProviderReadiness}: ${readableCode(path.providerReadiness)}`}
+                          state={pipelineProviderState(path.providerReadiness)}
+                        />
+                      </div>
+                      <div>
+                        <p style={statLabelStyle}>{copy.verificationPipelineAffectedOutcomes}</p>
+                        <ul style={compactListStyle}>
+                          {path.affectedOutcomes.map((outcome) => (
+                            <li key={`${path.id}-${outcome}`} style={chipStyle}>
+                              {readableCode(outcome)}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                        <strong>{copy.verificationPipelineEligibilityImpact}: </strong>
+                        {getLocalizedText(path.eligibilityImpact, locale)}
+                      </p>
+                      <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                        <strong>{copy.verificationPipelineFallbackReason}: </strong>
+                        {getLocalizedText(path.fallbackReason, locale)}
+                      </p>
+                      <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                        {copy.verificationPipelineNextAction}: {getLocalizedText(path.nextAction, locale)}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+
+                <div style={boundaryStyle}>
+                  <p style={{ margin: 0 }}>{getLocalizedText(verificationPipeline.boundary, locale)}</p>
+                  <p style={{ margin: "8px 0 0" }}>
+                    {copy.verificationPipelineNextAction}: {getLocalizedText(verificationPipeline.nextAction, locale)}
+                  </p>
+                </div>
+              </article>
+            )}
 
             <article style={{ ...workflowStyle, minHeight: 0 }}>
               <h4 style={{ fontSize: 18, margin: 0 }}>{copy.serviceCoveredApiGroups}</h4>

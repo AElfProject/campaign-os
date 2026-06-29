@@ -18,6 +18,7 @@ import {
   createCampaignShareCardReadiness,
   createTranslationManagerReadModel,
   createLocaleAnalyticsReadiness,
+  createVerificationPipelineReadinessGate,
   createWalletConnectionDiagnostics,
   createWalletProviderQaReadinessGate,
   deriveEligibilityWalletStatus,
@@ -1197,6 +1198,67 @@ describe("Campaign OS domain foundation", () => {
     expect(summary.totalTasks).toBe(5);
     expect(summary.totalTaskStates).toBe(20);
     expect(elapsedMs).toBeLessThan(100);
+  });
+
+  it("creates a verification pipeline readiness gate without live provider claims", () => {
+    const gate = createVerificationPipelineReadinessGate(campaignDetail);
+    const repeatedGate = createVerificationPipelineReadinessGate(campaignDetail);
+    const pathsById = Object.fromEntries(gate.paths.map((path) => [path.id, path]));
+
+    expect(gate).toEqual(repeatedGate);
+    expect(gate.paths.map((path) => path.id)).toEqual([
+      "aefinder-on-chain",
+      "aelfscan-on-chain",
+      "dapp-api",
+      "social-api",
+      "wallet-session",
+      "manual-review",
+      "referral-qualification",
+    ]);
+    expect(gate.summary).toMatchObject({
+      blockedPaths: 1,
+      liveEvidenceReadyPaths: 0,
+      manualReviewPaths: 1,
+      missingLiveEvidencePaths: 5,
+      seededReadyPaths: 7,
+      totalPaths: 7,
+    });
+    expect(gate.taskOutcomeCoverage).toMatchObject({
+      completedCount: 10,
+      failedCount: 1,
+      manualReviewCount: 3,
+      pendingCount: 6,
+    });
+    expect(gate.eligibilityImpact).toMatchObject({
+      missingRequiredTasks: ["bridge_ebridge"],
+      referralQualificationStatus: "needs_verified_invitee",
+      riskFlags: expect.arrayContaining(["manual_review_queue", "referral_velocity_review"]),
+    });
+    expect(pathsById["aefinder-on-chain"]).toMatchObject({
+      affectedOutcomes: expect.arrayContaining(["points", "eligibility", "release"]),
+      evidenceSource: "AEFINDER",
+      liveEvidenceStatus: "missing",
+      seededCoverageStatus: "ready",
+    });
+    expect(pathsById["social-api"]).toMatchObject({
+      liveEvidenceStatus: "blocked",
+      providerReadiness: "blocked",
+      releaseImpact: "blocker",
+    });
+    expect(pathsById["manual-review"]).toMatchObject({
+      liveEvidenceStatus: "not_applicable",
+      providerReadiness: "review_required",
+      releaseImpact: "needs_review",
+    });
+    expect(pathsById["referral-qualification"].eligibilityImpact["en-US"]).toContain(
+      "qualified invitees",
+    );
+    expect(gate.boundary["en-US"]).toContain("No live AeFinder");
+    expect(gate.boundary["zh-CN"]).toContain("不会执行实时 AeFinder");
+    expect(gate.boundary["zh-TW"]).toContain("No live AeFinder");
+    expect(JSON.stringify(gate).toLowerCase()).not.toContain("bearer ");
+    expect(JSON.stringify(gate).toLowerCase()).not.toContain("private key");
+    expect(JSON.stringify(gate)).not.toContain("downloadUrl");
   });
 
   it("creates a participation read model with actionable eligibility and referral rules", () => {

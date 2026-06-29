@@ -387,6 +387,12 @@ describe("Campaign OS local API service facade", () => {
 
   it("summarizes service coverage across API and field groups", () => {
     const coverage = service.getCoverageSummary();
+    const pipeline = service.getVerificationPipelineReadiness({
+      campaignId: campaignDetail.id,
+    });
+    const missingPipeline = service.getVerificationPipelineReadiness({
+      campaignId: "missing-campaign",
+    });
 
     expect(coverage.payload).toMatchObject({
       blockedCount: 0,
@@ -411,12 +417,49 @@ describe("Campaign OS local API service facade", () => {
         "content",
         "risk",
       ]),
-      totalServices: 10,
+      totalServices: 11,
     });
     expect(coverage.payload?.sampleResponseIds).toEqual(
-      expect.arrayContaining(["createWalletSession", "verifyTask", "checkEligibility", "exportWinners"]),
+      expect.arrayContaining([
+        "createWalletSession",
+        "verifyTask",
+        "checkEligibility",
+        "getVerificationPipelineReadiness",
+        "exportWinners",
+      ]),
     );
     expect(coverage.payload?.verificationBoundary["en-US"]).toContain("No live AeFinder");
+    expect(pipeline.payload).toMatchObject({
+      summary: expect.objectContaining({
+        totalPaths: 7,
+        liveEvidenceReadyPaths: 0,
+      }),
+      taskOutcomeCoverage: expect.objectContaining({
+        completedCount: 10,
+        failedCount: 1,
+        manualReviewCount: 3,
+        pendingCount: 6,
+      }),
+      eligibilityImpact: expect.objectContaining({
+        missingRequiredTasks: ["bridge_ebridge"],
+        referralQualificationStatus: "needs_verified_invitee",
+      }),
+    });
+    expect(pipeline.payload?.paths.map((path) => path.id)).toEqual([
+      "aefinder-on-chain",
+      "aelfscan-on-chain",
+      "dapp-api",
+      "social-api",
+      "wallet-session",
+      "manual-review",
+      "referral-qualification",
+    ]);
+    expect(JSON.stringify(pipeline.payload)).not.toContain("contractRoot");
+    expect(JSON.stringify(pipeline.payload)).not.toContain("downloadUrl");
+    expect(missingPipeline).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "CAMPAIGN_NOT_FOUND", field: "campaignId" }),
+    });
     expect(serviceBoundary["en-US"]).toContain("No live API");
   });
 });
