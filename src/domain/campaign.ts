@@ -1,5 +1,13 @@
 import type {
   AdminOpsReadModel,
+  AiOptimizationAction,
+  AiOptimizationActionStatus,
+  AiOptimizationMetricTone,
+  AiOptimizationOwnerRole,
+  AiOptimizationReportCategory,
+  AiOptimizationReportGroup,
+  AiOptimizationSourceMetric,
+  AiOptimizationWorkflow,
   AiContentArtifact,
   AiContentArtifactDraft,
   AiContentArtifactLifecycle,
@@ -168,6 +176,15 @@ const noAutoPublishNotice: LocalizedText = {
   "en-US": "AI generated translation cannot auto-publish before human review.",
   "zh-CN": "AI 生成翻译必须经过人工审核后才能发布。",
   "zh-TW": "AI generated translation cannot auto-publish before human review.",
+};
+
+const aiOptimizationBoundary: LocalizedText = {
+  "en-US":
+    "Seeded/local AI optimization workflow only. No live AI provider, analytics SDK, risk scoring, export file, wallet action, contract transaction, reward custody, or reward distribution is executed.",
+  "zh-CN":
+    "仅 seeded/本地 AI 优化工作流。不会执行实时 AI、分析 SDK、风险评分、导出文件、钱包动作、合约交易、奖励托管或发奖。",
+  "zh-TW":
+    "Seeded/local AI optimization workflow only. No live AI provider, analytics SDK, risk scoring, export file, wallet action, contract transaction, reward custody, or reward distribution is executed.",
 };
 
 const compareReviewPrompt: LocalizedText = {
@@ -2283,17 +2300,354 @@ const createAnalyticsExportDecision = (
   };
 };
 
+const aiOptimizationCategoryByReportId: Record<string, AiOptimizationReportCategory> = {
+  "boss-report": "boss_report",
+  "bot-pattern": "bot_pattern",
+  "daily-summary": "analytics_summary",
+  optimization: "optimization",
+  "user-quality": "user_quality",
+  "winner-report": "winner_report",
+};
+
+const aiOptimizationOwnerByCategory: Record<AiOptimizationReportCategory, AiOptimizationOwnerRole> = {
+  analytics_summary: "internal_operator",
+  boss_report: "growth_lead",
+  bot_pattern: "risk_reviewer",
+  optimization: "project_owner",
+  user_quality: "growth_lead",
+  winner_report: "risk_reviewer",
+};
+
+const aiOptimizationCategoryFallbackTitle: Record<AiOptimizationReportCategory, LocalizedText> = {
+  analytics_summary: {
+    "en-US": "AI analytics summary",
+    "zh-CN": "AI 分析摘要",
+    "zh-TW": "AI analytics summary",
+  },
+  boss_report: {
+    "en-US": "AI boss report",
+    "zh-CN": "AI Boss 报告",
+    "zh-TW": "AI boss report",
+  },
+  bot_pattern: {
+    "en-US": "AI bot pattern summary",
+    "zh-CN": "AI 机器人模式摘要",
+    "zh-TW": "AI bot pattern summary",
+  },
+  optimization: {
+    "en-US": "AI optimization",
+    "zh-CN": "AI 优化建议",
+    "zh-TW": "AI optimization",
+  },
+  user_quality: {
+    "en-US": "AI user quality summary",
+    "zh-CN": "AI 用户质量摘要",
+    "zh-TW": "AI user quality summary",
+  },
+  winner_report: {
+    "en-US": "AI winner report",
+    "zh-CN": "AI winner 报告",
+    "zh-TW": "AI winner report",
+  },
+};
+
+const createAiOptimizationStatus = (
+  recommendation: Pick<AiOptimizationAction, "requiresHumanReview" | "riskLevel">,
+  category: AiOptimizationReportCategory,
+): AiOptimizationActionStatus => {
+  if (recommendation.riskLevel === "high" || category === "bot_pattern") {
+    return "blocked";
+  }
+
+  if (recommendation.requiresHumanReview || category === "winner_report") {
+    return "review_required";
+  }
+
+  return "ready_to_review";
+};
+
+const createAiOptimizationGuardrail = (category: AiOptimizationReportCategory): LocalizedText => {
+  if (category === "winner_report") {
+    return exportRiskBoundary;
+  }
+
+  if (category === "bot_pattern") {
+    return {
+      "en-US": "Risk signals are review inputs; Campaign OS does not automatically ban, exclude, export, or distribute rewards.",
+      "zh-CN": "风险信号仅作为审核输入；Campaign OS 不会自动封禁、剔除、导出或发奖。",
+      "zh-TW": "Risk signals are review inputs; Campaign OS does not automatically ban, exclude, export, or distribute rewards.",
+    };
+  }
+
+  if (category === "optimization") {
+    return {
+      "en-US": "Optimization suggestions require operator/project review before any campaign rule changes.",
+      "zh-CN": "优化建议在修改活动规则前需要运营/项目方审核。",
+      "zh-TW": "Optimization suggestions require operator/project review before any campaign rule changes.",
+    };
+  }
+
+  return aiOptimizationBoundary;
+};
+
+const metricText = (enUS: string, zhCN: string): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": enUS,
+});
+
+const sourceMetric = (
+  id: string,
+  label: LocalizedText,
+  value: string,
+  tone: AiOptimizationMetricTone,
+): AiOptimizationSourceMetric => ({
+  id,
+  label,
+  value,
+  tone,
+});
+
+const createAiOptimizationSourceMetrics = (
+  category: AiOptimizationReportCategory,
+  campaign: CampaignShellDetail,
+  exportBatch: ExportBatchSummary,
+  analytics: AnalyticsKpi[],
+): AiOptimizationSourceMetric[] => {
+  const analyticsById = Object.fromEntries(analytics.map((kpi) => [kpi.id, kpi]));
+  const riskSignal = campaign.riskSignals.find((signal) => signal.severity === "high") ??
+    campaign.riskSignals[0];
+  const walletSplit = createWalletSplit(campaign.participants);
+  const aaWallets = String(walletSplit.find((split) => split.label === "AA")?.count ?? 0);
+  const eoaWallets = String(walletSplit.find((split) => split.label === "EOA")?.count ?? 0);
+  const reviewRows = exportBatch.rows.filter((row) => row.rowStatus !== "ready").length;
+
+  switch (category) {
+    case "analytics_summary":
+      return [
+        sourceMetric(
+          "drop-off",
+          metricText("Main drop-off", "主要流失点"),
+          createDropOffPoint(campaign.conversionFunnel)["en-US"],
+          "warning",
+        ),
+        sourceMetric(
+          "verified-actions",
+          analyticsById["verified-actions"]?.label ?? metricText("Verified actions", "有效行为"),
+          analyticsById["verified-actions"]?.value ?? "0",
+          "good",
+        ),
+      ];
+    case "user_quality":
+      return [
+        sourceMetric("aa-wallets", metricText("AA wallets", "AA 钱包"), aaWallets, "good"),
+        sourceMetric("eoa-wallets", metricText("EOA wallets", "EOA 钱包"), eoaWallets, "good"),
+      ];
+    case "bot_pattern":
+      return [
+        sourceMetric(
+          "risk-signal",
+          riskSignal?.label ?? metricText("Risk signal", "风险信号"),
+          riskSignal?.value ?? "0",
+          "risk",
+        ),
+      ];
+    case "winner_report":
+      return [
+        sourceMetric(
+          "export-ready",
+          metricText("Export ready rows", "导出就绪行"),
+          `${exportBatch.readyCount}/${exportBatch.rows.length}`,
+          reviewRows > 0 ? "warning" : "good",
+        ),
+        sourceMetric(
+          "review-rows",
+          metricText("Rows needing review", "需审核行"),
+          String(reviewRows),
+          reviewRows > 0 ? "warning" : "good",
+        ),
+      ];
+    case "boss_report":
+      return [
+        sourceMetric(
+          "participants",
+          analyticsById.participants?.label ?? metricText("Participants", "参与者"),
+          analyticsById.participants?.value ?? String(campaign.participants.length),
+          "good",
+        ),
+        sourceMetric(
+          "risk-rate",
+          analyticsById["risk-rate"]?.label ?? metricText("Risk rate", "风险比例"),
+          analyticsById["risk-rate"]?.value ?? "0%",
+          "warning",
+        ),
+      ];
+    case "optimization":
+      return [
+        sourceMetric(
+          "referral-conversion",
+          analyticsById["referral-conversion"]?.label ?? metricText("Referral conversion", "邀请转化"),
+          analyticsById["referral-conversion"]?.value ?? "0%",
+          "warning",
+        ),
+      ];
+  }
+};
+
+const createAiOptimizationEvidence = (
+  reportSummary: LocalizedText,
+  metrics: AiOptimizationSourceMetric[],
+): LocalizedText => {
+  const firstMetric = metrics[0];
+
+  return {
+    "en-US": `${reportSummary["en-US"]} Evidence: ${firstMetric.label["en-US"]} = ${firstMetric.value}.`,
+    "zh-CN": `${reportSummary["zh-CN"]} 证据：${firstMetric.label["zh-CN"]} = ${firstMetric.value}。`,
+    "zh-TW": `${reportSummary["zh-TW"]} Evidence: ${firstMetric.label["en-US"]} = ${firstMetric.value}.`,
+  };
+};
+
+const createAiOptimizationNextAction = (
+  category: AiOptimizationReportCategory,
+  status: AiOptimizationActionStatus,
+): LocalizedText => {
+  if (status === "blocked") {
+    return {
+      "en-US": "Complete human risk/export review before this recommendation can move forward.",
+      "zh-CN": "先完成人工风险/导出审核，再推进该建议。",
+      "zh-TW": "Complete human risk/export review before this recommendation can move forward.",
+    };
+  }
+
+  if (status === "review_required") {
+    return {
+      "en-US": "Route to the accountable reviewer before changing campaign rules or export decisions.",
+      "zh-CN": "修改活动规则或导出决定前，先交由对应审核人处理。",
+      "zh-TW": "Route to the accountable reviewer before changing campaign rules or export decisions.",
+    };
+  }
+
+  if (category === "optimization") {
+    return {
+      "en-US": "Review with the project owner and keep qualified on-chain actions as the quality anchor.",
+      "zh-CN": "与项目方审核，并继续把合格链上行为作为质量锚点。",
+      "zh-TW": "Review with the project owner and keep qualified on-chain actions as the quality anchor.",
+    };
+  }
+
+  return {
+    "en-US": "Operator can review this recommendation as a local optimization input.",
+    "zh-CN": "运营可将该建议作为本地优化输入进行审核。",
+    "zh-TW": "Operator can review this recommendation as a local optimization input.",
+  };
+};
+
+export const createAiOptimizationWorkflow = (
+  campaign: CampaignShellDetail,
+): AiOptimizationWorkflow => {
+  const exportBatch = createExportBatch(campaign);
+  const analytics = createAnalytics(campaign, exportBatch);
+  const reports = campaign.aiOpsReports.map<AiOptimizationReportGroup>((report) => {
+    const category = aiOptimizationCategoryByReportId[report.id] ?? "optimization";
+
+    return {
+      id: report.id,
+      category,
+      title: report.title ?? aiOptimizationCategoryFallbackTitle[category],
+      summary: report.summary,
+      generatedAt: report.generatedAt,
+      actions: report.recommendations.map<AiOptimizationAction>((recommendation) => {
+        const status = createAiOptimizationStatus(recommendation, category);
+        const sourceMetrics = createAiOptimizationSourceMetrics(category, campaign, exportBatch, analytics);
+
+        return {
+          id: recommendation.id,
+          title: recommendation.title,
+          status,
+          ownerRole:
+            status === "blocked" || category === "winner_report"
+              ? "risk_reviewer"
+              : aiOptimizationOwnerByCategory[category],
+          evidence: createAiOptimizationEvidence(report.summary, sourceMetrics),
+          sourceMetrics,
+          expectedImpact: recommendation.expectedImpact,
+          confidence: recommendation.confidence,
+          riskLevel: recommendation.riskLevel,
+          guardrail: createAiOptimizationGuardrail(category),
+          nextAction: createAiOptimizationNextAction(category, status),
+          requiresHumanReview: recommendation.requiresHumanReview,
+        };
+      }),
+    };
+  });
+  const actions = reports.flatMap((report) => report.actions);
+  const readyCount = actions.filter((action) => action.status === "ready_to_review").length;
+  const reviewRequiredCount = actions.filter((action) => action.status === "review_required").length;
+  const blockedCount = actions.filter((action) => action.status === "blocked").length;
+  const topAction =
+    actions.find((action) => action.status === "ready_to_review" && action.ownerRole === "project_owner") ??
+    actions.find((action) => action.status === "ready_to_review") ??
+    actions[0];
+  const bossReport = reports.find((report) => report.category === "boss_report");
+  const summaryNextAction = blockedCount > 0
+    ? createAiOptimizationNextAction("bot_pattern", "blocked")
+    : topAction?.nextAction ?? {
+        "en-US": "Review seeded AI optimization actions.",
+        "zh-CN": "审核 seeded AI 优化动作。",
+        "zh-TW": "Review seeded AI optimization actions.",
+      };
+
+  return {
+    campaignId: campaign.id,
+    summary: {
+      totalActions: actions.length,
+      readyCount,
+      reviewRequiredCount,
+      blockedCount,
+      topActionId: topAction?.id ?? "",
+      bossSummary: bossReport?.summary ?? {
+        "en-US": "AI boss report is not available in the seeded workflow.",
+        "zh-CN": "Seeded 工作流中暂无 AI Boss 报告。",
+        "zh-TW": "AI boss report is not available in the seeded workflow.",
+      },
+      nextAction: summaryNextAction,
+    },
+    reports,
+    projectOwnerSummary: {
+      title: {
+        "en-US": "AI Optimization summary",
+        "zh-CN": "AI 优化摘要",
+        "zh-TW": "AI Optimization summary",
+      },
+      summary: {
+        "en-US":
+          "AI optimization highlights project-owner actions while hiding internal risk mechanics.",
+        "zh-CN": "AI 优化聚焦项目方可处理动作，并隐藏内部风险细节。",
+        "zh-TW":
+          "AI optimization highlights project-owner actions while hiding internal risk mechanics.",
+      },
+      recommendedAction: topAction?.title ?? aiOptimizationCategoryFallbackTitle.optimization,
+      nextAction: topAction?.nextAction ?? summaryNextAction,
+      boundary: aiOptimizationBoundary,
+      hiddenInternalRiskDetail: true,
+    },
+    boundary: aiOptimizationBoundary,
+  };
+};
+
 export const createProjectCampaignCommandCenter = (
   campaign: CampaignShellDetail,
 ): ProjectCampaignCommandCenter => {
   const exportBatch = createExportBatch(campaign);
   const campaigns = createSeededCampaignCommandItems(campaign, exportBatch);
   const analyticsExport = createAnalyticsExportDecision(campaign, exportBatch);
+  const aiOptimization = createAiOptimizationWorkflow(campaign);
 
   return {
     summary: createCommandSummary(campaigns, analyticsExport.readyRows),
     campaigns,
     analyticsExport,
+    aiOptimization,
     boundary: commandCenterBoundary,
   };
 };
@@ -4858,6 +5212,7 @@ export const createAdminOpsReadModel = (
   campaign: CampaignShellDetail,
 ): AdminOpsReadModel => {
   const exportBatch = createExportBatch(campaign);
+  const aiOptimization = createAiOptimizationWorkflow(campaign);
 
   return {
     campaignId: campaign.id,
@@ -4873,6 +5228,7 @@ export const createAdminOpsReadModel = (
     localeSplit: createLocaleSplit(campaign.participants),
     riskSignals: campaign.riskSignals,
     aiReports: campaign.aiOpsReports,
+    aiOptimization,
     ecosystemMetrics: campaign.ecosystemMetrics,
     exportBatch,
   };

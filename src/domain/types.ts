@@ -877,6 +877,7 @@ export interface ProjectCampaignCommandCenter {
   summary: CampaignCommandCenterSummary;
   campaigns: CampaignCommandItem[];
   analyticsExport: AnalyticsExportDecision;
+  aiOptimization: AiOptimizationWorkflow;
   boundary: LocalizedText;
 }
 
@@ -904,6 +905,84 @@ export interface AiOpsReportCard {
   summary: LocalizedText;
   generatedAt: string;
   recommendations: AiOpsRecommendation[];
+}
+
+export type AiOptimizationReportCategory =
+  | "analytics_summary"
+  | "user_quality"
+  | "bot_pattern"
+  | "winner_report"
+  | "boss_report"
+  | "optimization";
+export type AiOptimizationActionStatus =
+  | "ready_to_review"
+  | "review_required"
+  | "blocked"
+  | "adopted_preview";
+export type AiOptimizationOwnerRole =
+  | "project_owner"
+  | "internal_operator"
+  | "risk_reviewer"
+  | "content_reviewer"
+  | "growth_lead";
+export type AiOptimizationMetricTone = "good" | "warning" | "risk";
+
+export interface AiOptimizationSourceMetric {
+  id: string;
+  label: LocalizedText;
+  value: string;
+  tone: AiOptimizationMetricTone;
+}
+
+export interface AiOptimizationAction {
+  id: string;
+  title: LocalizedText;
+  status: AiOptimizationActionStatus;
+  ownerRole: AiOptimizationOwnerRole;
+  evidence: LocalizedText;
+  sourceMetrics: AiOptimizationSourceMetric[];
+  expectedImpact: LocalizedText;
+  confidence: AiConfidence;
+  riskLevel: Exclude<SignalSeverity, "blocked">;
+  guardrail: LocalizedText;
+  nextAction: LocalizedText;
+  requiresHumanReview: boolean;
+}
+
+export interface AiOptimizationReportGroup {
+  id: string;
+  category: AiOptimizationReportCategory;
+  title: LocalizedText;
+  summary: LocalizedText;
+  generatedAt: string;
+  actions: AiOptimizationAction[];
+}
+
+export interface AiOptimizationSummary {
+  totalActions: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  topActionId: string;
+  bossSummary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface ProjectOwnerAiOptimizationSummary {
+  title: LocalizedText;
+  summary: LocalizedText;
+  recommendedAction: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+  hiddenInternalRiskDetail: boolean;
+}
+
+export interface AiOptimizationWorkflow {
+  campaignId: string;
+  summary: AiOptimizationSummary;
+  reports: AiOptimizationReportGroup[];
+  projectOwnerSummary: ProjectOwnerAiOptimizationSummary;
+  boundary: LocalizedText;
 }
 
 export interface EcosystemMetricRow {
@@ -1104,6 +1183,7 @@ export interface AdminOpsReadModel {
   localeSplit: DimensionSplit[];
   riskSignals: RiskSignal[];
   aiReports: AiOpsReportCard[];
+  aiOptimization: AiOptimizationWorkflow;
   ecosystemMetrics: EcosystemMetricRow[];
   exportBatch: ExportBatchSummary;
 }
