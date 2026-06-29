@@ -14,7 +14,9 @@ import {
   createAdminOpsReadModel,
   createExportPreview,
   createParticipationReadModel,
+  createCampaignShareCardReadiness,
   createTranslationManagerReadModel,
+  createLocaleAnalyticsReadiness,
   createWalletConnectionDiagnostics,
   deriveEligibilityWalletStatus,
   deriveParticipantTaskStates,
@@ -28,6 +30,7 @@ import {
   isSupportedLocale,
   leaderboardModes,
   normalizeWalletSession,
+  parseCampaignRoutePath,
   resolveLocalePreference,
   shouldRecommendChineseLocale,
   supportedLocales,
@@ -79,6 +82,45 @@ describe("Campaign OS domain foundation", () => {
     expect(resolveLocalePreference({ storedLocale: "ko-KR" })).toEqual({
       locale: "en-US",
       source: "default",
+    });
+  });
+
+  it("parses localized campaign route paths without widening locale support", () => {
+    expect(parseCampaignRoutePath("/en-US/campaigns/awaken-sprint")).toMatchObject({
+      campaignId: "awaken-sprint",
+      canonicalPath: "/en-US/campaigns/awaken-sprint",
+      localeSource: "url",
+      matched: true,
+      unsupportedLocale: null,
+      urlLocale: "en-US",
+    });
+    expect(parseCampaignRoutePath("/zh-CN/campaigns/awaken-sprint?ref=abc")).toMatchObject({
+      campaignId: "awaken-sprint",
+      canonicalPath: "/zh-CN/campaigns/awaken-sprint",
+      localeSource: "url",
+      matched: true,
+      urlLocale: "zh-CN",
+    });
+    expect(parseCampaignRoutePath("/zh-TW/campaigns/awaken-sprint#share")).toMatchObject({
+      campaignId: "awaken-sprint",
+      canonicalPath: "/zh-TW/campaigns/awaken-sprint",
+      localeSource: "url",
+      matched: true,
+      urlLocale: "zh-TW",
+    });
+    expect(parseCampaignRoutePath("/ja-JP/campaigns/awaken-sprint")).toMatchObject({
+      campaignId: "awaken-sprint",
+      canonicalPath: "/en-US/campaigns/awaken-sprint",
+      localeSource: "fallback",
+      matched: false,
+      unsupportedLocale: "ja-JP",
+      urlLocale: null,
+    });
+    expect(parseCampaignRoutePath("/")).toMatchObject({
+      campaignId: "awaken-sprint",
+      canonicalPath: "/en-US/campaigns/awaken-sprint",
+      matched: false,
+      urlLocale: null,
     });
   });
 
@@ -1561,6 +1603,85 @@ describe("Campaign OS domain foundation", () => {
     expect(decision.evidenceCoverage["en-US"]).toContain("task evidence");
     expect(decision.boundary["en-US"]).toContain("exports verified records only");
     expect(decision.boundary["en-US"]).toContain("does not distribute rewards");
+  });
+
+  it("derives localized campaign share cards and metadata fields", () => {
+    const englishCard = createCampaignShareCardReadiness(campaignDetail, "en-US");
+    const chineseCard = createCampaignShareCardReadiness(campaignDetail, "zh-CN");
+    const traditionalCard = createCampaignShareCardReadiness(campaignDetail, "zh-TW");
+    const metadataByName = Object.fromEntries(
+      traditionalCard.metadataFields.map((field) => [field.name, field]),
+    );
+
+    expect(englishCard).toMatchObject({
+      canonicalUrl: "https://campaign.local/en-US/campaigns/awaken-sprint",
+      contentStatus: "published",
+      fallbackToEnglish: false,
+      readiness: "ready",
+      title: "Awaken Sprint",
+    });
+    expect(chineseCard).toMatchObject({
+      canonicalUrl: "https://campaign.local/zh-CN/campaigns/awaken-sprint",
+      contentStatus: "ai_draft",
+      fallbackToEnglish: true,
+      readiness: "warning",
+      title: "Awaken Sprint",
+    });
+    expect(traditionalCard).toMatchObject({
+      canonicalUrl: "https://campaign.local/zh-TW/campaigns/awaken-sprint",
+      contentStatus: "empty",
+      fallbackToEnglish: true,
+      readiness: "warning",
+      title: "Awaken Sprint",
+    });
+    expect(traditionalCard.alternateUrls).toEqual({
+      "en-US": "https://campaign.local/en-US/campaigns/awaken-sprint",
+      "zh-CN": "https://campaign.local/zh-CN/campaigns/awaken-sprint",
+      "zh-TW": "https://campaign.local/zh-TW/campaigns/awaken-sprint",
+    });
+    expect(metadataByName.title).toMatchObject({
+      content: "Awaken Sprint | aelf Campaign OS",
+      kind: "document-title",
+    });
+    expect(metadataByName["og:url"]).toMatchObject({
+      content: "https://campaign.local/zh-TW/campaigns/awaken-sprint",
+      kind: "meta-property",
+    });
+    expect(metadataByName["twitter:card"]).toMatchObject({
+      content: "summary_large_image",
+      kind: "meta-name",
+    });
+    expect(traditionalCard.fallbackNotice["en-US"]).toContain("English fallback");
+  });
+
+  it("derives seeded locale analytics readiness without live instrumentation", () => {
+    const rows = createLocaleAnalyticsReadiness(campaignDetail);
+    const rowsByKey = Object.fromEntries(
+      rows.map((row) => [`${row.metric}:${row.locale}`, row]),
+    );
+
+    expect(rows).toHaveLength(supportedLocales.length * 5);
+    for (const locale of supportedLocales) {
+      expect(rowsByKey[`campaign_views:${locale}`]).toMatchObject({
+        label: expect.objectContaining({ "en-US": "Campaign views" }),
+        readiness: "ready",
+      });
+      expect(rowsByKey[`wallet_connect_conversion:${locale}`]).toBeDefined();
+      expect(rowsByKey[`task_completion:${locale}`]).toBeDefined();
+      expect(rowsByKey[`referral_conversion:${locale}`]).toBeDefined();
+      expect(rowsByKey[`translation_fallback_rate:${locale}`]).toBeDefined();
+      expect(rowsByKey[`campaign_views:${locale}`].boundary["en-US"]).toContain(
+        "No live analytics SDK",
+      );
+    }
+    expect(rowsByKey["translation_fallback_rate:en-US"]).toMatchObject({
+      readiness: "ready",
+      value: "0%",
+    });
+    expect(rowsByKey["translation_fallback_rate:zh-TW"]).toMatchObject({
+      readiness: "warning",
+      value: "100%",
+    });
   });
 
   it("keeps wallet fixtures free of credential examples", () => {

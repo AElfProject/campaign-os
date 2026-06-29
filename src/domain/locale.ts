@@ -1,4 +1,4 @@
-import { supportedLocales, type SupportedLocale } from "./types";
+import { supportedLocales, type CampaignRouteContext, type SupportedLocale } from "./types";
 
 export const defaultLocale: SupportedLocale = "en-US";
 export const fallbackLocale: SupportedLocale = "en-US";
@@ -68,3 +68,44 @@ export const getLocalizedText = (
   text: Record<SupportedLocale, string>,
   locale: SupportedLocale,
 ) => text[locale] || text[fallbackLocale];
+
+const localeLikePattern = /^[a-z]{2}(?:-[A-Za-z]{2,4})?$/;
+
+const stripQueryAndHash = (path: string) => path.split(/[?#]/, 1)[0] || "/";
+
+const normalizePathSegments = (path: string) =>
+  stripQueryAndHash(path)
+    .split("/")
+    .map((segment) => decodeURIComponent(segment.trim()))
+    .filter(Boolean);
+
+export const createLocalizedCampaignPath = (
+  locale: SupportedLocale,
+  campaignId: string,
+) => `/${locale}/campaigns/${encodeURIComponent(campaignId)}`;
+
+export const parseCampaignRoutePath = (
+  path: string,
+  fallbackCampaignId = "awaken-sprint",
+): CampaignRouteContext => {
+  const segments = normalizePathSegments(path);
+  const [localeSegment, routeSegment, campaignIdSegment] = segments;
+  const matchedRoute = routeSegment === "campaigns" && Boolean(campaignIdSegment);
+  const urlLocale = localeSegment && isSupportedLocale(localeSegment) ? localeSegment : null;
+  const campaignId = matchedRoute ? campaignIdSegment : fallbackCampaignId;
+  const fallbackLocaleForPath = urlLocale ?? defaultLocale;
+  const unsupportedLocale =
+    localeSegment && !urlLocale && localeLikePattern.test(localeSegment)
+      ? localeSegment
+      : null;
+
+  return {
+    path: stripQueryAndHash(path),
+    campaignId,
+    urlLocale,
+    localeSource: urlLocale && matchedRoute ? "url" : "fallback",
+    matched: Boolean(urlLocale && matchedRoute),
+    unsupportedLocale,
+    canonicalPath: createLocalizedCampaignPath(fallbackLocaleForPath, campaignId),
+  };
+};

@@ -389,6 +389,56 @@ export interface ContentRevision {
   updatedAt: string;
 }
 
+export interface CampaignRouteContext {
+  path: string;
+  campaignId: string;
+  urlLocale: SupportedLocale | null;
+  localeSource: "url" | "fallback";
+  matched: boolean;
+  unsupportedLocale: string | null;
+  canonicalPath: string;
+}
+
+export type CampaignMetadataFieldKind = "document-title" | "meta-name" | "meta-property";
+
+export interface CampaignMetadataField {
+  name: string;
+  content: string;
+  kind: CampaignMetadataFieldKind;
+}
+
+export interface CampaignShareCardReadiness {
+  campaignId: string;
+  locale: SupportedLocale;
+  canonicalUrl: string;
+  alternateUrls: Record<SupportedLocale, string>;
+  title: string;
+  description: string;
+  image: string;
+  fallbackToEnglish: boolean;
+  contentStatus: ContentRevisionStatus;
+  readiness: PublishState;
+  fallbackNotice: LocalizedText;
+  metadataFields: CampaignMetadataField[];
+}
+
+export type LocaleAnalyticsMetric =
+  | "campaign_views"
+  | "wallet_connect_conversion"
+  | "task_completion"
+  | "referral_conversion"
+  | "translation_fallback_rate";
+
+export interface LocaleAnalyticsReadinessRow {
+  id: string;
+  locale: SupportedLocale;
+  metric: LocaleAnalyticsMetric;
+  label: LocalizedText;
+  value: string;
+  readiness: PublishState;
+  boundary: LocalizedText;
+}
+
 export interface AiContentActionPolicy {
   copy: AiContentReleaseActionState;
   edit: AiContentReleaseActionState;
