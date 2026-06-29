@@ -24,12 +24,27 @@ describe("API Skill Contract registry", () => {
     for (const contract of apiSkillContractRegistry) {
       expect(contract.title["en-US"]).toBeTruthy();
       expect(contract.title["zh-CN"]).toBeTruthy();
+      expect(contract.title["zh-TW"]).toBeTruthy();
       expect(contract.purpose["en-US"]).toBeTruthy();
       expect(contract.inputFields.length).toBeGreaterThan(0);
       expect(contract.outputFields.length).toBeGreaterThan(0);
       expect(contract.securityBoundary["en-US"]).toMatch(/No live|Verification contract|Export contract|Seeded\/local/);
       expect(contract.nextAction["zh-CN"]).toBeTruthy();
+      expect(contract.nextAction["zh-TW"]).toBeTruthy();
     }
+  });
+
+  it("documents exact MVP locale targets without widening to P1 locales", () => {
+    const createCampaignFields = contractsById.create_campaign.inputFields;
+    const postFields = contractsById.generate_campaign_posts.inputFields;
+    const supportedLocales = createCampaignFields.find((field) => field.name === "supportedLocales");
+    const targetLocales = postFields.find((field) => field.name === "targetLocales");
+
+    expect(supportedLocales?.description["en-US"]).toContain("en-US, zh-CN, and zh-TW");
+    expect(supportedLocales?.example).toBe("en-US,zh-CN,zh-TW");
+    expect(targetLocales?.description["en-US"]).toContain("zh-CN and zh-TW");
+    expect(targetLocales?.example).toBe("zh-CN,zh-TW");
+    expect(JSON.stringify([supportedLocales, targetLocales])).not.toContain("ja-JP");
   });
 
   it("covers v0.2 wallet, locale, contract, export, and evidence field groups", () => {

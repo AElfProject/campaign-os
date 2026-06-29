@@ -27,6 +27,7 @@ import {
   type ExportCsvColumn,
   type ExportPreviewRow,
   type LocalizedText,
+  type DimensionSplit,
   type NormalizedWalletSession,
   type ParticipantSnapshot,
   type PublishReadiness,
@@ -177,7 +178,7 @@ export interface GenerateI18nDraftResponse {
   humanReviewRequired: boolean;
   noAutoPublishNotice: LocalizedText;
   sourceLocale: "en-US";
-  targetLocale: "zh-CN";
+  targetLocale: Exclude<SupportedLocale, "en-US">;
 }
 
 export interface GetCampaignAnalyticsRequest {
@@ -265,16 +266,20 @@ export const serviceBoundary: LocalizedText = {
     "No live API, wallet SDK, provider, secret storage, real export file, reward distribution, contract call, or contract root write is executed. Responses are seeded/local read models only.",
   "zh-CN":
     "不会调用实时 API、钱包 SDK、provider、secret 存储、真实导出文件、奖励发放、合约调用或合约 root 写入。响应仅来自 seeded/本地 read model。",
+  "zh-TW":
+    "No live API, wallet SDK, provider, secret storage, real export file, reward distribution, contract call, or contract root write is executed. Responses are seeded/local read models only.",
 };
 
 const rewardBoundary: LocalizedText = {
   "en-US": "Rewards are provided by the campaign project. Export winners does not distribute rewards.",
   "zh-CN": "奖励由活动项目方提供。导出 winners 不等于发奖。",
+  "zh-TW": "Rewards are provided by the campaign project. Export winners does not distribute rewards.",
 };
 
 const noAutoPublishNotice: LocalizedText = {
   "en-US": "AI generated translation cannot auto-publish before human review.",
   "zh-CN": "AI 生成翻译必须经过人工审核后才能发布。",
+  "zh-TW": "AI generated translation cannot auto-publish before human review.",
 };
 
 const success = <T>(payload: T): LocalServiceResult<T> => ({
@@ -296,6 +301,7 @@ const failure = <T>(
     message: {
       "en-US": enUS,
       "zh-CN": zhCN,
+      "zh-TW": enUS,
     },
   },
   boundary: serviceBoundary,
@@ -307,6 +313,10 @@ const isSupportedServiceLocale = (locale: string): locale is SupportedLocale =>
 const hasOnlySupportedLocales = (locales: readonly string[]) =>
   locales.length === supportedLocales.length &&
   supportedLocales.every((locale) => locales.includes(locale));
+
+const isSupportedDraftTargetLocale = (
+  locale: SupportedLocale,
+): locale is Exclude<SupportedLocale, "en-US"> => locale !== "en-US" && isSupportedServiceLocale(locale);
 
 const findCampaign = (campaignId: string): CampaignShellDetail | undefined =>
   campaignDetail.id === campaignId ? campaignDetail : undefined;
@@ -329,6 +339,20 @@ const requiredMissingTemplateCodes = (
 const toVerificationStatus = (
   status: TaskVerificationStatus,
 ): Exclude<TaskVerificationStatus, "ready"> => (status === "ready" ? "pending" : status);
+
+const completeLocaleSplit = (
+  split: readonly DimensionSplit[],
+  locales: readonly SupportedLocale[],
+): DimensionSplit[] => {
+  const splitByLabel = new Map(split.map((row) => [row.label, row]));
+
+  return locales.map((locale) => splitByLabel.get(locale) ?? {
+    count: 0,
+    id: locale,
+    label: locale,
+    percentage: 0,
+  });
+};
 
 export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
   createWalletSession: (request) => {
@@ -357,8 +381,8 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       return failure(
         "UNSUPPORTED_LOCALE",
         "supportedLocales",
-        "Only en-US and zh-CN are supported by this local runtime.",
-        "当前本地运行时仅支持 en-US 与 zh-CN。",
+        "Only the exact MVP locale set en-US, zh-CN, and zh-TW is supported by this local runtime.",
+        "当前本地运行时仅支持完整 MVP 语言集合 en-US、zh-CN 与 zh-TW。",
       );
     }
 
@@ -539,18 +563,19 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
 
     if (
       request.sourceLocale !== "en-US" ||
-      request.targetLocale !== "zh-CN" ||
-      !isSupportedServiceLocale(request.targetLocale)
+      !isSupportedDraftTargetLocale(request.targetLocale)
     ) {
       return failure(
         "UNSUPPORTED_LOCALE",
         "targetLocale",
-        "Only en-US source and zh-CN target drafts are supported.",
-        "当前仅支持 en-US 源文案与 zh-CN 目标草稿。",
+        "Only en-US source and zh-CN or zh-TW target drafts are supported.",
+        "当前仅支持 en-US 源文案与 zh-CN 或 zh-TW 目标草稿。",
       );
     }
 
-    const targetPanel = createTranslationManagerReadModel(campaign).panels.find(
+    const translationManager = createTranslationManagerReadModel(campaign);
+    const sourcePanel = translationManager.panels.find((panel) => panel.locale === "en-US");
+    const targetPanel = translationManager.panels.find(
       (panel) => panel.locale === request.targetLocale,
     );
 
@@ -564,10 +589,10 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     }
 
     const sourceFields: Record<string, string> = {
-      description: targetPanel.description,
-      rewardDisclaimer: targetPanel.rewardDisclaimer,
-      socialPost: targetPanel.socialPost,
-      title: targetPanel.title,
+      description: targetPanel.description || sourcePanel?.description || "",
+      rewardDisclaimer: targetPanel.rewardDisclaimer || sourcePanel?.rewardDisclaimer || "",
+      socialPost: targetPanel.socialPost || sourcePanel?.socialPost || "",
+      title: targetPanel.title || sourcePanel?.title || "",
     };
 
     return success({
@@ -580,7 +605,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       humanReviewRequired: !targetPanel.humanReviewed,
       noAutoPublishNotice,
       sourceLocale: "en-US",
-      targetLocale: "zh-CN",
+      targetLocale: request.targetLocale,
     });
   },
 
@@ -596,7 +621,12 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       );
     }
 
-    return success(createProjectCampaignCommandCenter(campaign).analyticsExport);
+    const analyticsExport = createProjectCampaignCommandCenter(campaign).analyticsExport;
+
+    return success({
+      ...analyticsExport,
+      localeSplit: completeLocaleSplit(analyticsExport.localeSplit, campaign.supportedLocales),
+    });
   },
 
   generateCampaignPosts: (request) => {
@@ -618,8 +648,8 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       return failure(
         "UNSUPPORTED_LOCALE",
         "targetLocales",
-        "Campaign posts support en-US plus zh-CN only.",
-        "活动帖子仅支持 en-US 与 zh-CN。",
+        "Campaign posts support MVP target locales zh-CN and zh-TW only.",
+        "活动帖子仅支持 MVP 目标语言 zh-CN 与 zh-TW。",
       );
     }
 
@@ -653,7 +683,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
 
     return success({
       campaignId: campaign.id,
-      localeMetrics: commandCenter.analyticsExport.localeSplit,
+      localeMetrics: completeLocaleSplit(commandCenter.analyticsExport.localeSplit, campaign.supportedLocales),
       period: request.period,
       reportCards: adminOps.aiReports,
       riskSummary: adminOps.riskSignals,

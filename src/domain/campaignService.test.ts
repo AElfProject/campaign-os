@@ -104,7 +104,7 @@ describe("Campaign OS local API service facade", () => {
     const unsupportedLocale = service.createCampaign({
       projectId: "awaken",
       rewardDescription: "Rewards remain project owned.",
-      supportedLocales: ["en-US", "zh-CN", "zh-TW" as never],
+      supportedLocales: ["en-US", "zh-CN", "fr-FR" as never],
     });
     const invalidTask = service.addTask({
       campaignId: campaignDetail.id,
@@ -119,7 +119,7 @@ describe("Campaign OS local API service facade", () => {
     expect(campaign.payload).toMatchObject({
       contractMode: "OFF_CHAIN_MVP",
       defaultLocale: "en-US",
-      supportedLocales: ["en-US", "zh-CN"],
+      supportedLocales: ["en-US", "zh-CN", "zh-TW"],
       walletPolicy: "ANY",
     });
     expect(campaign.payload?.publishReadiness.ready).toBe(true);
@@ -272,29 +272,44 @@ describe("Campaign OS local API service facade", () => {
     });
   });
 
-  it("generates i18n drafts and rejects unsupported locales", () => {
-    const draft = service.generateI18nDraft({
+  it("generates i18n drafts for Chinese targets and rejects unsupported locales", () => {
+    const zhCnDraft = service.generateI18nDraft({
       campaignId: campaignDetail.id,
       contentKeys: ["title", "description", "rewardDisclaimer"],
       sourceLocale: "en-US",
       targetLocale: "zh-CN",
     });
+    const zhTwDraft = service.generateI18nDraft({
+      campaignId: campaignDetail.id,
+      contentKeys: ["title", "description", "rewardDisclaimer"],
+      sourceLocale: "en-US",
+      targetLocale: "zh-TW",
+    });
     const unsupported = service.generateI18nDraft({
       campaignId: campaignDetail.id,
       contentKeys: ["title"],
       sourceLocale: "en-US",
-      targetLocale: "zh-TW" as never,
+      targetLocale: "ja-JP" as never,
     });
 
-    expect(draft.payload).toMatchObject({
+    expect(zhCnDraft.payload).toMatchObject({
       aiDraft: true,
       fallbackToEnglish: true,
       humanReviewRequired: true,
       sourceLocale: "en-US",
       targetLocale: "zh-CN",
     });
-    expect(draft.payload?.draft.rewardDisclaimer).toContain("不等于发奖");
-    expect(draft.payload?.noAutoPublishNotice["en-US"]).toContain("cannot auto-publish");
+    expect(zhCnDraft.payload?.draft.rewardDisclaimer).toContain("不等于发奖");
+    expect(zhCnDraft.payload?.noAutoPublishNotice["en-US"]).toContain("cannot auto-publish");
+    expect(zhTwDraft.payload).toMatchObject({
+      aiDraft: false,
+      fallbackToEnglish: true,
+      humanReviewRequired: true,
+      sourceLocale: "en-US",
+      targetLocale: "zh-TW",
+    });
+    expect(zhTwDraft.payload?.draft.title).toBe("Awaken Sprint");
+    expect(zhTwDraft.payload?.noAutoPublishNotice["zh-TW"]).toContain("AI generated translation");
     expect(unsupported).toMatchObject({
       ok: false,
       error: expect.objectContaining({ code: "UNSUPPORTED_LOCALE", field: "targetLocale" }),
@@ -307,7 +322,7 @@ describe("Campaign OS local API service facade", () => {
       campaignId: campaignDetail.id,
       channel: "x",
       sourceLocale: "en-US",
-      targetLocales: ["zh-CN"],
+      targetLocales: ["zh-CN", "zh-TW"],
     });
     const summary = service.summarizeCampaign({ campaignId: campaignDetail.id, period: "daily" });
     const exportPreview = service.exportWinners({
@@ -328,10 +343,15 @@ describe("Campaign OS local API service facade", () => {
     });
 
     expect(analytics.payload?.walletSplit.map((split) => split.label).sort()).toEqual(["AA", "EOA"]);
-    expect(analytics.payload?.localeSplit.map((split) => split.label).sort()).toEqual(["en-US", "zh-CN"]);
-    expect(JSON.stringify(analytics.payload?.localeSplit)).not.toContain("zh-TW");
+    expect(analytics.payload?.localeSplit.map((split) => split.label).sort()).toEqual([
+      "en-US",
+      "zh-CN",
+      "zh-TW",
+    ]);
+    expect(JSON.stringify(analytics.payload?.localeSplit)).toContain("zh-TW");
     expect(posts.payload?.artifacts.length).toBeGreaterThan(0);
     expect(posts.payload?.humanReviewRequired).toBe(true);
+    expect(posts.payload?.noAutoPublishNotice["zh-TW"]).toContain("AI generated translation");
     expect(summary.payload).toMatchObject({
       campaignId: campaignDetail.id,
       localeMetrics: expect.any(Array),
