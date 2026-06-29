@@ -80,6 +80,11 @@ describe("Project Console shell", () => {
     expect(screen.getByLabelText("Translation Manager")).toBeInTheDocument();
     expect(screen.getAllByText("English source content").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Chinese AI draft").length).toBeGreaterThan(0);
+    const rewardReviewGate = screen.getByLabelText("Reward disclaimer review");
+    expect(within(rewardReviewGate).getByText("Review every localized reward disclaimer before publish.")).toBeInTheDocument();
+    expect(within(rewardReviewGate).getAllByText("Blocks publish").length).toBeGreaterThan(0);
+    expect(within(rewardReviewGate).getByText("Localized reward disclaimer is missing and blocks publish.")).toBeInTheDocument();
+    expect(within(rewardReviewGate).getAllByText("Rewards are provided by the campaign project. Export winners does not distribute rewards.").length).toBeGreaterThan(0);
     expect(
       screen.getAllByText("AI generated translation cannot auto-publish before human review.").length,
     ).toBeGreaterThan(0);

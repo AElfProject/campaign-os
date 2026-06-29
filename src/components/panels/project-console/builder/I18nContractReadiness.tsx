@@ -9,6 +9,7 @@ import {
   type ContractImpactReviewOption,
   type ContentRevisionStatus,
   type PublishState,
+  type RewardDisclaimerReviewRow,
   type ReviewSeverity,
   type SupportedLocale,
   type TranslationComparisonRow,
@@ -27,6 +28,7 @@ const copy = {
     aiCannotPublish: "AI generated translation cannot auto-publish before human review.",
     aiDraft: "AI draft",
     blockedHighImpact: "Blocked pending high-impact manual review",
+    blocksPublish: "Blocks publish",
     boundary: "Boundary",
     compareReview: "Compare with English",
     compareReviewPrompt: "Source and draft comparison",
@@ -45,10 +47,14 @@ const copy = {
     humanReview: "Human review",
     localeList: "Locale list",
     markReviewed: "Mark reviewed",
+    missing: "Missing",
     nextAction: "Next action",
     notPublished: "Not published",
+    ownerNextAction: "Owner next action",
     published: "Published",
     publishRevision: "Publish revision",
+    readyForPublish: "Ready for publish",
+    reviewGateSummary: "Review every localized reward disclaimer before publish.",
     reviewStatus: "Review status",
     reviewed: "Reviewed",
     rewardBoundary: "Reward boundary",
@@ -70,6 +76,7 @@ const copy = {
     aiCannotPublish: "AI 生成翻译必须经过人工审核后才能发布。",
     aiDraft: "AI 草稿",
     blockedHighImpact: "等待高影响人工审核，已阻断",
+    blocksPublish: "阻断发布",
     boundary: "边界",
     compareReview: "对照英文",
     compareReviewPrompt: "源内容与草稿对照",
@@ -88,10 +95,14 @@ const copy = {
     humanReview: "人工审核",
     localeList: "语言列表",
     markReviewed: "标记已审核",
+    missing: "缺失",
     nextAction: "下一步",
     notPublished: "未发布",
+    ownerNextAction: "项目方下一步",
     published: "已发布",
     publishRevision: "发布版本",
+    readyForPublish: "可发布",
+    reviewGateSummary: "发布前逐一审核每个语言的奖励免责声明。",
     reviewStatus: "审核状态",
     reviewed: "已审核",
     rewardBoundary: "奖励边界",
@@ -113,6 +124,7 @@ const copy = {
     aiCannotPublish: "AI 生成翻譯必須經過人工審核後才能發布。",
     aiDraft: "AI 草稿",
     blockedHighImpact: "等待高影響人工審核，已阻斷",
+    blocksPublish: "阻斷發布",
     boundary: "邊界",
     compareReview: "對照英文",
     compareReviewPrompt: "源內容與草稿對照",
@@ -131,10 +143,14 @@ const copy = {
     humanReview: "人工審核",
     localeList: "語言列表",
     markReviewed: "標記已審核",
+    missing: "缺失",
     nextAction: "下一步",
     notPublished: "未發布",
+    ownerNextAction: "專案方下一步",
     published: "已發布",
     publishRevision: "發布版本",
+    readyForPublish: "可發布",
+    reviewGateSummary: "發布前逐一審核每個語言的獎勵免責聲明。",
     reviewStatus: "審核狀態",
     reviewed: "已審核",
     rewardBoundary: "獎勵邊界",
@@ -281,9 +297,20 @@ const localeItemStyle: CSSProperties = {
   padding: 10,
 };
 
+const rewardDisclaimerRowStyle: CSSProperties = {
+  borderTop: "1px solid #dbe6f4",
+  display: "grid",
+  gap: 10,
+  gridTemplateColumns: "minmax(132px, 0.55fr) minmax(220px, 1fr) minmax(220px, 1fr)",
+  padding: "12px 0",
+};
+
 const mediaStyle = `
 @media (max-width: 720px) {
   [data-translation-compare-row] {
+    grid-template-columns: 1fr !important;
+  }
+  [data-reward-disclaimer-row] {
     grid-template-columns: 1fr !important;
   }
 }
@@ -343,6 +370,16 @@ const localeStatusFromItem = (item: TranslationLocaleItem) => {
   return item.status === "ai_draft" ? "ai_draft" : "missing";
 };
 
+const localeStatusFromRewardDisclaimer = (
+  row: RewardDisclaimerReviewRow,
+) => {
+  if (row.reviewState === "reviewed") {
+    return "reviewed";
+  }
+
+  return row.reviewState;
+};
+
 const modeGateLabel = (
   option: ContractImpactReviewOption,
   selectedMode: CampaignShellDetail["contractMode"],
@@ -361,6 +398,25 @@ const modeGateLabel = (
   }
 
   return labels.highImpactBlocker;
+};
+
+const rewardDisclaimerReviewStateLabel = (
+  row: RewardDisclaimerReviewRow,
+  labels: (typeof copy)[SupportedLocale],
+) => {
+  if (row.reviewState === "reviewed") {
+    return labels.reviewed;
+  }
+
+  if (row.reviewState === "ai_draft") {
+    return labels.aiDraft;
+  }
+
+  if (row.reviewState === "fallback") {
+    return labels.fallback;
+  }
+
+  return labels.missing;
 };
 
 const reviewActions = (labels: (typeof copy)[SupportedLocale]) => [
@@ -507,6 +563,68 @@ const TranslationCompareConsole = ({
   </article>
 );
 
+const RewardDisclaimerReviewGate = ({
+  labels,
+  locale,
+  rows,
+}: {
+  labels: (typeof copy)[SupportedLocale];
+  locale: SupportedLocale;
+  rows: RewardDisclaimerReviewRow[];
+}) => {
+  const blocksPublish = rows.some((row) => row.blocksPublish);
+  const boundary = rows[0]?.boundary;
+
+  return (
+    <article aria-label={labels.rewardDisclaimer} style={cardStyle}>
+      <div style={statStripStyle}>
+        <span>
+          <p style={labelStyle}>{labels.rewardDisclaimer}</p>
+          <p style={valueStyle}>{labels.reviewGateSummary}</p>
+        </span>
+        <PublishStateBadge
+          label={blocksPublish ? labels.blocksPublish : labels.readyForPublish}
+          state={blocksPublish ? "blocker" : "ready"}
+        />
+      </div>
+      <div style={listStyle}>
+        {rows.map((row) => (
+          <div data-reward-disclaimer-row key={row.locale} style={rewardDisclaimerRowStyle}>
+            <div>
+              <span style={badgeRowStyle}>
+                <PublishStateBadge label={row.locale} state={row.publishState} />
+                <LocaleStatusBadge
+                  label={rewardDisclaimerReviewStateLabel(row, labels)}
+                  status={localeStatusFromRewardDisclaimer(row)}
+                />
+                {row.fallbackToEnglish ? (
+                  <PublishStateBadge label={labels.fallback} state="warning" />
+                ) : null}
+              </span>
+            </div>
+            <div>
+              <p style={labelStyle}>{row.blocksPublish ? labels.blocksPublish : labels.readyForPublish}</p>
+              <p style={bodyStyle}>{row.disclaimer}</p>
+            </div>
+            <div>
+              <p style={labelStyle}>{labels.reviewStatus}</p>
+              <p style={bodyStyle}>{getLocalizedText(row.blockerReason, locale)}</p>
+              <p style={labelStyle}>{labels.ownerNextAction}</p>
+              <p style={bodyStyle}>{getLocalizedText(row.nextAction, locale)}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+      {boundary ? (
+        <>
+          <p style={labelStyle}>{labels.rewardBoundary}</p>
+          <p style={bodyStyle}>{getLocalizedText(boundary, locale)}</p>
+        </>
+      ) : null}
+    </article>
+  );
+};
+
 const ContractModeRow = ({
   labels,
   locale,
@@ -609,26 +727,11 @@ export const I18nContractReadiness = ({
         rows={translationManager.comparisonRows}
       />
 
-      <article aria-label={labels.rewardDisclaimer} style={cardStyle}>
-        <p style={labelStyle}>{labels.rewardDisclaimer}</p>
-        <div style={gridStyle}>
-          {translationManager.rewardDisclaimers.map((row) => (
-            <div key={row.locale} style={{ display: "grid", gap: 8 }}>
-              <span style={badgeRowStyle}>
-                <PublishStateBadge label={row.locale} state={row.publishState} />
-                <PublishStateBadge
-                  label={row.reviewed ? labels.reviewed : labels.aiDraft}
-                  state={row.publishState}
-                />
-                {row.fallbackToEnglish ? (
-                  <PublishStateBadge label={labels.fallback} state="warning" />
-                ) : null}
-              </span>
-              <p style={bodyStyle}>{row.disclaimer}</p>
-            </div>
-          ))}
-        </div>
-      </article>
+      <RewardDisclaimerReviewGate
+        labels={labels}
+        locale={locale}
+        rows={translationManager.rewardDisclaimers}
+      />
 
       <article aria-label={labels.contractReview} style={cardStyle}>
         <div style={statStripStyle}>
