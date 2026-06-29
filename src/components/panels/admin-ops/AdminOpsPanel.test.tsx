@@ -131,6 +131,28 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Risk dashboard");
     expectVisibleText("Bot/sybil review");
     expectVisibleText("AI Ops reports");
+    expect(screen.getByRole("heading", { name: "AI Optimization action queue" })).toBeInTheDocument();
+    const actionQueueSection = screen
+      .getByRole("heading", { name: "AI Optimization action queue" })
+      .closest("section");
+    expect(actionQueueSection).not.toBeNull();
+    expect(within(actionQueueSection as HTMLElement).getByText(/Total actions/)).toBeInTheDocument();
+    expect(within(actionQueueSection as HTMLElement).getByText(/Ready$/)).toBeInTheDocument();
+    expect(within(actionQueueSection as HTMLElement).getAllByText("Ready to review").length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText("Review required").length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText("Blocked").length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText("Owner role").length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText("Source metrics").length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText(/Guardrail:/).length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText(/Evidence:/).length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText(/Next action:/).length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText(/No live AI provider/).length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText(/risk scoring/).length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText(/export file/).length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText(/wallet action/).length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText(/contract transaction/).length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText(/reward custody/).length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getAllByText(/reward distribution/).length).toBeGreaterThan(0);
     expectVisibleText("Daily AI Ops summary");
     expectVisibleText("Human review required");
     expectVisibleText("Ecosystem metrics");
@@ -192,6 +214,27 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("风险看板");
     expectVisibleText("机器人/女巫审核");
     expectVisibleText("AI Ops 报告");
+    expect(screen.getByRole("heading", { name: "AI Optimization 动作队列" })).toBeInTheDocument();
+    const zhActionQueueSection = screen
+      .getByRole("heading", { name: "AI Optimization 动作队列" })
+      .closest("section");
+    expect(zhActionQueueSection).not.toBeNull();
+    expect(within(zhActionQueueSection as HTMLElement).getByText(/总动作/)).toBeInTheDocument();
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText("可审核").length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText("需要审核").length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText("已阻断").length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText("负责人角色").length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText("来源指标").length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText(/防护栏:/).length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText(/证据:/).length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText(/下一步:/).length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText(/不会执行实时 AI/).length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText(/风险评分/).length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText(/导出文件/).length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText(/钱包动作/).length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText(/合约交易/).length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText(/奖励托管/).length).toBeGreaterThan(0);
+    expect(within(zhActionQueueSection as HTMLElement).getAllByText(/发奖/).length).toBeGreaterThan(0);
     expectVisibleText("生态指标");
     expectVisibleText("禁止自动发布：中文草稿发布前必须经过人工审核。");
     expect(screen.getByRole("heading", { name: "模板治理" })).toBeInTheDocument();
