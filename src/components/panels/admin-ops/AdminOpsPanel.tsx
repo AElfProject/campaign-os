@@ -19,6 +19,9 @@ import {
   type SupportedLocale,
   type TemplateGovernanceSignal,
   type TemplateGovernanceStatus,
+  type WalletProviderQaLiveEvidenceStatus,
+  type WalletProviderQaReleaseImpact,
+  type WalletProviderQaSeededStatus,
 } from "../../../domain";
 import {
   Badge,
@@ -305,6 +308,48 @@ const deliveryChecklistStatusLabel = (
   };
 
   return labels[status];
+};
+
+const walletProviderQaSeededState = (status: WalletProviderQaSeededStatus) =>
+  status === "ready" ? "ready" : "warning";
+
+const walletProviderQaLiveState = (status: WalletProviderQaLiveEvidenceStatus) =>
+  status === "ready" ? "ready" : status === "blocked" ? "blocker" : "warning";
+
+const walletProviderQaImpactState = (impact: WalletProviderQaReleaseImpact) =>
+  impact === "release_blocker" ? "blocker" : impact === "ready" ? "ready" : "warning";
+
+const walletProviderQaSeededLabel = (
+  status: WalletProviderQaSeededStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => (status === "ready" ? copy.seededReady : copy.missing);
+
+const walletProviderQaLiveLabel = (
+  status: WalletProviderQaLiveEvidenceStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<WalletProviderQaLiveEvidenceStatus, string> = {
+    blocked: copy.blocked,
+    missing: copy.missing,
+    not_applicable: copy.notApplicable,
+    ready: copy.liveEvidenceReady,
+  };
+
+  return labels[status];
+};
+
+const walletProviderQaImpactLabel = (
+  impact: WalletProviderQaReleaseImpact,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<WalletProviderQaReleaseImpact, string> = {
+    informational: copy.informational,
+    needs_review: copy.needsReview,
+    ready: copy.readyToReview,
+    release_blocker: copy.releaseBlocker,
+  };
+
+  return labels[impact];
 };
 
 const walletCompatibilityLabel = (
@@ -688,6 +733,116 @@ export const AdminOpsPanel = ({
                   </div>
                 ))}
               </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section
+        aria-label={copy.walletProviderQaReadiness}
+        style={panelStyle}
+      >
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.walletProviderQaSubtitle}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.walletProviderQaReadiness}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${adminOps.walletProviderQaGate.summary.totalScenarios} ${copy.totalScenarios}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${adminOps.walletProviderQaGate.summary.missingLiveEvidenceScenarios} ${copy.missingLiveEvidence}`}
+              state={
+                adminOps.walletProviderQaGate.summary.missingLiveEvidenceScenarios > 0
+                  ? "warning"
+                  : "ready"
+              }
+            />
+            <PublishStateBadge
+              label={`${adminOps.walletProviderQaGate.summary.releaseBlockers} ${copy.releaseBlockers}`}
+              state={
+                adminOps.walletProviderQaGate.summary.releaseBlockers > 0 ? "blocker" : "ready"
+              }
+            />
+          </span>
+        </div>
+        <p style={boundaryStyle}>{getLocalizedText(adminOps.walletProviderQaGate.boundary, locale)}</p>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.totalScenarios}</p>
+            <p style={valueStyle}>{adminOps.walletProviderQaGate.summary.totalScenarios}</p>
+            <p style={mutedTextStyle}>{copy.walletProviderQaSubtitle}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.seededReady}</p>
+            <p style={valueStyle}>{adminOps.walletProviderQaGate.summary.seededReadyScenarios}</p>
+            <p style={mutedTextStyle}>{copy.seededEvidence}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.liveEvidenceReady}</p>
+            <p style={valueStyle}>{adminOps.walletProviderQaGate.summary.liveEvidenceReadyScenarios}</p>
+            <p style={mutedTextStyle}>{copy.liveEvidence}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.missingLiveEvidence}</p>
+            <p style={valueStyle}>{adminOps.walletProviderQaGate.summary.missingLiveEvidenceScenarios}</p>
+            <p style={mutedTextStyle}>{copy.humanReviewRequired}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.releaseBlockers}</p>
+            <p style={valueStyle}>{adminOps.walletProviderQaGate.summary.releaseBlockers}</p>
+            <p style={mutedTextStyle}>{copy.noRewardCustodyDistribution}</p>
+          </article>
+        </div>
+        <div style={gridStyle}>
+          {adminOps.walletProviderQaGate.scenarios.map((scenario) => (
+            <article key={scenario.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.walletProviderQaSubtitle}</p>
+                  <strong>{getLocalizedText(scenario.label, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={walletProviderQaImpactLabel(scenario.releaseImpact, copy)}
+                  state={walletProviderQaImpactState(scenario.releaseImpact)}
+                />
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.seededEvidence}</p>
+                  <PublishStateBadge
+                    label={walletProviderQaSeededLabel(scenario.seededStatus, copy)}
+                    state={walletProviderQaSeededState(scenario.seededStatus)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.liveEvidence}</p>
+                  <PublishStateBadge
+                    label={walletProviderQaLiveLabel(scenario.liveEvidenceStatus, copy)}
+                    state={walletProviderQaLiveState(scenario.liveEvidenceStatus)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.releaseImpact}</p>
+                  <PublishStateBadge
+                    label={walletProviderQaImpactLabel(scenario.releaseImpact, copy)}
+                    state={walletProviderQaImpactState(scenario.releaseImpact)}
+                  />
+                </div>
+              </div>
+              <p style={mutedTextStyle}>
+                {copy.evidence}: {getLocalizedText(scenario.evidence, locale)}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.nextAction}: {getLocalizedText(scenario.nextAction, locale)}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.matchedSessions}: {scenario.matchedSessionIds.join(", ") || "-"}
+              </p>
             </article>
           ))}
         </div>
