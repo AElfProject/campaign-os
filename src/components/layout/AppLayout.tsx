@@ -33,6 +33,7 @@ interface AppLayoutProps {
 
 const pageStyle: CSSProperties = {
   background: "#f5f7fb",
+  boxSizing: "border-box",
   color: "#071426",
   minHeight: "100vh",
   padding: "18px",

@@ -401,6 +401,7 @@ export const ProjectConsole = ({
   );
   const commandCenter = createProjectCampaignCommandCenter(campaign);
   const exportDecision = commandCenter.analyticsExport;
+  const aiOptimizationSummary = commandCenter.aiOptimization.projectOwnerSummary;
   const localeAnalyticsReadiness = createLocaleAnalyticsReadiness(campaign);
   const aiContentPack = createAiContentPackWorkbench(campaign);
 
@@ -792,6 +793,48 @@ export const ProjectConsole = ({
         </div>
 
         <p style={boundaryStyle}>{getLocalizedText(exportDecision.boundary, locale)}</p>
+      </section>
+
+      <section aria-label={copy.aiOptimizationSummary} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.aiOptimizationReviewInput}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {getLocalizedText(aiOptimizationSummary.title, locale)}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.aiOptimizationSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge label={copy.aiOptimizationReviewInput} state="warning" />
+        </div>
+
+        <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+          {getLocalizedText(aiOptimizationSummary.summary, locale)}
+        </p>
+
+        <div style={sectionGridStyle}>
+          <article style={{ ...cardStyle, minHeight: 0 }}>
+            <p style={statLabelStyle}>{copy.aiOptimizationRecommendedAction}</p>
+            <p style={{ color: "#071426", fontSize: 18, fontWeight: 900, lineHeight: 1.25, margin: 0 }}>
+              {getLocalizedText(aiOptimizationSummary.recommendedAction, locale)}
+            </p>
+          </article>
+          <article style={{ ...cardStyle, minHeight: 0 }}>
+            <p style={statLabelStyle}>{copy.aiOptimizationOwnerSafeNextAction}</p>
+            <p style={{ color: "#071426", fontSize: 18, fontWeight: 900, lineHeight: 1.25, margin: 0 }}>
+              {getLocalizedText(aiOptimizationSummary.nextAction, locale)}
+            </p>
+          </article>
+        </div>
+
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.aiOptimizationLocalOnlyBoundary}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {getLocalizedText(aiOptimizationSummary.boundary, locale)}
+          </p>
+          <p style={{ margin: "8px 0 0" }}>{copy.aiOptimizationNoAutoExecution}</p>
+        </div>
       </section>
 
       <section aria-label={copy.aiContentPack} style={panelStyle}>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   campaignDetail,
   createAiContentPackWorkbench,
+  createAiOptimizationWorkflow,
   createContractImpactReviewModel,
   createEligibilityCheckerReadModel,
   createEcosystemNextActionReadModel,
@@ -1410,7 +1411,17 @@ describe("Campaign OS domain foundation", () => {
       "bot-sybil-review",
       "manual-review",
     ]);
-    expect(adminOps.aiReports).toHaveLength(4);
+    expect(adminOps.aiReports).toHaveLength(6);
+    expect(adminOps.aiOptimization.reports.map((report) => report.category)).toEqual(
+      expect.arrayContaining([
+        "analytics_summary",
+        "user_quality",
+        "bot_pattern",
+        "winner_report",
+        "boss_report",
+        "optimization",
+      ]),
+    );
     expect(adminOps.aiContentPack.summary.totalArtifacts).toBe(7);
     expect(adminOps.aiContentPack.artifacts.map((artifact) => artifact.type)).toEqual(
       expect.arrayContaining([
@@ -1487,6 +1498,90 @@ describe("Campaign OS domain foundation", () => {
         }),
       ]),
     );
+  });
+
+  it("derives deterministic AI optimization actions with review guardrails", () => {
+    const workflow = createAiOptimizationWorkflow(campaignDetail);
+    const repeatedWorkflow = createAiOptimizationWorkflow(campaignDetail);
+    const actions = workflow.reports.flatMap((report) => report.actions);
+    const actionsById = Object.fromEntries(actions.map((action) => [action.id, action]));
+
+    expect(workflow).toEqual(repeatedWorkflow);
+    expect(workflow.campaignId).toBe(campaignDetail.id);
+    expect(workflow.reports.map((report) => report.category)).toEqual([
+      "analytics_summary",
+      "user_quality",
+      "bot_pattern",
+      "winner_report",
+      "boss_report",
+      "optimization",
+    ]);
+    expect(actions.length).toBeGreaterThanOrEqual(4);
+    expect(workflow.summary).toMatchObject({
+      totalActions: actions.length,
+      readyCount: expect.any(Number),
+      reviewRequiredCount: expect.any(Number),
+      blockedCount: expect.any(Number),
+      topActionId: expect.any(String),
+    });
+    expect(workflow.summary.bossSummary["en-US"]).toContain("Campaign health");
+    expect(workflow.boundary["en-US"]).toContain("No live AI provider");
+
+    for (const action of actions) {
+      expect(action).toMatchObject({
+        ownerRole: expect.any(String),
+        status: expect.any(String),
+        evidence: expect.objectContaining({ "en-US": expect.any(String) }),
+        expectedImpact: expect.objectContaining({ "en-US": expect.any(String) }),
+        guardrail: expect.objectContaining({ "en-US": expect.any(String) }),
+        nextAction: expect.objectContaining({ "en-US": expect.any(String) }),
+      });
+      expect(action.sourceMetrics.length).toBeGreaterThan(0);
+    }
+
+    expect(actionsById["explain-bridge-friction"]).toMatchObject({
+      status: "ready_to_review",
+      ownerRole: "internal_operator",
+      riskLevel: "low",
+      requiresHumanReview: false,
+    });
+    expect(actionsById["hold-export-for-risk-review"]).toMatchObject({
+      status: "blocked",
+      ownerRole: "risk_reviewer",
+      riskLevel: "high",
+      requiresHumanReview: true,
+    });
+    expect(actionsById["prepare-winner-export-brief"]).toMatchObject({
+      status: "review_required",
+      ownerRole: "risk_reviewer",
+      requiresHumanReview: true,
+    });
+    expect(actionsById["review-referral-weight"]).toMatchObject({
+      status: "review_required",
+      ownerRole: "project_owner",
+      riskLevel: "medium",
+      requiresHumanReview: true,
+    });
+    expect(actionsById["hold-export-for-risk-review"].guardrail["en-US"]).toContain(
+      "does not automatically",
+    );
+  });
+
+  it("keeps the AI optimization project-owner summary safe and local-only", () => {
+    const workflow = createAiOptimizationWorkflow(campaignDetail);
+    const summaryText = [
+      workflow.projectOwnerSummary.title["en-US"],
+      workflow.projectOwnerSummary.summary["en-US"],
+      workflow.projectOwnerSummary.recommendedAction["en-US"],
+      workflow.projectOwnerSummary.nextAction["en-US"],
+      workflow.projectOwnerSummary.boundary["en-US"],
+    ].join(" ");
+
+    expect(workflow.projectOwnerSummary.hiddenInternalRiskDetail).toBe(true);
+    expect(summaryText).toContain("AI Optimization summary");
+    expect(summaryText).toContain("No live AI provider");
+    expect(summaryText.toLowerCase()).not.toContain("shared funding");
+    expect(summaryText.toLowerCase()).not.toContain("ban");
   });
 
   it("keeps Admin/Ops ecosystem metrics and export evidence complete", () => {

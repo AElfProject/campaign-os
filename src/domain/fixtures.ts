@@ -1239,6 +1239,70 @@ export const aiOpsReports: AiOpsReportCard[] = [
     ],
   },
   {
+    id: "winner-report",
+    title: {
+      "en-US": "Winner report",
+      "zh-CN": "Winner 报告",
+      "zh-TW": "Winner report",
+    },
+    summary: {
+      "en-US": "Export rows are ready as review inputs; reward distribution remains project-owned.",
+      "zh-CN": "导出行仅作为审核输入；奖励发放仍由项目方负责。",
+      "zh-TW": "Export rows are ready as review inputs; reward distribution remains project-owned.",
+    },
+    generatedAt: "2026-06-27 08:42",
+    recommendations: [
+      {
+        id: "prepare-winner-export-brief",
+        title: {
+          "en-US": "Prepare winner export brief",
+          "zh-CN": "准备 winners 导出说明",
+          "zh-TW": "Prepare winner export brief",
+        },
+        expectedImpact: {
+          "en-US": "Makes reward-owner review clear before any project distribution.",
+          "zh-CN": "在项目方发奖前明确奖励负责人审核。",
+          "zh-TW": "Makes reward-owner review clear before any project distribution.",
+        },
+        confidence: "medium",
+        riskLevel: "medium",
+        requiresHumanReview: true,
+      },
+    ],
+  },
+  {
+    id: "boss-report",
+    title: {
+      "en-US": "Boss report",
+      "zh-CN": "Boss 复盘报告",
+      "zh-TW": "Boss report",
+    },
+    summary: {
+      "en-US": "Campaign health is positive, but export and risk review remain the next leadership checkpoint.",
+      "zh-CN": "活动健康度正向，但导出与风险审核仍是下一步管理检查点。",
+      "zh-TW": "Campaign health is positive, but export and risk review remain the next leadership checkpoint.",
+    },
+    generatedAt: "2026-06-27 08:44",
+    recommendations: [
+      {
+        id: "align-owner-next-actions",
+        title: {
+          "en-US": "Align owner next actions",
+          "zh-CN": "对齐负责人下一步",
+          "zh-TW": "Align owner next actions",
+        },
+        expectedImpact: {
+          "en-US": "Keeps growth, risk, and project reward owners aligned before closeout.",
+          "zh-CN": "在收口前对齐增长、风险与项目方奖励负责人。",
+          "zh-TW": "Keeps growth, risk, and project reward owners aligned before closeout.",
+        },
+        confidence: "high",
+        riskLevel: "medium",
+        requiresHumanReview: false,
+      },
+    ],
+  },
+  {
     id: "optimization",
     title: {
       "en-US": "Optimization suggestions",

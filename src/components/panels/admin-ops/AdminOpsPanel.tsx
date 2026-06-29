@@ -5,6 +5,8 @@ import {
   createAdminOpsReadModel,
   createParticipationReadModel,
   getLocalizedText,
+  type AiOptimizationActionStatus,
+  type AiOptimizationMetricTone,
   type CampaignShellDetail,
   type ContractInterfaceReadiness,
   type ContractMode,
@@ -115,6 +117,7 @@ const exportTableStyle: CSSProperties = {
 
 const scrollContainerStyle: CSSProperties = {
   maxWidth: "100%",
+  minWidth: 0,
   overflowX: "auto",
 };
 
@@ -170,6 +173,35 @@ const boundaryStyle: CSSProperties = {
   padding: 12,
 };
 
+const sourceMetricListStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+  minWidth: 0,
+};
+
+const sourceMetricChipStyle: CSSProperties = {
+  alignItems: "flex-start",
+  border: "1px solid",
+  borderRadius: 8,
+  boxSizing: "border-box",
+  display: "inline-flex",
+  fontSize: 12,
+  fontWeight: 700,
+  lineHeight: 1.35,
+  maxWidth: "100%",
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  padding: "6px 9px",
+  whiteSpace: "normal",
+  wordBreak: "break-word",
+};
+
+const sourceMetricToneStyles: Record<AiOptimizationMetricTone, CSSProperties> = {
+  good: { background: "#ecfdf5", borderColor: "#86efac", color: "#166534" },
+  warning: { background: "#fffbeb", borderColor: "#fcd34d", color: "#92400e" },
+  risk: { background: "#fef2f2", borderColor: "#fca5a5", color: "#991b1b" },
+};
+
 const modeLabel = (mode: ContractMode) => mode.replace(/_/g, " ");
 
 const metricToneState = (tone: MetricTone) =>
@@ -202,6 +234,27 @@ const aiContentGateState = (status: AiContentQualityGateStatus) =>
   status === "blocked" ? "blocker" : status === "warning" ? "warning" : "ready";
 
 const readableCode = (value: string) => value.replace(/_/g, " ");
+
+const aiOptimizationStatusState = (status: AiOptimizationActionStatus) =>
+  status === "blocked"
+    ? "blocker"
+    : status === "review_required"
+      ? "warning"
+      : "ready";
+
+const aiOptimizationStatusLabel = (
+  status: AiOptimizationActionStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<AiOptimizationActionStatus, string> = {
+    adopted_preview: copy.adoptedPreview,
+    blocked: copy.blocked,
+    ready_to_review: copy.readyToReview,
+    review_required: copy.reviewRequired,
+  };
+
+  return labels[status];
+};
 
 const providerReadinessState = (readiness: string) =>
   readiness === "blocked"
@@ -274,6 +327,7 @@ export const AdminOpsPanel = ({
 }: AdminOpsPanelProps) => {
   const copy = adminOpsCopy[locale];
   const adminOps = createAdminOpsReadModel(campaign);
+  const aiOptimization = adminOps.aiOptimization;
   const aiContentPack = adminOps.aiContentPack;
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
@@ -1225,6 +1279,117 @@ export const AdminOpsPanel = ({
       </section>
 
       <section style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <h3 style={{ fontSize: 20, margin: 0 }}>{copy.aiOptimizationActionQueue}</h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${aiOptimization.summary.totalActions} ${copy.totalActions}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${aiOptimization.summary.readyCount} ${copy.readyActions}`}
+              state="ready"
+            />
+            <PublishStateBadge
+              label={`${aiOptimization.summary.reviewRequiredCount} ${copy.reviewRequiredActions}`}
+              state={aiOptimization.summary.reviewRequiredCount > 0 ? "warning" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${aiOptimization.summary.blockedCount} ${copy.blockedActions}`}
+              state={aiOptimization.summary.blockedCount > 0 ? "blocker" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.localOnlyBoundary}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {getLocalizedText(aiOptimization.boundary, locale)}
+          </p>
+        </div>
+        <div style={gridStyle}>
+          {aiOptimization.reports.map((report) => (
+            <article key={report.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.category}: {readableCode(report.category)}</p>
+                  <strong>{getLocalizedText(report.title, locale)}</strong>
+                </div>
+                <Badge label={`${copy.generatedAt}: ${report.generatedAt}`} tone="ai" />
+              </div>
+              <p style={mutedTextStyle}>{getLocalizedText(report.summary, locale)}</p>
+              {report.actions.map((action) => (
+                <div
+                  key={action.id}
+                  style={{
+                    borderTop: "1px solid #dbe6f4",
+                    display: "grid",
+                    gap: 10,
+                    minWidth: 0,
+                    paddingTop: 10,
+                  }}
+                >
+                  <div style={rowStyle}>
+                    <strong>{getLocalizedText(action.title, locale)}</strong>
+                    <PublishStateBadge
+                      label={aiOptimizationStatusLabel(action.status, copy)}
+                      state={aiOptimizationStatusState(action.status)}
+                    />
+                  </div>
+                  <div style={compactGridStyle}>
+                    <div>
+                      <p style={labelStyle}>{copy.actionStatus}</p>
+                      <p style={mutedTextStyle}>{aiOptimizationStatusLabel(action.status, copy)}</p>
+                    </div>
+                    <div>
+                      <p style={labelStyle}>{copy.ownerRole}</p>
+                      <p style={mutedTextStyle}>{readableCode(action.ownerRole)}</p>
+                    </div>
+                    <div>
+                      <p style={labelStyle}>{copy.confidence}</p>
+                      <p style={mutedTextStyle}>
+                        {action.confidence} · {copy.riskLevel}: {action.riskLevel}
+                      </p>
+                    </div>
+                  </div>
+                  <p style={mutedTextStyle}>
+                    {copy.evidence}: {getLocalizedText(action.evidence, locale)}
+                  </p>
+                  <p style={mutedTextStyle}>
+                    {copy.expectedImpact}: {getLocalizedText(action.expectedImpact, locale)}
+                  </p>
+                  <div style={stackStyle}>
+                    <p style={labelStyle}>{copy.sourceMetrics}</p>
+                    <span style={sourceMetricListStyle}>
+                      {action.sourceMetrics.map((metric) => (
+                        <span
+                          key={metric.id}
+                          style={{
+                            ...sourceMetricChipStyle,
+                            ...sourceMetricToneStyles[metric.tone],
+                          }}
+                          title={`${getLocalizedText(metric.label, locale)}: ${metric.value}`}
+                        >
+                          {getLocalizedText(metric.label, locale)}: {metric.value}
+                        </span>
+                      ))}
+                    </span>
+                  </div>
+                  <p style={mutedTextStyle}>
+                    {copy.guardrail}: {getLocalizedText(action.guardrail, locale)}
+                  </p>
+                  <p style={mutedTextStyle}>
+                    {copy.nextAction}: {getLocalizedText(action.nextAction, locale)}
+                  </p>
+                </div>
+              ))}
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section style={panelStyle}>
         <h3 style={{ fontSize: 20, margin: 0 }}>{copy.aiOpsReports}</h3>
         <div style={gridStyle}>
           {adminOps.aiReports.map((report) => (
@@ -1271,7 +1436,7 @@ export const AdminOpsPanel = ({
 
       <section style={panelStyle}>
         <h3 style={{ fontSize: 20, margin: 0 }}>{copy.ecosystemMetrics}</h3>
-        <div style={{ overflowX: "auto" }}>
+        <div style={scrollContainerStyle}>
           <table style={tableStyle}>
             <thead>
               <tr>
