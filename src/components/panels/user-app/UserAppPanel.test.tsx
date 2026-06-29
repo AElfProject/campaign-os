@@ -38,6 +38,12 @@ describe("User App shell", () => {
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Check eligibility" }).length).toBeGreaterThan(0);
+    const shareReadiness = screen.getByRole("region", { name: "Share card readiness" });
+    expect(within(shareReadiness).getAllByText("https://campaign.local/en-US/campaigns/awaken-sprint").length).toBeGreaterThan(0);
+    expect(within(shareReadiness).getAllByText("https://campaign.local/zh-CN/campaigns/awaken-sprint").length).toBeGreaterThan(0);
+    expect(within(shareReadiness).getAllByText("https://campaign.local/zh-TW/campaigns/awaken-sprint").length).toBeGreaterThan(0);
+    expect(within(shareReadiness).getByText("Awaken Sprint")).toBeInTheDocument();
+    expect(within(shareReadiness).getByText(/No SSR, crawler guarantee, social API/)).toBeInTheDocument();
     expect(screen.getByText("Campaign OS never asks for private keys or seed phrases.")).toBeInTheDocument();
     expect(screen.getByText("Wallet connection is limited to connection and message signing in this shell.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Wallet session status" })).toBeInTheDocument();
@@ -179,6 +185,9 @@ describe("User App shell", () => {
     expect(screen.getByRole("heading", { name: "Awaken 冲刺活动" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "连接钱包" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "检查资格" }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("region", { name: "分享卡片就绪状态" })).toBeInTheDocument();
+    expect(screen.getAllByText("https://campaign.local/zh-CN/campaigns/awaken-sprint").length).toBeGreaterThan(0);
+    expect(screen.getByText(/未接入 SSR、crawler 保证、social API/)).toBeInTheDocument();
     expect(screen.getByText("Campaign OS 永远不会索要私钥或助记词。")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "钱包会话状态" })).toBeInTheDocument();
     expect(screen.getAllByText("钱包类型已验证").length).toBeGreaterThan(0);
@@ -337,6 +346,10 @@ describe("User App shell", () => {
     expect(screen.getByRole("heading", { name: "活動 Feed" })).toBeInTheDocument();
     expect(screen.getAllByText(/語言 readiness/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/回退|缺失/).length).toBeGreaterThan(0);
+    const shareReadiness = screen.getByRole("region", { name: "分享卡片 readiness" });
+    expect(within(shareReadiness).getAllByText("https://campaign.local/zh-TW/campaigns/awaken-sprint").length).toBeGreaterThan(0);
+    expect(within(shareReadiness).getByText("英文回退")).toBeInTheDocument();
+    expect(within(shareReadiness).getAllByText(/English fallback|英文回退/).length).toBeGreaterThan(0);
     expect(screen.getByText("Forest NFT 任務")).toBeInTheDocument();
     expect(screen.getByText("TMRWDAO 治理連續任務")).toBeInTheDocument();
   });
