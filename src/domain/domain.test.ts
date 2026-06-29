@@ -13,6 +13,7 @@ import {
   computeMissingTasks,
   computePublishReadiness,
   createAdminOpsReadModel,
+  createExportConfirmationReadinessGate,
   createExportPreview,
   createParticipationReadModel,
   createCampaignShareCardReadiness,
@@ -41,6 +42,21 @@ import {
   walletAdapterFixtures,
   walletSessions,
 } from "./index";
+
+const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasOwnKeyDeep(item, key));
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return Object.prototype.hasOwnProperty.call(record, key)
+    || Object.values(record).some((item) => hasOwnKeyDeep(item, key));
+};
 
 describe("Campaign OS domain foundation", () => {
   it("defines exact v0.2 MVP locales with English default and fallback", () => {
@@ -1399,6 +1415,60 @@ describe("Campaign OS domain foundation", () => {
       eligibleRankCutoff: 100,
       participantRank: 48,
     });
+  });
+
+  it("derives export confirmation readiness without live export outputs", () => {
+    const gate = createExportConfirmationReadinessGate(campaignDetail);
+
+    expect(gate.campaignId).toBe(campaignDetail.id);
+    expect(gate.previewModes.map((mode) => mode.mode)).toEqual(["csv", "json"]);
+    expect(gate.previewModes.every((mode) => !mode.generatesFile && !mode.downloadAvailable)).toBe(true);
+    expect(gate.fieldCoverage.missingFields).toEqual([]);
+    expect(gate.fieldCoverage.requiredFields).toEqual(
+      expect.arrayContaining([
+        "wallet_address",
+        "account_type",
+        "wallet_source",
+        "task_records",
+        "total_points",
+        "referrer_address",
+        "risk_flags",
+        "locale_preference",
+        "export_batch_id",
+      ]),
+    );
+    expect(gate.rowStatusCoverage.map((reason) => reason.reasonCode)).toEqual([
+      "eligible_verified",
+      "risk_review_required",
+      "missing_required_tasks",
+      "wallet_metadata_unverified",
+      "missing_export_fields",
+    ]);
+    expect(gate.rowStatusCoverage.find((reason) => reason.reasonCode === "eligible_verified")).toMatchObject({
+      affectedRows: 1,
+      rowStatus: "ready",
+    });
+    expect(gate.acknowledgements.map((item) => item.id)).toEqual([
+      "verified-records-only",
+      "project-owned-reward-distribution",
+      "no-reward-custody",
+      "no-reward-distribution",
+      "no-real-export-file",
+    ]);
+    expect(gate.acknowledgements.every((item) => item.required && item.acknowledged)).toBe(true);
+    expect(gate.contractRootReadiness.map((item) => [item.mode, item.readiness, item.safeDefault])).toEqual([
+      ["none", "ready", true],
+      ["eligibility_root", "review_required", false],
+      ["winners_root", "review_required", false],
+      ["contract_claim", "blocked", false],
+    ]);
+    expect(gate.boundary["en-US"]).toContain("No real CSV or JSON file");
+    expect(gate.boundary["zh-CN"]).toContain("不会生成真实 CSV 或 JSON 文件");
+    expect(gate.boundary["zh-TW"]).toContain("No real CSV or JSON file");
+    expect(hasOwnKeyDeep(gate, "downloadUrl")).toBe(false);
+    expect(hasOwnKeyDeep(gate, "storageKey")).toBe(false);
+    expect(hasOwnKeyDeep(gate, "contractRoot")).toBe(false);
+    expect(hasOwnKeyDeep(gate, "transactionId")).toBe(false);
   });
 
   it("creates wallet-aware eligibility checker results for seeded participants", () => {

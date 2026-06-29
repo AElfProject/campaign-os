@@ -1,6 +1,7 @@
 import {
   createAdminOpsReadModel,
   createAiContentPackWorkbench,
+  createExportConfirmationReadinessGate,
   createExportPreview,
   createParticipationReadModel,
   createProjectCampaignCommandCenter,
@@ -25,7 +26,10 @@ import {
   type ApiSkillFieldGroup,
   type CampaignShellDetail,
   type ContractMode,
+  type ExportConfirmationReadinessGate,
+  type ExportContractRootMode,
   type ExportCsvColumn,
+  type ExportPreviewMode,
   type ExportPreviewRow,
   type LocalizedText,
   type DimensionSplit,
@@ -205,8 +209,8 @@ export interface SummarizeCampaignRequest {
 
 export interface ExportWinnersRequest {
   campaignId: string;
-  contractRootMode: "none";
-  format: "csv";
+  contractRootMode: ExportContractRootMode;
+  format: ExportPreviewMode;
   includeLocalePreference: boolean;
   includeRiskFlags: boolean;
   includeWalletType: boolean;
@@ -217,7 +221,8 @@ export interface ExportWinnersResponse {
   columns: readonly ExportCsvColumn[];
   confirmation: ReturnType<typeof createExportPreview>["confirmation"];
   disclaimer: string;
-  format: "csv";
+  exportReadiness: ExportConfirmationReadinessGate;
+  format: ExportPreviewMode;
   rows: ExportPreviewRow[];
   readyRows: number;
   reviewRequiredRows: number;
@@ -258,6 +263,9 @@ export interface CampaignOsLocalService {
   getVerificationPipelineReadiness(
     request: GetVerificationPipelineReadinessRequest,
   ): LocalServiceResult<VerificationPipelineReadinessGate>;
+  getExportConfirmationReadiness(
+    request: GetCampaignAnalyticsRequest,
+  ): LocalServiceResult<ExportConfirmationReadinessGate>;
   getCoverageSummary(): LocalServiceResult<LocalServiceCoverageSummary>;
   summarizeCampaign(request: SummarizeCampaignRequest): LocalServiceResult<{
     campaignId: string;
@@ -727,12 +735,12 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       );
     }
 
-    if (request.format !== "csv" || request.contractRootMode !== "none") {
+    if (!["csv", "json"].includes(request.format) || request.contractRootMode !== "none") {
       return failure(
         "UNSUPPORTED_EXPORT_MODE",
-        request.format !== "csv" ? "format" : "contractRootMode",
-        "Only local CSV preview with contractRootMode none is supported.",
-        "当前仅支持 contractRootMode 为 none 的本地 CSV 预览。",
+        !["csv", "json"].includes(request.format) ? "format" : "contractRootMode",
+        "Only local CSV or JSON preview with contractRootMode none is supported.",
+        "当前仅支持 contractRootMode 为 none 的本地 CSV 或 JSON 预览。",
       );
     }
 
@@ -751,11 +759,27 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       confirmation: preview.confirmation,
       contractRootMode: request.contractRootMode,
       disclaimer: preview.disclaimer,
-      format: "csv",
+      exportReadiness: createExportConfirmationReadinessGate(campaign),
+      format: request.format,
       readyRows: rows.filter((row) => row.rowStatus === "ready").length,
       reviewRequiredRows: rows.filter((row) => row.rowStatus === "review_required").length,
       rows,
     });
+  },
+
+  getExportConfirmationReadiness: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local service facade.",
+        "本地 service facade 中不存在该活动。",
+      );
+    }
+
+    return success(createExportConfirmationReadinessGate(campaign));
   },
 
   getCoverageSummary: () => {
@@ -770,6 +794,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       "getCampaignAnalytics",
       "exportWinners",
       "getVerificationPipelineReadiness",
+      "getExportConfirmationReadiness",
       "generateCampaignPosts",
       "summarizeCampaign",
     ];
@@ -810,6 +835,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
         "verifyTask",
         "checkEligibility",
         "getVerificationPipelineReadiness",
+        "getExportConfirmationReadiness",
         "exportWinners",
       ],
       serviceNames,

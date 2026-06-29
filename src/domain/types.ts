@@ -202,7 +202,26 @@ export const EXPORT_CSV_COLUMNS = [
 ] as const;
 
 export type ExportCsvColumn = (typeof EXPORT_CSV_COLUMNS)[number];
+export type ExportPreviewMode = "csv" | "json";
+export type ExportReadinessState = "ready" | "review_required" | "blocked";
 export type ExportRowStatus = "ready" | "review_required" | "blocked";
+export type ExportContractRootMode =
+  | "none"
+  | "eligibility_root"
+  | "winners_root"
+  | "contract_claim";
+export type ExportRowReasonCode =
+  | "eligible_verified"
+  | "risk_review_required"
+  | "missing_required_tasks"
+  | "wallet_metadata_unverified"
+  | "missing_export_fields";
+export type ExportAcknowledgementId =
+  | "verified-records-only"
+  | "project-owned-reward-distribution"
+  | "no-reward-custody"
+  | "no-reward-distribution"
+  | "no-real-export-file";
 export type UserWinnersExportStatus = ExportRowStatus | "pending";
 
 export interface WalletAdapterFixture {
@@ -1117,6 +1136,74 @@ export interface ExportConfirmation {
   rewardDistributionOwner: "campaign_project";
   noDistributionBoundary: LocalizedText;
   riskBoundary: LocalizedText;
+}
+
+export interface ExportPreviewModeReadiness {
+  mode: ExportPreviewMode;
+  label: LocalizedText;
+  readiness: ExportReadinessState;
+  generatesFile: false;
+  downloadAvailable: false;
+  includedFields: readonly ExportCsvColumn[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface ExportFieldCoverage {
+  requiredFields: readonly ExportCsvColumn[];
+  presentFields: readonly ExportCsvColumn[];
+  missingFields: readonly ExportCsvColumn[];
+  coverageReady: boolean;
+}
+
+export interface ExportRowStatusReason {
+  rowStatus: ExportRowStatus;
+  reasonCode: ExportRowReasonCode;
+  label: LocalizedText;
+  affectedRows: number;
+  nextAction: LocalizedText;
+}
+
+export interface ExportAcknowledgement {
+  id: ExportAcknowledgementId;
+  label: LocalizedText;
+  description: LocalizedText;
+  required: boolean;
+  acknowledged: boolean;
+  ownerRole: OwnerRole;
+}
+
+export interface ExportContractRootReadiness {
+  mode: ExportContractRootMode;
+  label: LocalizedText;
+  readiness: ExportReadinessState;
+  safeDefault: boolean;
+  approvalRequired: boolean;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface ExportConfirmationReadinessSummary {
+  totalRows: number;
+  readyRows: number;
+  reviewRequiredRows: number;
+  blockedRows: number;
+  requiredAcknowledgements: number;
+  acknowledgedItems: number;
+  previewModeCount: number;
+}
+
+export interface ExportConfirmationReadinessGate {
+  campaignId: string;
+  batchId: string;
+  summary: ExportConfirmationReadinessSummary;
+  previewModes: ExportPreviewModeReadiness[];
+  fieldCoverage: ExportFieldCoverage;
+  rowStatusCoverage: ExportRowStatusReason[];
+  acknowledgements: ExportAcknowledgement[];
+  contractRootReadiness: ExportContractRootReadiness[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
 }
 
 export interface ExportBatchSummary {

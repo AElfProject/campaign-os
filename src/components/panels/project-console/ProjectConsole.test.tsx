@@ -234,14 +234,36 @@ describe("Project Console shell", () => {
     clickWorkspace("Export");
 
     expect(screen.getByRole("heading", { name: "Export Decision" })).toBeInTheDocument();
-    expect(screen.getByText("Ready rows")).toBeInTheDocument();
-    expect(screen.getByText("Review-required rows")).toBeInTheDocument();
-    expect(screen.getByText("Blocked rows")).toBeInTheDocument();
+    expect(screen.getAllByText("Ready rows").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Review-required rows").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Blocked rows").length).toBeGreaterThan(0);
     expect(screen.getByText("1 / 3 / 0")).toBeInTheDocument();
     expect(screen.getByText("CSV columns")).toBeInTheDocument();
     expect(screen.getByText(EXPORT_CSV_COLUMNS.join(","))).toBeInTheDocument();
     expect(screen.getByText(/Campaign OS exports verified records only/)).toBeInTheDocument();
     expect(screen.getByText(/No live analytics, no real export file/)).toBeInTheDocument();
+
+    const exportReadiness = screen.getByLabelText("Export confirmation readiness");
+    expect(
+      within(exportReadiness).getByRole("heading", { name: "Export confirmation readiness" }),
+    ).toBeInTheDocument();
+    expect(within(exportReadiness).getAllByText("CSV preview").length).toBeGreaterThan(0);
+    expect(within(exportReadiness).getAllByText("JSON preview").length).toBeGreaterThan(0);
+    expect(within(exportReadiness).getByText("Required export fields")).toBeInTheDocument();
+    expect(within(exportReadiness).getAllByText("wallet_address").length).toBeGreaterThan(0);
+    expect(within(exportReadiness).getAllByText("locale_preference").length).toBeGreaterThan(0);
+    expect(within(exportReadiness).getAllByText("Row reason coverage").length).toBeGreaterThan(0);
+    expect(within(exportReadiness).getByText("Eligible verified row")).toBeInTheDocument();
+    expect(within(exportReadiness).getByText("Risk review required")).toBeInTheDocument();
+    expect(within(exportReadiness).getByText("Project acknowledgements")).toBeInTheDocument();
+    expect(within(exportReadiness).getByText("Project owns final reward distribution")).toBeInTheDocument();
+    expect(within(exportReadiness).getByText("No real export file")).toBeInTheDocument();
+    expect(within(exportReadiness).getByText("Contract root readiness")).toBeInTheDocument();
+    expect(within(exportReadiness).getByText("No contract root")).toBeInTheDocument();
+    expect(within(exportReadiness).getByText("Eligibility root")).toBeInTheDocument();
+    expect(within(exportReadiness).getByText("Winners root")).toBeInTheDocument();
+    expect(within(exportReadiness).getByText("Contract claim")).toBeInTheDocument();
+    expect(within(exportReadiness).getByText(/No real CSV or JSON file/)).toBeInTheDocument();
 
     const serviceFacade = screen.getByLabelText("Local API Service Facade");
     expect(
@@ -368,11 +390,21 @@ describe("Project Console shell", () => {
 
     fireEvent.click(within(nav).getByRole("button", { name: "导出" }));
     expect(screen.getByRole("heading", { name: "导出决策" })).toBeInTheDocument();
-    expect(screen.getByText("就绪行")).toBeInTheDocument();
-    expect(screen.getByText("需复核行")).toBeInTheDocument();
-    expect(screen.getByText("阻断行")).toBeInTheDocument();
+    expect(screen.getAllByText("就绪行").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("需复核行").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("阻断行").length).toBeGreaterThan(0);
     expect(screen.getByText(EXPORT_CSV_COLUMNS.join(","))).toBeInTheDocument();
     expect(screen.getByText(/只导出已验证记录/)).toBeInTheDocument();
+    const exportReadiness = screen.getByLabelText("导出确认 readiness");
+    expect(
+      within(exportReadiness).getByRole("heading", { name: "导出确认 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(exportReadiness).getAllByText("CSV 预览").length).toBeGreaterThan(0);
+    expect(within(exportReadiness).getAllByText("JSON 预览").length).toBeGreaterThan(0);
+    expect(within(exportReadiness).getByText("必需导出字段")).toBeInTheDocument();
+    expect(within(exportReadiness).getByText("项目方确认项")).toBeInTheDocument();
+    expect(within(exportReadiness).getAllByText("Root 与 claim 执行阻断").length).toBeGreaterThan(0);
+    expect(within(exportReadiness).getByText(/不会生成真实 CSV 或 JSON 文件/)).toBeInTheDocument();
     const serviceFacade = screen.getByLabelText("本地 API Service Facade");
     expect(
       within(serviceFacade).getByRole("heading", { name: "本地 API Service Facade" }),

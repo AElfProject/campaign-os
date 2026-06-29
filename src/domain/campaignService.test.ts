@@ -9,6 +9,21 @@ import {
 
 const service = createCampaignOsLocalService();
 
+const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasOwnKeyDeep(item, key));
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return Object.prototype.hasOwnProperty.call(record, key)
+    || Object.values(record).some((item) => hasOwnKeyDeep(item, key));
+};
+
 describe("Campaign OS local API service facade", () => {
   it("returns explicit success and error envelopes with bilingual boundaries", () => {
     const success = service.getCoverageSummary();
@@ -341,6 +356,17 @@ describe("Campaign OS local API service facade", () => {
       includeRiskFlags: true,
       includeWalletType: true,
     });
+    const jsonExportPreview = service.exportWinners({
+      campaignId: campaignDetail.id,
+      contractRootMode: "none",
+      format: "json",
+      includeLocalePreference: true,
+      includeRiskFlags: true,
+      includeWalletType: true,
+    });
+    const exportReadiness = service.getExportConfirmationReadiness({
+      campaignId: campaignDetail.id,
+    });
 
     expect(analytics.payload?.walletSplit.map((split) => split.label).sort()).toEqual(["AA", "EOA"]);
     expect(analytics.payload?.localeSplit.map((split) => split.label).sort()).toEqual([
@@ -379,6 +405,33 @@ describe("Campaign OS local API service facade", () => {
     expect(exportPreview.payload?.confirmation.noDistributionBoundary["en-US"]).toContain(
       "does not distribute rewards",
     );
+    expect(exportPreview.payload?.exportReadiness.previewModes.map((mode) => mode.mode)).toEqual(["csv", "json"]);
+    expect(jsonExportPreview.payload).toMatchObject({
+      contractRootMode: "none",
+      format: "json",
+      readyRows: 1,
+      reviewRequiredRows: 3,
+    });
+    expect(jsonExportPreview.payload?.exportReadiness.previewModes.find((mode) => mode.mode === "json")).toMatchObject({
+      downloadAvailable: false,
+      generatesFile: false,
+      readiness: "ready",
+    });
+    expect(exportReadiness.payload?.acknowledgements.map((item) => item.id)).toEqual([
+      "verified-records-only",
+      "project-owned-reward-distribution",
+      "no-reward-custody",
+      "no-reward-distribution",
+      "no-real-export-file",
+    ]);
+    expect(exportReadiness.payload?.contractRootReadiness.find((mode) => mode.mode === "contract_claim")).toMatchObject({
+      readiness: "blocked",
+      approvalRequired: true,
+    });
+    expect(hasOwnKeyDeep(jsonExportPreview.payload, "downloadUrl")).toBe(false);
+    expect(hasOwnKeyDeep(jsonExportPreview.payload, "storageKey")).toBe(false);
+    expect(hasOwnKeyDeep(jsonExportPreview.payload, "contractRoot")).toBe(false);
+    expect(hasOwnKeyDeep(jsonExportPreview.payload, "transactionId")).toBe(false);
     expect(unsafeExport).toMatchObject({
       ok: false,
       error: expect.objectContaining({ code: "UNSUPPORTED_EXPORT_MODE", field: "contractRootMode" }),
@@ -417,7 +470,7 @@ describe("Campaign OS local API service facade", () => {
         "content",
         "risk",
       ]),
-      totalServices: 11,
+      totalServices: 12,
     });
     expect(coverage.payload?.sampleResponseIds).toEqual(
       expect.arrayContaining([
@@ -425,6 +478,7 @@ describe("Campaign OS local API service facade", () => {
         "verifyTask",
         "checkEligibility",
         "getVerificationPipelineReadiness",
+        "getExportConfirmationReadiness",
         "exportWinners",
       ]),
     );

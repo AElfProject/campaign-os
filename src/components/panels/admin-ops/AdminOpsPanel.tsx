@@ -3,6 +3,7 @@ import {
   campaignDetail,
   computePublishReadiness,
   createAdminOpsReadModel,
+  createExportConfirmationReadinessGate,
   createParticipationReadModel,
   getLocalizedText,
   type AiOptimizationActionStatus,
@@ -12,6 +13,7 @@ import {
   type ContractMode,
   type ContractReviewChecklistStatus,
   type DeliveryChecklistStatus,
+  type ExportReadinessState,
   type AiContentArtifactLifecycle,
   type AiContentQualityGateStatus,
   type MetricTone,
@@ -238,6 +240,9 @@ const aiContentGateState = (status: AiContentQualityGateStatus) =>
 
 const readableCode = (value: string) => value.replace(/_/g, " ");
 
+const exportReadinessState = (readiness: ExportReadinessState) =>
+  readiness === "blocked" ? "blocker" : readiness === "review_required" ? "warning" : "ready";
+
 const aiOptimizationStatusState = (status: AiOptimizationActionStatus) =>
   status === "blocked"
     ? "blocker"
@@ -372,6 +377,7 @@ export const AdminOpsPanel = ({
 }: AdminOpsPanelProps) => {
   const copy = adminOpsCopy[locale];
   const adminOps = createAdminOpsReadModel(campaign);
+  const exportReadiness = createExportConfirmationReadinessGate(campaign);
   const aiOptimization = adminOps.aiOptimization;
   const aiContentPack = adminOps.aiContentPack;
   const templateGovernance = adminOps.templateGovernance;
@@ -1648,6 +1654,109 @@ export const AdminOpsPanel = ({
               {getLocalizedText(adminOps.exportBatch.confirmation.riskBoundary, locale)}
             </p>
           </article>
+        </div>
+        <div aria-label={copy.exportConfirmationReadiness} style={cardStyle}>
+          <div style={rowStyle}>
+            <div>
+              <p style={labelStyle}>{copy.exportConfirmationReadiness}</p>
+              <h4 style={{ fontSize: 18, margin: "2px 0 0" }}>{copy.exportConfirmationReadiness}</h4>
+            </div>
+            <PublishStateBadge
+              label={`${exportReadiness.summary.requiredAcknowledgements}/${exportReadiness.summary.acknowledgedItems} ${copy.exportAcknowledgements}`}
+              state={
+                exportReadiness.summary.requiredAcknowledgements === exportReadiness.summary.acknowledgedItems
+                  ? "ready"
+                  : "warning"
+              }
+            />
+          </div>
+          <div style={compactGridStyle}>
+            {[
+              { label: copy.readyRows, state: "ready" as const, value: exportReadiness.summary.readyRows },
+              { label: copy.reviewRequired, state: "warning" as const, value: exportReadiness.summary.reviewRequiredRows },
+              {
+                label: copy.blocked,
+                state: exportReadiness.summary.blockedRows > 0 ? "blocker" as const : "ready" as const,
+                value: exportReadiness.summary.blockedRows,
+              },
+              { label: copy.exportPreviewModes, state: "ready" as const, value: exportReadiness.summary.previewModeCount },
+            ].map(({ label, value, state }) => (
+              <article key={label} style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={labelStyle}>{label}</p>
+                <p style={{ ...valueStyle, fontSize: 20 }}>{value}</p>
+                <PublishStateBadge label={String(value)} state={state} />
+              </article>
+            ))}
+          </div>
+          <div style={gridStyle}>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportPreviewModes}</p>
+              <div style={sourceMetricListStyle}>
+                {exportReadiness.previewModes.map((mode) => (
+                  <div key={mode.mode} style={rowStyle}>
+                    <span style={mutedTextStyle}>{getLocalizedText(mode.label, locale)}</span>
+                    <PublishStateBadge
+                      label={mode.generatesFile ? copy.exportRealFile : copy.exportLocalPreviewOnly}
+                      state={mode.generatesFile ? "blocker" : "ready"}
+                    />
+                  </div>
+                ))}
+              </div>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportProjectAcknowledgements}</p>
+              <div style={sourceMetricListStyle}>
+                {exportReadiness.acknowledgements.map((acknowledgement) => (
+                  <div key={acknowledgement.id} style={rowStyle}>
+                    <span style={mutedTextStyle}>{getLocalizedText(acknowledgement.label, locale)}</span>
+                    <PublishStateBadge
+                      label={acknowledgement.acknowledged ? copy.humanApproved : copy.reviewRequired}
+                      state={acknowledgement.acknowledged ? "ready" : "warning"}
+                    />
+                  </div>
+                ))}
+              </div>
+            </article>
+          </div>
+          <div style={gridStyle}>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportRequiredFields}</p>
+              <code style={codeListStyle}>
+                {exportReadiness.fieldCoverage.requiredFields.join(",")}
+              </code>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportRowReasonCoverage}</p>
+              <div style={sourceMetricListStyle}>
+                {exportReadiness.rowStatusCoverage.map((reason) => (
+                  <div key={reason.reasonCode} style={rowStyle}>
+                    <span style={mutedTextStyle}>{getLocalizedText(reason.label, locale)}</span>
+                    <PublishStateBadge
+                      label={`${reason.affectedRows} ${readableCode(reason.rowStatus)}`}
+                      state={reason.rowStatus === "blocked" ? "blocker" : reason.rowStatus === "review_required" ? "warning" : "ready"}
+                    />
+                  </div>
+                ))}
+              </div>
+            </article>
+          </div>
+          <div style={gridStyle}>
+            {exportReadiness.contractRootReadiness.map((rootMode) => (
+              <article key={rootMode.mode} style={{ ...cardStyle, minHeight: 0 }}>
+                <div style={rowStyle}>
+                  <strong>{getLocalizedText(rootMode.label, locale)}</strong>
+                  <PublishStateBadge
+                    label={readableCode(rootMode.readiness)}
+                    state={exportReadinessState(rootMode.readiness)}
+                  />
+                </div>
+                <p style={mutedTextStyle}>
+                  {rootMode.safeDefault ? copy.exportSafeDefault : getLocalizedText(rootMode.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+          <p style={boundaryStyle}>{getLocalizedText(exportReadiness.boundary, locale)}</p>
         </div>
         <div style={stackStyle}>
           <p style={labelStyle}>{copy.exactColumnOrder}</p>
