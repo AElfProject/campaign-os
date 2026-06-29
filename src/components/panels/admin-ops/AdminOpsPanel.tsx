@@ -117,6 +117,7 @@ const exportTableStyle: CSSProperties = {
 
 const scrollContainerStyle: CSSProperties = {
   maxWidth: "100%",
+  minWidth: 0,
   overflowX: "auto",
 };
 
@@ -1404,7 +1405,7 @@ export const AdminOpsPanel = ({
 
       <section style={panelStyle}>
         <h3 style={{ fontSize: 20, margin: 0 }}>{copy.ecosystemMetrics}</h3>
-        <div style={{ overflowX: "auto" }}>
+        <div style={scrollContainerStyle}>
           <table style={tableStyle}>
             <thead>
               <tr>
