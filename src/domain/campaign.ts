@@ -84,7 +84,7 @@ import type {
   UserWinnersExportStatusReadModel,
 } from "./types";
 import { deriveEligibilityWalletStatus, isWalletSessionVerified } from "./wallet";
-import { EXPORT_CSV_COLUMNS as exportCsvColumns } from "./types";
+import { EXPORT_CSV_COLUMNS as exportCsvColumns, supportedLocales } from "./types";
 import { createTemplateGovernanceConsole } from "./builder";
 
 const defaultPointsThreshold = 160;
@@ -1565,24 +1565,16 @@ const createWalletSplit = (participants: ParticipantSnapshot[]): DimensionSplit[
 const createLocaleSplit = (participants: ParticipantSnapshot[]): DimensionSplit[] => {
   const total = participants.length || 1;
 
-  return [
-    {
-      id: "locale-en-us",
-      label: "en-US",
-      count: participants.filter((participant) => participant.localePreference === "en-US").length,
-      percentage: Math.round(
-        (participants.filter((participant) => participant.localePreference === "en-US").length / total) * 100,
-      ),
-    },
-    {
-      id: "locale-zh-cn",
-      label: "zh-CN",
-      count: participants.filter((participant) => participant.localePreference === "zh-CN").length,
-      percentage: Math.round(
-        (participants.filter((participant) => participant.localePreference === "zh-CN").length / total) * 100,
-      ),
-    },
-  ];
+  return supportedLocales.map((locale) => {
+    const count = participants.filter((participant) => participant.localePreference === locale).length;
+
+    return {
+      id: `locale-${locale.toLowerCase()}`,
+      label: locale,
+      count,
+      percentage: Math.round((count / total) * 100),
+    };
+  });
 };
 
 const createTaskEvidence = (
