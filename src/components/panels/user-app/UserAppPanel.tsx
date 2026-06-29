@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from "react";
 import {
   campaignDetail,
+  createCampaignShareCardReadiness,
   createEcosystemNextActionReadModel,
   createEligibilityCheckerReadModel,
   createLeaderboardReadModel,
@@ -21,6 +22,7 @@ import {
   type LocaleStatus,
   type NormalizedWalletSession,
   type ParticipantSnapshot,
+  type PublishState,
   type SupportedLocale,
   type TaskVerificationStatus,
   type UserWinnersExportStatus,
@@ -42,6 +44,7 @@ interface UserAppPanelProps {
   campaign?: CampaignShellDetail;
   locale: SupportedLocale;
   participant?: ParticipantSnapshot;
+  shareLocale?: SupportedLocale;
 }
 
 const panelStyle: CSSProperties = {
@@ -161,6 +164,16 @@ const chipStyle: CSSProperties = {
   padding: "6px 8px",
 };
 
+const urlTextStyle: CSSProperties = {
+  color: "#071426",
+  fontSize: 13,
+  fontWeight: 800,
+  lineHeight: 1.4,
+  margin: 0,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
 const feedGridStyle: CSSProperties = {
   display: "grid",
   gap: 12,
@@ -242,6 +255,9 @@ const daysUntil = (iso: string) => {
 };
 
 const contractModeLabel = (mode: CampaignShellDetail["contractMode"]) => mode.replace(/_/g, " ");
+
+const publishStateBadgeState = (state: PublishState) =>
+  state === "blocker" ? "blocker" : state === "warning" ? "warning" : "ready";
 
 const formatSource = (value: string) => value.replace(/_/g, " ");
 
@@ -736,6 +752,7 @@ export const UserAppPanel = ({
   campaign = campaignDetail,
   locale,
   participant = campaignDetail.participants[1],
+  shareLocale = locale,
 }: UserAppPanelProps) => {
   const [isWalletModalOpen, setWalletModalOpen] = useState(false);
   const [eligibilityAddressInput, setEligibilityAddressInput] = useState(participant.walletAddress);
@@ -752,6 +769,7 @@ export const UserAppPanel = ({
   const completedCount = taskStates.filter((task) => task.completed).length;
   const title = getLocalizedText(campaign.title, locale);
   const subtitle = getLocalizedText(campaign.subtitle, locale);
+  const shareCardReadiness = createCampaignShareCardReadiness(campaign, shareLocale);
   const selectedWallet = sessionForParticipant(campaign, participant);
   const walletDiagnostics = createWalletConnectionDiagnostics(campaign.walletSessions);
   const missingTasks = campaign.tasks.filter((task) =>
@@ -1037,6 +1055,62 @@ export const UserAppPanel = ({
             </p>
           </article>
         </div>
+      </section>
+
+      <section aria-label={copy.shareCardReadiness} style={panelStyle}>
+        <div style={rowStyle}>
+          <div>
+            <p style={labelStyle}>{copy.shareCardReadiness}</p>
+            <h3 style={{ fontSize: 20, margin: "2px 0 0" }}>{copy.shareCardReadiness}</h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: "6px 0 0" }}>
+              {copy.shareCardReadinessSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={
+              shareCardReadiness.fallbackToEnglish
+                ? copy.shareFallbackActive
+                : copy.shareReadyLocal
+            }
+            state={publishStateBadgeState(shareCardReadiness.readiness)}
+          />
+        </div>
+
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.shareCanonicalUrl}</p>
+            <p style={urlTextStyle}>{shareCardReadiness.canonicalUrl}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.sharePreviewTitle}</p>
+            <strong>{shareCardReadiness.title}</strong>
+            <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+              {shareCardReadiness.description}
+            </p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.shareFallbackNotice}</p>
+            <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+              {getLocalizedText(shareCardReadiness.fallbackNotice, locale)}
+            </p>
+          </article>
+        </div>
+
+        <div style={cardStyle}>
+          <p style={labelStyle}>{copy.shareAlternateUrls}</p>
+          <div style={{ display: "grid", gap: 8 }}>
+            {Object.entries(shareCardReadiness.alternateUrls).map(([alternateLocale, url]) => (
+              <div key={alternateLocale} style={{ display: "grid", gap: 4, minWidth: 0 }}>
+                <strong style={{ color: "#64748b", fontSize: 12 }}>{alternateLocale}</strong>
+                <p style={urlTextStyle}>{url}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+          {copy.shareBoundary}
+        </p>
       </section>
 
       <section style={panelStyle}>

@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { EXPORT_CSV_COLUMNS } from "../domain";
 import {
@@ -10,6 +10,7 @@ import { App } from "./App";
 
 describe("Campaign OS app shell", () => {
   const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
+  const defaultDocumentTitle = "aelf Campaign OS";
 
   const setNavigatorLanguages = (languages: readonly string[]) => {
     Object.defineProperty(window.navigator, "languages", {
@@ -22,9 +23,40 @@ describe("Campaign OS app shell", () => {
     });
   };
 
+  const pushRoute = (path: string) => {
+    window.history.pushState({}, "", path);
+  };
+
+  const readMetaContent = (selector: string) =>
+    document.head.querySelector<HTMLMetaElement>(selector)?.content;
+
+  const removeDynamicMetadata = () => {
+    document.title = defaultDocumentTitle;
+    for (const selector of [
+      'meta[property="og:title"]',
+      'meta[property="og:description"]',
+      'meta[property="og:image"]',
+      'meta[property="og:url"]',
+      'meta[name="twitter:card"]',
+      'meta[name="twitter:title"]',
+      'meta[name="twitter:description"]',
+      'meta[name="twitter:image"]',
+    ]) {
+      document.head.querySelector(selector)?.remove();
+    }
+    const description = document.head.querySelector<HTMLMetaElement>('meta[name="description"]');
+
+    if (description) {
+      description.content =
+        "aelf Campaign OS app shell for campaign operations, wallet-aware tasks, and review workflows.";
+    }
+  };
+
   afterEach(() => {
     window.localStorage.clear();
     setNavigatorLanguages(["en-US"]);
+    pushRoute("/");
+    removeDynamicMetadata();
   });
 
   it("renders the default English shell with all surfaces exposed", () => {
@@ -95,6 +127,90 @@ describe("Campaign OS app shell", () => {
       screen.queryByText("Your browser language is Chinese. Switch to 简体中文?"),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("option", { name: "繁體中文" })).toBeInTheDocument();
+  });
+
+  it("uses supported URL locale before stored locale on initial load", () => {
+    window.localStorage.setItem(localePreferenceStorageKey, "en-US");
+    pushRoute("/zh-CN/campaigns/awaken-sprint");
+
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: "活动运营工作台" })).toBeInTheDocument();
+    expect(screen.getByLabelText("语言")).toHaveValue("zh-CN");
+    expect(screen.getByRole("heading", { name: "Awaken 冲刺活动" })).toBeInTheDocument();
+  });
+
+  it("initializes zh-TW from the URL while campaign content falls back safely", () => {
+    pushRoute("/zh-TW/campaigns/awaken-sprint");
+
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: "活動營運工作台" })).toBeInTheDocument();
+    expect(screen.getByLabelText("語言")).toHaveValue("zh-TW");
+    expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
+  });
+
+  it("preserves the zh-TW URL locale for User App share readiness while content falls back", () => {
+    pushRoute("/zh-TW/campaigns/awaken-sprint");
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "使用者應用" }));
+
+    const shareReadiness = screen.getByRole("region", { name: "Share card readiness" });
+    const canonicalUrlCard = within(shareReadiness)
+      .getByText("Canonical URL")
+      .closest("article");
+
+    expect(canonicalUrlCard).not.toBeNull();
+    expect(
+      within(canonicalUrlCard as HTMLElement).getByText(
+        "https://campaign.local/zh-TW/campaigns/awaken-sprint",
+      ),
+    ).toBeInTheDocument();
+    expect(within(shareReadiness).getByText("English fallback")).toBeInTheDocument();
+    expect(
+      within(shareReadiness).getByText(
+        "This locale uses English fallback until localized campaign content is reviewed.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(canonicalUrlCard as HTMLElement).queryByText(
+        "https://campaign.local/en-US/campaigns/awaken-sprint",
+      ),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
+  });
+
+  it("falls back safely for unsupported URL locales", () => {
+    pushRoute("/ja-JP/campaigns/awaken-sprint");
+
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: "Campaign operations shell" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Language")).toHaveValue("en-US");
+  });
+
+  it("updates campaign metadata from the active share card without duplicate tags", () => {
+    pushRoute("/zh-CN/campaigns/awaken-sprint");
+
+    const { rerender } = render(<App />);
+
+    expect(document.title).toBe("Awaken Sprint | aelf Campaign OS");
+    expect(readMetaContent('meta[name="description"]')).toBe(
+      "Complete wallet-aware aelf ecosystem tasks.",
+    );
+    expect(readMetaContent('meta[property="og:url"]')).toBe(
+      "https://campaign.local/zh-CN/campaigns/awaken-sprint",
+    );
+    expect(readMetaContent('meta[property="og:image"]')).toBe(
+      "https://campaign.local/share-cards/awaken-sprint-zh-CN.png",
+    );
+    expect(readMetaContent('meta[name="twitter:card"]')).toBe("summary_large_image");
+
+    rerender(<App />);
+
+    expect(document.head.querySelectorAll('meta[property="og:url"]')).toHaveLength(1);
+    expect(document.head.querySelectorAll('meta[name="twitter:card"]')).toHaveLength(1);
   });
 
   it("switches major shell copy manually to zh-CN", () => {

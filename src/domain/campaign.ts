@@ -9,6 +9,8 @@ import type {
   AnalyticsExportDecision,
   AnalyticsKpi,
   AdminContractReviewCenter,
+  CampaignMetadataField,
+  CampaignShareCardReadiness,
   CampaignCommandCenterSummary,
   CampaignCommandItem,
   CampaignCommandPriority,
@@ -57,6 +59,8 @@ import type {
   LeaderboardModeRow,
   LeaderboardReadModel,
   LeaderboardRow,
+  LocaleAnalyticsMetric,
+  LocaleAnalyticsReadinessRow,
   LocalizedText,
   ParticipationMetrics,
   ParticipationReadModel,
@@ -86,6 +90,7 @@ import type {
 import { deriveEligibilityWalletStatus, isWalletSessionVerified } from "./wallet";
 import { EXPORT_CSV_COLUMNS as exportCsvColumns, supportedLocales } from "./types";
 import { createTemplateGovernanceConsole } from "./builder";
+import { createLocalizedCampaignPath } from "./locale";
 
 const defaultPointsThreshold = 160;
 const defaultEligibleRankCutoff = 100;
@@ -1401,6 +1406,200 @@ export const createLeaderboardReadModel = (
 };
 
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
+
+const campaignRouteBaseUrl = "https://campaign.local";
+
+const localeAnalyticsBoundary: LocalizedText = {
+  "en-US": "Seeded/local locale analytics readiness only. No live analytics SDK, event ingestion, crawler service, or external dashboard is connected.",
+  "zh-CN": "仅 seeded/本地语言分析准备度。不会连接实时 analytics SDK、事件采集、crawler 服务或外部 dashboard。",
+  "zh-TW": "Seeded/local locale analytics readiness only. No live analytics SDK, event ingestion, crawler service, or external dashboard is connected.",
+};
+
+const shareCardFallbackNotice: LocalizedText = {
+  "en-US": "This locale uses English fallback until localized campaign content is reviewed.",
+  "zh-CN": "该语言在本地化活动内容审核完成前使用英文回退。",
+  "zh-TW": "This locale uses English fallback until localized campaign content is reviewed.",
+};
+
+const shareCardReadyNotice: LocalizedText = {
+  "en-US": "Localized campaign share copy is ready for local preview.",
+  "zh-CN": "本地化活动分享文案可用于本地预览。",
+  "zh-TW": "Localized campaign share copy is ready for local preview.",
+};
+
+const routeUrlFor = (
+  locale: (typeof supportedLocales)[number],
+  campaignSlug: string,
+  baseUrl = campaignRouteBaseUrl,
+) => `${baseUrl}${createLocalizedCampaignPath(locale, campaignSlug)}`;
+
+const revisionReadyForShare = (revision: ContentRevision | undefined) =>
+  revision?.status === "published" || revision?.status === "human_reviewed";
+
+const metadataField = (
+  name: string,
+  content: string,
+  kind: CampaignMetadataField["kind"],
+): CampaignMetadataField => ({ name, content, kind });
+
+export const createCampaignShareCardReadiness = (
+  campaign: Pick<CampaignShellDetail, "id" | "slug" | "title" | "subtitle" | "contentRevisions">,
+  locale: (typeof supportedLocales)[number],
+  baseUrl = campaignRouteBaseUrl,
+): CampaignShareCardReadiness => {
+  const englishRevision = campaign.contentRevisions.find((revision) => revision.locale === "en-US");
+  const requestedRevision = campaign.contentRevisions.find((revision) => revision.locale === locale);
+  const shouldUseRequestedRevision = locale === "en-US" || revisionReadyForShare(requestedRevision);
+  const sourceRevision = shouldUseRequestedRevision ? requestedRevision : englishRevision;
+  const fallbackToEnglish = locale !== "en-US" && sourceRevision?.locale !== locale;
+  const title = sourceRevision?.title?.trim() || campaign.title["en-US"];
+  const description = sourceRevision?.description?.trim() || campaign.subtitle["en-US"];
+  const canonicalUrl = routeUrlFor(locale, campaign.slug, baseUrl);
+  const alternateUrls = Object.fromEntries(
+    supportedLocales.map((supportedLocale) => [
+      supportedLocale,
+      routeUrlFor(supportedLocale, campaign.slug, baseUrl),
+    ]),
+  ) as Record<(typeof supportedLocales)[number], string>;
+  const image = `${baseUrl}/share-cards/${campaign.slug}-${locale}.png`;
+  const readiness: PublishState = fallbackToEnglish ? "warning" : "ready";
+  const fallbackNotice = fallbackToEnglish ? shareCardFallbackNotice : shareCardReadyNotice;
+  const metadataTitle = `${title} | aelf Campaign OS`;
+
+  return {
+    campaignId: campaign.id,
+    locale,
+    canonicalUrl,
+    alternateUrls,
+    title,
+    description,
+    image,
+    fallbackToEnglish,
+    contentStatus: requestedRevision?.status ?? "empty",
+    readiness,
+    fallbackNotice,
+    metadataFields: [
+      metadataField("title", metadataTitle, "document-title"),
+      metadataField("description", description, "meta-name"),
+      metadataField("og:title", metadataTitle, "meta-property"),
+      metadataField("og:description", description, "meta-property"),
+      metadataField("og:image", image, "meta-property"),
+      metadataField("og:url", canonicalUrl, "meta-property"),
+      metadataField("twitter:card", "summary_large_image", "meta-name"),
+      metadataField("twitter:title", metadataTitle, "meta-name"),
+      metadataField("twitter:description", description, "meta-name"),
+      metadataField("twitter:image", image, "meta-name"),
+    ],
+  };
+};
+
+const localeMetricLabel = (metric: LocaleAnalyticsMetric): LocalizedText => {
+  const labels: Record<LocaleAnalyticsMetric, LocalizedText> = {
+    campaign_views: {
+      "en-US": "Campaign views",
+      "zh-CN": "活动浏览",
+      "zh-TW": "Campaign views",
+    },
+    wallet_connect_conversion: {
+      "en-US": "Wallet connect conversion",
+      "zh-CN": "钱包连接转化",
+      "zh-TW": "Wallet connect conversion",
+    },
+    task_completion: {
+      "en-US": "Task completion",
+      "zh-CN": "任务完成",
+      "zh-TW": "Task completion",
+    },
+    referral_conversion: {
+      "en-US": "Referral conversion",
+      "zh-CN": "邀请转化",
+      "zh-TW": "Referral conversion",
+    },
+    translation_fallback_rate: {
+      "en-US": "Translation fallback rate",
+      "zh-CN": "翻译回退率",
+      "zh-TW": "Translation fallback rate",
+    },
+  };
+
+  return labels[metric];
+};
+
+const localeReadinessRow = (
+  locale: (typeof supportedLocales)[number],
+  metric: LocaleAnalyticsMetric,
+  value: string,
+  readiness: PublishState,
+): LocaleAnalyticsReadinessRow => ({
+  id: `${metric}-${locale.toLowerCase()}`,
+  locale,
+  metric,
+  label: localeMetricLabel(metric),
+  value,
+  readiness,
+  boundary: localeAnalyticsBoundary,
+});
+
+export const createLocaleAnalyticsReadiness = (
+  campaign: Pick<CampaignShellDetail, "participants" | "contentRevisions" | "metrics">,
+): LocaleAnalyticsReadinessRow[] => {
+  const totalParticipants = campaign.participants.length || 1;
+  const completedTasks = campaign.participants.reduce(
+    (count, participant) => count + participant.completedTaskIds.length,
+    0,
+  );
+  const totalTaskSlots = totalParticipants * 3;
+  const invitedCount = campaign.participants.reduce(
+    (count, participant) => count + (participant.referralSummary?.invitedCount ?? 0),
+    0,
+  );
+  const qualifiedInvitees = campaign.participants.reduce(
+    (count, participant) => count + (participant.referralSummary?.qualifiedInvitees ?? 0),
+    0,
+  );
+
+  return supportedLocales.flatMap((locale) => {
+    const localeParticipants = campaign.participants.filter(
+      (participant) => participant.localePreference === locale,
+    );
+    const localeShare = localeParticipants.length / totalParticipants;
+    const localeRevision = campaign.contentRevisions.find((revision) => revision.locale === locale);
+    const fallbackActive = locale !== "en-US" && !revisionReadyForShare(localeRevision);
+
+    return [
+      localeReadinessRow(
+        locale,
+        "campaign_views",
+        String(Math.max(1, Math.round(campaign.metrics.connectedWallets * localeShare))),
+        "ready",
+      ),
+      localeReadinessRow(
+        locale,
+        "wallet_connect_conversion",
+        formatPercent(localeParticipants.length / totalParticipants),
+        localeParticipants.length > 0 ? "ready" : "warning",
+      ),
+      localeReadinessRow(
+        locale,
+        "task_completion",
+        formatPercent(completedTasks / Math.max(1, totalTaskSlots)),
+        "ready",
+      ),
+      localeReadinessRow(
+        locale,
+        "referral_conversion",
+        formatPercent(invitedCount === 0 ? 0 : qualifiedInvitees / invitedCount),
+        "warning",
+      ),
+      localeReadinessRow(
+        locale,
+        "translation_fallback_rate",
+        fallbackActive ? "100%" : "0%",
+        fallbackActive ? "warning" : "ready",
+      ),
+    ];
+  });
+};
 
 const createAnalytics = (
   campaign: CampaignShellDetail,

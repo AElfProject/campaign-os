@@ -37,6 +37,21 @@ describe("Project Console shell", () => {
     expect(screen.getByText(EXPORT_CSV_COLUMNS.join(","))).toBeInTheDocument();
     expect(screen.getByText(/Campaign OS exports verified records only/)).toBeInTheDocument();
     expect(screen.getByText(/No live analytics, no real export file/)).toBeInTheDocument();
+    const localeAnalytics = screen.getByLabelText("Locale analytics readiness");
+    expect(within(localeAnalytics).getByRole("heading", { name: "Locale analytics readiness" })).toBeInTheDocument();
+    for (const locale of ["en-US", "zh-CN", "zh-TW"]) {
+      expect(within(localeAnalytics).getByRole("heading", { name: locale })).toBeInTheDocument();
+    }
+    for (const metric of [
+      "Campaign views",
+      "Wallet connect conversion",
+      "Task completion",
+      "Referral conversion",
+      "Translation fallback rate",
+    ]) {
+      expect(within(localeAnalytics).getAllByText(metric).length).toBeGreaterThan(0);
+    }
+    expect(within(localeAnalytics).getByText(/No live analytics SDK/)).toBeInTheDocument();
     expect(screen.getAllByText("AI Campaign Planner").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Recommendation" })).toBeInTheDocument();
     expect(screen.getByText("Use Any wallet for conversion")).toBeInTheDocument();
@@ -187,6 +202,14 @@ describe("Project Console shell", () => {
     expect(screen.getByText(EXPORT_CSV_COLUMNS.join(","))).toBeInTheDocument();
     expect(screen.getByText(/只导出已验证记录/)).toBeInTheDocument();
     expect(screen.getByText(/不会连接实时数据/)).toBeInTheDocument();
+    const localeAnalytics = screen.getByLabelText("语言 analytics 就绪状态");
+    expect(within(localeAnalytics).getByRole("heading", { name: "语言 analytics 就绪状态" })).toBeInTheDocument();
+    expect(within(localeAnalytics).getAllByText("活动浏览").length).toBeGreaterThan(0);
+    expect(within(localeAnalytics).getAllByText("钱包连接转化").length).toBeGreaterThan(0);
+    expect(within(localeAnalytics).getAllByText("任务完成").length).toBeGreaterThan(0);
+    expect(within(localeAnalytics).getAllByText("邀请转化").length).toBeGreaterThan(0);
+    expect(within(localeAnalytics).getAllByText("翻译回退率").length).toBeGreaterThan(0);
+    expect(within(localeAnalytics).getByText(/未接入实时 analytics SDK/)).toBeInTheDocument();
     expect(screen.getAllByText("活动构建器")).toHaveLength(2);
     expect(screen.getByRole("heading", { name: "草稿概览" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "任意钱包" })).toHaveAttribute(

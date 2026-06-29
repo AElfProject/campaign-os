@@ -52,6 +52,15 @@ describe("i18n messages", () => {
     expect(window.localStorage.getItem(localePreferenceStorageKey)).toBe("en-US");
   });
 
+  it("uses URL locale before stored locale for initial resolution", () => {
+    window.localStorage.setItem(localePreferenceStorageKey, "en-US");
+
+    const { result } = renderHook(() => useLocale("zh-CN"));
+
+    expect(result.current.locale).toBe("zh-CN");
+    expect(result.current.localeSource).toBe("url");
+  });
+
   it("keeps Chinese browser language as a prompt-only recommendation", () => {
     setNavigatorLanguages(["zh-TW"]);
 

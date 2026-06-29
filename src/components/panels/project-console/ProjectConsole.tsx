@@ -4,6 +4,7 @@ import {
   createApiSkillContractSurface,
   createCampaignOsLocalService,
   campaignDetail,
+  createLocaleAnalyticsReadiness,
   createProjectCampaignCommandCenter,
   createVerificationCoverageSummary,
   getLocalizedText,
@@ -14,6 +15,7 @@ import {
   type ApiSkillContractReadiness,
   type CampaignShellDetail,
   type LocaleStatus,
+  type PublishState,
   type SupportedLocale,
 } from "../../../domain";
 import {
@@ -312,6 +314,9 @@ const serviceFieldGroupLabel = (group: string) => {
 
 const readableCode = (value: string) => value.replace(/_/g, " ");
 
+const publishStateBadgeState = (state: PublishState) =>
+  state === "blocker" ? "blocker" : state === "warning" ? "warning" : "ready";
+
 const aiContentLifecycleState = (lifecycle: AiContentArtifactLifecycle) =>
   lifecycle === "human_approved" || lifecycle === "schedule_intent" || lifecycle === "publish_intent"
     ? "ready"
@@ -396,6 +401,7 @@ export const ProjectConsole = ({
   );
   const commandCenter = createProjectCampaignCommandCenter(campaign);
   const exportDecision = commandCenter.analyticsExport;
+  const localeAnalyticsReadiness = createLocaleAnalyticsReadiness(campaign);
   const aiContentPack = createAiContentPackWorkbench(campaign);
 
   const stats = [
@@ -732,6 +738,48 @@ export const ProjectConsole = ({
           <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
             {getLocalizedText(exportDecision.evidenceCoverage, locale)}
           </p>
+        </div>
+
+        <div
+          aria-label={copy.localeAnalyticsReadiness}
+          style={{ display: "grid", gap: 12, minHeight: 0 }}
+        >
+          <div style={headingRowStyle}>
+            <div>
+              <p style={statLabelStyle}>{copy.localeAnalyticsReadiness}</p>
+              <h4 style={{ fontSize: 18, margin: "4px 0" }}>{copy.localeAnalyticsReadiness}</h4>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {copy.localeAnalyticsReadinessSubtitle}
+              </p>
+            </div>
+            <PublishStateBadge label={copy.apiSkillReadinessLocalOnly} state="warning" />
+          </div>
+          <div style={sectionGridStyle}>
+            {campaign.supportedLocales.map((supportedLocale) => (
+              <article key={supportedLocale} style={{ ...workflowStyle, minHeight: 0 }}>
+                <h5 style={{ fontSize: 16, margin: 0 }}>{supportedLocale}</h5>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {localeAnalyticsReadiness
+                    .filter((row) => row.locale === supportedLocale)
+                    .map((row) => (
+                      <div key={row.id} style={listItemStyle}>
+                        <span style={{ color: "#475569", fontSize: 13, fontWeight: 800 }}>
+                          {getLocalizedText(row.label, locale)}
+                        </span>
+                        <span style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          <strong>{row.value}</strong>
+                          <PublishStateBadge
+                            label={row.readiness === "warning" ? copy.warning : copy.apiSkillReadinessReady}
+                            state={publishStateBadgeState(row.readiness)}
+                          />
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </article>
+            ))}
+          </div>
+          <p style={boundaryStyle}>{copy.localeAnalyticsBoundary}</p>
         </div>
 
         <div style={{ ...cardStyle, minHeight: 0 }}>

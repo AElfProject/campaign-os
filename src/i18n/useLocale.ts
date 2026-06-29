@@ -15,6 +15,10 @@ export const browserLocalePromptDismissedStorageKey =
   "campaign-os.browserLocalePromptDismissed";
 
 const safeGetLocalStorageValue = (key: string) => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
   try {
     return window.localStorage.getItem(key);
   } catch {
@@ -23,6 +27,10 @@ const safeGetLocalStorageValue = (key: string) => {
 };
 
 const safeSetLocalStorageValue = (key: string, value: string) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
   try {
     window.localStorage.setItem(key, value);
   } catch {
