@@ -73,10 +73,18 @@ const localeLikePattern = /^[a-z]{2}(?:-[A-Za-z]{2,4})?$/;
 
 const stripQueryAndHash = (path: string) => path.split(/[?#]/, 1)[0] || "/";
 
+const decodePathSegment = (segment: string) => {
+  try {
+    return decodeURIComponent(segment.trim());
+  } catch {
+    return segment.trim();
+  }
+};
+
 const normalizePathSegments = (path: string) =>
   stripQueryAndHash(path)
     .split("/")
-    .map((segment) => decodeURIComponent(segment.trim()))
+    .map(decodePathSegment)
     .filter(Boolean);
 
 export const createLocalizedCampaignPath = (

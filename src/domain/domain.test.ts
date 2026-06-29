@@ -116,6 +116,14 @@ describe("Campaign OS domain foundation", () => {
       unsupportedLocale: "ja-JP",
       urlLocale: null,
     });
+    expect(() => parseCampaignRoutePath("/zh-CN/campaigns/%E0%A4%A")).not.toThrow();
+    expect(parseCampaignRoutePath("/zh-CN/campaigns/%E0%A4%A")).toMatchObject({
+      campaignId: "%E0%A4%A",
+      canonicalPath: "/zh-CN/campaigns/%25E0%25A4%25A",
+      localeSource: "url",
+      matched: true,
+      urlLocale: "zh-CN",
+    });
     expect(parseCampaignRoutePath("/")).toMatchObject({
       campaignId: "awaken-sprint",
       canonicalPath: "/en-US/campaigns/awaken-sprint",
