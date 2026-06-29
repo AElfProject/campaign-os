@@ -70,6 +70,7 @@ import type {
   LocaleAnalyticsMetric,
   LocaleAnalyticsReadinessRow,
   LocalizedText,
+  OwnerRole,
   ParticipationMetrics,
   ParticipationReadModel,
   ParticipantSnapshot,
