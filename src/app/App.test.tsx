@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { EXPORT_CSV_COLUMNS } from "../domain";
 import {
@@ -147,6 +147,37 @@ describe("Campaign OS app shell", () => {
 
     expect(screen.getByRole("heading", { name: "活動營運工作台" })).toBeInTheDocument();
     expect(screen.getByLabelText("語言")).toHaveValue("zh-TW");
+    expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
+  });
+
+  it("preserves the zh-TW URL locale for User App share readiness while content falls back", () => {
+    pushRoute("/zh-TW/campaigns/awaken-sprint");
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "使用者應用" }));
+
+    const shareReadiness = screen.getByRole("region", { name: "Share card readiness" });
+    const canonicalUrlCard = within(shareReadiness)
+      .getByText("Canonical URL")
+      .closest("article");
+
+    expect(canonicalUrlCard).not.toBeNull();
+    expect(
+      within(canonicalUrlCard as HTMLElement).getByText(
+        "https://campaign.local/zh-TW/campaigns/awaken-sprint",
+      ),
+    ).toBeInTheDocument();
+    expect(within(shareReadiness).getByText("English fallback")).toBeInTheDocument();
+    expect(
+      within(shareReadiness).getByText(
+        "This locale uses English fallback until localized campaign content is reviewed.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(canonicalUrlCard as HTMLElement).queryByText(
+        "https://campaign.local/en-US/campaigns/awaken-sprint",
+      ),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
   });
 

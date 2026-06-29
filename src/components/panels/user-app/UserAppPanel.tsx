@@ -44,6 +44,7 @@ interface UserAppPanelProps {
   campaign?: CampaignShellDetail;
   locale: SupportedLocale;
   participant?: ParticipantSnapshot;
+  shareLocale?: SupportedLocale;
 }
 
 const panelStyle: CSSProperties = {
@@ -751,6 +752,7 @@ export const UserAppPanel = ({
   campaign = campaignDetail,
   locale,
   participant = campaignDetail.participants[1],
+  shareLocale = locale,
 }: UserAppPanelProps) => {
   const [isWalletModalOpen, setWalletModalOpen] = useState(false);
   const [eligibilityAddressInput, setEligibilityAddressInput] = useState(participant.walletAddress);
@@ -767,7 +769,7 @@ export const UserAppPanel = ({
   const completedCount = taskStates.filter((task) => task.completed).length;
   const title = getLocalizedText(campaign.title, locale);
   const subtitle = getLocalizedText(campaign.subtitle, locale);
-  const shareCardReadiness = createCampaignShareCardReadiness(campaign, locale);
+  const shareCardReadiness = createCampaignShareCardReadiness(campaign, shareLocale);
   const selectedWallet = sessionForParticipant(campaign, participant);
   const walletDiagnostics = createWalletConnectionDiagnostics(campaign.walletSessions);
   const missingTasks = campaign.tasks.filter((task) =>

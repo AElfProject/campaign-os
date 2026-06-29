@@ -149,7 +149,7 @@ export const App = () => {
       {activeSurface === "project" ? (
         <ProjectConsole locale={contentLocale} />
       ) : activeSurface === "user" ? (
-        <UserAppPanel locale={contentLocale} />
+        <UserAppPanel locale={contentLocale} shareLocale={locale} />
       ) : (
         <AdminOpsPanel locale={contentLocale} />
       )}
