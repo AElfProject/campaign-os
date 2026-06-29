@@ -143,6 +143,9 @@ describe("Admin/Ops shell", () => {
     expect(within(actionQueueSection as HTMLElement).getAllByText("Blocked").length).toBeGreaterThan(0);
     expect(within(actionQueueSection as HTMLElement).getAllByText("Owner role").length).toBeGreaterThan(0);
     expect(within(actionQueueSection as HTMLElement).getAllByText("Source metrics").length).toBeGreaterThan(0);
+    expect(within(actionQueueSection as HTMLElement).getByText(/Main drop-off: Largest drop-off/)).toHaveStyle(
+      "white-space: normal; overflow-wrap: anywhere;",
+    );
     expect(within(actionQueueSection as HTMLElement).getAllByText(/Guardrail:/).length).toBeGreaterThan(0);
     expect(within(actionQueueSection as HTMLElement).getAllByText(/Evidence:/).length).toBeGreaterThan(0);
     expect(within(actionQueueSection as HTMLElement).getAllByText(/Next action:/).length).toBeGreaterThan(0);

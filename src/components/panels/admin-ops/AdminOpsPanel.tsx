@@ -173,6 +173,35 @@ const boundaryStyle: CSSProperties = {
   padding: 12,
 };
 
+const sourceMetricListStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+  minWidth: 0,
+};
+
+const sourceMetricChipStyle: CSSProperties = {
+  alignItems: "flex-start",
+  border: "1px solid",
+  borderRadius: 8,
+  boxSizing: "border-box",
+  display: "inline-flex",
+  fontSize: 12,
+  fontWeight: 700,
+  lineHeight: 1.35,
+  maxWidth: "100%",
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  padding: "6px 9px",
+  whiteSpace: "normal",
+  wordBreak: "break-word",
+};
+
+const sourceMetricToneStyles: Record<AiOptimizationMetricTone, CSSProperties> = {
+  good: { background: "#ecfdf5", borderColor: "#86efac", color: "#166534" },
+  warning: { background: "#fffbeb", borderColor: "#fcd34d", color: "#92400e" },
+  risk: { background: "#fef2f2", borderColor: "#fca5a5", color: "#991b1b" },
+};
+
 const modeLabel = (mode: ContractMode) => mode.replace(/_/g, " ");
 
 const metricToneState = (tone: MetricTone) =>
@@ -212,9 +241,6 @@ const aiOptimizationStatusState = (status: AiOptimizationActionStatus) =>
     : status === "review_required"
       ? "warning"
       : "ready";
-
-const aiOptimizationMetricState = (tone: AiOptimizationMetricTone) =>
-  tone === "risk" ? "blocker" : tone === "warning" ? "warning" : "ready";
 
 const aiOptimizationStatusLabel = (
   status: AiOptimizationActionStatus,
@@ -1335,13 +1361,18 @@ export const AdminOpsPanel = ({
                   </p>
                   <div style={stackStyle}>
                     <p style={labelStyle}>{copy.sourceMetrics}</p>
-                    <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <span style={sourceMetricListStyle}>
                       {action.sourceMetrics.map((metric) => (
-                        <PublishStateBadge
+                        <span
                           key={metric.id}
-                          label={`${getLocalizedText(metric.label, locale)}: ${metric.value}`}
-                          state={aiOptimizationMetricState(metric.tone)}
-                        />
+                          style={{
+                            ...sourceMetricChipStyle,
+                            ...sourceMetricToneStyles[metric.tone],
+                          }}
+                          title={`${getLocalizedText(metric.label, locale)}: ${metric.value}`}
+                        >
+                          {getLocalizedText(metric.label, locale)}: {metric.value}
+                        </span>
                       ))}
                     </span>
                   </div>
