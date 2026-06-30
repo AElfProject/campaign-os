@@ -333,6 +333,10 @@ describe("Campaign OS local API service facade", () => {
 
   it("returns analytics, campaign posts, summaries, and export previews without live outputs", () => {
     const analytics = service.getCampaignAnalytics({ campaignId: campaignDetail.id });
+    const advancedAnalytics = service.getAdvancedAnalyticsReadiness({ campaignId: campaignDetail.id });
+    const missingAdvancedAnalytics = service.getAdvancedAnalyticsReadiness({
+      campaignId: "missing-campaign",
+    });
     const posts = service.generateCampaignPosts({
       campaignId: campaignDetail.id,
       channel: "x",
@@ -375,6 +379,56 @@ describe("Campaign OS local API service facade", () => {
       "zh-TW",
     ]);
     expect(JSON.stringify(analytics.payload?.localeSplit)).toContain("zh-TW");
+    expect(advancedAnalytics.ok).toBe(true);
+    expect(advancedAnalytics.payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      cohorts: expect.any(Array),
+      productConversions: expect.any(Array),
+      premiumReports: expect.any(Array),
+    });
+    expect(advancedAnalytics.payload?.cohorts.length).toBeGreaterThanOrEqual(4);
+    expect(advancedAnalytics.payload?.retentionWindows.map((window) => window.id)).toEqual(["day7", "day30"]);
+    expect(advancedAnalytics.payload?.productConversions.map((row) => row.productName["en-US"])).toEqual([
+      "eBridge",
+      "Awaken",
+      "Forest",
+      "TMRWDAO",
+      "daipp",
+      "Pay",
+      "Forecast",
+      "Portfolio",
+    ]);
+    expect(advancedAnalytics.payload?.premiumReports.map((report) => report.id)).toEqual([
+      "cohort_report",
+      "retention_report",
+      "real_user_quality",
+      "conversion_report",
+      "risk_report",
+    ]);
+    expect(advancedAnalytics.payload?.boundary["en-US"]).toContain("No live analytics");
+    expect(advancedAnalytics.payload?.boundary["en-US"]).toContain("event warehouse");
+    expect(advancedAnalytics.payload?.boundary["en-US"]).toContain("billing");
+    expect(advancedAnalytics.boundary["en-US"]).toContain("No live API");
+    expect(missingAdvancedAnalytics).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "CAMPAIGN_NOT_FOUND", field: "campaignId" }),
+    });
+    for (const unsafe of [
+      "apiKey",
+      "token",
+      "privateKey",
+      "signedPayload",
+      "transactionId",
+      "contractRoot",
+      "fileUrl",
+      "webhookSecret",
+      "billingCustomerId",
+      "ipAddress",
+      "deviceFingerprint",
+      "mutationId",
+    ]) {
+      expect(hasOwnKeyDeep(advancedAnalytics, unsafe)).toBe(false);
+    }
     expect(posts.payload?.artifacts.length).toBeGreaterThan(0);
     expect(posts.payload?.humanReviewRequired).toBe(true);
     expect(posts.payload?.noAutoPublishNotice["zh-TW"]).toContain("AI generated translation");
@@ -586,20 +640,25 @@ describe("Campaign OS local API service facade", () => {
         "risk",
       ]),
       serviceNames: expect.arrayContaining([
+        "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
       ]),
       sampleResponseIds: expect.arrayContaining([
+        "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
       ]),
-      totalServices: 15,
+      totalServices: 16,
     });
+    expect(coverage.payload?.boundary["en-US"]).toContain("advanced analytics readiness");
+    expect(coverage.payload?.boundary["en-US"]).toContain("No live analytics SDK");
     expect(coverage.payload?.sampleResponseIds).toEqual(
       expect.arrayContaining([
         "createWalletSession",
         "verifyTask",
         "checkEligibility",
+        "getAdvancedAnalyticsReadiness",
         "getVerificationPipelineReadiness",
         "getProviderEvidenceRegistry",
         "getExportConfirmationReadiness",

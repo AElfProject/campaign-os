@@ -1,5 +1,6 @@
 import {
   createAdminOpsReadModel,
+  createAdvancedAnalyticsReadiness,
   createAiContentPackWorkbench,
   createCampaignLifecycleOperations,
   createExportConfirmationReadinessGate,
@@ -23,6 +24,7 @@ import {
   EXPORT_CSV_COLUMNS,
   supportedLocales,
   type AccountType,
+  type AdvancedAnalyticsReadinessSurface,
   type AiContentArtifactChannel,
   type ApiSkillApiGroup,
   type ApiSkillContractReadiness,
@@ -213,6 +215,10 @@ export interface GetCampaignAnalyticsRequest {
   campaignId: string;
 }
 
+export interface GetAdvancedAnalyticsReadinessRequest {
+  campaignId: string;
+}
+
 export interface GenerateCampaignPostsRequest {
   campaignId: string;
   channel: AiContentArtifactChannel;
@@ -278,6 +284,9 @@ export interface CampaignOsLocalService {
   getCampaignAnalytics(request: GetCampaignAnalyticsRequest): LocalServiceResult<
     ReturnType<typeof createProjectCampaignCommandCenter>["analyticsExport"]
   >;
+  getAdvancedAnalyticsReadiness(
+    request: GetAdvancedAnalyticsReadinessRequest,
+  ): LocalServiceResult<AdvancedAnalyticsReadinessSurface>;
   getVerificationPipelineReadiness(
     request: GetVerificationPipelineReadinessRequest,
   ): LocalServiceResult<VerificationPipelineReadinessGate>;
@@ -307,11 +316,11 @@ export interface CampaignOsLocalService {
 
 export const serviceBoundary: LocalizedText = {
   "en-US":
-    "No live API, wallet SDK, provider, secret storage, real export file, reward distribution, contract call, or contract root write is executed. Responses are seeded/local read models only.",
+    "No live API, wallet SDK, provider, secret storage, real export file, reward distribution, contract call, or contract root write is executed. No live analytics SDK, event warehouse, or billing is executed. Responses are seeded/local read models only, including advanced analytics readiness.",
   "zh-CN":
-    "不会调用实时 API、钱包 SDK、provider、secret 存储、真实导出文件、奖励发放、合约调用或合约 root 写入。响应仅来自 seeded/本地 read model。",
+    "不会调用实时 API、analytics SDK、事件仓库、billing、钱包 SDK、provider、secret 存储、真实导出文件、奖励发放、合约调用或合约 root 写入。响应仅来自 seeded/本地 read model，包括高级分析准备度。",
   "zh-TW":
-    "No live API, wallet SDK, provider, secret storage, real export file, reward distribution, contract call, or contract root write is executed. Responses are seeded/local read models only.",
+    "No live API, wallet SDK, provider, secret storage, real export file, reward distribution, contract call, or contract root write is executed. No live analytics SDK, event warehouse, or billing is executed. Responses are seeded/local read models only, including advanced analytics readiness.",
 };
 
 const rewardBoundary: LocalizedText = {
@@ -673,6 +682,21 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     });
   },
 
+  getAdvancedAnalyticsReadiness: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local service facade.",
+        "本地 service facade 中不存在该活动。",
+      );
+    }
+
+    return success(createAdvancedAnalyticsReadiness(campaign));
+  },
+
   getVerificationPipelineReadiness: (request) => {
     const campaign = findCampaign(request.campaignId);
 
@@ -864,6 +888,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       "checkEligibility",
       "generateI18nDraft",
       "getCampaignAnalytics",
+      "getAdvancedAnalyticsReadiness",
       "exportWinners",
       "getVerificationPipelineReadiness",
       "getProviderEvidenceRegistry",
@@ -909,6 +934,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
         "createCampaign",
         "verifyTask",
         "checkEligibility",
+        "getAdvancedAnalyticsReadiness",
         "getVerificationPipelineReadiness",
         "getProviderEvidenceRegistry",
         "getExportConfirmationReadiness",
