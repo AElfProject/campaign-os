@@ -37,14 +37,6 @@ export type LocaleStatus =
   | "published"
   | "fallback"
   | "missing";
-export type CampaignStatus =
-  | "draft"
-  | "scheduled"
-  | "live"
-  | "paused"
-  | "ended"
-  | "exported";
-
 export const campaignLifecycleStatuses = [
   "draft",
   "scheduled",
@@ -55,6 +47,7 @@ export const campaignLifecycleStatuses = [
   "archived",
 ] as const;
 
+export type CampaignStatus = (typeof campaignLifecycleStatuses)[number];
 export type CampaignLifecycleStatus = (typeof campaignLifecycleStatuses)[number];
 export type VerificationType = "WALLET" | "ON_CHAIN" | "DAPP_API" | "SOCIAL" | "MANUAL";
 export type RiskLevel = "low" | "medium" | "high";

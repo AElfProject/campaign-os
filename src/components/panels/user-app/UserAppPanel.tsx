@@ -439,6 +439,7 @@ const campaignStatusLabel = (status: CampaignStatus, copy: typeof userAppCopy["e
     paused: "Paused",
     ended: copy.ended,
     exported: "Exported",
+    archived: "Archived",
   };
 
   return labels[status];
@@ -648,8 +649,14 @@ const CampaignFeedCard = ({
     <button
       style={{
         ...buttonStyle,
-        background: item.status === "ended" ? "#ffffff" : buttonStyle.background,
-        color: item.status === "ended" ? "#1c64f2" : buttonStyle.color,
+        background:
+          item.status === "ended" || item.status === "archived"
+            ? "#ffffff"
+            : buttonStyle.background,
+        color:
+          item.status === "ended" || item.status === "archived"
+            ? "#1c64f2"
+            : buttonStyle.color,
       }}
       type="button"
     >

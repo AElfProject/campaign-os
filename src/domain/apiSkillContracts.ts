@@ -8,6 +8,7 @@ import type {
   ApiSkillId,
   LocalizedText,
 } from "./types";
+import { campaignLifecycleStatuses } from "./types";
 
 const text = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
   "en-US": enUS,
@@ -45,6 +46,8 @@ const exportBoundary = text(
   "Export contract only. Campaign OS previews winner records and columns but does not distribute rewards or write contract roots.",
   "仅导出 contract。Campaign OS 预览 winners 记录和字段，不会发奖，也不会写入合约 root。",
 );
+
+const campaignStatusExample = campaignLifecycleStatuses.join(",");
 
 export const requiredApiSkillIds = [
   "create_campaign",
@@ -86,7 +89,14 @@ export const apiSkillContractRegistry: ApiSkillContract[] = [
       field("duration", "campaign", true, "Start and end time window.", "开始与结束时间窗口。", "2026-07-01/2026-07-14"),
       field("startTime", "campaign", true, "Campaign start timestamp.", "活动开始时间。", "2026-07-01T00:00:00Z"),
       field("endTime", "campaign", true, "Campaign end timestamp.", "活动结束时间。", "2026-07-14T23:59:59Z"),
-      field("status", "campaign", true, "Campaign lifecycle status.", "活动 lifecycle 状态。", "draft"),
+      field(
+        "status",
+        "campaign",
+        true,
+        "Campaign lifecycle status: draft, scheduled, live, paused, ended, exported, or archived.",
+        "活动 lifecycle 状态：draft、scheduled、live、paused、ended、exported 或 archived。",
+        campaignStatusExample,
+      ),
       field("defaultLocale", "locale", true, "Default runtime locale. MVP default is en-US.", "默认运行语言。MVP 默认为 en-US。", "en-US"),
       field(
         "supportedLocales",

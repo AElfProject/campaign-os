@@ -102,6 +102,11 @@ describe("API Skill Contract registry", () => {
     for (const optionalField of ["metadataUri", "metadataHash", "rewardDisclaimerHash"]) {
       expect(createCampaignFields.get(optionalField)?.required).toBe(false);
     }
+    expect(createCampaignFields.get("status")).toMatchObject({
+      example: "draft,scheduled,live,paused,ended,exported,archived",
+      group: "campaign",
+      required: true,
+    });
 
     expect([...taskGenerationFields.keys()]).toEqual(
       expect.arrayContaining([
