@@ -55,16 +55,19 @@ describe("Campaign OS local API service facade", () => {
 
     expect(sessions["sess-aa-001"].payload).toMatchObject({
       accountType: "AA",
+      capabilities: expect.arrayContaining(["EBRIDGE"]),
       walletSource: "PORTKEY_AA",
       verificationStatus: "verified",
       walletTypeVerified: true,
     });
     expect(sessions["sess-eoa-app-001"].payload).toMatchObject({
       accountType: "EOA",
+      capabilities: expect.arrayContaining(["EBRIDGE"]),
       walletSource: "PORTKEY_EOA_APP",
       verificationStatus: "verified",
     });
     expect(sessions["sess-eoa-001"].payload).toMatchObject({
+      capabilities: expect.arrayContaining(["EBRIDGE"]),
       walletSource: "PORTKEY_EOA_EXTENSION",
       walletTypeVerified: true,
     });
@@ -73,11 +76,13 @@ describe("Campaign OS local API service facade", () => {
       walletTypeVerified: true,
     });
     expect(sessions["sess-agent-skill-001"].payload).toMatchObject({
+      capabilities: expect.not.arrayContaining(["EBRIDGE"]),
       walletSource: "AGENT_SKILL",
       verificationStatus: "internal_agent",
       walletTypeVerified: false,
     });
     expect(sessions["sess-unsupported-001"].payload).toMatchObject({
+      capabilities: expect.not.arrayContaining(["EBRIDGE"]),
       verificationStatus: "unsupported_wallet",
       walletTypeVerified: false,
     });
@@ -95,6 +100,7 @@ describe("Campaign OS local API service facade", () => {
     });
     expect(sessions["sess-unknown-001"].payload).toMatchObject({
       accountType: "UNKNOWN",
+      capabilities: expect.not.arrayContaining(["EBRIDGE"]),
       verificationStatus: "address_only",
     });
     expect(JSON.stringify(sessions).toLowerCase()).not.toContain("private key");

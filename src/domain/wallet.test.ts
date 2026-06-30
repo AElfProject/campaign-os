@@ -9,6 +9,19 @@ import {
 } from "./index";
 
 describe("wallet locale coverage", () => {
+  it("preserves the documented EBRIDGE capability for bridge-capable AA and EOA sessions", () => {
+    const sessions = normalizeWalletSessions(walletAdapterFixtures);
+    const sessionsById = Object.fromEntries(sessions.map((session) => [session.id, session]));
+
+    for (const sessionId of ["sess-aa-001", "sess-eoa-app-001", "sess-eoa-001"]) {
+      expect(sessionsById[sessionId]?.capabilities).toContain("EBRIDGE");
+    }
+
+    for (const sessionId of ["sess-unsupported-001", "sess-unknown-001", "sess-agent-skill-001"]) {
+      expect(sessionsById[sessionId]?.capabilities).not.toContain("EBRIDGE");
+    }
+  });
+
   it("creates a local aelf-web-login adapter readiness contract without live evidence promotion", () => {
     const sessions = normalizeWalletSessions(walletAdapterFixtures);
     const readiness = createAelfWebLoginAdapterReadiness(sessions);
@@ -39,12 +52,16 @@ describe("wallet locale coverage", () => {
     });
     expect(entriesById["portkey-aa"]).toMatchObject({
       accountType: "AA",
+      capabilities: expect.arrayContaining(["EBRIDGE"]),
       walletSource: "PORTKEY_AA",
       readiness: "local_only",
       liveEvidenceStatus: "missing",
       seededCoverageStatus: "ready",
       matchedSessionIds: ["sess-aa-001", "sess-account-restricted-001"],
     });
+    expect(entriesById["portkey-eoa-app"]?.capabilities).toContain("EBRIDGE");
+    expect(entriesById["portkey-eoa-extension"]?.capabilities).toContain("EBRIDGE");
+    expect(entriesById["agent-skill-internal"]?.capabilities).not.toContain("EBRIDGE");
     expect(entriesById["future-eoa-adapter"]).toMatchObject({
       readiness: "maintenance",
       seededCoverageStatus: "missing",
