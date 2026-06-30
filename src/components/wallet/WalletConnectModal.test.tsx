@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { walletOptions } from "../../domain";
+import { createAelfWebLoginAdapterReadiness, walletOptions, walletSessions } from "../../domain";
 import { WalletConnectModal } from "./WalletConnectModal";
 
 describe("WalletConnectModal locale coverage", () => {
@@ -12,6 +12,22 @@ describe("WalletConnectModal locale coverage", () => {
 
     const dialog = screen.getByRole("dialog", { name: "連接錢包" });
 
+    const adapterRecommended = within(dialog).getByTestId("wallet-modal-adapter-recommended");
+    const adapterEoa = within(dialog).getByTestId("wallet-modal-adapter-eoa");
+    const adapterDegraded = within(dialog).getByTestId("wallet-modal-adapter-degraded");
+    const adapterInternal = within(dialog).getByTestId("wallet-modal-adapter-internal");
+
+    expect(adapterRecommended).toBeInTheDocument();
+    expect(adapterEoa).toBeInTheDocument();
+    expect(adapterDegraded).toBeInTheDocument();
+    expect(adapterInternal).toBeInTheDocument();
+    expect(within(adapterRecommended).getByText("Portkey AA")).toBeInTheDocument();
+    expect(within(adapterRecommended).queryByText("Agent Skill 錢包")).not.toBeInTheDocument();
+    expect(within(adapterEoa).getByText("Portkey EOA App / Discover")).toBeInTheDocument();
+    expect(within(adapterDegraded).getByText("未來 EOA adapter")).toBeInTheDocument();
+    expect(within(adapterDegraded).getByText(/維護狀態/)).toBeInTheDocument();
+    expect(within(adapterInternal).getByText("Agent Skill 錢包")).toBeInTheDocument();
+    expect(within(adapterInternal).getByText(/內部自動化/)).toBeInTheDocument();
     expect(within(dialog).getByTestId("wallet-modal-group-recommended")).toBeInTheDocument();
     expect(within(dialog).getByTestId("wallet-modal-group-eoa")).toBeInTheDocument();
     expect(within(dialog).getByTestId("wallet-modal-group-advanced")).toBeInTheDocument();
@@ -25,5 +41,34 @@ describe("WalletConnectModal locale coverage", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "關閉錢包連接彈窗" }));
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Agent Skill out of normal-user adapter groups", () => {
+    render(
+      <WalletConnectModal
+        adapterReadiness={createAelfWebLoginAdapterReadiness(walletSessions)}
+        locale="en-US"
+        onClose={vi.fn()}
+        options={walletOptions}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    const normalUserGroups = [
+      within(dialog).getByTestId("wallet-modal-adapter-recommended"),
+      within(dialog).getByTestId("wallet-modal-adapter-eoa"),
+      within(dialog).getByTestId("wallet-modal-adapter-degraded"),
+    ];
+
+    for (const group of normalUserGroups) {
+      expect(within(group).queryByText("Agent Skill wallet")).not.toBeInTheDocument();
+    }
+
+    expect(within(dialog).getByTestId("wallet-modal-adapter-internal")).toHaveTextContent(
+      "Agent Skill wallet",
+    );
+    expect(within(dialog).getByText(/no live wallet SDK connection/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Future EOA adapter is maintenance-only/)).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/Next action:/).length).toBeGreaterThan(0);
   });
 });

@@ -326,6 +326,26 @@ describe("Project Console shell", () => {
       within(serviceFacade).getAllByText(/No live AeFinder, AelfScan, dApp API, social API, wallet SDK, reward distribution, export file, secret storage, or contract write/).length,
     ).toBeGreaterThan(0);
 
+    const walletAdapterReadiness = screen.getByLabelText("aelf-web-login adapter readiness");
+    expect(
+      within(walletAdapterReadiness).getByRole("heading", {
+        name: "aelf-web-login adapter readiness",
+      }),
+    ).toBeInTheDocument();
+    expect(within(walletAdapterReadiness).getByText("Configured adapters")).toBeInTheDocument();
+    expect(within(walletAdapterReadiness).getByText(/Enabled preview/)).toBeInTheDocument();
+    expect(within(walletAdapterReadiness).getByText("Missing live evidence")).toBeInTheDocument();
+    expect(within(walletAdapterReadiness).getByText("Release blockers")).toBeInTheDocument();
+    expect(within(walletAdapterReadiness).getByText("Portkey AA")).toBeInTheDocument();
+    expect(within(walletAdapterReadiness).getByText("Portkey EOA App / Discover")).toBeInTheDocument();
+    expect(within(walletAdapterReadiness).getByText("Future EOA adapter")).toBeInTheDocument();
+    expect(within(walletAdapterReadiness).queryByText("Agent Skill wallet")).not.toBeInTheDocument();
+    expect(within(walletAdapterReadiness).getAllByText(/Feature gate: enabled preview/).length).toBeGreaterThan(0);
+    expect(within(walletAdapterReadiness).getAllByText(/Live evidence: missing/).length).toBeGreaterThan(0);
+    expect(within(walletAdapterReadiness).getByText(/Future EOA adapter is maintenance-only/)).toBeInTheDocument();
+    expect(within(walletAdapterReadiness).getByText(/Show Future EOA adapter as maintenance/)).toBeInTheDocument();
+    expect(within(walletAdapterReadiness).getByText(/no live wallet SDK connection/)).toBeInTheDocument();
+
     const providerRegistry = screen.getByLabelText("Provider evidence registry");
     expect(
       within(providerRegistry).getByRole("heading", { name: "Provider evidence registry" }),

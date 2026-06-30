@@ -6,6 +6,8 @@ import {
   createExportConfirmationReadinessGate,
   createParticipationReadModel,
   getLocalizedText,
+  type AelfWebLoginAdapterLiveEvidenceStatus,
+  type AelfWebLoginAdapterReadiness,
   type AiOptimizationActionStatus,
   type AiOptimizationMetricTone,
   type CampaignShellDetail,
@@ -362,6 +364,22 @@ const providerLiveEvidenceState = (status: ProviderLiveEvidenceStatus) =>
 const providerFeatureGateState = (state: ProviderFeatureGateState) =>
   state === "disabled" ? "blocker" : "warning";
 
+const adapterReadinessState = (readiness: AelfWebLoginAdapterReadiness) => {
+  if (readiness === "blocked" || readiness === "unavailable") {
+    return "blocker";
+  }
+
+  return readiness === "ready" ? "ready" : "warning";
+};
+
+const adapterLiveEvidenceState = (status: AelfWebLoginAdapterLiveEvidenceStatus) => {
+  if (status === "blocked") {
+    return "blocker";
+  }
+
+  return status === "ready" ? "ready" : "warning";
+};
+
 const providerPathPriority = (entry: {
   adapterReadiness: string;
   liveEvidenceStatus: string;
@@ -451,6 +469,7 @@ export const AdminOpsPanel = ({
     ),
   );
   const providerEvidenceRegistry = adminOps.providerEvidenceRegistry;
+  const walletAdapterReadiness = adminOps.aelfWebLoginAdapterReadiness;
   const providerEvidenceRegistryEntries = [...providerEvidenceRegistry.entries].sort(
     (left, right) => providerPathPriority(left) - providerPathPriority(right),
   );
@@ -1021,6 +1040,119 @@ export const AdminOpsPanel = ({
               </p>
               <p style={mutedTextStyle}>
                 {copy.matchedSessions}: {scenario.matchedSessionIds.join(", ") || "-"}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.walletAdapterReadiness} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.walletAdapterReadinessSubtitle}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.walletAdapterReadiness}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${walletAdapterReadiness.summary.configuredAdapters} ${copy.walletAdapterConfigured}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${walletAdapterReadiness.summary.missingLiveEvidenceAdapters} ${copy.walletAdapterMissingLiveEvidence}`}
+              state={walletAdapterReadiness.summary.missingLiveEvidenceAdapters > 0 ? "warning" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${walletAdapterReadiness.summary.releaseBlockers} ${copy.releaseBlockers}`}
+              state={walletAdapterReadiness.summary.releaseBlockers > 0 ? "blocker" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{getLocalizedText(walletAdapterReadiness.boundary, locale)}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.nextAction}: {getLocalizedText(walletAdapterReadiness.nextAction, locale)}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.walletAdapterConfigured}</p>
+            <p style={valueStyle}>{walletAdapterReadiness.summary.configuredAdapters}</p>
+            <p style={mutedTextStyle}>{copy.walletAdapterReadinessSubtitle}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.walletAdapterEnabledPreview}</p>
+            <p style={valueStyle}>{walletAdapterReadiness.summary.enabledPreviewAdapters}</p>
+            <p style={mutedTextStyle}>{copy.configGate}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.walletAdapterMaintenance}</p>
+            <p style={valueStyle}>{walletAdapterReadiness.summary.maintenanceAdapters}</p>
+            <p style={mutedTextStyle}>{copy.fallback}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.walletAdapterInternalOnly}</p>
+            <p style={valueStyle}>{walletAdapterReadiness.summary.internalOnlyAdapters}</p>
+            <p style={mutedTextStyle}>{copy.walletAdapterBoundary}</p>
+          </article>
+        </div>
+        <div style={gridStyle}>
+          {walletAdapterReadiness.entries.map((entry) => (
+            <article key={entry.adapterId} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{entry.adapterName}</p>
+                  <strong>{getLocalizedText(entry.displayName, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={readableCode(entry.readiness)}
+                  state={adapterReadinessState(entry.readiness)}
+                />
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.walletSource}</p>
+                  <p style={mutedTextStyle}>{entry.walletSource}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.accountType}</p>
+                  <p style={mutedTextStyle}>{entry.accountType}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.liveEvidence}</p>
+                  <PublishStateBadge
+                    label={readableCode(entry.liveEvidenceStatus)}
+                    state={adapterLiveEvidenceState(entry.liveEvidenceStatus)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.featureGate}</p>
+                  <PublishStateBadge
+                    label={readableCode(entry.featureGate.state)}
+                    state={entry.featureGate.state === "blocked" ? "blocker" : "warning"}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.fallback}</p>
+                  <PublishStateBadge
+                    label={readableCode(entry.fallback.mode)}
+                    state={entry.fallback.blocksLaunch ? "blocker" : "warning"}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.matchedSessions}</p>
+                  <p style={mutedTextStyle}>{entry.matchedSessionIds.join(", ") || "-"}</p>
+                </div>
+              </div>
+              <p style={mutedTextStyle}>
+                {copy.configGate}: {entry.featureGate.configKey} · {getLocalizedText(entry.featureGate.operatorMessage, locale)}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.fallback}: {getLocalizedText(entry.fallback.reason, locale)}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.nextAction}: {getLocalizedText(entry.nextAction, locale)}
               </p>
             </article>
           ))}
