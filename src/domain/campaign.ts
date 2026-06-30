@@ -7262,8 +7262,8 @@ const createProductDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
       status: "covered",
       surface: localized("App shell header", "App shell Header"),
       evidence: localized(
-        "The global header exposes English and Simplified Chinese options.",
-        "全局 Header 暴露 English 与简体中文选项。",
+        "The global header exposes English, Simplified Chinese, and Traditional Chinese options.",
+        "全局 Header 暴露 English、简体中文与繁體中文选项。",
       ),
       nextAction: localized(
         "Keep only the approved runtime locales until a separate expansion is approved.",
@@ -7287,6 +7287,23 @@ const createProductDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
         "在必要语言审核未完成时继续阻断发布。",
       ),
       sourceRequirement: "Product checklist: builder locale fields",
+    }),
+    deliveryChecklistItem({
+      groupId,
+      id: "product-mvp-locale-coverage",
+      label: localized("MVP locale coverage", "MVP 语言覆盖"),
+      status: "covered",
+      ownerRole: "project_owner",
+      surface: localized("Locale governance", "语言治理"),
+      evidence: localized(
+        "Runtime support covers the v0.2 MVP locales: en-US, zh-CN, and zh-TW.",
+        "运行时已覆盖 v0.2 MVP 语言：en-US、zh-CN 与 zh-TW。",
+      ),
+      nextAction: localized(
+        "Keep P1 locales such as ko-KR, ja-JP, vi-VN, id-ID, tr-TR, and es-ES deferred to a separate expansion mission.",
+        "将 ko-KR、ja-JP、vi-VN、id-ID、tr-TR、es-ES 等 P1 语言继续后置到单独扩展 mission。",
+      ),
+      sourceRequirement: "Product checklist: MVP locale coverage",
     }),
     deliveryChecklistItem({
       groupId,
@@ -7342,17 +7359,17 @@ const createProductDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
     deliveryChecklistItem({
       groupId,
       id: "product-future-locale-expansion",
-      label: localized("Additional locale expansion is deferred", "额外语言扩展已后置"),
+      label: localized("Additional P1 locale expansion is deferred", "额外 P1 语言扩展已后置"),
       status: "deferred",
       ownerRole: "project_owner",
       surface: localized("Locale governance", "语言治理"),
       evidence: localized(
-        "Runtime support intentionally remains English and Simplified Chinese for this MVP.",
-        "当前 MVP 运行时有意仅支持 English 与简体中文。",
+        "The v0.2 MVP locales are covered; P1 locales such as ko-KR, ja-JP, vi-VN, id-ID, tr-TR, and es-ES remain future scope.",
+        "v0.2 MVP 语言已覆盖；ko-KR、ja-JP、vi-VN、id-ID、tr-TR、es-ES 等 P1 语言仍为未来范围。",
       ),
       nextAction: localized(
-        "Open a separate locale expansion mission if more locales become required.",
-        "若需要更多语言，单独开启语言扩展 mission。",
+        "Open a separate locale expansion mission if P1 locales become required.",
+        "若需要 P1 语言，单独开启语言扩展 mission。",
       ),
       sourceRequirement: "Product checklist: future locale expansion",
     }),
