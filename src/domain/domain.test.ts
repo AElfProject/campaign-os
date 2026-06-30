@@ -552,6 +552,17 @@ describe("Campaign OS domain foundation", () => {
       "GetEligibilityRoot",
       "VerifyEligibilityProof",
     ]);
+    const setSupportedLocalesMethod = matrix.groups
+      .find((group) => group.contractName === "CampaignRegistryV2")
+      ?.methods.find((method) => method.name === "SetSupportedLocales");
+
+    expect(setSupportedLocalesMethod?.nextAction).toMatchObject({
+      "en-US": expect.stringContaining("zh-TW"),
+      "zh-CN": expect.stringContaining("zh-TW"),
+      "zh-TW": expect.stringContaining("zh-TW"),
+    });
+    expect(setSupportedLocalesMethod?.nextAction["en-US"]).not.toContain("limited to en-US and zh-CN");
+    expect(setSupportedLocalesMethod?.nextAction["zh-CN"]).not.toContain("保持 en-US 与 zh-CN");
     expect(
       matrix.groups
         .find((group) => group.contractName === "CampaignPointsLedgerV2")
