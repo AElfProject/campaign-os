@@ -3,6 +3,7 @@ import {
   createAdvancedAnalyticsReadiness,
   createAiContentPackWorkbench,
   createCampaignLifecycleOperations,
+  createExportArtifact,
   createExportConfirmationReadinessGate,
   createExportPreview,
   createLaunchConsoleCampaignBundles,
@@ -33,6 +34,7 @@ import {
   type CampaignLifecycleOperations,
   type ContractMode,
   type ExportConfirmationReadinessGate,
+  type ExportArtifact,
   type ExportContractRootMode,
   type ExportCsvColumn,
   type ExportPreviewMode,
@@ -241,6 +243,7 @@ export interface ExportWinnersRequest {
 }
 
 export interface ExportWinnersResponse {
+  artifact: ExportArtifact;
   campaignId: string;
   columns: readonly ExportCsvColumn[];
   confirmation: ReturnType<typeof createExportPreview>["confirmation"];
@@ -316,11 +319,11 @@ export interface CampaignOsLocalService {
 
 export const serviceBoundary: LocalizedText = {
   "en-US":
-    "No live API, wallet SDK, provider, secret storage, real export file, reward distribution, contract call, or contract root write is executed. No live analytics SDK, event warehouse, or billing is executed. Responses are seeded/local read models only, including advanced analytics readiness.",
+    "No live API, wallet SDK, provider, secret storage, storage-backed export file, reward distribution, contract call, or contract root write is executed. No live analytics SDK, event warehouse, or billing is executed. Responses are seeded/local read models only, including local export artifacts and advanced analytics readiness.",
   "zh-CN":
-    "不会调用实时 API、analytics SDK、事件仓库、billing、钱包 SDK、provider、secret 存储、真实导出文件、奖励发放、合约调用或合约 root 写入。响应仅来自 seeded/本地 read model，包括高级分析准备度。",
+    "不会调用实时 API、analytics SDK、事件仓库、billing、钱包 SDK、provider、secret 存储、storage-backed 导出文件、奖励发放、合约调用或合约 root 写入。响应仅来自 seeded/本地 read model，包括本地导出 artifact 与高级分析准备度。",
   "zh-TW":
-    "No live API, wallet SDK, provider, secret storage, real export file, reward distribution, contract call, or contract root write is executed. No live analytics SDK, event warehouse, or billing is executed. Responses are seeded/local read models only, including advanced analytics readiness.",
+    "No live API, wallet SDK, provider, secret storage, storage-backed export file, reward distribution, contract call, or contract root write is executed. No live analytics SDK, event warehouse, or billing is executed. Responses are seeded/local read models only, including local export artifacts and advanced analytics readiness.",
 };
 
 const rewardBoundary: LocalizedText = {
@@ -810,6 +813,33 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       );
     }
 
+    if (!request.includeWalletType) {
+      return failure(
+        "INVALID_REQUEST",
+        "includeWalletType",
+        "Export artifacts must include wallet type and wallet source for v0.2 review.",
+        "v0.2 审核要求导出 artifact 包含钱包类型与钱包来源。",
+      );
+    }
+
+    if (!request.includeLocalePreference) {
+      return failure(
+        "INVALID_REQUEST",
+        "includeLocalePreference",
+        "Export artifacts must include locale preference for v0.2 review.",
+        "v0.2 审核要求导出 artifact 包含语言偏好。",
+      );
+    }
+
+    if (!request.includeRiskFlags) {
+      return failure(
+        "INVALID_REQUEST",
+        "includeRiskFlags",
+        "Export artifacts must include risk flags for v0.2 review.",
+        "v0.2 审核要求导出 artifact 包含风险标记。",
+      );
+    }
+
     const preview = createExportPreview(
       campaign.id,
       campaign.participants,
@@ -817,8 +847,10 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       campaign.walletSessions,
     );
     const rows = preview.rows;
+    const artifact = createExportArtifact(preview, request.format);
 
     return success({
+      artifact,
       blockedRows: rows.filter((row) => row.rowStatus === "blocked").length,
       campaignId: campaign.id,
       columns: EXPORT_CSV_COLUMNS,

@@ -16,6 +16,7 @@ import {
   computePublishReadiness,
   createAdminOpsReadModel,
   createExportConfirmationReadinessGate,
+  createExportArtifact,
   createExportPreview,
   createParticipationReadModel,
   createProviderEvidenceRegistry,
@@ -965,6 +966,78 @@ describe("Campaign OS domain foundation", () => {
       expect.arrayContaining(["demo-task-bridge-3E9", "demo-task-social-3E9"]),
     );
     expect(exportPreview.rows).toHaveLength(4);
+  });
+
+  it("creates deterministic local CSV and JSON export artifacts", () => {
+    const exportPreview = createExportPreview(
+      campaignDetail.id,
+      campaignDetail.participants,
+      campaignDetail.tasks,
+      campaignDetail.walletSessions,
+    );
+    const csvArtifact = createExportArtifact(exportPreview, "csv");
+    const csvArtifactAgain = createExportArtifact(exportPreview, "csv");
+    const jsonArtifact = createExportArtifact(exportPreview, "json");
+    const parsedJson = JSON.parse(jsonArtifact.payload) as {
+      columns: string[];
+      rows: Array<Record<string, unknown>>;
+    };
+
+    expect(csvArtifact.format).toBe("csv");
+    expect(csvArtifact.mimeType).toBe("text/csv;charset=utf-8");
+    expect(csvArtifact.payload.split("\n")[0]).toBe(EXPORT_CSV_COLUMNS.join(","));
+    expect(csvArtifact.payload).toContain(
+      "camp-awaken-sprint,2F4...9aB,AA,PORTKEY_AA,en-US,270,12,true,",
+    );
+    expect(csvArtifact.payload).toContain(
+      "referral_velocity_review",
+    );
+    expect(csvArtifact.payload).toContain("task-bridge:pending:aelfscan");
+    expect(csvArtifact.payload).toContain("demo-task-bridge-3E9");
+    expect(csvArtifact.metadata).toMatchObject({
+      blockedRows: 0,
+      columns: EXPORT_CSV_COLUMNS,
+      generatedMode: "local_review_only",
+      readyRows: 1,
+      reviewRequiredRows: 3,
+      totalRows: 4,
+    });
+    expect(csvArtifact.metadata.checksum).toBe(csvArtifactAgain.metadata.checksum);
+    expect(csvArtifact.payload).toBe(csvArtifactAgain.payload);
+    expect(csvArtifact.safety).toMatchObject({
+      localOnly: true,
+      noContractRoot: true,
+      noDownloadUrl: true,
+      noRewardDistribution: true,
+      noStorageWrite: true,
+      rewardDistributionOwner: "campaign_project",
+    });
+
+    expect(jsonArtifact.format).toBe("json");
+    expect(jsonArtifact.mimeType).toBe("application/json;charset=utf-8");
+    expect(parsedJson.columns).toEqual(EXPORT_CSV_COLUMNS);
+    expect(parsedJson.rows).toHaveLength(4);
+    expect(parsedJson.rows[1]).toMatchObject({
+      account_type: "EOA",
+      locale_preference: "zh-CN",
+      risk_flags: ["referral_velocity_review"],
+      wallet_source: "PORTKEY_EOA_EXTENSION",
+    });
+    expect(jsonArtifact.metadata.totalRows).toBe(csvArtifact.metadata.totalRows);
+
+    for (const unsafe of [
+      "downloadUrl",
+      "storageKey",
+      "contractRoot",
+      "transactionId",
+      "privateKey",
+      "signedPayload",
+      "ipAddress",
+      "deviceFingerprint",
+    ]) {
+      expect(hasOwnKeyDeep(csvArtifact, unsafe)).toBe(false);
+      expect(hasOwnKeyDeep(jsonArtifact, unsafe)).toBe(false);
+    }
   });
 
   it("derives ready user winners export status from the export preview row", () => {

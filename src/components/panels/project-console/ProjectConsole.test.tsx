@@ -306,7 +306,24 @@ describe("Project Console shell", () => {
     expect(screen.getByText("CSV columns")).toBeInTheDocument();
     expect(screen.getByText(EXPORT_CSV_COLUMNS.join(","))).toBeInTheDocument();
     expect(screen.getByText(/Campaign OS exports verified records only/)).toBeInTheDocument();
-    expect(screen.getByText(/No live analytics, no real export file/)).toBeInTheDocument();
+    expect(screen.getByText(/Local export artifact only/)).toBeInTheDocument();
+    const localArtifact = screen.getByLabelText("Local export artifact");
+    expect(within(localArtifact).getByText("camp-awaken-sprint-export-awaken-sprint-preview-local-review.csv")).toBeInTheDocument();
+    expect(within(localArtifact).getByText("CSV")).toBeInTheDocument();
+    expect(within(localArtifact).getByText(/Artifact batch: export-awaken-sprint-preview/)).toBeInTheDocument();
+    expect(within(localArtifact).getByText("Checksum")).toBeInTheDocument();
+    expect(within(localArtifact).getByText(/^local-[0-9a-f]{8}$/)).toBeInTheDocument();
+    expect(within(localArtifact).getByText("Payload bytes")).toBeInTheDocument();
+    expect(within(localArtifact).getByText(/Artifact rows: 1 \/ 3 \/ 0/)).toBeInTheDocument();
+    expect(within(localArtifact).getAllByText("No download URL").length).toBeGreaterThan(0);
+    expect(within(localArtifact).getAllByText("No storage write").length).toBeGreaterThan(0);
+    expect(within(localArtifact).getAllByText("No contract root").length).toBeGreaterThan(0);
+    expect(within(localArtifact).getAllByText("No reward distribution").length).toBeGreaterThan(0);
+    expect(within(localArtifact).getByText(/no download URL, storage write, contract root/)).toBeInTheDocument();
+    expect(within(localArtifact).queryByText(/Download ready/i)).not.toBeInTheDocument();
+    expect(within(localArtifact).queryByText(/Stored/i)).not.toBeInTheDocument();
+    expect(within(localArtifact).queryByText(/Contract root generated/i)).not.toBeInTheDocument();
+    expect(within(localArtifact).queryByText(/Rewards distributed/i)).not.toBeInTheDocument();
 
     const exportReadiness = screen.getByLabelText("Export confirmation readiness");
     expect(
@@ -521,6 +538,14 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText("阻断行").length).toBeGreaterThan(0);
     expect(screen.getByText(EXPORT_CSV_COLUMNS.join(","))).toBeInTheDocument();
     expect(screen.getByText(/只导出已验证记录/)).toBeInTheDocument();
+    const exportArtifact = screen.getByLabelText("本地导出 artifact");
+    expect(within(exportArtifact).getByText("camp-awaken-sprint-export-awaken-sprint-preview-local-review.csv")).toBeInTheDocument();
+    expect(within(exportArtifact).getByText(/Artifact 批次: export-awaken-sprint-preview/)).toBeInTheDocument();
+    expect(within(exportArtifact).getByText("不生成下载链接")).toBeInTheDocument();
+    expect(within(exportArtifact).getByText("不写入存储")).toBeInTheDocument();
+    expect(within(exportArtifact).getByText("不生成合约 root")).toBeInTheDocument();
+    expect(within(exportArtifact).getByText("不发奖")).toBeInTheDocument();
+    expect(within(exportArtifact).getByText(/仅本地导出 artifact/)).toBeInTheDocument();
     const exportReadiness = screen.getByLabelText("导出确认 readiness");
     expect(
       within(exportReadiness).getByRole("heading", { name: "导出确认 readiness" }),

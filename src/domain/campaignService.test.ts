@@ -368,6 +368,38 @@ describe("Campaign OS local API service facade", () => {
       includeRiskFlags: true,
       includeWalletType: true,
     });
+    const repeatedJsonExportPreview = service.exportWinners({
+      campaignId: campaignDetail.id,
+      contractRootMode: "none",
+      format: "json",
+      includeLocalePreference: true,
+      includeRiskFlags: true,
+      includeWalletType: true,
+    });
+    const missingWalletTypeExport = service.exportWinners({
+      campaignId: campaignDetail.id,
+      contractRootMode: "none",
+      format: "csv",
+      includeLocalePreference: true,
+      includeRiskFlags: true,
+      includeWalletType: false,
+    });
+    const missingLocaleExport = service.exportWinners({
+      campaignId: campaignDetail.id,
+      contractRootMode: "none",
+      format: "csv",
+      includeLocalePreference: false,
+      includeRiskFlags: true,
+      includeWalletType: true,
+    });
+    const missingRiskExport = service.exportWinners({
+      campaignId: campaignDetail.id,
+      contractRootMode: "none",
+      format: "csv",
+      includeLocalePreference: true,
+      includeRiskFlags: false,
+      includeWalletType: true,
+    });
     const exportReadiness = service.getExportConfirmationReadiness({
       campaignId: campaignDetail.id,
     });
@@ -441,12 +473,32 @@ describe("Campaign OS local API service facade", () => {
     });
     expect(exportPreview.payload?.columns).toEqual(EXPORT_CSV_COLUMNS);
     expect(exportPreview.payload).toMatchObject({
+      artifact: expect.objectContaining({
+        format: "csv",
+        metadata: expect.objectContaining({
+          columns: EXPORT_CSV_COLUMNS,
+          generatedMode: "local_review_only",
+          readyRows: 1,
+          reviewRequiredRows: 3,
+          totalRows: 4,
+        }),
+        safety: expect.objectContaining({
+          localOnly: true,
+          noDownloadUrl: true,
+          noStorageWrite: true,
+          noContractRoot: true,
+          noRewardDistribution: true,
+        }),
+      }),
       blockedRows: 0,
       contractRootMode: "none",
       format: "csv",
       readyRows: 1,
       reviewRequiredRows: 3,
     });
+    expect(exportPreview.payload?.artifact.payload.split("\n")[0]).toBe(EXPORT_CSV_COLUMNS.join(","));
+    expect(exportPreview.payload?.artifact.payload).toContain("task-bridge:pending:aelfscan");
+    expect(exportPreview.payload?.artifact.payload).toContain("demo-task-bridge-3E9");
     expect(exportPreview.payload?.rows[1]).toMatchObject({
       evidenceHashes: expect.arrayContaining(["demo-task-bridge-3E9"]),
       localePreference: "zh-CN",
@@ -461,11 +513,34 @@ describe("Campaign OS local API service facade", () => {
     );
     expect(exportPreview.payload?.exportReadiness.previewModes.map((mode) => mode.mode)).toEqual(["csv", "json"]);
     expect(jsonExportPreview.payload).toMatchObject({
+      artifact: expect.objectContaining({
+        format: "json",
+        metadata: expect.objectContaining({
+          checksum: expect.stringMatching(/^local-[0-9a-f]{8}$/),
+          payloadBytes: expect.any(Number),
+          totalRows: 4,
+        }),
+      }),
       contractRootMode: "none",
       format: "json",
       readyRows: 1,
       reviewRequiredRows: 3,
     });
+    expect(JSON.parse(jsonExportPreview.payload?.artifact.payload ?? "{}")).toMatchObject({
+      columns: EXPORT_CSV_COLUMNS,
+      rows: expect.arrayContaining([
+        expect.objectContaining({
+          account_type: "EOA",
+          locale_preference: "zh-CN",
+          risk_flags: ["referral_velocity_review"],
+          wallet_source: "PORTKEY_EOA_EXTENSION",
+        }),
+      ]),
+    });
+    expect(repeatedJsonExportPreview.payload?.artifact.payload).toBe(jsonExportPreview.payload?.artifact.payload);
+    expect(repeatedJsonExportPreview.payload?.artifact.metadata.checksum).toBe(
+      jsonExportPreview.payload?.artifact.metadata.checksum,
+    );
     expect(jsonExportPreview.payload?.exportReadiness.previewModes.find((mode) => mode.mode === "json")).toMatchObject({
       downloadAvailable: false,
       generatesFile: false,
@@ -486,6 +561,22 @@ describe("Campaign OS local API service facade", () => {
     expect(hasOwnKeyDeep(jsonExportPreview.payload, "storageKey")).toBe(false);
     expect(hasOwnKeyDeep(jsonExportPreview.payload, "contractRoot")).toBe(false);
     expect(hasOwnKeyDeep(jsonExportPreview.payload, "transactionId")).toBe(false);
+    expect(hasOwnKeyDeep(jsonExportPreview.payload, "privateKey")).toBe(false);
+    expect(hasOwnKeyDeep(jsonExportPreview.payload, "signedPayload")).toBe(false);
+    expect(hasOwnKeyDeep(jsonExportPreview.payload, "ipAddress")).toBe(false);
+    expect(hasOwnKeyDeep(jsonExportPreview.payload, "deviceFingerprint")).toBe(false);
+    expect(missingWalletTypeExport).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "INVALID_REQUEST", field: "includeWalletType" }),
+    });
+    expect(missingLocaleExport).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "INVALID_REQUEST", field: "includeLocalePreference" }),
+    });
+    expect(missingRiskExport).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "INVALID_REQUEST", field: "includeRiskFlags" }),
+    });
     expect(unsafeExport).toMatchObject({
       ok: false,
       error: expect.objectContaining({ code: "UNSUPPORTED_EXPORT_MODE", field: "contractRootMode" }),
