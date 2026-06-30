@@ -217,6 +217,7 @@ export type ExportCsvColumn = (typeof EXPORT_CSV_COLUMNS)[number];
 export type ExportPreviewMode = "csv" | "json";
 export type ExportReadinessState = "ready" | "review_required" | "blocked";
 export type ExportRowStatus = "ready" | "review_required" | "blocked";
+export type ExportArtifactGeneratedMode = "local_review_only";
 export type ExportContractRootMode =
   | "none"
   | "eligibility_root"
@@ -1515,6 +1516,43 @@ export interface ExportConfirmation {
   rewardDistributionOwner: "campaign_project";
   noDistributionBoundary: LocalizedText;
   riskBoundary: LocalizedText;
+}
+
+export interface ExportArtifactMetadata {
+  columns: readonly ExportCsvColumn[];
+  totalRows: number;
+  readyRows: number;
+  reviewRequiredRows: number;
+  blockedRows: number;
+  checksum: string;
+  checksumAlgorithm: string;
+  generatedMode: ExportArtifactGeneratedMode;
+  payloadBytes: number;
+}
+
+export interface ExportArtifactSafety {
+  localOnly: true;
+  verifiedRecordsOnly: boolean;
+  rewardDistributionOwner: "campaign_project";
+  noDownloadUrl: true;
+  noStorageWrite: true;
+  noContractRoot: true;
+  noContractTransaction: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  boundary: LocalizedText;
+}
+
+export interface ExportArtifact {
+  campaignId: string;
+  batchId: string;
+  format: ExportPreviewMode;
+  fileName: string;
+  mimeType: string;
+  extension: ExportPreviewMode;
+  payload: string;
+  metadata: ExportArtifactMetadata;
+  safety: ExportArtifactSafety;
 }
 
 export interface ExportPreviewModeReadiness {

@@ -67,6 +67,7 @@ import type {
   EcosystemRecommendationPriority,
   EcosystemRecommendationStatus,
   ExportAcknowledgement,
+  ExportArtifact,
   ExportConfirmation,
   ExportConfirmationReadinessGate,
   ExportContractRootReadiness,
@@ -195,6 +196,15 @@ const exportRiskBoundary: LocalizedText = {
   "en-US": "Risk flags and eligibility results are review inputs; Campaign OS does not distribute rewards.",
   "zh-CN": "风险标记与资格结果仅作为审核输入；Campaign OS 不执行发奖。",
   "zh-TW": "Risk flags and eligibility results are review inputs; Campaign OS does not distribute rewards.",
+};
+
+export const exportArtifactBoundary: LocalizedText = {
+  "en-US":
+    "Local export artifact only. Campaign OS creates an in-memory review payload with no download URL, storage write, contract root, contract transaction, reward custody, or reward distribution.",
+  "zh-CN":
+    "仅本地导出 artifact。Campaign OS 只生成内存中的审核 payload，不生成下载链接、存储写入、合约 root、合约交易、奖励托管或发奖。",
+  "zh-TW":
+    "Local export artifact only. Campaign OS creates an in-memory review payload with no download URL, storage write, contract root, contract transaction, reward custody, or reward distribution.",
 };
 
 const exportFulfillmentOwner: LocalizedText = {
@@ -2707,6 +2717,131 @@ const createExportConfirmation = (): ExportConfirmation => ({
   noDistributionBoundary: rewardBoundary,
   riskBoundary: exportRiskBoundary,
 });
+
+const exportRowValueByColumn = (
+  row: ExportPreviewRow,
+  column: ExportCsvColumn,
+): string | number | boolean | string[] | undefined => {
+  const values = {
+    campaign_id: row.campaignId,
+    wallet_address: row.walletAddress,
+    account_type: row.accountType,
+    wallet_source: row.walletSource,
+    locale_preference: row.localePreference,
+    total_points: row.totalPoints,
+    rank: row.rank ?? 0,
+    eligible: row.eligible,
+    missing_tasks: row.missingTasks,
+    risk_flags: row.riskFlags,
+    referrer_address: row.referrerAddress,
+    task_records: row.taskRecords,
+    evidence_hashes: row.evidenceHashes,
+    export_batch_id: row.exportBatchId,
+  } satisfies Record<ExportCsvColumn, string | number | boolean | string[]>;
+
+  return values[column];
+};
+
+const serializeExportScalar = (value: string | number | boolean | string[] | undefined): string => {
+  if (Array.isArray(value)) {
+    return value.join("|");
+  }
+
+  return value === undefined ? "" : String(value);
+};
+
+const escapeCsvValue = (value: string | number | boolean | string[] | undefined): string => {
+  const serialized = serializeExportScalar(value);
+
+  return /[",\n\r]/.test(serialized) ? `"${serialized.replace(/"/g, "\"\"")}"` : serialized;
+};
+
+const serializeExportRowsToCsv = (rows: ExportPreviewRow[]): string =>
+  [
+    exportCsvColumns.join(","),
+    ...rows.map((row) =>
+      exportCsvColumns.map((column) => escapeCsvValue(exportRowValueByColumn(row, column))).join(",")
+    ),
+  ].join("\n");
+
+const projectExportRowForArtifact = (row: ExportPreviewRow) =>
+  Object.fromEntries(
+    exportCsvColumns.map((column) => [column, exportRowValueByColumn(row, column)]),
+  ) as Record<ExportCsvColumn, string | number | boolean | string[] | undefined>;
+
+const serializeExportRowsToJson = (preview: ExportPreview): string =>
+  JSON.stringify(
+    {
+      campaignId: preview.campaignId,
+      columns: exportCsvColumns,
+      rows: preview.rows.map(projectExportRowForArtifact),
+    },
+    null,
+    2,
+  );
+
+const createLocalReviewChecksum = (payload: string): string => {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < payload.length; index += 1) {
+    hash ^= payload.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return `local-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+};
+
+const exportArtifactMimeTypes: Record<ExportPreviewMode, string> = {
+  csv: "text/csv;charset=utf-8",
+  json: "application/json;charset=utf-8",
+};
+
+const serializeExportArtifactPayload = (preview: ExportPreview, format: ExportPreviewMode): string =>
+  format === "csv" ? serializeExportRowsToCsv(preview.rows) : serializeExportRowsToJson(preview);
+
+export const createExportArtifact = (
+  preview: ExportPreview,
+  format: ExportPreviewMode,
+): ExportArtifact => {
+  const payload = serializeExportArtifactPayload(preview, format);
+  const readyRows = preview.rows.filter((row) => row.rowStatus === "ready").length;
+  const reviewRequiredRows = preview.rows.filter((row) => row.rowStatus === "review_required").length;
+  const blockedRows = preview.rows.filter((row) => row.rowStatus === "blocked").length;
+  const batchId = preview.rows[0]?.exportBatchId ?? exportBatchId;
+
+  return {
+    campaignId: preview.campaignId,
+    batchId,
+    format,
+    fileName: `${preview.campaignId}-${batchId}-local-review.${format}`,
+    mimeType: exportArtifactMimeTypes[format],
+    extension: format,
+    payload,
+    metadata: {
+      columns: exportCsvColumns,
+      totalRows: preview.rows.length,
+      readyRows,
+      reviewRequiredRows,
+      blockedRows,
+      checksum: createLocalReviewChecksum(payload),
+      checksumAlgorithm: "fnv1a32-local-review",
+      generatedMode: "local_review_only",
+      payloadBytes: new TextEncoder().encode(payload).length,
+    },
+    safety: {
+      localOnly: true,
+      verifiedRecordsOnly: preview.confirmation.verifiedRecordsOnly,
+      rewardDistributionOwner: preview.confirmation.rewardDistributionOwner,
+      noDownloadUrl: true,
+      noStorageWrite: true,
+      noContractRoot: true,
+      noContractTransaction: true,
+      noRewardCustody: true,
+      noRewardDistribution: true,
+      boundary: exportArtifactBoundary,
+    },
+  };
+};
 
 const findMissingColumnValues = (
   row: Record<ExportCsvColumn, string | number | boolean | string[] | undefined>,
