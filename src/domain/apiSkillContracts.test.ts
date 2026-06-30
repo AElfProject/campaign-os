@@ -57,6 +57,89 @@ describe("API Skill Contract registry", () => {
     );
   });
 
+  it("models exact v0.2 campaign, task, completion, and content field contracts", () => {
+    const createCampaignFields = new Map(
+      [
+        ...contractsById.create_campaign.inputFields,
+        ...contractsById.create_campaign.outputFields,
+      ].map((field) => [field.name, field]),
+    );
+    const taskGenerationFields = new Map(
+      [
+        ...contractsById.generate_campaign_tasks.inputFields,
+        ...contractsById.generate_campaign_tasks.outputFields,
+      ].map((field) => [field.name, field]),
+    );
+    const taskCompletionFields = new Map(
+      [
+        ...contractsById.verify_task.inputFields,
+        ...contractsById.verify_task.outputFields,
+      ].map((field) => [field.name, field]),
+    );
+    const postFields = new Map(
+      [
+        ...contractsById.generate_campaign_posts.inputFields,
+        ...contractsById.generate_campaign_posts.outputFields,
+      ].map((field) => [field.name, field]),
+    );
+
+    expect([...createCampaignFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "projectId",
+        "ownerAddress",
+        "status",
+        "defaultLocale",
+        "supportedLocales",
+        "walletPolicy",
+        "contractMode",
+        "metadataUri",
+        "metadataHash",
+        "rewardDisclaimerHash",
+        "startTime",
+        "endTime",
+      ]),
+    );
+    for (const optionalField of ["metadataUri", "metadataHash", "rewardDisclaimerHash"]) {
+      expect(createCampaignFields.get(optionalField)?.required).toBe(false);
+    }
+
+    expect([...taskGenerationFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "campaignId",
+        "templateCode",
+        "titleKey",
+        "instructionKey",
+        "verificationType",
+        "walletCompatibility",
+        "points",
+        "required",
+        "evidenceRule",
+      ]),
+    );
+
+    expect([...taskCompletionFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "campaignId",
+        "taskId",
+        "walletAddress",
+        "accountType",
+        "walletSource",
+        "status",
+        "evidenceSource",
+        "evidenceHash",
+        "txId",
+        "completedAt",
+        "pointsAwarded",
+      ]),
+    );
+    for (const optionalField of ["evidenceHash", "txId", "completedAt"]) {
+      expect(taskCompletionFields.get(optionalField)?.required).toBe(false);
+    }
+
+    expect([...postFields.keys()]).toEqual(expect.arrayContaining(["contentKeys"]));
+    expect(postFields.get("contentKeys")?.example).toBe("title,description,rewardDisclaimer,faq");
+  });
+
   it("models verification and eligibility wallet/evidence boundaries", () => {
     const verifyTaskFields = [
       ...contractsById.verify_task.inputFields,

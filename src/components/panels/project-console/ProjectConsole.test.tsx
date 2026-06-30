@@ -437,8 +437,16 @@ describe("Project Console shell", () => {
     expect(screen.getByText("create_campaign")).toBeInTheDocument();
     expect(screen.getByText("verify_task")).toBeInTheDocument();
     expect(screen.getByText("export_winners")).toBeInTheDocument();
+    expect(screen.getByText("ownerAddress")).toBeInTheDocument();
+    expect(screen.getByText("metadataUri")).toBeInTheDocument();
+    expect(screen.getByText("rewardDisclaimerHash")).toBeInTheDocument();
+    expect(screen.getByText("templateCode")).toBeInTheDocument();
+    expect(screen.getByText("evidenceRule")).toBeInTheDocument();
     expect(screen.getAllByText("walletAddress").length).toBeGreaterThan(0);
     expect(screen.getAllByText("accountType").length).toBeGreaterThan(0);
+    expect(screen.getByText("txId")).toBeInTheDocument();
+    expect(screen.getByText("completedAt")).toBeInTheDocument();
+    expect(screen.getByText("contentKeys")).toBeInTheDocument();
     expect(screen.getByText("contractRootMode")).toBeInTheDocument();
     expect(
       screen.getAllByText("LOCAL_SEEDED, AEFINDER, AELFSCAN, DAPP_API, SOCIAL_API, WALLET_SESSION, MANUAL").length,
