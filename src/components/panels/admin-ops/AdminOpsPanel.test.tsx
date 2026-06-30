@@ -78,6 +78,9 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Wallet modal has Recommended, EOA, and Advanced sections");
     expectVisibleText("Normalized wallet session schema");
     expectVisibleText("Reward disclaimer per locale");
+    expectVisibleText("MVP locale coverage");
+    expectVisibleText(/Traditional Chinese/);
+    expectVisibleText(/P1 locale/);
     expectVisibleText("Contract impact review before publish");
     expectVisibleText("Portkey AA connect tested");
     expectVisibleText("Wrong chain error tested");

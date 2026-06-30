@@ -625,6 +625,30 @@ describe("Campaign OS domain foundation", () => {
     expect(itemsById["product-reward-disclaimer-locales"]?.evidence["en-US"]).toContain(
       "localized reward disclaimer gate",
     );
+    expect(itemsById["product-language-selector"]).toMatchObject({
+      status: "covered",
+      blocksDelivery: false,
+    });
+    expect(itemsById["product-language-selector"]?.evidence["en-US"]).toContain("English");
+    expect(itemsById["product-language-selector"]?.evidence["en-US"]).toContain("Simplified Chinese");
+    expect(itemsById["product-language-selector"]?.evidence["en-US"]).toContain("Traditional Chinese");
+    expect(itemsById["product-mvp-locale-coverage"]).toMatchObject({
+      status: "covered",
+      blocksDelivery: false,
+    });
+    expect(itemsById["product-mvp-locale-coverage"]?.evidence["en-US"]).toContain(
+      "en-US, zh-CN, and zh-TW",
+    );
+    expect(itemsById["product-mvp-locale-coverage"]?.nextAction["en-US"]).toContain(
+      "P1 locales",
+    );
+    expect(itemsById["product-future-locale-expansion"]).toMatchObject({
+      status: "deferred",
+      blocksDelivery: false,
+    });
+    expect(itemsById["product-future-locale-expansion"]?.evidence["en-US"]).toContain(
+      "P1 locales",
+    );
     expect(itemsById["product-contract-impact-review"]?.evidence["en-US"]).toContain("claim-mode blockers");
     expect(itemsById["qa-wrong-chain-error"]).toMatchObject({
       status: "needs_review",
