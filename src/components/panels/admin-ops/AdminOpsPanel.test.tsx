@@ -207,6 +207,30 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Wallet split");
     expectVisibleText("Locale split");
     expectVisibleText("Risk dashboard");
+    expect(screen.getByRole("heading", { name: "Risk Intelligence" })).toBeInTheDocument();
+    const riskIntelligenceSection = screen
+      .getByRole("heading", { name: "Risk Intelligence" })
+      .closest("section");
+    expect(riskIntelligenceSection).not.toBeNull();
+    expect(within(riskIntelligenceSection as HTMLElement).getAllByText("Anti-sybil review surface").length).toBeGreaterThan(0);
+    expect(within(riskIntelligenceSection as HTMLElement).getByText("Wallet age review")).toBeInTheDocument();
+    expect(within(riskIntelligenceSection as HTMLElement).getByText("Funding source clustering")).toBeInTheDocument();
+    expect(within(riskIntelligenceSection as HTMLElement).getByText("Referral tree concentration")).toBeInTheDocument();
+    expect(within(riskIntelligenceSection as HTMLElement).getByText("Device/session similarity")).toBeInTheDocument();
+    expect(within(riskIntelligenceSection as HTMLElement).getByText("Task pattern similarity")).toBeInTheDocument();
+    expect(within(riskIntelligenceSection as HTMLElement).getByText("Minimum meaningful action")).toBeInTheDocument();
+    expect(within(riskIntelligenceSection as HTMLElement).getByText("Manual review queue")).toBeInTheDocument();
+    expect(
+      within(riskIntelligenceSection as HTMLElement).getByText(
+        "Risk flags are review inputs and do not automatically ban, exclude, export, or distribute rewards.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(riskIntelligenceSection as HTMLElement).getAllByText("Evidence coverage").length).toBeGreaterThan(0);
+    expect(within(riskIntelligenceSection as HTMLElement).getAllByText("Export impact").length).toBeGreaterThan(0);
+    expect(within(riskIntelligenceSection as HTMLElement).getAllByText("Owner role").length).toBeGreaterThan(0);
+    expect(within(riskIntelligenceSection as HTMLElement).getAllByText(/Next action:/).length).toBeGreaterThan(0);
+    expect(within(riskIntelligenceSection as HTMLElement).getByText(/Wallet, on-chain, and dApp API/)).toBeInTheDocument();
+    expect(within(riskIntelligenceSection as HTMLElement).getByText(/Referral-heavy winners stay review-required/)).toBeInTheDocument();
     expectVisibleText("Bot/sybil review");
     expectVisibleText("AI Ops reports");
     expect(screen.getByRole("heading", { name: "AI Optimization action queue" })).toBeInTheDocument();
@@ -336,6 +360,23 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("钱包拆分");
     expectVisibleText("语言拆分");
     expectVisibleText("风险看板");
+    expect(screen.getByRole("heading", { name: "风险智能审核" })).toBeInTheDocument();
+    const zhRiskIntelligenceSection = screen
+      .getByRole("heading", { name: "风险智能审核" })
+      .closest("section");
+    expect(zhRiskIntelligenceSection).not.toBeNull();
+    expect(within(zhRiskIntelligenceSection as HTMLElement).getAllByText("反女巫审核界面").length).toBeGreaterThan(0);
+    expect(within(zhRiskIntelligenceSection as HTMLElement).getByText("钱包年龄审核")).toBeInTheDocument();
+    expect(within(zhRiskIntelligenceSection as HTMLElement).getByText("资金来源聚类")).toBeInTheDocument();
+    expect(within(zhRiskIntelligenceSection as HTMLElement).getByText("邀请树集中度")).toBeInTheDocument();
+    expect(within(zhRiskIntelligenceSection as HTMLElement).getByText("设备/会话相似度")).toBeInTheDocument();
+    expect(within(zhRiskIntelligenceSection as HTMLElement).getByText("任务模式相似度")).toBeInTheDocument();
+    expect(within(zhRiskIntelligenceSection as HTMLElement).getByText("最低有效行为")).toBeInTheDocument();
+    expect(within(zhRiskIntelligenceSection as HTMLElement).getAllByText("人工审核队列").length).toBeGreaterThan(0);
+    expect(within(zhRiskIntelligenceSection as HTMLElement).getAllByText("证据覆盖").length).toBeGreaterThan(0);
+    expect(within(zhRiskIntelligenceSection as HTMLElement).getAllByText("导出影响").length).toBeGreaterThan(0);
+    expect(within(zhRiskIntelligenceSection as HTMLElement).getAllByText("负责人角色").length).toBeGreaterThan(0);
+    expect(within(zhRiskIntelligenceSection as HTMLElement).getAllByText(/下一步:/).length).toBeGreaterThan(0);
     expectVisibleText("机器人/女巫审核");
     expectVisibleText("AI Ops 报告");
     expect(screen.getByRole("heading", { name: "AI Optimization 动作队列" })).toBeInTheDocument();

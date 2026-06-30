@@ -1169,6 +1169,67 @@ export interface RiskSignal {
   nextAction: LocalizedText;
 }
 
+export type RiskIntelligenceCategory =
+  | "wallet_age"
+  | "funding_cluster"
+  | "invite_tree"
+  | "device_session"
+  | "task_pattern"
+  | "meaningful_action"
+  | "manual_review_queue";
+export type RiskIntelligenceReviewState =
+  | "clear"
+  | "monitor"
+  | "review_required"
+  | "blocked";
+export type RiskIntelligenceOwnerRole =
+  | "internal_operator"
+  | "risk_reviewer"
+  | "project_owner"
+  | "growth_lead";
+
+export interface RiskMeaningfulActionCoverage {
+  requiredActionCount: number;
+  completedActionCount: number;
+  coverageLabel: LocalizedText;
+  qualityPolicy: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface RiskIntelligenceDimension {
+  id: string;
+  category: RiskIntelligenceCategory;
+  label: LocalizedText;
+  severity: SignalSeverity;
+  reviewState: RiskIntelligenceReviewState;
+  affectedCohort: LocalizedText;
+  evidenceCoverage: LocalizedText;
+  sourceSignal: LocalizedText;
+  exportImpact: LocalizedText;
+  ownerRole: RiskIntelligenceOwnerRole;
+  rationale: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface RiskIntelligenceSummary {
+  totalDimensions: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  highSeverityCount: number;
+  manualReviewQueueSize: number;
+  meaningfulActionCoverage: string;
+  exportHoldCount: number;
+}
+
+export interface RiskIntelligenceReviewSurface {
+  campaignId: string;
+  summary: RiskIntelligenceSummary;
+  dimensions: RiskIntelligenceDimension[];
+  meaningfulAction: RiskMeaningfulActionCoverage;
+  boundary: LocalizedText;
+}
+
 export interface AiOpsRecommendation {
   id: string;
   title: LocalizedText;
@@ -1532,6 +1593,7 @@ export interface AdminOpsReadModel {
   walletSplit: DimensionSplit[];
   localeSplit: DimensionSplit[];
   riskSignals: RiskSignal[];
+  riskIntelligence: RiskIntelligenceReviewSurface;
   aiReports: AiOpsReportCard[];
   aiOptimization: AiOptimizationWorkflow;
   ecosystemMetrics: EcosystemMetricRow[];

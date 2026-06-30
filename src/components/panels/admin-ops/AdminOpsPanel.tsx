@@ -24,6 +24,7 @@ import {
   type MetricTone,
   type ProviderFeatureGateState,
   type ProviderLiveEvidenceStatus,
+  type RiskIntelligenceReviewState,
   type SignalSeverity,
   type SupportedLocale,
   type TemplateGovernanceSignal,
@@ -114,6 +115,12 @@ const mutedTextStyle: CSSProperties = {
   fontSize: 13,
   lineHeight: 1.45,
   margin: 0,
+};
+
+const wrapTextStyle: CSSProperties = {
+  ...mutedTextStyle,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
 };
 
 const tableStyle: CSSProperties = {
@@ -225,6 +232,23 @@ const signalState = (severity: SignalSeverity) =>
     : severity === "medium"
       ? "warning"
       : "ready";
+
+const riskReviewState = (state: RiskIntelligenceReviewState) =>
+  state === "blocked" ? "blocker" : state === "review_required" || state === "monitor" ? "warning" : "ready";
+
+const riskReviewStateLabel = (
+  state: RiskIntelligenceReviewState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<RiskIntelligenceReviewState, string> = {
+    blocked: copy.riskIntelligenceReviewStateBlocked,
+    clear: copy.riskIntelligenceReviewStateClear,
+    monitor: copy.riskIntelligenceReviewStateMonitor,
+    review_required: copy.riskIntelligenceReviewStateReviewRequired,
+  };
+
+  return labels[state];
+};
 
 const checklistStatusState = (status: ContractReviewChecklistStatus) =>
   status === "blocked" ? "blocker" : status === "warning" ? "warning" : "ready";
@@ -463,6 +487,7 @@ export const AdminOpsPanel = ({
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
   const lifecycleOperations = adminOps.lifecycleOperations;
+  const riskIntelligence = adminOps.riskIntelligence;
   const lifecycleReviewRows = lifecycleOperations.operations.filter((operation) =>
     ["pause-campaign", "resume-campaign", "end-campaign", "export-campaign", "archive-campaign"].includes(
       operation.id,
@@ -535,6 +560,42 @@ export const AdminOpsPanel = ({
       id: "reward-custody",
       label: copy.rewardCustody,
       value: getLocalizedText(contractReviewCenter.rewardCustody, locale),
+    },
+  ];
+
+  const riskIntelligenceSummaryItems = [
+    {
+      id: "total-dimensions",
+      label: copy.riskIntelligenceTotalDimensions,
+      value: riskIntelligence.summary.totalDimensions,
+      state: "ready" as const,
+    },
+    {
+      id: "review-required",
+      label: copy.reviewRequired,
+      value: riskIntelligence.summary.reviewRequiredCount,
+      state: riskIntelligence.summary.reviewRequiredCount > 0 ? "warning" as const : "ready" as const,
+    },
+    {
+      id: "blocked-export-hold",
+      label: copy.riskIntelligenceBlockedExportHold,
+      value: riskIntelligence.summary.blockedCount + riskIntelligence.summary.exportHoldCount,
+      state:
+        riskIntelligence.summary.blockedCount + riskIntelligence.summary.exportHoldCount > 0
+          ? "blocker" as const
+          : "ready" as const,
+    },
+    {
+      id: "high-severity",
+      label: copy.riskIntelligenceHighSeverity,
+      value: riskIntelligence.summary.highSeverityCount,
+      state: riskIntelligence.summary.highSeverityCount > 0 ? "blocker" as const : "ready" as const,
+    },
+    {
+      id: "manual-review-queue",
+      label: copy.riskIntelligenceManualQueue,
+      value: riskIntelligence.summary.manualReviewQueueSize,
+      state: riskIntelligence.summary.manualReviewQueueSize > 0 ? "warning" as const : "ready" as const,
     },
   ];
 
@@ -1857,8 +1918,131 @@ export const AdminOpsPanel = ({
         </article>
       </section>
 
+      <section aria-label={copy.riskIntelligenceTitle} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.riskIntelligenceSubtitle}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.riskIntelligenceTitle}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {riskIntelligenceSummaryItems.map((item) => (
+              <PublishStateBadge
+                key={item.id}
+                label={`${item.value} ${item.label}`}
+                state={item.state}
+              />
+            ))}
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.riskIntelligenceBoundary}</p>
+          <p style={{ margin: "8px 0 0" }}>{getLocalizedText(riskIntelligence.boundary, locale)}</p>
+        </div>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.riskIntelligenceTotalDimensions}</p>
+            <p style={valueStyle}>{riskIntelligence.summary.totalDimensions}</p>
+            <p style={wrapTextStyle}>{copy.riskIntelligenceSubtitle}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.reviewRequired}</p>
+            <p style={valueStyle}>{riskIntelligence.summary.reviewRequiredCount}</p>
+            <p style={wrapTextStyle}>{copy.humanReviewRequired}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.riskIntelligenceBlockedExportHold}</p>
+            <p style={valueStyle}>{riskIntelligence.summary.exportHoldCount}</p>
+            <p style={wrapTextStyle}>{copy.exportReady}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.riskIntelligenceHighSeverity}</p>
+            <p style={valueStyle}>{riskIntelligence.summary.highSeverityCount}</p>
+            <p style={wrapTextStyle}>{copy.riskReview}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.riskIntelligenceManualQueue}</p>
+            <p style={valueStyle}>{riskIntelligence.summary.manualReviewQueueSize}</p>
+            <p style={wrapTextStyle}>{copy.humanReviewGate}</p>
+          </article>
+        </div>
+        <article style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.riskIntelligenceMeaningfulCoverage}</p>
+              <strong>{getLocalizedText(riskIntelligence.meaningfulAction.coverageLabel, locale)}</strong>
+            </div>
+            <Badge label={riskIntelligence.summary.meaningfulActionCoverage} tone="info" />
+          </div>
+          <p style={wrapTextStyle}>
+            {getLocalizedText(riskIntelligence.meaningfulAction.qualityPolicy, locale)}
+          </p>
+          <p style={wrapTextStyle}>
+            {copy.nextAction}: {getLocalizedText(riskIntelligence.meaningfulAction.nextAction, locale)}
+          </p>
+        </article>
+        <div style={gridStyle}>
+          {riskIntelligence.dimensions.map((dimension) => (
+            <article key={dimension.id} style={{ ...cardStyle, alignContent: "start", minHeight: 360 }}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.riskIntelligenceDimension}: {readableCode(dimension.category)}</p>
+                  <strong style={{ overflowWrap: "anywhere" }}>
+                    {getLocalizedText(dimension.label, locale)}
+                  </strong>
+                </div>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
+                  <PublishStateBadge
+                    label={riskReviewStateLabel(dimension.reviewState, copy)}
+                    state={riskReviewState(dimension.reviewState)}
+                  />
+                  <PublishStateBadge
+                    label={dimension.severity}
+                    state={signalState(dimension.severity)}
+                  />
+                </span>
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.riskIntelligenceReviewState}</p>
+                  <p style={wrapTextStyle}>{riskReviewStateLabel(dimension.reviewState, copy)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.ownerRole}</p>
+                  <p style={wrapTextStyle}>{readableCode(dimension.ownerRole)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.riskLevel}</p>
+                  <p style={wrapTextStyle}>{dimension.severity}</p>
+                </div>
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.riskIntelligenceAffectedCohort}: {getLocalizedText(dimension.affectedCohort, locale)}
+              </p>
+              <p style={labelStyle}>{copy.riskIntelligenceEvidenceCoverage}</p>
+              <p style={wrapTextStyle}>{getLocalizedText(dimension.evidenceCoverage, locale)}</p>
+              <p style={wrapTextStyle}>
+                {copy.riskIntelligenceSourceSignal}: {getLocalizedText(dimension.sourceSignal, locale)}
+              </p>
+              <p style={labelStyle}>{copy.riskIntelligenceExportImpact}</p>
+              <p style={wrapTextStyle}>{getLocalizedText(dimension.exportImpact, locale)}</p>
+              <p style={wrapTextStyle}>
+                {copy.riskIntelligenceRationale}: {getLocalizedText(dimension.rationale, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(dimension.nextAction, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <section style={panelStyle}>
-        <h3 style={{ fontSize: 20, margin: 0 }}>{copy.riskDashboard}</h3>
+        <div style={stackStyle}>
+          <p style={labelStyle}>{copy.riskIntelligenceSourceSignal}</p>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.riskDashboard}</h3>
+        </div>
         <div style={gridStyle}>
           {adminOps.riskSignals.map((signal) => (
             <article key={signal.id} style={cardStyle}>

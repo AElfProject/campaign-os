@@ -78,6 +78,11 @@ import type {
   EligibilityCheckEntry,
   EligibilityCheckResult,
   EligibilityMissingTaskDetail,
+  RiskIntelligenceCategory,
+  RiskIntelligenceDimension,
+  RiskIntelligenceOwnerRole,
+  RiskIntelligenceReviewState,
+  RiskIntelligenceReviewSurface,
   RiskSignal,
   TaskEvidenceSummary,
   LeaderboardMode,
@@ -233,6 +238,15 @@ const aiOptimizationBoundary: LocalizedText = {
     "仅 seeded/本地 AI 优化工作流。不会执行实时 AI、分析 SDK、风险评分、导出文件、钱包动作、合约交易、奖励托管或发奖。",
   "zh-TW":
     "Seeded/local AI optimization workflow only. No live AI provider, analytics SDK, risk scoring, export file, wallet action, contract transaction, reward custody, or reward distribution is executed.",
+};
+
+const riskIntelligenceBoundary: LocalizedText = {
+  "en-US":
+    "Risk flags are review inputs only. Campaign OS does not automatically ban wallets, exclude winners, approve exports, distribute rewards, reveal private thresholds, or expose raw IP/device/session data.",
+  "zh-CN":
+    "风险标记仅作为审核输入。Campaign OS 不会自动封禁钱包、剔除 winners、批准导出、发奖、暴露私有阈值或展示原始 IP/设备/会话数据。",
+  "zh-TW":
+    "Risk flags are review inputs only. Campaign OS does not automatically ban wallets, exclude winners, approve exports, distribute rewards, reveal private thresholds, or expose raw IP/device/session data.",
 };
 
 const compareReviewPrompt: LocalizedText = {
@@ -3939,6 +3953,462 @@ const createAnalyticsExportDecision = (
   };
 };
 
+const riskReviewStatePriority: Record<RiskIntelligenceReviewState, number> = {
+  blocked: 0,
+  review_required: 1,
+  monitor: 2,
+  clear: 3,
+};
+
+const riskSeverityPriority: Record<RiskSignal["severity"], number> = {
+  blocked: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+
+const riskSignalById = (signals: RiskSignal[], id: string) =>
+  signals.find((signal) => signal.id === id);
+
+const reviewStateFromSeverity = (severity: RiskSignal["severity"]): RiskIntelligenceReviewState => {
+  if (severity === "blocked" || severity === "high") {
+    return "blocked";
+  }
+
+  if (severity === "medium") {
+    return "review_required";
+  }
+
+  return "monitor";
+};
+
+const meaningfulVerificationTypes = new Set<CampaignTask["verificationType"]>([
+  "WALLET",
+  "ON_CHAIN",
+  "DAPP_API",
+]);
+
+const createRiskMeaningfulActionCoverage = (
+  campaign: CampaignShellDetail,
+): RiskIntelligenceReviewSurface["meaningfulAction"] => {
+  const meaningfulRequiredTasks = campaign.tasks.filter(
+    (task) => task.required && meaningfulVerificationTypes.has(task.verificationType),
+  );
+  const completedActionCount = campaign.participants.reduce((count, participant) => {
+    const completedMeaningfulActions = meaningfulRequiredTasks.filter((task) =>
+      participant.completedTaskIds.includes(task.id),
+    ).length;
+
+    return count + completedMeaningfulActions;
+  }, 0);
+  const requiredActionCount = meaningfulRequiredTasks.length * campaign.participants.length;
+  const coveragePercent = Math.round((completedActionCount / Math.max(1, requiredActionCount)) * 100);
+
+  return {
+    requiredActionCount,
+    completedActionCount,
+    coverageLabel: {
+      "en-US": `${completedActionCount}/${requiredActionCount} meaningful actions covered (${coveragePercent}%).`,
+      "zh-CN": `${requiredActionCount} 个 meaningful action 中已覆盖 ${completedActionCount} 个（${coveragePercent}%）。`,
+      "zh-TW": `${completedActionCount}/${requiredActionCount} meaningful actions covered (${coveragePercent}%).`,
+    },
+    qualityPolicy: {
+      "en-US": "Referral and leaderboard quality stays anchored to wallet, on-chain, and dApp API evidence instead of raw social volume.",
+      "zh-CN": "邀请与排行榜质量继续以钱包、链上和 dApp API 证据为锚点，而不是原始社交量。",
+      "zh-TW": "Referral and leaderboard quality stays anchored to wallet, on-chain, and dApp API evidence instead of raw social volume.",
+    },
+    nextAction: {
+      "en-US": coveragePercent < 80
+        ? "Review referral-heavy rows before export because meaningful action coverage is incomplete."
+        : "Keep meaningful action evidence attached before approving export.",
+      "zh-CN": coveragePercent < 80
+        ? "Meaningful action 覆盖不完整，导出前先审核邀请占比较高的记录。"
+        : "批准导出前继续保留 meaningful action 证据。",
+      "zh-TW": coveragePercent < 80
+        ? "Review referral-heavy rows before export because meaningful action coverage is incomplete."
+        : "Keep meaningful action evidence attached before approving export.",
+    },
+  };
+};
+
+const riskDimension = (input: {
+  id: string;
+  category: RiskIntelligenceCategory;
+  label: LocalizedText;
+  severity: RiskSignal["severity"];
+  reviewState?: RiskIntelligenceReviewState;
+  affectedCohort: LocalizedText;
+  evidenceCoverage: LocalizedText;
+  sourceSignal: LocalizedText;
+  exportImpact: LocalizedText;
+  ownerRole: RiskIntelligenceOwnerRole;
+  rationale: LocalizedText;
+  nextAction: LocalizedText;
+}): RiskIntelligenceDimension => ({
+  ...input,
+  reviewState: input.reviewState ?? reviewStateFromSeverity(input.severity),
+  boundary: riskIntelligenceBoundary,
+});
+
+const countParticipantsWithRisk = (participants: ParticipantSnapshot[]) =>
+  participants.filter((participant) => participant.riskFlags.length > 0).length;
+
+const countManualReviewRows = (exportBatch: ExportBatchSummary) =>
+  exportBatch.rows.filter(
+    (row) => row.rowStatus !== "ready" || row.riskFlags.length > 0 ||
+      row.taskEvidence.some((evidence) => evidence.status === "manual_review" || evidence.status === "failed"),
+  ).length;
+
+export const createRiskIntelligenceReviewSurface = (
+  campaign: CampaignShellDetail,
+): RiskIntelligenceReviewSurface => {
+  const exportBatch = createExportBatch(campaign);
+  const meaningfulAction = createRiskMeaningfulActionCoverage(campaign);
+  const riskFlaggedParticipants = countParticipantsWithRisk(campaign.participants);
+  const manualReviewQueueSize = countManualReviewRows(exportBatch);
+  const fundingSource = riskSignalById(campaign.riskSignals, "funding-source");
+  const referralTree = riskSignalById(campaign.riskSignals, "referral-tree");
+  const deviceSession = riskSignalById(campaign.riskSignals, "device-session");
+  const taskTiming = riskSignalById(campaign.riskSignals, "task-timing");
+  const manualReview = riskSignalById(campaign.riskSignals, "manual-review");
+  const walletAgeReviewCount = campaign.participants.filter((participant) =>
+    participant.walletSource !== "PORTKEY_AA" || participant.totalPoints < defaultPointsThreshold,
+  ).length;
+
+  const dimensions: RiskIntelligenceDimension[] = [
+    riskDimension({
+      id: "wallet-age",
+      category: "wallet_age",
+      label: {
+        "en-US": "Wallet age review",
+        "zh-CN": "钱包年龄审核",
+        "zh-TW": "Wallet age review",
+      },
+      severity: walletAgeReviewCount > 0 ? "medium" : "low",
+      affectedCohort: {
+        "en-US": `${walletAgeReviewCount} seeded wallets need age or history review.`,
+        "zh-CN": `${walletAgeReviewCount} 个 seeded 钱包需要钱包年龄或历史审核。`,
+        "zh-TW": `${walletAgeReviewCount} seeded wallets need age or history review.`,
+      },
+      evidenceCoverage: {
+        "en-US": "Wallet source, account type, verification time, and points progress are present; no raw wallet graph is exposed.",
+        "zh-CN": "已提供钱包来源、账户类型、验证时间与积分进度；不暴露原始钱包图谱。",
+        "zh-TW": "Wallet source, account type, verification time, and points progress are present; no raw wallet graph is exposed.",
+      },
+      sourceSignal: {
+        "en-US": "Seeded wallet sessions and participant progress.",
+        "zh-CN": "Seeded 钱包会话与参与进度。",
+        "zh-TW": "Seeded wallet sessions and participant progress.",
+      },
+      exportImpact: {
+        "en-US": "Review before treating low-history wallets as export-ready winners.",
+        "zh-CN": "将低历史钱包视为可导出 winners 前需要审核。",
+        "zh-TW": "Review before treating low-history wallets as export-ready winners.",
+      },
+      ownerRole: "risk_reviewer",
+      rationale: {
+        "en-US": "New or low-history wallets can be legitimate users, so this remains a review signal rather than an exclusion rule.",
+        "zh-CN": "新钱包或低历史钱包也可能是真实用户，因此这里只作为审核信号，不作为剔除规则。",
+        "zh-TW": "New or low-history wallets can be legitimate users, so this remains a review signal rather than an exclusion rule.",
+      },
+      nextAction: {
+        "en-US": "Sample wallet history before export approval.",
+        "zh-CN": "导出批准前抽样检查钱包历史。",
+        "zh-TW": "Sample wallet history before export approval.",
+      },
+    }),
+    riskDimension({
+      id: "funding-cluster",
+      category: "funding_cluster",
+      label: {
+        "en-US": "Funding source clustering",
+        "zh-CN": "资金来源聚类",
+        "zh-TW": "Funding source clustering",
+      },
+      severity: fundingSource?.severity ?? "medium",
+      affectedCohort: {
+        "en-US": fundingSource?.value
+          ? `${fundingSource.value} shared funding-source review cohort.`
+          : "Shared funding-source review cohort.",
+        "zh-CN": fundingSource?.value
+          ? `${fundingSource.value} 共享资金来源审核队列。`
+          : "共享资金来源审核队列。",
+        "zh-TW": fundingSource?.value
+          ? `${fundingSource.value} shared funding-source review cohort.`
+          : "Shared funding-source review cohort.",
+      },
+      evidenceCoverage: fundingSource?.evidence ?? {
+        "en-US": "Funding-source review evidence is seeded only.",
+        "zh-CN": "资金来源审核证据仅为 seeded 数据。",
+        "zh-TW": "Funding-source review evidence is seeded only.",
+      },
+      sourceSignal: fundingSource?.label ?? {
+        "en-US": "Funding source review",
+        "zh-CN": "资金来源审核",
+        "zh-TW": "Funding source review",
+      },
+      exportImpact: {
+        "en-US": "Shared funding is an export review input, not an automatic winner exclusion.",
+        "zh-CN": "共享资金来源是导出审核输入，不是自动剔除 winner 的依据。",
+        "zh-TW": "Shared funding is an export review input, not an automatic winner exclusion.",
+      },
+      ownerRole: "risk_reviewer",
+      rationale: {
+        "en-US": "Common funding can indicate coordination but may also be exchange, campaign, or onboarding behavior.",
+        "zh-CN": "共同资金来源可能表示协同，也可能来自交易所、活动或 onboarding 行为。",
+        "zh-TW": "Common funding can indicate coordination but may also be exchange, campaign, or onboarding behavior.",
+      },
+      nextAction: fundingSource?.nextAction ?? {
+        "en-US": "Review sample wallets before export approval.",
+        "zh-CN": "导出批准前抽样审核钱包。",
+        "zh-TW": "Review sample wallets before export approval.",
+      },
+    }),
+    riskDimension({
+      id: "invite-tree",
+      category: "invite_tree",
+      label: {
+        "en-US": "Referral tree concentration",
+        "zh-CN": "邀请树集中度",
+        "zh-TW": "Referral tree concentration",
+      },
+      severity: referralTree?.severity ?? "high",
+      affectedCohort: {
+        "en-US": referralTree?.value
+          ? `${referralTree.value} qualified invite cluster needs owner review.`
+          : "Qualified invite cluster needs owner review.",
+        "zh-CN": referralTree?.value
+          ? `${referralTree.value} 合格邀请聚类需要项目方审核。`
+          : "合格邀请聚类需要项目方审核。",
+        "zh-TW": referralTree?.value
+          ? `${referralTree.value} qualified invite cluster needs owner review.`
+          : "Qualified invite cluster needs owner review.",
+      },
+      evidenceCoverage: referralTree?.evidence ?? {
+        "en-US": "Referral tree review evidence is seeded only.",
+        "zh-CN": "邀请树审核证据仅为 seeded 数据。",
+        "zh-TW": "Referral tree review evidence is seeded only.",
+      },
+      sourceSignal: referralTree?.label ?? {
+        "en-US": "Referral tree review",
+        "zh-CN": "邀请树审核",
+        "zh-TW": "Referral tree review",
+      },
+      exportImpact: {
+        "en-US": "Hold referral-weighted export decisions until manual review is complete.",
+        "zh-CN": "人工审核完成前暂缓基于邀请权重的导出决定。",
+        "zh-TW": "Hold referral-weighted export decisions until manual review is complete.",
+      },
+      ownerRole: "project_owner",
+      rationale: {
+        "en-US": "Referral rewards require qualified invitees and should not count raw signups alone.",
+        "zh-CN": "邀请奖励必须依赖合格被邀请人，不能只计算原始注册。",
+        "zh-TW": "Referral rewards require qualified invitees and should not count raw signups alone.",
+      },
+      nextAction: referralTree?.nextAction ?? {
+        "en-US": "Keep referral points advisory until project owner approval.",
+        "zh-CN": "项目方批准前将邀请积分保持为建议状态。",
+        "zh-TW": "Keep referral points advisory until project owner approval.",
+      },
+    }),
+    riskDimension({
+      id: "device-session",
+      category: "device_session",
+      label: {
+        "en-US": "Device/session similarity",
+        "zh-CN": "设备/会话相似度",
+        "zh-TW": "Device/session similarity",
+      },
+      severity: deviceSession?.severity ?? "medium",
+      affectedCohort: {
+        "en-US": deviceSession?.value
+          ? `${deviceSession.value} similar-session review cohort.`
+          : "Similar-session review cohort.",
+        "zh-CN": deviceSession?.value
+          ? `${deviceSession.value} 相似会话审核队列。`
+          : "相似会话审核队列。",
+        "zh-TW": deviceSession?.value
+          ? `${deviceSession.value} similar-session review cohort.`
+          : "Similar-session review cohort.",
+      },
+      evidenceCoverage: deviceSession?.evidence ?? {
+        "en-US": "Device/session evidence is aggregate-only.",
+        "zh-CN": "设备/会话证据仅为聚合信息。",
+        "zh-TW": "Device/session evidence is aggregate-only.",
+      },
+      sourceSignal: deviceSession?.label ?? {
+        "en-US": "Device/session review",
+        "zh-CN": "设备/会话审核",
+        "zh-TW": "Device/session review",
+      },
+      exportImpact: {
+        "en-US": "Compare with verified on-chain actions before changing eligibility or export readiness.",
+        "zh-CN": "变更资格或导出准备度前，先与已验证链上行为交叉检查。",
+        "zh-TW": "Compare with verified on-chain actions before changing eligibility or export readiness.",
+      },
+      ownerRole: "internal_operator",
+      rationale: {
+        "en-US": "Aggregate session similarity can prioritize review without exposing raw identifiers.",
+        "zh-CN": "聚合会话相似度可用于排序审核，但不暴露原始标识符。",
+        "zh-TW": "Aggregate session similarity can prioritize review without exposing raw identifiers.",
+      },
+      nextAction: deviceSession?.nextAction ?? {
+        "en-US": "Compare with verified on-chain actions.",
+        "zh-CN": "与已验证链上行为交叉检查。",
+        "zh-TW": "Compare with verified on-chain actions.",
+      },
+    }),
+    riskDimension({
+      id: "task-pattern",
+      category: "task_pattern",
+      label: {
+        "en-US": "Task pattern similarity",
+        "zh-CN": "任务模式相似度",
+        "zh-TW": "Task pattern similarity",
+      },
+      severity: taskTiming?.severity ?? "low",
+      affectedCohort: {
+        "en-US": taskTiming?.value
+          ? `${taskTiming.value} repeated task-order review cohort.`
+          : "Repeated task-order review cohort.",
+        "zh-CN": taskTiming?.value
+          ? `${taskTiming.value} 重复任务顺序审核队列。`
+          : "重复任务顺序审核队列。",
+        "zh-TW": taskTiming?.value
+          ? `${taskTiming.value} repeated task-order review cohort.`
+          : "Repeated task-order review cohort.",
+      },
+      evidenceCoverage: taskTiming?.evidence ?? {
+        "en-US": "Task pattern evidence is seeded only.",
+        "zh-CN": "任务模式证据仅为 seeded 数据。",
+        "zh-TW": "Task pattern evidence is seeded only.",
+      },
+      sourceSignal: taskTiming?.label ?? {
+        "en-US": "Task timing review",
+        "zh-CN": "任务时序审核",
+        "zh-TW": "Task timing review",
+      },
+      exportImpact: {
+        "en-US": "Use task evidence before changing eligibility.",
+        "zh-CN": "变更资格前先查看任务证据。",
+        "zh-TW": "Use task evidence before changing eligibility.",
+      },
+      ownerRole: "internal_operator",
+      rationale: {
+        "en-US": "Repeated order and timing are weak signals until matched with wallet and task evidence.",
+        "zh-CN": "重复顺序和时序在结合钱包与任务证据前只是弱信号。",
+        "zh-TW": "Repeated order and timing are weak signals until matched with wallet and task evidence.",
+      },
+      nextAction: taskTiming?.nextAction ?? {
+        "en-US": "Use task evidence before changing eligibility.",
+        "zh-CN": "变更资格前先查看任务证据。",
+        "zh-TW": "Use task evidence before changing eligibility.",
+      },
+    }),
+    riskDimension({
+      id: "meaningful-action",
+      category: "meaningful_action",
+      label: {
+        "en-US": "Minimum meaningful action",
+        "zh-CN": "最低有效行为",
+        "zh-TW": "Minimum meaningful action",
+      },
+      severity: meaningfulAction.completedActionCount < meaningfulAction.requiredActionCount ? "medium" : "low",
+      affectedCohort: meaningfulAction.coverageLabel,
+      evidenceCoverage: {
+        "en-US": "Wallet, on-chain, and dApp API required tasks are counted as meaningful action evidence.",
+        "zh-CN": "钱包、链上与 dApp API 必做任务被计为 meaningful action 证据。",
+        "zh-TW": "Wallet, on-chain, and dApp API required tasks are counted as meaningful action evidence.",
+      },
+      sourceSignal: {
+        "en-US": "Required task evidence coverage",
+        "zh-CN": "必做任务证据覆盖",
+        "zh-TW": "Required task evidence coverage",
+      },
+      exportImpact: {
+        "en-US": "Referral-heavy winners stay review-required until meaningful action evidence is attached.",
+        "zh-CN": "邀请占比较高的 winners 在 meaningful action 证据补齐前保持需审核。",
+        "zh-TW": "Referral-heavy winners stay review-required until meaningful action evidence is attached.",
+      },
+      ownerRole: "growth_lead",
+      rationale: meaningfulAction.qualityPolicy,
+      nextAction: meaningfulAction.nextAction,
+    }),
+    riskDimension({
+      id: "manual-review-queue",
+      category: "manual_review_queue",
+      label: {
+        "en-US": "Manual review queue",
+        "zh-CN": "人工审核队列",
+        "zh-TW": "Manual review queue",
+      },
+      severity: manualReview?.severity ?? "high",
+      affectedCohort: {
+        "en-US": `${manualReviewQueueSize} export rows or wallets need manual review.`,
+        "zh-CN": `${manualReviewQueueSize} 条导出记录或钱包需要人工审核。`,
+        "zh-TW": `${manualReviewQueueSize} export rows or wallets need manual review.`,
+      },
+      evidenceCoverage: manualReview?.evidence ?? {
+        "en-US": "Manual review evidence is seeded only.",
+        "zh-CN": "人工审核证据仅为 seeded 数据。",
+        "zh-TW": "Manual review evidence is seeded only.",
+      },
+      sourceSignal: manualReview?.label ?? {
+        "en-US": "Manual review queue",
+        "zh-CN": "人工审核队列",
+        "zh-TW": "Manual review queue",
+      },
+      exportImpact: {
+        "en-US": "Hold export approval until review is complete.",
+        "zh-CN": "审核完成前暂缓导出批准。",
+        "zh-TW": "Hold export approval until review is complete.",
+      },
+      ownerRole: "risk_reviewer",
+      rationale: {
+        "en-US": `${riskFlaggedParticipants} seeded participants carry risk flags or manual-review evidence.`,
+        "zh-CN": `${riskFlaggedParticipants} 个 seeded 参与者带有风险标记或人工审核证据。`,
+        "zh-TW": `${riskFlaggedParticipants} seeded participants carry risk flags or manual-review evidence.`,
+      },
+      nextAction: manualReview?.nextAction ?? {
+        "en-US": "Hold export approval until review is complete.",
+        "zh-CN": "审核完成前暂缓导出批准。",
+        "zh-TW": "Hold export approval until review is complete.",
+      },
+    }),
+  ].sort((left, right) =>
+    riskReviewStatePriority[left.reviewState] - riskReviewStatePriority[right.reviewState] ||
+    riskSeverityPriority[left.severity] - riskSeverityPriority[right.severity] ||
+    left.id.localeCompare(right.id),
+  );
+  const reviewRequiredCount = dimensions.filter((dimension) =>
+    dimension.reviewState === "review_required" || dimension.reviewState === "blocked",
+  ).length;
+  const blockedCount = dimensions.filter((dimension) => dimension.reviewState === "blocked").length;
+  const highSeverityCount = dimensions.filter((dimension) =>
+    dimension.severity === "high" || dimension.severity === "blocked",
+  ).length;
+  const exportHoldCount = dimensions.filter((dimension) =>
+    dimension.reviewState === "blocked" ||
+      dimension.exportImpact["en-US"].toLowerCase().includes("hold"),
+  ).length;
+
+  return {
+    campaignId: campaign.id,
+    summary: {
+      totalDimensions: dimensions.length,
+      reviewRequiredCount,
+      blockedCount,
+      highSeverityCount,
+      manualReviewQueueSize,
+      meaningfulActionCoverage: meaningfulAction.coverageLabel["en-US"],
+      exportHoldCount,
+    },
+    dimensions,
+    meaningfulAction,
+    boundary: riskIntelligenceBoundary,
+  };
+};
+
 const aiOptimizationCategoryByReportId: Record<string, AiOptimizationReportCategory> = {
   "boss-report": "boss_report",
   "bot-pattern": "bot_pattern",
@@ -6914,6 +7384,7 @@ export const createAdminOpsReadModel = (
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
+  const riskIntelligence = createRiskIntelligenceReviewSurface(campaign);
 
   return {
     campaignId: campaign.id,
@@ -6931,6 +7402,7 @@ export const createAdminOpsReadModel = (
     walletSplit: createWalletSplit(campaign.participants),
     localeSplit: createLocaleSplit(campaign.participants),
     riskSignals: campaign.riskSignals,
+    riskIntelligence,
     aiReports: campaign.aiOpsReports,
     aiOptimization,
     ecosystemMetrics: campaign.ecosystemMetrics,
