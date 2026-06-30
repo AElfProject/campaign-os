@@ -85,6 +85,16 @@ import type {
   ParticipationReadModel,
   ParticipantSnapshot,
   ParticipantTaskState,
+  ProviderAdapterReadinessContract,
+  ProviderAffectedOutcome,
+  ProviderEvidenceCategory,
+  ProviderEvidenceRegistry,
+  ProviderEvidenceRegistryEntry,
+  ProviderFallbackMode,
+  ProviderFallbackSemantics,
+  ProviderFeatureGateIntent,
+  ProviderFeatureGateState,
+  ProviderSeededCoverageStatus,
   ProjectCampaignCommandCenter,
   PublishState,
   PublishReadiness,
@@ -1343,6 +1353,347 @@ export const createVerificationPipelineReadinessGate = (
       "zh-CN": "在将 seeded 验证视为生产就绪前，先附上真实 provider 证据。",
       "zh-TW": "Attach live provider evidence before treating seeded verification as production-ready.",
     },
+  };
+};
+
+const providerEvidenceRegistryBoundary: LocalizedText = {
+  "en-US":
+    "Seeded/local provider evidence registry only. No live API, wallet SDK, provider credential, export file, reward distribution, contract call, or contract root write is executed.",
+  "zh-CN":
+    "仅 seeded/本地 provider 证据登记表。不会调用实时 API、钱包 SDK、provider 凭证、导出文件、奖励发放、合约调用或合约 root 写入。",
+  "zh-TW":
+    "Seeded/local provider evidence registry only. No live API, wallet SDK, provider credential, export file, reward distribution, contract call, or contract root write is executed.",
+};
+
+const providerEvidenceRegistryNextAction: LocalizedText = {
+  "en-US": "Attach live provider QA evidence and config-gate approval before treating any path as production-ready.",
+  "zh-CN": "在将任何路径视为生产就绪前，先附上真实 provider QA 证据与配置门禁批准。",
+  "zh-TW": "Attach live provider QA evidence and config-gate approval before treating any path as production-ready.",
+};
+
+const featureGateMessage = (
+  providerId: string,
+  state: ProviderFeatureGateState,
+): LocalizedText => ({
+  "en-US": `${providerId} live integration is ${state.replace(/_/g, " ")} and degrades to seeded/local readiness.`,
+  "zh-CN": `${providerId} 真实集成当前为 ${state.replace(/_/g, " ")}，会降级到 seeded/本地 readiness。`,
+  "zh-TW": `${providerId} live integration is ${state.replace(/_/g, " ")} and degrades to seeded/local readiness.`,
+});
+
+const createFeatureGate = (
+  providerId: string,
+  state: ProviderFeatureGateState,
+): ProviderFeatureGateIntent => ({
+  state,
+  configKey: `providers.${providerId}.enabled`,
+  degradesGracefully: true,
+  operatorMessage: featureGateMessage(providerId, state),
+});
+
+const fallbackLabel = (mode: ProviderFallbackMode): LocalizedText => {
+  const labels: Record<ProviderFallbackMode, LocalizedText> = {
+    blocked: {
+      "en-US": "Blocked",
+      "zh-CN": "已阻断",
+      "zh-TW": "Blocked",
+    },
+    local_seeded: {
+      "en-US": "Local seeded fallback",
+      "zh-CN": "本地 seeded fallback",
+      "zh-TW": "Local seeded fallback",
+    },
+    manual_review: {
+      "en-US": "Manual review fallback",
+      "zh-CN": "人工审核 fallback",
+      "zh-TW": "Manual review fallback",
+    },
+    not_applicable: {
+      "en-US": "Not applicable",
+      "zh-CN": "不适用",
+      "zh-TW": "Not applicable",
+    },
+    unavailable: {
+      "en-US": "Unavailable",
+      "zh-CN": "不可用",
+      "zh-TW": "Unavailable",
+    },
+  };
+
+  return labels[mode];
+};
+
+const createFallback = (
+  mode: ProviderFallbackMode,
+  description: LocalizedText,
+  blocksLaunch: boolean,
+): ProviderFallbackSemantics => ({
+  mode,
+  label: fallbackLabel(mode),
+  description,
+  blocksLaunch,
+});
+
+const providerCategoryForPipeline = (
+  path: VerificationPipelinePath,
+): ProviderEvidenceCategory => path.id === "manual-review" ? "manual_review" : "verification";
+
+const providerAffectedOutcomesForPipeline = (
+  outcomes: VerificationAffectedOutcome[],
+): ProviderAffectedOutcome[] =>
+  outcomes.map((outcome) => outcome === "referral" ? "points" : outcome);
+
+const fallbackModeForPipeline = (
+  path: VerificationPipelinePath,
+): ProviderFallbackMode => {
+  if (path.providerReadiness === "blocked") {
+    return "blocked";
+  }
+
+  if (path.providerReadiness === "review_required") {
+    return "manual_review";
+  }
+
+  if (path.providerReadiness === "local_only") {
+    return "local_seeded";
+  }
+
+  return "unavailable";
+};
+
+const createRegistryEntry = (
+  entry: Omit<ProviderEvidenceRegistryEntry, "boundary">,
+): ProviderEvidenceRegistryEntry => ({
+  ...entry,
+  boundary: providerEvidenceRegistryBoundary,
+});
+
+const createProviderEvidenceEntryFromPipeline = (
+  path: VerificationPipelinePath,
+): ProviderEvidenceRegistryEntry => {
+  const providerId = path.id.replace(/-/g, "_");
+  const fallbackMode = fallbackModeForPipeline(path);
+
+  return createRegistryEntry({
+    id: `verification-${providerId}`,
+    category: providerCategoryForPipeline(path),
+    providerId,
+    label: path.label,
+    seededCoverageStatus: path.seededCoverageStatus,
+    liveEvidenceStatus: path.liveEvidenceStatus,
+    adapterReadiness: path.providerReadiness,
+    featureGate: createFeatureGate(providerId, path.providerReadiness === "local_only" ? "enabled_preview" : "planned"),
+    fallback: createFallback(
+      fallbackMode,
+      path.fallbackReason,
+      path.releaseImpact === "blocker" || path.providerReadiness === "blocked",
+    ),
+    ownerRole: path.owner,
+    affectedOutcomes: providerAffectedOutcomesForPipeline(path.affectedOutcomes),
+    evidenceRequired: path.nextAction,
+    nextAction: path.nextAction,
+  });
+};
+
+const createWalletProviderEvidenceEntry = (
+  gate: WalletProviderQaReadinessGate,
+): ProviderEvidenceRegistryEntry => createRegistryEntry({
+  id: "wallet-provider-qa",
+  category: "wallet",
+  providerId: "wallet_session",
+  label: {
+    "en-US": "Wallet provider QA",
+    "zh-CN": "钱包 provider QA",
+    "zh-TW": "Wallet provider QA",
+  },
+  seededCoverageStatus: gate.summary.seededReadyScenarios > 0 ? "ready" : "missing",
+  liveEvidenceStatus: gate.summary.liveEvidenceReadyScenarios > 0 ? "ready" : "missing",
+  adapterReadiness: gate.summary.missingLiveEvidenceScenarios > 0 ? "local_only" : "ready",
+  featureGate: createFeatureGate("wallet_session", "enabled_preview"),
+  fallback: createFallback(
+    "local_seeded",
+    {
+      "en-US": "Wallet QA uses seeded sessions until live provider evidence is attached.",
+      "zh-CN": "钱包 QA 在附上真实 provider 证据前使用 seeded 会话。",
+      "zh-TW": "Wallet QA uses seeded sessions until live provider evidence is attached.",
+    },
+    gate.summary.releaseBlockers > 0,
+  ),
+  ownerRole: "internal_operator",
+  affectedOutcomes: ["eligibility", "export", "release"],
+  evidenceRequired: {
+    "en-US": "Attach live wallet provider QA evidence for AA and EOA sessions.",
+    "zh-CN": "为 AA 与 EOA 会话附上真实钱包 provider QA 证据。",
+    "zh-TW": "Attach live wallet provider QA evidence for AA and EOA sessions.",
+  },
+  nextAction: {
+    "en-US": "Review wallet provider QA before trusting wallet sessions in production.",
+    "zh-CN": "生产中信任钱包会话前先审核钱包 provider QA。",
+    "zh-TW": "Review wallet provider QA before trusting wallet sessions in production.",
+  },
+});
+
+const createAnalyticsExportProviderEvidenceEntry = (
+  exportReadiness: ExportConfirmationReadinessGate,
+): ProviderEvidenceRegistryEntry => createRegistryEntry({
+  id: "analytics-export-readiness",
+  category: "analytics_export",
+  providerId: "analytics_export",
+  label: {
+    "en-US": "Analytics and export readiness",
+    "zh-CN": "分析与导出 readiness",
+    "zh-TW": "Analytics and export readiness",
+  },
+  seededCoverageStatus: "ready",
+  liveEvidenceStatus: "missing",
+  adapterReadiness: exportReadiness.summary.blockedRows > 0 ? "review_required" : "local_only",
+  featureGate: createFeatureGate("analytics_export", "enabled_preview"),
+  fallback: createFallback(
+    "local_seeded",
+    exportReadiness.boundary,
+    exportReadiness.summary.blockedRows > 0,
+  ),
+  ownerRole: "project_owner",
+  affectedOutcomes: ["analytics", "export", "release"],
+  evidenceRequired: {
+    "en-US": "Attach live analytics/export service evidence before enabling real files or dashboards.",
+    "zh-CN": "启用真实文件或 dashboard 前，先附上真实 analytics/export service 证据。",
+    "zh-TW": "Attach live analytics/export service evidence before enabling real files or dashboards.",
+  },
+  nextAction: exportReadiness.nextAction,
+});
+
+const createAiContentProviderEvidenceEntry = (
+  workbench: AiContentPackWorkbench,
+): ProviderEvidenceRegistryEntry => createRegistryEntry({
+  id: "ai-content-provider-readiness",
+  category: "ai_content",
+  providerId: "ai_content",
+  label: {
+    "en-US": "AI/content provider readiness",
+    "zh-CN": "AI/content provider readiness",
+    "zh-TW": "AI/content provider readiness",
+  },
+  seededCoverageStatus: workbench.summary.totalArtifacts > 0 ? "ready" : "missing",
+  liveEvidenceStatus: "missing",
+  adapterReadiness: workbench.summary.qualityGateBlockers > 0 ? "review_required" : "local_only",
+  featureGate: createFeatureGate("ai_content", "planned"),
+  fallback: createFallback(
+    "manual_review",
+    workbench.boundary.body,
+    workbench.summary.qualityGateBlockers > 0,
+  ),
+  ownerRole: "internal_operator",
+  affectedOutcomes: ["content", "release"],
+  evidenceRequired: {
+    "en-US": "Attach live AI/content provider QA and human-review evidence before publish automation.",
+    "zh-CN": "发布自动化前附上真实 AI/content provider QA 与人工审核证据。",
+    "zh-TW": "Attach live AI/content provider QA and human-review evidence before publish automation.",
+  },
+  nextAction: workbench.summary.nextAction,
+});
+
+const createContractExportProviderEvidenceEntry = (
+  exportReadiness: ExportConfirmationReadinessGate,
+): ProviderEvidenceRegistryEntry => {
+  const blockedModes = exportReadiness.contractRootReadiness.filter((mode) => mode.readiness === "blocked").length;
+
+  return createRegistryEntry({
+    id: "contract-export-root-readiness",
+    category: "contract_export",
+    providerId: "contract_export",
+    label: {
+      "en-US": "Contract/export root readiness",
+      "zh-CN": "合约/导出 root readiness",
+      "zh-TW": "Contract/export root readiness",
+    },
+    seededCoverageStatus: "ready",
+    liveEvidenceStatus: "not_applicable",
+    adapterReadiness: blockedModes > 0 ? "blocked" : "review_required",
+    featureGate: createFeatureGate("contract_export", "disabled"),
+    fallback: createFallback(
+      blockedModes > 0 ? "blocked" : "manual_review",
+      exportReadiness.contractRootReadiness.find((mode) => mode.mode === "contract_claim")?.boundary ?? exportReadiness.boundary,
+      blockedModes > 0,
+    ),
+    ownerRole: "contract_reviewer",
+    affectedOutcomes: ["contract", "export", "release"],
+    evidenceRequired: {
+      "en-US": "Attach security, legal, audit, and contract approval before root or claim paths become executable.",
+      "zh-CN": "root 或 claim 路径可执行前，必须附上安全、法务、审计与合约批准。",
+      "zh-TW": "Attach security, legal, audit, and contract approval before root or claim paths become executable.",
+    },
+    nextAction: exportReadiness.contractRootReadiness.find((mode) => mode.mode === "contract_claim")?.nextAction ?? exportReadiness.nextAction,
+  });
+};
+
+const providerAcceptancePrerequisites = (
+  entry: ProviderEvidenceRegistryEntry,
+): LocalizedText[] => [
+  entry.evidenceRequired,
+  {
+    "en-US": "Provider timeout, manual-review fallback, and operator rollback path are documented.",
+    "zh-CN": "已记录 provider 超时、人工审核 fallback 与运营回滚路径。",
+    "zh-TW": "Provider timeout, manual-review fallback, and operator rollback path are documented.",
+  },
+  {
+    "en-US": "Feature gate is approved before production launch.",
+    "zh-CN": "生产上线前配置门禁已获批准。",
+    "zh-TW": "Feature gate is approved before production launch.",
+  },
+];
+
+const createAdapterContract = (
+  entry: ProviderEvidenceRegistryEntry,
+): ProviderAdapterReadinessContract => ({
+  adapterId: `${entry.providerId}_adapter`,
+  providerId: entry.providerId,
+  category: entry.category,
+  expectedEvidence: entry.evidenceRequired,
+  featureGate: entry.featureGate,
+  acceptancePrerequisites: providerAcceptancePrerequisites(entry),
+  fallback: entry.fallback,
+  readyForProduction: false,
+});
+
+const summarizeProviderEvidenceRegistry = (
+  entries: ProviderEvidenceRegistryEntry[],
+): ProviderEvidenceRegistry["summary"] => ({
+  totalEntries: entries.length,
+  seededReadyEntries: entries.filter((entry) => entry.seededCoverageStatus === "ready").length,
+  liveEvidenceReadyEntries: entries.filter((entry) => entry.liveEvidenceStatus === "ready").length,
+  missingLiveEvidenceEntries: entries.filter((entry) => entry.liveEvidenceStatus === "missing").length,
+  localOnlyEntries: entries.filter((entry) => entry.adapterReadiness === "local_only").length,
+  reviewRequiredEntries: entries.filter((entry) => entry.adapterReadiness === "review_required").length,
+  unavailableEntries: entries.filter((entry) => entry.adapterReadiness === "unavailable").length,
+  blockedEntries: entries.filter((entry) => entry.adapterReadiness === "blocked").length,
+  notApplicableEntries: entries.filter((entry) => entry.liveEvidenceStatus === "not_applicable").length,
+  launchBlockers: entries.filter(
+    (entry) => entry.fallback.blocksLaunch || entry.adapterReadiness === "blocked",
+  ).length,
+});
+
+export const createProviderEvidenceRegistry = (
+  campaign: CampaignShellDetail,
+): ProviderEvidenceRegistry => {
+  const verificationPipeline = createVerificationPipelineReadinessGate(campaign);
+  const walletProviderQaGate = createWalletProviderQaReadinessGate(campaign.walletSessions);
+  const exportReadiness = createExportConfirmationReadinessGate(campaign);
+  const aiContentPack = createAiContentPackWorkbench(campaign);
+  const entries = [
+    ...verificationPipeline.paths.map(createProviderEvidenceEntryFromPipeline),
+    createWalletProviderEvidenceEntry(walletProviderQaGate),
+    createAnalyticsExportProviderEvidenceEntry(exportReadiness),
+    createAiContentProviderEvidenceEntry(aiContentPack),
+    createContractExportProviderEvidenceEntry(exportReadiness),
+  ];
+
+  return {
+    campaignId: campaign.id,
+    summary: summarizeProviderEvidenceRegistry(entries),
+    entries,
+    adapterContracts: entries.map(createAdapterContract),
+    boundary: providerEvidenceRegistryBoundary,
+    nextAction: providerEvidenceRegistryNextAction,
   };
 };
 
@@ -3404,12 +3755,14 @@ export const createProjectCampaignCommandCenter = (
   const campaigns = createSeededCampaignCommandItems(campaign, exportBatch);
   const analyticsExport = createAnalyticsExportDecision(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
+  const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
 
   return {
     summary: createCommandSummary(campaigns, analyticsExport.readyRows),
     campaigns,
     analyticsExport,
     aiOptimization,
+    providerEvidenceRegistry,
     boundary: commandCenterBoundary,
   };
 };
@@ -6028,12 +6381,14 @@ export const createAdminOpsReadModel = (
   const exportBatch = createExportBatch(campaign);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const walletProviderQaGate = createWalletProviderQaReadinessGate(campaign.walletSessions);
+  const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
 
   return {
     campaignId: campaign.id,
     reviewQueue: campaign.reviewItems,
     deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
     walletProviderQaGate,
+    providerEvidenceRegistry,
     contractReviewCenter: createAdminContractReviewCenter(campaign),
     contractInterfaceMatrix: createContractInterfaceMatrixConsole(),
     aiContentPack: createAiContentPackWorkbench(campaign),

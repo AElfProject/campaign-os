@@ -941,6 +941,7 @@ export interface ProjectCampaignCommandCenter {
   campaigns: CampaignCommandItem[];
   analyticsExport: AnalyticsExportDecision;
   aiOptimization: AiOptimizationWorkflow;
+  providerEvidenceRegistry: ProviderEvidenceRegistry;
   boundary: LocalizedText;
 }
 
@@ -1305,6 +1306,7 @@ export interface AdminOpsReadModel {
   reviewQueue: ReviewItem[];
   deliveryChecklistReadiness: DeliveryChecklistReadinessConsole;
   walletProviderQaGate: WalletProviderQaReadinessGate;
+  providerEvidenceRegistry: ProviderEvidenceRegistry;
   contractReviewCenter: AdminContractReviewCenter;
   contractInterfaceMatrix: ContractInterfaceMatrixConsole;
   aiContentPack: AiContentPackWorkbench;
@@ -1529,6 +1531,96 @@ export interface VerificationPipelineReadinessGate {
   taskOutcomeCoverage: VerificationTaskOutcomeCoverage;
   eligibilityImpact: VerificationPipelineEligibilityImpact;
   paths: VerificationPipelinePath[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export type ProviderEvidenceCategory =
+  | "verification"
+  | "wallet"
+  | "analytics_export"
+  | "ai_content"
+  | "manual_review"
+  | "contract_export";
+export type ProviderSeededCoverageStatus = "ready" | "missing" | "not_applicable";
+export type ProviderLiveEvidenceStatus = VerificationLiveEvidenceStatus;
+export type ProviderFeatureGateState = "disabled" | "planned" | "enabled_preview";
+export type ProviderFallbackMode =
+  | "local_seeded"
+  | "manual_review"
+  | "blocked"
+  | "unavailable"
+  | "not_applicable";
+export type ProviderAffectedOutcome =
+  | "points"
+  | "eligibility"
+  | "export"
+  | "release"
+  | "user_next_action"
+  | "analytics"
+  | "content"
+  | "contract";
+
+export interface ProviderFeatureGateIntent {
+  state: ProviderFeatureGateState;
+  configKey: string;
+  degradesGracefully: boolean;
+  operatorMessage: LocalizedText;
+}
+
+export interface ProviderFallbackSemantics {
+  mode: ProviderFallbackMode;
+  label: LocalizedText;
+  description: LocalizedText;
+  blocksLaunch: boolean;
+}
+
+export interface ProviderEvidenceRegistryEntry {
+  id: string;
+  category: ProviderEvidenceCategory;
+  providerId: string;
+  label: LocalizedText;
+  seededCoverageStatus: ProviderSeededCoverageStatus;
+  liveEvidenceStatus: ProviderLiveEvidenceStatus;
+  adapterReadiness: VerificationProviderReadiness;
+  featureGate: ProviderFeatureGateIntent;
+  fallback: ProviderFallbackSemantics;
+  ownerRole: OwnerRole;
+  affectedOutcomes: ProviderAffectedOutcome[];
+  evidenceRequired: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface ProviderAdapterReadinessContract {
+  adapterId: string;
+  providerId: string;
+  category: ProviderEvidenceCategory;
+  expectedEvidence: LocalizedText;
+  featureGate: ProviderFeatureGateIntent;
+  acceptancePrerequisites: LocalizedText[];
+  fallback: ProviderFallbackSemantics;
+  readyForProduction: boolean;
+}
+
+export interface ProviderEvidenceRegistrySummary {
+  totalEntries: number;
+  seededReadyEntries: number;
+  liveEvidenceReadyEntries: number;
+  missingLiveEvidenceEntries: number;
+  localOnlyEntries: number;
+  reviewRequiredEntries: number;
+  unavailableEntries: number;
+  blockedEntries: number;
+  notApplicableEntries: number;
+  launchBlockers: number;
+}
+
+export interface ProviderEvidenceRegistry {
+  campaignId: string;
+  summary: ProviderEvidenceRegistrySummary;
+  entries: ProviderEvidenceRegistryEntry[];
+  adapterContracts: ProviderAdapterReadinessContract[];
   boundary: LocalizedText;
   nextAction: LocalizedText;
 }

@@ -4,6 +4,7 @@ import {
   createExportConfirmationReadinessGate,
   createExportPreview,
   createParticipationReadModel,
+  createProviderEvidenceRegistry,
   createProjectCampaignCommandCenter,
   createTranslationManagerReadModel,
   createVerificationPipelineReadinessGate,
@@ -35,6 +36,7 @@ import {
   type DimensionSplit,
   type NormalizedWalletSession,
   type ParticipantSnapshot,
+  type ProviderEvidenceRegistry,
   type PublishReadiness,
   type SupportedLocale,
   type TaskVerificationStatus,
@@ -158,6 +160,10 @@ export interface GetVerificationPipelineReadinessRequest {
   campaignId: string;
 }
 
+export interface GetProviderEvidenceRegistryRequest {
+  campaignId: string;
+}
+
 export interface CheckEligibilityResponse {
   accountType: AccountType;
   campaignId: string;
@@ -263,6 +269,9 @@ export interface CampaignOsLocalService {
   getVerificationPipelineReadiness(
     request: GetVerificationPipelineReadinessRequest,
   ): LocalServiceResult<VerificationPipelineReadinessGate>;
+  getProviderEvidenceRegistry(
+    request: GetProviderEvidenceRegistryRequest,
+  ): LocalServiceResult<ProviderEvidenceRegistry>;
   getExportConfirmationReadiness(
     request: GetCampaignAnalyticsRequest,
   ): LocalServiceResult<ExportConfirmationReadinessGate>;
@@ -661,6 +670,21 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     return success(createVerificationPipelineReadinessGate(campaign));
   },
 
+  getProviderEvidenceRegistry: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local service facade.",
+        "本地 service facade 中不存在该活动。",
+      );
+    }
+
+    return success(createProviderEvidenceRegistry(campaign));
+  },
+
   generateCampaignPosts: (request) => {
     const campaign = findCampaign(request.campaignId);
 
@@ -794,6 +818,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       "getCampaignAnalytics",
       "exportWinners",
       "getVerificationPipelineReadiness",
+      "getProviderEvidenceRegistry",
       "getExportConfirmationReadiness",
       "generateCampaignPosts",
       "summarizeCampaign",
@@ -835,6 +860,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
         "verifyTask",
         "checkEligibility",
         "getVerificationPipelineReadiness",
+        "getProviderEvidenceRegistry",
         "getExportConfirmationReadiness",
         "exportWinners",
       ],

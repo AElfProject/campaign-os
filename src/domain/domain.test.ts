@@ -16,6 +16,7 @@ import {
   createExportConfirmationReadinessGate,
   createExportPreview,
   createParticipationReadModel,
+  createProviderEvidenceRegistry,
   createCampaignShareCardReadiness,
   createTranslationManagerReadModel,
   createLocaleAnalyticsReadiness,
@@ -1275,6 +1276,74 @@ describe("Campaign OS domain foundation", () => {
     expect(JSON.stringify(gate).toLowerCase()).not.toContain("bearer ");
     expect(JSON.stringify(gate).toLowerCase()).not.toContain("private key");
     expect(JSON.stringify(gate)).not.toContain("downloadUrl");
+  });
+
+  it("creates a provider evidence registry without promoting seeded evidence to live readiness", () => {
+    const registry = createProviderEvidenceRegistry(campaignDetail);
+    const repeatedRegistry = createProviderEvidenceRegistry(campaignDetail);
+    const entriesById = Object.fromEntries(registry.entries.map((entry) => [entry.id, entry]));
+
+    expect(registry).toEqual(repeatedRegistry);
+    expect(registry.campaignId).toBe(campaignDetail.id);
+    expect(registry.entries.map((entry) => entry.category)).toEqual(
+      expect.arrayContaining([
+        "verification",
+        "wallet",
+        "analytics_export",
+        "ai_content",
+        "manual_review",
+        "contract_export",
+      ]),
+    );
+    expect(registry.summary).toMatchObject({
+      totalEntries: registry.entries.length,
+      seededReadyEntries: registry.entries.filter((entry) => entry.seededCoverageStatus === "ready").length,
+      liveEvidenceReadyEntries: 0,
+      missingLiveEvidenceEntries: registry.entries.filter((entry) => entry.liveEvidenceStatus === "missing").length,
+      localOnlyEntries: registry.entries.filter((entry) => entry.adapterReadiness === "local_only").length,
+      reviewRequiredEntries: registry.entries.filter((entry) => entry.adapterReadiness === "review_required").length,
+      unavailableEntries: registry.entries.filter((entry) => entry.adapterReadiness === "unavailable").length,
+      blockedEntries: registry.entries.filter((entry) => entry.adapterReadiness === "blocked").length,
+      notApplicableEntries: registry.entries.filter((entry) => entry.liveEvidenceStatus === "not_applicable").length,
+    });
+    expect(registry.summary.launchBlockers).toBeGreaterThan(0);
+    expect(registry.summary.missingLiveEvidenceEntries).toBeGreaterThan(0);
+    expect(entriesById["verification-aefinder_on_chain"]).toMatchObject({
+      adapterReadiness: "unavailable",
+      liveEvidenceStatus: "missing",
+      providerId: "aefinder_on_chain",
+    });
+    expect(entriesById["verification-social_api"]).toMatchObject({
+      adapterReadiness: "blocked",
+      fallback: expect.objectContaining({ blocksLaunch: true, mode: "blocked" }),
+      liveEvidenceStatus: "blocked",
+    });
+    expect(entriesById["wallet-provider-qa"]).toMatchObject({
+      adapterReadiness: "local_only",
+      category: "wallet",
+      featureGate: expect.objectContaining({ degradesGracefully: true }),
+    });
+    expect(entriesById["contract-export-root-readiness"]).toMatchObject({
+      adapterReadiness: "blocked",
+      category: "contract_export",
+      ownerRole: "contract_reviewer",
+    });
+    expect(
+      registry.entries
+        .filter((entry) => entry.adapterReadiness !== "ready")
+        .every((entry) => entry.nextAction["en-US"] && entry.fallback.label["en-US"]),
+    ).toBe(true);
+    expect(registry.adapterContracts).toHaveLength(registry.entries.length);
+    expect(registry.adapterContracts.every((contract) => !contract.readyForProduction)).toBe(true);
+    expect(registry.adapterContracts.every((contract) => contract.featureGate.degradesGracefully)).toBe(true);
+    expect(registry.boundary["en-US"]).toContain("No live API");
+    expect(registry.boundary["zh-CN"]).toContain("不会调用实时 API");
+    expect(hasOwnKeyDeep(registry, "downloadUrl")).toBe(false);
+    expect(hasOwnKeyDeep(registry, "storageKey")).toBe(false);
+    expect(hasOwnKeyDeep(registry, "contractRoot")).toBe(false);
+    expect(hasOwnKeyDeep(registry, "transactionId")).toBe(false);
+    expect(JSON.stringify(registry).toLowerCase()).not.toContain("private key");
+    expect(JSON.stringify(registry).toLowerCase()).not.toContain("bearer ");
   });
 
   it("creates a participation read model with actionable eligibility and referral rules", () => {

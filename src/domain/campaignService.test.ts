@@ -443,7 +443,13 @@ describe("Campaign OS local API service facade", () => {
     const pipeline = service.getVerificationPipelineReadiness({
       campaignId: campaignDetail.id,
     });
+    const providerRegistry = service.getProviderEvidenceRegistry({
+      campaignId: campaignDetail.id,
+    });
     const missingPipeline = service.getVerificationPipelineReadiness({
+      campaignId: "missing-campaign",
+    });
+    const missingProviderRegistry = service.getProviderEvidenceRegistry({
       campaignId: "missing-campaign",
     });
 
@@ -470,7 +476,7 @@ describe("Campaign OS local API service facade", () => {
         "content",
         "risk",
       ]),
-      totalServices: 12,
+      totalServices: 13,
     });
     expect(coverage.payload?.sampleResponseIds).toEqual(
       expect.arrayContaining([
@@ -478,6 +484,7 @@ describe("Campaign OS local API service facade", () => {
         "verifyTask",
         "checkEligibility",
         "getVerificationPipelineReadiness",
+        "getProviderEvidenceRegistry",
         "getExportConfirmationReadiness",
         "exportWinners",
       ]),
@@ -510,7 +517,36 @@ describe("Campaign OS local API service facade", () => {
     ]);
     expect(JSON.stringify(pipeline.payload)).not.toContain("contractRoot");
     expect(JSON.stringify(pipeline.payload)).not.toContain("downloadUrl");
+    expect(providerRegistry.payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      summary: expect.objectContaining({
+        liveEvidenceReadyEntries: 0,
+        missingLiveEvidenceEntries: expect.any(Number),
+        totalEntries: expect.any(Number),
+      }),
+    });
+    expect(providerRegistry.payload?.entries.map((entry) => entry.category)).toEqual(
+      expect.arrayContaining([
+        "verification",
+        "wallet",
+        "analytics_export",
+        "ai_content",
+        "manual_review",
+        "contract_export",
+      ]),
+    );
+    expect(providerRegistry.payload?.adapterContracts.every((contract) => !contract.readyForProduction)).toBe(true);
+    expect(
+      providerRegistry.payload?.entries.every((entry) => entry.featureGate.degradesGracefully),
+    ).toBe(true);
+    expect(JSON.stringify(providerRegistry.payload)).not.toContain("contractRoot");
+    expect(JSON.stringify(providerRegistry.payload)).not.toContain("downloadUrl");
+    expect(JSON.stringify(providerRegistry.payload).toLowerCase()).not.toContain("private key");
     expect(missingPipeline).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "CAMPAIGN_NOT_FOUND", field: "campaignId" }),
+    });
+    expect(missingProviderRegistry).toMatchObject({
       ok: false,
       error: expect.objectContaining({ code: "CAMPAIGN_NOT_FOUND", field: "campaignId" }),
     });
