@@ -23,6 +23,24 @@ describe("Admin/Ops shell", () => {
     expect(screen.getByRole("heading", { name: "Review queue" })).toBeInTheDocument();
     expectVisibleText("Chinese copy needs human review");
     expectVisibleText("Off-chain MVP: no contract migration required");
+    const lifecycleReview = screen.getByLabelText("Lifecycle operation review");
+    expect(
+      within(lifecycleReview).getByRole("heading", { name: "Lifecycle operation review" }),
+    ).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText("Path-level pause, resume, end, export, and archive review before any future production execution.")).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText("Pause campaign")).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText("Resume campaign")).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText("End campaign")).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText("Mark export readiness")).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText("Archive campaign")).toBeInTheDocument();
+    expect(within(lifecycleReview).getAllByText("Gate group").length).toBeGreaterThan(0);
+    expect(within(lifecycleReview).getAllByText("Affected outcomes").length).toBeGreaterThan(0);
+    expect(within(lifecycleReview).getAllByText("Blocking checks").length).toBeGreaterThan(0);
+    expect(within(lifecycleReview).getByText(/no live mutation/)).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText(/no scheduler action/)).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText(/no contract write/)).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText(/no export file generation/)).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText(/no reward distribution/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Delivery Checklist Readiness" })).toBeInTheDocument();
     expectVisibleText("v0.2 delivery audit");
     expectVisibleText("Product Checklist");
@@ -231,6 +249,21 @@ describe("Admin/Ops shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "管理员/Ops" }));
 
     expect(screen.getByRole("heading", { name: "审核队列" })).toBeInTheDocument();
+    const zhLifecycleReview = screen.getByLabelText("Lifecycle 操作审核");
+    expect(
+      within(zhLifecycleReview).getByRole("heading", { name: "Lifecycle 操作审核" }),
+    ).toBeInTheDocument();
+    expect(within(zhLifecycleReview).getByText(/按路径审核暂停、恢复、结束、导出与归档/)).toBeInTheDocument();
+    expect(within(zhLifecycleReview).getByText("暂停活动")).toBeInTheDocument();
+    expect(within(zhLifecycleReview).getByText("恢复活动")).toBeInTheDocument();
+    expect(within(zhLifecycleReview).getByText("结束活动")).toBeInTheDocument();
+    expect(within(zhLifecycleReview).getByText("标记导出 readiness")).toBeInTheDocument();
+    expect(within(zhLifecycleReview).getByText("归档活动")).toBeInTheDocument();
+    expect(within(zhLifecycleReview).getByText(/不会执行实时变更/)).toBeInTheDocument();
+    expect(within(zhLifecycleReview).getByText(/scheduler 动作/)).toBeInTheDocument();
+    expect(within(zhLifecycleReview).getAllByText(/合约写入/).length).toBeGreaterThan(0);
+    expect(within(zhLifecycleReview).getAllByText(/导出文件生成/).length).toBeGreaterThan(0);
+    expect(within(zhLifecycleReview).getAllByText(/发奖/).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "交付清单 Readiness" })).toBeInTheDocument();
     expectVisibleText("v0.2 交付审计");
     expectVisibleText("产品清单");

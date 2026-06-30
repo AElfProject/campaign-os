@@ -13,6 +13,9 @@ import {
   type AiContentQualityGateStatus,
   type AiContentReleaseActionState,
   type ApiSkillContractReadiness,
+  type CampaignLifecycleOperation,
+  type CampaignLifecycleOperationState,
+  type CampaignLifecycleStatus,
   type CampaignShellDetail,
   type ExportReadinessState,
   type LocaleStatus,
@@ -322,6 +325,38 @@ const readableCode = (value: string) => value.replace(/_/g, " ");
 const exportReadinessBadgeState = (readiness: ExportReadinessState) =>
   readiness === "blocked" ? "blocker" : readiness === "review_required" ? "warning" : "ready";
 
+const lifecycleOperationStateBadgeState = (state: CampaignLifecycleOperationState) => {
+  if (state === "blocked") {
+    return "blocker";
+  }
+
+  return state === "review_required" || state === "not_applicable" ? "warning" : "ready";
+};
+
+const lifecycleOperationStateLabel = (
+  state: CampaignLifecycleOperationState,
+  labels: {
+    lifecycleAllowed: string;
+    lifecycleBlocked: string;
+    lifecycleNotApplicable: string;
+    lifecycleReviewRequired: string;
+  },
+) => {
+  const stateLabels: Record<CampaignLifecycleOperationState, string> = {
+    allowed: labels.lifecycleAllowed,
+    blocked: labels.lifecycleBlocked,
+    not_applicable: labels.lifecycleNotApplicable,
+    review_required: labels.lifecycleReviewRequired,
+  };
+
+  return stateLabels[state];
+};
+
+const lifecycleStatusLabel = (status: CampaignLifecycleStatus) => status.replace(/_/g, " ");
+
+const lifecycleOwnerLabel = (ownerRole: CampaignLifecycleOperation["ownerRole"]) =>
+  ownerRole.replace(/_/g, " ");
+
 const pipelineSeededCoverageState = (status: VerificationSeededCoverageStatus) =>
   status === "ready" ? "ready" : "blocker";
 
@@ -526,6 +561,10 @@ export const ProjectConsole = ({
   const exportDecision = commandCenter.analyticsExport;
   const aiOptimizationSummary = commandCenter.aiOptimization.projectOwnerSummary;
   const providerEvidenceRegistry = commandCenter.providerEvidenceRegistry;
+  const lifecycleOperations = commandCenter.lifecycleOperations;
+  const topLifecycleOperation = lifecycleOperations.operations.find(
+    (operation) => operation.id === lifecycleOperations.summary.topOperationId,
+  );
   const localeAnalyticsReadiness = createLocaleAnalyticsReadiness(campaign);
   const aiContentPack = createAiContentPackWorkbench(campaign);
 
@@ -830,6 +869,159 @@ export const ProjectConsole = ({
         </div>
 
         <p style={boundaryStyle}>{getLocalizedText(commandCenter.boundary, locale)}</p>
+      </section>
+
+      <section aria-label={copy.lifecycleOperations} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.lifecycleOperationsEyebrow}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.lifecycleOperations}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.lifecycleOperationsSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={`${lifecycleOperations.summary.launchBlockingCount} ${copy.lifecycleLaunchBlockers}`}
+            state={lifecycleOperations.summary.launchBlockingCount > 0 ? "blocker" : "ready"}
+          />
+        </div>
+
+        <div aria-label={copy.lifecycleSummary} style={gridStyle}>
+          {[
+            {
+              detail: copy.lifecycleCurrentStatusDetail,
+              label: copy.lifecycleCurrentStatus,
+              value: lifecycleStatusLabel(lifecycleOperations.currentStatus),
+            },
+            {
+              detail: `${lifecycleOperations.summary.totalOperations} ${copy.lifecycleOperationCount}`,
+              label: copy.lifecycleAllowed,
+              value: String(lifecycleOperations.summary.allowedCount),
+            },
+            {
+              detail: copy.lifecycleLaunchBlockers,
+              label: copy.lifecycleBlocked,
+              value: String(lifecycleOperations.summary.blockedCount),
+            },
+            {
+              detail: copy.lifecycleOwnerAction,
+              label: copy.lifecycleReviewRequired,
+              value: String(lifecycleOperations.summary.reviewRequiredCount),
+            },
+            {
+              detail: copy.lifecycleCurrentStatusDetail,
+              label: copy.lifecycleNotApplicable,
+              value: String(lifecycleOperations.summary.notApplicableCount),
+            },
+            {
+              detail: copy.lifecycleExportSensitiveDetail,
+              label: copy.lifecycleExportSensitive,
+              value: String(lifecycleOperations.summary.exportSensitiveCount),
+            },
+          ].map((stat) => (
+            <article key={stat.label} style={cardStyle}>
+              <p style={statLabelStyle}>{stat.label}</p>
+              <p style={{ ...statValueStyle, fontSize: stat.value.length > 6 ? 18 : 24 }}>
+                {stat.value}
+              </p>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                {stat.detail}
+              </p>
+            </article>
+          ))}
+        </div>
+
+        {topLifecycleOperation ? (
+          <article style={{ ...workflowStyle, minHeight: 0 }}>
+            <div style={headingRowStyle}>
+              <div style={{ minWidth: 0 }}>
+                <p style={statLabelStyle}>{copy.lifecycleTopNextAction}</p>
+                <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                  {getLocalizedText(topLifecycleOperation.label, locale)}
+                </h4>
+              </div>
+              <PublishStateBadge
+                label={lifecycleOperationStateLabel(topLifecycleOperation.operationState, copy)}
+                state={lifecycleOperationStateBadgeState(topLifecycleOperation.operationState)}
+              />
+            </div>
+            <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+              {getLocalizedText(lifecycleOperations.nextAction, locale)}
+            </p>
+          </article>
+        ) : null}
+
+        <div style={sectionGridStyle}>
+          {lifecycleOperations.operations
+            .filter((operation) =>
+              [
+                "schedule-campaign",
+                "publish-campaign",
+                "export-campaign",
+                "archive-campaign",
+              ].includes(operation.id),
+            )
+            .map((operation) => (
+              <article key={operation.id} style={workflowStyle}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>
+                      {lifecycleStatusLabel(operation.fromStatus)}{" -> "}
+                      {lifecycleStatusLabel(operation.targetStatus)}
+                    </p>
+                    <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                      {getLocalizedText(operation.label, locale)}
+                    </h4>
+                  </div>
+                  <PublishStateBadge
+                    label={lifecycleOperationStateLabel(operation.operationState, copy)}
+                    state={lifecycleOperationStateBadgeState(operation.operationState)}
+                  />
+                </div>
+                <div style={gridStyle}>
+                  <div>
+                    <p style={statLabelStyle}>{copy.lifecycleOwner}</p>
+                    <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
+                      {lifecycleOwnerLabel(operation.ownerRole)}
+                    </p>
+                  </div>
+                  <div>
+                    <p style={statLabelStyle}>{copy.lifecycleGateGroup}</p>
+                    <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
+                      {operation.gateGroup.replace(/-/g, " ")}
+                    </p>
+                  </div>
+                  <div>
+                    <p style={statLabelStyle}>{copy.lifecycleBlockingChecks}</p>
+                    <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
+                      {operation.blockingChecks.length}
+                    </p>
+                  </div>
+                </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(operation.reason, locale)}
+                </p>
+                {operation.blockingChecks.length > 0 ? (
+                  <ul style={compactListStyle}>
+                    {operation.blockingChecks.slice(0, 3).map((check) => (
+                      <li key={check.id} style={chipStyle}>
+                        {getLocalizedText(check.label, locale)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.lifecycleOwnerAction}: {getLocalizedText(operation.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+        </div>
+
+        <p style={boundaryStyle}>
+          {copy.lifecycleLocalOnlyBoundary}: {getLocalizedText(lifecycleOperations.boundary, locale)}
+        </p>
       </section>
 
         </>
