@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createAelfWebLoginAdapterReadiness,
   createWalletConnectionDiagnostics,
   createWalletProviderQaReadinessGate,
   deriveEligibilityWalletStatus,
@@ -8,6 +9,109 @@ import {
 } from "./index";
 
 describe("wallet locale coverage", () => {
+  it("creates a local aelf-web-login adapter readiness contract without live evidence promotion", () => {
+    const sessions = normalizeWalletSessions(walletAdapterFixtures);
+    const readiness = createAelfWebLoginAdapterReadiness(sessions);
+    const entriesById = Object.fromEntries(readiness.entries.map((entry) => [entry.adapterId, entry]));
+
+    expect(readiness.integrationId).toBe("aelf-web-login");
+    expect(readiness.entries.map((entry) => entry.adapterId)).toEqual([
+      "portkey-aa",
+      "portkey-eoa-app",
+      "portkey-eoa-extension",
+      "nightelf",
+      "future-eoa-adapter",
+      "agent-skill-internal",
+    ]);
+    expect(readiness.summary).toMatchObject({
+      totalAdapters: 6,
+      configuredAdapters: 6,
+      enabledPreviewAdapters: 4,
+      disabledAdapters: 1,
+      maintenanceAdapters: 1,
+      publicUserAdapters: 5,
+      internalOnlyAdapters: 1,
+      seededReadyAdapters: 5,
+      liveEvidenceReadyAdapters: 0,
+      missingLiveEvidenceAdapters: 5,
+      releaseBlockers: 0,
+      recommendedAdapterId: "portkey-aa",
+    });
+    expect(entriesById["portkey-aa"]).toMatchObject({
+      accountType: "AA",
+      walletSource: "PORTKEY_AA",
+      readiness: "local_only",
+      liveEvidenceStatus: "missing",
+      seededCoverageStatus: "ready",
+      matchedSessionIds: ["sess-aa-001", "sess-account-restricted-001"],
+    });
+    expect(entriesById["future-eoa-adapter"]).toMatchObject({
+      readiness: "maintenance",
+      seededCoverageStatus: "missing",
+      featureGate: expect.objectContaining({ state: "maintenance" }),
+      fallback: expect.objectContaining({ mode: "maintenance" }),
+    });
+    expect(readiness.normalUserEntries.map((entry) => entry.adapterId)).not.toContain(
+      "agent-skill-internal",
+    );
+    expect(readiness.internalEntries.map((entry) => entry.adapterId)).toEqual([
+      "agent-skill-internal",
+    ]);
+    expect(readiness.boundary["en-US"]).toContain("no live wallet SDK connection");
+    expect(readiness.boundary["zh-CN"]).toContain("不会连接实时钱包 SDK");
+    expect(readiness.boundary["zh-TW"]).toContain("不會連接即時錢包 SDK");
+    expect(
+      readiness.entries
+        .filter((entry) => entry.readiness !== "ready")
+        .every((entry) => entry.fallback.reason["zh-TW"] && entry.nextAction["zh-CN"]),
+    ).toBe(true);
+  });
+
+  it("keeps adapter readiness fail-closed and free of live wallet output fields", () => {
+    const readiness = createAelfWebLoginAdapterReadiness(
+      normalizeWalletSessions(walletAdapterFixtures),
+      {
+        "portkey-aa": "ready",
+        "portkey-eoa-extension": "blocked",
+      },
+    );
+    const entriesById = Object.fromEntries(readiness.entries.map((entry) => [entry.adapterId, entry]));
+    expect(entriesById["portkey-aa"]).toMatchObject({
+      liveEvidenceStatus: "ready",
+      readiness: "ready",
+      releaseImpact: "ready",
+    });
+    expect(entriesById["portkey-eoa-extension"]).toMatchObject({
+      liveEvidenceStatus: "blocked",
+      readiness: "blocked",
+      releaseImpact: "release_blocker",
+      fallback: expect.objectContaining({ blocksLaunch: true, mode: "blocked" }),
+    });
+    expect(readiness.summary.liveEvidenceReadyAdapters).toBe(1);
+    expect(readiness.summary.releaseBlockers).toBe(1);
+
+    for (const unsafe of [
+      "privateKey",
+      "seedPhrase",
+      "recoveryPhrase",
+      "oauthToken",
+      "apiKey",
+      "signature",
+      "signedPayload",
+      "transactionId",
+      "contractRoot",
+      "fileUrl",
+      "downloadUrl",
+      "rawProvider",
+      "providerCredential",
+    ]) {
+      expect(Object.prototype.hasOwnProperty.call(readiness, unsafe)).toBe(false);
+      expect(JSON.stringify(readiness)).not.toContain(`"${unsafe}"`);
+    }
+    expect(readiness.boundary["en-US"]).toContain("reward custody");
+    expect(readiness.boundary["en-US"]).toContain("reward distribution");
+  });
+
   it("exposes zh-TW strings for wallet diagnostics and seeded status copy", () => {
     const sessions = normalizeWalletSessions(walletAdapterFixtures);
     const diagnostics = createWalletConnectionDiagnostics(sessions);

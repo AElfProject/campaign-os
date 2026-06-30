@@ -1,4 +1,13 @@
 import type {
+  AelfWebLoginAdapterConfig,
+  AelfWebLoginAdapterFallbackMode,
+  AelfWebLoginAdapterFeatureGateState,
+  AelfWebLoginAdapterLiveEvidenceStatus,
+  AelfWebLoginAdapterReadiness,
+  AelfWebLoginAdapterReadinessEntry,
+  AelfWebLoginAdapterReadinessModel,
+  AelfWebLoginAdapterReleaseImpact,
+  AelfWebLoginAdapterSeededCoverageStatus,
   AccountType,
   EligibilityWalletStatus,
   LocalizedText,
@@ -130,6 +139,18 @@ const walletDiagnosticsBoundary = text(
   "Seeded diagnostics only; no live wallet SDK connection, signature request, transaction, or contract call is executed.",
   "仅 seeded 诊断；不会执行实时钱包 SDK 连接、签名请求、交易或合约调用。",
   "僅 seeded 診斷；不會執行即時錢包 SDK 連接、簽名請求、交易或合約呼叫。",
+);
+
+export const aelfWebLoginAdapterBoundary = text(
+  "aelf-web-login adapter readiness preview only; no live wallet SDK connection, private key, seed phrase, signing prompt, transaction, contract call, reward custody, or reward distribution is requested.",
+  "仅 aelf-web-login adapter readiness 预览；不会连接实时钱包 SDK，不会请求私钥、助记词、签名提示、交易、合约调用、奖励托管或奖励发放。",
+  "僅 aelf-web-login adapter readiness 預覽；不會連接即時錢包 SDK，不會請求私鑰、助記詞、簽名提示、交易、合約呼叫、獎勵託管或獎勵發放。",
+);
+
+const aelfWebLoginAdapterNextAction = text(
+  "Attach live adapter QA evidence and approve feature gates before treating any wallet path as production-ready.",
+  "在将任何钱包路径视为生产就绪前，先附上真实 adapter QA 证据并批准功能门禁。",
+  "在將任何錢包路徑視為生產就緒前，先附上真實 adapter QA 證據並批准功能門禁。",
 );
 
 export const walletProviderQaBoundary = text(
@@ -358,6 +379,420 @@ export const isWalletCompatible = (
 
 const expectedChainId = "AELF";
 const expectedNetwork = "mainnet";
+
+const featureGateMessage = (
+  adapterLabel: LocalizedText,
+  state: AelfWebLoginAdapterFeatureGateState,
+): LocalizedText => {
+  const readableState = state.replace(/_/g, " ");
+
+  return text(
+    `${adapterLabel["en-US"]} adapter gate is ${readableState} and degrades without live wallet SDK calls.`,
+    `${adapterLabel["zh-CN"]} adapter 门禁当前为 ${readableState}，会在不调用实时钱包 SDK 的情况下优雅降级。`,
+    `${adapterLabel["zh-TW"]} adapter 門禁目前為 ${readableState}，會在不呼叫即時錢包 SDK 的情況下優雅降級。`,
+  );
+};
+
+const createAdapterFeatureGate = (
+  configKey: string,
+  state: AelfWebLoginAdapterFeatureGateState,
+  label: LocalizedText,
+): AelfWebLoginAdapterConfig["featureGate"] => ({
+  configKey,
+  degradesGracefully: true,
+  operatorMessage: featureGateMessage(label, state),
+  state,
+});
+
+export const aelfWebLoginAdapterConfigs: AelfWebLoginAdapterConfig[] = [
+  {
+    accountType: "AA",
+    adapterName: "PortkeyAAWallet",
+    audience: "NORMAL_USER",
+    capabilities: ["SIGN_MESSAGE", "VIEW_BALANCE", "CONTRACT_VIEW"],
+    chainId: expectedChainId,
+    displayName: text("Portkey AA", "Portkey AA", "Portkey AA"),
+    featureGate: createAdapterFeatureGate(
+      "wallet.adapters.portkeyAa.enabled",
+      "enabled_preview",
+      text("Portkey AA", "Portkey AA", "Portkey AA"),
+    ),
+    id: "portkey-aa",
+    integrationId: "aelf-web-login",
+    network: expectedNetwork,
+    recommended: true,
+    walletSource: "PORTKEY_AA",
+  },
+  {
+    accountType: "EOA",
+    adapterName: "PortkeyDiscoverWallet",
+    audience: "EXISTING_USER",
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW"],
+    chainId: expectedChainId,
+    displayName: text(
+      "Portkey EOA App / Discover",
+      "Portkey EOA App / Discover",
+      "Portkey EOA App / Discover",
+    ),
+    featureGate: createAdapterFeatureGate(
+      "wallet.adapters.portkeyDiscover.enabled",
+      "enabled_preview",
+      text("Portkey EOA App / Discover", "Portkey EOA App / Discover", "Portkey EOA App / Discover"),
+    ),
+    id: "portkey-eoa-app",
+    integrationId: "aelf-web-login",
+    network: expectedNetwork,
+    recommended: false,
+    walletSource: "PORTKEY_EOA_APP",
+  },
+  {
+    accountType: "EOA",
+    adapterName: "PortkeyExtensionWallet",
+    audience: "EXISTING_USER",
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW"],
+    chainId: expectedChainId,
+    displayName: text("Portkey EOA Extension", "Portkey EOA Extension", "Portkey EOA Extension"),
+    featureGate: createAdapterFeatureGate(
+      "wallet.adapters.portkeyExtension.enabled",
+      "enabled_preview",
+      text("Portkey EOA Extension", "Portkey EOA Extension", "Portkey EOA Extension"),
+    ),
+    id: "portkey-eoa-extension",
+    integrationId: "aelf-web-login",
+    network: expectedNetwork,
+    recommended: false,
+    walletSource: "PORTKEY_EOA_EXTENSION",
+  },
+  {
+    accountType: "EOA",
+    adapterName: "NightElfWallet",
+    audience: "EXISTING_USER",
+    capabilities: ["SIGN_MESSAGE", "CONTRACT_VIEW"],
+    chainId: expectedChainId,
+    displayName: text("NightElf", "NightElf", "NightElf"),
+    featureGate: createAdapterFeatureGate(
+      "wallet.adapters.nightElf.enabled",
+      "enabled_preview",
+      text("NightElf", "NightElf", "NightElf"),
+    ),
+    id: "nightelf",
+    integrationId: "aelf-web-login",
+    network: expectedNetwork,
+    recommended: false,
+    walletSource: "NIGHTELF",
+  },
+  {
+    accountType: "EOA",
+    adapterName: "FutureEOAWallet",
+    audience: "FUTURE_USER",
+    capabilities: ["SIGN_MESSAGE", "VIEW_BALANCE"],
+    chainId: expectedChainId,
+    displayName: text("Future EOA adapter", "未来 EOA adapter", "未來 EOA adapter"),
+    featureGate: createAdapterFeatureGate(
+      "wallet.adapters.futureEoa.maintenance",
+      "maintenance",
+      text("Future EOA adapter", "未来 EOA adapter", "未來 EOA adapter"),
+    ),
+    id: "future-eoa-adapter",
+    integrationId: "aelf-web-login",
+    network: expectedNetwork,
+    recommended: false,
+    walletSource: "OTHER",
+  },
+  {
+    accountType: "EOA",
+    adapterName: "PortkeyAgentSkill",
+    audience: "INTERNAL_AGENT",
+    capabilities: ["CONTRACT_VIEW", "CONTRACT_SEND", "INTERNAL_AUTOMATION"],
+    chainId: expectedChainId,
+    displayName: text("Agent Skill wallet", "Agent Skill 钱包", "Agent Skill 錢包"),
+    featureGate: createAdapterFeatureGate(
+      "wallet.adapters.agentSkill.internalOnly",
+      "disabled",
+      text("Agent Skill wallet", "Agent Skill 钱包", "Agent Skill 錢包"),
+    ),
+    id: "agent-skill-internal",
+    integrationId: "aelf-web-login",
+    network: expectedNetwork,
+    recommended: false,
+    walletSource: "AGENT_SKILL",
+  },
+];
+
+const isSessionSeededReadyForAdapter = (
+  config: AelfWebLoginAdapterConfig,
+  session: NormalizedWalletSession,
+) =>
+  session.walletSource === config.walletSource &&
+  session.accountType === config.accountType &&
+  session.chainId === config.chainId &&
+  session.network === config.network &&
+  session.verificationStatus !== "address_only" &&
+  session.verificationStatus !== "unsupported_wallet" &&
+  session.verificationStatus !== "wrong_chain";
+
+const seededCoverageFor = (
+  config: AelfWebLoginAdapterConfig,
+  matchedSessionIds: string[],
+): AelfWebLoginAdapterSeededCoverageStatus => {
+  if (config.audience === "FUTURE_USER") {
+    return "missing";
+  }
+
+  return matchedSessionIds.length > 0 ? "ready" : "missing";
+};
+
+const readinessFor = (
+  state: AelfWebLoginAdapterFeatureGateState,
+  seededCoverageStatus: AelfWebLoginAdapterSeededCoverageStatus,
+  liveEvidenceStatus: AelfWebLoginAdapterLiveEvidenceStatus,
+): AelfWebLoginAdapterReadiness => {
+  if (liveEvidenceStatus === "blocked" || state === "blocked") {
+    return "blocked";
+  }
+
+  if (state === "maintenance") {
+    return "maintenance";
+  }
+
+  if (state === "unavailable") {
+    return "unavailable";
+  }
+
+  if (state === "disabled") {
+    return seededCoverageStatus === "ready" ? "review_required" : "unavailable";
+  }
+
+  if (liveEvidenceStatus === "ready") {
+    return "ready";
+  }
+
+  return seededCoverageStatus === "ready" ? "local_only" : "review_required";
+};
+
+const releaseImpactFor = (
+  readiness: AelfWebLoginAdapterReadiness,
+  liveEvidenceStatus: AelfWebLoginAdapterLiveEvidenceStatus,
+): AelfWebLoginAdapterReleaseImpact => {
+  if (readiness === "ready" && liveEvidenceStatus === "ready") {
+    return "ready";
+  }
+
+  if (readiness === "blocked") {
+    return "release_blocker";
+  }
+
+  if (readiness === "maintenance") {
+    return "maintenance";
+  }
+
+  if (readiness === "unavailable") {
+    return "informational";
+  }
+
+  return "needs_review";
+};
+
+const fallbackModeFor = (readiness: AelfWebLoginAdapterReadiness): AelfWebLoginAdapterFallbackMode => {
+  if (readiness === "ready") {
+    return "none";
+  }
+
+  if (readiness === "local_only") {
+    return "local_seeded";
+  }
+
+  if (readiness === "maintenance") {
+    return "maintenance";
+  }
+
+  if (readiness === "review_required") {
+    return "manual_review";
+  }
+
+  if (readiness === "blocked") {
+    return "blocked";
+  }
+
+  return "unavailable";
+};
+
+const fallbackReasonFor = (
+  config: AelfWebLoginAdapterConfig,
+  mode: AelfWebLoginAdapterFallbackMode,
+): LocalizedText => {
+  const name = config.displayName;
+  const reasons: Record<AelfWebLoginAdapterFallbackMode, LocalizedText> = {
+    blocked: text(
+      `${name["en-US"]} is blocked until live adapter QA and launch approval are attached.`,
+      `${name["zh-CN"]} 在附上真实 adapter QA 与上线批准前保持阻断。`,
+      `${name["zh-TW"]} 在附上真實 adapter QA 與上線批准前保持阻斷。`,
+    ),
+    disabled: text(
+      `${name["en-US"]} is disabled by feature gate.`,
+      `${name["zh-CN"]} 已被功能门禁关闭。`,
+      `${name["zh-TW"]} 已被功能門禁關閉。`,
+    ),
+    local_seeded: text(
+      `${name["en-US"]} has seeded coverage but no live adapter evidence yet.`,
+      `${name["zh-CN"]} 已有 seeded 覆盖，但尚无真实 adapter 证据。`,
+      `${name["zh-TW"]} 已有 seeded 覆蓋，但尚無真實 adapter 證據。`,
+    ),
+    maintenance: text(
+      `${name["en-US"]} is maintenance-only in this readiness preview.`,
+      `${name["zh-CN"]} 在本 readiness 预览中处于维护状态。`,
+      `${name["zh-TW"]} 在本 readiness 預覽中處於維護狀態。`,
+    ),
+    manual_review: text(
+      `${name["en-US"]} requires live evidence or operator review before release.`,
+      `${name["zh-CN"]} 发布前需要真实证据或运营审核。`,
+      `${name["zh-TW"]} 發布前需要真實證據或營運審核。`,
+    ),
+    none: text(
+      `${name["en-US"]} has live evidence attached for this readiness preview.`,
+      `${name["zh-CN"]} 在本 readiness 预览中已有真实证据。`,
+      `${name["zh-TW"]} 在本 readiness 預覽中已有真實證據。`,
+    ),
+    unavailable: text(
+      `${name["en-US"]} is unavailable to normal users until the adapter is configured and approved.`,
+      `${name["zh-CN"]} 在 adapter 配置并批准前，普通用户不可用。`,
+      `${name["zh-TW"]} 在 adapter 配置並批准前，一般使用者不可用。`,
+    ),
+  };
+
+  return reasons[mode];
+};
+
+const nextActionForAdapter = (
+  config: AelfWebLoginAdapterConfig,
+  readiness: AelfWebLoginAdapterReadiness,
+): LocalizedText => {
+  const name = config.displayName;
+
+  if (config.audience === "INTERNAL_AGENT") {
+    return text(
+      "Keep Agent Skill wallets for internal automation and out of normal Web wallet recommendations.",
+      "Agent Skill 钱包仅保留给内部自动化，不进入普通 Web 钱包推荐。",
+      "Agent Skill 錢包僅保留給內部自動化，不進入一般 Web 錢包推薦。",
+    );
+  }
+
+  if (readiness === "ready") {
+    return text(
+      `Keep ${name["en-US"]} available and continue monitoring live adapter evidence.`,
+      `保持 ${name["zh-CN"]} 可用，并继续监控真实 adapter 证据。`,
+      `保持 ${name["zh-TW"]} 可用，並繼續監控真實 adapter 證據。`,
+    );
+  }
+
+  if (readiness === "maintenance") {
+    return text(
+      `Show ${name["en-US"]} as maintenance and route users to available AA or EOA options.`,
+      `将 ${name["zh-CN"]} 显示为维护中，并引导用户选择可用的 AA 或 EOA 选项。`,
+      `將 ${name["zh-TW"]} 顯示為維護中，並引導使用者選擇可用的 AA 或 EOA 選項。`,
+    );
+  }
+
+  if (readiness === "blocked") {
+    return text(
+      `Resolve blocker and attach live QA before enabling ${name["en-US"]}.`,
+      `解决阻断并附上真实 QA 后再启用 ${name["zh-CN"]}。`,
+      `解決阻斷並附上真實 QA 後再啟用 ${name["zh-TW"]}。`,
+    );
+  }
+
+  return text(
+    `Attach live adapter evidence before treating ${name["en-US"]} as production-ready.`,
+    `在将 ${name["zh-CN"]} 视为生产就绪前，先附上真实 adapter 证据。`,
+    `在將 ${name["zh-TW"]} 視為生產就緒前，先附上真實 adapter 證據。`,
+  );
+};
+
+const evidenceRequiredFor = (config: AelfWebLoginAdapterConfig): LocalizedText => {
+  const name = config.displayName;
+
+  return text(
+    `Chrome live adapter connect, disconnect, wrong-chain, and fallback evidence required for ${name["en-US"]}.`,
+    `${name["zh-CN"]} 需要 Chrome 真实 adapter 连接、断开、错误链与 fallback 证据。`,
+    `${name["zh-TW"]} 需要 Chrome 真實 adapter 連接、斷開、錯誤鏈與 fallback 證據。`,
+  );
+};
+
+const createAdapterEntry = (
+  config: AelfWebLoginAdapterConfig,
+  sessions: NormalizedWalletSession[],
+  liveEvidenceStatus: AelfWebLoginAdapterLiveEvidenceStatus,
+): AelfWebLoginAdapterReadinessEntry => {
+  const matchedSessionIds = sessions
+    .filter((session) => isSessionSeededReadyForAdapter(config, session))
+    .map((session) => session.sessionId);
+  const seededCoverageStatus = seededCoverageFor(config, matchedSessionIds);
+  const readiness = readinessFor(config.featureGate.state, seededCoverageStatus, liveEvidenceStatus);
+  const fallbackMode = fallbackModeFor(readiness);
+  const nextAction = nextActionForAdapter(config, readiness);
+
+  return {
+    ...config,
+    adapterId: config.id,
+    evidenceRequired: evidenceRequiredFor(config),
+    fallback: {
+      blocksLaunch: readiness === "blocked",
+      mode: fallbackMode,
+      nextAction,
+      reason: fallbackReasonFor(config, fallbackMode),
+    },
+    liveEvidenceStatus,
+    matchedSessionIds,
+    nextAction,
+    readiness,
+    releaseImpact: releaseImpactFor(readiness, liveEvidenceStatus),
+    securityBoundary: aelfWebLoginAdapterBoundary,
+    seededCoverageStatus,
+  };
+};
+
+const summarizeAdapterReadiness = (
+  entries: AelfWebLoginAdapterReadinessEntry[],
+): AelfWebLoginAdapterReadinessModel["summary"] => ({
+  blockedAdapters: entries.filter((entry) => entry.readiness === "blocked").length,
+  configuredAdapters: entries.length,
+  disabledAdapters: entries.filter((entry) => entry.featureGate.state === "disabled").length,
+  enabledPreviewAdapters: entries.filter((entry) => entry.featureGate.state === "enabled_preview").length,
+  internalOnlyAdapters: entries.filter((entry) => entry.audience === "INTERNAL_AGENT").length,
+  liveEvidenceReadyAdapters: entries.filter((entry) => entry.liveEvidenceStatus === "ready").length,
+  maintenanceAdapters: entries.filter((entry) => entry.featureGate.state === "maintenance").length,
+  missingLiveEvidenceAdapters: entries.filter((entry) => entry.liveEvidenceStatus === "missing").length,
+  publicUserAdapters: entries.filter((entry) => entry.audience !== "INTERNAL_AGENT").length,
+  recommendedAdapterId:
+    entries.find((entry) => entry.recommended && entry.audience !== "INTERNAL_AGENT")?.adapterId ?? "",
+  releaseBlockers: entries.filter((entry) => entry.fallback.blocksLaunch).length,
+  seededReadyAdapters: entries.filter((entry) => entry.seededCoverageStatus === "ready").length,
+  totalAdapters: entries.length,
+  unavailableAdapters: entries.filter((entry) => entry.readiness === "unavailable").length,
+});
+
+export const createAelfWebLoginAdapterReadiness = (
+  sessions: NormalizedWalletSession[],
+  liveEvidence: Partial<Record<string, AelfWebLoginAdapterLiveEvidenceStatus>> = {},
+): AelfWebLoginAdapterReadinessModel => {
+  const entries = aelfWebLoginAdapterConfigs.map((config) =>
+    createAdapterEntry(
+      config,
+      sessions,
+      liveEvidence[config.id] ?? (config.audience === "INTERNAL_AGENT" ? "not_applicable" : "missing"),
+    ),
+  );
+
+  return {
+    boundary: aelfWebLoginAdapterBoundary,
+    entries,
+    integrationId: "aelf-web-login",
+    internalEntries: entries.filter((entry) => entry.audience === "INTERNAL_AGENT"),
+    nextAction: aelfWebLoginAdapterNextAction,
+    normalUserEntries: entries.filter((entry) => entry.audience !== "INTERNAL_AGENT"),
+    summary: summarizeAdapterReadiness(entries),
+  };
+};
 
 const shortenAddress = (address: string) => {
   if (address.includes("...") || address.length <= 10) {

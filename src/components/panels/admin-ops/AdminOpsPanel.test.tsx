@@ -86,6 +86,22 @@ describe("Admin/Ops shell", () => {
     expectVisibleText(/transaction/);
     expectVisibleText(/contract call/);
     expectVisibleText(/reward distribution/);
+    const walletAdapterReadiness = screen
+      .getByRole("heading", { name: "aelf-web-login adapter readiness" })
+      .closest("section");
+    expect(walletAdapterReadiness).not.toBeNull();
+    expect(within(walletAdapterReadiness as HTMLElement).getByText("Configured adapters")).toBeInTheDocument();
+    expect(within(walletAdapterReadiness as HTMLElement).getByText("Enabled preview")).toBeInTheDocument();
+    expect(within(walletAdapterReadiness as HTMLElement).getByText("Maintenance")).toBeInTheDocument();
+    expect(within(walletAdapterReadiness as HTMLElement).getByText("Internal only")).toBeInTheDocument();
+    expect(within(walletAdapterReadiness as HTMLElement).getAllByText("Feature gate").length).toBeGreaterThan(0);
+    expect(within(walletAdapterReadiness as HTMLElement).getAllByText("Fallback").length).toBeGreaterThan(0);
+    expect(within(walletAdapterReadiness as HTMLElement).getByText(/wallet\.adapters\.portkeyAa\.enabled/)).toBeInTheDocument();
+    expect(within(walletAdapterReadiness as HTMLElement).getByText(/wallet\.adapters\.agentSkill\.internalOnly/)).toBeInTheDocument();
+    expect(within(walletAdapterReadiness as HTMLElement).getByText("Agent Skill wallet")).toBeInTheDocument();
+    expect(within(walletAdapterReadiness as HTMLElement).getByText(/internal automation/)).toBeInTheDocument();
+    expect(within(walletAdapterReadiness as HTMLElement).getByText(/private key, seed phrase/)).toBeInTheDocument();
+    expect(within(walletAdapterReadiness as HTMLElement).getByText(/Future EOA adapter is maintenance-only/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Provider evidence registry" })).toBeInTheDocument();
     const providerRegistry = screen
       .getByRole("heading", { name: "Provider evidence registry" })

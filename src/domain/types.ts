@@ -315,6 +315,110 @@ export type WalletProviderQaReleaseImpact =
   | "needs_review"
   | "ready"
   | "informational";
+export type AelfWebLoginIntegrationId = "aelf-web-login";
+export type AelfWebLoginAdapterAudience =
+  | "NORMAL_USER"
+  | "EXISTING_USER"
+  | "FUTURE_USER"
+  | "INTERNAL_AGENT";
+export type AelfWebLoginAdapterFeatureGateState =
+  | "enabled_preview"
+  | "disabled"
+  | "maintenance"
+  | "unavailable"
+  | "blocked";
+export type AelfWebLoginAdapterReadiness =
+  | "ready"
+  | "local_only"
+  | "review_required"
+  | "maintenance"
+  | "unavailable"
+  | "blocked";
+export type AelfWebLoginAdapterSeededCoverageStatus = "ready" | "missing" | "not_applicable";
+export type AelfWebLoginAdapterLiveEvidenceStatus = "ready" | "missing" | "blocked" | "not_applicable";
+export type AelfWebLoginAdapterReleaseImpact =
+  | "ready"
+  | "needs_review"
+  | "maintenance"
+  | "release_blocker"
+  | "informational";
+export type AelfWebLoginAdapterFallbackMode =
+  | "none"
+  | "local_seeded"
+  | "maintenance"
+  | "manual_review"
+  | "disabled"
+  | "unavailable"
+  | "blocked";
+
+export interface AelfWebLoginAdapterFeatureGate {
+  state: AelfWebLoginAdapterFeatureGateState;
+  configKey: string;
+  degradesGracefully: true;
+  operatorMessage: LocalizedText;
+}
+
+export interface AelfWebLoginAdapterFallback {
+  mode: AelfWebLoginAdapterFallbackMode;
+  reason: LocalizedText;
+  nextAction: LocalizedText;
+  blocksLaunch: boolean;
+}
+
+export interface AelfWebLoginAdapterConfig {
+  id: string;
+  integrationId: AelfWebLoginIntegrationId;
+  adapterName: string;
+  displayName: LocalizedText;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  chainId: "AELF" | "tDVV" | "tDVW" | string;
+  network: WalletNetwork;
+  capabilities: WalletCapability[];
+  audience: AelfWebLoginAdapterAudience;
+  recommended: boolean;
+  featureGate: AelfWebLoginAdapterFeatureGate;
+}
+
+export interface AelfWebLoginAdapterReadinessEntry extends AelfWebLoginAdapterConfig {
+  adapterId: string;
+  readiness: AelfWebLoginAdapterReadiness;
+  seededCoverageStatus: AelfWebLoginAdapterSeededCoverageStatus;
+  liveEvidenceStatus: AelfWebLoginAdapterLiveEvidenceStatus;
+  releaseImpact: AelfWebLoginAdapterReleaseImpact;
+  matchedSessionIds: string[];
+  fallback: AelfWebLoginAdapterFallback;
+  evidenceRequired: LocalizedText;
+  nextAction: LocalizedText;
+  securityBoundary: LocalizedText;
+}
+
+export interface AelfWebLoginAdapterReadinessSummary {
+  totalAdapters: number;
+  configuredAdapters: number;
+  enabledPreviewAdapters: number;
+  disabledAdapters: number;
+  maintenanceAdapters: number;
+  unavailableAdapters: number;
+  blockedAdapters: number;
+  publicUserAdapters: number;
+  internalOnlyAdapters: number;
+  seededReadyAdapters: number;
+  liveEvidenceReadyAdapters: number;
+  missingLiveEvidenceAdapters: number;
+  releaseBlockers: number;
+  recommendedAdapterId: string;
+}
+
+export interface AelfWebLoginAdapterReadinessModel {
+  integrationId: AelfWebLoginIntegrationId;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  summary: AelfWebLoginAdapterReadinessSummary;
+  entries: AelfWebLoginAdapterReadinessEntry[];
+  normalUserEntries: AelfWebLoginAdapterReadinessEntry[];
+  internalEntries: AelfWebLoginAdapterReadinessEntry[];
+}
 
 export interface WalletDiagnosticItem {
   sessionId: string;
@@ -1050,6 +1154,7 @@ export interface ProjectCampaignCommandCenter {
   campaigns: CampaignCommandItem[];
   analyticsExport: AnalyticsExportDecision;
   aiOptimization: AiOptimizationWorkflow;
+  aelfWebLoginAdapterReadiness: AelfWebLoginAdapterReadinessModel;
   providerEvidenceRegistry: ProviderEvidenceRegistry;
   lifecycleOperations: CampaignLifecycleOperations;
   boundary: LocalizedText;
@@ -1416,6 +1521,7 @@ export interface AdminOpsReadModel {
   reviewQueue: ReviewItem[];
   deliveryChecklistReadiness: DeliveryChecklistReadinessConsole;
   walletProviderQaGate: WalletProviderQaReadinessGate;
+  aelfWebLoginAdapterReadiness: AelfWebLoginAdapterReadinessModel;
   providerEvidenceRegistry: ProviderEvidenceRegistry;
   contractReviewCenter: AdminContractReviewCenter;
   contractInterfaceMatrix: ContractInterfaceMatrixConsole;

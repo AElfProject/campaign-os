@@ -12,6 +12,8 @@ import {
   type AiContentArtifactLifecycle,
   type AiContentQualityGateStatus,
   type AiContentReleaseActionState,
+  type AelfWebLoginAdapterLiveEvidenceStatus,
+  type AelfWebLoginAdapterReadiness,
   type ApiSkillContractReadiness,
   type CampaignLifecycleOperation,
   type CampaignLifecycleOperationState,
@@ -384,6 +386,22 @@ const providerEvidenceRegistryState = (readiness: VerificationProviderReadiness)
   return readiness === "ready" ? "ready" : "warning";
 };
 
+const walletAdapterReadinessState = (readiness: AelfWebLoginAdapterReadiness) => {
+  if (readiness === "blocked" || readiness === "unavailable") {
+    return "blocker";
+  }
+
+  return readiness === "ready" ? "ready" : "warning";
+};
+
+const walletAdapterLiveEvidenceState = (status: AelfWebLoginAdapterLiveEvidenceStatus) => {
+  if (status === "blocked") {
+    return "blocker";
+  }
+
+  return status === "ready" ? "ready" : "warning";
+};
+
 const pipelineReleaseImpactState = (impact: VerificationReleaseImpact) => {
   if (impact === "blocker") {
     return "blocker";
@@ -560,6 +578,7 @@ export const ProjectConsole = ({
   const commandCenter = createProjectCampaignCommandCenter(campaign);
   const exportDecision = commandCenter.analyticsExport;
   const aiOptimizationSummary = commandCenter.aiOptimization.projectOwnerSummary;
+  const walletAdapterReadiness = commandCenter.aelfWebLoginAdapterReadiness;
   const providerEvidenceRegistry = commandCenter.providerEvidenceRegistry;
   const lifecycleOperations = commandCenter.lifecycleOperations;
   const topLifecycleOperation = lifecycleOperations.operations.find(
@@ -2052,6 +2071,104 @@ export const ProjectConsole = ({
           </div>
         </section>
       )}
+
+      <section aria-label={copy.walletAdapterReadiness} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.walletAdapterBoundary}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.walletAdapterReadiness}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.walletAdapterReadinessSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={`${walletAdapterReadiness.summary.releaseBlockers} ${copy.walletAdapterReleaseBlockers}`}
+            state={walletAdapterReadiness.summary.releaseBlockers > 0 ? "blocker" : "ready"}
+          />
+        </div>
+
+        <div aria-label={`${copy.walletAdapterReadiness} summary`} style={gridStyle}>
+          {[
+            {
+              detail: `${walletAdapterReadiness.summary.enabledPreviewAdapters} ${copy.walletAdapterEnabledPreview}`,
+              label: copy.walletAdapterConfigured,
+              value: String(walletAdapterReadiness.summary.configuredAdapters),
+            },
+            {
+              detail: `${walletAdapterReadiness.summary.liveEvidenceReadyAdapters} ${copy.verificationPipelineLiveReady}`,
+              label: copy.walletAdapterMissingLiveEvidence,
+              value: String(walletAdapterReadiness.summary.missingLiveEvidenceAdapters),
+            },
+            {
+              detail: copy.walletAdapterFallback,
+              label: copy.walletAdapterMaintenance,
+              value: String(walletAdapterReadiness.summary.maintenanceAdapters),
+            },
+            {
+              detail: copy.walletAdapterBoundary,
+              label: copy.walletAdapterReleaseBlockers,
+              value: String(walletAdapterReadiness.summary.releaseBlockers),
+            },
+          ].map((stat) => (
+            <article key={stat.label} style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={statLabelStyle}>{stat.label}</p>
+              <p style={{ ...statValueStyle, fontSize: 20 }}>{stat.value}</p>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                {stat.detail}
+              </p>
+            </article>
+          ))}
+        </div>
+
+        <div style={sectionGridStyle}>
+          {walletAdapterReadiness.entries
+            .filter((entry) => entry.audience !== "INTERNAL_AGENT")
+            .map((entry) => (
+              <article key={entry.adapterId} style={{ ...cardStyle, minHeight: 0 }}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>{entry.adapterName}</p>
+                    <h4 style={{ fontSize: 16, lineHeight: 1.2, margin: "4px 0" }}>
+                      {getLocalizedText(entry.displayName, locale)}
+                    </h4>
+                  </div>
+                  <PublishStateBadge
+                    label={readableCode(entry.readiness)}
+                    state={walletAdapterReadinessState(entry.readiness)}
+                  />
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge
+                    label={`${copy.walletAdapterFeatureGate}: ${readableCode(entry.featureGate.state)}`}
+                    state={entry.featureGate.state === "blocked" ? "blocker" : "warning"}
+                  />
+                  <PublishStateBadge
+                    label={`${copy.verificationPipelineLiveEvidence}: ${readableCode(entry.liveEvidenceStatus)}`}
+                    state={walletAdapterLiveEvidenceState(entry.liveEvidenceStatus)}
+                  />
+                </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {entry.accountType} · {entry.walletSource} · {entry.chainId}/{entry.network}
+                </p>
+                <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.walletAdapterFallback}: {getLocalizedText(entry.fallback.reason, locale)}
+                </p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.walletAdapterNextAction}: {getLocalizedText(entry.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+        </div>
+
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{getLocalizedText(walletAdapterReadiness.boundary, locale)}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.walletAdapterNextAction}: {getLocalizedText(walletAdapterReadiness.nextAction, locale)}
+          </p>
+        </div>
+      </section>
 
       <section aria-label={copy.providerEvidenceRegistry} style={panelStyle}>
         <div style={headingRowStyle}>
