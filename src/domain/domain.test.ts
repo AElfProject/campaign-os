@@ -22,6 +22,7 @@ import {
   createCampaignLifecycleOperations,
   createTranslationManagerReadModel,
   createLocaleAnalyticsReadiness,
+  createRiskIntelligenceReviewSurface,
   createVerificationPipelineReadinessGate,
   createWalletConnectionDiagnostics,
   createWalletProviderQaReadinessGate,
@@ -1809,6 +1810,71 @@ describe("Campaign OS domain foundation", () => {
         }),
       ]),
     );
+  });
+
+  it("derives risk intelligence dimensions for review-only anti-sybil analysis", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const surface = adminOps.riskIntelligence;
+    const repeated = createRiskIntelligenceReviewSurface(campaignDetail);
+    const dimensionsByCategory = Object.fromEntries(
+      surface.dimensions.map((dimension) => [dimension.category, dimension]),
+    );
+    const publicSafetyText = JSON.stringify(surface).toLowerCase();
+
+    expect(surface).toEqual(repeated);
+    expect(surface.campaignId).toBe(campaignDetail.id);
+    expect(surface.dimensions.map((dimension) => dimension.category).sort()).toEqual([
+      "device_session",
+      "funding_cluster",
+      "invite_tree",
+      "manual_review_queue",
+      "meaningful_action",
+      "task_pattern",
+      "wallet_age",
+    ]);
+    expect(surface.summary).toMatchObject({
+      totalDimensions: 7,
+      reviewRequiredCount: expect.any(Number),
+      blockedCount: expect.any(Number),
+      highSeverityCount: expect.any(Number),
+      manualReviewQueueSize: expect.any(Number),
+      meaningfulActionCoverage: expect.stringContaining("meaningful actions"),
+      exportHoldCount: expect.any(Number),
+    });
+    expect(surface.summary.reviewRequiredCount).toBeGreaterThan(0);
+    expect(surface.summary.blockedCount).toBeGreaterThan(0);
+    expect(surface.summary.exportHoldCount).toBeGreaterThan(0);
+    expect(surface.meaningfulAction).toMatchObject({
+      requiredActionCount: expect.any(Number),
+      completedActionCount: expect.any(Number),
+      coverageLabel: expect.objectContaining({
+        "en-US": expect.stringContaining("meaningful actions covered"),
+      }),
+      qualityPolicy: expect.objectContaining({
+        "en-US": expect.stringContaining("on-chain"),
+      }),
+    });
+    expect(dimensionsByCategory.wallet_age).toMatchObject({
+      id: "wallet-age",
+      ownerRole: "risk_reviewer",
+      reviewState: "review_required",
+    });
+    expect(dimensionsByCategory.funding_cluster?.sourceSignal["en-US"]).toBe("Funding source review");
+    expect(dimensionsByCategory.invite_tree).toMatchObject({
+      reviewState: "blocked",
+      ownerRole: "project_owner",
+    });
+    expect(dimensionsByCategory.manual_review_queue?.exportImpact["en-US"]).toContain("Hold export");
+    expect(surface.boundary["en-US"]).toContain("does not automatically ban");
+    expect(surface.boundary["zh-CN"]).toContain("不会自动封禁");
+
+    expect(publicSafetyText).not.toContain("rawip");
+    expect(publicSafetyText).not.toContain("devicefingerprint");
+    expect(publicSafetyText).not.toContain("sessionfingerprint");
+    expect(publicSafetyText).not.toContain("privatethreshold");
+    expect(publicSafetyText).not.toContain("apikey");
+    expect(publicSafetyText).not.toContain("access_token");
+    expect(publicSafetyText).not.toContain("seed phrase");
   });
 
   it("derives deterministic AI optimization actions with review guardrails", () => {
