@@ -3,6 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
 import { EXPORT_CSV_COLUMNS } from "../../../domain";
+import { AdminOpsPanel } from "./AdminOpsPanel";
 
 const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
 
@@ -556,5 +557,22 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("风险标记与资格结果仅作为审核输入；Campaign OS 不执行发奖。");
     expectVisibleText("zh-CN / zh-TW AI draft/fallback");
     expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
+  });
+
+  it("renders Advanced Analytics review copy explicitly in zh-TW", () => {
+    render(<AdminOpsPanel locale="zh-TW" />);
+
+    const advancedAnalyticsReview = screen.getByLabelText("進階分析審核");
+    expect(
+      within(advancedAnalyticsReview).getByRole("heading", { name: "進階分析審核" }),
+    ).toBeInTheDocument();
+    expect(within(advancedAnalyticsReview).getByText("Premium 報告 readiness")).toBeInTheDocument();
+    expect(within(advancedAnalyticsReview).getByText("Day 7 留存")).toBeInTheDocument();
+    expect(within(advancedAnalyticsReview).getByText("Day 30 留存")).toBeInTheDocument();
+    expect(within(advancedAnalyticsReview).getByText("證據缺口")).toBeInTheDocument();
+    expect(within(advancedAnalyticsReview).getAllByText("信號僅作為審核輸入").length).toBeGreaterThan(0);
+    expect(within(advancedAnalyticsReview).getAllByText(/事件倉庫/).length).toBeGreaterThan(0);
+    expect(within(advancedAnalyticsReview).getAllByText(/billing/).length).toBeGreaterThan(0);
+    expect(within(advancedAnalyticsReview).getAllByText(/自動處罰/).length).toBeGreaterThan(0);
   });
 });
