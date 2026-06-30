@@ -20,6 +20,12 @@ import {
   type CampaignLifecycleStatus,
   type CampaignShellDetail,
   type ExportReadinessState,
+  type LaunchConsoleBundleOwnerRole,
+  type LaunchConsoleBundleStage,
+  type LaunchConsoleBundleStatus,
+  type LaunchConsoleGateState,
+  type LaunchConsoleHandoffReviewState,
+  type LaunchConsoleTaskCategory,
   type LocaleStatus,
   type PublishState,
   type SupportedLocale,
@@ -359,6 +365,66 @@ const lifecycleStatusLabel = (status: CampaignLifecycleStatus) => status.replace
 const lifecycleOwnerLabel = (ownerRole: CampaignLifecycleOperation["ownerRole"]) =>
   ownerRole.replace(/_/g, " ");
 
+const launchConsoleStatusBadgeState = (
+  status: LaunchConsoleBundleStatus | LaunchConsoleGateState | LaunchConsoleHandoffReviewState,
+) => {
+  if (status === "blocked") {
+    return "blocker";
+  }
+
+  return status === "ready" || status === "passed" ? "ready" : "warning";
+};
+
+const launchConsoleStatusLabel = (
+  status: LaunchConsoleBundleStatus | LaunchConsoleGateState | LaunchConsoleHandoffReviewState,
+  labels: {
+    launchConsoleBlocked: string;
+    launchConsoleLocalOnly: string;
+    launchConsoleReady: string;
+    launchConsoleReviewRequired: string;
+    warning: string;
+  },
+) => {
+  if (status === "ready" || status === "passed") {
+    return labels.launchConsoleReady;
+  }
+
+  if (status === "local_only") {
+    return labels.launchConsoleLocalOnly;
+  }
+
+  if (status === "review_required") {
+    return labels.launchConsoleReviewRequired;
+  }
+
+  return status === "warning" ? labels.warning : labels.launchConsoleBlocked;
+};
+
+const launchConsoleStageLabel = (stage: LaunchConsoleBundleStage) =>
+  stage.replace(/_/g, " ");
+
+const launchConsoleOwnerLabel = (ownerRole: LaunchConsoleBundleOwnerRole) =>
+  ownerRole.replace(/_/g, " ");
+
+const launchConsoleTaskCategoryLabel = (
+  category: LaunchConsoleTaskCategory,
+  labels: {
+    launchConsoleTaskCategoryContentAnalytics: string;
+    launchConsoleTaskCategoryOnChainApi: string;
+    launchConsoleTaskCategorySocialManual: string;
+    launchConsoleTaskCategoryWallet: string;
+  },
+) => {
+  const categoryLabels: Record<LaunchConsoleTaskCategory, string> = {
+    content_analytics: labels.launchConsoleTaskCategoryContentAnalytics,
+    on_chain_api: labels.launchConsoleTaskCategoryOnChainApi,
+    social_manual: labels.launchConsoleTaskCategorySocialManual,
+    wallet: labels.launchConsoleTaskCategoryWallet,
+  };
+
+  return categoryLabels[category];
+};
+
 const pipelineSeededCoverageState = (status: VerificationSeededCoverageStatus) =>
   status === "ready" ? "ready" : "blocker";
 
@@ -581,6 +647,7 @@ export const ProjectConsole = ({
   const walletAdapterReadiness = commandCenter.aelfWebLoginAdapterReadiness;
   const providerEvidenceRegistry = commandCenter.providerEvidenceRegistry;
   const lifecycleOperations = commandCenter.lifecycleOperations;
+  const launchConsoleBundles = commandCenter.launchConsoleCampaignBundles;
   const topLifecycleOperation = lifecycleOperations.operations.find(
     (operation) => operation.id === lifecycleOperations.summary.topOperationId,
   );
@@ -1040,6 +1107,164 @@ export const ProjectConsole = ({
 
         <p style={boundaryStyle}>
           {copy.lifecycleLocalOnlyBoundary}: {getLocalizedText(lifecycleOperations.boundary, locale)}
+        </p>
+      </section>
+
+      <section aria-label={copy.launchConsoleBundles} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.launchConsoleSummary}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.launchConsoleBundles}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.launchConsoleBundlesSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={`${launchConsoleBundles.summary.launchBlockingCount} ${copy.launchConsoleLaunchBlocking}`}
+            state={launchConsoleBundles.summary.launchBlockingCount > 0 ? "blocker" : "ready"}
+          />
+        </div>
+
+        <div aria-label={copy.launchConsoleSummary} style={gridStyle}>
+          {[
+            [copy.launchConsoleTotalBundles, String(launchConsoleBundles.summary.totalBundles)],
+            [copy.launchConsoleReady, String(launchConsoleBundles.summary.readyCount)],
+            [copy.launchConsoleReviewRequired, String(launchConsoleBundles.summary.reviewRequiredCount)],
+            [copy.launchConsoleBlocked, String(launchConsoleBundles.summary.blockedCount)],
+            [copy.launchConsoleLocalOnly, String(launchConsoleBundles.summary.localOnlyCount)],
+            [copy.launchConsoleLaunchBlocking, String(launchConsoleBundles.summary.launchBlockingCount)],
+            [copy.launchConsoleHandoffRequired, String(launchConsoleBundles.summary.handoffRequiredCount)],
+          ].map(([label, value]) => (
+            <article key={label} style={cardStyle}>
+              <p style={statLabelStyle}>{label}</p>
+              <p style={statValueStyle}>{value}</p>
+            </article>
+          ))}
+        </div>
+
+        <div style={sectionGridStyle}>
+          {launchConsoleBundles.bundles.map((bundle) => {
+            const bundleHandoffs = bundle.handoffIds.flatMap((handoffId) => {
+              const handoff = launchConsoleBundles.handoffs.find(
+                (candidate) => candidate.id === handoffId,
+              );
+              return handoff ? [handoff] : [];
+            });
+
+            return (
+              <article key={bundle.id} style={{ ...workflowStyle, overflowWrap: "anywhere" }}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>
+                      {copy.launchConsoleStage}: {launchConsoleStageLabel(bundle.stage)}
+                    </p>
+                    <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                      {getLocalizedText(bundle.title, locale)}
+                    </h4>
+                  </div>
+                  <PublishStateBadge
+                    label={launchConsoleStatusLabel(bundle.status, copy)}
+                    state={launchConsoleStatusBadgeState(bundle.status)}
+                  />
+                </div>
+
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(bundle.objective, locale)}
+                </p>
+
+                <div style={gridStyle}>
+                  {[
+                    [copy.launchConsoleCampaignIntent, getLocalizedText(bundle.campaignIntent, locale)],
+                    [copy.launchConsoleAudience, getLocalizedText(bundle.targetAudience, locale)],
+                    [copy.launchConsoleRecommendedTiming, getLocalizedText(bundle.recommendedTiming, locale)],
+                    [copy.launchConsoleOwner, launchConsoleOwnerLabel(bundle.ownerRole)],
+                  ].map(([label, value]) => (
+                    <div key={`${bundle.id}-${label}`} style={{ minWidth: 0 }}>
+                      <p style={statLabelStyle}>{label}</p>
+                      <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
+                        {value}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <div>
+                  <p style={statLabelStyle}>{copy.launchConsoleTasks}</p>
+                  <ul style={compactListStyle}>
+                    {bundle.tasks.map((task) => (
+                      <li key={task.id} style={{ ...chipStyle, display: "grid", gap: 4 }}>
+                        <span>{launchConsoleTaskCategoryLabel(task.category, copy)}</span>
+                        <strong>{getLocalizedText(task.label, locale)}</strong>
+                        <span>{getLocalizedText(task.description, locale)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div>
+                  <p style={statLabelStyle}>{copy.launchConsoleGateEvidence}</p>
+                  <ul style={listStyle}>
+                    {bundle.gateEvidence.map((gate) => (
+                      <li
+                        key={gate.id}
+                        style={{ ...listItemStyle, alignItems: "flex-start", gap: 10 }}
+                      >
+                        <span style={{ display: "grid", flex: "1 1 210px", gap: 4, minWidth: 0 }}>
+                          <strong>{getLocalizedText(gate.label, locale)}</strong>
+                          <span style={{ color: "#475569", fontSize: 13, lineHeight: 1.45 }}>
+                            {getLocalizedText(gate.reason, locale)}
+                          </span>
+                          <span style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.35 }}>
+                            {copy.launchConsoleNextAction}: {getLocalizedText(gate.nextAction, locale)}
+                          </span>
+                        </span>
+                        <span style={{ alignItems: "flex-end", display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" }}>
+                          <PublishStateBadge
+                            label={launchConsoleStatusLabel(gate.state, copy)}
+                            state={launchConsoleStatusBadgeState(gate.state)}
+                          />
+                          {gate.blocksLaunch ? (
+                            <PublishStateBadge label={copy.launchConsoleLaunchBlocking} state="blocker" />
+                          ) : null}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div>
+                  <p style={statLabelStyle}>{copy.launchConsoleHandoffs}</p>
+                  <ul style={compactListStyle}>
+                    {bundleHandoffs.map((handoff) => (
+                      <li key={`${bundle.id}-${handoff.id}`} style={{ ...chipStyle, display: "grid", gap: 4 }}>
+                        <span>{handoff.id}</span>
+                        <strong>{getLocalizedText(handoff.title, locale)}</strong>
+                        <span>{getLocalizedText(handoff.outputPreview, locale)}</span>
+                        <PublishStateBadge
+                          label={launchConsoleStatusLabel(handoff.reviewState, copy)}
+                          state={launchConsoleStatusBadgeState(handoff.reviewState)}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.launchConsoleNextAction}: {getLocalizedText(bundle.nextAction, locale)}
+                </p>
+                <p style={boundaryStyle}>
+                  {copy.launchConsoleBoundary}: {getLocalizedText(bundle.publicBoundary, locale)}
+                </p>
+              </article>
+            );
+          })}
+        </div>
+
+        <p style={boundaryStyle}>
+          {copy.launchConsoleBoundary}: {getLocalizedText(launchConsoleBundles.boundary, locale)}{" "}
+          {copy.launchConsoleNoLiveBoundary}
         </p>
       </section>
 

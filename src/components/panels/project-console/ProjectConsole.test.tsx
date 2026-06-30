@@ -58,6 +58,24 @@ describe("Project Console shell", () => {
     expect(within(lifecycleOperations).getByText("Archive campaign")).toBeInTheDocument();
     expect(within(lifecycleOperations).getByText(/Lifecycle local-only boundary/)).toBeInTheDocument();
     expect(within(lifecycleOperations).getByText(/No live backend, scheduler, wallet signing/)).toBeInTheDocument();
+    const launchBundles = screen.getByLabelText("Launch Console campaign bundles");
+    expect(
+      within(launchBundles).getByRole("heading", { name: "Launch Console campaign bundles" }),
+    ).toBeInTheDocument();
+    expect(within(launchBundles).getByText("Pre-launch bundle")).toBeInTheDocument();
+    expect(within(launchBundles).getByText("Launch bundle")).toBeInTheDocument();
+    expect(within(launchBundles).getByText("Post-launch bundle")).toBeInTheDocument();
+    expect(within(launchBundles).getByText("Wallet connect readiness")).toBeInTheDocument();
+    expect(within(launchBundles).getByText("Verified ecosystem action")).toBeInTheDocument();
+    expect(within(launchBundles).getByText("Winner export preview")).toBeInTheDocument();
+    expect(within(launchBundles).getByText("Create campaign draft")).toBeInTheDocument();
+    expect(within(launchBundles).getAllByText("verify_task").length).toBeGreaterThan(0);
+    expect(within(launchBundles).getAllByText("Local only").length).toBeGreaterThan(0);
+    expect(within(launchBundles).getAllByText(/No live Launch Console/).length).toBeGreaterThan(0);
+    expect(within(launchBundles).getAllByText(/no automatic campaign creation or publish/).length).toBeGreaterThan(0);
+    expect(within(launchBundles).getAllByText(/no external API/i).length).toBeGreaterThan(0);
+    expect(within(launchBundles).queryByText(/automatically creates campaigns/i)).not.toBeInTheDocument();
+    expect(within(launchBundles).queryByText(/publishes through a live Launch Console/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Analytics & Export Decision" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Task template library" })).not.toBeInTheDocument();
   });
@@ -285,7 +303,7 @@ describe("Project Console shell", () => {
     expect(within(serviceFacade).getByText("Service coverage")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Total services")).toBeInTheDocument();
     expect(within(serviceFacade).getAllByText("Ready").length).toBeGreaterThan(0);
-    expect(within(serviceFacade).getByText("4 Local only")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("5 Local only")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Review required")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Blocked")).toBeInTheDocument();
     for (const coverage of ["wallet coverage", "task verification", "eligibility", "i18n", "analytics", "export", "content", "summary"]) {
@@ -412,6 +430,15 @@ describe("Project Console shell", () => {
     expect(within(zhLifecycleOperations).getByText("当前状态")).toBeInTheDocument();
     expect(within(zhLifecycleOperations).getAllByText("项目方动作").length).toBeGreaterThan(0);
     expect(within(zhLifecycleOperations).getByText(/不会执行实时后端/)).toBeInTheDocument();
+    const zhLaunchBundles = screen.getByLabelText("Launch Console 活动包");
+    expect(
+      within(zhLaunchBundles).getByRole("heading", { name: "Launch Console 活动包" }),
+    ).toBeInTheDocument();
+    expect(within(zhLaunchBundles).getByText("预热活动包")).toBeInTheDocument();
+    expect(within(zhLaunchBundles).getByText("上线活动包")).toBeInTheDocument();
+    expect(within(zhLaunchBundles).getByText("上线后活动包")).toBeInTheDocument();
+    expect(within(zhLaunchBundles).getAllByText("本地预览").length).toBeGreaterThan(0);
+    expect(within(zhLaunchBundles).getByText(/不会连接真实 Launch Console/)).toBeInTheDocument();
 
     fireEvent.click(within(nav).getByRole("button", { name: "创建" }));
     for (const step of ["目标", "任务", "奖励与资格", "i18n", "合约", "发布准备度"]) {
