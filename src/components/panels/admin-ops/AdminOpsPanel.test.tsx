@@ -68,6 +68,27 @@ describe("Admin/Ops shell", () => {
     expectVisibleText(/transaction/);
     expectVisibleText(/contract call/);
     expectVisibleText(/reward distribution/);
+    expect(screen.getByRole("heading", { name: "Provider evidence registry" })).toBeInTheDocument();
+    const providerRegistry = screen
+      .getByRole("heading", { name: "Provider evidence registry" })
+      .closest("section");
+    expect(providerRegistry).not.toBeNull();
+    expect(within(providerRegistry as HTMLElement).getAllByText("Live evidence missing").length).toBeGreaterThan(0);
+    expect(within(providerRegistry as HTMLElement).getAllByText("Adapter readiness").length).toBeGreaterThan(0);
+    expect(within(providerRegistry as HTMLElement).getAllByText("Feature gate").length).toBeGreaterThan(0);
+    expect(within(providerRegistry as HTMLElement).getAllByText("Fallback").length).toBeGreaterThan(0);
+    expect(within(providerRegistry as HTMLElement).getAllByText("Affected outcomes").length).toBeGreaterThan(0);
+    expect(within(providerRegistry as HTMLElement).getByText("Social API verification")).toBeInTheDocument();
+    expect(within(providerRegistry as HTMLElement).getAllByText("blocked").length).toBeGreaterThan(0);
+    expect(within(providerRegistry as HTMLElement).getByText("AeFinder on-chain verification")).toBeInTheDocument();
+    expect(within(providerRegistry as HTMLElement).getAllByText("unavailable").length).toBeGreaterThan(0);
+    expect(within(providerRegistry as HTMLElement).getByText("Manual review")).toBeInTheDocument();
+    expect(within(providerRegistry as HTMLElement).getAllByText("review required").length).toBeGreaterThan(0);
+    expect(within(providerRegistry as HTMLElement).getByText("Wallet provider QA")).toBeInTheDocument();
+    expect(within(providerRegistry as HTMLElement).getAllByText("local only").length).toBeGreaterThan(0);
+    expect(within(providerRegistry as HTMLElement).getAllByText(/providers\..+\.enabled/).length).toBeGreaterThan(0);
+    expect(within(providerRegistry as HTMLElement).getAllByText(/Attach live provider QA evidence/).length).toBeGreaterThan(0);
+    expect(within(providerRegistry as HTMLElement).getByText(/No live API, wallet SDK, provider credential/)).toBeInTheDocument();
     expectVisibleText("Admin Contract Review Center");
     expectVisibleText("V2 companion needed");
     expect(screen.getByText("No for MVP; recommended for P1 transparency.")).toBeInTheDocument();
@@ -249,6 +270,17 @@ describe("Admin/Ops shell", () => {
     expect(screen.getAllByText("缺失").length).toBeGreaterThan(0);
     expectVisibleText(/尚未附上真实 Portkey AA provider 证据/);
     expectVisibleText(/不会执行实时钱包 SDK 连接、真实签名、交易、合约调用/);
+    expect(screen.getByRole("heading", { name: "Provider 证据登记表" })).toBeInTheDocument();
+    const zhProviderRegistry = screen
+      .getByRole("heading", { name: "Provider 证据登记表" })
+      .closest("section");
+    expect(zhProviderRegistry).not.toBeNull();
+    expect(within(zhProviderRegistry as HTMLElement).getAllByText("缺失真实 evidence").length).toBeGreaterThan(0);
+    expect(within(zhProviderRegistry as HTMLElement).getAllByText("配置门禁").length).toBeGreaterThan(0);
+    expect(within(zhProviderRegistry as HTMLElement).getAllByText("Fallback").length).toBeGreaterThan(0);
+    expect(within(zhProviderRegistry as HTMLElement).getByText("社交 API 验证")).toBeInTheDocument();
+    expect(within(zhProviderRegistry as HTMLElement).getByText("钱包 provider QA")).toBeInTheDocument();
+    expect(within(zhProviderRegistry as HTMLElement).getByText(/不会调用实时 API/)).toBeInTheDocument();
     expectVisibleText("AI 内容审核");
     expectVisibleText("分析概览");
     expectVisibleText("转化漏斗");

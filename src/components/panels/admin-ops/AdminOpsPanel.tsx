@@ -17,6 +17,8 @@ import {
   type AiContentArtifactLifecycle,
   type AiContentQualityGateStatus,
   type MetricTone,
+  type ProviderFeatureGateState,
+  type ProviderLiveEvidenceStatus,
   type SignalSeverity,
   type SupportedLocale,
   type TemplateGovernanceSignal,
@@ -324,6 +326,36 @@ const walletProviderQaLiveState = (status: WalletProviderQaLiveEvidenceStatus) =
 const walletProviderQaImpactState = (impact: WalletProviderQaReleaseImpact) =>
   impact === "release_blocker" ? "blocker" : impact === "ready" ? "ready" : "warning";
 
+const providerLiveEvidenceState = (status: ProviderLiveEvidenceStatus) =>
+  status === "blocked" ? "blocker" : status === "ready" ? "ready" : "warning";
+
+const providerFeatureGateState = (state: ProviderFeatureGateState) =>
+  state === "disabled" ? "blocker" : "warning";
+
+const providerPathPriority = (entry: {
+  adapterReadiness: string;
+  liveEvidenceStatus: string;
+  fallback: { blocksLaunch: boolean };
+}) => {
+  if (entry.adapterReadiness === "blocked" || entry.fallback.blocksLaunch) {
+    return 0;
+  }
+
+  if (entry.adapterReadiness === "unavailable") {
+    return 1;
+  }
+
+  if (entry.adapterReadiness === "review_required") {
+    return 2;
+  }
+
+  if (entry.liveEvidenceStatus === "missing") {
+    return 3;
+  }
+
+  return 4;
+};
+
 const walletProviderQaSeededLabel = (
   status: WalletProviderQaSeededStatus,
   copy: typeof adminOpsCopy["en-US"],
@@ -382,6 +414,10 @@ export const AdminOpsPanel = ({
   const aiContentPack = adminOps.aiContentPack;
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
+  const providerEvidenceRegistry = adminOps.providerEvidenceRegistry;
+  const providerEvidenceRegistryEntries = [...providerEvidenceRegistry.entries].sort(
+    (left, right) => providerPathPriority(left) - providerPathPriority(right),
+  );
   const contractClaimReadiness = computePublishReadiness(
     { contractMode: "CONTRACT_CLAIM" },
     campaign.contentRevisions,
@@ -848,6 +884,143 @@ export const AdminOpsPanel = ({
               </p>
               <p style={mutedTextStyle}>
                 {copy.matchedSessions}: {scenario.matchedSessionIds.join(", ") || "-"}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.providerEvidenceRegistry} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.providerEvidenceRegistrySubtitle}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.providerEvidenceRegistry}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${providerEvidenceRegistry.summary.totalEntries} ${copy.totalItems}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${providerEvidenceRegistry.summary.missingLiveEvidenceEntries} ${copy.liveEvidenceMissing}`}
+              state={providerEvidenceRegistry.summary.missingLiveEvidenceEntries > 0 ? "warning" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${providerEvidenceRegistry.summary.launchBlockers} ${copy.releaseBlockers}`}
+              state={providerEvidenceRegistry.summary.launchBlockers > 0 ? "blocker" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{getLocalizedText(providerEvidenceRegistry.boundary, locale)}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.nextAction}: {getLocalizedText(providerEvidenceRegistry.nextAction, locale)}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.totalItems}</p>
+            <p style={valueStyle}>{providerEvidenceRegistry.summary.totalEntries}</p>
+            <p style={mutedTextStyle}>{copy.providerEvidenceRegistrySubtitle}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.liveEvidenceMissing}</p>
+            <p style={valueStyle}>{providerEvidenceRegistry.summary.missingLiveEvidenceEntries}</p>
+            <p style={mutedTextStyle}>{copy.liveEvidence}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.localOnlyReadiness}</p>
+            <p style={valueStyle}>{providerEvidenceRegistry.summary.localOnlyEntries}</p>
+            <p style={mutedTextStyle}>{copy.seededEvidence}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.reviewRequired}</p>
+            <p style={valueStyle}>{providerEvidenceRegistry.summary.reviewRequiredEntries}</p>
+            <p style={mutedTextStyle}>{copy.humanReviewRequired}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.unavailableReadiness}</p>
+            <p style={valueStyle}>{providerEvidenceRegistry.summary.unavailableEntries}</p>
+            <p style={mutedTextStyle}>{copy.configGate}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.blocker}</p>
+            <p style={valueStyle}>{providerEvidenceRegistry.summary.blockedEntries}</p>
+            <p style={mutedTextStyle}>{copy.releaseBlockers}</p>
+          </article>
+        </div>
+        <div style={gridStyle}>
+          {providerEvidenceRegistryEntries.map((entry) => (
+            <article key={entry.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{entry.providerId}</p>
+                  <strong>{getLocalizedText(entry.label, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={readableCode(entry.adapterReadiness)}
+                  state={providerReadinessState(entry.adapterReadiness)}
+                />
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.category}</p>
+                  <p style={mutedTextStyle}>{readableCode(entry.category)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.liveEvidence}</p>
+                  <PublishStateBadge
+                    label={readableCode(entry.liveEvidenceStatus)}
+                    state={providerLiveEvidenceState(entry.liveEvidenceStatus)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.adapterReadiness}</p>
+                  <PublishStateBadge
+                    label={readableCode(entry.adapterReadiness)}
+                    state={providerReadinessState(entry.adapterReadiness)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.featureGate}</p>
+                  <PublishStateBadge
+                    label={readableCode(entry.featureGate.state)}
+                    state={providerFeatureGateState(entry.featureGate.state)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.fallback}</p>
+                  <PublishStateBadge
+                    label={getLocalizedText(entry.fallback.label, locale)}
+                    state={entry.fallback.blocksLaunch ? "blocker" : "warning"}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.ownerRole}</p>
+                  <p style={mutedTextStyle}>{readableCode(entry.ownerRole)}</p>
+                </div>
+              </div>
+              <div>
+                <p style={labelStyle}>{copy.affectedOutcomes}</p>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {entry.affectedOutcomes.map((outcome, index) => (
+                    <Badge key={`${entry.id}-${outcome}-${index}`} label={readableCode(outcome)} tone="info" />
+                  ))}
+                </span>
+              </div>
+              <p style={mutedTextStyle}>
+                {copy.configGate}: {entry.featureGate.configKey} · {getLocalizedText(entry.featureGate.operatorMessage, locale)}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.evidence}: {getLocalizedText(entry.evidenceRequired, locale)}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.fallback}: {getLocalizedText(entry.fallback.description, locale)}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.nextAction}: {getLocalizedText(entry.nextAction, locale)}
               </p>
             </article>
           ))}
