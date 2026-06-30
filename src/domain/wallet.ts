@@ -409,7 +409,7 @@ export const aelfWebLoginAdapterConfigs: AelfWebLoginAdapterConfig[] = [
     accountType: "AA",
     adapterName: "PortkeyAAWallet",
     audience: "NORMAL_USER",
-    capabilities: ["SIGN_MESSAGE", "VIEW_BALANCE", "CONTRACT_VIEW"],
+    capabilities: ["SIGN_MESSAGE", "VIEW_BALANCE", "CONTRACT_VIEW", "EBRIDGE"],
     chainId: expectedChainId,
     displayName: text("Portkey AA", "Portkey AA", "Portkey AA"),
     featureGate: createAdapterFeatureGate(
@@ -427,7 +427,7 @@ export const aelfWebLoginAdapterConfigs: AelfWebLoginAdapterConfig[] = [
     accountType: "EOA",
     adapterName: "PortkeyDiscoverWallet",
     audience: "EXISTING_USER",
-    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW"],
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW", "EBRIDGE"],
     chainId: expectedChainId,
     displayName: text(
       "Portkey EOA App / Discover",
@@ -449,7 +449,7 @@ export const aelfWebLoginAdapterConfigs: AelfWebLoginAdapterConfig[] = [
     accountType: "EOA",
     adapterName: "PortkeyExtensionWallet",
     audience: "EXISTING_USER",
-    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW"],
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW", "EBRIDGE"],
     chainId: expectedChainId,
     displayName: text("Portkey EOA Extension", "Portkey EOA Extension", "Portkey EOA Extension"),
     featureGate: createAdapterFeatureGate(

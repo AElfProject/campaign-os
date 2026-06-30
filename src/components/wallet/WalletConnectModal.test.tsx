@@ -71,4 +71,16 @@ describe("WalletConnectModal locale coverage", () => {
     expect(within(dialog).getByText(/Future EOA adapter is maintenance-only/)).toBeInTheDocument();
     expect(within(dialog).getAllByText(/Next action:/).length).toBeGreaterThan(0);
   });
+
+  it("renders bridge capability through the existing wallet capability rows", () => {
+    render(<WalletConnectModal locale="en-US" onClose={vi.fn()} options={walletOptions} />);
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    const recommendedOptions = within(dialog).getByTestId("wallet-modal-group-recommended");
+    const eoaOptions = within(dialog).getByTestId("wallet-modal-group-eoa");
+
+    expect(within(recommendedOptions).getByText(/Capabilities: .*EBRIDGE/)).toBeInTheDocument();
+    expect(within(eoaOptions).getAllByText(/Capabilities: .*EBRIDGE/)).toHaveLength(2);
+    expect(within(dialog).getByTestId("wallet-modal-group-advanced")).not.toHaveTextContent("EBRIDGE");
+  });
 });

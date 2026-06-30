@@ -26,6 +26,7 @@ export type WalletCapability =
   | "CONTRACT_VIEW"
   | "CONTRACT_SEND"
   | "VIEW_BALANCE"
+  | "EBRIDGE"
   | "INTERNAL_AUTOMATION"
   | "ADDRESS_ONLY";
 export type ContractMode = "OFF_CHAIN_MVP" | "V2_COMPANION" | "CONTRACT_CLAIM";
