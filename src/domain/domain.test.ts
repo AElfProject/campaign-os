@@ -18,6 +18,7 @@ import {
   createParticipationReadModel,
   createProviderEvidenceRegistry,
   createCampaignShareCardReadiness,
+  createCampaignLifecycleOperations,
   createTranslationManagerReadModel,
   createLocaleAnalyticsReadiness,
   createVerificationPipelineReadinessGate,
@@ -1978,6 +1979,103 @@ describe("Campaign OS domain foundation", () => {
     expect(commandCenter.boundary["en-US"]).toContain("does not distribute rewards");
     expect(commandCenter.boundary["en-US"]).toContain("No live analytics");
     expect(commandCenter.boundary["zh-CN"]).toContain("不会连接实时数据");
+  });
+
+  it("derives seeded lifecycle status operations without live side effects", () => {
+    const lifecycle = createCampaignLifecycleOperations(campaignDetail);
+    const commandCenter = createProjectCampaignCommandCenter(campaignDetail);
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const operationsById = Object.fromEntries(
+      lifecycle.operations.map((operation) => [operation.id, operation]),
+    );
+    const repeated = createCampaignLifecycleOperations(campaignDetail);
+
+    expect(lifecycle.currentStatus).toBe("live");
+    expect(lifecycle.supportedStatuses).toEqual([
+      "draft",
+      "scheduled",
+      "live",
+      "paused",
+      "ended",
+      "exported",
+      "archived",
+    ]);
+    expect(lifecycle.summary).toMatchObject({
+      totalOperations: lifecycle.operations.length,
+      blockedCount: expect.any(Number),
+      reviewRequiredCount: expect.any(Number),
+      launchBlockingCount: expect.any(Number),
+      exportSensitiveCount: expect.any(Number),
+    });
+    expect(lifecycle.summary.blockedCount).toBe(
+      lifecycle.operations.filter((operation) => operation.operationState === "blocked").length,
+    );
+    expect(lifecycle.operations.map((operation) => operation.id)).toEqual(
+      repeated.operations.map((operation) => operation.id),
+    );
+    expect(lifecycle.launchGateGroups.map((group) => group.id)).toEqual(
+      expect.arrayContaining([
+        "campaign-basics",
+        "time-window",
+        "task-verification",
+        "reward-eligibility",
+        "risk-i18n-contract",
+        "internal-provider-review",
+      ]),
+    );
+    expect(operationsById["schedule-campaign"]).toMatchObject({
+      fromStatus: "draft",
+      targetStatus: "scheduled",
+      localOnly: true,
+      operationState: expect.stringMatching(/blocked|review_required|not_applicable/),
+      ownerRole: expect.any(String),
+    });
+    expect(operationsById["publish-campaign"]).toMatchObject({
+      fromStatus: "scheduled",
+      targetStatus: "live",
+      localOnly: true,
+      operationState: expect.stringMatching(/blocked|review_required|not_applicable/),
+    });
+    expect(operationsById["pause-campaign"]).toMatchObject({
+      fromStatus: "live",
+      targetStatus: "paused",
+      operationState: "review_required",
+      requiresReview: true,
+    });
+    expect(operationsById["resume-campaign"]).toMatchObject({
+      fromStatus: "paused",
+      targetStatus: "live",
+      operationState: "not_applicable",
+      requiresReview: true,
+    });
+    expect(operationsById["end-campaign"]).toMatchObject({
+      fromStatus: "live",
+      targetStatus: "ended",
+      operationState: "review_required",
+    });
+    expect(operationsById["export-campaign"]).toMatchObject({
+      fromStatus: "ended",
+      targetStatus: "exported",
+      operationState: "not_applicable",
+      gateGroup: "export",
+    });
+    expect(operationsById["archive-campaign"]).toMatchObject({
+      fromStatus: "exported",
+      targetStatus: "archived",
+      operationState: "not_applicable",
+      gateGroup: "archive",
+    });
+    expect(operationsById["pause-campaign"].blockingChecks.length).toBeGreaterThan(0);
+    expect(lifecycle.boundary["en-US"]).toContain("No live backend");
+    expect(lifecycle.boundary["en-US"]).toContain("reward distribution");
+    expect(lifecycle.nextAction["en-US"].length).toBeGreaterThan(0);
+    expect(commandCenter.lifecycleOperations).toEqual(lifecycle);
+    expect(adminOps.lifecycleOperations).toEqual(lifecycle);
+    expect(JSON.stringify(lifecycle)).not.toContain("signedPayload");
+    expect(JSON.stringify(lifecycle)).not.toContain("transactionId");
+    expect(JSON.stringify(lifecycle)).not.toContain("contractRoot");
+    expect(JSON.stringify(lifecycle)).not.toContain("fileUrl");
+    expect(JSON.stringify(lifecycle)).not.toContain("mutationId");
   });
 
   it("derives analytics and export decision details for Project Console", () => {

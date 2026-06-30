@@ -1,6 +1,7 @@
 import {
   createAdminOpsReadModel,
   createAiContentPackWorkbench,
+  createCampaignLifecycleOperations,
   createExportConfirmationReadinessGate,
   createExportPreview,
   createParticipationReadModel,
@@ -26,6 +27,7 @@ import {
   type ApiSkillContractReadiness,
   type ApiSkillFieldGroup,
   type CampaignShellDetail,
+  type CampaignLifecycleOperations,
   type ContractMode,
   type ExportConfirmationReadinessGate,
   type ExportContractRootMode,
@@ -164,6 +166,10 @@ export interface GetProviderEvidenceRegistryRequest {
   campaignId: string;
 }
 
+export interface GetCampaignLifecycleOperationsRequest {
+  campaignId: string;
+}
+
 export interface CheckEligibilityResponse {
   accountType: AccountType;
   campaignId: string;
@@ -275,6 +281,9 @@ export interface CampaignOsLocalService {
   getExportConfirmationReadiness(
     request: GetCampaignAnalyticsRequest,
   ): LocalServiceResult<ExportConfirmationReadinessGate>;
+  getCampaignLifecycleOperations(
+    request: GetCampaignLifecycleOperationsRequest,
+  ): LocalServiceResult<CampaignLifecycleOperations>;
   getCoverageSummary(): LocalServiceResult<LocalServiceCoverageSummary>;
   summarizeCampaign(request: SummarizeCampaignRequest): LocalServiceResult<{
     campaignId: string;
@@ -806,6 +815,21 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     return success(createExportConfirmationReadinessGate(campaign));
   },
 
+  getCampaignLifecycleOperations: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local service facade.",
+        "本地 service facade 中不存在该活动。",
+      );
+    }
+
+    return success(createCampaignLifecycleOperations(campaign));
+  },
+
   getCoverageSummary: () => {
     const surface = createApiSkillContractSurface();
     const serviceNames = [
@@ -820,6 +844,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       "getVerificationPipelineReadiness",
       "getProviderEvidenceRegistry",
       "getExportConfirmationReadiness",
+      "getCampaignLifecycleOperations",
       "generateCampaignPosts",
       "summarizeCampaign",
     ];
@@ -831,8 +856,8 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       "eligibility",
       "analytics",
       "export",
-      "content_generation",
       "campaign_summary",
+      "content_generation",
     ];
     const coveredFieldGroups: ApiSkillFieldGroup[] = [
       "wallet",
@@ -853,7 +878,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       coveredFieldGroups,
       localOnlyCount: surface.summary.localOnlyCount + 2,
       readyCount: surface.summary.readyCount + 1,
-      reviewRequiredCount: surface.summary.reviewRequiredCount + 1,
+      reviewRequiredCount: surface.summary.reviewRequiredCount + 2,
       sampleResponseIds: [
         "createWalletSession",
         "createCampaign",
@@ -862,6 +887,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
         "getVerificationPipelineReadiness",
         "getProviderEvidenceRegistry",
         "getExportConfirmationReadiness",
+        "getCampaignLifecycleOperations",
         "exportWinners",
       ],
       serviceNames,

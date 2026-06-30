@@ -22,6 +22,14 @@ import type {
   CampaignCommandCenterSummary,
   CampaignCommandItem,
   CampaignCommandPriority,
+  CampaignLifecycleBlockingCheck,
+  CampaignLifecycleCheckSource,
+  CampaignLifecycleCheckState,
+  CampaignLifecycleGateGroup,
+  CampaignLifecycleGateGroupId,
+  CampaignLifecycleOperation,
+  CampaignLifecycleOperations,
+  CampaignLifecycleStatus,
   ConversionFunnelStep,
   CampaignShellDetail,
   CampaignTask,
@@ -131,7 +139,11 @@ import {
   deriveEligibilityWalletStatus,
   isWalletSessionVerified,
 } from "./wallet";
-import { EXPORT_CSV_COLUMNS as exportCsvColumns, supportedLocales } from "./types";
+import {
+  EXPORT_CSV_COLUMNS as exportCsvColumns,
+  campaignLifecycleStatuses,
+  supportedLocales,
+} from "./types";
 import { createTemplateGovernanceConsole } from "./builder";
 import { createLocalizedCampaignPath } from "./locale";
 
@@ -3349,6 +3361,519 @@ const createCommandSummary = (
   };
 };
 
+const lifecycleBoundary: LocalizedText = {
+  "en-US":
+    "Seeded/local lifecycle operation intent only. No live backend, scheduler, wallet signing, contract write, export file generation, reward custody, or reward distribution is executed.",
+  "zh-CN":
+    "仅 seeded/本地 lifecycle operation 意图。不会执行实时后端、排期器、钱包签名、合约写入、导出文件生成、奖励托管或发奖。",
+  "zh-TW":
+    "Seeded/local lifecycle operation intent only. No live backend, scheduler, wallet signing, contract write, export file generation, reward custody, or reward distribution is executed.",
+};
+
+const lifecycleText = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": zhTW,
+});
+
+const lifecycleGateLabels: Record<CampaignLifecycleGateGroupId, LocalizedText> = {
+  archive: lifecycleText("Archive gate", "归档门禁"),
+  "campaign-basics": lifecycleText("Campaign basics", "活动基础信息"),
+  end: lifecycleText("End gate", "结束门禁"),
+  export: lifecycleText("Export gate", "导出门禁"),
+  "internal-provider-review": lifecycleText("Internal/provider review", "内部与 provider 审核"),
+  "pause-resume": lifecycleText("Pause/resume authority", "暂停/恢复权限"),
+  "reward-eligibility": lifecycleText("Rewards and eligibility", "奖励与资格"),
+  "risk-i18n-contract": lifecycleText("Risk, i18n, and contract", "风险、i18n 与合约"),
+  "safety-boundary": lifecycleText("Safety boundary", "安全边界"),
+  "task-verification": lifecycleText("Task verification", "任务验证"),
+  "time-window": lifecycleText("Time window", "活动时间窗口"),
+};
+
+const lifecycleCheck = ({
+  id,
+  label,
+  nextAction,
+  reason,
+  source,
+  state,
+}: {
+  id: string;
+  label: LocalizedText;
+  nextAction: LocalizedText;
+  reason: LocalizedText;
+  source: CampaignLifecycleCheckSource;
+  state: CampaignLifecycleCheckState;
+}): CampaignLifecycleBlockingCheck => ({
+  id,
+  label,
+  state,
+  source,
+  reason,
+  nextAction,
+});
+
+const lifecycleGroupState = (
+  checks: readonly CampaignLifecycleBlockingCheck[],
+): CampaignLifecycleCheckState => {
+  if (checks.some((check) => check.state === "blocked")) {
+    return "blocked";
+  }
+
+  if (checks.some((check) => check.state === "warning")) {
+    return "warning";
+  }
+
+  return checks.every((check) => check.state === "not_applicable") ? "not_applicable" : "passed";
+};
+
+const lifecycleGateGroup = (
+  id: CampaignLifecycleGateGroupId,
+  checks: CampaignLifecycleBlockingCheck[],
+): CampaignLifecycleGateGroup => ({
+  id,
+  label: lifecycleGateLabels[id],
+  state: lifecycleGroupState(checks),
+  checks,
+});
+
+const launchOperationState = (
+  currentStatus: CampaignLifecycleStatus,
+  applicableStatuses: readonly CampaignLifecycleStatus[],
+  checks: readonly CampaignLifecycleBlockingCheck[],
+): CampaignLifecycleOperation["operationState"] => {
+  if (!applicableStatuses.includes(currentStatus)) {
+    return "not_applicable";
+  }
+
+  if (checks.some((check) => check.state === "blocked")) {
+    return "blocked";
+  }
+
+  return checks.some((check) => check.state === "warning") ? "review_required" : "allowed";
+};
+
+const lifecycleStatusOperationState = (
+  currentStatus: CampaignLifecycleStatus,
+  applicableStatuses: readonly CampaignLifecycleStatus[],
+  fallbackState: CampaignLifecycleOperation["operationState"],
+): CampaignLifecycleOperation["operationState"] =>
+  applicableStatuses.includes(currentStatus) ? fallbackState : "not_applicable";
+
+const flattenLifecycleChecks = (
+  groups: readonly CampaignLifecycleGateGroup[],
+) => groups.flatMap((group) => group.checks);
+
+const createLaunchGateGroups = (
+  campaign: CampaignShellDetail,
+): CampaignLifecycleGateGroup[] => {
+  const publishReadiness = computePublishReadiness(campaign, campaign.contentRevisions);
+  const translationManager = createTranslationManagerReadModel(campaign);
+  const providerRegistry = createProviderEvidenceRegistry(campaign);
+  const verificationPipeline = createVerificationPipelineReadinessGate(campaign);
+  const contractReview = createContractImpactReviewModel(campaign);
+  const requiredTasks = campaign.tasks.filter((task) => task.required);
+  const hasVerifiableTask = campaign.tasks.some((task) =>
+    task.verificationType === "ON_CHAIN" || task.verificationType === "DAPP_API",
+  );
+  const rewardDisclaimerBlockers = translationManager.rewardDisclaimers.filter(
+    (row) => row.blocksPublish,
+  );
+  const claimModeBlocked = contractReview.options.some(
+    (option) => option.mode === "CONTRACT_CLAIM" && option.publishState === "blocker",
+  );
+  const openReviewItems = campaign.reviewItems.filter((item) => item.status !== "approved");
+
+  return [
+    lifecycleGateGroup("campaign-basics", [
+      lifecycleCheck({
+        id: "campaign-title",
+        label: lifecycleText("Campaign title", "活动标题"),
+        state: campaign.title["en-US"].trim() ? "passed" : "blocked",
+        source: "publish_readiness",
+        reason: lifecycleText("Campaign title is available in the seeded shell.", "Seeded shell 中已有活动标题。"),
+        nextAction: lifecycleText("Keep campaign basics visible before lifecycle review.", "Lifecycle 审核前保持活动基础信息可见。"),
+      }),
+      lifecycleCheck({
+        id: "campaign-wallet-policy",
+        label: lifecycleText("Wallet policy", "钱包策略"),
+        state: campaign.walletPolicy ? "passed" : "blocked",
+        source: "publish_readiness",
+        reason: lifecycleText("Wallet policy is explicit for launch review.", "上线审核已有明确钱包策略。"),
+        nextAction: lifecycleText("Review wallet compatibility before publish intent.", "发布意图前审核钱包兼容性。"),
+      }),
+    ]),
+    lifecycleGateGroup("time-window", [
+      lifecycleCheck({
+        id: "campaign-time-window",
+        label: lifecycleText("Start and end time", "开始与结束时间"),
+        state: new Date(campaign.startTime).getTime() < new Date(campaign.endTime).getTime() ? "passed" : "blocked",
+        source: "publish_readiness",
+        reason: formatTimeWindow(campaign.startTime, campaign.endTime),
+        nextAction: lifecycleText("Keep time window reviewed before schedule or live intent.", "排期或上线意图前保持时间窗口已审核。"),
+      }),
+    ]),
+    lifecycleGateGroup("task-verification", [
+      lifecycleCheck({
+        id: "valid-required-tasks",
+        label: lifecycleText("Valid required tasks", "有效必做任务"),
+        state: requiredTasks.length > 0 && requiredTasks.every((task) => task.points >= 0) ? "passed" : "blocked",
+        source: "publish_readiness",
+        reason: lifecycleText(
+          `${requiredTasks.length} required tasks are configured.`,
+          `已配置 ${requiredTasks.length} 个必做任务。`,
+        ),
+        nextAction: lifecycleText("Keep required tasks and points reviewed before launch.", "上线前保持必做任务和积分已审核。"),
+      }),
+      lifecycleCheck({
+        id: "on-chain-or-api-verifiable-task",
+        label: lifecycleText("On-chain or API-verifiable task", "链上或 API 可验证任务"),
+        state: hasVerifiableTask ? "passed" : "blocked",
+        source: "provider_evidence",
+        reason: hasVerifiableTask
+          ? lifecycleText("At least one task can be checked through on-chain or dApp API evidence.", "至少一个任务可通过链上或 dApp API 证据检查。")
+          : lifecycleText("Launch requires at least one on-chain or API-verifiable task.", "上线需要至少一个链上或 API 可验证任务。"),
+        nextAction: lifecycleText("Attach live provider evidence before production launch.", "生产上线前附上真实 provider 证据。"),
+      }),
+    ]),
+    lifecycleGateGroup("reward-eligibility", [
+      lifecycleCheck({
+        id: "reward-disclaimer-review",
+        label: lifecycleText("Reward disclaimer review", "奖励声明审核"),
+        state: rewardDisclaimerBlockers.length > 0 ? "blocked" : "passed",
+        source: "publish_readiness",
+        reason: rewardDisclaimerBlockers.length > 0
+          ? lifecycleText(
+              `${rewardDisclaimerBlockers.length} reward disclaimer locale rows block publish.`,
+              `${rewardDisclaimerBlockers.length} 个奖励声明语言行阻断发布。`,
+            )
+          : lifecycleText("Reward responsibility disclaimer is reviewed.", "奖励责任声明已审核。"),
+        nextAction: rewardDisclaimerBlockers[0]?.nextAction ?? rewardDisclaimerReadyAction,
+      }),
+      lifecycleCheck({
+        id: "eligibility-rule-review",
+        label: lifecycleText("Eligibility and winner rules", "资格与 winner 规则"),
+        state: verificationPipeline.eligibilityImpact.missingRequiredTasks.length > 0 ? "warning" : "passed",
+        source: "provider_evidence",
+        reason: verificationPipeline.eligibilityImpact.summary,
+        nextAction: lifecycleText("Review eligibility and winner export rules before launch.", "上线前审核资格与 winner 导出规则。"),
+      }),
+    ]),
+    lifecycleGateGroup("risk-i18n-contract", [
+      lifecycleCheck({
+        id: "risk-settings-review",
+        label: lifecycleText("Risk settings", "风险设置"),
+        state: campaign.metrics.riskReviewQueue > 0 ? "warning" : "passed",
+        source: "publish_readiness",
+        reason: lifecycleText(
+          `${campaign.metrics.riskReviewQueue} risk reviews are queued.`,
+          `${campaign.metrics.riskReviewQueue} 条风险审核排队。`,
+        ),
+        nextAction: lifecycleText("Resolve risk queue before treating lifecycle intent as launch-ready.", "将 lifecycle 意图视为可上线前先处理风险队列。"),
+      }),
+      lifecycleCheck({
+        id: "i18n-review",
+        label: lifecycleText("i18n review", "i18n 审核"),
+        state: translationManager.rewardDisclaimers.some((row) => row.publishState === "blocker") ? "blocked" : "passed",
+        source: "publish_readiness",
+        reason: translationManager.noAutoPublishNotice,
+        nextAction: lifecycleText("Complete localized copy review before publish intent.", "发布意图前完成本地化文案审核。"),
+      }),
+      lifecycleCheck({
+        id: "contract-impact-review",
+        label: lifecycleText("Contract impact", "合约影响"),
+        state: claimModeBlocked || publishReadiness.blockers.length > 0 ? "blocked" : "passed",
+        source: "contract_review",
+        reason: claimModeBlocked
+          ? lifecycleText("Contract claim remains blocked until high-impact review.", "Contract claim 在高影响审核前保持阻断。")
+          : contractReview.rewardBoundary,
+        nextAction: lifecycleText("Keep Off-chain MVP as the safe lifecycle path.", "保持 Off-chain MVP 作为安全 lifecycle 路径。"),
+      }),
+    ]),
+    lifecycleGateGroup("internal-provider-review", [
+      lifecycleCheck({
+        id: "provider-launch-evidence",
+        label: lifecycleText("Provider launch evidence", "Provider 上线证据"),
+        state: providerRegistry.summary.launchBlockers > 0
+          ? "blocked"
+          : providerRegistry.summary.reviewRequiredEntries > 0
+            ? "warning"
+            : "passed",
+        source: "provider_evidence",
+        reason: providerRegistry.boundary,
+        nextAction: providerRegistry.nextAction,
+      }),
+      lifecycleCheck({
+        id: "internal-review",
+        label: lifecycleText("Internal review", "内部审核"),
+        state: openReviewItems.length > 0 ? "warning" : "passed",
+        source: "local_boundary",
+        reason: lifecycleText(
+          `${openReviewItems.length} internal review items remain open.`,
+          `${openReviewItems.length} 个内部审核项仍未关闭。`,
+        ),
+        nextAction: lifecycleText("Route open review items before production lifecycle execution.", "生产 lifecycle 执行前先处理开放审核项。"),
+      }),
+    ]),
+  ];
+};
+
+const lifecycleOperation = ({
+  affectedOutcome,
+  blockingChecks,
+  fromStatus,
+  gateGroup,
+  id,
+  label,
+  nextAction,
+  operationState,
+  ownerRole,
+  reason,
+  requiresReview,
+  targetStatus,
+}: Omit<CampaignLifecycleOperation, "localOnly">): CampaignLifecycleOperation => ({
+  id,
+  label,
+  fromStatus,
+  targetStatus,
+  operationState,
+  ownerRole,
+  reason,
+  gateGroup,
+  blockingChecks,
+  affectedOutcome,
+  nextAction,
+  requiresReview,
+  localOnly: true,
+});
+
+const summarizeLifecycleOperations = (
+  operations: readonly CampaignLifecycleOperation[],
+): CampaignLifecycleOperations["summary"] => {
+  const launchBlockingCheckIds = new Set(
+    operations
+      .filter((operation) => operation.affectedOutcome === "launch" || operation.affectedOutcome === "schedule")
+      .flatMap((operation) => operation.blockingChecks)
+      .filter((check) => check.state === "blocked")
+      .map((check) => check.id),
+  );
+  const topOperation =
+    operations.find((operation) =>
+      (operation.id === "schedule-campaign" || operation.id === "publish-campaign") &&
+      operation.operationState === "blocked",
+    ) ??
+    operations.find((operation) =>
+      (operation.id === "schedule-campaign" || operation.id === "publish-campaign") &&
+      operation.operationState === "review_required",
+    ) ??
+    operations.find((operation) =>
+      (operation.gateGroup === "export" || operation.gateGroup === "archive") &&
+      operation.operationState !== "not_applicable",
+    ) ??
+    operations.find((operation) => operation.operationState !== "not_applicable") ??
+    operations[0];
+
+  return {
+    totalOperations: operations.length,
+    allowedCount: operations.filter((operation) => operation.operationState === "allowed").length,
+    blockedCount: operations.filter((operation) => operation.operationState === "blocked").length,
+    reviewRequiredCount: operations.filter((operation) => operation.operationState === "review_required").length,
+    notApplicableCount: operations.filter((operation) => operation.operationState === "not_applicable").length,
+    launchBlockingCount: launchBlockingCheckIds.size,
+    exportSensitiveCount: operations.filter(
+      (operation) =>
+        (operation.gateGroup === "export" || operation.gateGroup === "archive") &&
+        operation.operationState !== "allowed",
+    ).length,
+    topOperationId: topOperation?.id ?? "",
+  };
+};
+
+export const createCampaignLifecycleOperations = (
+  campaign: CampaignShellDetail,
+): CampaignLifecycleOperations => {
+  const launchGateGroups = createLaunchGateGroups(campaign);
+  const launchChecks = flattenLifecycleChecks(launchGateGroups);
+  const exportReadiness = createExportConfirmationReadinessGate(campaign);
+  const pauseReviewCheck = lifecycleCheck({
+    id: "incident-admin-review",
+    label: lifecycleText("Incident/admin review", "事故/管理员审核"),
+    state: "warning",
+    source: "local_boundary",
+    reason: lifecycleText(
+      "Pause and resume are incident-sensitive operations that require internal authority.",
+      "暂停与恢复是事故敏感操作，需要内部权限审核。",
+    ),
+    nextAction: lifecycleText("Route pause or resume intent to an internal operator.", "将暂停或恢复意图交给内部运营处理。"),
+  });
+  const endReviewCheck = lifecycleCheck({
+    id: "end-export-reward-review",
+    label: lifecycleText("End/export/reward review", "结束/导出/奖励审核"),
+    state: "warning",
+    source: "export_confirmation",
+    reason: exportReadiness.boundary,
+    nextAction: lifecycleText("Confirm export and reward responsibility before ending lifecycle.", "结束 lifecycle 前确认导出与奖励责任。"),
+  });
+  const exportChecks = [
+    lifecycleCheck({
+      id: "export-confirmation-readiness",
+      label: lifecycleText("Export confirmation readiness", "导出确认 readiness"),
+      state: exportReadiness.summary.blockedRows > 0
+        ? "blocked"
+        : exportReadiness.summary.reviewRequiredRows > 0
+          ? "warning"
+          : "passed",
+      source: "export_confirmation",
+      reason: exportReadiness.boundary,
+      nextAction: exportReadiness.nextAction,
+    }),
+    lifecycleCheck({
+      id: "no-real-export-file",
+      label: lifecycleText("No real export file", "不生成真实导出文件"),
+      state: "passed",
+      source: "local_boundary",
+      reason: exportConfirmationReadinessBoundary,
+      nextAction: lifecycleText("Keep export as local preview until production export is approved.", "生产导出获批前保持本地预览。"),
+    }),
+  ];
+  const archiveCheck = lifecycleCheck({
+    id: "archive-audit-visibility",
+    label: lifecycleText("Archive audit visibility", "归档审计可见性"),
+    state: "warning",
+    source: "local_boundary",
+    reason: lifecycleText(
+      "Archive intent must preserve final evidence and cannot hide reward responsibility.",
+      "归档意图必须保留最终证据，且不能隐藏奖励责任。",
+    ),
+    nextAction: lifecycleText("Keep final evidence visible before archive intent.", "归档意图前保持最终证据可见。"),
+  });
+  const scheduleState = launchOperationState(campaign.status, ["draft"], launchChecks);
+  const publishState = launchOperationState(campaign.status, ["draft", "scheduled"], launchChecks);
+  const exportState = lifecycleStatusOperationState(
+    campaign.status,
+    ["ended"],
+    exportChecks.some((check) => check.state === "blocked")
+      ? "blocked"
+      : exportChecks.some((check) => check.state === "warning")
+        ? "review_required"
+        : "allowed",
+  );
+  const archiveState = lifecycleStatusOperationState(campaign.status, ["exported"], "review_required");
+  const operations: CampaignLifecycleOperation[] = [
+    lifecycleOperation({
+      id: "schedule-campaign",
+      label: lifecycleText("Schedule campaign", "排期活动"),
+      fromStatus: "draft",
+      targetStatus: "scheduled",
+      operationState: scheduleState,
+      ownerRole: "project_owner",
+      reason: lifecycleText("Schedule intent depends on launch gates and remains local-only.", "排期意图取决于上线门禁，并保持本地状态。"),
+      gateGroup: "campaign-basics",
+      blockingChecks: launchChecks.filter((check) => check.state !== "passed"),
+      affectedOutcome: "schedule",
+      nextAction: lifecycleText("Resolve launch gates before scheduling.", "排期前处理上线门禁。"),
+      requiresReview: scheduleState === "review_required" || scheduleState === "blocked",
+    }),
+    lifecycleOperation({
+      id: "publish-campaign",
+      label: lifecycleText("Publish campaign", "发布活动"),
+      fromStatus: "scheduled",
+      targetStatus: "live",
+      operationState: publishState,
+      ownerRole: "project_owner",
+      reason: lifecycleText("Publish/go-live intent is evaluated locally and never executes scheduler or backend mutation.", "发布/上线意图仅本地评估，不执行排期器或后端变更。"),
+      gateGroup: "internal-provider-review",
+      blockingChecks: launchChecks.filter((check) => check.state !== "passed"),
+      affectedOutcome: "launch",
+      nextAction: lifecycleText("Complete launch-blocking checks before go-live.", "上线前完成阻断项。"),
+      requiresReview: publishState === "review_required" || publishState === "blocked",
+    }),
+    lifecycleOperation({
+      id: "pause-campaign",
+      label: lifecycleText("Pause campaign", "暂停活动"),
+      fromStatus: "live",
+      targetStatus: "paused",
+      operationState: lifecycleStatusOperationState(campaign.status, ["live"], "review_required"),
+      ownerRole: "internal_operator",
+      reason: pauseReviewCheck.reason,
+      gateGroup: "pause-resume",
+      blockingChecks: [pauseReviewCheck],
+      affectedOutcome: "pause",
+      nextAction: pauseReviewCheck.nextAction,
+      requiresReview: true,
+    }),
+    lifecycleOperation({
+      id: "resume-campaign",
+      label: lifecycleText("Resume campaign", "恢复活动"),
+      fromStatus: "paused",
+      targetStatus: "live",
+      operationState: lifecycleStatusOperationState(campaign.status, ["paused"], "review_required"),
+      ownerRole: "internal_operator",
+      reason: lifecycleText("Resume intent requires internal review after a pause condition is cleared.", "暂停条件解除后，恢复意图需要内部审核。"),
+      gateGroup: "pause-resume",
+      blockingChecks: [pauseReviewCheck],
+      affectedOutcome: "resume",
+      nextAction: lifecycleText("Confirm incident resolution before resume intent.", "恢复意图前确认事故已解决。"),
+      requiresReview: true,
+    }),
+    lifecycleOperation({
+      id: "end-campaign",
+      label: lifecycleText("End campaign", "结束活动"),
+      fromStatus: "live",
+      targetStatus: "ended",
+      operationState: lifecycleStatusOperationState(campaign.status, ["live", "scheduled", "paused"], "review_required"),
+      ownerRole: "internal_operator",
+      reason: lifecycleText("Ending preserves export, risk, and reward responsibility review boundaries.", "结束活动会保留导出、风险与奖励责任审核边界。"),
+      gateGroup: "end",
+      blockingChecks: [endReviewCheck],
+      affectedOutcome: "end",
+      nextAction: endReviewCheck.nextAction,
+      requiresReview: true,
+    }),
+    lifecycleOperation({
+      id: "export-campaign",
+      label: lifecycleText("Mark export readiness", "标记导出 readiness"),
+      fromStatus: "ended",
+      targetStatus: "exported",
+      operationState: exportState,
+      ownerRole: "export_reviewer",
+      reason: lifecycleText("Export readiness uses local preview rows and does not create a real file.", "导出 readiness 使用本地预览行，不生成真实文件。"),
+      gateGroup: "export",
+      blockingChecks: exportChecks.filter((check) => check.state !== "passed"),
+      affectedOutcome: "export",
+      nextAction: exportReadiness.nextAction,
+      requiresReview: exportState !== "allowed",
+    }),
+    lifecycleOperation({
+      id: "archive-campaign",
+      label: lifecycleText("Archive campaign", "归档活动"),
+      fromStatus: "exported",
+      targetStatus: "archived",
+      operationState: archiveState,
+      ownerRole: "internal_operator",
+      reason: lifecycleText("Archive intent can only follow exported evidence and must preserve audit visibility.", "归档意图只能在已导出证据之后，并必须保留审计可见性。"),
+      gateGroup: "archive",
+      blockingChecks: [archiveCheck],
+      affectedOutcome: "archive",
+      nextAction: archiveCheck.nextAction,
+      requiresReview: true,
+    }),
+  ];
+  const summary = summarizeLifecycleOperations(operations);
+  const topOperation = operations.find((operation) => operation.id === summary.topOperationId);
+
+  return {
+    campaignId: campaign.id,
+    currentStatus: campaign.status,
+    supportedStatuses: [...campaignLifecycleStatuses],
+    summary,
+    operations,
+    launchGateGroups,
+    boundary: lifecycleBoundary,
+    nextAction: topOperation?.nextAction ?? lifecycleText("Review lifecycle operations.", "审核 lifecycle operations。"),
+  };
+};
+
 const createDropOffPoint = (funnel: ConversionFunnelStep[]): LocalizedText => {
   const largestDropOff = funnel.slice(1).reduce(
     (largest, step) => {
@@ -3756,6 +4281,7 @@ export const createProjectCampaignCommandCenter = (
   const analyticsExport = createAnalyticsExportDecision(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
+  const lifecycleOperations = createCampaignLifecycleOperations(campaign);
 
   return {
     summary: createCommandSummary(campaigns, analyticsExport.readyRows),
@@ -3763,6 +4289,7 @@ export const createProjectCampaignCommandCenter = (
     analyticsExport,
     aiOptimization,
     providerEvidenceRegistry,
+    lifecycleOperations,
     boundary: commandCenterBoundary,
   };
 };
@@ -6382,6 +6909,7 @@ export const createAdminOpsReadModel = (
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const walletProviderQaGate = createWalletProviderQaReadinessGate(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
+  const lifecycleOperations = createCampaignLifecycleOperations(campaign);
 
   return {
     campaignId: campaign.id,
@@ -6402,6 +6930,7 @@ export const createAdminOpsReadModel = (
     aiOptimization,
     ecosystemMetrics: campaign.ecosystemMetrics,
     exportBatch,
+    lifecycleOperations,
   };
 };
 

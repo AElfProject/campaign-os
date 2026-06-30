@@ -45,6 +45,19 @@ describe("Project Console shell", () => {
     expect(screen.getByText("Forest NFT Quest")).toBeInTheDocument();
     expect(screen.getByText("TMRWDAO Governance Streak")).toBeInTheDocument();
     expect(screen.getByText("eBridge Onboarding Wave")).toBeInTheDocument();
+    const lifecycleOperations = screen.getByLabelText("Lifecycle operations");
+    expect(
+      within(lifecycleOperations).getByRole("heading", { name: "Lifecycle operations" }),
+    ).toBeInTheDocument();
+    expect(within(lifecycleOperations).getByText("Current status")).toBeInTheDocument();
+    expect(within(lifecycleOperations).getByText("live")).toBeInTheDocument();
+    expect(within(lifecycleOperations).getAllByText(/launch blockers/).length).toBeGreaterThan(0);
+    expect(within(lifecycleOperations).getAllByText("Owner action").length).toBeGreaterThan(0);
+    expect(within(lifecycleOperations).getByText("Publish campaign")).toBeInTheDocument();
+    expect(within(lifecycleOperations).getByText("Mark export readiness")).toBeInTheDocument();
+    expect(within(lifecycleOperations).getByText("Archive campaign")).toBeInTheDocument();
+    expect(within(lifecycleOperations).getByText(/Lifecycle local-only boundary/)).toBeInTheDocument();
+    expect(within(lifecycleOperations).getByText(/No live backend, scheduler, wallet signing/)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Analytics & Export Decision" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Task template library" })).not.toBeInTheDocument();
   });
@@ -372,6 +385,13 @@ describe("Project Console shell", () => {
     expect(screen.getByText("审核发布准备度")).toBeInTheDocument();
     expect(screen.getByText("批准导出预览")).toBeInTheDocument();
     expect(screen.getByText("归档最终报告")).toBeInTheDocument();
+    const zhLifecycleOperations = screen.getByLabelText("Lifecycle 操作");
+    expect(
+      within(zhLifecycleOperations).getByRole("heading", { name: "Lifecycle 操作" }),
+    ).toBeInTheDocument();
+    expect(within(zhLifecycleOperations).getByText("当前状态")).toBeInTheDocument();
+    expect(within(zhLifecycleOperations).getAllByText("项目方动作").length).toBeGreaterThan(0);
+    expect(within(zhLifecycleOperations).getByText(/不会执行实时后端/)).toBeInTheDocument();
 
     fireEvent.click(within(nav).getByRole("button", { name: "创建" }));
     for (const step of ["目标", "任务", "奖励与资格", "i18n", "合约", "发布准备度"]) {

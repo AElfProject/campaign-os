@@ -16,6 +16,9 @@ import {
   type ExportReadinessState,
   type AiContentArtifactLifecycle,
   type AiContentQualityGateStatus,
+  type CampaignLifecycleOperation,
+  type CampaignLifecycleOperationState,
+  type CampaignLifecycleStatus,
   type MetricTone,
   type ProviderFeatureGateState,
   type ProviderLiveEvidenceStatus,
@@ -245,6 +248,33 @@ const readableCode = (value: string) => value.replace(/_/g, " ");
 const exportReadinessState = (readiness: ExportReadinessState) =>
   readiness === "blocked" ? "blocker" : readiness === "review_required" ? "warning" : "ready";
 
+const lifecycleOperationState = (state: CampaignLifecycleOperationState) => {
+  if (state === "blocked") {
+    return "blocker";
+  }
+
+  return state === "review_required" || state === "not_applicable" ? "warning" : "ready";
+};
+
+const lifecycleOperationStateLabel = (
+  state: CampaignLifecycleOperationState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<CampaignLifecycleOperationState, string> = {
+    allowed: copy.lifecycleAllowed,
+    blocked: copy.blocked,
+    not_applicable: copy.notApplicable,
+    review_required: copy.reviewRequired,
+  };
+
+  return labels[state];
+};
+
+const lifecycleStatusLabel = (status: CampaignLifecycleStatus) => status.replace(/_/g, " ");
+
+const lifecycleOwnerLabel = (ownerRole: CampaignLifecycleOperation["ownerRole"]) =>
+  ownerRole.replace(/_/g, " ");
+
 const aiOptimizationStatusState = (status: AiOptimizationActionStatus) =>
   status === "blocked"
     ? "blocker"
@@ -414,6 +444,12 @@ export const AdminOpsPanel = ({
   const aiContentPack = adminOps.aiContentPack;
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
+  const lifecycleOperations = adminOps.lifecycleOperations;
+  const lifecycleReviewRows = lifecycleOperations.operations.filter((operation) =>
+    ["pause-campaign", "resume-campaign", "end-campaign", "export-campaign", "archive-campaign"].includes(
+      operation.id,
+    ),
+  );
   const providerEvidenceRegistry = adminOps.providerEvidenceRegistry;
   const providerEvidenceRegistryEntries = [...providerEvidenceRegistry.entries].sort(
     (left, right) => providerPathPriority(left) - providerPathPriority(right),
@@ -529,6 +565,107 @@ export const AdminOpsPanel = ({
               </p>
               <p style={mutedTextStyle}>
                 {copy.owner}: {item.ownerRole}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.lifecycleOperationReview} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.lifecycleIncidentBoundary}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.lifecycleOperationReview}
+            </h3>
+            <p style={mutedTextStyle}>{copy.lifecycleOperationReviewSubtitle}</p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${lifecycleOperations.summary.totalOperations} ${copy.totalActions}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${lifecycleOperations.summary.blockedCount} ${copy.blocker}`}
+              state={lifecycleOperations.summary.blockedCount > 0 ? "blocker" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${lifecycleOperations.summary.reviewRequiredCount} ${copy.reviewRequired}`}
+              state={lifecycleOperations.summary.reviewRequiredCount > 0 ? "warning" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${lifecycleOperations.summary.exportSensitiveCount} ${copy.lifecycleExportSensitive}`}
+              state={lifecycleOperations.summary.exportSensitiveCount > 0 ? "warning" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.lifecycleNoLiveSideEffects}</p>
+          <p style={{ margin: "8px 0 0" }}>{getLocalizedText(lifecycleOperations.boundary, locale)}</p>
+        </div>
+        <div style={gridStyle}>
+          {lifecycleReviewRows.map((operation) => (
+            <article key={operation.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>
+                    {lifecycleStatusLabel(operation.fromStatus)}{" -> "}
+                    {lifecycleStatusLabel(operation.targetStatus)}
+                  </p>
+                  <strong>{getLocalizedText(operation.label, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={lifecycleOperationStateLabel(operation.operationState, copy)}
+                  state={lifecycleOperationState(operation.operationState)}
+                />
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.ownerRole}</p>
+                  <p style={mutedTextStyle}>{lifecycleOwnerLabel(operation.ownerRole)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.lifecycleGateGroup}</p>
+                  <p style={mutedTextStyle}>{operation.gateGroup.replace(/-/g, " ")}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.affectedOutcomes}</p>
+                  <p style={mutedTextStyle}>{operation.affectedOutcome.replace(/_/g, " ")}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.lifecycleBlockingChecks}</p>
+                  <p style={mutedTextStyle}>{operation.blockingChecks.length}</p>
+                </div>
+              </div>
+              <p style={mutedTextStyle}>{getLocalizedText(operation.reason, locale)}</p>
+              {operation.blockingChecks.length > 0 ? (
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.lifecycleBlockingChecks}</p>
+                  {operation.blockingChecks.map((check) => (
+                    <div key={check.id} style={{ borderTop: "1px solid #dbe6f4", display: "grid", gap: 6, paddingTop: 8 }}>
+                      <div style={rowStyle}>
+                        <strong>{getLocalizedText(check.label, locale)}</strong>
+                        <PublishStateBadge
+                          label={check.state.replace(/_/g, " ")}
+                          state={
+                            check.state === "blocked"
+                              ? "blocker"
+                              : check.state === "warning" || check.state === "not_applicable"
+                                ? "warning"
+                                : "ready"
+                          }
+                        />
+                      </div>
+                      <p style={mutedTextStyle}>{getLocalizedText(check.reason, locale)}</p>
+                      <p style={mutedTextStyle}>
+                        {copy.nextAction}: {getLocalizedText(check.nextAction, locale)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <p style={mutedTextStyle}>
+                {copy.nextAction}: {getLocalizedText(operation.nextAction, locale)}
               </p>
             </article>
           ))}
