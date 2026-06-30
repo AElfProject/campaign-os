@@ -1157,6 +1157,7 @@ export interface ProjectCampaignCommandCenter {
   aelfWebLoginAdapterReadiness: AelfWebLoginAdapterReadinessModel;
   providerEvidenceRegistry: ProviderEvidenceRegistry;
   lifecycleOperations: CampaignLifecycleOperations;
+  launchConsoleCampaignBundles: LaunchConsoleCampaignBundleSurface;
   boundary: LocalizedText;
 }
 
@@ -1577,6 +1578,109 @@ export interface ApiSkillContractSurface {
   boundary: LocalizedText;
 }
 
+export type LaunchConsoleBundleStage = "pre_launch" | "launch" | "post_launch";
+export type LaunchConsoleBundleStatus =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "local_only";
+export type LaunchConsoleBundleOwnerRole =
+  | "project_owner"
+  | "growth_lead"
+  | "internal_operator"
+  | "risk_reviewer"
+  | "export_reviewer";
+export type LaunchConsoleTaskCategory =
+  | "wallet"
+  | "on_chain_api"
+  | "social_manual"
+  | "content_analytics";
+export type LaunchConsoleGateSource =
+  | "publish_readiness"
+  | "lifecycle_gate"
+  | "provider_evidence"
+  | "risk_review"
+  | "reward_disclaimer"
+  | "export_readiness"
+  | "ai_content_review";
+export type LaunchConsoleGateState =
+  | "passed"
+  | "warning"
+  | "blocked"
+  | "review_required"
+  | "local_only";
+export type LaunchConsoleHandoffReviewState =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "local_only";
+
+export interface LaunchConsoleTaskBuildingBlock {
+  id: string;
+  category: LaunchConsoleTaskCategory;
+  label: LocalizedText;
+  description: LocalizedText;
+  source: LocalizedText;
+}
+
+export interface LaunchConsoleGateEvidence {
+  id: string;
+  source: LaunchConsoleGateSource;
+  state: LaunchConsoleGateState;
+  label: LocalizedText;
+  reason: LocalizedText;
+  nextAction: LocalizedText;
+  blocksLaunch: boolean;
+}
+
+export interface LaunchConsoleHandoffContract {
+  id: ApiSkillId;
+  title: LocalizedText;
+  inputIntent: LocalizedText;
+  outputPreview: LocalizedText;
+  readiness: ApiSkillContractReadiness;
+  riskLevel: ApiSkillRiskLevel;
+  reviewState: LaunchConsoleHandoffReviewState;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface LaunchConsoleBundleSummary {
+  totalBundles: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  localOnlyCount: number;
+  launchBlockingCount: number;
+  handoffRequiredCount: number;
+}
+
+export interface LaunchConsoleCampaignBundle {
+  id: string;
+  stage: LaunchConsoleBundleStage;
+  title: LocalizedText;
+  objective: LocalizedText;
+  campaignIntent: LocalizedText;
+  targetAudience: LocalizedText;
+  recommendedTiming: LocalizedText;
+  ownerRole: LaunchConsoleBundleOwnerRole;
+  status: LaunchConsoleBundleStatus;
+  tasks: LaunchConsoleTaskBuildingBlock[];
+  gateEvidence: LaunchConsoleGateEvidence[];
+  handoffIds: ApiSkillId[];
+  nextAction: LocalizedText;
+  publicBoundary: LocalizedText;
+}
+
+export interface LaunchConsoleCampaignBundleSurface {
+  campaignId: string;
+  summary: LaunchConsoleBundleSummary;
+  bundles: LaunchConsoleCampaignBundle[];
+  handoffs: LaunchConsoleHandoffContract[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface AdminOpsReadModel {
   campaignId: string;
   reviewQueue: ReviewItem[];
@@ -1594,6 +1698,7 @@ export interface AdminOpsReadModel {
   localeSplit: DimensionSplit[];
   riskSignals: RiskSignal[];
   riskIntelligence: RiskIntelligenceReviewSurface;
+  launchConsoleCampaignBundles: LaunchConsoleCampaignBundleSurface;
   aiReports: AiOpsReportCard[];
   aiOptimization: AiOptimizationWorkflow;
   ecosystemMetrics: EcosystemMetricRow[];
