@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   campaignDetail,
+  campaignLifecycleStatuses,
   createAdvancedAnalyticsReadiness,
   createAiContentPackWorkbench,
   createAelfWebLoginAdapterReadiness,
@@ -50,6 +51,16 @@ import {
   walletSessions,
 } from "./index";
 
+const v02CampaignStatuses = [
+  "draft",
+  "scheduled",
+  "live",
+  "paused",
+  "ended",
+  "exported",
+  "archived",
+] as const;
+
 const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
   if (!value || typeof value !== "object") {
     return false;
@@ -73,6 +84,10 @@ describe("Campaign OS domain foundation", () => {
     expect(isSupportedLocale("zh-CN")).toBe(true);
     expect(isSupportedLocale("zh-TW")).toBe(true);
     expect(isSupportedLocale("ko-KR")).toBe(false);
+  });
+
+  it("keeps campaign and lifecycle status sets aligned with v0.2 docs", () => {
+    expect(campaignLifecycleStatuses).toEqual(v02CampaignStatuses);
   });
 
   it("resolves locale preference with URL, profile, storage, and default precedence", () => {
@@ -1776,6 +1791,19 @@ describe("Campaign OS domain foundation", () => {
     expect(createParticipationReadModel(campaignDetail, pendingParticipant).eligibility.status).toBe(
       "pending",
     );
+  });
+
+  it("treats archived campaigns as closed for participant eligibility", () => {
+    const [eligibleParticipant] = campaignDetail.participants;
+    const archivedCampaign = {
+      ...campaignDetail,
+      status: "archived",
+    } satisfies typeof campaignDetail;
+
+    expect(createParticipationReadModel(archivedCampaign, eligibleParticipant).eligibility).toMatchObject({
+      status: "ended",
+      walletStatus: expect.any(Object),
+    });
   });
 
   it("creates an Admin/Ops read model for analytics, risk, AI reports, and export evidence", () => {

@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
+import { campaignDetail } from "../../../domain";
 import { UserAppPanel } from "./UserAppPanel";
 
 describe("User App shell", () => {
@@ -157,6 +158,32 @@ describe("User App shell", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Close wallet connect modal" }));
 
     expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
+  });
+
+  it("renders archived campaigns as terminal user app statuses", () => {
+    const [participant] = campaignDetail.participants;
+    const archivedCampaign = {
+      ...campaignDetail,
+      status: "archived",
+    } satisfies typeof campaignDetail;
+
+    render(
+      <UserAppPanel
+        campaign={archivedCampaign}
+        locale="en-US"
+        participant={participant}
+      />,
+    );
+
+    const archivedBadges = screen.getAllByText("Archived");
+
+    expect(archivedBadges.length).toBeGreaterThan(0);
+    expect(archivedBadges[0]).toHaveStyle({ color: "#991b1b" });
+    expect(
+      screen.getAllByText(
+        "Campaign has ended; winner export review is closed for this seeded view.",
+      ).length,
+    ).toBeGreaterThan(0);
   });
 
   it("switches User App copy manually to zh-CN", () => {

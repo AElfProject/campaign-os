@@ -1798,7 +1798,11 @@ const createEligibilityResult = (
       )
     : undefined;
 
-  if (campaign.status === "ended" || campaign.status === "exported") {
+  if (
+    campaign.status === "ended" ||
+    campaign.status === "exported" ||
+    campaign.status === "archived"
+  ) {
     return {
       status: "ended",
       score: participant.totalPoints,
@@ -3345,6 +3349,18 @@ const statusNextAction: Record<
       "zh-TW": "Keep final evidence and remind the project that rewards remain project-owned.",
     },
   },
+  archived: {
+    nextActionLabel: {
+      "en-US": "Review archived evidence",
+      "zh-CN": "复核归档证据",
+      "zh-TW": "Review archived evidence",
+    },
+    nextActionDetail: {
+      "en-US": "Keep archived evidence visible for audit without reopening eligibility or rewards.",
+      "zh-CN": "保持归档证据对审计可见，不重新开启资格或奖励流程。",
+      "zh-TW": "Keep archived evidence visible for audit without reopening eligibility or rewards.",
+    },
+  },
 };
 
 const priorityForCampaign = (
@@ -3360,7 +3376,7 @@ const priorityForCampaign = (
     return "primary";
   }
 
-  return status === "exported" ? "watch" : "secondary";
+  return status === "exported" || status === "archived" ? "watch" : "secondary";
 };
 
 const createCampaignCommandItem = ({
