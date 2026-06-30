@@ -3,6 +3,7 @@ import {
   campaignDetail,
   computePublishReadiness,
   createAdminOpsReadModel,
+  createExportArtifact,
   createExportConfirmationReadinessGate,
   createParticipationReadModel,
   getLocalizedText,
@@ -533,6 +534,7 @@ export const AdminOpsPanel = ({
   const copy = adminOpsCopy[locale];
   const adminOps = createAdminOpsReadModel(campaign);
   const exportReadiness = createExportConfirmationReadinessGate(campaign);
+  const exportArtifact = createExportArtifact(campaign.exportPreview, "csv");
   const aiOptimization = adminOps.aiOptimization;
   const advancedAnalytics = adminOps.advancedAnalytics;
   const aiContentPack = adminOps.aiContentPack;
@@ -2823,6 +2825,55 @@ export const AdminOpsPanel = ({
             <code style={contractCodeStyle}>{columnContract}</code>
           </div>
         </div>
+        <article aria-label={copy.exportArtifact} style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.exportArtifact}</p>
+              <strong style={{ overflowWrap: "anywhere" }}>{exportArtifact.fileName}</strong>
+            </div>
+            <PublishStateBadge label={readableCode(exportArtifact.metadata.generatedMode)} state="ready" />
+          </div>
+          <div style={compactGridStyle}>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportArtifactFormat}</p>
+              <p style={{ ...valueStyle, fontSize: 20 }}>{exportArtifact.format.toUpperCase()}</p>
+              <p style={wrapTextStyle}>
+                {copy.exportArtifactBatchId}: {exportArtifact.batchId}
+              </p>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportArtifactChecksum}</p>
+              <p style={{ color: "#071426", fontSize: 13, fontWeight: 900, lineHeight: 1.35, margin: 0, overflowWrap: "anywhere" }}>
+                {exportArtifact.metadata.checksum}
+              </p>
+              <p style={wrapTextStyle}>{exportArtifact.metadata.checksumAlgorithm}</p>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportArtifactPayloadSize}</p>
+              <p style={{ ...valueStyle, fontSize: 20 }}>
+                {exportArtifact.metadata.payloadBytes.toLocaleString("en-US")}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.exportArtifactRows}: {exportArtifact.metadata.readyRows} / {exportArtifact.metadata.reviewRequiredRows} / {exportArtifact.metadata.blockedRows}
+              </p>
+            </article>
+          </div>
+          <div style={sourceMetricListStyle}>
+            {[
+              copy.exportArtifactNoDownloadUrl,
+              copy.exportArtifactNoStorageWrite,
+              copy.exportArtifactNoContractRoot,
+              copy.exportArtifactNoRewardDistribution,
+            ].map((boundary) => (
+              <div key={boundary} style={rowStyle}>
+                <span style={mutedTextStyle}>{boundary}</span>
+                <PublishStateBadge label={copy.localOnly} state="ready" />
+              </div>
+            ))}
+          </div>
+          <p style={boundaryStyle}>{getLocalizedText(exportArtifact.safety.boundary, locale)}</p>
+          <p style={boundaryStyle}>{copy.exportArtifactBoundary}</p>
+        </article>
         <div style={scrollContainerStyle}>
           <table style={exportTableStyle}>
             <thead>
