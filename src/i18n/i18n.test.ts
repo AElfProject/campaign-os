@@ -1,11 +1,37 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { translate } from "./messages";
+import { messages, translate, type MessageKey } from "./messages";
 import {
   browserLocalePromptDismissedStorageKey,
   localePreferenceStorageKey,
   useLocale,
 } from "./useLocale";
+
+const canonicalEnglishSchemaMessages = {
+  "common.connectWallet": "Connect Wallet",
+  "common.chooseWallet": "Choose how you want to join this campaign.",
+  "common.defaultLanguage": "Default language: English",
+  "common.language": "English",
+  "common.exportNotReward": "Export winners ≠ distribute rewards.",
+  "common.privateKeyWarning": "Campaign OS never asks for your private key.",
+  "wallet.recommended": "Recommended for new users",
+  "wallet.portkeyAA": "Portkey AA Wallet",
+  "wallet.portkeyEOAApp": "Portkey EOA App",
+  "wallet.portkeyEOAExtension": "Portkey EOA Extension",
+  "wallet.nightElf": "NightElf Wallet",
+  "wallet.agentSkill": "Agent Skill Wallet",
+  "wallet.anyWallet": "Any wallet",
+  "wallet.aaOnly": "AA only",
+  "wallet.eoaOnly": "EOA only",
+  "campaign.aiPlanner": "AI Campaign Planner",
+  "campaign.taskBuilder": "Task Builder",
+  "campaign.rewardsEligibility": "Rewards & Eligibility",
+  "campaign.translationManager": "Translation Manager",
+  "campaign.contractImpact": "Contract Impact Review",
+  "campaign.eligibilityChecker": "Eligibility Checker",
+} as const satisfies Record<MessageKey, string>;
+
+const canonicalSchemaKeys = Object.keys(canonicalEnglishSchemaMessages).sort() as MessageKey[];
 
 const setNavigatorLanguages = (languages: readonly string[]) => {
   Object.defineProperty(window.navigator, "languages", {
@@ -25,17 +51,35 @@ describe("i18n messages", () => {
     vi.restoreAllMocks();
   });
 
+  it("keeps runtime keys aligned to the v0.2 i18n schema", () => {
+    expect(Object.keys(messages["en-US"]).sort()).toEqual(canonicalSchemaKeys);
+    expect(Object.keys(messages["zh-CN"]).sort()).toEqual(canonicalSchemaKeys);
+    expect(Object.keys(messages["zh-TW"]).sort()).toEqual(canonicalSchemaKeys);
+  });
+
+  it("keeps English values equal to the v0.2 i18n schema", () => {
+    expect(messages["en-US"]).toEqual(canonicalEnglishSchemaMessages);
+  });
+
+  it("provides complete Chinese copy for every canonical schema key", () => {
+    for (const key of canonicalSchemaKeys) {
+      expect(messages["zh-CN"][key].trim()).not.toBe("");
+      expect(messages["zh-TW"][key].trim()).not.toBe("");
+    }
+  });
+
   it("provides English, Simplified Chinese, and Traditional Chinese UI copy", () => {
-    expect(translate("en-US", "action.connectWallet")).toBe("Connect Wallet");
-    expect(translate("zh-CN", "action.connectWallet")).toBe("连接钱包");
-    expect(translate("zh-TW", "action.connectWallet")).toBe("連接錢包");
-    expect(translate("zh-TW", "locale.traditionalChinese")).toBe("繁體中文");
+    expect(translate("en-US", "common.connectWallet")).toBe("Connect Wallet");
+    expect(translate("zh-CN", "common.connectWallet")).toBe("连接钱包");
+    expect(translate("zh-TW", "common.connectWallet")).toBe("連接錢包");
+    expect(translate("en-US", "campaign.translationManager")).toBe("Translation Manager");
+    expect(translate("zh-TW", "wallet.anyWallet")).toBe("任意錢包");
   });
 
   it("keeps export responsibility explicit in all MVP locales", () => {
-    expect(translate("en-US", "export.disclaimer")).toContain("does not distribute rewards");
-    expect(translate("zh-CN", "export.disclaimer")).toContain("不等于发奖");
-    expect(translate("zh-TW", "export.disclaimer")).toContain("不等於發獎");
+    expect(translate("en-US", "common.exportNotReward")).toBe("Export winners ≠ distribute rewards.");
+    expect(translate("zh-CN", "common.exportNotReward")).toContain("≠ 发奖");
+    expect(translate("zh-TW", "common.exportNotReward")).toContain("≠ 發獎");
   });
 
   it("restores and persists supported locale preferences", () => {
