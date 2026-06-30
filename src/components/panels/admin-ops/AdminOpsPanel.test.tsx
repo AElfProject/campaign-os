@@ -223,6 +223,34 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("CONTRACT CLAIM");
     expectVisibleText("Contract claim is blocked pending high-impact manual review.");
     expectVisibleText("Analytics overview");
+    const advancedAnalyticsReview = screen.getByLabelText("Advanced analytics review");
+    expect(
+      within(advancedAnalyticsReview).getByRole("heading", { name: "Advanced analytics review" }),
+    ).toBeInTheDocument();
+    expect(within(advancedAnalyticsReview).getByText("Premium report readiness")).toBeInTheDocument();
+    expect(within(advancedAnalyticsReview).getByText("Day 7 retention")).toBeInTheDocument();
+    expect(within(advancedAnalyticsReview).getByText("Day 30 retention")).toBeInTheDocument();
+    expect(within(advancedAnalyticsReview).getByText("Evidence gap")).toBeInTheDocument();
+    expect(within(advancedAnalyticsReview).getAllByText("Owner role").length).toBeGreaterThan(0);
+    for (const report of [
+      "Cohort report",
+      "Retention report",
+      "Real user quality",
+      "Conversion report",
+      "Risk report",
+    ]) {
+      expect(within(advancedAnalyticsReview).getAllByText(report).length).toBeGreaterThan(0);
+    }
+    for (const cohort of ["New AA users", "EOA power users", "Referral-driven users"]) {
+      expect(within(advancedAnalyticsReview).getByText(cohort)).toBeInTheDocument();
+    }
+    for (const product of ["eBridge", "Awaken", "Forest", "TMRWDAO"]) {
+      expect(within(advancedAnalyticsReview).getByText(product)).toBeInTheDocument();
+    }
+    expect(within(advancedAnalyticsReview).getAllByText(/No live analytics SDK/).length).toBeGreaterThan(0);
+    expect(within(advancedAnalyticsReview).getAllByText(/event warehouse/).length).toBeGreaterThan(0);
+    expect(within(advancedAnalyticsReview).getAllByText(/billing/).length).toBeGreaterThan(0);
+    expect(within(advancedAnalyticsReview).getAllByText(/automatic enforcement/).length).toBeGreaterThan(0);
     expectVisibleText("Verified actions");
     expectVisibleText("Conversion funnel");
     expectVisibleText("Wallet connect");
@@ -389,6 +417,18 @@ describe("Admin/Ops shell", () => {
     expect(within(zhProviderRegistry as HTMLElement).getByText(/不会调用实时 API/)).toBeInTheDocument();
     expectVisibleText("AI 内容审核");
     expectVisibleText("分析概览");
+    const zhAdvancedAnalyticsReview = screen.getByLabelText("高级分析审核");
+    expect(
+      within(zhAdvancedAnalyticsReview).getByRole("heading", { name: "高级分析审核" }),
+    ).toBeInTheDocument();
+    expect(within(zhAdvancedAnalyticsReview).getByText("Premium report readiness")).toBeInTheDocument();
+    expect(within(zhAdvancedAnalyticsReview).getByText("Day 7 留存")).toBeInTheDocument();
+    expect(within(zhAdvancedAnalyticsReview).getByText("Day 30 留存")).toBeInTheDocument();
+    expect(within(zhAdvancedAnalyticsReview).getByText("Evidence gap")).toBeInTheDocument();
+    expect(within(zhAdvancedAnalyticsReview).getAllByText("负责人角色").length).toBeGreaterThan(0);
+    expect(within(zhAdvancedAnalyticsReview).getAllByText(/事件仓库/).length).toBeGreaterThan(0);
+    expect(within(zhAdvancedAnalyticsReview).getAllByText(/billing/).length).toBeGreaterThan(0);
+    expect(within(zhAdvancedAnalyticsReview).getAllByText(/自动处罚/).length).toBeGreaterThan(0);
     expectVisibleText("转化漏斗");
     expectVisibleText("钱包拆分");
     expectVisibleText("语言拆分");
