@@ -21,6 +21,9 @@ import {
   type CampaignLifecycleOperation,
   type CampaignLifecycleOperationState,
   type CampaignLifecycleStatus,
+  type LaunchConsoleBundleStatus,
+  type LaunchConsoleGateState,
+  type LaunchConsoleHandoffReviewState,
   type MetricTone,
   type ProviderFeatureGateState,
   type ProviderLiveEvidenceStatus,
@@ -301,6 +304,35 @@ const lifecycleStatusLabel = (status: CampaignLifecycleStatus) => status.replace
 const lifecycleOwnerLabel = (ownerRole: CampaignLifecycleOperation["ownerRole"]) =>
   ownerRole.replace(/_/g, " ");
 
+const launchConsoleReviewState = (
+  state: LaunchConsoleBundleStatus | LaunchConsoleGateState | LaunchConsoleHandoffReviewState,
+) => {
+  if (state === "blocked") {
+    return "blocker";
+  }
+
+  return state === "ready" || state === "passed" ? "ready" : "warning";
+};
+
+const launchConsoleReviewStateLabel = (
+  state: LaunchConsoleBundleStatus | LaunchConsoleGateState | LaunchConsoleHandoffReviewState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  if (state === "ready" || state === "passed") {
+    return copy.readyActions;
+  }
+
+  if (state === "local_only") {
+    return copy.localOnly;
+  }
+
+  if (state === "review_required") {
+    return copy.reviewRequired;
+  }
+
+  return state === "warning" ? copy.warning : copy.blocked;
+};
+
 const aiOptimizationStatusState = (status: AiOptimizationActionStatus) =>
   status === "blocked"
     ? "blocker"
@@ -487,6 +519,12 @@ export const AdminOpsPanel = ({
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
   const lifecycleOperations = adminOps.lifecycleOperations;
+  const launchConsoleBundles = adminOps.launchConsoleCampaignBundles;
+  const launchBlockingGates = launchConsoleBundles.bundles.flatMap((bundle) =>
+    bundle.gateEvidence
+      .filter((gate) => gate.blocksLaunch || gate.state === "blocked" || gate.state === "review_required")
+      .map((gate) => ({ bundle, gate })),
+  );
   const riskIntelligence = adminOps.riskIntelligence;
   const lifecycleReviewRows = lifecycleOperations.operations.filter((operation) =>
     ["pause-campaign", "resume-campaign", "end-campaign", "export-campaign", "archive-campaign"].includes(
@@ -747,6 +785,167 @@ export const AdminOpsPanel = ({
               <p style={mutedTextStyle}>
                 {copy.nextAction}: {getLocalizedText(operation.nextAction, locale)}
               </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.launchBundleReview} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.launchBundleSummary}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.launchBundleReview}
+            </h3>
+            <p style={mutedTextStyle}>{copy.launchBundleReviewSubtitle}</p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${launchConsoleBundles.summary.totalBundles} ${copy.totalItems}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${launchConsoleBundles.summary.launchBlockingCount} ${copy.launchBlocking}`}
+              state={launchConsoleBundles.summary.launchBlockingCount > 0 ? "blocker" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${launchConsoleBundles.summary.handoffRequiredCount} ${copy.handoffReadiness}`}
+              state={launchConsoleBundles.summary.handoffRequiredCount > 0 ? "warning" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.launchBundleNoSideEffects}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {getLocalizedText(launchConsoleBundles.boundary, locale)}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.reviewRequired}</p>
+            <p style={valueStyle}>{launchConsoleBundles.summary.reviewRequiredCount}</p>
+            <p style={mutedTextStyle}>{copy.launchBundleSummary}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.blocked}</p>
+            <p style={valueStyle}>{launchConsoleBundles.summary.blockedCount}</p>
+            <p style={mutedTextStyle}>{copy.launchBlocking}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.localOnly}</p>
+            <p style={valueStyle}>{launchConsoleBundles.summary.localOnlyCount}</p>
+            <p style={mutedTextStyle}>{copy.seededEvidence}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.handoffReadiness}</p>
+            <p style={valueStyle}>{launchConsoleBundles.summary.handoffRequiredCount}</p>
+            <p style={mutedTextStyle}>{copy.reviewRequired}</p>
+          </article>
+        </div>
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <div style={rowStyle}>
+              <strong>{copy.launchBlockingGates}</strong>
+              <PublishStateBadge
+                label={`${launchBlockingGates.length} ${copy.launchBlocking}`}
+                state={launchBlockingGates.length > 0 ? "blocker" : "ready"}
+              />
+            </div>
+            <div style={stackStyle}>
+              {launchBlockingGates.map(({ bundle, gate }) => (
+                <div
+                  key={`${bundle.id}-${gate.id}`}
+                  style={{ borderTop: "1px solid #dbe6f4", display: "grid", gap: 6, paddingTop: 10 }}
+                >
+                  <div style={rowStyle}>
+                    <div style={stackStyle}>
+                      <p style={labelStyle}>{getLocalizedText(bundle.title, locale)}</p>
+                      <strong>{getLocalizedText(gate.label, locale)}</strong>
+                    </div>
+                    <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <PublishStateBadge
+                        label={launchConsoleReviewStateLabel(gate.state, copy)}
+                        state={launchConsoleReviewState(gate.state)}
+                      />
+                      {gate.blocksLaunch ? (
+                        <PublishStateBadge label={copy.launchBlocking} state="blocker" />
+                      ) : null}
+                    </span>
+                  </div>
+                  <p style={mutedTextStyle}>
+                    {copy.evidenceReason}: {getLocalizedText(gate.reason, locale)}
+                  </p>
+                  <p style={mutedTextStyle}>
+                    {copy.nextAction}: {getLocalizedText(gate.nextAction, locale)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article style={cardStyle}>
+            <div style={rowStyle}>
+              <strong>{copy.handoffReadiness}</strong>
+              <PublishStateBadge
+                label={`${launchConsoleBundles.summary.handoffRequiredCount} ${copy.reviewRequired}`}
+                state={launchConsoleBundles.summary.handoffRequiredCount > 0 ? "warning" : "ready"}
+              />
+            </div>
+            <div style={stackStyle}>
+              {launchConsoleBundles.handoffs.map((handoff) => (
+                <div
+                  key={handoff.id}
+                  style={{ borderTop: "1px solid #dbe6f4", display: "grid", gap: 6, paddingTop: 10 }}
+                >
+                  <div style={rowStyle}>
+                    <div style={stackStyle}>
+                      <p style={labelStyle}>{handoff.id}</p>
+                      <strong>{getLocalizedText(handoff.title, locale)}</strong>
+                    </div>
+                    <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <PublishStateBadge
+                        label={launchConsoleReviewStateLabel(handoff.reviewState, copy)}
+                        state={launchConsoleReviewState(handoff.reviewState)}
+                      />
+                      <Badge label={handoff.riskLevel} tone={handoff.riskLevel === "high" ? "warning" : "info"} />
+                    </span>
+                  </div>
+                  <p style={mutedTextStyle}>
+                    {copy.inputIntent}: {getLocalizedText(handoff.inputIntent, locale)}
+                  </p>
+                  <p style={mutedTextStyle}>
+                    {copy.outputPreview}: {getLocalizedText(handoff.outputPreview, locale)}
+                  </p>
+                  <p style={mutedTextStyle}>
+                    {copy.nextAction}: {getLocalizedText(handoff.nextAction, locale)}
+                  </p>
+                  <p style={wrapTextStyle}>{getLocalizedText(handoff.boundary, locale)}</p>
+                </div>
+              ))}
+            </div>
+          </article>
+        </div>
+        <div style={gridStyle}>
+          {launchConsoleBundles.bundles.map((bundle) => (
+            <article key={bundle.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{readableCode(bundle.stage)}</p>
+                  <strong>{getLocalizedText(bundle.title, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={launchConsoleReviewStateLabel(bundle.status, copy)}
+                  state={launchConsoleReviewState(bundle.status)}
+                />
+              </div>
+              <p style={mutedTextStyle}>{getLocalizedText(bundle.objective, locale)}</p>
+              <p style={mutedTextStyle}>
+                {copy.ownerRole}: {readableCode(bundle.ownerRole)}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.nextAction}: {getLocalizedText(bundle.nextAction, locale)}
+              </p>
+              <p style={wrapTextStyle}>{getLocalizedText(bundle.publicBoundary, locale)}</p>
             </article>
           ))}
         </div>

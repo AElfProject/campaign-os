@@ -4,6 +4,7 @@ import {
   createCampaignLifecycleOperations,
   createExportConfirmationReadinessGate,
   createExportPreview,
+  createLaunchConsoleCampaignBundles,
   createParticipationReadModel,
   createProviderEvidenceRegistry,
   createProjectCampaignCommandCenter,
@@ -35,6 +36,7 @@ import {
   type ExportPreviewMode,
   type ExportPreviewRow,
   type LocalizedText,
+  type LaunchConsoleCampaignBundleSurface,
   type DimensionSplit,
   type NormalizedWalletSession,
   type ParticipantSnapshot,
@@ -170,6 +172,10 @@ export interface GetCampaignLifecycleOperationsRequest {
   campaignId: string;
 }
 
+export interface GetLaunchConsoleCampaignBundlesRequest {
+  campaignId: string;
+}
+
 export interface CheckEligibilityResponse {
   accountType: AccountType;
   campaignId: string;
@@ -284,6 +290,9 @@ export interface CampaignOsLocalService {
   getCampaignLifecycleOperations(
     request: GetCampaignLifecycleOperationsRequest,
   ): LocalServiceResult<CampaignLifecycleOperations>;
+  getLaunchConsoleCampaignBundles(
+    request: GetLaunchConsoleCampaignBundlesRequest,
+  ): LocalServiceResult<LaunchConsoleCampaignBundleSurface>;
   getCoverageSummary(): LocalServiceResult<LocalServiceCoverageSummary>;
   summarizeCampaign(request: SummarizeCampaignRequest): LocalServiceResult<{
     campaignId: string;
@@ -830,6 +839,21 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     return success(createCampaignLifecycleOperations(campaign));
   },
 
+  getLaunchConsoleCampaignBundles: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local service facade.",
+        "本地 service facade 中不存在该活动。",
+      );
+    }
+
+    return success(createLaunchConsoleCampaignBundles(campaign));
+  },
+
   getCoverageSummary: () => {
     const surface = createApiSkillContractSurface();
     const serviceNames = [
@@ -845,6 +869,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       "getProviderEvidenceRegistry",
       "getExportConfirmationReadiness",
       "getCampaignLifecycleOperations",
+      "getLaunchConsoleCampaignBundles",
       "generateCampaignPosts",
       "summarizeCampaign",
     ];
@@ -876,7 +901,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       blockedCount: surface.summary.blockedCount,
       coveredApiGroups,
       coveredFieldGroups,
-      localOnlyCount: surface.summary.localOnlyCount + 2,
+      localOnlyCount: surface.summary.localOnlyCount + 3,
       readyCount: surface.summary.readyCount + 1,
       reviewRequiredCount: surface.summary.reviewRequiredCount + 2,
       sampleResponseIds: [
@@ -888,6 +913,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
         "getProviderEvidenceRegistry",
         "getExportConfirmationReadiness",
         "getCampaignLifecycleOperations",
+        "getLaunchConsoleCampaignBundles",
         "exportWinners",
       ],
       serviceNames,

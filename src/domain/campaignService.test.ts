@@ -493,6 +493,59 @@ describe("Campaign OS local API service facade", () => {
     });
   });
 
+  it("returns Launch Console campaign bundles without live side effects", () => {
+    const bundles = service.getLaunchConsoleCampaignBundles({
+      campaignId: campaignDetail.id,
+    });
+    const missingBundles = service.getLaunchConsoleCampaignBundles({
+      campaignId: "missing-campaign",
+    });
+    const payloadJson = JSON.stringify(bundles.payload);
+
+    expect(bundles.ok).toBe(true);
+    expect(bundles.payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      summary: expect.objectContaining({
+        totalBundles: 3,
+        launchBlockingCount: expect.any(Number),
+        handoffRequiredCount: expect.any(Number),
+      }),
+      bundles: expect.any(Array),
+      handoffs: expect.any(Array),
+    });
+    expect(bundles.payload?.bundles.map((bundle) => bundle.stage)).toEqual([
+      "pre_launch",
+      "launch",
+      "post_launch",
+    ]);
+    expect(bundles.payload?.handoffs.map((handoff) => handoff.id)).toEqual([
+      "create_campaign",
+      "generate_campaign_tasks",
+      "verify_task",
+      "check_eligibility",
+      "export_winners",
+      "generate_campaign_posts",
+      "summarize_campaign",
+    ]);
+    expect(bundles.payload?.boundary["en-US"]).toContain("No live Launch Console");
+    expect(bundles.boundary["en-US"]).toContain("No live API");
+    expect(payloadJson).not.toContain("apiKey");
+    expect(hasOwnKeyDeep(bundles.payload, "token")).toBe(false);
+    expect(hasOwnKeyDeep(bundles.payload, "accessToken")).toBe(false);
+    expect(hasOwnKeyDeep(bundles.payload, "oauthToken")).toBe(false);
+    expect(payloadJson).not.toContain("signedPayload");
+    expect(payloadJson).not.toContain("transactionId");
+    expect(payloadJson).not.toContain("contractRoot");
+    expect(payloadJson).not.toContain("fileUrl");
+    expect(payloadJson).not.toContain("webhookSecret");
+    expect(payloadJson).not.toContain("mutationId");
+    expect(payloadJson.toLowerCase()).not.toContain("private key");
+    expect(missingBundles).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "CAMPAIGN_NOT_FOUND", field: "campaignId" }),
+    });
+  });
+
   it("summarizes service coverage across API and field groups", () => {
     const coverage = service.getCoverageSummary();
     const pipeline = service.getVerificationPipelineReadiness({
@@ -532,9 +585,15 @@ describe("Campaign OS local API service facade", () => {
         "content",
         "risk",
       ]),
-      serviceNames: expect.arrayContaining(["getCampaignLifecycleOperations"]),
-      sampleResponseIds: expect.arrayContaining(["getCampaignLifecycleOperations"]),
-      totalServices: 14,
+      serviceNames: expect.arrayContaining([
+        "getCampaignLifecycleOperations",
+        "getLaunchConsoleCampaignBundles",
+      ]),
+      sampleResponseIds: expect.arrayContaining([
+        "getCampaignLifecycleOperations",
+        "getLaunchConsoleCampaignBundles",
+      ]),
+      totalServices: 15,
     });
     expect(coverage.payload?.sampleResponseIds).toEqual(
       expect.arrayContaining([
@@ -544,6 +603,7 @@ describe("Campaign OS local API service facade", () => {
         "getVerificationPipelineReadiness",
         "getProviderEvidenceRegistry",
         "getExportConfirmationReadiness",
+        "getLaunchConsoleCampaignBundles",
         "exportWinners",
       ]),
     );

@@ -78,6 +78,18 @@ import type {
   EligibilityCheckEntry,
   EligibilityCheckResult,
   EligibilityMissingTaskDetail,
+  ApiSkillContract,
+  ApiSkillId,
+  LaunchConsoleBundleOwnerRole,
+  LaunchConsoleBundleStatus,
+  LaunchConsoleCampaignBundle,
+  LaunchConsoleCampaignBundleSurface,
+  LaunchConsoleGateEvidence,
+  LaunchConsoleGateSource,
+  LaunchConsoleGateState,
+  LaunchConsoleHandoffContract,
+  LaunchConsoleHandoffReviewState,
+  LaunchConsoleTaskBuildingBlock,
   RiskIntelligenceCategory,
   RiskIntelligenceDimension,
   RiskIntelligenceOwnerRole,
@@ -150,6 +162,7 @@ import {
   campaignLifecycleStatuses,
   supportedLocales,
 } from "./types";
+import { createApiSkillContractSurface } from "./apiSkillContracts";
 import { createTemplateGovernanceConsole } from "./builder";
 import { createLocalizedCampaignPath } from "./locale";
 
@@ -247,6 +260,15 @@ const riskIntelligenceBoundary: LocalizedText = {
     "风险标记仅作为审核输入。Campaign OS 不会自动封禁钱包、剔除 winners、批准导出、发奖、暴露私有阈值或展示原始 IP/设备/会话数据。",
   "zh-TW":
     "Risk flags are review inputs only. Campaign OS does not automatically ban wallets, exclude winners, approve exports, distribute rewards, reveal private thresholds, or expose raw IP/device/session data.",
+};
+
+const launchConsoleBundleBoundary: LocalizedText = {
+  "en-US":
+    "Seeded/local Launch Console campaign bundle preview only. No live Launch Console, backend, scheduler, external API, wallet signing, contract write, export file, reward custody, or reward distribution is executed.",
+  "zh-CN":
+    "仅 seeded/本地 Launch Console 活动包预览。不会执行实时 Launch Console、后端、排期器、外部 API、钱包签名、合约写入、导出文件、奖励托管或发奖。",
+  "zh-TW":
+    "Seeded/local Launch Console campaign bundle preview only. No live Launch Console, backend, scheduler, external API, wallet signing, contract write, export file, reward custody, or reward distribution is executed.",
 };
 
 const compareReviewPrompt: LocalizedText = {
@@ -4409,6 +4431,476 @@ export const createRiskIntelligenceReviewSurface = (
   };
 };
 
+const launchBundleText = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": zhTW,
+});
+
+const launchConsoleRequiredHandoffIds: ApiSkillId[] = [
+  "create_campaign",
+  "generate_campaign_tasks",
+  "verify_task",
+  "check_eligibility",
+  "export_winners",
+  "generate_campaign_posts",
+  "summarize_campaign",
+];
+
+const launchTask = (
+  id: string,
+  category: LaunchConsoleTaskBuildingBlock["category"],
+  label: LocalizedText,
+  description: LocalizedText,
+  source: LocalizedText,
+): LaunchConsoleTaskBuildingBlock => ({
+  category,
+  description,
+  id,
+  label,
+  source,
+});
+
+const launchGateStateFromLifecycle = (
+  state: CampaignLifecycleCheckState,
+): LaunchConsoleGateState => {
+  if (state === "passed") {
+    return "passed";
+  }
+
+  if (state === "blocked") {
+    return "blocked";
+  }
+
+  if (state === "warning") {
+    return "review_required";
+  }
+
+  return "local_only";
+};
+
+const launchGateStateFromOperation = (
+  state: CampaignLifecycleOperation["operationState"],
+): LaunchConsoleGateState => {
+  if (state === "allowed") {
+    return "passed";
+  }
+
+  if (state === "blocked") {
+    return "blocked";
+  }
+
+  if (state === "review_required") {
+    return "review_required";
+  }
+
+  return "local_only";
+};
+
+const launchGateStateFromReadiness = (
+  readiness: ApiSkillContract["readiness"],
+): LaunchConsoleGateState => {
+  if (readiness === "ready") {
+    return "passed";
+  }
+
+  if (readiness === "blocked") {
+    return "blocked";
+  }
+
+  if (readiness === "review_required") {
+    return "review_required";
+  }
+
+  return "local_only";
+};
+
+const launchGate = ({
+  blocksLaunch,
+  id,
+  label,
+  nextAction,
+  reason,
+  source,
+  state,
+}: {
+  blocksLaunch?: boolean;
+  id: string;
+  label: LocalizedText;
+  nextAction: LocalizedText;
+  reason: LocalizedText;
+  source: LaunchConsoleGateSource;
+  state: LaunchConsoleGateState;
+}): LaunchConsoleGateEvidence => ({
+  blocksLaunch: blocksLaunch ?? (state === "blocked" || state === "review_required"),
+  id,
+  label,
+  nextAction,
+  reason,
+  source,
+  state,
+});
+
+const launchHandoffReviewState = (
+  readiness: ApiSkillContract["readiness"],
+): LaunchConsoleHandoffReviewState => {
+  if (readiness === "ready") {
+    return "ready";
+  }
+
+  if (readiness === "blocked") {
+    return "blocked";
+  }
+
+  if (readiness === "review_required") {
+    return "review_required";
+  }
+
+  return "local_only";
+};
+
+const createLaunchConsoleHandoff = (
+  contract: ApiSkillContract,
+): LaunchConsoleHandoffContract => ({
+  boundary: contract.securityBoundary,
+  id: contract.id,
+  inputIntent: {
+    "en-US": contract.inputFields
+      .slice(0, 3)
+      .map((field) => field.label["en-US"])
+      .join(", "),
+    "zh-CN": contract.inputFields
+      .slice(0, 3)
+      .map((field) => field.label["zh-CN"])
+      .join("、"),
+    "zh-TW": contract.inputFields
+      .slice(0, 3)
+      .map((field) => field.label["zh-TW"])
+      .join(", "),
+  },
+  nextAction: contract.nextAction,
+  outputPreview: {
+    "en-US": contract.outputFields
+      .slice(0, 3)
+      .map((field) => field.label["en-US"])
+      .join(", "),
+    "zh-CN": contract.outputFields
+      .slice(0, 3)
+      .map((field) => field.label["zh-CN"])
+      .join("、"),
+    "zh-TW": contract.outputFields
+      .slice(0, 3)
+      .map((field) => field.label["zh-TW"])
+      .join(", "),
+  },
+  readiness: contract.readiness,
+  reviewState: launchHandoffReviewState(contract.readiness),
+  riskLevel: contract.riskLevel,
+  title: contract.title,
+});
+
+const launchBundleStatus = (
+  gateEvidence: readonly LaunchConsoleGateEvidence[],
+  handoffs: readonly LaunchConsoleHandoffContract[],
+): LaunchConsoleBundleStatus => {
+  if (gateEvidence.some((gate) => gate.state === "blocked" && gate.blocksLaunch) ||
+    handoffs.some((handoff) => handoff.reviewState === "blocked")) {
+    return "blocked";
+  }
+
+  if (gateEvidence.some((gate) => gate.state === "review_required" && gate.blocksLaunch) ||
+    handoffs.some((handoff) => handoff.reviewState === "review_required")) {
+    return "review_required";
+  }
+
+  if (gateEvidence.some((gate) => gate.state === "local_only") ||
+    handoffs.some((handoff) => handoff.reviewState === "local_only")) {
+    return "local_only";
+  }
+
+  return "ready";
+};
+
+const launchBundle = ({
+  campaignIntent,
+  gateEvidence,
+  handoffIds,
+  handoffs,
+  id,
+  nextAction,
+  objective,
+  ownerRole,
+  recommendedTiming,
+  stage,
+  targetAudience,
+  tasks,
+  title,
+}: Omit<LaunchConsoleCampaignBundle, "publicBoundary" | "status"> & {
+  handoffs: readonly LaunchConsoleHandoffContract[];
+}): LaunchConsoleCampaignBundle => ({
+  campaignIntent,
+  gateEvidence,
+  handoffIds,
+  id,
+  nextAction,
+  objective,
+  ownerRole,
+  publicBoundary: launchConsoleBundleBoundary,
+  recommendedTiming,
+  stage,
+  status: launchBundleStatus(
+    gateEvidence,
+    handoffs.filter((handoff) => handoffIds.includes(handoff.id)),
+  ),
+  targetAudience,
+  tasks,
+  title,
+});
+
+const topLaunchBundleAction = (
+  bundles: readonly LaunchConsoleCampaignBundle[],
+): LocalizedText => {
+  const blocked = bundles.find((bundle) => bundle.status === "blocked");
+  if (blocked) {
+    return blocked.nextAction;
+  }
+
+  const review = bundles.find((bundle) => bundle.status === "review_required");
+  if (review) {
+    return review.nextAction;
+  }
+
+  const localOnly = bundles.find((bundle) => bundle.status === "local_only");
+  return localOnly?.nextAction ?? launchBundleText(
+    "Keep bundle preview available for Launch Console handoff review.",
+    "保持活动包预览可用于 Launch Console handoff 审核。",
+  );
+};
+
+export const createLaunchConsoleCampaignBundles = (
+  campaign: CampaignShellDetail,
+): LaunchConsoleCampaignBundleSurface => {
+  const lifecycle = createCampaignLifecycleOperations(campaign);
+  const providerRegistry = createProviderEvidenceRegistry(campaign);
+  const riskIntelligence = createRiskIntelligenceReviewSurface(campaign);
+  const exportReadiness = createExportConfirmationReadinessGate(campaign);
+  const aiContentPack = createAiContentPackWorkbench(campaign);
+  const apiSkillSurface = createApiSkillContractSurface();
+  const contractsById = new Map(apiSkillSurface.contracts.map((contract) => [contract.id, contract]));
+  const handoffs = launchConsoleRequiredHandoffIds.flatMap((id) => {
+    const contract = contractsById.get(id);
+    return contract ? [createLaunchConsoleHandoff(contract)] : [];
+  });
+  const handoffById = new Map(handoffs.map((handoff) => [handoff.id, handoff]));
+  const publishOperation = lifecycle.operations.find((operation) => operation.id === "publish-campaign");
+  const scheduleOperation = lifecycle.operations.find((operation) => operation.id === "schedule-campaign");
+  const exportOperation = lifecycle.operations.find((operation) => operation.id === "export-campaign");
+  const providerGate = providerRegistry.entries.find((entry) =>
+    entry.fallback.blocksLaunch || entry.adapterReadiness === "blocked",
+  ) ?? providerRegistry.entries[0];
+  const riskGate = riskIntelligence.dimensions.find((dimension) => dimension.reviewState === "blocked") ??
+    riskIntelligence.dimensions.find((dimension) => dimension.reviewState === "review_required") ??
+    riskIntelligence.dimensions[0];
+  const aiGateBlocked =
+    aiContentPack.summary.blockedReleaseActions > 0 ||
+    aiContentPack.summary.qualityGateBlockers > 0;
+
+  const preLaunchGates = [
+    launchGate({
+      id: "pre-launch-lifecycle-schedule",
+      label: scheduleOperation?.label ?? launchBundleText("Schedule readiness", "排期 readiness"),
+      reason: scheduleOperation?.reason ?? lifecycle.boundary,
+      nextAction: scheduleOperation?.nextAction ?? lifecycle.nextAction,
+      source: "lifecycle_gate",
+      state: scheduleOperation ? launchGateStateFromOperation(scheduleOperation.operationState) : "local_only",
+    }),
+    launchGate({
+      id: "pre-launch-provider-evidence",
+      label: providerGate?.label ?? launchBundleText("Provider evidence", "Provider 证据"),
+      reason: providerRegistry.boundary,
+      nextAction: providerRegistry.nextAction,
+      source: "provider_evidence",
+      state: providerRegistry.summary.launchBlockers > 0
+        ? "blocked"
+        : providerRegistry.summary.reviewRequiredEntries > 0
+          ? "review_required"
+          : "local_only",
+    }),
+    launchGate({
+      id: "pre-launch-api-contracts",
+      label: launchBundleText("Launch handoff contracts", "Launch handoff contracts"),
+      reason: apiSkillSurface.boundary,
+      nextAction: launchBundleText(
+        "Review local handoff contracts before Launch Console consumes them.",
+        "Launch Console 消费前先审核本地 handoff contracts。",
+      ),
+      source: "publish_readiness",
+      state: handoffs.some((handoff) => handoff.reviewState === "blocked")
+        ? "blocked"
+        : handoffs.some((handoff) => handoff.reviewState === "review_required")
+          ? "review_required"
+          : "local_only",
+    }),
+  ];
+  const launchGates = [
+    ...(publishOperation?.blockingChecks.slice(0, 2).map((check) =>
+      launchGate({
+        blocksLaunch: check.state !== "passed",
+        id: `launch-${check.id}`,
+        label: check.label,
+        nextAction: check.nextAction,
+        reason: check.reason,
+        source: check.source === "provider_evidence" ? "provider_evidence" : "lifecycle_gate",
+        state: launchGateStateFromLifecycle(check.state),
+      })
+    ) ?? []),
+    launchGate({
+      id: "launch-risk-review",
+      label: riskGate?.label ?? launchBundleText("Risk review", "风险审核"),
+      reason: riskGate?.rationale ?? riskIntelligence.boundary,
+      nextAction: riskGate?.nextAction ?? riskIntelligence.boundary,
+      source: "risk_review",
+      state: riskGate?.reviewState === "blocked"
+        ? "blocked"
+        : riskGate?.reviewState === "review_required"
+          ? "review_required"
+          : "warning",
+    }),
+    launchGate({
+      id: "launch-ai-content-review",
+      label: launchBundleText("AI content review", "AI 内容审核"),
+      reason: aiContentPack.boundary.body,
+      nextAction: aiContentPack.summary.nextAction,
+      source: "ai_content_review",
+      state: aiGateBlocked ? "review_required" : "passed",
+      blocksLaunch: aiGateBlocked,
+    }),
+  ];
+  const postLaunchGates = [
+    launchGate({
+      id: "post-launch-export-readiness",
+      label: launchBundleText("Export readiness", "导出 readiness"),
+      reason: exportReadiness.boundary,
+      nextAction: exportReadiness.nextAction,
+      source: "export_readiness",
+      state: exportOperation ? launchGateStateFromOperation(exportOperation.operationState) : "local_only",
+    }),
+    launchGate({
+      id: "post-launch-reward-boundary",
+      label: launchBundleText("Reward non-distribution", "不执行发奖"),
+      reason: rewardBoundary,
+      nextAction: launchBundleText(
+        "Confirm the project owns final reward fulfillment after winner review.",
+        "Winner 审核后确认项目方负责最终奖励履约。",
+      ),
+      source: "reward_disclaimer",
+      state: "local_only",
+      blocksLaunch: false,
+    }),
+    launchGate({
+      id: "post-launch-summary-handoff",
+      label: handoffById.get("summarize_campaign")?.title ?? launchBundleText("Campaign summary", "活动总结"),
+      reason: handoffById.get("summarize_campaign")?.boundary ?? apiSkillSurface.boundary,
+      nextAction: handoffById.get("summarize_campaign")?.nextAction ?? launchBundleText(
+        "Keep summary as local report-card output until analytics services are connected.",
+        "Analytics 服务接入前保持本地报告卡输出。",
+      ),
+      source: "publish_readiness",
+      state: launchGateStateFromReadiness(handoffById.get("summarize_campaign")?.readiness ?? "local_only"),
+      blocksLaunch: false,
+    }),
+  ];
+  const bundles = [
+    launchBundle({
+      id: "bundle-pre-launch",
+      stage: "pre_launch",
+      title: launchBundleText("Pre-launch bundle", "预热活动包"),
+      objective: launchBundleText(
+        "Prepare launch audience, wallet readiness, and project-owned reward boundaries before go-live.",
+        "上线前准备发行受众、钱包 readiness 与项目方奖励责任边界。",
+      ),
+      campaignIntent: launchBundleText("Warm up qualified users before token or product launch.", "在 token 或产品上线前预热合格用户。"),
+      targetAudience: launchBundleText("Allowlist, early community, partner users, and wallet-ready prospects.", "白名单、早期社区、合作伙伴用户与钱包就绪潜客。"),
+      recommendedTiming: launchBundleText("T-14 to T-3 days before launch.", "上线前 T-14 到 T-3 天。"),
+      ownerRole: "growth_lead",
+      tasks: [
+        launchTask("pre-wallet-connect", "wallet", launchBundleText("Wallet connect readiness", "钱包连接 readiness"), launchBundleText("Confirm supported AA/EOA wallet entry before Launch Console handoff.", "Launch Console handoff 前确认支持的 AA/EOA 钱包入口。"), launchBundleText("Wallet adapter readiness", "钱包适配器 readiness")),
+        launchTask("pre-onchain-interest", "on_chain_api", launchBundleText("On-chain interest signal", "链上兴趣信号"), launchBundleText("Use local on-chain/API task templates as preview evidence only.", "仅将本地链上/API 任务模板作为预览证据。"), launchBundleText("Task template library", "任务模板库")),
+        launchTask("pre-social-waitlist", "social_manual", launchBundleText("Social waitlist review", "社交 waitlist 审核"), launchBundleText("Route social/manual tasks through human review before any reward impact.", "任何奖励影响前将社交/人工任务交给人工审核。"), launchBundleText("Risk and publish readiness", "风险与发布 readiness")),
+      ],
+      gateEvidence: preLaunchGates,
+      handoffIds: ["create_campaign", "generate_campaign_tasks", "verify_task"],
+      handoffs,
+      nextAction: launchBundleText(
+        "Review Launch Console handoff contracts and provider evidence before creating a live launch package.",
+        "创建真实 launch package 前先审核 Launch Console handoff contracts 与 provider 证据。",
+      ),
+    }),
+    launchBundle({
+      id: "bundle-launch",
+      stage: "launch",
+      title: launchBundleText("Launch bundle", "上线活动包"),
+      objective: launchBundleText(
+        "Coordinate launch-week tasks, eligibility checks, content review, and risk gates.",
+        "协调上线周任务、资格检查、内容审核与风险门禁。",
+      ),
+      campaignIntent: launchBundleText("Drive verified launch-week actions without automatic publishing.", "驱动上线周有效行为，但不自动发布。"),
+      targetAudience: launchBundleText("Launch-week participants, referral cohorts, and verified ecosystem users.", "上线周参与者、邀请队列与已验证生态用户。"),
+      recommendedTiming: launchBundleText("Launch day through the first launch week.", "上线日到上线首周。"),
+      ownerRole: "internal_operator",
+      tasks: [
+        launchTask("launch-onchain-action", "on_chain_api", launchBundleText("Verified ecosystem action", "已验证生态行为"), launchBundleText("Bridge, swap, mint, vote, or dApp API actions stay provider-review gated.", "Bridge、swap、mint、vote 或 dApp API 行为保持 provider 审核门禁。"), launchBundleText("Verification pipeline", "验证 pipeline")),
+        launchTask("launch-content-posts", "content_analytics", launchBundleText("Launch content posts", "上线内容帖"), launchBundleText("AI-generated posts require human review before any channel publish intent.", "AI 生成帖子在任何渠道发布意图前必须人工审核。"), launchBundleText("AI content pack", "AI 内容包")),
+        launchTask("launch-social-referral", "social_manual", launchBundleText("Referral and social task review", "邀请与社交任务审核"), launchBundleText("Social/referral activity remains review input and cannot auto-award rewards.", "社交/邀请活动只作为审核输入，不能自动发奖。"), launchBundleText("Risk intelligence", "风险智能")),
+      ],
+      gateEvidence: launchGates,
+      handoffIds: ["verify_task", "check_eligibility", "generate_campaign_posts"],
+      handoffs,
+      nextAction: publishOperation?.nextAction ?? lifecycle.nextAction,
+    }),
+    launchBundle({
+      id: "bundle-post-launch",
+      stage: "post_launch",
+      title: launchBundleText("Post-launch bundle", "上线后活动包"),
+      objective: launchBundleText(
+        "Review winners, export readiness, analytics summary, and reward responsibility after launch.",
+        "上线后审核 winners、导出 readiness、分析总结与奖励责任。",
+      ),
+      campaignIntent: launchBundleText("Turn launch activity into reviewed winners and summary insights.", "将上线活动转化为已审核 winners 与总结洞察。"),
+      targetAudience: launchBundleText("Qualified participants, winners candidates, and retained ecosystem users.", "合格参与者、候选 winners 与留存生态用户。"),
+      recommendedTiming: launchBundleText("After the launch window closes.", "Launch 窗口结束后。"),
+      ownerRole: "export_reviewer",
+      tasks: [
+        launchTask("post-eligibility-check", "on_chain_api", launchBundleText("Eligibility review", "资格审核"), launchBundleText("Eligibility and winner checks stay local preview until export is approved.", "资格与 winner 检查在导出获批前保持本地预览。"), launchBundleText("Eligibility and export readiness", "资格与导出 readiness")),
+        launchTask("post-winner-export", "content_analytics", launchBundleText("Winner export preview", "Winner 导出预览"), launchBundleText("Preview rows are reviewed without creating a real file, URL, or contract root.", "审核预览行，但不生成真实文件、URL 或合约 root。"), launchBundleText("Export confirmation", "导出确认")),
+        launchTask("post-summary-report", "content_analytics", launchBundleText("Campaign summary report", "活动总结报告"), launchBundleText("Summary remains a local report-card output until analytics services are connected.", "Analytics 服务接入前总结保持为本地报告卡输出。"), launchBundleText("AI optimization and analytics", "AI 优化与分析")),
+      ],
+      gateEvidence: postLaunchGates,
+      handoffIds: ["check_eligibility", "export_winners", "summarize_campaign"],
+      handoffs,
+      nextAction: exportReadiness.nextAction,
+    }),
+  ];
+
+  return {
+    boundary: launchConsoleBundleBoundary,
+    bundles,
+    campaignId: campaign.id,
+    handoffs,
+    nextAction: topLaunchBundleAction(bundles),
+    summary: {
+      blockedCount: bundles.filter((bundle) => bundle.status === "blocked").length,
+      handoffRequiredCount: handoffs.filter((handoff) => handoff.reviewState !== "ready").length,
+      launchBlockingCount: bundles.flatMap((bundle) => bundle.gateEvidence)
+        .filter((gate) => gate.blocksLaunch).length,
+      localOnlyCount: bundles.filter((bundle) => bundle.status === "local_only").length,
+      readyCount: bundles.filter((bundle) => bundle.status === "ready").length,
+      reviewRequiredCount: bundles.filter((bundle) => bundle.status === "review_required").length,
+      totalBundles: bundles.length,
+    },
+  };
+};
+
 const aiOptimizationCategoryByReportId: Record<string, AiOptimizationReportCategory> = {
   "boss-report": "boss_report",
   "bot-pattern": "bot_pattern",
@@ -4754,6 +5246,7 @@ export const createProjectCampaignCommandCenter = (
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
+  const launchConsoleCampaignBundles = createLaunchConsoleCampaignBundles(campaign);
 
   return {
     summary: createCommandSummary(campaigns, analyticsExport.readyRows),
@@ -4763,6 +5256,7 @@ export const createProjectCampaignCommandCenter = (
     aelfWebLoginAdapterReadiness,
     providerEvidenceRegistry,
     lifecycleOperations,
+    launchConsoleCampaignBundles,
     boundary: commandCenterBoundary,
   };
 };
@@ -7385,6 +7879,7 @@ export const createAdminOpsReadModel = (
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
   const riskIntelligence = createRiskIntelligenceReviewSurface(campaign);
+  const launchConsoleCampaignBundles = createLaunchConsoleCampaignBundles(campaign);
 
   return {
     campaignId: campaign.id,
@@ -7403,6 +7898,7 @@ export const createAdminOpsReadModel = (
     localeSplit: createLocaleSplit(campaign.participants),
     riskSignals: campaign.riskSignals,
     riskIntelligence,
+    launchConsoleCampaignBundles,
     aiReports: campaign.aiOpsReports,
     aiOptimization,
     ecosystemMetrics: campaign.ecosystemMetrics,

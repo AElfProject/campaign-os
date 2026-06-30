@@ -22,6 +22,7 @@ import {
   createCampaignLifecycleOperations,
   createTranslationManagerReadModel,
   createLocaleAnalyticsReadiness,
+  createLaunchConsoleCampaignBundles,
   createRiskIntelligenceReviewSurface,
   createVerificationPipelineReadinessGate,
   createWalletConnectionDiagnostics,
@@ -2143,6 +2144,93 @@ describe("Campaign OS domain foundation", () => {
     expect(JSON.stringify(lifecycle)).not.toContain("contractRoot");
     expect(JSON.stringify(lifecycle)).not.toContain("fileUrl");
     expect(JSON.stringify(lifecycle)).not.toContain("mutationId");
+  });
+
+  it("derives Launch Console campaign bundles as local-only staged handoffs", () => {
+    const surface = createLaunchConsoleCampaignBundles(campaignDetail);
+    const repeated = createLaunchConsoleCampaignBundles(campaignDetail);
+    const commandCenter = createProjectCampaignCommandCenter(campaignDetail);
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const allTaskCategories = new Set(
+      surface.bundles.flatMap((bundle) => bundle.tasks.map((task) => task.category)),
+    );
+    const handoffIds = surface.handoffs.map((handoff) => handoff.id);
+    const publicSafetyText = JSON.stringify(surface).toLowerCase();
+
+    expect(surface).toEqual(repeated);
+    expect(surface.campaignId).toBe(campaignDetail.id);
+    expect(surface.bundles.map((bundle) => bundle.stage)).toEqual([
+      "pre_launch",
+      "launch",
+      "post_launch",
+    ]);
+    expect(surface.summary).toMatchObject({
+      totalBundles: 3,
+      readyCount: expect.any(Number),
+      reviewRequiredCount: expect.any(Number),
+      blockedCount: expect.any(Number),
+      localOnlyCount: expect.any(Number),
+      launchBlockingCount: expect.any(Number),
+      handoffRequiredCount: expect.any(Number),
+    });
+    expect(surface.summary.blockedCount).toBe(
+      surface.bundles.filter((bundle) => bundle.status === "blocked").length,
+    );
+    expect(surface.summary.reviewRequiredCount).toBe(
+      surface.bundles.filter((bundle) => bundle.status === "review_required").length,
+    );
+    expect(surface.summary.localOnlyCount).toBe(
+      surface.bundles.filter((bundle) => bundle.status === "local_only").length,
+    );
+    expect(surface.summary.launchBlockingCount).toBe(
+      surface.bundles
+        .flatMap((bundle) => bundle.gateEvidence)
+        .filter((gate) => gate.blocksLaunch).length,
+    );
+    expect(surface.summary.handoffRequiredCount).toBe(
+      surface.handoffs.filter((handoff) => handoff.reviewState !== "ready").length,
+    );
+    expect([...allTaskCategories].sort()).toEqual([
+      "content_analytics",
+      "on_chain_api",
+      "social_manual",
+      "wallet",
+    ]);
+    expect(handoffIds).toEqual([
+      "create_campaign",
+      "generate_campaign_tasks",
+      "verify_task",
+      "check_eligibility",
+      "export_winners",
+      "generate_campaign_posts",
+      "summarize_campaign",
+    ]);
+    expect(surface.bundles.every((bundle) =>
+      bundle.ownerRole &&
+      bundle.tasks.length > 0 &&
+      bundle.gateEvidence.length > 0 &&
+      bundle.handoffIds.length > 0 &&
+      bundle.nextAction["en-US"].length > 0 &&
+      bundle.publicBoundary["en-US"].includes("No live Launch Console")
+    )).toBe(true);
+    expect(surface.handoffs.every((handoff) =>
+      handoff.inputIntent["en-US"].length > 0 &&
+      handoff.outputPreview["en-US"].length > 0 &&
+      handoff.boundary["en-US"].length > 0
+    )).toBe(true);
+    expect(surface.boundary["en-US"]).toContain("No live Launch Console");
+    expect(surface.boundary["zh-CN"]).toContain("不会执行实时 Launch Console");
+    expect(commandCenter.launchConsoleCampaignBundles).toEqual(surface);
+    expect(adminOps.launchConsoleCampaignBundles).toEqual(surface);
+
+    expect(publicSafetyText).not.toContain("apikey");
+    expect(publicSafetyText).not.toContain("access_token");
+    expect(publicSafetyText).not.toContain("signedpayload");
+    expect(publicSafetyText).not.toContain("transactionid");
+    expect(publicSafetyText).not.toContain("contractroot");
+    expect(publicSafetyText).not.toContain("fileurl");
+    expect(publicSafetyText).not.toContain("webhooksecret");
+    expect(publicSafetyText).not.toContain("mutationid");
   });
 
   it("derives analytics and export decision details for Project Console", () => {

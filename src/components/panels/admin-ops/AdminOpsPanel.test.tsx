@@ -41,6 +41,28 @@ describe("Admin/Ops shell", () => {
     expect(within(lifecycleReview).getByText(/no contract write/)).toBeInTheDocument();
     expect(within(lifecycleReview).getByText(/no export file generation/)).toBeInTheDocument();
     expect(within(lifecycleReview).getByText(/no reward distribution/)).toBeInTheDocument();
+    const launchBundleReview = screen.getByLabelText("Launch Console bundle review");
+    expect(
+      within(launchBundleReview).getByRole("heading", { name: "Launch Console bundle review" }),
+    ).toBeInTheDocument();
+    expect(within(launchBundleReview).getByText("Launch-blocking gates")).toBeInTheDocument();
+    expect(within(launchBundleReview).getAllByText("Handoff readiness").length).toBeGreaterThan(0);
+    expect(within(launchBundleReview).getAllByText("Pre-launch bundle").length).toBeGreaterThan(0);
+    expect(within(launchBundleReview).getAllByText("Launch bundle").length).toBeGreaterThan(0);
+    expect(within(launchBundleReview).getAllByText("Post-launch bundle").length).toBeGreaterThan(0);
+    expect(within(launchBundleReview).getByText("Social API verification")).toBeInTheDocument();
+    expect(within(launchBundleReview).getByText(/Seeded\/local provider evidence registry only/)).toBeInTheDocument();
+    expect(within(launchBundleReview).getByText("Create campaign draft")).toBeInTheDocument();
+    expect(within(launchBundleReview).getByText("verify_task")).toBeInTheDocument();
+    expect(within(launchBundleReview).getAllByText("Review required").length).toBeGreaterThan(0);
+    expect(within(launchBundleReview).getAllByText("Local only").length).toBeGreaterThan(0);
+    expect(within(launchBundleReview).getAllByText("Launch blocking").length).toBeGreaterThan(0);
+    expect(within(launchBundleReview).getAllByText(/No live Launch Console/).length).toBeGreaterThan(0);
+    expect(within(launchBundleReview).getAllByText(/no external API/i).length).toBeGreaterThan(0);
+    expect(within(launchBundleReview).getAllByText(/no wallet signing/i).length).toBeGreaterThan(0);
+    expect(within(launchBundleReview).getAllByText(/no contract write/i).length).toBeGreaterThan(0);
+    expect(within(launchBundleReview).getAllByText(/no export file/i).length).toBeGreaterThan(0);
+    expect(within(launchBundleReview).getAllByText(/no reward distribution/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Delivery Checklist Readiness" })).toBeInTheDocument();
     expectVisibleText("v0.2 delivery audit");
     expectVisibleText("Product Checklist");
@@ -304,6 +326,17 @@ describe("Admin/Ops shell", () => {
     expect(within(zhLifecycleReview).getAllByText(/合约写入/).length).toBeGreaterThan(0);
     expect(within(zhLifecycleReview).getAllByText(/导出文件生成/).length).toBeGreaterThan(0);
     expect(within(zhLifecycleReview).getAllByText(/发奖/).length).toBeGreaterThan(0);
+    const zhLaunchBundleReview = screen.getByLabelText("Launch Console 活动包审核");
+    expect(
+      within(zhLaunchBundleReview).getByRole("heading", { name: "Launch Console 活动包审核" }),
+    ).toBeInTheDocument();
+    expect(within(zhLaunchBundleReview).getByText("上线阻断门禁")).toBeInTheDocument();
+    expect(within(zhLaunchBundleReview).getAllByText("Handoff readiness").length).toBeGreaterThan(0);
+    expect(within(zhLaunchBundleReview).getAllByText("预热活动包").length).toBeGreaterThan(0);
+    expect(within(zhLaunchBundleReview).getAllByText("上线活动包").length).toBeGreaterThan(0);
+    expect(within(zhLaunchBundleReview).getAllByText("上线后活动包").length).toBeGreaterThan(0);
+    expect(within(zhLaunchBundleReview).getAllByText("本地预览").length).toBeGreaterThan(0);
+    expect(within(zhLaunchBundleReview).getByText(/不会连接真实 Launch Console/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "交付清单 Readiness" })).toBeInTheDocument();
     expectVisibleText("v0.2 交付审计");
     expectVisibleText("产品清单");
