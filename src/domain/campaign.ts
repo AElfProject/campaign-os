@@ -4701,7 +4701,9 @@ export const createLaunchConsoleCampaignBundles = (
   const riskGate = riskIntelligence.dimensions.find((dimension) => dimension.reviewState === "blocked") ??
     riskIntelligence.dimensions.find((dimension) => dimension.reviewState === "review_required") ??
     riskIntelligence.dimensions[0];
-  const aiGateBlocked = aiContentPack.summary.blockedActions > 0 || aiContentPack.summary.pendingReview > 0;
+  const aiGateBlocked =
+    aiContentPack.summary.blockedReleaseActions > 0 ||
+    aiContentPack.summary.qualityGateBlockers > 0;
 
   const preLaunchGates = [
     launchGate({
