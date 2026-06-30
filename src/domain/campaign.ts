@@ -6440,9 +6440,9 @@ const createContractInterfaceGroups = (): ContractInterfaceGroup[] => [
         phase: "P1",
         readiness: "warning",
         nextAction: {
-          "en-US": "Keep runtime locales limited to en-US and zh-CN until a separate locale expansion is approved.",
-          "zh-CN": "运行时语言保持 en-US 与 zh-CN，除非另行批准语言扩展。",
-          "zh-TW": "Keep runtime locales limited to en-US and zh-CN until a separate locale expansion is approved.",
+          "en-US": "Keep runtime locale scope aligned to the MVP set en-US, zh-CN, and zh-TW before any P1 locale expansion is approved.",
+          "zh-CN": "运行时语言范围保持与 MVP 集合 en-US、zh-CN 与 zh-TW 对齐；后续 P1 语言扩展需另行批准。",
+          "zh-TW": "執行時語言範圍保持與 MVP 集合 en-US、zh-CN 與 zh-TW 對齊；後續 P1 語言擴展需另行批准。",
         },
       }),
       createContractMethod({
