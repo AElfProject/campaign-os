@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   campaignDetail,
   createAiContentPackWorkbench,
+  createAelfWebLoginAdapterReadiness,
   createAiOptimizationWorkflow,
   createContractImpactReviewModel,
   createEligibilityCheckerReadModel,
@@ -2207,6 +2208,48 @@ describe("Campaign OS domain foundation", () => {
       "bearer ",
     ]) {
       expect(fixtureText).not.toContain(unsafe);
+    }
+  });
+
+  it("exposes aelf-web-login adapter readiness through command center and admin ops", () => {
+    const commandCenter = createProjectCampaignCommandCenter(campaignDetail);
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const readiness = commandCenter.aelfWebLoginAdapterReadiness;
+
+    expect(readiness).toEqual(adminOps.aelfWebLoginAdapterReadiness);
+    expect(readiness).toEqual(createAelfWebLoginAdapterReadiness(campaignDetail.walletSessions));
+    expect(readiness.summary.totalAdapters).toBe(readiness.entries.length);
+    expect(readiness.summary.publicUserAdapters).toBe(readiness.normalUserEntries.length);
+    expect(readiness.summary.internalOnlyAdapters).toBe(readiness.internalEntries.length);
+    expect(readiness.entries.map((entry) => entry.walletSource)).toEqual(
+      expect.arrayContaining([
+        "PORTKEY_AA",
+        "PORTKEY_EOA_APP",
+        "PORTKEY_EOA_EXTENSION",
+        "NIGHTELF",
+        "AGENT_SKILL",
+      ]),
+    );
+    expect(readiness.normalUserEntries.every((entry) => entry.walletSource !== "AGENT_SKILL")).toBe(true);
+    expect(readiness.entries.every((entry) => entry.featureGate.degradesGracefully)).toBe(true);
+    expect(readiness.entries.every((entry) => entry.securityBoundary["en-US"])).toBe(true);
+
+    for (const unsafe of [
+      "privateKey",
+      "seedPhrase",
+      "recoveryPhrase",
+      "oauthToken",
+      "apiKey",
+      "signature",
+      "signedPayload",
+      "transactionId",
+      "contractRoot",
+      "fileUrl",
+      "downloadUrl",
+      "rawProvider",
+      "providerCredential",
+    ]) {
+      expect(hasOwnKeyDeep(readiness, unsafe)).toBe(false);
     }
   });
 });

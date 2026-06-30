@@ -135,6 +135,7 @@ import type {
   WalletProviderQaScenarioId,
 } from "./types";
 import {
+  createAelfWebLoginAdapterReadiness,
   createWalletProviderQaReadinessGate,
   deriveEligibilityWalletStatus,
   isWalletSessionVerified,
@@ -4280,6 +4281,7 @@ export const createProjectCampaignCommandCenter = (
   const campaigns = createSeededCampaignCommandItems(campaign, exportBatch);
   const analyticsExport = createAnalyticsExportDecision(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
+  const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
 
@@ -4288,6 +4290,7 @@ export const createProjectCampaignCommandCenter = (
     campaigns,
     analyticsExport,
     aiOptimization,
+    aelfWebLoginAdapterReadiness,
     providerEvidenceRegistry,
     lifecycleOperations,
     boundary: commandCenterBoundary,
@@ -6908,6 +6911,7 @@ export const createAdminOpsReadModel = (
   const exportBatch = createExportBatch(campaign);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const walletProviderQaGate = createWalletProviderQaReadinessGate(campaign.walletSessions);
+  const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
 
@@ -6916,6 +6920,7 @@ export const createAdminOpsReadModel = (
     reviewQueue: campaign.reviewItems,
     deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
     walletProviderQaGate,
+    aelfWebLoginAdapterReadiness,
     providerEvidenceRegistry,
     contractReviewCenter: createAdminContractReviewCenter(campaign),
     contractInterfaceMatrix: createContractInterfaceMatrixConsole(),
