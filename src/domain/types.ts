@@ -44,6 +44,18 @@ export type CampaignStatus =
   | "paused"
   | "ended"
   | "exported";
+
+export const campaignLifecycleStatuses = [
+  "draft",
+  "scheduled",
+  "live",
+  "paused",
+  "ended",
+  "exported",
+  "archived",
+] as const;
+
+export type CampaignLifecycleStatus = (typeof campaignLifecycleStatuses)[number];
 export type VerificationType = "WALLET" | "ON_CHAIN" | "DAPP_API" | "SOCIAL" | "MANUAL";
 export type RiskLevel = "low" | "medium" | "high";
 export type ContentRevisionStatus =
@@ -921,6 +933,103 @@ export interface CampaignCommandCenterSummary {
   nextPrimaryAction: LocalizedText;
 }
 
+export type CampaignLifecycleOperationState =
+  | "allowed"
+  | "blocked"
+  | "review_required"
+  | "not_applicable";
+export type CampaignLifecycleCheckState =
+  | "passed"
+  | "warning"
+  | "blocked"
+  | "not_applicable";
+export type CampaignLifecycleGateGroupId =
+  | "campaign-basics"
+  | "time-window"
+  | "task-verification"
+  | "reward-eligibility"
+  | "risk-i18n-contract"
+  | "internal-provider-review"
+  | "pause-resume"
+  | "end"
+  | "export"
+  | "archive"
+  | "safety-boundary";
+export type CampaignLifecycleAffectedOutcome =
+  | "launch"
+  | "schedule"
+  | "pause"
+  | "resume"
+  | "end"
+  | "export"
+  | "archive"
+  | "reward_boundary"
+  | "contract_boundary";
+export type CampaignLifecycleCheckSource =
+  | "publish_readiness"
+  | "provider_evidence"
+  | "export_confirmation"
+  | "contract_review"
+  | "local_boundary";
+export type CampaignLifecycleOwnerRole =
+  | OwnerRole
+  | "risk_reviewer"
+  | "export_reviewer";
+
+export interface CampaignLifecycleBlockingCheck {
+  id: string;
+  label: LocalizedText;
+  state: CampaignLifecycleCheckState;
+  source: CampaignLifecycleCheckSource;
+  reason: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface CampaignLifecycleGateGroup {
+  id: CampaignLifecycleGateGroupId;
+  label: LocalizedText;
+  state: CampaignLifecycleCheckState;
+  checks: CampaignLifecycleBlockingCheck[];
+}
+
+export interface CampaignLifecycleOperation {
+  id: string;
+  label: LocalizedText;
+  fromStatus: CampaignLifecycleStatus;
+  targetStatus: CampaignLifecycleStatus;
+  operationState: CampaignLifecycleOperationState;
+  ownerRole: CampaignLifecycleOwnerRole;
+  reason: LocalizedText;
+  gateGroup: CampaignLifecycleGateGroupId;
+  blockingChecks: CampaignLifecycleBlockingCheck[];
+  affectedOutcome: CampaignLifecycleAffectedOutcome;
+  nextAction: LocalizedText;
+  requiresReview: boolean;
+  localOnly: true;
+}
+
+export interface CampaignLifecycleOperationSummary {
+  totalOperations: number;
+  allowedCount: number;
+  blockedCount: number;
+  reviewRequiredCount: number;
+  notApplicableCount: number;
+  launchBlockingCount: number;
+  exportSensitiveCount: number;
+  topOperationId: string;
+}
+
+export interface CampaignLifecycleOperations {
+  campaignId: string;
+  currentStatus: CampaignStatus;
+  supportedStatuses: CampaignLifecycleStatus[];
+  summary: CampaignLifecycleOperationSummary;
+  operations: CampaignLifecycleOperation[];
+  launchGateGroups: CampaignLifecycleGateGroup[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface AnalyticsExportDecision {
   kpis: AnalyticsKpi[];
   funnel: ConversionFunnelStep[];
@@ -942,6 +1051,7 @@ export interface ProjectCampaignCommandCenter {
   analyticsExport: AnalyticsExportDecision;
   aiOptimization: AiOptimizationWorkflow;
   providerEvidenceRegistry: ProviderEvidenceRegistry;
+  lifecycleOperations: CampaignLifecycleOperations;
   boundary: LocalizedText;
 }
 
@@ -1320,6 +1430,7 @@ export interface AdminOpsReadModel {
   aiOptimization: AiOptimizationWorkflow;
   ecosystemMetrics: EcosystemMetricRow[];
   exportBatch: ExportBatchSummary;
+  lifecycleOperations: CampaignLifecycleOperations;
 }
 
 export interface EligibilityResult {

@@ -438,6 +438,61 @@ describe("Campaign OS local API service facade", () => {
     });
   });
 
+  it("returns lifecycle operations without mutation or secret fields", () => {
+    const lifecycle = service.getCampaignLifecycleOperations({
+      campaignId: campaignDetail.id,
+    });
+    const missingLifecycle = service.getCampaignLifecycleOperations({
+      campaignId: "missing-campaign",
+    });
+    const payloadJson = JSON.stringify(lifecycle.payload);
+
+    expect(lifecycle.ok).toBe(true);
+    expect(lifecycle.payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      currentStatus: "live",
+      supportedStatuses: expect.arrayContaining([
+        "draft",
+        "scheduled",
+        "live",
+        "paused",
+        "ended",
+        "exported",
+        "archived",
+      ]),
+      summary: expect.objectContaining({
+        launchBlockingCount: expect.any(Number),
+        reviewRequiredCount: expect.any(Number),
+        totalOperations: expect.any(Number),
+      }),
+      operations: expect.any(Array),
+    });
+    expect(lifecycle.payload?.operations.map((operation) => operation.id)).toEqual(
+      expect.arrayContaining([
+        "schedule-campaign",
+        "publish-campaign",
+        "pause-campaign",
+        "resume-campaign",
+        "end-campaign",
+        "export-campaign",
+        "archive-campaign",
+      ]),
+    );
+    expect(lifecycle.payload?.boundary["en-US"]).toContain("No live backend");
+    expect(lifecycle.boundary["en-US"]).toContain("No live API");
+    expect(payloadJson).not.toContain("signedPayload");
+    expect(payloadJson).not.toContain("transactionId");
+    expect(payloadJson).not.toContain("contractRoot");
+    expect(payloadJson).not.toContain("fileUrl");
+    expect(payloadJson).not.toContain("mutationId");
+    expect(payloadJson.toLowerCase()).not.toContain("private key");
+    expect(payloadJson.toLowerCase()).not.toContain("access_token");
+    expect(missingLifecycle).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "CAMPAIGN_NOT_FOUND", field: "campaignId" }),
+    });
+  });
+
   it("summarizes service coverage across API and field groups", () => {
     const coverage = service.getCoverageSummary();
     const pipeline = service.getVerificationPipelineReadiness({
@@ -457,6 +512,7 @@ describe("Campaign OS local API service facade", () => {
       blockedCount: 0,
       coveredApiGroups: expect.arrayContaining([
         "wallet_session",
+        "campaign_creation",
         "task_verification",
         "eligibility",
         "analytics",
@@ -476,7 +532,9 @@ describe("Campaign OS local API service facade", () => {
         "content",
         "risk",
       ]),
-      totalServices: 13,
+      serviceNames: expect.arrayContaining(["getCampaignLifecycleOperations"]),
+      sampleResponseIds: expect.arrayContaining(["getCampaignLifecycleOperations"]),
+      totalServices: 14,
     });
     expect(coverage.payload?.sampleResponseIds).toEqual(
       expect.arrayContaining([
