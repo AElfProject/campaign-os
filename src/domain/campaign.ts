@@ -1,4 +1,12 @@
 import type {
+  AdvancedAnalyticsCohortSegment,
+  AdvancedAnalyticsCostEfficiency,
+  AdvancedAnalyticsPremiumReport,
+  AdvancedAnalyticsProductConversion,
+  AdvancedAnalyticsQualitySignal,
+  AdvancedAnalyticsReadinessState,
+  AdvancedAnalyticsReadinessSurface,
+  AdvancedAnalyticsRetentionWindow,
   AdminOpsReadModel,
   AiOptimizationAction,
   AiOptimizationActionStatus,
@@ -52,6 +60,7 @@ import type {
   DeliveryChecklistStatus,
   DimensionSplit,
   EligibilityResult,
+  EcosystemProduct,
   EcosystemNextActionProduct,
   EcosystemNextActionRecommendation,
   EcosystemNextActionReadModel,
@@ -251,6 +260,15 @@ const aiOptimizationBoundary: LocalizedText = {
     "仅 seeded/本地 AI 优化工作流。不会执行实时 AI、分析 SDK、风险评分、导出文件、钱包动作、合约交易、奖励托管或发奖。",
   "zh-TW":
     "Seeded/local AI optimization workflow only. No live AI provider, analytics SDK, risk scoring, export file, wallet action, contract transaction, reward custody, or reward distribution is executed.",
+};
+
+const advancedAnalyticsBoundary: LocalizedText = {
+  "en-US":
+    "Seeded/local advanced analytics readiness only. No live analytics SDK, event warehouse, billing, wallet action, contract transaction, export file, reward custody, reward distribution, raw PII, IP/device fingerprint, or automatic enforcement is executed.",
+  "zh-CN":
+    "仅 seeded/本地高级分析准备度。不会执行实时 analytics SDK、事件仓库、billing、钱包动作、合约交易、导出文件、奖励托管、发奖、原始 PII、IP/设备指纹或自动处罚。",
+  "zh-TW":
+    "Seeded/local advanced analytics readiness only. No live analytics SDK, event warehouse, billing, wallet action, contract transaction, export file, reward custody, reward distribution, raw PII, IP/device fingerprint, or automatic enforcement is executed.",
 };
 
 const riskIntelligenceBoundary: LocalizedText = {
@@ -3941,6 +3959,12 @@ const createDropOffPoint = (funnel: ConversionFunnelStep[]): LocalizedText => {
   };
 };
 
+const meaningfulVerificationTypes = new Set<CampaignTask["verificationType"]>([
+  "WALLET",
+  "ON_CHAIN",
+  "DAPP_API",
+]);
+
 const createAnalyticsExportDecision = (
   campaign: CampaignShellDetail,
   exportBatch: ExportBatchSummary,
@@ -3975,6 +3999,522 @@ const createAnalyticsExportDecision = (
   };
 };
 
+const advancedAnalyticsText = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": zhTW,
+});
+
+const advancedAnalyticsProducts: EcosystemProduct[] = [
+  "eBridge",
+  "Awaken",
+  "Forest",
+  "TMRWDAO",
+  "daipp",
+  "Pay",
+  "Forecast",
+  "Portfolio",
+];
+
+const advancedAnalyticsActionFamily: Record<EcosystemProduct, LocalizedText> = {
+  eBridge: advancedAnalyticsText("Bridge", "跨链"),
+  Awaken: advancedAnalyticsText("Swap", "Swap"),
+  Forest: advancedAnalyticsText("NFT and holder actions", "NFT 与 holder 行为"),
+  TMRWDAO: advancedAnalyticsText("Governance", "治理"),
+  daipp: advancedAnalyticsText("AI agent coin", "AI agent coin"),
+  Pay: advancedAnalyticsText("Payment", "支付"),
+  Forecast: advancedAnalyticsText("Prediction and streaks", "预测与连续参与"),
+  Portfolio: advancedAnalyticsText("Portfolio tracking", "资产组合跟踪"),
+};
+
+const advancedAnalyticsProductId = (product: EcosystemProduct) => product.toLowerCase();
+
+const roundAdvancedAnalyticsRate = (value: number) =>
+  Math.max(0, Math.min(1, Number(value.toFixed(3))));
+
+const clampAdvancedAnalyticsScore = (value: number) =>
+  Math.max(0, Math.min(100, Math.round(value)));
+
+const advancedAnalyticsWalletMix = (participants: ParticipantSnapshot[]): LocalizedText => {
+  const aaCount = participants.filter((participant) => participant.accountType === "AA").length;
+  const eoaCount = participants.length - aaCount;
+
+  return advancedAnalyticsText(
+    `${aaCount} AA / ${eoaCount} EOA wallets.`,
+    `${aaCount} 个 AA / ${eoaCount} 个 EOA 钱包。`,
+  );
+};
+
+const advancedAnalyticsCohort = (input: {
+  id: string;
+  label: LocalizedText;
+  participants: ParticipantSnapshot[];
+  qualityState: AdvancedAnalyticsReadinessState;
+  audienceSummary: LocalizedText;
+  retentionSignal: LocalizedText;
+  conversionSignal: LocalizedText;
+  riskReviewState: LocalizedText;
+  nextAction: LocalizedText;
+}): AdvancedAnalyticsCohortSegment => ({
+  id: input.id,
+  label: input.label,
+  audienceSummary: input.audienceSummary,
+  walletMix: advancedAnalyticsWalletMix(input.participants),
+  participantCount: input.participants.length,
+  qualityState: input.qualityState,
+  retentionSignal: input.retentionSignal,
+  conversionSignal: input.conversionSignal,
+  riskReviewState: input.riskReviewState,
+  nextAction: input.nextAction,
+  boundary: advancedAnalyticsBoundary,
+});
+
+const createAdvancedAnalyticsCohorts = (
+  participants: ParticipantSnapshot[],
+): AdvancedAnalyticsCohortSegment[] => {
+  const aaParticipants = participants.filter((participant) => participant.accountType === "AA");
+  const eoaPowerUsers = participants.filter(
+    (participant) => participant.accountType === "EOA" && participant.completedTaskIds.length >= 3,
+  );
+  const referralDrivenUsers = participants.filter(
+    (participant) => (participant.referralSummary?.qualifiedInvitees ?? 0) > 0,
+  );
+  const riskReviewUsers = participants.filter(
+    (participant) => participant.riskFlags.length > 0 || !participant.eligible,
+  );
+
+  return [
+    advancedAnalyticsCohort({
+      id: "new-aa-users",
+      label: advancedAnalyticsText("New AA users", "新 AA 用户"),
+      participants: aaParticipants,
+      qualityState: aaParticipants.some((participant) => participant.riskFlags.length > 0)
+        ? "review_required"
+        : "ready",
+      audienceSummary: advancedAnalyticsText(
+        "AA wallets that completed wallet-aware onboarding tasks in the seeded sample.",
+        "Seeded 样本中完成钱包感知 onboarding 任务的 AA 钱包。",
+      ),
+      retentionSignal: advancedAnalyticsText(
+        "Use Day 7 repeat actions to confirm AA onboarding quality.",
+        "使用 Day 7 重复行为确认 AA onboarding 质量。",
+      ),
+      conversionSignal: advancedAnalyticsText(
+        "Bridge and swap actions indicate ecosystem activation beyond wallet connect.",
+        "跨链与 Swap 行为说明用户已从钱包连接进入生态激活。",
+      ),
+      riskReviewState: advancedAnalyticsText(
+        "Aggregate cohort only; no personal score or raw wallet graph is exposed.",
+        "仅聚合 cohort；不暴露个人分或原始钱包图谱。",
+      ),
+      nextAction: advancedAnalyticsText(
+        "Keep AA onboarding as a premium cohort candidate before live analytics is connected.",
+        "在接入实时 analytics 前，将 AA onboarding 保持为 premium cohort 候选。",
+      ),
+    }),
+    advancedAnalyticsCohort({
+      id: "eoa-power-users",
+      label: advancedAnalyticsText("EOA power users", "EOA 高活跃用户"),
+      participants: eoaPowerUsers,
+      qualityState: eoaPowerUsers.some((participant) => participant.riskFlags.length > 0)
+        ? "review_required"
+        : "ready",
+      audienceSummary: advancedAnalyticsText(
+        "EOA wallets with three or more completed seeded actions.",
+        "完成三个及以上 seeded 行为的 EOA 钱包。",
+      ),
+      retentionSignal: advancedAnalyticsText(
+        "High task depth is a proxy for Day 30 retention readiness.",
+        "较深任务完成度可作为 Day 30 留存准备度代理。",
+      ),
+      conversionSignal: advancedAnalyticsText(
+        "Power users show post-bridge product conversion potential.",
+        "高活跃用户显示跨链后的产品转化潜力。",
+      ),
+      riskReviewState: advancedAnalyticsText(
+        "Manual review remains required for any risk-flagged EOA rows.",
+        "任何带风险标记的 EOA 记录仍需人工审核。",
+      ),
+      nextAction: advancedAnalyticsText(
+        "Review EOA power users before turning this cohort into a leaderboard or export rule.",
+        "将该 cohort 用于排行榜或导出规则前，先审核 EOA 高活跃用户。",
+      ),
+    }),
+    advancedAnalyticsCohort({
+      id: "referral-driven-users",
+      label: advancedAnalyticsText("Referral-driven users", "邀请驱动用户"),
+      participants: referralDrivenUsers,
+      qualityState: "review_required",
+      audienceSummary: advancedAnalyticsText(
+        "Participants with qualified invitees in the local referral summary.",
+        "本地 referral summary 中拥有合格被邀请人的参与者。",
+      ),
+      retentionSignal: advancedAnalyticsText(
+        "Repeat action must stay attached to qualified invitee quality, not raw signup volume.",
+        "重复行为必须锚定合格被邀请人质量，而不是原始注册量。",
+      ),
+      conversionSignal: advancedAnalyticsText(
+        "Referral growth needs product conversion confirmation before premium reporting.",
+        "邀请增长进入 premium reporting 前，需要产品转化确认。",
+      ),
+      riskReviewState: advancedAnalyticsText(
+        "Referral-heavy rows stay review-required until live anti-farm evidence exists.",
+        "在实时反作弊证据存在前，邀请占比较高的记录保持需审核。",
+      ),
+      nextAction: advancedAnalyticsText(
+        "Pair referral cohorts with meaningful wallet/on-chain/dApp actions.",
+        "将邀请 cohort 与 meaningful wallet/on-chain/dApp 行为组合审核。",
+      ),
+    }),
+    advancedAnalyticsCohort({
+      id: "risk-review-cohort",
+      label: advancedAnalyticsText("Risk review cohort", "风险审核 cohort"),
+      participants: riskReviewUsers,
+      qualityState: riskReviewUsers.length > 0 ? "review_required" : "ready",
+      audienceSummary: advancedAnalyticsText(
+        "Rows with risk flags or incomplete eligibility in the seeded export sample.",
+        "Seeded 导出样本中带风险标记或资格未完成的记录。",
+      ),
+      retentionSignal: advancedAnalyticsText(
+        "Retention cannot override risk or eligibility review.",
+        "留存信号不能覆盖风险或资格审核。",
+      ),
+      conversionSignal: advancedAnalyticsText(
+        "Conversion remains an input for review, not an automatic allow-list.",
+        "转化只是审核输入，不会自动进入 allow-list。",
+      ),
+      riskReviewState: advancedAnalyticsText(
+        "Operator review required; no automated exclusion or punishment is executed.",
+        "需要运营审核；不会执行自动剔除或处罚。",
+      ),
+      nextAction: advancedAnalyticsText(
+        "Resolve risk and eligibility evidence before using this cohort in premium reports.",
+        "在 premium reports 使用该 cohort 前，先处理风险和资格证据。",
+      ),
+    }),
+  ];
+};
+
+const createAdvancedAnalyticsRetentionWindows = (
+  participants: ParticipantSnapshot[],
+): AdvancedAnalyticsRetentionWindow[] => {
+  const totalParticipants = Math.max(1, participants.length);
+  const day7RepeatCount = participants.filter(
+    (participant) => participant.completedTaskIds.length >= 2,
+  ).length;
+  const day30RepeatCount = participants.filter(
+    (participant) => participant.completedTaskIds.length >= 3 || participant.eligible,
+  ).length;
+
+  return [
+    {
+      id: "day7",
+      label: advancedAnalyticsText("Day 7 retention", "Day 7 留存"),
+      rate: roundAdvancedAnalyticsRate(day7RepeatCount / totalParticipants),
+      repeatActionCount: day7RepeatCount,
+      sampleBasis: advancedAnalyticsText(
+        `${day7RepeatCount}/${participants.length} seeded participants completed two or more actions.`,
+        `${participants.length} 个 seeded 参与者中 ${day7RepeatCount} 个完成两个及以上行为。`,
+      ),
+      qualityNote: advancedAnalyticsText(
+        "Day 7 uses local repeat-action depth until production event windows are connected.",
+        "Day 7 在生产事件窗口接入前使用本地重复行为深度。",
+      ),
+      evidenceGap: advancedAnalyticsText(
+        "Needs live analytics event windows before it can become production retention.",
+        "成为生产留存前，需要接入实时 analytics 事件窗口。",
+      ),
+    },
+    {
+      id: "day30",
+      label: advancedAnalyticsText("Day 30 retention", "Day 30 留存"),
+      rate: roundAdvancedAnalyticsRate(day30RepeatCount / totalParticipants),
+      repeatActionCount: day30RepeatCount,
+      sampleBasis: advancedAnalyticsText(
+        `${day30RepeatCount}/${participants.length} seeded participants reached deeper action depth or eligibility.`,
+        `${participants.length} 个 seeded 参与者中 ${day30RepeatCount} 个达到更深行为深度或资格完成。`,
+      ),
+      qualityNote: advancedAnalyticsText(
+        "Day 30 is modeled separately so it is not hidden behind the Day 7 signal.",
+        "Day 30 单独建模，避免被 Day 7 单点信号替代。",
+      ),
+      evidenceGap: advancedAnalyticsText(
+        "Needs production cohort calendar data before premium reporting.",
+        "进入 premium reporting 前，需要生产 cohort 日历数据。",
+      ),
+    },
+  ];
+};
+
+const createAdvancedAnalyticsQualitySignal = (input: {
+  participants: ParticipantSnapshot[];
+  exportBatch: ExportBatchSummary;
+  day30RetentionRate: number;
+  meaningfulCoverageRate: number;
+}): AdvancedAnalyticsQualitySignal => {
+  const totalParticipants = Math.max(1, input.participants.length);
+  const riskFlaggedParticipants = input.participants.filter(
+    (participant) => participant.riskFlags.length > 0,
+  ).length;
+  const noRiskRate = (totalParticipants - riskFlaggedParticipants) / totalParticipants;
+  const eligibilityRate = input.exportBatch.readyCount / totalParticipants;
+  const score = clampAdvancedAnalyticsScore(
+    45 +
+      noRiskRate * 20 +
+      eligibilityRate * 15 +
+      input.meaningfulCoverageRate * 15 +
+      input.day30RetentionRate * 5,
+  );
+  const state: AdvancedAnalyticsReadinessState =
+    score >= 70 ? "local_only" : score >= 55 ? "review_required" : "blocked";
+
+  return {
+    score,
+    state,
+    label: advancedAnalyticsText("Aggregate real user quality", "聚合真实用户质量"),
+    explanation: advancedAnalyticsText(
+      "Score combines aggregate risk-free share, export-ready eligibility, meaningful action coverage, and Day 30 readiness.",
+      "分数聚合无风险占比、导出就绪资格、meaningful action 覆盖与 Day 30 准备度。",
+    ),
+    boundary: advancedAnalyticsBoundary,
+    nextAction: advancedAnalyticsText(
+      "Review aggregate quality before wiring production scoring or enforcement.",
+      "接入生产评分或处置前，先审核聚合质量。",
+    ),
+  };
+};
+
+const createAdvancedAnalyticsCostEfficiency = (
+  participants: ParticipantSnapshot[],
+): AdvancedAnalyticsCostEfficiency => {
+  const verifiedActionCount = participants.reduce(
+    (count, participant) => count + participant.completedTaskIds.length,
+    0,
+  );
+  const seededRewardBudget = 12000;
+  const costPerAction = Math.round(seededRewardBudget / Math.max(1, verifiedActionCount));
+
+  return {
+    rewardBudget: `${seededRewardBudget.toLocaleString("en-US")} ELF seeded reward budget`,
+    verifiedActionCount,
+    costPerVerifiedAction: `${costPerAction.toLocaleString("en-US")} ELF / verified action`,
+    qualityNote: advancedAnalyticsText(
+      "Cost efficiency is a seeded planning metric; export winners still does not distribute rewards.",
+      "成本效率是 seeded 规划指标；导出 winners 仍不等于发奖。",
+    ),
+    boundary: advancedAnalyticsBoundary,
+  };
+};
+
+const createAdvancedAnalyticsProductConversions = (
+  campaign: CampaignShellDetail,
+  exportBatch: ExportBatchSummary,
+): AdvancedAnalyticsProductConversion[] => {
+  const topOfFunnelCount = Math.max(1, campaign.conversionFunnel[0]?.count ?? campaign.participants.length);
+  const metricsByProduct = new Map(
+    campaign.ecosystemMetrics.map((metric) => [metric.product, metric]),
+  );
+  const eligibleParticipants = campaign.participants.filter((participant) => participant.eligible).length;
+  const portfolioConvertedCount = Math.max(1, exportBatch.readyCount, eligibleParticipants) * 120;
+
+  return advancedAnalyticsProducts.map((product) => {
+    const metric = metricsByProduct.get(product);
+    const convertedCount = metric?.verifiedActions ?? portfolioConvertedCount;
+
+    return {
+      id: advancedAnalyticsProductId(product),
+      productName: advancedAnalyticsText(product, product),
+      actionFamily: advancedAnalyticsActionFamily[product],
+      convertedCount,
+      conversionRate: roundAdvancedAnalyticsRate(convertedCount / topOfFunnelCount),
+      readiness: metric ? "local_only" : "review_required",
+      evidenceGap: metric
+        ? advancedAnalyticsText(
+            "Seeded product conversion is available; live analytics event attribution is still missing.",
+            "已具备 seeded 产品转化；仍缺少实时 analytics 事件归因。",
+          )
+        : advancedAnalyticsText(
+            "Portfolio conversion is synthesized from export-ready eligibility until product telemetry exists.",
+            "Portfolio 转化在产品遥测存在前，由导出就绪资格合成。",
+          ),
+      nextAction: metric?.recommendedNextAction ?? advancedAnalyticsText(
+        "Define Portfolio tracking events before treating this as production conversion.",
+        "将其视为生产转化前，先定义 Portfolio tracking events。",
+      ),
+    };
+  });
+};
+
+const createAdvancedAnalyticsPremiumReports = (input: {
+  cohorts: AdvancedAnalyticsCohortSegment[];
+  retentionWindows: AdvancedAnalyticsRetentionWindow[];
+  realUserQuality: AdvancedAnalyticsQualitySignal;
+  productConversions: AdvancedAnalyticsProductConversion[];
+}): AdvancedAnalyticsPremiumReport[] => [
+  {
+    id: "cohort_report",
+    label: advancedAnalyticsText("Cohort report", "Cohort 报告"),
+    readiness: "local_only",
+    coverage: advancedAnalyticsText(
+      `${input.cohorts.length} seeded cohorts include wallet mix, quality state, retention and conversion signals.`,
+      `${input.cohorts.length} 个 seeded cohort 已包含钱包组合、质量状态、留存与转化信号。`,
+    ),
+    gap: advancedAnalyticsText(
+      "Needs production cohort storage before paid report delivery.",
+      "付费报告交付前需要生产 cohort 存储。",
+    ),
+    ownerRole: advancedAnalyticsText("Growth reviewer", "增长审核人"),
+    nextAction: advancedAnalyticsText(
+      "Review cohort definitions with project owners before live cohort ingestion.",
+      "接入实时 cohort ingestion 前，与项目方审核 cohort 定义。",
+    ),
+  },
+  {
+    id: "retention_report",
+    label: advancedAnalyticsText("Retention report", "留存报告"),
+    readiness: "review_required",
+    coverage: advancedAnalyticsText(
+      `${input.retentionWindows.length} retention windows cover Day 7 and Day 30 in the seeded surface.`,
+      `${input.retentionWindows.length} 个留存窗口在 seeded surface 中覆盖 Day 7 与 Day 30。`,
+    ),
+    gap: advancedAnalyticsText(
+      "Needs production event windows and cohort calendar evidence.",
+      "需要生产事件窗口与 cohort 日历证据。",
+    ),
+    ownerRole: advancedAnalyticsText("Analytics operator", "分析运营"),
+    nextAction: advancedAnalyticsText(
+      "Keep Day 30 visible while preparing live retention instrumentation.",
+      "准备实时留存埋点时，继续保持 Day 30 可见。",
+    ),
+  },
+  {
+    id: "real_user_quality",
+    label: advancedAnalyticsText("Real user quality", "真实用户质量"),
+    readiness: input.realUserQuality.state,
+    coverage: advancedAnalyticsText(
+      `Aggregate score ${input.realUserQuality.score}/100 uses public-safe seeded quality inputs.`,
+      `聚合分 ${input.realUserQuality.score}/100 使用 public-safe seeded 质量输入。`,
+    ),
+    gap: advancedAnalyticsText(
+      "No raw personal score, IP/device signal, private rule, or automated enforcement is exposed.",
+      "不暴露原始个人分、IP/设备信号、私密规则或自动处罚。",
+    ),
+    ownerRole: advancedAnalyticsText("Risk reviewer", "风险审核人"),
+    nextAction: advancedAnalyticsText(
+      "Approve quality definitions before wiring any production scorer.",
+      "接入任何生产评分器前，先批准质量定义。",
+    ),
+  },
+  {
+    id: "conversion_report",
+    label: advancedAnalyticsText("Conversion report", "转化报告"),
+    readiness: "local_only",
+    coverage: advancedAnalyticsText(
+      `${input.productConversions.length} ecosystem product directions are covered.`,
+      `已覆盖 ${input.productConversions.length} 个生态产品方向。`,
+    ),
+    gap: advancedAnalyticsText(
+      "Needs live product event attribution before premium conversion reporting.",
+      "Premium conversion reporting 前需要实时产品事件归因。",
+    ),
+    ownerRole: advancedAnalyticsText("Project owner", "项目方"),
+    nextAction: advancedAnalyticsText(
+      "Confirm product event names before enabling premium report generation.",
+      "启用 premium report 生成前，先确认产品事件名称。",
+    ),
+  },
+  {
+    id: "risk_report",
+    label: advancedAnalyticsText("Risk report", "风险报告"),
+    readiness: "review_required",
+    coverage: advancedAnalyticsText(
+      "Risk flags are included as aggregate review inputs only.",
+      "风险标记仅作为聚合审核输入。",
+    ),
+    gap: advancedAnalyticsText(
+      "Needs reviewer approval before any export, reward, or premium distribution decision.",
+      "任何导出、奖励或 premium 分发决策前都需要审核人批准。",
+    ),
+    ownerRole: advancedAnalyticsText("Internal operator", "内部运营"),
+    nextAction: advancedAnalyticsText(
+      "Keep risk reporting separate from automated punishment or reward distribution.",
+      "保持风险报告与自动处罚或发奖分离。",
+    ),
+  },
+];
+
+export const createAdvancedAnalyticsReadiness = (
+  campaign: CampaignShellDetail,
+  exportBatch: ExportBatchSummary = createExportBatch(campaign),
+): AdvancedAnalyticsReadinessSurface => {
+  const totalParticipants = Math.max(1, campaign.participants.length);
+  const requiredMeaningfulTaskIds = new Set(
+    campaign.tasks
+      .filter((task) => task.required && meaningfulVerificationTypes.has(task.verificationType))
+      .map((task) => task.id),
+  );
+  const completedMeaningfulActions = campaign.participants.reduce((count, participant) => {
+    const participantCompleted = participant.completedTaskIds.filter((taskId) =>
+      requiredMeaningfulTaskIds.has(taskId)
+    ).length;
+
+    return count + participantCompleted;
+  }, 0);
+  const requiredMeaningfulActions = requiredMeaningfulTaskIds.size * totalParticipants;
+  const meaningfulCoverageRate = requiredMeaningfulActions === 0
+    ? 0
+    : completedMeaningfulActions / requiredMeaningfulActions;
+  const cohorts = createAdvancedAnalyticsCohorts(campaign.participants);
+  const retentionWindows = createAdvancedAnalyticsRetentionWindows(campaign.participants);
+  const day30Retention = retentionWindows.find((window) => window.id === "day30");
+  const realUserQuality = createAdvancedAnalyticsQualitySignal({
+    participants: campaign.participants,
+    exportBatch,
+    day30RetentionRate: day30Retention?.rate ?? 0,
+    meaningfulCoverageRate,
+  });
+  const costEfficiency = createAdvancedAnalyticsCostEfficiency(campaign.participants);
+  const productConversions = createAdvancedAnalyticsProductConversions(campaign, exportBatch);
+  const premiumReports = createAdvancedAnalyticsPremiumReports({
+    cohorts,
+    retentionWindows,
+    realUserQuality,
+    productConversions,
+  });
+  const readyCohorts = cohorts.filter((cohort) => cohort.qualityState === "ready").length;
+  const reviewRequiredCohorts = cohorts.filter(
+    (cohort) => cohort.qualityState === "review_required" || cohort.qualityState === "blocked",
+  ).length;
+
+  return {
+    campaignId: campaign.id,
+    summary: {
+      totalCohorts: cohorts.length,
+      readyCohorts,
+      reviewRequiredCohorts,
+      day7RetentionRate: retentionWindows[0]?.rate ?? 0,
+      day30RetentionRate: retentionWindows[1]?.rate ?? 0,
+      averageRealUserScore: realUserQuality.score,
+      costPerVerifiedAction: costEfficiency.costPerVerifiedAction,
+      productConversionCoverage: productConversions.length,
+      premiumReadyReports: premiumReports.filter((report) =>
+        report.readiness === "ready" || report.readiness === "local_only"
+      ).length,
+      nextAction: advancedAnalyticsText(
+        "Review seeded advanced analytics readiness before connecting live analytics, billing, or premium reports.",
+        "连接实时 analytics、billing 或 premium reports 前，先审核 seeded 高级分析准备度。",
+      ),
+    },
+    cohorts,
+    retentionWindows,
+    realUserQuality,
+    costEfficiency,
+    productConversions,
+    premiumReports,
+    boundary: advancedAnalyticsBoundary,
+  };
+};
+
 const riskReviewStatePriority: Record<RiskIntelligenceReviewState, number> = {
   blocked: 0,
   review_required: 1,
@@ -4003,12 +4543,6 @@ const reviewStateFromSeverity = (severity: RiskSignal["severity"]): RiskIntellig
 
   return "monitor";
 };
-
-const meaningfulVerificationTypes = new Set<CampaignTask["verificationType"]>([
-  "WALLET",
-  "ON_CHAIN",
-  "DAPP_API",
-]);
 
 const createRiskMeaningfulActionCoverage = (
   campaign: CampaignShellDetail,
@@ -5242,6 +5776,7 @@ export const createProjectCampaignCommandCenter = (
   const exportBatch = createExportBatch(campaign);
   const campaigns = createSeededCampaignCommandItems(campaign, exportBatch);
   const analyticsExport = createAnalyticsExportDecision(campaign, exportBatch);
+  const advancedAnalytics = createAdvancedAnalyticsReadiness(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
@@ -5252,6 +5787,7 @@ export const createProjectCampaignCommandCenter = (
     summary: createCommandSummary(campaigns, analyticsExport.readyRows),
     campaigns,
     analyticsExport,
+    advancedAnalytics,
     aiOptimization,
     aelfWebLoginAdapterReadiness,
     providerEvidenceRegistry,
@@ -7873,6 +8409,7 @@ export const createAdminOpsReadModel = (
   campaign: CampaignShellDetail,
 ): AdminOpsReadModel => {
   const exportBatch = createExportBatch(campaign);
+  const advancedAnalytics = createAdvancedAnalyticsReadiness(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const walletProviderQaGate = createWalletProviderQaReadinessGate(campaign.walletSessions);
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
@@ -7896,6 +8433,7 @@ export const createAdminOpsReadModel = (
     funnel: campaign.conversionFunnel,
     walletSplit: createWalletSplit(campaign.participants),
     localeSplit: createLocaleSplit(campaign.participants),
+    advancedAnalytics,
     riskSignals: campaign.riskSignals,
     riskIntelligence,
     launchConsoleCampaignBundles,
