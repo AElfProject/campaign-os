@@ -313,6 +313,22 @@ describe("Project Console shell", () => {
       within(serviceFacade).getAllByText(/No live AeFinder, AelfScan, dApp API, social API, wallet SDK, reward distribution, export file, secret storage, or contract write/).length,
     ).toBeGreaterThan(0);
 
+    const providerRegistry = screen.getByLabelText("Provider evidence registry");
+    expect(
+      within(providerRegistry).getByRole("heading", { name: "Provider evidence registry" }),
+    ).toBeInTheDocument();
+    expect(within(providerRegistry).getByText("Registry entries")).toBeInTheDocument();
+    expect(within(providerRegistry).getByText("Missing live evidence")).toBeInTheDocument();
+    expect(within(providerRegistry).getByText("Local-only paths")).toBeInTheDocument();
+    expect(within(providerRegistry).getByText("Review-required paths")).toBeInTheDocument();
+    expect(within(providerRegistry).getByText("Unavailable paths")).toBeInTheDocument();
+    expect(within(providerRegistry).getAllByText("Launch blockers").length).toBeGreaterThan(0);
+    expect(within(providerRegistry).getByText("AeFinder on-chain verification")).toBeInTheDocument();
+    expect(within(providerRegistry).getByText("Social API verification")).toBeInTheDocument();
+    expect(within(providerRegistry).getAllByText(/Feature gate/).length).toBeGreaterThan(0);
+    expect(within(providerRegistry).getAllByText(/Fallback/).length).toBeGreaterThan(0);
+    expect(within(providerRegistry).getByText(/No live API, wallet SDK, provider credential/)).toBeInTheDocument();
+
     expect(screen.getByRole("heading", { name: "API / Skill Contracts" })).toBeInTheDocument();
     expect(screen.getByText("Read-only contract registry for future agents and APIs.")).toBeInTheDocument();
     expect(screen.getByText("Total contracts")).toBeInTheDocument();
@@ -409,6 +425,13 @@ describe("Project Console shell", () => {
     expect(
       within(serviceFacade).getByRole("heading", { name: "本地 API Service Facade" }),
     ).toBeInTheDocument();
+    const providerRegistry = screen.getByLabelText("Provider 证据登记表");
+    expect(
+      within(providerRegistry).getByRole("heading", { name: "Provider 证据登记表" }),
+    ).toBeInTheDocument();
+    expect(within(providerRegistry).getByText("登记条目")).toBeInTheDocument();
+    expect(within(providerRegistry).getByText("缺失真实 evidence")).toBeInTheDocument();
+    expect(within(providerRegistry).getByText(/不会调用实时 API/)).toBeInTheDocument();
     expect(screen.getByText("面向未来 agent 与 API 的只读 contract registry。")).toBeInTheDocument();
     expect(screen.getByText("创建活动草稿")).toBeInTheDocument();
     expect(screen.getByText("验证任务")).toBeInTheDocument();

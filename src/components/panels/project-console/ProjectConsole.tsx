@@ -341,6 +341,14 @@ const pipelineProviderState = (readiness: VerificationProviderReadiness) => {
   return readiness === "ready" ? "ready" : "warning";
 };
 
+const providerEvidenceRegistryState = (readiness: VerificationProviderReadiness) => {
+  if (readiness === "blocked" || readiness === "unavailable") {
+    return "blocker";
+  }
+
+  return readiness === "ready" ? "ready" : "warning";
+};
+
 const pipelineReleaseImpactState = (impact: VerificationReleaseImpact) => {
   if (impact === "blocker") {
     return "blocker";
@@ -517,6 +525,7 @@ export const ProjectConsole = ({
   const commandCenter = createProjectCampaignCommandCenter(campaign);
   const exportDecision = commandCenter.analyticsExport;
   const aiOptimizationSummary = commandCenter.aiOptimization.projectOwnerSummary;
+  const providerEvidenceRegistry = commandCenter.providerEvidenceRegistry;
   const localeAnalyticsReadiness = createLocaleAnalyticsReadiness(campaign);
   const aiContentPack = createAiContentPackWorkbench(campaign);
 
@@ -1851,6 +1860,122 @@ export const ProjectConsole = ({
           </div>
         </section>
       )}
+
+      <section aria-label={copy.providerEvidenceRegistry} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.providerRegistryLocalOnlyBoundary}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.providerEvidenceRegistry}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.providerEvidenceRegistrySubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={`${providerEvidenceRegistry.summary.launchBlockers} ${copy.providerRegistryLaunchBlockers}`}
+            state={providerEvidenceRegistry.summary.launchBlockers > 0 ? "blocker" : "ready"}
+          />
+        </div>
+
+        <div aria-label={`${copy.providerEvidenceRegistry} summary`} style={gridStyle}>
+          {[
+            {
+              detail: `${providerEvidenceRegistry.summary.seededReadyEntries} ${copy.verificationPipelineSeededReady}`,
+              label: copy.providerRegistryTotalEntries,
+              value: String(providerEvidenceRegistry.summary.totalEntries),
+            },
+            {
+              detail: `${providerEvidenceRegistry.summary.liveEvidenceReadyEntries} ${copy.verificationPipelineLiveReady}`,
+              label: copy.providerRegistryMissingLiveEvidence,
+              value: String(providerEvidenceRegistry.summary.missingLiveEvidenceEntries),
+            },
+            {
+              detail: copy.providerRegistryFallback,
+              label: copy.providerRegistryLocalOnly,
+              value: String(providerEvidenceRegistry.summary.localOnlyEntries),
+            },
+            {
+              label: copy.providerRegistryReviewRequired,
+              detail: copy.providerRegistryAdapterReadiness,
+              value: String(providerEvidenceRegistry.summary.reviewRequiredEntries),
+            },
+            {
+              detail: copy.providerRegistryUnavailableReadiness,
+              label: copy.providerRegistryUnavailable,
+              value: String(providerEvidenceRegistry.summary.unavailableEntries),
+            },
+            {
+              detail: copy.providerRegistryAdapterReadiness,
+              label: copy.providerRegistryBlocked,
+              value: String(providerEvidenceRegistry.summary.blockedEntries),
+            },
+            {
+              detail: `${providerEvidenceRegistry.summary.blockedEntries} ${copy.providerRegistryBlockedReadiness}`,
+              label: copy.providerRegistryLaunchBlockers,
+              value: String(providerEvidenceRegistry.summary.launchBlockers),
+            },
+          ].map((stat) => (
+            <article key={stat.label} style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={statLabelStyle}>{stat.label}</p>
+              <p style={{ ...statValueStyle, fontSize: 20 }}>{stat.value}</p>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                {stat.detail}
+              </p>
+            </article>
+          ))}
+        </div>
+
+        <div style={sectionGridStyle}>
+          {providerEvidenceRegistry.entries
+            .filter((entry) =>
+              entry.adapterReadiness === "blocked" ||
+              entry.adapterReadiness === "unavailable" ||
+              entry.adapterReadiness === "review_required" ||
+              entry.liveEvidenceStatus === "missing",
+            )
+            .slice(0, 4)
+            .map((entry) => (
+              <article key={entry.id} style={{ ...cardStyle, minHeight: 0 }}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>{readableCode(entry.category)}</p>
+                    <h4 style={{ fontSize: 16, lineHeight: 1.2, margin: "4px 0" }}>
+                      {getLocalizedText(entry.label, locale)}
+                    </h4>
+                  </div>
+                  <PublishStateBadge
+                    label={readableCode(entry.adapterReadiness)}
+                    state={providerEvidenceRegistryState(entry.adapterReadiness)}
+                  />
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge
+                    label={`${copy.verificationPipelineLiveEvidence}: ${readableCode(entry.liveEvidenceStatus)}`}
+                    state={pipelineLiveEvidenceState(entry.liveEvidenceStatus)}
+                  />
+                  <PublishStateBadge
+                    label={`${copy.providerRegistryFeatureGate}: ${readableCode(entry.featureGate.state)}`}
+                    state={entry.featureGate.state === "disabled" ? "blocker" : "warning"}
+                  />
+                </div>
+                <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.providerRegistryFallback}: {getLocalizedText(entry.fallback.label, locale)}
+                </p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(entry.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+        </div>
+
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{getLocalizedText(providerEvidenceRegistry.boundary, locale)}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.verificationPipelineNextAction}: {getLocalizedText(providerEvidenceRegistry.nextAction, locale)}
+          </p>
+        </div>
+      </section>
 
       <section aria-label={copy.apiSkillContracts} style={panelStyle}>
         <div style={headingRowStyle}>
