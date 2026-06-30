@@ -18,6 +18,7 @@ import {
   type ExportReadinessState,
   type AiContentArtifactLifecycle,
   type AiContentQualityGateStatus,
+  type AdvancedAnalyticsReadinessState,
   type CampaignLifecycleOperation,
   type CampaignLifecycleOperationState,
   type CampaignLifecycleStatus,
@@ -277,6 +278,24 @@ const readableCode = (value: string) => value.replace(/_/g, " ");
 const exportReadinessState = (readiness: ExportReadinessState) =>
   readiness === "blocked" ? "blocker" : readiness === "review_required" ? "warning" : "ready";
 
+const advancedAnalyticsReadinessState = (readiness: AdvancedAnalyticsReadinessState) =>
+  readiness === "blocked" ? "blocker" : readiness === "ready" ? "ready" : "warning";
+
+const advancedAnalyticsReadinessLabel = (
+  readiness: AdvancedAnalyticsReadinessState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  if (readiness === "ready") {
+    return copy.readyActions;
+  }
+
+  if (readiness === "local_only") {
+    return copy.localOnlyReadiness;
+  }
+
+  return readiness === "review_required" ? copy.reviewRequired : copy.blocked;
+};
+
 const lifecycleOperationState = (state: CampaignLifecycleOperationState) => {
   if (state === "blocked") {
     return "blocker";
@@ -515,6 +534,7 @@ export const AdminOpsPanel = ({
   const adminOps = createAdminOpsReadModel(campaign);
   const exportReadiness = createExportConfirmationReadinessGate(campaign);
   const aiOptimization = adminOps.aiOptimization;
+  const advancedAnalytics = adminOps.advancedAnalytics;
   const aiContentPack = adminOps.aiContentPack;
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
@@ -1937,6 +1957,220 @@ export const AdminOpsPanel = ({
             </article>
           ))}
         </div>
+      </section>
+
+      <section aria-label={copy.advancedAnalyticsReview} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.advancedAnalyticsSummary}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.advancedAnalyticsReview}
+            </h3>
+            <p style={mutedTextStyle}>{copy.advancedAnalyticsReviewSubtitle}</p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${advancedAnalytics.summary.totalCohorts} ${copy.advancedAnalyticsCohortReview}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${advancedAnalytics.summary.reviewRequiredCohorts} ${copy.reviewRequired}`}
+              state={advancedAnalytics.summary.reviewRequiredCohorts > 0 ? "warning" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${advancedAnalytics.summary.premiumReadyReports}/${advancedAnalytics.premiumReports.length} ${copy.advancedAnalyticsPremiumReadiness}`}
+              state="warning"
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.advancedAnalyticsReviewerBoundary}</p>
+          <p style={{ margin: "8px 0 0" }}>{getLocalizedText(advancedAnalytics.boundary, locale)}</p>
+        </div>
+        <div style={compactGridStyle}>
+          {[
+            {
+              detail: `${advancedAnalytics.summary.readyCohorts} ${copy.readyActions} / ${advancedAnalytics.summary.reviewRequiredCohorts} ${copy.reviewRequired}`,
+              label: copy.advancedAnalyticsCohortReview,
+              value: advancedAnalytics.summary.totalCohorts,
+            },
+            {
+              detail: copy.advancedAnalyticsRetentionReview,
+              label: copy.advancedAnalyticsDay7Retention,
+              value: `${Math.round(advancedAnalytics.summary.day7RetentionRate * 100)}%`,
+            },
+            {
+              detail: copy.advancedAnalyticsRetentionReview,
+              label: copy.advancedAnalyticsDay30Retention,
+              value: `${Math.round(advancedAnalytics.summary.day30RetentionRate * 100)}%`,
+            },
+            {
+              detail: copy.advancedAnalyticsQualityReview,
+              label: copy.qualitySignal,
+              value: `${advancedAnalytics.summary.averageRealUserScore}/100`,
+            },
+            {
+              detail: copy.advancedAnalyticsConversionReview,
+              label: copy.advancedAnalyticsProductCoverage,
+              value: advancedAnalytics.summary.productConversionCoverage,
+            },
+            {
+              detail: copy.advancedAnalyticsCostEfficiency,
+              label: copy.advancedAnalyticsCostEfficiency,
+              value: advancedAnalytics.summary.costPerVerifiedAction,
+            },
+          ].map((item) => (
+            <article key={item.label} style={cardStyle}>
+              <p style={labelStyle}>{item.label}</p>
+              <p style={{ ...valueStyle, fontSize: 22, overflowWrap: "anywhere" }}>{item.value}</p>
+              <p style={wrapTextStyle}>{item.detail}</p>
+            </article>
+          ))}
+        </div>
+        <article style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.nextAction}</p>
+              <strong>{getLocalizedText(advancedAnalytics.summary.nextAction, locale)}</strong>
+            </div>
+            <PublishStateBadge label={copy.advancedAnalyticsReviewInputsOnly} state="warning" />
+          </div>
+        </article>
+
+        <section style={stackStyle}>
+          <div style={rowStyle}>
+            <h4 style={{ fontSize: 18, margin: 0 }}>{copy.advancedAnalyticsPremiumReadiness}</h4>
+            <PublishStateBadge
+              label={`${advancedAnalytics.summary.premiumReadyReports}/${advancedAnalytics.premiumReports.length} ${copy.localOnlyReadiness}`}
+              state="warning"
+            />
+          </div>
+          <div style={gridStyle}>
+            {advancedAnalytics.premiumReports.map((report) => (
+              <article key={report.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <strong>{getLocalizedText(report.label, locale)}</strong>
+                  <PublishStateBadge
+                    label={advancedAnalyticsReadinessLabel(report.readiness, copy)}
+                    state={advancedAnalyticsReadinessState(report.readiness)}
+                  />
+                </div>
+                <p style={wrapTextStyle}>
+                  {copy.evidence}: {getLocalizedText(report.coverage, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.advancedAnalyticsEvidenceGap}: {getLocalizedText(report.gap, locale)}
+                </p>
+                <p style={labelStyle}>{copy.ownerRole}</p>
+                <p style={wrapTextStyle}>{getLocalizedText(report.ownerRole, locale)}</p>
+                <p style={wrapTextStyle}>
+                  {copy.nextAction}: {getLocalizedText(report.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <div style={rowStyle}>
+              <h4 style={{ fontSize: 18, margin: 0 }}>{copy.advancedAnalyticsCohortReview}</h4>
+              <PublishStateBadge
+                label={`${advancedAnalytics.summary.reviewRequiredCohorts} ${copy.reviewRequired}`}
+                state={advancedAnalytics.summary.reviewRequiredCohorts > 0 ? "warning" : "ready"}
+              />
+            </div>
+            <div style={stackStyle}>
+              {advancedAnalytics.cohorts.map((cohort) => (
+                <div
+                  key={cohort.id}
+                  style={{ borderTop: "1px solid #dbe6f4", display: "grid", gap: 6, paddingTop: 10 }}
+                >
+                  <div style={rowStyle}>
+                    <strong>{getLocalizedText(cohort.label, locale)}</strong>
+                    <PublishStateBadge
+                      label={advancedAnalyticsReadinessLabel(cohort.qualityState, copy)}
+                      state={advancedAnalyticsReadinessState(cohort.qualityState)}
+                    />
+                  </div>
+                  <p style={wrapTextStyle}>
+                    {getLocalizedText(cohort.audienceSummary, locale)}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.advancedAnalyticsRetentionReview}: {getLocalizedText(cohort.retentionSignal, locale)}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.advancedAnalyticsConversionReview}: {getLocalizedText(cohort.conversionSignal, locale)}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.riskReview}: {getLocalizedText(cohort.riskReviewState, locale)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article style={cardStyle}>
+            <div style={rowStyle}>
+              <h4 style={{ fontSize: 18, margin: 0 }}>{copy.advancedAnalyticsQualityReview}</h4>
+              <PublishStateBadge
+                label={advancedAnalyticsReadinessLabel(advancedAnalytics.realUserQuality.state, copy)}
+                state={advancedAnalyticsReadinessState(advancedAnalytics.realUserQuality.state)}
+              />
+            </div>
+            <p style={{ ...valueStyle, fontSize: 24 }}>{advancedAnalytics.realUserQuality.score}/100</p>
+            <p style={wrapTextStyle}>{getLocalizedText(advancedAnalytics.realUserQuality.explanation, locale)}</p>
+            <p style={wrapTextStyle}>
+              {copy.nextAction}: {getLocalizedText(advancedAnalytics.realUserQuality.nextAction, locale)}
+            </p>
+            <p style={boundaryStyle}>{copy.advancedAnalyticsReviewInputsOnly}</p>
+          </article>
+        </div>
+
+        <section style={stackStyle}>
+          <div style={rowStyle}>
+            <h4 style={{ fontSize: 18, margin: 0 }}>{copy.advancedAnalyticsConversionReview}</h4>
+            <Badge
+              label={`${advancedAnalytics.productConversions.length} ${copy.product}`}
+              tone="info"
+            />
+          </div>
+          <div style={scrollContainerStyle}>
+            <table style={tableStyle}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>{copy.product}</th>
+                  <th style={thStyle}>{copy.category}</th>
+                  <th style={thStyle}>{copy.conversion}</th>
+                  <th style={thStyle}>{copy.readiness}</th>
+                  <th style={thStyle}>{copy.advancedAnalyticsEvidenceGap}</th>
+                  <th style={thStyle}>{copy.nextAction}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {advancedAnalytics.productConversions.map((product) => (
+                  <tr key={product.id}>
+                    <td style={tdStyle}>
+                      <strong>{getLocalizedText(product.productName, locale)}</strong>
+                    </td>
+                    <td style={tdStyle}>{getLocalizedText(product.actionFamily, locale)}</td>
+                    <td style={tdStyle}>
+                      {product.convertedCount.toLocaleString("en-US")} / {Math.round(product.conversionRate * 100)}%
+                    </td>
+                    <td style={tdStyle}>
+                      <PublishStateBadge
+                        label={advancedAnalyticsReadinessLabel(product.readiness, copy)}
+                        state={advancedAnalyticsReadinessState(product.readiness)}
+                      />
+                    </td>
+                    <td style={tdStyle}>{getLocalizedText(product.evidenceGap, locale)}</td>
+                    <td style={tdStyle}>{getLocalizedText(product.nextAction, locale)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </section>
 
       <section style={gridStyle}>

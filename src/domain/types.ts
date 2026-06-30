@@ -1149,10 +1149,111 @@ export interface AnalyticsExportDecision {
   boundary: LocalizedText;
 }
 
+export type AdvancedAnalyticsReadinessState =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "local_only";
+export type AdvancedAnalyticsRetentionWindowId = "day7" | "day30";
+export type AdvancedAnalyticsPremiumReportId =
+  | "cohort_report"
+  | "retention_report"
+  | "real_user_quality"
+  | "conversion_report"
+  | "risk_report";
+
+export interface AdvancedAnalyticsSummary {
+  totalCohorts: number;
+  readyCohorts: number;
+  reviewRequiredCohorts: number;
+  day7RetentionRate: number;
+  day30RetentionRate: number;
+  averageRealUserScore: number;
+  costPerVerifiedAction: string;
+  productConversionCoverage: number;
+  premiumReadyReports: number;
+  nextAction: LocalizedText;
+}
+
+export interface AdvancedAnalyticsCohortSegment {
+  id: string;
+  label: LocalizedText;
+  audienceSummary: LocalizedText;
+  walletMix: LocalizedText;
+  participantCount: number;
+  qualityState: AdvancedAnalyticsReadinessState;
+  retentionSignal: LocalizedText;
+  conversionSignal: LocalizedText;
+  riskReviewState: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface AdvancedAnalyticsRetentionWindow {
+  id: AdvancedAnalyticsRetentionWindowId;
+  label: LocalizedText;
+  rate: number;
+  repeatActionCount: number;
+  sampleBasis: LocalizedText;
+  qualityNote: LocalizedText;
+  evidenceGap: LocalizedText;
+}
+
+export interface AdvancedAnalyticsQualitySignal {
+  score: number;
+  state: AdvancedAnalyticsReadinessState;
+  label: LocalizedText;
+  explanation: LocalizedText;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface AdvancedAnalyticsCostEfficiency {
+  rewardBudget: string;
+  verifiedActionCount: number;
+  costPerVerifiedAction: string;
+  qualityNote: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface AdvancedAnalyticsProductConversion {
+  id: string;
+  productName: LocalizedText;
+  actionFamily: LocalizedText;
+  convertedCount: number;
+  conversionRate: number;
+  readiness: AdvancedAnalyticsReadinessState;
+  evidenceGap: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface AdvancedAnalyticsPremiumReport {
+  id: AdvancedAnalyticsPremiumReportId;
+  label: LocalizedText;
+  readiness: AdvancedAnalyticsReadinessState;
+  coverage: LocalizedText;
+  gap: LocalizedText;
+  ownerRole: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface AdvancedAnalyticsReadinessSurface {
+  campaignId: string;
+  summary: AdvancedAnalyticsSummary;
+  cohorts: AdvancedAnalyticsCohortSegment[];
+  retentionWindows: AdvancedAnalyticsRetentionWindow[];
+  realUserQuality: AdvancedAnalyticsQualitySignal;
+  costEfficiency: AdvancedAnalyticsCostEfficiency;
+  productConversions: AdvancedAnalyticsProductConversion[];
+  premiumReports: AdvancedAnalyticsPremiumReport[];
+  boundary: LocalizedText;
+}
+
 export interface ProjectCampaignCommandCenter {
   summary: CampaignCommandCenterSummary;
   campaigns: CampaignCommandItem[];
   analyticsExport: AnalyticsExportDecision;
+  advancedAnalytics: AdvancedAnalyticsReadinessSurface;
   aiOptimization: AiOptimizationWorkflow;
   aelfWebLoginAdapterReadiness: AelfWebLoginAdapterReadinessModel;
   providerEvidenceRegistry: ProviderEvidenceRegistry;
@@ -1696,6 +1797,7 @@ export interface AdminOpsReadModel {
   funnel: ConversionFunnelStep[];
   walletSplit: DimensionSplit[];
   localeSplit: DimensionSplit[];
+  advancedAnalytics: AdvancedAnalyticsReadinessSurface;
   riskSignals: RiskSignal[];
   riskIntelligence: RiskIntelligenceReviewSurface;
   launchConsoleCampaignBundles: LaunchConsoleCampaignBundleSurface;

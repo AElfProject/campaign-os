@@ -232,6 +232,40 @@ describe("Project Console shell", () => {
     clickWorkspace("Analytics");
 
     expect(screen.getByRole("heading", { name: "Analytics & Export Decision" })).toBeInTheDocument();
+    const advancedAnalytics = screen.getByLabelText("Advanced Analytics readiness");
+    expect(
+      within(advancedAnalytics).getByRole("heading", { name: "Advanced Analytics readiness" }),
+    ).toBeInTheDocument();
+    expect(within(advancedAnalytics).getByText("Cohorts")).toBeInTheDocument();
+    expect(within(advancedAnalytics).getByText("Day 7 retention")).toBeInTheDocument();
+    expect(within(advancedAnalytics).getByText("Day 30 retention")).toBeInTheDocument();
+    expect(within(advancedAnalytics).getByText("Real user quality")).toBeInTheDocument();
+    expect(within(advancedAnalytics).getByText("Cost per verified action")).toBeInTheDocument();
+    expect(within(advancedAnalytics).getByText("Product conversion")).toBeInTheDocument();
+    expect(within(advancedAnalytics).getByText("Premium analytics readiness")).toBeInTheDocument();
+    for (const cohort of [
+      "New AA users",
+      "EOA power users",
+      "Referral-driven users",
+      "Risk review cohort",
+    ]) {
+      expect(within(advancedAnalytics).getByText(cohort)).toBeInTheDocument();
+    }
+    for (const product of ["eBridge", "Awaken", "Forest", "TMRWDAO", "daipp", "Pay", "Forecast", "Portfolio"]) {
+      expect(within(advancedAnalytics).getByText(product)).toBeInTheDocument();
+    }
+    for (const report of [
+      "Cohort report",
+      "Retention report",
+      "Real user quality",
+      "Conversion report",
+      "Risk report",
+    ]) {
+      expect(within(advancedAnalytics).getAllByText(report).length).toBeGreaterThan(0);
+    }
+    expect(within(advancedAnalytics).getByText(/No live analytics SDK/)).toBeInTheDocument();
+    expect(within(advancedAnalytics).getByText(/event warehouse/)).toBeInTheDocument();
+    expect(within(advancedAnalytics).getByText(/billing/)).toBeInTheDocument();
     expect(screen.getByText("Largest drop-off")).toBeInTheDocument();
     expect(screen.getAllByText("Wallet connect conversion").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Task completion").length).toBeGreaterThan(0);
@@ -462,6 +496,15 @@ describe("Project Console shell", () => {
 
     fireEvent.click(within(nav).getByRole("button", { name: "分析" }));
     expect(screen.getByRole("heading", { name: "分析与导出决策" })).toBeInTheDocument();
+    const zhAdvancedAnalytics = screen.getByLabelText("高级分析 readiness");
+    expect(
+      within(zhAdvancedAnalytics).getByRole("heading", { name: "高级分析 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(zhAdvancedAnalytics).getByText("Day 7 留存")).toBeInTheDocument();
+    expect(within(zhAdvancedAnalytics).getByText("Day 30 留存")).toBeInTheDocument();
+    expect(within(zhAdvancedAnalytics).getByText("产品转化")).toBeInTheDocument();
+    expect(within(zhAdvancedAnalytics).getByText("Premium analytics readiness")).toBeInTheDocument();
+    expect(within(zhAdvancedAnalytics).getByText(/事件仓库/)).toBeInTheDocument();
     expect(screen.getByText("最大流失点")).toBeInTheDocument();
     const localeAnalytics = screen.getByLabelText("语言 analytics 就绪状态");
     expect(within(localeAnalytics).getAllByText("活动浏览").length).toBeGreaterThan(0);

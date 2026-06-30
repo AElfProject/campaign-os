@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   campaignDetail,
+  createAdvancedAnalyticsReadiness,
   createAiContentPackWorkbench,
   createAelfWebLoginAdapterReadiness,
   createAiOptimizationWorkflow,
@@ -2268,6 +2269,95 @@ describe("Campaign OS domain foundation", () => {
     expect(decision.evidenceCoverage["en-US"]).toContain("task evidence");
     expect(decision.boundary["en-US"]).toContain("exports verified records only");
     expect(decision.boundary["en-US"]).toContain("does not distribute rewards");
+  });
+
+  it("derives advanced analytics readiness without live analytics side effects", () => {
+    const surface = createAdvancedAnalyticsReadiness(campaignDetail);
+    const commandCenter = createProjectCampaignCommandCenter(campaignDetail);
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+
+    expect(commandCenter.advancedAnalytics).toEqual(surface);
+    expect(adminOps.advancedAnalytics).toEqual(surface);
+    expect(surface.campaignId).toBe(campaignDetail.id);
+    expect(surface.cohorts.length).toBeGreaterThanOrEqual(4);
+    expect(surface.cohorts.every((cohort) =>
+      cohort.id &&
+      cohort.label["en-US"] &&
+      cohort.audienceSummary["en-US"] &&
+      cohort.walletMix["en-US"] &&
+      Number.isInteger(cohort.participantCount) &&
+      cohort.retentionSignal["en-US"] &&
+      cohort.conversionSignal["en-US"] &&
+      cohort.riskReviewState["en-US"] &&
+      cohort.nextAction["en-US"] &&
+      cohort.boundary["en-US"].includes("No live analytics")
+    )).toBe(true);
+    expect(surface.retentionWindows.map((window) => window.id)).toEqual(["day7", "day30"]);
+    expect(surface.retentionWindows.every((window) =>
+      window.rate >= 0 &&
+      window.rate <= 1 &&
+      window.repeatActionCount >= 0 &&
+      window.sampleBasis["en-US"] &&
+      window.qualityNote["en-US"] &&
+      window.evidenceGap["en-US"]
+    )).toBe(true);
+    expect(surface.productConversions.map((row) => row.productName["en-US"])).toEqual([
+      "eBridge",
+      "Awaken",
+      "Forest",
+      "TMRWDAO",
+      "daipp",
+      "Pay",
+      "Forecast",
+      "Portfolio",
+    ]);
+    expect(surface.premiumReports.map((report) => report.id)).toEqual([
+      "cohort_report",
+      "retention_report",
+      "real_user_quality",
+      "conversion_report",
+      "risk_report",
+    ]);
+    expect(surface.summary.totalCohorts).toBe(surface.cohorts.length);
+    expect(surface.summary.readyCohorts).toBe(
+      surface.cohorts.filter((cohort) => cohort.qualityState === "ready").length,
+    );
+    expect(surface.summary.reviewRequiredCohorts).toBe(
+      surface.cohorts.filter((cohort) =>
+        cohort.qualityState === "review_required" || cohort.qualityState === "blocked"
+      ).length,
+    );
+    expect(surface.summary.day7RetentionRate).toBe(surface.retentionWindows[0].rate);
+    expect(surface.summary.day30RetentionRate).toBe(surface.retentionWindows[1].rate);
+    expect(surface.summary.averageRealUserScore).toBe(surface.realUserQuality.score);
+    expect(surface.summary.costPerVerifiedAction).toBe(surface.costEfficiency.costPerVerifiedAction);
+    expect(surface.summary.productConversionCoverage).toBe(surface.productConversions.length);
+    expect(surface.summary.premiumReadyReports).toBe(
+      surface.premiumReports.filter((report) =>
+        report.readiness === "ready" || report.readiness === "local_only"
+      ).length,
+    );
+    expect(surface.boundary["en-US"]).toContain("No live analytics");
+    expect(surface.costEfficiency.boundary["en-US"]).toContain("reward distribution");
+    expect(surface.realUserQuality.score).toBeGreaterThanOrEqual(0);
+    expect(surface.realUserQuality.score).toBeLessThanOrEqual(100);
+
+    for (const unsafe of [
+      "apiKey",
+      "token",
+      "privateKey",
+      "signedPayload",
+      "transactionId",
+      "contractRoot",
+      "fileUrl",
+      "webhookSecret",
+      "billingCustomerId",
+      "ipAddress",
+      "deviceFingerprint",
+      "mutationId",
+    ]) {
+      expect(hasOwnKeyDeep(surface, unsafe)).toBe(false);
+    }
   });
 
   it("derives localized campaign share cards and metadata fields", () => {
