@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   createAelfWebLoginAdapterReadiness,
+  createLiveWalletConnectorBoundary,
   createWalletConnectionDiagnostics,
   createWalletProviderQaReadinessGate,
   deriveEligibilityWalletStatus,
+  mapLiveWalletInfoToSessionCandidate,
   normalizeWalletSessions,
   walletAdapterFixtures,
 } from "./index";
@@ -254,6 +256,260 @@ describe("wallet locale coverage", () => {
       seededStatus: "missing",
       liveEvidenceStatus: "ready",
       releaseImpact: "ready",
+    });
+  });
+
+  it("creates a disabled-by-default live wallet connector boundary without live SDK promotion", () => {
+    const boundary = createLiveWalletConnectorBoundary();
+    const entriesById = Object.fromEntries(boundary.entries.map((entry) => [entry.connectorId, entry]));
+
+    expect(boundary.integrationId).toBe("aelf-web-login");
+    expect(boundary.entries.map((entry) => entry.connectorId)).toEqual([
+      "portkey-aa-live",
+      "portkey-discover-eoa-live",
+      "portkey-eoa-extension-live",
+      "nightelf-live",
+    ]);
+    expect(boundary.summary).toMatchObject({
+      totalConnectors: 4,
+      disabledConnectors: 4,
+      approvedConnectors: 0,
+      missingLiveEvidenceConnectors: 4,
+      releaseBlockers: 0,
+    });
+    expect(entriesById["portkey-aa-live"]).toMatchObject({
+      accountType: "AA",
+      adapterId: "portkey-aa",
+      dependencyRisk: "high",
+      featureGateState: "disabled",
+      packageName: "@aelf-web-login/wallet-adapter-portkey-aa",
+      packageVersionSource: "candidate:0.4.0-alpha.21",
+      readiness: "disabled",
+      releaseImpact: "needs_review",
+      walletSource: "PORTKEY_AA",
+    });
+    expect(entriesById["portkey-discover-eoa-live"]).toMatchObject({
+      accountType: "EOA",
+      walletSource: "PORTKEY_EOA_APP",
+    });
+    expect(entriesById["portkey-eoa-extension-live"]?.capabilities).toContain("EBRIDGE");
+    expect(entriesById["nightelf-live"]).toMatchObject({
+      packageName: "@aelf-web-login/wallet-adapter-night-elf",
+      walletSource: "NIGHTELF",
+    });
+    expect(boundary.packageCandidates.map((candidate) => candidate.packageName)).toEqual(
+      expect.arrayContaining([
+        "aelf-web-login",
+        "@aelf-web-login/wallet-adapter-base",
+        "@aelf-web-login/wallet-adapter-react",
+      ]),
+    );
+    expect(boundary.forbiddenOperations.map((operation) => operation.name)).toEqual([
+      "connectWallet",
+      "getSignature",
+      "callSendMethod",
+      "callViewMethod",
+      "sendMultiTransaction",
+      "requestAccounts",
+      "switchChain",
+      "sendTransaction",
+      "contractView",
+      "contractSend",
+    ]);
+    expect(boundary.forbiddenOperations.every((operation) => operation.state === "blocked")).toBe(true);
+    expect(boundary.boundary["en-US"]).toContain("disabled by default");
+    expect(boundary.boundary["zh-CN"]).toContain("默认关闭");
+    expect(boundary.boundary["zh-TW"]).toContain("預設關閉");
+  });
+
+  it("requires explicit gate evidence and approval before a connector can be future-ready", () => {
+    const boundary = createLiveWalletConnectorBoundary({
+      featureGates: {
+        "portkey-aa-live": "approved",
+        "portkey-eoa-extension-live": "blocked",
+        "portkey-discover-eoa-live": "preview",
+      },
+      liveEvidence: {
+        "portkey-aa-live": "ready",
+        "portkey-eoa-extension-live": "blocked",
+      },
+      reviewApprovals: {
+        "portkey-aa-live": true,
+      },
+    });
+    const entriesById = Object.fromEntries(boundary.entries.map((entry) => [entry.connectorId, entry]));
+
+    expect(entriesById["portkey-aa-live"]).toMatchObject({
+      featureGateState: "approved",
+      liveEvidenceStatus: "ready",
+      readiness: "approved",
+      releaseImpact: "future_ready",
+    });
+    expect(entriesById["portkey-discover-eoa-live"]).toMatchObject({
+      featureGateState: "preview",
+      liveEvidenceStatus: "missing",
+      readiness: "review_required",
+      releaseImpact: "needs_review",
+    });
+    expect(entriesById["portkey-eoa-extension-live"]).toMatchObject({
+      featureGateState: "blocked",
+      readiness: "blocked",
+      releaseImpact: "release_blocker",
+    });
+    expect(boundary.summary).toMatchObject({
+      approvedConnectors: 1,
+      releaseBlockers: 1,
+    });
+  });
+
+  it("maps live adapter wallet info into credential-free normalized session candidates", () => {
+    const portkeyAa = mapLiveWalletInfoToSessionCandidate({
+      adapterName: "PortkeyAAWallet",
+      address: "ELF_2F49AB",
+      chainId: "AELF",
+      network: "mainnet",
+      signaturePresent: true,
+      walletName: "Portkey AA",
+    });
+    const discover = mapLiveWalletInfoToSessionCandidate({
+      adapterName: "PortkeyDiscoverWallet",
+      address: "ELF_8A21EF",
+      chainId: "AELF",
+      network: "mainnet",
+      signaturePresent: true,
+    });
+    const extension = mapLiveWalletInfoToSessionCandidate({
+      adapterName: "PortkeyExtensionWallet",
+      address: "ELF_3E97CD",
+      chainId: "AELF",
+      network: "mainnet",
+      signaturePresent: true,
+    });
+    const nightElf = mapLiveWalletInfoToSessionCandidate({
+      adapterName: "NightElfWallet",
+      address: "ELF_5N14FA",
+      chainId: "AELF",
+      network: "mainnet",
+      signaturePresent: true,
+    });
+
+    expect(portkeyAa).toMatchObject({
+      accountType: "AA",
+      address: "ELF_2F49AB",
+      signatureStatus: "signed",
+      verificationStatus: "verified",
+      walletSource: "PORTKEY_AA",
+      walletTypeVerified: true,
+    });
+    expect(portkeyAa.capabilities).toEqual(
+      expect.arrayContaining(["SIGN_MESSAGE", "VIEW_BALANCE", "CONTRACT_VIEW", "EBRIDGE"]),
+    );
+    expect(discover).toMatchObject({
+      accountType: "EOA",
+      walletSource: "PORTKEY_EOA_APP",
+      walletTypeVerified: true,
+    });
+    expect(extension).toMatchObject({
+      accountType: "EOA",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
+    });
+    expect(nightElf).toMatchObject({
+      accountType: "EOA",
+      walletSource: "NIGHTELF",
+      walletTypeVerified: true,
+    });
+    expect(nightElf.capabilities).not.toContain("EBRIDGE");
+
+    const serialized = JSON.stringify([portkeyAa, discover, extension, nightElf]);
+    for (const unsafe of [
+      "privateKey",
+      "seedPhrase",
+      "recoveryPhrase",
+      "oauthToken",
+      "apiKey",
+      "rawSignature",
+      "signedPayload",
+      "providerCredential",
+      "transactionId",
+      "contractRoot",
+      "downloadUrl",
+      "fileUrl",
+      "campaign-os-kitty",
+      "kitty-specs",
+      "docs/current",
+    ]) {
+      expect(serialized).not.toContain(unsafe);
+    }
+  });
+
+  it("fails live wallet info mapping closed for unsupported or incomplete adapter data", () => {
+    expect(
+      mapLiveWalletInfoToSessionCandidate({
+        adapterName: "PortkeyAAWallet",
+        chainId: "AELF",
+        network: "mainnet",
+        signaturePresent: true,
+      }),
+    ).toMatchObject({
+      accountType: "UNKNOWN",
+      signatureStatus: "not_available",
+      verificationStatus: "address_only",
+      walletSource: "OTHER",
+      walletTypeVerified: false,
+    });
+    expect(
+      mapLiveWalletInfoToSessionCandidate({
+        adapterName: "UnknownWallet",
+        address: "ELF_UNKNOWN",
+        chainId: "AELF",
+        network: "mainnet",
+        signaturePresent: true,
+      }),
+    ).toMatchObject({
+      accountType: "UNKNOWN",
+      verificationStatus: "unsupported_wallet",
+      walletSource: "OTHER",
+      walletTypeVerified: false,
+    });
+    expect(
+      mapLiveWalletInfoToSessionCandidate({
+        adapterName: "PortkeyExtensionWallet",
+        address: "ELF_WRONG",
+        chainId: "tDVV",
+        network: "testnet",
+        signaturePresent: true,
+      }),
+    ).toMatchObject({
+      verificationStatus: "wrong_chain",
+      walletTypeVerified: false,
+    });
+    expect(
+      mapLiveWalletInfoToSessionCandidate({
+        adapterName: "NightElfWallet",
+        address: "ELF_MISSING_SIGNATURE",
+        chainId: "AELF",
+        network: "mainnet",
+        signaturePresent: false,
+      }),
+    ).toMatchObject({
+      signatureStatus: "missing",
+      verificationStatus: "missing_signature",
+      walletTypeVerified: false,
+    });
+    expect(
+      mapLiveWalletInfoToSessionCandidate({
+        adapterName: "PortkeyAgentSkill",
+        address: "ELF_AGENT",
+        chainId: "AELF",
+        internalAgent: true,
+        network: "mainnet",
+        signaturePresent: true,
+      }),
+    ).toMatchObject({
+      verificationStatus: "internal_agent",
+      walletSource: "AGENT_SKILL",
+      walletTypeVerified: false,
     });
   });
 });
