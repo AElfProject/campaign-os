@@ -33,6 +33,7 @@ describe("Campaign Builder domain foundation", () => {
       "wallet",
       "bridge",
       "swap",
+      "liquidity",
       "nft",
       "schrodinger",
       "dao",
@@ -56,15 +57,18 @@ describe("Campaign Builder domain foundation", () => {
 
     expect(
       taskTemplateLibrary
-        .filter((template) => ["schrodinger", "pay", "forecast"].includes(template.category))
+        .filter((template) => ["liquidity", "schrodinger", "pay", "forecast"].includes(template.category))
         .map((template) => ({
           id: template.id,
           walletCompatibility: template.walletCompatibility,
+          requiredByDefault: template.requiredByDefault,
+          riskLevel: template.riskLevel,
         })),
     ).toEqual([
-      { id: "tpl-schrodinger-hold", walletCompatibility: "ANY" },
-      { id: "tpl-pay-complete", walletCompatibility: "ANY" },
-      { id: "tpl-forecast-participate", walletCompatibility: "ANY" },
+      { id: "tpl-liquidity-awaken", walletCompatibility: "ANY", requiredByDefault: false, riskLevel: "medium" },
+      { id: "tpl-schrodinger-hold", walletCompatibility: "ANY", requiredByDefault: false, riskLevel: "medium" },
+      { id: "tpl-pay-complete", walletCompatibility: "ANY", requiredByDefault: false, riskLevel: "medium" },
+      { id: "tpl-forecast-participate", walletCompatibility: "ANY", requiredByDefault: false, riskLevel: "medium" },
     ]);
   });
 
@@ -101,7 +105,7 @@ describe("Campaign Builder domain foundation", () => {
     );
 
     expect(anyTemplates.every((template) => template.walletCompatibility === "ANY")).toBe(true);
-    expect(anyTemplates).toHaveLength(10);
+    expect(anyTemplates).toHaveLength(11);
   });
 
   it("filters task templates by verification type", () => {
@@ -110,7 +114,13 @@ describe("Campaign Builder domain foundation", () => {
         ...defaultTaskTemplateFilters,
         verification: ["on_chain"],
       }).map((template) => template.id),
-    ).toEqual(["tpl-bridge-ebridge", "tpl-nft-hold", "tpl-schrodinger-hold", "tpl-dao-vote"]);
+    ).toEqual([
+      "tpl-bridge-ebridge",
+      "tpl-liquidity-awaken",
+      "tpl-nft-hold",
+      "tpl-schrodinger-hold",
+      "tpl-dao-vote",
+    ]);
 
     expect(
       filterTaskTemplates(taskTemplateLibrary, {
@@ -158,6 +168,7 @@ describe("Campaign Builder domain foundation", () => {
     expect(zhDraft.map((template) => template.id)).toEqual([
       "tpl-bridge-ebridge",
       "tpl-swap-awaken",
+      "tpl-liquidity-awaken",
       "tpl-nft-hold",
       "tpl-schrodinger-hold",
       "tpl-daipp-submit",
@@ -206,7 +217,7 @@ describe("Campaign Builder domain foundation", () => {
       hasActiveFilters: true,
       isEmpty: true,
       selectedFilters: 3,
-      totalTemplates: 11,
+      totalTemplates: 12,
       visibleTemplates: 0,
     });
   });

@@ -25,6 +25,7 @@ export type TaskTemplateCategory =
   | "wallet"
   | "bridge"
   | "swap"
+  | "liquidity"
   | "nft"
   | "schrodinger"
   | "dao"
@@ -466,6 +467,21 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     verificationType: "DAPP_API",
     walletCompatibility: "ANY",
     defaultPoints: 100,
+    requiredByDefault: false,
+    riskLevel: "medium",
+    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft", "zh-TW": "missing" },
+  },
+  {
+    id: "tpl-liquidity-awaken",
+    category: "liquidity",
+    title: text("Add liquidity on Awaken", "在 Awaken 添加流动性"),
+    description: text(
+      "Verify seeded/local LP position or liquidity event evidence without connecting a live Awaken provider.",
+      "验证 seeded/本地 LP 仓位或流动性事件证据，不连接实时 Awaken provider。",
+    ),
+    verificationType: "ON_CHAIN",
+    walletCompatibility: "ANY",
+    defaultPoints: 130,
     requiredByDefault: false,
     riskLevel: "medium",
     localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft", "zh-TW": "missing" },
