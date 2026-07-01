@@ -2348,6 +2348,68 @@ describe("Campaign OS domain foundation", () => {
     expect(commandCenter.boundary["zh-CN"]).toContain("不会连接实时数据");
   });
 
+  it("derives project portfolio and commercial readiness without live billing or reward custody", () => {
+    const commandCenter = createProjectCampaignCommandCenter(campaignDetail);
+    const repeated = createProjectCampaignCommandCenter(campaignDetail);
+    const readiness = commandCenter.portfolioCommercialReadiness;
+    const metricIds = readiness.metrics.map((metric) => metric.id);
+    const commercialIds = readiness.commercialModels.map((model) => model.id);
+    const serialized = JSON.stringify(readiness);
+
+    expect(readiness).toEqual(repeated.portfolioCommercialReadiness);
+    expect(metricIds).toEqual([
+      "campaigns_created",
+      "active_projects",
+      "campaign_setup_time",
+      "reward_budget_committed",
+      "winner_exports",
+      "repeat_project_usage",
+    ]);
+    expect(commercialIds).toEqual([
+      "free_ecosystem_mode",
+      "partner_campaign_fee",
+      "premium_analytics",
+      "ai_ops_package",
+      "launch_package",
+      "api_usage",
+    ]);
+    expect(readiness.summary).toMatchObject({
+      commercialModelCount: 6,
+      productionReadyModelCount: 0,
+      totalMetrics: 6,
+    });
+    expect(readiness.summary.rewardBoundary["en-US"]).toContain("project or partner committed");
+    expect(readiness.summary.rewardBoundary["en-US"]).toContain("does not custody rewards");
+    expect(readiness.boundary["en-US"]).toContain("No live billing");
+    expect(readiness.boundary["en-US"]).toContain("no aelf reward subsidy");
+    expect(readiness.boundary["zh-CN"]).toContain("不会执行实时 billing");
+    expect(readiness.metrics.find((metric) => metric.id === "reward_budget_committed")).toMatchObject({
+      ownerRole: "finance_reviewer",
+      state: "warning",
+      value: "18,000 ELF",
+    });
+    expect(readiness.commercialModels.every((model) => model.boundary["en-US"].includes("No live billing"))).toBe(true);
+
+    for (const unsafe of [
+      "apiKey",
+      "token",
+      "privateKey",
+      "signedPayload",
+      "transactionId",
+      "contractRoot",
+      "fileUrl",
+      "webhookSecret",
+      "billingCustomerId",
+      "invoiceId",
+      "paymentId",
+      "ipAddress",
+      "deviceFingerprint",
+      "mutationId",
+    ]) {
+      expect(serialized).not.toContain(unsafe);
+    }
+  });
+
   it("derives seeded lifecycle status operations without live side effects", () => {
     const lifecycle = createCampaignLifecycleOperations(campaignDetail);
     const commandCenter = createProjectCampaignCommandCenter(campaignDetail);

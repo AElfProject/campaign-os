@@ -139,6 +139,9 @@ import type {
   ProviderFeatureGateState,
   ProviderSeededCoverageStatus,
   ProjectCampaignCommandCenter,
+  ProjectPortfolioCommercialOwnerRole,
+  ProjectPortfolioCommercialReadiness,
+  ProjectPortfolioMetricId,
   PublishState,
   PublishReadiness,
   ReferralSummary,
@@ -3163,6 +3166,24 @@ const commandCenterBoundary: LocalizedText = {
   "zh-TW": "Seeded/local preview only. No live analytics, no real export file, no wallet SDK, no contract call, and export winners does not distribute rewards.",
 };
 
+const portfolioCommercialBoundary: LocalizedText = {
+  "en-US":
+    "Seeded/local portfolio and commercial readiness only. No live billing, payment, invoice, CRM, reward custody, reward distribution, wallet transaction, contract write, or backend mutation is executed; no aelf reward subsidy is executed.",
+  "zh-CN":
+    "仅 seeded/本地项目组合与商业化 readiness。不会执行实时 billing、支付、发票、CRM、奖励托管、发奖、钱包交易、合约写入、后端变更或 aelf 奖励补贴。",
+  "zh-TW":
+    "Seeded/local portfolio and commercial readiness only. No live billing, payment, invoice, CRM, reward custody, reward distribution, wallet transaction, contract write, backend mutation, or aelf reward subsidy is executed.",
+};
+
+const portfolioRewardBoundary: LocalizedText = {
+  "en-US":
+    "Reward budget is project or partner committed only; Campaign OS does not custody rewards, distribute rewards, or use aelf-funded subsidies.",
+  "zh-CN":
+    "奖励预算仅表示项目方或合作方承诺；Campaign OS 不托管奖励、不发奖，也不使用 aelf 补贴。",
+  "zh-TW":
+    "Reward budget is project or partner committed only; Campaign OS does not custody rewards, distribute rewards, or use aelf-funded subsidies.",
+};
+
 const exportDecisionBoundary: LocalizedText = {
   "en-US": "Campaign OS exports verified records only and does not distribute rewards; the campaign project owns reward fulfillment.",
   "zh-CN": "Campaign OS 只导出已验证记录，不执行发奖；奖励履约由活动项目方负责。",
@@ -3785,6 +3806,255 @@ const createCommandSummary = (
       "en-US": "Review campaigns",
       "zh-CN": "审核活动",
       "zh-TW": "Review campaigns",
+    },
+  };
+};
+
+const portfolioText = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": zhTW,
+});
+
+const portfolioMetric = ({
+  detail,
+  id,
+  label,
+  nextAction,
+  ownerRole,
+  state = "ready",
+  value,
+}: {
+  detail: LocalizedText;
+  id: ProjectPortfolioMetricId;
+  label: LocalizedText;
+  nextAction: LocalizedText;
+  ownerRole: ProjectPortfolioCommercialOwnerRole;
+  state?: PublishState;
+  value: string;
+}) => ({
+  detail,
+  id,
+  label,
+  nextAction,
+  ownerRole,
+  state,
+  value,
+});
+
+const createPortfolioMetrics = (
+  campaigns: CampaignCommandItem[],
+  exportReadyRows: number,
+) => {
+  const activeProjects = new Set(
+    campaigns
+      .filter((campaign) => campaign.status === "live" || campaign.status === "scheduled")
+      .map((campaign) => campaign.projectName),
+  ).size;
+  const repeatProjectCount = Array.from(
+    campaigns.reduce<Map<string, number>>(
+      (counts, campaign) => counts.set(campaign.projectName, (counts.get(campaign.projectName) ?? 0) + 1),
+      new Map(),
+    ).values(),
+  ).filter((count) => count > 1).length;
+
+  return [
+    portfolioMetric({
+      detail: portfolioText(
+        "Seeded command center rows across live, scheduled, ended, and exported states.",
+        "Seeded 指挥中心覆盖进行中、排期、已结束与已导出活动。",
+      ),
+      id: "campaigns_created",
+      label: portfolioText("Campaigns created", "已创建活动"),
+      nextAction: portfolioText("Keep portfolio status reviewed before adding live backend data.", "接入实时后端数据前持续复核活动组合状态。"),
+      ownerRole: "project_owner",
+      value: String(campaigns.length),
+    }),
+    portfolioMetric({
+      detail: portfolioText(
+        "Projects with live or scheduled seeded campaigns.",
+        "拥有进行中或已排期 seeded 活动的项目。",
+      ),
+      id: "active_projects",
+      label: portfolioText("Active projects", "活跃项目"),
+      nextAction: portfolioText("Review project coverage before opening partner onboarding.", "开放合作伙伴接入前复核项目覆盖。"),
+      ownerRole: "growth_lead",
+      value: String(activeProjects),
+    }),
+    portfolioMetric({
+      detail: portfolioText(
+        "Seeded idea-to-launch estimate from AI draft, template selection, review gates, and publish checks.",
+        "基于 AI 草稿、模板选择、审核门禁与发布检查的 seeded 从想法到上线估算。",
+      ),
+      id: "campaign_setup_time",
+      label: portfolioText("Campaign setup time", "活动配置耗时"),
+      nextAction: portfolioText("Measure this with live workflow timestamps before using it as an SLA.", "作为 SLA 使用前需接入真实流程时间戳。"),
+      ownerRole: "internal_operator",
+      state: "warning",
+      value: "42 min",
+    }),
+    portfolioMetric({
+      detail: portfolioRewardBoundary,
+      id: "reward_budget_committed",
+      label: portfolioText("Reward budget committed", "已承诺奖励预算"),
+      nextAction: portfolioText("Confirm project-owned budget terms before winner export.", "导出 winners 前确认项目方自有预算条款。"),
+      ownerRole: "finance_reviewer",
+      state: "warning",
+      value: "18,000 ELF",
+    }),
+    portfolioMetric({
+      detail: portfolioText(
+        "Winner exports remain local previews until project owner approval and private evidence are complete.",
+        "在项目方批准和私有 evidence 完成前，winner exports 仍为本地预览。",
+      ),
+      id: "winner_exports",
+      label: portfolioText("Winner exports", "Winners 导出"),
+      nextAction: portfolioText("Keep export approvals tied to no-reward-distribution acknowledgements.", "保持导出批准与不发奖确认绑定。"),
+      ownerRole: "project_owner",
+      value: String(exportReadyRows),
+    }),
+    portfolioMetric({
+      detail: portfolioText(
+        "Repeat usage counts seeded projects with more than one campaign in the portfolio.",
+        "重复使用统计活动组合中拥有多个活动的 seeded 项目。",
+      ),
+      id: "repeat_project_usage",
+      label: portfolioText("Repeat project usage", "项目重复使用"),
+      nextAction: portfolioText("Track repeat project usage with live project identity before commercial reporting.", "商业化报表前需用真实项目身份追踪重复使用。"),
+      ownerRole: "growth_lead",
+      state: repeatProjectCount > 0 ? "ready" : "warning",
+      value: `${repeatProjectCount}/${new Set(campaigns.map((campaign) => campaign.projectName)).size}`,
+    }),
+  ];
+};
+
+const commercialModel = ({
+  evidence,
+  id,
+  label,
+  nextAction,
+  ownerRole,
+  state,
+}: {
+  evidence: LocalizedText;
+  id: ProjectPortfolioCommercialReadiness["commercialModels"][number]["id"];
+  label: LocalizedText;
+  nextAction: LocalizedText;
+  ownerRole: ProjectPortfolioCommercialOwnerRole;
+  state: PublishState;
+}) => ({
+  boundary: portfolioCommercialBoundary,
+  evidence,
+  id,
+  label,
+  nextAction,
+  ownerRole,
+  state,
+});
+
+const createCommercialModelReadiness = (
+  advancedAnalytics: AdvancedAnalyticsReadinessSurface,
+  launchConsoleCampaignBundles: LaunchConsoleCampaignBundleSurface,
+) => [
+  commercialModel({
+    evidence: portfolioText(
+      "Ecosystem mode can stay free while seeded readiness validates core campaign operations.",
+      "Seeded readiness 验证核心活动运营时，生态模式可保持免费。",
+    ),
+    id: "free_ecosystem_mode",
+    label: portfolioText("Free ecosystem mode", "生态免费模式"),
+    nextAction: portfolioText("Keep free ecosystem access until partner charging rules are approved.", "合作伙伴收费规则批准前保持生态免费访问。"),
+    ownerRole: "growth_lead",
+    state: "ready",
+  }),
+  commercialModel({
+    evidence: portfolioText(
+      "Partner campaign fee needs billing, contract, and finance review before production.",
+      "合作伙伴活动服务费进入生产前需要 billing、合约与财务审核。",
+    ),
+    id: "partner_campaign_fee",
+    label: portfolioText("Partner campaign fee", "合作伙伴活动服务费"),
+    nextAction: portfolioText("Define fee approval and invoice boundaries before live billing.", "实时 billing 前定义服务费批准与发票边界。"),
+    ownerRole: "finance_reviewer",
+    state: "warning",
+  }),
+  commercialModel({
+    evidence: portfolioText(
+      `${advancedAnalytics.summary.premiumReadyReports}/${advancedAnalytics.premiumReports.length} premium reports are seeded-ready for review.`,
+      `${advancedAnalytics.summary.premiumReadyReports}/${advancedAnalytics.premiumReports.length} 个 premium reports 已 seeded 就绪待审核。`,
+    ),
+    id: "premium_analytics",
+    label: portfolioText("Premium analytics", "Premium analytics"),
+    nextAction: portfolioText("Connect event warehouse and billing only after premium report review.", "Premium report 审核后再接入事件仓库与 billing。"),
+    ownerRole: "growth_lead",
+    state: "warning",
+  }),
+  commercialModel({
+    evidence: portfolioText(
+      "AI planner, content pack, and optimization workflows are review-gated seeded surfaces.",
+      "AI planner、content pack 与 optimization workflow 均为审核门禁下的 seeded 表面。",
+    ),
+    id: "ai_ops_package",
+    label: portfolioText("AI Ops package", "AI Ops 套餐"),
+    nextAction: portfolioText("Price AI Ops only after human-review and no-auto-publish gates stay green.", "人工审核与不自动发布门禁保持通过后再为 AI Ops 定价。"),
+    ownerRole: "internal_operator",
+    state: "warning",
+  }),
+  commercialModel({
+    evidence: portfolioText(
+      `${launchConsoleCampaignBundles.summary.totalBundles} Launch Console bundles are available as local handoff packages.`,
+      `${launchConsoleCampaignBundles.summary.totalBundles} 个 Launch Console 活动包可作为本地 handoff package。`,
+    ),
+    id: "launch_package",
+    label: portfolioText("Launch package", "Launch package"),
+    nextAction: portfolioText("Review live Launch Console handoff contracts before packaging.", "打包前先审核真实 Launch Console handoff contracts。"),
+    ownerRole: "growth_lead",
+    state: "warning",
+  }),
+  commercialModel({
+    evidence: portfolioText(
+      "API and skill contracts are local-only and can inform future usage pricing.",
+      "API 与 skill contracts 仍为本地-only，可用于未来 API usage 定价口径。",
+    ),
+    id: "api_usage",
+    label: portfolioText("API usage", "API usage"),
+    nextAction: portfolioText("Define usage metering after live API authentication and quotas exist.", "实时 API 认证与配额存在后再定义 usage metering。"),
+    ownerRole: "api_reviewer",
+    state: "warning",
+  }),
+];
+
+const createProjectPortfolioCommercialReadiness = ({
+  advancedAnalytics,
+  campaigns,
+  exportReadyRows,
+  launchConsoleCampaignBundles,
+}: {
+  advancedAnalytics: AdvancedAnalyticsReadinessSurface;
+  campaigns: CampaignCommandItem[];
+  exportReadyRows: number;
+  launchConsoleCampaignBundles: LaunchConsoleCampaignBundleSurface;
+}): ProjectPortfolioCommercialReadiness => {
+  const metrics = createPortfolioMetrics(campaigns, exportReadyRows);
+  const commercialModels = createCommercialModelReadiness(advancedAnalytics, launchConsoleCampaignBundles);
+  const readyMetricCount = metrics.filter((metric) => metric.state === "ready").length;
+  const reviewRequiredMetricCount = metrics.filter((metric) => metric.state === "warning").length;
+
+  return {
+    boundary: portfolioCommercialBoundary,
+    commercialModels,
+    metrics,
+    summary: {
+      commercialModelCount: commercialModels.length,
+      productionReadyModelCount: 0,
+      readyMetricCount,
+      reviewRequiredMetricCount,
+      rewardBoundary: portfolioRewardBoundary,
+      topNextAction: portfolioText(
+        "Review partner fee, premium analytics, and API usage boundaries before any billing work.",
+        "任何 billing 工作前先审核合作伙伴收费、premium analytics 与 API usage 边界。",
+      ),
+      totalMetrics: metrics.length,
     },
   };
 };
@@ -6155,6 +6425,12 @@ export const createProjectCampaignCommandCenter = (
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
   const launchConsoleCampaignBundles = createLaunchConsoleCampaignBundles(campaign);
+  const portfolioCommercialReadiness = createProjectPortfolioCommercialReadiness({
+    advancedAnalytics,
+    campaigns,
+    exportReadyRows: analyticsExport.readyRows,
+    launchConsoleCampaignBundles,
+  });
 
   return {
     summary: createCommandSummary(campaigns, analyticsExport.readyRows),
@@ -6166,6 +6442,7 @@ export const createProjectCampaignCommandCenter = (
     providerEvidenceRegistry,
     lifecycleOperations,
     launchConsoleCampaignBundles,
+    portfolioCommercialReadiness,
     boundary: commandCenterBoundary,
   };
 };
