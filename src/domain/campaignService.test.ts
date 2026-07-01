@@ -273,6 +273,34 @@ describe("Campaign OS local API service facade", () => {
       campaignId: campaignDetail.id,
       walletAddress: "3E9...7cD",
     });
+    const notEligibleWithWalletProvenance = service.checkEligibility({
+      accountType: "EOA",
+      campaignId: campaignDetail.id,
+      walletAddress: "3E9...7cD",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
+    const partialAccountType = service.checkEligibility({
+      accountType: "EOA",
+      campaignId: campaignDetail.id,
+      walletAddress: "3E9...7cD",
+    });
+    const partialWalletSource = service.checkEligibility({
+      campaignId: campaignDetail.id,
+      walletAddress: "3E9...7cD",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
+    const mismatchedAccountType = service.checkEligibility({
+      accountType: "AA",
+      campaignId: campaignDetail.id,
+      walletAddress: "3E9...7cD",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
+    const mismatchedWalletSource = service.checkEligibility({
+      accountType: "EOA",
+      campaignId: campaignDetail.id,
+      walletAddress: "3E9...7cD",
+      walletSource: "PORTKEY_AA",
+    });
     const eligible = service.checkEligibility({
       campaignId: campaignDetail.id,
       walletAddress: "2F4...9aB",
@@ -357,6 +385,31 @@ describe("Campaign OS local API service facade", () => {
       walletSource: "PORTKEY_EOA_EXTENSION",
       walletTypeVerified: true,
     });
+    expect(notEligibleWithWalletProvenance.payload).toMatchObject({
+      accountType: "EOA",
+      eligible: false,
+      localePreference: "zh-CN",
+      missingTasks: ["bridge_ebridge"],
+      riskFlags: ["referral_velocity_review"],
+      status: "not_eligible",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
+    });
+    for (const invalidWalletProvenance of [
+      partialAccountType,
+      partialWalletSource,
+      mismatchedAccountType,
+      mismatchedWalletSource,
+    ]) {
+      expect(invalidWalletProvenance).toMatchObject({
+        ok: false,
+        error: expect.objectContaining({
+          code: "INVALID_REQUEST",
+          field: "walletProvenance",
+        }),
+      });
+      expect(invalidWalletProvenance.payload).toBeUndefined();
+    }
     expect(eligible.payload).toMatchObject({ eligible: true, status: "eligible" });
     expect(riskFlagged.payload).toMatchObject({ eligible: false, status: "risk_flagged" });
     expect(pendingEligibility.payload).toMatchObject({ eligible: false, status: "pending" });
