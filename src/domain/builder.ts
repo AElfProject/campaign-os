@@ -1802,6 +1802,7 @@ const makeCheck = (
 
 const gateTitles: Record<string, LocalizedText> = {
   "basics-complete": text("Campaign basics", "活动基础信息"),
+  "campaign-quality": text("Campaign quality", "活动质量", "活動品質"),
   "contract-impact": text("Contract impact", "合约影响"),
   "export-disclaimer": text("Export boundary", "导出边界"),
   "i18n-human-review": text("i18n human review", "多语言人工审核"),
@@ -1866,10 +1867,30 @@ const localizedRewardDisclaimerBlockerLocales = (draft: CampaignDraft) =>
     return locale !== "en-US" && (!revision.humanReviewed || revision.fallbackToEnglish);
   });
 
+const highRewardCampaignValueUsd = 2000;
+
+const meaningfulEcosystemTaskCategories = new Set<TaskTemplateCategory>([
+  "bridge",
+  "dao",
+  "daipp",
+  "forecast",
+  "liquidity",
+  "nft",
+  "pay",
+  "schrodinger",
+  "swap",
+]);
+
+const isMeaningfulEcosystemTask = (template: TaskTemplate) =>
+  template.verificationType === "ON_CHAIN" ||
+  template.verificationType === "DAPP_API" ||
+  meaningfulEcosystemTaskCategories.has(template.category);
+
+const selectedTaskTemplates = (draft: CampaignDraft) =>
+  taskTemplateLibrary.filter((template) => draft.selectedTaskTemplateIds.includes(template.id));
+
 const isHighRewardSocialOnly = (draft: CampaignDraft) => {
-  const selectedTemplates = taskTemplateLibrary.filter((template) =>
-    draft.selectedTaskTemplateIds.includes(template.id),
-  );
+  const selectedTemplates = selectedTaskTemplates(draft);
   const hasOnlySocialVerification = selectedTemplates.length > 0 && selectedTemplates.every(
     (template) => template.verificationType === "SOCIAL" || template.verificationType === "REFERRAL",
   );
@@ -1877,11 +1898,68 @@ const isHighRewardSocialOnly = (draft: CampaignDraft) => {
     (template) => template.category === "social" && template.riskLevel === "high" && template.defaultPoints >= 150,
   );
 
-  return hasHighRewardSocialTask && (hasOnlySocialVerification || draft.rewardPlan.estimatedRewardValueUsd >= 2000);
+  return hasHighRewardSocialTask && (hasOnlySocialVerification || draft.rewardPlan.estimatedRewardValueUsd >= highRewardCampaignValueUsd);
 };
 
-const selectedTaskTemplates = (draft: CampaignDraft) =>
-  taskTemplateLibrary.filter((template) => draft.selectedTaskTemplateIds.includes(template.id));
+const createCampaignQualityCheck = (draft: CampaignDraft): ReadinessCheck => {
+  const templates = selectedTaskTemplates(draft);
+  const meaningfulActionCount = templates.filter(isMeaningfulEcosystemTask).length;
+
+  if (meaningfulActionCount > 0) {
+    return makeCheck(
+      "campaign-quality",
+      "risk",
+      "passed",
+      text(
+        "Selected tasks include a meaningful ecosystem action before publish.",
+        "已选任务包含发布前所需的有效生态行为。",
+        "已選任務包含發布前所需的有效生態行為。",
+      ),
+      text(
+        "Keep the ecosystem action visible alongside reward, risk, and export review.",
+        "在奖励、风险与导出审核中继续展示该生态行为。",
+        "在獎勵、風險與匯出審核中繼續展示該生態行為。",
+      ),
+      "internal_operator",
+    );
+  }
+
+  if (draft.rewardPlan.estimatedRewardValueUsd >= highRewardCampaignValueUsd || templates.length === 0) {
+    return makeCheck(
+      "campaign-quality",
+      "risk",
+      "blocker",
+      text(
+        "High-reward campaigns need at least one meaningful ecosystem action before publish.",
+        "高奖励活动发布前至少需要一个有效生态行为。",
+        "高獎勵活動發布前至少需要一個有效生態行為。",
+      ),
+      text(
+        "Add bridge, swap, NFT, DAO, dApp API, Pay, Forecast, or another ecosystem task before publish.",
+        "发布前添加 bridge、swap、NFT、DAO、dApp API、Pay、Forecast 或其他生态任务。",
+        "發布前加入 bridge、swap、NFT、DAO、dApp API、Pay、Forecast 或其他生態任務。",
+      ),
+      "internal_operator",
+    );
+  }
+
+  return makeCheck(
+    "campaign-quality",
+    "risk",
+    "warning",
+    text(
+      "This campaign lacks a meaningful ecosystem action and needs quality review.",
+      "该活动缺少有效生态行为，需要质量审核。",
+      "該活動缺少有效生態行為，需要品質審核。",
+    ),
+    text(
+      "Add a real ecosystem action or keep the reward posture low with manual review.",
+      "添加真实生态行为，或保持低奖励并进入人工审核。",
+      "加入真實生態行為，或保持低獎勵並進入人工審核。",
+    ),
+    "internal_operator",
+  );
+};
 
 const createWalletGate = (draft: CampaignDraft): PublishGateItem => {
   if (draft.walletPolicy === "ANY") {
@@ -2155,6 +2233,8 @@ export const computeBuilderPublishReadiness = (draft: CampaignDraft): PublishRea
     );
   }
 
+  checks.push(createCampaignQualityCheck(draft));
+
   const blockers = checks.filter((check) => check.status === "blocker");
 
   return {
@@ -2212,6 +2292,7 @@ const routeSummary = (ownerRole: OwnerRole, gates: PublishGateItem[]): Localized
 const createApprovalRoutes = (gates: PublishGateItem[]): PublishGateApprovalRoute[] => {
   const routeGateIds = new Set([
     "contract-impact",
+    "campaign-quality",
     "export-disclaimer",
     "i18n-human-review",
     "localized-reward-disclaimer",

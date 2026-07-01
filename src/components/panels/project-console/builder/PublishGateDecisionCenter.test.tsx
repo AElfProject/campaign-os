@@ -12,6 +12,9 @@ describe("PublishGateDecisionCenter", () => {
     expect(screen.getByText("Approval routing")).toBeInTheDocument();
     expect(screen.getByText(/no real publish/i)).toBeInTheDocument();
     expect(screen.getByText("Any wallet allows AA and EOA users to participate.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Selected tasks include a meaningful ecosystem action before publish."),
+    ).toBeInTheDocument();
     expect(screen.getByText("Contract claim mode requires high-impact manual review.")).toBeInTheDocument();
     expect(
       screen.getByText("Exporting winners does not distribute rewards disclaimer is accepted."),
@@ -28,6 +31,7 @@ describe("PublishGateDecisionCenter", () => {
     expect(screen.getAllByText("内部运营").length).toBeGreaterThan(0);
     expect(screen.getAllByText("合约审核人").length).toBeGreaterThan(0);
     expect(screen.getByText("合约领取模式需要高影响人工审核。")).toBeInTheDocument();
+    expect(screen.getByText("已选任务包含发布前所需的有效生态行为。")).toBeInTheDocument();
     expect(screen.getByText("导出 winners 不等于发奖的声明已确认。")).toBeInTheDocument();
     expect(screen.getByText(/不执行真实发布/)).toBeInTheDocument();
   });
@@ -40,6 +44,7 @@ describe("PublishGateDecisionCenter", () => {
     expect(screen.getAllByText("專案方").length).toBeGreaterThan(0);
     expect(screen.getAllByText("內部營運").length).toBeGreaterThan(0);
     expect(screen.getAllByText("合約審核人").length).toBeGreaterThan(0);
+    expect(screen.getByText("已選任務包含發布前所需的有效生態行為。")).toBeInTheDocument();
     expect(screen.getByText(/高影响门禁/)).toBeInTheDocument();
   });
 
@@ -51,6 +56,7 @@ describe("PublishGateDecisionCenter", () => {
     expect(within(approvalRouting).getAllByText("Project owner").length).toBeGreaterThan(0);
     expect(within(approvalRouting).getAllByText("Internal operator").length).toBeGreaterThan(0);
     expect(within(approvalRouting).getAllByText("Contract reviewer").length).toBeGreaterThan(0);
+    expect(within(approvalRouting).getByText("campaign-quality")).toBeInTheDocument();
     expect(within(approvalRouting).getByText("contract-impact")).toBeInTheDocument();
     expect(within(approvalRouting).getByText("risk-referral-controls")).toBeInTheDocument();
     expect(within(approvalRouting).getByText("wallet-policy")).toBeInTheDocument();
