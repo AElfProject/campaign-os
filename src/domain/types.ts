@@ -240,6 +240,8 @@ export interface WalletAdapterFixture {
   walletSource: WalletSource;
   chainId: "AELF" | "tDVV" | "tDVW" | string;
   network: WalletNetwork;
+  accounts?: Record<string, string>;
+  publicKey?: string;
   capabilities: WalletCapability[];
   connectedAt?: string;
   lastSeenAt?: string;
@@ -262,6 +264,8 @@ export interface NormalizedWalletSession {
   walletName: string;
   chainId: "AELF" | "tDVV" | "tDVW" | string;
   network: WalletNetwork;
+  accounts?: Record<string, string>;
+  publicKey?: string;
   capabilities: WalletCapability[];
   connectedAt?: string;
   lastSeenAt?: string;

@@ -55,14 +55,18 @@ describe("Campaign OS local API service facade", () => {
 
     expect(sessions["sess-aa-001"].payload).toMatchObject({
       accountType: "AA",
+      accounts: { AELF: "2F4...9aB" },
       capabilities: expect.arrayContaining(["EBRIDGE"]),
+      publicKey: "PUB_AA_SEEDED_001",
       walletSource: "PORTKEY_AA",
       verificationStatus: "verified",
       walletTypeVerified: true,
     });
     expect(sessions["sess-eoa-app-001"].payload).toMatchObject({
       accountType: "EOA",
+      accounts: { AELF: "8A2...1eF" },
       capabilities: expect.arrayContaining(["EBRIDGE"]),
+      publicKey: "PUB_EOA_APP_SEEDED_001",
       walletSource: "PORTKEY_EOA_APP",
       verificationStatus: "verified",
     });
@@ -150,6 +154,8 @@ describe("Campaign OS local API service facade", () => {
         walletTypeVerified: true,
       },
     });
+    expect(verified.payload).not.toHaveProperty("accounts");
+    expect(verified.payload).not.toHaveProperty("publicKey");
     expect(missingSignature).toMatchObject({
       ok: true,
       payload: {
