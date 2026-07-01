@@ -187,6 +187,8 @@ describe("Campaign OS local API service facade", () => {
 
   it("creates campaign and task payloads with locale, wallet, contract, and evidence metadata", () => {
     const campaign = service.createCampaign({
+      duration: "2026-07-01/2026-07-14",
+      goal: "Activate Awaken traders",
       ownerAddress: "2F4...9aB",
       projectId: "awaken",
       rewardDescription: "Rewards remain project owned.",
@@ -199,6 +201,8 @@ describe("Campaign OS local API service facade", () => {
       endTime: "2026-08-14T23:59:59Z",
       metadataHash: "sha256:campaign-metadata",
       metadataUri: "ipfs://campaign-metadata",
+      duration: "  2026-08-01/2026-08-14  ",
+      goal: "  Grow Forest liquidity  ",
       ownerAddress: "3E9...7cD",
       projectId: "forest",
       rewardDescription: "Rewards remain project owned with reviewed disclaimer.",
@@ -218,6 +222,8 @@ describe("Campaign OS local API service facade", () => {
       walletCompatibility: "ANY",
     });
     const unsupportedLocale = service.createCampaign({
+      duration: "2026-07-01/2026-07-14",
+      goal: "Activate Awaken traders",
       ownerAddress: "2F4...9aB",
       projectId: "awaken",
       rewardDescription: "Rewards remain project owned.",
@@ -238,7 +244,9 @@ describe("Campaign OS local API service facade", () => {
     expect(campaign.payload).toMatchObject({
       contractMode: "OFF_CHAIN_MVP",
       defaultLocale: "en-US",
+      duration: "2026-07-01/2026-07-14",
       endTime: "2026-07-14T23:59:59Z",
+      goal: "Activate Awaken traders",
       ownerAddress: "2F4...9aB",
       supportedLocales: ["en-US", "zh-CN", "zh-TW"],
       startTime: "2026-07-01T00:00:00Z",
@@ -249,7 +257,9 @@ describe("Campaign OS local API service facade", () => {
     expect(explicitCampaign.payload).toMatchObject({
       contractMode: "V2_COMPANION",
       defaultLocale: "en-US",
+      duration: "2026-08-01/2026-08-14",
       endTime: "2026-08-14T23:59:59Z",
+      goal: "Grow Forest liquidity",
       metadataHash: "sha256:campaign-metadata",
       metadataUri: "ipfs://campaign-metadata",
       ownerAddress: "3E9...7cD",
@@ -411,7 +421,9 @@ describe("Campaign OS local API service facade", () => {
 
   it("fails closed for invalid create campaign request fields", () => {
     const validCreateCampaignRequest = {
+      duration: "2026-07-01/2026-07-14",
       endTime: "2026-07-14T23:59:59Z",
+      goal: "Activate Awaken traders",
       ownerAddress: "2F4...9aB",
       projectId: "awaken",
       rewardDescription: "Rewards remain project owned.",
@@ -459,6 +471,34 @@ describe("Campaign OS local API service facade", () => {
           endTime: "2026-07-01T00:00:00Z",
         }),
         expected: { code: "INVALID_REQUEST", field: "timeWindow" },
+      },
+      {
+        response: service.createCampaign({
+          ...validCreateCampaignRequest,
+          goal: "  ",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "goal" },
+      },
+      {
+        response: service.createCampaign({
+          ...validCreateCampaignRequest,
+          duration: "  ",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "duration" },
+      },
+      {
+        response: service.createCampaign({
+          ...validCreateCampaignRequest,
+          duration: "2026-07-02/2026-07-14",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "duration" },
+      },
+      {
+        response: service.createCampaign({
+          ...validCreateCampaignRequest,
+          duration: "2026-07-01/2026-07-15",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "duration" },
       },
     ];
 
