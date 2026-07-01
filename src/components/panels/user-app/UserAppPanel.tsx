@@ -2,12 +2,14 @@ import { useState, type CSSProperties } from "react";
 import {
   campaignDetail,
   createCampaignShareCardReadiness,
+  createCampaignOsLocalService,
   createEcosystemNextActionReadModel,
   createEligibilityCheckerReadModel,
   createLeaderboardReadModel,
   createParticipationReadModel,
   createUserWinnersExportStatusReadModel,
   createWalletConnectionDiagnostics,
+  deriveTaskVerificationAction,
   getWalletCompatibilityLabel,
   getWalletBadgeLabel,
   getLocalizedText,
@@ -15,15 +17,19 @@ import {
   type CampaignShellDetail,
   type CampaignStatus,
   type EligibilityStatus,
+  type ExecuteTaskVerificationActionResponse,
   type LeaderboardModeId,
   type EcosystemRecommendationPriority,
   type EcosystemRecommendationStatus,
   type LocalizedText,
+  type LocalServiceResult,
   type LocaleStatus,
   type NormalizedWalletSession,
   type ParticipantSnapshot,
   type PublishState,
   type SupportedLocale,
+  type TaskVerificationActionKind,
+  type TaskVerificationProofType,
   type TaskVerificationStatus,
   type UserWinnersExportStatus,
   type WalletDiagnosticState,
@@ -118,6 +124,22 @@ const secondaryButtonStyle: CSSProperties = {
   ...buttonStyle,
   background: "#ffffff",
   color: "#1c64f2",
+};
+
+const compactActionButtonStyle: CSSProperties = {
+  ...buttonStyle,
+  maxWidth: "100%",
+  minWidth: 112,
+  overflowWrap: "anywhere",
+  whiteSpace: "normal",
+};
+
+const disabledActionButtonStyle: CSSProperties = {
+  ...compactActionButtonStyle,
+  background: "#e2e8f0",
+  borderColor: "#cbd5e1",
+  color: "#475569",
+  cursor: "not-allowed",
 };
 
 const activeChoiceButtonStyle: CSSProperties = {
@@ -260,6 +282,25 @@ const publishStateBadgeState = (state: PublishState) =>
   state === "blocker" ? "blocker" : state === "warning" ? "warning" : "ready";
 
 const formatSource = (value: string) => value.replace(/_/g, " ");
+
+const localCampaignService = createCampaignOsLocalService();
+
+type LocalTaskActionResult = LocalServiceResult<ExecuteTaskVerificationActionResponse>;
+
+const taskActionLabel = (
+  kind: TaskVerificationActionKind,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels: Record<TaskVerificationActionKind, string> = {
+    completed: copy.alreadyVerifiedAction,
+    retry: copy.retryVerificationAction,
+    submit_proof: copy.submitProofAction,
+    verify: copy.verifyTaskAction,
+    view_review: copy.viewReviewAction,
+  };
+
+  return labels[kind];
+};
 
 const renderChips = (items: readonly string[], emptyLabel: string) => (
   <span style={chipListStyle}>
@@ -765,6 +806,7 @@ export const UserAppPanel = ({
   const [eligibilityAddressInput, setEligibilityAddressInput] = useState(participant.walletAddress);
   const [checkedEligibilityAddress, setCheckedEligibilityAddress] = useState(participant.walletAddress);
   const [leaderboardMode, setLeaderboardMode] = useState<LeaderboardModeId>("total_points");
+  const [latestTaskActions, setLatestTaskActions] = useState<Record<string, LocalTaskActionResult>>({});
   const copy = userAppCopy[locale];
   const participation = createParticipationReadModel(campaign, participant);
   const winnersExportStatus = createUserWinnersExportStatusReadModel(campaign, participant);
@@ -818,6 +860,27 @@ export const UserAppPanel = ({
   ];
   const submitEligibilityCheck = () => {
     setCheckedEligibilityAddress(eligibilityAddressInput.trim());
+  };
+
+  const runLocalTaskAction = (
+    taskId: string,
+    kind: TaskVerificationActionKind,
+    proofType?: TaskVerificationProofType,
+  ) => {
+    const result = localCampaignService.executeTaskVerificationAction({
+      accountType: participant.accountType,
+      campaignId: campaign.id,
+      kind,
+      proofType,
+      taskId,
+      walletAddress: participant.walletAddress,
+      walletSource: participant.walletSource,
+    });
+
+    setLatestTaskActions((current) => ({
+      ...current,
+      [taskId]: result,
+    }));
   };
 
   return (
@@ -1533,6 +1596,11 @@ export const UserAppPanel = ({
         <ul style={listStyle}>
           {campaign.tasks.map((task) => {
             const state = taskStates.find((taskState) => taskState.taskId === task.id);
+            const action = state ? deriveTaskVerificationAction(task, state) : undefined;
+            const actionKind = action?.kind ?? "verify";
+            const actionProofType: TaskVerificationProofType | undefined =
+              actionKind === "submit_proof" ? "screenshot" : undefined;
+            const latestAction = latestTaskActions[task.id];
 
             return (
               <li key={task.id} style={listItemStyle}>
@@ -1548,6 +1616,19 @@ export const UserAppPanel = ({
                     state={taskBadgeState(state?.status ?? "ready")}
                   />
                 </div>
+                <div style={rowStyle}>
+                  <button
+                    disabled={!action?.enabled}
+                    onClick={() => runLocalTaskAction(task.id, actionKind, actionProofType)}
+                    style={action?.enabled ? compactActionButtonStyle : disabledActionButtonStyle}
+                    type="button"
+                  >
+                    {taskActionLabel(actionKind, copy)}
+                  </button>
+                  <span style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>
+                    {copy.localOnlyActionBoundary}
+                  </span>
+                </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   <WalletCompatibilityBadge compatibility={task.walletCompatibility} />
                   <LocaleStatusBadge
@@ -1562,6 +1643,9 @@ export const UserAppPanel = ({
                   </span>
                   <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
                     {copy.evidenceCategory}: {state?.canonicalEvidenceSource ?? "-"}
+                  </span>
+                  <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
+                    {copy.evidenceHashes}: {state?.evidence.evidenceHash ?? "-"}
                   </span>
                   <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
                     {copy.pointsAwarded}: {state?.pointsAwarded ?? 0}/{state?.pointsAvailable ?? task.points}
@@ -1592,6 +1676,82 @@ export const UserAppPanel = ({
                 <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
                   {copy.nextAction}: {state ? getLocalizedText(state.nextAction, locale) : "-"}
                 </p>
+                {latestAction ? (
+                  <article
+                    aria-label={`${copy.latestLocalAction}: ${getLocalizedText(task.title, locale)}`}
+                    style={{ ...cardStyle, background: latestAction.ok ? "#ffffff" : "#fff7ed" }}
+                  >
+                    <div style={rowStyle}>
+                      <strong>{copy.latestLocalAction}</strong>
+                      <PublishStateBadge
+                        label={
+                          latestAction.ok
+                            ? taskStatusLabel(latestAction.payload.status, copy)
+                            : copy.localValidationFailure
+                        }
+                        state={latestAction.ok ? taskBadgeState(latestAction.payload.status) : "blocker"}
+                      />
+                    </div>
+                    {latestAction.ok ? (
+                      <>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          <span style={chipStyle}>
+                            {copy.actionKind}: {taskActionLabel(latestAction.payload.kind, copy)}
+                          </span>
+                          <span style={chipStyle}>
+                            {copy.localAttempt}: {latestAction.payload.attemptLabel}
+                          </span>
+                          <span style={chipStyle}>
+                            {copy.providerReadiness}: {formatSource(latestAction.payload.provider.readiness)}
+                          </span>
+                          <span style={chipStyle}>
+                            {copy.pointsAwarded}: {latestAction.payload.pointsAwarded}/
+                            {latestAction.payload.pointsAvailable}
+                          </span>
+                          <span style={chipStyle}>
+                            {copy.evidenceHashes}: {latestAction.payload.evidenceHash}
+                          </span>
+                          {latestAction.payload.proof ? (
+                            <>
+                              <span style={chipStyle}>
+                                {copy.proofType}: {formatSource(latestAction.payload.proof.proofType)}
+                              </span>
+                              <span style={chipStyle}>{copy.noUploadExecuted}</span>
+                            </>
+                          ) : null}
+                          {latestAction.payload.manualReview.queueId ? (
+                            <span style={chipStyle}>
+                              {copy.manualQueue}: {latestAction.payload.manualReview.queueId}
+                            </span>
+                          ) : null}
+                        </div>
+                        {latestAction.payload.provider.fallbackReason ? (
+                          <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                            {copy.fallbackReason}:{" "}
+                            {getLocalizedText(latestAction.payload.provider.fallbackReason, locale)}
+                          </p>
+                        ) : null}
+                        {latestAction.payload.manualReview.reason ? (
+                          <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                            {copy.manualReview}:{" "}
+                            {getLocalizedText(latestAction.payload.manualReview.reason, locale)}
+                          </p>
+                        ) : null}
+                        <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                          {copy.nextAction}: {getLocalizedText(latestAction.payload.nextAction, locale)}
+                        </p>
+                        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                          {getLocalizedText(latestAction.payload.boundary, locale)}{" "}
+                          {copy.noLiveProviderBoundary} {copy.noRewardDistributionBoundary}
+                        </p>
+                      </>
+                    ) : (
+                      <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                        {getLocalizedText(latestAction.error.message, locale)}
+                      </p>
+                    )}
+                  </article>
+                ) : null}
               </li>
             );
           })}

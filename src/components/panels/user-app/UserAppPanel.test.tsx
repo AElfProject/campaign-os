@@ -324,6 +324,79 @@ describe("User App shell", () => {
     expect(within(checker).getByText(/Connect or verify/)).toBeInTheDocument();
   });
 
+  it("runs local task verification actions without changing eligibility or export projections", () => {
+    render(<UserAppPanel locale="en-US" />);
+
+    const taskVerification = screen.getByRole("heading", { name: "Task verification states" }).closest("section");
+    const exportStatus = screen.getByRole("region", { name: "Winners export status" });
+    const eligibility = screen.getByRole("region", { name: "Eligibility checker" });
+
+    expect(taskVerification).not.toBeNull();
+    expect(within(eligibility).getByText("Not eligible")).toBeInTheDocument();
+    expect(within(exportStatus).getAllByText("Blocked before export").length).toBeGreaterThan(0);
+    expect(within(exportStatus).getByText("task-bridge:pending:aelfscan")).toBeInTheDocument();
+
+    fireEvent.click(within(taskVerification!).getByRole("button", { name: "Verify task" }));
+
+    const verifyResult = within(taskVerification!).getByRole("article", {
+      name: "Latest local action: Bridge via eBridge",
+    });
+    expect(within(verifyResult).getByText("Local attempt: local-verify-task-bridge")).toBeInTheDocument();
+    expect(within(verifyResult).getByText("Action: Verify task")).toBeInTheDocument();
+    expect(within(verifyResult).getByText(/No live provider is called by this action/)).toBeInTheDocument();
+    expect(within(verifyResult).getByText(/does not approve eligibility/)).toBeInTheDocument();
+
+    fireEvent.click(within(taskVerification!).getByRole("button", { name: "Retry verification" }));
+    const retryResult = within(taskVerification!).getByRole("article", {
+      name: "Latest local action: Swap on Awaken",
+    });
+    expect(within(retryResult).getByText("Local attempt: local-retry-task-swap")).toBeInTheDocument();
+    expect(within(retryResult).getAllByText(/provider path/i).length).toBeGreaterThan(0);
+    expect(within(retryResult).queryByText("Completed")).not.toBeInTheDocument();
+
+    fireEvent.click(within(taskVerification!).getByRole("button", { name: "Submit proof" }));
+    const proofResult = within(taskVerification!).getByRole("article", {
+      name: "Latest local action: Follow social channel",
+    });
+    expect(within(proofResult).getByText("Proof type: screenshot")).toBeInTheDocument();
+    expect(within(proofResult).getByText("No upload executed")).toBeInTheDocument();
+
+    fireEvent.click(within(taskVerification!).getByRole("button", { name: "View review queue" }));
+    const reviewResult = within(taskVerification!).getByRole("article", {
+      name: "Latest local action: Agent review smoke check",
+    });
+    expect(within(reviewResult).getByText("Review queue: review-task-agent-review-3E9")).toBeInTheDocument();
+    expect(within(reviewResult).getAllByText(/requires human review/i).length).toBeGreaterThan(0);
+
+    expect(within(taskVerification!).getByRole("button", { name: "Already verified" })).toBeDisabled();
+    expect(within(taskVerification!).getByText("Evidence hashes: demo-task-connect-wallet-3E9")).toBeInTheDocument();
+    expect(within(eligibility).getByText("Not eligible")).toBeInTheDocument();
+    expect(within(exportStatus).getAllByText("Blocked before export").length).toBeGreaterThan(0);
+    expect(within(exportStatus).getByText("task-bridge:pending:aelfscan")).toBeInTheDocument();
+  });
+
+  it("renders localized local task action labels and boundaries", () => {
+    render(<UserAppPanel locale="zh-CN" />);
+
+    const taskVerification = screen.getByRole("heading", { name: "任务验证状态" }).closest("section");
+
+    expect(taskVerification).not.toBeNull();
+    expect(within(taskVerification!).getByRole("button", { name: "验证任务" })).toBeInTheDocument();
+    expect(within(taskVerification!).getByRole("button", { name: "重试验证" })).toBeInTheDocument();
+    expect(within(taskVerification!).getByRole("button", { name: "提交证明" })).toBeInTheDocument();
+    expect(within(taskVerification!).getByRole("button", { name: "查看审核队列" })).toBeInTheDocument();
+    expect(within(taskVerification!).getByRole("button", { name: "已验证" })).toBeDisabled();
+
+    fireEvent.click(within(taskVerification!).getByRole("button", { name: "提交证明" }));
+
+    const proofResult = within(taskVerification!).getByRole("article", {
+      name: "最新本地动作: 关注社交频道",
+    });
+    expect(within(proofResult).getByText("证明类型: screenshot")).toBeInTheDocument();
+    expect(within(proofResult).getByText("未执行上传")).toBeInTheDocument();
+    expect(within(proofResult).getByText(/不会批准资格、导出 winners 或发放奖励/)).toBeInTheDocument();
+  });
+
   it("switches leaderboard modes with active state and mode-specific values", () => {
     render(<App />);
 
