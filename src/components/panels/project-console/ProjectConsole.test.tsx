@@ -158,7 +158,19 @@ describe("Project Console shell", () => {
     clickWorkspace("Templates");
 
     expect(screen.getByRole("heading", { name: "Task template library" })).toBeInTheDocument();
-    for (const category of ["wallet", "bridge", "swap", "nft", "dao", "daipp", "social", "invite"]) {
+    for (const category of [
+      "wallet",
+      "bridge",
+      "swap",
+      "nft",
+      "schrodinger",
+      "dao",
+      "daipp",
+      "pay",
+      "forecast",
+      "social",
+      "invite",
+    ]) {
       expect(screen.getByText(category)).toBeInTheDocument();
     }
     expect(screen.getAllByText("AA + EOA").length).toBeGreaterThan(0);

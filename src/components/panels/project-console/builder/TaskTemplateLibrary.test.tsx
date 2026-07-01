@@ -7,7 +7,19 @@ describe("TaskTemplateLibrary", () => {
   it("renders all required task template categories", () => {
     render(<TaskTemplateLibrary locale="en-US" />);
 
-    for (const category of ["wallet", "bridge", "swap", "nft", "dao", "daipp", "social", "invite"]) {
+    for (const category of [
+      "wallet",
+      "bridge",
+      "swap",
+      "nft",
+      "schrodinger",
+      "dao",
+      "daipp",
+      "pay",
+      "forecast",
+      "social",
+      "invite",
+    ]) {
       expect(screen.getByText(category)).toBeInTheDocument();
     }
   });
@@ -16,10 +28,10 @@ describe("TaskTemplateLibrary", () => {
     render(<TaskTemplateLibrary locale="en-US" />);
 
     expect(screen.getByText("Connect wallet")).toBeInTheDocument();
-    expect(screen.getByText("8 of 8 templates")).toBeInTheDocument();
+    expect(screen.getByText("11 of 11 templates")).toBeInTheDocument();
     expect(screen.getByText("WALLET")).toBeInTheDocument();
     expect(screen.getAllByText("AA + EOA").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Default points")).toHaveLength(8);
+    expect(screen.getAllByText("Default points")).toHaveLength(11);
     expect(screen.getByText("40")).toBeInTheDocument();
     expect(screen.getAllByText("zh-CN ai_draft").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
@@ -31,7 +43,7 @@ describe("TaskTemplateLibrary", () => {
 
     expect(screen.getByText("任务模板库")).toBeInTheDocument();
     expect(screen.getByText("连接钱包")).toBeInTheDocument();
-    expect(screen.getAllByText("默认积分")).toHaveLength(8);
+    expect(screen.getAllByText("默认积分")).toHaveLength(11);
   });
 
   it("filters templates by verification type through accessible controls", () => {
@@ -39,9 +51,10 @@ describe("TaskTemplateLibrary", () => {
 
     fireEvent.click(screen.getByLabelText("On-chain"));
 
-    expect(screen.getByText("3 of 8 templates")).toBeInTheDocument();
+    expect(screen.getByText("4 of 11 templates")).toBeInTheDocument();
     expect(screen.getByText("Bridge with eBridge")).toBeInTheDocument();
     expect(screen.getByText("Hold campaign NFT")).toBeInTheDocument();
+    expect(screen.getByText("Hold Schrödinger NFT")).toBeInTheDocument();
     expect(screen.getByText("Vote in DAO proposal")).toBeInTheDocument();
     expect(screen.queryByText("Connect wallet")).not.toBeInTheDocument();
     expect(screen.queryByText("Swap on Awaken")).not.toBeInTheDocument();
@@ -54,7 +67,7 @@ describe("TaskTemplateLibrary", () => {
     fireEvent.click(screen.getByLabelText("On-chain"));
     fireEvent.click(screen.getByLabelText("Chinese fallback"));
 
-    expect(screen.getByText("1 of 8 templates")).toBeInTheDocument();
+    expect(screen.getByText("1 of 11 templates")).toBeInTheDocument();
     expect(screen.getByText("Vote in DAO proposal")).toBeInTheDocument();
     expect(screen.queryByText("Invite a qualified friend")).not.toBeInTheDocument();
     expect(screen.getByText("EOA only")).toBeInTheDocument();
@@ -68,12 +81,12 @@ describe("TaskTemplateLibrary", () => {
     fireEvent.click(screen.getByLabelText("Manual"));
     fireEvent.click(screen.getByLabelText("Chinese reviewed"));
 
-    expect(screen.getByText("0 of 8 templates")).toBeInTheDocument();
+    expect(screen.getByText("0 of 11 templates")).toBeInTheDocument();
     expect(screen.getByText("No task templates match the selected filters.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
 
-    expect(screen.getByText("8 of 8 templates")).toBeInTheDocument();
+    expect(screen.getByText("11 of 11 templates")).toBeInTheDocument();
     expect(screen.getByText("Connect wallet")).toBeInTheDocument();
     expect(screen.getByText("Invite a qualified friend")).toBeInTheDocument();
   });
@@ -85,11 +98,11 @@ describe("TaskTemplateLibrary", () => {
     expect(within(filters).getByText("钱包兼容性")).toBeInTheDocument();
     expect(within(filters).getByLabelText("链上")).toBeInTheDocument();
     expect(within(filters).getByLabelText("中文回退")).toBeInTheDocument();
-    expect(screen.getByText("8 / 8 个模板")).toBeInTheDocument();
+    expect(screen.getByText("11 / 11 个模板")).toBeInTheDocument();
 
     fireEvent.click(within(filters).getByLabelText("人工"));
 
-    expect(screen.getByText("0 / 8 个模板")).toBeInTheDocument();
+    expect(screen.getByText("0 / 11 个模板")).toBeInTheDocument();
     expect(screen.getByText("没有任务模板匹配当前筛选条件。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "重置筛选" }));
     expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);

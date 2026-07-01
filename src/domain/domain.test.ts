@@ -1937,7 +1937,19 @@ describe("Campaign OS domain foundation", () => {
     expect(adminOps.localeSplit.map((row) => row.label)).toEqual(["en-US", "zh-CN", "zh-TW"]);
     expect(adminOps.templateGovernance.summary.totalTemplates).toBe(taskTemplateLibrary.length);
     expect(adminOps.templateGovernance.rows.map((row) => row.category)).toEqual(
-      expect.arrayContaining(["wallet", "bridge", "swap", "nft", "dao", "daipp", "social", "invite"]),
+      expect.arrayContaining([
+        "wallet",
+        "bridge",
+        "swap",
+        "nft",
+        "schrodinger",
+        "dao",
+        "daipp",
+        "pay",
+        "forecast",
+        "social",
+        "invite",
+      ]),
     );
     expect(adminOps.templateGovernance.summary.anyWalletCount).toBeGreaterThan(0);
     expect(adminOps.templateGovernance.summary.eoaOnlyCount).toBeGreaterThan(0);
@@ -1991,6 +2003,10 @@ describe("Campaign OS domain foundation", () => {
     const inviteTemplate = adminOps.templateGovernance.rows.find(
       (row) => row.templateId === "tpl-invite-friend",
     );
+    const payTemplate = adminOps.templateGovernance.rows.find((row) => row.templateId === "tpl-pay-complete");
+    const forecastTemplate = adminOps.templateGovernance.rows.find(
+      (row) => row.templateId === "tpl-forecast-participate",
+    );
     const daoTemplate = adminOps.templateGovernance.rows.find((row) => row.templateId === "tpl-dao-vote");
 
     expect(socialTemplate).toMatchObject({
@@ -2005,6 +2021,17 @@ describe("Campaign OS domain foundation", () => {
     expect(daoTemplate).toMatchObject({
       walletCompatibility: "EOA_ONLY",
       reviewSignals: expect.arrayContaining(["wallet_coverage", "localization_review"]),
+    });
+    expect(payTemplate).toMatchObject({
+      category: "pay",
+      verificationType: "DAPP_API",
+      walletCompatibility: "ANY",
+      reviewSignals: expect.arrayContaining(["localization_review"]),
+    });
+    expect(forecastTemplate).toMatchObject({
+      category: "forecast",
+      verificationType: "DAPP_API",
+      walletCompatibility: "ANY",
     });
     expect(adminOps.templateGovernance.boundary["zh-TW"]).toContain("模板管理治理");
     expect(daoTemplate?.localeReadiness["zh-TW"]).toBe("fallback");
