@@ -269,6 +269,20 @@ describe("Campaign OS local API service facade", () => {
       walletAddress: "3E9...7cD",
       walletSource: "PORTKEY_EOA_EXTENSION",
     });
+    const mismatchedVerifyAccountType = service.verifyTask({
+      accountType: "AA",
+      campaignId: campaignDetail.id,
+      taskId: "task-swap",
+      walletAddress: "3E9...7cD",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
+    const mismatchedVerifyWalletSource = service.verifyTask({
+      accountType: "EOA",
+      campaignId: campaignDetail.id,
+      taskId: "task-swap",
+      walletAddress: "3E9...7cD",
+      walletSource: "PORTKEY_AA",
+    });
     const notEligible = service.checkEligibility({
       campaignId: campaignDetail.id,
       walletAddress: "3E9...7cD",
@@ -375,6 +389,19 @@ describe("Campaign OS local API service facade", () => {
       status: "manual_review",
     });
     expect(manualReview.payload?.nextAction["en-US"]).toContain("manual review");
+    for (const invalidTaskWalletProvenance of [
+      mismatchedVerifyAccountType,
+      mismatchedVerifyWalletSource,
+    ]) {
+      expect(invalidTaskWalletProvenance).toMatchObject({
+        ok: false,
+        error: expect.objectContaining({
+          code: "INVALID_REQUEST",
+          field: "walletProvenance",
+        }),
+      });
+      expect(invalidTaskWalletProvenance.payload).toBeUndefined();
+    }
     expect(notEligible.payload).toMatchObject({
       accountType: "EOA",
       eligible: false,

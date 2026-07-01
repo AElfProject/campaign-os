@@ -429,6 +429,25 @@ const validateEligibilityWalletProvenance = (
   return undefined;
 };
 
+const validateTaskWalletProvenance = (
+  request: VerifyTaskRequest,
+  participant: ParticipantSnapshot,
+): LocalServiceResult<VerifyTaskResponse> | undefined => {
+  if (
+    request.accountType !== participant.accountType ||
+    request.walletSource !== participant.walletSource
+  ) {
+    return failure(
+      "INVALID_REQUEST",
+      "walletProvenance",
+      "Task verification wallet provenance must match the local participant wallet metadata before evidence or points can be returned.",
+      "任务验证的钱包来源信息必须匹配本地参与者钱包元数据，才能返回 evidence 或积分结果。",
+    );
+  }
+
+  return undefined;
+};
+
 const toVerificationStatus = (
   status: TaskVerificationStatus,
 ): Exclude<TaskVerificationStatus, "ready"> => (status === "ready" ? "pending" : status);
@@ -652,6 +671,12 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       );
     }
 
+    const provenanceFailure = validateTaskWalletProvenance(request, participant);
+
+    if (provenanceFailure) {
+      return provenanceFailure;
+    }
+
     const taskState = deriveParticipantTaskStates(campaign.tasks, participant).find(
       (state) => state.taskId === task.id,
     );
@@ -666,7 +691,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     }
 
     return success({
-      accountType: request.accountType,
+      accountType: participant.accountType,
       canonicalEvidenceSource: taskState.canonicalEvidenceSource,
       campaignId: campaign.id,
       evidence: taskState.evidence,
@@ -681,7 +706,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       status: toVerificationStatus(taskState.status),
       taskId: task.id,
       walletAddress: participant.walletAddress,
-      walletSource: request.walletSource,
+      walletSource: participant.walletSource,
     });
   },
 
