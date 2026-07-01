@@ -55,6 +55,8 @@ import {
   type ParticipantSnapshot,
   type ProviderEvidenceRegistry,
   type PublishReadiness,
+  type ReferralRiskTier,
+  type ReferralWalletRiskMetric,
   type SupportedLocale,
   type TaskVerificationStatus,
   type TaskVerificationActionKind,
@@ -423,6 +425,7 @@ export interface CampaignOsLocalService {
     localeMetrics: ReturnType<typeof createProjectCampaignCommandCenter>["analyticsExport"]["localeSplit"];
     period: "daily" | "weekly";
     reportCards: ReturnType<typeof createAdminOpsReadModel>["aiReports"];
+    referralWalletRiskMetrics: ReferralWalletRiskMetric[];
     riskSummary: ReturnType<typeof createAdminOpsReadModel>["riskSignals"];
     walletLocaleMetrics: WalletLocaleMetric[];
     walletTypeMetrics: ReturnType<typeof createProjectCampaignCommandCenter>["analyticsExport"]["walletSplit"];
@@ -790,6 +793,60 @@ const createWalletLocaleMetrics = (
       };
     });
   });
+};
+
+const referralRiskTierFor = (participant: ParticipantSnapshot): ReferralRiskTier =>
+  participant.riskFlags.length > 0 || (participant.referralSummary?.riskFlags.length ?? 0) > 0
+    ? "needs_review"
+    : "low_risk";
+
+const referralWalletRiskKey = (walletType: AccountType, riskTier: ReferralRiskTier) =>
+  `${walletType}:${riskTier}`;
+
+const referralWalletRiskLabel = (walletType: AccountType, riskTier: ReferralRiskTier) =>
+  `${walletType} / ${riskTier.replace("_", " ")}`;
+
+const roundRate = (value: number) => Math.round(value * 100) / 100;
+
+const createReferralWalletRiskMetrics = (
+  participants: readonly ParticipantSnapshot[],
+): ReferralWalletRiskMetric[] => {
+  const metricsByKey = new Map<string, ReferralWalletRiskMetric>();
+
+  for (const participant of participants) {
+    const walletType = participant.accountType;
+    const riskTier = referralRiskTierFor(participant);
+    const key = referralWalletRiskKey(walletType, riskTier);
+    const existing = metricsByKey.get(key) ?? {
+      conversionRate: 0,
+      id: `referral-wallet-risk-${walletType.toLowerCase()}-${riskTier.replace("_", "-")}`,
+      invitedCount: 0,
+      label: referralWalletRiskLabel(walletType, riskTier),
+      participantCount: 0,
+      qualifiedInvitees: 0,
+      riskTier,
+      walletType,
+    };
+    const referral = participant.referralSummary;
+
+    existing.participantCount += 1;
+    existing.invitedCount += referral?.invitedCount ?? 0;
+    existing.qualifiedInvitees += referral?.qualifiedInvitees ?? 0;
+    metricsByKey.set(key, existing);
+  }
+
+  const walletOrder: AccountType[] = ["AA", "EOA", "UNKNOWN"];
+  const tierOrder: ReferralRiskTier[] = ["low_risk", "needs_review"];
+
+  return Array.from(metricsByKey.values())
+    .map((metric) => ({
+      ...metric,
+      conversionRate: metric.invitedCount === 0 ? 0 : roundRate(metric.qualifiedInvitees / metric.invitedCount),
+    }))
+    .sort((left, right) =>
+      walletOrder.indexOf(left.walletType) - walletOrder.indexOf(right.walletType) ||
+      tierOrder.indexOf(left.riskTier) - tierOrder.indexOf(right.riskTier)
+    );
 };
 
 interface DirectWalletAdapterMetadata {
@@ -1540,6 +1597,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       localeMetrics,
       period: request.period,
       reportCards: adminOps.aiReports,
+      referralWalletRiskMetrics: createReferralWalletRiskMetrics(campaign.participants),
       riskSummary: adminOps.riskSignals,
       walletLocaleMetrics: createWalletLocaleMetrics(campaign.participants, walletTypeMetrics, campaign.supportedLocales),
       walletTypeMetrics,
