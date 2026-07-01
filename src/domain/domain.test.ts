@@ -2642,7 +2642,7 @@ describe("Campaign OS domain foundation", () => {
       rows.map((row) => [`${row.metric}:${row.locale}`, row]),
     );
 
-    expect(rows).toHaveLength(supportedLocales.length * 5);
+    expect(rows).toHaveLength(supportedLocales.length * 7);
     for (const locale of supportedLocales) {
       expect(rowsByKey[`campaign_views:${locale}`]).toMatchObject({
         label: expect.objectContaining({ "en-US": "Campaign views" }),
@@ -2652,6 +2652,8 @@ describe("Campaign OS domain foundation", () => {
       expect(rowsByKey[`task_completion:${locale}`]).toBeDefined();
       expect(rowsByKey[`referral_conversion:${locale}`]).toBeDefined();
       expect(rowsByKey[`translation_fallback_rate:${locale}`]).toBeDefined();
+      expect(rowsByKey[`ai_draft_accepted_rate:${locale}`]).toBeDefined();
+      expect(rowsByKey[`manual_edit_time:${locale}`]).toBeDefined();
       expect(rowsByKey[`campaign_views:${locale}`].boundary["en-US"]).toContain(
         "No live analytics SDK",
       );
@@ -2663,6 +2665,24 @@ describe("Campaign OS domain foundation", () => {
     expect(rowsByKey["translation_fallback_rate:zh-TW"]).toMatchObject({
       readiness: "warning",
       value: "100%",
+    });
+    expect(rowsByKey["ai_draft_accepted_rate:en-US"]).toMatchObject({
+      readiness: "ready",
+      value: "N/A",
+    });
+    expect(rowsByKey["ai_draft_accepted_rate:zh-CN"]).toMatchObject({
+      label: expect.objectContaining({ "en-US": "AI draft accepted rate" }),
+      readiness: "warning",
+      value: "0%",
+    });
+    expect(rowsByKey["manual_edit_time:zh-CN"]).toMatchObject({
+      label: expect.objectContaining({ "en-US": "Manual edit time" }),
+      readiness: "warning",
+      value: "15 min pending review",
+    });
+    expect(rowsByKey["manual_edit_time:zh-TW"]).toMatchObject({
+      readiness: "warning",
+      value: "30 min fallback review",
     });
   });
 

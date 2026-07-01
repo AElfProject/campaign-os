@@ -739,7 +739,9 @@ export type LocaleAnalyticsMetric =
   | "wallet_connect_conversion"
   | "task_completion"
   | "referral_conversion"
-  | "translation_fallback_rate";
+  | "translation_fallback_rate"
+  | "ai_draft_accepted_rate"
+  | "manual_edit_time";
 
 export interface LocaleAnalyticsReadinessRow {
   id: string;
