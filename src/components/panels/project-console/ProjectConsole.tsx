@@ -2600,7 +2600,6 @@ export const ProjectConsole = ({
               <ul style={compactListStyle}>
                 {[
                   ...serviceCoverage.sampleResponseIds,
-                  "generateI18nDraft",
                   "getCampaignAnalytics",
                   "generateCampaignPosts",
                   "summarizeCampaign",

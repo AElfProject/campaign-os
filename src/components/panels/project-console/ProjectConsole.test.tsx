@@ -354,7 +354,7 @@ describe("Project Console shell", () => {
     expect(within(serviceFacade).getByText("Service coverage")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Total services")).toBeInTheDocument();
     expect(within(serviceFacade).getAllByText("Ready").length).toBeGreaterThan(0);
-    expect(within(serviceFacade).getByText("7 Local only")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("8 Local only")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Review required")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Blocked")).toBeInTheDocument();
     for (const coverage of ["wallet coverage", "task verification", "eligibility", "i18n", "analytics", "export", "content", "summary"]) {
@@ -439,6 +439,7 @@ describe("Project Console shell", () => {
     expect(screen.getByText("verify_task")).toBeInTheDocument();
     expect(screen.getByText("export_winners")).toBeInTheDocument();
     expect(screen.getByText("add_campaign_task")).toBeInTheDocument();
+    expect(screen.getByText("generate_i18n_draft")).toBeInTheDocument();
     expect(screen.getByText("ownerAddress")).toBeInTheDocument();
     expect(screen.getByText("metadataUri")).toBeInTheDocument();
     expect(screen.getByText("rewardDisclaimerHash")).toBeInTheDocument();
@@ -448,7 +449,7 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText("accountType").length).toBeGreaterThan(0);
     expect(screen.getByText("txId")).toBeInTheDocument();
     expect(screen.getByText("completedAt")).toBeInTheDocument();
-    expect(screen.getByText("contentKeys")).toBeInTheDocument();
+    expect(screen.getAllByText("contentKeys").length).toBeGreaterThan(0);
     expect(screen.getByText("contractRootMode")).toBeInTheDocument();
     expect(
       screen.getAllByText("LOCAL_SEEDED, AEFINDER, AELFSCAN, DAPP_API, SOCIAL_API, WALLET_SESSION, MANUAL").length,

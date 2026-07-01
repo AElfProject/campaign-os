@@ -1286,12 +1286,14 @@ describe("Campaign OS local API service facade", () => {
       ]),
       serviceNames: expect.arrayContaining([
         "addTask",
+        "generateI18nDraft",
         "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
       ]),
       sampleResponseIds: expect.arrayContaining([
         "addTask",
+        "generateI18nDraft",
         "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
@@ -1303,6 +1305,7 @@ describe("Campaign OS local API service facade", () => {
     expect(coverage.payload?.sampleResponseIds).toEqual(
       expect.arrayContaining([
         "createWalletSession",
+        "generateI18nDraft",
         "verifyTask",
         "checkEligibility",
         "getAdvancedAnalyticsReadiness",
