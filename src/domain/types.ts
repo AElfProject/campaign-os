@@ -972,6 +972,8 @@ export type ContractInterfaceReadiness = "ready" | "warning" | "blocker" | "info
 export type ContractInterfacePhase = "MVP" | "P1" | "P2" | "N/A";
 export type DeliveryChecklistStatus = "covered" | "needs_review" | "blocked" | "deferred";
 export type DeliveryChecklistGroupId = "product" | "architecture" | "ui" | "contract" | "qa";
+export type P1LocaleCode = "ko-KR" | "ja-JP" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES";
+export type P1LocaleExpansionReadinessStatus = "deferred";
 
 export interface ContractInterfaceMethod {
   name: string;
@@ -1061,9 +1063,36 @@ export interface DeliveryChecklistReadinessSummary {
   nextAction: LocalizedText;
 }
 
+export interface P1LocaleExpansionReadinessRow {
+  code: P1LocaleCode;
+  displayName: LocalizedText;
+  status: P1LocaleExpansionReadinessStatus;
+  ownerRole: OwnerRole;
+  reason: LocalizedText;
+  prerequisites: LocalizedText[];
+  nextAction: LocalizedText;
+  runtimeSupported: false;
+}
+
+export interface P1LocaleExpansionReadinessSummary {
+  title: LocalizedText;
+  subtitle: LocalizedText;
+  totalLocales: number;
+  deferredLocales: number;
+  runtimeSupportedLocales: number;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface P1LocaleExpansionReadiness {
+  summary: P1LocaleExpansionReadinessSummary;
+  rows: P1LocaleExpansionReadinessRow[];
+}
+
 export interface DeliveryChecklistReadinessConsole {
   summary: DeliveryChecklistReadinessSummary;
   boundary: LocalizedText;
+  p1LocaleExpansion: P1LocaleExpansionReadiness;
   groups: DeliveryChecklistGroup[];
   blockers: DeliveryChecklistItem[];
   needsReview: DeliveryChecklistItem[];

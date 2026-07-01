@@ -227,16 +227,19 @@ describe("Campaign OS local API service facade", () => {
       verificationType: "ON_CHAIN",
       walletCompatibility: "ANY",
     });
-    const unsupportedLocale = service.createCampaign({
-      duration: "2026-07-01/2026-07-14",
-      goal: "Activate Awaken traders",
-      ownerAddress: "2F4...9aB",
-      projectId: "awaken",
-      rewardDescription: "Rewards remain project owned.",
-      startTime: "2026-07-01T00:00:00Z",
-      endTime: "2026-07-14T23:59:59Z",
-      supportedLocales: ["en-US", "zh-CN", "fr-FR" as never],
-    });
+    const unsupportedLocaleResponses = ["ko-KR", "ja-JP", "vi-VN", "id-ID", "tr-TR", "es-ES"].map(
+      (locale) =>
+        service.createCampaign({
+          duration: "2026-07-01/2026-07-14",
+          goal: "Activate Awaken traders",
+          ownerAddress: "2F4...9aB",
+          projectId: "awaken",
+          rewardDescription: "Rewards remain project owned.",
+          startTime: "2026-07-01T00:00:00Z",
+          endTime: "2026-07-14T23:59:59Z",
+          supportedLocales: ["en-US", "zh-CN", locale as never],
+        }),
+    );
     const invalidTask = service.addTask({
       campaignId: campaignDetail.id,
       evidenceRule: { source: "LOCAL_SEEDED" },
@@ -285,10 +288,12 @@ describe("Campaign OS local API service facade", () => {
       verificationType: "ON_CHAIN",
       walletCompatibility: "ANY",
     });
-    expect(unsupportedLocale).toMatchObject({
-      ok: false,
-      error: expect.objectContaining({ code: "UNSUPPORTED_LOCALE", field: "supportedLocales" }),
-    });
+    for (const response of unsupportedLocaleResponses) {
+      expect(response).toMatchObject({
+        ok: false,
+        error: expect.objectContaining({ code: "UNSUPPORTED_LOCALE", field: "supportedLocales" }),
+      });
+    }
     expect(invalidTask).toMatchObject({
       ok: false,
       error: expect.objectContaining({ code: "INVALID_REQUEST", field: "templateCode" }),
