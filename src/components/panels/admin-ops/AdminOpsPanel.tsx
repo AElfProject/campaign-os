@@ -5,6 +5,7 @@ import {
   createAdminOpsReadModel,
   createExportArtifact,
   createExportConfirmationReadinessGate,
+  createLiveWalletConnectorBoundary,
   createParticipationReadModel,
   getLocalizedText,
   type AelfWebLoginAdapterLiveEvidenceStatus,
@@ -26,6 +27,8 @@ import {
   type LaunchConsoleBundleStatus,
   type LaunchConsoleGateState,
   type LaunchConsoleHandoffReviewState,
+  type LiveWalletConnectorLiveEvidenceStatus,
+  type LiveWalletConnectorReadiness,
   type MetricTone,
   type ProviderFeatureGateState,
   type ProviderLiveEvidenceStatus,
@@ -456,6 +459,22 @@ const adapterLiveEvidenceState = (status: AelfWebLoginAdapterLiveEvidenceStatus)
   return status === "ready" ? "ready" : "warning";
 };
 
+const liveConnectorReadinessState = (readiness: LiveWalletConnectorReadiness) => {
+  if (readiness === "blocked") {
+    return "blocker";
+  }
+
+  return readiness === "approved" ? "ready" : "warning";
+};
+
+const liveConnectorEvidenceState = (status: LiveWalletConnectorLiveEvidenceStatus) => {
+  if (status === "blocked") {
+    return "blocker";
+  }
+
+  return status === "ready" ? "ready" : "warning";
+};
+
 const providerPathPriority = (entry: {
   adapterReadiness: string;
   liveEvidenceStatus: string;
@@ -555,6 +574,7 @@ export const AdminOpsPanel = ({
   );
   const providerEvidenceRegistry = adminOps.providerEvidenceRegistry;
   const walletAdapterReadiness = adminOps.aelfWebLoginAdapterReadiness;
+  const liveWalletConnectorBoundary = createLiveWalletConnectorBoundary();
   const providerEvidenceRegistryEntries = [...providerEvidenceRegistry.entries].sort(
     (left, right) => providerPathPriority(left) - providerPathPriority(right),
   );
@@ -1438,6 +1458,174 @@ export const AdminOpsPanel = ({
               </p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.liveConnectorReleaseReview} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.liveConnectorReleaseReviewSubtitle}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.liveConnectorReleaseReview}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${liveWalletConnectorBoundary.summary.totalConnectors} ${copy.liveConnectorCandidates}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${liveWalletConnectorBoundary.summary.missingLiveEvidenceConnectors} ${copy.liveConnectorMissingEvidence}`}
+              state={
+                liveWalletConnectorBoundary.summary.missingLiveEvidenceConnectors > 0
+                  ? "warning"
+                  : "ready"
+              }
+            />
+            <PublishStateBadge
+              label={`${liveWalletConnectorBoundary.summary.releaseBlockers} ${copy.liveConnectorReleaseBlockers}`}
+              state={liveWalletConnectorBoundary.summary.releaseBlockers > 0 ? "blocker" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{getLocalizedText(liveWalletConnectorBoundary.boundary, locale)}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.nextAction}: {getLocalizedText(liveWalletConnectorBoundary.nextAction, locale)}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.liveConnectorCandidates}</p>
+            <p style={valueStyle}>{liveWalletConnectorBoundary.summary.totalConnectors}</p>
+            <p style={mutedTextStyle}>{copy.liveConnectorCandidatePackages}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.liveConnectorDisabledReviewRequired}</p>
+            <p style={valueStyle}>
+              {liveWalletConnectorBoundary.summary.disabledConnectors +
+                liveWalletConnectorBoundary.summary.reviewRequiredConnectors}
+            </p>
+            <p style={mutedTextStyle}>{copy.liveConnectorFeatureGateState}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.liveConnectorMissingEvidence}</p>
+            <p style={valueStyle}>{liveWalletConnectorBoundary.summary.missingLiveEvidenceConnectors}</p>
+            <p style={mutedTextStyle}>{copy.liveConnectorLiveQaRequired}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.liveConnectorReleaseBlockers}</p>
+            <p style={valueStyle}>{liveWalletConnectorBoundary.summary.releaseBlockers}</p>
+            <p style={mutedTextStyle}>{copy.liveConnectorNoProductionEnablement}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.liveConnectorReviewApprovalRequired}</p>
+            <p style={valueStyle}>{liveWalletConnectorBoundary.summary.approvedConnectors}</p>
+            <p style={mutedTextStyle}>{copy.liveConnectorReviewApprovalRequired}</p>
+          </article>
+        </div>
+        <div style={gridStyle}>
+          {liveWalletConnectorBoundary.entries.map((entry) => (
+            <article key={entry.connectorId} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{entry.connectorId}</p>
+                  <strong>{getLocalizedText(entry.displayName, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={readableCode(entry.readiness)}
+                  state={liveConnectorReadinessState(entry.readiness)}
+                />
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.liveConnectorCandidatePackage}</p>
+                  <p style={wrapTextStyle}>{entry.packageName}</p>
+                  <p style={wrapTextStyle}>{entry.packageVersionSource}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.liveConnectorDependencyRisk}</p>
+                  <PublishStateBadge
+                    label={entry.dependencyRisk}
+                    state={entry.dependencyRisk === "high" ? "blocker" : "warning"}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.liveConnectorFeatureGateState}</p>
+                  <PublishStateBadge
+                    label={readableCode(entry.featureGateState)}
+                    state={entry.featureGateState === "blocked" ? "blocker" : "warning"}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.liveEvidence}</p>
+                  <PublishStateBadge
+                    label={readableCode(entry.liveEvidenceStatus)}
+                    state={liveConnectorEvidenceState(entry.liveEvidenceStatus)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.liveConnectorReadiness}</p>
+                  <PublishStateBadge
+                    label={readableCode(entry.readiness)}
+                    state={liveConnectorReadinessState(entry.readiness)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.liveConnectorReleaseImpact}</p>
+                  <PublishStateBadge
+                    label={readableCode(entry.releaseImpact)}
+                    state={entry.releaseImpact === "release_blocker" ? "blocker" : "warning"}
+                  />
+                </div>
+              </div>
+              <p style={mutedTextStyle}>
+                {copy.liveConnectorFallbackReason}: {getLocalizedText(entry.fallback.reason, locale)}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.nextAction}: {getLocalizedText(entry.nextAction, locale)}
+              </p>
+              <p style={mutedTextStyle}>
+                {copy.liveConnectorNoProductionEnablement}: {getLocalizedText(entry.securityBoundary, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.liveConnectorCandidatePackages}</p>
+            <div style={sourceMetricListStyle}>
+              {liveWalletConnectorBoundary.packageCandidates.map((candidate) => (
+                <span
+                  key={candidate.packageName}
+                  style={{
+                    ...sourceMetricChipStyle,
+                    ...sourceMetricToneStyles[
+                      candidate.dependencyRisk === "high" ? "risk" : "warning"
+                    ],
+                  }}
+                >
+                  {candidate.packageName} ({candidate.packageVersionSource}) ·{" "}
+                  {copy.liveConnectorDependencyRisk}: {candidate.dependencyRisk} ·{" "}
+                  {getLocalizedText(candidate.role, locale)}
+                </span>
+              ))}
+            </div>
+            <p style={wrapTextStyle}>{getLocalizedText(liveWalletConnectorBoundary.packageVersionSource, locale)}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.liveConnectorForbiddenOperations}</p>
+            <p style={mutedTextStyle}>{copy.liveConnectorOperationBoundary}</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {liveWalletConnectorBoundary.forbiddenOperations.map((operation) => (
+                <PublishStateBadge
+                  key={operation.name}
+                  label={operation.name}
+                  state={operation.state === "blocked" ? "blocker" : "warning"}
+                />
+              ))}
+            </div>
+          </article>
         </div>
       </section>
 

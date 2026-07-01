@@ -9,11 +9,25 @@ import type {
   AelfWebLoginAdapterReleaseImpact,
   AelfWebLoginAdapterSeededCoverageStatus,
   AccountType,
+  AdapterWalletInfoCandidate,
   EligibilityWalletStatus,
   LocalizedText,
+  LiveWalletConnectorDependencyRisk,
+  LiveWalletConnectorEntry,
+  LiveWalletConnectorFeatureGateState,
+  LiveWalletConnectorId,
+  LiveWalletConnectorLiveEvidenceStatus,
+  LiveWalletConnectorOperation,
+  LiveWalletConnectorReadiness,
+  LiveWalletConnectorReleaseImpact,
+  LiveWalletConnectorPackageCandidate,
+  LiveWalletConnectorSummary,
+  LiveWalletConnectorBoundary,
+  NormalizedWalletSessionCandidate,
   NormalizedWalletSession,
   WalletAdapterFixture,
   WalletCompatibility,
+  WalletCapability,
   WalletDiagnosticGroup,
   WalletDiagnosticGroupId,
   WalletDiagnosticItem,
@@ -794,12 +808,437 @@ export const createAelfWebLoginAdapterReadiness = (
   };
 };
 
+const liveWalletConnectorBoundary = text(
+  "Live wallet connector execution is disabled by default; no live wallet SDK connection, signature prompt, transaction, contract call, reward custody, reward distribution, backend persistence, export generation, analytics ingestion, or AI provider call is executed.",
+  "Live wallet connector 默认关闭；不会执行实时钱包 SDK 连接、签名提示、交易、合约调用、奖励托管、奖励发放、后端持久化、导出生成、analytics ingestion 或 AI provider 调用。",
+  "Live wallet connector 預設關閉；不會執行即時錢包 SDK 連接、簽名提示、交易、合約呼叫、獎勵託管、獎勵發放、後端持久化、匯出生成、analytics ingestion 或 AI provider 呼叫。",
+);
+
+const liveWalletConnectorNextAction = text(
+  "Enable a connector only after configuration, Chrome live QA evidence, dependency review, and release approval are attached in a later live integration mission.",
+  "只有在后续 live integration mission 中附上配置、Chrome 真实 QA 证据、依赖审核与发布批准后，才启用 connector。",
+  "只有在後續 live integration mission 中附上配置、Chrome 真實 QA 證據、依賴審核與發布批准後，才啟用 connector。",
+);
+
+const liveConnectorPackageVersionSource = text(
+  "Candidate package metadata only: aelf-web-login@2.1.9 and @aelf-web-login/wallet-adapter-* @0.4.0-alpha.21 were reviewed on 2026-07-01, but are not mandatory runtime dependencies in this mission.",
+  "仅候选 package metadata：2026-07-01 已审阅 aelf-web-login@2.1.9 与 @aelf-web-login/wallet-adapter-* @0.4.0-alpha.21，但本 mission 不把它们作为强制 runtime dependency。",
+  "僅候選 package metadata：2026-07-01 已審閱 aelf-web-login@2.1.9 與 @aelf-web-login/wallet-adapter-* @0.4.0-alpha.21，但本 mission 不把它們作為強制 runtime dependency。",
+);
+
+const liveConnectorPackageCandidates: LiveWalletConnectorPackageCandidate[] = [
+  {
+    dependencyRisk: "high",
+    packageName: "aelf-web-login",
+    packageVersionSource: "candidate:2.1.9",
+    role: text(
+      "Legacy broad wallet login package; candidate metadata only.",
+      "旧版宽口径 wallet login package；仅作为候选 metadata。",
+      "舊版寬口徑 wallet login package；僅作為候選 metadata。",
+    ),
+  },
+  {
+    dependencyRisk: "medium",
+    packageName: "@aelf-web-login/wallet-adapter-base",
+    packageVersionSource: "candidate:0.4.0-alpha.21",
+    role: text(
+      "Base adapter type surface for future wallet-info mapping.",
+      "未来 wallet-info mapping 的 base adapter 类型面。",
+      "未來 wallet-info mapping 的 base adapter 類型面。",
+    ),
+  },
+  {
+    dependencyRisk: "high",
+    packageName: "@aelf-web-login/wallet-adapter-react",
+    packageVersionSource: "candidate:0.4.0-alpha.21",
+    role: text(
+      "React modal/hook candidate that exposes connect, signature, transaction, and contract operations; blocked in this mission.",
+      "React modal/hook 候选包会暴露 connect、signature、transaction 与 contract 操作；本 mission 阻断。",
+      "React modal/hook 候選包會暴露 connect、signature、transaction 與 contract 操作；本 mission 阻斷。",
+    ),
+  },
+];
+
+const liveConnectorForbiddenOperationNames = [
+  "connectWallet",
+  "getSignature",
+  "callSendMethod",
+  "callViewMethod",
+  "sendMultiTransaction",
+  "requestAccounts",
+  "switchChain",
+  "sendTransaction",
+  "contractView",
+  "contractSend",
+] as const;
+
+const liveConnectorForbiddenOperations: LiveWalletConnectorOperation[] = liveConnectorForbiddenOperationNames.map((name) => ({
+  name,
+  reason: text(
+    `${name} is blocked until a later live wallet integration mission adds QA evidence and review approval.`,
+    `${name} 在后续 live wallet integration mission 附上 QA 证据与审核批准前保持阻断。`,
+    `${name} 在後續 live wallet integration mission 附上 QA 證據與審核批准前保持阻斷。`,
+  ),
+  state: "blocked",
+}));
+
+interface LiveConnectorConfig {
+  adapterId: string;
+  capabilities: WalletCapability[];
+  connectorId: LiveWalletConnectorId;
+  dependencyRisk: LiveWalletConnectorDependencyRisk;
+  displayName: LocalizedText;
+  packageName: string;
+  packageVersionSource: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+}
+
+const liveConnectorConfigs: LiveConnectorConfig[] = [
+  {
+    accountType: "AA",
+    adapterId: "portkey-aa",
+    capabilities: ["SIGN_MESSAGE", "VIEW_BALANCE", "CONTRACT_VIEW", "EBRIDGE"],
+    connectorId: "portkey-aa-live",
+    dependencyRisk: "high",
+    displayName: text("Portkey AA live connector", "Portkey AA live connector", "Portkey AA live connector"),
+    packageName: "@aelf-web-login/wallet-adapter-portkey-aa",
+    packageVersionSource: "candidate:0.4.0-alpha.21",
+    walletSource: "PORTKEY_AA",
+  },
+  {
+    accountType: "EOA",
+    adapterId: "portkey-eoa-app",
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW", "EBRIDGE"],
+    connectorId: "portkey-discover-eoa-live",
+    dependencyRisk: "high",
+    displayName: text(
+      "Portkey Discover EOA live connector",
+      "Portkey Discover EOA live connector",
+      "Portkey Discover EOA live connector",
+    ),
+    packageName: "@aelf-web-login/wallet-adapter-portkey-discover",
+    packageVersionSource: "candidate:0.4.0-alpha.21",
+    walletSource: "PORTKEY_EOA_APP",
+  },
+  {
+    accountType: "EOA",
+    adapterId: "portkey-eoa-extension",
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW", "EBRIDGE"],
+    connectorId: "portkey-eoa-extension-live",
+    dependencyRisk: "high",
+    displayName: text(
+      "Portkey EOA extension live connector",
+      "Portkey EOA extension live connector",
+      "Portkey EOA extension live connector",
+    ),
+    packageName: "@aelf-web-login/wallet-adapter-portkey-extension",
+    packageVersionSource: "candidate:0.4.0-alpha.21",
+    walletSource: "PORTKEY_EOA_EXTENSION",
+  },
+  {
+    accountType: "EOA",
+    adapterId: "nightelf",
+    capabilities: ["SIGN_MESSAGE", "CONTRACT_VIEW"],
+    connectorId: "nightelf-live",
+    dependencyRisk: "medium",
+    displayName: text("NightElf live connector", "NightElf live connector", "NightElf live connector"),
+    packageName: "@aelf-web-login/wallet-adapter-night-elf",
+    packageVersionSource: "candidate:0.4.0-alpha.21",
+    walletSource: "NIGHTELF",
+  },
+];
+
+const liveConnectorReadinessFor = (
+  featureGateState: LiveWalletConnectorFeatureGateState,
+  liveEvidenceStatus: LiveWalletConnectorLiveEvidenceStatus,
+  reviewApproved: boolean,
+): LiveWalletConnectorReadiness => {
+  if (featureGateState === "blocked" || liveEvidenceStatus === "blocked") {
+    return "blocked";
+  }
+
+  if (
+    featureGateState === "approved" &&
+    liveEvidenceStatus === "ready" &&
+    reviewApproved
+  ) {
+    return "approved";
+  }
+
+  if (featureGateState === "disabled") {
+    return "disabled";
+  }
+
+  return "review_required";
+};
+
+const liveConnectorReleaseImpactFor = (
+  readiness: LiveWalletConnectorReadiness,
+): LiveWalletConnectorReleaseImpact => {
+  if (readiness === "approved") {
+    return "future_ready";
+  }
+
+  if (readiness === "blocked") {
+    return "release_blocker";
+  }
+
+  return readiness === "disabled" ? "needs_review" : "needs_review";
+};
+
+const liveConnectorFallbackFor = (
+  displayName: LocalizedText,
+  readiness: LiveWalletConnectorReadiness,
+  liveEvidenceStatus: LiveWalletConnectorLiveEvidenceStatus,
+) => {
+  if (readiness === "blocked") {
+    return {
+      blocksLaunch: true,
+      nextAction: text(
+        `Resolve live QA or feature-gate blocker before enabling ${displayName["en-US"]}.`,
+        `解决 live QA 或 feature-gate 阻断后再启用 ${displayName["zh-CN"]}。`,
+        `解決 live QA 或 feature-gate 阻斷後再啟用 ${displayName["zh-TW"]}。`,
+      ),
+      reason: text(
+        `${displayName["en-US"]} is blocked for release review.`,
+        `${displayName["zh-CN"]} 当前被 release review 阻断。`,
+        `${displayName["zh-TW"]} 目前被 release review 阻斷。`,
+      ),
+    };
+  }
+
+  if (readiness === "approved") {
+    return {
+      blocksLaunch: false,
+      nextAction: text(
+        `Keep ${displayName["en-US"]} staged for a later live execution mission.`,
+        `保持 ${displayName["zh-CN"]} 等待后续 live execution mission。`,
+        `保持 ${displayName["zh-TW"]} 等待後續 live execution mission。`,
+      ),
+      reason: text(
+        `${displayName["en-US"]} has gate approval and live evidence metadata, but execution remains out of scope here.`,
+        `${displayName["zh-CN"]} 已有 gate approval 与 live evidence metadata，但本 mission 仍不执行连接。`,
+        `${displayName["zh-TW"]} 已有 gate approval 與 live evidence metadata，但本 mission 仍不執行連接。`,
+      ),
+    };
+  }
+
+  return {
+    blocksLaunch: false,
+    nextAction: liveWalletConnectorNextAction,
+    reason: liveEvidenceStatus === "missing"
+      ? text(
+          `${displayName["en-US"]} is disabled or review-required because live QA evidence is missing.`,
+          `${displayName["zh-CN"]} 因缺少 live QA 证据保持 disabled 或 review-required。`,
+          `${displayName["zh-TW"]} 因缺少 live QA 證據保持 disabled 或 review-required。`,
+        )
+      : text(
+          `${displayName["en-US"]} still requires feature-gate and review approval before production enablement.`,
+          `${displayName["zh-CN"]} 在生产启用前仍需要 feature-gate 与审核批准。`,
+          `${displayName["zh-TW"]} 在生產啟用前仍需要 feature-gate 與審核批准。`,
+        ),
+  };
+};
+
+const createLiveConnectorEntry = (
+  config: LiveConnectorConfig,
+  featureGateState: LiveWalletConnectorFeatureGateState,
+  liveEvidenceStatus: LiveWalletConnectorLiveEvidenceStatus,
+  reviewApproved: boolean,
+): LiveWalletConnectorEntry => {
+  const readiness = liveConnectorReadinessFor(featureGateState, liveEvidenceStatus, reviewApproved);
+  const fallback = liveConnectorFallbackFor(config.displayName, readiness, liveEvidenceStatus);
+
+  return {
+    accountType: config.accountType,
+    adapterId: config.adapterId,
+    capabilities: config.capabilities,
+    connectorId: config.connectorId,
+    dependencyRisk: config.dependencyRisk,
+    displayName: config.displayName,
+    fallback,
+    featureGateState,
+    liveEvidenceStatus,
+    network: expectedNetwork,
+    nextAction: fallback.nextAction,
+    packageName: config.packageName,
+    packageVersionSource: config.packageVersionSource,
+    readiness,
+    releaseImpact: liveConnectorReleaseImpactFor(readiness),
+    securityBoundary: liveWalletConnectorBoundary,
+    supportedChains: [expectedChainId, "tDVV", "tDVW"],
+    walletSource: config.walletSource,
+  };
+};
+
+const summarizeLiveConnectorBoundary = (
+  entries: LiveWalletConnectorEntry[],
+): LiveWalletConnectorSummary => ({
+  approvedConnectors: entries.filter((entry) => entry.readiness === "approved").length,
+  blockedConnectors: entries.filter((entry) => entry.readiness === "blocked").length,
+  disabledConnectors: entries.filter((entry) => entry.readiness === "disabled").length,
+  missingLiveEvidenceConnectors: entries.filter((entry) => entry.liveEvidenceStatus === "missing").length,
+  releaseBlockers: entries.filter((entry) => entry.releaseImpact === "release_blocker").length,
+  reviewRequiredConnectors: entries.filter((entry) => entry.readiness === "review_required").length,
+  totalConnectors: entries.length,
+});
+
+export const createLiveWalletConnectorBoundary = (
+  options: {
+    featureGates?: Partial<Record<LiveWalletConnectorId, LiveWalletConnectorFeatureGateState>>;
+    liveEvidence?: Partial<Record<LiveWalletConnectorId, LiveWalletConnectorLiveEvidenceStatus>>;
+    reviewApprovals?: Partial<Record<LiveWalletConnectorId, boolean>>;
+  } = {},
+): LiveWalletConnectorBoundary => {
+  const entries = liveConnectorConfigs.map((config) =>
+    createLiveConnectorEntry(
+      config,
+      options.featureGates?.[config.connectorId] ?? "disabled",
+      options.liveEvidence?.[config.connectorId] ?? "missing",
+      options.reviewApprovals?.[config.connectorId] ?? false,
+    ),
+  );
+
+  return {
+    boundary: liveWalletConnectorBoundary,
+    entries,
+    forbiddenOperations: liveConnectorForbiddenOperations,
+    integrationId: "aelf-web-login",
+    nextAction: liveWalletConnectorNextAction,
+    packageCandidates: liveConnectorPackageCandidates,
+    packageVersionSource: liveConnectorPackageVersionSource,
+    summary: summarizeLiveConnectorBoundary(entries),
+  };
+};
+
 const shortenAddress = (address: string) => {
   if (address.includes("...") || address.length <= 10) {
     return address;
   }
 
   return `${address.slice(0, 3)}...${address.slice(-3)}`;
+};
+
+interface LiveWalletAdapterMapping {
+  accountType: AccountType;
+  capabilities: WalletCapability[];
+  walletSource: WalletSource;
+  walletName: string;
+}
+
+const liveWalletAdapterMappings: Record<string, LiveWalletAdapterMapping> = {
+  NightElfWallet: {
+    accountType: "EOA",
+    capabilities: ["SIGN_MESSAGE", "CONTRACT_VIEW"],
+    walletName: "NightElf",
+    walletSource: "NIGHTELF",
+  },
+  PortkeyAAWallet: {
+    accountType: "AA",
+    capabilities: ["SIGN_MESSAGE", "VIEW_BALANCE", "CONTRACT_VIEW", "EBRIDGE"],
+    walletName: "Portkey AA",
+    walletSource: "PORTKEY_AA",
+  },
+  PortkeyAgentSkill: {
+    accountType: "EOA",
+    capabilities: ["CONTRACT_VIEW", "CONTRACT_SEND", "INTERNAL_AUTOMATION"],
+    walletName: "Agent Skill wallet",
+    walletSource: "AGENT_SKILL",
+  },
+  PortkeyDiscoverWallet: {
+    accountType: "EOA",
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW", "EBRIDGE"],
+    walletName: "Portkey EOA App / Discover",
+    walletSource: "PORTKEY_EOA_APP",
+  },
+  PortkeyExtensionWallet: {
+    accountType: "EOA",
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW", "EBRIDGE"],
+    walletName: "Portkey EOA Extension",
+    walletSource: "PORTKEY_EOA_EXTENSION",
+  },
+};
+
+const candidateSessionIdFor = (adapterName: string, address: string) =>
+  `live-${adapterName}-${address}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+
+const verificationStatusForLiveInfo = (
+  input: AdapterWalletInfoCandidate,
+  mapping: LiveWalletAdapterMapping | undefined,
+): WalletVerificationStatus => {
+  if (!input.address) {
+    return "address_only";
+  }
+
+  if (!mapping) {
+    return "unsupported_wallet";
+  }
+
+  if (input.internalAgent || mapping.walletSource === "AGENT_SKILL") {
+    return "internal_agent";
+  }
+
+  if ((input.chainId ?? "unknown") !== expectedChainId || (input.network ?? "unknown") !== expectedNetwork) {
+    return "wrong_chain";
+  }
+
+  if (!input.signaturePresent) {
+    return "missing_signature";
+  }
+
+  return "verified";
+};
+
+const signatureStatusForLiveInfo = (
+  input: AdapterWalletInfoCandidate,
+  verificationStatus: WalletVerificationStatus,
+): WalletSignatureStatus => {
+  if (verificationStatus === "address_only" || verificationStatus === "unsupported_wallet") {
+    return "not_available";
+  }
+
+  return input.signaturePresent ? "signed" : "missing";
+};
+
+export const mapLiveWalletInfoToSessionCandidate = (
+  input: AdapterWalletInfoCandidate,
+): NormalizedWalletSessionCandidate => {
+  const mapping = liveWalletAdapterMappings[input.adapterName];
+  const verificationStatus = verificationStatusForLiveInfo(input, mapping);
+  const address = input.address ?? "Address only";
+  const accountType = verificationStatus === "address_only"
+    ? "UNKNOWN"
+    : mapping?.accountType ?? input.accountTypeHint ?? "UNKNOWN";
+  const walletSource = verificationStatus === "address_only"
+    ? "OTHER"
+    : mapping?.walletSource ?? input.walletSourceHint ?? "OTHER";
+
+  return {
+    accountType,
+    address,
+    boundary: liveWalletConnectorBoundary,
+    capabilities:
+      verificationStatus === "address_only"
+        ? ["ADDRESS_ONLY"]
+        : mapping?.capabilities ?? ["ADDRESS_ONLY"],
+    chainId: input.chainId ?? "unknown",
+    displayAddress: shortenAddress(address),
+    errorReason: verificationStatus === "verified" ? undefined : verificationStatus,
+    id: candidateSessionIdFor(input.adapterName, address),
+    network: input.network ?? "unknown",
+    nextAction: walletNextActions[verificationStatus],
+    sessionId: candidateSessionIdFor(input.adapterName, address),
+    signatureStatus: signatureStatusForLiveInfo(input, verificationStatus),
+    statusMessage: walletVerificationLabels[verificationStatus],
+    verificationStatus,
+    walletName: input.walletName ?? mapping?.walletName ?? "Unknown wallet",
+    walletSource,
+    walletTypeVerified: verificationStatus === "verified",
+  };
 };
 
 const signatureStatusFor = (fixture: WalletAdapterFixture): WalletSignatureStatus => {

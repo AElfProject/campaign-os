@@ -422,6 +422,136 @@ export interface AelfWebLoginAdapterReadinessModel {
   internalEntries: AelfWebLoginAdapterReadinessEntry[];
 }
 
+export type LiveWalletConnectorId =
+  | "portkey-aa-live"
+  | "portkey-discover-eoa-live"
+  | "portkey-eoa-extension-live"
+  | "nightelf-live";
+export type LiveWalletConnectorFeatureGateState =
+  | "disabled"
+  | "preview"
+  | "review_required"
+  | "blocked"
+  | "approved";
+export type LiveWalletConnectorReadiness =
+  | "disabled"
+  | "review_required"
+  | "blocked"
+  | "approved";
+export type LiveWalletConnectorReleaseImpact =
+  | "informational"
+  | "needs_review"
+  | "release_blocker"
+  | "future_ready";
+export type LiveWalletConnectorDependencyRisk = "low" | "medium" | "high";
+export type LiveWalletConnectorLiveEvidenceStatus = "missing" | "ready" | "blocked";
+export type LiveWalletConnectorOperationName =
+  | "connectWallet"
+  | "getSignature"
+  | "callSendMethod"
+  | "callViewMethod"
+  | "sendMultiTransaction"
+  | "requestAccounts"
+  | "switchChain"
+  | "sendTransaction"
+  | "contractView"
+  | "contractSend";
+export type LiveWalletConnectorOperationState = "blocked" | "review_only";
+
+export interface LiveWalletConnectorPackageCandidate {
+  packageName: string;
+  packageVersionSource: string;
+  dependencyRisk: LiveWalletConnectorDependencyRisk;
+  role: LocalizedText;
+}
+
+export interface LiveWalletConnectorOperation {
+  name: LiveWalletConnectorOperationName;
+  state: LiveWalletConnectorOperationState;
+  reason: LocalizedText;
+}
+
+export interface LiveWalletConnectorFallback {
+  reason: LocalizedText;
+  nextAction: LocalizedText;
+  blocksLaunch: boolean;
+}
+
+export interface LiveWalletConnectorEntry {
+  connectorId: LiveWalletConnectorId;
+  adapterId: string;
+  displayName: LocalizedText;
+  packageName: string;
+  packageVersionSource: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  supportedChains: string[];
+  network: WalletNetwork;
+  capabilities: WalletCapability[];
+  featureGateState: LiveWalletConnectorFeatureGateState;
+  liveEvidenceStatus: LiveWalletConnectorLiveEvidenceStatus;
+  readiness: LiveWalletConnectorReadiness;
+  releaseImpact: LiveWalletConnectorReleaseImpact;
+  dependencyRisk: LiveWalletConnectorDependencyRisk;
+  fallback: LiveWalletConnectorFallback;
+  nextAction: LocalizedText;
+  securityBoundary: LocalizedText;
+}
+
+export interface LiveWalletConnectorSummary {
+  totalConnectors: number;
+  disabledConnectors: number;
+  reviewRequiredConnectors: number;
+  approvedConnectors: number;
+  blockedConnectors: number;
+  missingLiveEvidenceConnectors: number;
+  releaseBlockers: number;
+}
+
+export interface LiveWalletConnectorBoundary {
+  integrationId: AelfWebLoginIntegrationId;
+  packageVersionSource: LocalizedText;
+  packageCandidates: LiveWalletConnectorPackageCandidate[];
+  forbiddenOperations: LiveWalletConnectorOperation[];
+  entries: LiveWalletConnectorEntry[];
+  summary: LiveWalletConnectorSummary;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface AdapterWalletInfoCandidate {
+  adapterName: string;
+  walletName?: string;
+  address?: string;
+  chainId?: "AELF" | "tDVV" | "tDVW" | string;
+  network?: WalletNetwork;
+  accountTypeHint?: AccountType;
+  walletSourceHint?: WalletSource;
+  signaturePresent?: boolean;
+  extraInfoKeys?: string[];
+  internalAgent?: boolean;
+}
+
+export interface NormalizedWalletSessionCandidate {
+  id: string;
+  sessionId: string;
+  address: string;
+  displayAddress: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  walletName: string;
+  chainId: "AELF" | "tDVV" | "tDVW" | string;
+  network: WalletNetwork;
+  capabilities: WalletCapability[];
+  verificationStatus: WalletVerificationStatus;
+  signatureStatus: WalletSignatureStatus;
+  walletTypeVerified: boolean;
+  errorReason?: string;
+  statusMessage: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
 export interface WalletDiagnosticItem {
   sessionId: string;
   walletName: string;

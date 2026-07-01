@@ -128,6 +128,34 @@ describe("Admin/Ops shell", () => {
     expect(within(walletAdapterReadiness as HTMLElement).getByText(/internal automation/)).toBeInTheDocument();
     expect(within(walletAdapterReadiness as HTMLElement).getByText(/private key, seed phrase/)).toBeInTheDocument();
     expect(within(walletAdapterReadiness as HTMLElement).getByText(/Future EOA adapter is maintenance-only/)).toBeInTheDocument();
+    const liveConnectorReleaseReview = screen
+      .getByRole("heading", { name: "Live wallet connector release review" })
+      .closest("section");
+    expect(liveConnectorReleaseReview).not.toBeNull();
+    expect(within(liveConnectorReleaseReview as HTMLElement).getByText("Connector candidates")).toBeInTheDocument();
+    expect(within(liveConnectorReleaseReview as HTMLElement).getByText("Disabled / review-required")).toBeInTheDocument();
+    expect(within(liveConnectorReleaseReview as HTMLElement).getByText("No production enablement")).toBeInTheDocument();
+    expect(within(liveConnectorReleaseReview as HTMLElement).getByText("Portkey AA live connector")).toBeInTheDocument();
+    expect(within(liveConnectorReleaseReview as HTMLElement).getByText("Portkey Discover EOA live connector")).toBeInTheDocument();
+    expect(within(liveConnectorReleaseReview as HTMLElement).getByText("@aelf-web-login/wallet-adapter-portkey-aa")).toBeInTheDocument();
+    expect(within(liveConnectorReleaseReview as HTMLElement).getAllByText(/candidate:0\.4\.0-alpha\.21/).length).toBeGreaterThan(0);
+    expect(within(liveConnectorReleaseReview as HTMLElement).getAllByText("Dependency risk").length).toBeGreaterThan(0);
+    expect(within(liveConnectorReleaseReview as HTMLElement).getAllByText("high").length).toBeGreaterThan(0);
+    expect(within(liveConnectorReleaseReview as HTMLElement).getByText("Live QA required")).toBeInTheDocument();
+    expect(within(liveConnectorReleaseReview as HTMLElement).getAllByText("Review approval required").length).toBeGreaterThan(0);
+    expect(within(liveConnectorReleaseReview as HTMLElement).getAllByText(/no live wallet SDK connection/).length).toBeGreaterThan(0);
+    expect(within(liveConnectorReleaseReview as HTMLElement).getAllByText(/signature prompt/).length).toBeGreaterThan(0);
+    expect(within(liveConnectorReleaseReview as HTMLElement).getAllByText(/transaction/).length).toBeGreaterThan(0);
+    expect(within(liveConnectorReleaseReview as HTMLElement).getAllByText(/contract call/).length).toBeGreaterThan(0);
+    expect(within(liveConnectorReleaseReview as HTMLElement).getAllByText(/reward custody/).length).toBeGreaterThan(0);
+    expect(within(liveConnectorReleaseReview as HTMLElement).getAllByText(/reward distribution/).length).toBeGreaterThan(0);
+    expect(within(liveConnectorReleaseReview as HTMLElement).getAllByText(/export generation/).length).toBeGreaterThan(0);
+    expect(within(liveConnectorReleaseReview as HTMLElement).getByText("Blocked operations")).toBeInTheDocument();
+    expect(within(liveConnectorReleaseReview as HTMLElement).getByText("connectWallet")).toBeInTheDocument();
+    expect(within(liveConnectorReleaseReview as HTMLElement).getByText("getSignature")).toBeInTheDocument();
+    expect(within(liveConnectorReleaseReview as HTMLElement).getByText("sendTransaction")).toBeInTheDocument();
+    expect(within(liveConnectorReleaseReview as HTMLElement).queryByText(/production-ready/i)).not.toBeInTheDocument();
+    expect(within(liveConnectorReleaseReview as HTMLElement).queryByText(/live connector execution is enabled/i)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Provider evidence registry" })).toBeInTheDocument();
     const providerRegistry = screen
       .getByRole("heading", { name: "Provider evidence registry" })
@@ -425,6 +453,20 @@ describe("Admin/Ops shell", () => {
     expect(screen.getAllByText("缺失").length).toBeGreaterThan(0);
     expectVisibleText(/尚未附上真实 Portkey AA provider 证据/);
     expectVisibleText(/不会执行实时钱包 SDK 连接、真实签名、交易、合约调用/);
+    const zhLiveConnectorReleaseReview = screen
+      .getByRole("heading", { name: "Live 钱包 connector 发布审核" })
+      .closest("section");
+    expect(zhLiveConnectorReleaseReview).not.toBeNull();
+    expect(within(zhLiveConnectorReleaseReview as HTMLElement).getByText("Connector 候选")).toBeInTheDocument();
+    expect(within(zhLiveConnectorReleaseReview as HTMLElement).getByText("已关闭 / 需审核")).toBeInTheDocument();
+    expect(within(zhLiveConnectorReleaseReview as HTMLElement).getByText("不启用生产连接")).toBeInTheDocument();
+    expect(within(zhLiveConnectorReleaseReview as HTMLElement).getByText("需要 live QA")).toBeInTheDocument();
+    expect(within(zhLiveConnectorReleaseReview as HTMLElement).getAllByText("需要审核批准").length).toBeGreaterThan(0);
+    expect(within(zhLiveConnectorReleaseReview as HTMLElement).getByText("@aelf-web-login/wallet-adapter-portkey-aa")).toBeInTheDocument();
+    expect(within(zhLiveConnectorReleaseReview as HTMLElement).getAllByText(/candidate:0\.4\.0-alpha\.21/).length).toBeGreaterThan(0);
+    expect(within(zhLiveConnectorReleaseReview as HTMLElement).getAllByText("依赖风险").length).toBeGreaterThan(0);
+    expect(within(zhLiveConnectorReleaseReview as HTMLElement).getAllByText(/不会执行实时钱包 SDK 连接、签名提示、交易、合约调用/).length).toBeGreaterThan(0);
+    expect(within(zhLiveConnectorReleaseReview as HTMLElement).getByText("已阻断操作")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Provider 证据登记表" })).toBeInTheDocument();
     const zhProviderRegistry = screen
       .getByRole("heading", { name: "Provider 证据登记表" })
