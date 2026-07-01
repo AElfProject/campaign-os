@@ -13,6 +13,7 @@ import {
   taskTemplateLibrary,
   taskTemplateVerificationFilterOptions,
   taskTemplateWalletFilterOptions,
+  type CampaignDraft,
   walletPolicyOptions,
 } from "./builder";
 import { createTranslationManagerReadModel } from "./campaign";
@@ -32,6 +33,21 @@ const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
   return Object.prototype.hasOwnProperty.call(record, key)
     || Object.values(record).some((item) => hasOwnKeyDeep(item, key));
 };
+
+const campaignQualityDraft = (
+  selectedTaskTemplateIds: string[],
+  estimatedRewardValueUsd = seededCampaignDraft.rewardPlan.estimatedRewardValueUsd,
+): CampaignDraft => ({
+  ...seededCampaignDraft,
+  selectedTaskTemplateIds,
+  rewardPlan: {
+    ...seededCampaignDraft.rewardPlan,
+    estimatedRewardValueUsd,
+  },
+});
+
+const qualityGateFrom = (draft: CampaignDraft) =>
+  createPublishGateDecisionCenter(draft).gates.find((gate) => gate.id === "campaign-quality");
 
 describe("Campaign Builder domain foundation", () => {
   it("keeps builder locale support aligned to exact MVP locales", () => {
@@ -379,8 +395,75 @@ describe("Campaign Builder domain foundation", () => {
       "risk-social-reward",
     ]);
     expect(readiness.passed.map((check) => check.id)).toEqual(
-      expect.arrayContaining(["basics-complete", "reward-disclaimer", "export-disclaimer"]),
+      expect.arrayContaining(["basics-complete", "campaign-quality", "reward-disclaimer", "export-disclaimer"]),
     );
+  });
+
+  it("blocks high-reward campaign quality when no task is selected", () => {
+    const qualityGate = qualityGateFrom(campaignQualityDraft([]));
+
+    expect(qualityGate).toMatchObject({
+      blocksPublish: true,
+      group: "risk",
+      ownerRole: "internal_operator",
+      status: "blocker",
+    });
+    expect(qualityGate?.reason["en-US"]).toContain("meaningful ecosystem action");
+    expect(qualityGate?.nextAction["en-US"]).toContain("bridge");
+  });
+
+  it("blocks high-reward social-only campaign quality before publish", () => {
+    const qualityGate = qualityGateFrom(campaignQualityDraft(["tpl-social-share"]));
+
+    expect(qualityGate).toMatchObject({
+      blocksPublish: true,
+      status: "blocker",
+    });
+    expect(qualityGate?.reason["en-US"]).toContain("High-reward campaigns");
+  });
+
+  it("warns lower-value social-only campaign quality without marking it ready", () => {
+    const qualityGate = qualityGateFrom(campaignQualityDraft(["tpl-social-share"], 100));
+
+    expect(qualityGate).toMatchObject({
+      blocksPublish: false,
+      status: "warning",
+    });
+    expect(qualityGate?.reason["en-US"]).toContain("lacks a meaningful ecosystem action");
+  });
+
+  it("does not treat wallet and referral only tasks as meaningful ecosystem action", () => {
+    const qualityGate = qualityGateFrom(campaignQualityDraft(["tpl-wallet-connect", "tpl-invite-friend"], 100));
+
+    expect(qualityGate).toMatchObject({
+      blocksPublish: false,
+      status: "warning",
+    });
+    expect(qualityGate?.nextAction["en-US"]).toContain("manual review");
+  });
+
+  it("passes campaign quality when bridge or swap ecosystem actions are selected", () => {
+    const bridgeGate = qualityGateFrom(campaignQualityDraft(["tpl-bridge-ebridge"]));
+    const swapGate = qualityGateFrom(campaignQualityDraft(["tpl-swap-awaken"]));
+
+    expect(bridgeGate).toMatchObject({
+      blocksPublish: false,
+      status: "passed",
+    });
+    expect(swapGate).toMatchObject({
+      blocksPublish: false,
+      status: "passed",
+    });
+  });
+
+  it("passes campaign quality for DApp API ecosystem actions", () => {
+    const qualityGate = qualityGateFrom(campaignQualityDraft(["tpl-pay-complete"]));
+
+    expect(qualityGate).toMatchObject({
+      blocksPublish: false,
+      status: "passed",
+    });
+    expect(qualityGate?.reason["en-US"]).toContain("meaningful ecosystem action");
   });
 
   it("requires reward and export non-distribution disclaimers", () => {
@@ -416,8 +499,8 @@ describe("Campaign Builder domain foundation", () => {
     expect(decisionCenter.launchState).toBe("blocker");
     expect(decisionCenter.counts).toEqual({
       blockers: 2,
-      passed: 6,
-      total: 10,
+      passed: 7,
+      total: 11,
       warnings: 2,
     });
     expect(decisionCenter.gates.map((gate) => gate.group)).toEqual([
@@ -428,6 +511,7 @@ describe("Campaign Builder domain foundation", () => {
       "basics",
       "rewards",
       "export",
+      "risk",
       "wallet",
       "tasks",
       "risk",
@@ -468,6 +552,13 @@ describe("Campaign Builder domain foundation", () => {
       status: "blocker",
     });
 
+    expect(gateById.get("campaign-quality")).toMatchObject({
+      blocksPublish: false,
+      ownerRole: "internal_operator",
+      status: "passed",
+    });
+    expect(gateById.get("campaign-quality")?.reason["en-US"]).toContain("meaningful ecosystem action");
+
     expect(gateById.get("risk-referral-controls")?.reason["en-US"]).toContain("Referral validation");
     expect(gateById.get("risk-referral-controls")?.reason["en-US"]).toContain("risk flags");
     expect(gateById.get("export-disclaimer")?.reason["en-US"]).toContain(
@@ -493,6 +584,7 @@ describe("Campaign Builder domain foundation", () => {
     expect(decisionCenter.approvalRoutes.flatMap((route) => route.gateIds)).toEqual(
       expect.arrayContaining([
         "contract-impact",
+        "campaign-quality",
         "export-disclaimer",
         "i18n-human-review",
         "localized-reward-disclaimer",
