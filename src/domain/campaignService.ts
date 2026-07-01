@@ -167,8 +167,10 @@ export interface VerifyTaskResponse {
 }
 
 export interface CheckEligibilityRequest {
+  accountType?: AccountType;
   campaignId: string;
   walletAddress: string;
+  walletSource?: WalletSource;
 }
 
 export interface GetVerificationPipelineReadinessRequest {
@@ -398,6 +400,34 @@ const requiredMissingTemplateCodes = (
     (taskId) =>
       campaign.tasks.find((task) => task.id === taskId)?.templateCode ?? taskId,
   );
+
+const validateEligibilityWalletProvenance = (
+  request: CheckEligibilityRequest,
+  participant: ParticipantSnapshot,
+): LocalServiceResult<CheckEligibilityResponse> | undefined => {
+  const hasAccountType = request.accountType !== undefined;
+  const hasWalletSource = request.walletSource !== undefined;
+
+  if (!hasAccountType && !hasWalletSource) {
+    return undefined;
+  }
+
+  if (
+    !hasAccountType ||
+    !hasWalletSource ||
+    request.accountType !== participant.accountType ||
+    request.walletSource !== participant.walletSource
+  ) {
+    return failure(
+      "INVALID_REQUEST",
+      "walletProvenance",
+      "Eligibility wallet provenance requires accountType and walletSource to be supplied together and match the local participant wallet metadata.",
+      "资格检查的钱包来源信息要求 accountType 与 walletSource 同时提供，并且必须匹配本地参与者钱包元数据。",
+    );
+  }
+
+  return undefined;
+};
 
 const toVerificationStatus = (
   status: TaskVerificationStatus,
@@ -676,6 +706,12 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
         "Participant wallet is not available in the local service facade.",
         "本地 service facade 中不存在该参与钱包。",
       );
+    }
+
+    const provenanceFailure = validateEligibilityWalletProvenance(request, participant);
+
+    if (provenanceFailure) {
+      return provenanceFailure;
     }
 
     const participation = createParticipationReadModel(campaign, participant);
