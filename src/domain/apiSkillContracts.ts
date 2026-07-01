@@ -47,6 +47,11 @@ const addTaskBoundary = text(
   "仅 seeded/本地添加任务 contract。不会执行实时 API、后端持久化、provider 或 evidence 查询、secret 处理、导出文件、发奖或合约写入。",
 );
 
+const i18nDraftBoundary = text(
+  "Seeded/local i18n draft contract only. No live API, AI provider, LLM gateway, backend persistence, publish mutation, auto-publish, secret handling, export file, reward, or contract write is executed.",
+  "仅 seeded/本地 i18n 草稿 contract。不会执行实时 API、AI provider、LLM gateway、后端持久化、发布变更、自动发布、secret 处理、导出文件、发奖或合约写入。",
+);
+
 const verificationBoundary = text(
   "Verification contract only. Local seeded, AeFinder, AelfScan, dApp APIs, social APIs, wallet session, and manual review are named as evidence categories; no live provider, wallet SDK, secret, reward, export file, or contract write is executed.",
   "仅验证 contract。Local seeded、AeFinder、AelfScan、dApp API、社交 API、钱包会话与人工审核只作为 evidence category 展示；不会执行真实 provider、钱包 SDK、secret、发奖、导出文件或合约写入。",
@@ -68,6 +73,7 @@ export const requiredApiSkillIds = [
   "check_eligibility",
   "get_campaign_analytics",
   "export_winners",
+  "generate_i18n_draft",
   "generate_campaign_posts",
   "summarize_campaign",
 ] as const satisfies readonly ApiSkillId[];
@@ -391,6 +397,46 @@ export const apiSkillContractRegistry: ApiSkillContract[] = [
     riskLevel: "high",
     securityBoundary: exportBoundary,
     title: text("Export winners", "导出 winners"),
+  },
+  {
+    apiGroup: "content_generation",
+    evidenceSources: ["LOCAL_SEEDED"],
+    id: "generate_i18n_draft",
+    inputFields: [
+      field("campaignId", "campaign", true, "Campaign identifier for the translation draft.", "翻译草稿所属活动标识。", "camp_awaken_sprint"),
+      field("sourceLocale", "locale", true, "Source locale. MVP source is en-US.", "源语言。MVP 源语言为 en-US。", "en-US"),
+      field("targetLocale", "locale", true, "Target locale limited to zh-CN or zh-TW.", "目标语言限定为 zh-CN 或 zh-TW。", "zh-CN"),
+      field(
+        "contentKeys",
+        "content",
+        true,
+        "Content keys requested for translation draft: title, description, reward disclaimer, and FAQ.",
+        "请求生成翻译草稿的内容 key：标题、描述、奖励声明与 FAQ。",
+        "title,description,rewardDisclaimer,faq",
+      ),
+    ],
+    nextAction: text(
+      "Route every generated translation draft through human review before any publish revision.",
+      "任何生成的翻译草稿进入发布 revision 前都必须经过人工审核。",
+    ),
+    outputFields: [
+      field("sourceLocale", "locale", true, "Source locale used for the draft.", "草稿使用的源语言。", "en-US"),
+      field("targetLocale", "locale", true, "Target locale for the draft.", "草稿目标语言。", "zh-CN"),
+      field("contentKeys", "content", true, "Content keys included in the draft.", "草稿包含的内容 key。", "title,description"),
+      field("draft", "content", true, "Local translation draft values keyed by content key.", "按内容 key 返回的本地翻译草稿。"),
+      field("fallbackToEnglish", "locale", true, "Whether missing target copy falls back to English.", "缺失目标文案是否 fallback 到英文。", "true"),
+      field("humanReviewRequired", "risk", true, "Whether a human reviewer must approve the draft before publish.", "发布前是否必须由人工审核草稿。", "true"),
+      field("noAutoPublishNotice", "risk", true, "Localized notice that AI generated translation cannot auto-publish.", "AI 生成翻译不得自动发布的本地化提示。"),
+      field("aiDraft", "content", false, "Existing local signal that the target locale is an AI draft.", "目标语言是 AI 草稿的现有本地信号。", "true"),
+    ],
+    purpose: text(
+      "Generate a seeded/local translation draft from English source content with fallback, human review, and no-auto-publish boundaries visible.",
+      "从英文源文案生成 seeded/本地翻译草稿，并展示 fallback、人工审核与禁止自动发布边界。",
+    ),
+    readiness: "local_only",
+    riskLevel: "medium",
+    securityBoundary: i18nDraftBoundary,
+    title: text("Generate i18n translation draft", "生成 i18n 翻译草稿"),
   },
   {
     apiGroup: "content_generation",

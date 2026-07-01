@@ -1542,6 +1542,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
         "createCampaign",
         "addTask",
         "generateCampaignTasks",
+        "generateI18nDraft",
         "verifyTask",
         "checkEligibility",
         "getAdvancedAnalyticsReadiness",

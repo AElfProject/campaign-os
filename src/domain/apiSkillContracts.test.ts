@@ -12,11 +12,11 @@ const contractsById = Object.fromEntries(
 );
 
 describe("API Skill Contract registry", () => {
-  it("covers the complete v0.1 first skill batch plus the v0.2 wallet session and add-task APIs", () => {
+  it("covers the complete v0.1 first skill batch plus the v0.2 wallet session, add-task, and i18n draft APIs", () => {
     expect(apiSkillContractRegistry.map((contract) => contract.id)).toEqual(requiredApiSkillIds);
     expect(createApiSkillContractSurface().summary).toMatchObject({
       missingSkillIds: [],
-      totalContracts: 10,
+      totalContracts: 11,
     });
   });
 
@@ -98,6 +98,46 @@ describe("API Skill Contract registry", () => {
     expect(addTask.securityBoundary["en-US"]).toContain("provider");
     expect(addTask.securityBoundary["en-US"]).toContain("contract write");
     expect(addTask.purpose["en-US"]).not.toContain("Generate");
+  });
+
+  it("models the local i18n draft API contract separately from campaign post generation", () => {
+    const i18nDraft = contractsById.generate_i18n_draft;
+    const inputFields = new Map(i18nDraft.inputFields.map((field) => [field.name, field]));
+    const outputFields = new Map(i18nDraft.outputFields.map((field) => [field.name, field]));
+
+    expect(i18nDraft).toMatchObject({
+      apiGroup: "content_generation",
+      readiness: "local_only",
+      riskLevel: "medium",
+    });
+    expect([...inputFields.keys()]).toEqual(
+      expect.arrayContaining(["campaignId", "sourceLocale", "targetLocale", "contentKeys"]),
+    );
+    expect([...outputFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "sourceLocale",
+        "targetLocale",
+        "contentKeys",
+        "draft",
+        "fallbackToEnglish",
+        "humanReviewRequired",
+        "noAutoPublishNotice",
+      ]),
+    );
+    expect(inputFields.get("sourceLocale")).toMatchObject({ group: "locale", required: true });
+    expect(inputFields.get("targetLocale")).toMatchObject({ group: "locale", required: true });
+    expect(inputFields.get("contentKeys")).toMatchObject({ group: "content", required: true });
+    expect(outputFields.get("fallbackToEnglish")).toMatchObject({ group: "locale", required: true });
+    expect(outputFields.get("humanReviewRequired")).toMatchObject({ group: "risk", required: true });
+    expect(outputFields.get("noAutoPublishNotice")).toMatchObject({ group: "risk", required: true });
+    expect(i18nDraft.securityBoundary["en-US"]).toContain("No live API");
+    expect(i18nDraft.securityBoundary["en-US"]).toContain("AI provider");
+    expect(i18nDraft.securityBoundary["en-US"]).toContain("persistence");
+    expect(i18nDraft.securityBoundary["en-US"]).toContain("auto-publish");
+    expect(i18nDraft.securityBoundary["en-US"]).toContain("publish mutation");
+    expect(i18nDraft.securityBoundary["en-US"]).toContain("contract write");
+    expect(i18nDraft.purpose["en-US"]).toContain("translation draft");
+    expect(i18nDraft.purpose["en-US"]).not.toContain("channel copy");
   });
 
   it("keeps every contract structured, localized, and bounded", () => {
@@ -305,7 +345,7 @@ describe("API Skill Contract registry", () => {
       blockedCount: 0,
       externalEvidenceCount: 4,
       highRiskCount: 2,
-      localOnlyCount: 4,
+      localOnlyCount: 5,
       readyCount: 3,
       reviewRequiredCount: 3,
     });

@@ -106,6 +106,7 @@ export type ApiSkillId =
   | "check_eligibility"
   | "get_campaign_analytics"
   | "export_winners"
+  | "generate_i18n_draft"
   | "generate_campaign_posts"
   | "summarize_campaign";
 export type ApiSkillContractReadiness =
