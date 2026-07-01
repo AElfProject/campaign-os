@@ -108,6 +108,83 @@ describe("Campaign OS local API service facade", () => {
     expect(JSON.stringify(sessions).toLowerCase()).not.toContain("bearer ");
   });
 
+  it("normalizes direct wallet session requests with fail-closed local statuses", () => {
+    const verified = service.createWalletSession({
+      address: "2F4...9aB",
+      adapterName: "PortkeyDiscoverWallet",
+      chainId: "AELF",
+      network: "mainnet",
+      signature: "local-signature-presence",
+    });
+    const missingSignature = service.createWalletSession({
+      address: "2F4...9aB",
+      adapterName: "PortkeyDiscoverWallet",
+      chainId: "AELF",
+      network: "mainnet",
+    });
+    const wrongChain = service.createWalletSession({
+      address: "2F4...9aB",
+      adapterName: "PortkeyDiscoverWallet",
+      chainId: "tDVV",
+      network: "testnet",
+      signature: "local-signature-presence",
+    });
+    const unsupported = service.createWalletSession({
+      address: "2F4...9aB",
+      adapterName: "UnsupportedWallet",
+      chainId: "AELF",
+      network: "mainnet",
+      signature: "local-signature-presence",
+    });
+
+    expect(verified).toMatchObject({
+      ok: true,
+      payload: {
+        accountType: "EOA",
+        address: "2F4...9aB",
+        chainId: "AELF",
+        network: "mainnet",
+        signatureStatus: "signed",
+        verificationStatus: "verified",
+        walletSource: "PORTKEY_EOA_APP",
+        walletTypeVerified: true,
+      },
+    });
+    expect(missingSignature).toMatchObject({
+      ok: true,
+      payload: {
+        signatureStatus: "missing",
+        verificationStatus: "missing_signature",
+        walletTypeVerified: false,
+      },
+    });
+    expect(wrongChain).toMatchObject({
+      ok: true,
+      payload: {
+        chainId: "tDVV",
+        network: "testnet",
+        verificationStatus: "wrong_chain",
+        walletTypeVerified: false,
+      },
+    });
+    expect(unsupported).toMatchObject({
+      ok: true,
+      payload: {
+        accountType: "UNKNOWN",
+        capabilities: expect.not.arrayContaining(["EBRIDGE"]),
+        verificationStatus: "unsupported_wallet",
+        walletSource: "OTHER",
+        walletTypeVerified: false,
+      },
+    });
+
+    for (const response of [verified, missingSignature, wrongChain, unsupported]) {
+      for (const unsafe of ["signature", "privateKey", "token", "secret", "signedPayload"]) {
+        expect(hasOwnKeyDeep(response, unsafe)).toBe(false);
+      }
+    }
+  });
+
   it("creates campaign and task payloads with locale, wallet, contract, and evidence metadata", () => {
     const campaign = service.createCampaign({
       projectId: "awaken",

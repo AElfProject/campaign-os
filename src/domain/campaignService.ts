@@ -54,7 +54,10 @@ import {
   type VerificationPipelineReadinessGate,
   type VerificationProviderState,
   type VerificationType,
+  type WalletAdapterFixture,
+  type WalletCapability,
   type WalletCompatibility,
+  type WalletNetwork,
   type WalletPolicy,
   type WalletSource,
 } from "./types";
@@ -93,8 +96,12 @@ export type LocalServiceResult<T> =
     };
 
 export interface CreateWalletSessionRequest {
+  address?: string;
   adapterName?: string;
+  chainId?: string;
   fixtureId?: string;
+  network?: WalletNetwork | string;
+  signature?: string;
   walletPolicy?: WalletPolicy;
 }
 
@@ -410,13 +417,110 @@ const completeLocaleSplit = (
   });
 };
 
+interface DirectWalletAdapterMetadata {
+  accountType: AccountType;
+  audience: WalletAdapterFixture["audience"];
+  capabilities: WalletCapability[];
+  recommended: boolean;
+  walletName: string;
+  walletSource: WalletSource;
+}
+
+const directWalletAdapters: Record<string, DirectWalletAdapterMetadata> = {
+  NightElfWallet: {
+    accountType: "EOA",
+    audience: "EXISTING_USER",
+    capabilities: ["SIGN_MESSAGE", "CONTRACT_VIEW"],
+    recommended: false,
+    walletName: "NightElf Wallet",
+    walletSource: "NIGHTELF",
+  },
+  PortkeyAAWallet: {
+    accountType: "AA",
+    audience: "NORMAL_USER",
+    capabilities: ["SIGN_MESSAGE", "VIEW_BALANCE", "CONTRACT_VIEW", "EBRIDGE"],
+    recommended: true,
+    walletName: "Portkey AA Wallet",
+    walletSource: "PORTKEY_AA",
+  },
+  PortkeyDiscoverWallet: {
+    accountType: "EOA",
+    audience: "EXISTING_USER",
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW", "EBRIDGE"],
+    recommended: false,
+    walletName: "Portkey EOA App",
+    walletSource: "PORTKEY_EOA_APP",
+  },
+  PortkeyExtensionWallet: {
+    accountType: "EOA",
+    audience: "EXISTING_USER",
+    capabilities: ["SIGN_MESSAGE", "SEND_TRANSACTION", "CONTRACT_VIEW", "EBRIDGE"],
+    recommended: false,
+    walletName: "Portkey EOA Extension",
+    walletSource: "PORTKEY_EOA_EXTENSION",
+  },
+};
+
+const hasDirectWalletSessionFields = (request: CreateWalletSessionRequest) =>
+  request.address !== undefined ||
+  request.chainId !== undefined ||
+  request.network !== undefined ||
+  request.signature !== undefined;
+
+const toWalletNetwork = (network: CreateWalletSessionRequest["network"]): WalletNetwork => {
+  if (network === "mainnet" || network === "testnet") {
+    return network;
+  }
+
+  return "unknown";
+};
+
+const toLocalSessionIdPart = (value: string | undefined, fallback: string) => {
+  const normalized = value?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+  return normalized ? normalized.slice(0, 48) : fallback;
+};
+
+const createDirectWalletFixture = (
+  request: CreateWalletSessionRequest,
+): WalletAdapterFixture => {
+  const adapterName = request.adapterName?.trim() || "UnsupportedWallet";
+  const address = request.address?.trim();
+  const metadata = directWalletAdapters[adapterName];
+  const hasAddress = Boolean(address);
+  const supported = Boolean(metadata);
+
+  return {
+    id: `local-direct-${toLocalSessionIdPart(adapterName, "adapter")}-${toLocalSessionIdPart(address, "address")}`,
+    adapterName,
+    walletName: metadata?.walletName ?? adapterName,
+    address: hasAddress ? address : undefined,
+    accountType: metadata?.accountType ?? "UNKNOWN",
+    walletSource: metadata?.walletSource ?? "OTHER",
+    chainId: request.chainId?.trim() || "unknown",
+    network: toWalletNetwork(request.network),
+    capabilities: metadata ? [...metadata.capabilities] : ["ADDRESS_ONLY"],
+    signatureRequired: true,
+    signaturePresent: supported && Boolean(request.signature?.trim()),
+    supported,
+    allowedByCampaignPolicy: supported,
+    addressOnly: !hasAddress,
+    recommended: metadata?.recommended ?? false,
+    audience: metadata?.audience ?? "EXISTING_USER",
+  };
+};
+
 export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
   createWalletSession: (request) => {
-    const fixture =
-      walletAdapterFixtures.find((candidate) => candidate.id === request.fixtureId) ??
-      walletAdapterFixtures.find(
-        (candidate) => request.adapterName && candidate.adapterName === request.adapterName,
-      );
+    const requestedFixture = request.fixtureId
+      ? walletAdapterFixtures.find((candidate) => candidate.id === request.fixtureId)
+      : undefined;
+    const fixture = requestedFixture
+      ?? (hasDirectWalletSessionFields(request)
+        ? createDirectWalletFixture(request)
+        : walletAdapterFixtures.find(
+          (candidate) => request.adapterName && candidate.adapterName === request.adapterName,
+        ));
 
     if (!fixture) {
       return failure(
