@@ -6,6 +6,7 @@ import {
   campaignDetail,
   createLocaleAnalyticsReadiness,
   createProjectCampaignCommandCenter,
+  createLiveWalletConnectorBoundary,
   createVerificationCoverageSummary,
   getLocalizedText,
   seededCampaignDraft,
@@ -28,6 +29,8 @@ import {
   type LaunchConsoleHandoffReviewState,
   type LaunchConsoleTaskCategory,
   type LocaleStatus,
+  type LiveWalletConnectorLiveEvidenceStatus,
+  type LiveWalletConnectorReadiness,
   type PublishState,
   type SupportedLocale,
   type VerificationLiveEvidenceStatus,
@@ -487,6 +490,22 @@ const walletAdapterLiveEvidenceState = (status: AelfWebLoginAdapterLiveEvidenceS
   return status === "ready" ? "ready" : "warning";
 };
 
+const liveConnectorReadinessState = (readiness: LiveWalletConnectorReadiness) => {
+  if (readiness === "blocked") {
+    return "blocker";
+  }
+
+  return readiness === "approved" ? "ready" : "warning";
+};
+
+const liveConnectorEvidenceState = (status: LiveWalletConnectorLiveEvidenceStatus) => {
+  if (status === "blocked") {
+    return "blocker";
+  }
+
+  return status === "ready" ? "ready" : "warning";
+};
+
 const pipelineReleaseImpactState = (impact: VerificationReleaseImpact) => {
   if (impact === "blocker") {
     return "blocker";
@@ -674,6 +693,7 @@ export const ProjectConsole = ({
   const advancedAnalytics = commandCenter.advancedAnalytics;
   const aiOptimizationSummary = commandCenter.aiOptimization.projectOwnerSummary;
   const walletAdapterReadiness = commandCenter.aelfWebLoginAdapterReadiness;
+  const liveWalletConnectorBoundary = createLiveWalletConnectorBoundary();
   const providerEvidenceRegistry = commandCenter.providerEvidenceRegistry;
   const lifecycleOperations = commandCenter.lifecycleOperations;
   const launchConsoleBundles = commandCenter.launchConsoleCampaignBundles;
@@ -2721,6 +2741,105 @@ export const ProjectConsole = ({
           <p style={{ margin: 0 }}>{getLocalizedText(walletAdapterReadiness.boundary, locale)}</p>
           <p style={{ margin: "8px 0 0" }}>
             {copy.walletAdapterNextAction}: {getLocalizedText(walletAdapterReadiness.nextAction, locale)}
+          </p>
+        </div>
+      </section>
+
+      <section aria-label={copy.liveWalletConnectorBoundary} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.liveWalletConnectorBoundaryEyebrow}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.liveWalletConnectorBoundary}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.liveWalletConnectorBoundarySubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={`${liveWalletConnectorBoundary.summary.missingLiveEvidenceConnectors} ${copy.liveWalletConnectorMissingEvidence}`}
+            state={liveWalletConnectorBoundary.summary.releaseBlockers > 0 ? "blocker" : "warning"}
+          />
+        </div>
+
+        <div aria-label={`${copy.liveWalletConnectorBoundary} summary`} style={gridStyle}>
+          {[
+            {
+              detail: copy.liveWalletConnectorDisabledReviewRequired,
+              label: copy.liveWalletConnectorCandidates,
+              value: String(liveWalletConnectorBoundary.summary.totalConnectors),
+            },
+            {
+              detail: copy.liveWalletConnectorConfigRequired,
+              label: copy.liveWalletConnectorDisabledReviewRequired,
+              value: String(
+                liveWalletConnectorBoundary.summary.disabledConnectors +
+                  liveWalletConnectorBoundary.summary.reviewRequiredConnectors,
+              ),
+            },
+            {
+              detail: copy.liveWalletConnectorReviewApprovalRequired,
+              label: copy.liveWalletConnectorMissingEvidence,
+              value: String(liveWalletConnectorBoundary.summary.missingLiveEvidenceConnectors),
+            },
+            {
+              detail: copy.liveWalletConnectorReleaseGuardrail,
+              label: copy.walletAdapterReleaseBlockers,
+              value: String(liveWalletConnectorBoundary.summary.releaseBlockers),
+            },
+          ].map((stat) => (
+            <article key={stat.label} style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={statLabelStyle}>{stat.label}</p>
+              <p style={{ ...statValueStyle, fontSize: 20 }}>{stat.value}</p>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                {stat.detail}
+              </p>
+            </article>
+          ))}
+        </div>
+
+        <div style={sectionGridStyle}>
+          {liveWalletConnectorBoundary.entries.map((entry) => (
+            <article key={entry.connectorId} style={{ ...cardStyle, minHeight: 0 }}>
+              <div style={headingRowStyle}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={statLabelStyle}>{entry.packageName}</p>
+                  <h4 style={{ fontSize: 16, lineHeight: 1.2, margin: "4px 0" }}>
+                    {getLocalizedText(entry.displayName, locale)}
+                  </h4>
+                </div>
+                <PublishStateBadge
+                  label={readableCode(entry.readiness)}
+                  state={liveConnectorReadinessState(entry.readiness)}
+                />
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <PublishStateBadge
+                  label={`${copy.walletAdapterFeatureGate}: ${readableCode(entry.featureGateState)}`}
+                  state={entry.featureGateState === "blocked" ? "blocker" : "warning"}
+                />
+                <PublishStateBadge
+                  label={`${copy.verificationPipelineLiveEvidence}: ${readableCode(entry.liveEvidenceStatus)}`}
+                  state={liveConnectorEvidenceState(entry.liveEvidenceStatus)}
+                />
+              </div>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0, overflowWrap: "anywhere" }}>
+                {copy.liveWalletConnectorPackage}: {entry.packageName} ({entry.packageVersionSource})
+              </p>
+              <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                {copy.walletAdapterFallback}: {getLocalizedText(entry.fallback.reason, locale)}
+              </p>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {copy.walletAdapterNextAction}: {getLocalizedText(entry.nextAction, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
+
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{getLocalizedText(liveWalletConnectorBoundary.boundary, locale)}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.walletAdapterNextAction}: {getLocalizedText(liveWalletConnectorBoundary.nextAction, locale)}
           </p>
         </div>
       </section>

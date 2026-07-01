@@ -416,6 +416,25 @@ describe("Project Console shell", () => {
     expect(within(walletAdapterReadiness).getByText(/Show Future EOA adapter as maintenance/)).toBeInTheDocument();
     expect(within(walletAdapterReadiness).getByText(/no live wallet SDK connection/)).toBeInTheDocument();
 
+    const liveConnectorBoundary = screen.getByLabelText("Live wallet connector boundary");
+    expect(
+      within(liveConnectorBoundary).getByRole("heading", {
+        name: "Live wallet connector boundary",
+      }),
+    ).toBeInTheDocument();
+    expect(within(liveConnectorBoundary).getByText("Connector candidates")).toBeInTheDocument();
+    expect(within(liveConnectorBoundary).getAllByText("Missing live evidence").length).toBeGreaterThan(0);
+    expect(within(liveConnectorBoundary).getByText("Portkey AA live connector")).toBeInTheDocument();
+    expect(within(liveConnectorBoundary).getByText("Portkey Discover EOA live connector")).toBeInTheDocument();
+    expect(
+      within(liveConnectorBoundary).getAllByText(/@aelf-web-login\/wallet-adapter-portkey-aa/).length,
+    ).toBeGreaterThan(0);
+    expect(within(liveConnectorBoundary).getByText(/Configuration gate required/)).toBeInTheDocument();
+    expect(
+      within(liveConnectorBoundary).getByText(/Live wallet connector execution is disabled by default/),
+    ).toBeInTheDocument();
+    expect(within(liveConnectorBoundary).queryByText(/production wallet connection is available/i)).not.toBeInTheDocument();
+
     const providerRegistry = screen.getByLabelText("Provider evidence registry");
     expect(
       within(providerRegistry).getByRole("heading", { name: "Provider evidence registry" }),
@@ -578,6 +597,10 @@ describe("Project Console shell", () => {
     expect(within(providerRegistry).getByText("登记条目")).toBeInTheDocument();
     expect(within(providerRegistry).getByText("缺失真实 evidence")).toBeInTheDocument();
     expect(within(providerRegistry).getByText(/不会调用实时 API/)).toBeInTheDocument();
+    const liveConnectorBoundary = screen.getByLabelText("Live wallet connector boundary");
+    expect(within(liveConnectorBoundary).getByText("Connector 候选")).toBeInTheDocument();
+    expect(within(liveConnectorBoundary).getAllByText("已关闭 / 需审核").length).toBeGreaterThan(0);
+    expect(within(liveConnectorBoundary).getByText(/Live wallet connector 默认关闭/)).toBeInTheDocument();
     expect(screen.getByText("面向未来 agent 与 API 的只读 contract registry。")).toBeInTheDocument();
     expect(screen.getByText("创建活动草稿")).toBeInTheDocument();
     expect(screen.getByText("验证任务")).toBeInTheDocument();
