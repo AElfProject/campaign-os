@@ -16,11 +16,16 @@ describe("WalletConnectModal locale coverage", () => {
     const adapterEoa = within(dialog).getByTestId("wallet-modal-adapter-eoa");
     const adapterDegraded = within(dialog).getByTestId("wallet-modal-adapter-degraded");
     const adapterInternal = within(dialog).getByTestId("wallet-modal-adapter-internal");
+    const connectorBoundary = within(dialog).getByTestId("wallet-modal-live-connector-boundary");
 
     expect(adapterRecommended).toBeInTheDocument();
     expect(adapterEoa).toBeInTheDocument();
     expect(adapterDegraded).toBeInTheDocument();
     expect(adapterInternal).toBeInTheDocument();
+    expect(connectorBoundary).toBeInTheDocument();
+    expect(connectorBoundary).toHaveTextContent("Portkey AA live connector");
+    expect(connectorBoundary).toHaveTextContent("@aelf-web-login/wallet-adapter-portkey-aa");
+    expect(connectorBoundary).toHaveTextContent("Live wallet connector 預設關閉");
     expect(within(adapterRecommended).getByText("Portkey AA")).toBeInTheDocument();
     expect(within(adapterRecommended).queryByText("Agent Skill 錢包")).not.toBeInTheDocument();
     expect(within(adapterEoa).getByText("Portkey EOA App / Discover")).toBeInTheDocument();
@@ -37,6 +42,7 @@ describe("WalletConnectModal locale coverage", () => {
     expect(within(dialog).getByText("不支援的錢包：請為該 seeded 活動流程選擇 Portkey AA、Portkey EOA App、Portkey EOA Extension 或 NightElf。")).toBeInTheDocument();
     expect(within(dialog).getByText("缺少簽名：確認提示內容後只簽署 seeded 驗證訊息；此預覽不會請求真實簽名。")).toBeInTheDocument();
     expect(within(dialog).getByText("帳戶類型限制：如果活動只允許 AA 或只允許 EOA，請切換到該活動策略接受的錢包類型。")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /connectWallet|getSignature|sendTransaction/i })).not.toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "關閉錢包連接彈窗" }));
 
@@ -67,7 +73,15 @@ describe("WalletConnectModal locale coverage", () => {
     expect(within(dialog).getByTestId("wallet-modal-adapter-internal")).toHaveTextContent(
       "Agent Skill wallet",
     );
-    expect(within(dialog).getByText(/no live wallet SDK connection/)).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/no live wallet SDK connection/).length).toBeGreaterThan(0);
+    expect(
+      within(dialog).getAllByText(/Live wallet connector execution is disabled by default/).length,
+    ).toBeGreaterThan(0);
+    const connectorBoundary = within(dialog).getByTestId("wallet-modal-live-connector-boundary");
+    expect(connectorBoundary).toHaveTextContent("Connector candidates: 4");
+    expect(connectorBoundary).toHaveTextContent("Disabled/review-required: 4");
+    expect(connectorBoundary).toHaveTextContent("Portkey Discover EOA live connector");
+    expect(connectorBoundary).toHaveTextContent("@aelf-web-login/wallet-adapter-portkey-discover");
     expect(within(dialog).getByText(/Future EOA adapter is maintenance-only/)).toBeInTheDocument();
     expect(within(dialog).getAllByText(/Next action:/).length).toBeGreaterThan(0);
   });

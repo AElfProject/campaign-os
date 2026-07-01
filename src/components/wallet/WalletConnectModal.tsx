@@ -2,10 +2,13 @@ import { useEffect, type CSSProperties } from "react";
 import { X } from "lucide-react";
 import {
   createAelfWebLoginAdapterReadiness,
+  createLiveWalletConnectorBoundary,
   getLocalizedText,
   walletSessions,
   type AelfWebLoginAdapterReadinessEntry,
   type AelfWebLoginAdapterReadinessModel,
+  type LiveWalletConnectorBoundary,
+  type LiveWalletConnectorEntry,
   type SupportedLocale,
   type WalletOption,
 } from "../../domain";
@@ -13,6 +16,7 @@ import { WalletBadge } from "../badges/Badges";
 
 interface WalletConnectModalProps {
   adapterReadiness?: AelfWebLoginAdapterReadinessModel;
+  connectorBoundary?: LiveWalletConnectorBoundary;
   locale: SupportedLocale;
   onClose: () => void;
   options: WalletOption[];
@@ -28,6 +32,10 @@ const modalCopy = {
     advancedGroup: "Advanced / Agent",
     capability: "Capabilities",
     close: "Close wallet connect modal",
+    connectorBoundary: "Live connector boundary",
+    connectorCandidates: "Connector candidates",
+    connectorDisabled: "Disabled/review-required",
+    connectorPackage: "Candidate package",
     degradedGroup: "Unavailable / maintenance",
     eoaGroup: "EOA Wallets",
     featureGate: "Feature gate",
@@ -56,6 +64,10 @@ const modalCopy = {
     advancedGroup: "高级 / Agent",
     capability: "能力",
     close: "关闭钱包连接弹窗",
+    connectorBoundary: "Live connector boundary",
+    connectorCandidates: "Connector candidates",
+    connectorDisabled: "已关闭/待审核",
+    connectorPackage: "候选 package",
     degradedGroup: "不可用 / 维护中",
     eoaGroup: "EOA 钱包",
     featureGate: "功能门禁",
@@ -84,6 +96,10 @@ const modalCopy = {
     advancedGroup: "進階 / Agent",
     capability: "能力",
     close: "關閉錢包連接彈窗",
+    connectorBoundary: "Live connector boundary",
+    connectorCandidates: "Connector candidates",
+    connectorDisabled: "已關閉/待審核",
+    connectorPackage: "候選 package",
     degradedGroup: "不可用 / 維護中",
     eoaGroup: "EOA 錢包",
     featureGate: "功能門禁",
@@ -343,8 +359,81 @@ const AdapterEntryGroup = ({
   </section>
 );
 
+const ConnectorEntryCard = ({
+  copy,
+  entry,
+  locale,
+}: {
+  copy: (typeof modalCopy)["en-US"];
+  entry: LiveWalletConnectorEntry;
+  locale: SupportedLocale;
+}) => (
+  <article style={cardStyle}>
+    <div style={{ alignItems: "start", display: "flex", gap: 8, justifyContent: "space-between" }}>
+      <strong>{getLocalizedText(entry.displayName, locale)}</strong>
+      <WalletBadge accountType={entry.accountType} walletSource={entry.walletSource} />
+    </div>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+      <span style={advancedStyle}>{entry.readiness.replace(/_/g, " ")}</span>
+      <span style={advancedStyle}>{entry.featureGateState.replace(/_/g, " ")}</span>
+      <span style={advancedStyle}>{entry.liveEvidenceStatus.replace(/_/g, " ")}</span>
+    </div>
+    <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0, overflowWrap: "anywhere" }}>
+      {copy.connectorPackage}: {entry.packageName} ({entry.packageVersionSource})
+    </p>
+    <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+      {copy.capability}: {entry.capabilities.join(", ")}
+    </p>
+    <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.4, margin: 0 }}>
+      {getLocalizedText(entry.fallback.reason, locale)}
+    </p>
+    <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+      {copy.nextAction}: {getLocalizedText(entry.nextAction, locale)}
+    </p>
+  </article>
+);
+
+const ConnectorBoundarySection = ({
+  boundary,
+  copy,
+  locale,
+}: {
+  boundary: LiveWalletConnectorBoundary;
+  copy: (typeof modalCopy)["en-US"];
+  locale: SupportedLocale;
+}) => {
+  const disabledOrReviewRequired =
+    boundary.summary.disabledConnectors + boundary.summary.reviewRequiredConnectors;
+
+  return (
+    <section
+      aria-label={copy.connectorBoundary}
+      data-testid="wallet-modal-live-connector-boundary"
+      style={groupStyle}
+    >
+      <div style={rowStyle}>
+        <h3 style={{ color: "#071426", fontSize: 18, margin: 0 }}>{copy.connectorBoundary}</h3>
+        <span style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>
+          {copy.connectorCandidates}: {boundary.summary.totalConnectors}
+        </span>
+      </div>
+      <div role="note" style={alertStyle}>
+        <span>{getLocalizedText(boundary.boundary, locale)}</span>
+        <span>{copy.connectorDisabled}: {disabledOrReviewRequired}</span>
+        <span>{copy.nextAction}: {getLocalizedText(boundary.nextAction, locale)}</span>
+      </div>
+      <div style={gridStyle}>
+        {boundary.entries.map((entry) => (
+          <ConnectorEntryCard copy={copy} entry={entry} key={entry.connectorId} locale={locale} />
+        ))}
+      </div>
+    </section>
+  );
+};
+
 export const WalletConnectModal = ({
   adapterReadiness = createAelfWebLoginAdapterReadiness(walletSessions),
+  connectorBoundary = createLiveWalletConnectorBoundary(),
   locale,
   onClose,
   options,
@@ -398,7 +487,10 @@ export const WalletConnectModal = ({
           <span>{copy.privateKeySafety}</span>
           <span>{copy.nonLiveBoundary}</span>
           <span>{getLocalizedText(adapterReadiness.boundary, locale)}</span>
+          <span>{getLocalizedText(connectorBoundary.boundary, locale)}</span>
         </div>
+
+        <ConnectorBoundarySection boundary={connectorBoundary} copy={copy} locale={locale} />
 
         <AdapterEntryGroup
           copy={copy}
