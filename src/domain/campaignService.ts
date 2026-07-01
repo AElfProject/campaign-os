@@ -17,6 +17,10 @@ import {
 } from "./campaign";
 import { createApiSkillContractSurface } from "./apiSkillContracts";
 import {
+  taskTemplateLibrary,
+  type TaskTemplate,
+} from "./builder";
+import {
   campaignDetail,
   campaignTasks,
   walletAdapterFixtures,
@@ -240,6 +244,49 @@ export interface GenerateI18nDraftResponse {
   targetLocale: Exclude<SupportedLocale, "en-US">;
 }
 
+export interface GenerateCampaignTasksRequest {
+  campaignId: string;
+  goal: string;
+  product: string;
+  targetUsers: string[];
+  walletPolicy: WalletPolicy;
+}
+
+export type GeneratedCampaignTaskVerificationType = VerificationType | "REFERRAL";
+
+export interface GeneratedCampaignTask {
+  campaignId: string;
+  evidenceRule: Record<string, string | number | boolean>;
+  id: string;
+  instructionKey: string;
+  points: number;
+  required: boolean;
+  templateCode: string;
+  titleKey: string;
+  verificationType: GeneratedCampaignTaskVerificationType;
+  walletCompatibility: WalletCompatibility;
+}
+
+export interface GeneratedCampaignTaskPointRule {
+  points: number;
+  required: boolean;
+  templateCode: string;
+}
+
+export interface GeneratedCampaignTaskWalletCompatibility {
+  templateCode: string;
+  walletCompatibility: WalletCompatibility;
+}
+
+export interface GenerateCampaignTasksResponse {
+  boundary: LocalizedText;
+  campaignId: string;
+  humanReviewRequired: boolean;
+  pointRules: GeneratedCampaignTaskPointRule[];
+  taskList: GeneratedCampaignTask[];
+  walletCompatibility: GeneratedCampaignTaskWalletCompatibility[];
+}
+
 export interface GetCampaignAnalyticsRequest {
   campaignId: string;
 }
@@ -305,6 +352,7 @@ export interface CampaignOsLocalService {
   createCampaign(request: CreateCampaignRequest): LocalServiceResult<LocalCampaignDraft>;
   createWalletSession(request: CreateWalletSessionRequest): LocalServiceResult<NormalizedWalletSession>;
   exportWinners(request: ExportWinnersRequest): LocalServiceResult<ExportWinnersResponse>;
+  generateCampaignTasks(request: GenerateCampaignTasksRequest): LocalServiceResult<GenerateCampaignTasksResponse>;
   generateCampaignPosts(request: GenerateCampaignPostsRequest): LocalServiceResult<{
     artifacts: ReturnType<typeof createAiContentPackWorkbench>["artifacts"];
     boundary: ReturnType<typeof createAiContentPackWorkbench>["boundary"];
@@ -364,6 +412,15 @@ const noAutoPublishNotice: LocalizedText = {
   "en-US": "AI generated translation cannot auto-publish before human review.",
   "zh-CN": "AI 生成翻译必须经过人工审核后才能发布。",
   "zh-TW": "AI generated translation cannot auto-publish before human review.",
+};
+
+const generatedCampaignTasksBoundary: LocalizedText = {
+  "en-US":
+    "No live task generation provider, template registry, wallet SDK, verification provider, storage write, reward distribution, contract call, or publish mutation is executed. Generated tasks are seeded/local Task Template Library projections only.",
+  "zh-CN":
+    "不会调用实时任务生成 provider、模板 registry、钱包 SDK、验证 provider、storage 写入、奖励发放、合约调用或发布变更。生成任务仅来自 seeded/本地任务模板库投影。",
+  "zh-TW":
+    "No live task generation provider, template registry, wallet SDK, verification provider, storage write, reward distribution, contract call, or publish mutation is executed. Generated tasks are seeded/local Task Template Library projections only.",
 };
 
 const success = <T>(payload: T): LocalServiceResult<T> => ({
@@ -473,6 +530,85 @@ const filterGeneratedCampaignPostArtifacts = (
 
 const findCampaign = (campaignId: string): CampaignShellDetail | undefined =>
   campaignDetail.id === campaignId ? campaignDetail : undefined;
+
+const supportedGeneratedCampaignTaskWalletPolicies = ["ANY", "AA_ONLY", "EOA_ONLY"] as const satisfies readonly WalletPolicy[];
+
+const isSupportedGeneratedCampaignTaskWalletPolicy = (walletPolicy: string): walletPolicy is WalletPolicy =>
+  supportedGeneratedCampaignTaskWalletPolicies.includes(walletPolicy as WalletPolicy);
+
+const taskTemplateCode = (template: TaskTemplate) =>
+  template.id.startsWith("tpl-") ? template.id.slice(4) : template.id;
+
+const taskTemplateLocaleKeyPrefix = (template: TaskTemplate) =>
+  `task.${taskTemplateCode(template)}`;
+
+const matchesGeneratedCampaignTaskWalletPolicy = (
+  template: TaskTemplate,
+  walletPolicy: WalletPolicy,
+) => {
+  if (walletPolicy === "AA_ONLY") {
+    return template.walletCompatibility === "ANY" || template.walletCompatibility === "AA_ONLY";
+  }
+  if (walletPolicy === "EOA_ONLY") {
+    return template.walletCompatibility === "ANY" || template.walletCompatibility === "EOA_ONLY";
+  }
+
+  return true;
+};
+
+const createGeneratedCampaignTask = (
+  campaignId: string,
+  request: GenerateCampaignTasksRequest,
+  template: TaskTemplate,
+): GeneratedCampaignTask => {
+  const templateCode = taskTemplateCode(template);
+  const localeKeyPrefix = taskTemplateLocaleKeyPrefix(template);
+
+  return {
+    campaignId,
+    evidenceRule: {
+      category: template.category,
+      goal: request.goal.trim(),
+      product: request.product.trim(),
+      source: "LOCAL_SEEDED",
+      targetUsers: request.targetUsers.map((targetUser) => targetUser.trim()).filter(Boolean).join(","),
+      templateId: template.id,
+    },
+    id: `local-task-${templateCode}`,
+    instructionKey: `${localeKeyPrefix}.instruction`,
+    points: template.defaultPoints,
+    required: template.requiredByDefault,
+    templateCode,
+    titleKey: `${localeKeyPrefix}.title`,
+    verificationType: template.verificationType,
+    walletCompatibility: template.walletCompatibility,
+  };
+};
+
+const createGeneratedCampaignTasksResponse = (
+  campaignId: string,
+  request: GenerateCampaignTasksRequest,
+): GenerateCampaignTasksResponse => {
+  const taskList = taskTemplateLibrary
+    .filter((template) => matchesGeneratedCampaignTaskWalletPolicy(template, request.walletPolicy))
+    .map((template) => createGeneratedCampaignTask(campaignId, request, template));
+
+  return {
+    boundary: generatedCampaignTasksBoundary,
+    campaignId,
+    humanReviewRequired: true,
+    pointRules: taskList.map((task) => ({
+      points: task.points,
+      required: task.required,
+      templateCode: task.templateCode,
+    })),
+    taskList,
+    walletCompatibility: taskList.map((task) => ({
+      templateCode: task.templateCode,
+      walletCompatibility: task.walletCompatibility,
+    })),
+  };
+};
 
 const findParticipant = (
   campaign: CampaignShellDetail,
@@ -770,6 +906,57 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       ...request,
       id: `local-task-${request.templateCode}`,
     });
+  },
+
+  generateCampaignTasks: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local service facade.",
+        "本地 service facade 中不存在该活动。",
+      );
+    }
+
+    if (!request.goal.trim()) {
+      return failure(
+        "INVALID_REQUEST",
+        "goal",
+        "Campaign task generation requires a non-empty goal.",
+        "生成活动任务前必须提供非空活动目标。",
+      );
+    }
+
+    if (!request.product.trim()) {
+      return failure(
+        "INVALID_REQUEST",
+        "product",
+        "Campaign task generation requires a non-empty product.",
+        "生成活动任务前必须提供非空产品上下文。",
+      );
+    }
+
+    if (request.targetUsers.filter((targetUser) => targetUser.trim()).length === 0) {
+      return failure(
+        "INVALID_REQUEST",
+        "targetUsers",
+        "Campaign task generation requires at least one target user segment.",
+        "生成活动任务前必须至少提供一个目标用户分层。",
+      );
+    }
+
+    if (!isSupportedGeneratedCampaignTaskWalletPolicy(request.walletPolicy)) {
+      return failure(
+        "INVALID_REQUEST",
+        "walletPolicy",
+        "Campaign task generation walletPolicy must be ANY, AA_ONLY, or EOA_ONLY.",
+        "生成活动任务的 walletPolicy 必须为 ANY、AA_ONLY 或 EOA_ONLY。",
+      );
+    }
+
+    return success(createGeneratedCampaignTasksResponse(campaign.id, request));
   },
 
   verifyTask: (request) => {
@@ -1244,7 +1431,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     const serviceNames = [
       "createWalletSession",
       "createCampaign",
-      "addTask",
+      "generateCampaignTasks",
       "verifyTask",
       "checkEligibility",
       "generateI18nDraft",
@@ -1293,6 +1480,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       sampleResponseIds: [
         "createWalletSession",
         "createCampaign",
+        "generateCampaignTasks",
         "verifyTask",
         "checkEligibility",
         "getAdvancedAnalyticsReadiness",

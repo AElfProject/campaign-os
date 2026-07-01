@@ -279,6 +279,136 @@ describe("Campaign OS local API service facade", () => {
     });
   });
 
+  it("generates seeded campaign task suggestions with point and wallet contract fields", () => {
+    const generated = service.generateCampaignTasks({
+      campaignId: campaignDetail.id,
+      goal: "Activate Awaken traders",
+      product: "Awaken",
+      targetUsers: ["new AA users", "existing EOA traders"],
+      walletPolicy: "ANY",
+    });
+
+    expect(generated.ok).toBe(true);
+    expect(generated.payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      humanReviewRequired: true,
+      taskList: expect.any(Array),
+      pointRules: expect.any(Array),
+      walletCompatibility: expect.any(Array),
+    });
+    expect(generated.payload?.taskList.length).toBeGreaterThan(0);
+    expect(generated.payload?.pointRules).toHaveLength(generated.payload?.taskList.length ?? 0);
+    expect(generated.payload?.walletCompatibility).toHaveLength(generated.payload?.taskList.length ?? 0);
+    expect(generated.payload?.taskList[0]).toMatchObject({
+      campaignId: campaignDetail.id,
+      evidenceRule: expect.objectContaining({
+        product: "Awaken",
+        source: "LOCAL_SEEDED",
+      }),
+      instructionKey: expect.stringMatching(/^task\..+\.instruction$/),
+      points: expect.any(Number),
+      required: expect.any(Boolean),
+      templateCode: expect.any(String),
+      titleKey: expect.stringMatching(/^task\..+\.title$/),
+      walletCompatibility: expect.any(String),
+    });
+    expect(generated.payload?.boundary["en-US"]).toContain("No live task generation provider");
+    expect(generated.boundary["en-US"]).toContain("No live API");
+    for (const unsafeKey of [["private", "Key"], ["tok", "en"], ["sec", "ret"]].map((parts) => parts.join(""))) {
+      expect(hasOwnKeyDeep(generated.payload, unsafeKey)).toBe(false);
+    }
+    expect(service.getCoverageSummary().payload?.serviceNames).toContain("generateCampaignTasks");
+    expect(typeof service.addTask).toBe("function");
+  });
+
+  it("filters generated campaign tasks by wallet policy", () => {
+    const aaOnly = service.generateCampaignTasks({
+      campaignId: campaignDetail.id,
+      goal: "Onboard AA users",
+      product: "Portkey",
+      targetUsers: ["AA users"],
+      walletPolicy: "AA_ONLY",
+    });
+    const eoaOnly = service.generateCampaignTasks({
+      campaignId: campaignDetail.id,
+      goal: "Retain EOA traders",
+      product: "Awaken",
+      targetUsers: ["EOA users"],
+      walletPolicy: "EOA_ONLY",
+    });
+    const anyWallet = service.generateCampaignTasks({
+      campaignId: campaignDetail.id,
+      goal: "Grow all wallet users",
+      product: "aelf",
+      targetUsers: ["AA users", "EOA users"],
+      walletPolicy: "ANY",
+    });
+
+    expect(aaOnly.ok).toBe(true);
+    expect(eoaOnly.ok).toBe(true);
+    expect(anyWallet.ok).toBe(true);
+    expect(aaOnly.payload?.walletCompatibility.map((row) => row.walletCompatibility)).not.toContain("EOA_ONLY");
+    expect(eoaOnly.payload?.walletCompatibility.map((row) => row.walletCompatibility)).not.toContain("AA_ONLY");
+    expect(anyWallet.payload?.walletCompatibility.map((row) => row.walletCompatibility)).toEqual(
+      expect.arrayContaining(["EOA_ONLY"]),
+    );
+  });
+
+  it("fails closed for invalid generated campaign task requests", () => {
+    const validRequest = {
+      campaignId: campaignDetail.id,
+      goal: "Activate Awaken traders",
+      product: "Awaken",
+      targetUsers: ["new users"],
+      walletPolicy: "ANY" as const,
+    };
+    const invalidResponses = [
+      {
+        response: service.generateCampaignTasks({
+          ...validRequest,
+          campaignId: "missing-campaign",
+        }),
+        expected: { code: "CAMPAIGN_NOT_FOUND", field: "campaignId" },
+      },
+      {
+        response: service.generateCampaignTasks({
+          ...validRequest,
+          goal: "  ",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "goal" },
+      },
+      {
+        response: service.generateCampaignTasks({
+          ...validRequest,
+          product: "",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "product" },
+      },
+      {
+        response: service.generateCampaignTasks({
+          ...validRequest,
+          targetUsers: [" ", ""],
+        }),
+        expected: { code: "INVALID_REQUEST", field: "targetUsers" },
+      },
+      {
+        response: service.generateCampaignTasks({
+          ...validRequest,
+          walletPolicy: "AA_AND_EOA" as never,
+        }),
+        expected: { code: "INVALID_REQUEST", field: "walletPolicy" },
+      },
+    ];
+
+    for (const { response, expected } of invalidResponses) {
+      expect(response).toMatchObject({
+        ok: false,
+        error: expect.objectContaining(expected),
+      });
+      expect(response.payload).toBeUndefined();
+    }
+  });
+
   it("fails closed for invalid create campaign request fields", () => {
     const validCreateCampaignRequest = {
       endTime: "2026-07-14T23:59:59Z",
