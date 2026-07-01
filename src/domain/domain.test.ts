@@ -31,7 +31,9 @@ import {
   createWalletConnectionDiagnostics,
   createWalletProviderQaReadinessGate,
   deriveEligibilityWalletStatus,
+  deriveParticipantTaskActions,
   deriveParticipantTaskStates,
+  deriveTaskVerificationAction,
   defaultLocale,
   EXPORT_CSV_COLUMNS,
   fallbackLocale,
@@ -1281,6 +1283,93 @@ describe("Campaign OS domain foundation", () => {
         walletCompatibility: "EOA_ONLY",
       }),
     ]));
+  });
+
+  it("derives localized local task verification actions from participant states", () => {
+    const [completedParticipant, eoaParticipant] = campaignDetail.participants;
+    const eoaActions = deriveParticipantTaskActions(campaignDetail.tasks, eoaParticipant);
+    const completedActions = deriveParticipantTaskActions(campaignDetail.tasks, completedParticipant);
+    const actionByTaskId = new Map(eoaActions.map((action) => [action.taskId, action]));
+    const completedBridgeAction = completedActions.find((action) => action.taskId === "task-bridge");
+
+    expect(actionByTaskId.get("task-bridge")).toMatchObject({
+      kind: "verify",
+      enabled: true,
+      proofRequired: false,
+      requiresWalletProvenance: true,
+      status: "ready",
+      providerReadiness: "unavailable",
+      canonicalEvidenceSource: "AELFSCAN",
+    });
+    expect(actionByTaskId.get("task-swap")).toMatchObject({
+      kind: "retry",
+      enabled: true,
+      proofRequired: false,
+      status: "pending",
+      providerReadiness: "unavailable",
+      canonicalEvidenceSource: "DAPP_API",
+    });
+    expect(actionByTaskId.get("task-social")).toMatchObject({
+      kind: "submit_proof",
+      enabled: true,
+      proofRequired: true,
+      status: "failed",
+      providerReadiness: "blocked",
+      canonicalEvidenceSource: "SOCIAL_API",
+    });
+    expect(actionByTaskId.get("task-agent-review")).toMatchObject({
+      kind: "view_review",
+      enabled: true,
+      proofRequired: false,
+      status: "manual_review",
+      providerReadiness: "review_required",
+      canonicalEvidenceSource: "MANUAL_REVIEW",
+    });
+    expect(completedBridgeAction).toMatchObject({
+      kind: "completed",
+      enabled: false,
+      proofRequired: false,
+      status: "completed",
+      providerReadiness: "local_only",
+      canonicalEvidenceSource: "AELFSCAN",
+    });
+
+    for (const action of [...eoaActions, completedBridgeAction]) {
+      expect(action?.label["zh-CN"]).toBeTruthy();
+      expect(action?.label["zh-TW"]).toBeTruthy();
+      expect(action?.nextAction["zh-CN"]).toBeTruthy();
+      expect(action?.nextAction["zh-TW"]).toBeTruthy();
+      expect(action?.boundary["zh-CN"]).toContain("本地");
+      expect(action?.boundary["zh-TW"]).toBeTruthy();
+    }
+  });
+
+  it("builds deterministic local task verification action results", () => {
+    const [, eoaParticipant] = campaignDetail.participants;
+    const states = deriveParticipantTaskStates(campaignDetail.tasks, eoaParticipant);
+    const failedTask = campaignDetail.tasks.find((task) => task.id === "task-social");
+    const failedState = states.find((state) => state.taskId === "task-social");
+    const manualTask = campaignDetail.tasks.find((task) => task.id === "task-agent-review");
+    const manualState = states.find((state) => state.taskId === "task-agent-review");
+
+    expect(failedTask).toBeDefined();
+    expect(failedState).toBeDefined();
+    expect(manualTask).toBeDefined();
+    expect(manualState).toBeDefined();
+
+    const failedAction = deriveTaskVerificationAction(failedTask!, failedState!);
+    const manualAction = deriveTaskVerificationAction(manualTask!, manualState!);
+
+    expect(failedAction).toMatchObject({
+      kind: "submit_proof",
+      proofRequired: true,
+      status: "failed",
+    });
+    expect(manualAction).toMatchObject({
+      kind: "view_review",
+      proofRequired: false,
+      status: "manual_review",
+    });
   });
 
   it("builds deterministic verification coverage without live provider claims", () => {
