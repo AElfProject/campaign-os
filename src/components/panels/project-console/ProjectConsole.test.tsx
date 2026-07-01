@@ -162,6 +162,7 @@ describe("Project Console shell", () => {
       "wallet",
       "bridge",
       "swap",
+      "liquidity",
       "nft",
       "schrodinger",
       "dao",

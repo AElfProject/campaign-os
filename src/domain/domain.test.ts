@@ -1941,6 +1941,7 @@ describe("Campaign OS domain foundation", () => {
         "wallet",
         "bridge",
         "swap",
+        "liquidity",
         "nft",
         "schrodinger",
         "dao",
@@ -2004,6 +2005,9 @@ describe("Campaign OS domain foundation", () => {
       (row) => row.templateId === "tpl-invite-friend",
     );
     const payTemplate = adminOps.templateGovernance.rows.find((row) => row.templateId === "tpl-pay-complete");
+    const liquidityTemplate = adminOps.templateGovernance.rows.find(
+      (row) => row.templateId === "tpl-liquidity-awaken",
+    );
     const forecastTemplate = adminOps.templateGovernance.rows.find(
       (row) => row.templateId === "tpl-forecast-participate",
     );
@@ -2025,6 +2029,12 @@ describe("Campaign OS domain foundation", () => {
     expect(payTemplate).toMatchObject({
       category: "pay",
       verificationType: "DAPP_API",
+      walletCompatibility: "ANY",
+      reviewSignals: expect.arrayContaining(["localization_review"]),
+    });
+    expect(liquidityTemplate).toMatchObject({
+      category: "liquidity",
+      verificationType: "ON_CHAIN",
       walletCompatibility: "ANY",
       reviewSignals: expect.arrayContaining(["localization_review"]),
     });
