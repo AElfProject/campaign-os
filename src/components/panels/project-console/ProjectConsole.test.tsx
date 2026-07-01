@@ -178,6 +178,20 @@ describe("Project Console shell", () => {
 
     clickWorkspace("Templates");
 
+    expect(screen.getByRole("heading", { name: "Campaign Template Pack" })).toBeInTheDocument();
+    for (const presetName of [
+      "aelf Onboarding Campaign",
+      "Awaken Liquidity Challenge",
+      "NFT Holder Quest",
+      "DAO Governance Campaign",
+      "AI Agent Coin Launch Campaign",
+    ]) {
+      expect(screen.getByText(presetName)).toBeInTheDocument();
+    }
+    expect(screen.getByText(/no live provider verification/i)).toBeInTheDocument();
+    expect(screen.getByText(/automatic campaign creation/i)).toBeInTheDocument();
+    expect(screen.getByText(/reward custody/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Campaign OS provides preset guidance/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Task template library" })).toBeInTheDocument();
     for (const category of [
       "wallet",
@@ -601,6 +615,11 @@ describe("Project Console shell", () => {
     expect(screen.getByText(/不执行真实发布/)).toBeInTheDocument();
 
     fireEvent.click(within(nav).getByRole("button", { name: "模板" }));
+    expect(screen.getByRole("heading", { name: "活动模板包" })).toBeInTheDocument();
+    expect(screen.getByText("aelf 新手引导活动")).toBeInTheDocument();
+    expect(screen.getByText("Awaken 流动性挑战")).toBeInTheDocument();
+    expect(screen.getByText(/不会执行实时 provider 验证/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Campaign OS 只提供模板指引/).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "任务模板库" })).toBeInTheDocument();
     expect(screen.getAllByText("连接钱包").length).toBeGreaterThan(0);
 
