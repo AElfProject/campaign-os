@@ -115,7 +115,9 @@ export interface CreateWalletSessionRequest {
 export interface CreateCampaignRequest {
   contractMode?: ContractMode;
   defaultLocale?: SupportedLocale;
+  duration: string;
   endTime: string;
+  goal: string;
   metadataHash?: string;
   metadataUri?: string;
   ownerAddress: string;
@@ -131,7 +133,9 @@ export interface CreateCampaignRequest {
 export interface LocalCampaignDraft {
   contractMode: ContractMode;
   defaultLocale: "en-US";
+  duration: string;
   endTime: string;
+  goal: string;
   id: string;
   metadataHash?: string;
   metadataUri?: string;
@@ -462,6 +466,29 @@ const parseCampaignTimestamp = (value: string): number | undefined => {
   const timestamp = Date.parse(value);
 
   return Number.isFinite(timestamp) ? timestamp : undefined;
+};
+
+const toUtcDateKey = (value: string): string | undefined => {
+  const timestamp = parseCampaignTimestamp(value.trim());
+
+  return timestamp === undefined ? undefined : new Date(timestamp).toISOString().slice(0, 10);
+};
+
+const isDurationCoherentWithWindow = (
+  duration: string,
+  startTime: string,
+  endTime: string,
+) => {
+  const [durationStart, durationEnd, ...extraParts] = duration.split("/").map((part) => part.trim());
+
+  if (!durationStart || !durationEnd || extraParts.length > 0) {
+    return false;
+  }
+
+  return (
+    toUtcDateKey(durationStart) === toUtcDateKey(startTime) &&
+    toUtcDateKey(durationEnd) === toUtcDateKey(endTime)
+  );
 };
 
 const isSupportedDraftTargetLocale = (
@@ -808,12 +835,33 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
   },
 
   createCampaign: (request) => {
+    const goal = request.goal.trim();
+    const duration = request.duration.trim();
+
     if (!request.ownerAddress.trim()) {
       return failure(
         "INVALID_REQUEST",
         "ownerAddress",
         "Campaign ownerAddress is required before a local campaign draft can be created.",
         "创建本地活动草稿前必须提供活动 ownerAddress。",
+      );
+    }
+
+    if (!goal) {
+      return failure(
+        "INVALID_REQUEST",
+        "goal",
+        "Campaign goal is required before a local campaign draft can be created.",
+        "创建本地活动草稿前必须提供活动目标。",
+      );
+    }
+
+    if (!duration) {
+      return failure(
+        "INVALID_REQUEST",
+        "duration",
+        "Campaign duration is required before a local campaign draft can be created.",
+        "创建本地活动草稿前必须提供活动周期。",
       );
     }
 
@@ -859,10 +907,21 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       );
     }
 
+    if (!isDurationCoherentWithWindow(duration, request.startTime, request.endTime)) {
+      return failure(
+        "INVALID_REQUEST",
+        "duration",
+        "Campaign duration must match the startTime and endTime dates.",
+        "活动 duration 必须与 startTime 和 endTime 日期一致。",
+      );
+    }
+
     return success({
       contractMode: request.contractMode ?? "OFF_CHAIN_MVP",
       defaultLocale,
+      duration,
       endTime: request.endTime,
+      goal,
       id: `local-${request.projectId}-campaign`,
       ...(request.metadataHash ? { metadataHash: request.metadataHash } : {}),
       ...(request.metadataUri ? { metadataUri: request.metadataUri } : {}),
