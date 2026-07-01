@@ -12,12 +12,50 @@ const contractsById = Object.fromEntries(
 );
 
 describe("API Skill Contract registry", () => {
-  it("covers the complete v0.1 first skill batch", () => {
+  it("covers the complete v0.1 first skill batch plus the v0.2 wallet session API", () => {
     expect(apiSkillContractRegistry.map((contract) => contract.id)).toEqual(requiredApiSkillIds);
     expect(createApiSkillContractSurface().summary).toMatchObject({
       missingSkillIds: [],
-      totalContracts: 8,
+      totalContracts: 9,
     });
+  });
+
+  it("models the local wallet session API contract with optional public identity metadata", () => {
+    const walletSession = contractsById.create_wallet_session;
+    const inputFields = new Map(walletSession.inputFields.map((field) => [field.name, field]));
+    const outputFields = new Map(walletSession.outputFields.map((field) => [field.name, field]));
+
+    expect(walletSession).toMatchObject({
+      apiGroup: "wallet_session",
+      readiness: "local_only",
+      riskLevel: "medium",
+    });
+    expect([...inputFields.keys()]).toEqual(
+      expect.arrayContaining(["address", "adapterName", "chainId", "network", "signature"]),
+    );
+    expect(inputFields.get("signature")?.required).toBe(false);
+    expect([...outputFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "sessionId",
+        "address",
+        "accountType",
+        "walletSource",
+        "walletName",
+        "chainId",
+        "network",
+        "accounts",
+        "publicKey",
+        "capabilities",
+        "verificationStatus",
+        "signatureStatus",
+        "walletTypeVerified",
+      ]),
+    );
+    expect(outputFields.get("accounts")).toMatchObject({ group: "wallet", required: false });
+    expect(outputFields.get("publicKey")).toMatchObject({ group: "wallet", required: false });
+    expect(outputFields.has("signature")).toBe(false);
+    expect(walletSession.securityBoundary["en-US"]).toContain("No live API");
+    expect(walletSession.securityBoundary["en-US"]).toContain("wallet SDK");
   });
 
   it("keeps every contract structured, localized, and bounded", () => {
@@ -225,7 +263,7 @@ describe("API Skill Contract registry", () => {
       blockedCount: 0,
       externalEvidenceCount: 4,
       highRiskCount: 2,
-      localOnlyCount: 2,
+      localOnlyCount: 3,
       readyCount: 3,
       reviewRequiredCount: 3,
     });
