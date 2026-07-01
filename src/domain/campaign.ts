@@ -2596,6 +2596,16 @@ const localeMetricLabel = (metric: LocaleAnalyticsMetric): LocalizedText => {
       "zh-CN": "翻译回退率",
       "zh-TW": "Translation fallback rate",
     },
+    ai_draft_accepted_rate: {
+      "en-US": "AI draft accepted rate",
+      "zh-CN": "AI 草稿采用率",
+      "zh-TW": "AI 草稿採用率",
+    },
+    manual_edit_time: {
+      "en-US": "Manual edit time",
+      "zh-CN": "人工编辑耗时",
+      "zh-TW": "人工編輯耗時",
+    },
   };
 
   return labels[metric];
@@ -2615,6 +2625,39 @@ const localeReadinessRow = (
   readiness,
   boundary: localeAnalyticsBoundary,
 });
+
+const aiDraftAcceptedReadiness = (
+  locale: (typeof supportedLocales)[number],
+  revision: ContentRevision | undefined,
+): Pick<LocaleAnalyticsReadinessRow, "value" | "readiness"> => {
+  if (locale === "en-US") {
+    return { readiness: "ready", value: "N/A" };
+  }
+
+  return revisionReadyForShare(revision)
+    ? { readiness: "ready", value: "100%" }
+    : { readiness: "warning", value: "0%" };
+};
+
+const manualEditTimeReadiness = (
+  locale: (typeof supportedLocales)[number],
+  revision: ContentRevision | undefined,
+  fallbackActive: boolean,
+): Pick<LocaleAnalyticsReadinessRow, "value" | "readiness"> => {
+  if (locale === "en-US") {
+    return { readiness: "ready", value: "Source locale" };
+  }
+
+  if (revision?.status === "ai_draft") {
+    return { readiness: "warning", value: "15 min pending review" };
+  }
+
+  if (fallbackActive) {
+    return { readiness: "warning", value: "30 min fallback review" };
+  }
+
+  return { readiness: "ready", value: "10 min reviewed" };
+};
 
 export const createLocaleAnalyticsReadiness = (
   campaign: Pick<CampaignShellDetail, "participants" | "contentRevisions" | "metrics">,
@@ -2641,6 +2684,8 @@ export const createLocaleAnalyticsReadiness = (
     const localeShare = localeParticipants.length / totalParticipants;
     const localeRevision = campaign.contentRevisions.find((revision) => revision.locale === locale);
     const fallbackActive = locale !== "en-US" && !revisionReadyForShare(localeRevision);
+    const aiDraftAccepted = aiDraftAcceptedReadiness(locale, localeRevision);
+    const manualEditTime = manualEditTimeReadiness(locale, localeRevision, fallbackActive);
 
     return [
       localeReadinessRow(
@@ -2672,6 +2717,18 @@ export const createLocaleAnalyticsReadiness = (
         "translation_fallback_rate",
         fallbackActive ? "100%" : "0%",
         fallbackActive ? "warning" : "ready",
+      ),
+      localeReadinessRow(
+        locale,
+        "ai_draft_accepted_rate",
+        aiDraftAccepted.value,
+        aiDraftAccepted.readiness,
+      ),
+      localeReadinessRow(
+        locale,
+        "manual_edit_time",
+        manualEditTime.value,
+        manualEditTime.readiness,
       ),
     ];
   });

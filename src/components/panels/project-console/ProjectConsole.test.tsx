@@ -285,6 +285,8 @@ describe("Project Console shell", () => {
       "Task completion",
       "Referral conversion",
       "Translation fallback rate",
+      "AI draft accepted rate",
+      "Manual edit time",
     ]) {
       expect(within(localeAnalytics).getAllByText(metric).length).toBeGreaterThan(0);
     }
