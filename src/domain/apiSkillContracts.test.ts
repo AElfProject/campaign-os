@@ -374,6 +374,28 @@ describe("API Skill Contract registry", () => {
     );
   });
 
+  it("documents summarize_campaign wallet type and locale cross-split output", () => {
+    const outputFields = new Map(
+      contractsById.summarize_campaign.outputFields.map((field) => [field.name, field]),
+    );
+
+    expect([...outputFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "report",
+        "walletTypeMetrics",
+        "localeMetrics",
+        "walletLocaleMetrics",
+        "riskSummary",
+      ]),
+    );
+    expect(outputFields.get("walletLocaleMetrics")).toMatchObject({
+      group: "wallet",
+      required: true,
+    });
+    expect(outputFields.get("walletLocaleMetrics")?.description["en-US"]).toContain("wallet type and locale");
+    expect(outputFields.get("walletLocaleMetrics")?.description["zh-CN"]).toContain("钱包类型与语言");
+  });
+
   it("models export winner columns and safety options", () => {
     const exportFields = [
       ...contractsById.export_winners.inputFields,

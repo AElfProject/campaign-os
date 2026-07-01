@@ -1230,8 +1230,59 @@ describe("Campaign OS local API service facade", () => {
       localeMetrics: expect.any(Array),
       period: "daily",
       riskSummary: expect.any(Array),
+      walletLocaleMetrics: expect.any(Array),
       walletTypeMetrics: expect.any(Array),
     });
+    expect(summary.payload?.walletLocaleMetrics).toEqual([
+      {
+        count: 1,
+        id: "wallet-locale-aa-en-us",
+        label: "AA / en-US",
+        locale: "en-US",
+        percentage: 25,
+        walletType: "AA",
+      },
+      {
+        count: 0,
+        id: "wallet-locale-aa-zh-cn",
+        label: "AA / zh-CN",
+        locale: "zh-CN",
+        percentage: 0,
+        walletType: "AA",
+      },
+      {
+        count: 1,
+        id: "wallet-locale-aa-zh-tw",
+        label: "AA / zh-TW",
+        locale: "zh-TW",
+        percentage: 25,
+        walletType: "AA",
+      },
+      {
+        count: 1,
+        id: "wallet-locale-eoa-en-us",
+        label: "EOA / en-US",
+        locale: "en-US",
+        percentage: 25,
+        walletType: "EOA",
+      },
+      {
+        count: 1,
+        id: "wallet-locale-eoa-zh-cn",
+        label: "EOA / zh-CN",
+        locale: "zh-CN",
+        percentage: 25,
+        walletType: "EOA",
+      },
+      {
+        count: 0,
+        id: "wallet-locale-eoa-zh-tw",
+        label: "EOA / zh-TW",
+        locale: "zh-TW",
+        percentage: 0,
+        walletType: "EOA",
+      },
+    ]);
     expect(exportPreview.payload?.columns).toEqual(EXPORT_CSV_COLUMNS);
     expect(exportPreview.payload).toMatchObject({
       artifact: expect.objectContaining({
