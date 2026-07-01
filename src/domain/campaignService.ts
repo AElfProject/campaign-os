@@ -28,6 +28,7 @@ import {
   type AccountType,
   type AdvancedAnalyticsReadinessSurface,
   type AiContentArtifactChannel,
+  type AiContentArtifactType,
   type ApiSkillApiGroup,
   type ApiSkillContractReadiness,
   type ApiSkillFieldGroup,
@@ -250,6 +251,7 @@ export interface GetAdvancedAnalyticsReadinessRequest {
 export interface GenerateCampaignPostsRequest {
   campaignId: string;
   channel: AiContentArtifactChannel;
+  contentKeys?: GeneratedCampaignPostContentKey[];
   sourceLocale?: SupportedLocale;
   targetLocales?: SupportedLocale[];
 }
@@ -417,6 +419,57 @@ const defaultGeneratedPostTargetLocales: readonly Exclude<SupportedLocale, "en-U
 const isSupportedGeneratedPostTargetLocale = (
   locale: SupportedLocale,
 ): locale is Exclude<SupportedLocale, "en-US"> => isSupportedDraftTargetLocale(locale);
+
+const generatedCampaignPostContentKeys = [
+  "title",
+  "description",
+  "rewardDisclaimer",
+  "socialPost",
+  "faq",
+] as const;
+
+export type GeneratedCampaignPostContentKey = (typeof generatedCampaignPostContentKeys)[number];
+
+const channelCopyContentKeys = new Set<GeneratedCampaignPostContentKey>([
+  "title",
+  "description",
+  "rewardDisclaimer",
+  "socialPost",
+]);
+
+const isGeneratedCampaignPostContentKey = (
+  key: string,
+): key is GeneratedCampaignPostContentKey =>
+  generatedCampaignPostContentKeys.includes(key as GeneratedCampaignPostContentKey);
+
+const filterGeneratedCampaignPostArtifacts = (
+  artifacts: ReturnType<typeof createAiContentPackWorkbench>["artifacts"],
+  channel: AiContentArtifactChannel,
+  contentKeys?: readonly GeneratedCampaignPostContentKey[],
+): ReturnType<typeof createAiContentPackWorkbench>["artifacts"] => {
+  if (!contentKeys) {
+    const channelArtifacts = artifacts.filter((artifact) => artifact.channel === channel);
+
+    return channelArtifacts.length > 0 ? channelArtifacts : artifacts;
+  }
+
+  const selectedChannels = new Set<AiContentArtifactChannel>();
+  const selectedTypes = new Set<AiContentArtifactType>();
+
+  for (const key of contentKeys) {
+    if (channelCopyContentKeys.has(key)) {
+      selectedChannels.add(channel);
+    }
+
+    if (key === "faq") {
+      selectedTypes.add("faq");
+    }
+  }
+
+  return artifacts.filter(
+    (artifact) => selectedChannels.has(artifact.channel) || selectedTypes.has(artifact.type),
+  );
+};
 
 const findCampaign = (campaignId: string): CampaignShellDetail | undefined =>
   campaignDetail.id === campaignId ? campaignDetail : undefined;
@@ -1014,13 +1067,29 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       );
     }
 
+    if (
+      request.contentKeys &&
+      (!Array.isArray(request.contentKeys) ||
+        request.contentKeys.length === 0 ||
+        request.contentKeys.some((key) => !isGeneratedCampaignPostContentKey(key)))
+    ) {
+      return failure(
+        "INVALID_REQUEST",
+        "contentKeys",
+        "Campaign posts contentKeys must include supported content keys only.",
+        "活动帖子 contentKeys 仅支持已定义的内容键。",
+      );
+    }
+
     const workbench = createAiContentPackWorkbench(campaign);
-    const artifacts = workbench.artifacts.filter(
-      (artifact) => artifact.channel === request.channel,
+    const artifacts = filterGeneratedCampaignPostArtifacts(
+      workbench.artifacts,
+      request.channel,
+      request.contentKeys,
     );
 
     return success({
-      artifacts: artifacts.length > 0 ? artifacts : workbench.artifacts,
+      artifacts,
       boundary: workbench.boundary,
       humanReviewRequired: true,
       noAutoPublishNotice,

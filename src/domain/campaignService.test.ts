@@ -617,6 +617,21 @@ describe("Campaign OS local API service facade", () => {
       sourceLocale: "en-US",
       targetLocales: ["zh-CN"],
     });
+    const titleKeyPosts = service.generateCampaignPosts({
+      campaignId: campaignDetail.id,
+      channel: "telegram",
+      contentKeys: ["title"],
+    });
+    const faqPosts = service.generateCampaignPosts({
+      campaignId: campaignDetail.id,
+      channel: "x",
+      contentKeys: ["faq"],
+    });
+    const titleAndFaqPosts = service.generateCampaignPosts({
+      campaignId: campaignDetail.id,
+      channel: "telegram",
+      contentKeys: ["title", "faq"],
+    });
     const unsupportedSourcePosts = service.generateCampaignPosts({
       campaignId: campaignDetail.id,
       channel: "x",
@@ -640,6 +655,16 @@ describe("Campaign OS local API service facade", () => {
       channel: "x",
       sourceLocale: "en-US",
       targetLocales: ["fr-FR" as never],
+    });
+    const emptyContentKeysPosts = service.generateCampaignPosts({
+      campaignId: campaignDetail.id,
+      channel: "x",
+      contentKeys: [],
+    });
+    const unsupportedContentKeyPosts = service.generateCampaignPosts({
+      campaignId: campaignDetail.id,
+      channel: "x",
+      contentKeys: ["blogPost" as never],
     });
     const summary = service.summarizeCampaign({ campaignId: campaignDetail.id, period: "daily" });
     const exportPreview = service.exportWinners({
@@ -774,6 +799,16 @@ describe("Campaign OS local API service facade", () => {
       ]),
     );
     expect(zhCnPosts.payload?.humanReviewRequired).toBe(true);
+    expect(titleKeyPosts.payload?.artifacts).toEqual([
+      expect.objectContaining({ channel: "telegram", id: "content-telegram-announcement" }),
+    ]);
+    expect(faqPosts.payload?.artifacts).toEqual([
+      expect.objectContaining({ channel: "support", id: "content-faq", type: "faq" }),
+    ]);
+    expect(titleAndFaqPosts.payload?.artifacts.map((artifact) => artifact.id)).toEqual([
+      "content-telegram-announcement",
+      "content-faq",
+    ]);
     for (const invalidPosts of [
       {
         response: unsupportedSourcePosts,
@@ -790,6 +825,14 @@ describe("Campaign OS local API service facade", () => {
       {
         response: unsupportedTargetPosts,
         expected: { code: "UNSUPPORTED_LOCALE", field: "targetLocales" },
+      },
+      {
+        response: emptyContentKeysPosts,
+        expected: { code: "INVALID_REQUEST", field: "contentKeys" },
+      },
+      {
+        response: unsupportedContentKeyPosts,
+        expected: { code: "INVALID_REQUEST", field: "contentKeys" },
       },
     ]) {
       expect(invalidPosts.response).toMatchObject({
