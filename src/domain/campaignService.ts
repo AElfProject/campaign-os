@@ -10,8 +10,10 @@ import {
   createParticipationReadModel,
   createProviderEvidenceRegistry,
   createProjectCampaignCommandCenter,
+  createTaskVerificationActionResult,
   createTranslationManagerReadModel,
   createVerificationPipelineReadinessGate,
+  deriveTaskVerificationAction,
   deriveParticipantTaskStates,
   verificationBoundary,
 } from "./campaign";
@@ -55,6 +57,11 @@ import {
   type PublishReadiness,
   type SupportedLocale,
   type TaskVerificationStatus,
+  type TaskVerificationActionKind,
+  type TaskVerificationActionProof,
+  type TaskVerificationActionRequest,
+  type TaskVerificationActionResult,
+  type TaskVerificationProofType,
   type VerificationEvidence,
   type VerificationEvidenceSource,
   type VerificationManualReviewState,
@@ -188,6 +195,19 @@ export interface VerifyTaskResponse {
   riskFlags: string[];
   status: Exclude<TaskVerificationStatus, "ready">;
   taskId: string;
+  walletAddress: string;
+  walletSource: WalletSource;
+}
+
+export interface ExecuteTaskVerificationActionRequest extends VerifyTaskRequest, TaskVerificationActionRequest {}
+
+export interface ExecuteTaskVerificationActionResponse extends TaskVerificationActionResult {
+  accountType: AccountType;
+  campaignId: string;
+  canonicalEvidenceSource: VerificationEvidenceSource;
+  evidenceHash: string;
+  evidenceSource: string;
+  proof?: TaskVerificationActionProof;
   walletAddress: string;
   walletSource: WalletSource;
 }
@@ -356,6 +376,9 @@ export interface CampaignOsLocalService {
   createCampaign(request: CreateCampaignRequest): LocalServiceResult<LocalCampaignDraft>;
   createWalletSession(request: CreateWalletSessionRequest): LocalServiceResult<NormalizedWalletSession>;
   exportWinners(request: ExportWinnersRequest): LocalServiceResult<ExportWinnersResponse>;
+  executeTaskVerificationAction(
+    request: ExecuteTaskVerificationActionRequest,
+  ): LocalServiceResult<ExecuteTaskVerificationActionResponse>;
   generateCampaignTasks(request: GenerateCampaignTasksRequest): LocalServiceResult<GenerateCampaignTasksResponse>;
   generateCampaignPosts(request: GenerateCampaignPostsRequest): LocalServiceResult<{
     artifacts: ReturnType<typeof createAiContentPackWorkbench>["artifacts"];
@@ -681,9 +704,9 @@ const validateEligibilityWalletProvenance = (
 };
 
 const validateTaskWalletProvenance = (
-  request: VerifyTaskRequest,
+  request: Pick<VerifyTaskRequest, "accountType" | "walletSource">,
   participant: ParticipantSnapshot,
-): LocalServiceResult<VerifyTaskResponse> | undefined => {
+): LocalServiceResult<never> | undefined => {
   if (
     request.accountType !== participant.accountType ||
     request.walletSource !== participant.walletSource
@@ -702,6 +725,15 @@ const validateTaskWalletProvenance = (
 const toVerificationStatus = (
   status: TaskVerificationStatus,
 ): Exclude<TaskVerificationStatus, "ready"> => (status === "ready" ? "pending" : status);
+
+const isAllowedTaskAction = (
+  requested: TaskVerificationActionKind,
+  allowed: TaskVerificationActionKind,
+) => requested === allowed || (allowed === "view_review" && requested === "submit_proof");
+
+const isSupportedTaskVerificationProofType = (
+  proofType: TaskVerificationProofType | undefined,
+) => proofType === undefined || ["screenshot", "url", "manual_note"].includes(proofType);
 
 const completeLocaleSplit = (
   split: readonly DimensionSplit[],
@@ -1086,6 +1118,107 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       riskFlags: taskState.riskFlags,
       status: toVerificationStatus(taskState.status),
       taskId: task.id,
+      walletAddress: participant.walletAddress,
+      walletSource: participant.walletSource,
+    });
+  },
+
+  executeTaskVerificationAction: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local service facade.",
+        "本地 service facade 中不存在该活动。",
+      );
+    }
+
+    const task = campaign.tasks.find((candidate) => candidate.id === request.taskId);
+
+    if (!task) {
+      return failure(
+        "TASK_NOT_FOUND",
+        "taskId",
+        "Task is not available in the local service facade.",
+        "本地 service facade 中不存在该任务。",
+      );
+    }
+
+    const participant = findParticipant(campaign, request.walletAddress);
+
+    if (!participant) {
+      return failure(
+        "PARTICIPANT_NOT_FOUND",
+        "walletAddress",
+        "Participant wallet is not available in the local service facade.",
+        "本地 service facade 中不存在该参与钱包。",
+      );
+    }
+
+    const provenanceFailure = validateTaskWalletProvenance(request, participant);
+
+    if (provenanceFailure) {
+      return provenanceFailure;
+    }
+
+    const taskState = deriveParticipantTaskStates(campaign.tasks, participant).find(
+      (state) => state.taskId === task.id,
+    );
+
+    if (!taskState) {
+      return failure(
+        "TASK_NOT_FOUND",
+        "taskId",
+        "Task state is not available in the local service facade.",
+        "本地 service facade 中不存在该任务状态。",
+      );
+    }
+
+    const action = deriveTaskVerificationAction(task, taskState);
+
+    if (!isAllowedTaskAction(request.kind, action.kind)) {
+      return failure(
+        "INVALID_REQUEST",
+        "kind",
+        `Task action ${request.kind} is not allowed while the local task action is ${action.kind}.`,
+        `当前本地任务动作是 ${action.kind}，不允许执行 ${request.kind}。`,
+      );
+    }
+
+    if (request.kind === "submit_proof" && !request.proofType) {
+      return failure(
+        "INVALID_REQUEST",
+        "proofType",
+        "Submit proof requires a local proof type and does not upload files.",
+        "提交证明需要提供本地 proofType，且不会上传文件。",
+      );
+    }
+
+    if (!isSupportedTaskVerificationProofType(request.proofType)) {
+      return failure(
+        "INVALID_REQUEST",
+        "proofType",
+        "Task verification proof type must be screenshot, url, or manual_note.",
+        "任务验证 proofType 必须是 screenshot、url 或 manual_note。",
+      );
+    }
+
+    const result = createTaskVerificationActionResult(
+      task,
+      taskState,
+      request.kind,
+      request.proofType,
+    );
+
+    return success({
+      ...result,
+      accountType: participant.accountType,
+      campaignId: campaign.id,
+      canonicalEvidenceSource: result.evidence.source,
+      evidenceHash: result.evidence.evidenceHash,
+      evidenceSource: taskState.evidenceSource,
       walletAddress: participant.walletAddress,
       walletSource: participant.walletSource,
     });
@@ -1493,6 +1626,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       "addTask",
       "generateCampaignTasks",
       "verifyTask",
+      "executeTaskVerificationAction",
       "checkEligibility",
       "generateI18nDraft",
       "getCampaignAnalytics",
@@ -1544,6 +1678,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
         "generateCampaignTasks",
         "generateI18nDraft",
         "verifyTask",
+        "executeTaskVerificationAction",
         "checkEligibility",
         "getAdvancedAnalyticsReadiness",
         "getVerificationPipelineReadiness",

@@ -106,6 +106,11 @@ import type {
   RiskIntelligenceReviewState,
   RiskIntelligenceReviewSurface,
   RiskSignal,
+  TaskVerificationAction,
+  TaskVerificationActionKind,
+  TaskVerificationActionProof,
+  TaskVerificationActionResult,
+  TaskVerificationProofType,
   TaskEvidenceSummary,
   LeaderboardMode,
   LeaderboardModeId,
@@ -262,6 +267,16 @@ const noAutoPublishNotice: LocalizedText = {
   "zh-CN": "AI 生成翻译必须经过人工审核后才能发布。",
   "zh-TW": "AI generated translation cannot auto-publish before human review.",
 };
+
+const verificationActionText = (
+  enUS: string,
+  zhCN: string,
+  zhTW: string = enUS,
+): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": zhTW,
+});
 
 const aiOptimizationBoundary: LocalizedText = {
   "en-US":
@@ -1028,6 +1043,153 @@ const taskNextAction = (
     "en-US": `Complete ${task.title["en-US"]} to recover eligibility.`,
     "zh-CN": `完成${task.title["zh-CN"]}以恢复资格。`,
     "zh-TW": `Complete ${task.title["en-US"]} to recover eligibility.`,
+  };
+};
+
+export const taskVerificationActionBoundary: LocalizedText = verificationActionText(
+  "Local verification action only. No live wallet SDK, provider API, upload, backend mutation, export file, reward distribution, contract call, or contract root write is executed.",
+  "仅本地验证动作。不会执行实时钱包 SDK、provider API、上传、后端变更、导出文件、奖励发放、合约调用或合约 root 写入。",
+);
+
+const taskVerificationActionLabels: Record<TaskVerificationActionKind, LocalizedText> = {
+  completed: verificationActionText("Already verified", "已验证"),
+  retry: verificationActionText("Retry verification", "重试验证"),
+  submit_proof: verificationActionText("Submit proof", "提交证明"),
+  verify: verificationActionText("Verify task", "验证任务"),
+  view_review: verificationActionText("View review queue", "查看审核队列"),
+};
+
+const taskVerificationActionNextAction = (
+  task: CampaignTask,
+  kind: TaskVerificationActionKind,
+): LocalizedText => {
+  if (kind === "completed") {
+    return verificationActionText(
+      `${task.title["en-US"]} is already verified. Keep the evidence for export review.`,
+      `${task.title["zh-CN"]} 已验证。保留 evidence 供导出审核使用。`,
+    );
+  }
+
+  if (kind === "retry") {
+    return verificationActionText(
+      `Retry ${task.title["en-US"]} in the local preview; provider status remains pending until live QA is attached.`,
+      `在本地预览中重试${task.title["zh-CN"]}；在接入真实 QA 前 provider 状态仍保持待验证。`,
+    );
+  }
+
+  if (kind === "submit_proof") {
+    return verificationActionText(
+      `Submit local proof metadata for ${task.title["en-US"]}; no file upload or automatic reward approval occurs.`,
+      `提交${task.title["zh-CN"]}的本地证明 metadata；不会上传文件，也不会自动批准奖励。`,
+    );
+  }
+
+  if (kind === "view_review") {
+    return verificationActionText(
+      `${task.title["en-US"]} is held in the manual review queue before any completion or reward decision.`,
+      `${task.title["zh-CN"]} 需先进入人工审核队列，之后才可判断完成或奖励。`,
+    );
+  }
+
+  return verificationActionText(
+    `Run local verification for ${task.title["en-US"]}; this does not call a live provider.`,
+    `对${task.title["zh-CN"]}执行本地验证；不会调用真实 provider。`,
+  );
+};
+
+const taskVerificationActionKindFor = (
+  state: ParticipantTaskState,
+): TaskVerificationActionKind => {
+  if (state.status === "completed") {
+    return "completed";
+  }
+
+  if (state.status === "manual_review") {
+    return "view_review";
+  }
+
+  if (state.status === "failed") {
+    return "submit_proof";
+  }
+
+  if (state.status === "pending") {
+    return "retry";
+  }
+
+  return "verify";
+};
+
+export const deriveTaskVerificationAction = (
+  task: CampaignTask,
+  state: ParticipantTaskState,
+): TaskVerificationAction => {
+  const kind = taskVerificationActionKindFor(state);
+
+  return {
+    taskId: task.id,
+    kind,
+    enabled: kind !== "completed",
+    requiresWalletProvenance: true,
+    proofRequired: kind === "submit_proof",
+    status: state.status,
+    providerReadiness: state.provider.readiness,
+    canonicalEvidenceSource: state.canonicalEvidenceSource,
+    label: taskVerificationActionLabels[kind],
+    nextAction: taskVerificationActionNextAction(task, kind),
+    boundary: taskVerificationActionBoundary,
+  };
+};
+
+export const deriveParticipantTaskActions = (
+  tasks: CampaignTask[],
+  participant: ParticipantSnapshot,
+): TaskVerificationAction[] => {
+  const states = deriveParticipantTaskStates(tasks, participant);
+
+  return tasks.flatMap((task) => {
+    const state = states.find((candidate) => candidate.taskId === task.id);
+
+    return state ? [deriveTaskVerificationAction(task, state)] : [];
+  });
+};
+
+const taskVerificationActionProof = (
+  proofType?: TaskVerificationProofType,
+): TaskVerificationActionProof | undefined =>
+  proofType
+    ? {
+        proofType,
+        localOnly: true,
+        uploadExecuted: false,
+      }
+    : undefined;
+
+export const createTaskVerificationActionResult = (
+  task: CampaignTask,
+  state: ParticipantTaskState,
+  kind: TaskVerificationActionKind,
+  proofType?: TaskVerificationProofType,
+): TaskVerificationActionResult => {
+  const normalizedStatus: Exclude<TaskVerificationStatus, "ready"> =
+    state.status === "ready" ? "pending" : state.status;
+  const proof = kind === "submit_proof"
+    ? taskVerificationActionProof(proofType)
+    : undefined;
+
+  return {
+    taskId: task.id,
+    kind,
+    status: normalizedStatus,
+    attemptLabel: `local-${kind}-${task.id}`,
+    evidence: state.evidence,
+    provider: state.provider,
+    manualReview: state.manualReview,
+    pointsAwarded: kind === "completed" || state.status === "completed" ? state.pointsAwarded : 0,
+    pointsAvailable: state.pointsAvailable,
+    riskFlags: [...state.riskFlags],
+    proof,
+    nextAction: taskVerificationActionNextAction(task, kind),
+    boundary: taskVerificationActionBoundary,
   };
 };
 

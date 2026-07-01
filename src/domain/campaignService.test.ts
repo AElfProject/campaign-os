@@ -727,6 +727,214 @@ describe("Campaign OS local API service facade", () => {
     });
   });
 
+  it("executes local task verification actions without live side effects", () => {
+    const eoaRequest = {
+      accountType: "EOA" as const,
+      campaignId: campaignDetail.id,
+      walletAddress: "3E9...7cD",
+      walletSource: "PORTKEY_EOA_EXTENSION" as const,
+    };
+    const completed = service.executeTaskVerificationAction({
+      accountType: "AA",
+      campaignId: campaignDetail.id,
+      kind: "completed",
+      taskId: "task-bridge",
+      walletAddress: "2F4...9aB",
+      walletSource: "PORTKEY_AA",
+    });
+    const repeatedCompleted = service.executeTaskVerificationAction({
+      accountType: "AA",
+      campaignId: campaignDetail.id,
+      kind: "completed",
+      taskId: "task-bridge",
+      walletAddress: "2F4...9aB",
+      walletSource: "PORTKEY_AA",
+    });
+    const verify = service.executeTaskVerificationAction({
+      ...eoaRequest,
+      kind: "verify",
+      taskId: "task-bridge",
+    });
+    const retry = service.executeTaskVerificationAction({
+      ...eoaRequest,
+      kind: "retry",
+      taskId: "task-swap",
+    });
+    const submitProof = service.executeTaskVerificationAction({
+      ...eoaRequest,
+      kind: "submit_proof",
+      proofType: "screenshot",
+      taskId: "task-social",
+    });
+    const viewReview = service.executeTaskVerificationAction({
+      ...eoaRequest,
+      kind: "view_review",
+      taskId: "task-agent-review",
+    });
+    const reviewProof = service.executeTaskVerificationAction({
+      ...eoaRequest,
+      kind: "submit_proof",
+      proofType: "manual_note",
+      taskId: "task-agent-review",
+    });
+
+    expect(completed.payload).toMatchObject({
+      accountType: "AA",
+      attemptLabel: "local-completed-task-bridge",
+      campaignId: campaignDetail.id,
+      canonicalEvidenceSource: "AELFSCAN",
+      evidenceHash: "demo-task-bridge-2F4",
+      kind: "completed",
+      pointsAwarded: 120,
+      status: "completed",
+      taskId: "task-bridge",
+      walletAddress: "2F4...9aB",
+      walletSource: "PORTKEY_AA",
+    });
+    expect(repeatedCompleted.payload?.pointsAwarded).toBe(120);
+    expect(repeatedCompleted.payload).not.toHaveProperty("totalPoints");
+    expect(verify.payload).toMatchObject({
+      attemptLabel: "local-verify-task-bridge",
+      kind: "verify",
+      pointsAwarded: 0,
+      provider: expect.objectContaining({ readiness: "unavailable" }),
+      status: "pending",
+    });
+    expect(retry.payload).toMatchObject({
+      attemptLabel: "local-retry-task-swap",
+      evidenceSource: "dapp_api",
+      kind: "retry",
+      pointsAwarded: 0,
+      status: "pending",
+    });
+    expect(submitProof.payload).toMatchObject({
+      attemptLabel: "local-submit_proof-task-social",
+      kind: "submit_proof",
+      pointsAwarded: 0,
+      proof: {
+        localOnly: true,
+        proofType: "screenshot",
+        uploadExecuted: false,
+      },
+      status: "failed",
+    });
+    expect(viewReview.payload).toMatchObject({
+      attemptLabel: "local-view_review-task-agent-review",
+      kind: "view_review",
+      manualReview: expect.objectContaining({ queued: true }),
+      provider: expect.objectContaining({ readiness: "review_required" }),
+      status: "manual_review",
+    });
+    expect(reviewProof.payload).toMatchObject({
+      kind: "submit_proof",
+      proof: expect.objectContaining({ proofType: "manual_note", uploadExecuted: false }),
+      status: "manual_review",
+    });
+
+    const serializedResults = JSON.stringify([
+      completed.payload,
+      verify.payload,
+      retry.payload,
+      submitProof.payload,
+      viewReview.payload,
+      reviewProof.payload,
+    ]);
+
+    for (const unsafe of [
+      "downloadUrl",
+      "uploadUrl",
+      "contractRoot",
+      "apiKey",
+      "raw signature",
+      "signedPayload",
+      "transactionId",
+      "kitty-specs",
+      "docs/current",
+    ]) {
+      expect(serializedResults).not.toContain(unsafe);
+    }
+  });
+
+  it("fails closed for invalid local task verification actions", () => {
+    const eoaRequest = {
+      accountType: "EOA" as const,
+      campaignId: campaignDetail.id,
+      walletAddress: "3E9...7cD",
+      walletSource: "PORTKEY_EOA_EXTENSION" as const,
+    };
+    const invalidResponses = [
+      {
+        response: service.executeTaskVerificationAction({
+          ...eoaRequest,
+          kind: "submit_proof",
+          taskId: "task-social",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "proofType" },
+      },
+      {
+        response: service.executeTaskVerificationAction({
+          ...eoaRequest,
+          kind: "submit_proof",
+          proofType: "raw_signature" as never,
+          taskId: "task-social",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "proofType" },
+      },
+      {
+        response: service.executeTaskVerificationAction({
+          ...eoaRequest,
+          kind: "completed",
+          taskId: "task-swap",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "kind" },
+      },
+      {
+        response: service.executeTaskVerificationAction({
+          ...eoaRequest,
+          accountType: "AA",
+          kind: "retry",
+          taskId: "task-swap",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "walletProvenance" },
+      },
+      {
+        response: service.executeTaskVerificationAction({
+          campaignId: campaignDetail.id,
+          kind: "retry",
+          taskId: "task-swap",
+          walletAddress: "3E9...7cD",
+          walletSource: "PORTKEY_EOA_EXTENSION",
+        } as never),
+        expected: { code: "INVALID_REQUEST", field: "walletProvenance" },
+      },
+      {
+        response: service.executeTaskVerificationAction({
+          ...eoaRequest,
+          kind: "retry",
+          taskId: "missing-task",
+        }),
+        expected: { code: "TASK_NOT_FOUND", field: "taskId" },
+      },
+      {
+        response: service.executeTaskVerificationAction({
+          ...eoaRequest,
+          kind: "retry",
+          taskId: "task-swap",
+          walletAddress: "missing-wallet",
+        }),
+        expected: { code: "PARTICIPANT_NOT_FOUND", field: "walletAddress" },
+      },
+    ];
+
+    for (const { response, expected } of invalidResponses) {
+      expect(response).toMatchObject({
+        ok: false,
+        error: expect.objectContaining(expected),
+      });
+      expect(response.payload).toBeUndefined();
+    }
+  });
+
   it("generates i18n drafts for Chinese targets and rejects unsupported locales", () => {
     const zhCnDraft = service.generateI18nDraft({
       campaignId: campaignDetail.id,
@@ -1286,6 +1494,7 @@ describe("Campaign OS local API service facade", () => {
       ]),
       serviceNames: expect.arrayContaining([
         "addTask",
+        "executeTaskVerificationAction",
         "generateI18nDraft",
         "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
@@ -1293,12 +1502,13 @@ describe("Campaign OS local API service facade", () => {
       ]),
       sampleResponseIds: expect.arrayContaining([
         "addTask",
+        "executeTaskVerificationAction",
         "generateI18nDraft",
         "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
       ]),
-      totalServices: 17,
+      totalServices: 18,
     });
     expect(coverage.payload?.boundary["en-US"]).toContain("advanced analytics readiness");
     expect(coverage.payload?.boundary["en-US"]).toContain("No live analytics SDK");
@@ -1307,6 +1517,7 @@ describe("Campaign OS local API service facade", () => {
         "createWalletSession",
         "generateI18nDraft",
         "verifyTask",
+        "executeTaskVerificationAction",
         "checkEligibility",
         "getAdvancedAnalyticsReadiness",
         "getVerificationPipelineReadiness",

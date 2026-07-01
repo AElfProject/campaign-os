@@ -151,6 +151,13 @@ export type OwnerRole = "project_owner" | "internal_operator" | "contract_review
 export type PublishState = "ready" | "warning" | "blocker";
 export type EligibilityStatus = "eligible" | "not_eligible" | "pending" | "risk_flagged" | "ended";
 export type TaskVerificationStatus = "ready" | "pending" | "completed" | "failed" | "manual_review";
+export type TaskVerificationActionKind =
+  | "verify"
+  | "retry"
+  | "submit_proof"
+  | "view_review"
+  | "completed";
+export type TaskVerificationProofType = "screenshot" | "url" | "manual_note";
 export type EvidenceSource = "wallet" | "aefinder" | "aelfscan" | "dapp_api" | "social_api" | "manual";
 export type VerificationEvidenceSource =
   | "LOCAL_SEEDED"
@@ -2299,6 +2306,48 @@ export interface TaskVerificationState {
 }
 
 export type ParticipantTaskState = TaskVerificationState;
+
+export interface TaskVerificationAction {
+  taskId: string;
+  kind: TaskVerificationActionKind;
+  enabled: boolean;
+  requiresWalletProvenance: boolean;
+  proofRequired: boolean;
+  status: TaskVerificationStatus;
+  providerReadiness: VerificationProviderReadiness;
+  canonicalEvidenceSource: VerificationEvidenceSource;
+  label: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface TaskVerificationActionProof {
+  proofType: TaskVerificationProofType;
+  localOnly: true;
+  uploadExecuted: false;
+}
+
+export interface TaskVerificationActionRequest {
+  taskId: string;
+  kind: TaskVerificationActionKind;
+  proofType?: TaskVerificationProofType;
+}
+
+export interface TaskVerificationActionResult {
+  taskId: string;
+  kind: TaskVerificationActionKind;
+  status: Exclude<TaskVerificationStatus, "ready">;
+  attemptLabel: string;
+  evidence: VerificationEvidence;
+  provider: VerificationProviderState;
+  manualReview: VerificationManualReviewState;
+  pointsAwarded: number;
+  pointsAvailable: number;
+  riskFlags: string[];
+  proof?: TaskVerificationActionProof;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
 
 export interface ReferralSummary {
   inviteLink: string;
