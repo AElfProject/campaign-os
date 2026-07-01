@@ -98,6 +98,7 @@ export type TemplateGovernanceSignal =
   | "wallet_coverage"
   | "verification_strength";
 export type ApiSkillId =
+  | "create_wallet_session"
   | "create_campaign"
   | "generate_campaign_tasks"
   | "verify_task"

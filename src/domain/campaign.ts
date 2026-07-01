@@ -7403,8 +7403,8 @@ const createArchitectureDeliveryChecklistItems = (): DeliveryChecklistItem[] => 
       status: "covered",
       surface: localized("NormalizedWalletSession", "NormalizedWalletSession"),
       evidence: localized(
-        "Seeded fixtures normalize address, account type, wallet source, chain, network, capabilities, and signature status.",
-        "Seeded fixtures 归一化 address、account type、wallet source、chain、network、capabilities 与 signature status。",
+        "Seeded fixtures normalize address, account type, wallet source, chain, network, capabilities, signature status, and optional public accounts/publicKey metadata.",
+        "Seeded fixtures 归一化 address、account type、wallet source、chain、network、capabilities、signature status，以及可选公开 accounts/publicKey metadata。",
       ),
       nextAction: localized(
         "Bind the same shape to live adapters only after provider QA.",

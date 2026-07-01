@@ -643,6 +643,8 @@ describe("Campaign OS domain foundation", () => {
       groupId: "architecture",
       status: "covered",
     });
+    expect(itemsById["architecture-wallet-normalization"]?.evidence["en-US"]).toContain("accounts");
+    expect(itemsById["architecture-wallet-normalization"]?.evidence["en-US"]).toContain("publicKey");
     expect(itemsById["product-reward-disclaimer-locales"]).toMatchObject({
       status: "covered",
       blocksDelivery: false,

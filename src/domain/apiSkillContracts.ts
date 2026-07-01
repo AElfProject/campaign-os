@@ -37,6 +37,11 @@ const liveApiBoundary = text(
   "仅 seeded/本地 contract。不会执行实时 API、外部 provider、钱包签名、secret 存储或活动变更。",
 );
 
+const walletSessionBoundary = text(
+  "Seeded/local wallet session contract only. No live API, wallet SDK, provider call, signature execution, signature verification, secret storage, campaign mutation, reward, export file, or contract write is executed.",
+  "仅 seeded/本地钱包会话 contract。不会执行实时 API、钱包 SDK、provider 调用、签名执行、签名验证、secret 存储、活动变更、发奖、导出文件或合约写入。",
+);
+
 const verificationBoundary = text(
   "Verification contract only. Local seeded, AeFinder, AelfScan, dApp APIs, social APIs, wallet session, and manual review are named as evidence categories; no live provider, wallet SDK, secret, reward, export file, or contract write is executed.",
   "仅验证 contract。Local seeded、AeFinder、AelfScan、dApp API、社交 API、钱包会话与人工审核只作为 evidence category 展示；不会执行真实 provider、钱包 SDK、secret、发奖、导出文件或合约写入。",
@@ -50,6 +55,7 @@ const exportBoundary = text(
 const campaignStatusExample = campaignLifecycleStatuses.join(",");
 
 export const requiredApiSkillIds = [
+  "create_wallet_session",
   "create_campaign",
   "generate_campaign_tasks",
   "verify_task",
@@ -78,6 +84,45 @@ const externalEvidenceSources = new Set<ApiSkillEvidenceSource>([
 ]);
 
 export const apiSkillContractRegistry: ApiSkillContract[] = [
+  {
+    apiGroup: "wallet_session",
+    evidenceSources: ["LOCAL_SEEDED"],
+    id: "create_wallet_session",
+    inputFields: [
+      field("address", "wallet", true, "Wallet address supplied by the local session request.", "本地会话请求提供的钱包地址。", "2F4...9aB"),
+      field("adapterName", "wallet", true, "Wallet adapter name used for local source and account-type mapping.", "用于本地来源与账户类型映射的钱包 adapter 名称。", "PortkeyDiscoverWallet"),
+      field("chainId", "wallet", true, "Wallet chain identifier.", "钱包链标识。", "AELF"),
+      field("network", "wallet", true, "Wallet network for the local session.", "本地会话的钱包网络。", "mainnet"),
+      field("signature", "wallet", false, "Optional signature presence signal; the signature value is not returned.", "可选签名存在信号；签名值不会返回。"),
+    ],
+    nextAction: text(
+      "Keep wallet session creation local until wallet provider QA, adapter evidence, and backend persistence are approved.",
+      "在钱包 provider QA、adapter 证据与后端持久化获批前，保持钱包会话创建为本地模式。",
+    ),
+    outputFields: [
+      field("sessionId", "wallet", true, "Normalized local wallet session identifier.", "归一化本地钱包会话标识。", "sess_123"),
+      field("address", "wallet", true, "Normalized wallet address.", "归一化钱包地址。", "2F4...9aB"),
+      field("accountType", "wallet", true, "AA, EOA, or UNKNOWN account type.", "AA、EOA 或 UNKNOWN 账户类型。", "EOA"),
+      field("walletSource", "wallet", true, "Normalized wallet source.", "归一化钱包来源。", "PORTKEY_EOA_EXTENSION"),
+      field("walletName", "wallet", true, "Human-readable wallet name.", "可读钱包名称。", "Portkey EOA Extension"),
+      field("chainId", "wallet", true, "Normalized chain identifier.", "归一化链标识。", "AELF"),
+      field("network", "wallet", true, "Normalized wallet network.", "归一化钱包网络。", "mainnet"),
+      field("accounts", "wallet", false, "Optional public account-map metadata when fixture-provided.", "fixture 提供时返回的可选公开账户映射 metadata。", "AELF:2F4...9aB"),
+      field("publicKey", "wallet", false, "Optional public wallet identity metadata when fixture-provided.", "fixture 提供时返回的可选公开钱包身份 metadata。", "PUB_EOA_APP_SEEDED_001"),
+      field("capabilities", "wallet", true, "Normalized wallet capability list.", "归一化钱包能力列表。", "SIGN_MESSAGE,SEND_TRANSACTION"),
+      field("verificationStatus", "wallet", true, "Local wallet verification status.", "本地钱包验证状态。", "verified"),
+      field("signatureStatus", "wallet", true, "Local signature presence status.", "本地签名存在状态。", "signed"),
+      field("walletTypeVerified", "wallet", true, "Whether the local session has a verified wallet type.", "本地会话是否已有已验证的钱包类型。", "true"),
+    ],
+    purpose: text(
+      "Create a local normalized wallet session with public identity metadata boundaries visible before live wallet integration.",
+      "在接入真实钱包前，创建本地归一化钱包会话并明确公开身份 metadata 边界。",
+    ),
+    readiness: "local_only",
+    riskLevel: "medium",
+    securityBoundary: walletSessionBoundary,
+    title: text("Create wallet session", "创建钱包会话"),
+  },
   {
     apiGroup: "campaign_creation",
     evidenceSources: ["LOCAL_SEEDED"],
