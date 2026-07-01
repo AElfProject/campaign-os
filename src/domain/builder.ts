@@ -83,6 +83,64 @@ export interface TaskTemplate {
   localeReadiness: Record<SupportedLocale, LocaleStatus>;
 }
 
+export type CampaignTemplatePresetId =
+  | "aelf-onboarding-campaign"
+  | "awaken-liquidity-challenge"
+  | "nft-holder-quest"
+  | "dao-governance-campaign"
+  | "ai-agent-coin-launch-campaign";
+export type CampaignTemplateReadiness = "ready" | "review_required";
+export type CampaignTemplateTaskCategory =
+  | TaskTemplateCategory
+  | "agent_page"
+  | "governance_badge"
+  | "leaderboard"
+  | "portfolio"
+  | "proposal_summary";
+
+export interface CampaignTemplateTaskStep {
+  id: string;
+  label: LocalizedText;
+  description: LocalizedText;
+  taskCategory: CampaignTemplateTaskCategory;
+  verificationIntent: LocalizedText;
+  localOnly: boolean;
+  reviewRequired: boolean;
+}
+
+export interface CampaignTemplatePreset {
+  id: CampaignTemplatePresetId;
+  title: LocalizedText;
+  goal: LocalizedText;
+  targetAudience: LocalizedText;
+  suitableFor: LocalizedText;
+  taskSequence: CampaignTemplateTaskStep[];
+  defaultWalletPolicy: WalletPolicy;
+  pointsAndRankingHint: LocalizedText;
+  rewardBoundary: LocalizedText;
+  riskGuidance: LocalizedText;
+  ownerRole: OwnerRole;
+  nextAction: LocalizedText;
+  readiness: CampaignTemplateReadiness;
+  boundary: LocalizedText;
+}
+
+export interface CampaignTemplatePackSummary {
+  totalTemplates: number;
+  readyTemplateCount: number;
+  reviewRequiredTemplateCount: number;
+  defaultLocale: "en-US";
+  ecosystemCoverage: LocalizedText[];
+  topNextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface CampaignTemplatePack {
+  templates: CampaignTemplatePreset[];
+  summary: CampaignTemplatePackSummary;
+  boundary: LocalizedText;
+}
+
 export interface TaskTemplateFilterState {
   wallet: TaskTemplateWalletFilter[];
   verification: TaskTemplateVerificationFilter[];
@@ -242,6 +300,7 @@ export interface AiPlannerSummary {
   walletPolicy: WalletPolicy;
   recommendedWallet: LocalizedText;
   contractMode: ContractMode;
+  campaignTemplatePack: CampaignTemplatePackSummary;
 }
 
 export interface AiPlannerDecisionCounts {
@@ -592,6 +651,355 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     localeReadiness: { "en-US": "ready", "zh-CN": "fallback", "zh-TW": "fallback" },
   },
 ];
+
+const campaignTemplateBoundary = text(
+  "Seeded/local campaign template guidance only. No live provider verification, automatic campaign creation, automatic publish, wallet signing, contract write, export file, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地活动模板指引。不会执行实时 provider 验证、自动创建活动、自动发布、钱包签名、合约写入、导出文件、奖励托管或发奖。",
+  "Seeded/local campaign template guidance only. No live provider verification, automatic campaign creation, automatic publish, wallet signing, contract write, export file, reward custody, or reward distribution is executed.",
+);
+
+const campaignRewardBoundary = text(
+  "Rewards are provided and fulfilled by the campaign project or partner. Campaign OS provides preset guidance, review, verification intent, points, analytics, and export support only.",
+  "奖励由活动项目方或合作伙伴提供并履约。Campaign OS 只提供模板指引、审核、验证意图、积分、分析与导出支持。",
+  "Rewards are provided and fulfilled by the campaign project or partner. Campaign OS provides preset guidance, review, verification intent, points, analytics, and export support only.",
+);
+
+const campaignStep = (
+  id: string,
+  taskCategory: CampaignTemplateTaskCategory,
+  label: LocalizedText,
+  description: LocalizedText,
+  verificationIntent: LocalizedText,
+  localOnly = false,
+  reviewRequired = false,
+): CampaignTemplateTaskStep => ({
+  description,
+  id,
+  label,
+  localOnly,
+  reviewRequired,
+  taskCategory,
+  verificationIntent,
+});
+
+export const campaignTemplatePresets: CampaignTemplatePreset[] = [
+  {
+    boundary: campaignTemplateBoundary,
+    defaultWalletPolicy: "ANY",
+    goal: text("Bring new users into the aelf ecosystem.", "将新用户带入 aelf 生态。"),
+    id: "aelf-onboarding-campaign",
+    nextAction: text("Review wallet, bridge, swap, Portfolio, and invite steps before campaign drafting.", "创建活动草稿前审核钱包、bridge、swap、Portfolio 与邀请步骤。"),
+    ownerRole: "project_owner",
+    pointsAndRankingHint: text("Rank by verified onboarding actions and qualified invite completion.", "按已验证引导行为与合格邀请完成情况排名。"),
+    readiness: "ready",
+    rewardBoundary: campaignRewardBoundary,
+    riskGuidance: text("Keep qualified invite validation and manual review enabled before winner export.", "Winner 导出前保持合格邀请验证与人工审核开启。"),
+    suitableFor: text("New-user growth, exchange campaigns, and ecosystem promotion.", "新用户增长、交易所活动与生态推广。"),
+    targetAudience: text("New aelf users and wallet-ready ecosystem explorers.", "aelf 新用户与钱包就绪的生态探索者。"),
+    taskSequence: [
+      campaignStep(
+        "onboarding-wallet",
+        "wallet",
+        text("Connect wallet or Portkey", "连接钱包或 Portkey"),
+        text("Start with a supported AA or EOA wallet entry.", "从受支持的 AA 或 EOA 钱包入口开始。"),
+        text("Wallet connection state is local seeded readiness.", "钱包连接状态是本地 seeded readiness。"),
+      ),
+      campaignStep(
+        "onboarding-bridge",
+        "bridge",
+        text("Bridge assets via eBridge", "通过 eBridge 跨链资产"),
+        text("Use bridge completion as the first ecosystem action.", "将跨链完成作为第一个生态行为。"),
+        text("Bridge verification remains provider-review gated.", "Bridge 验证仍需 provider review 门禁。"),
+      ),
+      campaignStep(
+        "onboarding-swap",
+        "swap",
+        text("Complete one swap on Awaken", "在 Awaken 完成一次 Swap"),
+        text("Ask users to complete a seeded swap task.", "要求用户完成 seeded swap 任务。"),
+        text("Swap verification remains local/dApp API intent.", "Swap 验证仍为本地/dApp API 意图。"),
+      ),
+      campaignStep(
+        "onboarding-portfolio",
+        "portfolio",
+        text("Check Portfolio", "查看 Portfolio"),
+        text("Guide users to inspect portfolio context after core tasks.", "引导用户在核心任务后查看 Portfolio 上下文。"),
+        text("Portfolio check is local-only intent until a provider contract exists.", "在 provider contract 存在前，Portfolio 检查是仅本地意图。"),
+        true,
+      ),
+      campaignStep(
+        "onboarding-invite",
+        "invite",
+        text("Invite one qualified friend", "邀请一名合格好友"),
+        text("Count invites only after the invitee completes required actions.", "仅在被邀请人完成必做行为后计入邀请。"),
+        text("Referral validation and risk review are required.", "需要邀请验证与风险审核。"),
+        false,
+        true,
+      ),
+    ],
+    title: text("aelf Onboarding Campaign", "aelf 新手引导活动"),
+  },
+  {
+    boundary: campaignTemplateBoundary,
+    defaultWalletPolicy: "ANY",
+    goal: text("Increase Awaken swap and liquidity participation.", "提升 Awaken swap 与流动性参与。"),
+    id: "awaken-liquidity-challenge",
+    nextAction: text("Review LP effort, volume ranking, and reward cost before using this preset.", "使用该模板前审核 LP 门槛、交易量排名与奖励成本。"),
+    ownerRole: "project_owner",
+    pointsAndRankingHint: text("Rank by verified volume or valid swap and liquidity actions.", "按已验证交易量或有效 swap 与流动性行为排名。"),
+    readiness: "review_required",
+    rewardBoundary: campaignRewardBoundary,
+    riskGuidance: text("Volume and LP tasks need cost, wash-trade, and referral review before launch.", "交易量与 LP 任务上线前需要成本、刷量与邀请风险审核。"),
+    suitableFor: text("DEX growth and liquidity activation.", "DEX 增长与流动性激活。"),
+    targetAudience: text("Active traders, LP candidates, and qualified invited users.", "活跃交易者、LP 候选用户与合格被邀请用户。"),
+    taskSequence: [
+      campaignStep(
+        "liquidity-swap",
+        "swap",
+        text("Swap ELF or stable asset", "Swap ELF 或稳定资产"),
+        text("Start with a seeded swap action.", "从 seeded swap 行为开始。"),
+        text("Swap verification remains local/dApp API intent.", "Swap 验证仍为本地/dApp API 意图。"),
+      ),
+      campaignStep(
+        "liquidity-add",
+        "liquidity",
+        text("Add liquidity", "添加流动性"),
+        text("Represent LP position or liquidity event participation.", "表达 LP 仓位或流动性事件参与。"),
+        text("LP evidence is seeded/local until live provider review.", "在实时 provider review 前，LP evidence 保持 seeded/本地。"),
+        true,
+        true,
+      ),
+      campaignStep(
+        "liquidity-hold",
+        "liquidity",
+        text("Hold LP for a period", "持有 LP 一段时间"),
+        text("Use hold duration as local campaign intent.", "将持有周期作为本地活动意图。"),
+        text("Hold-duration proof is local-only intent.", "持有周期证明是仅本地意图。"),
+        true,
+        true,
+      ),
+      campaignStep(
+        "liquidity-invite",
+        "invite",
+        text("Invite users who complete swap", "邀请完成 Swap 的用户"),
+        text("Only qualified swap completion should count.", "只有完成合格 swap 的邀请才计入。"),
+        text("Referral validation and risk review are required.", "需要邀请验证与风险审核。"),
+        false,
+        true,
+      ),
+      campaignStep(
+        "liquidity-rank",
+        "leaderboard",
+        text("Rank by verified volume or valid actions", "按验证交易量或有效行为排名"),
+        text("Use ranking as review input rather than automatic payout.", "将排名作为审核输入，而不是自动发奖。"),
+        text("Leaderboard remains seeded/local review input.", "排行榜保持 seeded/本地审核输入。"),
+        true,
+        true,
+      ),
+    ],
+    title: text("Awaken Liquidity Challenge", "Awaken 流动性挑战"),
+  },
+  {
+    boundary: campaignTemplateBoundary,
+    defaultWalletPolicy: "ANY",
+    goal: text("Activate Forest and Schrödinger NFT holders.", "激活 Forest 与 Schrödinger NFT 用户。"),
+    id: "nft-holder-quest",
+    nextAction: text("Review collection eligibility, holder rules, and share copy before launch.", "上线前审核合集资格、持有规则与分享文案。"),
+    ownerRole: "project_owner",
+    pointsAndRankingHint: text("Rank by verified NFT ownership, hold intent, and reviewed collection activity.", "按已验证 NFT 持有、持有意图与已审核合集行为排名。"),
+    readiness: "review_required",
+    rewardBoundary: campaignRewardBoundary,
+    riskGuidance: text("NFT mint, trade, and list actions need collection eligibility and wash-trade review.", "NFT mint、交易与挂单行为需要合集资格与刷量审核。"),
+    suitableFor: text("NFT collections, Schrödinger, and Forest campaigns.", "NFT 合集、Schrödinger 与 Forest 活动。"),
+    targetAudience: text("NFT minters, holders, traders, and collection community members.", "NFT mint 用户、持有人、交易者与合集社区成员。"),
+    taskSequence: [
+      campaignStep(
+        "nft-mint",
+        "nft",
+        text("Mint NFT", "Mint NFT"),
+        text("Represent a collection mint action.", "表达合集 mint 行为。"),
+        text("NFT proof remains on-chain/local evidence intent.", "NFT 证明保持链上/本地 evidence 意图。"),
+      ),
+      campaignStep(
+        "nft-hold",
+        "schrodinger",
+        text("Hold NFT for a duration", "持有 NFT 一段时间"),
+        text("Represent Forest or Schrödinger holding intent.", "表达 Forest 或 Schrödinger 持有意图。"),
+        text("Hold duration remains seeded/local review input.", "持有周期保持 seeded/本地审核输入。"),
+        true,
+        true,
+      ),
+      campaignStep(
+        "nft-trade-list",
+        "nft",
+        text("Trade or list NFT", "交易或挂单 NFT"),
+        text("Represent market activity without connecting a live marketplace.", "表达市场行为，但不连接真实 marketplace。"),
+        text("Marketplace evidence is local-only intent.", "Marketplace evidence 是仅本地意图。"),
+        true,
+        true,
+      ),
+      campaignStep(
+        "nft-share",
+        "social",
+        text("Share collection", "分享合集"),
+        text("Share approved collection copy.", "分享已审核的合集文案。"),
+        text("Social proof requires review.", "社交证明需要审核。"),
+        false,
+        true,
+      ),
+      campaignStep(
+        "nft-leaderboard",
+        "leaderboard",
+        text("Join holder leaderboard", "加入持有人排行榜"),
+        text("Show holder ranking as review input.", "将持有人排名作为审核输入。"),
+        text("Leaderboard remains seeded/local.", "排行榜保持 seeded/本地。"),
+        true,
+      ),
+    ],
+    title: text("NFT Holder Quest", "NFT 持有人任务"),
+  },
+  {
+    boundary: campaignTemplateBoundary,
+    defaultWalletPolicy: "ANY",
+    goal: text("Activate TMRWDAO governance participation.", "激活 TMRWDAO 治理参与。"),
+    id: "dao-governance-campaign",
+    nextAction: text("Review proposal context, voter eligibility, and badge rules before drafting.", "创建草稿前审核提案上下文、投票者资格与 badge 规则。"),
+    ownerRole: "internal_operator",
+    pointsAndRankingHint: text("Award governance points or badge eligibility after reviewed voting activity.", "在审核投票行为后给予治理积分或 badge 资格。"),
+    readiness: "review_required",
+    rewardBoundary: campaignRewardBoundary,
+    riskGuidance: text("DAO tasks need proposal clarity, voter eligibility, and qualified-voter invite review.", "DAO 任务需要提案清晰度、投票者资格与合格投票邀请审核。"),
+    suitableFor: text("DAO and community governance activation.", "DAO 与社区治理激活。"),
+    targetAudience: text("DAO members, proposal readers, voters, and governance contributors.", "DAO 成员、提案阅读者、投票者与治理贡献者。"),
+    taskSequence: [
+      campaignStep(
+        "dao-join",
+        "dao",
+        text("Join DAO or confirm readiness", "加入 DAO 或确认治理 readiness"),
+        text("Start from DAO participation readiness.", "从 DAO 参与 readiness 开始。"),
+        text("DAO readiness remains on-chain/local intent.", "DAO readiness 保持链上/本地意图。"),
+      ),
+      campaignStep(
+        "dao-read",
+        "proposal_summary",
+        text("Read proposal summary", "阅读提案摘要"),
+        text("Ask users to review proposal context before voting.", "要求用户投票前阅读提案上下文。"),
+        text("Proposal summary reading is local-only intent.", "阅读提案摘要是仅本地意图。"),
+        true,
+        true,
+      ),
+      campaignStep(
+        "dao-vote",
+        "dao",
+        text("Vote on proposal", "参与提案投票"),
+        text("Use proposal voting as the verified governance anchor.", "将提案投票作为已验证治理锚点。"),
+        text("Vote evidence remains provider-review gated.", "投票 evidence 仍需 provider review 门禁。"),
+      ),
+      campaignStep(
+        "dao-invite",
+        "invite",
+        text("Invite qualified voter", "邀请合格投票者"),
+        text("Count invites only when voter actions are qualified.", "仅在投票行为合格时计入邀请。"),
+        text("Referral validation and governance review are required.", "需要邀请验证与治理审核。"),
+        false,
+        true,
+      ),
+      campaignStep(
+        "dao-badge",
+        "governance_badge",
+        text("Earn governance badge or points", "获得治理 badge 或积分"),
+        text("Use badge or points as reviewed eligibility output.", "将 badge 或积分作为审核后的资格输出。"),
+        text("Badge eligibility remains local review output.", "Badge 资格保持本地审核输出。"),
+        true,
+        true,
+      ),
+    ],
+    title: text("DAO Governance Campaign", "DAO 治理活动"),
+  },
+  {
+    boundary: campaignTemplateBoundary,
+    defaultWalletPolicy: "ANY",
+    goal: text("Support daipp.ai and AI agent coin launch campaigns.", "支持 daipp.ai 与 AI agent coin 发行活动。"),
+    id: "ai-agent-coin-launch-campaign",
+    nextAction: text("Review agent interaction, asset language, and launch leaderboard risk before use.", "使用前审核 agent 互动、资产表述与发行排行榜风险。"),
+    ownerRole: "internal_operator",
+    pointsAndRankingHint: text("Rank by reviewed agent interaction, share quality, and launch participation intent.", "按已审核 agent 互动、分享质量与发行参与意图排名。"),
+    readiness: "review_required",
+    rewardBoundary: campaignRewardBoundary,
+    riskGuidance: text("Buy or hold intent and launch sharing require legal, risk, and manual review before rewards.", "购买或持有意图与发行分享在奖励前需要法务、风险与人工审核。"),
+    suitableFor: text("daipp projects and AI agent coin launch operations.", "daipp 项目与 AI agent coin 发行运营。"),
+    targetAudience: text("AI agent users, launch participants, and reviewed community sharers.", "AI agent 用户、发行参与者与已审核社区分享者。"),
+    taskSequence: [
+      campaignStep(
+        "agent-visit",
+        "agent_page",
+        text("Visit agent page", "访问 agent 页面"),
+        text("Represent discovery of the agent campaign page.", "表达用户访问 agent 活动页。"),
+        text("Agent page visit is local-only intent.", "Agent 页面访问是仅本地意图。"),
+        true,
+      ),
+      campaignStep(
+        "agent-interact",
+        "daipp",
+        text("Interact with agent", "与 agent 互动"),
+        text("Use structured agent interaction as the participation anchor.", "将结构化 agent 互动作为参与锚点。"),
+        text("daipp interaction remains DApp API intent.", "daipp 互动保持 DApp API 意图。"),
+      ),
+      campaignStep(
+        "agent-hold",
+        "daipp",
+        text("Buy or hold agent asset intent", "购买或持有 agent 资产意图"),
+        text("Represent reviewed launch participation without executing asset activity.", "表达已审核发行参与，但不执行资产行为。"),
+        text("Asset participation is local-only review intent.", "资产参与是仅本地审核意图。"),
+        true,
+        true,
+      ),
+      campaignStep(
+        "agent-share",
+        "social",
+        text("Share AI-generated intro", "分享 AI 生成简介"),
+        text("Share approved intro copy after human review.", "人工审核后分享已批准简介文案。"),
+        text("Social proof requires review.", "社交证明需要审核。"),
+        false,
+        true,
+      ),
+      campaignStep(
+        "agent-leaderboard",
+        "leaderboard",
+        text("Join launch leaderboard", "加入发行排行榜"),
+        text("Use launch leaderboard as review input.", "将发行排行榜作为审核输入。"),
+        text("Leaderboard remains seeded/local.", "排行榜保持 seeded/本地。"),
+        true,
+        true,
+      ),
+    ],
+    title: text("AI Agent Coin Launch Campaign", "AI Agent Coin 发行活动"),
+  },
+];
+
+export const createCampaignTemplatePack = (
+  templates: CampaignTemplatePreset[] = campaignTemplatePresets,
+): CampaignTemplatePack => ({
+  boundary: campaignTemplateBoundary,
+  summary: {
+    boundary: campaignTemplateBoundary,
+    defaultLocale: "en-US",
+    ecosystemCoverage: [
+      text("Onboarding", "新手引导"),
+      text("Awaken liquidity", "Awaken 流动性"),
+      text("NFT holder", "NFT 持有人"),
+      text("DAO governance", "DAO 治理"),
+      text("AI agent launch", "AI agent 发行"),
+    ],
+    readyTemplateCount: templates.filter((template) => template.readiness === "ready").length,
+    reviewRequiredTemplateCount: templates.filter((template) => template.readiness === "review_required").length,
+    topNextAction: text(
+      "Choose a preset, then run human review before creating or publishing a campaign draft.",
+      "先选择模板，再完成人工审核，之后才能创建或发布活动草稿。",
+    ),
+    totalTemplates: templates.length,
+  },
+  templates,
+});
 
 const verificationFilterValues = {
   dapp_api: "DAPP_API",
@@ -1121,6 +1529,7 @@ export const createAiCampaignPlannerDecisionConsole = (
   draft: CampaignDraft = seededCampaignDraft,
 ): AiCampaignPlannerDecisionConsole => {
   const templates = selectedPlannerTemplates(draft);
+  const campaignTemplatePack = createCampaignTemplatePack();
   const hasOnChainOrDappAnchor = templates.some((template) =>
     template.verificationType === "ON_CHAIN" || template.verificationType === "DAPP_API",
   );
@@ -1266,6 +1675,21 @@ export const createAiCampaignPlannerDecisionConsole = (
           ),
           text("Review task wallet compatibility before publish readiness.", "发布准备度前审核任务钱包兼容性。"),
         ),
+        plannerItem(
+          "task-campaign-template-pack",
+          campaignTemplatePack.summary.totalTemplates === 5 ? "ready" : "review_required",
+          "project_owner",
+          "medium",
+          text("Campaign template pack available", "活动模板包可用"),
+          text(
+            "The planner can reference five seeded campaign presets without creating, publishing, or mutating a campaign draft.",
+            "Planner 可引用五个 seeded 活动模板，但不会创建、发布或变更活动草稿。",
+          ),
+          text(
+            "Choose a preset as review input, then create the draft only after human approval.",
+            "将模板作为审核输入；人工批准后再创建活动草稿。",
+          ),
+        ),
       ],
     ),
     plannerGroup(
@@ -1344,6 +1768,7 @@ export const createAiCampaignPlannerDecisionConsole = (
     groups,
     nextAction: aiPlannerNextAction,
     summary: {
+      campaignTemplatePack: campaignTemplatePack.summary,
       contractMode,
       defaultLocale: draft.defaultLocale,
       generatedOutline: draft.aiPrompt.generatedOutline,

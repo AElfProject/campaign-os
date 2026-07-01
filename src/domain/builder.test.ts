@@ -3,6 +3,7 @@ import {
   builderSupportedLocales,
   computeBuilderPublishReadiness,
   createAiCampaignPlannerDecisionConsole,
+  createCampaignTemplatePack,
   createTaskTemplateFilterSummary,
   createPublishGateDecisionCenter,
   defaultTaskTemplateFilters,
@@ -16,6 +17,21 @@ import {
 } from "./builder";
 import { createTranslationManagerReadModel } from "./campaign";
 import type { ContentRevision, ContentRevisionStatus } from "./types";
+
+const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasOwnKeyDeep(item, key));
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return Object.prototype.hasOwnProperty.call(record, key)
+    || Object.values(record).some((item) => hasOwnKeyDeep(item, key));
+};
 
 describe("Campaign Builder domain foundation", () => {
   it("keeps builder locale support aligned to exact MVP locales", () => {
@@ -220,6 +236,132 @@ describe("Campaign Builder domain foundation", () => {
       totalTemplates: 12,
       visibleTemplates: 0,
     });
+  });
+
+  it("creates the five seeded campaign template presets with exact v0.1 intent", () => {
+    const pack = createCampaignTemplatePack();
+
+    expect(pack.templates.map((template) => template.id)).toEqual([
+      "aelf-onboarding-campaign",
+      "awaken-liquidity-challenge",
+      "nft-holder-quest",
+      "dao-governance-campaign",
+      "ai-agent-coin-launch-campaign",
+    ]);
+    expect(pack.templates).toHaveLength(5);
+    expect(pack.summary).toMatchObject({
+      defaultLocale: "en-US",
+      readyTemplateCount: 1,
+      reviewRequiredTemplateCount: 4,
+      totalTemplates: 5,
+    });
+    expect(pack.summary.ecosystemCoverage.map((coverage) => coverage["en-US"])).toEqual([
+      "Onboarding",
+      "Awaken liquidity",
+      "NFT holder",
+      "DAO governance",
+      "AI agent launch",
+    ]);
+    expect(pack.summary.boundary["en-US"]).toContain("No live provider verification");
+    expect(pack.summary.boundary["en-US"]).toContain("automatic publish");
+
+    expect(
+      pack.templates.map((template) => ({
+        id: template.id,
+        ownerRole: template.ownerRole,
+        sequence: template.taskSequence.map((step) => step.taskCategory),
+      })),
+    ).toEqual([
+      {
+        id: "aelf-onboarding-campaign",
+        ownerRole: "project_owner",
+        sequence: ["wallet", "bridge", "swap", "portfolio", "invite"],
+      },
+      {
+        id: "awaken-liquidity-challenge",
+        ownerRole: "project_owner",
+        sequence: ["swap", "liquidity", "liquidity", "invite", "leaderboard"],
+      },
+      {
+        id: "nft-holder-quest",
+        ownerRole: "project_owner",
+        sequence: ["nft", "schrodinger", "nft", "social", "leaderboard"],
+      },
+      {
+        id: "dao-governance-campaign",
+        ownerRole: "internal_operator",
+        sequence: ["dao", "proposal_summary", "dao", "invite", "governance_badge"],
+      },
+      {
+        id: "ai-agent-coin-launch-campaign",
+        ownerRole: "internal_operator",
+        sequence: ["agent_page", "daipp", "daipp", "social", "leaderboard"],
+      },
+    ]);
+  });
+
+  it("keeps campaign template presets localized and bounded to review-only use", () => {
+    const pack = createCampaignTemplatePack();
+
+    for (const template of pack.templates) {
+      for (const localizedField of [
+        template.title,
+        template.goal,
+        template.targetAudience,
+        template.suitableFor,
+        template.pointsAndRankingHint,
+        template.rewardBoundary,
+        template.riskGuidance,
+        template.nextAction,
+        template.boundary,
+      ]) {
+        expect(localizedField).toEqual(
+          expect.objectContaining({
+            "en-US": expect.any(String),
+            "zh-CN": expect.any(String),
+            "zh-TW": expect.any(String),
+          }),
+        );
+        expect(localizedField["en-US"].length).toBeGreaterThan(0);
+        expect(localizedField["zh-CN"].length).toBeGreaterThan(0);
+        expect(localizedField["zh-TW"].length).toBeGreaterThan(0);
+      }
+
+      expect(template.defaultWalletPolicy).toBe("ANY");
+      expect(template.taskSequence).toHaveLength(5);
+      expect(template.rewardBoundary["en-US"]).toContain("Campaign OS provides preset guidance");
+      expect(template.boundary["en-US"]).toContain("No live provider verification");
+      expect(template.boundary["en-US"]).toContain("reward custody");
+
+      for (const step of template.taskSequence) {
+        expect(step.label["en-US"]).toBeTruthy();
+        expect(step.label["zh-CN"]).toBeTruthy();
+        expect(step.description["en-US"]).toBeTruthy();
+        expect(step.verificationIntent["en-US"]).toBeTruthy();
+      }
+    }
+
+    expect(pack.templates.some((template) => template.taskSequence.some((step) => step.localOnly))).toBe(true);
+    expect(pack.templates.some((template) => template.taskSequence.some((step) => step.reviewRequired))).toBe(true);
+
+    for (const unsafeKey of [
+      "apiKey",
+      "token",
+      "privateKey",
+      "signedPayload",
+      "transactionId",
+      "contractRoot",
+      "fileUrl",
+      "webhookSecret",
+      "billingCustomerId",
+      "invoiceId",
+      "paymentId",
+      "ipAddress",
+      "deviceFingerprint",
+      "mutationId",
+    ]) {
+      expect(hasOwnKeyDeep(pack, unsafeKey)).toBe(false);
+    }
   });
 
   it("separates readiness blockers, warnings, and passed checks", () => {
@@ -429,6 +571,11 @@ describe("Campaign Builder domain foundation", () => {
     expect(planner.summary.prompt).toContain("activation campaign");
     expect(planner.summary.generatedOutline).toHaveLength(4);
     expect(planner.summary.generatedOutline.join(" ")).toContain("zh-TW");
+    expect(planner.summary.campaignTemplatePack).toMatchObject({
+      defaultLocale: "en-US",
+      totalTemplates: 5,
+    });
+    expect(planner.summary.campaignTemplatePack.boundary["en-US"]).toContain("No live provider verification");
     expect(planner.summary.recommendedWallet["en-US"]).toContain("Portkey AA");
     expect(planner.boundary["en-US"]).toContain("No live AI provider");
     expect(planner.boundary["en-US"]).toContain("no automatic publish");
@@ -463,6 +610,13 @@ describe("Campaign Builder domain foundation", () => {
     expect(itemsById.get("language-zh-review")?.status).toBe("review_required");
     expect(itemsById.get("language-zh-review")?.rationale["en-US"]).toContain("fallback");
     expect(itemsById.get("task-verified-anchors")?.rationale["en-US"]).toContain("bridge");
+    expect(itemsById.get("task-campaign-template-pack")).toMatchObject({
+      ownerRole: "project_owner",
+      status: "ready",
+    });
+    expect(itemsById.get("task-campaign-template-pack")?.rationale["en-US"]).toContain(
+      "without creating, publishing, or mutating",
+    );
     expect(itemsById.get("risk-social-review")?.status).toBe("warning");
     expect(itemsById.get("contract-off-chain-mvp")).toMatchObject({
       ownerRole: "contract_reviewer",
@@ -475,9 +629,9 @@ describe("Campaign Builder domain foundation", () => {
     expect(itemsById.get("contract-claim-blocker")?.rationale["en-US"]).toContain("not enabled");
     expect(planner.counts).toEqual({
       blocked: 1,
-      ready: 8,
+      ready: 9,
       reviewRequired: 2,
-      total: 12,
+      total: 13,
       warning: 1,
     });
     expect(JSON.stringify(planner)).toContain("zh-TW");

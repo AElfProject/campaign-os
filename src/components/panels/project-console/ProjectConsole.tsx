@@ -3,6 +3,7 @@ import {
   createAiContentPackWorkbench,
   createApiSkillContractSurface,
   createCampaignOsLocalService,
+  createCampaignTemplatePack,
   campaignDetail,
   createLocaleAnalyticsReadiness,
   createProjectCampaignCommandCenter,
@@ -17,9 +18,11 @@ import {
   type AelfWebLoginAdapterReadiness,
   type AdvancedAnalyticsReadinessState,
   type ApiSkillContractReadiness,
+  type CampaignTemplatePreset,
   type CampaignLifecycleOperation,
   type CampaignLifecycleOperationState,
   type CampaignLifecycleStatus,
+  type CampaignTemplateReadiness,
   type CampaignShellDetail,
   type ExportReadinessState,
   type LaunchConsoleBundleOwnerRole,
@@ -273,6 +276,42 @@ const localeStatusLabel = (
   }
 
   return labels.published;
+};
+
+const campaignTemplateReadinessLabel = (
+  readiness: CampaignTemplateReadiness,
+  labels: {
+    campaignTemplatePackReady: string;
+    campaignTemplatePackReviewRequired: string;
+  },
+) => readiness === "ready" ? labels.campaignTemplatePackReady : labels.campaignTemplatePackReviewRequired;
+
+const campaignTemplateReadinessState = (readiness: CampaignTemplateReadiness) =>
+  readiness === "ready" ? "ready" : "warning";
+
+const campaignTemplateOwnerLabel = (
+  ownerRole: CampaignTemplatePreset["ownerRole"],
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      contract_reviewer: "Contract reviewer",
+      internal_operator: "Internal operator",
+      project_owner: "Project owner",
+    },
+    "zh-CN": {
+      contract_reviewer: "合约审核人",
+      internal_operator: "内部运营",
+      project_owner: "项目方",
+    },
+    "zh-TW": {
+      contract_reviewer: "合約審核人",
+      internal_operator: "內部營運",
+      project_owner: "專案方",
+    },
+  } satisfies Record<SupportedLocale, Record<CampaignTemplatePreset["ownerRole"], string>>;
+
+  return labels[locale][ownerRole];
 };
 
 const readinessState = (readiness: ApiSkillContractReadiness) => {
@@ -724,6 +763,7 @@ export const ProjectConsole = ({
   );
   const localeAnalyticsReadiness = createLocaleAnalyticsReadiness(campaign);
   const aiContentPack = createAiContentPackWorkbench(campaign);
+  const campaignTemplatePack = createCampaignTemplatePack();
 
   const stats = [
     {
@@ -2055,53 +2095,154 @@ export const ProjectConsole = ({
 
       {activeWorkspace === "templates" && (
         <>
-      <section aria-label={copy.workspaceTemplates} style={panelStyle}>
-        <div style={headingRowStyle}>
-          <div>
-            <p style={statLabelStyle}>{copy.workspaceTemplates}</p>
-            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
-              {copy.workspaceTemplates}
-            </h3>
-            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
-              {copy.templatesWorkspaceBoundary}
-            </p>
-          </div>
-          <WalletCompatibilityBadge compatibility="ANY" />
-        </div>
-      </section>
+          <section aria-label={copy.workspaceTemplates} style={panelStyle}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.workspaceTemplates}</p>
+                <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                  {copy.workspaceTemplates}
+                </h3>
+                <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                  {copy.templatesWorkspaceBoundary}
+                </p>
+              </div>
+              <WalletCompatibilityBadge compatibility="ANY" />
+            </div>
+          </section>
 
-      <TaskTemplateLibrary locale={locale} />
-
-      <section aria-label="Task readiness preview" style={panelStyle}>
-        <div style={headingRowStyle}>
-          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.taskBuilder}</h3>
-          <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
-            {campaign.tasks.length} tasks
-          </span>
-        </div>
-        <ul style={listStyle}>
-          {campaign.tasks.map((task) => (
-            <li key={task.id} style={listItemStyle}>
-              <span style={{ display: "grid", gap: 3 }}>
-                <strong>{getLocalizedText(task.title, locale)}</strong>
-                <span style={{ color: "#64748b", fontSize: 13 }}>
-                  {task.verificationType} · {task.points} pts · {task.riskLevel}
-                </span>
-              </span>
+          <section aria-label={copy.campaignTemplatePackTitle} style={panelStyle}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.campaignTemplatePackTotal}</p>
+                <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                  {copy.campaignTemplatePackTitle}
+                </h3>
+                <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                  {copy.campaignTemplatePackSubtitle}
+                </p>
+              </div>
               <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                <WalletCompatibilityBadge compatibility={task.walletCompatibility} />
-                {Object.entries(task.localeStatus).map(([statusLocale, status]) => (
-                  <LocaleStatusBadge
-                    key={statusLocale}
-                    label={`${statusLocale} ${localeStatusLabel(status, copy)}`}
-                    status={status}
-                  />
-                ))}
+                <PublishStateBadge
+                  label={`${campaignTemplatePack.summary.totalTemplates} ${copy.campaignTemplatePackTotal}`}
+                  state="ready"
+                />
+                <PublishStateBadge
+                  label={`${campaignTemplatePack.summary.reviewRequiredTemplateCount} ${copy.campaignTemplatePackReviewRequired}`}
+                  state="warning"
+                />
               </span>
-            </li>
-          ))}
-        </ul>
-      </section>
+            </div>
+
+            <div style={gridStyle}>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.campaignTemplatePackTotal}</p>
+                <p style={statValueStyle}>{campaignTemplatePack.summary.totalTemplates}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.campaignTemplatePackReadiness}</p>
+                <p style={statValueStyle}>
+                  {campaignTemplatePack.summary.readyTemplateCount}/
+                  {campaignTemplatePack.summary.reviewRequiredTemplateCount}
+                </p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.campaignTemplatePackNextAction}</p>
+                <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(campaignTemplatePack.summary.topNextAction, locale)}
+                </p>
+              </article>
+            </div>
+
+            <p style={boundaryStyle}>{copy.campaignTemplatePackBoundary}</p>
+
+            <div style={sectionGridStyle}>
+              {campaignTemplatePack.templates.map((template) => (
+                <article key={template.id} style={{ ...cardStyle, minHeight: 0 }}>
+                  <div style={headingRowStyle}>
+                    <div>
+                      <p style={statLabelStyle}>{copy.campaignTemplatePackSuitableFor}</p>
+                      <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                        {getLocalizedText(template.title, locale)}
+                      </h4>
+                    </div>
+                    <PublishStateBadge
+                      label={campaignTemplateReadinessLabel(template.readiness, copy)}
+                      state={campaignTemplateReadinessState(template.readiness)}
+                    />
+                  </div>
+
+                  <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(template.goal, locale)}
+                  </p>
+                  <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.campaignTemplatePackSuitableFor}: </strong>
+                    {getLocalizedText(template.suitableFor, locale)}
+                  </p>
+
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <p style={statLabelStyle}>{copy.campaignTemplatePackTaskSequence}</p>
+                    <ol style={{ ...compactListStyle, listStyle: "none" }}>
+                      {template.taskSequence.map((step, index) => (
+                        <li key={step.id} style={chipStyle}>
+                          {index + 1}. {getLocalizedText(step.label, locale)}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <WalletCompatibilityBadge compatibility={template.defaultWalletPolicy} />
+                    <Badge
+                      label={`${copy.campaignTemplatePackOwner}: ${campaignTemplateOwnerLabel(template.ownerRole, locale)}`}
+                      tone="info"
+                    />
+                  </div>
+
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.campaignTemplatePackNextAction}: </strong>
+                    {getLocalizedText(template.nextAction, locale)}
+                  </p>
+                  <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.campaignTemplatePackRewardBoundary}: </strong>
+                    {getLocalizedText(template.rewardBoundary, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <TaskTemplateLibrary locale={locale} />
+
+          <section aria-label="Task readiness preview" style={panelStyle}>
+            <div style={headingRowStyle}>
+              <h3 style={{ fontSize: 20, margin: 0 }}>{copy.taskBuilder}</h3>
+              <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
+                {campaign.tasks.length} tasks
+              </span>
+            </div>
+            <ul style={listStyle}>
+              {campaign.tasks.map((task) => (
+                <li key={task.id} style={listItemStyle}>
+                  <span style={{ display: "grid", gap: 3 }}>
+                    <strong>{getLocalizedText(task.title, locale)}</strong>
+                    <span style={{ color: "#64748b", fontSize: 13 }}>
+                      {task.verificationType} · {task.points} pts · {task.riskLevel}
+                    </span>
+                  </span>
+                  <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <WalletCompatibilityBadge compatibility={task.walletCompatibility} />
+                    {Object.entries(task.localeStatus).map(([statusLocale, status]) => (
+                      <LocaleStatusBadge
+                        key={statusLocale}
+                        label={`${statusLocale} ${localeStatusLabel(status, copy)}`}
+                        status={status}
+                      />
+                    ))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
         </>
       )}
 
