@@ -1264,6 +1264,7 @@ describe("Campaign OS local API service facade", () => {
       coveredApiGroups: expect.arrayContaining([
         "wallet_session",
         "campaign_creation",
+        "task_generation",
         "task_verification",
         "eligibility",
         "analytics",
@@ -1284,16 +1285,18 @@ describe("Campaign OS local API service facade", () => {
         "risk",
       ]),
       serviceNames: expect.arrayContaining([
+        "addTask",
         "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
       ]),
       sampleResponseIds: expect.arrayContaining([
+        "addTask",
         "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
       ]),
-      totalServices: 16,
+      totalServices: 17,
     });
     expect(coverage.payload?.boundary["en-US"]).toContain("advanced analytics readiness");
     expect(coverage.payload?.boundary["en-US"]).toContain("No live analytics SDK");

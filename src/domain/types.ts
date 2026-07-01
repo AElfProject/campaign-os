@@ -100,6 +100,7 @@ export type TemplateGovernanceSignal =
 export type ApiSkillId =
   | "create_wallet_session"
   | "create_campaign"
+  | "add_campaign_task"
   | "generate_campaign_tasks"
   | "verify_task"
   | "check_eligibility"

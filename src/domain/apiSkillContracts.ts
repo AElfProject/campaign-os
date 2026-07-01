@@ -42,6 +42,11 @@ const walletSessionBoundary = text(
   "仅 seeded/本地钱包会话 contract。不会执行实时 API、钱包 SDK、provider 调用、签名执行、签名验证、secret 存储、活动变更、发奖、导出文件或合约写入。",
 );
 
+const addTaskBoundary = text(
+  "Seeded/local add-task contract only. No live API, backend persistence, provider or evidence lookup, secret handling, export file, reward, or contract write is executed.",
+  "仅 seeded/本地添加任务 contract。不会执行实时 API、后端持久化、provider 或 evidence 查询、secret 处理、导出文件、发奖或合约写入。",
+);
+
 const verificationBoundary = text(
   "Verification contract only. Local seeded, AeFinder, AelfScan, dApp APIs, social APIs, wallet session, and manual review are named as evidence categories; no live provider, wallet SDK, secret, reward, export file, or contract write is executed.",
   "仅验证 contract。Local seeded、AeFinder、AelfScan、dApp API、社交 API、钱包会话与人工审核只作为 evidence category 展示；不会执行真实 provider、钱包 SDK、secret、发奖、导出文件或合约写入。",
@@ -57,6 +62,7 @@ const campaignStatusExample = campaignLifecycleStatuses.join(",");
 export const requiredApiSkillIds = [
   "create_wallet_session",
   "create_campaign",
+  "add_campaign_task",
   "generate_campaign_tasks",
   "verify_task",
   "check_eligibility",
@@ -175,6 +181,42 @@ export const apiSkillContractRegistry: ApiSkillContract[] = [
     riskLevel: "medium",
     securityBoundary: liveApiBoundary,
     title: text("Create campaign draft", "创建活动草稿"),
+  },
+  {
+    apiGroup: "task_generation",
+    evidenceSources: ["LOCAL_SEEDED"],
+    id: "add_campaign_task",
+    inputFields: [
+      field("campaignId", "campaign", true, "Campaign identifier for the task draft.", "任务草稿所属活动标识。", "camp_123"),
+      field("templateCode", "task", true, "Task template code to add to the campaign.", "要添加到活动的任务模板代码。", "bridge_ebridge"),
+      field("walletCompatibility", "wallet", true, "Wallet compatibility for the task.", "任务的钱包兼容性。", "ANY"),
+      field("verificationType", "task", true, "WALLET, ON_CHAIN, DAPP_API, SOCIAL, or MANUAL.", "WALLET、ON_CHAIN、DAPP_API、SOCIAL 或 MANUAL。", "ON_CHAIN"),
+      field("points", "task", true, "Points available for the task.", "任务可获得积分。", "120"),
+      field("required", "task", true, "Whether the task is required for eligibility.", "该任务是否为资格必做任务。", "true"),
+      field("evidenceRule", "evidence", true, "Structured seeded/local evidence rule metadata.", "结构化 seeded/本地 evidence 规则 metadata。"),
+    ],
+    nextAction: text(
+      "Keep task draft creation local until backend persistence, template governance, and live verification adapters are approved.",
+      "在后端持久化、模板治理与实时验证 adapter 获批前，保持任务草稿创建为本地模式。",
+    ),
+    outputFields: [
+      field("id", "task", true, "Local task draft identifier.", "本地任务草稿标识。", "task_bridge_ebridge_1"),
+      field("campaignId", "campaign", true, "Campaign identifier for the task draft.", "任务草稿所属活动标识。", "camp_123"),
+      field("templateCode", "task", true, "Task template code added to the campaign.", "已添加到活动的任务模板代码。", "bridge_ebridge"),
+      field("walletCompatibility", "wallet", true, "Wallet compatibility for the task.", "任务的钱包兼容性。", "ANY"),
+      field("verificationType", "task", true, "Task verification type.", "任务验证类型。", "ON_CHAIN"),
+      field("points", "task", true, "Points available for the task.", "任务可获得积分。", "120"),
+      field("required", "task", true, "Whether the task is required for eligibility.", "该任务是否为资格必做任务。", "true"),
+      field("evidenceRule", "evidence", true, "Structured seeded/local evidence rule metadata.", "结构化 seeded/本地 evidence 规则 metadata。"),
+    ],
+    purpose: text(
+      "Add one seeded/local campaign task draft with wallet compatibility, verification, points, required flag, and evidence rule boundaries visible.",
+      "添加一个 seeded/本地活动任务草稿，并展示钱包兼容性、验证、积分、必做标记与 evidence 规则边界。",
+    ),
+    readiness: "local_only",
+    riskLevel: "medium",
+    securityBoundary: addTaskBoundary,
+    title: text("Add campaign task", "添加活动任务"),
   },
   {
     apiGroup: "task_generation",

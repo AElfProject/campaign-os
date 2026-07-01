@@ -1490,6 +1490,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     const serviceNames = [
       "createWalletSession",
       "createCampaign",
+      "addTask",
       "generateCampaignTasks",
       "verifyTask",
       "checkEligibility",
@@ -1539,6 +1540,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       sampleResponseIds: [
         "createWalletSession",
         "createCampaign",
+        "addTask",
         "generateCampaignTasks",
         "verifyTask",
         "checkEligibility",
