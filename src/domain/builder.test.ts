@@ -16,7 +16,12 @@ import {
   type CampaignDraft,
   walletPolicyOptions,
 } from "./builder";
-import { createTranslationManagerReadModel } from "./campaign";
+import {
+  createCampaignSettingsReadiness,
+  createParticipantOperationsReadModel,
+  createTranslationManagerReadModel,
+} from "./campaign";
+import { campaignDetail } from "./fixtures";
 import type { ContentRevision, ContentRevisionStatus } from "./types";
 
 const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
@@ -727,5 +732,111 @@ describe("Campaign Builder domain foundation", () => {
       warning: 1,
     });
     expect(JSON.stringify(planner)).toContain("zh-TW");
+  });
+
+  it("derives seeded participant operations without live providers or reward distribution", () => {
+    const operations = createParticipantOperationsReadModel(campaignDetail);
+
+    expect(operations.campaignId).toBe(campaignDetail.id);
+    expect(operations.summary).toMatchObject({
+      aaWalletParticipants: 2,
+      blockedParticipants: 1,
+      eligibleParticipants: 1,
+      eoaWalletParticipants: 2,
+      exportReadyParticipants: 1,
+      pendingParticipants: 1,
+      reviewRequiredParticipants: 1,
+      riskFlaggedParticipants: 2,
+      totalParticipants: 4,
+    });
+    expect(operations.summary.localeCounts).toEqual({
+      "en-US": 2,
+      "zh-CN": 1,
+      "zh-TW": 1,
+    });
+
+    const rowsById = new Map(operations.rows.map((row) => [row.participantId, row]));
+
+    expect(rowsById.get("part-aa-001")).toMatchObject({
+      completedTasks: 4,
+      eligible: true,
+      exportStatus: "ready",
+      taskProgressLabel: {
+        "en-US": "4/5 tasks",
+        "zh-CN": "4/5 个任务",
+      },
+      totalTasks: 5,
+      walletAddress: "2F4...9aB",
+    });
+    expect(rowsById.get("part-nightelf-risk-001")).toMatchObject({
+      exportStatus: "review_required",
+      riskFlags: ["manual_review_queue"],
+      walletSource: "NIGHTELF",
+    });
+    expect(rowsById.get("part-eoa-001")).toMatchObject({
+      exportStatus: "blocked",
+      riskFlags: ["referral_velocity_review"],
+    });
+    expect(rowsById.get("part-aa-pending-001")).toMatchObject({
+      exportStatus: "pending",
+      riskFlags: [],
+    });
+    expect(operations.boundary["en-US"]).toContain("does not distribute rewards");
+    expect(rowsById.get("part-aa-001")?.rewardBoundary["en-US"]).toContain(
+      "Export winners does not distribute rewards",
+    );
+  });
+
+  it("derives read-only campaign settings readiness across required groups", () => {
+    const readiness = createCampaignSettingsReadiness(campaignDetail);
+
+    expect(readiness.campaignId).toBe(campaignDetail.id);
+    expect(readiness.groups.map((group) => group.id)).toEqual([
+      "wallet-policy",
+      "contract-mode",
+      "reward-responsibility",
+      "i18n-fallback",
+      "verification-risk",
+      "export-policy",
+      "publish-prerequisites",
+    ]);
+    expect(readiness.summary.totalGroups).toBe(7);
+    expect(
+      readiness.summary.readyGroups +
+        readiness.summary.reviewRequiredGroups +
+        readiness.summary.blockedGroups,
+    ).toBe(7);
+    expect(readiness.summary.reviewRequiredGroups).toBeGreaterThan(0);
+    expect(readiness.summary.blockedGroups).toBe(1);
+
+    const groupsById = new Map(readiness.groups.map((group) => [group.id, group]));
+
+    expect(groupsById.get("wallet-policy")).toMatchObject({
+      ownerRole: "project_owner",
+      readiness: "ready",
+    });
+    expect(groupsById.get("contract-mode")).toMatchObject({
+      ownerRole: "contract_reviewer",
+      readiness: "ready",
+    });
+    expect(groupsById.get("reward-responsibility")?.evidence["en-US"]).toContain(
+      "Export winners does not distribute rewards",
+    );
+    expect(groupsById.get("i18n-fallback")).toMatchObject({
+      readiness: "review_required",
+    });
+    expect(groupsById.get("verification-risk")).toMatchObject({
+      ownerRole: "internal_operator",
+      readiness: "blocked",
+    });
+    expect(groupsById.get("export-policy")).toMatchObject({
+      readiness: "review_required",
+    });
+    expect(groupsById.get("publish-prerequisites")).toMatchObject({
+      readiness: "review_required",
+    });
+    expect(readiness.boundary["en-US"]).toContain("Read-only");
+    expect(readiness.boundary["en-US"]).toContain("No live settings save");
+    expect(readiness.boundary["en-US"]).toContain("reward distribution");
   });
 });

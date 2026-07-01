@@ -5,7 +5,9 @@ import {
   createCampaignOsLocalService,
   createCampaignTemplatePack,
   campaignDetail,
+  createCampaignSettingsReadiness,
   createLocaleAnalyticsReadiness,
+  createParticipantOperationsReadModel,
   createProjectCampaignCommandCenter,
   createLiveWalletConnectorBoundary,
   createVerificationCoverageSummary,
@@ -24,6 +26,7 @@ import {
   type CampaignLifecycleStatus,
   type CampaignTemplateReadiness,
   type CampaignShellDetail,
+  type CampaignSettingsReadinessState,
   type ExportReadinessState,
   type LaunchConsoleBundleOwnerRole,
   type LaunchConsoleBundleStage,
@@ -34,6 +37,8 @@ import {
   type LocaleStatus,
   type LiveWalletConnectorLiveEvidenceStatus,
   type LiveWalletConnectorReadiness,
+  type OwnerRole,
+  type ParticipantOperationsExportStatus,
   type ProjectPortfolioCommercialOwnerRole,
   type PublishState,
   type SupportedLocale,
@@ -471,6 +476,9 @@ const launchConsoleOwnerLabel = (ownerRole: LaunchConsoleBundleOwnerRole) =>
 const portfolioOwnerLabel = (ownerRole: ProjectPortfolioCommercialOwnerRole) =>
   ownerRole.replace(/_/g, " ");
 
+const settingsOwnerLabel = (ownerRole: OwnerRole) =>
+  ownerRole.replace(/_/g, " ");
+
 const publishStateLabel = (
   state: PublishState,
   labels: {
@@ -577,6 +585,17 @@ const pipelineReleaseImpactState = (impact: VerificationReleaseImpact) => {
 const publishStateBadgeState = (state: PublishState) =>
   state === "blocker" ? "blocker" : state === "warning" ? "warning" : "ready";
 
+const participantExportBadgeState = (status: ParticipantOperationsExportStatus) => {
+  if (status === "blocked") {
+    return "blocker";
+  }
+
+  return status === "ready" ? "ready" : "warning";
+};
+
+const settingsReadinessBadgeState = (state: CampaignSettingsReadinessState) =>
+  state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
 const aiContentLifecycleState = (lifecycle: AiContentArtifactLifecycle) =>
   lifecycle === "human_approved" || lifecycle === "schedule_intent" || lifecycle === "publish_intent"
     ? "ready"
@@ -641,9 +660,11 @@ const projectWorkspaceKeys = [
   "campaigns",
   "create",
   "templates",
+  "participants",
   "aiContent",
   "analytics",
   "export",
+  "settings",
 ] as const;
 
 type ProjectWorkspaceKey = (typeof projectWorkspaceKeys)[number];
@@ -764,6 +785,8 @@ export const ProjectConsole = ({
   const localeAnalyticsReadiness = createLocaleAnalyticsReadiness(campaign);
   const aiContentPack = createAiContentPackWorkbench(campaign);
   const campaignTemplatePack = createCampaignTemplatePack();
+  const participantOperations = createParticipantOperationsReadModel(campaign);
+  const settingsReadiness = createCampaignSettingsReadiness(campaign);
 
   const stats = [
     {
@@ -865,6 +888,8 @@ export const ProjectConsole = ({
     campaigns: copy.workspaceCampaigns,
     create: copy.workspaceCreate,
     export: copy.workspaceExport,
+    participants: copy.workspaceParticipants,
+    settings: copy.workspaceSettings,
     templates: copy.workspaceTemplates,
   };
 
@@ -874,6 +899,8 @@ export const ProjectConsole = ({
     campaigns: copy.workspaceCampaignsSummary,
     create: copy.workspaceCreateSummary,
     export: copy.workspaceExportSummary,
+    participants: copy.workspaceParticipantsSummary,
+    settings: copy.workspaceSettingsSummary,
     templates: copy.workspaceTemplatesSummary,
   };
 
@@ -1480,6 +1507,144 @@ export const ProjectConsole = ({
       </section>
 
         </>
+      )}
+
+      {activeWorkspace === "participants" && (
+        <section aria-label={copy.participantOperations} style={panelStyle}>
+          <div style={headingRowStyle}>
+            <div>
+              <p style={statLabelStyle}>{copy.workspaceParticipants}</p>
+              <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                {copy.participantOperations}
+              </h3>
+              <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                {copy.participantOperationsSubtitle}
+              </p>
+            </div>
+            <PublishStateBadge
+              label={`${participantOperations.summary.reviewRequiredParticipants} ${copy.participantReviewRequired}`}
+              state={participantOperations.summary.blockedParticipants > 0 ? "blocker" : "warning"}
+            />
+          </div>
+
+          <div aria-label={copy.participantSummary} style={gridStyle}>
+            {[
+              {
+                detail: `${participantOperations.summary.aaWalletParticipants} AA / ${participantOperations.summary.eoaWalletParticipants} EOA`,
+                label: copy.participantWalletMix,
+                value: String(participantOperations.summary.totalParticipants),
+              },
+              {
+                detail: copy.participantEligible,
+                label: copy.participantExportReady,
+                value: String(participantOperations.summary.exportReadyParticipants),
+              },
+              {
+                detail: `${participantOperations.summary.riskFlaggedParticipants} ${copy.participantRiskFlags}`,
+                label: copy.participantReviewRequired,
+                value: String(participantOperations.summary.reviewRequiredParticipants),
+              },
+              {
+                detail: copy.participantTaskProgress,
+                label: copy.participantBlocked,
+                value: String(participantOperations.summary.blockedParticipants),
+              },
+              {
+                detail: copy.participantExportPosture,
+                label: copy.participantPending,
+                value: String(participantOperations.summary.pendingParticipants),
+              },
+            ].map((stat) => (
+              <article key={stat.label} style={cardStyle}>
+                <p style={statLabelStyle}>{stat.label}</p>
+                <p style={statValueStyle}>{stat.value}</p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                  {stat.detail}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <article style={{ ...workflowStyle, minHeight: 0 }}>
+            <h4 style={{ fontSize: 18, margin: 0 }}>{copy.participantLocaleMix}</h4>
+            <div style={gridStyle}>
+              {campaign.supportedLocales.map((supportedLocale) => (
+                <div key={supportedLocale}>
+                  <p style={statLabelStyle}>{supportedLocale}</p>
+                  <p style={{ ...statValueStyle, fontSize: 20 }}>
+                    {participantOperations.summary.localeCounts[supportedLocale]}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <div aria-label={copy.participantRowList} style={sectionGridStyle}>
+            {participantOperations.rows.map((row) => (
+              <article key={row.participantId} style={{ ...workflowStyle, minHeight: 0 }}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>{row.participantId}</p>
+                    <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0", overflowWrap: "anywhere" }}>
+                      {row.walletAddress}
+                    </h4>
+                  </div>
+                  <PublishStateBadge
+                    label={getLocalizedText(row.exportStatusLabel, locale)}
+                    state={participantExportBadgeState(row.exportStatus)}
+                  />
+                </div>
+
+                <div style={gridStyle}>
+                  <div>
+                    <p style={statLabelStyle}>{copy.participantAccount}</p>
+                    <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
+                      {row.accountType}
+                    </p>
+                  </div>
+                  <div>
+                    <p style={statLabelStyle}>{copy.participantWalletSource}</p>
+                    <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
+                      {row.walletSource}
+                    </p>
+                  </div>
+                  <div>
+                    <p style={statLabelStyle}>{copy.participantLocale}</p>
+                    <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
+                      {row.localePreference}
+                    </p>
+                  </div>
+                  <div>
+                    <p style={statLabelStyle}>{copy.participantTaskProgress}</p>
+                    <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
+                      {getLocalizedText(row.taskProgressLabel, locale)}
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <p style={statLabelStyle}>{copy.participantRiskFlags}</p>
+                  <ul style={compactListStyle}>
+                    {(row.riskFlags.length > 0 ? row.riskFlags : [copy.participantNoRiskFlags]).map((riskFlag) => (
+                      <li key={`${row.participantId}-${riskFlag}`} style={chipStyle}>
+                        {riskFlag}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.participantNextAction}: {getLocalizedText(row.nextAction, locale)}
+                </p>
+                <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.participantRewardBoundary}: {getLocalizedText(row.rewardBoundary, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <p style={boundaryStyle}>{getLocalizedText(participantOperations.boundary, locale)}</p>
+        </section>
       )}
 
       {activeWorkspace === "analytics" && (
@@ -3353,6 +3518,111 @@ export const ProjectConsole = ({
         </div>
       </section>
         </>
+      )}
+
+      {activeWorkspace === "settings" && (
+        <section aria-label={copy.settingsReadiness} style={panelStyle}>
+          <div style={headingRowStyle}>
+            <div>
+              <p style={statLabelStyle}>{copy.workspaceSettings}</p>
+              <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                {copy.settingsReadiness}
+              </h3>
+              <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                {copy.settingsReadinessSubtitle}
+              </p>
+            </div>
+            <PublishStateBadge
+              label={`${settingsReadiness.summary.reviewRequiredGroups} ${copy.settingsReviewGroups}`}
+              state={settingsReadiness.summary.blockedGroups > 0 ? "blocker" : "warning"}
+            />
+          </div>
+
+          <div aria-label={copy.settingsSummary} style={gridStyle}>
+            {[
+              {
+                detail: copy.settingsGroupList,
+                label: copy.settingsTotalGroups,
+                value: String(settingsReadiness.summary.totalGroups),
+              },
+              {
+                detail: copy.settingsReadiness,
+                label: copy.settingsReadyGroups,
+                value: String(settingsReadiness.summary.readyGroups),
+              },
+              {
+                detail: copy.settingsNextAction,
+                label: copy.settingsReviewGroups,
+                value: String(settingsReadiness.summary.reviewRequiredGroups),
+              },
+              {
+                detail: copy.settingsReadOnlyBoundary,
+                label: copy.settingsBlockedGroups,
+                value: String(settingsReadiness.summary.blockedGroups),
+              },
+            ].map((stat) => (
+              <article key={stat.label} style={cardStyle}>
+                <p style={statLabelStyle}>{stat.label}</p>
+                <p style={statValueStyle}>{stat.value}</p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                  {stat.detail}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <article style={{ ...workflowStyle, minHeight: 0 }}>
+            <p style={statLabelStyle}>{copy.settingsNextAction}</p>
+            <p style={{ color: "#071426", fontSize: 16, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+              {getLocalizedText(settingsReadiness.summary.topNextAction, locale)}
+            </p>
+          </article>
+
+          <div aria-label={copy.settingsGroupList} style={sectionGridStyle}>
+            {settingsReadiness.groups.map((group) => (
+              <article key={group.id} style={{ ...workflowStyle, minHeight: 0 }}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>{settingsOwnerLabel(group.ownerRole)}</p>
+                    <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                      {getLocalizedText(group.label, locale)}
+                    </h4>
+                  </div>
+                  <PublishStateBadge
+                    label={
+                      group.readiness === "ready"
+                        ? copy.apiSkillReadinessReady
+                        : group.readiness === "review_required"
+                          ? copy.apiSkillReadinessReviewRequired
+                          : copy.apiSkillReadinessBlocked
+                    }
+                    state={settingsReadinessBadgeState(group.readiness)}
+                  />
+                </div>
+
+                <div>
+                  <p style={statLabelStyle}>{copy.settingsCurrentValue}</p>
+                  <p style={{ color: "#071426", fontSize: 14, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(group.currentValue, locale)}
+                  </p>
+                </div>
+                <div>
+                  <p style={statLabelStyle}>{copy.settingsEvidence}</p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(group.evidence, locale)}
+                  </p>
+                </div>
+                <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.settingsNextAction}: {getLocalizedText(group.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <p style={boundaryStyle}>
+            {copy.settingsReadOnlyBoundary}: {getLocalizedText(settingsReadiness.boundary, locale)}
+          </p>
+        </section>
       )}
 
       {activeWorkspace === "create" && (
