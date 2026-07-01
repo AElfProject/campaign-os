@@ -42,6 +42,11 @@ const walletSessionBoundary = text(
   "仅 seeded/本地钱包会话 contract。不会执行实时 API、钱包 SDK、provider 调用、签名执行、签名验证、secret 存储、活动变更、发奖、导出文件或合约写入。",
 );
 
+const agentWalletActionBoundary = text(
+  "Internal Agent Skill wallet action readiness only. No live API, no agent skill execution/import, no wallet SDK/provider call, no private key or secret handling, no signature execution, no transaction send, no contract send/write, no reward distribution, no export file, and no root write is executed.",
+  "仅内部 Agent Skill 钱包动作 readiness。不会执行实时 API、Agent Skill 执行/导入、钱包 SDK/provider 调用、私钥或 secret 处理、签名执行、交易发送、合约发送/写入、发奖、导出文件或 root 写入。",
+);
+
 const addTaskBoundary = text(
   "Seeded/local add-task contract only. No live API, backend persistence, provider or evidence lookup, secret handling, export file, reward, or contract write is executed.",
   "仅 seeded/本地添加任务 contract。不会执行实时 API、后端持久化、provider 或 evidence 查询、secret 处理、导出文件、发奖或合约写入。",
@@ -66,6 +71,7 @@ const campaignStatusExample = campaignLifecycleStatuses.join(",");
 
 export const requiredApiSkillIds = [
   "create_wallet_session",
+  "agent_wallet_action",
   "create_campaign",
   "add_campaign_task",
   "generate_campaign_tasks",
@@ -134,6 +140,45 @@ export const apiSkillContractRegistry: ApiSkillContract[] = [
     riskLevel: "medium",
     securityBoundary: walletSessionBoundary,
     title: text("Create wallet session", "创建钱包会话"),
+  },
+  {
+    apiGroup: "wallet_session",
+    evidenceSources: ["LOCAL_SEEDED", "MANUAL", "WALLET_SESSION"],
+    id: "agent_wallet_action",
+    inputFields: [
+      field("agentId", "wallet", true, "Internal Agent Skill identifier requesting wallet action readiness.", "请求钱包动作 readiness 的内部 Agent Skill 标识。", "agent_portkey_eoa_001"),
+      field("operatorRole", "risk", true, "Operator or service role that owns the human approval path.", "负责人审批路径所属的运营或服务角色。", "internal_operator"),
+      field("walletSource", "wallet", true, "Wallet source must stay AGENT_SKILL for this internal automation path.", "该内部自动化路径的钱包来源必须保持为 AGENT_SKILL。", "AGENT_SKILL"),
+      field("actionIntent", "task", true, "Requested wallet action intent for review only.", "仅用于审核的请求钱包动作意图。", "verify_task_evidence"),
+      field("chainId", "wallet", true, "Target chain identifier for the reviewed intent.", "被审核意图的目标链标识。", "AELF"),
+      field("network", "wallet", true, "Target wallet network for the reviewed intent.", "被审核意图的目标钱包网络。", "mainnet"),
+      field("campaignId", "campaign", true, "Campaign associated with the reviewed wallet action.", "被审核钱包动作关联的活动。", "camp_awaken_sprint"),
+      field("taskId", "task", true, "Task associated with the reviewed wallet action.", "被审核钱包动作关联的任务。", "task_bridge_ebridge_1"),
+      field("humanApprovalState", "risk", true, "Human approval state required before any future execution can be considered.", "未来考虑任何执行前所需的人工审批状态。", "pending_review"),
+      field("evidencePurpose", "evidence", true, "Evidence purpose for audit review without fetching live evidence.", "不拉取实时 evidence 的审计审核用途。", "operator_readiness_review"),
+    ],
+    nextAction: text(
+      "Keep Agent Skill wallet actions blocked until human approval, audited evidence, key custody design, and execution runbooks are separately approved.",
+      "在人工审批、已审计 evidence、密钥托管设计与执行 runbook 单独获批前，保持 Agent Skill 钱包动作阻断。",
+    ),
+    outputFields: [
+      field("actionState", "risk", true, "blocked or review_required readiness state for the requested intent.", "请求意图的 blocked 或 review_required readiness 状态。", "review_required"),
+      field("allowedOperation", "risk", true, "Review-only operation allowed by this contract.", "该 contract 允许的仅审核操作。", "readiness_review_only"),
+      field("blockedReason", "risk", true, "Reason live wallet action execution remains blocked.", "真实钱包动作执行仍被阻断的原因。"),
+      field("auditTrail", "evidence", true, "Local audit trail summary for the reviewed intent.", "被审核意图的本地审计轨迹摘要。"),
+      field("noPrivateKeyBoundary", "wallet", true, "Confirms private keys, mnemonics, recovery phrases, and passwords are not handled.", "确认不会处理私钥、助记词、恢复短语或密码。", "true"),
+      field("noSignatureExecution", "wallet", true, "Confirms no signature execution is performed.", "确认不会执行签名。", "true"),
+      field("noTransactionExecution", "wallet", true, "Confirms no transaction, transfer, or contract write is sent.", "确认不会发送交易、转账或合约写入。", "true"),
+      field("nextReviewAction", "risk", true, "Next operator review action before any future execution design.", "任何未来执行设计前的下一步运营审核动作。"),
+    ],
+    purpose: text(
+      "Expose internal automation wallet action readiness for Agent Skill EOA flows without executing wallet, signature, transaction, reward, export, or contract operations.",
+      "展示 Agent Skill EOA 流程的内部自动化钱包动作 readiness，但不执行钱包、签名、交易、发奖、导出或合约操作。",
+    ),
+    readiness: "review_required",
+    riskLevel: "high",
+    securityBoundary: agentWalletActionBoundary,
+    title: text("Agent Skill wallet action readiness", "Agent Skill 钱包动作 readiness"),
   },
   {
     apiGroup: "campaign_creation",

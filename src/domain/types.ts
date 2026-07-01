@@ -99,6 +99,7 @@ export type TemplateGovernanceSignal =
   | "verification_strength";
 export type ApiSkillId =
   | "create_wallet_session"
+  | "agent_wallet_action"
   | "create_campaign"
   | "add_campaign_task"
   | "generate_campaign_tasks"

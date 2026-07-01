@@ -455,10 +455,18 @@ describe("Project Console shell", () => {
     expect(screen.getByText("Read-only contract registry for future agents and APIs.")).toBeInTheDocument();
     expect(screen.getByText("Total contracts")).toBeInTheDocument();
     expect(screen.getByText("create_campaign")).toBeInTheDocument();
+    expect(screen.getByText("agent_wallet_action")).toBeInTheDocument();
     expect(screen.getByText("verify_task")).toBeInTheDocument();
     expect(screen.getByText("export_winners")).toBeInTheDocument();
     expect(screen.getByText("add_campaign_task")).toBeInTheDocument();
     expect(screen.getByText("generate_i18n_draft")).toBeInTheDocument();
+    expect(screen.getByText("Agent Skill wallet action readiness")).toBeInTheDocument();
+    expect(screen.getByText("agentId")).toBeInTheDocument();
+    expect(screen.getByText("actionIntent")).toBeInTheDocument();
+    expect(screen.getByText("humanApprovalState")).toBeInTheDocument();
+    expect(screen.getByText("noPrivateKeyBoundary")).toBeInTheDocument();
+    expect(screen.getByText("noSignatureExecution")).toBeInTheDocument();
+    expect(screen.getByText("noTransactionExecution")).toBeInTheDocument();
     expect(screen.getByText("ownerAddress")).toBeInTheDocument();
     expect(screen.getByText("metadataUri")).toBeInTheDocument();
     expect(screen.getByText("rewardDisclaimerHash")).toBeInTheDocument();
