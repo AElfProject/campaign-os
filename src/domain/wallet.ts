@@ -863,6 +863,8 @@ export const normalizeWalletSession = (
     walletName: fixture.walletName,
     chainId: fixture.chainId,
     network: fixture.network,
+    ...(fixture.accounts ? { accounts: { ...fixture.accounts } } : {}),
+    ...(fixture.publicKey ? { publicKey: fixture.publicKey } : {}),
     capabilities: fixture.capabilities,
     connectedAt: fixture.connectedAt,
     lastSeenAt: fixture.lastSeenAt,

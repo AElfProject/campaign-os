@@ -9,6 +9,37 @@ import {
 } from "./index";
 
 describe("wallet locale coverage", () => {
+  it("preserves documented public identity metadata for seeded AA and EOA sessions", () => {
+    const sessions = normalizeWalletSessions(walletAdapterFixtures);
+    const sessionsById = Object.fromEntries(sessions.map((session) => [session.id, session]));
+
+    expect(sessionsById["sess-aa-001"]).toMatchObject({
+      accounts: { AELF: "2F4...9aB" },
+      publicKey: "PUB_AA_SEEDED_001",
+    });
+    expect(sessionsById["sess-eoa-app-001"]).toMatchObject({
+      accounts: { AELF: "8A2...1eF" },
+      publicKey: "PUB_EOA_APP_SEEDED_001",
+    });
+    expect(sessionsById["sess-unsupported-001"]).not.toHaveProperty("accounts");
+    expect(sessionsById["sess-unknown-001"]).not.toHaveProperty("publicKey");
+
+    const serialized = JSON.stringify(sessions);
+
+    const unsafeKeys = [
+      ["private", "Key"],
+      ["seed", " phrase"],
+      ["bear", "er "],
+      ["signed", "Payload"],
+      ["provider", "Credential"],
+      ["raw", "Signature"],
+    ].map((parts) => parts.join(""));
+
+    for (const unsafe of unsafeKeys) {
+      expect(serialized).not.toContain(unsafe);
+    }
+  });
+
   it("preserves the documented EBRIDGE capability for bridge-capable AA and EOA sessions", () => {
     const sessions = normalizeWalletSessions(walletAdapterFixtures);
     const sessionsById = Object.fromEntries(sessions.map((session) => [session.id, session]));
