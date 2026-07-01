@@ -543,6 +543,13 @@ export const apiSkillContractRegistry: ApiSkillContract[] = [
       field("report", "analytics", true, "Daily or weekly campaign report.", "每日或每周活动报告。"),
       field("walletTypeMetrics", "wallet", true, "Metrics split by wallet type.", "按钱包类型拆分的指标。"),
       field("localeMetrics", "locale", true, "Metrics split by locale.", "按语言拆分的指标。"),
+      field(
+        "walletLocaleMetrics",
+        "wallet",
+        true,
+        "Metrics split by wallet type and locale.",
+        "按钱包类型与语言组合拆分的指标。",
+      ),
       field("riskSummary", "risk", true, "Risk and review summary.", "风险与审核摘要。"),
     ],
     purpose: text(

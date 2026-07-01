@@ -370,6 +370,15 @@ export interface LocalServiceCoverageSummary {
   boundary: LocalizedText;
 }
 
+interface WalletLocaleMetric {
+  id: string;
+  label: string;
+  walletType: AccountType;
+  locale: SupportedLocale;
+  count: number;
+  percentage: number;
+}
+
 export interface CampaignOsLocalService {
   addTask(request: AddTaskRequest): LocalServiceResult<LocalTaskDraft>;
   checkEligibility(request: CheckEligibilityRequest): LocalServiceResult<CheckEligibilityResponse>;
@@ -415,6 +424,7 @@ export interface CampaignOsLocalService {
     period: "daily" | "weekly";
     reportCards: ReturnType<typeof createAdminOpsReadModel>["aiReports"];
     riskSummary: ReturnType<typeof createAdminOpsReadModel>["riskSignals"];
+    walletLocaleMetrics: WalletLocaleMetric[];
     walletTypeMetrics: ReturnType<typeof createProjectCampaignCommandCenter>["analyticsExport"]["walletSplit"];
   }>;
   verifyTask(request: VerifyTaskRequest): LocalServiceResult<VerifyTaskResponse>;
@@ -746,6 +756,39 @@ const completeLocaleSplit = (
     id: locale,
     label: locale,
     percentage: 0,
+  });
+};
+
+const walletLocaleKey = (walletType: AccountType, locale: SupportedLocale) => `${walletType}:${locale}`;
+
+const createWalletLocaleMetrics = (
+  participants: readonly ParticipantSnapshot[],
+  walletSplit: readonly DimensionSplit[],
+  locales: readonly SupportedLocale[],
+): WalletLocaleMetric[] => {
+  const total = participants.length || 1;
+  const countsByWalletLocale = new Map<AccountType | string, number>();
+
+  for (const participant of participants) {
+    const key = walletLocaleKey(participant.accountType, participant.localePreference);
+    countsByWalletLocale.set(key, (countsByWalletLocale.get(key) ?? 0) + 1);
+  }
+
+  return walletSplit.flatMap((walletMetric) => {
+    const walletType = walletMetric.label as AccountType;
+
+    return locales.map((locale) => {
+      const count = countsByWalletLocale.get(walletLocaleKey(walletType, locale)) ?? 0;
+
+      return {
+        count,
+        id: `wallet-locale-${walletType.toLowerCase()}-${locale.toLowerCase()}`,
+        label: `${walletType} / ${locale}`,
+        locale,
+        percentage: Math.round((count / total) * 100),
+        walletType,
+      };
+    });
   });
 };
 
@@ -1489,14 +1532,17 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
 
     const commandCenter = createProjectCampaignCommandCenter(campaign);
     const adminOps = createAdminOpsReadModel(campaign);
+    const localeMetrics = completeLocaleSplit(commandCenter.analyticsExport.localeSplit, campaign.supportedLocales);
+    const walletTypeMetrics = commandCenter.analyticsExport.walletSplit;
 
     return success({
       campaignId: campaign.id,
-      localeMetrics: completeLocaleSplit(commandCenter.analyticsExport.localeSplit, campaign.supportedLocales),
+      localeMetrics,
       period: request.period,
       reportCards: adminOps.aiReports,
       riskSummary: adminOps.riskSignals,
-      walletTypeMetrics: commandCenter.analyticsExport.walletSplit,
+      walletLocaleMetrics: createWalletLocaleMetrics(campaign.participants, walletTypeMetrics, campaign.supportedLocales),
+      walletTypeMetrics,
     });
   },
 
