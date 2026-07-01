@@ -1208,6 +1208,63 @@ export interface CampaignCommandCenterSummary {
   nextPrimaryAction: LocalizedText;
 }
 
+export type ProjectPortfolioMetricId =
+  | "campaigns_created"
+  | "active_projects"
+  | "campaign_setup_time"
+  | "reward_budget_committed"
+  | "winner_exports"
+  | "repeat_project_usage";
+export type CommercialModelReadinessId =
+  | "free_ecosystem_mode"
+  | "partner_campaign_fee"
+  | "premium_analytics"
+  | "ai_ops_package"
+  | "launch_package"
+  | "api_usage";
+export type ProjectPortfolioCommercialOwnerRole =
+  | OwnerRole
+  | "growth_lead"
+  | "finance_reviewer"
+  | "api_reviewer";
+
+export interface ProjectPortfolioMetric {
+  id: ProjectPortfolioMetricId;
+  label: LocalizedText;
+  value: string;
+  detail: LocalizedText;
+  state: PublishState;
+  ownerRole: ProjectPortfolioCommercialOwnerRole;
+  nextAction: LocalizedText;
+}
+
+export interface CommercialModelReadiness {
+  id: CommercialModelReadinessId;
+  label: LocalizedText;
+  state: PublishState;
+  evidence: LocalizedText;
+  boundary: LocalizedText;
+  ownerRole: ProjectPortfolioCommercialOwnerRole;
+  nextAction: LocalizedText;
+}
+
+export interface PortfolioCommercialSummary {
+  totalMetrics: number;
+  readyMetricCount: number;
+  reviewRequiredMetricCount: number;
+  commercialModelCount: number;
+  productionReadyModelCount: number;
+  topNextAction: LocalizedText;
+  rewardBoundary: LocalizedText;
+}
+
+export interface ProjectPortfolioCommercialReadiness {
+  summary: PortfolioCommercialSummary;
+  metrics: ProjectPortfolioMetric[];
+  commercialModels: CommercialModelReadiness[];
+  boundary: LocalizedText;
+}
+
 export type CampaignLifecycleOperationState =
   | "allowed"
   | "blocked"
@@ -1430,6 +1487,7 @@ export interface ProjectCampaignCommandCenter {
   providerEvidenceRegistry: ProviderEvidenceRegistry;
   lifecycleOperations: CampaignLifecycleOperations;
   launchConsoleCampaignBundles: LaunchConsoleCampaignBundleSurface;
+  portfolioCommercialReadiness: ProjectPortfolioCommercialReadiness;
   boundary: LocalizedText;
 }
 

@@ -31,6 +31,7 @@ import {
   type LocaleStatus,
   type LiveWalletConnectorLiveEvidenceStatus,
   type LiveWalletConnectorReadiness,
+  type ProjectPortfolioCommercialOwnerRole,
   type PublishState,
   type SupportedLocale,
   type VerificationLiveEvidenceStatus,
@@ -428,6 +429,26 @@ const launchConsoleStageLabel = (stage: LaunchConsoleBundleStage) =>
 const launchConsoleOwnerLabel = (ownerRole: LaunchConsoleBundleOwnerRole) =>
   ownerRole.replace(/_/g, " ");
 
+const portfolioOwnerLabel = (ownerRole: ProjectPortfolioCommercialOwnerRole) =>
+  ownerRole.replace(/_/g, " ");
+
+const publishStateLabel = (
+  state: PublishState,
+  labels: {
+    apiSkillReadinessBlocked: string;
+    apiSkillReadinessReady: string;
+    apiSkillReadinessReviewRequired: string;
+  },
+) => {
+  if (state === "ready") {
+    return labels.apiSkillReadinessReady;
+  }
+
+  return state === "warning"
+    ? labels.apiSkillReadinessReviewRequired
+    : labels.apiSkillReadinessBlocked;
+};
+
 const launchConsoleTaskCategoryLabel = (
   category: LaunchConsoleTaskCategory,
   labels: {
@@ -697,6 +718,7 @@ export const ProjectConsole = ({
   const providerEvidenceRegistry = commandCenter.providerEvidenceRegistry;
   const lifecycleOperations = commandCenter.lifecycleOperations;
   const launchConsoleBundles = commandCenter.launchConsoleCampaignBundles;
+  const portfolioCommercialReadiness = commandCenter.portfolioCommercialReadiness;
   const topLifecycleOperation = lifecycleOperations.operations.find(
     (operation) => operation.id === lifecycleOperations.summary.topOperationId,
   );
@@ -1004,6 +1026,106 @@ export const ProjectConsole = ({
         </div>
 
         <p style={boundaryStyle}>{getLocalizedText(commandCenter.boundary, locale)}</p>
+      </section>
+
+      <section aria-label={copy.portfolioCommercialReadiness} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.portfolioCommercialSummary}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.portfolioCommercialReadiness}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.portfolioCommercialSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={`${portfolioCommercialReadiness.summary.productionReadyModelCount} ${copy.portfolioCommercialProductionReady}`}
+            state="warning"
+          />
+        </div>
+
+        <div aria-label={copy.portfolioCommercialSummary} style={gridStyle}>
+          {[
+            [copy.portfolioCommercialMetrics, String(portfolioCommercialReadiness.summary.totalMetrics)],
+            [copy.apiSkillReadinessReady, String(portfolioCommercialReadiness.summary.readyMetricCount)],
+            [copy.apiSkillReadinessReviewRequired, String(portfolioCommercialReadiness.summary.reviewRequiredMetricCount)],
+            [copy.portfolioCommercialModels, String(portfolioCommercialReadiness.summary.commercialModelCount)],
+            [copy.portfolioCommercialProductionReady, String(portfolioCommercialReadiness.summary.productionReadyModelCount)],
+          ].map(([label, value]) => (
+            <article key={label} style={cardStyle}>
+              <p style={statLabelStyle}>{label}</p>
+              <p style={statValueStyle}>{value}</p>
+            </article>
+          ))}
+        </div>
+
+        <div>
+          <p style={statLabelStyle}>{copy.portfolioCommercialMetrics}</p>
+          <div style={sectionGridStyle}>
+            {portfolioCommercialReadiness.metrics.map((metric) => (
+              <article key={metric.id} style={{ ...workflowStyle, minHeight: 0 }}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>{portfolioOwnerLabel(metric.ownerRole)}</p>
+                    <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                      {getLocalizedText(metric.label, locale)}
+                    </h4>
+                  </div>
+                  <PublishStateBadge
+                    label={publishStateLabel(metric.state, copy)}
+                    state={metric.state}
+                  />
+                </div>
+                <p style={{ ...statValueStyle, fontSize: 22 }}>{metric.value}</p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(metric.detail, locale)}
+                </p>
+                <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.portfolioCommercialNextAction}: {getLocalizedText(metric.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <p style={statLabelStyle}>{copy.portfolioCommercialModels}</p>
+          <div style={sectionGridStyle}>
+            {portfolioCommercialReadiness.commercialModels.map((model) => (
+              <article key={model.id} style={{ ...workflowStyle, minHeight: 0 }}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>{portfolioOwnerLabel(model.ownerRole)}</p>
+                    <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                      {getLocalizedText(model.label, locale)}
+                    </h4>
+                  </div>
+                  <PublishStateBadge
+                    label={publishStateLabel(model.state, copy)}
+                    state={model.state}
+                  />
+                </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.portfolioCommercialEvidence}: {getLocalizedText(model.evidence, locale)}
+                </p>
+                <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.portfolioCommercialNextAction}: {getLocalizedText(model.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+        </div>
+
+        <p style={boundaryStyle}>
+          {copy.portfolioCommercialTopNextAction}:{" "}
+          {getLocalizedText(portfolioCommercialReadiness.summary.topNextAction, locale)}
+        </p>
+        <p style={boundaryStyle}>
+          {copy.portfolioCommercialRewardBoundary}:{" "}
+          {getLocalizedText(portfolioCommercialReadiness.summary.rewardBoundary, locale)}
+        </p>
+        <p style={boundaryStyle}>{getLocalizedText(portfolioCommercialReadiness.boundary, locale)}</p>
       </section>
 
       <section aria-label={copy.lifecycleOperations} style={panelStyle}>

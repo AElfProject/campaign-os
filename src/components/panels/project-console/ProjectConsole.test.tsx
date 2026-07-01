@@ -76,6 +76,27 @@ describe("Project Console shell", () => {
     expect(within(launchBundles).getAllByText(/no external API/i).length).toBeGreaterThan(0);
     expect(within(launchBundles).queryByText(/automatically creates campaigns/i)).not.toBeInTheDocument();
     expect(within(launchBundles).queryByText(/publishes through a live Launch Console/i)).not.toBeInTheDocument();
+    const portfolioReadiness = screen.getByLabelText("Project portfolio readiness");
+    expect(
+      within(portfolioReadiness).getByRole("heading", { name: "Project portfolio readiness" }),
+    ).toBeInTheDocument();
+    for (const metric of [
+      "Campaigns created",
+      "Active projects",
+      "Campaign setup time",
+      "Reward budget committed",
+      "Winner exports",
+      "Repeat project usage",
+    ]) {
+      expect(within(portfolioReadiness).getByText(metric)).toBeInTheDocument();
+    }
+    expect(within(portfolioReadiness).getAllByText("Commercial readiness").length).toBeGreaterThan(0);
+    expect(within(portfolioReadiness).getByText("Partner campaign fee")).toBeInTheDocument();
+    expect(within(portfolioReadiness).getByText("Premium analytics")).toBeInTheDocument();
+    expect(within(portfolioReadiness).getByText(/No live billing, payment, invoice, CRM, reward custody/)).toBeInTheDocument();
+    expect(within(portfolioReadiness).getAllByText(/Reward budget is project or partner committed only/).length).toBeGreaterThan(0);
+    expect(within(portfolioReadiness).queryByText(/invoice id/i)).not.toBeInTheDocument();
+    expect(within(portfolioReadiness).queryByText(/payment id/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Analytics & Export Decision" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Task template library" })).not.toBeInTheDocument();
   });
@@ -543,6 +564,25 @@ describe("Project Console shell", () => {
     expect(within(zhLaunchBundles).getByText("上线后活动包")).toBeInTheDocument();
     expect(within(zhLaunchBundles).getAllByText("本地预览").length).toBeGreaterThan(0);
     expect(within(zhLaunchBundles).getByText(/不会连接真实 Launch Console/)).toBeInTheDocument();
+    const zhPortfolioReadiness = screen.getByLabelText("项目组合 readiness");
+    expect(
+      within(zhPortfolioReadiness).getByRole("heading", { name: "项目组合 readiness" }),
+    ).toBeInTheDocument();
+    for (const metric of [
+      "已创建活动",
+      "活跃项目",
+      "活动配置耗时",
+      "已承诺奖励预算",
+      "Winners 导出",
+      "项目重复使用",
+    ]) {
+      expect(within(zhPortfolioReadiness).getByText(metric)).toBeInTheDocument();
+    }
+    expect(within(zhPortfolioReadiness).getAllByText("商业化 readiness").length).toBeGreaterThan(0);
+    expect(within(zhPortfolioReadiness).getByText("合作伙伴活动服务费")).toBeInTheDocument();
+    expect(within(zhPortfolioReadiness).getByText("Premium analytics")).toBeInTheDocument();
+    expect(within(zhPortfolioReadiness).getByText(/不会执行实时 billing、支付、发票、CRM、奖励托管/)).toBeInTheDocument();
+    expect(within(zhPortfolioReadiness).getAllByText(/Campaign OS 不托管奖励、不发奖/).length).toBeGreaterThan(0);
 
     fireEvent.click(within(nav).getByRole("button", { name: "创建" }));
     for (const step of ["目标", "任务", "奖励与资格", "i18n", "合约", "发布准备度"]) {
