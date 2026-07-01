@@ -224,7 +224,7 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("No auto-publish: human review is required before Chinese draft can ship.");
     expect(screen.getByRole("heading", { name: "Template Governance" })).toBeInTheDocument();
     expectVisibleText("Template Manager");
-    expectVisibleText("8 templates");
+    expectVisibleText("11 templates");
     expectVisibleText("Localization review");
     expectVisibleText("Risk review");
     expectVisibleText(/No live template registry/);
@@ -540,7 +540,7 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("禁止自动发布：中文草稿发布前必须经过人工审核。");
     expect(screen.getByRole("heading", { name: "模板治理" })).toBeInTheDocument();
     expectVisibleText("模板管理");
-    expectVisibleText("8 个模板");
+    expectVisibleText("11 个模板");
     expectVisibleText("本地化审核");
     expectVisibleText("风险审核");
     expectVisibleText(/不会连接实时模板 registry/);

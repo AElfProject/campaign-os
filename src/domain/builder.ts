@@ -26,8 +26,11 @@ export type TaskTemplateCategory =
   | "bridge"
   | "swap"
   | "nft"
+  | "schrodinger"
   | "dao"
   | "daipp"
+  | "pay"
+  | "forecast"
   | "social"
   | "invite";
 export type RewardProvider = "campaign_project" | "partner";
@@ -480,6 +483,21 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft", "zh-TW": "missing" },
   },
   {
+    id: "tpl-schrodinger-hold",
+    category: "schrodinger",
+    title: text("Hold Schrödinger NFT", "持有 Schrödinger NFT"),
+    description: text(
+      "Verify seeded adopt, hold, or trade participation for Schrödinger NFTs.",
+      "验证 Schrödinger NFT 的 seeded 领养、持有或交易参与。",
+    ),
+    verificationType: "ON_CHAIN",
+    walletCompatibility: "ANY",
+    defaultPoints: 95,
+    requiredByDefault: false,
+    riskLevel: "medium",
+    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft", "zh-TW": "missing" },
+  },
+  {
     id: "tpl-dao-vote",
     category: "dao",
     title: text("Vote in DAO proposal", "参与 DAO 提案投票"),
@@ -501,6 +519,36 @@ export const taskTemplateLibrary: TaskTemplate[] = [
     defaultPoints: 80,
     requiredByDefault: false,
     riskLevel: "low",
+    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft", "zh-TW": "missing" },
+  },
+  {
+    id: "tpl-pay-complete",
+    category: "pay",
+    title: text("Complete aelf Pay payment", "完成 aelf Pay 支付"),
+    description: text(
+      "Complete a seeded invoice or payment link task through aelf Pay metadata.",
+      "通过 aelf Pay metadata 完成 seeded 发票或支付链接任务。",
+    ),
+    verificationType: "DAPP_API",
+    walletCompatibility: "ANY",
+    defaultPoints: 85,
+    requiredByDefault: false,
+    riskLevel: "medium",
+    localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft", "zh-TW": "missing" },
+  },
+  {
+    id: "tpl-forecast-participate",
+    category: "forecast",
+    title: text("Participate in Forecast", "参与 Forecast 预测"),
+    description: text(
+      "Join a seeded prediction or win-streak activity from Forecast metadata.",
+      "基于 Forecast metadata 参与 seeded 预测或连胜任务。",
+    ),
+    verificationType: "DAPP_API",
+    walletCompatibility: "ANY",
+    defaultPoints: 90,
+    requiredByDefault: false,
+    riskLevel: "medium",
     localeReadiness: { "en-US": "ready", "zh-CN": "ai_draft", "zh-TW": "missing" },
   },
   {
