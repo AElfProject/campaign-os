@@ -250,8 +250,8 @@ export interface GetAdvancedAnalyticsReadinessRequest {
 export interface GenerateCampaignPostsRequest {
   campaignId: string;
   channel: AiContentArtifactChannel;
-  sourceLocale: SupportedLocale;
-  targetLocales: SupportedLocale[];
+  sourceLocale?: SupportedLocale;
+  targetLocales?: SupportedLocale[];
 }
 
 export interface SummarizeCampaignRequest {
@@ -408,6 +408,15 @@ const parseCampaignTimestamp = (value: string): number | undefined => {
 const isSupportedDraftTargetLocale = (
   locale: SupportedLocale,
 ): locale is Exclude<SupportedLocale, "en-US"> => locale !== "en-US" && isSupportedServiceLocale(locale);
+
+const defaultGeneratedPostTargetLocales: readonly Exclude<SupportedLocale, "en-US">[] = [
+  "zh-CN",
+  "zh-TW",
+];
+
+const isSupportedGeneratedPostTargetLocale = (
+  locale: SupportedLocale,
+): locale is Exclude<SupportedLocale, "en-US"> => isSupportedDraftTargetLocale(locale);
 
 const findCampaign = (campaignId: string): CampaignShellDetail | undefined =>
   campaignDetail.id === campaignId ? campaignDetail : undefined;
@@ -980,9 +989,22 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       );
     }
 
+    const sourceLocale = request.sourceLocale ?? "en-US";
+
+    if (sourceLocale !== "en-US") {
+      return failure(
+        "UNSUPPORTED_LOCALE",
+        "sourceLocale",
+        "Campaign posts support en-US source content only.",
+        "活动帖子仅支持 en-US 源内容。",
+      );
+    }
+
+    const targetLocales = request.targetLocales ?? defaultGeneratedPostTargetLocales;
+
     if (
-      request.sourceLocale !== "en-US" ||
-      request.targetLocales.some((locale) => !isSupportedServiceLocale(locale))
+      targetLocales.length === 0 ||
+      targetLocales.some((locale) => !isSupportedGeneratedPostTargetLocale(locale))
     ) {
       return failure(
         "UNSUPPORTED_LOCALE",

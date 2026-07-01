@@ -607,6 +607,40 @@ describe("Campaign OS local API service facade", () => {
       sourceLocale: "en-US",
       targetLocales: ["zh-CN", "zh-TW"],
     });
+    const defaultLocalePosts = service.generateCampaignPosts({
+      campaignId: campaignDetail.id,
+      channel: "telegram",
+    });
+    const zhCnPosts = service.generateCampaignPosts({
+      campaignId: campaignDetail.id,
+      channel: "telegram",
+      sourceLocale: "en-US",
+      targetLocales: ["zh-CN"],
+    });
+    const unsupportedSourcePosts = service.generateCampaignPosts({
+      campaignId: campaignDetail.id,
+      channel: "x",
+      sourceLocale: "zh-CN",
+      targetLocales: ["zh-TW"],
+    });
+    const emptyTargetPosts = service.generateCampaignPosts({
+      campaignId: campaignDetail.id,
+      channel: "x",
+      sourceLocale: "en-US",
+      targetLocales: [],
+    });
+    const englishTargetPosts = service.generateCampaignPosts({
+      campaignId: campaignDetail.id,
+      channel: "x",
+      sourceLocale: "en-US",
+      targetLocales: ["en-US"],
+    });
+    const unsupportedTargetPosts = service.generateCampaignPosts({
+      campaignId: campaignDetail.id,
+      channel: "x",
+      sourceLocale: "en-US",
+      targetLocales: ["fr-FR" as never],
+    });
     const summary = service.summarizeCampaign({ campaignId: campaignDetail.id, period: "daily" });
     const exportPreview = service.exportWinners({
       campaignId: campaignDetail.id,
@@ -728,6 +762,42 @@ describe("Campaign OS local API service facade", () => {
     expect(posts.payload?.artifacts.length).toBeGreaterThan(0);
     expect(posts.payload?.humanReviewRequired).toBe(true);
     expect(posts.payload?.noAutoPublishNotice["zh-TW"]).toContain("AI generated translation");
+    expect(defaultLocalePosts.payload?.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ channel: "telegram" }),
+      ]),
+    );
+    expect(defaultLocalePosts.payload?.humanReviewRequired).toBe(true);
+    expect(zhCnPosts.payload?.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ channel: "telegram" }),
+      ]),
+    );
+    expect(zhCnPosts.payload?.humanReviewRequired).toBe(true);
+    for (const invalidPosts of [
+      {
+        response: unsupportedSourcePosts,
+        expected: { code: "UNSUPPORTED_LOCALE", field: "sourceLocale" },
+      },
+      {
+        response: emptyTargetPosts,
+        expected: { code: "UNSUPPORTED_LOCALE", field: "targetLocales" },
+      },
+      {
+        response: englishTargetPosts,
+        expected: { code: "UNSUPPORTED_LOCALE", field: "targetLocales" },
+      },
+      {
+        response: unsupportedTargetPosts,
+        expected: { code: "UNSUPPORTED_LOCALE", field: "targetLocales" },
+      },
+    ]) {
+      expect(invalidPosts.response).toMatchObject({
+        ok: false,
+        error: expect.objectContaining(invalidPosts.expected),
+      });
+      expect(invalidPosts.response.payload).toBeUndefined();
+    }
     expect(summary.payload).toMatchObject({
       campaignId: campaignDetail.id,
       localeMetrics: expect.any(Array),
