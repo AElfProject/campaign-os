@@ -385,6 +385,7 @@ describe("API Skill Contract registry", () => {
         "walletTypeMetrics",
         "localeMetrics",
         "walletLocaleMetrics",
+        "referralWalletRiskMetrics",
         "riskSummary",
       ]),
     );
@@ -394,6 +395,14 @@ describe("API Skill Contract registry", () => {
     });
     expect(outputFields.get("walletLocaleMetrics")?.description["en-US"]).toContain("wallet type and locale");
     expect(outputFields.get("walletLocaleMetrics")?.description["zh-CN"]).toContain("钱包类型与语言");
+    expect(outputFields.get("referralWalletRiskMetrics")).toMatchObject({
+      group: "risk",
+      required: true,
+    });
+    expect(outputFields.get("referralWalletRiskMetrics")?.description["en-US"]).toContain("wallet type");
+    expect(outputFields.get("referralWalletRiskMetrics")?.description["en-US"]).toContain("risk tier");
+    expect(outputFields.get("referralWalletRiskMetrics")?.description["zh-CN"]).toContain("钱包类型");
+    expect(outputFields.get("referralWalletRiskMetrics")?.description["zh-CN"]).toContain("风险分层");
   });
 
   it("models export winner columns and safety options", () => {

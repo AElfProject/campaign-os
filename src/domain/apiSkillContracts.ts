@@ -550,6 +550,13 @@ export const apiSkillContractRegistry: ApiSkillContract[] = [
         "Metrics split by wallet type and locale.",
         "按钱包类型与语言组合拆分的指标。",
       ),
+      field(
+        "referralWalletRiskMetrics",
+        "risk",
+        true,
+        "Seeded referral conversion metrics split by wallet type and review-safe risk tier.",
+        "按钱包类型与审核安全风险分层拆分的 seeded 邀请转化指标。",
+      ),
       field("riskSummary", "risk", true, "Risk and review summary.", "风险与审核摘要。"),
     ],
     purpose: text(

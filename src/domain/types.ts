@@ -2361,6 +2361,19 @@ export interface ReferralSummary {
   riskFlags: string[];
 }
 
+export type ReferralRiskTier = "low_risk" | "needs_review";
+
+export interface ReferralWalletRiskMetric {
+  id: string;
+  label: string;
+  walletType: AccountType;
+  riskTier: ReferralRiskTier;
+  participantCount: number;
+  invitedCount: number;
+  qualifiedInvitees: number;
+  conversionRate: number;
+}
+
 export interface LeaderboardRow {
   rank: number;
   walletAddress: string;

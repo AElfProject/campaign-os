@@ -1229,10 +1229,46 @@ describe("Campaign OS local API service facade", () => {
       campaignId: campaignDetail.id,
       localeMetrics: expect.any(Array),
       period: "daily",
+      referralWalletRiskMetrics: expect.any(Array),
       riskSummary: expect.any(Array),
       walletLocaleMetrics: expect.any(Array),
       walletTypeMetrics: expect.any(Array),
     });
+    expect(summary.payload?.referralWalletRiskMetrics).toEqual([
+      {
+        conversionRate: 0.56,
+        id: "referral-wallet-risk-aa-low-risk",
+        invitedCount: 9,
+        label: "AA / low risk",
+        participantCount: 2,
+        qualifiedInvitees: 5,
+        riskTier: "low_risk",
+        walletType: "AA",
+      },
+      {
+        conversionRate: 0.38,
+        id: "referral-wallet-risk-eoa-needs-review",
+        invitedCount: 13,
+        label: "EOA / needs review",
+        participantCount: 2,
+        qualifiedInvitees: 5,
+        riskTier: "needs_review",
+        walletType: "EOA",
+      },
+    ]);
+    for (const unsafe of [
+      "riskScore",
+      "walletGraph",
+      "deviceFingerprint",
+      "ipAddress",
+      "privateKey",
+      "signedPayload",
+      "transactionId",
+      "downloadUrl",
+      "contractRoot",
+    ]) {
+      expect(hasOwnKeyDeep(summary.payload, unsafe)).toBe(false);
+    }
     expect(summary.payload?.walletLocaleMetrics).toEqual([
       {
         count: 1,
