@@ -187,8 +187,26 @@ describe("Campaign OS local API service facade", () => {
 
   it("creates campaign and task payloads with locale, wallet, contract, and evidence metadata", () => {
     const campaign = service.createCampaign({
+      ownerAddress: "2F4...9aB",
       projectId: "awaken",
       rewardDescription: "Rewards remain project owned.",
+      startTime: "2026-07-01T00:00:00Z",
+      endTime: "2026-07-14T23:59:59Z",
+    });
+    const explicitCampaign = service.createCampaign({
+      contractMode: "V2_COMPANION",
+      defaultLocale: "en-US",
+      endTime: "2026-08-14T23:59:59Z",
+      metadataHash: "sha256:campaign-metadata",
+      metadataUri: "ipfs://campaign-metadata",
+      ownerAddress: "3E9...7cD",
+      projectId: "forest",
+      rewardDescription: "Rewards remain project owned with reviewed disclaimer.",
+      rewardDisclaimerHash: "sha256:reward-disclaimer",
+      startTime: "2026-08-01T00:00:00Z",
+      status: "scheduled",
+      supportedLocales: ["zh-TW", "en-US", "zh-CN"],
+      walletPolicy: "AA_ONLY",
     });
     const task = service.addTask({
       campaignId: campaignDetail.id,
@@ -200,8 +218,11 @@ describe("Campaign OS local API service facade", () => {
       walletCompatibility: "ANY",
     });
     const unsupportedLocale = service.createCampaign({
+      ownerAddress: "2F4...9aB",
       projectId: "awaken",
       rewardDescription: "Rewards remain project owned.",
+      startTime: "2026-07-01T00:00:00Z",
+      endTime: "2026-07-14T23:59:59Z",
       supportedLocales: ["en-US", "zh-CN", "fr-FR" as never],
     });
     const invalidTask = service.addTask({
@@ -217,8 +238,26 @@ describe("Campaign OS local API service facade", () => {
     expect(campaign.payload).toMatchObject({
       contractMode: "OFF_CHAIN_MVP",
       defaultLocale: "en-US",
+      endTime: "2026-07-14T23:59:59Z",
+      ownerAddress: "2F4...9aB",
       supportedLocales: ["en-US", "zh-CN", "zh-TW"],
+      startTime: "2026-07-01T00:00:00Z",
+      status: "draft",
       walletPolicy: "ANY",
+    });
+    expect(campaign.payload).not.toHaveProperty("metadataUri");
+    expect(explicitCampaign.payload).toMatchObject({
+      contractMode: "V2_COMPANION",
+      defaultLocale: "en-US",
+      endTime: "2026-08-14T23:59:59Z",
+      metadataHash: "sha256:campaign-metadata",
+      metadataUri: "ipfs://campaign-metadata",
+      ownerAddress: "3E9...7cD",
+      rewardDisclaimerHash: "sha256:reward-disclaimer",
+      startTime: "2026-08-01T00:00:00Z",
+      status: "scheduled",
+      supportedLocales: ["en-US", "zh-CN", "zh-TW"],
+      walletPolicy: "AA_ONLY",
     });
     expect(campaign.payload?.publishReadiness.ready).toBe(true);
     expect(task.payload).toMatchObject({
@@ -238,6 +277,68 @@ describe("Campaign OS local API service facade", () => {
       ok: false,
       error: expect.objectContaining({ code: "INVALID_REQUEST", field: "templateCode" }),
     });
+  });
+
+  it("fails closed for invalid create campaign request fields", () => {
+    const validCreateCampaignRequest = {
+      endTime: "2026-07-14T23:59:59Z",
+      ownerAddress: "2F4...9aB",
+      projectId: "awaken",
+      rewardDescription: "Rewards remain project owned.",
+      startTime: "2026-07-01T00:00:00Z",
+    };
+    const invalidResponses = [
+      {
+        response: service.createCampaign({
+          ...validCreateCampaignRequest,
+          ownerAddress: "  ",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "ownerAddress" },
+      },
+      {
+        response: service.createCampaign({
+          ...validCreateCampaignRequest,
+          status: "published" as never,
+        }),
+        expected: { code: "INVALID_REQUEST", field: "status" },
+      },
+      {
+        response: service.createCampaign({
+          ...validCreateCampaignRequest,
+          defaultLocale: "zh-CN",
+        }),
+        expected: { code: "UNSUPPORTED_LOCALE", field: "defaultLocale" },
+      },
+      {
+        response: service.createCampaign({
+          ...validCreateCampaignRequest,
+          supportedLocales: ["en-US", "zh-CN"],
+        }),
+        expected: { code: "UNSUPPORTED_LOCALE", field: "supportedLocales" },
+      },
+      {
+        response: service.createCampaign({
+          ...validCreateCampaignRequest,
+          startTime: "not-a-date",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "timeWindow" },
+      },
+      {
+        response: service.createCampaign({
+          ...validCreateCampaignRequest,
+          endTime: "2026-07-01T00:00:00Z",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "timeWindow" },
+      },
+    ];
+
+    for (const { response, expected } of invalidResponses) {
+      expect(response).toMatchObject({
+        ok: false,
+        error: expect.objectContaining(expected),
+      });
+      expect(response.payload).toBeUndefined();
+    }
   });
 
   it("verifies task states and eligibility while preserving wallet provenance", () => {

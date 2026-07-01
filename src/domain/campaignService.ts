@@ -23,6 +23,7 @@ import {
 } from "./fixtures";
 import {
   EXPORT_CSV_COLUMNS,
+  campaignLifecycleStatuses,
   supportedLocales,
   type AccountType,
   type AdvancedAnalyticsReadinessSurface,
@@ -32,6 +33,7 @@ import {
   type ApiSkillFieldGroup,
   type CampaignShellDetail,
   type CampaignLifecycleOperations,
+  type CampaignStatus,
   type ContractMode,
   type ExportConfirmationReadinessGate,
   type ExportArtifact,
@@ -106,23 +108,38 @@ export interface CreateWalletSessionRequest {
 }
 
 export interface CreateCampaignRequest {
+  contractMode?: ContractMode;
+  defaultLocale?: SupportedLocale;
+  endTime: string;
+  metadataHash?: string;
+  metadataUri?: string;
+  ownerAddress: string;
   projectId: string;
   rewardDescription: string;
+  rewardDisclaimerHash?: string;
+  startTime: string;
+  status?: CampaignStatus;
   supportedLocales?: SupportedLocale[];
   walletPolicy?: WalletPolicy;
-  contractMode?: ContractMode;
 }
 
 export interface LocalCampaignDraft {
-  id: string;
-  projectId: string;
-  defaultLocale: "en-US";
-  supportedLocales: SupportedLocale[];
-  walletPolicy: WalletPolicy;
   contractMode: ContractMode;
+  defaultLocale: "en-US";
+  endTime: string;
+  id: string;
+  metadataHash?: string;
+  metadataUri?: string;
+  ownerAddress: string;
+  projectId: string;
   publishReadiness: PublishReadiness;
   rewardBoundary: LocalizedText;
   rewardDescription: string;
+  rewardDisclaimerHash?: string;
+  startTime: string;
+  status: CampaignStatus;
+  supportedLocales: SupportedLocale[];
+  walletPolicy: WalletPolicy;
 }
 
 export interface AddTaskRequest {
@@ -379,6 +396,15 @@ const hasOnlySupportedLocales = (locales: readonly string[]) =>
   locales.length === supportedLocales.length &&
   supportedLocales.every((locale) => locales.includes(locale));
 
+const isSupportedCampaignStatus = (status: string): status is CampaignStatus =>
+  campaignLifecycleStatuses.includes(status as CampaignStatus);
+
+const parseCampaignTimestamp = (value: string): number | undefined => {
+  const timestamp = Date.parse(value);
+
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+};
+
 const isSupportedDraftTargetLocale = (
   locale: SupportedLocale,
 ): locale is Exclude<SupportedLocale, "en-US"> => locale !== "en-US" && isSupportedServiceLocale(locale);
@@ -584,6 +610,35 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
   },
 
   createCampaign: (request) => {
+    if (!request.ownerAddress.trim()) {
+      return failure(
+        "INVALID_REQUEST",
+        "ownerAddress",
+        "Campaign ownerAddress is required before a local campaign draft can be created.",
+        "创建本地活动草稿前必须提供活动 ownerAddress。",
+      );
+    }
+
+    const status = request.status ?? "draft";
+    if (!isSupportedCampaignStatus(status)) {
+      return failure(
+        "INVALID_REQUEST",
+        "status",
+        "Campaign status must be one of the supported lifecycle statuses.",
+        "活动 status 必须属于受支持的 lifecycle 状态集合。",
+      );
+    }
+
+    const defaultLocale = request.defaultLocale ?? "en-US";
+    if (defaultLocale !== "en-US") {
+      return failure(
+        "UNSUPPORTED_LOCALE",
+        "defaultLocale",
+        "Only en-US is supported as the default locale in this local runtime.",
+        "当前本地运行时仅支持 en-US 作为默认语言。",
+      );
+    }
+
     const requestedLocales = request.supportedLocales ?? [...supportedLocales];
 
     if (!hasOnlySupportedLocales(requestedLocales)) {
@@ -595,10 +650,25 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       );
     }
 
+    const startTimestamp = parseCampaignTimestamp(request.startTime);
+    const endTimestamp = parseCampaignTimestamp(request.endTime);
+    if (startTimestamp === undefined || endTimestamp === undefined || endTimestamp <= startTimestamp) {
+      return failure(
+        "INVALID_REQUEST",
+        "timeWindow",
+        "Campaign startTime and endTime must be valid timestamps, and endTime must be later than startTime.",
+        "活动 startTime 与 endTime 必须是有效时间戳，并且 endTime 必须晚于 startTime。",
+      );
+    }
+
     return success({
       contractMode: request.contractMode ?? "OFF_CHAIN_MVP",
-      defaultLocale: "en-US",
+      defaultLocale,
+      endTime: request.endTime,
       id: `local-${request.projectId}-campaign`,
+      ...(request.metadataHash ? { metadataHash: request.metadataHash } : {}),
+      ...(request.metadataUri ? { metadataUri: request.metadataUri } : {}),
+      ownerAddress: request.ownerAddress,
       projectId: request.projectId,
       publishReadiness: {
         blockers: [],
@@ -607,6 +677,9 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       },
       rewardBoundary,
       rewardDescription: request.rewardDescription,
+      ...(request.rewardDisclaimerHash ? { rewardDisclaimerHash: request.rewardDisclaimerHash } : {}),
+      startTime: request.startTime,
+      status,
       supportedLocales: [...supportedLocales],
       walletPolicy: request.walletPolicy ?? "ANY",
     });
