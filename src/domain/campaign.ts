@@ -121,6 +121,9 @@ import type {
   LocaleAnalyticsReadinessRow,
   LocalizedText,
   OwnerRole,
+  P1LocaleCode,
+  P1LocaleExpansionReadiness,
+  P1LocaleExpansionReadinessRow,
   ParticipationMetrics,
   ParticipationReadModel,
   ParticipantSnapshot,
@@ -7358,6 +7361,110 @@ const localized = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
   "zh-TW": zhTW,
 });
 
+const p1LocaleExpansionRegistry: Array<{
+  code: P1LocaleCode;
+  displayName: LocalizedText;
+  marketSignal: LocalizedText;
+}> = [
+  {
+    code: "ko-KR",
+    displayName: localized("Korean", "韩语", "韓語"),
+    marketSignal: localized("Korea growth campaign coverage", "韩国增长活动覆盖", "韓國增長活動覆蓋"),
+  },
+  {
+    code: "ja-JP",
+    displayName: localized("Japanese", "日语", "日語"),
+    marketSignal: localized("Japan ecosystem partner readiness", "日本生态合作方 readiness", "日本生態合作方 readiness"),
+  },
+  {
+    code: "vi-VN",
+    displayName: localized("Vietnamese", "越南语", "越南語"),
+    marketSignal: localized("Vietnam community campaign coverage", "越南社区活动覆盖", "越南社群活動覆蓋"),
+  },
+  {
+    code: "id-ID",
+    displayName: localized("Indonesian", "印尼语", "印尼語"),
+    marketSignal: localized("Indonesia community campaign coverage", "印尼社区活动覆盖", "印尼社群活動覆蓋"),
+  },
+  {
+    code: "tr-TR",
+    displayName: localized("Turkish", "土耳其语", "土耳其語"),
+    marketSignal: localized("Turkey community campaign coverage", "土耳其社区活动覆盖", "土耳其社群活動覆蓋"),
+  },
+  {
+    code: "es-ES",
+    displayName: localized("Spanish", "西班牙语", "西班牙語"),
+    marketSignal: localized("Spanish-language campaign coverage", "西语活动覆盖", "西語活動覆蓋"),
+  },
+];
+
+const p1LocalePrerequisites = (code: P1LocaleCode): LocalizedText[] => [
+  localized(
+    `Create reviewed campaign content source for ${code}.`,
+    `为 ${code} 创建已审核活动内容源。`,
+    `為 ${code} 建立已審核活動內容源。`,
+  ),
+  localized(
+    `Complete human translation and reward disclaimer review for ${code}.`,
+    `完成 ${code} 的人工翻译与奖励免责声明审核。`,
+    `完成 ${code} 的人工翻譯與獎勵免責聲明審核。`,
+  ),
+  localized(
+    `Run locale QA and fallback checks before enabling ${code}.`,
+    `启用 ${code} 前完成语言 QA 与 fallback 检查。`,
+    `啟用 ${code} 前完成語言 QA 與 fallback 檢查。`,
+  ),
+  localized(
+    `Approve runtime selector, URL, analytics, and publish-gate expansion for ${code}.`,
+    `批准 ${code} 的运行时选择器、URL、analytics 与发布门禁扩展。`,
+    `批准 ${code} 的執行時選擇器、URL、analytics 與發布門禁擴展。`,
+  ),
+];
+
+const p1LocaleExpansionBoundary = localized(
+  "P1 locale rows are backlog planning only. Runtime support remains limited to en-US, zh-CN, and zh-TW.",
+  "P1 语言行仅用于 backlog 规划。运行时支持仍限定为 en-US、zh-CN 与 zh-TW。",
+  "P1 語言行僅用於 backlog 規劃。執行時支援仍限定為 en-US、zh-CN 與 zh-TW。",
+);
+
+const createP1LocaleExpansionReadiness = (): P1LocaleExpansionReadiness => {
+  const rows: P1LocaleExpansionReadinessRow[] = p1LocaleExpansionRegistry.map((locale) => ({
+    code: locale.code,
+    displayName: locale.displayName,
+    nextAction: localized(
+      `Open a dedicated ${locale.code} activation mission after content, QA, and runtime expansion gates are approved.`,
+      `内容、QA 与运行时扩展门禁批准后，单独开启 ${locale.code} 激活 mission。`,
+      `內容、QA 與執行時擴展門禁批准後，單獨開啟 ${locale.code} 啟用 mission。`,
+    ),
+    ownerRole: "project_owner",
+    prerequisites: p1LocalePrerequisites(locale.code),
+    reason: localized(
+      `${locale.code} is a documented P1 locale for ${locale.marketSignal["en-US"]}, but translation, review, QA, routing, and publish gates are not active in this MVP runtime.`,
+      `${locale.code} 是已记录的 P1 语言，用于${locale.marketSignal["zh-CN"]}；但翻译、审核、QA、路由与发布门禁尚未在当前 MVP runtime 启用。`,
+      `${locale.code} 是已記錄的 P1 語言，用於${locale.marketSignal["zh-TW"]}；但翻譯、審核、QA、路由與發布門禁尚未在目前 MVP runtime 啟用。`,
+    ),
+    runtimeSupported: false,
+    status: "deferred",
+  }));
+
+  return {
+    rows,
+    summary: {
+      boundary: p1LocaleExpansionBoundary,
+      deferredLocales: rows.filter((row) => row.status === "deferred").length,
+      nextAction: localized(
+        "Keep P1 locale expansion in backlog until a dedicated activation mission approves runtime, content, QA, analytics, and publish-gate changes.",
+        "在专门激活 mission 批准运行时、内容、QA、analytics 与发布门禁变更前，P1 语言扩展继续保留在 backlog。",
+        "在專門啟用 mission 批准執行時、內容、QA、analytics 與發布門禁變更前，P1 語言擴展繼續保留在 backlog。",
+      ),
+      runtimeSupportedLocales: rows.filter((row) => row.runtimeSupported).length,
+      subtitle: localized("Backlog matrix", "Backlog 矩阵", "Backlog 矩陣"),
+      title: localized("P1 locale expansion readiness", "P1 语言扩展 readiness", "P1 語言擴展 readiness"),
+      totalLocales: rows.length,
+    },
+  };
+};
+
 const deliveryChecklistStatusCount = (
   items: DeliveryChecklistItem[],
   status: DeliveryChecklistStatus,
@@ -7603,8 +7710,9 @@ const createProductDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
         "v0.2 MVP 语言已覆盖；ko-KR、ja-JP、vi-VN、id-ID、tr-TR、es-ES 等 P1 语言仍为未来范围。",
       ),
       nextAction: localized(
-        "Open a separate locale expansion mission if P1 locales become required.",
-        "若需要 P1 语言，单独开启语言扩展 mission。",
+        "Use the P1 locale expansion readiness matrix before opening any activation mission.",
+        "开启任何激活 mission 前先使用 P1 语言扩展 readiness 矩阵。",
+        "開啟任何啟用 mission 前先使用 P1 語言擴展 readiness 矩陣。",
       ),
       sourceRequirement: "Product checklist: future locale expansion",
     }),
@@ -8162,6 +8270,7 @@ export const createDeliveryChecklistReadinessConsole = (
     blockers: items.filter((item) => item.status === "blocked"),
     groups,
     needsReview: items.filter((item) => item.status === "needs_review"),
+    p1LocaleExpansion: createP1LocaleExpansionReadiness(),
     summary: {
       blockedItems: deliveryChecklistStatusCount(items, "blocked"),
       coveredItems: deliveryChecklistStatusCount(items, "covered"),

@@ -81,6 +81,15 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("MVP locale coverage");
     expectVisibleText(/Traditional Chinese/);
     expectVisibleText(/P1 locale/);
+    expect(screen.getByRole("heading", { name: "P1 locale expansion readiness" })).toBeInTheDocument();
+    expectVisibleText(/Runtime support remains limited to en-US, zh-CN, and zh-TW/);
+    expectVisibleText("6 Deferred");
+    for (const localeCode of ["ko-KR", "ja-JP", "vi-VN", "id-ID", "tr-TR", "es-ES"]) {
+      expectVisibleText(localeCode);
+    }
+    expectVisibleText("Korean");
+    expectVisibleText(/Create reviewed campaign content source for ko-KR/);
+    expectVisibleText(/Open a dedicated ja-JP activation mission/);
     expectVisibleText("Contract impact review before publish");
     expectVisibleText("Portkey AA connect tested");
     expectVisibleText("Wrong chain error tested");

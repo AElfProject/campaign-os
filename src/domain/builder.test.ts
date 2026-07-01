@@ -24,7 +24,7 @@ describe("Campaign Builder domain foundation", () => {
     expect(seededCampaignDraft.fallbackLocale).toBe("en-US");
     expect(seededCampaignDraft.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
     expect(seededCampaignDraft.supportedLocales).not.toEqual(
-      expect.arrayContaining(["ja-JP", "ko-KR", "vi-VN"]),
+      expect.arrayContaining(["ko-KR", "ja-JP", "vi-VN", "id-ID", "tr-TR", "es-ES"]),
     );
   });
 

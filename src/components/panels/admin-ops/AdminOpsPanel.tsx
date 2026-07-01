@@ -1764,6 +1764,80 @@ export const AdminOpsPanel = ({
             </article>
           ))}
         </div>
+        <article style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>
+                {getLocalizedText(deliveryChecklist.p1LocaleExpansion.summary.subtitle, locale)}
+              </p>
+              <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: 0 }}>
+                {getLocalizedText(deliveryChecklist.p1LocaleExpansion.summary.title, locale)}
+              </h4>
+            </div>
+            <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <Badge
+                label={`${deliveryChecklist.p1LocaleExpansion.summary.totalLocales} ${copy.localePreference}`}
+                tone="info"
+              />
+              <PublishStateBadge
+                label={`${deliveryChecklist.p1LocaleExpansion.summary.deferredLocales} ${copy.deferred}`}
+                state="warning"
+              />
+              <PublishStateBadge
+                label={`${deliveryChecklist.p1LocaleExpansion.summary.runtimeSupportedLocales} ${copy.covered}`}
+                state="ready"
+              />
+            </span>
+          </div>
+          <div style={boundaryStyle}>
+            <p style={{ margin: 0 }}>
+              {getLocalizedText(deliveryChecklist.p1LocaleExpansion.summary.boundary, locale)}
+            </p>
+            <p style={{ margin: "8px 0 0" }}>
+              {getLocalizedText(deliveryChecklist.p1LocaleExpansion.summary.nextAction, locale)}
+            </p>
+          </div>
+          <div style={gridStyle}>
+            {deliveryChecklist.p1LocaleExpansion.rows.map((row) => (
+              <div key={row.code} style={cardStyle}>
+                <div style={rowStyle}>
+                  <div style={stackStyle}>
+                    <p style={labelStyle}>{row.code}</p>
+                    <strong>{getLocalizedText(row.displayName, locale)}</strong>
+                  </div>
+                  <PublishStateBadge
+                    label={deliveryChecklistStatusLabel(row.status, copy)}
+                    state={deliveryChecklistStatusState(row.status)}
+                  />
+                </div>
+                <p style={mutedTextStyle}>{getLocalizedText(row.reason, locale)}</p>
+                <div style={compactGridStyle}>
+                  <div>
+                    <p style={labelStyle}>{copy.ownerRole}</p>
+                    <p style={mutedTextStyle}>{readableCode(row.ownerRole)}</p>
+                  </div>
+                  <div>
+                    <p style={labelStyle}>{copy.status}</p>
+                    <p style={mutedTextStyle}>
+                      {getLocalizedText(deliveryChecklist.p1LocaleExpansion.summary.boundary, locale)}
+                    </p>
+                  </div>
+                </div>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.required}</p>
+                  {row.prerequisites.slice(0, 2).map((prerequisite) => (
+                    <p key={`${row.code}-${getLocalizedText(prerequisite, locale)}`} style={mutedTextStyle}>
+                      {getLocalizedText(prerequisite, locale)}
+                    </p>
+                  ))}
+                </div>
+                <p style={mutedTextStyle}>
+                  {copy.nextAction}: {getLocalizedText(row.nextAction, locale)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </article>
       </section>
 
       <section style={panelStyle}>

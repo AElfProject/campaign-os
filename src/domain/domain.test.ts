@@ -86,6 +86,9 @@ describe("Campaign OS domain foundation", () => {
     expect(isSupportedLocale("zh-CN")).toBe(true);
     expect(isSupportedLocale("zh-TW")).toBe(true);
     expect(isSupportedLocale("ko-KR")).toBe(false);
+    for (const p1Locale of ["ko-KR", "ja-JP", "vi-VN", "id-ID", "tr-TR", "es-ES"]) {
+      expect(isSupportedLocale(p1Locale)).toBe(false);
+    }
   });
 
   it("keeps campaign and lifecycle status sets aligned with v0.2 docs", () => {
@@ -679,6 +682,37 @@ describe("Campaign OS domain foundation", () => {
     expect(itemsById["product-future-locale-expansion"]?.evidence["en-US"]).toContain(
       "P1 locales",
     );
+    expect(itemsById["product-future-locale-expansion"]?.nextAction["en-US"]).toContain(
+      "readiness matrix",
+    );
+    expect(readiness.p1LocaleExpansion.summary).toMatchObject({
+      totalLocales: 6,
+      deferredLocales: 6,
+      runtimeSupportedLocales: 0,
+    });
+    expect(readiness.p1LocaleExpansion.summary.boundary["en-US"]).toContain(
+      "Runtime support remains limited to en-US, zh-CN, and zh-TW",
+    );
+    expect(readiness.p1LocaleExpansion.rows.map((row) => row.code)).toEqual([
+      "ko-KR",
+      "ja-JP",
+      "vi-VN",
+      "id-ID",
+      "tr-TR",
+      "es-ES",
+    ]);
+    for (const row of readiness.p1LocaleExpansion.rows) {
+      expect(row).toMatchObject({
+        ownerRole: "project_owner",
+        runtimeSupported: false,
+        status: "deferred",
+      });
+      expect(row.displayName["en-US"].length).toBeGreaterThan(0);
+      expect(row.reason["en-US"]).toContain(row.code);
+      expect(row.prerequisites).toHaveLength(4);
+      expect(row.prerequisites.every((prerequisite) => prerequisite["en-US"].includes(row.code))).toBe(true);
+      expect(row.nextAction["en-US"]).toContain(row.code);
+    }
     expect(itemsById["product-contract-impact-review"]?.evidence["en-US"]).toContain("claim-mode blockers");
     expect(itemsById["qa-wrong-chain-error"]).toMatchObject({
       status: "needs_review",
