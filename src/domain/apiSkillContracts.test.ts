@@ -12,11 +12,11 @@ const contractsById = Object.fromEntries(
 );
 
 describe("API Skill Contract registry", () => {
-  it("covers the complete v0.1 first skill batch plus the v0.2 wallet session API", () => {
+  it("covers the complete v0.1 first skill batch plus the v0.2 wallet session and add-task APIs", () => {
     expect(apiSkillContractRegistry.map((contract) => contract.id)).toEqual(requiredApiSkillIds);
     expect(createApiSkillContractSurface().summary).toMatchObject({
       missingSkillIds: [],
-      totalContracts: 9,
+      totalContracts: 10,
     });
   });
 
@@ -56,6 +56,48 @@ describe("API Skill Contract registry", () => {
     expect(outputFields.has("signature")).toBe(false);
     expect(walletSession.securityBoundary["en-US"]).toContain("No live API");
     expect(walletSession.securityBoundary["en-US"]).toContain("wallet SDK");
+  });
+
+  it("models the local add campaign task API contract separately from task generation", () => {
+    const addTask = contractsById.add_campaign_task;
+    const inputFields = new Map(addTask.inputFields.map((field) => [field.name, field]));
+    const outputFields = new Map(addTask.outputFields.map((field) => [field.name, field]));
+
+    expect(addTask).toMatchObject({
+      apiGroup: "task_generation",
+      readiness: "local_only",
+      riskLevel: "medium",
+    });
+    expect([...inputFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "campaignId",
+        "templateCode",
+        "walletCompatibility",
+        "verificationType",
+        "points",
+        "required",
+        "evidenceRule",
+      ]),
+    );
+    expect([...outputFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "id",
+        "campaignId",
+        "templateCode",
+        "walletCompatibility",
+        "verificationType",
+        "points",
+        "required",
+        "evidenceRule",
+      ]),
+    );
+    expect(inputFields.get("evidenceRule")).toMatchObject({ group: "evidence", required: true });
+    expect(outputFields.get("evidenceRule")).toMatchObject({ group: "evidence", required: true });
+    expect(addTask.securityBoundary["en-US"]).toContain("No live API");
+    expect(addTask.securityBoundary["en-US"]).toContain("persistence");
+    expect(addTask.securityBoundary["en-US"]).toContain("provider");
+    expect(addTask.securityBoundary["en-US"]).toContain("contract write");
+    expect(addTask.purpose["en-US"]).not.toContain("Generate");
   });
 
   it("keeps every contract structured, localized, and bounded", () => {
@@ -263,7 +305,7 @@ describe("API Skill Contract registry", () => {
       blockedCount: 0,
       externalEvidenceCount: 4,
       highRiskCount: 2,
-      localOnlyCount: 3,
+      localOnlyCount: 4,
       readyCount: 3,
       reviewRequiredCount: 3,
     });

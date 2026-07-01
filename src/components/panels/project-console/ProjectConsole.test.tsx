@@ -354,13 +354,14 @@ describe("Project Console shell", () => {
     expect(within(serviceFacade).getByText("Service coverage")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Total services")).toBeInTheDocument();
     expect(within(serviceFacade).getAllByText("Ready").length).toBeGreaterThan(0);
-    expect(within(serviceFacade).getByText("6 Local only")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("7 Local only")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Review required")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Blocked")).toBeInTheDocument();
     for (const coverage of ["wallet coverage", "task verification", "eligibility", "i18n", "analytics", "export", "content", "summary"]) {
       expect(within(serviceFacade).getAllByText(coverage).length).toBeGreaterThan(0);
     }
     expect(within(serviceFacade).getByText("generateI18nDraft")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("addTask")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("exportWinners")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Verification coverage")).toBeInTheDocument();
     expect(within(serviceFacade).getAllByText("Provider readiness").length).toBeGreaterThan(0);
@@ -437,11 +438,12 @@ describe("Project Console shell", () => {
     expect(screen.getByText("create_campaign")).toBeInTheDocument();
     expect(screen.getByText("verify_task")).toBeInTheDocument();
     expect(screen.getByText("export_winners")).toBeInTheDocument();
+    expect(screen.getByText("add_campaign_task")).toBeInTheDocument();
     expect(screen.getByText("ownerAddress")).toBeInTheDocument();
     expect(screen.getByText("metadataUri")).toBeInTheDocument();
     expect(screen.getByText("rewardDisclaimerHash")).toBeInTheDocument();
-    expect(screen.getByText("templateCode")).toBeInTheDocument();
-    expect(screen.getByText("evidenceRule")).toBeInTheDocument();
+    expect(screen.getAllByText("templateCode").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("evidenceRule").length).toBeGreaterThan(0);
     expect(screen.getAllByText("walletAddress").length).toBeGreaterThan(0);
     expect(screen.getAllByText("accountType").length).toBeGreaterThan(0);
     expect(screen.getByText("txId")).toBeInTheDocument();
