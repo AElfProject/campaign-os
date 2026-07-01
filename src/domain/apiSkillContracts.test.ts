@@ -12,11 +12,11 @@ const contractsById = Object.fromEntries(
 );
 
 describe("API Skill Contract registry", () => {
-  it("covers the complete v0.1 first skill batch plus the v0.2 wallet session, add-task, and i18n draft APIs", () => {
+  it("covers the complete v0.1 first skill batch plus the v0.2 wallet session, add-task, i18n draft, and agent wallet action APIs", () => {
     expect(apiSkillContractRegistry.map((contract) => contract.id)).toEqual(requiredApiSkillIds);
     expect(createApiSkillContractSurface().summary).toMatchObject({
       missingSkillIds: [],
-      totalContracts: 11,
+      totalContracts: 12,
     });
   });
 
@@ -138,6 +138,66 @@ describe("API Skill Contract registry", () => {
     expect(i18nDraft.securityBoundary["en-US"]).toContain("contract write");
     expect(i18nDraft.purpose["en-US"]).toContain("translation draft");
     expect(i18nDraft.purpose["en-US"]).not.toContain("channel copy");
+  });
+
+  it("models the internal Agent Skill wallet action readiness contract without live execution", () => {
+    const agentWalletAction = contractsById.agent_wallet_action;
+    const inputFields = new Map(agentWalletAction.inputFields.map((field) => [field.name, field]));
+    const outputFields = new Map(agentWalletAction.outputFields.map((field) => [field.name, field]));
+
+    expect(agentWalletAction).toMatchObject({
+      apiGroup: "wallet_session",
+      readiness: "review_required",
+      riskLevel: "high",
+    });
+    expect(agentWalletAction.evidenceSources).toEqual(["LOCAL_SEEDED", "MANUAL", "WALLET_SESSION"]);
+    expect(agentWalletAction.title["en-US"]).toContain("Agent Skill wallet action");
+    expect(agentWalletAction.title["zh-CN"]).toContain("Agent Skill");
+    expect(agentWalletAction.purpose["en-US"]).toContain("internal automation");
+    expect(agentWalletAction.nextAction["en-US"]).toContain("human approval");
+    expect(agentWalletAction.nextAction["zh-CN"]).toContain("人工审批");
+    expect([...inputFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "agentId",
+        "operatorRole",
+        "walletSource",
+        "actionIntent",
+        "chainId",
+        "network",
+        "campaignId",
+        "taskId",
+        "humanApprovalState",
+        "evidencePurpose",
+      ]),
+    );
+    expect([...outputFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "actionState",
+        "allowedOperation",
+        "blockedReason",
+        "auditTrail",
+        "noPrivateKeyBoundary",
+        "noSignatureExecution",
+        "noTransactionExecution",
+        "nextReviewAction",
+      ]),
+    );
+    expect([...inputFields.values()].every((field) => field.required)).toBe(true);
+    expect([...outputFields.values()].every((field) => field.required)).toBe(true);
+    expect(inputFields.get("walletSource")).toMatchObject({ group: "wallet" });
+    expect(inputFields.get("humanApprovalState")).toMatchObject({ group: "risk" });
+    expect(outputFields.get("auditTrail")).toMatchObject({ group: "evidence" });
+
+    const boundary = agentWalletAction.securityBoundary["en-US"];
+    expect(boundary).toContain("No live API");
+    expect(boundary).toContain("no agent skill execution");
+    expect(boundary).toContain("no private key");
+    expect(boundary).toContain("no signature execution");
+    expect(boundary).toContain("no transaction send");
+    expect(boundary).toContain("no contract send/write");
+    expect(boundary).toContain("no reward distribution");
+    expect(boundary).toContain("no export file");
+    expect(boundary).toContain("no root write");
   });
 
   it("keeps every contract structured, localized, and bounded", () => {
@@ -343,11 +403,11 @@ describe("API Skill Contract registry", () => {
 
     expect(surface.summary).toMatchObject({
       blockedCount: 0,
-      externalEvidenceCount: 4,
-      highRiskCount: 2,
+      externalEvidenceCount: 5,
+      highRiskCount: 3,
       localOnlyCount: 5,
       readyCount: 3,
-      reviewRequiredCount: 3,
+      reviewRequiredCount: 4,
     });
     expect(surface.boundary["en-US"]).toContain("does not call live APIs");
     expect(surface.boundary["zh-CN"]).toContain("不会调用实时 API");
