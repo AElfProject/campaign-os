@@ -206,6 +206,128 @@ export type EcosystemRecommendationSignalTone = "ready" | "warning" | "blocker";
 
 export type LocalizedText = Record<SupportedLocale, string>;
 
+export type ExternalServiceId =
+  | "wallet-connector"
+  | "wallet-signing"
+  | "ebridge"
+  | "awaken"
+  | "aefinder"
+  | "aelfscan"
+  | "social-api"
+  | "ai-provider"
+  | "analytics-collector"
+  | "export-storage"
+  | "contract-root-writer"
+  | "telegram-app-hub"
+  | "pay"
+  | "forecast"
+  | "portfolio"
+  | (string & {});
+export type ExternalServiceCategory =
+  | "wallet"
+  | "verification"
+  | "dapp"
+  | "ai"
+  | "analytics"
+  | "export"
+  | "contract"
+  | "app_hub"
+  | "payment"
+  | "forecast"
+  | "portfolio"
+  | "social"
+  | "unknown";
+export type ExternalServiceState =
+  | "enabled_preview"
+  | "disabled"
+  | "maintenance"
+  | "review_required"
+  | "offline";
+export type ExternalServiceOwnerRole =
+  | "integration_owner"
+  | "wallet_ops"
+  | "growth_ops"
+  | "risk_reviewer"
+  | "contract_reviewer"
+  | "data_ops"
+  | "product_owner";
+export type ExternalServiceLiveEvidenceStatus =
+  | "missing"
+  | "ready"
+  | "blocked"
+  | "not_applicable";
+export type ExternalServiceReleaseImpact =
+  | "ready"
+  | "needs_review"
+  | "release_blocker"
+  | "informational";
+
+export interface ExternalServiceFeatureGate {
+  enabled: boolean;
+  key: string;
+  label: LocalizedText;
+  reviewRequired: boolean;
+  state: ExternalServiceState;
+}
+
+export interface ExternalServiceFallback {
+  blocksLaunch: boolean;
+  label: LocalizedText;
+  reason: LocalizedText;
+}
+
+export interface ExternalServiceRegistryEntry {
+  id: ExternalServiceId;
+  name: LocalizedText;
+  category: ExternalServiceCategory;
+  state: ExternalServiceState;
+  featureGate: ExternalServiceFeatureGate;
+  ownerRole: ExternalServiceOwnerRole;
+  riskLevel: RiskLevel;
+  highImpact: boolean;
+  liveEvidenceStatus: ExternalServiceLiveEvidenceStatus;
+  releaseImpact: ExternalServiceReleaseImpact;
+  fallback: ExternalServiceFallback;
+  userNotice: LocalizedText;
+  operatorNextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface ServiceRegistry {
+  entries: ExternalServiceRegistryEntry[];
+  entriesById: Record<string, ExternalServiceRegistryEntry>;
+  unknownFallback: ExternalServiceRegistryEntry;
+}
+
+export interface ServiceDegradationGovernanceSummary {
+  totalServices: number;
+  enabledPreviewServices: number;
+  disabledServices: number;
+  maintenanceServices: number;
+  reviewRequiredServices: number;
+  offlineServices: number;
+  releaseBlockers: number;
+  highImpactBlockers: number;
+  topServiceId: ExternalServiceId;
+}
+
+export interface ServiceDegradationGovernanceGroup {
+  category: ExternalServiceCategory;
+  label: LocalizedText;
+  entries: ExternalServiceRegistryEntry[];
+}
+
+export interface ServiceDegradationGovernance {
+  summary: ServiceDegradationGovernanceSummary;
+  entries: ExternalServiceRegistryEntry[];
+  groups: ServiceDegradationGovernanceGroup[];
+  blockers: ExternalServiceRegistryEntry[];
+  needsReview: ExternalServiceRegistryEntry[];
+  maintenanceOrOffline: ExternalServiceRegistryEntry[];
+  topOwnerAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
 export const EXPORT_CSV_COLUMNS = [
   "campaign_id",
   "wallet_address",
