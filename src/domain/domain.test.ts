@@ -952,7 +952,8 @@ describe("Campaign OS domain foundation", () => {
       "v02-contract-claim-reward-custody",
       "v02-live-wallet-provider-evidence",
     ]);
-    expect(acceptance.topResidualGaps.at(-1)?.id).not.toBe("v02-p1-locale-expansion");
+    const lastResidualGap = acceptance.topResidualGaps[acceptance.topResidualGaps.length - 1];
+    expect(lastResidualGap?.id).not.toBe("v02-p1-locale-expansion");
 
     for (const row of rows) {
       expect(row.title["en-US"]).toBeTruthy();
