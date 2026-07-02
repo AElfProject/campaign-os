@@ -47,6 +47,26 @@ describe("CampaignBuilderPanel", () => {
     expect(launchDecision.getByText(/No live AI provider/)).toBeInTheDocument();
     expect(launchDecision.getByText(/no automatic publish/)).toBeInTheDocument();
     expect(launchDecision.getByText(/no reward distribution/)).toBeInTheDocument();
+
+    const creationWorkflow = within(screen.getByLabelText("Campaign Creation Workflow Readiness"));
+    expect(creationWorkflow.getByRole("heading", { name: "Campaign Creation Workflow Readiness" })).toBeInTheDocument();
+    expect(creationWorkflow.getByText("Campaign Goal")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("Wallet & Locale Setup")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("Task Builder")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("Rewards & Eligibility")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("i18n Content Review")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("Contract Impact Review")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("Admin Review")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("Publish")).toBeInTheDocument();
+    expect(creationWorkflow.getAllByText("Project owner").length).toBeGreaterThan(0);
+    expect(creationWorkflow.getAllByText("Internal operator").length).toBeGreaterThan(0);
+    expect(creationWorkflow.getAllByText("Contract reviewer").length).toBeGreaterThan(0);
+    expect(creationWorkflow.getAllByText("contract-impact").length).toBeGreaterThan(0);
+    expect(creationWorkflow.getAllByText("localized-reward-disclaimer").length).toBeGreaterThan(0);
+    expect(creationWorkflow.getByText(/No live campaign creation/)).toBeInTheDocument();
+    expect(creationWorkflow.getByText(/no automatic publish/)).toBeInTheDocument();
+    expect(creationWorkflow.getByText(/no contract execution/)).toBeInTheDocument();
+    expect(creationWorkflow.getByText(/no reward distribution/)).toBeInTheDocument();
   });
 
   it("renders localized zh-CN builder copy", () => {
@@ -89,5 +109,22 @@ describe("CampaignBuilderPanel", () => {
     expect(launchDecision.getByText(/不会执行实时 AI provider/)).toBeInTheDocument();
     expect(launchDecision.getAllByText(/自动发布/).length).toBeGreaterThan(0);
     expect(launchDecision.getAllByText(/奖励发放/).length).toBeGreaterThan(0);
+
+    const creationWorkflow = within(screen.getByLabelText("活动创建流程 Readiness"));
+    expect(creationWorkflow.getByRole("heading", { name: "活动创建流程 Readiness" })).toBeInTheDocument();
+    expect(creationWorkflow.getByText("活动目标")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("钱包与语言设置")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("任务构建器")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("奖励与资格")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("i18n 内容审核")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("合约影响审核")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("管理员审核")).toBeInTheDocument();
+    expect(creationWorkflow.getByText("发布")).toBeInTheDocument();
+    expect(creationWorkflow.getAllByText("项目方").length).toBeGreaterThan(0);
+    expect(creationWorkflow.getAllByText("内部运营").length).toBeGreaterThan(0);
+    expect(creationWorkflow.getAllByText("合约审核人").length).toBeGreaterThan(0);
+    expect(creationWorkflow.getByText(/不会创建实时活动/)).toBeInTheDocument();
+    expect(creationWorkflow.getAllByText(/自动发布/).length).toBeGreaterThan(0);
+    expect(creationWorkflow.getAllByText(/奖励发放/).length).toBeGreaterThan(0);
   });
 });

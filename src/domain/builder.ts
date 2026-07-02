@@ -405,6 +405,56 @@ export interface AiPlannerLaunchDecision {
   summary: AiPlannerLaunchDecisionSummary;
 }
 
+export type CampaignCreationWorkflowStepId =
+  | "campaign_goal"
+  | "wallet_locale_setup"
+  | "task_builder"
+  | "rewards_eligibility"
+  | "i18n_content_review"
+  | "contract_impact_review"
+  | "admin_review"
+  | "publish";
+
+export type CampaignCreationWorkflowState = "ready" | "review_required" | "warning" | "blocked";
+
+export interface CampaignCreationWorkflowStep {
+  blockerIds: string[];
+  evidenceLabels: LocalizedText[];
+  id: CampaignCreationWorkflowStepId;
+  nextAction: LocalizedText;
+  order: number;
+  ownerRole: OwnerRole;
+  state: CampaignCreationWorkflowState;
+  summary: LocalizedText;
+  title: LocalizedText;
+  warningIds: string[];
+}
+
+export interface CampaignCreationWorkflowSummary {
+  blockedSteps: number;
+  inheritedGateCount: number;
+  publishBlocked: boolean;
+  readySteps: number;
+  reviewRequiredSteps: number;
+  totalSteps: number;
+  warningSteps: number;
+}
+
+export interface CampaignCreationWorkflowReadiness {
+  boundary: LocalizedText;
+  draftId: string;
+  nextAction: LocalizedText;
+  sourceChecklist: string[];
+  steps: CampaignCreationWorkflowStep[];
+  summary: CampaignCreationWorkflowSummary;
+}
+
+type CampaignCreationWorkflowStepInput = Omit<
+  CampaignCreationWorkflowStep,
+  "blockerIds" | "warningIds"
+> &
+  Partial<Pick<CampaignCreationWorkflowStep, "blockerIds" | "warningIds">>;
+
 export interface CampaignDraft {
   id: string;
   campaignName: LocalizedText;
@@ -2727,5 +2777,256 @@ export const createAiPlannerLaunchDecision = (
       title: selectedTemplate.title,
     },
     summary: countLaunchDecisions(decisionItems, inheritedGates, approvalRoutes, selectedTasks),
+  };
+};
+
+const campaignCreationWorkflowBoundary = text(
+  "Seeded/local creation workflow only. No live campaign creation, no automatic publish, no backend mutation, no wallet signature, no contract execution, no export file, no reward custody, and no reward distribution is executed.",
+  "仅 seeded/本地创建流程。不会创建实时活动、自动发布、后端变更、钱包签名、合约执行、导出文件、奖励托管或奖励发放。",
+  "僅 seeded/本地建立流程。不會建立即時活動、自動發布、後端變更、錢包簽名、合約執行、匯出檔案、獎勵託管或獎勵發放。",
+);
+
+const campaignCreationWorkflowNextAction = text(
+  "Resolve blocked creation steps, complete owner review, then re-check publish readiness before launch.",
+  "先解决被阻断的创建步骤并完成负责人审核，再重新检查发布准备度。",
+  "先解決被阻斷的建立步驟並完成負責人審核，再重新檢查發布準備度。",
+);
+
+const campaignCreationSourceChecklist = [
+  "docs/current/aelf_campaign_os_v0.2/docs/01_product_requirements_v0.2.md#Campaign 创建流程 v0.2",
+  "docs/current/aelf_campaign_os_v0.2/docs/03_interaction_design_v0.2.md#Project Console Flow",
+  "docs/current/aelf_campaign_os_v0.2/docs/09_delivery_checklist_v0.2.md",
+];
+
+const workflowStateFromGates = (
+  gates: readonly PublishGateItem[],
+  fallback: CampaignCreationWorkflowState = "ready",
+): CampaignCreationWorkflowState => {
+  if (gates.some((gate) => gate.status === "blocker")) {
+    return "blocked";
+  }
+
+  if (gates.some((gate) => gate.status === "warning")) {
+    return "warning";
+  }
+
+  return fallback;
+};
+
+const workflowGateIds = (
+  gates: readonly PublishGateItem[],
+  status: ReadinessStatus,
+) => gates.filter((gate) => gate.status === status).map((gate) => gate.id);
+
+const workflowStep = ({
+  blockerIds = [],
+  evidenceLabels,
+  id,
+  nextAction,
+  order,
+  ownerRole,
+  state,
+  summary,
+  title,
+  warningIds = [],
+}: CampaignCreationWorkflowStepInput): CampaignCreationWorkflowStep => ({
+  blockerIds,
+  evidenceLabels,
+  id,
+  nextAction,
+  order,
+  ownerRole,
+  state,
+  summary,
+  title,
+  warningIds,
+});
+
+const workflowSummary = (
+  steps: readonly CampaignCreationWorkflowStep[],
+  inheritedGateCount: number,
+): CampaignCreationWorkflowSummary => ({
+  blockedSteps: steps.filter((step) => step.state === "blocked").length,
+  inheritedGateCount,
+  publishBlocked: steps.some((step) => step.id === "publish" && step.state === "blocked"),
+  readySteps: steps.filter((step) => step.state === "ready").length,
+  reviewRequiredSteps: steps.filter((step) => step.state === "review_required").length,
+  totalSteps: steps.length,
+  warningSteps: steps.filter((step) => step.state === "warning").length,
+});
+
+const gatesByGroup = (
+  gates: readonly PublishGateItem[],
+  group: ReadinessGroup,
+) => gates.filter((gate) => gate.group === group);
+
+const getLocalizedPublishNextAction = (
+  launchState: PublishGateDecisionCenter["launchState"],
+): LocalizedText => {
+  if (launchState === "blocker") {
+    return text("Resolve blocked creation gates before publish.", "发布前解决被阻断的创建门禁。", "發布前解決被阻斷的建立門禁。");
+  }
+
+  if (launchState === "warning") {
+    return text("Complete owner review for warning gates before publish.", "发布前完成警告门禁的负责人审核。", "發布前完成警告門禁的負責人審核。");
+  }
+
+  return text("Proceed to final publish review.", "进入最终发布审核。", "進入最終發布審核。");
+};
+
+export const createCampaignCreationWorkflowReadiness = (
+  draft: CampaignDraft = seededCampaignDraft,
+): CampaignCreationWorkflowReadiness => {
+  const publishGateCenter = createPublishGateDecisionCenter(draft);
+  const launchDecision = createAiPlannerLaunchDecision(draft);
+  const basicsGates = gatesByGroup(publishGateCenter.gates, "basics");
+  const walletGates = gatesByGroup(publishGateCenter.gates, "wallet");
+  const taskGates = gatesByGroup(publishGateCenter.gates, "tasks");
+  const rewardGates = gatesByGroup(publishGateCenter.gates, "rewards");
+  const i18nGates = gatesByGroup(publishGateCenter.gates, "i18n");
+  const contractGates = gatesByGroup(publishGateCenter.gates, "contract");
+  const riskGates = gatesByGroup(publishGateCenter.gates, "risk");
+  const exportGates = gatesByGroup(publishGateCenter.gates, "export");
+  const taskNeedsReview = launchDecision.selectedTasks.some((task) => task.reviewRequired);
+  const publishBlockers = publishGateCenter.gates.filter((gate) => gate.blocksPublish);
+  const publishWarnings = publishGateCenter.gates.filter((gate) => gate.status === "warning");
+  const taskState = workflowStateFromGates(taskGates, taskNeedsReview ? "review_required" : "ready");
+
+  const steps = [
+    workflowStep({
+      blockerIds: workflowGateIds(basicsGates, "blocker"),
+      evidenceLabels: [
+        text("Campaign name and objective confirmed", "活动名称与目标已确认", "活動名稱與目標已確認"),
+        text("Default locale is en-US", "默认语言为 en-US", "預設語言為 en-US"),
+      ],
+      id: "campaign_goal",
+      nextAction: text("Keep basics visible before publish review.", "发布审核前保持基础信息可见。", "發布審核前保持基礎資訊可見。"),
+      order: 1,
+      ownerRole: "project_owner",
+      state: workflowStateFromGates(basicsGates),
+      summary: text("Campaign goal, objective, timeline, and audience are configured.", "活动目标、周期与受众已配置。", "活動目標、週期與受眾已配置。"),
+      title: text("Campaign Goal", "活动目标", "活動目標"),
+      warningIds: workflowGateIds(basicsGates, "warning"),
+    }),
+    workflowStep({
+      blockerIds: workflowGateIds(walletGates, "blocker"),
+      evidenceLabels: [
+        text(`Wallet policy: ${draft.walletPolicy}`, `钱包策略：${draft.walletPolicy}`, `錢包策略：${draft.walletPolicy}`),
+        text(`Locales: ${draft.supportedLocales.join(", ")}`, `语言：${draft.supportedLocales.join(", ")}`, `語言：${draft.supportedLocales.join(", ")}`),
+      ],
+      id: "wallet_locale_setup",
+      nextAction: text("Keep Any wallet policy and locale fallback visible.", "保持任意钱包策略与语言回退状态可见。", "保持任意錢包策略與語言回退狀態可見。"),
+      order: 2,
+      ownerRole: "project_owner",
+      state: workflowStateFromGates(walletGates),
+      summary: text("AA and EOA participation plus default English locale are represented.", "已展示 AA/EOA 参与和默认英文语言。", "已展示 AA/EOA 參與和預設英文語言。"),
+      title: text("Wallet & Locale Setup", "钱包与语言设置", "錢包與語言設定"),
+      warningIds: workflowGateIds(walletGates, "warning"),
+    }),
+    workflowStep({
+      blockerIds: workflowGateIds(taskGates, "blocker"),
+      evidenceLabels: [
+        text(`${launchDecision.selectedTasks.length} selected task templates`, `${launchDecision.selectedTasks.length} 个已选任务模板`, `${launchDecision.selectedTasks.length} 個已選任務模板`),
+        text("Wallet compatibility and locale readiness retained", "保留钱包兼容与语言 readiness", "保留錢包相容與語言 readiness"),
+      ],
+      id: "task_builder",
+      nextAction: taskNeedsReview
+        ? text("Review high-risk or untranslated selected tasks before launch.", "上线前审核高风险或未完成翻译的已选任务。", "上線前審核高風險或未完成翻譯的已選任務。")
+        : text("Keep selected tasks in the launch package.", "在发布包中保留已选任务。", "在發布包中保留已選任務。"),
+      order: 3,
+      ownerRole: taskNeedsReview ? "internal_operator" : "project_owner",
+      state: taskState,
+      summary: text("Selected templates cover wallet, bridge, swap, and social review.", "已选模板覆盖钱包、跨链、Swap 与社交审核。", "已選模板覆蓋錢包、跨鏈、Swap 與社交審核。"),
+      title: text("Task Builder", "任务构建器", "任務構建器"),
+      warningIds: workflowGateIds(taskGates, "warning"),
+    }),
+    workflowStep({
+      blockerIds: workflowGateIds(rewardGates, "blocker"),
+      evidenceLabels: [
+        text("Reward disclaimer per locale", "按语言的奖励声明", "依語言的獎勵聲明"),
+        text("Export disclaimer boundary", "导出声明边界", "匯出聲明邊界"),
+      ],
+      id: "rewards_eligibility",
+      nextAction: text("Resolve localized reward disclaimer blockers before publish.", "发布前解决本地化奖励声明阻断项。", "發布前解決本地化獎勵聲明阻斷項。"),
+      order: 4,
+      ownerRole: "project_owner",
+      state: workflowStateFromGates(rewardGates),
+      summary: text("Reward responsibility and eligibility rules stay owner-reviewed.", "奖励责任与资格规则保持项目方审核。", "獎勵責任與資格規則保持專案方審核。"),
+      title: text("Rewards & Eligibility", "奖励与资格", "獎勵與資格"),
+      warningIds: workflowGateIds(rewardGates, "warning"),
+    }),
+    workflowStep({
+      blockerIds: workflowGateIds(i18nGates, "blocker"),
+      evidenceLabels: [
+        text("English source copy", "英文源文案", "英文源文案"),
+        text("zh-CN and zh-TW review states", "zh-CN 与 zh-TW 审核状态", "zh-CN 與 zh-TW 審核狀態"),
+      ],
+      id: "i18n_content_review",
+      nextAction: text("Review AI draft or fallback localized content.", "审核 AI 草稿或回退的本地化内容。", "審核 AI 草稿或回退的本地化內容。"),
+      order: 5,
+      ownerRole: "project_owner",
+      state: workflowStateFromGates(i18nGates),
+      summary: text("Localized content remains review-first before publication.", "本地化内容发布前保持先审核。", "本地化內容發布前保持先審核。"),
+      title: text("i18n Content Review", "i18n 内容审核", "i18n 內容審核"),
+      warningIds: workflowGateIds(i18nGates, "warning"),
+    }),
+    workflowStep({
+      blockerIds: workflowGateIds(contractGates, "blocker"),
+      evidenceLabels: [
+        text(`Selected mode: ${draft.contractImpact.mode}`, `已选模式：${draft.contractImpact.mode}`, `已選模式：${draft.contractImpact.mode}`),
+        text(`Safe default: ${draft.defaultContractImpact.mode}`, `安全默认：${draft.defaultContractImpact.mode}`, `安全預設：${draft.defaultContractImpact.mode}`),
+      ],
+      id: "contract_impact_review",
+      nextAction: routeNextAction("contract_reviewer"),
+      order: 6,
+      ownerRole: "contract_reviewer",
+      state: workflowStateFromGates(contractGates),
+      summary: text("Contract impact remains explicit before publish.", "发布前明确展示合约影响。", "發布前明確展示合約影響。"),
+      title: text("Contract Impact Review", "合约影响审核", "合約影響審核"),
+      warningIds: workflowGateIds(contractGates, "warning"),
+    }),
+    workflowStep({
+      blockerIds: workflowGateIds([...riskGates, ...exportGates], "blocker"),
+      evidenceLabels: [
+        text("Risk flags and referral validation", "风险标记与推荐验证", "風險標記與推薦驗證"),
+        text("Export boundary review", "导出边界审核", "匯出邊界審核"),
+      ],
+      id: "admin_review",
+      nextAction: routeNextAction("internal_operator"),
+      order: 7,
+      ownerRole: "internal_operator",
+      state: workflowStateFromGates([...riskGates, ...exportGates]),
+      summary: text("Internal operator reviews risk, referral, and export posture.", "内部运营审核风险、推荐与导出姿态。", "內部營運審核風險、推薦與匯出姿態。"),
+      title: text("Admin Review", "管理员审核", "管理員審核"),
+      warningIds: workflowGateIds([...riskGates, ...exportGates], "warning"),
+    }),
+    workflowStep({
+      blockerIds: publishBlockers.map((gate) => gate.id),
+      evidenceLabels: [
+        text(`${publishGateCenter.counts.total} inherited publish gates`, `${publishGateCenter.counts.total} 个继承发布门禁`, `${publishGateCenter.counts.total} 個繼承發布門禁`),
+        text(`${publishGateCenter.counts.blockers} blockers`, `${publishGateCenter.counts.blockers} 个阻断项`, `${publishGateCenter.counts.blockers} 個阻斷項`),
+      ],
+      id: "publish",
+      nextAction: getLocalizedPublishNextAction(publishGateCenter.launchState),
+      order: 8,
+      ownerRole: publishGateCenter.launchState === "blocker" ? "internal_operator" : "project_owner",
+      state: publishGateCenter.launchState === "blocker"
+        ? "blocked"
+        : publishGateCenter.launchState === "warning"
+          ? "warning"
+          : "ready",
+      summary: publishGateCenter.summary,
+      title: text("Publish", "发布", "發布"),
+      warningIds: publishWarnings.map((gate) => gate.id),
+    }),
+  ];
+
+  return {
+    boundary: campaignCreationWorkflowBoundary,
+    draftId: draft.id,
+    nextAction: campaignCreationWorkflowNextAction,
+    sourceChecklist: campaignCreationSourceChecklist,
+    steps,
+    summary: workflowSummary(steps, publishGateCenter.gates.length),
   };
 };

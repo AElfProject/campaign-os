@@ -3,9 +3,11 @@ import {
   computeBuilderPublishReadiness,
   createAiCampaignPlannerDecisionConsole,
   createAiPlannerLaunchDecision,
+  createCampaignCreationWorkflowReadiness,
   getLocalizedText,
   seededCampaignDraft,
   type AiPlannerDecisionStatus,
+  type CampaignCreationWorkflowState,
   type CampaignDraft,
   type OwnerRole,
   type ReadinessStatus,
@@ -87,6 +89,14 @@ const bodyTextStyle: CSSProperties = {
   color: "#475569",
   lineHeight: 1.5,
   margin: 0,
+};
+
+const wrapTextStyle: CSSProperties = {
+  color: "#475569",
+  fontSize: 13,
+  lineHeight: 1.45,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
 };
 
 const listStyle: CSSProperties = {
@@ -181,6 +191,26 @@ const plannerStatusLabel = (
 const plannerStatusState = (status: AiPlannerDecisionStatus) =>
   status === "blocked" ? "blocker" : status === "warning" || status === "review_required" ? "warning" : "ready";
 
+const workflowStatusLabel = (
+  state: CampaignCreationWorkflowState,
+  copy: ProjectConsoleCopy,
+) => {
+  if (state === "ready") {
+    return copy.aiPlannerReady;
+  }
+  if (state === "review_required") {
+    return copy.aiPlannerReviewRequired;
+  }
+  if (state === "warning") {
+    return copy.aiPlannerWarning;
+  }
+
+  return copy.aiPlannerBlocked;
+};
+
+const workflowStatusState = (state: CampaignCreationWorkflowState) =>
+  state === "blocked" ? "blocker" : state === "ready" ? "ready" : "warning";
+
 const gateStatusLabel = (status: ReadinessStatus, copy: ProjectConsoleCopy) => {
   if (status === "blocker") {
     return copy.aiPlannerBlocked;
@@ -210,6 +240,7 @@ export const CampaignBuilderPanel = ({
   const readiness = computeBuilderPublishReadiness(draft);
   const planner = createAiCampaignPlannerDecisionConsole(draft);
   const launchDecision = createAiPlannerLaunchDecision(draft);
+  const creationWorkflow = createCampaignCreationWorkflowReadiness(draft);
   const missingBasics = readiness.blockers.filter((check) => check.group === "basics");
   const campaignName = getLocalizedText(draft.campaignName, locale);
   const activePolicy = draft.walletPolicy;
@@ -387,6 +418,119 @@ export const CampaignBuilderPanel = ({
           <strong>{copy.aiPlannerBoundary}: </strong>
           {getLocalizedText(planner.boundary, locale)}
         </p>
+
+        <section aria-label={copy.campaignCreationWorkflowReadiness} style={{ display: "grid", gap: 12 }}>
+          <div style={headingRowStyle}>
+            <div>
+              <p style={labelStyle}>{copy.campaignCreationWorkflowReadiness}</p>
+              <h3 style={{ fontSize: 20, lineHeight: 1.2, margin: "4px 0" }}>
+                {copy.campaignCreationWorkflowReadiness}
+              </h3>
+              <p style={bodyTextStyle}>{copy.campaignCreationWorkflowSubtitle}</p>
+            </div>
+            <PublishStateBadge
+              label={`${creationWorkflow.summary.blockedSteps} ${copy.countBlockers}`}
+              state={creationWorkflow.summary.blockedSteps > 0 ? "blocker" : "ready"}
+            />
+          </div>
+
+          <div style={summaryGridStyle}>
+            {[
+              [copy.campaignCreationWorkflowReadySteps, creationWorkflow.summary.readySteps],
+              [copy.campaignCreationWorkflowReviewSteps, creationWorkflow.summary.reviewRequiredSteps],
+              [copy.campaignCreationWorkflowWarningSteps, creationWorkflow.summary.warningSteps],
+              [copy.campaignCreationWorkflowBlockedSteps, creationWorkflow.summary.blockedSteps],
+              [copy.campaignCreationWorkflowInheritedGates, creationWorkflow.summary.inheritedGateCount],
+            ].map(([label, value]) => (
+              <article key={label} style={cardStyle}>
+                <p style={labelStyle}>{label}</p>
+                <p style={{ ...valueStyle, fontSize: 22 }}>{value}</p>
+              </article>
+            ))}
+          </div>
+
+          <div aria-label={copy.campaignCreationWorkflowStepList} style={plannerGridStyle}>
+            {creationWorkflow.steps.map((step) => {
+              const issueIds = [...step.blockerIds, ...step.warningIds];
+
+              return (
+                <article key={step.id} style={cardStyle}>
+                  <div style={headingRowStyle}>
+                    <div>
+                      <p style={labelStyle}>
+                        {copy.createStepPrefix} {step.order}
+                      </p>
+                      <h4 style={{ fontSize: 18, lineHeight: 1.25, margin: "4px 0" }}>
+                        {getLocalizedText(step.title, locale)}
+                      </h4>
+                    </div>
+                    <PublishStateBadge
+                      label={workflowStatusLabel(step.state, copy)}
+                      state={workflowStatusState(step.state)}
+                    />
+                  </div>
+                  <p style={bodyTextStyle}>{getLocalizedText(step.summary, locale)}</p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <PublishStateBadge label={ownerRoleLabels[locale][step.ownerRole]} state="ready" />
+                    {step.blockerIds.map((blockerId) => (
+                      <PublishStateBadge key={`${step.id}-${blockerId}`} label={blockerId} state="blocker" />
+                    ))}
+                    {step.warningIds.map((warningId) => (
+                      <PublishStateBadge key={`${step.id}-${warningId}`} label={warningId} state="warning" />
+                    ))}
+                    {issueIds.length === 0 ? (
+                      <PublishStateBadge label={copy.campaignCreationWorkflowNoIssues} state="ready" />
+                    ) : null}
+                  </div>
+                  <div style={compactGridStyle}>
+                    <span>
+                      <p style={labelStyle}>{copy.campaignCreationWorkflowEvidence}</p>
+                      <ul style={listStyle}>
+                        {step.evidenceLabels.map((evidence) => (
+                          <li
+                            key={getLocalizedText(evidence, "en-US")}
+                            style={{ ...listItemStyle, alignItems: "start", justifyContent: "start" }}
+                          >
+                            <span aria-hidden="true">-</span>
+                            <span style={wrapTextStyle}>{getLocalizedText(evidence, locale)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </span>
+                    <span>
+                      <p style={labelStyle}>{copy.aiPlannerNextAction}</p>
+                      <p style={bodyTextStyle}>{getLocalizedText(step.nextAction, locale)}</p>
+                    </span>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          <div style={summaryGridStyle}>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.campaignCreationWorkflowBoundary}</p>
+              <p style={bodyTextStyle}>{getLocalizedText(creationWorkflow.boundary, locale)}</p>
+              <p style={labelStyle}>{copy.aiPlannerNextAction}</p>
+              <p style={bodyTextStyle}>{getLocalizedText(creationWorkflow.nextAction, locale)}</p>
+            </article>
+
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.campaignCreationWorkflowSourceChecklist}</p>
+              <ul style={listStyle}>
+                {creationWorkflow.sourceChecklist.map((source) => (
+                  <li
+                    key={source}
+                    style={{ ...listItemStyle, alignItems: "start", justifyContent: "start" }}
+                  >
+                    <span aria-hidden="true">-</span>
+                    <span style={wrapTextStyle}>{source}</span>
+                  </li>
+                ))}
+              </ul>
+            </article>
+          </div>
+        </section>
 
         <section aria-label={copy.aiPlannerLaunchDecision} style={{ display: "grid", gap: 12 }}>
           <div style={headingRowStyle}>
