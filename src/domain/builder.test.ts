@@ -4,6 +4,7 @@ import {
   computeBuilderPublishReadiness,
   createAiPlannerLaunchDecision,
   createAiCampaignPlannerDecisionConsole,
+  createCampaignCreationWorkflowReadiness,
   createCampaignTemplatePack,
   createTaskTemplateFilterSummary,
   createPublishGateDecisionCenter,
@@ -817,6 +818,77 @@ describe("Campaign Builder domain foundation", () => {
     expect(launchDecision.boundary["en-US"]).toContain("no reward custody");
     expect(launchDecision.boundary["en-US"]).toContain("no reward distribution");
     expect(launchDecision.nextAction["en-US"]).toContain("Review selected tasks");
+  });
+
+  it("derives the campaign creation workflow readiness from existing gates", () => {
+    const workflow = createCampaignCreationWorkflowReadiness(seededCampaignDraft);
+    const repeatedWorkflow = createCampaignCreationWorkflowReadiness(seededCampaignDraft);
+
+    expect(JSON.stringify(workflow)).toBe(JSON.stringify(repeatedWorkflow));
+    expect(workflow.draftId).toBe(seededCampaignDraft.id);
+    expect(workflow.steps.map((step) => step.id)).toEqual([
+      "campaign_goal",
+      "wallet_locale_setup",
+      "task_builder",
+      "rewards_eligibility",
+      "i18n_content_review",
+      "contract_impact_review",
+      "admin_review",
+      "publish",
+    ]);
+    expect(workflow.summary.totalSteps).toBe(workflow.steps.length);
+    expect(
+      workflow.summary.readySteps +
+        workflow.summary.reviewRequiredSteps +
+        workflow.summary.warningSteps +
+        workflow.summary.blockedSteps,
+    ).toBe(workflow.steps.length);
+    expect(workflow.summary.publishBlocked).toBe(true);
+    expect(workflow.summary.inheritedGateCount).toBeGreaterThan(0);
+
+    const stepsById = new Map(workflow.steps.map((step) => [step.id, step]));
+    expect(stepsById.get("campaign_goal")).toMatchObject({
+      ownerRole: "project_owner",
+      state: "ready",
+    });
+    expect(stepsById.get("task_builder")).toMatchObject({
+      ownerRole: "internal_operator",
+      state: "review_required",
+    });
+    expect(stepsById.get("rewards_eligibility")).toMatchObject({
+      ownerRole: "project_owner",
+      state: "blocked",
+    });
+    expect(stepsById.get("contract_impact_review")).toMatchObject({
+      ownerRole: "contract_reviewer",
+      state: "blocked",
+    });
+    expect(stepsById.get("publish")).toMatchObject({
+      state: "blocked",
+    });
+    expect(stepsById.get("publish")?.blockerIds).toEqual(
+      expect.arrayContaining(["contract-impact", "localized-reward-disclaimer"]),
+    );
+    expect(stepsById.get("i18n_content_review")?.warningIds).toContain("i18n-human-review");
+    expect(stepsById.get("admin_review")?.warningIds).toContain("risk-social-reward");
+
+    const nonReadySteps = workflow.steps.filter((step) => step.state !== "ready");
+    expect(nonReadySteps.every((step) => step.nextAction["en-US"].length > 0)).toBe(true);
+    expect(new Set(nonReadySteps.map((step) => step.ownerRole))).toEqual(
+      new Set(["project_owner", "internal_operator", "contract_reviewer"]),
+    );
+    expect(workflow.boundary["en-US"]).toContain("No live campaign creation");
+    expect(workflow.boundary["en-US"]).toContain("no automatic publish");
+    expect(workflow.boundary["en-US"]).toContain("no contract execution");
+    expect(workflow.boundary["en-US"]).toContain("no export file");
+    expect(workflow.boundary["en-US"]).toContain("no reward custody");
+    expect(workflow.boundary["en-US"]).toContain("no reward distribution");
+    expect(workflow.sourceChecklist).toEqual(
+      expect.arrayContaining([
+        "docs/current/aelf_campaign_os_v0.2/docs/01_product_requirements_v0.2.md#Campaign 创建流程 v0.2",
+        "docs/current/aelf_campaign_os_v0.2/docs/09_delivery_checklist_v0.2.md",
+      ]),
+    );
   });
 
   it("derives seeded participant operations without live providers or reward distribution", () => {
