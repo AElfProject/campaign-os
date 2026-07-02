@@ -134,6 +134,11 @@ import type {
   ParticipationReadModel,
   ParticipantSnapshot,
   ParticipantTaskState,
+  PostCampaignCloseout,
+  PostCampaignCloseoutGate,
+  PostCampaignCloseoutOwnerRole,
+  PostCampaignCloseoutStatus,
+  PostCampaignRetrospective,
   ProviderAdapterReadinessContract,
   ProviderAffectedOutcome,
   ProviderEvidenceCategory,
@@ -6457,6 +6462,289 @@ export const createProjectCampaignCommandCenter = (
     launchConsoleCampaignBundles,
     portfolioCommercialReadiness,
     boundary: commandCenterBoundary,
+  };
+};
+
+const postCampaignCloseoutBoundary: LocalizedText = localized(
+  "Seeded/local retrospective only. No live analytics, no live AI provider, no real export file, no contract root or claim, no backend archive mutation, and no reward custody or distribution is executed.",
+  "仅 seeded/本地复盘。不接入实时 analytics 或真实 AI provider，不生成真实导出文件，不写入合约 root 或 claim，不执行后端归档变更，也不托管或发放奖励。",
+);
+
+const postCampaignAiRetrospectiveBoundary: LocalizedText = localized(
+  "AI retrospective is local report-card input for human review; it cannot change rules, approve winners, export files, or distribute rewards automatically.",
+  "AI 复盘仅是本地报告卡输入，必须人工审核；不会自动修改规则、批准 winners、导出文件或发奖。",
+);
+
+const closeoutStatusPriority: Record<PostCampaignCloseoutStatus, number> = {
+  blocked: 0,
+  review_required: 1,
+  local_only: 2,
+  ready: 3,
+};
+
+const statusFromPublishState = (state: PublishState): PostCampaignCloseoutStatus =>
+  state === "blocker" ? "blocked" : state === "warning" ? "review_required" : "ready";
+
+const statusFromAdvancedReadiness = (state: AdvancedAnalyticsReadinessState): PostCampaignCloseoutStatus =>
+  state === "blocked"
+    ? "blocked"
+    : state === "review_required"
+      ? "review_required"
+      : state === "local_only"
+        ? "local_only"
+        : "ready";
+
+const statusFromAiOptimizationAction = (state: AiOptimizationActionStatus): PostCampaignCloseoutStatus =>
+  state === "blocked" ? "blocked" : state === "review_required" ? "review_required" : "ready";
+
+const statusFromLifecycleOperation = (
+  state: CampaignLifecycleOperation["operationState"],
+): PostCampaignCloseoutStatus => {
+  if (state === "blocked") {
+    return "blocked";
+  }
+
+  if (state === "review_required") {
+    return "review_required";
+  }
+
+  return state === "not_applicable" ? "local_only" : "ready";
+};
+
+const createPostCampaignCloseoutGate = (gate: PostCampaignCloseoutGate): PostCampaignCloseoutGate => gate;
+
+const sortPostCampaignCloseoutGatesByPriority = (
+  gates: readonly PostCampaignCloseoutGate[],
+): PostCampaignCloseoutGate[] =>
+  [...gates].sort(
+    (left, right) => closeoutStatusPriority[left.status] - closeoutStatusPriority[right.status],
+  );
+
+const aggregateCloseoutStatus = (
+  gates: readonly PostCampaignCloseoutGate[],
+): PostCampaignCloseoutStatus =>
+  sortPostCampaignCloseoutGatesByPriority(gates)[0]?.status ?? "local_only";
+
+const createPostCampaignCloseoutSummary = (
+  gates: readonly PostCampaignCloseoutGate[],
+): PostCampaignCloseout["summary"] => {
+  const topGate = sortPostCampaignCloseoutGatesByPriority(gates)[0];
+
+  return {
+    totalGates: gates.length,
+    readyCount: gates.filter((gate) => gate.status === "ready").length,
+    reviewRequiredCount: gates.filter((gate) => gate.status === "review_required").length,
+    blockedCount: gates.filter((gate) => gate.status === "blocked").length,
+    localOnlyCount: gates.filter((gate) => gate.status === "local_only").length,
+    topGateId: topGate?.id ?? "",
+    topAction: topGate?.nextAction ?? localized("Review closeout evidence.", "审核 closeout 证据。"),
+  };
+};
+
+const ownerFromLifecycleOwner = (
+  ownerRole: CampaignLifecycleOperation["ownerRole"],
+): PostCampaignCloseoutOwnerRole =>
+  ownerRole === "contract_reviewer" ? "internal_operator" : ownerRole;
+
+const createPostCampaignRetrospective = ({
+  advancedAnalytics,
+  analyticsExport,
+  aiOptimization,
+  riskIntelligence,
+  status,
+}: {
+  advancedAnalytics: AdvancedAnalyticsReadinessSurface;
+  analyticsExport: AnalyticsExportDecision;
+  aiOptimization: AiOptimizationWorkflow;
+  riskIntelligence: RiskIntelligenceReviewSurface;
+  status: PostCampaignCloseoutStatus;
+}): PostCampaignRetrospective => {
+  const analyticsById = Object.fromEntries(analyticsExport.kpis.map((kpi) => [kpi.id, kpi]));
+  const winnerReport = aiOptimization.reports.find((report) => report.category === "winner_report");
+  const bossReport = aiOptimization.reports.find((report) => report.category === "boss_report");
+  const verifiedActions = analyticsById["verified-actions"];
+  const eligibleWinners = analyticsById["eligible-winners"];
+  const topRisk = riskIntelligence.dimensions.find((dimension) => dimension.reviewState === "blocked") ??
+    riskIntelligence.dimensions.find((dimension) => dimension.reviewState === "review_required");
+
+  return {
+    title: localized("Post-campaign AI retrospective", "活动后 AI 复盘"),
+    status,
+    generatedAt: winnerReport?.generatedAt ?? bossReport?.generatedAt ?? "seeded-local",
+    healthSummary: bossReport?.summary ?? aiOptimization.summary.bossSummary,
+    verifiedActionEvidence: localized(
+      `${verifiedActions?.label["en-US"] ?? "Verified actions"}: ${verifiedActions?.value ?? "0"}; main drop-off: ${analyticsExport.dropOffPoint["en-US"]}.`,
+      `${verifiedActions?.label["zh-CN"] ?? "有效行为"}：${verifiedActions?.value ?? "0"}；主要流失点：${analyticsExport.dropOffPoint["zh-CN"]}。`,
+    ),
+    winnerReportSummary: winnerReport
+      ? localized(
+          `Winner report: ${winnerReport.summary["en-US"]}`,
+          `Winner 报告：${winnerReport.summary["zh-CN"]}`,
+        )
+      : localized(
+          `Winner report: ${eligibleWinners?.value ?? analyticsExport.readyRows} eligible/export-ready winners remain a local review input.`,
+          `Winner 报告：${eligibleWinners?.value ?? analyticsExport.readyRows} 个合格/导出就绪 winners 仍是本地审核输入。`,
+        ),
+    riskPosture: topRisk
+      ? localized(
+          `${topRisk.label["en-US"]}: ${topRisk.rationale["en-US"]}`,
+          `${topRisk.label["zh-CN"]}：${topRisk.rationale["zh-CN"]}`,
+        )
+      : riskIntelligence.boundary,
+    nextIterationActions: [
+      aiOptimization.projectOwnerSummary.recommendedAction,
+      advancedAnalytics.summary.nextAction,
+      riskIntelligence.meaningfulAction.nextAction,
+    ],
+    humanReviewRequired: true,
+    boundary: postCampaignAiRetrospectiveBoundary,
+  };
+};
+
+export const createPostCampaignCloseout = (
+  campaign: CampaignShellDetail,
+): PostCampaignCloseout => {
+  const commandCenter = createProjectCampaignCommandCenter(campaign);
+  const riskIntelligence = createRiskIntelligenceReviewSurface(campaign);
+  const archiveOperation = commandCenter.lifecycleOperations.operations.find(
+    (operation) => operation.id === "archive-campaign",
+  );
+  const winnerReport = commandCenter.aiOptimization.reports.find(
+    (report) => report.category === "winner_report",
+  );
+  const winnerReportStatus = winnerReport?.actions
+    .map((action) => statusFromAiOptimizationAction(action.status))
+    .sort((left, right) => closeoutStatusPriority[left] - closeoutStatusPriority[right])[0] ??
+    "review_required";
+  const exportStatus: PostCampaignCloseoutStatus = commandCenter.analyticsExport.blockedRows > 0
+    ? "blocked"
+    : commandCenter.analyticsExport.reviewRequiredRows > 0
+      ? "review_required"
+      : "local_only";
+  const riskStatus: PostCampaignCloseoutStatus = riskIntelligence.summary.blockedCount > 0
+    ? "blocked"
+    : riskIntelligence.summary.reviewRequiredCount > 0 || riskIntelligence.summary.highSeverityCount > 0
+      ? "review_required"
+      : "ready";
+  const premiumReportStatuses = commandCenter.advancedAnalytics.premiumReports.map((report) =>
+    statusFromAdvancedReadiness(report.readiness)
+  );
+  const analyticsStatus = premiumReportStatuses.sort(
+    (left, right) => closeoutStatusPriority[left] - closeoutStatusPriority[right],
+  )[0] ?? "local_only";
+  const nextOptimizationStatus: PostCampaignCloseoutStatus =
+    commandCenter.aiOptimization.summary.blockedCount > 0
+      ? "blocked"
+      : commandCenter.aiOptimization.summary.reviewRequiredCount > 0
+        ? "review_required"
+        : "local_only";
+  const gates: PostCampaignCloseoutGate[] = [
+    createPostCampaignCloseoutGate({
+      id: "analytics-summary",
+      label: localized("Analytics summary", "数据复盘摘要"),
+      status: analyticsStatus,
+      ownerRole: "growth_lead",
+      evidence: localized(
+        `${commandCenter.advancedAnalytics.summary.premiumReadyReports}/${commandCenter.advancedAnalytics.premiumReports.length} premium reports are seeded-ready; ${commandCenter.analyticsExport.dropOffPoint["en-US"]} remains the main drop-off.`,
+        `${commandCenter.advancedAnalytics.summary.premiumReadyReports}/${commandCenter.advancedAnalytics.premiumReports.length} 个 premium reports 已 seeded 就绪；${commandCenter.analyticsExport.dropOffPoint["zh-CN"]} 仍是主要流失点。`,
+      ),
+      reason: commandCenter.advancedAnalytics.boundary,
+      nextAction: commandCenter.advancedAnalytics.summary.nextAction,
+      source: "analytics",
+    }),
+    createPostCampaignCloseoutGate({
+      id: "ai-winner-report",
+      label: localized("AI winner report review", "AI winner 报告审核"),
+      status: winnerReportStatus,
+      ownerRole: "risk_reviewer",
+      evidence: winnerReport?.summary ?? localized("Winner report is not available in the seeded workflow.", "Seeded 工作流中暂无 winner report。"),
+      reason: postCampaignAiRetrospectiveBoundary,
+      nextAction: winnerReport?.actions[0]?.nextAction ?? commandCenter.aiOptimization.summary.nextAction,
+      source: "ai_report",
+    }),
+    createPostCampaignCloseoutGate({
+      id: "export-readiness",
+      label: localized("Export readiness", "导出 readiness"),
+      status: exportStatus,
+      ownerRole: "export_reviewer",
+      evidence: localized(
+        `${commandCenter.analyticsExport.readyRows} ready / ${commandCenter.analyticsExport.reviewRequiredRows} review / ${commandCenter.analyticsExport.blockedRows} blocked rows in ${commandCenter.analyticsExport.exportBatchId}.`,
+        `${commandCenter.analyticsExport.exportBatchId} 中有 ${commandCenter.analyticsExport.readyRows} 个就绪 / ${commandCenter.analyticsExport.reviewRequiredRows} 个需审核 / ${commandCenter.analyticsExport.blockedRows} 个阻断行。`,
+      ),
+      reason: commandCenter.analyticsExport.boundary,
+      nextAction: commandCenter.campaigns.find((item) => item.status === "ended")?.nextActionDetail ??
+        localized("Review export rows before closeout.", "Closeout 前审核导出行。"),
+      source: "export",
+    }),
+    createPostCampaignCloseoutGate({
+      id: "risk-review",
+      label: localized("Risk review", "风险审核"),
+      status: riskStatus,
+      ownerRole: "risk_reviewer",
+      evidence: localized(
+        `${riskIntelligence.summary.blockedCount} blocked / ${riskIntelligence.summary.reviewRequiredCount} review-required risk dimensions.`,
+        `${riskIntelligence.summary.blockedCount} 个阻断 / ${riskIntelligence.summary.reviewRequiredCount} 个需审核风险维度。`,
+      ),
+      reason: riskIntelligence.boundary,
+      nextAction: riskIntelligence.meaningfulAction.nextAction,
+      source: "risk",
+    }),
+    createPostCampaignCloseoutGate({
+      id: "reward-responsibility",
+      label: localized("Reward responsibility acknowledgement", "奖励责任确认"),
+      status: "ready",
+      ownerRole: "project_owner",
+      evidence: rewardBoundary,
+      reason: localized(
+        "Closeout keeps final reward fulfillment with the campaign project.",
+        "Closeout 仍保持最终奖励履约由活动项目方负责。",
+      ),
+      nextAction: localized(
+        "Confirm project-owned reward fulfillment after winner review.",
+        "Winner 审核后确认项目方负责奖励履约。",
+      ),
+      source: "reward",
+    }),
+    createPostCampaignCloseoutGate({
+      id: "final-report-archive",
+      label: localized("Final report archive", "最终报告归档"),
+      status: archiveOperation ? statusFromLifecycleOperation(archiveOperation.operationState) : "local_only",
+      ownerRole: archiveOperation ? ownerFromLifecycleOwner(archiveOperation.ownerRole) : "internal_operator",
+      evidence: archiveOperation?.reason ?? commandCenter.lifecycleOperations.boundary,
+      reason: commandCenter.lifecycleOperations.boundary,
+      nextAction: archiveOperation?.nextAction ?? commandCenter.lifecycleOperations.nextAction,
+      source: "lifecycle",
+    }),
+    createPostCampaignCloseoutGate({
+      id: "next-campaign-recommendation",
+      label: localized("Next-campaign recommendation", "下一轮活动建议"),
+      status: nextOptimizationStatus,
+      ownerRole: "growth_lead",
+      evidence: commandCenter.aiOptimization.projectOwnerSummary.summary,
+      reason: commandCenter.aiOptimization.boundary,
+      nextAction: commandCenter.aiOptimization.projectOwnerSummary.nextAction,
+      source: "optimization",
+    }),
+  ];
+  const status = aggregateCloseoutStatus(gates);
+  const summary = createPostCampaignCloseoutSummary(gates);
+  const aiRetrospective = createPostCampaignRetrospective({
+    advancedAnalytics: commandCenter.advancedAnalytics,
+    aiOptimization: commandCenter.aiOptimization,
+    analyticsExport: commandCenter.analyticsExport,
+    riskIntelligence,
+    status,
+  });
+
+  return {
+    campaignId: campaign.id,
+    status,
+    summary,
+    gates,
+    aiRetrospective,
+    rewardBoundary,
+    nextAction: summary.topAction,
+    boundary: postCampaignCloseoutBoundary,
   };
 };
 

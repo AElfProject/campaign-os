@@ -1569,6 +1569,71 @@ export interface CampaignSettingsReadiness {
   boundary: LocalizedText;
 }
 
+export type PostCampaignCloseoutStatus =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "local_only";
+export type PostCampaignCloseoutGateSource =
+  | "analytics"
+  | "ai_report"
+  | "export"
+  | "risk"
+  | "reward"
+  | "lifecycle"
+  | "optimization";
+export type PostCampaignCloseoutOwnerRole =
+  | "project_owner"
+  | "internal_operator"
+  | "risk_reviewer"
+  | "export_reviewer"
+  | "growth_lead";
+
+export interface PostCampaignCloseoutGate {
+  id: string;
+  label: LocalizedText;
+  status: PostCampaignCloseoutStatus;
+  ownerRole: PostCampaignCloseoutOwnerRole;
+  evidence: LocalizedText;
+  reason: LocalizedText;
+  nextAction: LocalizedText;
+  source: PostCampaignCloseoutGateSource;
+}
+
+export interface PostCampaignCloseoutSummary {
+  totalGates: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  localOnlyCount: number;
+  topGateId: string;
+  topAction: LocalizedText;
+}
+
+export interface PostCampaignRetrospective {
+  title: LocalizedText;
+  status: PostCampaignCloseoutStatus;
+  generatedAt: string;
+  healthSummary: LocalizedText;
+  verifiedActionEvidence: LocalizedText;
+  winnerReportSummary: LocalizedText;
+  riskPosture: LocalizedText;
+  nextIterationActions: LocalizedText[];
+  humanReviewRequired: boolean;
+  boundary: LocalizedText;
+}
+
+export interface PostCampaignCloseout {
+  campaignId: string;
+  status: PostCampaignCloseoutStatus;
+  summary: PostCampaignCloseoutSummary;
+  gates: PostCampaignCloseoutGate[];
+  aiRetrospective: PostCampaignRetrospective;
+  rewardBoundary: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
 export interface RiskSignal {
   id: string;
   label: LocalizedText;
