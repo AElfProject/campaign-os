@@ -10,6 +10,7 @@ import {
   getLocalizedText,
   type AelfWebLoginAdapterLiveEvidenceStatus,
   type AelfWebLoginAdapterReadiness,
+  type AiOpsReportHandoffStatus,
   type AiOptimizationActionStatus,
   type AiOptimizationMetricTone,
   type CampaignShellDetail,
@@ -399,6 +400,22 @@ const aiOptimizationStatusLabel = (
   return labels[status];
 };
 
+const aiReportHandoffState = (status: AiOpsReportHandoffStatus) =>
+  status === "blocked" ? "blocker" : status === "review_required" ? "warning" : "ready";
+
+const aiReportHandoffLabel = (
+  status: AiOpsReportHandoffStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<AiOpsReportHandoffStatus, string> = {
+    blocked: copy.blocked,
+    ready_to_review: copy.readyToReview,
+    review_required: copy.reviewRequired,
+  };
+
+  return labels[status];
+};
+
 const providerReadinessState = (readiness: string) =>
   readiness === "blocked"
     ? "blocker"
@@ -577,6 +594,7 @@ export const AdminOpsPanel = ({
   const exportReadiness = createExportConfirmationReadinessGate(campaign);
   const exportArtifact = createExportArtifact(campaign.exportPreview, "csv");
   const aiOptimization = adminOps.aiOptimization;
+  const aiReportHandoff = adminOps.aiReportHandoff;
   const advancedAnalytics = adminOps.advancedAnalytics;
   const aiContentPack = adminOps.aiContentPack;
   const templateGovernance = adminOps.templateGovernance;
@@ -3033,6 +3051,99 @@ export const AdminOpsPanel = ({
                   </p>
                 </div>
               ))}
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.aiReportHandoff} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <h3 style={{ fontSize: 20, margin: 0 }}>{copy.aiReportHandoff}</h3>
+            <p style={mutedTextStyle}>{copy.aiReportHandoffSubtitle}</p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${aiReportHandoff.summary.totalHandoffs} ${copy.totalHandoffs}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${aiReportHandoff.summary.readyToReviewCount} ${copy.readyToReview}`}
+              state="ready"
+            />
+            <PublishStateBadge
+              label={`${aiReportHandoff.summary.reviewRequiredCount} ${copy.reviewRequired}`}
+              state={aiReportHandoff.summary.reviewRequiredCount > 0 ? "warning" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${aiReportHandoff.summary.blockedCount} ${copy.blocked}`}
+              state={aiReportHandoff.summary.blockedCount > 0 ? "blocker" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.localOnlyBoundary}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {getLocalizedText(aiReportHandoff.boundary, locale)}
+          </p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.nextAction}: {getLocalizedText(aiReportHandoff.summary.topNextAction, locale)}
+          </p>
+        </div>
+        <div style={gridStyle}>
+          {aiReportHandoff.handoffs.map((handoff) => (
+            <article key={handoff.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.category}: {readableCode(handoff.category)}</p>
+                  <strong>{getLocalizedText(handoff.title, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={aiReportHandoffLabel(handoff.reviewState, copy)}
+                  state={aiReportHandoffState(handoff.reviewState)}
+                />
+              </div>
+              <p style={mutedTextStyle}>{getLocalizedText(handoff.summary, locale)}</p>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.generatedAt}</p>
+                  <p style={mutedTextStyle}>{handoff.generatedAt}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.ownerRole}</p>
+                  <p style={mutedTextStyle}>{readableCode(handoff.ownerRole)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.reviewState}</p>
+                  <p style={mutedTextStyle}>{aiReportHandoffLabel(handoff.reviewState, copy)}</p>
+                </div>
+              </div>
+              <div style={stackStyle}>
+                <p style={labelStyle}>{copy.sourceMetrics}</p>
+                <span style={sourceMetricListStyle}>
+                  {handoff.sourceMetrics.map((metric) => (
+                    <span
+                      key={metric.id}
+                      style={{
+                        ...sourceMetricChipStyle,
+                        ...sourceMetricToneStyles[metric.tone],
+                      }}
+                      title={`${getLocalizedText(metric.label, locale)}: ${metric.value}`}
+                    >
+                      {getLocalizedText(metric.label, locale)}: {metric.value}
+                    </span>
+                  ))}
+                </span>
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.sourceEvidence}: {getLocalizedText(handoff.sourceEvidence, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.guardrail}: {getLocalizedText(handoff.guardrail, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(handoff.nextAction, locale)}
+              </p>
             </article>
           ))}
         </div>

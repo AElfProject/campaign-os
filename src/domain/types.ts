@@ -1932,6 +1932,43 @@ export interface AiOptimizationWorkflow {
   boundary: LocalizedText;
 }
 
+export type AiOpsReportHandoffStatus =
+  | "ready_to_review"
+  | "review_required"
+  | "blocked";
+
+export interface AiOpsReportHandoff {
+  id: string;
+  reportId: string;
+  actionId: string;
+  category: AiOptimizationReportCategory;
+  title: LocalizedText;
+  summary: LocalizedText;
+  generatedAt: string;
+  ownerRole: AiOptimizationOwnerRole;
+  reviewState: AiOpsReportHandoffStatus;
+  sourceEvidence: LocalizedText;
+  sourceMetrics: AiOptimizationSourceMetric[];
+  guardrail: LocalizedText;
+  nextAction: LocalizedText;
+  requiresHumanReview: boolean;
+}
+
+export interface AiOpsReportHandoffSummary {
+  totalHandoffs: number;
+  readyToReviewCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  topNextAction: LocalizedText;
+}
+
+export interface AiOpsReportHandoffSurface {
+  campaignId: string;
+  summary: AiOpsReportHandoffSummary;
+  handoffs: AiOpsReportHandoff[];
+  boundary: LocalizedText;
+}
+
 export interface EcosystemMetricRow {
   product: EcosystemProduct;
   verifiedActions: number;
@@ -2401,6 +2438,7 @@ export interface AdminOpsReadModel {
   launchConsoleCampaignBundles: LaunchConsoleCampaignBundleSurface;
   aiReports: AiOpsReportCard[];
   aiOptimization: AiOptimizationWorkflow;
+  aiReportHandoff: AiOpsReportHandoffSurface;
   ecosystemMetrics: EcosystemMetricRow[];
   exportBatch: ExportBatchSummary;
   lifecycleOperations: CampaignLifecycleOperations;
