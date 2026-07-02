@@ -20,6 +20,7 @@ import {
   createExportConfirmationReadinessGate,
   createExportArtifact,
   createExportPreview,
+  createParticipantWorkspaceReadModel,
   createParticipationReadModel,
   createProviderEvidenceRegistry,
   createCampaignShareCardReadiness,
@@ -1632,6 +1633,76 @@ describe("Campaign OS domain foundation", () => {
     );
     expect(participation.referral.antiFarmRule["en-US"]).toContain("Raw signups do not count");
     expect(participation.rewardBoundary["en-US"]).toContain("Export winners does not distribute rewards");
+  });
+
+  it("creates a deterministic participant workspace for tasks, points, and referral", () => {
+    const [, eoaParticipant] = campaignDetail.participants;
+    const firstWorkspace = createParticipantWorkspaceReadModel(campaignDetail, eoaParticipant);
+    const secondWorkspace = createParticipantWorkspaceReadModel(campaignDetail, eoaParticipant);
+
+    expect(firstWorkspace).toEqual(secondWorkspace);
+    expect(firstWorkspace).toMatchObject({
+      campaignId: "camp-awaken-sprint",
+      participantId: "part-eoa-001",
+      walletAddress: eoaParticipant.walletAddress,
+      summary: {
+        completedRequiredTasks: 1,
+        totalRequiredTasks: 2,
+        completedTasks: 1,
+        totalTasks: 5,
+        currentPoints: 40,
+        pointsThreshold: 160,
+        participantRank: 48,
+        eligibleRankCutoff: 100,
+        qualifiedInvitees: 2,
+        referralPoints: 40,
+        riskFlagCount: 1,
+        reviewRequired: true,
+      },
+    });
+    expect(firstWorkspace.summary.requiredProgressPercent).toBe(50);
+    expect(firstWorkspace.summary.totalProgressPercent).toBe(20);
+    expect(firstWorkspace.taskBuckets.completed.map((task) => task.taskId)).toEqual(["task-connect-wallet"]);
+    expect(firstWorkspace.taskBuckets.pending.map((task) => task.taskId)).toContain("task-bridge");
+    expect(firstWorkspace.taskBuckets.review.map((task) => task.taskId)).toEqual(["task-social", "task-agent-review"]);
+    expect(firstWorkspace.taskBuckets.missingRequired.map((task) => task.taskId)).toEqual(["task-bridge"]);
+    expect(firstWorkspace.taskBuckets.missingRequired[0]).toMatchObject({
+      pointsAwarded: 0,
+      pointsAvailable: 120,
+      evidenceSource: "aelfscan",
+      missingRequired: true,
+    });
+    expect(firstWorkspace.points).toMatchObject({
+      currentPoints: 40,
+      pointsThreshold: 160,
+      participantRank: 48,
+      eligibleRankCutoff: 100,
+      progressPercent: 50,
+      ledgerState: "seeded_preview",
+    });
+    expect(firstWorkspace.points.boundary["en-US"]).toContain("not settled by a live points ledger");
+    expect(firstWorkspace.referral).toMatchObject({
+      rawInvites: 9,
+      qualifiedInvitees: 2,
+      referralPoints: 40,
+      riskFlags: ["referral_velocity_review"],
+    });
+    expect(firstWorkspace.referral.antiFarmRule["en-US"]).toContain("Raw signups do not count");
+    expect(firstWorkspace.referral.boundary["en-US"]).toContain("no live Referral registry write");
+    expect(firstWorkspace.nextActions.map((action) => action.id)).toEqual([
+      "complete-missing-required-task",
+      "review-task-status",
+      "wait-for-risk-review",
+    ]);
+    expect(firstWorkspace.nextActions[0]).toMatchObject({
+      priority: "primary",
+      relatedTaskId: "task-bridge",
+    });
+    expect(firstWorkspace.boundary["en-US"]).toContain("not a live ledger");
+    expect(firstWorkspace.boundary["en-US"]).toContain("no Referral backend");
+    expect(firstWorkspace.boundary["en-US"]).toContain("reward distribution is executed");
+    expect(firstWorkspace.boundary["en-US"]).not.toContain("private key");
+    expect(firstWorkspace.rewardBoundary["en-US"]).toContain("Export winners does not distribute rewards");
   });
 
   it("derives deterministic ecosystem next actions for Pay, Forecast, and Portfolio", () => {
