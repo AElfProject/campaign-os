@@ -616,7 +616,13 @@ const createDiscoverySummary = (
 ): CampaignDiscoveryReadModel["summary"] => ({
   totalCampaigns: items.length,
   liveCount: items.filter((item) => item.status === "live").length,
-  scheduledCount: items.filter((item) => item.status === "scheduled" || item.status === "draft").length,
+  scheduledCount: items.filter(
+    (item) =>
+      item.status === "scheduled" ||
+      item.status === "draft" ||
+      item.status === "ai_draft" ||
+      item.status === "human_review",
+  ).length,
   endedCount: items.filter((item) =>
     item.status === "ended" || item.status === "exported" || item.status === "archived"
   ).length,

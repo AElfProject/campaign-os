@@ -342,10 +342,12 @@ describe("API Skill Contract registry", () => {
       expect(createCampaignFields.get(optionalField)?.required).toBe(false);
     }
     expect(createCampaignFields.get("status")).toMatchObject({
-      example: "draft,scheduled,live,paused,ended,exported,archived",
+      example: "draft,ai_draft,human_review,scheduled,live,paused,ended,exported,archived",
       group: "campaign",
       required: true,
     });
+    expect(createCampaignFields.get("status")?.description["en-US"]).toContain("ai_draft");
+    expect(createCampaignFields.get("status")?.description["en-US"]).toContain("human_review");
 
     expect([...taskGenerationFields.keys()]).toEqual(
       expect.arrayContaining([
