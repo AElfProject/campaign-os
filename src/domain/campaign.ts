@@ -72,6 +72,9 @@ import type {
   ContractTransparencyLaneId,
   ContractTransparencyMonitor,
   ContractTransparencyReadiness,
+  CompetitorWatchReviewState,
+  CompetitorWatchSignal,
+  CompetitorWatchSurface,
   DeliveryChecklistGroup,
   DeliveryChecklistGroupId,
   DeliveryChecklistItem,
@@ -6524,6 +6527,169 @@ export const createAiReportHandoffSurface = (
   };
 };
 
+const competitorWatchText = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": zhTW,
+});
+
+const competitorWatchBoundary: LocalizedText = competitorWatchText(
+  "Seeded/local competitor watch only. No live scraping, no live AI provider, no analytics write, no wallet action, no contract transaction, no export file, no reward custody, and no reward distribution is executed.",
+  "仅 seeded/本地竞品观察。不会执行实时抓取、实时 AI provider、analytics 写入、钱包动作、合约交易、导出文件、奖励托管或奖励发放。",
+);
+
+const createCompetitorWatchSignals = (
+  campaign: CampaignShellDetail,
+): CompetitorWatchSignal[] => {
+  const exportBatch = createExportBatch(campaign);
+  const analytics = createAnalytics(campaign, exportBatch);
+  const verifiedActions = analytics.find((kpi) => kpi.id === "verified-actions")?.value ?? "0";
+  const walletSplit = createWalletSplit(campaign.participants);
+  const aaWallets = walletSplit.find((split) => split.label === "AA")?.count ?? 0;
+  const eoaWallets = walletSplit.find((split) => split.label === "EOA")?.count ?? 0;
+  const readyRows = exportBatch.rows.filter((row) => row.rowStatus === "ready").length;
+  const reviewRows = exportBatch.rows.filter((row) => row.rowStatus === "review_required").length;
+
+  return [
+    {
+      id: "generic-quest-platform-positioning",
+      category: "generic_quest_platform",
+      platformLabel: competitorWatchText("Generic quest growth platforms", "通用任务增长平台"),
+      observedPattern: competitorWatchText(
+        "Generic quest tools emphasize campaign creation and broad traffic, but can drift toward low-quality social completion loops.",
+        "通用任务工具强调活动创建和泛流量，但容易滑向低质量社交完成循环。",
+      ),
+      aelfImplication: competitorWatchText(
+        "Position Campaign OS around aelf-native wallet onboarding, verified ecosystem actions, and project-owned rewards instead of generic follow-and-repost mechanics.",
+        "Campaign OS 应围绕 aelf 原生钱包 onboarding、可验证生态行为和项目方奖励责任定位，而不是泛关注转发机制。",
+      ),
+      differentiators: ["wallet_support", "verified_actions", "project_owned_rewards"],
+      evidenceBasis: competitorWatchText(
+        `${verifiedActions} verified actions and ${readyRows}/${exportBatch.rows.length} ready export rows are available in the seeded review surface.`,
+        `Seeded 审核面已有 ${verifiedActions} 个有效行为，以及 ${readyRows}/${exportBatch.rows.length} 条可导出行。`,
+      ),
+      ownerRole: "growth_lead",
+      reviewState: "ready",
+      guardrail: competitorWatchBoundary,
+      nextAction: competitorWatchText(
+        "Use this positioning in operator messaging without creating live external campaign integrations.",
+        "可将该定位用于运营口径，但不要创建实时外部活动集成。",
+      ),
+    },
+    {
+      id: "onchain-activation-quality",
+      category: "onchain_activation",
+      platformLabel: competitorWatchText("On-chain activation platforms", "链上激励激活平台"),
+      observedPattern: competitorWatchText(
+        "On-chain activation products focus on measurable actions, reward budgets, and ROI loops.",
+        "链上激活产品聚焦可衡量行为、奖励预算和 ROI 闭环。",
+      ),
+      aelfImplication: competitorWatchText(
+        "Keep eBridge, Awaken, Forest, DAO, Pay, Forecast, and Portfolio conversion visible before any premium analytics or winner-export decision.",
+        "在任何 premium analytics 或 winners 导出决定前，保持 eBridge、Awaken、Forest、DAO、Pay、Forecast 和 Portfolio 转化可见。",
+      ),
+      differentiators: ["ecosystem_conversion", "verified_actions", "user_quality"],
+      evidenceBasis: competitorWatchText(
+        `${campaign.ecosystemMetrics.length} ecosystem product rows and ${reviewRows} export-review rows remain local review inputs.`,
+        `${campaign.ecosystemMetrics.length} 个生态产品行和 ${reviewRows} 条导出复核行仍是本地审核输入。`,
+      ),
+      ownerRole: "internal_operator",
+      reviewState: reviewRows > 0 ? "review_required" : "ready",
+      guardrail: competitorWatchBoundary,
+      nextAction: competitorWatchText(
+        "Review ecosystem conversion quality before changing campaign rules or export messaging.",
+        "修改活动规则或导出口径前，先审核生态转化质量。",
+      ),
+    },
+    {
+      id: "community-intelligence-contributors",
+      category: "community_intelligence",
+      platformLabel: competitorWatchText("Community intelligence systems", "社区智能与贡献者系统"),
+      observedPattern: competitorWatchText(
+        "Community intelligence patterns emphasize contributor quality, reputation, and signal review over raw task volume.",
+        "社区智能模式强调贡献者质量、声誉和信号审核，而不是单纯任务量。",
+      ),
+      aelfImplication: competitorWatchText(
+        "Use wallet mix, cohort quality, risk review, and AI handoff evidence to describe real user quality without exposing private risk mechanics.",
+        "使用钱包结构、cohort 质量、风险审核和 AI handoff 证据描述真实用户质量，同时不暴露内部风控机制。",
+      ),
+      differentiators: ["wallet_support", "user_quality", "project_owned_rewards"],
+      evidenceBasis: competitorWatchText(
+        `${aaWallets} AA wallets and ${eoaWallets} EOA wallets are represented in the seeded wallet split.`,
+        `Seeded 钱包拆分已覆盖 ${aaWallets} 个 AA 钱包和 ${eoaWallets} 个 EOA 钱包。`,
+      ),
+      ownerRole: "risk_reviewer",
+      reviewState: "review_required",
+      guardrail: competitorWatchBoundary,
+      nextAction: competitorWatchText(
+        "Keep user-quality language aggregated and route risky interpretations to manual review.",
+        "保持用户质量口径为聚合表达，并将高风险解读交由人工审核。",
+      ),
+    },
+    {
+      id: "growth-infrastructure-ai-ops",
+      category: "growth_infrastructure",
+      platformLabel: competitorWatchText("Growth infrastructure suites", "增长基础设施套件"),
+      observedPattern: competitorWatchText(
+        "Growth suites bundle analytics, content, AI summaries, and API surfaces around campaign operations.",
+        "增长套件会围绕活动运营组合 analytics、内容、AI 摘要和 API 能力。",
+      ),
+      aelfImplication: competitorWatchText(
+        "Campaign OS can differentiate through AI Ops handoffs, local export safety, and contract/off-chain transparency without owning reward distribution.",
+        "Campaign OS 可通过 AI Ops handoff、本地导出安全和合约/链下透明度形成差异，同时不承担发奖责任。",
+      ),
+      differentiators: ["ecosystem_conversion", "user_quality", "project_owned_rewards"],
+      evidenceBasis: competitorWatchText(
+        `${campaign.aiOpsReports.length} seeded AI Ops reports and local export safety gates are available for review.`,
+        `${campaign.aiOpsReports.length} 个 seeded AI Ops 报告和本地导出安全门禁可供审核。`,
+      ),
+      ownerRole: "project_owner",
+      reviewState: "blocked",
+      guardrail: competitorWatchBoundary,
+      nextAction: competitorWatchText(
+        "Do not package this as a paid or external report until owner, legal, and live-evidence review exists.",
+        "在负责人、法务和真实证据审核就绪前，不要将其包装成付费或外部报告。",
+      ),
+    },
+  ];
+};
+
+const competitorWatchStateRank: Record<CompetitorWatchReviewState, number> = {
+  blocked: 0,
+  review_required: 1,
+  ready: 2,
+};
+
+export const createCompetitorWatchSurface = (
+  campaign: CampaignShellDetail,
+): CompetitorWatchSurface => {
+  const signals = createCompetitorWatchSignals(campaign);
+  const differentiators = new Set(signals.flatMap((signal) => signal.differentiators));
+  const topSignal = [...signals].sort(
+    (left, right) => competitorWatchStateRank[left.reviewState] - competitorWatchStateRank[right.reviewState],
+  )[0];
+  const fallbackNextAction = competitorWatchText(
+    "Review seeded competitor watch signals.",
+    "审核 seeded 竞品观察信号。",
+  );
+
+  return {
+    campaignId: campaign.id,
+    summary: {
+      totalSignals: signals.length,
+      readyCount: signals.filter((signal) => signal.reviewState === "ready").length,
+      reviewRequiredCount: signals.filter((signal) => signal.reviewState === "review_required").length,
+      blockedCount: signals.filter((signal) => signal.reviewState === "blocked").length,
+      differentiatorCount: differentiators.size,
+      topSignalId: topSignal?.id ?? "",
+      topNextAction: topSignal?.nextAction ?? fallbackNextAction,
+    },
+    signals,
+    boundary: competitorWatchBoundary,
+    nextAction: topSignal?.nextAction ?? fallbackNextAction,
+  };
+};
+
 export const createProjectCampaignCommandCenter = (
   campaign: CampaignShellDetail,
 ): ProjectCampaignCommandCenter => {
@@ -10967,6 +11133,7 @@ export const createAdminOpsReadModel = (
   const advancedAnalytics = createAdvancedAnalyticsReadiness(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const aiReportHandoff = createAiReportHandoffSurface(aiOptimization);
+  const competitorWatch = createCompetitorWatchSurface(campaign);
   const walletProviderQaGate = createWalletProviderQaReadinessGate(campaign.walletSessions);
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
@@ -10997,6 +11164,7 @@ export const createAdminOpsReadModel = (
     aiReports: campaign.aiOpsReports,
     aiOptimization,
     aiReportHandoff,
+    competitorWatch,
     ecosystemMetrics: campaign.ecosystemMetrics,
     exportBatch,
     lifecycleOperations,

@@ -2716,6 +2716,79 @@ describe("Campaign OS domain foundation", () => {
     }
   });
 
+  it("derives local-only competitor watch signals without exposing sensitive controls", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const competitorWatch = adminOps.competitorWatch;
+    const readyCount = competitorWatch.signals.filter((signal) => signal.reviewState === "ready").length;
+    const reviewRequiredCount = competitorWatch.signals.filter(
+      (signal) => signal.reviewState === "review_required",
+    ).length;
+    const blockedCount = competitorWatch.signals.filter((signal) => signal.reviewState === "blocked").length;
+    const differentiators = new Set(competitorWatch.signals.flatMap((signal) => signal.differentiators));
+    const localizedFields = [
+      competitorWatch.boundary,
+      competitorWatch.nextAction,
+      competitorWatch.summary.topNextAction,
+      ...competitorWatch.signals.flatMap((signal) => [
+        signal.platformLabel,
+        signal.observedPattern,
+        signal.aelfImplication,
+        signal.evidenceBasis,
+        signal.guardrail,
+        signal.nextAction,
+      ]),
+    ];
+    const serialized = JSON.stringify(competitorWatch).toLowerCase();
+
+    expect(competitorWatch.campaignId).toBe(campaignDetail.id);
+    expect(competitorWatch.signals.map((signal) => signal.category)).toEqual([
+      "generic_quest_platform",
+      "onchain_activation",
+      "community_intelligence",
+      "growth_infrastructure",
+    ]);
+    expect(competitorWatch.summary).toMatchObject({
+      totalSignals: competitorWatch.signals.length,
+      readyCount,
+      reviewRequiredCount,
+      blockedCount,
+      differentiatorCount: differentiators.size,
+    });
+    expect(competitorWatch.summary.topSignalId).toBe("growth-infrastructure-ai-ops");
+    expect([...differentiators].sort()).toEqual([
+      "ecosystem_conversion",
+      "project_owned_rewards",
+      "user_quality",
+      "verified_actions",
+      "wallet_support",
+    ]);
+    expect(competitorWatch.boundary["en-US"]).toContain("No live scraping");
+    expect(competitorWatch.boundary["en-US"]).toContain("no live AI provider");
+    expect(competitorWatch.boundary["en-US"]).toContain("no reward distribution");
+
+    for (const localizedText of localizedFields) {
+      for (const locale of supportedLocales) {
+        expect(localizedText[locale]).not.toHaveLength(0);
+      }
+    }
+
+    for (const forbidden of [
+      "private key",
+      "seed phrase",
+      "token",
+      "cookie",
+      "password",
+      "credential",
+      "ip address",
+      "raw device",
+      "private threshold",
+      "scraped page",
+      "paid data feed",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
   it("keeps Admin/Ops ecosystem metrics and export evidence complete", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
 
