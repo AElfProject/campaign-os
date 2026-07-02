@@ -163,6 +163,10 @@ import type {
   ParticipantOperationsExportStatus,
   ParticipantOperationsReadModel,
   ParticipantOperationsRow,
+  PointsRankingReferralLaneId,
+  PointsRankingReferralReadinessLane,
+  PointsRankingReferralReadinessState,
+  PointsRankingReferralServiceReadiness,
   ParticipationReadModel,
   ParticipantSnapshot,
   ParticipantTaskState,
@@ -6776,6 +6780,204 @@ export const createAiOpsKpiAdoptionConsole = (
   };
 };
 
+const pointsRankingReferralBoundary: LocalizedText = localized(
+  "No live points ledger, no live Referral backend, no Pixiepoints/backend ledger write, no contract write, no claim, and no reward distribution is executed. This surface is seeded/local service readiness for Project/Admin review only.",
+  "不接入实时积分账本，不接入实时 Referral backend，不写入 Pixiepoints/backend ledger，不写合约、不 claim、不发放奖励。该 surface 仅用于 Project/Admin 审核 seeded/本地 service readiness。",
+  "No live points ledger, no live Referral backend, no Pixiepoints/backend ledger write, no contract write, no claim, and no reward distribution is executed. This surface is seeded/local service readiness for Project/Admin review only.",
+);
+
+const pointsRankingReferralReadinessPriority: Record<
+  PointsRankingReferralReadinessState,
+  number
+> = {
+  blocked: 0,
+  review_required: 1,
+  local_only: 2,
+  ready: 3,
+};
+
+const createPointsRankingReferralLane = (
+  lane: PointsRankingReferralReadinessLane,
+): PointsRankingReferralReadinessLane => lane;
+
+const firstPointsRankingReferralAction = (
+  lanes: readonly PointsRankingReferralReadinessLane[],
+): PointsRankingReferralReadinessLane =>
+  [...lanes].sort(
+    (left, right) =>
+      pointsRankingReferralReadinessPriority[left.readiness] -
+      pointsRankingReferralReadinessPriority[right.readiness],
+  )[0] ?? lanes[0];
+
+export const createPointsRankingReferralServiceReadiness = (
+  campaign: CampaignShellDetail,
+): PointsRankingReferralServiceReadiness => {
+  const leaderboard = createLeaderboardReadModel(campaign, "referral");
+  const participantOperations = createParticipantOperationsReadModel(campaign);
+  const totalRawInvites = campaign.participants.reduce(
+    (count, participant) => count + (participant.referralSummary?.invitedCount ?? 0),
+    0,
+  );
+  const totalQualifiedInvitees = campaign.participants.reduce(
+    (count, participant) => count + (participant.referralSummary?.qualifiedInvitees ?? 0),
+    0,
+  );
+  const totalReferralPoints = campaign.participants.reduce(
+    (count, participant) => count + (participant.referralSummary?.referralPoints ?? 0),
+    0,
+  );
+  const totalSeededPoints = campaign.participants.reduce(
+    (count, participant) => count + participant.totalPoints,
+    0,
+  );
+  const topReferralRow = leaderboard.rows[0];
+  const referralPolicies = campaign.participants
+    .map((participant) => participant.referralSummary?.antiFarmRule)
+    .filter((rule): rule is LocalizedText => Boolean(rule));
+  const antiFarmRule = referralPolicies[0] ?? localized(
+    "Raw signups do not count until invitees complete required verification.",
+    "Raw signups 在被邀请人完成必需验证前不计入奖励。",
+  );
+
+  const lanes: PointsRankingReferralReadinessLane[] = [
+    createPointsRankingReferralLane({
+      id: "points-ledger",
+      label: localized("Points ledger", "积分账本", "Points ledger"),
+      description: localized(
+        "Seeded points are readable for operator review before any production ledger exists.",
+        "在真实生产账本存在前，operator 可读取 seeded 积分用于审核。",
+      ),
+      readiness: "local_only",
+      ownerRole: "internal_operator",
+      metricLabel: localized("Seeded points", "Seeded 积分", "Seeded points"),
+      metricValue: String(totalSeededPoints),
+      sourceSurface: localized(
+        "Participant operations and export preview rows",
+        "参与者运营与导出预览行",
+      ),
+      evidence: localized(
+        `${campaign.participants.length} seeded participants expose ${totalSeededPoints} local points; ${participantOperations.summary.exportReadyParticipants} are export-ready review rows.`,
+        `${campaign.participants.length} 个 seeded 参与者展示 ${totalSeededPoints} 本地积分；${participantOperations.summary.exportReadyParticipants} 行已进入导出就绪审核。`,
+      ),
+      nextAction: localized(
+        "Confirm the points schema before handing a write path to Pixiepoints/backend ledger.",
+        "交接 Pixiepoints/backend ledger 写入路径前，先确认积分 schema。",
+      ),
+      boundary: localized(
+        "Local read model only; no live points ledger, settlement, contract write, or reward distribution is executed.",
+        "仅本地 read model；不接入实时积分账本、不结算、不写合约、不发放奖励。",
+      ),
+    }),
+    createPointsRankingReferralLane({
+      id: "ranking",
+      label: localized("Ranking", "Ranking", "Ranking"),
+      description: localized(
+        "Off-chain ranking is review input for Project/Admin decisions and does not distribute rewards.",
+        "Off-chain ranking 仅作为 Project/Admin 决策的 review input，不发放奖励。",
+      ),
+      readiness: "ready",
+      ownerRole: "project_owner",
+      metricLabel: localized("Ranked rows", "Ranking 行数", "Ranked rows"),
+      metricValue: String(leaderboard.rows.length),
+      sourceSurface: localized(
+        "Leaderboard review input",
+        "Leaderboard review input",
+      ),
+      evidence: localized(
+        `Referral ranking covers ${leaderboard.rows.length} rows; top wallet ${topReferralRow?.walletAddress ?? "N/A"} has ${topReferralRow?.qualifiedInvitees ?? 0} qualified invitees.`,
+        `Referral ranking 覆盖 ${leaderboard.rows.length} 行；最高 wallet ${topReferralRow?.walletAddress ?? "N/A"} 有 ${topReferralRow?.qualifiedInvitees ?? 0} 个合格邀请。`,
+      ),
+      nextAction: localized(
+        "Review ranking policy and export-ready rows before any project-owned reward operation.",
+        "任何项目方自有发奖操作前，先审核 ranking policy 与导出就绪行。",
+      ),
+      boundary: localized(
+        "Ranking is off-chain review input only and does not distribute rewards, claim custody, or write contracts.",
+        "Ranking 仅是 off-chain review input，不发放奖励、不托管 claim、不写合约。",
+      ),
+    }),
+    createPointsRankingReferralLane({
+      id: "referral",
+      label: localized("Referral", "Referral", "Referral"),
+      description: localized(
+        "Referral service readiness separates raw invites from qualified invitees and referral points.",
+        "Referral service readiness 区分 Raw invites、合格邀请与 referral points。",
+      ),
+      readiness: totalRawInvites > totalQualifiedInvitees ? "review_required" : "ready",
+      ownerRole: "project_owner",
+      metricLabel: localized("Qualified invitees / raw invites", "合格邀请 / Raw invites"),
+      metricValue: `${totalQualifiedInvitees}/${totalRawInvites}`,
+      sourceSurface: localized(
+        "Seeded participant referral summaries",
+        "Seeded 参与者 referral summaries",
+      ),
+      evidence: localized(
+        `Raw invites: ${totalRawInvites}; qualified invitees: ${totalQualifiedInvitees}; referral points: ${totalReferralPoints}. ${antiFarmRule["en-US"]}`,
+        `Raw invites: ${totalRawInvites}；合格邀请: ${totalQualifiedInvitees}；referral points: ${totalReferralPoints}。${antiFarmRule["zh-CN"]}`,
+      ),
+      nextAction: localized(
+        "Review qualification rules and referral velocity flags before enabling a live Referral backend.",
+        "启用实时 Referral backend 前，先审核资格规则与 referral velocity flags。",
+      ),
+      boundary: localized(
+        "Seeded referral summary only; no live Referral backend, referral registry write, wallet action, or reward distribution is executed.",
+        "仅 seeded referral summary；不接入实时 Referral backend、不写 referral registry、不触发钱包动作、不发放奖励。",
+      ),
+    }),
+    createPointsRankingReferralLane({
+      id: "pixiepoints-backend-handoff",
+      label: localized(
+        "Pixiepoints/backend handoff",
+        "Pixiepoints/backend 交接",
+        "Pixiepoints/backend handoff",
+      ),
+      description: localized(
+        "P1 handoff boundary for reusing Pixiepoints/backend ledger primitives after review.",
+        "复用 Pixiepoints/backend ledger primitives 前的 P1 交接边界。",
+      ),
+      readiness: "review_required",
+      ownerRole: "internal_operator",
+      metricLabel: localized("Contract lanes", "合约 lanes", "Contract lanes"),
+      metricValue: "2",
+      sourceSurface: localized(
+        "Contract transparency monitor",
+        "合约透明度 monitor",
+      ),
+      evidence: localized(
+        "Pixiepoints/backend ledger reuse waits for points batch root and referral binding root review; no production write path is enabled.",
+        "Pixiepoints/backend ledger 复用需等待 points batch root 与 referral binding root 审核；不会启用生产写入路径。",
+      ),
+      nextAction: localized(
+        "Prepare the backend handoff brief with schema, reviewer, and rollback ownership.",
+        "准备包含 schema、reviewer 与 rollback ownership 的 backend 交接 brief。",
+      ),
+      boundary: localized(
+        "Handoff planning only; no backend ledger write, contract root write, claim, custody, or reward distribution is executed.",
+        "仅交接规划；不写 backend ledger、不写合约 root、不 claim、不托管、不发放奖励。",
+      ),
+    }),
+  ];
+  const topLane = firstPointsRankingReferralAction(lanes);
+
+  return {
+    campaignId: campaign.id,
+    summary: {
+      totalLanes: lanes.length,
+      readyLanes: lanes.filter((lane) => lane.readiness === "ready").length,
+      reviewRequiredLanes: lanes.filter((lane) => lane.readiness === "review_required").length,
+      blockedLanes: lanes.filter((lane) => lane.readiness === "blocked").length,
+      localOnlyLanes: lanes.filter((lane) => lane.readiness === "local_only").length,
+      topLaneId: topLane.id,
+      totalRawInvites,
+      totalQualifiedInvitees,
+      totalReferralPoints,
+      topNextAction: topLane.nextAction,
+    },
+    lanes,
+    boundary: pointsRankingReferralBoundary,
+  };
+};
+
 const competitorWatchText = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
   "en-US": enUS,
   "zh-CN": zhCN,
@@ -7424,6 +7626,7 @@ export const createProjectCampaignCommandCenter = (
   const advancedAnalytics = createAdvancedAnalyticsReadiness(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const aiOpsKpiAdoption = createAiOpsKpiAdoptionConsole(campaign, aiOptimization);
+  const pointsRankingReferralReadiness = createPointsRankingReferralServiceReadiness(campaign);
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
@@ -7442,6 +7645,7 @@ export const createProjectCampaignCommandCenter = (
     advancedAnalytics,
     aiOptimization,
     aiOpsKpiAdoption,
+    pointsRankingReferralReadiness,
     aelfWebLoginAdapterReadiness,
     providerEvidenceRegistry,
     lifecycleOperations,
@@ -11867,6 +12071,7 @@ export const createAdminOpsReadModel = (
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
   const riskIntelligence = createRiskIntelligenceReviewSurface(campaign);
   const launchConsoleCampaignBundles = createLaunchConsoleCampaignBundles(campaign);
+  const pointsRankingReferralReadiness = createPointsRankingReferralServiceReadiness(campaign);
 
   return {
     campaignId: campaign.id,
@@ -11878,6 +12083,7 @@ export const createAdminOpsReadModel = (
     contractReviewCenter: createAdminContractReviewCenter(campaign),
     contractInterfaceMatrix: createContractInterfaceMatrixConsole(),
     contractTransparencyMonitor: createContractTransparencyMonitor(campaign),
+    pointsRankingReferralReadiness,
     aiContentPack: createAiContentPackWorkbench(campaign),
     templateGovernance: createTemplateGovernanceConsole(),
     analytics: createAnalytics(campaign, exportBatch),

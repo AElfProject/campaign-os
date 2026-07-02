@@ -188,6 +188,33 @@ describe("Project Console shell", () => {
     expect(within(participants).getByText("referral_velocity_review")).toBeInTheDocument();
     expect(within(participants).getAllByText(/does not distribute rewards/).length).toBeGreaterThan(0);
     expect(within(participants).queryByRole("button", { name: /distribute|reward/i })).not.toBeInTheDocument();
+
+    const serviceReadiness = screen.getByLabelText("Points / Ranking / Referral Service Readiness");
+    expect(
+      within(serviceReadiness).getByRole("heading", {
+        name: "Points / Ranking / Referral Service Readiness",
+      }),
+    ).toBeInTheDocument();
+    for (const lane of [
+      "Points ledger",
+      "Ranking",
+      "Referral",
+      "Pixiepoints/backend handoff",
+    ]) {
+      expect(within(serviceReadiness).getByRole("heading", { name: lane })).toBeInTheDocument();
+    }
+    expect(within(serviceReadiness).getByText("Raw invites")).toBeInTheDocument();
+    expect(within(serviceReadiness).getByText("Qualified invitees")).toBeInTheDocument();
+    expect(within(serviceReadiness).getAllByText(/qualified invitees/).length).toBeGreaterThan(0);
+    expect(within(serviceReadiness).getByText(/Raw invites: 22/)).toBeInTheDocument();
+    expect(within(serviceReadiness).getByText(/Only qualified invitees/)).toBeInTheDocument();
+    expect(within(serviceReadiness).getAllByText(/no live points ledger/).length).toBeGreaterThan(0);
+    expect(within(serviceReadiness).getAllByText(/no live Referral backend/).length).toBeGreaterThan(0);
+    expect(within(serviceReadiness).getAllByText(/does not distribute rewards/).length).toBeGreaterThan(0);
+    expect(within(serviceReadiness).getAllByText(/review input/).length).toBeGreaterThan(0);
+    expect(
+      within(serviceReadiness).queryByRole("button", { name: /write|settle|claim|reward|contract/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("switches to Settings workspace and keeps readiness read-only", () => {
@@ -812,6 +839,22 @@ describe("Project Console shell", () => {
     expect(within(zhParticipants).getByText("语言分布")).toBeInTheDocument();
     expect(within(zhParticipants).getByText("manual_review_queue")).toBeInTheDocument();
     expect(within(zhParticipants).getAllByText(/不执行发奖/).length).toBeGreaterThan(0);
+    const zhServiceReadiness = screen.getByLabelText("Points / Ranking / Referral Service readiness");
+    expect(
+      within(zhServiceReadiness).getByRole("heading", {
+        name: "Points / Ranking / Referral Service readiness",
+      }),
+    ).toBeInTheDocument();
+    expect(within(zhServiceReadiness).getByRole("heading", { name: "积分账本" })).toBeInTheDocument();
+    expect(within(zhServiceReadiness).getByRole("heading", { name: "Ranking" })).toBeInTheDocument();
+    expect(within(zhServiceReadiness).getByRole("heading", { name: "Referral" })).toBeInTheDocument();
+    expect(within(zhServiceReadiness).getByRole("heading", { name: "Pixiepoints/backend 交接" })).toBeInTheDocument();
+    expect(within(zhServiceReadiness).getByText("Raw invites")).toBeInTheDocument();
+    expect(within(zhServiceReadiness).getByText("合格邀请")).toBeInTheDocument();
+    expect(within(zhServiceReadiness).getByText(/Raw invites: 22/)).toBeInTheDocument();
+    expect(within(zhServiceReadiness).getAllByText(/不接入实时积分账本/).length).toBeGreaterThan(0);
+    expect(within(zhServiceReadiness).getAllByText(/不接入实时 Referral backend/).length).toBeGreaterThan(0);
+    expect(within(zhServiceReadiness).getAllByText(/不发放奖励/).length).toBeGreaterThan(0);
 
     fireEvent.click(within(nav).getByRole("button", { name: "创建" }));
     for (const step of ["目标", "任务", "奖励与资格", "i18n", "合约", "发布准备度"]) {
