@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   builderSupportedLocales,
   computeBuilderPublishReadiness,
+  createAiPlannerLaunchDecision,
   createAiCampaignPlannerDecisionConsole,
   createCampaignTemplatePack,
   createTaskTemplateFilterSummary,
@@ -732,6 +733,90 @@ describe("Campaign Builder domain foundation", () => {
       warning: 1,
     });
     expect(JSON.stringify(planner)).toContain("zh-TW");
+  });
+
+  it("creates an actionable AI planner launch decision from selected tasks and inherited gates", () => {
+    const launchDecision = createAiPlannerLaunchDecision(seededCampaignDraft);
+    const repeatedLaunchDecision = createAiPlannerLaunchDecision(seededCampaignDraft);
+
+    expect(JSON.stringify(launchDecision)).toBe(JSON.stringify(repeatedLaunchDecision));
+    expect(launchDecision.draftId).toBe(seededCampaignDraft.id);
+    expect(launchDecision.summary).toMatchObject({
+      approvalRouteCount: 3,
+      inheritedGateCount: expect.any(Number),
+      selectedTaskCount: seededCampaignDraft.selectedTaskTemplateIds.length,
+      selectedTemplateCount: 1,
+    });
+    expect(launchDecision.selectedTemplate).toMatchObject({
+      ownerRole: "project_owner",
+      readiness: "review_required",
+      templateId: "awaken-liquidity-challenge",
+    });
+    expect(launchDecision.selectedTemplate.boundary["en-US"]).toContain("No live provider verification");
+
+    expect(launchDecision.selectedTasks.map((task) => task.taskId)).toEqual([
+      "tpl-wallet-connect",
+      "tpl-bridge-ebridge",
+      "tpl-swap-awaken",
+      "tpl-social-share",
+    ]);
+    expect(launchDecision.selectedTasks.map((task) => ({
+      points: task.defaultPoints,
+      riskLevel: task.riskLevel,
+      taskId: task.taskId,
+      verificationType: task.verificationType,
+      walletCompatibility: task.walletCompatibility,
+    }))).toEqual([
+      { points: 40, riskLevel: "low", taskId: "tpl-wallet-connect", verificationType: "WALLET", walletCompatibility: "ANY" },
+      { points: 120, riskLevel: "low", taskId: "tpl-bridge-ebridge", verificationType: "ON_CHAIN", walletCompatibility: "ANY" },
+      { points: 100, riskLevel: "medium", taskId: "tpl-swap-awaken", verificationType: "DAPP_API", walletCompatibility: "ANY" },
+      { points: 180, riskLevel: "high", taskId: "tpl-social-share", verificationType: "SOCIAL", walletCompatibility: "ANY" },
+    ]);
+    expect(launchDecision.selectedTasks.find((task) => task.taskId === "tpl-social-share")).toMatchObject({
+      reviewRequired: true,
+      localeReadiness: expect.objectContaining({
+        "en-US": "ready",
+        "zh-CN": "ai_draft",
+        "zh-TW": "missing",
+      }),
+    });
+
+    const gateIds = launchDecision.inheritedGates.map((gate) => gate.gateId);
+    expect(gateIds).toEqual(expect.arrayContaining([
+      "contract-impact",
+      "export-disclaimer",
+      "i18n-human-review",
+      "localized-reward-disclaimer",
+      "risk-social-reward",
+    ]));
+    expect(launchDecision.inheritedGates.find((gate) => gate.gateId === "contract-impact")).toMatchObject({
+      blocksPublish: true,
+      ownerRole: "contract_reviewer",
+      status: "blocker",
+    });
+    expect(launchDecision.inheritedGates.find((gate) => gate.gateId === "i18n-human-review")).toMatchObject({
+      ownerRole: "project_owner",
+      status: "warning",
+    });
+
+    const approvalRoutesByRole = new Map(launchDecision.approvalRoutes.map((route) => [route.ownerRole, route]));
+    expect([...approvalRoutesByRole.keys()]).toEqual(["project_owner", "internal_operator", "contract_reviewer"]);
+    expect(approvalRoutesByRole.get("project_owner")?.decisionIds.length).toBeGreaterThan(0);
+    expect(approvalRoutesByRole.get("internal_operator")?.decisionIds.length).toBeGreaterThan(0);
+    expect(approvalRoutesByRole.get("contract_reviewer")).toMatchObject({ status: "blocked" });
+
+    const contractDecision = launchDecision.decisionItems.find((item) => item.id === "launch-contract-claim-blocker");
+    expect(contractDecision).toMatchObject({
+      ownerRole: "contract_reviewer",
+      status: "blocked",
+    });
+    expect(contractDecision?.reason["en-US"]).toContain("Contract claim");
+    expect(launchDecision.boundary["en-US"]).toContain("No live AI provider");
+    expect(launchDecision.boundary["en-US"]).toContain("no automatic publish");
+    expect(launchDecision.boundary["en-US"]).toContain("no contract execution");
+    expect(launchDecision.boundary["en-US"]).toContain("no reward custody");
+    expect(launchDecision.boundary["en-US"]).toContain("no reward distribution");
+    expect(launchDecision.nextAction["en-US"]).toContain("Review selected tasks");
   });
 
   it("derives seeded participant operations without live providers or reward distribution", () => {
