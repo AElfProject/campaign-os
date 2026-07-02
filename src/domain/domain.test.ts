@@ -10,6 +10,7 @@ import {
   createEligibilityCheckerReadModel,
   createEcosystemNextActionReadModel,
   createLeaderboardReadModel,
+  createPostCampaignCloseout,
   createProjectCampaignCommandCenter,
   createUserWinnersExportStatusReadModel,
   createVerificationCoverageSummary,
@@ -2346,6 +2347,66 @@ describe("Campaign OS domain foundation", () => {
     expect(commandCenter.boundary["en-US"]).toContain("does not distribute rewards");
     expect(commandCenter.boundary["en-US"]).toContain("No live analytics");
     expect(commandCenter.boundary["zh-CN"]).toContain("不会连接实时数据");
+  });
+
+  it("derives a post-campaign closeout workspace without live execution or reward custody", () => {
+    const closeout = createPostCampaignCloseout(campaignDetail);
+    const repeated = createPostCampaignCloseout(campaignDetail);
+    const gateIds = closeout.gates.map((gate) => gate.id);
+    const gatesById = Object.fromEntries(closeout.gates.map((gate) => [gate.id, gate]));
+    const serialized = JSON.stringify(closeout).toLowerCase();
+
+    expect(closeout).toEqual(repeated);
+    expect(closeout.campaignId).toBe(campaignDetail.id);
+    expect(gateIds).toEqual([
+      "analytics-summary",
+      "ai-winner-report",
+      "export-readiness",
+      "risk-review",
+      "reward-responsibility",
+      "final-report-archive",
+      "next-campaign-recommendation",
+    ]);
+    expect(closeout.summary).toMatchObject({
+      totalGates: closeout.gates.length,
+      readyCount: closeout.gates.filter((gate) => gate.status === "ready").length,
+      reviewRequiredCount: closeout.gates.filter((gate) => gate.status === "review_required").length,
+      blockedCount: closeout.gates.filter((gate) => gate.status === "blocked").length,
+      localOnlyCount: closeout.gates.filter((gate) => gate.status === "local_only").length,
+      topGateId: expect.any(String),
+    });
+    expect(gateIds).toContain(closeout.summary.topGateId);
+    expect(closeout.summary.topAction).toEqual(gatesById[closeout.summary.topGateId]?.nextAction);
+    expect(gatesById["ai-winner-report"]).toMatchObject({
+      ownerRole: "risk_reviewer",
+      source: "ai_report",
+      status: "review_required",
+    });
+    expect(gatesById["export-readiness"]?.evidence["en-US"]).toContain("ready");
+    expect(gatesById["risk-review"]?.reason["en-US"]).toContain("does not automatically ban");
+    expect(gatesById["reward-responsibility"]).toMatchObject({
+      ownerRole: "project_owner",
+      source: "reward",
+      status: "ready",
+    });
+
+    expect(closeout.aiRetrospective).toMatchObject({
+      humanReviewRequired: true,
+      status: closeout.status,
+    });
+    expect(closeout.aiRetrospective.healthSummary["en-US"]).toContain("Campaign health");
+    expect(closeout.aiRetrospective.verifiedActionEvidence["en-US"]).toContain("Verified actions");
+    expect(closeout.aiRetrospective.winnerReportSummary["en-US"]).toContain("Winner");
+    expect(closeout.aiRetrospective.nextIterationActions.length).toBeGreaterThanOrEqual(3);
+    expect(closeout.rewardBoundary["en-US"]).toContain("does not distribute rewards");
+    expect(closeout.boundary["en-US"]).toContain("No live analytics");
+    expect(closeout.boundary["en-US"]).toContain("no reward custody or distribution");
+
+    expect(serialized).not.toContain("download url");
+    expect(serialized).not.toContain("contract transaction is executed");
+    expect(serialized).not.toContain("privatekey");
+    expect(serialized).not.toContain("access_token");
+    expect(serialized).not.toContain("seed phrase");
   });
 
   it("derives project portfolio and commercial readiness without live billing or reward custody", () => {

@@ -8,6 +8,7 @@ import {
   createCampaignSettingsReadiness,
   createLocaleAnalyticsReadiness,
   createParticipantOperationsReadModel,
+  createPostCampaignCloseout,
   createProjectCampaignCommandCenter,
   createLiveWalletConnectorBoundary,
   createVerificationCoverageSummary,
@@ -35,10 +36,13 @@ import {
   type LaunchConsoleHandoffReviewState,
   type LaunchConsoleTaskCategory,
   type LocaleStatus,
+  type LocalizedText,
   type LiveWalletConnectorLiveEvidenceStatus,
   type LiveWalletConnectorReadiness,
   type OwnerRole,
   type ParticipantOperationsExportStatus,
+  type PostCampaignCloseoutOwnerRole,
+  type PostCampaignCloseoutStatus,
   type ProjectPortfolioCommercialOwnerRole,
   type PublishState,
   type SupportedLocale,
@@ -479,6 +483,39 @@ const portfolioOwnerLabel = (ownerRole: ProjectPortfolioCommercialOwnerRole) =>
 const settingsOwnerLabel = (ownerRole: OwnerRole) =>
   ownerRole.replace(/_/g, " ");
 
+const closeoutOwnerLabel = (ownerRole: PostCampaignCloseoutOwnerRole) =>
+  ownerRole.replace(/_/g, " ");
+
+const closeoutStatusBadgeState = (status: PostCampaignCloseoutStatus) => {
+  if (status === "blocked") {
+    return "blocker";
+  }
+
+  return status === "ready" ? "ready" : "warning";
+};
+
+const closeoutStatusLabel = (
+  status: PostCampaignCloseoutStatus,
+  labels: {
+    apiSkillReadinessBlocked: string;
+    apiSkillReadinessLocalOnly: string;
+    apiSkillReadinessReady: string;
+    apiSkillReadinessReviewRequired: string;
+  },
+) => {
+  if (status === "ready") {
+    return labels.apiSkillReadinessReady;
+  }
+
+  if (status === "local_only") {
+    return labels.apiSkillReadinessLocalOnly;
+  }
+
+  return status === "review_required"
+    ? labels.apiSkillReadinessReviewRequired
+    : labels.apiSkillReadinessBlocked;
+};
+
 const publishStateLabel = (
   state: PublishState,
   labels: {
@@ -664,6 +701,7 @@ const projectWorkspaceKeys = [
   "aiContent",
   "analytics",
   "export",
+  "closeout",
   "settings",
 ] as const;
 
@@ -787,6 +825,7 @@ export const ProjectConsole = ({
   const campaignTemplatePack = createCampaignTemplatePack();
   const participantOperations = createParticipantOperationsReadModel(campaign);
   const settingsReadiness = createCampaignSettingsReadiness(campaign);
+  const postCampaignCloseout = createPostCampaignCloseout(campaign);
 
   const stats = [
     {
@@ -886,6 +925,7 @@ export const ProjectConsole = ({
     aiContent: copy.workspaceAiContent,
     analytics: copy.workspaceAnalytics,
     campaigns: copy.workspaceCampaigns,
+    closeout: copy.workspaceCloseout,
     create: copy.workspaceCreate,
     export: copy.workspaceExport,
     participants: copy.workspaceParticipants,
@@ -897,6 +937,7 @@ export const ProjectConsole = ({
     aiContent: copy.workspaceAiContentSummary,
     analytics: copy.workspaceAnalyticsSummary,
     campaigns: copy.workspaceCampaignsSummary,
+    closeout: copy.workspaceCloseoutSummary,
     create: copy.workspaceCreateSummary,
     export: copy.workspaceExportSummary,
     participants: copy.workspaceParticipantsSummary,
@@ -3518,6 +3559,149 @@ export const ProjectConsole = ({
         </div>
       </section>
         </>
+      )}
+
+      {activeWorkspace === "closeout" && (
+        <section aria-label={copy.closeoutRetrospective} style={panelStyle}>
+          <div style={headingRowStyle}>
+            <div>
+              <p style={statLabelStyle}>{copy.workspaceCloseout}</p>
+              <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                {copy.closeoutRetrospective}
+              </h3>
+              <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                {copy.closeoutRetrospectiveSubtitle}
+              </p>
+            </div>
+            <PublishStateBadge
+              label={closeoutStatusLabel(postCampaignCloseout.status, copy)}
+              state={closeoutStatusBadgeState(postCampaignCloseout.status)}
+            />
+          </div>
+
+          <div aria-label={copy.closeoutSummary} style={gridStyle}>
+            {[
+              {
+                detail: copy.closeoutGateList,
+                label: copy.closeoutTotalGates,
+                value: String(postCampaignCloseout.summary.totalGates),
+              },
+              {
+                detail: copy.closeoutStatus,
+                label: copy.closeoutReadyGates,
+                value: String(postCampaignCloseout.summary.readyCount),
+              },
+              {
+                detail: copy.closeoutNextAction,
+                label: copy.closeoutReviewGates,
+                value: String(postCampaignCloseout.summary.reviewRequiredCount),
+              },
+              {
+                detail: copy.closeoutFinalArchive,
+                label: copy.closeoutBlockedGates,
+                value: String(postCampaignCloseout.summary.blockedCount),
+              },
+              {
+                detail: copy.closeoutBoundary,
+                label: copy.closeoutLocalOnlyGates,
+                value: String(postCampaignCloseout.summary.localOnlyCount),
+              },
+            ].map((stat) => (
+              <article key={stat.label} style={cardStyle}>
+                <p style={statLabelStyle}>{stat.label}</p>
+                <p style={statValueStyle}>{stat.value}</p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                  {stat.detail}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <article style={{ ...workflowStyle, minHeight: 0 }}>
+            <p style={statLabelStyle}>{copy.closeoutNextAction}</p>
+            <p style={{ color: "#071426", fontSize: 16, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+              {getLocalizedText(postCampaignCloseout.nextAction, locale)}
+            </p>
+          </article>
+
+          <div aria-label={copy.closeoutGateList} style={sectionGridStyle}>
+            {postCampaignCloseout.gates.map((gate) => (
+              <article key={gate.id} style={{ ...workflowStyle, minHeight: 0 }}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>{copy.closeoutOwner}: {closeoutOwnerLabel(gate.ownerRole)}</p>
+                    <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                      {getLocalizedText(gate.label, locale)}
+                    </h4>
+                  </div>
+                  <PublishStateBadge
+                    label={closeoutStatusLabel(gate.status, copy)}
+                    state={closeoutStatusBadgeState(gate.status)}
+                  />
+                </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.closeoutEvidence}: {getLocalizedText(gate.evidence, locale)}
+                </p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.closeoutReason}: {getLocalizedText(gate.reason, locale)}
+                </p>
+                <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.closeoutNextAction}: {getLocalizedText(gate.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <section aria-label={copy.closeoutAiRetrospective} style={{ ...workflowStyle, minHeight: 0 }}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.closeoutGeneratedAt}: {postCampaignCloseout.aiRetrospective.generatedAt}</p>
+                <h4 style={{ fontSize: 20, lineHeight: 1.2, margin: "4px 0" }}>
+                  {getLocalizedText(postCampaignCloseout.aiRetrospective.title, locale)}
+                </h4>
+              </div>
+              <PublishStateBadge
+                label={copy.closeoutHumanReviewRequired}
+                state={postCampaignCloseout.aiRetrospective.humanReviewRequired ? "warning" : "ready"}
+              />
+            </div>
+            <div style={sectionGridStyle}>
+              {([
+                [copy.closeoutHealthSummary, postCampaignCloseout.aiRetrospective.healthSummary],
+                [copy.closeoutVerifiedActionEvidence, postCampaignCloseout.aiRetrospective.verifiedActionEvidence],
+                [copy.closeoutWinnerReport, postCampaignCloseout.aiRetrospective.winnerReportSummary],
+                [copy.closeoutRiskPosture, postCampaignCloseout.aiRetrospective.riskPosture],
+              ] satisfies Array<[string, LocalizedText]>).map(([label, value]) => (
+                <article key={label} style={{ ...cardStyle, minHeight: 0 }}>
+                  <p style={statLabelStyle}>{label}</p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(value, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+            <div>
+              <p style={statLabelStyle}>{copy.closeoutNextIterationActions}</p>
+              <ul style={listStyle}>
+                {postCampaignCloseout.aiRetrospective.nextIterationActions.map((action, index) => (
+                  <li key={`${getLocalizedText(action, locale)}-${index}`} style={listItemStyle}>
+                    <span>{getLocalizedText(action, locale)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <p style={boundaryStyle}>
+              {copy.closeoutAiRetrospectiveBoundary}: {getLocalizedText(postCampaignCloseout.aiRetrospective.boundary, locale)}
+            </p>
+          </section>
+
+          <p style={boundaryStyle}>
+            {copy.closeoutRewardBoundary}: {getLocalizedText(postCampaignCloseout.rewardBoundary, locale)}
+          </p>
+          <p style={boundaryStyle}>
+            {copy.closeoutBoundary}: {getLocalizedText(postCampaignCloseout.boundary, locale)}
+          </p>
+        </section>
       )}
 
       {activeWorkspace === "settings" && (

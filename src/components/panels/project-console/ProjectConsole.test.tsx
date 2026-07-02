@@ -25,7 +25,7 @@ describe("Project Console shell", () => {
     );
 
     const nav = getProjectWorkspaceNav();
-    for (const workspace of ["Campaigns", "Create", "Templates", "Participants", "AI Content", "Analytics", "Export", "Settings"]) {
+    for (const workspace of ["Campaigns", "Create", "Templates", "Participants", "AI Content", "Analytics", "Export", "Closeout", "Settings"]) {
       expect(within(nav).getByRole("button", { name: workspace })).toBeInTheDocument();
     }
     expect(within(nav).getByRole("button", { name: "Campaigns" })).toHaveAttribute(
@@ -165,6 +165,47 @@ describe("Project Console shell", () => {
     expect(within(settings).getByText(/No live settings save/)).toBeInTheDocument();
     expect(within(settings).getAllByText(/reward distribution/).length).toBeGreaterThan(0);
     expect(within(settings).queryByRole("button", { name: /save|update|publish/i })).not.toBeInTheDocument();
+  });
+
+  it("switches to Closeout workspace and keeps retrospective review local-only", () => {
+    render(<App />);
+
+    clickWorkspace("Closeout");
+
+    const nav = getProjectWorkspaceNav();
+    expect(within(nav).getByRole("button", { name: "Closeout" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const closeout = screen.getByLabelText("Post-campaign retrospective");
+    expect(
+      within(closeout).getByRole("heading", { name: "Post-campaign retrospective" }),
+    ).toBeInTheDocument();
+    expect(within(closeout).getByLabelText("Closeout summary")).toBeInTheDocument();
+    expect(within(closeout).getByLabelText("Closeout gates")).toBeInTheDocument();
+    for (const gate of [
+      "Analytics summary",
+      "AI winner report review",
+      "Export readiness",
+      "Risk review",
+      "Reward responsibility acknowledgement",
+      "Final report archive",
+      "Next-campaign recommendation",
+    ]) {
+      expect(within(closeout).getByText(gate)).toBeInTheDocument();
+    }
+    expect(within(closeout).getByLabelText("AI retrospective")).toBeInTheDocument();
+    expect(within(closeout).getByText("Winner report")).toBeInTheDocument();
+    expect(within(closeout).getByText("Human review required")).toBeInTheDocument();
+    expect(within(closeout).getAllByText(/Reward responsibility/).length).toBeGreaterThan(0);
+    expect(within(closeout).getAllByText(/No live analytics/).length).toBeGreaterThan(0);
+    expect(within(closeout).getAllByText(/no reward custody or distribution/).length).toBeGreaterThan(0);
+    expect(within(closeout).getAllByText(/does not distribute rewards/).length).toBeGreaterThan(0);
+    expect(
+      within(closeout).queryByRole("button", {
+        name: /distribute|claim|archive|export file|contract/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("switches to Create workspace and preserves the builder flow", () => {
@@ -613,7 +654,7 @@ describe("Project Console shell", () => {
     );
 
     const nav = screen.getByRole("navigation", { name: "项目控制台工作区导航" });
-    for (const workspace of ["活动", "创建", "模板", "参与者", "AI 内容", "分析", "导出", "设置"]) {
+    for (const workspace of ["活动", "创建", "模板", "参与者", "AI 内容", "分析", "导出", "复盘", "设置"]) {
       expect(within(nav).getByRole("button", { name: workspace })).toBeInTheDocument();
     }
     expect(within(nav).getByRole("button", { name: "活动" })).toHaveAttribute(
@@ -765,6 +806,20 @@ describe("Project Console shell", () => {
     expect(screen.getByText("验证任务")).toBeInTheDocument();
     expect(screen.getByText("导出 winners")).toBeInTheDocument();
     expect(screen.getAllByText(/不会调用实时 API/).length).toBeGreaterThan(0);
+
+    fireEvent.click(within(nav).getByRole("button", { name: "复盘" }));
+    const zhCloseout = screen.getByLabelText("活动后复盘");
+    expect(
+      within(zhCloseout).getByRole("heading", { name: "活动后复盘" }),
+    ).toBeInTheDocument();
+    expect(within(zhCloseout).getByLabelText("Closeout 摘要")).toBeInTheDocument();
+    expect(within(zhCloseout).getByLabelText("Closeout 门禁")).toBeInTheDocument();
+    expect(within(zhCloseout).getByLabelText("AI 复盘")).toBeInTheDocument();
+    expect(within(zhCloseout).getAllByText(/Winner 报告/).length).toBeGreaterThan(0);
+    expect(within(zhCloseout).getAllByText(/奖励责任/).length).toBeGreaterThan(0);
+    expect(within(zhCloseout).getAllByText(/不接入实时 analytics/).length).toBeGreaterThan(0);
+    expect(within(zhCloseout).getAllByText(/不托管或发放奖励/).length).toBeGreaterThan(0);
+    expect(within(zhCloseout).queryByRole("button", { name: /发奖|claim|archive|export file|contract/i })).not.toBeInTheDocument();
 
     fireEvent.click(within(nav).getByRole("button", { name: "设置" }));
     const zhSettings = screen.getByLabelText("设置 readiness");
