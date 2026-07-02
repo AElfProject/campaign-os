@@ -14,6 +14,8 @@ import {
   type AiOptimizationActionStatus,
   type AiOptimizationMetricTone,
   type CampaignShellDetail,
+  type CompetitorWatchDifferentiator,
+  type CompetitorWatchReviewState,
   type ContractInterfaceReadiness,
   type ContractMode,
   type ContractReviewChecklistStatus,
@@ -225,6 +227,20 @@ const sourceMetricChipStyle: CSSProperties = {
   wordBreak: "break-word",
 };
 
+const chipListStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  minWidth: 0,
+};
+
+const chipStyle: CSSProperties = {
+  ...sourceMetricChipStyle,
+  background: "#eff6ff",
+  borderColor: "#93c5fd",
+  color: "#1e40af",
+};
+
 const sourceMetricToneStyles: Record<AiOptimizationMetricTone, CSSProperties> = {
   good: { background: "#ecfdf5", borderColor: "#86efac", color: "#166534" },
   warning: { background: "#fffbeb", borderColor: "#fcd34d", color: "#92400e" },
@@ -416,6 +432,25 @@ const aiReportHandoffLabel = (
   return labels[status];
 };
 
+const competitorWatchReviewState = (status: CompetitorWatchReviewState) =>
+  status === "blocked" ? "blocker" : status === "review_required" ? "warning" : "ready";
+
+const competitorWatchReviewStateLabel = (
+  status: CompetitorWatchReviewState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<CompetitorWatchReviewState, string> = {
+    blocked: copy.blocked,
+    ready: copy.readyToReview,
+    review_required: copy.reviewRequired,
+  };
+
+  return labels[status];
+};
+
+const competitorWatchDifferentiatorLabel = (differentiator: CompetitorWatchDifferentiator) =>
+  readableCode(differentiator);
+
 const providerReadinessState = (readiness: string) =>
   readiness === "blocked"
     ? "blocker"
@@ -595,6 +630,7 @@ export const AdminOpsPanel = ({
   const exportArtifact = createExportArtifact(campaign.exportPreview, "csv");
   const aiOptimization = adminOps.aiOptimization;
   const aiReportHandoff = adminOps.aiReportHandoff;
+  const competitorWatch = adminOps.competitorWatch;
   const advancedAnalytics = adminOps.advancedAnalytics;
   const aiContentPack = adminOps.aiContentPack;
   const templateGovernance = adminOps.templateGovernance;
@@ -3143,6 +3179,103 @@ export const AdminOpsPanel = ({
               </p>
               <p style={wrapTextStyle}>
                 {copy.nextAction}: {getLocalizedText(handoff.nextAction, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.competitorWatch} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <h3 style={{ fontSize: 20, margin: 0 }}>{copy.competitorWatch}</h3>
+            <p style={mutedTextStyle}>{copy.competitorWatchSubtitle}</p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${competitorWatch.summary.totalSignals} ${copy.competitorWatchTotalSignals}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${competitorWatch.summary.readyCount} ${copy.readyToReview}`}
+              state="ready"
+            />
+            <PublishStateBadge
+              label={`${competitorWatch.summary.reviewRequiredCount} ${copy.reviewRequired}`}
+              state={competitorWatch.summary.reviewRequiredCount > 0 ? "warning" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${competitorWatch.summary.blockedCount} ${copy.blocked}`}
+              state={competitorWatch.summary.blockedCount > 0 ? "blocker" : "ready"}
+            />
+            <Badge
+              label={`${competitorWatch.summary.differentiatorCount} ${copy.competitorWatchDifferentiators}`}
+              tone="info"
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.localOnlyBoundary}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {getLocalizedText(competitorWatch.boundary, locale)}
+          </p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.nextAction}: {getLocalizedText(competitorWatch.summary.topNextAction, locale)}
+          </p>
+        </div>
+        <div style={gridStyle}>
+          {competitorWatch.signals.map((signal) => (
+            <article key={signal.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.category}: {readableCode(signal.category)}</p>
+                  <strong>{getLocalizedText(signal.platformLabel, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={competitorWatchReviewStateLabel(signal.reviewState, copy)}
+                  state={competitorWatchReviewState(signal.reviewState)}
+                />
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.competitorWatchPlatform}</p>
+                  <p style={mutedTextStyle}>{getLocalizedText(signal.platformLabel, locale)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.ownerRole}</p>
+                  <p style={mutedTextStyle}>{readableCode(signal.ownerRole)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.reviewState}</p>
+                  <p style={mutedTextStyle}>
+                    {competitorWatchReviewStateLabel(signal.reviewState, copy)}
+                  </p>
+                </div>
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.competitorWatchObservedPattern}: {getLocalizedText(signal.observedPattern, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.competitorWatchAelfImplication}: {getLocalizedText(signal.aelfImplication, locale)}
+              </p>
+              <div style={stackStyle}>
+                <p style={labelStyle}>{copy.competitorWatchDifferentiators}</p>
+                <span style={chipListStyle}>
+                  {signal.differentiators.map((differentiator) => (
+                    <span key={differentiator} style={chipStyle} title={differentiator}>
+                      {competitorWatchDifferentiatorLabel(differentiator)}
+                    </span>
+                  ))}
+                </span>
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.competitorWatchEvidenceBasis}: {getLocalizedText(signal.evidenceBasis, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.guardrail}: {getLocalizedText(signal.guardrail, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(signal.nextAction, locale)}
               </p>
             </article>
           ))}

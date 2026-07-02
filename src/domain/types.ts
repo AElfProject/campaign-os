@@ -2416,6 +2416,56 @@ export interface LaunchConsoleCampaignBundleSurface {
   nextAction: LocalizedText;
 }
 
+export type CompetitorWatchSignalCategory =
+  | "generic_quest_platform"
+  | "onchain_activation"
+  | "community_intelligence"
+  | "growth_infrastructure";
+export type CompetitorWatchDifferentiator =
+  | "wallet_support"
+  | "ecosystem_conversion"
+  | "verified_actions"
+  | "user_quality"
+  | "project_owned_rewards";
+export type CompetitorWatchOwnerRole =
+  | "growth_lead"
+  | "internal_operator"
+  | "project_owner"
+  | "risk_reviewer";
+export type CompetitorWatchReviewState = "ready" | "review_required" | "blocked";
+
+export interface CompetitorWatchSignal {
+  id: string;
+  category: CompetitorWatchSignalCategory;
+  platformLabel: LocalizedText;
+  observedPattern: LocalizedText;
+  aelfImplication: LocalizedText;
+  differentiators: CompetitorWatchDifferentiator[];
+  evidenceBasis: LocalizedText;
+  ownerRole: CompetitorWatchOwnerRole;
+  reviewState: CompetitorWatchReviewState;
+  guardrail: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface CompetitorWatchSummary {
+  totalSignals: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  differentiatorCount: number;
+  topSignalId: string;
+  topNextAction: LocalizedText;
+}
+
+export interface CompetitorWatchSurface {
+  campaignId: string;
+  summary: CompetitorWatchSummary;
+  signals: CompetitorWatchSignal[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface AdminOpsReadModel {
   campaignId: string;
   reviewQueue: ReviewItem[];
@@ -2439,6 +2489,7 @@ export interface AdminOpsReadModel {
   aiReports: AiOpsReportCard[];
   aiOptimization: AiOptimizationWorkflow;
   aiReportHandoff: AiOpsReportHandoffSurface;
+  competitorWatch: CompetitorWatchSurface;
   ecosystemMetrics: EcosystemMetricRow[];
   exportBatch: ExportBatchSummary;
   lifecycleOperations: CampaignLifecycleOperations;
