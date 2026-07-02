@@ -95,6 +95,11 @@ import type {
   EcosystemNextActionReadModel,
   EcosystemRecommendationPriority,
   EcosystemRecommendationStatus,
+  MobileHubAiGuide,
+  MobileTelegramMiniAppHubReadiness,
+  MobileTelegramMiniAppHubReadinessLane,
+  MobileTelegramMiniAppHubReadinessLaneId,
+  MobileTelegramMiniAppHubReadinessState,
   PortfolioCampaignHistoryReadModel,
   PortfolioCampaignHistoryRow,
   PortfolioCampaignHistoryState,
@@ -11756,6 +11761,413 @@ export const createCampaignMarketplaceReadiness = (
     rows,
     boundary: campaignMarketplaceReadinessBoundary,
     ownerNextAction: summary.ownerNextAction,
+  };
+};
+
+export const mobileTelegramMiniAppHubReadinessBoundary: LocalizedText = localized(
+  "Seeded/local Mobile and Telegram Mini App Hub readiness only. No live Telegram SDK, Bot API, OAuth, account binding, message push, Pay service, payment transaction, payment link creation, Forecast service, prediction transaction, Portfolio sync, asset lookup, wallet SDK/provider call, storage write, contract view/send/write, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地 Mobile 与 Telegram Mini App Hub readiness。不会执行实时 Telegram SDK、Bot API、OAuth、账号绑定、消息推送、Pay 服务、支付交易、支付链接创建、Forecast 服务、预测交易、Portfolio 同步、资产查询、钱包 SDK/provider 调用、storage 写入、合约读取/发送/写入、奖励托管或发奖。",
+  "僅 seeded/本地 Mobile 與 Telegram Mini App Hub readiness。未執行即時 Telegram SDK、Bot API、OAuth、帳號綁定、訊息推送、Pay 服務、支付交易、支付連結建立、Forecast 服務、預測交易、Portfolio 同步、資產查詢、錢包 SDK/provider 調用、storage 寫入、合約讀取/發送/寫入、獎勵託管或發獎。",
+);
+
+const mobileHubLaneLabels: Record<MobileTelegramMiniAppHubReadinessLaneId, LocalizedText> = {
+  "campaign-feed": localized("Campaign feed", "Campaign feed", "Campaign feed"),
+  "assets-overview": localized("Assets overview", "资产概览", "資產概覽"),
+  "forecast-feed": localized("Forecast feed", "Forecast feed", "Forecast feed"),
+  "pay-shortcut": localized("Pay shortcut", "Pay shortcut", "Pay shortcut"),
+  "invite-referral": localized("Invite referral", "邀请推荐", "邀請推薦"),
+  "telegram-shell": localized("Telegram shell", "Telegram shell", "Telegram shell"),
+};
+
+const mobileHubServiceBoundary: Record<MobileTelegramMiniAppHubReadinessLaneId, LocalizedText> = {
+  "campaign-feed": localized(
+    "Seeded/local campaign feed only. No live marketplace API, App Hub backend, Telegram SDK, wallet SDK/provider call, contract view/send/write, payment transaction, prediction transaction, reward custody, or reward distribution is executed.",
+    "仅 seeded/本地 campaign feed。不会执行实时 marketplace API、App Hub 后端、Telegram SDK、钱包 SDK/provider 调用、合约读取/发送/写入、支付交易、预测交易、奖励托管或发奖。",
+    "僅 seeded/本地 campaign feed。未執行即時 marketplace API、App Hub 後端、Telegram SDK、錢包 SDK/provider 調用、合約讀取/發送/寫入、支付交易、預測交易、獎勵託管或發獎。",
+  ),
+  "assets-overview": localized(
+    "Seeded/local assets overview only. No live Portfolio service, Portfolio sync, asset lookup, NFT lookup, wallet SDK/provider call, contract view/send/write, export file, reward custody, or reward distribution is executed.",
+    "仅 seeded/本地资产概览。不会执行真实 Portfolio 服务、Portfolio 同步、资产查询、NFT 查询、钱包 SDK/provider 调用、合约读取/发送/写入、导出文件、奖励托管或发奖。",
+    "僅 seeded/本地資產概覽。未執行真實 Portfolio 服務、Portfolio 同步、資產查詢、NFT 查詢、錢包 SDK/provider 調用、合約讀取/發送/寫入、匯出檔案、獎勵託管或發獎。",
+  ),
+  "forecast-feed": localized(
+    "Seeded/local Forecast feed only. No live Forecast service, prediction transaction, wallet SDK/provider call, contract view/send/write, Pay service, or reward distribution is executed.",
+    "仅 seeded/本地 Forecast feed。不会执行真实 Forecast 服务、预测交易、钱包 SDK/provider 调用、合约读取/发送/写入、Pay 服务或发奖。",
+    "僅 seeded/本地 Forecast feed。未執行真實 Forecast 服務、預測交易、錢包 SDK/provider 調用、合約讀取/發送/寫入、Pay 服務或發獎。",
+  ),
+  "pay-shortcut": localized(
+    "Seeded/local Pay shortcut only. No live Pay service, payment transaction, payment link creation, wallet signing, wallet SDK/provider call, contract view/send/write, Forecast service, or reward distribution is executed.",
+    "仅 seeded/本地 Pay shortcut。不会执行真实 Pay 服务、支付交易、支付链接创建、钱包签名、钱包 SDK/provider 调用、合约读取/发送/写入、Forecast 服务或发奖。",
+    "僅 seeded/本地 Pay shortcut。未執行真實 Pay 服務、支付交易、支付連結建立、錢包簽名、錢包 SDK/provider 調用、合約讀取/發送/寫入、Forecast 服務或發獎。",
+  ),
+  "invite-referral": localized(
+    "Seeded/local invite and referral preview only. No live Referral backend, Telegram message push, wallet SDK/provider call, storage write, reward custody, or reward distribution is executed.",
+    "仅 seeded/本地邀请与推荐预览。不会执行真实 Referral 后端、Telegram 消息推送、钱包 SDK/provider 调用、storage 写入、奖励托管或发奖。",
+    "僅 seeded/本地邀請與推薦預覽。未執行真實 Referral 後端、Telegram 訊息推送、錢包 SDK/provider 調用、storage 寫入、獎勵託管或發獎。",
+  ),
+  "telegram-shell": localized(
+    "Seeded/local Telegram shell readiness only. No live Telegram SDK, Bot API, OAuth, account binding, message push, App Hub backend, Pay service, wallet SDK/provider call, storage write, or contract view/send/write is executed.",
+    "仅 seeded/本地 Telegram shell readiness。不会执行实时 Telegram SDK、Bot API、OAuth、账号绑定、消息推送、App Hub 后端、Pay 服务、钱包 SDK/provider 调用、storage 写入或合约读取/发送/写入。",
+    "僅 seeded/本地 Telegram shell readiness。未執行即時 Telegram SDK、Bot API、OAuth、帳號綁定、訊息推送、App Hub 後端、Pay 服務、錢包 SDK/provider 調用、storage 寫入或合約讀取/發送/寫入。",
+  ),
+};
+
+const marketplaceMobileState = (
+  lane?: CampaignMarketplaceReadinessLane,
+): MobileTelegramMiniAppHubReadinessState => {
+  if (lane === "blocked") {
+    return "blocked";
+  }
+
+  if (lane === "review_required") {
+    return "review_required";
+  }
+
+  return "ready";
+};
+
+const portfolioMobileState = (
+  state?: PortfolioCampaignHistoryState,
+): MobileTelegramMiniAppHubReadinessState => {
+  if (state === "blocked") {
+    return "blocked";
+  }
+
+  if (state === "review_required") {
+    return "review_required";
+  }
+
+  return "ready";
+};
+
+const ecosystemMobileState = (
+  status?: EcosystemRecommendationStatus,
+): MobileTelegramMiniAppHubReadinessState => {
+  if (status === "locked") {
+    return "blocked";
+  }
+
+  if (status === "review") {
+    return "review_required";
+  }
+
+  return "ready";
+};
+
+const createMobileHubLane = (
+  lane: MobileTelegramMiniAppHubReadinessLane,
+): MobileTelegramMiniAppHubReadinessLane => lane;
+
+const missingRequiredTaskCopy = (
+  missingRequiredTasks: CampaignTask[],
+): LocalizedText => {
+  const task = missingRequiredTasks[0];
+
+  if (!task) {
+    return localized(
+      "No missing required campaign tasks are blocking the mobile hub preview.",
+      "没有缺失的必做活动任务阻断 mobile hub 预览。",
+      "沒有缺失的必做活動任務阻斷 mobile hub 預覽。",
+    );
+  }
+
+  return {
+    "en-US": `Missing required task: ${task.title["en-US"]}.`,
+    "zh-CN": `缺失必做任务：${task.title["zh-CN"]}。`,
+    "zh-TW": `Missing required task: ${task.title["zh-TW"]}.`,
+  };
+};
+
+const referralRiskCopy = (
+  participation: ParticipationReadModel,
+): LocalizedText => {
+  const riskFlags = [...new Set([
+    ...participation.participant.riskFlags,
+    ...participation.referral.riskFlags,
+    ...participation.eligibility.riskFlags,
+  ])];
+
+  if (riskFlags.length === 0) {
+    return localized(
+      `${participation.referral.qualifiedInvitees}/${participation.referral.invitedCount} invitees qualify in the seeded referral summary.`,
+      `${participation.referral.qualifiedInvitees}/${participation.referral.invitedCount} 位被邀请人符合 seeded 推荐摘要。`,
+      `${participation.referral.qualifiedInvitees}/${participation.referral.invitedCount} invitees qualify in the seeded referral summary.`,
+    );
+  }
+
+  return localized(
+    `Referral review flags: ${riskFlags.join(", ")}.`,
+    `推荐审核标记：${riskFlags.join(", ")}。`,
+    `Referral review flags: ${riskFlags.join(", ")}.`,
+  );
+};
+
+const mobileHubAiGuideFor = (
+  lanes: MobileTelegramMiniAppHubReadinessLane[],
+  missingRequiredTasks: CampaignTask[],
+): MobileHubAiGuide => {
+  const primaryReviewLane = lanes.find((lane) =>
+    lane.readiness === "blocked" || lane.readiness === "review_required"
+  );
+  const primaryLane = primaryReviewLane ?? lanes.find((lane) => lane.id === "campaign-feed") ?? lanes[0];
+  const hasBlockedLane = lanes.some((lane) => lane.readiness === "blocked");
+  const hasReviewLane = lanes.some((lane) => lane.readiness === "review_required");
+  const missingTask = missingRequiredTasks[0];
+
+  if (missingTask) {
+    return {
+      headline: localized(
+        "Finish the campaign gate before mobile shortcuts.",
+        "先完成活动门槛，再打开移动端快捷入口。",
+        "Finish the campaign gate before mobile shortcuts.",
+      ),
+      body: {
+        "en-US": `Complete ${missingTask.title["en-US"]} before opening Pay or Forecast shortcuts in the local Mobile Hub preview.`,
+        "zh-CN": `先完成${missingTask.title["zh-CN"]}，再在本地 Mobile Hub 预览中打开 Pay 或 Forecast 快捷入口。`,
+        "zh-TW": `Complete ${missingTask.title["zh-TW"]} before opening Pay or Forecast shortcuts in the local Mobile Hub preview.`,
+      },
+      primaryLaneId: primaryLane.id,
+      urgency: "blocked",
+      evidenceBasis: missingRequiredTaskCopy(missingRequiredTasks),
+    };
+  }
+
+  if (hasBlockedLane || hasReviewLane) {
+    return {
+      headline: localized(
+        "Review mobile hub signals before handoff.",
+        "移交前先审核 mobile hub 信号。",
+        "Review mobile hub signals before handoff.",
+      ),
+      body: localized(
+        "Keep the local Mobile Hub preview in review until Portfolio, Forecast, referral, and marketplace signals are cleared.",
+        "在 Portfolio、Forecast、推荐与 marketplace 信号清除前，保持本地 Mobile Hub 预览处于审核状态。",
+        "Keep the local Mobile Hub preview in review until Portfolio, Forecast, referral, and marketplace signals are cleared.",
+      ),
+      primaryLaneId: primaryLane.id,
+      urgency: hasBlockedLane ? "blocked" : "review_required",
+      evidenceBasis: primaryLane.evidenceBasis,
+    };
+  }
+
+  return {
+    headline: localized(
+      "Mobile Hub preview is ready locally.",
+      "Mobile Hub 本地预览已就绪。",
+      "Mobile Hub preview is ready locally.",
+    ),
+    body: localized(
+      "Campaign feed, assets, Forecast, Pay, and referral shortcuts can be reviewed as local preview lanes; Telegram shell remains an unconnected handoff.",
+      "Campaign feed、资产、Forecast、Pay 与推荐快捷入口可作为本地预览 lane 审核；Telegram shell 仍是未连接的移交项。",
+      "Campaign feed, assets, Forecast, Pay, and referral shortcuts can be reviewed as local preview lanes; Telegram shell remains an unconnected handoff.",
+    ),
+    primaryLaneId: "campaign-feed",
+    urgency: "ready",
+    evidenceBasis: lanes[0]?.evidenceBasis ?? mobileTelegramMiniAppHubReadinessBoundary,
+  };
+};
+
+const mobileHubOwnerNextActionFor = (
+  lanes: MobileTelegramMiniAppHubReadinessLane[],
+): LocalizedText => {
+  if (lanes.some((lane) => lane.readiness === "blocked")) {
+    return localized(
+      "Resolve blocking campaign gates before treating the mobile and Telegram hub as ready.",
+      "先解决阻断活动门槛，再将 mobile 与 Telegram hub 视为 ready。",
+      "Resolve blocking campaign gates before treating the mobile and Telegram hub as ready.",
+    );
+  }
+
+  if (lanes.some((lane) => lane.readiness === "review_required")) {
+    return localized(
+      "Review product and service ownership before live App Hub, Pay, Forecast, Portfolio, or referral handoff.",
+      "在真实 App Hub、Pay、Forecast、Portfolio 或推荐移交前，先审核产品与服务归属。",
+      "Review product and service ownership before live App Hub, Pay, Forecast, Portfolio, or referral handoff.",
+    );
+  }
+
+  if (lanes.some((lane) => lane.id === "telegram-shell" && lane.readiness === "not_connected")) {
+    return localized(
+      "Connect Telegram and App Hub shell ownership before promoting the ready local preview.",
+      "在提升 ready 本地预览前，先确认 Telegram 与 App Hub shell 归属。",
+      "Connect Telegram and App Hub shell ownership before promoting the ready local preview.",
+    );
+  }
+
+  return localized(
+    "Prepare the ready local preview handoff for product and growth review.",
+    "准备将 ready 本地预览移交给产品与增长审核。",
+    "Prepare the ready local preview handoff for product and growth review.",
+  );
+};
+
+const createMobileHubSummary = (
+  lanes: MobileTelegramMiniAppHubReadinessLane[],
+  aiGuide: MobileHubAiGuide,
+  ownerNextAction: LocalizedText,
+): MobileTelegramMiniAppHubReadiness["summary"] => ({
+  totalLanes: lanes.length,
+  readyCount: lanes.filter((lane) => lane.readiness === "ready").length,
+  reviewCount: lanes.filter((lane) => lane.readiness === "review_required").length,
+  blockedCount: lanes.filter((lane) => lane.readiness === "blocked").length,
+  notConnectedCount: lanes.filter((lane) => lane.readiness === "not_connected").length,
+  topLaneId: lanes[0]?.id ?? "campaign-feed",
+  topLaneState: lanes[0]?.readiness ?? "not_connected",
+  aiGuideHeadline: aiGuide.headline,
+  ownerNextAction,
+  boundary: mobileTelegramMiniAppHubReadinessBoundary,
+});
+
+export const createMobileTelegramMiniAppHubReadiness = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+): MobileTelegramMiniAppHubReadiness => {
+  const discovery = createCampaignDiscoveryReadModel(campaign, participant);
+  const marketplace = createCampaignMarketplaceReadiness(campaign, participant);
+  const ecosystem = createEcosystemNextActionReadModel(campaign, participant);
+  const portfolio = createPortfolioCampaignHistoryReadModel(campaign, participant);
+  const participation = createParticipationReadModel(campaign, participant);
+  const currentDiscoveryItem = discovery.items.find((item) => item.id === campaign.id) ?? discovery.items[0];
+  const currentMarketplaceRow = marketplace.rows.find((row) => row.campaignId === campaign.id) ?? marketplace.rows[0];
+  const currentPortfolioRow = portfolio.rows.find((row) => row.campaignId === campaign.id) ?? portfolio.rows[0];
+  const payRecommendation = ecosystem.recommendations.find(
+    (recommendation) => recommendation.product.id === "Pay",
+  );
+  const forecastRecommendation = ecosystem.recommendations.find(
+    (recommendation) => recommendation.product.id === "Forecast",
+  );
+  const missingRequiredTasks = computeMissingTasks(campaign.tasks, participant);
+  const hasReferralReview = participation.referral.riskFlags.length > 0
+    || participation.participant.riskFlags.length > 0
+    || participation.eligibility.riskFlags.length > 0;
+  const campaignFeedState = marketplaceMobileState(currentMarketplaceRow?.readinessLane);
+  const assetsState = portfolioMobileState(currentPortfolioRow?.portfolioState);
+  const forecastState = missingRequiredTasks.length > 0
+    ? "blocked"
+    : ecosystemMobileState(forecastRecommendation?.status);
+  const payState = ecosystemMobileState(payRecommendation?.status);
+  const referralState: MobileTelegramMiniAppHubReadinessState = hasReferralReview
+    ? "review_required"
+    : "ready";
+  const lanes: MobileTelegramMiniAppHubReadinessLane[] = [
+    createMobileHubLane({
+      id: "campaign-feed",
+      label: mobileHubLaneLabels["campaign-feed"],
+      readiness: campaignFeedState,
+      ownerRole: "growth_lead",
+      serviceState: "seeded_preview",
+      evidenceBasis: currentMarketplaceRow?.readinessReason ?? marketplace.ownerNextAction,
+      relatedSignal: currentDiscoveryItem?.cta.reason ?? discovery.nextAction,
+      ctaLabel: currentMarketplaceRow?.ctaLabel ?? currentDiscoveryItem?.cta.label ?? localized("Open campaign", "打开活动"),
+      nextAction: currentMarketplaceRow?.nextAction ?? marketplace.ownerNextAction,
+      boundary: mobileHubServiceBoundary["campaign-feed"],
+    }),
+    createMobileHubLane({
+      id: "assets-overview",
+      label: mobileHubLaneLabels["assets-overview"],
+      readiness: assetsState,
+      ownerRole: "wallet_ops",
+      serviceState: assetsState === "review_required" ? "review_required" : "local_only",
+      evidenceBasis: currentPortfolioRow
+        ? localized(
+            `Portfolio row is ${currentPortfolioRow.portfolioState} with ${currentPortfolioRow.points} local points.`,
+            `Portfolio row 当前为 ${currentPortfolioRow.portfolioState}，本地积分 ${currentPortfolioRow.points}。`,
+            `Portfolio row is ${currentPortfolioRow.portfolioState} with ${currentPortfolioRow.points} local points.`,
+          )
+        : portfolio.nextAction,
+      relatedSignal: currentPortfolioRow?.eligibilityLabel ?? portfolio.nextAction,
+      ctaLabel: localized("Preview assets", "预览资产", "Preview assets"),
+      nextAction: currentPortfolioRow?.nextAction ?? portfolio.nextAction,
+      boundary: mobileHubServiceBoundary["assets-overview"],
+    }),
+    createMobileHubLane({
+      id: "forecast-feed",
+      label: mobileHubLaneLabels["forecast-feed"],
+      readiness: forecastState,
+      ownerRole: "product_owner",
+      serviceState: "not_connected",
+      evidenceBasis: missingRequiredTasks.length > 0
+        ? missingRequiredTaskCopy(missingRequiredTasks)
+        : forecastRecommendation?.reason ?? ecosystem.summary.headline,
+      relatedSignal: forecastRecommendation?.gatingReason ?? forecastRecommendation?.reason ?? ecosystem.summary.headline,
+      ctaLabel: forecastRecommendation?.ctaLabel ?? localized("Preview Forecast", "预览 Forecast"),
+      nextAction: forecastRecommendation?.gatingReason ?? forecastRecommendation?.reason ?? ecosystem.summary.headline,
+      boundary: mobileHubServiceBoundary["forecast-feed"],
+    }),
+    createMobileHubLane({
+      id: "pay-shortcut",
+      label: mobileHubLaneLabels["pay-shortcut"],
+      readiness: payState,
+      ownerRole: "product_owner",
+      serviceState: "not_connected",
+      evidenceBasis: payRecommendation?.gatingReason ?? payRecommendation?.reason ?? ecosystem.summary.headline,
+      relatedSignal: missingRequiredTasks.length > 0
+        ? missingRequiredTaskCopy(missingRequiredTasks)
+        : payRecommendation?.reason ?? ecosystem.summary.headline,
+      ctaLabel: payRecommendation?.ctaLabel ?? localized("Preview Pay", "预览 Pay"),
+      nextAction: payRecommendation?.gatingReason ?? payRecommendation?.reason ?? ecosystem.summary.headline,
+      boundary: mobileHubServiceBoundary["pay-shortcut"],
+    }),
+    createMobileHubLane({
+      id: "invite-referral",
+      label: mobileHubLaneLabels["invite-referral"],
+      readiness: referralState,
+      ownerRole: hasReferralReview ? "risk_reviewer" : "growth_lead",
+      serviceState: hasReferralReview ? "review_required" : "local_only",
+      evidenceBasis: referralRiskCopy(participation),
+      relatedSignal: participation.referral.antiFarmRule,
+      ctaLabel: hasReferralReview
+        ? localized("Review referral", "审核推荐", "Review referral")
+        : localized("Preview invite", "预览邀请", "Preview invite"),
+      nextAction: hasReferralReview
+        ? localized(
+            "Review referral risk context before using invite and referral shortcuts.",
+            "使用邀请与推荐快捷入口前，先审核推荐风险上下文。",
+            "Review referral risk context before using invite and referral shortcuts.",
+          )
+        : localized(
+            "Use the seeded invite summary as a local referral preview.",
+            "将 seeded 邀请摘要作为本地推荐预览。",
+            "Use the seeded invite summary as a local referral preview.",
+          ),
+      boundary: mobileHubServiceBoundary["invite-referral"],
+    }),
+    createMobileHubLane({
+      id: "telegram-shell",
+      label: mobileHubLaneLabels["telegram-shell"],
+      readiness: "not_connected",
+      ownerRole: "internal_operator",
+      serviceState: "not_connected",
+      evidenceBasis: localized(
+        "Telegram Mini App shell is represented as a local readiness placeholder only.",
+        "Telegram Mini App shell 仅作为本地 readiness 占位。",
+        "Telegram Mini App shell is represented as a local readiness placeholder only.",
+      ),
+      relatedSignal: localized(
+        "App Hub and Telegram shell ownership is not connected in this local model.",
+        "App Hub 与 Telegram shell 归属尚未在这个本地模型中连接。",
+        "App Hub and Telegram shell ownership is not connected in this local model.",
+      ),
+      ctaLabel: localized("Review shell", "审核 shell", "Review shell"),
+      nextAction: localized(
+        "Confirm Telegram and App Hub shell ownership before any live mini app integration.",
+        "在任何真实 mini app 集成前，先确认 Telegram 与 App Hub shell 归属。",
+        "Confirm Telegram and App Hub shell ownership before any live mini app integration.",
+      ),
+      boundary: mobileHubServiceBoundary["telegram-shell"],
+    }),
+  ];
+  const aiGuide = mobileHubAiGuideFor(lanes, missingRequiredTasks);
+  const ownerNextAction = mobileHubOwnerNextActionFor(lanes);
+
+  return {
+    campaignId: campaign.id,
+    participantWalletAddress: participant.walletAddress,
+    summary: createMobileHubSummary(lanes, aiGuide, ownerNextAction),
+    lanes,
+    aiGuide,
+    boundary: mobileTelegramMiniAppHubReadinessBoundary,
+    ownerNextAction,
   };
 };
 
