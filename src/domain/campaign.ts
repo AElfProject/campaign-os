@@ -47,6 +47,10 @@ import type {
   CampaignLifecycleOperation,
   CampaignLifecycleOperations,
   CampaignLifecycleStatus,
+  CampaignMarketplaceConsumerSurfaceState,
+  CampaignMarketplaceReadiness,
+  CampaignMarketplaceReadinessRow,
+  CampaignMarketplaceReadinessLane,
   CampaignStatus,
   CampaignDiscoveryConsumerSurface,
   CampaignDiscoveryCta,
@@ -11476,6 +11480,282 @@ export const createCampaignDiscoveryReadModel = (
     summary: createDiscoverySummary(items),
     boundary: campaignDiscoveryBoundary,
     nextAction: campaignDiscoveryNextAction,
+  };
+};
+
+export const campaignMarketplaceReadinessBoundary: LocalizedText = localized(
+  "Seeded/local Campaign Marketplace readiness only. No live marketplace API, App Hub backend, Portfolio sync, Forecast prediction, Pay transaction, wallet SDK/provider call, storage write, contract view/send/write, claim, export file, reward custody, or reward distribution is connected.",
+  "仅 seeded/本地 Campaign Marketplace readiness。不会连接实时 marketplace API、App Hub 后端、Portfolio 同步、Forecast 预测、Pay 交易、钱包 SDK/provider 调用、storage 写入、合约读取/发送/写入、claim、导出文件、奖励托管或发奖。",
+  "僅 seeded/本地 Campaign Marketplace readiness。未連接即時 marketplace API、App Hub 後端、Portfolio 同步、Forecast 預測、Pay 交易、錢包 SDK/provider 調用、storage 寫入、合約讀取/發送/寫入、claim、匯出檔案、獎勵託管或發獎。",
+);
+
+const marketplaceLaneLabels: Record<CampaignMarketplaceReadinessLane, LocalizedText> = {
+  ready: localized("Ready for local marketplace preview", "可进入本地 marketplace 预览", "可進入本地 marketplace 預覽"),
+  review_required: localized("Review required", "需要审核", "需要審核"),
+  blocked: localized("Blocked by campaign gate", "被活动门槛阻断", "被活動門檻阻斷"),
+  local_preview: localized("Local preview only", "仅本地预览", "僅本地預覽"),
+};
+
+const marketplaceSurfaceNotes: Record<
+  "appHub" | "portfolio" | "forecast" | "notConfigured",
+  LocalizedText
+> = {
+  appHub: localized(
+    "App Hub may display this as seeded/local marketplace content only.",
+    "App Hub 只能将其展示为 seeded/本地 marketplace 内容。",
+    "App Hub 只能將其展示為 seeded/本地 marketplace 內容。",
+  ),
+  portfolio: localized(
+    "Portfolio may use this as a local campaign checkpoint without Portfolio sync.",
+    "Portfolio 可将其作为本地活动检查点，但不会执行 Portfolio 同步。",
+    "Portfolio 可將其作為本地活動檢查點，但不會執行 Portfolio 同步。",
+  ),
+  forecast: localized(
+    "Forecast may read this campaign context without prediction execution.",
+    "Forecast 可读取该活动上下文，但不会执行预测。",
+    "Forecast 可讀取該活動上下文，但不會執行預測。",
+  ),
+  notConfigured: localized(
+    "This consumer surface is not configured for the local marketplace row.",
+    "该消费端尚未配置到本地 marketplace row。",
+    "該消費端尚未配置到本地 marketplace row。",
+  ),
+};
+
+const isMarketplaceLocalPreviewStatus = (status: CampaignStatus) =>
+  status === "scheduled" || status === "draft" || status === "ai_draft" || status === "human_review";
+
+const isMarketplaceHistoricalStatus = (status: CampaignStatus) =>
+  status === "ended" || status === "exported" || status === "archived";
+
+const surfaceStateFor = (
+  hasSurface: boolean,
+  lane: CampaignMarketplaceReadinessLane,
+): CampaignMarketplaceConsumerSurfaceState => {
+  if (!hasSurface) {
+    return "not_configured";
+  }
+
+  return lane === "blocked" || lane === "review_required" ? "review_required" : "ready";
+};
+
+const marketplaceLaneReasonFor = (
+  lane: CampaignMarketplaceReadinessLane,
+  item: CampaignDiscoveryItem,
+): LocalizedText => {
+  if (lane === "blocked") {
+    return localized(
+      "A campaign gate is still blocking marketplace routing for this participant.",
+      "该参与者仍有活动门槛阻断 marketplace 路由。",
+      "該參與者仍有活動門檻阻斷 marketplace 路由。",
+    );
+  }
+
+  if (lane === "review_required") {
+    return isMarketplaceHistoricalStatus(item.status)
+      ? localized(
+          "Historical campaign rows stay review-only until export and reward ownership are checked.",
+          "历史活动 row 在导出与奖励归属确认前保持仅审核。",
+          "歷史活動 row 在匯出與獎勵歸屬確認前保持僅審核。",
+        )
+      : localized(
+          "Risk or manual review context must be cleared before treating this row as ready.",
+          "需要先清除风险或人工审核上下文，才能将该 row 视为 ready。",
+          "需要先清除風險或人工審核上下文，才能將該 row 視為 ready。",
+        );
+  }
+
+  if (lane === "local_preview") {
+    return localized(
+      "Pre-launch campaigns can be previewed locally but must not start live participation.",
+      "上线前活动可以本地预览，但不能启动真实参与。",
+      "上線前活動可以本地預覽，但不能啟動真實參與。",
+    );
+  }
+
+  return localized(
+    "Campaign discovery, CTA, and consumer surface coverage are ready for local marketplace preview.",
+    "活动发现、CTA 与消费端覆盖已可进入本地 marketplace 预览。",
+    "活動發現、CTA 與消費端覆蓋已可進入本地 marketplace 預覽。",
+  );
+};
+
+const marketplaceNextActionFor = (
+  lane: CampaignMarketplaceReadinessLane,
+  item: CampaignDiscoveryItem,
+): LocalizedText => {
+  if (lane === "blocked") {
+    return localized(
+      "Complete the blocking campaign gate before promoting this row in App Hub.",
+      "先完成阻断活动门槛，再在 App Hub 中提升该 row。",
+      "先完成阻斷活動門檻，再在 App Hub 中提升該 row。",
+    );
+  }
+
+  if (lane === "review_required") {
+    return isMarketplaceHistoricalStatus(item.status)
+      ? localized(
+          "Keep this historical campaign discoverable for eligibility and export review only.",
+          "仅将该历史活动保持为资格与导出审核可发现内容。",
+          "僅將該歷史活動保持為資格與匯出審核可發現內容。",
+        )
+      : localized(
+          "Review risk context before routing this campaign to product follow-ups.",
+          "先审核风险上下文，再将该活动路由到产品后续动作。",
+          "先審核風險上下文，再將該活動路由到產品後續動作。",
+        );
+  }
+
+  if (lane === "local_preview") {
+    return localized(
+      "Keep this campaign in local preview until launch review and marketplace backend ownership are approved.",
+      "在上线审核与 marketplace 后端归属获批前，保持该活动为本地预览。",
+      "在上線審核與 marketplace 後端歸屬獲批前，保持該活動為本地預覽。",
+    );
+  }
+
+  return localized(
+    "Use this row for local App Hub, Portfolio, and Forecast readiness review.",
+    "使用该 row 进行本地 App Hub、Portfolio 与 Forecast readiness 审核。",
+    "使用該 row 進行本地 App Hub、Portfolio 與 Forecast readiness 審核。",
+  );
+};
+
+const marketplaceOwnerNextActionFor = (
+  rows: CampaignMarketplaceReadinessRow[],
+): LocalizedText => {
+  if (rows.some((row) => row.readinessLane === "blocked")) {
+    return localized(
+      "Resolve blocking campaign gates before treating the marketplace loop as ready.",
+      "先解决阻断活动门槛，再将 marketplace loop 视为 ready。",
+      "先解決阻斷活動門檻，再將 marketplace loop 視為 ready。",
+    );
+  }
+
+  if (rows.some((row) => row.readinessLane === "review_required")) {
+    return localized(
+      "Review risk, historical, and export context before live marketplace integration.",
+      "在真实 marketplace 集成前，先审核风险、历史活动与导出上下文。",
+      "在真實 marketplace 集成前，先審核風險、歷史活動與匯出上下文。",
+    );
+  }
+
+  if (rows.some((row) => row.readinessLane === "local_preview")) {
+    return localized(
+      "Keep pre-launch campaigns local until App Hub routing and launch review are approved.",
+      "在 App Hub 路由与上线审核获批前，保持上线前活动为本地模式。",
+      "在 App Hub 路由與上線審核獲批前，保持上線前活動為本地模式。",
+    );
+  }
+
+  return localized(
+    "Prepare marketplace backend ownership, privacy controls, and product-service contracts before going live.",
+    "上线前准备 marketplace 后端归属、隐私控制与产品服务 contract。",
+    "上線前準備 marketplace 後端歸屬、隱私控制與產品服務 contract。",
+  );
+};
+
+const marketplaceLaneFor = (
+  item: CampaignDiscoveryItem,
+  ecosystem: EcosystemNextActionReadModel,
+  portfolioRow?: PortfolioCampaignHistoryRow,
+): CampaignMarketplaceReadinessLane => {
+  if (isMarketplaceLocalPreviewStatus(item.status)) {
+    return "local_preview";
+  }
+
+  if (isMarketplaceHistoricalStatus(item.status)) {
+    return "review_required";
+  }
+
+  if (portfolioRow?.portfolioState === "blocked" || ecosystem.summary.lockedCount > 0) {
+    return "blocked";
+  }
+
+  if (portfolioRow?.portfolioState === "review_required" || ecosystem.summary.reviewCount > 0) {
+    return "review_required";
+  }
+
+  return "ready";
+};
+
+const createMarketplaceReadinessRow = (
+  item: CampaignDiscoveryItem,
+  ecosystem: EcosystemNextActionReadModel,
+  portfolioRow?: PortfolioCampaignHistoryRow,
+): CampaignMarketplaceReadinessRow => {
+  const lane = marketplaceLaneFor(item, ecosystem, portfolioRow);
+  const hasAppHub = item.consumerSurfaces.includes("app_hub");
+  const hasPortfolio = item.consumerSurfaces.includes("portfolio");
+  const hasForecast = item.consumerSurfaces.includes("forecast");
+
+  return {
+    campaignId: item.id,
+    slug: item.slug,
+    title: item.title,
+    status: item.status,
+    ctaKind: item.cta.kind,
+    ctaLabel: item.cta.label,
+    consumerSurfaces: [...item.consumerSurfaces],
+    readinessLane: lane,
+    readinessLabel: marketplaceLaneLabels[lane],
+    readinessReason: marketplaceLaneReasonFor(lane, item),
+    nextAction: marketplaceNextActionFor(lane, item),
+    appHubState: surfaceStateFor(hasAppHub, lane),
+    appHubNote: hasAppHub ? marketplaceSurfaceNotes.appHub : marketplaceSurfaceNotes.notConfigured,
+    portfolioState: surfaceStateFor(hasPortfolio, lane),
+    portfolioNote: hasPortfolio ? marketplaceSurfaceNotes.portfolio : marketplaceSurfaceNotes.notConfigured,
+    forecastState: surfaceStateFor(hasForecast, lane),
+    forecastNote: hasForecast ? marketplaceSurfaceNotes.forecast : marketplaceSurfaceNotes.notConfigured,
+    points: item.points,
+    timeWindow: item.timeWindow,
+    boundary: campaignMarketplaceReadinessBoundary,
+  };
+};
+
+const createMarketplaceReadinessSummary = (
+  rows: CampaignMarketplaceReadinessRow[],
+): CampaignMarketplaceReadiness["summary"] => {
+  const ownerNextAction = marketplaceOwnerNextActionFor(rows);
+
+  return {
+    totalCampaigns: rows.length,
+    appHubReadyCount: rows.filter((row) => row.consumerSurfaces.includes("app_hub")).length,
+    portfolioReadyCount: rows.filter((row) => row.consumerSurfaces.includes("portfolio")).length,
+    forecastReadyCount: rows.filter((row) => row.consumerSurfaces.includes("forecast")).length,
+    readyCount: rows.filter((row) => row.readinessLane === "ready").length,
+    reviewCount: rows.filter((row) => row.readinessLane === "review_required").length,
+    blockedCount: rows.filter((row) => row.readinessLane === "blocked").length,
+    localPreviewCount: rows.filter((row) => row.readinessLane === "local_preview").length,
+    topCampaignId: rows[0]?.campaignId ?? "",
+    topReadinessLane: rows[0]?.readinessLane ?? "local_preview",
+    ownerNextAction,
+    boundary: campaignMarketplaceReadinessBoundary,
+  };
+};
+
+export const createCampaignMarketplaceReadiness = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+): CampaignMarketplaceReadiness => {
+  const discovery = createCampaignDiscoveryReadModel(campaign, participant);
+  const ecosystem = createEcosystemNextActionReadModel(campaign, participant);
+  const portfolioHistory = createPortfolioCampaignHistoryReadModel(campaign, participant);
+  const portfolioRows = new Map(
+    portfolioHistory.rows.map((row) => [row.campaignId, row] as const),
+  );
+  const rows = discovery.items.map((item) =>
+    createMarketplaceReadinessRow(item, ecosystem, portfolioRows.get(item.id)),
+  );
+  const summary = createMarketplaceReadinessSummary(rows);
+
+  return {
+    campaignId: campaign.id,
+    participantWalletAddress: participant.walletAddress,
+    summary,
+    rows,
+    boundary: campaignMarketplaceReadinessBoundary,
+    ownerNextAction: summary.ownerNextAction,
   };
 };
 
