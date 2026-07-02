@@ -381,9 +381,6 @@ const riskWeight: Record<RiskLevel, number> = {
   low: 2,
 };
 
-const servicePriority = (id: ExternalServiceId) =>
-  id === "wallet-signing" ? 0 : id === "contract-root-writer" ? 1 : id === "export-storage" ? 2 : 3;
-
 const sortByPriority = (entries: ExternalServiceRegistryEntry[]) =>
   [...entries].sort((left, right) => {
     const release = releaseImpactWeight[left.releaseImpact] - releaseImpactWeight[right.releaseImpact];
@@ -393,10 +390,6 @@ const sortByPriority = (entries: ExternalServiceRegistryEntry[]) =>
     const impact = Number(right.highImpact) - Number(left.highImpact);
 
     if (impact !== 0) return impact;
-
-    const service = servicePriority(left.id) - servicePriority(right.id);
-
-    if (service !== 0) return service;
 
     const state = stateWeight[left.state] - stateWeight[right.state];
 

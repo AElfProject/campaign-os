@@ -64,8 +64,14 @@ describe("service registry degradation governance", () => {
         governance.summary.reviewRequiredServices +
         governance.summary.offlineServices,
     ).toBe(governance.summary.totalServices);
-    expect(governance.topOwnerAction["en-US"]).toContain("wallet signing");
-    expect(governance.blockers[0]?.id).toBe("wallet-signing");
+    expect(governance.topOwnerAction["en-US"]).toContain("contract root writer");
+    expect(governance.blockers.map((entry) => entry.id)).toEqual([
+      "contract-root-writer",
+      "wallet-signing",
+      "export-storage",
+      "pay",
+      "aelfscan",
+    ]);
   });
 
   it("keeps helper semantics fail-closed for review, maintenance, offline, and unknown services", () => {
