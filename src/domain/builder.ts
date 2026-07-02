@@ -320,6 +320,91 @@ export interface AiCampaignPlannerDecisionConsole {
   nextAction: LocalizedText;
 }
 
+export type AiPlannerLaunchDecisionSource =
+  | "planner"
+  | "publish_gate"
+  | "task_selection"
+  | "template_selection";
+
+export type AiPlannerLaunchDecisionStatus =
+  | "ready"
+  | "review_required"
+  | "warning"
+  | "blocked";
+
+export interface AiPlannerLaunchDecisionSummary {
+  approvalRouteCount: number;
+  blockedCount: number;
+  inheritedGateCount: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  selectedTaskCount: number;
+  selectedTemplateCount: number;
+  warningCount: number;
+}
+
+export interface AiPlannerLaunchTemplateSelection {
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  ownerRole: OwnerRole;
+  readiness: CampaignTemplateReadiness;
+  rewardBoundary: LocalizedText;
+  templateId: CampaignTemplatePresetId;
+  title: LocalizedText;
+}
+
+export interface AiPlannerLaunchTaskSelection {
+  defaultPoints: number;
+  localeReadiness: Record<SupportedLocale, LocaleStatus>;
+  nextAction: LocalizedText;
+  reviewRequired: boolean;
+  riskLevel: RiskLevel;
+  taskId: string;
+  title: LocalizedText;
+  verificationType: VerificationType | "REFERRAL";
+  walletCompatibility: WalletCompatibility;
+}
+
+export interface AiPlannerInheritedPublishGate {
+  blocksPublish: boolean;
+  gateId: string;
+  group: ReadinessGroup;
+  nextAction: LocalizedText;
+  ownerRole: OwnerRole;
+  reason: LocalizedText;
+  status: ReadinessStatus;
+}
+
+export interface AiPlannerLaunchDecisionItem {
+  id: string;
+  label: LocalizedText;
+  nextAction: LocalizedText;
+  ownerRole: OwnerRole;
+  reason: LocalizedText;
+  source: AiPlannerLaunchDecisionSource;
+  status: AiPlannerLaunchDecisionStatus;
+}
+
+export interface AiPlannerLaunchApprovalRoute {
+  decisionIds: string[];
+  nextAction: LocalizedText;
+  ownerRole: OwnerRole;
+  status: "ready" | "warning" | "blocked";
+  summary: LocalizedText;
+}
+
+export interface AiPlannerLaunchDecision {
+  approvalRoutes: AiPlannerLaunchApprovalRoute[];
+  boundary: LocalizedText;
+  decisionItems: AiPlannerLaunchDecisionItem[];
+  draftId: string;
+  inheritedGates: AiPlannerInheritedPublishGate[];
+  nextAction: LocalizedText;
+  selectedTasks: AiPlannerLaunchTaskSelection[];
+  selectedTemplate: AiPlannerLaunchTemplateSelection;
+  summary: AiPlannerLaunchDecisionSummary;
+}
+
 export interface CampaignDraft {
   id: string;
   campaignName: LocalizedText;
@@ -2359,6 +2444,288 @@ export const createPublishGateDecisionCenter = (
         ? text("Publish is blocked until high-impact gates are resolved.", "高影响门禁解决前不能发布。")
         : launchState === "warning"
           ? text("Publish has warnings that need owner review.", "发布前仍有警告需要负责人审核。")
-          : text("All seeded publish gates are ready.", "所有 seeded 发布门禁已就绪。"),
+        : text("All seeded publish gates are ready.", "所有 seeded 发布门禁已就绪。"),
+  };
+};
+
+const aiPlannerLaunchBoundary = text(
+  "Seeded/local launch decision only. No live AI provider, no automatic publish, no campaign creation, no backend mutation, no wallet signature, no contract execution, no export file, no reward custody, and no reward distribution is executed.",
+  "仅 seeded/本地发布决策。不会执行实时 AI provider、自动发布、创建活动、后端变更、钱包签名、合约执行、导出文件、奖励托管或奖励发放。",
+  "Seeded/local launch decision only. No live AI provider, no automatic publish, no campaign creation, no backend mutation, no wallet signature, no contract execution, no export file, no reward custody, and no reward distribution is executed.",
+);
+
+const aiPlannerLaunchNextAction = text(
+  "Review selected tasks, inherited gates, reward boundaries, and owner routes before creating or publishing a campaign.",
+  "创建或发布活动前，先审核已选任务、继承门禁、奖励边界与负责人路线。",
+  "Review selected tasks, inherited gates, reward boundaries, and owner routes before creating or publishing a campaign.",
+);
+
+const launchDecisionStatusFromPlanner = (
+  status: AiPlannerDecisionStatus,
+): AiPlannerLaunchDecisionStatus => status;
+
+const launchDecisionStatusFromGate = (
+  status: ReadinessStatus,
+): AiPlannerLaunchDecisionStatus => {
+  if (status === "blocker") {
+    return "blocked";
+  }
+
+  return status === "warning" ? "warning" : "ready";
+};
+
+const launchRouteStatus = (
+  decisions: readonly AiPlannerLaunchDecisionItem[],
+): "ready" | "warning" | "blocked" => {
+  if (decisions.some((decision) => decision.status === "blocked")) {
+    return "blocked";
+  }
+
+  if (decisions.some((decision) => decision.status === "warning" || decision.status === "review_required")) {
+    return "warning";
+  }
+
+  return "ready";
+};
+
+const launchRouteSummary = (
+  ownerRole: OwnerRole,
+  decisions: readonly AiPlannerLaunchDecisionItem[],
+): LocalizedText => {
+  const unresolved = decisions.filter((decision) => decision.status !== "ready").length;
+
+  if (unresolved > 0) {
+    return text(
+      `${unresolved} launch decision${unresolved === 1 ? "" : "s"} need ${ownerRole.replace(/_/g, " ")} review.`,
+      `${unresolved} 个发布决策需要 ${ownerRole.replace(/_/g, " ")} 审核。`,
+    );
+  }
+
+  return ownerRole === "contract_reviewer"
+    ? text("Contract boundaries remain visible before launch.", "发布前合约边界保持可见。")
+    : ownerRole === "internal_operator"
+      ? text("Operational risk and export checks remain visible.", "运营风险与导出检查保持可见。")
+      : text("Project-owner launch checks are visible for final review.", "项目方发布检查项已展示，等待最终审核。");
+};
+
+const createLaunchApprovalRoutes = (
+  decisionItems: readonly AiPlannerLaunchDecisionItem[],
+): AiPlannerLaunchApprovalRoute[] =>
+  (["project_owner", "internal_operator", "contract_reviewer"] as const)
+    .map((ownerRole) => {
+      const ownedDecisions = decisionItems.filter((decision) => decision.ownerRole === ownerRole);
+
+      return {
+        decisionIds: ownedDecisions.map((decision) => decision.id),
+        nextAction: routeNextAction(ownerRole),
+        ownerRole,
+        status: launchRouteStatus(ownedDecisions),
+        summary: launchRouteSummary(ownerRole, ownedDecisions),
+      };
+    })
+    .filter((route) => route.decisionIds.length > 0);
+
+const selectedTemplateForDraft = (
+  draft: CampaignDraft,
+  templatePack: CampaignTemplatePack,
+): CampaignTemplatePreset => {
+  const awakenTemplate = templatePack.templates.find((template) =>
+    template.id === "awaken-liquidity-challenge",
+  );
+
+  if (draft.projectName.toLowerCase().includes("awaken") && awakenTemplate) {
+    return awakenTemplate;
+  }
+
+  return templatePack.templates[0];
+};
+
+const taskReviewRequired = (template: TaskTemplate) =>
+  template.riskLevel === "high" ||
+  template.verificationType === "SOCIAL" ||
+  chineseLocales.some((locale) => !isLocaleReady(template.localeReadiness[locale]));
+
+const taskSelectionNextAction = (template: TaskTemplate): LocalizedText => {
+  if (template.riskLevel === "high") {
+    return text(
+      "Run human risk review before launch.",
+      "上线前执行人工风险审核。",
+      "Run human risk review before launch.",
+    );
+  }
+
+  if (chineseLocales.some((locale) => !isLocaleReady(template.localeReadiness[locale]))) {
+    return text(
+      "Complete locale review before publishing this task copy.",
+      "发布该任务文案前完成语言审核。",
+      "Complete locale review before publishing this task copy.",
+    );
+  }
+
+  return text(
+    "Keep this selected task in the launch review package.",
+    "在发布审核包中保留该已选任务。",
+    "Keep this selected task in the launch review package.",
+  );
+};
+
+const createSelectedTasks = (
+  draft: CampaignDraft,
+): AiPlannerLaunchTaskSelection[] => {
+  const templatesById = new Map(taskTemplateLibrary.map((template) => [template.id, template]));
+
+  return draft.selectedTaskTemplateIds
+    .map((taskId) => templatesById.get(taskId))
+    .filter((template): template is TaskTemplate => Boolean(template))
+    .map((template) => ({
+      defaultPoints: template.defaultPoints,
+      localeReadiness: template.localeReadiness,
+      nextAction: taskSelectionNextAction(template),
+      reviewRequired: taskReviewRequired(template),
+      riskLevel: template.riskLevel,
+      taskId: template.id,
+      title: template.title,
+      verificationType: template.verificationType,
+      walletCompatibility: template.walletCompatibility,
+    }));
+};
+
+const createTaskSelectionDecisionItems = (
+  selectedTasks: readonly AiPlannerLaunchTaskSelection[],
+): AiPlannerLaunchDecisionItem[] =>
+  selectedTasks.map((task) => ({
+    id: `launch-task-${task.taskId}`,
+    label: task.title,
+    nextAction: task.nextAction,
+    ownerRole: task.reviewRequired ? "internal_operator" : "project_owner",
+    reason: task.reviewRequired
+      ? text(
+          `${task.taskId} needs launch review for risk, verification, or locale readiness.`,
+          `${task.taskId} 需要针对风险、验证或语言 readiness 做发布审核。`,
+        )
+      : text(
+          `${task.taskId} is selected for launch review.`,
+          `${task.taskId} 已进入发布审核。`,
+        ),
+    source: "task_selection",
+    status: task.reviewRequired ? "review_required" : "ready",
+  }));
+
+const createTemplateSelectionDecisionItem = (
+  selectedTemplate: CampaignTemplatePreset,
+): AiPlannerLaunchDecisionItem => ({
+  id: `launch-template-${selectedTemplate.id}`,
+  label: selectedTemplate.title,
+  nextAction: selectedTemplate.nextAction,
+  ownerRole: selectedTemplate.ownerRole,
+  reason: selectedTemplate.boundary,
+  source: "template_selection",
+  status: selectedTemplate.readiness === "ready" ? "ready" : "review_required",
+});
+
+const createPlannerDecisionItems = (
+  planner: AiCampaignPlannerDecisionConsole,
+): AiPlannerLaunchDecisionItem[] =>
+  planner.groups.flatMap((group) =>
+    group.items.map((item) => ({
+      id: `launch-${item.id}`,
+      label: item.label,
+      nextAction: item.nextAction,
+      ownerRole: item.ownerRole,
+      reason: item.rationale,
+      source: "planner" as const,
+      status: launchDecisionStatusFromPlanner(item.status),
+    })),
+  );
+
+const createInheritedGateDecisionItems = (
+  gates: readonly AiPlannerInheritedPublishGate[],
+): AiPlannerLaunchDecisionItem[] =>
+  gates.map((gate) => ({
+    id: `launch-gate-${gate.gateId}`,
+    label: gateTitles[gate.gateId] ?? gate.reason,
+    nextAction: gate.nextAction,
+    ownerRole: gate.ownerRole,
+    reason: gate.reason,
+    source: "publish_gate",
+    status: launchDecisionStatusFromGate(gate.status),
+  }));
+
+const decisionPriority = (item: AiPlannerLaunchDecisionItem) => {
+  if (item.status === "blocked") {
+    return 0;
+  }
+
+  if (item.status === "review_required" || item.status === "warning") {
+    return 1;
+  }
+
+  return 2;
+};
+
+const sortDecisionItems = (
+  items: readonly AiPlannerLaunchDecisionItem[],
+): AiPlannerLaunchDecisionItem[] =>
+  [...items].sort((left, right) => decisionPriority(left) - decisionPriority(right) || left.id.localeCompare(right.id));
+
+const countLaunchDecisions = (
+  decisionItems: readonly AiPlannerLaunchDecisionItem[],
+  inheritedGates: readonly AiPlannerInheritedPublishGate[],
+  approvalRoutes: readonly AiPlannerLaunchApprovalRoute[],
+  selectedTasks: readonly AiPlannerLaunchTaskSelection[],
+): AiPlannerLaunchDecisionSummary => ({
+  approvalRouteCount: approvalRoutes.length,
+  blockedCount: decisionItems.filter((item) => item.status === "blocked").length,
+  inheritedGateCount: inheritedGates.length,
+  readyCount: decisionItems.filter((item) => item.status === "ready").length,
+  reviewRequiredCount: decisionItems.filter((item) => item.status === "review_required").length,
+  selectedTaskCount: selectedTasks.length,
+  selectedTemplateCount: 1,
+  warningCount: decisionItems.filter((item) => item.status === "warning").length,
+});
+
+export const createAiPlannerLaunchDecision = (
+  draft: CampaignDraft = seededCampaignDraft,
+): AiPlannerLaunchDecision => {
+  const planner = createAiCampaignPlannerDecisionConsole(draft);
+  const templatePack = createCampaignTemplatePack();
+  const selectedTemplate = selectedTemplateForDraft(draft, templatePack);
+  const selectedTasks = createSelectedTasks(draft);
+  const publishGateCenter = createPublishGateDecisionCenter(draft);
+  const inheritedGates = publishGateCenter.gates.map<AiPlannerInheritedPublishGate>((gate) => ({
+    blocksPublish: gate.blocksPublish,
+    gateId: gate.id,
+    group: gate.group,
+    nextAction: gate.nextAction,
+    ownerRole: gate.ownerRole,
+    reason: gate.reason,
+    status: gate.status,
+  }));
+  const decisionItems = sortDecisionItems([
+    createTemplateSelectionDecisionItem(selectedTemplate),
+    ...createTaskSelectionDecisionItems(selectedTasks),
+    ...createPlannerDecisionItems(planner),
+    ...createInheritedGateDecisionItems(inheritedGates),
+  ]);
+  const approvalRoutes = createLaunchApprovalRoutes(decisionItems);
+
+  return {
+    approvalRoutes,
+    boundary: aiPlannerLaunchBoundary,
+    decisionItems,
+    draftId: draft.id,
+    inheritedGates,
+    nextAction: aiPlannerLaunchNextAction,
+    selectedTasks,
+    selectedTemplate: {
+      boundary: selectedTemplate.boundary,
+      nextAction: selectedTemplate.nextAction,
+      ownerRole: selectedTemplate.ownerRole,
+      readiness: selectedTemplate.readiness,
+      rewardBoundary: selectedTemplate.rewardBoundary,
+      templateId: selectedTemplate.id,
+      title: selectedTemplate.title,
+    },
+    summary: countLaunchDecisions(decisionItems, inheritedGates, approvalRoutes, selectedTasks),
   };
 };

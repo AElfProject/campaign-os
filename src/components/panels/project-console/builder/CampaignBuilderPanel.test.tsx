@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { projectConsoleCopy } from "../copy";
 import { CampaignBuilderPanel } from "./CampaignBuilderPanel";
@@ -27,9 +27,26 @@ describe("CampaignBuilderPanel", () => {
     expect(screen.getByText("Default language is English")).toBeInTheDocument();
     expect(screen.getByText("Recommend Off-chain MVP")).toBeInTheDocument();
     expect(screen.getByText("Keep contract claim blocked")).toBeInTheDocument();
-    expect(screen.getByText(/No live AI provider/)).toBeInTheDocument();
-    expect(screen.getByText(/no automatic publish/)).toBeInTheDocument();
+    expect(screen.getAllByText(/No live AI provider/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/no automatic publish/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("zh-TW").length).toBeGreaterThan(0);
+
+    const launchDecision = within(screen.getByLabelText("AI Planner Launch Decision"));
+    expect(launchDecision.getByRole("heading", { name: "AI Planner Launch Decision" })).toBeInTheDocument();
+    expect(launchDecision.getByText("Awaken Liquidity Challenge")).toBeInTheDocument();
+    expect(launchDecision.getByText("Connect wallet")).toBeInTheDocument();
+    expect(launchDecision.getByText("Bridge with eBridge")).toBeInTheDocument();
+    expect(launchDecision.getByText("Swap on Awaken")).toBeInTheDocument();
+    expect(launchDecision.getByText("Share campaign post")).toBeInTheDocument();
+    expect(launchDecision.getByText("contract-impact")).toBeInTheDocument();
+    expect(launchDecision.getByText("i18n-human-review")).toBeInTheDocument();
+    expect(launchDecision.getByText("localized-reward-disclaimer")).toBeInTheDocument();
+    expect(launchDecision.getByText("Project owner")).toBeInTheDocument();
+    expect(launchDecision.getByText("Internal operator")).toBeInTheDocument();
+    expect(launchDecision.getByText("Contract reviewer")).toBeInTheDocument();
+    expect(launchDecision.getByText(/No live AI provider/)).toBeInTheDocument();
+    expect(launchDecision.getByText(/no automatic publish/)).toBeInTheDocument();
+    expect(launchDecision.getByText(/no reward distribution/)).toBeInTheDocument();
   });
 
   it("renders localized zh-CN builder copy", () => {
@@ -54,6 +71,23 @@ describe("CampaignBuilderPanel", () => {
     expect(screen.getByText("默认语言为英文")).toBeInTheDocument();
     expect(screen.getByText("推荐 Off-chain MVP")).toBeInTheDocument();
     expect(screen.getByText("保持合约领取阻断")).toBeInTheDocument();
-    expect(screen.getByText(/不会执行实时 AI provider/)).toBeInTheDocument();
+    expect(screen.getAllByText(/不会执行实时 AI provider/).length).toBeGreaterThan(0);
+
+    const launchDecision = within(screen.getByLabelText("AI Planner 发布决策"));
+    expect(launchDecision.getByRole("heading", { name: "AI Planner 发布决策" })).toBeInTheDocument();
+    expect(launchDecision.getByText("Awaken 流动性挑战")).toBeInTheDocument();
+    expect(launchDecision.getByText("连接钱包")).toBeInTheDocument();
+    expect(launchDecision.getByText("使用 eBridge 跨链")).toBeInTheDocument();
+    expect(launchDecision.getByText("在 Awaken Swap")).toBeInTheDocument();
+    expect(launchDecision.getByText("分享活动动态")).toBeInTheDocument();
+    expect(launchDecision.getByText("contract-impact")).toBeInTheDocument();
+    expect(launchDecision.getByText("i18n-human-review")).toBeInTheDocument();
+    expect(launchDecision.getByText("localized-reward-disclaimer")).toBeInTheDocument();
+    expect(launchDecision.getByText("项目方")).toBeInTheDocument();
+    expect(launchDecision.getByText("内部运营")).toBeInTheDocument();
+    expect(launchDecision.getByText("合约审核人")).toBeInTheDocument();
+    expect(launchDecision.getByText(/不会执行实时 AI provider/)).toBeInTheDocument();
+    expect(launchDecision.getAllByText(/自动发布/).length).toBeGreaterThan(0);
+    expect(launchDecision.getAllByText(/奖励发放/).length).toBeGreaterThan(0);
   });
 });

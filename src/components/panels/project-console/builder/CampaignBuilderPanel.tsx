@@ -2,15 +2,17 @@ import type { CSSProperties } from "react";
 import {
   computeBuilderPublishReadiness,
   createAiCampaignPlannerDecisionConsole,
+  createAiPlannerLaunchDecision,
   getLocalizedText,
   seededCampaignDraft,
   type AiPlannerDecisionStatus,
   type CampaignDraft,
   type OwnerRole,
+  type ReadinessStatus,
   type SupportedLocale,
   walletPolicyOptions,
 } from "../../../../domain";
-import { PublishStateBadge } from "../../../badges/Badges";
+import { LocaleStatusBadge, PublishStateBadge, WalletCompatibilityBadge } from "../../../badges/Badges";
 import type { ProjectConsoleCopy } from "../copy";
 
 interface CampaignBuilderPanelProps {
@@ -179,6 +181,27 @@ const plannerStatusLabel = (
 const plannerStatusState = (status: AiPlannerDecisionStatus) =>
   status === "blocked" ? "blocker" : status === "warning" || status === "review_required" ? "warning" : "ready";
 
+const gateStatusLabel = (status: ReadinessStatus, copy: ProjectConsoleCopy) => {
+  if (status === "blocker") {
+    return copy.aiPlannerBlocked;
+  }
+  if (status === "warning") {
+    return copy.aiPlannerWarning;
+  }
+
+  return copy.aiPlannerReady;
+};
+
+const gateStatusState = (status: ReadinessStatus) =>
+  status === "blocker" ? "blocker" : status === "warning" ? "warning" : "ready";
+
+const routeStatusState = (status: "ready" | "warning" | "blocked") =>
+  status === "blocked" ? "blocker" : status;
+
+const compactLocalizedText = (value: string) => value.replace(/_/g, " ");
+
+const launchDecisionLocales = ["en-US", "zh-CN", "zh-TW"] as const satisfies readonly SupportedLocale[];
+
 export const CampaignBuilderPanel = ({
   copy,
   draft = seededCampaignDraft,
@@ -186,6 +209,7 @@ export const CampaignBuilderPanel = ({
 }: CampaignBuilderPanelProps) => {
   const readiness = computeBuilderPublishReadiness(draft);
   const planner = createAiCampaignPlannerDecisionConsole(draft);
+  const launchDecision = createAiPlannerLaunchDecision(draft);
   const missingBasics = readiness.blockers.filter((check) => check.group === "basics");
   const campaignName = getLocalizedText(draft.campaignName, locale);
   const activePolicy = draft.walletPolicy;
@@ -363,6 +387,179 @@ export const CampaignBuilderPanel = ({
           <strong>{copy.aiPlannerBoundary}: </strong>
           {getLocalizedText(planner.boundary, locale)}
         </p>
+
+        <section aria-label={copy.aiPlannerLaunchDecision} style={{ display: "grid", gap: 12 }}>
+          <div style={headingRowStyle}>
+            <div>
+              <p style={labelStyle}>{copy.aiPlannerLaunchDecision}</p>
+              <h3 style={{ fontSize: 20, lineHeight: 1.2, margin: "4px 0" }}>
+                {copy.aiPlannerLaunchDecision}
+              </h3>
+              <p style={bodyTextStyle}>{copy.aiPlannerLaunchDecisionSubtitle}</p>
+            </div>
+            <PublishStateBadge
+              label={`${launchDecision.summary.blockedCount} ${copy.countBlockers}`}
+              state={launchDecision.summary.blockedCount > 0 ? "blocker" : "ready"}
+            />
+          </div>
+
+          <div style={summaryGridStyle}>
+            {[
+              [copy.aiPlannerLaunchSelectedTaskCount, launchDecision.summary.selectedTaskCount],
+              [copy.aiPlannerLaunchSelectedTemplateCount, launchDecision.summary.selectedTemplateCount],
+              [copy.aiPlannerLaunchInheritedGateCount, launchDecision.summary.inheritedGateCount],
+              [copy.aiPlannerReviewRequired, launchDecision.summary.reviewRequiredCount],
+              [copy.aiPlannerWarning, launchDecision.summary.warningCount],
+              [copy.aiPlannerBlocked, launchDecision.summary.blockedCount],
+            ].map(([label, value]) => (
+              <article key={label} style={cardStyle}>
+                <p style={labelStyle}>{label}</p>
+                <p style={{ ...valueStyle, fontSize: 22 }}>{value}</p>
+              </article>
+            ))}
+          </div>
+
+          <div style={summaryGridStyle}>
+            <article style={cardStyle}>
+              <div style={headingRowStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.aiPlannerLaunchSelectedTemplate}</p>
+                  <p style={valueStyle}>{getLocalizedText(launchDecision.selectedTemplate.title, locale)}</p>
+                </div>
+                <PublishStateBadge
+                  label={
+                    launchDecision.selectedTemplate.readiness === "ready"
+                      ? copy.campaignTemplatePackReady
+                      : copy.campaignTemplatePackReviewRequired
+                  }
+                  state={launchDecision.selectedTemplate.readiness === "ready" ? "ready" : "warning"}
+                />
+              </div>
+              <p style={bodyTextStyle}>{getLocalizedText(launchDecision.selectedTemplate.nextAction, locale)}</p>
+              <p style={bodyTextStyle}>{getLocalizedText(launchDecision.selectedTemplate.rewardBoundary, locale)}</p>
+            </article>
+
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.aiPlannerLaunchBoundary}</p>
+              <p style={bodyTextStyle}>{getLocalizedText(launchDecision.boundary, locale)}</p>
+              <p style={labelStyle}>{copy.aiPlannerNextAction}</p>
+              <p style={bodyTextStyle}>{getLocalizedText(launchDecision.nextAction, locale)}</p>
+            </article>
+          </div>
+
+          <article style={cardStyle}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={labelStyle}>{copy.aiPlannerLaunchSelectedTasks}</p>
+                <p style={bodyTextStyle}>{copy.templatesWorkspaceBoundary}</p>
+              </div>
+              <PublishStateBadge
+                label={`${launchDecision.selectedTasks.length} ${copy.aiPlannerLaunchSelectedTaskCount}`}
+                state="ready"
+              />
+            </div>
+            <ul style={listStyle}>
+              {launchDecision.selectedTasks.map((task) => (
+                <li key={task.taskId} style={plannerItemStyle}>
+                  <div style={headingRowStyle}>
+                    <div>
+                      <p style={valueStyle}>{getLocalizedText(task.title, locale)}</p>
+                      <p style={bodyTextStyle}>{task.taskId}</p>
+                    </div>
+                    <PublishStateBadge
+                      label={task.reviewRequired ? copy.aiPlannerReviewRequired : copy.aiPlannerReady}
+                      state={task.reviewRequired ? "warning" : "ready"}
+                    />
+                  </div>
+                  <div style={compactGridStyle}>
+                    <span>
+                      <p style={labelStyle}>{copy.aiPlannerLaunchVerification}</p>
+                      <p style={bodyTextStyle}>{compactLocalizedText(task.verificationType)}</p>
+                    </span>
+                    <span>
+                      <p style={labelStyle}>{copy.aiPlannerLaunchPoints}</p>
+                      <p style={bodyTextStyle}>{task.defaultPoints}</p>
+                    </span>
+                    <span>
+                      <p style={labelStyle}>{copy.aiPlannerLaunchWalletCompatibility}</p>
+                      <WalletCompatibilityBadge compatibility={task.walletCompatibility} />
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {launchDecisionLocales.map((statusLocale) => (
+                      <LocaleStatusBadge
+                        key={`${task.taskId}-${statusLocale}`}
+                        label={`${statusLocale} ${compactLocalizedText(task.localeReadiness[statusLocale])}`}
+                        status={task.localeReadiness[statusLocale]}
+                      />
+                    ))}
+                  </div>
+                  <p style={bodyTextStyle}>
+                    <strong>{copy.aiPlannerNextAction}: </strong>
+                    {getLocalizedText(task.nextAction, locale)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </article>
+
+          <div style={summaryGridStyle}>
+            <article style={cardStyle}>
+              <div style={headingRowStyle}>
+                <p style={labelStyle}>{copy.aiPlannerLaunchInheritedGates}</p>
+                <PublishStateBadge
+                  label={`${launchDecision.inheritedGates.length} ${copy.aiPlannerLaunchInheritedGateCount}`}
+                  state={launchDecision.inheritedGates.some((gate) => gate.blocksPublish) ? "blocker" : "ready"}
+                />
+              </div>
+              <ul style={listStyle}>
+                {launchDecision.inheritedGates.slice(0, 6).map((gate) => (
+                  <li key={gate.gateId} style={plannerItemStyle}>
+                    <div style={headingRowStyle}>
+                      <p style={valueStyle}>{gate.gateId}</p>
+                      <PublishStateBadge
+                        label={gateStatusLabel(gate.status, copy)}
+                        state={gateStatusState(gate.status)}
+                      />
+                    </div>
+                    <p style={bodyTextStyle}>{getLocalizedText(gate.reason, locale)}</p>
+                    {gate.blocksPublish ? (
+                      <PublishStateBadge label={copy.aiPlannerLaunchBlocksPublish} state="blocker" />
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </article>
+
+            <article style={cardStyle}>
+              <div style={headingRowStyle}>
+                <p style={labelStyle}>{copy.aiPlannerLaunchApprovalRoutes}</p>
+                <PublishStateBadge
+                  label={`${launchDecision.approvalRoutes.length} ${copy.aiPlannerLaunchApprovalRoutes}`}
+                  state={launchDecision.approvalRoutes.some((route) => route.status === "blocked") ? "blocker" : "ready"}
+                />
+              </div>
+              <ul style={listStyle}>
+                {launchDecision.approvalRoutes.map((route) => (
+                  <li key={route.ownerRole} style={plannerItemStyle}>
+                    <div style={headingRowStyle}>
+                      <p style={valueStyle}>{ownerRoleLabels[locale][route.ownerRole]}</p>
+                      <PublishStateBadge
+                        label={route.status === "blocked" ? copy.aiPlannerBlocked : route.status === "warning" ? copy.aiPlannerWarning : copy.aiPlannerReady}
+                        state={routeStatusState(route.status)}
+                      />
+                    </div>
+                    <p style={bodyTextStyle}>{getLocalizedText(route.summary, locale)}</p>
+                    <p style={bodyTextStyle}>
+                      <strong>{copy.aiPlannerNextAction}: </strong>
+                      {getLocalizedText(route.nextAction, locale)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </article>
+          </div>
+        </section>
       </section>
 
       <div style={compactGridStyle}>
