@@ -1196,10 +1196,10 @@ export const AdminOpsPanel = ({
               state={contractTransparencyReadinessState(contractTransparencyMonitor.closeoutContext.status)}
             />
           </div>
-          <p style={mutedTextStyle}>
+          <p style={wrapTextStyle}>
             {copy.evidence}: {getLocalizedText(contractTransparencyMonitor.closeoutContext.evidence, locale)}
           </p>
-          <p style={mutedTextStyle}>
+          <p style={wrapTextStyle}>
             {copy.nextAction}: {getLocalizedText(contractTransparencyMonitor.closeoutContext.topAction, locale)}
           </p>
         </article>
@@ -1226,16 +1226,16 @@ export const AdminOpsPanel = ({
                   {lane.blocksExecution ? <Badge label={copy.blockedActions} tone="warning" /> : null}
                 </span>
               </div>
-              <p style={mutedTextStyle}>
+              <p style={wrapTextStyle}>
                 {copy.ownerRole}: {readableCode(lane.ownerRole)}
               </p>
-              <p style={mutedTextStyle}>
+              <p style={wrapTextStyle}>
                 {copy.linkedSurface}: {getLocalizedText(lane.sourceSurface, locale)}
               </p>
-              <p style={mutedTextStyle}>
+              <p style={wrapTextStyle}>
                 {copy.evidence}: {getLocalizedText(lane.sourceEvidence, locale)}
               </p>
-              <p style={mutedTextStyle}>
+              <p style={wrapTextStyle}>
                 {copy.nextAction}: {getLocalizedText(lane.nextAction, locale)}
               </p>
               <p style={wrapTextStyle}>
