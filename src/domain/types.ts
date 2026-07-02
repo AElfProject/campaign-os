@@ -2117,6 +2117,78 @@ export interface EcosystemNextActionReadModel {
   recommendations: EcosystemNextActionRecommendation[];
 }
 
+export type MobileTelegramMiniAppHubReadinessLaneId =
+  | "campaign-feed"
+  | "assets-overview"
+  | "forecast-feed"
+  | "pay-shortcut"
+  | "invite-referral"
+  | "telegram-shell";
+
+export type MobileTelegramMiniAppHubReadinessState =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "not_connected";
+
+export type MobileTelegramMiniAppHubServiceState =
+  | "seeded_preview"
+  | "local_only"
+  | "not_connected"
+  | "review_required";
+
+export type MobileTelegramMiniAppHubOwnerRole =
+  | "project_owner"
+  | "growth_lead"
+  | "internal_operator"
+  | "risk_reviewer"
+  | "wallet_ops"
+  | "product_owner";
+
+export interface MobileTelegramMiniAppHubReadinessLane {
+  id: MobileTelegramMiniAppHubReadinessLaneId;
+  label: LocalizedText;
+  readiness: MobileTelegramMiniAppHubReadinessState;
+  ownerRole: MobileTelegramMiniAppHubOwnerRole;
+  serviceState: MobileTelegramMiniAppHubServiceState;
+  evidenceBasis: LocalizedText;
+  relatedSignal: LocalizedText;
+  ctaLabel: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface MobileHubAiGuide {
+  headline: LocalizedText;
+  body: LocalizedText;
+  primaryLaneId: MobileTelegramMiniAppHubReadinessLaneId;
+  urgency: Exclude<MobileTelegramMiniAppHubReadinessState, "not_connected">;
+  evidenceBasis: LocalizedText;
+}
+
+export interface MobileTelegramMiniAppHubReadinessSummary {
+  totalLanes: number;
+  readyCount: number;
+  reviewCount: number;
+  blockedCount: number;
+  notConnectedCount: number;
+  topLaneId: MobileTelegramMiniAppHubReadinessLaneId;
+  topLaneState: MobileTelegramMiniAppHubReadinessState;
+  aiGuideHeadline: LocalizedText;
+  ownerNextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface MobileTelegramMiniAppHubReadiness {
+  campaignId: string;
+  participantWalletAddress: string;
+  summary: MobileTelegramMiniAppHubReadinessSummary;
+  lanes: MobileTelegramMiniAppHubReadinessLane[];
+  aiGuide: MobileHubAiGuide;
+  boundary: LocalizedText;
+  ownerNextAction: LocalizedText;
+}
+
 export type CampaignMarketplaceReadinessLane =
   | "ready"
   | "review_required"

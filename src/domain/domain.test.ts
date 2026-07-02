@@ -31,6 +31,7 @@ import {
   createCampaignLifecycleOperations,
   createCampaignDiscoveryReadModel,
   createCampaignMarketplaceReadiness,
+  createMobileTelegramMiniAppHubReadiness,
   createPortfolioCampaignHistoryReadModel,
   createTranslationManagerReadModel,
   createLocaleAnalyticsReadiness,
@@ -2149,6 +2150,195 @@ describe("Campaign OS domain foundation", () => {
     });
     expect(currentRow?.readinessReason["en-US"]).toContain("must not start live participation");
     expect(currentRow?.nextAction["en-US"]).toContain("local preview");
+  });
+
+  it("derives deterministic Mobile and Telegram Mini App Hub readiness lanes", () => {
+    const [, eoaParticipant] = campaignDetail.participants;
+    const firstReadModel = createMobileTelegramMiniAppHubReadiness(campaignDetail, eoaParticipant);
+    const secondReadModel = createMobileTelegramMiniAppHubReadiness(campaignDetail, eoaParticipant);
+    const lanesById = Object.fromEntries(firstReadModel.lanes.map((lane) => [lane.id, lane]));
+
+    expect(firstReadModel).toEqual(secondReadModel);
+    expect(firstReadModel.lanes.map((lane) => lane.id)).toEqual([
+      "campaign-feed",
+      "assets-overview",
+      "forecast-feed",
+      "pay-shortcut",
+      "invite-referral",
+      "telegram-shell",
+    ]);
+    expect(firstReadModel.summary).toMatchObject({
+      totalLanes: 6,
+      readyCount: 0,
+      reviewCount: 1,
+      blockedCount: 4,
+      notConnectedCount: 1,
+      topLaneId: "campaign-feed",
+      topLaneState: "blocked",
+    });
+    expect(
+      firstReadModel.summary.readyCount +
+        firstReadModel.summary.reviewCount +
+        firstReadModel.summary.blockedCount +
+        firstReadModel.summary.notConnectedCount,
+    ).toBe(firstReadModel.summary.totalLanes);
+    expect(lanesById["campaign-feed"]).toMatchObject({
+      readiness: "blocked",
+      ownerRole: "growth_lead",
+      serviceState: "seeded_preview",
+    });
+    expect(lanesById["assets-overview"]).toMatchObject({
+      readiness: "blocked",
+      ownerRole: "wallet_ops",
+    });
+    expect(lanesById["forecast-feed"]).toMatchObject({
+      readiness: "blocked",
+      ownerRole: "product_owner",
+      serviceState: "not_connected",
+    });
+    expect(lanesById["pay-shortcut"]).toMatchObject({
+      readiness: "blocked",
+      ownerRole: "product_owner",
+      serviceState: "not_connected",
+    });
+    expect(lanesById["invite-referral"]).toMatchObject({
+      readiness: "review_required",
+      ownerRole: "risk_reviewer",
+    });
+    expect(lanesById["telegram-shell"]).toMatchObject({
+      readiness: "not_connected",
+      ownerRole: "internal_operator",
+      serviceState: "not_connected",
+    });
+    expect(firstReadModel.aiGuide).toMatchObject({
+      primaryLaneId: "campaign-feed",
+      urgency: "blocked",
+    });
+    expect(firstReadModel.aiGuide.body["en-US"]).toContain("Bridge via eBridge");
+    expect(firstReadModel.aiGuide.body["en-US"]).toContain("Pay");
+    expect(firstReadModel.aiGuide.body["en-US"]).toContain("Forecast");
+    expect(firstReadModel.ownerNextAction["en-US"]).toContain("blocking campaign gates");
+  });
+
+  it("keeps Mobile and Telegram Mini App Hub readiness local-only, localized, and free of live claims", () => {
+    const [eligibleParticipant] = campaignDetail.participants;
+    const readModel = createMobileTelegramMiniAppHubReadiness(campaignDetail, eligibleParticipant);
+    const serialized = JSON.stringify(readModel).toLowerCase();
+    const boundaryText = [
+      readModel.boundary["en-US"],
+      readModel.summary.boundary["en-US"],
+      ...readModel.lanes.flatMap((lane) => [
+        lane.boundary["en-US"],
+        lane.evidenceBasis["en-US"],
+        lane.relatedSignal["en-US"],
+        lane.nextAction["en-US"],
+      ]),
+    ].join(" ");
+
+    expect(readModel.summary).toMatchObject({
+      totalLanes: 6,
+      readyCount: 5,
+      reviewCount: 0,
+      blockedCount: 0,
+      notConnectedCount: 1,
+      topLaneId: "campaign-feed",
+      topLaneState: "ready",
+    });
+    expect(readModel.aiGuide).toMatchObject({
+      primaryLaneId: "campaign-feed",
+      urgency: "ready",
+    });
+    expect(readModel.ownerNextAction["en-US"]).toContain("Telegram");
+    expect(boundaryText).toContain("No live Telegram SDK");
+    expect(boundaryText).toContain("Bot API");
+    expect(boundaryText).toContain("OAuth");
+    expect(boundaryText).toContain("Pay service");
+    expect(boundaryText).toContain("Forecast service");
+    expect(boundaryText).toContain("Portfolio sync");
+    expect(boundaryText).toContain("wallet SDK/provider");
+    expect(boundaryText).toContain("payment transaction");
+    expect(boundaryText).toContain("prediction transaction");
+    expect(boundaryText).toContain("asset lookup");
+    expect(boundaryText).toContain("contract view/send/write");
+
+    for (const lane of readModel.lanes) {
+      expect(lane.label["en-US"]).toBeTruthy();
+      expect(lane.label["zh-CN"]).toBeTruthy();
+      expect(lane.label["zh-TW"]).toBeTruthy();
+      expect(lane.evidenceBasis["en-US"]).toBeTruthy();
+      expect(lane.evidenceBasis["zh-CN"]).toBeTruthy();
+      expect(lane.evidenceBasis["zh-TW"]).toBeTruthy();
+      expect(lane.relatedSignal["en-US"]).toBeTruthy();
+      expect(lane.relatedSignal["zh-CN"]).toBeTruthy();
+      expect(lane.relatedSignal["zh-TW"]).toBeTruthy();
+      expect(lane.ctaLabel["en-US"]).toBeTruthy();
+      expect(lane.ctaLabel["zh-CN"]).toBeTruthy();
+      expect(lane.ctaLabel["zh-TW"]).toBeTruthy();
+      expect(lane.nextAction["en-US"]).toBeTruthy();
+      expect(lane.nextAction["zh-CN"]).toBeTruthy();
+      expect(lane.nextAction["zh-TW"]).toBeTruthy();
+    }
+    for (const locale of supportedLocales) {
+      expect(readModel.aiGuide.headline[locale]).toBeTruthy();
+      expect(readModel.aiGuide.body[locale]).toBeTruthy();
+      expect(readModel.aiGuide.evidenceBasis[locale]).toBeTruthy();
+      expect(readModel.summary.aiGuideHeadline[locale]).toBe(readModel.aiGuide.headline[locale]);
+      expect(readModel.summary.ownerNextAction[locale]).toBe(readModel.ownerNextAction[locale]);
+    }
+
+    for (const unsafe of [
+      "private key",
+      "seed phrase",
+      "bearer token",
+      "telegram token",
+      "oauth token",
+      "signed payload",
+      "secret",
+      "download url",
+      "file url",
+      "contract root",
+    ]) {
+      expect(serialized).not.toContain(unsafe);
+    }
+    for (const unsafeKey of [
+      "privateKey",
+      "seedPhrase",
+      "bearerToken",
+      "telegramToken",
+      "oauthToken",
+      "signedPayload",
+      "downloadUrl",
+      "fileUrl",
+      "contractRoot",
+      "transactionId",
+    ]) {
+      expect(hasOwnKeyDeep(readModel, unsafeKey)).toBe(false);
+    }
+  });
+
+  it("keeps Forecast and Portfolio review-required when risk context exists without missing required tasks", () => {
+    const [, , riskParticipant] = campaignDetail.participants;
+    const readModel = createMobileTelegramMiniAppHubReadiness(campaignDetail, riskParticipant);
+    const lanesById = Object.fromEntries(readModel.lanes.map((lane) => [lane.id, lane]));
+
+    expect(lanesById["pay-shortcut"]).toMatchObject({
+      readiness: "ready",
+    });
+    expect(lanesById["forecast-feed"]).toMatchObject({
+      readiness: "review_required",
+    });
+    expect(lanesById["assets-overview"]).toMatchObject({
+      readiness: "review_required",
+    });
+    expect(lanesById["invite-referral"]).toMatchObject({
+      readiness: "review_required",
+    });
+    expect(readModel.aiGuide).toMatchObject({
+      primaryLaneId: "campaign-feed",
+      urgency: "review_required",
+    });
+    expect(readModel.aiGuide.body["en-US"]).toContain("review");
+    expect(readModel.ownerNextAction["en-US"]).toContain("Review");
   });
 
   it("shows Portfolio history review-required state for risk/export review context", () => {
