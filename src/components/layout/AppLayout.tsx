@@ -3,9 +3,15 @@ import { getLocalizedText, type NormalizedWalletSession, type SupportedLocale } 
 import { WalletBadge, WalletVerificationBadge } from "../badges/Badges";
 
 export type SurfaceKey = "project" | "user" | "admin";
+export type ProductDestinationKey = "campaigns" | "create" | "analytics" | "export";
 
 interface SurfaceOption {
   key: SurfaceKey;
+  label: string;
+}
+
+interface ProductNavigationOption {
+  key: ProductDestinationKey;
   label: string;
 }
 
@@ -20,13 +26,16 @@ interface BrowserLocalePrompt {
 interface AppLayoutProps {
   brand: string;
   activeSurface: SurfaceKey;
+  activeProductDestination: ProductDestinationKey;
   browserLocalePrompt?: BrowserLocalePrompt;
   children: ReactNode;
   locale: SupportedLocale;
   localeLabel: string;
+  onProductDestinationChange: (destination: ProductDestinationKey) => void;
   shellTitle: string;
   onLocaleChange: (locale: SupportedLocale) => void;
   onSurfaceChange: (surface: SurfaceKey) => void;
+  productNavigation: ProductNavigationOption[];
   surfaces: SurfaceOption[];
   walletSession: NormalizedWalletSession;
 }
@@ -117,6 +126,16 @@ const navStyle: CSSProperties = {
   padding: 8,
 };
 
+const productNavStyle: CSSProperties = {
+  ...navStyle,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 170px), 1fr))",
+};
+
+const surfaceNavStyle: CSSProperties = {
+  ...navStyle,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))",
+};
+
 const buttonBaseStyle: CSSProperties = {
   border: "1px solid transparent",
   borderRadius: 8,
@@ -124,6 +143,13 @@ const buttonBaseStyle: CSSProperties = {
   fontWeight: 800,
   minHeight: 42,
   padding: "0 12px",
+  wordBreak: "break-word",
+};
+
+const productButtonBaseStyle: CSSProperties = {
+  ...buttonBaseStyle,
+  fontSize: 15,
+  minHeight: 48,
 };
 
 const promptStyle: CSSProperties = {
@@ -199,13 +225,16 @@ const mediaStyle = `
 
 export const AppLayout = ({
   activeSurface,
+  activeProductDestination,
   brand,
   browserLocalePrompt,
   children,
   locale,
   localeLabel,
   onLocaleChange,
+  onProductDestinationChange,
   onSurfaceChange,
+  productNavigation,
   shellTitle,
   surfaces,
   walletSession,
@@ -271,7 +300,30 @@ export const AppLayout = ({
         </aside>
       ) : null}
 
-      <nav aria-label="Campaign OS surfaces" style={navStyle}>
+      <nav aria-label="Campaign OS product navigation" style={productNavStyle}>
+        {productNavigation.map((destination) => {
+          const active = destination.key === activeProductDestination;
+
+          return (
+            <button
+              aria-pressed={active}
+              key={destination.key}
+              onClick={() => onProductDestinationChange(destination.key)}
+              style={{
+                ...productButtonBaseStyle,
+                background: active ? "#071426" : "#ffffff",
+                borderColor: active ? "#071426" : "#b8c7da",
+                color: active ? "#ffffff" : "#071426",
+              }}
+              type="button"
+            >
+              {destination.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      <nav aria-label="Campaign OS surfaces" style={surfaceNavStyle}>
         {surfaces.map((surface) => {
           const active = surface.key === activeSurface;
 

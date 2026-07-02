@@ -10,10 +10,14 @@ import {
 import { useLocale } from "../i18n/useLocale";
 import {
   AppLayout,
+  type ProductDestinationKey,
   type SurfaceKey,
 } from "../components/layout/AppLayout";
 import { AdminOpsPanel } from "../components/panels/admin-ops/AdminOpsPanel";
-import { ProjectConsole } from "../components/panels/project-console/ProjectConsole";
+import {
+  ProjectConsole,
+  type ProjectWorkspaceKey,
+} from "../components/panels/project-console/ProjectConsole";
 import { UserAppPanel } from "../components/panels/user-app/UserAppPanel";
 
 const surfaceCopy = {
@@ -23,6 +27,10 @@ const surfaceCopy = {
     browserLocalePromptDismiss: "Keep English",
     browserLocalePromptMessage: "Your browser language is Chinese. Switch to 简体中文?",
     browserLocalePromptSwitch: "Switch to 简体中文",
+    productAnalytics: "Analytics",
+    productCampaigns: "Campaigns",
+    productCreate: "Create",
+    productExport: "Export",
     localeLabel: "Language",
     project: "Project Console",
     shellTitle: "Campaign operations shell",
@@ -34,6 +42,10 @@ const surfaceCopy = {
     browserLocalePromptDismiss: "继续使用 English",
     browserLocalePromptMessage: "浏览器语言为中文。切换到简体中文？",
     browserLocalePromptSwitch: "切换到简体中文",
+    productAnalytics: "分析",
+    productCampaigns: "活动",
+    productCreate: "创建",
+    productExport: "导出",
     localeLabel: "语言",
     project: "项目控制台",
     shellTitle: "活动运营工作台",
@@ -45,12 +57,30 @@ const surfaceCopy = {
     browserLocalePromptDismiss: "繼續使用 English",
     browserLocalePromptMessage: "瀏覽器語言為中文。切換到簡體中文？",
     browserLocalePromptSwitch: "切換到簡體中文",
+    productAnalytics: "分析",
+    productCampaigns: "活動",
+    productCreate: "建立",
+    productExport: "匯出",
     localeLabel: "語言",
     project: "專案控制台",
     shellTitle: "活動營運工作台",
     userTitle: "使用者應用",
   },
 } satisfies Record<SupportedLocale, Record<string, string>>;
+
+const productDestinationWorkspaceMap: Record<ProductDestinationKey, ProjectWorkspaceKey> = {
+  analytics: "analytics",
+  campaigns: "campaigns",
+  create: "create",
+  export: "export",
+};
+
+const workspaceProductDestinationMap: Partial<Record<ProjectWorkspaceKey, ProductDestinationKey>> = {
+  analytics: "analytics",
+  campaigns: "campaigns",
+  create: "create",
+  export: "export",
+};
 
 const readBrowserPathname = () => {
   if (typeof window === "undefined") {
@@ -104,6 +134,10 @@ export const App = () => {
     setLocale,
     shouldShowBrowserLocalePrompt,
   } = useLocale(routeContext.urlLocale ?? undefined);
+  const [activeProductDestination, setActiveProductDestination] =
+    useState<ProductDestinationKey>("campaigns");
+  const [activeProjectWorkspace, setActiveProjectWorkspace] =
+    useState<ProjectWorkspaceKey>("campaigns");
   const [activeSurface, setActiveSurface] = useState<SurfaceKey>("project");
   const copy = surfaceCopy[locale];
   const contentLocale: SupportedLocale = locale === "zh-TW" ? "en-US" : locale;
@@ -122,9 +156,32 @@ export const App = () => {
     { key: "user" as const, label: copy.userTitle },
     { key: "admin" as const, label: copy.adminTitle },
   ];
+  const productNavigation = [
+    { key: "campaigns" as const, label: copy.productCampaigns },
+    { key: "create" as const, label: copy.productCreate },
+    { key: "analytics" as const, label: copy.productAnalytics },
+    { key: "export" as const, label: copy.productExport },
+  ];
+
+  const selectProductDestination = (destination: ProductDestinationKey) => {
+    setActiveProductDestination(destination);
+    setActiveProjectWorkspace(productDestinationWorkspaceMap[destination]);
+    setActiveSurface("project");
+  };
+
+  const selectProjectWorkspace = (workspace: ProjectWorkspaceKey) => {
+    setActiveProjectWorkspace(workspace);
+
+    const destination = workspaceProductDestinationMap[workspace];
+
+    if (destination) {
+      setActiveProductDestination(destination);
+    }
+  };
 
   return (
     <AppLayout
+      activeProductDestination={activeProductDestination}
       activeSurface={activeSurface}
       brand={copy.brand}
       browserLocalePrompt={
@@ -141,13 +198,19 @@ export const App = () => {
       locale={locale}
       localeLabel={copy.localeLabel}
       onLocaleChange={setLocale}
+      onProductDestinationChange={selectProductDestination}
       onSurfaceChange={setActiveSurface}
+      productNavigation={productNavigation}
       shellTitle={copy.shellTitle}
       surfaces={surfaces}
       walletSession={connectedWallet}
     >
       {activeSurface === "project" ? (
-        <ProjectConsole locale={contentLocale} />
+        <ProjectConsole
+          activeWorkspace={activeProjectWorkspace}
+          locale={contentLocale}
+          onWorkspaceChange={selectProjectWorkspace}
+        />
       ) : activeSurface === "user" ? (
         <UserAppPanel locale={contentLocale} shareLocale={locale} />
       ) : (

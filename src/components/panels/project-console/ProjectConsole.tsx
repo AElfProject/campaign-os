@@ -70,6 +70,8 @@ import { projectConsoleCopy } from "./copy";
 interface ProjectConsoleProps {
   locale: SupportedLocale;
   campaign?: CampaignShellDetail;
+  activeWorkspace?: ProjectWorkspaceKey;
+  onWorkspaceChange?: (workspace: ProjectWorkspaceKey) => void;
 }
 
 const panelStyle: CSSProperties = {
@@ -705,7 +707,7 @@ const projectWorkspaceKeys = [
   "settings",
 ] as const;
 
-type ProjectWorkspaceKey = (typeof projectWorkspaceKeys)[number];
+export type ProjectWorkspaceKey = (typeof projectWorkspaceKeys)[number];
 
 const workspaceShellStyle: CSSProperties = {
   background: "#f8fbff",
@@ -765,11 +767,14 @@ const stepperStyle: CSSProperties = {
 };
 
 export const ProjectConsole = ({
+  activeWorkspace: controlledActiveWorkspace,
   campaign = campaignDetail,
   locale,
+  onWorkspaceChange,
 }: ProjectConsoleProps) => {
   const copy = projectConsoleCopy[locale];
-  const [activeWorkspace, setActiveWorkspace] = useState<ProjectWorkspaceKey>("campaigns");
+  const [internalActiveWorkspace, setInternalActiveWorkspace] = useState<ProjectWorkspaceKey>("campaigns");
+  const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
   const title = getLocalizedText(campaign.title, locale);
   const subtitle = getLocalizedText(campaign.subtitle, locale);
   const firstParticipant = campaign.participants[0];
@@ -826,6 +831,14 @@ export const ProjectConsole = ({
   const participantOperations = createParticipantOperationsReadModel(campaign);
   const settingsReadiness = createCampaignSettingsReadiness(campaign);
   const postCampaignCloseout = createPostCampaignCloseout(campaign);
+
+  const selectWorkspace = (workspace: ProjectWorkspaceKey) => {
+    if (!controlledActiveWorkspace) {
+      setInternalActiveWorkspace(workspace);
+    }
+
+    onWorkspaceChange?.(workspace);
+  };
 
   const stats = [
     {
@@ -979,7 +992,7 @@ export const ProjectConsole = ({
             <button
               aria-pressed={activeWorkspace === workspaceKey}
               key={workspaceKey}
-              onClick={() => setActiveWorkspace(workspaceKey)}
+              onClick={() => selectWorkspace(workspaceKey)}
               style={workspaceButtonStyle(activeWorkspace === workspaceKey)}
               type="button"
             >
