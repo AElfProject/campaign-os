@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
-import { EXPORT_CSV_COLUMNS } from "../../../domain";
+import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
 import { AdminOpsPanel } from "./AdminOpsPanel";
 
 const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
@@ -29,6 +29,8 @@ describe("Admin/Ops shell", () => {
       within(lifecycleReview).getByRole("heading", { name: "Lifecycle operation review" }),
     ).toBeInTheDocument();
     expect(within(lifecycleReview).getByText("Path-level pause, resume, end, export, and archive review before any future production execution.")).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText("Generate AI draft")).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText("Submit for human review")).toBeInTheDocument();
     expect(within(lifecycleReview).getByText("Pause campaign")).toBeInTheDocument();
     expect(within(lifecycleReview).getByText("Resume campaign")).toBeInTheDocument();
     expect(within(lifecycleReview).getByText("End campaign")).toBeInTheDocument();
@@ -453,6 +455,31 @@ describe("Admin/Ops shell", () => {
     expectVisibleText(/demo-task-social-3E9/);
     expectVisibleText("zh-CN / zh-TW AI draft/fallback");
     expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
+  });
+
+  it("renders AI review lifecycle operation cards without production mutation copy", () => {
+    render(
+      <AdminOpsPanel
+        campaign={{ ...campaignDetail, status: "ai_draft" }}
+        locale="en-US"
+      />,
+    );
+
+    const lifecycleReview = screen.getByLabelText("Lifecycle operation review");
+
+    expect(within(lifecycleReview).getByText(/Draft\s*->\s*AI Draft/)).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText(/AI Draft\s*->\s*Human Review/)).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText("Generate AI draft")).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText("Submit for human review")).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText("Schedule campaign")).toBeInTheDocument();
+    expect(within(lifecycleReview).getByText("Publish campaign")).toBeInTheDocument();
+    expect(
+      within(lifecycleReview).getAllByText(/AI-generated campaign setup must be reviewed by a human/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(lifecycleReview).getByText(/Review only: no live mutation, no scheduler action/),
+    ).toBeInTheDocument();
+    expect(within(lifecycleReview).queryByText(/production mutation is enabled/i)).not.toBeInTheDocument();
   });
 
   it("switches Admin/Ops copy manually to zh-CN", () => {

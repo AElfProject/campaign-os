@@ -546,6 +546,8 @@ const portfolioHistoryBadgeState = (
 
 const campaignStatusLabel = (status: CampaignStatus, copy: typeof userAppCopy["en-US"]) => {
   const labels: Record<CampaignStatus, string> = {
+    ai_draft: "AI Draft",
+    human_review: "Human Review",
     draft: "Draft",
     scheduled: copy.comingSoon,
     live: copy.active,
@@ -563,12 +565,15 @@ const campaignStatusState = (status: CampaignStatus) => {
     return "ready";
   }
 
-  if (status === "scheduled" || status === "paused") {
+  if (status === "scheduled" || status === "paused" || status === "ai_draft" || status === "human_review") {
     return "warning";
   }
 
   return "blocker";
 };
+
+const campaignStatusIsPreLaunchReview = (status: CampaignStatus) =>
+  status === "ai_draft" || status === "human_review";
 
 const sessionForParticipant = (
   campaign: CampaignShellDetail,
@@ -677,22 +682,28 @@ const CampaignFeedCard = ({
         </li>
       ))}
     </ol>
-    <button
-      style={{
-        ...buttonStyle,
-        background:
-          item.status === "ended" || item.status === "archived"
-            ? "#ffffff"
-            : buttonStyle.background,
-        color:
-          item.status === "ended" || item.status === "archived"
-            ? "#1c64f2"
-            : buttonStyle.color,
-      }}
-      type="button"
-    >
-      {copy[campaignDiscoveryCtaKey(item.cta.kind)]}
-    </button>
+    {campaignStatusIsPreLaunchReview(item.status) ? (
+      <button disabled style={disabledActionButtonStyle} type="button">
+        {copy.reviewRequired}
+      </button>
+    ) : (
+      <button
+        style={{
+          ...buttonStyle,
+          background:
+            item.status === "ended" || item.status === "archived"
+              ? "#ffffff"
+              : buttonStyle.background,
+          color:
+            item.status === "ended" || item.status === "archived"
+              ? "#1c64f2"
+              : buttonStyle.color,
+        }}
+        type="button"
+      >
+        {copy[campaignDiscoveryCtaKey(item.cta.kind)]}
+      </button>
+    )}
   </article>
 );
 
@@ -995,6 +1006,10 @@ export const UserAppPanel = ({
     [copy.portfolioExportReady, String(portfolioCampaignHistory.summary.exportReadyCount), "ready"],
     [copy.portfolioTotalPoints, String(portfolioCampaignHistory.summary.totalPoints), "ready"],
   ];
+  const appHubCampaignSummary =
+    campaignDiscovery.summary.liveCount > 0
+      ? `${campaignDiscovery.summary.liveCount} ${copy.active}`
+      : `${campaignDiscovery.summary.scheduledCount} ${copy.comingSoon}`;
   const submitEligibilityCheck = () => {
     setCheckedEligibilityAddress(eligibilityAddressInput.trim());
   };
@@ -1108,7 +1123,7 @@ export const UserAppPanel = ({
             </div>
             <div style={gridStyle}>
               {[
-                [copy.appHubCampaigns, `${campaignDiscovery.summary.liveCount} ${copy.active}`],
+                [copy.appHubCampaigns, appHubCampaignSummary],
                 [copy.eligibility, eligibilityLabel(participation.eligibility.status, copy)],
                 [copy.walletType, getWalletBadgeLabel(selectedWallet.accountType, selectedWallet.walletSource)],
                 [copy.ecosystemLoopProgress, `${ecosystemNextActions.summary.loopProgressPercent}%`],
@@ -1169,7 +1184,9 @@ export const UserAppPanel = ({
                   />
                 </div>
                 <button style={{ ...buttonStyle, justifyContent: "center", width: "100%" }} type="button">
-                  {copy.continueTasks}
+                  {campaignStatusIsPreLaunchReview(appHubCampaign.status)
+                    ? copy.reviewRequired
+                    : copy.continueTasks}
                 </button>
               </article>
               <article style={cardStyle}>

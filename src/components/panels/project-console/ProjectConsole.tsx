@@ -242,6 +242,15 @@ const commandStatusLabel = (
     commandScheduledDraft: string;
   },
 ) => {
+  const reviewLabels: Partial<Record<CampaignShellDetail["status"], string>> = {
+    ai_draft: "AI Draft",
+    human_review: "Human Review",
+  };
+
+  if (reviewLabels[status]) {
+    return reviewLabels[status];
+  }
+
   if (status === "live") {
     return labels.active;
   }
@@ -450,7 +459,21 @@ const lifecycleOperationStateLabel = (
   return stateLabels[state];
 };
 
-const lifecycleStatusLabel = (status: CampaignLifecycleStatus) => status.replace(/_/g, " ");
+const lifecycleStatusLabel = (status: CampaignLifecycleStatus) => {
+  const labels: Record<CampaignLifecycleStatus, string> = {
+    archived: "Archived",
+    ai_draft: "AI Draft",
+    draft: "Draft",
+    ended: "Ended",
+    exported: "Exported",
+    human_review: "Human Review",
+    live: "Live",
+    paused: "Paused",
+    scheduled: "Scheduled",
+  };
+
+  return labels[status];
+};
 
 const lifecycleOwnerLabel = (ownerRole: CampaignLifecycleOperation["ownerRole"]) =>
   ownerRole.replace(/_/g, " ");
@@ -1439,6 +1462,8 @@ export const ProjectConsole = ({
           {lifecycleOperations.operations
             .filter((operation) =>
               [
+                "generate-ai-draft",
+                "submit-human-review",
                 "schedule-campaign",
                 "publish-campaign",
                 "export-campaign",
