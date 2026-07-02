@@ -25,7 +25,7 @@ describe("Project Console shell", () => {
     );
 
     const nav = getProjectWorkspaceNav();
-    for (const workspace of ["Campaigns", "Create", "Templates", "AI Content", "Analytics", "Export"]) {
+    for (const workspace of ["Campaigns", "Create", "Templates", "Participants", "AI Content", "Analytics", "Export", "Settings"]) {
       expect(within(nav).getByRole("button", { name: workspace })).toBeInTheDocument();
     }
     expect(within(nav).getByRole("button", { name: "Campaigns" })).toHaveAttribute(
@@ -99,6 +99,72 @@ describe("Project Console shell", () => {
     expect(within(portfolioReadiness).queryByText(/payment id/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Analytics & Export Decision" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Task template library" })).not.toBeInTheDocument();
+  });
+
+  it("switches to Participants workspace and renders seeded operations boundaries", () => {
+    render(<App />);
+
+    clickWorkspace("Participants");
+
+    const nav = getProjectWorkspaceNav();
+    expect(within(nav).getByRole("button", { name: "Participants" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const participants = screen.getByLabelText("Participant operations");
+    expect(
+      within(participants).getByRole("heading", { name: "Participant operations" }),
+    ).toBeInTheDocument();
+    expect(within(participants).getByLabelText("Participant summary")).toBeInTheDocument();
+    expect(within(participants).getByText("Wallet mix")).toBeInTheDocument();
+    expect(within(participants).getByText("Locale mix")).toBeInTheDocument();
+    expect(within(participants).getByText("2F4...9aB")).toBeInTheDocument();
+    expect(within(participants).getByText("3E9...7cD")).toBeInTheDocument();
+    expect(within(participants).getByText("5N1...4fA")).toBeInTheDocument();
+    expect(within(participants).getByText("7P8...2bE")).toBeInTheDocument();
+    expect(within(participants).getAllByText("Export ready").length).toBeGreaterThan(0);
+    expect(within(participants).getAllByText("Review required").length).toBeGreaterThan(0);
+    expect(within(participants).getAllByText("Blocked").length).toBeGreaterThan(0);
+    expect(within(participants).getAllByText("Pending").length).toBeGreaterThan(0);
+    expect(within(participants).getByText("manual_review_queue")).toBeInTheDocument();
+    expect(within(participants).getByText("referral_velocity_review")).toBeInTheDocument();
+    expect(within(participants).getAllByText(/does not distribute rewards/).length).toBeGreaterThan(0);
+    expect(within(participants).queryByRole("button", { name: /distribute|reward/i })).not.toBeInTheDocument();
+  });
+
+  it("switches to Settings workspace and keeps readiness read-only", () => {
+    render(<App />);
+
+    clickWorkspace("Settings");
+
+    const nav = getProjectWorkspaceNav();
+    expect(within(nav).getByRole("button", { name: "Settings" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const settings = screen.getByLabelText("Settings readiness");
+    expect(
+      within(settings).getByRole("heading", { name: "Settings readiness" }),
+    ).toBeInTheDocument();
+    expect(within(settings).getByLabelText("Settings summary")).toBeInTheDocument();
+    for (const group of [
+      "Wallet policy",
+      "Contract mode",
+      "Reward responsibility",
+      "i18n fallback",
+      "Verification and risk posture",
+      "Export policy",
+      "Publish prerequisites",
+    ]) {
+      expect(within(settings).getByText(group)).toBeInTheDocument();
+    }
+    expect(within(settings).getAllByText("Ready").length).toBeGreaterThan(0);
+    expect(within(settings).getAllByText("Review required").length).toBeGreaterThan(0);
+    expect(within(settings).getAllByText("Blocked").length).toBeGreaterThan(0);
+    expect(within(settings).getByText(/Read-only seeded\/local campaign settings readiness/)).toBeInTheDocument();
+    expect(within(settings).getByText(/No live settings save/)).toBeInTheDocument();
+    expect(within(settings).getAllByText(/reward distribution/).length).toBeGreaterThan(0);
+    expect(within(settings).queryByRole("button", { name: /save|update|publish/i })).not.toBeInTheDocument();
   });
 
   it("switches to Create workspace and preserves the builder flow", () => {
@@ -547,7 +613,7 @@ describe("Project Console shell", () => {
     );
 
     const nav = screen.getByRole("navigation", { name: "项目控制台工作区导航" });
-    for (const workspace of ["活动", "创建", "模板", "AI 内容", "分析", "导出"]) {
+    for (const workspace of ["活动", "创建", "模板", "参与者", "AI 内容", "分析", "导出", "设置"]) {
       expect(within(nav).getByRole("button", { name: workspace })).toBeInTheDocument();
     }
     expect(within(nav).getByRole("button", { name: "活动" })).toHaveAttribute(
@@ -597,6 +663,17 @@ describe("Project Console shell", () => {
     expect(within(zhPortfolioReadiness).getByText("Premium analytics")).toBeInTheDocument();
     expect(within(zhPortfolioReadiness).getByText(/不会执行实时 billing、支付、发票、CRM、奖励托管/)).toBeInTheDocument();
     expect(within(zhPortfolioReadiness).getAllByText(/Campaign OS 不托管奖励、不发奖/).length).toBeGreaterThan(0);
+
+    fireEvent.click(within(nav).getByRole("button", { name: "参与者" }));
+    const zhParticipants = screen.getByLabelText("参与者运营");
+    expect(
+      within(zhParticipants).getByRole("heading", { name: "参与者运营" }),
+    ).toBeInTheDocument();
+    expect(within(zhParticipants).getByLabelText("参与者摘要")).toBeInTheDocument();
+    expect(within(zhParticipants).getByText("钱包分布")).toBeInTheDocument();
+    expect(within(zhParticipants).getByText("语言分布")).toBeInTheDocument();
+    expect(within(zhParticipants).getByText("manual_review_queue")).toBeInTheDocument();
+    expect(within(zhParticipants).getAllByText(/不执行发奖/).length).toBeGreaterThan(0);
 
     fireEvent.click(within(nav).getByRole("button", { name: "创建" }));
     for (const step of ["目标", "任务", "奖励与资格", "i18n", "合约", "发布准备度"]) {
@@ -688,6 +765,17 @@ describe("Project Console shell", () => {
     expect(screen.getByText("验证任务")).toBeInTheDocument();
     expect(screen.getByText("导出 winners")).toBeInTheDocument();
     expect(screen.getAllByText(/不会调用实时 API/).length).toBeGreaterThan(0);
+
+    fireEvent.click(within(nav).getByRole("button", { name: "设置" }));
+    const zhSettings = screen.getByLabelText("设置 readiness");
+    expect(
+      within(zhSettings).getByRole("heading", { name: "设置 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(zhSettings).getByLabelText("设置摘要")).toBeInTheDocument();
+    expect(within(zhSettings).getByText("钱包策略")).toBeInTheDocument();
+    expect(within(zhSettings).getByText("奖励责任")).toBeInTheDocument();
+    expect(within(zhSettings).getByText("导出策略")).toBeInTheDocument();
+    expect(within(zhSettings).getByText(/不会保存真实设置/)).toBeInTheDocument();
 
     fireEvent.click(within(nav).getByRole("button", { name: "AI 内容" }));
     const aiContentPack = screen.getByLabelText("AI 内容包");

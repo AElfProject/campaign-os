@@ -26,6 +26,9 @@ import type {
   AnalyticsKpi,
   AdminContractReviewCenter,
   CampaignMetadataField,
+  CampaignSettingsGroup,
+  CampaignSettingsReadiness,
+  CampaignSettingsReadinessState,
   CampaignShareCardReadiness,
   CampaignCommandCenterSummary,
   CampaignCommandItem,
@@ -125,6 +128,9 @@ import type {
   P1LocaleExpansionReadiness,
   P1LocaleExpansionReadinessRow,
   ParticipationMetrics,
+  ParticipantOperationsExportStatus,
+  ParticipantOperationsReadModel,
+  ParticipantOperationsRow,
   ParticipationReadModel,
   ParticipantSnapshot,
   ParticipantTaskState,
@@ -148,6 +154,7 @@ import type {
   RewardDisclaimerReviewRow,
   ReviewSeverity,
   TaskVerificationStatus,
+  SupportedLocale,
   VerificationCoverageSummary,
   VerificationAffectedOutcome,
   VerificationEvidence,
@@ -190,6 +197,12 @@ import { createLocalizedCampaignPath } from "./locale";
 const defaultPointsThreshold = 160;
 const defaultEligibleRankCutoff = 100;
 const exportBatchId = "export-awaken-sprint-preview";
+
+const localized = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": zhTW,
+});
 
 const defaultReferralRule: LocalizedText = {
   "en-US": "Only qualified invitees who complete valid tasks count for referral points.",
@@ -7632,12 +7645,6 @@ export const createContractInterfaceMatrixConsole = (): ContractInterfaceMatrixC
   };
 };
 
-const localized = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
-  "en-US": enUS,
-  "zh-CN": zhCN,
-  "zh-TW": zhTW,
-});
-
 const p1LocaleExpansionRegistry: Array<{
   code: P1LocaleCode;
   displayName: LocalizedText;
@@ -9175,6 +9182,333 @@ export const createExportConfirmationReadinessGate = (
     ],
     boundary: exportConfirmationReadinessBoundary,
     nextAction: exportReadinessNextAction,
+  };
+};
+
+const participantOperationsBoundary: LocalizedText = {
+  "en-US":
+    "Seeded/local participant operations only. Risk flags and eligibility are review inputs; Campaign OS does not distribute rewards and the campaign project owns fulfillment.",
+  "zh-CN":
+    "仅 seeded/本地参与者运营视图。风险标记与资格结果仅作为审核输入；Campaign OS 不执行发奖，奖励履约由活动项目方负责。",
+  "zh-TW":
+    "Seeded/local participant operations only. Risk flags and eligibility are review inputs; Campaign OS does not distribute rewards and the campaign project owns fulfillment.",
+};
+
+const settingsReadinessBoundary: LocalizedText = {
+  "en-US":
+    "Read-only seeded/local campaign settings readiness. No live settings save, backend mutation, wallet action, contract transaction, export file, reward custody, or reward distribution is executed.",
+  "zh-CN":
+    "只读 seeded/本地活动设置 readiness。不会保存真实设置、写入后端、执行钱包动作、合约交易、导出文件、奖励托管或发奖。",
+  "zh-TW":
+    "Read-only seeded/local campaign settings readiness. No live settings save, backend mutation, wallet action, contract transaction, export file, reward custody, or reward distribution is executed.",
+};
+
+const participantExportStatusLabels: Record<ParticipantOperationsExportStatus, LocalizedText> = {
+  blocked: localized("Blocked", "阻断"),
+  pending: localized("Pending", "待处理"),
+  ready: localized("Export ready", "导出就绪"),
+  review_required: localized("Review required", "需要审核"),
+};
+
+const participantExportNextAction = (
+  status: ParticipantOperationsExportStatus,
+  row?: ExportPreviewRow,
+): LocalizedText => {
+  if (status === "ready") {
+    return localized(
+      "Keep the participant in the export preview until project-owned fulfillment review.",
+      "在项目方履约审核前保持该参与者位于导出预览中。",
+    );
+  }
+
+  if (status === "blocked") {
+    const missingTasks = row?.missingTasks.join(", ");
+
+    return localized(
+      missingTasks
+        ? `Resolve missing required tasks before export review: ${missingTasks}.`
+        : "Resolve missing wallet or export metadata before export review.",
+      missingTasks
+        ? `导出审核前先处理缺失必做任务：${missingTasks}。`
+        : "导出审核前先处理缺失的钱包或导出元数据。",
+    );
+  }
+
+  if (status === "review_required") {
+    const riskFlags = row?.riskFlags.join(", ");
+
+    return localized(
+      riskFlags
+        ? `Route risk flags to manual review before winner export: ${riskFlags}.`
+        : "Review eligibility and export evidence before approving this participant.",
+      riskFlags
+        ? `导出 winners 前将风险标记交给人工审核：${riskFlags}。`
+        : "批准该参与者前先审核资格与导出证据。",
+    );
+  }
+
+  return localized(
+    "Wait for pending task verification before export eligibility is trusted.",
+    "等待任务验证完成后再信任导出资格。",
+  );
+};
+
+const participantOperationsExportStatus = (
+  participant: ParticipantSnapshot,
+  missingRequiredTasks: CampaignTask[],
+  row?: ExportPreviewRow,
+): ParticipantOperationsExportStatus => {
+  if (missingRequiredTasks.length > 0 || row?.rowStatus === "blocked" || (row?.missingColumnValues.length ?? 0) > 0) {
+    return "blocked";
+  }
+
+  if (participant.riskFlags.length > 0 || (row?.riskFlags.length ?? 0) > 0) {
+    return "review_required";
+  }
+
+  if (participant.eligible && row?.rowStatus === "ready") {
+    return "ready";
+  }
+
+  return "pending";
+};
+
+const createParticipantOperationsRow = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+  exportRowsByWallet: Map<string, ExportPreviewRow>,
+): ParticipantOperationsRow => {
+  const taskStates = deriveParticipantTaskStates(campaign.tasks, participant);
+  const completedTasks = taskStates.filter((state) => state.completed).length;
+  const row = exportRowsByWallet.get(participant.walletAddress);
+  const missingRequiredTasks = computeMissingTasks(campaign.tasks, participant);
+  const exportStatus = participantOperationsExportStatus(participant, missingRequiredTasks, row);
+
+  return {
+    participantId: participant.id,
+    walletAddress: participant.walletAddress,
+    accountType: participant.accountType,
+    walletSource: participant.walletSource,
+    localePreference: participant.localePreference,
+    completedTasks,
+    totalTasks: campaign.tasks.length,
+    taskProgressLabel: localized(
+      `${completedTasks}/${campaign.tasks.length} tasks`,
+      `${completedTasks}/${campaign.tasks.length} 个任务`,
+    ),
+    eligible: participant.eligible,
+    riskFlags: [...participant.riskFlags],
+    exportStatus,
+    exportStatusLabel: participantExportStatusLabels[exportStatus],
+    nextAction: participantExportNextAction(exportStatus, row),
+    rewardBoundary,
+  };
+};
+
+const emptyLocaleCounts = (): Record<SupportedLocale, number> => ({
+  "en-US": 0,
+  "zh-CN": 0,
+  "zh-TW": 0,
+});
+
+export const createParticipantOperationsReadModel = (
+  campaign: CampaignShellDetail,
+): ParticipantOperationsReadModel => {
+  const exportPreview = createExportPreview(
+    campaign.id,
+    campaign.participants,
+    campaign.tasks,
+    campaign.walletSessions,
+  );
+  const exportRowsByWallet = new Map(
+    exportPreview.rows.map((row) => [row.walletAddress, row]),
+  );
+  const rows = campaign.participants.map((participant) =>
+    createParticipantOperationsRow(campaign, participant, exportRowsByWallet),
+  );
+  const localeCounts = emptyLocaleCounts();
+
+  for (const row of rows) {
+    localeCounts[row.localePreference] += 1;
+  }
+
+  return {
+    campaignId: campaign.id,
+    summary: {
+      totalParticipants: rows.length,
+      eligibleParticipants: rows.filter((row) => row.eligible).length,
+      exportReadyParticipants: rows.filter((row) => row.exportStatus === "ready").length,
+      reviewRequiredParticipants: rows.filter((row) => row.exportStatus === "review_required").length,
+      blockedParticipants: rows.filter((row) => row.exportStatus === "blocked").length,
+      pendingParticipants: rows.filter((row) => row.exportStatus === "pending").length,
+      aaWalletParticipants: rows.filter((row) => row.accountType === "AA").length,
+      eoaWalletParticipants: rows.filter((row) => row.accountType === "EOA").length,
+      riskFlaggedParticipants: rows.filter((row) => row.riskFlags.length > 0).length,
+      localeCounts,
+    },
+    rows,
+    boundary: participantOperationsBoundary,
+  };
+};
+
+const settingsStateFromCounts = (
+  blockedCount: number,
+  reviewRequiredCount: number,
+): CampaignSettingsReadinessState =>
+  blockedCount > 0 ? "blocked" : reviewRequiredCount > 0 ? "review_required" : "ready";
+
+const settingsValueFromState = (state: CampaignSettingsReadinessState): LocalizedText => {
+  if (state === "ready") {
+    return localized("Ready", "就绪");
+  }
+
+  return state === "blocked" ? localized("Blocked", "阻断") : localized("Review required", "需要审核");
+};
+
+const createSettingsGroup = ({
+  currentValue,
+  evidence,
+  id,
+  label,
+  nextAction,
+  ownerRole,
+  readiness,
+}: CampaignSettingsGroup): CampaignSettingsGroup => ({
+  currentValue,
+  evidence,
+  id,
+  label,
+  nextAction,
+  ownerRole,
+  readiness,
+});
+
+const settingsGroupPriority = (state: CampaignSettingsReadinessState) =>
+  state === "blocked" ? 0 : state === "review_required" ? 1 : 2;
+
+export const createCampaignSettingsReadiness = (
+  campaign: CampaignShellDetail,
+): CampaignSettingsReadiness => {
+  const exportReadiness = createExportConfirmationReadinessGate(campaign);
+  const translationManager = createTranslationManagerReadModel(campaign);
+  const riskIntelligence = createRiskIntelligenceReviewSurface(campaign);
+  const i18nReviewCount = translationManager.localeItems.filter((item) => item.publishState !== "ready").length;
+  const riskReviewCount = riskIntelligence.summary.reviewRequiredCount + riskIntelligence.summary.highSeverityCount;
+  const publishState: CampaignSettingsReadinessState = campaign.publishReadiness.blockers.length > 0
+    ? "blocked"
+    : campaign.publishReadiness.warnings.length > 0
+      ? "review_required"
+      : "ready";
+  const exportState = settingsStateFromCounts(
+    exportReadiness.summary.blockedRows,
+    exportReadiness.summary.reviewRequiredRows,
+  );
+  const riskState = settingsStateFromCounts(riskIntelligence.summary.blockedCount, riskReviewCount);
+  const i18nState = settingsStateFromCounts(0, i18nReviewCount);
+  const groups: CampaignSettingsGroup[] = [
+    createSettingsGroup({
+      id: "wallet-policy",
+      label: localized("Wallet policy", "钱包策略"),
+      currentValue: localized(`${campaign.walletPolicy} · AA and EOA supported`, `${campaign.walletPolicy} · 支持 AA 与 EOA`),
+      readiness: "ready",
+      ownerRole: "project_owner",
+      evidence: localized(
+        `${campaign.metrics.aaWallets} AA / ${campaign.metrics.eoaWallets} EOA wallets in the seeded campaign.`,
+        `Seeded 活动中有 ${campaign.metrics.aaWallets} 个 AA / ${campaign.metrics.eoaWallets} 个 EOA 钱包。`,
+      ),
+      nextAction: localized(
+        "Keep Any wallet policy unless a future campaign intentionally restricts wallet type.",
+        "保持 Any 钱包策略，除非后续活动明确限制钱包类型。",
+      ),
+    }),
+    createSettingsGroup({
+      id: "contract-mode",
+      label: localized("Contract mode", "合约模式"),
+      currentValue: contractModeLabels[campaign.contractMode],
+      readiness: campaign.contractMode === "CONTRACT_CLAIM" ? "blocked" : "ready",
+      ownerRole: "contract_reviewer",
+      evidence: contractBoundaryByMode[campaign.contractMode],
+      nextAction: contractNextActionByMode[campaign.contractMode],
+    }),
+    createSettingsGroup({
+      id: "reward-responsibility",
+      label: localized("Reward responsibility", "奖励责任"),
+      currentValue: localized("Campaign project owns reward fulfillment", "活动项目方负责奖励履约"),
+      readiness: "ready",
+      ownerRole: "project_owner",
+      evidence: rewardBoundary,
+      nextAction: localized(
+        "Keep reward copy and export confirmations clear before publish.",
+        "发布前保持奖励文案与导出确认清晰。",
+      ),
+    }),
+    createSettingsGroup({
+      id: "i18n-fallback",
+      label: localized("i18n fallback", "i18n 回退"),
+      currentValue: localized(`${i18nReviewCount} locales need review`, `${i18nReviewCount} 个语言需要审核`),
+      readiness: i18nState,
+      ownerRole: "project_owner",
+      evidence: noAutoPublishNotice,
+      nextAction: localized(
+        "Review fallback and AI draft locale rows before final publish.",
+        "最终发布前审核回退与 AI 草稿语言行。",
+      ),
+    }),
+    createSettingsGroup({
+      id: "verification-risk",
+      label: localized("Verification and risk posture", "验证与风险姿态"),
+      currentValue: settingsValueFromState(riskState),
+      readiness: riskState,
+      ownerRole: "internal_operator",
+      evidence: riskIntelligence.boundary,
+      nextAction: localized(
+        "Review risk dimensions and manual-review rows before export approval.",
+        "导出批准前审核风险维度与人工审核行。",
+      ),
+    }),
+    createSettingsGroup({
+      id: "export-policy",
+      label: localized("Export policy", "导出策略"),
+      currentValue: localized(
+        `${exportReadiness.summary.readyRows} ready / ${exportReadiness.summary.reviewRequiredRows} review / ${exportReadiness.summary.blockedRows} blocked`,
+        `${exportReadiness.summary.readyRows} 就绪 / ${exportReadiness.summary.reviewRequiredRows} 需审核 / ${exportReadiness.summary.blockedRows} 阻断`,
+      ),
+      readiness: exportState,
+      ownerRole: "project_owner",
+      evidence: exportReadiness.boundary,
+      nextAction: exportReadiness.nextAction,
+    }),
+    createSettingsGroup({
+      id: "publish-prerequisites",
+      label: localized("Publish prerequisites", "发布前置条件"),
+      currentValue: settingsValueFromState(publishState),
+      readiness: publishState,
+      ownerRole: publishState === "blocked" ? "contract_reviewer" : "project_owner",
+      evidence: localized(
+        `${campaign.publishReadiness.blockers.length} blockers / ${campaign.publishReadiness.warnings.length} warnings.`,
+        `${campaign.publishReadiness.blockers.length} 个阻断 / ${campaign.publishReadiness.warnings.length} 个警告。`,
+      ),
+      nextAction: localized(
+        "Resolve publish blockers and warnings before treating settings as final.",
+        "将设置视为最终态前先处理发布阻断与警告。",
+      ),
+    }),
+  ];
+  const sortedGroups = [...groups].sort((left, right) =>
+    settingsGroupPriority(left.readiness) - settingsGroupPriority(right.readiness),
+  );
+
+  return {
+    campaignId: campaign.id,
+    summary: {
+      totalGroups: groups.length,
+      readyGroups: groups.filter((group) => group.readiness === "ready").length,
+      reviewRequiredGroups: groups.filter((group) => group.readiness === "review_required").length,
+      blockedGroups: groups.filter((group) => group.readiness === "blocked").length,
+      topNextAction: sortedGroups[0]?.nextAction ?? localized("Keep settings under review.", "继续审核设置。"),
+    },
+    groups,
+    boundary: settingsReadinessBoundary,
   };
 };
 

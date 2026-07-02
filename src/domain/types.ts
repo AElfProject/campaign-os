@@ -1491,6 +1491,84 @@ export interface ProjectCampaignCommandCenter {
   boundary: LocalizedText;
 }
 
+export type ParticipantOperationsExportStatus =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "pending";
+
+export interface ParticipantOperationsSummary {
+  totalParticipants: number;
+  eligibleParticipants: number;
+  exportReadyParticipants: number;
+  reviewRequiredParticipants: number;
+  blockedParticipants: number;
+  pendingParticipants: number;
+  aaWalletParticipants: number;
+  eoaWalletParticipants: number;
+  riskFlaggedParticipants: number;
+  localeCounts: Record<SupportedLocale, number>;
+}
+
+export interface ParticipantOperationsRow {
+  participantId: string;
+  walletAddress: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  localePreference: SupportedLocale;
+  completedTasks: number;
+  totalTasks: number;
+  taskProgressLabel: LocalizedText;
+  eligible: boolean;
+  riskFlags: string[];
+  exportStatus: ParticipantOperationsExportStatus;
+  exportStatusLabel: LocalizedText;
+  nextAction: LocalizedText;
+  rewardBoundary: LocalizedText;
+}
+
+export interface ParticipantOperationsReadModel {
+  campaignId: string;
+  summary: ParticipantOperationsSummary;
+  rows: ParticipantOperationsRow[];
+  boundary: LocalizedText;
+}
+
+export type CampaignSettingsReadinessState = "ready" | "review_required" | "blocked";
+export type CampaignSettingsGroupId =
+  | "wallet-policy"
+  | "contract-mode"
+  | "reward-responsibility"
+  | "i18n-fallback"
+  | "verification-risk"
+  | "export-policy"
+  | "publish-prerequisites";
+
+export interface CampaignSettingsSummary {
+  totalGroups: number;
+  readyGroups: number;
+  reviewRequiredGroups: number;
+  blockedGroups: number;
+  topNextAction: LocalizedText;
+}
+
+export interface CampaignSettingsGroup {
+  id: CampaignSettingsGroupId;
+  label: LocalizedText;
+  currentValue: LocalizedText;
+  readiness: CampaignSettingsReadinessState;
+  ownerRole: OwnerRole;
+  evidence: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface CampaignSettingsReadiness {
+  campaignId: string;
+  summary: CampaignSettingsSummary;
+  groups: CampaignSettingsGroup[];
+  boundary: LocalizedText;
+}
+
 export interface RiskSignal {
   id: string;
   label: LocalizedText;
