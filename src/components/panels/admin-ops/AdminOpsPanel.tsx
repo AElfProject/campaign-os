@@ -6,6 +6,7 @@ import {
   createExportArtifact,
   createExportConfirmationReadinessGate,
   createLiveWalletConnectorBoundary,
+  createServiceDegradationGovernance,
   createParticipationReadModel,
   getLocalizedText,
   type AelfWebLoginAdapterLiveEvidenceStatus,
@@ -28,6 +29,10 @@ import {
   type CampaignLifecycleOperationState,
   type CampaignLifecycleStatus,
   type ContractTransparencyReadiness,
+  type ExternalServiceLiveEvidenceStatus,
+  type ExternalServiceRegistryEntry,
+  type ExternalServiceReleaseImpact,
+  type ExternalServiceState,
   type LaunchConsoleBundleStatus,
   type LaunchConsoleGateState,
   type LaunchConsoleHandoffReviewState,
@@ -531,6 +536,63 @@ const providerLiveEvidenceState = (status: ProviderLiveEvidenceStatus) =>
 const providerFeatureGateState = (state: ProviderFeatureGateState) =>
   state === "disabled" ? "blocker" : "warning";
 
+const serviceStateLabel = (
+  state: ExternalServiceState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<ExternalServiceState, string> = {
+    disabled: copy.disabledServices,
+    enabled_preview: copy.enabledPreview,
+    maintenance: copy.maintenanceServices,
+    offline: copy.offlineServices,
+    review_required: copy.reviewRequired,
+  };
+
+  return labels[state];
+};
+
+const serviceStateBadge = (entry: ExternalServiceRegistryEntry) => {
+  if (entry.releaseImpact === "release_blocker" || entry.fallback.blocksLaunch || entry.state === "offline") {
+    return "blocker";
+  }
+
+  return entry.state === "enabled_preview" && !entry.featureGate.reviewRequired ? "ready" : "warning";
+};
+
+const serviceReleaseImpactLabel = (
+  impact: ExternalServiceReleaseImpact,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<ExternalServiceReleaseImpact, string> = {
+    informational: copy.informational,
+    needs_review: copy.needsReview,
+    ready: copy.readyActions,
+    release_blocker: copy.releaseBlocker,
+  };
+
+  return labels[impact];
+};
+
+const serviceReleaseImpactState = (impact: ExternalServiceReleaseImpact) =>
+  impact === "release_blocker" ? "blocker" : impact === "ready" ? "ready" : "warning";
+
+const serviceLiveEvidenceLabel = (
+  status: ExternalServiceLiveEvidenceStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<ExternalServiceLiveEvidenceStatus, string> = {
+    blocked: copy.blocked,
+    missing: copy.missing,
+    not_applicable: copy.notApplicable,
+    ready: copy.liveEvidenceReady,
+  };
+
+  return labels[status];
+};
+
+const serviceLiveEvidenceState = (status: ExternalServiceLiveEvidenceStatus) =>
+  status === "blocked" ? "blocker" : status === "ready" ? "ready" : "warning";
+
 const adapterReadinessState = (readiness: AelfWebLoginAdapterReadiness) => {
   if (readiness === "blocked" || readiness === "unavailable") {
     return "blocker";
@@ -676,6 +738,57 @@ export const AdminOpsPanel = ({
   const providerEvidenceRegistryEntries = [...providerEvidenceRegistry.entries].sort(
     (left, right) => providerPathPriority(left) - providerPathPriority(right),
   );
+  const serviceGovernance = createServiceDegradationGovernance();
+  const serviceSummaryItems = [
+    {
+      id: "total",
+      label: copy.totalItems,
+      state: "ready" as const,
+      value: serviceGovernance.summary.totalServices,
+    },
+    {
+      id: "enabled-preview",
+      label: copy.enabledPreview,
+      state: "ready" as const,
+      value: serviceGovernance.summary.enabledPreviewServices,
+    },
+    {
+      id: "disabled",
+      label: copy.disabledServices,
+      state: serviceGovernance.summary.disabledServices > 0 ? "warning" as const : "ready" as const,
+      value: serviceGovernance.summary.disabledServices,
+    },
+    {
+      id: "maintenance",
+      label: copy.maintenanceServices,
+      state: serviceGovernance.summary.maintenanceServices > 0 ? "warning" as const : "ready" as const,
+      value: serviceGovernance.summary.maintenanceServices,
+    },
+    {
+      id: "review-required",
+      label: copy.reviewRequired,
+      state: serviceGovernance.summary.reviewRequiredServices > 0 ? "warning" as const : "ready" as const,
+      value: serviceGovernance.summary.reviewRequiredServices,
+    },
+    {
+      id: "offline",
+      label: copy.offlineServices,
+      state: serviceGovernance.summary.offlineServices > 0 ? "blocker" as const : "ready" as const,
+      value: serviceGovernance.summary.offlineServices,
+    },
+    {
+      id: "release-blockers",
+      label: copy.releaseBlockers,
+      state: serviceGovernance.summary.releaseBlockers > 0 ? "blocker" as const : "ready" as const,
+      value: serviceGovernance.summary.releaseBlockers,
+    },
+    {
+      id: "high-impact-blockers",
+      label: copy.highImpactBlockers,
+      state: serviceGovernance.summary.highImpactBlockers > 0 ? "blocker" as const : "ready" as const,
+      value: serviceGovernance.summary.highImpactBlockers,
+    },
+  ];
   const contractClaimReadiness = computePublishReadiness(
     { contractMode: "CONTRACT_CLAIM" },
     campaign.contentRevisions,
@@ -1867,6 +1980,217 @@ export const AdminOpsPanel = ({
               ))}
             </div>
           </article>
+        </div>
+      </section>
+
+      <section aria-label={copy.serviceRegistryGovernance} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.serviceRegistryGovernanceSubtitle}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.serviceRegistryGovernance}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${serviceGovernance.summary.totalServices} ${copy.totalItems}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${serviceGovernance.summary.releaseBlockers} ${copy.releaseBlockers}`}
+              state={serviceGovernance.summary.releaseBlockers > 0 ? "blocker" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${serviceGovernance.needsReview.length} ${copy.reviewRequired}`}
+              state={serviceGovernance.needsReview.length > 0 ? "warning" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.noLiveBoundary}: {getLocalizedText(serviceGovernance.boundary, locale)}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.ownerNextAction}: {getLocalizedText(serviceGovernance.topOwnerAction, locale)}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          {serviceSummaryItems.map((item) => (
+            <article key={item.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <p style={labelStyle}>{item.label}</p>
+                <PublishStateBadge label={item.label} state={item.state} />
+              </div>
+              <p style={valueStyle}>{item.value}</p>
+              <p style={mutedTextStyle}>{copy.serviceSummary}</p>
+            </article>
+          ))}
+        </div>
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <div style={rowStyle}>
+              <strong>{copy.releaseBlockers}</strong>
+              <PublishStateBadge
+                label={`${serviceGovernance.blockers.length} ${copy.releaseBlockers}`}
+                state={serviceGovernance.blockers.length > 0 ? "blocker" : "ready"}
+              />
+            </div>
+            <div style={stackStyle}>
+              {serviceGovernance.blockers.map((entry) => (
+                <div key={entry.id} style={{ borderTop: "1px solid #dbe6f4", display: "grid", gap: 6, paddingTop: 10 }}>
+                  <div style={rowStyle}>
+                    <div style={stackStyle}>
+                      <p style={labelStyle}>{entry.id}</p>
+                      <strong>{getLocalizedText(entry.name, locale)}</strong>
+                    </div>
+                    <PublishStateBadge
+                      label={serviceStateLabel(entry.state, copy)}
+                      state={serviceStateBadge(entry)}
+                    />
+                  </div>
+                  <p style={mutedTextStyle}>
+                    {copy.releaseImpact}: {serviceReleaseImpactLabel(entry.releaseImpact, copy)}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.fallback}: {getLocalizedText(entry.fallback.reason, locale)}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.ownerNextAction}: {getLocalizedText(entry.operatorNextAction, locale)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article style={cardStyle}>
+            <div style={rowStyle}>
+              <strong>{copy.maintenanceOfflineServices}</strong>
+              <PublishStateBadge
+                label={`${serviceGovernance.maintenanceOrOffline.length} ${copy.maintenanceOfflineServices}`}
+                state={serviceGovernance.maintenanceOrOffline.length > 0 ? "warning" : "ready"}
+              />
+            </div>
+            <div style={stackStyle}>
+              {serviceGovernance.maintenanceOrOffline.map((entry) => (
+                <div key={entry.id} style={{ borderTop: "1px solid #dbe6f4", display: "grid", gap: 6, paddingTop: 10 }}>
+                  <div style={rowStyle}>
+                    <strong>{getLocalizedText(entry.name, locale)}</strong>
+                    <PublishStateBadge
+                      label={serviceStateLabel(entry.state, copy)}
+                      state={serviceStateBadge(entry)}
+                    />
+                  </div>
+                  <p style={wrapTextStyle}>
+                    {copy.fallback}: {getLocalizedText(entry.fallback.reason, locale)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article style={cardStyle}>
+            <div style={rowStyle}>
+              <strong>{copy.servicesNeedReview}</strong>
+              <PublishStateBadge
+                label={`${serviceGovernance.needsReview.length} ${copy.reviewRequired}`}
+                state={serviceGovernance.needsReview.length > 0 ? "warning" : "ready"}
+              />
+            </div>
+            <div style={stackStyle}>
+              {serviceGovernance.needsReview.slice(0, 8).map((entry) => (
+                <div key={entry.id} style={{ borderTop: "1px solid #dbe6f4", display: "grid", gap: 6, paddingTop: 10 }}>
+                  <div style={rowStyle}>
+                    <strong>{getLocalizedText(entry.name, locale)}</strong>
+                    <PublishStateBadge
+                      label={serviceReleaseImpactLabel(entry.releaseImpact, copy)}
+                      state={serviceReleaseImpactState(entry.releaseImpact)}
+                    />
+                  </div>
+                  <p style={wrapTextStyle}>
+                    {copy.nextAction}: {getLocalizedText(entry.operatorNextAction, locale)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </article>
+        </div>
+        <div style={rowStyle}>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.groupedServices}</h3>
+          <Badge
+            label={`${serviceGovernance.groups.length} ${copy.category}`}
+            tone="info"
+          />
+        </div>
+        <div style={gridStyle}>
+          {serviceGovernance.groups.map((group) => (
+            <article key={group.category} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{readableCode(group.category)}</p>
+                  <strong>{getLocalizedText(group.label, locale)}</strong>
+                </div>
+                <Badge label={`${group.entries.length} ${copy.totalItems}`} tone="info" />
+              </div>
+              <div style={stackStyle}>
+                {group.entries.map((entry) => (
+                  <div key={entry.id} style={{ borderTop: "1px solid #dbe6f4", display: "grid", gap: 8, paddingTop: 10 }}>
+                    <div style={rowStyle}>
+                      <strong>{getLocalizedText(entry.name, locale)}</strong>
+                      <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        <PublishStateBadge
+                          label={serviceStateLabel(entry.state, copy)}
+                          state={serviceStateBadge(entry)}
+                        />
+                        <PublishStateBadge
+                          label={serviceReleaseImpactLabel(entry.releaseImpact, copy)}
+                          state={serviceReleaseImpactState(entry.releaseImpact)}
+                        />
+                      </span>
+                    </div>
+                    <div style={compactGridStyle}>
+                      <div>
+                        <p style={labelStyle}>{copy.ownerRole}</p>
+                        <p style={mutedTextStyle}>{readableCode(entry.ownerRole)}</p>
+                      </div>
+                      <div>
+                        <p style={labelStyle}>{copy.riskLevel}</p>
+                        <p style={mutedTextStyle}>{entry.riskLevel}</p>
+                      </div>
+                      <div>
+                        <p style={labelStyle}>{copy.liveEvidence}</p>
+                        <PublishStateBadge
+                          label={serviceLiveEvidenceLabel(entry.liveEvidenceStatus, copy)}
+                          state={serviceLiveEvidenceState(entry.liveEvidenceStatus)}
+                        />
+                      </div>
+                      <div>
+                        <p style={labelStyle}>{copy.featureGate}</p>
+                        <PublishStateBadge
+                          label={serviceStateLabel(entry.featureGate.state, copy)}
+                          state={entry.featureGate.enabled && !entry.featureGate.reviewRequired ? "ready" : "warning"}
+                        />
+                      </div>
+                      <div>
+                        <p style={labelStyle}>{copy.fallback}</p>
+                        <PublishStateBadge
+                          label={getLocalizedText(entry.fallback.label, locale)}
+                          state={entry.fallback.blocksLaunch ? "blocker" : "warning"}
+                        />
+                      </div>
+                      <div>
+                        <p style={labelStyle}>{copy.serviceState}</p>
+                        <p style={mutedTextStyle}>{entry.featureGate.key}</p>
+                      </div>
+                    </div>
+                    <p style={wrapTextStyle}>
+                      {copy.fallback}: {getLocalizedText(entry.fallback.reason, locale)}
+                    </p>
+                    <p style={wrapTextStyle}>
+                      {copy.ownerNextAction}: {getLocalizedText(entry.operatorNextAction, locale)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
         </div>
       </section>
 
