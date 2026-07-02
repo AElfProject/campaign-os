@@ -511,7 +511,7 @@ describe("Project Console shell", () => {
     expect(within(serviceFacade).getByText("Service coverage")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Total services")).toBeInTheDocument();
     expect(within(serviceFacade).getAllByText("Ready").length).toBeGreaterThan(0);
-    expect(within(serviceFacade).getByText("8 Local only")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("10 Local only")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Review required")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Blocked")).toBeInTheDocument();
     for (const coverage of ["wallet coverage", "task verification", "eligibility", "i18n", "analytics", "export", "content", "summary"]) {

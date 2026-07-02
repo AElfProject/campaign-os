@@ -41,6 +41,14 @@ import type {
   CampaignLifecycleOperation,
   CampaignLifecycleOperations,
   CampaignLifecycleStatus,
+  CampaignStatus,
+  CampaignDiscoveryConsumerSurface,
+  CampaignDiscoveryCta,
+  CampaignDiscoveryCtaKind,
+  CampaignDiscoveryDetail,
+  CampaignDiscoveryItem,
+  CampaignDiscoveryReadModel,
+  CampaignDiscoveryTaskSummary,
   ConversionFunnelStep,
   CampaignShellDetail,
   CampaignTask,
@@ -9397,6 +9405,348 @@ export const createEcosystemNextActionReadModel = (
     participantWalletAddress: participant.walletAddress,
     summary: createEcosystemSummary(prioritizedRecommendations, participation),
     recommendations: prioritizedRecommendations,
+  };
+};
+
+export const campaignDiscoveryBoundary: LocalizedText = localized(
+  "Seeded/local Campaign Discovery API readiness only. No live marketplace API, App Hub backend, Portfolio sync, Forecast prediction, wallet SDK, contract view/send, claim, export file, reward custody, or reward distribution is connected.",
+  "仅 seeded/本地 Campaign Discovery API readiness。不会连接实时 marketplace API、App Hub 后端、Portfolio 同步、Forecast 预测、钱包 SDK、合约读取/发送、claim、导出文件、奖励托管或发奖。",
+);
+
+const campaignDiscoveryNextAction: LocalizedText = localized(
+  "Use this local discovery surface for User App, App Hub, Portfolio, and Forecast previews until a reviewed marketplace backend exists.",
+  "在已审核的 marketplace 后端存在前，使用这个本地 discovery surface 支撑 User App、App Hub、Portfolio 与 Forecast 预览。",
+);
+
+const discoveryCtaCopy: Record<CampaignDiscoveryCtaKind, { label: LocalizedText; reason: LocalizedText }> = {
+  start: {
+    label: localized("Start", "开始"),
+    reason: localized(
+      "Scheduled campaign can be previewed from discovery before live participation opens.",
+      "活动开始前可先从 discovery 预览 scheduled 活动。",
+    ),
+  },
+  continue_tasks: {
+    label: localized("Continue tasks", "继续任务"),
+    reason: localized(
+      "Participant still has required campaign tasks to finish before eligibility review.",
+      "参与者仍有必做活动任务需要完成，然后才能进入资格审核。",
+    ),
+  },
+  check_eligibility: {
+    label: localized("Check eligibility", "检查资格"),
+    reason: localized(
+      "Campaign discovery can route the participant to local eligibility review.",
+      "Campaign discovery 可以将参与者引导到本地资格审核。",
+    ),
+  },
+  view_results: {
+    label: localized("View results", "查看结果"),
+    reason: localized(
+      "Ended campaign remains discoverable for points, eligibility, and export review.",
+      "已结束活动仍可被发现，用于积分、资格与导出审核。",
+    ),
+  },
+};
+
+const createDiscoveryCta = (kind: CampaignDiscoveryCtaKind): CampaignDiscoveryCta => ({
+  kind,
+  ...discoveryCtaCopy[kind],
+});
+
+const discoveryStatusRank: Record<CampaignLifecycleStatus, number> = {
+  live: 0,
+  paused: 1,
+  scheduled: 2,
+  draft: 3,
+  ended: 4,
+  exported: 5,
+  archived: 6,
+};
+
+const createDiscoveryTaskSummary = (task: CampaignTask): CampaignDiscoveryTaskSummary => ({
+  taskId: task.id,
+  title: task.title,
+  verificationType: task.verificationType,
+  points: task.points,
+  required: task.required,
+});
+
+const createTimeWindowText = (startTime: string, endTime: string): LocalizedText => ({
+  "en-US": `${startTime.slice(0, 10)} to ${endTime.slice(0, 10)}`,
+  "zh-CN": `${startTime.slice(0, 10)} 至 ${endTime.slice(0, 10)}`,
+  "zh-TW": `${startTime.slice(0, 10)} to ${endTime.slice(0, 10)}`,
+});
+
+const discoveryConsumerSurfaces = (
+  surfaces: CampaignDiscoveryConsumerSurface[],
+): CampaignDiscoveryConsumerSurface[] => surfaces;
+
+interface SeededDiscoveryCampaign {
+  campaignType: LocalizedText;
+  consumerSurfaces: CampaignDiscoveryConsumerSurface[];
+  cta: CampaignDiscoveryCtaKind;
+  endTime: string;
+  id: string;
+  points: number;
+  slug: string;
+  startTime: string;
+  status: CampaignStatus;
+  subtitle: LocalizedText;
+  supportedLocales: SupportedLocale[];
+  tags: LocalizedText[];
+  tasks: CampaignDiscoveryTaskSummary[];
+  title: LocalizedText;
+  walletPolicy: CampaignShellDetail["walletPolicy"];
+}
+
+const createSeededTask = (
+  taskId: string,
+  title: LocalizedText,
+  verificationType: CampaignTask["verificationType"],
+  points: number,
+  required: boolean,
+): CampaignDiscoveryTaskSummary => ({
+  taskId,
+  title,
+  verificationType,
+  points,
+  required,
+});
+
+const seededDiscoveryCampaigns: SeededDiscoveryCampaign[] = [
+  {
+    id: "camp-forest-nft-path",
+    slug: "forest-nft-quest",
+    title: localized("Forest NFT Quest", "Forest NFT 任务", "Forest NFT 任務"),
+    subtitle: localized(
+      "Preview the NFT and governance path before Forest campaign launch.",
+      "在 Forest 活动上线前预览 NFT 与治理路径。",
+      "Preview the NFT and governance path before Forest campaign launch.",
+    ),
+    campaignType: localized("NFT / DAO", "NFT / DAO"),
+    status: "scheduled",
+    points: 260,
+    startTime: "2026-07-05T00:00:00Z",
+    endTime: "2026-07-12T00:00:00Z",
+    walletPolicy: "ANY",
+    supportedLocales: [...supportedLocales],
+    consumerSurfaces: discoveryConsumerSurfaces(["user_app", "app_hub", "portfolio"]),
+    tags: [
+      localized("Forest", "Forest"),
+      localized("NFT", "NFT"),
+      localized("Governance path", "治理路径"),
+    ],
+    cta: "start",
+    tasks: [
+      createSeededTask(
+        "forest-hold-nft",
+        localized("Hold Forest NFT", "持有 Forest NFT", "持有 Forest NFT"),
+        "ON_CHAIN",
+        120,
+        true,
+      ),
+      createSeededTask(
+        "forest-vote-tmrwdao",
+        localized("Vote on TMRWDAO", "参与 TMRWDAO 投票", "參與 TMRWDAO 投票"),
+        "DAPP_API",
+        90,
+        true,
+      ),
+      createSeededTask(
+        "forest-qualified-invite",
+        localized("Invite one qualified friend", "邀请 1 位合格好友", "邀請 1 位合格好友"),
+        "SOCIAL",
+        50,
+        false,
+      ),
+    ],
+  },
+  {
+    id: "camp-tmrwdao-streak",
+    slug: "tmrwdao-governance-streak",
+    title: localized(
+      "TMRWDAO Governance Streak",
+      "TMRWDAO 治理连续任务",
+      "TMRWDAO 治理連續任務",
+    ),
+    subtitle: localized(
+      "Review the ended governance streak and keep results discoverable.",
+      "查看已结束的治理连续任务，并保持结果可被发现。",
+      "Review the ended governance streak and keep results discoverable.",
+    ),
+    campaignType: localized("DAO / Referral", "DAO / Referral"),
+    status: "ended",
+    points: 180,
+    startTime: "2026-06-10T00:00:00Z",
+    endTime: "2026-06-18T00:00:00Z",
+    walletPolicy: "ANY",
+    supportedLocales: [...supportedLocales],
+    consumerSurfaces: discoveryConsumerSurfaces(["user_app", "app_hub", "forecast", "portfolio"]),
+    tags: [
+      localized("TMRWDAO", "TMRWDAO"),
+      localized("Governance", "治理"),
+      localized("Results review", "结果审核"),
+    ],
+    cta: "check_eligibility",
+    tasks: [
+      createSeededTask(
+        "tmrwdao-vote",
+        localized("Vote on proposal", "完成提案投票", "完成提案投票"),
+        "DAPP_API",
+        100,
+        true,
+      ),
+      createSeededTask(
+        "tmrwdao-review-points",
+        localized("Review points", "查看积分", "查看積分"),
+        "MANUAL",
+        40,
+        false,
+      ),
+      createSeededTask(
+        "tmrwdao-check-winners-export",
+        localized("Check winners export", "检查 winners 导出", "檢查 winners 匯出"),
+        "MANUAL",
+        40,
+        false,
+      ),
+    ],
+  },
+];
+
+const ctaKindForCampaign = (
+  status: CampaignStatus,
+  participant?: ParticipantSnapshot,
+): CampaignDiscoveryCtaKind => {
+  if (status === "scheduled" || status === "draft") {
+    return "start";
+  }
+
+  if (status === "ended" || status === "exported" || status === "archived") {
+    return "check_eligibility";
+  }
+
+  return participant && participant.missingTaskIds.length > 0
+    ? "continue_tasks"
+    : "check_eligibility";
+};
+
+const createPrimaryDiscoveryItem = (
+  campaign: CampaignShellDetail,
+  participant?: ParticipantSnapshot,
+): CampaignDiscoveryItem => ({
+  id: campaign.id,
+  slug: campaign.slug,
+  title: campaign.title,
+  subtitle: campaign.subtitle,
+  campaignType: localized("Bridge / Swap / Invite", "Bridge / Swap / Invite"),
+  status: campaign.status,
+  points: campaign.tasks.reduce((total, task) => total + task.points, 0),
+  startTime: campaign.startTime,
+  endTime: campaign.endTime,
+  timeWindow: createTimeWindowText(campaign.startTime, campaign.endTime),
+  coreTasks: campaign.tasks.slice(0, 3).map(createDiscoveryTaskSummary),
+  cta: createDiscoveryCta(ctaKindForCampaign(campaign.status, participant)),
+  walletPolicy: campaign.walletPolicy,
+  supportedLocales: [...campaign.supportedLocales],
+  consumerSurfaces: discoveryConsumerSurfaces(["user_app", "app_hub", "portfolio", "forecast"]),
+  tags: [
+    localized(campaign.projectName, campaign.projectName),
+    localized("Bridge", "跨链"),
+    localized("Swap", "Swap"),
+  ],
+  boundary: campaignDiscoveryBoundary,
+});
+
+const createSeededDiscoveryItem = (seeded: SeededDiscoveryCampaign): CampaignDiscoveryItem => ({
+  id: seeded.id,
+  slug: seeded.slug,
+  title: seeded.title,
+  subtitle: seeded.subtitle,
+  campaignType: seeded.campaignType,
+  status: seeded.status,
+  points: seeded.points,
+  startTime: seeded.startTime,
+  endTime: seeded.endTime,
+  timeWindow: createTimeWindowText(seeded.startTime, seeded.endTime),
+  coreTasks: seeded.tasks.slice(0, 3),
+  cta: createDiscoveryCta(seeded.cta),
+  walletPolicy: seeded.walletPolicy,
+  supportedLocales: [...seeded.supportedLocales],
+  consumerSurfaces: [...seeded.consumerSurfaces],
+  tags: [...seeded.tags],
+  boundary: campaignDiscoveryBoundary,
+});
+
+const createDiscoveryDetail = (
+  item: CampaignDiscoveryItem,
+  tasks: CampaignDiscoveryTaskSummary[],
+): CampaignDiscoveryDetail => ({
+  item,
+  tasks,
+  eligibilityEntry: localized(
+    "Route users to the local eligibility checker before any reward or export decision.",
+    "在任何奖励或导出决策前，将用户引导到本地资格检查器。",
+  ),
+  rewardBoundary,
+  appHubContext: localized(
+    "App Hub may display this campaign as seeded/local discovery content only.",
+    "App Hub 只能将该活动展示为 seeded/本地 discovery 内容。",
+  ),
+  portfolioContext: localized(
+    "Portfolio may use this campaign as a local checkpoint without portfolio sync.",
+    "Portfolio 可以将该活动用作本地检查点，但不会执行 Portfolio 同步。",
+  ),
+  forecastContext: localized(
+    "Forecast may read campaign context without prediction transactions or live Forecast service calls.",
+    "Forecast 可以读取活动上下文，但不会执行预测交易或调用真实 Forecast 服务。",
+  ),
+  boundary: campaignDiscoveryBoundary,
+});
+
+const createDiscoverySummary = (
+  items: CampaignDiscoveryItem[],
+): CampaignDiscoveryReadModel["summary"] => ({
+  totalCampaigns: items.length,
+  liveCount: items.filter((item) => item.status === "live").length,
+  scheduledCount: items.filter((item) => item.status === "scheduled" || item.status === "draft").length,
+  endedCount: items.filter((item) =>
+    item.status === "ended" || item.status === "exported" || item.status === "archived"
+  ).length,
+  appHubReadyCount: items.filter((item) => item.consumerSurfaces.includes("app_hub")).length,
+  portfolioReadyCount: items.filter((item) => item.consumerSurfaces.includes("portfolio")).length,
+  forecastReadyCount: items.filter((item) => item.consumerSurfaces.includes("forecast")).length,
+  topCampaignId: items[0]?.id ?? "",
+});
+
+export const createCampaignDiscoveryReadModel = (
+  campaign: CampaignShellDetail,
+  participant?: ParticipantSnapshot,
+): CampaignDiscoveryReadModel => {
+  const primaryItem = createPrimaryDiscoveryItem(campaign, participant);
+  const seededItems = seededDiscoveryCampaigns.map(createSeededDiscoveryItem);
+  const items = [primaryItem, ...seededItems].sort((left, right) => {
+    const statusDelta = discoveryStatusRank[left.status] - discoveryStatusRank[right.status];
+
+    if (statusDelta !== 0) {
+      return statusDelta;
+    }
+
+    return left.id.localeCompare(right.id);
+  });
+  const taskMap = new Map<string, CampaignDiscoveryTaskSummary[]>([
+    [campaign.id, campaign.tasks.map(createDiscoveryTaskSummary)],
+    ...seededDiscoveryCampaigns.map((seeded) => [seeded.id, seeded.tasks] as const),
+  ]);
+
+  return {
+    campaignId: campaign.id,
+    items,
+    details: items.map((item) => createDiscoveryDetail(item, taskMap.get(item.id) ?? item.coreTasks)),
+    summary: createDiscoverySummary(items),
+    boundary: campaignDiscoveryBoundary,
+    nextAction: campaignDiscoveryNextAction,
   };
 };
 

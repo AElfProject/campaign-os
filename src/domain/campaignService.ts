@@ -2,6 +2,7 @@ import {
   createAdminOpsReadModel,
   createAdvancedAnalyticsReadiness,
   createAiContentPackWorkbench,
+  createCampaignDiscoveryReadModel,
   createCampaignLifecycleOperations,
   createExportArtifact,
   createExportConfirmationReadinessGate,
@@ -38,6 +39,10 @@ import {
   type ApiSkillApiGroup,
   type ApiSkillContractReadiness,
   type ApiSkillFieldGroup,
+  type CampaignDiscoveryConsumerSurface,
+  type CampaignDiscoveryDetail,
+  type CampaignDiscoveryItem,
+  type CampaignDiscoveryReadModel,
   type CampaignShellDetail,
   type CampaignLifecycleOperations,
   type CampaignStatus,
@@ -313,6 +318,16 @@ export interface GenerateCampaignTasksResponse {
   walletCompatibility: GeneratedCampaignTaskWalletCompatibility[];
 }
 
+export interface ListCampaignsRequest {
+  consumerSurface?: CampaignDiscoveryConsumerSurface;
+  status?: CampaignStatus;
+  walletAddress?: string;
+}
+
+export interface GetCampaignDetailRequest extends ListCampaignsRequest {
+  campaignId: string;
+}
+
 export interface GetCampaignAnalyticsRequest {
   campaignId: string;
 }
@@ -398,6 +413,7 @@ export interface CampaignOsLocalService {
     noAutoPublishNotice: LocalizedText;
   }>;
   generateI18nDraft(request: GenerateI18nDraftRequest): LocalServiceResult<GenerateI18nDraftResponse>;
+  getCampaignDetail(request: GetCampaignDetailRequest): LocalServiceResult<CampaignDiscoveryDetail>;
   getCampaignAnalytics(request: GetCampaignAnalyticsRequest): LocalServiceResult<
     ReturnType<typeof createProjectCampaignCommandCenter>["analyticsExport"]
   >;
@@ -420,6 +436,7 @@ export interface CampaignOsLocalService {
     request: GetLaunchConsoleCampaignBundlesRequest,
   ): LocalServiceResult<LaunchConsoleCampaignBundleSurface>;
   getCoverageSummary(): LocalServiceResult<LocalServiceCoverageSummary>;
+  listCampaigns(request?: ListCampaignsRequest): LocalServiceResult<CampaignDiscoveryReadModel>;
   summarizeCampaign(request: SummarizeCampaignRequest): LocalServiceResult<{
     campaignId: string;
     localeMetrics: ReturnType<typeof createProjectCampaignCommandCenter>["analyticsExport"]["localeSplit"];
@@ -593,6 +610,43 @@ const filterGeneratedCampaignPostArtifacts = (
 
 const findCampaign = (campaignId: string): CampaignShellDetail | undefined =>
   campaignDetail.id === campaignId ? campaignDetail : undefined;
+
+const createDiscoverySummary = (
+  items: CampaignDiscoveryItem[],
+): CampaignDiscoveryReadModel["summary"] => ({
+  totalCampaigns: items.length,
+  liveCount: items.filter((item) => item.status === "live").length,
+  scheduledCount: items.filter((item) => item.status === "scheduled" || item.status === "draft").length,
+  endedCount: items.filter((item) =>
+    item.status === "ended" || item.status === "exported" || item.status === "archived"
+  ).length,
+  appHubReadyCount: items.filter((item) => item.consumerSurfaces.includes("app_hub")).length,
+  portfolioReadyCount: items.filter((item) => item.consumerSurfaces.includes("portfolio")).length,
+  forecastReadyCount: items.filter((item) => item.consumerSurfaces.includes("forecast")).length,
+  topCampaignId: items[0]?.id ?? "",
+});
+
+const filterCampaignDiscovery = (
+  discovery: CampaignDiscoveryReadModel,
+  request: ListCampaignsRequest = {},
+): CampaignDiscoveryReadModel => {
+  const items = discovery.items.filter((item) => {
+    const surfaceMatches = request.consumerSurface
+      ? item.consumerSurfaces.includes(request.consumerSurface)
+      : true;
+    const statusMatches = request.status ? item.status === request.status : true;
+
+    return surfaceMatches && statusMatches;
+  });
+  const itemIds = new Set(items.map((item) => item.id));
+
+  return {
+    ...discovery,
+    items,
+    details: discovery.details.filter((detail) => itemIds.has(detail.item.id)),
+    summary: createDiscoverySummary(items),
+  };
+};
 
 const supportedGeneratedCampaignTaskWalletPolicies = ["ANY", "AA_ONLY", "EOA_ONLY"] as const satisfies readonly WalletPolicy[];
 
@@ -1072,6 +1126,37 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       supportedLocales: [...supportedLocales],
       walletPolicy: request.walletPolicy ?? "ANY",
     });
+  },
+
+  listCampaigns: (request = {}) => {
+    const participant = request.walletAddress
+      ? findParticipant(campaignDetail, request.walletAddress)
+      : undefined;
+    const discovery = createCampaignDiscoveryReadModel(campaignDetail, participant);
+
+    return success(filterCampaignDiscovery(discovery, request));
+  },
+
+  getCampaignDetail: (request) => {
+    const participant = request.walletAddress
+      ? findParticipant(campaignDetail, request.walletAddress)
+      : undefined;
+    const discovery = filterCampaignDiscovery(
+      createCampaignDiscoveryReadModel(campaignDetail, participant),
+      request,
+    );
+    const detail = discovery.details.find((candidate) => candidate.item.id === request.campaignId);
+
+    if (!detail) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local discovery facade.",
+        "本地 discovery facade 中不存在该活动。",
+      );
+    }
+
+    return success(detail);
   },
 
   addTask: (request) => {
@@ -1727,6 +1812,8 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     const serviceNames = [
       "createWalletSession",
       "createCampaign",
+      "listCampaigns",
+      "getCampaignDetail",
       "addTask",
       "generateCampaignTasks",
       "verifyTask",
@@ -1747,6 +1834,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     const coveredApiGroups: ApiSkillApiGroup[] = [
       "wallet_session",
       "campaign_creation",
+      "campaign_discovery",
       "task_generation",
       "task_verification",
       "eligibility",
@@ -1778,6 +1866,8 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       sampleResponseIds: [
         "createWalletSession",
         "createCampaign",
+        "listCampaigns",
+        "getCampaignDetail",
         "addTask",
         "generateCampaignTasks",
         "generateI18nDraft",

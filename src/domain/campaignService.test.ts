@@ -342,6 +342,65 @@ describe("Campaign OS local API service facade", () => {
     expect(typeof service.addTask).toBe("function");
   });
 
+  it("lists and reads seeded campaign discovery without live service fields", () => {
+    const discovery = service.listCampaigns({
+      consumerSurface: "app_hub",
+      walletAddress: campaignDetail.participants[1].walletAddress,
+    });
+    const detail = service.getCampaignDetail({
+      campaignId: campaignDetail.id,
+      consumerSurface: "user_app",
+      walletAddress: campaignDetail.participants[1].walletAddress,
+    });
+    const missingDetail = service.getCampaignDetail({
+      campaignId: "missing-campaign",
+    });
+
+    expect(discovery).toMatchObject({
+      ok: true,
+      payload: {
+        campaignId: campaignDetail.id,
+        summary: {
+          totalCampaigns: 3,
+          appHubReadyCount: 3,
+          portfolioReadyCount: 3,
+          forecastReadyCount: 2,
+        },
+      },
+    });
+    expect(discovery.payload?.items.map((item) => item.id)).toEqual([
+      "camp-awaken-sprint",
+      "camp-forest-nft-path",
+      "camp-tmrwdao-streak",
+    ]);
+    expect(discovery.payload?.items[0]).toMatchObject({
+      cta: expect.objectContaining({ kind: "continue_tasks" }),
+      status: "live",
+    });
+    expect(detail).toMatchObject({
+      ok: true,
+      payload: {
+        item: expect.objectContaining({ id: campaignDetail.id }),
+        tasks: expect.arrayContaining([
+          expect.objectContaining({ taskId: "task-connect-wallet" }),
+          expect.objectContaining({ taskId: "task-bridge" }),
+        ]),
+      },
+    });
+    expect(detail.payload?.boundary["en-US"]).toContain("No live marketplace API");
+    expect(detail.payload?.rewardBoundary["en-US"]).toContain("Export winners does not distribute rewards");
+    expect(missingDetail).toMatchObject({
+      ok: false,
+      error: { code: "CAMPAIGN_NOT_FOUND", field: "campaignId" },
+    });
+
+    for (const response of [discovery, detail]) {
+      expect(JSON.stringify(response).toLowerCase()).not.toContain("private key");
+      expect(JSON.stringify(response).toLowerCase()).not.toContain("seed phrase");
+      expect(JSON.stringify(response).toLowerCase()).not.toContain("bearer ");
+    }
+  });
+
   it("filters generated campaign tasks by wallet policy", () => {
     const aaOnly = service.generateCampaignTasks({
       campaignId: campaignDetail.id,
@@ -1564,6 +1623,7 @@ describe("Campaign OS local API service facade", () => {
       coveredApiGroups: expect.arrayContaining([
         "wallet_session",
         "campaign_creation",
+        "campaign_discovery",
         "task_generation",
         "task_verification",
         "eligibility",
@@ -1586,6 +1646,8 @@ describe("Campaign OS local API service facade", () => {
       ]),
       serviceNames: expect.arrayContaining([
         "addTask",
+        "listCampaigns",
+        "getCampaignDetail",
         "executeTaskVerificationAction",
         "generateI18nDraft",
         "getAdvancedAnalyticsReadiness",
@@ -1594,13 +1656,15 @@ describe("Campaign OS local API service facade", () => {
       ]),
       sampleResponseIds: expect.arrayContaining([
         "addTask",
+        "listCampaigns",
+        "getCampaignDetail",
         "executeTaskVerificationAction",
         "generateI18nDraft",
         "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
       ]),
-      totalServices: 18,
+      totalServices: 20,
     });
     expect(coverage.payload?.boundary["en-US"]).toContain("advanced analytics readiness");
     expect(coverage.payload?.boundary["en-US"]).toContain("No live analytics SDK");

@@ -52,6 +52,11 @@ const addTaskBoundary = text(
   "仅 seeded/本地添加任务 contract。不会执行实时 API、后端持久化、provider 或 evidence 查询、secret 处理、导出文件、发奖或合约写入。",
 );
 
+const campaignDiscoveryBoundary = text(
+  "Seeded/local campaign discovery contract only. No live marketplace API, App Hub backend, Portfolio sync, Forecast prediction, wallet SDK, provider call, storage write, contract view/send, claim, export file, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地活动发现 contract。不会执行实时 marketplace API、App Hub 后端、Portfolio 同步、Forecast 预测、钱包 SDK、provider 调用、storage 写入、合约读取/发送、claim、导出文件、奖励托管或发奖。",
+);
+
 const i18nDraftBoundary = text(
   "Seeded/local i18n draft contract only. No live API, AI provider, LLM gateway, backend persistence, publish mutation, auto-publish, secret handling, export file, reward, or contract write is executed.",
   "仅 seeded/本地 i18n 草稿 contract。不会执行实时 API、AI provider、LLM gateway、后端持久化、发布变更、自动发布、secret 处理、导出文件、发奖或合约写入。",
@@ -73,6 +78,8 @@ export const requiredApiSkillIds = [
   "create_wallet_session",
   "agent_wallet_action",
   "create_campaign",
+  "list_campaigns",
+  "get_campaign_detail",
   "add_campaign_task",
   "generate_campaign_tasks",
   "verify_task",
@@ -232,6 +239,72 @@ export const apiSkillContractRegistry: ApiSkillContract[] = [
     riskLevel: "medium",
     securityBoundary: liveApiBoundary,
     title: text("Create campaign draft", "创建活动草稿"),
+  },
+  {
+    apiGroup: "campaign_discovery",
+    evidenceSources: ["LOCAL_SEEDED"],
+    id: "list_campaigns",
+    inputFields: [
+      field("consumerSurface", "campaign", false, "Optional consumer surface: user_app, app_hub, portfolio, or forecast.", "可选消费端：user_app、app_hub、portfolio 或 forecast。", "app_hub"),
+      field("status", "campaign", false, "Optional campaign lifecycle status filter.", "可选活动 lifecycle 状态筛选。", "live"),
+      field("walletAddress", "wallet", false, "Optional wallet address used only for local CTA context.", "仅用于本地 CTA 上下文的可选钱包地址。", "3E9...7cD"),
+    ],
+    nextAction: text(
+      "Use local campaign discovery until marketplace backend ownership, pagination, ranking, and privacy controls are approved.",
+      "在 marketplace 后端归属、分页、排序与隐私控制获批前，使用本地活动发现。",
+    ),
+    outputFields: [
+      field("campaignId", "campaign", true, "Primary seeded campaign identifier.", "主要 seeded 活动标识。", "camp-awaken-sprint"),
+      field("items", "campaign", true, "Seeded campaign discovery list items.", "Seeded 活动发现列表项。"),
+      field("title", "locale", true, "Localized campaign title per item.", "每个活动项的本地化标题。"),
+      field("status", "campaign", true, "Campaign lifecycle status per item.", "每个活动项的活动 lifecycle 状态。", campaignStatusExample),
+      field("points", "task", true, "Total points shown for discovery.", "Discovery 中展示的总积分。", "270"),
+      field("coreTasks", "task", true, "Core task summaries for feed cards.", "Feed 卡片中的核心任务摘要。"),
+      field("walletPolicy", "wallet", true, "Allowed wallet policy for the campaign.", "活动允许的钱包策略。", "ANY"),
+      field("supportedLocales", "locale", true, "Supported locale set for campaign copy.", "活动文案支持的语言集合。", "en-US,zh-CN,zh-TW"),
+      field("consumerSurfaces", "campaign", true, "User App, App Hub, Portfolio, or Forecast surface readiness.", "User App、App Hub、Portfolio 或 Forecast 消费端 readiness。"),
+      field("boundary", "risk", true, "Local-only campaign discovery boundary.", "仅本地活动发现边界。"),
+    ],
+    purpose: text(
+      "List seeded/local campaigns for User App, App Hub, Portfolio, and Forecast discovery readiness.",
+      "为 User App、App Hub、Portfolio 与 Forecast discovery readiness 列出 seeded/本地活动。",
+    ),
+    readiness: "local_only",
+    riskLevel: "medium",
+    securityBoundary: campaignDiscoveryBoundary,
+    title: text("List campaigns", "列出活动"),
+  },
+  {
+    apiGroup: "campaign_discovery",
+    evidenceSources: ["LOCAL_SEEDED"],
+    id: "get_campaign_detail",
+    inputFields: [
+      field("campaignId", "campaign", true, "Campaign identifier from the discovery list.", "来自 discovery 列表的活动标识。", "camp-awaken-sprint"),
+      field("consumerSurface", "campaign", false, "Optional consumer surface: user_app, app_hub, portfolio, or forecast.", "可选消费端：user_app、app_hub、portfolio 或 forecast。", "user_app"),
+      field("walletAddress", "wallet", false, "Optional wallet address used only for local CTA context.", "仅用于本地 CTA 上下文的可选钱包地址。", "3E9...7cD"),
+    ],
+    nextAction: text(
+      "Keep detail reads local until campaign detail backend, App Hub routing, and service-level ownership are separately approved.",
+      "在活动详情后端、App Hub 路由与服务级归属单独获批前，保持详情读取为本地模式。",
+    ),
+    outputFields: [
+      field("item", "campaign", true, "Selected discovery campaign item.", "选中的 discovery 活动项。"),
+      field("tasks", "task", true, "Expanded safe task summaries.", "展开后的安全任务摘要。"),
+      field("eligibilityEntry", "risk", true, "Local eligibility entry guidance.", "本地资格入口指引。"),
+      field("rewardBoundary", "risk", true, "Project-owned reward fulfillment boundary.", "项目方负责奖励履约的边界。"),
+      field("appHubContext", "campaign", true, "App Hub local display context.", "App Hub 本地展示上下文。"),
+      field("portfolioContext", "campaign", true, "Portfolio local checkpoint context.", "Portfolio 本地检查点上下文。"),
+      field("forecastContext", "campaign", true, "Forecast local context without prediction execution.", "无预测执行的 Forecast 本地上下文。"),
+      field("boundary", "risk", true, "Local-only campaign detail boundary.", "仅本地活动详情边界。"),
+    ],
+    purpose: text(
+      "Read one seeded/local campaign detail for discovery consumers without live marketplace or product-service execution.",
+      "为 discovery 消费端读取一个 seeded/本地活动详情，不执行实时 marketplace 或产品服务。",
+    ),
+    readiness: "local_only",
+    riskLevel: "medium",
+    securityBoundary: campaignDiscoveryBoundary,
+    title: text("Get campaign detail", "获取活动详情"),
   },
   {
     apiGroup: "task_generation",

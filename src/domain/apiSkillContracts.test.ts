@@ -12,12 +12,71 @@ const contractsById = Object.fromEntries(
 );
 
 describe("API Skill Contract registry", () => {
-  it("covers the complete v0.1 first skill batch plus the v0.2 wallet session, add-task, i18n draft, and agent wallet action APIs", () => {
+  it("covers the complete v0.1 first skill batch plus the v0.2 wallet session, discovery, add-task, i18n draft, and agent wallet action APIs", () => {
     expect(apiSkillContractRegistry.map((contract) => contract.id)).toEqual(requiredApiSkillIds);
     expect(createApiSkillContractSurface().summary).toMatchObject({
       missingSkillIds: [],
-      totalContracts: 12,
+      totalContracts: 14,
     });
+  });
+
+  it("models local campaign discovery list and detail contracts", () => {
+    const listCampaigns = contractsById.list_campaigns;
+    const getCampaignDetail = contractsById.get_campaign_detail;
+    const listFields = new Map(
+      [...listCampaigns.inputFields, ...listCampaigns.outputFields].map((field) => [field.name, field]),
+    );
+    const detailFields = new Map(
+      [...getCampaignDetail.inputFields, ...getCampaignDetail.outputFields].map((field) => [field.name, field]),
+    );
+
+    expect(listCampaigns).toMatchObject({
+      apiGroup: "campaign_discovery",
+      readiness: "local_only",
+      riskLevel: "medium",
+    });
+    expect(getCampaignDetail).toMatchObject({
+      apiGroup: "campaign_discovery",
+      readiness: "local_only",
+      riskLevel: "medium",
+    });
+    expect([...listFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "consumerSurface",
+        "status",
+        "walletAddress",
+        "campaignId",
+        "items",
+        "title",
+        "points",
+        "coreTasks",
+        "walletPolicy",
+        "supportedLocales",
+        "consumerSurfaces",
+        "boundary",
+      ]),
+    );
+    expect([...detailFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "campaignId",
+        "consumerSurface",
+        "walletAddress",
+        "item",
+        "tasks",
+        "eligibilityEntry",
+        "rewardBoundary",
+        "appHubContext",
+        "portfolioContext",
+        "forecastContext",
+        "boundary",
+      ]),
+    );
+    expect(listFields.get("walletAddress")).toMatchObject({ group: "wallet", required: false });
+    expect(detailFields.get("rewardBoundary")).toMatchObject({ group: "risk", required: true });
+    expect(listCampaigns.securityBoundary["en-US"]).toContain("No live marketplace API");
+    expect(listCampaigns.securityBoundary["en-US"]).toContain("App Hub backend");
+    expect(listCampaigns.securityBoundary["en-US"]).toContain("Forecast prediction");
+    expect(getCampaignDetail.securityBoundary["zh-CN"]).toContain("不会执行实时 marketplace API");
   });
 
   it("models the local wallet session API contract with optional public identity metadata", () => {
@@ -436,7 +495,7 @@ describe("API Skill Contract registry", () => {
       blockedCount: 0,
       externalEvidenceCount: 5,
       highRiskCount: 3,
-      localOnlyCount: 5,
+      localOnlyCount: 7,
       readyCount: 3,
       reviewRequiredCount: 4,
     });

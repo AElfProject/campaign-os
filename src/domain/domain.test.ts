@@ -24,6 +24,7 @@ import {
   createProviderEvidenceRegistry,
   createCampaignShareCardReadiness,
   createCampaignLifecycleOperations,
+  createCampaignDiscoveryReadModel,
   createTranslationManagerReadModel,
   createLocaleAnalyticsReadiness,
   createLaunchConsoleCampaignBundles,
@@ -1715,6 +1716,80 @@ describe("Campaign OS domain foundation", () => {
     expect(supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
     expect(isSupportedLocale("zh-TW")).toBe(true);
     expect(isSupportedLocale("ja-JP")).toBe(false);
+  });
+
+  it("derives deterministic campaign discovery for User App, App Hub, Portfolio, and Forecast", () => {
+    const [, eoaParticipant] = campaignDetail.participants;
+    const firstReadModel = createCampaignDiscoveryReadModel(campaignDetail, eoaParticipant);
+    const secondReadModel = createCampaignDiscoveryReadModel(campaignDetail, eoaParticipant);
+
+    expect(firstReadModel).toEqual(secondReadModel);
+    expect(firstReadModel.items.map((item) => item.id)).toEqual([
+      "camp-awaken-sprint",
+      "camp-forest-nft-path",
+      "camp-tmrwdao-streak",
+    ]);
+    expect(firstReadModel.summary).toMatchObject({
+      totalCampaigns: 3,
+      liveCount: 1,
+      scheduledCount: 1,
+      endedCount: 1,
+      appHubReadyCount: 3,
+      portfolioReadyCount: 3,
+      forecastReadyCount: 2,
+      topCampaignId: "camp-awaken-sprint",
+    });
+
+    const awaken = firstReadModel.items[0];
+    const forest = firstReadModel.items[1];
+    const tmrwdao = firstReadModel.items[2];
+
+    expect(awaken).toMatchObject({
+      cta: expect.objectContaining({ kind: "continue_tasks" }),
+      points: 290,
+      status: "live",
+      walletPolicy: "ANY",
+    });
+    expect(awaken.consumerSurfaces).toEqual(["user_app", "app_hub", "portfolio", "forecast"]);
+    expect(awaken.coreTasks.map((task) => task.taskId)).toEqual([
+      "task-connect-wallet",
+      "task-bridge",
+      "task-swap",
+    ]);
+    expect(forest).toMatchObject({
+      cta: expect.objectContaining({ kind: "start" }),
+      points: 260,
+      status: "scheduled",
+    });
+    expect(tmrwdao).toMatchObject({
+      cta: expect.objectContaining({ kind: "check_eligibility" }),
+      points: 180,
+      status: "ended",
+    });
+    expect(tmrwdao.consumerSurfaces).toEqual(["user_app", "app_hub", "forecast", "portfolio"]);
+    expect(firstReadModel.details.find((detail) => detail.item.id === "camp-awaken-sprint")?.tasks).toHaveLength(
+      campaignDetail.tasks.length,
+    );
+    expect(firstReadModel.boundary["en-US"]).toContain("Campaign Discovery API readiness");
+    expect(firstReadModel.boundary["en-US"]).toContain("No live marketplace API");
+    expect(firstReadModel.boundary["zh-CN"]).toContain("不会连接实时 marketplace API");
+    expect(firstReadModel.nextAction["en-US"]).toContain("User App");
+    expect(JSON.stringify(firstReadModel).toLowerCase()).not.toContain("private key");
+    expect(JSON.stringify(firstReadModel).toLowerCase()).not.toContain("seed phrase");
+    expect(JSON.stringify(firstReadModel).toLowerCase()).not.toContain("bearer ");
+  });
+
+  it("uses eligibility CTA for fully eligible campaign discovery participants", () => {
+    const [eligibleParticipant] = campaignDetail.participants;
+    const readModel = createCampaignDiscoveryReadModel(campaignDetail, eligibleParticipant);
+
+    expect(readModel.items[0]).toMatchObject({
+      id: "camp-awaken-sprint",
+      cta: expect.objectContaining({
+        kind: "check_eligibility",
+        label: expect.objectContaining({ "en-US": "Check eligibility" }),
+      }),
+    });
   });
 
   it("keeps participation leaderboard wallet-transparent across AA and EOA rows", () => {

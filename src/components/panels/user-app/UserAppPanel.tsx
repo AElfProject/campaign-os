@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from "react";
 import {
   campaignDetail,
+  createCampaignDiscoveryReadModel,
   createCampaignShareCardReadiness,
   createCampaignOsLocalService,
   createEcosystemNextActionReadModel,
@@ -16,6 +17,8 @@ import {
   walletOptions,
   type CampaignShellDetail,
   type CampaignStatus,
+  type CampaignDiscoveryCtaKind,
+  type CampaignDiscoveryItem,
   type EligibilityStatus,
   type ExecuteTaskVerificationActionResponse,
   type LeaderboardModeId,
@@ -508,92 +511,10 @@ const sessionForParticipant = (
       session.address === participant.walletAddress,
   ) ?? campaign.walletSessions[0];
 
-interface CampaignFeedItem {
-  id: string;
-  title: LocalizedText;
-  campaignType: string;
-  status: CampaignStatus;
-  points: number;
-  endTime: string;
-  coreTasks: LocalizedText[];
-  cta: keyof Pick<typeof userAppCopy["en-US"], "checkEligibility" | "continueTasks" | "start">;
-}
-
-const createCampaignFeed = (
-  campaign: CampaignShellDetail,
-  participant: ParticipantSnapshot,
-): CampaignFeedItem[] => [
-  {
-    id: campaign.id,
-    title: campaign.title,
-    campaignType: "Bridge / Swap / Invite",
-    status: campaign.status,
-    points: campaign.tasks.reduce((total, task) => total + task.points, 0),
-    endTime: campaign.endTime,
-    coreTasks: campaign.tasks.slice(0, 3).map((task) => task.title),
-    cta: participant.missingTaskIds.length > 0 ? "continueTasks" : "checkEligibility",
-  },
-  {
-    id: "camp-forest-nft-path",
-    title: {
-      "en-US": "Forest NFT Quest",
-      "zh-CN": "Forest NFT 任务",
-      "zh-TW": "Forest NFT 任務",
-    },
-    campaignType: "NFT / DAO",
-    status: "scheduled",
-    points: 260,
-    endTime: "2026-07-12T00:00:00Z",
-    coreTasks: [
-      {
-        "en-US": "Hold Forest NFT",
-        "zh-CN": "持有 Forest NFT",
-        "zh-TW": "持有 Forest NFT",
-      },
-      {
-        "en-US": "Vote on TMRWDAO",
-        "zh-CN": "参与 TMRWDAO 投票",
-        "zh-TW": "參與 TMRWDAO 投票",
-      },
-      {
-        "en-US": "Invite one qualified friend",
-        "zh-CN": "邀请 1 位合格好友",
-        "zh-TW": "邀請 1 位合格好友",
-      },
-    ],
-    cta: "start",
-  },
-  {
-    id: "camp-tmrwdao-streak",
-    title: {
-      "en-US": "TMRWDAO Governance Streak",
-      "zh-CN": "TMRWDAO 治理连续任务",
-      "zh-TW": "TMRWDAO 治理連續任務",
-    },
-    campaignType: "DAO / Referral",
-    status: "ended",
-    points: 180,
-    endTime: "2026-06-18T00:00:00Z",
-    coreTasks: [
-      {
-        "en-US": "Vote on proposal",
-        "zh-CN": "完成提案投票",
-        "zh-TW": "完成提案投票",
-      },
-      {
-        "en-US": "Review points",
-        "zh-CN": "查看积分",
-        "zh-TW": "查看積分",
-      },
-      {
-        "en-US": "Check winners export",
-        "zh-CN": "检查 winners 导出",
-        "zh-TW": "檢查 winners 匯出",
-      },
-    ],
-    cta: "checkEligibility",
-  },
-];
+const campaignDiscoveryCtaKey = (
+  kind: CampaignDiscoveryCtaKind,
+): keyof Pick<typeof userAppCopy["en-US"], "checkEligibility" | "continueTasks" | "start"> =>
+  kind === "continue_tasks" ? "continueTasks" : kind === "start" ? "start" : "checkEligibility";
 
 const WalletSessionCard = ({
   copy,
@@ -652,13 +573,13 @@ const CampaignFeedCard = ({
   locale,
 }: {
   copy: typeof userAppCopy["en-US"];
-  item: CampaignFeedItem;
+  item: CampaignDiscoveryItem;
   locale: SupportedLocale;
 }) => (
   <article style={{ ...cardStyle, alignContent: "space-between" }}>
     <div style={rowStyle}>
       <div style={{ display: "grid", gap: 4 }}>
-        <p style={labelStyle}>{item.campaignType}</p>
+        <p style={labelStyle}>{getLocalizedText(item.campaignType, locale)}</p>
         <strong style={{ color: "#071426", fontSize: 19 }}>
           {getLocalizedText(item.title, locale)}
         </strong>
@@ -682,8 +603,8 @@ const CampaignFeedCard = ({
     </div>
     <ol style={{ display: "grid", gap: 6, margin: 0, paddingInlineStart: 18 }}>
       {item.coreTasks.map((task) => (
-        <li key={getLocalizedText(task, locale)} style={{ color: "#475569", fontSize: 13 }}>
-          {getLocalizedText(task, locale)}
+        <li key={task.taskId} style={{ color: "#475569", fontSize: 13 }}>
+          {getLocalizedText(task.title, locale)}
         </li>
       ))}
     </ol>
@@ -701,7 +622,7 @@ const CampaignFeedCard = ({
       }}
       type="button"
     >
-      {copy[item.cta]}
+      {copy[campaignDiscoveryCtaKey(item.cta.kind)]}
     </button>
   </article>
 );
@@ -824,8 +745,9 @@ export const UserAppPanel = ({
   const missingTasks = campaign.tasks.filter((task) =>
     participation.eligibility.missingTaskIds.includes(task.id),
   );
-  const campaignFeed = createCampaignFeed(campaign, participant);
-  const appHubCampaign = campaignFeed[0];
+  const campaignDiscovery = createCampaignDiscoveryReadModel(campaign, participant);
+  const campaignFeed = campaignDiscovery.items;
+  const appHubCampaign = campaignDiscovery.details[0]?.item ?? campaignFeed[0];
   const diagnosticMetrics: Array<[string, string, WalletDiagnosticState]> = [
     [copy.diagnosticsTotal, String(walletDiagnostics.totalSessions), "ready"],
     [copy.diagnosticsVerified, String(walletDiagnostics.verifiedSessions), "ready"],
@@ -930,7 +852,7 @@ export const UserAppPanel = ({
             </div>
             <div style={gridStyle}>
               {[
-                [copy.appHubCampaigns, `${campaignFeed.filter((item) => item.status === "live").length} ${copy.active}`],
+                [copy.appHubCampaigns, `${campaignDiscovery.summary.liveCount} ${copy.active}`],
                 [copy.eligibility, eligibilityLabel(participation.eligibility.status, copy)],
                 [copy.walletType, getWalletBadgeLabel(selectedWallet.accountType, selectedWallet.walletSource)],
                 [copy.ecosystemLoopProgress, `${ecosystemNextActions.summary.loopProgressPercent}%`],
