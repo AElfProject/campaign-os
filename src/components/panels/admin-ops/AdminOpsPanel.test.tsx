@@ -100,6 +100,26 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Reward custody excluded from MVP");
     expectVisibleText(/This console does not execute live wallet SDK/);
     expectVisibleText(/No live wallet SDK, API call, contract transaction, export file/);
+    const deliveryAcceptance = screen.getByLabelText("Delivery Acceptance Console");
+    expect(
+      within(deliveryAcceptance).getByRole("heading", { name: "Delivery Acceptance Console" }),
+    ).toBeInTheDocument();
+    expect(within(deliveryAcceptance).getByText("v0.1/v0.2 acceptance audit")).toBeInTheDocument();
+    expect(within(deliveryAcceptance).getAllByText("Solution sets").length).toBeGreaterThan(0);
+    expect(within(deliveryAcceptance).getAllByText("Residual gaps").length).toBeGreaterThan(0);
+    expect(within(deliveryAcceptance).getAllByText("v0.1 Product/UI foundation").length).toBeGreaterThan(0);
+    expect(within(deliveryAcceptance).getAllByText("v0.2 Wallet/i18n/contract update").length).toBeGreaterThan(0);
+    expect(within(deliveryAcceptance).getByText("Global navigation shell")).toBeInTheDocument();
+    expect(within(deliveryAcceptance).getAllByText("Live wallet provider evidence").length).toBeGreaterThan(0);
+    expect(
+      within(deliveryAcceptance).getAllByText("Contract claim and reward custody remain blocked").length,
+    ).toBeGreaterThan(0);
+    expect(within(deliveryAcceptance).getAllByText("Evidence surface").length).toBeGreaterThan(0);
+    expect(within(deliveryAcceptance).getAllByText(/Next mission action/).length).toBeGreaterThan(0);
+    expect(within(deliveryAcceptance).getAllByText("Needs live evidence").length).toBeGreaterThan(0);
+    expect(within(deliveryAcceptance).getAllByText(/Non-live boundary:/).length).toBeGreaterThan(0);
+    expect(within(deliveryAcceptance).getByText(/Seeded\/local delivery acceptance audit only/)).toBeInTheDocument();
+    expect(within(deliveryAcceptance).getAllByText(/No live wallet SDK/).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Wallet Provider QA Readiness" })).toBeInTheDocument();
     expectVisibleText("Live provider evidence gate");
     expectVisibleText("Total scenarios");
@@ -555,6 +575,26 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("奖励托管排除在 MVP 外");
     expectVisibleText(/这个控制台不会执行实时钱包 SDK/);
     expectVisibleText(/不会执行实时钱包 SDK、API 调用、合约交易、导出文件/);
+    const zhDeliveryAcceptance = screen.getByLabelText("交付验收控制台");
+    expect(
+      within(zhDeliveryAcceptance).getByRole("heading", { name: "交付验收控制台" }),
+    ).toBeInTheDocument();
+    expect(within(zhDeliveryAcceptance).getByText("v0.1/v0.2 验收审计")).toBeInTheDocument();
+    expect(within(zhDeliveryAcceptance).getAllByText("方案集").length).toBeGreaterThan(0);
+    expect(within(zhDeliveryAcceptance).getAllByText("残留缺口").length).toBeGreaterThan(0);
+    expect(within(zhDeliveryAcceptance).getAllByText("v0.1 产品/UI 基础").length).toBeGreaterThan(0);
+    expect(within(zhDeliveryAcceptance).getAllByText("v0.2 钱包/i18n/合约更新").length).toBeGreaterThan(0);
+    expect(within(zhDeliveryAcceptance).getByText("全局导航 shell")).toBeInTheDocument();
+    expect(within(zhDeliveryAcceptance).getAllByText("真实钱包 provider 证据").length).toBeGreaterThan(0);
+    expect(
+      within(zhDeliveryAcceptance).getAllByText("合约领取与奖励托管保持阻断").length,
+    ).toBeGreaterThan(0);
+    expect(within(zhDeliveryAcceptance).getAllByText("证据界面").length).toBeGreaterThan(0);
+    expect(within(zhDeliveryAcceptance).getAllByText(/下个 mission 动作/).length).toBeGreaterThan(0);
+    expect(within(zhDeliveryAcceptance).getAllByText("需要真实证据").length).toBeGreaterThan(0);
+    expect(within(zhDeliveryAcceptance).getAllByText(/非实时边界:/).length).toBeGreaterThan(0);
+    expect(within(zhDeliveryAcceptance).getByText(/仅 seeded\/本地交付验收审计/)).toBeInTheDocument();
+    expect(within(zhDeliveryAcceptance).getAllByText(/不会执行实时钱包 SDK/).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "钱包 Provider QA Readiness" })).toBeInTheDocument();
     expectVisibleText("真实 provider 证据门禁");
     expectVisibleText("场景总数");
