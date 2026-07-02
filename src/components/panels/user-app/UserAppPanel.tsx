@@ -2,6 +2,7 @@ import { useRef, useState, type CSSProperties, type RefObject } from "react";
 import {
   campaignDetail,
   createCampaignDiscoveryReadModel,
+  createCampaignMarketplaceReadiness,
   createCampaignShareCardReadiness,
   createCampaignOsLocalService,
   createEcosystemNextActionReadModel,
@@ -19,7 +20,10 @@ import {
   walletOptions,
   type CampaignShellDetail,
   type CampaignStatus,
+  type CampaignDiscoveryConsumerSurface,
   type CampaignDiscoveryCtaKind,
+  type CampaignMarketplaceConsumerSurfaceState,
+  type CampaignMarketplaceReadinessLane,
   type CampaignDiscoveryItem,
   type EligibilityStatus,
   type ExecuteTaskVerificationActionResponse,
@@ -544,6 +548,52 @@ const portfolioHistoryBadgeState = (
   return "warning";
 };
 
+const marketplaceLaneState = (lane: CampaignMarketplaceReadinessLane) => {
+  if (lane === "blocked") {
+    return "blocker";
+  }
+
+  if (lane === "review_required" || lane === "local_preview") {
+    return "warning";
+  }
+
+  return "ready";
+};
+
+const marketplaceSurfaceStateLabel = (
+  state: CampaignMarketplaceConsumerSurfaceState,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels: Record<CampaignMarketplaceConsumerSurfaceState, string> = {
+    not_configured: copy.marketplaceSurfaceNotConfigured,
+    ready: copy.marketplaceSurfaceReady,
+    review_required: copy.marketplaceSurfaceReview,
+  };
+
+  return labels[state];
+};
+
+const marketplaceSurfaceBadgeState = (state: CampaignMarketplaceConsumerSurfaceState) =>
+  state === "not_configured"
+    ? "blocker"
+    : state === "review_required"
+      ? "warning"
+      : "ready";
+
+const marketplaceSurfaceLabel = (
+  surface: CampaignDiscoveryConsumerSurface,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels: Record<CampaignDiscoveryConsumerSurface, string> = {
+    app_hub: copy.marketplaceSurfaceAppHub,
+    forecast: copy.marketplaceSurfaceForecast,
+    portfolio: copy.marketplaceSurfacePortfolio,
+    user_app: copy.marketplaceSurfaceUserApp,
+  };
+
+  return labels[surface];
+};
+
 const campaignStatusLabel = (status: CampaignStatus, copy: typeof userAppCopy["en-US"]) => {
   const labels: Record<CampaignStatus, string> = {
     ai_draft: "AI Draft",
@@ -846,6 +896,86 @@ const MobileEcosystemCard = ({
   </article>
 );
 
+const MarketplaceReadinessCard = ({
+  copy,
+  locale,
+  row,
+}: {
+  copy: typeof userAppCopy["en-US"];
+  locale: SupportedLocale;
+  row: ReturnType<typeof createCampaignMarketplaceReadiness>["rows"][number];
+}) => (
+  <article style={{ ...cardStyle, alignContent: "space-between" }}>
+    <div style={rowStyle}>
+      <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+        <p style={labelStyle}>{campaignStatusLabel(row.status, copy)}</p>
+        <strong style={{ color: "#071426", fontSize: 18, lineHeight: 1.2 }}>
+          {getLocalizedText(row.title, locale)}
+        </strong>
+      </div>
+      <PublishStateBadge
+        label={getLocalizedText(row.readinessLabel, locale)}
+        state={marketplaceLaneState(row.readinessLane)}
+      />
+    </div>
+    <dl style={{ display: "grid", gap: 8, margin: 0 }}>
+      {[
+        [copy.marketplaceCtaPolicy, `${row.ctaKind} · ${getLocalizedText(row.ctaLabel, locale)}`],
+        [copy.points, String(row.points)],
+        [copy.timeWindow, getLocalizedText(row.timeWindow, locale)],
+      ].map(([label, value]) => (
+        <div key={label} style={rowStyle}>
+          <dt style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>{label}</dt>
+          <dd style={{ color: "#071426", fontSize: 13, fontWeight: 700, margin: 0, overflowWrap: "anywhere" }}>
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+    <div style={{ display: "grid", gap: 8 }}>
+      <div style={rowStyle}>
+        <span style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>
+          {copy.marketplaceConsumerSurfaces}
+        </span>
+        <span style={chipListStyle}>
+          {row.consumerSurfaces.map((surface) => (
+            <span key={surface} style={chipStyle}>
+              {marketplaceSurfaceLabel(surface, copy)}
+            </span>
+          ))}
+        </span>
+      </div>
+      {[
+        [copy.marketplaceAppHubReady, row.appHubState, row.appHubNote],
+        [copy.marketplacePortfolioReady, row.portfolioState, row.portfolioNote],
+        [copy.marketplaceForecastReady, row.forecastState, row.forecastNote],
+      ].map(([label, state, note]) => (
+        <div key={label as string} style={rowStyle}>
+          <span style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>
+            {label as string}
+          </span>
+          <PublishStateBadge
+            label={marketplaceSurfaceStateLabel(state as CampaignMarketplaceConsumerSurfaceState, copy)}
+            state={marketplaceSurfaceBadgeState(state as CampaignMarketplaceConsumerSurfaceState)}
+          />
+          <p style={{ color: "#64748b", flexBasis: "100%", fontSize: 12, lineHeight: 1.35, margin: 0 }}>
+            {getLocalizedText(note as typeof row.appHubNote, locale)}
+          </p>
+        </div>
+      ))}
+    </div>
+    <p style={{ color: "#475569", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+      {getLocalizedText(row.readinessReason, locale)}
+    </p>
+    <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+      {copy.nextAction}: {getLocalizedText(row.nextAction, locale)}
+    </p>
+    <p style={{ color: "#92400e", fontSize: 12, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+      {getLocalizedText(row.boundary, locale)}
+    </p>
+  </article>
+);
+
 const PortfolioHistoryCard = ({
   copy,
   locale,
@@ -945,6 +1075,7 @@ export const UserAppPanel = ({
   const leaderboard = createLeaderboardReadModel(campaign, leaderboardMode);
   const ecosystemNextActions = createEcosystemNextActionReadModel(campaign, participant);
   const portfolioCampaignHistory = createPortfolioCampaignHistoryReadModel(campaign, participant);
+  const marketplaceReadiness = createCampaignMarketplaceReadiness(campaign, participant);
   const taskStates = participation.taskStates;
   const completedCount = taskStates.filter((task) => task.completed).length;
   const title = getLocalizedText(campaign.title, locale);
@@ -988,6 +1119,27 @@ export const UserAppPanel = ({
       copy.ecosystemReview,
       String(ecosystemNextActions.summary.reviewCount),
       ecosystemNextActions.summary.reviewCount > 0 ? "warning" : "ready",
+    ],
+  ];
+  const marketplaceSummaryMetrics: Array<[string, string, "ready" | "warning" | "blocker"]> = [
+    [copy.appHubCampaigns, String(marketplaceReadiness.summary.totalCampaigns), "ready"],
+    [copy.marketplaceAppHubReady, String(marketplaceReadiness.summary.appHubReadyCount), "ready"],
+    [copy.marketplacePortfolioReady, String(marketplaceReadiness.summary.portfolioReadyCount), "ready"],
+    [copy.marketplaceForecastReady, String(marketplaceReadiness.summary.forecastReadyCount), "ready"],
+    [
+      copy.marketplaceBlockedCount,
+      String(marketplaceReadiness.summary.blockedCount),
+      marketplaceReadiness.summary.blockedCount > 0 ? "blocker" : "ready",
+    ],
+    [
+      copy.marketplaceReviewCount,
+      String(marketplaceReadiness.summary.reviewCount),
+      marketplaceReadiness.summary.reviewCount > 0 ? "warning" : "ready",
+    ],
+    [
+      copy.marketplaceLocalPreviewCount,
+      String(marketplaceReadiness.summary.localPreviewCount),
+      marketplaceReadiness.summary.localPreviewCount > 0 ? "warning" : "ready",
     ],
   ];
   const portfolioSummaryMetrics: Array<[string, string, "ready" | "warning" | "blocker"]> = [
@@ -1236,6 +1388,52 @@ export const UserAppPanel = ({
             </div>
           </aside>
         </div>
+      </section>
+
+      <section aria-label={copy.marketplaceReadiness} style={panelStyle}>
+        <div style={rowStyle}>
+          <div>
+            <p style={labelStyle}>{copy.marketplaceReadiness}</p>
+            <h2 style={{ fontSize: 28, lineHeight: 1.1, margin: "4px 0" }}>
+              {copy.marketplaceReadiness}
+            </h2>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.marketplaceSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={`${copy.status}: ${getLocalizedText(
+              marketplaceReadiness.rows[0]?.readinessLabel ?? marketplaceReadiness.summary.ownerNextAction,
+              locale,
+            )}`}
+            state={marketplaceLaneState(marketplaceReadiness.summary.topReadinessLane)}
+          />
+        </div>
+        <div style={metricGridStyle}>
+          {marketplaceSummaryMetrics.map(([label, value, state]) => (
+            <article key={label} style={cardStyle}>
+              <p style={labelStyle}>{label}</p>
+              <p style={valueStyle}>{value}</p>
+              <PublishStateBadge label={String(state)} state={state} />
+            </article>
+          ))}
+        </div>
+        <p style={{ color: "#071426", fontSize: 15, fontWeight: 900, lineHeight: 1.45, margin: 0 }}>
+          {copy.marketplaceOwnerNextAction}: {getLocalizedText(marketplaceReadiness.ownerNextAction, locale)}
+        </p>
+        <div style={feedGridStyle}>
+          {marketplaceReadiness.rows.map((row) => (
+            <MarketplaceReadinessCard
+              copy={copy}
+              key={row.campaignId}
+              locale={locale}
+              row={row}
+            />
+          ))}
+        </div>
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+          {copy.marketplaceBoundary}
+        </p>
       </section>
 
       <section aria-label={copy.ecosystemNextActions} style={panelStyle}>
