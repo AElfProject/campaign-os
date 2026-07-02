@@ -8,6 +8,9 @@ import type {
   AdvancedAnalyticsReadinessSurface,
   AdvancedAnalyticsRetentionWindow,
   AdminOpsReadModel,
+  AiOpsKpiAdoptionConsole,
+  AiOpsKpiMetric,
+  AiOpsKpiReadiness,
   AiOpsReportHandoff,
   AiOpsReportHandoffStatus,
   AiOpsReportHandoffSurface,
@@ -338,6 +341,15 @@ const aiOptimizationBoundary: LocalizedText = {
     "仅 seeded/本地 AI 优化工作流。不会执行实时 AI、分析 SDK、风险评分、导出文件、钱包动作、合约交易、奖励托管或发奖。",
   "zh-TW":
     "Seeded/local AI optimization workflow only. No live AI provider, analytics SDK, risk scoring, export file, wallet action, contract transaction, reward custody, or reward distribution is executed.",
+};
+
+const aiOpsKpiAdoptionBoundary: LocalizedText = {
+  "en-US":
+    "Seeded/local AI Ops KPI adoption console only. No live AI provider, event warehouse read, analytics SDK write, backend mutation, scheduler, wallet action, contract transaction, export generation, reward custody, or reward distribution is executed.",
+  "zh-CN":
+    "仅 seeded/本地 AI Ops KPI 采纳看板。不会执行实时 AI provider、事件仓库读取、analytics SDK 写入、后端变更、调度器、钱包动作、合约交易、导出生成、奖励托管或发奖。",
+  "zh-TW":
+    "Seeded/local AI Ops KPI adoption console only. No live AI provider, event warehouse read, analytics SDK write, backend mutation, scheduler, wallet action, contract transaction, export generation, reward custody, or reward distribution is executed.",
 };
 
 const advancedAnalyticsBoundary: LocalizedText = {
@@ -6531,6 +6543,239 @@ export const createAiReportHandoffSurface = (
   };
 };
 
+const aiOpsKpiReadinessRank: Record<AiOpsKpiReadiness, number> = {
+  blocked: 0,
+  review_required: 1,
+  ready: 2,
+};
+
+const createAiOpsKpiMetric = (
+  metric: Omit<AiOpsKpiMetric, "boundary">,
+): AiOpsKpiMetric => ({
+  ...metric,
+  boundary: aiOpsKpiAdoptionBoundary,
+});
+
+export const createAiOpsKpiAdoptionConsole = (
+  campaign: CampaignShellDetail,
+  aiOptimization = createAiOptimizationWorkflow(campaign),
+): AiOpsKpiAdoptionConsole => {
+  const aiContentPack = createAiContentPackWorkbench(campaign);
+  const localeAnalytics = createLocaleAnalyticsReadiness(campaign);
+  const aiDraftAcceptedRows = localeAnalytics.filter(
+    (row) => row.metric === "ai_draft_accepted_rate" && row.locale !== "en-US",
+  );
+  const manualEditRows = localeAnalytics.filter(
+    (row) => row.metric === "manual_edit_time" && row.locale !== "en-US",
+  );
+  const acceptedRows = aiDraftAcceptedRows.filter((row) => row.readiness === "ready").length;
+  const reviewedManualRows = manualEditRows.filter((row) => row.readiness === "ready").length;
+  const optimizationActions = aiOptimization.reports.flatMap((report) => report.actions);
+  const adoptedPreviewActions = optimizationActions.filter(
+    (action) =>
+      action.status === "adopted_preview" ||
+      (action.status === "ready_to_review" && !action.requiresHumanReview),
+  );
+  const topOptimizationAction =
+    adoptedPreviewActions[0] ??
+    optimizationActions.find((action) => action.status === "review_required") ??
+    optimizationActions[0];
+
+  const metrics = [
+    createAiOpsKpiMetric({
+      id: "kpi-ai-generated-campaign-drafts",
+      category: "ai_generated_campaign_drafts",
+      label: localized(
+        "AI-generated campaign drafts",
+        "AI 生成活动方案数",
+        "AI-generated campaign drafts",
+      ),
+      description: localized(
+        "Seeded campaign copy and content drafts generated for owner review.",
+        "供项目方审核的 seeded 活动文案与内容草稿。",
+      ),
+      value: String(aiContentPack.summary.totalArtifacts),
+      target: localized(
+        "Track generation volume separately from human acceptance.",
+        "生成量与人工采纳率分开追踪。",
+      ),
+      readiness: aiContentPack.summary.aiDrafts > 0 ? "review_required" : "ready",
+      trend: localized(
+        `${aiContentPack.summary.aiDrafts} AI drafts remain before release intent.`,
+        `仍有 ${aiContentPack.summary.aiDrafts} 个 AI 草稿需处理后才能进入发布意图。`,
+      ),
+      ownerRole: "content_reviewer",
+      evidenceBasis: localized(
+        `${aiContentPack.summary.totalArtifacts} seeded AI content artifacts are available in AI Content Pack.`,
+        `AI 内容包中有 ${aiContentPack.summary.totalArtifacts} 个 seeded AI 内容 artifact。`,
+      ),
+      sourceSurface: localized("AI Content Pack", "AI 内容包"),
+      nextAction: aiContentPack.summary.nextAction,
+    }),
+    createAiOpsKpiMetric({
+      id: "kpi-ai-content-accepted-rate",
+      category: "ai_content_accepted_rate",
+      label: localized(
+        "AI content accepted rate",
+        "AI 文案被采用比例",
+        "AI content accepted rate",
+      ),
+      description: localized(
+        "Human-reviewed acceptance posture for AI-generated localized content.",
+        "AI 生成多语言内容经人工审核后的采纳状态。",
+      ),
+      value:
+        aiDraftAcceptedRows.length === 0
+          ? "N/A"
+          : formatPercent(acceptedRows / aiDraftAcceptedRows.length),
+      target: localized(
+        "Human acceptance before publish or schedule intent.",
+        "发布或排期意图前必须人工采纳。",
+      ),
+      readiness: acceptedRows === aiDraftAcceptedRows.length ? "ready" : "review_required",
+      trend: localized(
+        `${acceptedRows}/${aiDraftAcceptedRows.length} non-source locales have human-accepted AI content.`,
+        `${acceptedRows}/${aiDraftAcceptedRows.length} 个非源语言已完成人工采纳。`,
+      ),
+      ownerRole: "content_reviewer",
+      evidenceBasis: localized(
+        "Locale analytics readiness separates accepted AI content from generated AI drafts.",
+        "语言 analytics readiness 将已采纳 AI 内容与已生成 AI 草稿分开。",
+      ),
+      sourceSurface: localized("Locale analytics readiness", "语言 analytics readiness"),
+      nextAction: localized(
+        "Route remaining AI drafts to content reviewer before publish intent.",
+        "发布意图前将剩余 AI 草稿交给内容审核人处理。",
+      ),
+    }),
+    createAiOpsKpiMetric({
+      id: "kpi-manual-edit-time-saved",
+      category: "manual_edit_time_saved",
+      label: localized(
+        "Manual edit time saved",
+        "人工运营节省时间",
+        "Manual edit time saved",
+      ),
+      description: localized(
+        "Operator effort signal from reviewed localization rows and pending edit work.",
+        "来自已审核本地化行与待编辑工作的运营节省时间信号。",
+      ),
+      value:
+        reviewedManualRows > 0
+          ? `${reviewedManualRows * 10} min reviewed`
+          : "Review pending",
+      target: localized(
+        "Count saved time only after human review closes the edit loop.",
+        "只有人工审核闭环后才计入节省时间。",
+      ),
+      readiness: reviewedManualRows > 0 ? "ready" : "review_required",
+      trend: localized(
+        `${manualEditRows.length - reviewedManualRows} locale edit lanes still need review.`,
+        `${manualEditRows.length - reviewedManualRows} 条语言编辑 lane 仍需审核。`,
+      ),
+      ownerRole: "internal_operator",
+      evidenceBasis: localized(
+        manualEditRows.map((row) => `${row.locale}: ${row.value}`).join(" · "),
+        manualEditRows.map((row) => `${row.locale}: ${row.value}`).join(" · "),
+      ),
+      sourceSurface: localized("Locale manual edit readiness", "语言人工编辑 readiness"),
+      nextAction: localized(
+        "Close pending locale review before claiming additional saved operator time.",
+        "先关闭待审核语言项，再计入更多运营节省时间。",
+      ),
+    }),
+    createAiOpsKpiMetric({
+      id: "kpi-ai-reports-generated",
+      category: "ai_reports_generated",
+      label: localized(
+        "AI reports generated",
+        "AI 报告生成数",
+        "AI reports generated",
+      ),
+      description: localized(
+        "Seeded AI Ops daily, quality, bot, winner, boss, and optimization report coverage.",
+        "Seeded AI Ops 日报、质量、机器人、winner、Boss 与优化报告覆盖。",
+      ),
+      value: String(campaign.aiOpsReports.length),
+      target: localized(
+        "Keep every generated report tied to owner handoff and review state.",
+        "每个生成报告都必须绑定负责人 handoff 与审核状态。",
+      ),
+      readiness: campaign.aiOpsReports.length >= 5 ? "ready" : "review_required",
+      trend: localized(
+        `${aiOptimization.reports.length} AI Ops report groups feed optimization and handoff surfaces.`,
+        `${aiOptimization.reports.length} 个 AI Ops 报告分组支撑优化与 handoff surface。`,
+      ),
+      ownerRole: "internal_operator",
+      evidenceBasis: localized(
+        `${campaign.aiOpsReports.length} seeded AI Ops reports are present for local review.`,
+        `${campaign.aiOpsReports.length} 个 seeded AI Ops 报告可供本地审核。`,
+      ),
+      sourceSurface: localized("AI Ops reports", "AI Ops 报告"),
+      nextAction: localized(
+        "Keep report handoff owner, source evidence, and guardrail visible before externalizing insights.",
+        "对外使用 insight 前，保持报告 handoff 负责人、来源证据与 guardrail 可见。",
+      ),
+    }),
+    createAiOpsKpiMetric({
+      id: "kpi-optimization-suggestions-adopted",
+      category: "optimization_suggestions_adopted",
+      label: localized(
+        "Optimization suggestions adopted",
+        "AI 优化建议被采用次数",
+        "Optimization suggestions adopted",
+      ),
+      description: localized(
+        "Human-reviewed optimization suggestions that are safe to treat as adopted preview inputs.",
+        "经人工审核、可作为 adopted preview 输入的优化建议。",
+      ),
+      value: String(adoptedPreviewActions.length),
+      target: localized(
+        "Adoption requires human review; no automatic campaign rule changes.",
+        "采纳必须经过人工审核；不会自动修改活动规则。",
+      ),
+      readiness: adoptedPreviewActions.length > 0 ? "ready" : "review_required",
+      trend: localized(
+        `${optimizationActions.length - adoptedPreviewActions.length} suggestions remain review or blocked inputs.`,
+        `${optimizationActions.length - adoptedPreviewActions.length} 条建议仍处于审核或阻断输入。`,
+      ),
+      ownerRole: "project_owner",
+      evidenceBasis:
+        topOptimizationAction?.evidence ??
+        localized("Seeded optimization actions are available for review.", "Seeded 优化动作可供审核。"),
+      sourceSurface: localized("AI Optimization workflow", "AI 优化工作流"),
+      nextAction:
+        topOptimizationAction?.nextAction ??
+        localized("Review AI optimization suggestions before adoption.", "采纳前审核 AI 优化建议。"),
+    }),
+  ] satisfies AiOpsKpiMetric[];
+  const readyCount = metrics.filter((metric) => metric.readiness === "ready").length;
+  const reviewCount = metrics.filter((metric) => metric.readiness === "review_required").length;
+  const blockedCount = metrics.filter((metric) => metric.readiness === "blocked").length;
+  const strongestSignal =
+    metrics.find((metric) => metric.category === "ai_reports_generated" && metric.readiness === "ready") ??
+    metrics.find((metric) => metric.readiness === "ready") ??
+    metrics[0];
+  const topActionMetric = [...metrics].sort(
+    (left, right) => aiOpsKpiReadinessRank[left.readiness] - aiOpsKpiReadinessRank[right.readiness],
+  )[0];
+
+  return {
+    campaignId: campaign.id,
+    summary: {
+      totalMetrics: metrics.length,
+      readyCount,
+      reviewCount,
+      blockedCount,
+      strongestSignalMetricId: strongestSignal.id,
+      topNextAction: topActionMetric.nextAction,
+    },
+    metrics,
+    boundary: aiOpsKpiAdoptionBoundary,
+    topNextAction: topActionMetric.nextAction,
+  };
+};
+
 const competitorWatchText = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
   "en-US": enUS,
   "zh-CN": zhCN,
@@ -7178,6 +7423,7 @@ export const createProjectCampaignCommandCenter = (
   const analyticsExport = createAnalyticsExportDecision(campaign, exportBatch);
   const advancedAnalytics = createAdvancedAnalyticsReadiness(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
+  const aiOpsKpiAdoption = createAiOpsKpiAdoptionConsole(campaign, aiOptimization);
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
@@ -7195,6 +7441,7 @@ export const createProjectCampaignCommandCenter = (
     analyticsExport,
     advancedAnalytics,
     aiOptimization,
+    aiOpsKpiAdoption,
     aelfWebLoginAdapterReadiness,
     providerEvidenceRegistry,
     lifecycleOperations,

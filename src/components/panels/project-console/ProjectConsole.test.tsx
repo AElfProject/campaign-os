@@ -407,6 +407,45 @@ describe("Project Console shell", () => {
     expect(within(aiOptimizationSummary).queryByText(/anti-sybil/i)).not.toBeInTheDocument();
     expect(within(aiOptimizationSummary).queryByText(/Risk signal/i)).not.toBeInTheDocument();
 
+    const aiOpsKpiConsole = screen.getByLabelText("AI Ops KPI Adoption Console");
+    expect(
+      within(aiOpsKpiConsole).getByRole("heading", { name: "AI Ops KPI Adoption Console" }),
+    ).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText("Total KPIs")).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText("Ready KPIs")).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText("Review KPIs")).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText("Blocked KPIs")).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText("Strongest signal")).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText("Top next action")).toBeInTheDocument();
+    for (const metric of [
+      "AI-generated campaign drafts",
+      "AI content accepted rate",
+      "Manual edit time saved",
+      "AI reports generated",
+      "Optimization suggestions adopted",
+    ]) {
+      expect(within(aiOpsKpiConsole).getByRole("heading", { name: metric })).toBeInTheDocument();
+    }
+    expect(within(aiOpsKpiConsole).getAllByText(/Value:/).length).toBeGreaterThan(0);
+    expect(within(aiOpsKpiConsole).getAllByText(/Owner:/).length).toBeGreaterThan(0);
+    expect(within(aiOpsKpiConsole).getAllByText(/Source:/).length).toBeGreaterThan(0);
+    expect(within(aiOpsKpiConsole).getAllByText(/Evidence:/).length).toBeGreaterThan(0);
+    expect(within(aiOpsKpiConsole).getAllByText(/Next action:/).length).toBeGreaterThan(0);
+    expect(within(aiOpsKpiConsole).getByText(/Human acceptance before publish/)).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText(/Adoption requires human review/)).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText(/no automatic campaign rule changes/)).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText("KPI boundary")).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText(/No live AI provider/)).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText(/analytics SDK write/)).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText(/wallet action/)).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText(/contract transaction/)).toBeInTheDocument();
+    expect(within(aiOpsKpiConsole).getByText(/reward distribution/)).toBeInTheDocument();
+    expect(
+      within(aiOpsKpiConsole).queryByRole("button", {
+        name: /generate|accept|publish|export|wallet|contract|reward/i,
+      }),
+    ).not.toBeInTheDocument();
+
     const aiContentPack = screen.getByLabelText("AI Content Pack");
     expect(within(aiContentPack).getByRole("heading", { name: "AI Content Pack" })).toBeInTheDocument();
     expect(

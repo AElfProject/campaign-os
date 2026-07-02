@@ -1616,6 +1616,7 @@ export interface ProjectCampaignCommandCenter {
   analyticsExport: AnalyticsExportDecision;
   advancedAnalytics: AdvancedAnalyticsReadinessSurface;
   aiOptimization: AiOptimizationWorkflow;
+  aiOpsKpiAdoption: AiOpsKpiAdoptionConsole;
   aelfWebLoginAdapterReadiness: AelfWebLoginAdapterReadinessModel;
   providerEvidenceRegistry: ProviderEvidenceRegistry;
   lifecycleOperations: CampaignLifecycleOperations;
@@ -1967,6 +1968,52 @@ export interface AiOpsReportHandoffSurface {
   summary: AiOpsReportHandoffSummary;
   handoffs: AiOpsReportHandoff[];
   boundary: LocalizedText;
+}
+
+export type AiOpsKpiCategory =
+  | "ai_generated_campaign_drafts"
+  | "ai_content_accepted_rate"
+  | "manual_edit_time_saved"
+  | "ai_reports_generated"
+  | "optimization_suggestions_adopted";
+export type AiOpsKpiReadiness = "ready" | "review_required" | "blocked";
+export type AiOpsKpiOwnerRole =
+  | "growth_lead"
+  | "internal_operator"
+  | "project_owner"
+  | "content_reviewer";
+
+export interface AiOpsKpiMetric {
+  id: string;
+  category: AiOpsKpiCategory;
+  label: LocalizedText;
+  description: LocalizedText;
+  value: string;
+  target: LocalizedText;
+  readiness: AiOpsKpiReadiness;
+  trend: LocalizedText;
+  ownerRole: AiOpsKpiOwnerRole;
+  evidenceBasis: LocalizedText;
+  sourceSurface: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface AiOpsKpiSummary {
+  totalMetrics: number;
+  readyCount: number;
+  reviewCount: number;
+  blockedCount: number;
+  strongestSignalMetricId: string;
+  topNextAction: LocalizedText;
+}
+
+export interface AiOpsKpiAdoptionConsole {
+  campaignId: string;
+  summary: AiOpsKpiSummary;
+  metrics: AiOpsKpiMetric[];
+  boundary: LocalizedText;
+  topNextAction: LocalizedText;
 }
 
 export interface EcosystemMetricRow {
