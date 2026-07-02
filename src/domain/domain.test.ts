@@ -27,6 +27,7 @@ import {
   createCampaignShareCardReadiness,
   createCampaignLifecycleOperations,
   createCampaignDiscoveryReadModel,
+  createPortfolioCampaignHistoryReadModel,
   createTranslationManagerReadModel,
   createLocaleAnalyticsReadiness,
   createLaunchConsoleCampaignBundles,
@@ -1966,6 +1967,119 @@ describe("Campaign OS domain foundation", () => {
         label: expect.objectContaining({ "en-US": "Check eligibility" }),
       }),
     });
+  });
+
+  it("derives deterministic Portfolio campaign history across current and seeded campaigns", () => {
+    const [, eoaParticipant] = campaignDetail.participants;
+    const firstReadModel = createPortfolioCampaignHistoryReadModel(campaignDetail, eoaParticipant);
+    const secondReadModel = createPortfolioCampaignHistoryReadModel(campaignDetail, eoaParticipant);
+
+    expect(firstReadModel).toEqual(secondReadModel);
+    expect(firstReadModel.rows.map((row) => row.campaignId)).toEqual([
+      "camp-awaken-sprint",
+      "camp-forest-nft-path",
+      "camp-tmrwdao-streak",
+    ]);
+    expect(firstReadModel.rows.map((row) => row.portfolioState)).toEqual([
+      "blocked",
+      "scheduled",
+      "archived",
+    ]);
+    expect(firstReadModel.summary).toMatchObject({
+      totalCampaigns: 3,
+      activeCount: 2,
+      historicalCount: 1,
+      reviewRequiredCount: 0,
+      blockerCount: 1,
+      exportReadyCount: 0,
+      totalPoints: 480,
+      topCampaignId: "camp-awaken-sprint",
+    });
+    expect(firstReadModel.rows[0]).toMatchObject({
+      campaignId: "camp-awaken-sprint",
+      eligibilityStatus: "not_eligible",
+      localePreference: "zh-CN",
+      missingTaskIds: ["task-bridge"],
+      points: 40,
+      rank: 48,
+      walletAddress: "3E9...7cD",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletType: "EOA",
+      winnerExportStatus: "blocked",
+    });
+    expect(firstReadModel.rows[1]).toMatchObject({
+      campaignId: "camp-forest-nft-path",
+      campaignStatus: "scheduled",
+      eligibilityStatus: "pending",
+      portfolioState: "scheduled",
+      winnerExportStatus: "pending",
+    });
+    expect(firstReadModel.rows[2]).toMatchObject({
+      campaignId: "camp-tmrwdao-streak",
+      campaignStatus: "ended",
+      eligibilityStatus: "ended",
+      portfolioState: "archived",
+      winnerExportStatus: "pending",
+    });
+  });
+
+  it("shows Portfolio history review-required state for risk/export review context", () => {
+    const [, , riskParticipant] = campaignDetail.participants;
+    const readModel = createPortfolioCampaignHistoryReadModel(campaignDetail, riskParticipant);
+    const currentRow = readModel.rows[0];
+
+    expect(currentRow).toMatchObject({
+      campaignId: "camp-awaken-sprint",
+      eligibilityStatus: "risk_flagged",
+      portfolioState: "review_required",
+      riskFlags: ["manual_review_queue"],
+      winnerExportStatus: "review_required",
+    });
+    expect(readModel.summary).toMatchObject({
+      reviewRequiredCount: 1,
+      blockerCount: 0,
+      exportReadyCount: 0,
+    });
+    expect(currentRow.nextAction["en-US"]).toContain("manual review");
+    expect(currentRow.nextAction["zh-CN"]).toContain("人工审核");
+    expect(currentRow.boundary["en-US"]).toContain("No live Portfolio service");
+  });
+
+  it("keeps Portfolio campaign history local-only and free of sensitive serialized fields", () => {
+    const [eligibleParticipant] = campaignDetail.participants;
+    const readModel = createPortfolioCampaignHistoryReadModel(campaignDetail, eligibleParticipant);
+    const serialized = JSON.stringify(readModel).toLowerCase();
+    const boundaryText = [
+      readModel.boundary["en-US"],
+      readModel.summary.boundary["en-US"],
+      ...readModel.rows.flatMap((row) => [row.boundary["en-US"], row.nextAction["en-US"]]),
+    ].join(" ");
+
+    expect(readModel.summary).toMatchObject({
+      exportReadyCount: 1,
+      totalPoints: 710,
+      topCampaignId: "camp-awaken-sprint",
+    });
+    expect(readModel.rows[0]).toMatchObject({
+      eligibilityStatus: "eligible",
+      portfolioState: "ready",
+      winnerExportStatus: "ready",
+    });
+    expect(boundaryText).toContain("No live Portfolio service");
+    expect(boundaryText).toContain("no Portfolio sync");
+    expect(boundaryText).toContain("no wallet SDK");
+    expect(boundaryText).toContain("no contract view");
+    expect(boundaryText).toContain("no contract send");
+    expect(boundaryText).toContain("no export file");
+    expect(boundaryText).toContain("no reward custody");
+    expect(boundaryText).toContain("no reward distribution");
+
+    for (const unsafe of ["private key", "seed phrase", "bearer token", "token", "secret", "signed payload"]) {
+      expect(serialized).not.toContain(unsafe);
+    }
+    for (const unsafeKey of ["privateKey", "seedPhrase", "bearerToken", "token", "secret", "signedPayload"]) {
+      expect(hasOwnKeyDeep(readModel, unsafeKey)).toBe(false);
+    }
   });
 
   it("keeps participation leaderboard wallet-transparent across AA and EOA rows", () => {

@@ -82,6 +82,9 @@ import type {
   EcosystemNextActionReadModel,
   EcosystemRecommendationPriority,
   EcosystemRecommendationStatus,
+  PortfolioCampaignHistoryReadModel,
+  PortfolioCampaignHistoryRow,
+  PortfolioCampaignHistoryState,
   ExportAcknowledgement,
   ExportArtifact,
   ExportConfirmation,
@@ -10219,6 +10222,267 @@ export const createCampaignDiscoveryReadModel = (
     summary: createDiscoverySummary(items),
     boundary: campaignDiscoveryBoundary,
     nextAction: campaignDiscoveryNextAction,
+  };
+};
+
+const portfolioCampaignHistoryBoundary: LocalizedText = localized(
+  "Seeded/local Portfolio campaign history only. No live Portfolio service, no Portfolio sync, no wallet SDK, no contract view, no contract send, no export file, no reward custody, and no reward distribution is executed.",
+  "仅 seeded/本地 Portfolio 活动历史。不会连接真实 Portfolio 服务，不会执行 Portfolio 同步、钱包 SDK、合约读取、合约发送、导出文件、奖励托管或发奖。",
+);
+
+const portfolioCampaignHistoryNextAction: LocalizedText = localized(
+  "Use this local history to inspect campaign points, eligibility, wallet context, and export review before joining the next campaign.",
+  "使用这个本地历史视图检查活动积分、资格、钱包上下文与导出审核，然后再进入下一个活动。",
+);
+
+const portfolioHistoryEligibilityLabels: Record<EligibilityResult["status"], LocalizedText> = {
+  eligible: localized("Eligible", "符合资格"),
+  ended: localized("Ended", "已结束"),
+  not_eligible: localized("Not eligible", "不符合资格"),
+  pending: localized("Pending verification", "等待验证"),
+  risk_flagged: localized("Risk review required", "需要风险审核"),
+};
+
+const portfolioHistoryStatusLabels: Record<UserWinnersExportStatus, LocalizedText> = {
+  ready: userWinnersExportStatusLabels.ready,
+  review_required: userWinnersExportStatusLabels.review_required,
+  blocked: userWinnersExportStatusLabels.blocked,
+  pending: userWinnersExportStatusLabels.pending,
+};
+
+const campaignHistoryParticipantFor = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+  item: CampaignDiscoveryItem,
+): ParticipantSnapshot => ({
+  ...participant,
+  campaignId: item.id,
+  completedTaskIds: [],
+  eligible: false,
+  missingTaskIds: item.coreTasks.filter((task) => task.required).map((task) => task.taskId),
+  rank: undefined,
+  referrerAddress: "",
+  referralSummary: {
+    ...defaultReferralSummary,
+    inviteLink: "",
+  },
+  riskFlags: [],
+  taskEvidenceSources: undefined,
+  taskVerificationOverrides: undefined,
+  totalPoints: item.points,
+  walletVerifiedAt: undefined,
+  walletSessionId: undefined,
+  walletSignatureStatus: undefined,
+});
+
+const portfolioStateFor = (
+  status: CampaignStatus,
+  eligibilityStatus: EligibilityResult["status"],
+  exportStatus: UserWinnersExportStatus,
+  missingTaskIds: string[],
+  riskFlags: string[],
+): PortfolioCampaignHistoryState => {
+  if (status === "scheduled" || status === "draft") {
+    return "scheduled";
+  }
+
+  if (status === "ended" || status === "exported" || status === "archived") {
+    return "archived";
+  }
+
+  if (missingTaskIds.length > 0 || eligibilityStatus === "not_eligible" || exportStatus === "blocked") {
+    return "blocked";
+  }
+
+  if (riskFlags.length > 0 || eligibilityStatus === "risk_flagged" || exportStatus === "review_required") {
+    return "review_required";
+  }
+
+  if (eligibilityStatus === "eligible" && exportStatus === "ready") {
+    return "ready";
+  }
+
+  return "in_progress";
+};
+
+const portfolioNextActionFor = (
+  state: PortfolioCampaignHistoryState,
+  baseNextAction: LocalizedText,
+): LocalizedText => {
+  if (state === "scheduled") {
+    return localized(
+      "Preview this upcoming campaign locally; Portfolio sync is not connected.",
+      "本地预览这个即将开始的活动；不会连接 Portfolio 同步。",
+    );
+  }
+
+  if (state === "archived") {
+    return localized(
+      "Review historical results locally without assuming reward distribution.",
+      "本地查看历史结果，但不要将其理解为自动发奖。",
+    );
+  }
+
+  if (state === "review_required") {
+    return localized(
+      "Wait for manual review before relying on Portfolio history for export decisions.",
+      "等待人工审核后，再将 Portfolio 历史用于导出决策。",
+    );
+  }
+
+  if (state === "ready") {
+    return localized(
+      "Keep this row as a local Portfolio checkpoint until project-owned reward fulfillment.",
+      "在项目方奖励履约前，将该记录保留为本地 Portfolio 检查点。",
+    );
+  }
+
+  return baseNextAction;
+};
+
+const createPortfolioCurrentHistoryRow = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+  detail: CampaignDiscoveryDetail,
+): PortfolioCampaignHistoryRow => {
+  const participation = createParticipationReadModel(campaign, participant);
+  const eligibility = createEligibilityCheckerReadModel(campaign, participant.walletAddress).result;
+  const exportStatus = createUserWinnersExportStatusReadModel(campaign, participant);
+  const state = portfolioStateFor(
+    campaign.status,
+    eligibility.status,
+    exportStatus.status,
+    eligibility.missingTasks.map((task) => task.taskId),
+    eligibility.riskFlags,
+  );
+
+  return {
+    campaignId: campaign.id,
+    slug: campaign.slug,
+    title: campaign.title,
+    subtitle: campaign.subtitle,
+    campaignStatus: campaign.status,
+    portfolioState: state,
+    points: participant.totalPoints,
+    walletAddress: participant.walletAddress,
+    walletType: participant.accountType,
+    walletSource: participant.walletSource,
+    localePreference: participant.localePreference,
+    eligibilityStatus: eligibility.status,
+    eligibilityLabel: portfolioHistoryEligibilityLabels[eligibility.status],
+    missingTaskIds: eligibility.missingTasks.map((task) => task.taskId),
+    riskFlags: [...new Set([...eligibility.riskFlags, ...participant.riskFlags])],
+    rank: participation.metrics.participantRank || null,
+    winnerExportStatus: exportStatus.status,
+    winnerExportStatusLabel: portfolioHistoryStatusLabels[exportStatus.status],
+    exportBatchId: exportStatus.exportBatchId,
+    nextAction: portfolioNextActionFor(state, exportStatus.nextAction),
+    boundary: portfolioCampaignHistoryBoundary,
+    timeWindow: detail.item.timeWindow,
+  };
+};
+
+const createPortfolioSeededHistoryRow = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+  detail: CampaignDiscoveryDetail,
+): PortfolioCampaignHistoryRow => {
+  const item = detail.item;
+  const localParticipant = campaignHistoryParticipantFor(campaign, participant, item);
+  const localCampaign: CampaignShellDetail = {
+    ...campaign,
+    id: item.id,
+    slug: item.slug,
+    title: item.title,
+    subtitle: item.subtitle,
+    status: item.status,
+    startTime: item.startTime,
+    endTime: item.endTime,
+    walletPolicy: item.walletPolicy,
+    supportedLocales: item.supportedLocales,
+    tasks: [],
+    participants: [localParticipant],
+    walletSessions: [],
+    exportPreview: {
+      ...campaign.exportPreview,
+      campaignId: item.id,
+      rows: [],
+    },
+  };
+  const eligibility = createEligibilityCheckerReadModel(localCampaign, localParticipant.walletAddress).result;
+  const exportStatus = createUserWinnersExportStatusReadModel(localCampaign, localParticipant);
+  const eligibilityStatus = item.status === "scheduled" || item.status === "draft"
+    ? "pending"
+    : eligibility.status;
+  const state = portfolioStateFor(
+    item.status,
+    eligibilityStatus,
+    exportStatus.status,
+    eligibility.missingTasks.map((task) => task.taskId),
+    eligibility.riskFlags,
+  );
+
+  return {
+    campaignId: item.id,
+    slug: item.slug,
+    title: item.title,
+    subtitle: item.subtitle,
+    campaignStatus: item.status,
+    portfolioState: state,
+    points: item.points,
+    walletAddress: participant.walletAddress,
+    walletType: participant.accountType,
+    walletSource: participant.walletSource,
+    localePreference: participant.localePreference,
+    eligibilityStatus,
+    eligibilityLabel: portfolioHistoryEligibilityLabels[eligibilityStatus],
+    missingTaskIds: eligibility.missingTasks.map((task) => task.taskId),
+    riskFlags: [],
+    rank: null,
+    winnerExportStatus: exportStatus.status,
+    winnerExportStatusLabel: portfolioHistoryStatusLabels[exportStatus.status],
+    exportBatchId: exportStatus.exportBatchId,
+    nextAction: portfolioNextActionFor(state, detail.portfolioContext),
+    boundary: portfolioCampaignHistoryBoundary,
+    timeWindow: item.timeWindow,
+  };
+};
+
+const createPortfolioHistorySummary = (
+  rows: PortfolioCampaignHistoryRow[],
+): PortfolioCampaignHistoryReadModel["summary"] => ({
+  totalCampaigns: rows.length,
+  activeCount: rows.filter((row) => row.portfolioState !== "archived").length,
+  historicalCount: rows.filter((row) => row.portfolioState === "archived").length,
+  reviewRequiredCount: rows.filter((row) => row.portfolioState === "review_required").length,
+  blockerCount: rows.filter((row) => row.portfolioState === "blocked").length,
+  exportReadyCount: rows.filter((row) => row.winnerExportStatus === "ready").length,
+  totalPoints: rows.reduce((total, row) => total + row.points, 0),
+  topCampaignId: rows[0]?.campaignId ?? "",
+  boundary: portfolioCampaignHistoryBoundary,
+});
+
+export const createPortfolioCampaignHistoryReadModel = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+): PortfolioCampaignHistoryReadModel => {
+  const discovery = createCampaignDiscoveryReadModel(campaign, participant);
+  const rows = discovery.details
+    .filter((detail) => detail.item.consumerSurfaces.includes("portfolio"))
+    .map((detail) =>
+      detail.item.id === campaign.id
+        ? createPortfolioCurrentHistoryRow(campaign, participant, detail)
+        : createPortfolioSeededHistoryRow(campaign, participant, detail),
+    );
+
+  return {
+    campaignId: campaign.id,
+    participantId: participant.id,
+    participantWalletAddress: participant.walletAddress,
+    summary: createPortfolioHistorySummary(rows),
+    rows,
+    boundary: portfolioCampaignHistoryBoundary,
+    nextAction: portfolioCampaignHistoryNextAction,
   };
 };
 

@@ -1985,6 +1985,61 @@ export interface EcosystemNextActionReadModel {
   recommendations: EcosystemNextActionRecommendation[];
 }
 
+export type PortfolioCampaignHistoryState =
+  | "ready"
+  | "in_progress"
+  | "review_required"
+  | "blocked"
+  | "scheduled"
+  | "archived";
+
+export interface PortfolioCampaignHistorySummary {
+  totalCampaigns: number;
+  activeCount: number;
+  historicalCount: number;
+  reviewRequiredCount: number;
+  blockerCount: number;
+  exportReadyCount: number;
+  totalPoints: number;
+  topCampaignId: string;
+  boundary: LocalizedText;
+}
+
+export interface PortfolioCampaignHistoryRow {
+  campaignId: string;
+  slug: string;
+  title: LocalizedText;
+  subtitle: LocalizedText;
+  campaignStatus: CampaignStatus;
+  portfolioState: PortfolioCampaignHistoryState;
+  points: number;
+  walletAddress: string;
+  walletType: AccountType;
+  walletSource: WalletSource;
+  localePreference: SupportedLocale;
+  eligibilityStatus: EligibilityStatus;
+  eligibilityLabel: LocalizedText;
+  missingTaskIds: string[];
+  riskFlags: string[];
+  rank: number | null;
+  winnerExportStatus: UserWinnersExportStatus;
+  winnerExportStatusLabel: LocalizedText;
+  exportBatchId?: string;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+  timeWindow: LocalizedText;
+}
+
+export interface PortfolioCampaignHistoryReadModel {
+  campaignId: string;
+  participantId: string;
+  participantWalletAddress: string;
+  summary: PortfolioCampaignHistorySummary;
+  rows: PortfolioCampaignHistoryRow[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface TaskEvidenceSummary {
   taskId: string;
   label: LocalizedText;

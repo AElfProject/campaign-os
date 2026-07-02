@@ -17,8 +17,8 @@ describe("User App shell", () => {
 
     expect(screen.getByRole("heading", { name: "Campaign Feed" })).toBeInTheDocument();
     expect(screen.getByText("Find live aelf campaigns, points, time left, core tasks, and eligibility entry points.")).toBeInTheDocument();
-    expect(screen.getByText("Forest NFT Quest")).toBeInTheDocument();
-    expect(screen.getByText("TMRWDAO Governance Streak")).toBeInTheDocument();
+    expect(screen.getAllByText("Forest NFT Quest").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("TMRWDAO Governance Streak").length).toBeGreaterThan(0);
     expect(screen.getByText("Local Campaign Discovery API readiness only; no live marketplace, App Hub backend, Portfolio, or Forecast service is connected.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Mobile entry for campaigns, points, pay, forecast, and portfolio." })).toBeInTheDocument();
     expect(screen.getByText("Seeded mobile hub preview; no Telegram Mini App, payment, forecast, or portfolio service is connected.")).toBeInTheDocument();
@@ -35,6 +35,20 @@ describe("User App shell", () => {
     expect(screen.getAllByText("No live Pay service, wallet SDK, payment transaction, contract view, or contract send is executed.").length).toBeGreaterThan(0);
     expect(screen.getAllByText("No live Forecast service, prediction transaction, wallet SDK, contract view, or contract send is executed.").length).toBeGreaterThan(0);
     expect(screen.getAllByText("No live Portfolio service, wallet SDK, portfolio sync, contract view, or contract send is executed.").length).toBeGreaterThan(0);
+    const portfolioHistory = screen.getByRole("region", { name: "Portfolio Campaign History" });
+    expect(within(portfolioHistory).getByRole("heading", { name: "Portfolio Campaign History" })).toBeInTheDocument();
+    expect(within(portfolioHistory).getByText("Current and historical campaign checkpoints for points, eligibility, wallet, locale, and export review.")).toBeInTheDocument();
+    expect(within(portfolioHistory).getByText("Awaken Sprint")).toBeInTheDocument();
+    expect(within(portfolioHistory).getByText("Forest NFT Quest")).toBeInTheDocument();
+    expect(within(portfolioHistory).getByText("TMRWDAO Governance Streak")).toBeInTheDocument();
+    expect(within(portfolioHistory).getAllByText("Wallet").length).toBeGreaterThan(0);
+    expect(within(portfolioHistory).getAllByText("Locale").length).toBeGreaterThan(0);
+    expect(within(portfolioHistory).getAllByText("Eligibility").length).toBeGreaterThan(0);
+    expect(within(portfolioHistory).getAllByText("Points").length).toBeGreaterThan(0);
+    expect(within(portfolioHistory).getAllByText("Winner / export").length).toBeGreaterThan(0);
+    expect(within(portfolioHistory).getAllByText("Blocked before export").length).toBeGreaterThan(0);
+    expect(within(portfolioHistory).getAllByText("Seeded/local Portfolio campaign history only. No live Portfolio service, no Portfolio sync, no wallet SDK, no contract view, no contract send, no export file, no reward custody, and no reward distribution is executed.").length).toBeGreaterThan(0);
+    expect(within(portfolioHistory).getByText("Seeded/local Portfolio campaign history only. No live Portfolio service, Portfolio sync, wallet SDK, contract view/send, export file, reward custody, or reward distribution is connected.")).toBeInTheDocument();
     const participantWorkspace = screen.getByRole("region", { name: "My Tasks / Points / Referral" });
     expect(within(participantWorkspace).getByRole("heading", { name: "My Tasks / Points / Referral" })).toBeInTheDocument();
     expect(within(participantWorkspace).getByText("One workspace for required task progress, seeded points, rank, and qualified referral contribution.")).toBeInTheDocument();
@@ -209,8 +223,8 @@ describe("User App shell", () => {
 
     expect(screen.getByRole("heading", { name: "活动 Feed" })).toBeInTheDocument();
     expect(screen.getByText("展示进行中的 aelf 活动、可获得积分、剩余时间、核心任务与资格入口。")).toBeInTheDocument();
-    expect(screen.getByText("Forest NFT 任务")).toBeInTheDocument();
-    expect(screen.getByText("TMRWDAO 治理连续任务")).toBeInTheDocument();
+    expect(screen.getAllByText("Forest NFT 任务").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("TMRWDAO 治理连续任务").length).toBeGreaterThan(0);
     expect(screen.getByText("仅本地 Campaign Discovery API readiness；不会连接实时 marketplace、App Hub 后端、Portfolio 或 Forecast 服务。")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "移动端入口，聚合活动、积分、Pay、Forecast 与 Portfolio。" })).toBeInTheDocument();
     expect(screen.getByText("仅 seeded 移动端 Hub 预览；未接入 Telegram Mini App、支付、Forecast 或 Portfolio 服务。")).toBeInTheDocument();
@@ -224,6 +238,17 @@ describe("User App shell", () => {
     expect(screen.getAllByText("不会连接真实 Pay 服务、钱包 SDK、支付交易、合约读取或合约发送。").length).toBeGreaterThan(0);
     expect(screen.getAllByText("不会连接真实 Forecast 服务、预测交易、钱包 SDK、合约读取或合约发送。").length).toBeGreaterThan(0);
     expect(screen.getAllByText("不会连接真实 Portfolio 服务、钱包 SDK、Portfolio 同步、合约读取或合约发送。").length).toBeGreaterThan(0);
+    const portfolioHistory = screen.getByRole("region", { name: "Portfolio 活动历史" });
+    expect(within(portfolioHistory).getByRole("heading", { name: "Portfolio 活动历史" })).toBeInTheDocument();
+    expect(within(portfolioHistory).getByText("查看当前与历史活动的积分、资格、钱包、语言与导出审核检查点。")).toBeInTheDocument();
+    expect(within(portfolioHistory).getAllByText("钱包").length).toBeGreaterThan(0);
+    expect(within(portfolioHistory).getAllByText("语言").length).toBeGreaterThan(0);
+    expect(within(portfolioHistory).getAllByText("资格").length).toBeGreaterThan(0);
+    expect(within(portfolioHistory).getAllByText("获奖 / 导出").length).toBeGreaterThan(0);
+    expect(within(portfolioHistory).getByText("仅 seeded/本地 Portfolio 活动历史。不会连接真实 Portfolio 服务、Portfolio 同步、钱包 SDK、合约读取/发送、导出文件、奖励托管或发奖。")).toBeInTheDocument();
+    expect(within(portfolioHistory).getAllByText("Awaken 冲刺活动").length).toBeGreaterThan(0);
+    expect(within(portfolioHistory).getByText("Forest NFT 任务")).toBeInTheDocument();
+    expect(within(portfolioHistory).getByText("TMRWDAO 治理连续任务")).toBeInTheDocument();
     const participantWorkspace = screen.getByRole("region", { name: "我的任务 / 积分 / 推荐" });
     expect(within(participantWorkspace).getByRole("heading", { name: "我的任务 / 积分 / 推荐" })).toBeInTheDocument();
     expect(within(participantWorkspace).getByText("在一个工作台查看必做任务进度、seeded 积分、排名与合格推荐贡献。")).toBeInTheDocument();
@@ -480,7 +505,7 @@ describe("User App shell", () => {
     expect(within(shareReadiness).getAllByText("https://campaign.local/zh-TW/campaigns/awaken-sprint").length).toBeGreaterThan(0);
     expect(within(shareReadiness).getByText("英文回退")).toBeInTheDocument();
     expect(within(shareReadiness).getAllByText(/English fallback|英文回退/).length).toBeGreaterThan(0);
-    expect(screen.getByText("Forest NFT 任務")).toBeInTheDocument();
-    expect(screen.getByText("TMRWDAO 治理連續任務")).toBeInTheDocument();
+    expect(screen.getAllByText("Forest NFT 任務").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("TMRWDAO 治理連續任務").length).toBeGreaterThan(0);
   });
 });
