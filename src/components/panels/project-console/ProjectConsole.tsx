@@ -18,6 +18,7 @@ import {
   type AiContentArtifactLifecycle,
   type AiContentQualityGateStatus,
   type AiContentReleaseActionState,
+  type AiOpsKpiReadiness,
   type AelfWebLoginAdapterLiveEvidenceStatus,
   type AelfWebLoginAdapterReadiness,
   type AdvancedAnalyticsReadinessState,
@@ -657,6 +658,26 @@ const stateComponentReadinessLabel = (
     : labels.stateReadinessBlocked;
 };
 
+const aiOpsKpiReadinessState = (state: AiOpsKpiReadiness) =>
+  state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const aiOpsKpiReadinessLabel = (
+  state: AiOpsKpiReadiness,
+  labels: {
+    aiOpsKpiReadinessBlocked: string;
+    aiOpsKpiReadinessReady: string;
+    aiOpsKpiReadinessReviewRequired: string;
+  },
+) => {
+  if (state === "ready") {
+    return labels.aiOpsKpiReadinessReady;
+  }
+
+  return state === "review_required"
+    ? labels.aiOpsKpiReadinessReviewRequired
+    : labels.aiOpsKpiReadinessBlocked;
+};
+
 const aiContentLifecycleState = (lifecycle: AiContentArtifactLifecycle) =>
   lifecycle === "human_approved" || lifecycle === "schedule_intent" || lifecycle === "publish_intent"
     ? "ready"
@@ -839,6 +860,10 @@ export const ProjectConsole = ({
   const exportDecision = commandCenter.analyticsExport;
   const advancedAnalytics = commandCenter.advancedAnalytics;
   const aiOptimizationSummary = commandCenter.aiOptimization.projectOwnerSummary;
+  const aiOpsKpiAdoption = commandCenter.aiOpsKpiAdoption;
+  const aiOpsKpiStrongestMetric = aiOpsKpiAdoption.metrics.find(
+    (metric) => metric.id === aiOpsKpiAdoption.summary.strongestSignalMetricId,
+  );
   const walletAdapterReadiness = commandCenter.aelfWebLoginAdapterReadiness;
   const liveWalletConnectorBoundary = createLiveWalletConnectorBoundary();
   const providerEvidenceRegistry = commandCenter.providerEvidenceRegistry;
@@ -2265,6 +2290,103 @@ export const ProjectConsole = ({
             {getLocalizedText(aiOptimizationSummary.boundary, locale)}
           </p>
           <p style={{ margin: "8px 0 0" }}>{copy.aiOptimizationNoAutoExecution}</p>
+        </div>
+      </section>
+
+      <section aria-label={copy.aiOpsKpiAdoption} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.aiOpsKpiAdoption}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.aiOpsKpiAdoption}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.aiOpsKpiAdoptionSubtitle}
+            </p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge label={`${aiOpsKpiAdoption.summary.totalMetrics} ${copy.aiOpsKpiTotal}`} tone="ai" />
+            <PublishStateBadge
+              label={`${aiOpsKpiAdoption.summary.reviewCount} ${copy.aiOpsKpiReview}`}
+              state={aiOpsKpiAdoption.summary.reviewCount > 0 ? "warning" : "ready"}
+            />
+          </span>
+        </div>
+
+        <div style={gridStyle}>
+          {[
+            [copy.aiOpsKpiTotal, String(aiOpsKpiAdoption.summary.totalMetrics)],
+            [copy.aiOpsKpiReady, String(aiOpsKpiAdoption.summary.readyCount)],
+            [copy.aiOpsKpiReview, String(aiOpsKpiAdoption.summary.reviewCount)],
+            [copy.aiOpsKpiBlocked, String(aiOpsKpiAdoption.summary.blockedCount)],
+          ].map(([label, value]) => (
+            <article key={label} style={cardStyle}>
+              <p style={statLabelStyle}>{label}</p>
+              <p style={statValueStyle}>{value}</p>
+            </article>
+          ))}
+        </div>
+
+        <div style={sectionGridStyle}>
+          <article style={{ ...cardStyle, minHeight: 0 }}>
+            <p style={statLabelStyle}>{copy.aiOpsKpiStrongestSignal}</p>
+            <p style={{ color: "#071426", fontSize: 18, fontWeight: 900, lineHeight: 1.25, margin: 0 }}>
+              {aiOpsKpiStrongestMetric
+                ? getLocalizedText(aiOpsKpiStrongestMetric.label, locale)
+                : aiOpsKpiAdoption.summary.strongestSignalMetricId}
+            </p>
+          </article>
+          <article style={{ ...cardStyle, minHeight: 0 }}>
+            <p style={statLabelStyle}>{copy.aiOpsKpiTopNextAction}</p>
+            <p style={{ color: "#071426", fontSize: 18, fontWeight: 900, lineHeight: 1.25, margin: 0 }}>
+              {getLocalizedText(aiOpsKpiAdoption.summary.topNextAction, locale)}
+            </p>
+          </article>
+        </div>
+
+        <div style={sectionGridStyle}>
+          {aiOpsKpiAdoption.metrics.map((metric) => (
+            <article key={metric.id} style={workflowStyle}>
+              <div style={headingRowStyle}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={statLabelStyle}>{copy.aiOpsKpiValue}: {metric.value}</p>
+                  <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0", wordBreak: "break-word" }}>
+                    {getLocalizedText(metric.label, locale)}
+                  </h4>
+                </div>
+                <PublishStateBadge
+                  label={aiOpsKpiReadinessLabel(metric.readiness, copy)}
+                  state={aiOpsKpiReadinessState(metric.readiness)}
+                />
+              </div>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {getLocalizedText(metric.description, locale)}
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <Badge label={`${copy.aiOpsKpiOwner}: ${readableCode(metric.ownerRole)}`} tone="info" />
+                <Badge label={`${copy.aiOpsKpiSource}: ${getLocalizedText(metric.sourceSurface, locale)}`} tone="neutral" />
+              </div>
+              <p style={{ color: "#0f172a", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {copy.aiOpsKpiTarget}: {getLocalizedText(metric.target, locale)}
+              </p>
+              <p style={{ color: "#0f172a", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {copy.aiOpsKpiTrend}: {getLocalizedText(metric.trend, locale)}
+              </p>
+              <p style={{ color: "#0f172a", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {copy.aiOpsKpiEvidence}: {getLocalizedText(metric.evidenceBasis, locale)}
+              </p>
+              <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                {copy.aiOpsKpiNextAction}: {getLocalizedText(metric.nextAction, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
+
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.aiOpsKpiBoundary}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {getLocalizedText(aiOpsKpiAdoption.boundary, locale)}
+          </p>
         </div>
       </section>
 

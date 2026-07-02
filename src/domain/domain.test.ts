@@ -5,6 +5,7 @@ import {
   createAdvancedAnalyticsReadiness,
   createAiContentPackWorkbench,
   createAelfWebLoginAdapterReadiness,
+  createAiOpsKpiAdoptionConsole,
   createAiOptimizationWorkflow,
   createContractImpactReviewModel,
   createContractTransparencyMonitor,
@@ -2714,6 +2715,99 @@ describe("Campaign OS domain foundation", () => {
       "automatically exclude",
     ]) {
       expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("derives a local-only AI Ops KPI adoption console for section 10.5 metrics", () => {
+    const console = createAiOpsKpiAdoptionConsole(campaignDetail);
+    const commandCenter = createProjectCampaignCommandCenter(campaignDetail);
+    const metricsByCategory = Object.fromEntries(
+      console.metrics.map((metric) => [metric.category, metric]),
+    );
+    const readyCount = console.metrics.filter((metric) => metric.readiness === "ready").length;
+    const reviewCount = console.metrics.filter((metric) => metric.readiness === "review_required").length;
+    const blockedCount = console.metrics.filter((metric) => metric.readiness === "blocked").length;
+    const serialized = JSON.stringify(console).toLowerCase();
+
+    expect(console).toEqual(commandCenter.aiOpsKpiAdoption);
+    expect(console.campaignId).toBe(campaignDetail.id);
+    expect(console.metrics.map((metric) => metric.category)).toEqual([
+      "ai_generated_campaign_drafts",
+      "ai_content_accepted_rate",
+      "manual_edit_time_saved",
+      "ai_reports_generated",
+      "optimization_suggestions_adopted",
+    ]);
+    expect(console.summary).toMatchObject({
+      totalMetrics: 5,
+      readyCount,
+      reviewCount,
+      blockedCount,
+      strongestSignalMetricId: expect.any(String),
+      topNextAction: expect.objectContaining({ "en-US": expect.any(String) }),
+    });
+    expect(console.summary.readyCount + console.summary.reviewCount + console.summary.blockedCount).toBe(5);
+    expect(console.boundary["en-US"]).toContain("No live AI provider");
+    expect(console.boundary["en-US"]).toContain("event warehouse read");
+    expect(console.boundary["en-US"]).toContain("analytics SDK write");
+    expect(console.boundary["en-US"]).toContain("wallet action");
+    expect(console.boundary["en-US"]).toContain("contract transaction");
+    expect(console.boundary["en-US"]).toContain("reward distribution");
+
+    for (const metric of console.metrics) {
+      expect(metric).toMatchObject({
+        id: expect.any(String),
+        value: expect.any(String),
+        ownerRole: expect.any(String),
+        readiness: expect.any(String),
+        label: expect.objectContaining({ "en-US": expect.any(String) }),
+        description: expect.objectContaining({ "en-US": expect.any(String) }),
+        target: expect.objectContaining({ "en-US": expect.any(String) }),
+        trend: expect.objectContaining({ "en-US": expect.any(String) }),
+        evidenceBasis: expect.objectContaining({ "en-US": expect.any(String) }),
+        sourceSurface: expect.objectContaining({ "en-US": expect.any(String) }),
+        nextAction: expect.objectContaining({ "en-US": expect.any(String) }),
+        boundary: expect.objectContaining({ "en-US": expect.any(String) }),
+      });
+
+      for (const locale of supportedLocales) {
+        expect(metric.label[locale].trim()).not.toBe("");
+        expect(metric.description[locale].trim()).not.toBe("");
+        expect(metric.target[locale].trim()).not.toBe("");
+        expect(metric.trend[locale].trim()).not.toBe("");
+        expect(metric.evidenceBasis[locale].trim()).not.toBe("");
+        expect(metric.sourceSurface[locale].trim()).not.toBe("");
+        expect(metric.nextAction[locale].trim()).not.toBe("");
+        expect(metric.boundary[locale].trim()).not.toBe("");
+      }
+    }
+
+    expect(metricsByCategory.ai_generated_campaign_drafts).toMatchObject({
+      label: expect.objectContaining({ "en-US": "AI-generated campaign drafts" }),
+      sourceSurface: expect.objectContaining({ "en-US": "AI Content Pack" }),
+    });
+    expect(metricsByCategory.ai_content_accepted_rate?.target["en-US"].toLowerCase()).toContain("human");
+    expect(metricsByCategory.optimization_suggestions_adopted?.target["en-US"].toLowerCase()).toContain("human");
+    expect(metricsByCategory.optimization_suggestions_adopted?.target["en-US"]).toContain("no automatic campaign rule changes");
+    expect(metricsByCategory.ai_reports_generated).toMatchObject({
+      value: String(campaignDetail.aiOpsReports.length),
+      readiness: "ready",
+    });
+
+    for (const unsafe of [
+      "private key",
+      "seed phrase",
+      "password",
+      "cookie",
+      "credential",
+      "raw ip",
+      "raw device",
+      "provider prompt",
+      "private repo",
+      "private threshold",
+      "access_token",
+    ]) {
+      expect(serialized).not.toContain(unsafe);
     }
   });
 
