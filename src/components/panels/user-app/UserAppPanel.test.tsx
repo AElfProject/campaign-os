@@ -19,7 +19,7 @@ describe("User App shell", () => {
     expect(screen.getByText("Find live aelf campaigns, points, time left, core tasks, and eligibility entry points.")).toBeInTheDocument();
     expect(screen.getByText("Forest NFT Quest")).toBeInTheDocument();
     expect(screen.getByText("TMRWDAO Governance Streak")).toBeInTheDocument();
-    expect(screen.getByText("Seeded campaign feed preview; campaign discovery is not a live marketplace API.")).toBeInTheDocument();
+    expect(screen.getByText("Local Campaign Discovery API readiness only; no live marketplace, App Hub backend, Portfolio, or Forecast service is connected.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Mobile entry for campaigns, points, pay, forecast, and portfolio." })).toBeInTheDocument();
     expect(screen.getByText("Seeded mobile hub preview; no Telegram Mini App, payment, forecast, or portfolio service is connected.")).toBeInTheDocument();
     expect(screen.getByText("What should I do today?")).toBeInTheDocument();
@@ -196,7 +196,7 @@ describe("User App shell", () => {
     expect(screen.getByText("展示进行中的 aelf 活动、可获得积分、剩余时间、核心任务与资格入口。")).toBeInTheDocument();
     expect(screen.getByText("Forest NFT 任务")).toBeInTheDocument();
     expect(screen.getByText("TMRWDAO 治理连续任务")).toBeInTheDocument();
-    expect(screen.getByText("仅 seeded 活动 Feed 预览；活动发现未接入实时 marketplace API。")).toBeInTheDocument();
+    expect(screen.getByText("仅本地 Campaign Discovery API readiness；不会连接实时 marketplace、App Hub 后端、Portfolio 或 Forecast 服务。")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "移动端入口，聚合活动、积分、Pay、Forecast 与 Portfolio。" })).toBeInTheDocument();
     expect(screen.getByText("仅 seeded 移动端 Hub 预览；未接入 Telegram Mini App、支付、Forecast 或 Portfolio 服务。")).toBeInTheDocument();
     expect(screen.getByText("今天该做什么？")).toBeInTheDocument();

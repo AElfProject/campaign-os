@@ -101,6 +101,8 @@ export type ApiSkillId =
   | "create_wallet_session"
   | "agent_wallet_action"
   | "create_campaign"
+  | "list_campaigns"
+  | "get_campaign_detail"
   | "add_campaign_task"
   | "generate_campaign_tasks"
   | "verify_task"
@@ -119,6 +121,7 @@ export type ApiSkillRiskLevel = "low" | "medium" | "high";
 export type ApiSkillApiGroup =
   | "wallet_session"
   | "campaign_creation"
+  | "campaign_discovery"
   | "task_generation"
   | "task_verification"
   | "eligibility"
@@ -663,6 +666,83 @@ export interface CampaignTask {
   required: boolean;
   riskLevel: RiskLevel;
   localeStatus: Record<SupportedLocale, LocaleStatus>;
+}
+
+export type CampaignDiscoveryConsumerSurface =
+  | "user_app"
+  | "app_hub"
+  | "portfolio"
+  | "forecast";
+
+export type CampaignDiscoveryCtaKind =
+  | "start"
+  | "continue_tasks"
+  | "check_eligibility"
+  | "view_results";
+
+export interface CampaignDiscoveryCta {
+  kind: CampaignDiscoveryCtaKind;
+  label: LocalizedText;
+  reason: LocalizedText;
+}
+
+export interface CampaignDiscoveryTaskSummary {
+  taskId: string;
+  title: LocalizedText;
+  verificationType: VerificationType;
+  points: number;
+  required: boolean;
+}
+
+export interface CampaignDiscoveryItem {
+  id: string;
+  slug: string;
+  title: LocalizedText;
+  subtitle: LocalizedText;
+  campaignType: LocalizedText;
+  status: CampaignStatus;
+  points: number;
+  startTime: string;
+  endTime: string;
+  timeWindow: LocalizedText;
+  coreTasks: CampaignDiscoveryTaskSummary[];
+  cta: CampaignDiscoveryCta;
+  walletPolicy: WalletPolicy;
+  supportedLocales: SupportedLocale[];
+  consumerSurfaces: CampaignDiscoveryConsumerSurface[];
+  tags: LocalizedText[];
+  boundary: LocalizedText;
+}
+
+export interface CampaignDiscoveryDetail {
+  item: CampaignDiscoveryItem;
+  tasks: CampaignDiscoveryTaskSummary[];
+  eligibilityEntry: LocalizedText;
+  rewardBoundary: LocalizedText;
+  appHubContext: LocalizedText;
+  portfolioContext: LocalizedText;
+  forecastContext: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface CampaignDiscoverySummary {
+  totalCampaigns: number;
+  liveCount: number;
+  scheduledCount: number;
+  endedCount: number;
+  appHubReadyCount: number;
+  portfolioReadyCount: number;
+  forecastReadyCount: number;
+  topCampaignId: string;
+}
+
+export interface CampaignDiscoveryReadModel {
+  campaignId: string;
+  items: CampaignDiscoveryItem[];
+  details: CampaignDiscoveryDetail[];
+  summary: CampaignDiscoverySummary;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
 }
 
 export interface ParticipantSnapshot {
