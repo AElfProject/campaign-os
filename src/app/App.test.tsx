@@ -84,6 +84,7 @@ describe("Campaign OS app shell", () => {
     expect(
       screen.getByRole("navigation", { name: "Project Console workspace navigation" }),
     ).toBeInTheDocument();
+    expect(within(getProjectWorkspaceNavigation()).getByRole("button", { name: "States" })).toBeInTheDocument();
     expect(within(getProjectWorkspaceNavigation()).getByRole("button", { name: "Campaigns" })).toHaveAttribute(
       "aria-pressed",
       "true",

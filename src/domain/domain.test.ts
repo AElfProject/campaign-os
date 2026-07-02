@@ -13,6 +13,7 @@ import {
   createLeaderboardReadModel,
   createPostCampaignCloseout,
   createProjectCampaignCommandCenter,
+  createStateComponentsDeliveryGallery,
   createUserWinnersExportStatusReadModel,
   createVerificationCoverageSummary,
   computeMissingTasks,
@@ -2784,6 +2785,88 @@ describe("Campaign OS domain foundation", () => {
       "private threshold",
       "scraped page",
       "paid data feed",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("derives a local-only state components delivery gallery with complete coverage", () => {
+    const gallery = createStateComponentsDeliveryGallery(campaignDetail);
+    const examples = gallery.families.flatMap((family) => family.examples);
+    const examplesById = Object.fromEntries(examples.map((example) => [example.id, example]));
+    const localizedFields = [
+      gallery.boundary,
+      gallery.summary.topNextAction,
+      ...gallery.families.flatMap((family) => [
+        family.label,
+        family.description,
+        ...family.examples.flatMap((example) => [
+          example.label,
+          example.meaning,
+          example.userMessage,
+          example.nextAction,
+        ]),
+      ]),
+    ];
+    const serialized = JSON.stringify(gallery).toLowerCase();
+
+    expect(gallery.families.map((family) => family.id)).toEqual([
+      "campaign",
+      "task_verification",
+      "eligibility",
+      "i18n_content",
+      "wallet_qa",
+      "export_modal",
+      "toast_notification",
+      "blocked_publish",
+    ]);
+    expect(gallery.summary).toMatchObject({
+      totalFamilies: gallery.families.length,
+      totalExamples: examples.length,
+      coveredCount: examples.filter((example) => example.readiness === "covered").length,
+      reviewRequiredCount: examples.filter((example) => example.readiness === "review_required").length,
+      blockedCount: examples.filter((example) => example.readiness === "blocked").length,
+    });
+    expect(gallery.summary.totalFamilies).toBe(8);
+    expect(gallery.sourceReferences).toEqual(
+      expect.arrayContaining([
+        "v0.1 full UI design screen 15 state delivery",
+        "v0.2 interaction design i18n state requirements",
+      ]),
+    );
+    expect(examplesById["task-failed"].nextAction["en-US"]).toMatch(/Retry verification|go to bridge|complete swap|contact the project owner/i);
+    expect(examplesById["task-manual-review"].nextAction["en-US"]).toContain("Submit proof");
+    expect(examplesById["toast-loading"].userMessage["en-US"]).toContain("No live sync");
+    expect(examplesById["toast-empty"].nextAction["en-US"]).toContain("Clear filters");
+    expect(examplesById["toast-error"].nextAction["en-US"]).toMatch(/Retry the local preview|contact the project owner/i);
+    expect(examplesById["export-modal-review"].userMessage["en-US"]).toContain("does not distribute rewards");
+    expect(examplesById["export-modal-review"].userMessage["en-US"]).toContain("campaign project");
+    expect(examplesById["publish-contract-claim-review"].nextAction["en-US"]).toContain("contract reviewer approval");
+    expect(gallery.boundary["en-US"]).toContain("No live backend or API call");
+    expect(gallery.boundary["en-US"]).toContain("no wallet signing");
+    expect(gallery.boundary["en-US"]).toContain("no analytics write");
+    expect(gallery.boundary["en-US"]).toContain("no export file generation");
+    expect(gallery.boundary["en-US"]).toContain("no contract write");
+    expect(gallery.boundary["en-US"]).toContain("no reward custody");
+    expect(gallery.boundary["en-US"]).toContain("no reward distribution");
+
+    for (const localizedText of localizedFields) {
+      for (const locale of supportedLocales) {
+        expect(localizedText[locale]).not.toHaveLength(0);
+      }
+    }
+
+    for (const forbidden of [
+      "private key",
+      "seed phrase",
+      "token",
+      "cookie",
+      "password",
+      "credential",
+      "ip address",
+      "raw device",
+      "private repo",
+      "private threshold",
     ]) {
       expect(serialized).not.toContain(forbidden);
     }
