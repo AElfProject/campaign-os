@@ -8,6 +8,9 @@ import type {
   AdvancedAnalyticsReadinessSurface,
   AdvancedAnalyticsRetentionWindow,
   AdminOpsReadModel,
+  AiOpsReportHandoff,
+  AiOpsReportHandoffStatus,
+  AiOpsReportHandoffSurface,
   AiOptimizationAction,
   AiOptimizationActionStatus,
   AiOptimizationMetricTone,
@@ -6450,6 +6453,77 @@ export const createAiOptimizationWorkflow = (
   };
 };
 
+const aiReportHandoffRank: Record<AiOpsReportHandoffStatus, number> = {
+  blocked: 0,
+  review_required: 1,
+  ready_to_review: 2,
+};
+
+const toAiReportHandoffStatus = (
+  status: AiOptimizationActionStatus,
+): AiOpsReportHandoffStatus =>
+  status === "blocked" || status === "review_required"
+    ? status
+    : "ready_to_review";
+
+const pickHandoffAction = (actions: AiOptimizationAction[]) =>
+  [...actions].sort(
+    (left, right) =>
+      aiReportHandoffRank[toAiReportHandoffStatus(left.status)] -
+      aiReportHandoffRank[toAiReportHandoffStatus(right.status)],
+  )[0];
+
+export const createAiReportHandoffSurface = (
+  workflow: AiOptimizationWorkflow,
+): AiOpsReportHandoffSurface => {
+  const handoffs = workflow.reports.map<AiOpsReportHandoff>((report) => {
+    const action = pickHandoffAction(report.actions);
+    const fallbackStatus: AiOpsReportHandoffStatus =
+      report.category === "bot_pattern"
+        ? "blocked"
+        : report.category === "winner_report"
+          ? "review_required"
+          : "ready_to_review";
+    const reviewState = action ? toAiReportHandoffStatus(action.status) : fallbackStatus;
+
+    return {
+      id: `${report.id}-handoff`,
+      reportId: report.id,
+      actionId: action?.id ?? `${report.id}-fallback`,
+      category: report.category,
+      title: action?.title ?? report.title,
+      summary: report.summary,
+      generatedAt: report.generatedAt,
+      ownerRole: action?.ownerRole ?? aiOptimizationOwnerByCategory[report.category],
+      reviewState,
+      sourceEvidence: action?.evidence ?? report.summary,
+      sourceMetrics: action?.sourceMetrics ?? [],
+      guardrail: action?.guardrail ?? createAiOptimizationGuardrail(report.category),
+      nextAction:
+        action?.nextAction ?? createAiOptimizationNextAction(report.category, reviewState),
+      requiresHumanReview:
+        action?.requiresHumanReview ?? reviewState !== "ready_to_review",
+    };
+  });
+  const topHandoff =
+    handoffs.find((handoff) => handoff.reviewState === "blocked") ??
+    handoffs.find((handoff) => handoff.reviewState === "review_required") ??
+    handoffs[0];
+
+  return {
+    campaignId: workflow.campaignId,
+    summary: {
+      totalHandoffs: handoffs.length,
+      readyToReviewCount: handoffs.filter((handoff) => handoff.reviewState === "ready_to_review").length,
+      reviewRequiredCount: handoffs.filter((handoff) => handoff.reviewState === "review_required").length,
+      blockedCount: handoffs.filter((handoff) => handoff.reviewState === "blocked").length,
+      topNextAction: topHandoff?.nextAction ?? workflow.summary.nextAction,
+    },
+    handoffs,
+    boundary: workflow.boundary,
+  };
+};
+
 export const createProjectCampaignCommandCenter = (
   campaign: CampaignShellDetail,
 ): ProjectCampaignCommandCenter => {
@@ -10892,6 +10966,7 @@ export const createAdminOpsReadModel = (
   const exportBatch = createExportBatch(campaign);
   const advancedAnalytics = createAdvancedAnalyticsReadiness(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
+  const aiReportHandoff = createAiReportHandoffSurface(aiOptimization);
   const walletProviderQaGate = createWalletProviderQaReadinessGate(campaign.walletSessions);
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
@@ -10921,6 +10996,7 @@ export const createAdminOpsReadModel = (
     launchConsoleCampaignBundles,
     aiReports: campaign.aiOpsReports,
     aiOptimization,
+    aiReportHandoff,
     ecosystemMetrics: campaign.ecosystemMetrics,
     exportBatch,
     lifecycleOperations,

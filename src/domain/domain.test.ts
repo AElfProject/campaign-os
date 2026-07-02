@@ -2627,6 +2627,95 @@ describe("Campaign OS domain foundation", () => {
     expect(summaryText.toLowerCase()).not.toContain("ban");
   });
 
+  it("derives AI report handoffs from seeded AI Ops reports without exposing private controls", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const handoff = adminOps.aiReportHandoff;
+    const handoffsByCategory = Object.fromEntries(
+      handoff.handoffs.map((row) => [row.category, row]),
+    );
+    const readyToReviewCount = handoff.handoffs.filter(
+      (row) => row.reviewState === "ready_to_review",
+    ).length;
+    const reviewRequiredCount = handoff.handoffs.filter(
+      (row) => row.reviewState === "review_required",
+    ).length;
+    const blockedCount = handoff.handoffs.filter(
+      (row) => row.reviewState === "blocked",
+    ).length;
+    const serialized = JSON.stringify(handoff).toLowerCase();
+
+    expect(handoff.campaignId).toBe(campaignDetail.id);
+    expect(handoff.handoffs.map((row) => row.category)).toEqual([
+      "analytics_summary",
+      "user_quality",
+      "bot_pattern",
+      "winner_report",
+      "boss_report",
+      "optimization",
+    ]);
+    expect(handoff.summary).toMatchObject({
+      totalHandoffs: handoff.handoffs.length,
+      readyToReviewCount,
+      reviewRequiredCount,
+      blockedCount,
+    });
+    expect(handoff.summary.blockedCount).toBeGreaterThan(0);
+    expect(handoff.summary.reviewRequiredCount).toBeGreaterThan(0);
+    expect(handoff.summary.topNextAction["en-US"]).toContain("human risk/export review");
+    expect(handoff.boundary["en-US"]).toContain("No live AI provider");
+
+    for (const row of handoff.handoffs) {
+      expect(row).toMatchObject({
+        actionId: expect.any(String),
+        ownerRole: expect.any(String),
+        generatedAt: expect.any(String),
+        reviewState: expect.any(String),
+        sourceEvidence: expect.objectContaining({ "en-US": expect.any(String) }),
+        guardrail: expect.objectContaining({ "en-US": expect.any(String) }),
+        nextAction: expect.objectContaining({ "en-US": expect.any(String) }),
+      });
+      expect(row.sourceMetrics.length).toBeGreaterThan(0);
+      for (const locale of supportedLocales) {
+        expect(row.title[locale]).not.toHaveLength(0);
+        expect(row.summary[locale]).not.toHaveLength(0);
+        expect(row.sourceEvidence[locale]).not.toHaveLength(0);
+        expect(row.guardrail[locale]).not.toHaveLength(0);
+        expect(row.nextAction[locale]).not.toHaveLength(0);
+      }
+    }
+
+    expect(handoffsByCategory.bot_pattern).toMatchObject({
+      ownerRole: "risk_reviewer",
+      reviewState: "blocked",
+      requiresHumanReview: true,
+    });
+    expect(handoffsByCategory.winner_report).toMatchObject({
+      ownerRole: "risk_reviewer",
+      reviewState: "review_required",
+      requiresHumanReview: true,
+    });
+    expect(handoffsByCategory.boss_report?.ownerRole).toBe("growth_lead");
+    expect(handoffsByCategory.winner_report?.guardrail["en-US"]).toContain("does not distribute rewards");
+
+    for (const forbidden of [
+      "privatekey",
+      "private key",
+      "secret",
+      "token",
+      "signed payload",
+      "raw ip",
+      "rawip",
+      "devicefingerprint",
+      "sessionfingerprint",
+      "privatethreshold",
+      "private threshold",
+      "automatic ban",
+      "automatically exclude",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
   it("keeps Admin/Ops ecosystem metrics and export evidence complete", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
 
