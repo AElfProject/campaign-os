@@ -40,6 +40,8 @@ export type LocaleStatus =
   | "missing";
 export const campaignLifecycleStatuses = [
   "draft",
+  "ai_draft",
+  "human_review",
   "scheduled",
   "live",
   "paused",

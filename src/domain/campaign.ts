@@ -3595,6 +3595,30 @@ const statusNextAction: Record<
       "zh-TW": "Complete basics, reward disclaimers, and launch gates before scheduling.",
     },
   },
+  ai_draft: {
+    nextActionLabel: {
+      "en-US": "Route AI draft to review",
+      "zh-CN": "将 AI 草稿送审",
+      "zh-TW": "Route AI draft to review",
+    },
+    nextActionDetail: {
+      "en-US": "Review AI-generated campaign setup before scheduling or live handoff.",
+      "zh-CN": "排期或上线交接前先审核 AI 生成的活动配置。",
+      "zh-TW": "Review AI-generated campaign setup before scheduling or live handoff.",
+    },
+  },
+  human_review: {
+    nextActionLabel: {
+      "en-US": "Complete human review",
+      "zh-CN": "完成人工审核",
+      "zh-TW": "Complete human review",
+    },
+    nextActionDetail: {
+      "en-US": "Confirm launch gates, localized copy, and contract impact before scheduling.",
+      "zh-CN": "排期前确认上线门禁、本地化文案和合约影响。",
+      "zh-TW": "Confirm launch gates, localized copy, and contract impact before scheduling.",
+    },
+  },
   scheduled: {
     nextActionLabel: {
       "en-US": "Review launch readiness",
@@ -3854,7 +3878,11 @@ const createCommandSummary = (
     totalCampaigns: campaigns.length,
     liveCount: campaigns.filter((campaign) => campaign.status === "live").length,
     scheduledOrDraftCount: campaigns.filter(
-      (campaign) => campaign.status === "scheduled" || campaign.status === "draft",
+      (campaign) =>
+        campaign.status === "scheduled" ||
+        campaign.status === "draft" ||
+        campaign.status === "ai_draft" ||
+        campaign.status === "human_review",
     ).length,
     endedCount: campaigns.filter((campaign) => campaign.status === "ended").length,
     exportedCount: campaigns.filter((campaign) => campaign.status === "exported").length,
@@ -4508,8 +4536,21 @@ export const createCampaignLifecycleOperations = (
     ),
     nextAction: lifecycleText("Keep final evidence visible before archive intent.", "归档意图前保持最终证据可见。"),
   });
-  const scheduleState = launchOperationState(campaign.status, ["draft"], launchChecks);
-  const publishState = launchOperationState(campaign.status, ["draft", "scheduled"], launchChecks);
+  const aiDraftReviewCheck = lifecycleCheck({
+    id: "ai-draft-human-review",
+    label: lifecycleText("AI draft human review", "AI 草稿人工审核"),
+    state: "warning",
+    source: "local_boundary",
+    reason: lifecycleText(
+      "AI-generated campaign setup must be reviewed by a human before scheduling or live handoff.",
+      "AI 生成的活动配置在排期或上线交接前必须经过人工审核。",
+    ),
+    nextAction: lifecycleText("Route the AI draft to a human reviewer.", "将 AI 草稿交给人工审核。"),
+  });
+  const generateAiDraftState = lifecycleStatusOperationState(campaign.status, ["draft"], "review_required");
+  const submitHumanReviewState = lifecycleStatusOperationState(campaign.status, ["ai_draft"], "review_required");
+  const scheduleState = launchOperationState(campaign.status, ["human_review"], launchChecks);
+  const publishState = launchOperationState(campaign.status, ["human_review"], launchChecks);
   const exportState = lifecycleStatusOperationState(
     campaign.status,
     ["ended"],
@@ -4522,27 +4563,61 @@ export const createCampaignLifecycleOperations = (
   const archiveState = lifecycleStatusOperationState(campaign.status, ["exported"], "review_required");
   const operations: CampaignLifecycleOperation[] = [
     lifecycleOperation({
+      id: "generate-ai-draft",
+      label: lifecycleText("Generate AI draft", "生成 AI 草稿"),
+      fromStatus: "draft",
+      targetStatus: "ai_draft",
+      operationState: generateAiDraftState,
+      ownerRole: "project_owner",
+      reason: lifecycleText(
+        "AI draft intent is local-only and cannot publish, schedule, or mutate backend state.",
+        "AI 草稿意图仅为本地状态，不能发布、排期或修改后端状态。",
+      ),
+      gateGroup: "internal-provider-review",
+      blockingChecks: [aiDraftReviewCheck],
+      affectedOutcome: "schedule",
+      nextAction: lifecycleText("Review AI-generated campaign structure before handoff.", "交接前审核 AI 生成的活动结构。"),
+      requiresReview: true,
+    }),
+    lifecycleOperation({
+      id: "submit-human-review",
+      label: lifecycleText("Submit for human review", "提交人工审核"),
+      fromStatus: "ai_draft",
+      targetStatus: "human_review",
+      operationState: submitHumanReviewState,
+      ownerRole: "internal_operator",
+      reason: lifecycleText(
+        "Human review keeps AI-generated campaign work gated before schedule or live intent.",
+        "人工审核会在排期或上线意图前继续约束 AI 生成的活动内容。",
+      ),
+      gateGroup: "risk-i18n-contract",
+      blockingChecks: [aiDraftReviewCheck],
+      affectedOutcome: "schedule",
+      nextAction: lifecycleText("Confirm reward, eligibility, risk, i18n, and contract review.", "确认奖励、资格、风险、i18n 与合约审核。"),
+      requiresReview: true,
+    }),
+    lifecycleOperation({
       id: "schedule-campaign",
       label: lifecycleText("Schedule campaign", "排期活动"),
-      fromStatus: "draft",
+      fromStatus: "human_review",
       targetStatus: "scheduled",
       operationState: scheduleState,
       ownerRole: "project_owner",
-      reason: lifecycleText("Schedule intent depends on launch gates and remains local-only.", "排期意图取决于上线门禁，并保持本地状态。"),
+      reason: lifecycleText("Schedule intent depends on human review and launch gates and remains local-only.", "排期意图取决于人工审核和上线门禁，并保持本地状态。"),
       gateGroup: "campaign-basics",
       blockingChecks: launchChecks.filter((check) => check.state !== "passed"),
       affectedOutcome: "schedule",
-      nextAction: lifecycleText("Resolve launch gates before scheduling.", "排期前处理上线门禁。"),
+      nextAction: lifecycleText("Complete human review and launch gates before scheduling.", "排期前完成人工审核和上线门禁。"),
       requiresReview: scheduleState === "review_required" || scheduleState === "blocked",
     }),
     lifecycleOperation({
       id: "publish-campaign",
       label: lifecycleText("Publish campaign", "发布活动"),
-      fromStatus: "scheduled",
+      fromStatus: "human_review",
       targetStatus: "live",
       operationState: publishState,
       ownerRole: "project_owner",
-      reason: lifecycleText("Publish/go-live intent is evaluated locally and never executes scheduler or backend mutation.", "发布/上线意图仅本地评估，不执行排期器或后端变更。"),
+      reason: lifecycleText("Publish/go-live intent requires human review and never executes scheduler or backend mutation.", "发布/上线意图需要人工审核，且不执行排期器或后端变更。"),
       gateGroup: "internal-provider-review",
       blockingChecks: launchChecks.filter((check) => check.state !== "passed"),
       affectedOutcome: "launch",
@@ -11104,10 +11179,12 @@ const discoveryStatusRank: Record<CampaignLifecycleStatus, number> = {
   live: 0,
   paused: 1,
   scheduled: 2,
-  draft: 3,
-  ended: 4,
-  exported: 5,
-  archived: 6,
+  human_review: 3,
+  ai_draft: 4,
+  draft: 5,
+  ended: 6,
+  exported: 7,
+  archived: 8,
 };
 
 const createDiscoveryTaskSummary = (task: CampaignTask): CampaignDiscoveryTaskSummary => ({
@@ -11265,7 +11342,7 @@ const ctaKindForCampaign = (
   status: CampaignStatus,
   participant?: ParticipantSnapshot,
 ): CampaignDiscoveryCtaKind => {
-  if (status === "scheduled" || status === "draft") {
+  if (status === "scheduled" || status === "draft" || status === "ai_draft" || status === "human_review") {
     return "start";
   }
 
@@ -11356,7 +11433,13 @@ const createDiscoverySummary = (
 ): CampaignDiscoveryReadModel["summary"] => ({
   totalCampaigns: items.length,
   liveCount: items.filter((item) => item.status === "live").length,
-  scheduledCount: items.filter((item) => item.status === "scheduled" || item.status === "draft").length,
+  scheduledCount: items.filter(
+    (item) =>
+      item.status === "scheduled" ||
+      item.status === "draft" ||
+      item.status === "ai_draft" ||
+      item.status === "human_review",
+  ).length,
   endedCount: items.filter((item) =>
     item.status === "ended" || item.status === "exported" || item.status === "archived"
   ).length,
@@ -11453,7 +11536,7 @@ const portfolioStateFor = (
   missingTaskIds: string[],
   riskFlags: string[],
 ): PortfolioCampaignHistoryState => {
-  if (status === "scheduled" || status === "draft") {
+  if (status === "scheduled" || status === "draft" || status === "ai_draft" || status === "human_review") {
     return "scheduled";
   }
 
@@ -11582,7 +11665,8 @@ const createPortfolioSeededHistoryRow = (
   };
   const eligibility = createEligibilityCheckerReadModel(localCampaign, localParticipant.walletAddress).result;
   const exportStatus = createUserWinnersExportStatusReadModel(localCampaign, localParticipant);
-  const eligibilityStatus = item.status === "scheduled" || item.status === "draft"
+  const eligibilityStatus =
+    item.status === "scheduled" || item.status === "draft" || item.status === "ai_draft" || item.status === "human_review"
     ? "pending"
     : eligibility.status;
   const state = portfolioStateFor(

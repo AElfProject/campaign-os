@@ -2,7 +2,8 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
-import { EXPORT_CSV_COLUMNS } from "../../../domain";
+import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
+import { ProjectConsole } from "./ProjectConsole";
 
 const getProjectWorkspaceNav = () =>
   screen.getByRole("navigation", { name: "Project Console workspace navigation" });
@@ -50,7 +51,7 @@ describe("Project Console shell", () => {
       within(lifecycleOperations).getByRole("heading", { name: "Lifecycle operations" }),
     ).toBeInTheDocument();
     expect(within(lifecycleOperations).getByText("Current status")).toBeInTheDocument();
-    expect(within(lifecycleOperations).getByText("live")).toBeInTheDocument();
+    expect(within(lifecycleOperations).getByText("Live")).toBeInTheDocument();
     expect(within(lifecycleOperations).getAllByText(/launch blockers/).length).toBeGreaterThan(0);
     expect(within(lifecycleOperations).getAllByText("Owner action").length).toBeGreaterThan(0);
     expect(within(lifecycleOperations).getByText("Publish campaign")).toBeInTheDocument();
@@ -99,6 +100,49 @@ describe("Project Console shell", () => {
     expect(within(portfolioReadiness).queryByText(/payment id/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Analytics & Export Decision" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Task template library" })).not.toBeInTheDocument();
+  });
+
+  it("renders AI draft and human review lifecycle states with review-safe owner actions", () => {
+    const aiDraftCampaign = {
+      ...campaignDetail,
+      status: "ai_draft",
+    } satisfies typeof campaignDetail;
+
+    const { rerender } = render(
+      <ProjectConsole campaign={aiDraftCampaign} locale="en-US" />,
+    );
+
+    const aiDraftCommandCenter = screen.getByLabelText("Campaign Command Center");
+    const aiDraftLifecycle = screen.getByLabelText("Lifecycle operations");
+
+    expect(within(aiDraftCommandCenter).getByText("AI Draft")).toBeInTheDocument();
+    expect(within(aiDraftLifecycle).getByText("AI Draft")).toBeInTheDocument();
+    expect(within(aiDraftLifecycle).getByText(/AI Draft\s*->\s*Human Review/)).toBeInTheDocument();
+    expect(within(aiDraftLifecycle).getAllByText("Submit for human review").length).toBeGreaterThan(0);
+    expect(
+      within(aiDraftLifecycle).getAllByText(/Confirm reward, eligibility, risk, i18n, and contract review/).length,
+    ).toBeGreaterThan(0);
+
+    rerender(
+      <ProjectConsole
+        campaign={{ ...campaignDetail, status: "human_review" }}
+        locale="en-US"
+      />,
+    );
+
+    const humanReviewCommandCenter = screen.getByLabelText("Campaign Command Center");
+    const humanReviewLifecycle = screen.getByLabelText("Lifecycle operations");
+
+    expect(within(humanReviewCommandCenter).getByText("Human Review")).toBeInTheDocument();
+    expect(within(humanReviewLifecycle).getByText("Human Review")).toBeInTheDocument();
+    expect(within(humanReviewLifecycle).getAllByText("Schedule campaign").length).toBeGreaterThan(0);
+    expect(within(humanReviewLifecycle).getAllByText("Publish campaign").length).toBeGreaterThan(0);
+    expect(
+      within(humanReviewLifecycle).getAllByText(/Complete human review and launch gates before scheduling/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(humanReviewLifecycle).getAllByText(/Complete launch-blocking checks before go-live/).length,
+    ).toBeGreaterThan(0);
   });
 
   it("switches to States workspace and renders state component delivery coverage", () => {

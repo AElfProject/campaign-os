@@ -273,6 +273,55 @@ describe("User App shell", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("renders AI review campaign statuses as non-live participant states", () => {
+    const [participant] = campaignDetail.participants;
+    const aiDraftCampaign = {
+      ...campaignDetail,
+      status: "ai_draft",
+    } satisfies typeof campaignDetail;
+
+    const { rerender } = render(
+      <UserAppPanel
+        campaign={aiDraftCampaign}
+        locale="en-US"
+        participant={participant}
+      />,
+    );
+
+    const aiDraftFeed = screen.getByRole("heading", { name: "Campaign Feed" }).closest("section");
+    const aiDraftFeedCard = within(aiDraftFeed as HTMLElement)
+      .getAllByRole("article")
+      .find((card) => within(card).queryByText("Awaken Sprint"));
+
+    expect(aiDraftFeed).not.toBeNull();
+    expect(aiDraftFeedCard).not.toBeUndefined();
+    expect(within(aiDraftFeedCard as HTMLElement).getByText("AI Draft")).toBeInTheDocument();
+    expect(within(aiDraftFeedCard as HTMLElement).getByRole("button", { name: "Review required" })).toBeDisabled();
+    expect(within(aiDraftFeedCard as HTMLElement).queryByRole("button", { name: "Continue tasks" })).not.toBeInTheDocument();
+    expect(within(aiDraftFeedCard as HTMLElement).queryByRole("button", { name: "Start" })).not.toBeInTheDocument();
+
+    rerender(
+      <UserAppPanel
+        campaign={{ ...campaignDetail, status: "human_review" }}
+        locale="en-US"
+        participant={participant}
+      />,
+    );
+
+    const humanReviewFeed = screen.getByRole("heading", { name: "Campaign Feed" }).closest("section");
+    const humanReviewFeedCard = within(humanReviewFeed as HTMLElement)
+      .getAllByRole("article")
+      .find((card) => within(card).queryByText("Awaken Sprint"));
+
+    expect(humanReviewFeed).not.toBeNull();
+    expect(humanReviewFeedCard).not.toBeUndefined();
+    expect(within(humanReviewFeedCard as HTMLElement).getByText("Human Review")).toBeInTheDocument();
+    expect(within(humanReviewFeedCard as HTMLElement).getByRole("button", { name: "Review required" })).toBeDisabled();
+    expect(within(humanReviewFeedCard as HTMLElement).queryByRole("button", { name: "Continue tasks" })).not.toBeInTheDocument();
+    expect(within(humanReviewFeedCard as HTMLElement).queryByRole("button", { name: "Start" })).not.toBeInTheDocument();
+    expect(screen.getByText("2 Coming Soon")).toBeInTheDocument();
+  });
+
   it("switches User App copy manually to zh-CN", () => {
     render(<App />);
 

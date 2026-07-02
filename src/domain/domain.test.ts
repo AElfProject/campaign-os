@@ -63,6 +63,8 @@ import {
 
 const v02CampaignStatuses = [
   "draft",
+  "ai_draft",
+  "human_review",
   "scheduled",
   "live",
   "paused",
@@ -3279,6 +3281,8 @@ describe("Campaign OS domain foundation", () => {
     expect(lifecycle.currentStatus).toBe("live");
     expect(lifecycle.supportedStatuses).toEqual([
       "draft",
+      "ai_draft",
+      "human_review",
       "scheduled",
       "live",
       "paused",
@@ -3310,18 +3314,47 @@ describe("Campaign OS domain foundation", () => {
       ]),
     );
     expect(operationsById["schedule-campaign"]).toMatchObject({
-      fromStatus: "draft",
+      fromStatus: "human_review",
       targetStatus: "scheduled",
       localOnly: true,
       operationState: expect.stringMatching(/blocked|review_required|not_applicable/),
       ownerRole: expect.any(String),
     });
     expect(operationsById["publish-campaign"]).toMatchObject({
-      fromStatus: "scheduled",
+      fromStatus: "human_review",
       targetStatus: "live",
       localOnly: true,
       operationState: expect.stringMatching(/blocked|review_required|not_applicable/),
     });
+    expect(operationsById["generate-ai-draft"]).toMatchObject({
+      fromStatus: "draft",
+      targetStatus: "ai_draft",
+      localOnly: true,
+      operationState: "not_applicable",
+      requiresReview: true,
+    });
+    expect(operationsById["submit-human-review"]).toMatchObject({
+      fromStatus: "ai_draft",
+      targetStatus: "human_review",
+      localOnly: true,
+      operationState: "not_applicable",
+      requiresReview: true,
+    });
+    for (const operationId of [
+      "generate-ai-draft",
+      "submit-human-review",
+      "schedule-campaign",
+      "publish-campaign",
+    ]) {
+      const operation = operationsById[operationId];
+
+      expect(operation.label["en-US"]).not.toHaveLength(0);
+      expect(operation.label["zh-CN"]).not.toHaveLength(0);
+      expect(operation.label["zh-TW"]).not.toHaveLength(0);
+      expect(operation.nextAction["en-US"]).not.toHaveLength(0);
+      expect(operation.nextAction["zh-CN"]).not.toHaveLength(0);
+      expect(operation.nextAction["zh-TW"]).not.toHaveLength(0);
+    }
     expect(operationsById["pause-campaign"]).toMatchObject({
       fromStatus: "live",
       targetStatus: "paused",

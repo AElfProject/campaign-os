@@ -1510,6 +1510,8 @@ describe("Campaign OS local API service facade", () => {
       currentStatus: "live",
       supportedStatuses: expect.arrayContaining([
         "draft",
+        "ai_draft",
+        "human_review",
         "scheduled",
         "live",
         "paused",
@@ -1527,6 +1529,8 @@ describe("Campaign OS local API service facade", () => {
     expect(lifecycle.payload?.operations.map((operation) => operation.id)).toEqual(
       expect.arrayContaining([
         "schedule-campaign",
+        "generate-ai-draft",
+        "submit-human-review",
         "publish-campaign",
         "pause-campaign",
         "resume-campaign",

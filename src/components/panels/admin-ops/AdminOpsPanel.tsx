@@ -361,7 +361,21 @@ const lifecycleOperationStateLabel = (
   return labels[state];
 };
 
-const lifecycleStatusLabel = (status: CampaignLifecycleStatus) => status.replace(/_/g, " ");
+const lifecycleStatusLabel = (status: CampaignLifecycleStatus) => {
+  const labels: Record<CampaignLifecycleStatus, string> = {
+    archived: "Archived",
+    ai_draft: "AI Draft",
+    draft: "Draft",
+    ended: "Ended",
+    exported: "Exported",
+    human_review: "Human Review",
+    live: "Live",
+    paused: "Paused",
+    scheduled: "Scheduled",
+  };
+
+  return labels[status];
+};
 
 const lifecycleOwnerLabel = (ownerRole: CampaignLifecycleOperation["ownerRole"]) =>
   ownerRole.replace(/_/g, " ");
@@ -644,9 +658,17 @@ export const AdminOpsPanel = ({
   );
   const riskIntelligence = adminOps.riskIntelligence;
   const lifecycleReviewRows = lifecycleOperations.operations.filter((operation) =>
-    ["pause-campaign", "resume-campaign", "end-campaign", "export-campaign", "archive-campaign"].includes(
-      operation.id,
-    ),
+    [
+      "generate-ai-draft",
+      "submit-human-review",
+      "schedule-campaign",
+      "publish-campaign",
+      "pause-campaign",
+      "resume-campaign",
+      "end-campaign",
+      "export-campaign",
+      "archive-campaign",
+    ].includes(operation.id),
   );
   const providerEvidenceRegistry = adminOps.providerEvidenceRegistry;
   const walletAdapterReadiness = adminOps.aelfWebLoginAdapterReadiness;
