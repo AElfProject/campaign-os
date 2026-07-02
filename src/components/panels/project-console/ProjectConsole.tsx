@@ -43,6 +43,7 @@ import {
   type LiveWalletConnectorReadiness,
   type OwnerRole,
   type ParticipantOperationsExportStatus,
+  type PointsRankingReferralReadinessState,
   type PostCampaignCloseoutOwnerRole,
   type PostCampaignCloseoutStatus,
   type ProjectPortfolioCommercialOwnerRole,
@@ -81,8 +82,11 @@ const panelStyle: CSSProperties = {
   background: "#ffffff",
   border: "1px solid #dbe6f4",
   borderRadius: 8,
+  boxSizing: "border-box",
   display: "grid",
   gap: 16,
+  maxWidth: "100%",
+  minWidth: 0,
   padding: 18,
 };
 
@@ -104,8 +108,10 @@ const cardStyle: CSSProperties = {
   background: "#f8fbff",
   border: "1px solid #dbe6f4",
   borderRadius: 8,
+  boxSizing: "border-box",
   display: "grid",
   gap: 6,
+  minWidth: 0,
   minHeight: 104,
   padding: 14,
 };
@@ -131,6 +137,14 @@ const sectionGridStyle: CSSProperties = {
   display: "grid",
   gap: 12,
   gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+  minWidth: 0,
+};
+
+const compactSectionGridStyle: CSSProperties = {
+  display: "grid",
+  gap: 12,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
+  minWidth: 0,
 };
 
 const builderDetailsStyle: CSSProperties = {
@@ -635,6 +649,38 @@ const participantExportBadgeState = (status: ParticipantOperationsExportStatus) 
   return status === "ready" ? "ready" : "warning";
 };
 
+const pointsRankingReferralReadinessBadgeState = (
+  state: PointsRankingReferralReadinessState,
+) => {
+  if (state === "blocked") {
+    return "blocker";
+  }
+
+  return state === "ready" ? "ready" : "warning";
+};
+
+const pointsRankingReferralReadinessLabel = (
+  state: PointsRankingReferralReadinessState,
+  labels: {
+    pointsRankingReferralBlocked: string;
+    pointsRankingReferralLocalOnly: string;
+    pointsRankingReferralReady: string;
+    pointsRankingReferralReviewRequired: string;
+  },
+) => {
+  if (state === "ready") {
+    return labels.pointsRankingReferralReady;
+  }
+
+  if (state === "blocked") {
+    return labels.pointsRankingReferralBlocked;
+  }
+
+  return state === "local_only"
+    ? labels.pointsRankingReferralLocalOnly
+    : labels.pointsRankingReferralReviewRequired;
+};
+
 const settingsReadinessBadgeState = (state: CampaignSettingsReadinessState) =>
   state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
 
@@ -757,8 +803,11 @@ const workspaceShellStyle: CSSProperties = {
   background: "#f8fbff",
   border: "1px solid #dbe6f4",
   borderRadius: 8,
+  boxSizing: "border-box",
   display: "grid",
   gap: 14,
+  maxWidth: "100%",
+  minWidth: 0,
   padding: 14,
 };
 
@@ -766,6 +815,7 @@ const workspaceNavStyle: CSSProperties = {
   display: "grid",
   gap: 8,
   gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 132px), 1fr))",
+  minWidth: 0,
 };
 
 const workspaceButtonBaseStyle: CSSProperties = {
@@ -799,8 +849,10 @@ const workspaceIntroStyle: CSSProperties = {
   background: "#ffffff",
   border: "1px solid #dbe6f4",
   borderRadius: 8,
+  boxSizing: "border-box",
   display: "grid",
   gap: 4,
+  minWidth: 0,
   padding: 14,
 };
 
@@ -864,6 +916,7 @@ export const ProjectConsole = ({
   const aiOpsKpiStrongestMetric = aiOpsKpiAdoption.metrics.find(
     (metric) => metric.id === aiOpsKpiAdoption.summary.strongestSignalMetricId,
   );
+  const pointsRankingReferralReadiness = commandCenter.pointsRankingReferralReadiness;
   const walletAdapterReadiness = commandCenter.aelfWebLoginAdapterReadiness;
   const liveWalletConnectorBoundary = createLiveWalletConnectorBoundary();
   const providerEvidenceRegistry = commandCenter.providerEvidenceRegistry;
@@ -1019,7 +1072,7 @@ export const ProjectConsole = ({
   ];
 
   return (
-    <div style={{ display: "grid", gap: 18 }}>
+    <div style={{ display: "grid", gap: 18, maxWidth: "100%", minWidth: 0 }}>
       <section aria-label={copy.projectWorkspace} style={workspaceShellStyle}>
         <div style={headingRowStyle}>
           <div>
@@ -1752,6 +1805,7 @@ export const ProjectConsole = ({
       )}
 
       {activeWorkspace === "participants" && (
+        <>
         <section aria-label={copy.participantOperations} style={panelStyle}>
           <div style={headingRowStyle}>
             <div>
@@ -1887,6 +1941,100 @@ export const ProjectConsole = ({
 
           <p style={boundaryStyle}>{getLocalizedText(participantOperations.boundary, locale)}</p>
         </section>
+        <section aria-label={copy.pointsRankingReferralReadiness} style={panelStyle}>
+          <div style={headingRowStyle}>
+            <div>
+              <p style={statLabelStyle}>{copy.pointsRankingReferralSummary}</p>
+              <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                {copy.pointsRankingReferralReadiness}
+              </h3>
+              <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                {copy.pointsRankingReferralSubtitle}
+              </p>
+            </div>
+            <PublishStateBadge
+              label={`${pointsRankingReferralReadiness.summary.reviewRequiredLanes} ${copy.pointsRankingReferralReviewRequired}`}
+              state={
+                pointsRankingReferralReadiness.summary.blockedLanes > 0
+                  ? "blocker"
+                  : pointsRankingReferralReadiness.summary.reviewRequiredLanes > 0
+                    ? "warning"
+                    : "ready"
+              }
+            />
+          </div>
+
+          <div aria-label={copy.pointsRankingReferralSummary} style={gridStyle}>
+            {[
+              {
+                detail: `${pointsRankingReferralReadiness.summary.localOnlyLanes} ${copy.pointsRankingReferralLocalOnly}`,
+                label: copy.pointsRankingReferralTotalLanes,
+                value: String(pointsRankingReferralReadiness.summary.totalLanes),
+              },
+              {
+                detail: `${pointsRankingReferralReadiness.summary.readyLanes} ${copy.pointsRankingReferralReady}`,
+                label: copy.pointsRankingReferralRawInvites,
+                value: String(pointsRankingReferralReadiness.summary.totalRawInvites),
+              },
+              {
+                detail: `${pointsRankingReferralReadiness.summary.reviewRequiredLanes} ${copy.pointsRankingReferralReviewRequired}`,
+                label: copy.pointsRankingReferralQualifiedInvitees,
+                value: String(pointsRankingReferralReadiness.summary.totalQualifiedInvitees),
+              },
+              {
+                detail: getLocalizedText(pointsRankingReferralReadiness.summary.topNextAction, locale),
+                label: copy.pointsRankingReferralReferralPoints,
+                value: String(pointsRankingReferralReadiness.summary.totalReferralPoints),
+              },
+            ].map((stat) => (
+              <article key={stat.label} style={cardStyle}>
+                <p style={statLabelStyle}>{stat.label}</p>
+                <p style={statValueStyle}>{stat.value}</p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                  {stat.detail}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <div aria-label={copy.pointsRankingReferralLaneList} style={compactSectionGridStyle}>
+            {pointsRankingReferralReadiness.lanes.map((lane) => (
+              <article key={lane.id} style={{ ...workflowStyle, minHeight: 0, overflowWrap: "anywhere" }}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>{getLocalizedText(lane.metricLabel, locale)}: {lane.metricValue}</p>
+                    <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0", wordBreak: "break-word" }}>
+                      {getLocalizedText(lane.label, locale)}
+                    </h4>
+                  </div>
+                  <PublishStateBadge
+                    label={pointsRankingReferralReadinessLabel(lane.readiness, copy)}
+                    state={pointsRankingReferralReadinessBadgeState(lane.readiness)}
+                  />
+                </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(lane.description, locale)}
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <Badge label={`${copy.pointsRankingReferralOwner}: ${readableCode(lane.ownerRole)}`} tone="info" />
+                  <Badge label={`${copy.pointsRankingReferralSource}: ${getLocalizedText(lane.sourceSurface, locale)}`} tone="neutral" />
+                </div>
+                <p style={{ color: "#0f172a", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.pointsRankingReferralEvidence}: {getLocalizedText(lane.evidence, locale)}
+                </p>
+                <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.pointsRankingReferralNextAction}: {getLocalizedText(lane.nextAction, locale)}
+                </p>
+                <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.pointsRankingReferralBoundary}: {getLocalizedText(lane.boundary, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <p style={boundaryStyle}>{getLocalizedText(pointsRankingReferralReadiness.boundary, locale)}</p>
+        </section>
+        </>
       )}
 
       {activeWorkspace === "analytics" && (

@@ -1617,6 +1617,7 @@ export interface ProjectCampaignCommandCenter {
   advancedAnalytics: AdvancedAnalyticsReadinessSurface;
   aiOptimization: AiOptimizationWorkflow;
   aiOpsKpiAdoption: AiOpsKpiAdoptionConsole;
+  pointsRankingReferralReadiness: PointsRankingReferralServiceReadiness;
   aelfWebLoginAdapterReadiness: AelfWebLoginAdapterReadinessModel;
   providerEvidenceRegistry: ProviderEvidenceRegistry;
   lifecycleOperations: CampaignLifecycleOperations;
@@ -2014,6 +2015,51 @@ export interface AiOpsKpiAdoptionConsole {
   metrics: AiOpsKpiMetric[];
   boundary: LocalizedText;
   topNextAction: LocalizedText;
+}
+
+export type PointsRankingReferralLaneId =
+  | "points-ledger"
+  | "ranking"
+  | "referral"
+  | "pixiepoints-backend-handoff";
+export type PointsRankingReferralReadinessState =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "local_only";
+
+export interface PointsRankingReferralReadinessLane {
+  id: PointsRankingReferralLaneId;
+  label: LocalizedText;
+  description: LocalizedText;
+  readiness: PointsRankingReferralReadinessState;
+  ownerRole: OwnerRole;
+  metricLabel: LocalizedText;
+  metricValue: string;
+  sourceSurface: LocalizedText;
+  evidence: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface PointsRankingReferralReadinessSummary {
+  totalLanes: number;
+  readyLanes: number;
+  reviewRequiredLanes: number;
+  blockedLanes: number;
+  localOnlyLanes: number;
+  topLaneId: PointsRankingReferralLaneId;
+  totalRawInvites: number;
+  totalQualifiedInvitees: number;
+  totalReferralPoints: number;
+  topNextAction: LocalizedText;
+}
+
+export interface PointsRankingReferralServiceReadiness {
+  campaignId: string;
+  summary: PointsRankingReferralReadinessSummary;
+  lanes: PointsRankingReferralReadinessLane[];
+  boundary: LocalizedText;
 }
 
 export interface EcosystemMetricRow {
@@ -2571,6 +2617,7 @@ export interface AdminOpsReadModel {
   contractReviewCenter: AdminContractReviewCenter;
   contractInterfaceMatrix: ContractInterfaceMatrixConsole;
   contractTransparencyMonitor: ContractTransparencyMonitor;
+  pointsRankingReferralReadiness: PointsRankingReferralServiceReadiness;
   aiContentPack: AiContentPackWorkbench;
   templateGovernance: TemplateGovernanceConsole;
   analytics: AnalyticsKpi[];

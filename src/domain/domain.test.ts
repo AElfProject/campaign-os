@@ -12,6 +12,7 @@ import {
   createEligibilityCheckerReadModel,
   createEcosystemNextActionReadModel,
   createLeaderboardReadModel,
+  createPointsRankingReferralServiceReadiness,
   createPostCampaignCloseout,
   createProjectCampaignCommandCenter,
   createStateComponentsDeliveryGallery,
@@ -2808,6 +2809,97 @@ describe("Campaign OS domain foundation", () => {
       "access_token",
     ]) {
       expect(serialized).not.toContain(unsafe);
+    }
+  });
+
+  it("derives Points / Ranking / Referral service readiness without live ledger or reward execution", () => {
+    const readiness = createPointsRankingReferralServiceReadiness(campaignDetail);
+    const again = createPointsRankingReferralServiceReadiness(campaignDetail);
+    const commandCenter = createProjectCampaignCommandCenter(campaignDetail);
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const lanesById = Object.fromEntries(readiness.lanes.map((lane) => [lane.id, lane]));
+    const readyCount = readiness.lanes.filter((lane) => lane.readiness === "ready").length;
+    const reviewCount = readiness.lanes.filter((lane) => lane.readiness === "review_required").length;
+    const blockedCount = readiness.lanes.filter((lane) => lane.readiness === "blocked").length;
+    const localOnlyCount = readiness.lanes.filter((lane) => lane.readiness === "local_only").length;
+    const seededPoints = campaignDetail.participants.reduce(
+      (sum, participant) => sum + participant.totalPoints,
+      0,
+    );
+    const serialized = JSON.stringify(readiness).toLowerCase();
+
+    expect(readiness).toEqual(again);
+    expect(commandCenter.pointsRankingReferralReadiness).toEqual(readiness);
+    expect(adminOps.pointsRankingReferralReadiness).toEqual(readiness);
+    expect(readiness.lanes.map((lane) => lane.id)).toEqual([
+      "points-ledger",
+      "ranking",
+      "referral",
+      "pixiepoints-backend-handoff",
+    ]);
+    expect(readiness.summary).toMatchObject({
+      totalLanes: 4,
+      readyLanes: readyCount,
+      reviewRequiredLanes: reviewCount,
+      blockedLanes: blockedCount,
+      localOnlyLanes: localOnlyCount,
+      topLaneId: expect.any(String),
+      totalRawInvites: 22,
+      totalQualifiedInvitees: 10,
+      totalReferralPoints: 200,
+    });
+    expect(
+      readiness.summary.readyLanes +
+        readiness.summary.reviewRequiredLanes +
+        readiness.summary.blockedLanes +
+        readiness.summary.localOnlyLanes,
+    ).toBe(4);
+    expect(lanesById["points-ledger"]).toMatchObject({
+      metricValue: String(seededPoints),
+      ownerRole: "internal_operator",
+      readiness: "local_only",
+    });
+    expect(lanesById["points-ledger"]?.boundary["en-US"]).toContain("no live points ledger");
+    expect(lanesById.ranking?.sourceSurface["en-US"]).toContain("review input");
+    expect(lanesById.ranking?.boundary["en-US"]).toContain("does not distribute rewards");
+    expect(lanesById.referral).toMatchObject({
+      metricValue: "10/22",
+      ownerRole: "project_owner",
+    });
+    expect(lanesById.referral?.evidence["en-US"]).toContain("Raw invites: 22");
+    expect(lanesById.referral?.evidence["en-US"]).toContain("qualified invitees: 10");
+    expect(lanesById.referral?.evidence["en-US"]).toContain("referral points: 200");
+    expect(lanesById.referral?.evidence["en-US"]).toContain("Only qualified invitees");
+    expect(lanesById.referral?.boundary["en-US"]).toContain("no live Referral backend");
+    expect(lanesById["pixiepoints-backend-handoff"]?.evidence["en-US"]).toContain(
+      "Pixiepoints/backend ledger",
+    );
+    expect(lanesById["pixiepoints-backend-handoff"]?.boundary["en-US"]).toContain(
+      "no backend ledger write",
+    );
+    expect(readiness.boundary["en-US"]).toContain("No live points ledger");
+    expect(readiness.boundary["en-US"]).toContain("no live Referral backend");
+    expect(readiness.boundary["en-US"]).toContain("no contract write");
+    expect(readiness.boundary["en-US"]).toContain("no reward distribution");
+
+    for (const lane of readiness.lanes) {
+      for (const locale of supportedLocales) {
+        expect(lane.label[locale].trim()).not.toBe("");
+        expect(lane.description[locale].trim()).not.toBe("");
+        expect(lane.evidence[locale].trim()).not.toBe("");
+        expect(lane.nextAction[locale].trim()).not.toBe("");
+      }
+    }
+
+    for (const forbidden of [
+      "privatekey",
+      "access_token",
+      "contractroot",
+      "transactionid",
+      "downloadurl",
+      "signed payload",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
     }
   });
 
