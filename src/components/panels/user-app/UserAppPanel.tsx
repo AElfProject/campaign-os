@@ -3,6 +3,7 @@ import {
   campaignDetail,
   createCampaignDiscoveryReadModel,
   createCampaignMarketplaceReadiness,
+  createMobileTelegramMiniAppHubReadiness,
   createCampaignShareCardReadiness,
   createCampaignOsLocalService,
   createEcosystemNextActionReadModel,
@@ -33,6 +34,9 @@ import {
   type LocalizedText,
   type LocalServiceResult,
   type LocaleStatus,
+  type MobileTelegramMiniAppHubReadinessLane,
+  type MobileTelegramMiniAppHubReadinessState,
+  type MobileTelegramMiniAppHubServiceState,
   type NormalizedWalletSession,
   type ParticipantSnapshot,
   type ParticipantWorkspaceTaskRow,
@@ -518,6 +522,71 @@ const ecosystemServiceStateLabel = (
   copy: typeof userAppCopy["en-US"],
 ) => (state === "seeded_preview" ? copy.ecosystemSeededPreview : copy.ecosystemNotConnected);
 
+const mobileHubReadinessStateLabel = (
+  state: MobileTelegramMiniAppHubReadinessState,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels: Record<MobileTelegramMiniAppHubReadinessState, string> = {
+    blocked: copy.mobileHubStateBlocked,
+    not_connected: copy.mobileHubStateNotConnected,
+    ready: copy.mobileHubStateReady,
+    review_required: copy.mobileHubStateReviewRequired,
+  };
+
+  return labels[state];
+};
+
+const mobileHubReadinessBadgeState = (
+  state: MobileTelegramMiniAppHubReadinessState,
+) => {
+  if (state === "blocked" || state === "not_connected") {
+    return "blocker";
+  }
+
+  if (state === "review_required") {
+    return "warning";
+  }
+
+  return "ready";
+};
+
+const mobileHubServiceStateLabel = (
+  state: MobileTelegramMiniAppHubServiceState,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels: Record<MobileTelegramMiniAppHubServiceState, string> = {
+    local_only: copy.mobileHubServiceLocalOnly,
+    not_connected: copy.mobileHubServiceNotConnected,
+    review_required: copy.mobileHubServiceReviewRequired,
+    seeded_preview: copy.mobileHubServiceSeededPreview,
+  };
+
+  return labels[state];
+};
+
+const mobileHubServiceBadgeState = (
+  state: MobileTelegramMiniAppHubServiceState,
+) => state === "not_connected"
+  ? "blocker"
+  : state === "review_required"
+    ? "warning"
+    : "ready";
+
+const mobileHubAiGuideHeadline = (
+  urgency: Exclude<MobileTelegramMiniAppHubReadinessState, "not_connected">,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  if (urgency === "blocked") {
+    return copy.mobileHubGuideBlocked;
+  }
+
+  if (urgency === "review_required") {
+    return copy.mobileHubGuideReview;
+  }
+
+  return copy.mobileHubGuideReady;
+};
+
 const portfolioHistoryStateLabel = (
   state: ReturnType<typeof createPortfolioCampaignHistoryReadModel>["rows"][number]["portfolioState"],
   copy: typeof userAppCopy["en-US"],
@@ -869,29 +938,86 @@ const EcosystemRecommendationCard = ({
   </article>
 );
 
-const MobileEcosystemCard = ({
+const MobileHubLaneCard = ({
   copy,
+  compact = false,
+  lane,
   locale,
-  recommendation,
 }: {
   copy: typeof userAppCopy["en-US"];
+  compact?: boolean;
+  lane: MobileTelegramMiniAppHubReadinessLane;
   locale: SupportedLocale;
-  recommendation: ReturnType<typeof createEcosystemNextActionReadModel>["recommendations"][number];
 }) => (
-  <article style={{ ...cardStyle, gap: 8 }}>
-    <div style={rowStyle}>
-      <strong style={{ fontSize: 14 }}>{getLocalizedText(recommendation.product.label, locale)}</strong>
-      <PublishStateBadge
-        label={ecosystemStatusLabel(recommendation.status, copy)}
-        state={ecosystemStatusState(recommendation.status)}
-      />
+  <article
+    style={{
+      ...cardStyle,
+      background: compact ? "#ffffff" : cardStyle.background,
+      gap: compact ? 8 : 10,
+      minWidth: 0,
+      overflowWrap: "anywhere",
+      padding: compact ? 10 : cardStyle.padding,
+    }}
+  >
+    <div style={{ ...rowStyle, alignItems: "flex-start" }}>
+      <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+        <p style={labelStyle}>{mobileHubServiceStateLabel(lane.serviceState, copy)}</p>
+        <strong style={{ color: "#071426", fontSize: compact ? 14 : 18, lineHeight: 1.2 }}>
+          {getLocalizedText(lane.label, locale)}
+        </strong>
+      </div>
+      <span style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-end", minWidth: 0 }}>
+        <PublishStateBadge
+          label={mobileHubReadinessStateLabel(lane.readiness, copy)}
+          state={mobileHubReadinessBadgeState(lane.readiness)}
+        />
+        {!compact ? (
+          <PublishStateBadge
+            label={mobileHubServiceStateLabel(lane.serviceState, copy)}
+            state={mobileHubServiceBadgeState(lane.serviceState)}
+          />
+        ) : null}
+      </span>
     </div>
-    <p style={{ color: "#475569", fontSize: 12, lineHeight: 1.4, margin: 0 }}>
-      {getLocalizedText(recommendation.title, locale)}
-    </p>
-    <p style={{ color: "#64748b", fontSize: 12, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
-      {getLocalizedText(recommendation.relatedSignals[0].label, locale)}:{" "}
-      {getLocalizedText(recommendation.relatedSignals[0].value, locale)}
+    <dl style={{ display: "grid", gap: compact ? 5 : 8, margin: 0, minWidth: 0 }}>
+      {[
+        [copy.mobileHubEvidenceBasis, getLocalizedText(lane.evidenceBasis, locale)],
+        [copy.mobileHubRelatedSignal, getLocalizedText(lane.relatedSignal, locale)],
+        [copy.mobileHubCta, getLocalizedText(lane.ctaLabel, locale)],
+        [copy.nextAction, getLocalizedText(lane.nextAction, locale)],
+      ].map(([label, value]) => (
+        <div key={label} style={{ display: "grid", gap: 2, minWidth: 0 }}>
+          <dt style={{ color: "#64748b", fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>
+            {label}
+          </dt>
+          <dd
+            style={{
+              color: "#071426",
+              fontSize: compact ? 12 : 13,
+              fontWeight: 700,
+              lineHeight: 1.35,
+              margin: 0,
+              minWidth: 0,
+              overflowWrap: "anywhere",
+            }}
+          >
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+    <p
+      style={{
+        color: "#92400e",
+        fontSize: compact ? 11 : 12,
+        fontWeight: 800,
+        lineHeight: 1.4,
+        margin: 0,
+        minWidth: 0,
+        overflowWrap: "anywhere",
+      }}
+    >
+      {copy.mobileHubBoundaryHeading}: {getLocalizedText(lane.boundary, locale)}
     </p>
   </article>
 );
@@ -1076,6 +1202,7 @@ export const UserAppPanel = ({
   const ecosystemNextActions = createEcosystemNextActionReadModel(campaign, participant);
   const portfolioCampaignHistory = createPortfolioCampaignHistoryReadModel(campaign, participant);
   const marketplaceReadiness = createCampaignMarketplaceReadiness(campaign, participant);
+  const mobileHubReadiness = createMobileTelegramMiniAppHubReadiness(campaign, participant);
   const taskStates = participation.taskStates;
   const completedCount = taskStates.filter((task) => task.completed).length;
   const title = getLocalizedText(campaign.title, locale);
@@ -1157,6 +1284,25 @@ export const UserAppPanel = ({
     ],
     [copy.portfolioExportReady, String(portfolioCampaignHistory.summary.exportReadyCount), "ready"],
     [copy.portfolioTotalPoints, String(portfolioCampaignHistory.summary.totalPoints), "ready"],
+  ];
+  const mobileHubSummaryMetrics: Array<[string, string, "ready" | "warning" | "blocker"]> = [
+    [copy.mobileHubTotalLanes, String(mobileHubReadiness.summary.totalLanes), "ready"],
+    [copy.mobileHubReadyLanes, String(mobileHubReadiness.summary.readyCount), "ready"],
+    [
+      copy.mobileHubReviewLanes,
+      String(mobileHubReadiness.summary.reviewCount),
+      mobileHubReadiness.summary.reviewCount > 0 ? "warning" : "ready",
+    ],
+    [
+      copy.mobileHubBlockedLanes,
+      String(mobileHubReadiness.summary.blockedCount),
+      mobileHubReadiness.summary.blockedCount > 0 ? "blocker" : "ready",
+    ],
+    [
+      copy.mobileHubNotConnectedLanes,
+      String(mobileHubReadiness.summary.notConnectedCount),
+      mobileHubReadiness.summary.notConnectedCount > 0 ? "blocker" : "ready",
+    ],
   ];
   const appHubCampaignSummary =
     campaignDiscovery.summary.liveCount > 0
@@ -1310,8 +1456,11 @@ export const UserAppPanel = ({
               >
                 <p style={{ ...labelStyle, color: "#93c5fd" }}>{copy.appHubGuide}</p>
                 <strong style={{ color: "#ffffff", fontSize: 20 }}>
-                  {copy.appHubGuideText}
+                  {mobileHubAiGuideHeadline(mobileHubReadiness.aiGuide.urgency, copy)}
                 </strong>
+                <p style={{ color: "#dbeafe", fontSize: 12, fontWeight: 700, lineHeight: 1.4, margin: 0 }}>
+                  {getLocalizedText(mobileHubReadiness.aiGuide.body, locale)}
+                </p>
               </article>
               <article style={cardStyle}>
                 <p style={labelStyle}>{copy.appHubToday}</p>
@@ -1358,14 +1507,15 @@ export const UserAppPanel = ({
                 </p>
               </article>
               <article style={cardStyle}>
-                <p style={labelStyle}>{copy.ecosystemNextActions}</p>
+                <p style={labelStyle}>{copy.mobileHubLaneList}</p>
                 <div style={{ display: "grid", gap: 8 }}>
-                  {ecosystemNextActions.recommendations.map((recommendation) => (
-                    <MobileEcosystemCard
+                  {mobileHubReadiness.lanes.map((lane) => (
+                    <MobileHubLaneCard
+                      compact
                       copy={copy}
-                      key={recommendation.id}
+                      key={lane.id}
+                      lane={lane}
                       locale={locale}
-                      recommendation={recommendation}
                     />
                   ))}
                 </div>
@@ -1388,6 +1538,63 @@ export const UserAppPanel = ({
             </div>
           </aside>
         </div>
+      </section>
+
+      <section aria-label={copy.mobileHubReadiness} style={panelStyle}>
+        <div style={rowStyle}>
+          <div>
+            <p style={labelStyle}>{copy.appHubTitle}</p>
+            <h2 style={{ fontSize: 28, lineHeight: 1.1, margin: "4px 0" }}>
+              {copy.mobileHubReadiness}
+            </h2>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.mobileHubSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={`${copy.status}: ${mobileHubReadinessStateLabel(mobileHubReadiness.summary.topLaneState, copy)}`}
+            state={mobileHubReadinessBadgeState(mobileHubReadiness.summary.topLaneState)}
+          />
+        </div>
+        <div style={metricGridStyle}>
+          {mobileHubSummaryMetrics.map(([label, value, state]) => (
+            <article key={label} style={cardStyle}>
+              <p style={labelStyle}>{label}</p>
+              <p style={valueStyle}>{value}</p>
+              <PublishStateBadge label={String(state)} state={state} />
+            </article>
+          ))}
+        </div>
+        <article style={{ ...cardStyle, background: "#ffffff" }}>
+          <div style={rowStyle}>
+            <p style={labelStyle}>{copy.mobileHubAiGuide}</p>
+            <PublishStateBadge
+              label={mobileHubReadinessStateLabel(mobileHubReadiness.aiGuide.urgency, copy)}
+              state={mobileHubReadinessBadgeState(mobileHubReadiness.aiGuide.urgency)}
+            />
+          </div>
+          <strong style={{ color: "#071426", fontSize: 18, lineHeight: 1.25 }}>
+            {mobileHubAiGuideHeadline(mobileHubReadiness.aiGuide.urgency, copy)}
+          </strong>
+          <p style={{ color: "#475569", fontSize: 13, fontWeight: 700, lineHeight: 1.45, margin: 0 }}>
+            {getLocalizedText(mobileHubReadiness.aiGuide.body, locale)}
+          </p>
+          <p style={{ color: "#64748b", fontSize: 12, fontWeight: 800, lineHeight: 1.4, margin: 0 }}>
+            {copy.mobileHubEvidenceBasis}: {getLocalizedText(mobileHubReadiness.aiGuide.evidenceBasis, locale)}
+          </p>
+        </article>
+        <p style={{ color: "#071426", fontSize: 15, fontWeight: 900, lineHeight: 1.45, margin: 0 }}>
+          {copy.mobileHubOwnerNextAction}: {getLocalizedText(mobileHubReadiness.ownerNextAction, locale)}
+        </p>
+        <div style={feedGridStyle}>
+          {mobileHubReadiness.lanes.map((lane) => (
+            <MobileHubLaneCard copy={copy} key={lane.id} lane={lane} locale={locale} />
+          ))}
+        </div>
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+          {copy.mobileHubBoundaryHeading}: {getLocalizedText(mobileHubReadiness.boundary, locale)}{" "}
+          {copy.mobileHubNoLiveHelper}
+        </p>
       </section>
 
       <section aria-label={copy.marketplaceReadiness} style={panelStyle}>
