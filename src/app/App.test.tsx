@@ -11,6 +11,10 @@ import { App } from "./App";
 describe("Campaign OS app shell", () => {
   const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
   const defaultDocumentTitle = "aelf Campaign OS";
+  const getProductNavigation = () =>
+    screen.getByRole("navigation", { name: "Campaign OS product navigation" });
+  const getProjectWorkspaceNavigation = () =>
+    screen.getByRole("navigation", { name: "Project Console workspace navigation" });
 
   const setNavigatorLanguages = (languages: readonly string[]) => {
     Object.defineProperty(window.navigator, "languages", {
@@ -63,6 +67,14 @@ describe("Campaign OS app shell", () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "Campaign operations shell" })).toBeInTheDocument();
+    const productNavigation = getProductNavigation();
+    expect(
+      within(productNavigation).getAllByRole("button").map((button) => button.textContent),
+    ).toEqual(["Campaigns", "Create", "Analytics", "Export"]);
+    expect(within(productNavigation).getByRole("button", { name: "Campaigns" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(screen.getByRole("button", { name: "Project Console" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "User App" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Admin/Ops" })).toBeInTheDocument();
@@ -72,13 +84,75 @@ describe("Campaign OS app shell", () => {
     expect(
       screen.getByRole("navigation", { name: "Project Console workspace navigation" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Campaigns" })).toHaveAttribute(
+    expect(within(getProjectWorkspaceNavigation()).getByRole("button", { name: "Campaigns" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
     expect(screen.getByText("Connected wallets")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Campaign Command Center" })).toBeInTheDocument();
+  });
+
+  it("routes product navigation to seeded Project Console destinations", () => {
+    render(<App />);
+
+    const productNavigation = getProductNavigation();
+
+    fireEvent.click(within(productNavigation).getByRole("button", { name: "Create" }));
+
+    expect(within(productNavigation).getByRole("button", { name: "Create" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getAllByText("Campaign Builder").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Draft overview" })).toBeInTheDocument();
+
+    fireEvent.click(within(productNavigation).getByRole("button", { name: "Analytics" }));
+
+    expect(within(productNavigation).getByRole("button", { name: "Analytics" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("heading", { name: "Analytics & Export Decision" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Advanced Analytics readiness")).toBeInTheDocument();
+
+    fireEvent.click(within(productNavigation).getByRole("button", { name: "Export" }));
+
+    expect(within(productNavigation).getByRole("button", { name: "Export" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("heading", { name: "API / Skill Contracts" })).toBeInTheDocument();
+    expect(screen.getByText("Read-only contract registry for future agents and APIs.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Project Console" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByLabelText("Language")).toHaveValue("en-US");
+    expect(screen.getByText("2F4...9aB")).toBeInTheDocument();
+  });
+
+  it("keeps secondary workspaces reachable after product navigation", () => {
+    render(<App />);
+
+    fireEvent.click(within(getProductNavigation()).getByRole("button", { name: "Analytics" }));
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    expect(screen.getByRole("button", { name: "User App" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByText("Eligibility checker").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
+
+    expect(screen.getByRole("button", { name: "Admin/Ops" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { name: "Human review gate" })).toBeInTheDocument();
+
+    fireEvent.click(within(getProductNavigation()).getByRole("button", { name: "Campaigns" }));
+
+    expect(screen.getByRole("button", { name: "Project Console" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
   });
 
   it("prompts Chinese browser users without changing the English default", () => {
@@ -225,6 +299,10 @@ describe("Campaign OS app shell", () => {
     fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh-CN" } });
 
     expect(screen.getByRole("heading", { name: "活动运营工作台" })).toBeInTheDocument();
+    const productNavigation = screen.getByRole("navigation", { name: "Campaign OS product navigation" });
+    expect(
+      within(productNavigation).getAllByRole("button").map((button) => button.textContent),
+    ).toEqual(["活动", "创建", "分析", "导出"]);
     expect(screen.getByRole("button", { name: "项目控制台" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "用户应用" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "管理员/Ops" })).toBeInTheDocument();
@@ -238,6 +316,10 @@ describe("Campaign OS app shell", () => {
     fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh-TW" } });
 
     expect(screen.getByRole("heading", { name: "活動營運工作台" })).toBeInTheDocument();
+    const productNavigation = screen.getByRole("navigation", { name: "Campaign OS product navigation" });
+    expect(
+      within(productNavigation).getAllByRole("button").map((button) => button.textContent),
+    ).toEqual(["活動", "建立", "分析", "匯出"]);
     expect(screen.getByRole("button", { name: "專案控制台" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "使用者應用" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "管理員/Ops" })).toBeInTheDocument();
@@ -261,7 +343,7 @@ describe("Campaign OS app shell", () => {
   it("exposes Campaign Builder core flow from the Project Console", () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    fireEvent.click(within(getProductNavigation()).getByRole("button", { name: "Create" }));
 
     expect(screen.getAllByText("Campaign Builder").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Draft overview" })).toBeInTheDocument();
@@ -302,7 +384,7 @@ describe("Campaign OS app shell", () => {
       expect(screen.getByText(category)).toBeInTheDocument();
     }
 
-    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    fireEvent.click(within(getProductNavigation()).getByRole("button", { name: "Export" }));
     expect(screen.getByRole("heading", { name: "API / Skill Contracts" })).toBeInTheDocument();
     expect(screen.getByText("Read-only contract registry for future agents and APIs.")).toBeInTheDocument();
     expect(screen.getByText("create_campaign")).toBeInTheDocument();
@@ -314,7 +396,7 @@ describe("Campaign OS app shell", () => {
     render(<App />);
 
     fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh-CN" } });
-    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    fireEvent.click(within(getProductNavigation()).getByRole("button", { name: "创建" }));
 
     expect(screen.getAllByText("活动构建器").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "草稿概览" })).toBeInTheDocument();
@@ -344,7 +426,7 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("heading", { name: "任务模板库" })).toBeInTheDocument();
     expect(screen.getAllByText("连接钱包").length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "导出" }));
+    fireEvent.click(within(getProductNavigation()).getByRole("button", { name: "导出" }));
     expect(screen.getByRole("heading", { name: "API / Skill Contracts" })).toBeInTheDocument();
     expect(screen.getByText("面向未来 agent 与 API 的只读 contract registry。")).toBeInTheDocument();
     expect(screen.getByText("创建活动草稿")).toBeInTheDocument();
