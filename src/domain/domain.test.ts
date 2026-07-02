@@ -7,6 +7,7 @@ import {
   createAelfWebLoginAdapterReadiness,
   createAiOptimizationWorkflow,
   createContractImpactReviewModel,
+  createContractTransparencyMonitor,
   createEligibilityCheckerReadModel,
   createEcosystemNextActionReadModel,
   createLeaderboardReadModel,
@@ -610,6 +611,110 @@ describe("Campaign OS domain foundation", () => {
       area: expect.objectContaining({ "zh-TW": "Multilingual content" }),
       boundary: expect.objectContaining({ "zh-TW": expect.stringContaining("translated copy") }),
     });
+  });
+
+  it("derives a contract transparency monitor from existing contract and export read models", () => {
+    const monitor = createContractTransparencyMonitor(campaignDetail);
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const exportReadiness = createExportConfirmationReadinessGate(campaignDetail);
+    const closeout = createPostCampaignCloseout(campaignDetail);
+    const lanesById = Object.fromEntries(monitor.lanes.map((lane) => [lane.id, lane]));
+    const serialized = JSON.stringify(monitor).toLowerCase();
+
+    expect(adminOps.contractTransparencyMonitor).toEqual(monitor);
+    expect(monitor.campaignId).toBe(campaignDetail.id);
+    expect(monitor.lanes.map((lane) => lane.id)).toEqual([
+      "off-chain-mvp",
+      "export-root-readiness",
+      "points-batch-root",
+      "referral-binding-root",
+      "eligibility-root",
+      "verifier-role",
+      "reward-custody-claim",
+    ]);
+    expect(monitor.summary).toMatchObject({
+      totalLanes: monitor.lanes.length,
+      readyLanes: monitor.lanes.filter((lane) => lane.readiness === "ready").length,
+      reviewRequiredLanes: monitor.lanes.filter((lane) => lane.readiness === "review_required").length,
+      blockedLanes: monitor.lanes.filter((lane) => lane.readiness === "blocked").length,
+      localOnlyLanes: monitor.lanes.filter((lane) => lane.readiness === "local_only").length,
+      topLaneId: "reward-custody-claim",
+    });
+    expect(monitor.summary.topNextAction).toEqual(lanesById["reward-custody-claim"]?.nextAction);
+    expect(lanesById["export-root-readiness"]).toMatchObject({
+      readiness: exportReadiness.summary.blockedRows > 0 ? "blocked" : "ready",
+      sourceSurface: expect.objectContaining({
+        "en-US": "Export confirmation readiness",
+      }),
+      boundary: exportReadiness.boundary,
+      nextAction: exportReadiness.nextAction,
+    });
+    expect(lanesById["points-batch-root"]).toMatchObject({
+      readiness: "review_required",
+      ownerRole: "internal_operator",
+      phase: "P1",
+    });
+    expect(lanesById["referral-binding-root"]?.sourceSurface["en-US"]).toContain(
+      "ReferralRegistryV2.BindReferral",
+    );
+    expect(lanesById["eligibility-root"]?.sourceSurface["en-US"]).toContain(
+      "EligibilityRootRegistryV2.SetEligibilityRoot",
+    );
+    expect(lanesById["verifier-role"]).toMatchObject({
+      readiness: "local_only",
+      blocksExecution: false,
+    });
+    expect(lanesById["reward-custody-claim"]).toMatchObject({
+      readiness: "blocked",
+      blocksExecution: true,
+      ownerRole: "contract_reviewer",
+      phase: "P2",
+    });
+    expect(lanesById["reward-custody-claim"]?.boundary["en-US"]).toContain(
+      "Reward custody and contract claim execution are blocked",
+    );
+    expect(monitor.closeoutContext).toMatchObject({
+      status: closeout.status,
+      topGateId: closeout.summary.topGateId,
+      topAction: closeout.summary.topAction,
+    });
+    expect(monitor.closeoutContext.evidence).toEqual(
+      closeout.gates.find((gate) => gate.id === closeout.summary.topGateId)?.evidence,
+    );
+    expect(monitor.boundary["en-US"]).toContain("No live contract transaction");
+    expect(monitor.boundary["en-US"]).toContain("root generation");
+    expect(monitor.boundary["en-US"]).toContain("reward custody");
+    expect(monitor.boundary["zh-CN"]).toContain("不会执行真实合约交易");
+    expect(monitor.boundary["zh-CN"]).toContain("托管奖励");
+    expect(monitor.boundary["zh-TW"]).toContain("託管獎勵");
+
+    for (const lane of monitor.lanes) {
+      expect(lane.label["en-US"].length).toBeGreaterThan(0);
+      expect(lane.label["zh-CN"].length).toBeGreaterThan(0);
+      expect(lane.label["zh-TW"].length).toBeGreaterThan(0);
+      expect(lane.sourceEvidence["en-US"].length).toBeGreaterThan(0);
+      expect(lane.sourceSurface["en-US"].length).toBeGreaterThan(0);
+      expect(lane.boundary["en-US"].length).toBeGreaterThan(0);
+      expect(lane.nextAction["en-US"].length).toBeGreaterThan(0);
+    }
+
+    for (const unsafe of [
+      "signature",
+      "signedpayload",
+      "contractaddress",
+      "contractroot",
+      "merkleroot",
+      "downloadurl",
+      "storageurl",
+      "fileurl",
+      "transactionid",
+      "txid",
+      "privatekey",
+      "apikey",
+      "secret",
+    ]) {
+      expect(serialized).not.toContain(unsafe);
+    }
   });
 
   it("builds the delivery checklist readiness console with conservative v0.2 evidence", () => {

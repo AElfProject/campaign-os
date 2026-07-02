@@ -64,6 +64,11 @@ import type {
   ContractInterfaceMethod,
   ContractInterfacePhase,
   ContractInterfaceReadiness,
+  ContractTransparencyCloseoutContext,
+  ContractTransparencyLane,
+  ContractTransparencyLaneId,
+  ContractTransparencyMonitor,
+  ContractTransparencyReadiness,
   DeliveryChecklistGroup,
   DeliveryChecklistGroupId,
   DeliveryChecklistItem,
@@ -7944,6 +7949,305 @@ export const createContractInterfaceMatrixConsole = (): ContractInterfaceMatrixC
   };
 };
 
+const contractTransparencyBoundary: LocalizedText = localized(
+  "Seeded/local contract transparency monitor only. No live contract transaction, root generation, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地合约透明度监控。不会执行真实合约交易、生成 root、托管奖励或发奖。",
+  "僅 seeded/本地合約透明度監控。不會執行真實合約交易、生成 root、託管獎勵或發獎。",
+);
+
+const contractTransparencySource = (
+  enUS: string,
+  zhCN: string,
+  zhTW = enUS,
+): LocalizedText => localized(enUS, zhCN, zhTW);
+
+const contractTransparencyReadinessPriority: Record<ContractTransparencyReadiness, number> = {
+  blocked: 0,
+  review_required: 1,
+  local_only: 2,
+  ready: 3,
+};
+
+const contractTransparencyLaneLabels: Record<ContractTransparencyLaneId, LocalizedText> = {
+  "off-chain-mvp": localized("Off-chain MVP", "链下 MVP", "鏈下 MVP"),
+  "export-root-readiness": localized("Export root readiness", "导出 root readiness", "匯出 root readiness"),
+  "points-batch-root": localized("Points batch root", "积分批次 root", "積分批次 root"),
+  "referral-binding-root": localized("Referral binding root", "邀请绑定 root", "邀請綁定 root"),
+  "eligibility-root": localized("Eligibility root", "资格 root", "資格 root"),
+  "verifier-role": localized("Verifier role", "Verifier role", "Verifier role"),
+  "reward-custody-claim": localized("Reward custody / claim", "奖励托管 / claim", "獎勵託管 / claim"),
+};
+
+const contractTransparencyLane = ({
+  blocksExecution = false,
+  boundary = contractTransparencyBoundary,
+  id,
+  nextAction,
+  ownerRole,
+  phase,
+  readiness,
+  sourceEvidence,
+  sourceSurface,
+}: Omit<ContractTransparencyLane, "blocksExecution" | "label"> & {
+  blocksExecution?: boolean;
+}): ContractTransparencyLane => ({
+  id,
+  label: contractTransparencyLaneLabels[id],
+  phase,
+  readiness,
+  ownerRole,
+  sourceEvidence,
+  sourceSurface,
+  boundary,
+  nextAction,
+  blocksExecution,
+});
+
+const contractTransparencySummary = (
+  lanes: readonly ContractTransparencyLane[],
+): ContractTransparencyMonitor["summary"] => {
+  const topLane = [...lanes].sort((left, right) => {
+    const priorityDelta = contractTransparencyReadinessPriority[left.readiness] -
+      contractTransparencyReadinessPriority[right.readiness];
+
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+
+    return lanes.findIndex((lane) => lane.id === left.id) - lanes.findIndex((lane) => lane.id === right.id);
+  })[0] ?? lanes[0];
+
+  return {
+    totalLanes: lanes.length,
+    readyLanes: lanes.filter((lane) => lane.readiness === "ready").length,
+    reviewRequiredLanes: lanes.filter((lane) => lane.readiness === "review_required").length,
+    blockedLanes: lanes.filter((lane) => lane.readiness === "blocked").length,
+    localOnlyLanes: lanes.filter((lane) => lane.readiness === "local_only").length,
+    topLaneId: topLane.id,
+    topNextAction: topLane.nextAction,
+  };
+};
+
+const contractTransparencyCloseoutContext = (
+  closeout: PostCampaignCloseout,
+): ContractTransparencyCloseoutContext => {
+  const topGate = closeout.gates.find((gate) => gate.id === closeout.summary.topGateId);
+
+  return {
+    status: closeout.status,
+    topGateId: closeout.summary.topGateId,
+    topAction: closeout.summary.topAction,
+    evidence: topGate?.evidence ?? closeout.boundary,
+  };
+};
+
+const findContractGroup = (
+  matrix: ContractInterfaceMatrixConsole,
+  contractName: string,
+): ContractInterfaceGroup | undefined => matrix.groups.find((group) => group.contractName === contractName);
+
+const findContractMethod = (
+  group: ContractInterfaceGroup | undefined,
+  methodName: string,
+): ContractInterfaceMethod | undefined => group?.methods.find((method) => method.name === methodName);
+
+export const createContractTransparencyMonitor = (
+  campaign: CampaignShellDetail,
+): ContractTransparencyMonitor => {
+  const exportReadiness = createExportConfirmationReadinessGate(campaign);
+  const closeout = createPostCampaignCloseout(campaign);
+  const matrix = createContractInterfaceMatrixConsole();
+  const registry = findContractGroup(matrix, "CampaignRegistryV2");
+  const pointsLedger = findContractGroup(matrix, "CampaignPointsLedgerV2");
+  const referralRegistry = findContractGroup(matrix, "ReferralRegistryV2");
+  const eligibilityRegistry = findContractGroup(matrix, "EligibilityRootRegistryV2");
+  const pointsRoot = findContractMethod(pointsLedger, "CommitPointsBatch");
+  const referralBinding = findContractMethod(referralRegistry, "BindReferral");
+  const eligibilityRoot = findContractMethod(eligibilityRegistry, "SetEligibilityRoot");
+  const verifierMethod = findContractMethod(eligibilityRegistry, "VerifyEligibilityProof");
+  const noRootMode = exportReadiness.contractRootReadiness.find((item) => item.mode === "none");
+  const eligibilityRootMode = exportReadiness.contractRootReadiness.find(
+    (item) => item.mode === "eligibility_root",
+  );
+  const contractClaimMode = exportReadiness.contractRootReadiness.find(
+    (item) => item.mode === "contract_claim",
+  );
+  const lanes: ContractTransparencyLane[] = [
+    contractTransparencyLane({
+      id: "off-chain-mvp",
+      phase: "MVP",
+      readiness: "ready",
+      ownerRole: "project_owner",
+      sourceEvidence: localized(
+        `${campaign.contractMode.replace(/_/g, " ")} keeps campaign execution off-chain with ${exportReadiness.summary.totalRows} seeded export rows.`,
+        `${campaign.contractMode.replace(/_/g, " ")} 保持活动执行链下，并提供 ${exportReadiness.summary.totalRows} 条 seeded 导出行。`,
+        `${campaign.contractMode.replace(/_/g, " ")} 保持活動執行鏈下，並提供 ${exportReadiness.summary.totalRows} 條 seeded 匯出行。`,
+      ),
+      sourceSurface: contractTransparencySource(
+        "Admin Contract Review Center",
+        "管理员合约审核中心",
+        "管理員合約審核中心",
+      ),
+      boundary: localized(
+        "MVP remains off-chain; Campaign OS does not submit contract transactions, generate roots, custody rewards, or distribute rewards.",
+        "MVP 保持链下；Campaign OS 不提交合约交易、不生成 root、不托管奖励、不发奖。",
+        "MVP 保持鏈下；Campaign OS 不提交合約交易、不生成 root、不託管獎勵、不發獎。",
+      ),
+      nextAction: localized(
+        "Keep current campaign operations off-chain while reviewing P1 companion-contract evidence.",
+        "当前活动操作保持链下，同时审核 P1 companion-contract 证据。",
+        "目前活動操作保持鏈下，同時審核 P1 companion-contract 證據。",
+      ),
+    }),
+    contractTransparencyLane({
+      id: "export-root-readiness",
+      phase: "MVP",
+      readiness: exportReadiness.summary.blockedRows > 0 ? "blocked" : "ready",
+      ownerRole: "internal_operator",
+      sourceEvidence: localized(
+        `${exportReadiness.batchId}: ${exportReadiness.summary.readyRows} ready / ${exportReadiness.summary.reviewRequiredRows} review / ${exportReadiness.summary.blockedRows} blocked rows; safe default is ${noRootMode?.label["en-US"] ?? "No contract root"}.`,
+        `${exportReadiness.batchId}：${exportReadiness.summary.readyRows} 个就绪 / ${exportReadiness.summary.reviewRequiredRows} 个需审核 / ${exportReadiness.summary.blockedRows} 个阻断行；安全默认是 ${noRootMode?.label["zh-CN"] ?? "无合约 root"}。`,
+        `${exportReadiness.batchId}：${exportReadiness.summary.readyRows} 個就緒 / ${exportReadiness.summary.reviewRequiredRows} 個需審核 / ${exportReadiness.summary.blockedRows} 個阻斷行；安全預設是 ${noRootMode?.label["zh-TW"] ?? "No contract root"}。`,
+      ),
+      sourceSurface: contractTransparencySource(
+        "Export confirmation readiness",
+        "导出确认 readiness",
+        "匯出確認 readiness",
+      ),
+      boundary: exportReadiness.boundary,
+      nextAction: exportReadiness.nextAction,
+      blocksExecution: exportReadiness.summary.blockedRows > 0,
+    }),
+    contractTransparencyLane({
+      id: "points-batch-root",
+      phase: "P1",
+      readiness: "review_required",
+      ownerRole: pointsRoot?.ownerRole ?? "internal_operator",
+      sourceEvidence: pointsRoot?.purpose ?? localized(
+        "Points batch root is planned through CampaignPointsLedgerV2.",
+        "积分批次 root 通过 CampaignPointsLedgerV2 规划。",
+        "積分批次 root 透過 CampaignPointsLedgerV2 規劃。",
+      ),
+      sourceSurface: contractTransparencySource(
+        "Contract Interface Matrix Console: CampaignPointsLedgerV2.CommitPointsBatch",
+        "合约接口矩阵控制台：CampaignPointsLedgerV2.CommitPointsBatch",
+        "合約接口矩陣控制台：CampaignPointsLedgerV2.CommitPointsBatch",
+      ),
+      boundary: pointsRoot?.boundary ?? contractTransparencyBoundary,
+      nextAction: pointsRoot?.nextAction ?? localized(
+        "Define batch cadence, root format, and rollback semantics.",
+        "定义批次周期、root 格式与回滚语义。",
+        "定義批次週期、root 格式與回滾語義。",
+      ),
+    }),
+    contractTransparencyLane({
+      id: "referral-binding-root",
+      phase: "P1",
+      readiness: "review_required",
+      ownerRole: referralBinding?.ownerRole ?? "internal_operator",
+      sourceEvidence: referralBinding?.purpose ?? localized(
+        "Referral binding root is planned through ReferralRegistryV2.",
+        "邀请绑定 root 通过 ReferralRegistryV2 规划。",
+        "邀請綁定 root 透過 ReferralRegistryV2 規劃。",
+      ),
+      sourceSurface: contractTransparencySource(
+        "Contract Interface Matrix Console: ReferralRegistryV2.BindReferral",
+        "合约接口矩阵控制台：ReferralRegistryV2.BindReferral",
+        "合約接口矩陣控制台：ReferralRegistryV2.BindReferral",
+      ),
+      boundary: referralBinding?.boundary ?? referralRegistry?.boundary ?? contractTransparencyBoundary,
+      nextAction: referralBinding?.nextAction ?? referralRegistry?.nextAction ?? localized(
+        "Review duplicate, self, and circular referral rules.",
+        "审核重复、自邀请与循环邀请规则。",
+        "審核重複、自邀請與循環邀請規則。",
+      ),
+    }),
+    contractTransparencyLane({
+      id: "eligibility-root",
+      phase: "P1",
+      readiness: eligibilityRootMode?.readiness === "blocked" ? "blocked" : "review_required",
+      ownerRole: eligibilityRoot?.ownerRole ?? "contract_reviewer",
+      sourceEvidence: localized(
+        `${eligibilityRoot?.purpose["en-US"] ?? "Eligibility root is planned"}; export root mode is ${eligibilityRootMode?.readiness ?? "review_required"}.`,
+        `${eligibilityRoot?.purpose["zh-CN"] ?? "资格 root 已规划"}；导出 root 模式为 ${eligibilityRootMode?.readiness ?? "review_required"}。`,
+        `${eligibilityRoot?.purpose["zh-TW"] ?? "資格 root 已規劃"}；匯出 root 模式為 ${eligibilityRootMode?.readiness ?? "review_required"}。`,
+      ),
+      sourceSurface: contractTransparencySource(
+        "Export confirmation readiness + EligibilityRootRegistryV2.SetEligibilityRoot",
+        "导出确认 readiness + EligibilityRootRegistryV2.SetEligibilityRoot",
+        "匯出確認 readiness + EligibilityRootRegistryV2.SetEligibilityRoot",
+      ),
+      boundary: eligibilityRoot?.boundary ?? eligibilityRootMode?.boundary ?? noRewardCustodyBoundary,
+      nextAction: eligibilityRoot?.nextAction ?? eligibilityRootMode?.nextAction ?? exportReadiness.nextAction,
+      blocksExecution: eligibilityRootMode?.readiness === "blocked",
+    }),
+    contractTransparencyLane({
+      id: "verifier-role",
+      phase: "P1",
+      readiness: "local_only",
+      ownerRole: verifierMethod?.ownerRole ?? "internal_operator",
+      sourceEvidence: verifierMethod?.purpose ?? localized(
+        "Verifier role is local/backend review only before any proof surface is exposed.",
+        "任何 proof 界面开放前，verifier role 仅用于本地/backend 审核。",
+        "任何 proof 介面開放前，verifier role 僅用於本地/backend 審核。",
+      ),
+      sourceSurface: contractTransparencySource(
+        "Contract Interface Matrix Console: EligibilityRootRegistryV2.VerifyEligibilityProof",
+        "合约接口矩阵控制台：EligibilityRootRegistryV2.VerifyEligibilityProof",
+        "合約接口矩陣控制台：EligibilityRootRegistryV2.VerifyEligibilityProof",
+      ),
+      boundary: localized(
+        "Verifier is a read/review boundary only; Campaign OS does not grant live contract write authority from this monitor.",
+        "Verifier 仅是读取/审核边界；Campaign OS 不会通过此 monitor 授予真实合约写权限。",
+        "Verifier 僅是讀取/審核邊界；Campaign OS 不會透過此 monitor 授予真實合約寫權限。",
+      ),
+      nextAction: verifierMethod?.nextAction ?? localized(
+        "Review privacy and proof UX before exposing verifier evidence to users.",
+        "向用户展示 verifier evidence 前先审核隐私与 proof 体验。",
+        "向使用者展示 verifier evidence 前先審核隱私與 proof 體驗。",
+      ),
+    }),
+    contractTransparencyLane({
+      id: "reward-custody-claim",
+      phase: "P2",
+      readiness: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceEvidence: localized(
+        `Contract claim remains ${contractClaimMode?.readiness ?? "blocked"} and closeout status is ${closeout.status}; reward fulfillment stays project-owned.`,
+        `合约 claim 仍为 ${contractClaimMode?.readiness ?? "blocked"}，closeout 状态为 ${closeout.status}；奖励履约仍由项目方负责。`,
+        `合約 claim 仍為 ${contractClaimMode?.readiness ?? "blocked"}，closeout 狀態為 ${closeout.status}；獎勵履約仍由專案方負責。`,
+      ),
+      sourceSurface: contractTransparencySource(
+        "Export confirmation readiness + Post-campaign closeout",
+        "导出确认 readiness + 活动后 closeout",
+        "匯出確認 readiness + 活動後 closeout",
+      ),
+      boundary: localized(
+        "Reward custody and contract claim execution are blocked. Campaign OS does not custody rewards, distribute rewards, or enable claim-mode execution.",
+        "奖励托管与合约 claim 执行已阻断。Campaign OS 不托管奖励、不发奖，也不启用 claim-mode 执行。",
+        "獎勵託管與合約 claim 執行已阻斷。Campaign OS 不託管獎勵、不發獎，也不啟用 claim-mode 執行。",
+      ),
+      nextAction: contractClaimMode?.nextAction ?? localized(
+        "Keep claim mode blocked until security, custody, legal, audit, and contract approvals exist.",
+        "在安全、托管、法律、审计与合约批准前继续阻断 claim mode。",
+        "在安全、託管、法律、審計與合約批准前繼續阻斷 claim mode。",
+      ),
+      blocksExecution: true,
+    }),
+  ];
+  const summary = contractTransparencySummary(lanes);
+  const closeoutContext = contractTransparencyCloseoutContext(closeout);
+
+  return {
+    campaignId: campaign.id,
+    summary,
+    lanes,
+    closeoutContext,
+    boundary: contractTransparencyBoundary,
+    nextAction: summary.topNextAction,
+  };
+};
+
 const p1LocaleExpansionRegistry: Array<{
   code: P1LocaleCode;
   displayName: LocalizedText;
@@ -10340,6 +10644,7 @@ export const createAdminOpsReadModel = (
     providerEvidenceRegistry,
     contractReviewCenter: createAdminContractReviewCenter(campaign),
     contractInterfaceMatrix: createContractInterfaceMatrixConsole(),
+    contractTransparencyMonitor: createContractTransparencyMonitor(campaign),
     aiContentPack: createAiContentPackWorkbench(campaign),
     templateGovernance: createTemplateGovernanceConsole(),
     analytics: createAnalytics(campaign, exportBatch),

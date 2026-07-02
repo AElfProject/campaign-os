@@ -229,6 +229,28 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Wallet type");
     expectVisibleText("Risk flags");
     expectVisibleText(/Campaign OS does not custody or distribute rewards/);
+    const contractTransparencyMonitor = screen.getByLabelText("Contract Transparency Monitor");
+    expect(
+      within(contractTransparencyMonitor).getByRole("heading", { name: "Contract Transparency Monitor" }),
+    ).toBeInTheDocument();
+    expect(within(contractTransparencyMonitor).getAllByText("Total lanes").length).toBeGreaterThan(0);
+    expect(within(contractTransparencyMonitor).getByText("Closeout context")).toBeInTheDocument();
+    expect(within(contractTransparencyMonitor).getByText("Transparency lanes")).toBeInTheDocument();
+    expect(within(contractTransparencyMonitor).getByText("Off-chain MVP")).toBeInTheDocument();
+    expect(within(contractTransparencyMonitor).getByText("Export root readiness")).toBeInTheDocument();
+    expect(within(contractTransparencyMonitor).getByText("Points batch root")).toBeInTheDocument();
+    expect(within(contractTransparencyMonitor).getByText("Referral binding root")).toBeInTheDocument();
+    expect(within(contractTransparencyMonitor).getByText("Eligibility root")).toBeInTheDocument();
+    expect(within(contractTransparencyMonitor).getByText("Verifier role")).toBeInTheDocument();
+    expect(within(contractTransparencyMonitor).getByText("Reward custody / claim")).toBeInTheDocument();
+    expect(within(contractTransparencyMonitor).getAllByText(/Next action:/).length).toBeGreaterThan(0);
+    expect(within(contractTransparencyMonitor).getAllByText(/Contract Interface Matrix Console/).length).toBeGreaterThan(0);
+    expect(within(contractTransparencyMonitor).getByText(/Reward custody and contract claim execution are blocked/)).toBeInTheDocument();
+    expect(within(contractTransparencyMonitor).getAllByText(/No live contract transaction/).length).toBeGreaterThan(0);
+    expect(within(contractTransparencyMonitor).getAllByText(/root generation/).length).toBeGreaterThan(0);
+    expect(within(contractTransparencyMonitor).getAllByText(/reward custody/).length).toBeGreaterThan(0);
+    expect(within(contractTransparencyMonitor).queryByText(/https?:\/\//i)).not.toBeInTheDocument();
+    expect(within(contractTransparencyMonitor).queryByText(/Download ready/i)).not.toBeInTheDocument();
     expectVisibleText("Chinese AI draft/fallback");
     expectVisibleText("No auto-publish: human review is required before Chinese draft can ship.");
     expect(screen.getByRole("heading", { name: "Template Governance" })).toBeInTheDocument();
@@ -619,6 +641,25 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("钱包类型");
     expectVisibleText("风险标记");
     expectVisibleText(/Campaign OS 不托管也不发放奖励/);
+    const zhContractTransparencyMonitor = screen.getByLabelText("合约透明度监控");
+    expect(
+      within(zhContractTransparencyMonitor).getByRole("heading", { name: "合约透明度监控" }),
+    ).toBeInTheDocument();
+    expect(within(zhContractTransparencyMonitor).getAllByText("总 lanes").length).toBeGreaterThan(0);
+    expect(within(zhContractTransparencyMonitor).getByText("Closeout 上下文")).toBeInTheDocument();
+    expect(within(zhContractTransparencyMonitor).getByText("透明度 lanes")).toBeInTheDocument();
+    expect(within(zhContractTransparencyMonitor).getByText("链下 MVP")).toBeInTheDocument();
+    expect(within(zhContractTransparencyMonitor).getByText("导出 root readiness")).toBeInTheDocument();
+    expect(within(zhContractTransparencyMonitor).getByText("积分批次 root")).toBeInTheDocument();
+    expect(within(zhContractTransparencyMonitor).getByText("邀请绑定 root")).toBeInTheDocument();
+    expect(within(zhContractTransparencyMonitor).getByText("资格 root")).toBeInTheDocument();
+    expect(within(zhContractTransparencyMonitor).getByText("奖励托管 / claim")).toBeInTheDocument();
+    expect(within(zhContractTransparencyMonitor).getAllByText(/下一步:/).length).toBeGreaterThan(0);
+    expect(within(zhContractTransparencyMonitor).getAllByText(/合约接口矩阵控制台/).length).toBeGreaterThan(0);
+    expect(within(zhContractTransparencyMonitor).getByText(/奖励托管与合约 claim 执行已阻断/)).toBeInTheDocument();
+    expect(within(zhContractTransparencyMonitor).getAllByText(/不会执行真实合约交易/).length).toBeGreaterThan(0);
+    expect(within(zhContractTransparencyMonitor).getAllByText(/生成 root/).length).toBeGreaterThan(0);
+    expect(within(zhContractTransparencyMonitor).getAllByText(/托管奖励/).length).toBeGreaterThan(0);
     expectVisibleText("合约影响审核");
     expectVisibleText("Contract claim 已阻断，等待高影响人工审核。");
     expectVisibleText("导出 winners 不等于发奖。");
