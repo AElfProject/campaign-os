@@ -1084,7 +1084,7 @@ export const UserAppPanel = ({
             [copy.myPoints, `${participantWorkspace.points.currentPoints}/${participantWorkspace.points.pointsThreshold}`],
             [copy.rank, participantWorkspace.points.participantRank ? `#${participantWorkspace.points.participantRank}` : "-"],
             [copy.eligibleCutoff, `#${participantWorkspace.points.eligibleRankCutoff}`],
-            [copy.qualifiedInvitees, String(participantWorkspace.referral.qualifiedInvitees)],
+            [copy.workspaceQualifiedInvitees, String(participantWorkspace.referral.qualifiedInvitees)],
             [copy.referralPoints, String(participantWorkspace.referral.referralPoints)],
             [copy.riskFlags, String(participantWorkspace.summary.riskFlagCount)],
           ].map(([label, value]) => (
@@ -1154,12 +1154,12 @@ export const UserAppPanel = ({
           </article>
 
           <article style={cardStyle}>
-            <p style={labelStyle}>{copy.referral}</p>
+            <p style={labelStyle}>{copy.referralSummary}</p>
             <dl style={{ display: "grid", gap: 10, margin: 0 }}>
               {[
                 [copy.inviteLink, participantWorkspace.referral.inviteLink],
                 [copy.invitedCount, String(participantWorkspace.referral.rawInvites)],
-                [copy.qualifiedInvitees, String(participantWorkspace.referral.qualifiedInvitees)],
+                [copy.workspaceQualifiedInvitees, String(participantWorkspace.referral.qualifiedInvitees)],
                 [copy.referralPoints, String(participantWorkspace.referral.referralPoints)],
                 [copy.riskFlags, participantWorkspace.referral.riskFlags.join(", ") || copy.riskClear],
               ].map(([label, value]) => (

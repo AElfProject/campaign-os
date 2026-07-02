@@ -40,8 +40,8 @@ describe("User App shell", () => {
     expect(within(participantWorkspace).getByText("One workspace for required task progress, seeded points, rank, and qualified referral contribution.")).toBeInTheDocument();
     expect(within(participantWorkspace).getAllByText("My Tasks").length).toBeGreaterThan(0);
     expect(within(participantWorkspace).getAllByText("My Points").length).toBeGreaterThan(0);
-    expect(within(participantWorkspace).getAllByText("Referral context").length).toBeGreaterThan(0);
-    expect(within(participantWorkspace).getAllByText("Qualified invitees").length).toBeGreaterThan(0);
+    expect(within(participantWorkspace).getAllByText("Referral summary").length).toBeGreaterThan(0);
+    expect(within(participantWorkspace).getAllByText("Qualified referrals").length).toBeGreaterThan(0);
     expect(within(participantWorkspace).getAllByText("Pending / ready tasks").length).toBeGreaterThan(0);
     expect(within(participantWorkspace).getByText("Complete missing required task")).toBeInTheDocument();
     expect(within(participantWorkspace).getByText("Review task status")).toBeInTheDocument();
@@ -229,8 +229,8 @@ describe("User App shell", () => {
     expect(within(participantWorkspace).getByText("在一个工作台查看必做任务进度、seeded 积分、排名与合格推荐贡献。")).toBeInTheDocument();
     expect(within(participantWorkspace).getAllByText("我的任务").length).toBeGreaterThan(0);
     expect(within(participantWorkspace).getAllByText("我的积分").length).toBeGreaterThan(0);
-    expect(within(participantWorkspace).getAllByText("推荐关系").length).toBeGreaterThan(0);
-    expect(within(participantWorkspace).getAllByText("合格被邀请人").length).toBeGreaterThan(0);
+    expect(within(participantWorkspace).getAllByText("推荐摘要").length).toBeGreaterThan(0);
+    expect(within(participantWorkspace).getAllByText("合格推荐").length).toBeGreaterThan(0);
     expect(within(participantWorkspace).getAllByText("待处理 / 待开始任务").length).toBeGreaterThan(0);
     expect(within(participantWorkspace).getByText("完成缺失的必做任务")).toBeInTheDocument();
     expect(within(participantWorkspace).getByText("审核任务状态")).toBeInTheDocument();
