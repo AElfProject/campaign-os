@@ -694,6 +694,8 @@ describe("User App shell", () => {
     expect(within(mobileHubReadiness).getByText("Mobile 與 Telegram Mini App Hub lane 的本地準備度。")).toBeInTheDocument();
     expect(within(mobileHubReadiness).getAllByText("資產概覽").length).toBeGreaterThan(0);
     expect(within(mobileHubReadiness).getAllByText("邀請推薦").length).toBeGreaterThan(0);
+    expect(within(mobileHubReadiness).getAllByText("Seeded 預覽").length).toBeGreaterThan(0);
+    expect(within(mobileHubReadiness).getAllByText("未連接").length).toBeGreaterThan(0);
     expect(within(mobileHubReadiness).getByText("先完成活動門檻，再開啟行動端快捷入口。")).toBeInTheDocument();
     expect(within(mobileHubReadiness).getAllByText(/未執行即時 Telegram SDK/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/語言 readiness/).length).toBeGreaterThan(0);
