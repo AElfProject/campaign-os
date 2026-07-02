@@ -30,6 +30,7 @@ import {
   createCampaignShareCardReadiness,
   createCampaignLifecycleOperations,
   createCampaignDiscoveryReadModel,
+  createCampaignMarketplaceReadiness,
   createPortfolioCampaignHistoryReadModel,
   createTranslationManagerReadModel,
   createLocaleAnalyticsReadiness,
@@ -2026,6 +2027,128 @@ describe("Campaign OS domain foundation", () => {
       portfolioState: "archived",
       winnerExportStatus: "pending",
     });
+  });
+
+  it("derives deterministic Campaign Marketplace readiness for App Hub, Portfolio, and Forecast", () => {
+    const [, eoaParticipant] = campaignDetail.participants;
+    const firstReadModel = createCampaignMarketplaceReadiness(campaignDetail, eoaParticipant);
+    const secondReadModel = createCampaignMarketplaceReadiness(campaignDetail, eoaParticipant);
+
+    expect(firstReadModel).toEqual(secondReadModel);
+    expect(firstReadModel.rows.map((row) => row.campaignId)).toEqual([
+      "camp-awaken-sprint",
+      "camp-forest-nft-path",
+      "camp-tmrwdao-streak",
+    ]);
+    expect(firstReadModel.summary).toMatchObject({
+      totalCampaigns: 3,
+      appHubReadyCount: 3,
+      portfolioReadyCount: 3,
+      forecastReadyCount: 2,
+      readyCount: 0,
+      reviewCount: 1,
+      blockedCount: 1,
+      localPreviewCount: 1,
+      topCampaignId: "camp-awaken-sprint",
+      topReadinessLane: "blocked",
+    });
+    expect(
+      firstReadModel.summary.readyCount +
+        firstReadModel.summary.reviewCount +
+        firstReadModel.summary.blockedCount +
+        firstReadModel.summary.localPreviewCount,
+    ).toBe(firstReadModel.summary.totalCampaigns);
+
+    expect(firstReadModel.rows[0]).toMatchObject({
+      campaignId: "camp-awaken-sprint",
+      ctaKind: "continue_tasks",
+      readinessLane: "blocked",
+      appHubState: "review_required",
+      portfolioState: "review_required",
+      forecastState: "review_required",
+    });
+    expect(firstReadModel.rows[1]).toMatchObject({
+      campaignId: "camp-forest-nft-path",
+      ctaKind: "start",
+      readinessLane: "local_preview",
+      appHubState: "ready",
+      portfolioState: "ready",
+      forecastState: "not_configured",
+    });
+    expect(firstReadModel.rows[2]).toMatchObject({
+      campaignId: "camp-tmrwdao-streak",
+      ctaKind: "check_eligibility",
+      readinessLane: "review_required",
+      appHubState: "review_required",
+      portfolioState: "review_required",
+      forecastState: "review_required",
+    });
+    expect(firstReadModel.ownerNextAction["en-US"]).toContain("blocking campaign gates");
+    expect(firstReadModel.ownerNextAction["zh-CN"]).toContain("阻断活动门槛");
+  });
+
+  it("keeps Campaign Marketplace readiness local-only, localized, and free of live-service secrets", () => {
+    const [, eoaParticipant] = campaignDetail.participants;
+    const readModel = createCampaignMarketplaceReadiness(campaignDetail, eoaParticipant);
+    const serialized = JSON.stringify(readModel).toLowerCase();
+    const boundaryText = [
+      readModel.boundary["en-US"],
+      readModel.summary.boundary["en-US"],
+      ...readModel.rows.flatMap((row) => [
+        row.boundary["en-US"],
+        row.readinessReason["en-US"],
+        row.nextAction["en-US"],
+      ]),
+    ].join(" ");
+
+    expect(boundaryText).toContain("No live marketplace API");
+    expect(boundaryText).toContain("App Hub backend");
+    expect(boundaryText).toContain("Portfolio sync");
+    expect(boundaryText).toContain("Forecast prediction");
+    expect(boundaryText).toContain("wallet SDK/provider");
+    expect(boundaryText).toContain("contract view/send/write");
+    expect(boundaryText).toContain("export file");
+    expect(boundaryText).toContain("reward custody");
+    expect(boundaryText).toContain("reward distribution");
+
+    for (const row of readModel.rows) {
+      expect(row.readinessLabel["en-US"]).toBeTruthy();
+      expect(row.readinessLabel["zh-CN"]).toBeTruthy();
+      expect(row.readinessLabel["zh-TW"]).toBeTruthy();
+      expect(row.readinessReason["en-US"]).toBeTruthy();
+      expect(row.readinessReason["zh-CN"]).toBeTruthy();
+      expect(row.readinessReason["zh-TW"]).toBeTruthy();
+      expect(row.nextAction["en-US"]).toBeTruthy();
+      expect(row.nextAction["zh-CN"]).toBeTruthy();
+      expect(row.nextAction["zh-TW"]).toBeTruthy();
+      expect(row.boundary["en-US"]).toContain("No live");
+      expect(row.boundary["zh-CN"]).toContain("不会");
+      expect(row.boundary["zh-TW"]).toContain("未連接");
+    }
+
+    for (const unsafe of ["private key", "seed phrase", "bearer token", "signed payload"]) {
+      expect(serialized).not.toContain(unsafe);
+    }
+    for (const unsafeKey of ["privateKey", "seedPhrase", "bearerToken", "signedPayload"]) {
+      expect(hasOwnKeyDeep(readModel, unsafeKey)).toBe(false);
+    }
+  });
+
+  it("keeps Campaign Marketplace pre-launch statuses in local preview lanes", () => {
+    const [eligibleParticipant] = campaignDetail.participants;
+    const reviewCampaign = {
+      ...campaignDetail,
+      status: "human_review",
+    } satisfies typeof campaignDetail;
+    const readModel = createCampaignMarketplaceReadiness(reviewCampaign, eligibleParticipant);
+    const currentRow = readModel.rows.find((row) => row.campaignId === campaignDetail.id);
+
+    expect(currentRow).toMatchObject({
+      ctaKind: "start",
+      readinessLane: "local_preview",
+    });
+    expect(currentRow?.readinessReason["en-US"]).toContain("must not start live participation");
+    expect(currentRow?.nextAction["en-US"]).toContain("local preview");
   });
 
   it("shows Portfolio history review-required state for risk/export review context", () => {

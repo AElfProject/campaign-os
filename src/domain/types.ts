@@ -2117,6 +2117,64 @@ export interface EcosystemNextActionReadModel {
   recommendations: EcosystemNextActionRecommendation[];
 }
 
+export type CampaignMarketplaceReadinessLane =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "local_preview";
+
+export type CampaignMarketplaceConsumerSurfaceState =
+  | "ready"
+  | "review_required"
+  | "not_configured";
+
+export interface CampaignMarketplaceReadinessSummary {
+  totalCampaigns: number;
+  appHubReadyCount: number;
+  portfolioReadyCount: number;
+  forecastReadyCount: number;
+  readyCount: number;
+  reviewCount: number;
+  blockedCount: number;
+  localPreviewCount: number;
+  topCampaignId: string;
+  topReadinessLane: CampaignMarketplaceReadinessLane;
+  ownerNextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface CampaignMarketplaceReadinessRow {
+  campaignId: string;
+  slug: string;
+  title: LocalizedText;
+  status: CampaignStatus;
+  ctaKind: CampaignDiscoveryCtaKind;
+  ctaLabel: LocalizedText;
+  consumerSurfaces: CampaignDiscoveryConsumerSurface[];
+  readinessLane: CampaignMarketplaceReadinessLane;
+  readinessLabel: LocalizedText;
+  readinessReason: LocalizedText;
+  nextAction: LocalizedText;
+  appHubState: CampaignMarketplaceConsumerSurfaceState;
+  appHubNote: LocalizedText;
+  portfolioState: CampaignMarketplaceConsumerSurfaceState;
+  portfolioNote: LocalizedText;
+  forecastState: CampaignMarketplaceConsumerSurfaceState;
+  forecastNote: LocalizedText;
+  points: number;
+  timeWindow: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface CampaignMarketplaceReadiness {
+  campaignId: string;
+  participantWalletAddress: string;
+  summary: CampaignMarketplaceReadinessSummary;
+  rows: CampaignMarketplaceReadinessRow[];
+  boundary: LocalizedText;
+  ownerNextAction: LocalizedText;
+}
+
 export type PortfolioCampaignHistoryState =
   | "ready"
   | "in_progress"
