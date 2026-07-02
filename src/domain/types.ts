@@ -2745,6 +2745,85 @@ export interface ParticipationMetrics {
   pointsThreshold: number;
 }
 
+export type ParticipantWorkspaceNextActionPriority = "primary" | "secondary" | "review";
+
+export interface ParticipantWorkspaceTaskRow {
+  taskId: string;
+  title: LocalizedText;
+  status: TaskVerificationStatus;
+  pointsAwarded: number;
+  pointsAvailable: number;
+  evidenceSource: EvidenceSource;
+  missingRequired: boolean;
+  nextAction: LocalizedText;
+  riskFlags: string[];
+}
+
+export interface ParticipantWorkspaceTaskBuckets {
+  completed: ParticipantWorkspaceTaskRow[];
+  pending: ParticipantWorkspaceTaskRow[];
+  review: ParticipantWorkspaceTaskRow[];
+  missingRequired: ParticipantWorkspaceTaskRow[];
+}
+
+export interface ParticipantWorkspaceSummary {
+  requiredProgressPercent: number;
+  totalProgressPercent: number;
+  completedRequiredTasks: number;
+  totalRequiredTasks: number;
+  completedTasks: number;
+  totalTasks: number;
+  currentPoints: number;
+  pointsThreshold: number;
+  participantRank: number | null;
+  eligibleRankCutoff: number;
+  qualifiedInvitees: number;
+  referralPoints: number;
+  riskFlagCount: number;
+  reviewRequired: boolean;
+}
+
+export interface ParticipantWorkspacePoints {
+  currentPoints: number;
+  pointsThreshold: number;
+  participantRank: number | null;
+  eligibleRankCutoff: number;
+  progressPercent: number;
+  ledgerState: "seeded_preview";
+  boundary: LocalizedText;
+}
+
+export interface ParticipantWorkspaceReferral {
+  inviteLink: string;
+  rawInvites: number;
+  qualifiedInvitees: number;
+  referralPoints: number;
+  antiFarmRule: LocalizedText;
+  riskFlags: string[];
+  boundary: LocalizedText;
+}
+
+export interface ParticipantWorkspaceNextAction {
+  id: string;
+  priority: ParticipantWorkspaceNextActionPriority;
+  label: LocalizedText;
+  reason: LocalizedText;
+  relatedTaskId?: string;
+}
+
+export interface ParticipantWorkspaceReadModel {
+  campaignId: string;
+  participantId: string;
+  walletAddress: string;
+  summary: ParticipantWorkspaceSummary;
+  taskBuckets: ParticipantWorkspaceTaskBuckets;
+  points: ParticipantWorkspacePoints;
+  referral: ParticipantWorkspaceReferral;
+  nextActions: ParticipantWorkspaceNextAction[];
+  boundary: LocalizedText;
+  rewardBoundary: LocalizedText;
+}
+
 export interface ParticipationReadModel {
   campaignId: string;
   participant: ParticipantSnapshot;

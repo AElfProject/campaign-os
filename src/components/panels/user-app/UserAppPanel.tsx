@@ -7,6 +7,7 @@ import {
   createEcosystemNextActionReadModel,
   createEligibilityCheckerReadModel,
   createLeaderboardReadModel,
+  createParticipantWorkspaceReadModel,
   createParticipationReadModel,
   createUserWinnersExportStatusReadModel,
   createWalletConnectionDiagnostics,
@@ -29,6 +30,7 @@ import {
   type LocaleStatus,
   type NormalizedWalletSession,
   type ParticipantSnapshot,
+  type ParticipantWorkspaceTaskRow,
   type PublishState,
   type SupportedLocale,
   type TaskVerificationActionKind,
@@ -627,6 +629,55 @@ const CampaignFeedCard = ({
   </article>
 );
 
+const WorkspaceTaskList = ({
+  copy,
+  emptyLabel,
+  locale,
+  tasks,
+}: {
+  copy: typeof userAppCopy["en-US"];
+  emptyLabel: string;
+  locale: SupportedLocale;
+  tasks: ParticipantWorkspaceTaskRow[];
+}) => (
+  <ul style={listStyle}>
+    {tasks.length > 0 ? (
+      tasks.map((task) => (
+        <li key={task.taskId} style={listItemStyle}>
+          <div style={rowStyle}>
+            <strong>{getLocalizedText(task.title, locale)}</strong>
+            <PublishStateBadge
+              label={taskStatusLabel(task.status, copy)}
+              state={taskBadgeState(task.status)}
+            />
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            <span style={chipStyle}>
+              {copy.pointsAwarded}: {task.pointsAwarded}/{task.pointsAvailable}
+            </span>
+            <span style={chipStyle}>
+              {copy.evidenceSource}: {formatSource(task.evidenceSource)}
+            </span>
+            {task.missingRequired ? <span style={chipStyle}>{copy.missingTasks}</span> : null}
+            {task.riskFlags.length > 0 ? (
+              <span style={chipStyle}>
+                {copy.riskFlags}: {task.riskFlags.join(", ")}
+              </span>
+            ) : null}
+          </div>
+          <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+            {copy.nextAction}: {getLocalizedText(task.nextAction, locale)}
+          </p>
+        </li>
+      ))
+    ) : (
+      <li style={listItemStyle}>
+        <strong>{emptyLabel}</strong>
+      </li>
+    )}
+  </ul>
+);
+
 const EcosystemRecommendationCard = ({
   copy,
   locale,
@@ -730,6 +781,7 @@ export const UserAppPanel = ({
   const [latestTaskActions, setLatestTaskActions] = useState<Record<string, LocalTaskActionResult>>({});
   const copy = userAppCopy[locale];
   const participation = createParticipationReadModel(campaign, participant);
+  const participantWorkspace = createParticipantWorkspaceReadModel(campaign, participant);
   const winnersExportStatus = createUserWinnersExportStatusReadModel(campaign, participant);
   const eligibilityChecker = createEligibilityCheckerReadModel(campaign, checkedEligibilityAddress);
   const eligibilityResult = eligibilityChecker.result;
@@ -1005,6 +1057,151 @@ export const UserAppPanel = ({
         </div>
         <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
           {copy.ecosystemBoundary}
+        </p>
+      </section>
+
+      <section aria-label={copy.participantWorkspace} style={panelStyle}>
+        <div style={rowStyle}>
+          <div>
+            <p style={labelStyle}>{copy.participantSummary}</p>
+            <h2 style={{ fontSize: 28, lineHeight: 1.1, margin: "4px 0" }}>
+              {copy.participantWorkspace}
+            </h2>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.participantWorkspaceSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={participantWorkspace.summary.reviewRequired ? copy.reviewRequired : copy.ready}
+            state={participantWorkspace.summary.reviewRequired ? "warning" : "ready"}
+          />
+        </div>
+
+        <div style={metricGridStyle}>
+          {[
+            [copy.completedRequired, `${participantWorkspace.summary.completedRequiredTasks}/${participantWorkspace.summary.totalRequiredTasks}`],
+            [copy.progressPercent, `${participantWorkspace.summary.requiredProgressPercent}%`],
+            [copy.myPoints, `${participantWorkspace.points.currentPoints}/${participantWorkspace.points.pointsThreshold}`],
+            [copy.rank, participantWorkspace.points.participantRank ? `#${participantWorkspace.points.participantRank}` : "-"],
+            [copy.eligibleCutoff, `#${participantWorkspace.points.eligibleRankCutoff}`],
+            [copy.qualifiedInvitees, String(participantWorkspace.referral.qualifiedInvitees)],
+            [copy.referralPoints, String(participantWorkspace.referral.referralPoints)],
+            [copy.riskFlags, String(participantWorkspace.summary.riskFlagCount)],
+          ].map(([label, value]) => (
+            <article key={label} style={cardStyle}>
+              <p style={labelStyle}>{label}</p>
+              <p style={valueStyle}>{value}</p>
+            </article>
+          ))}
+        </div>
+
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.myTasks}</p>
+            <h3 style={{ fontSize: 18, margin: 0 }}>{copy.missingTasks}</h3>
+            <WorkspaceTaskList
+              copy={copy}
+              emptyLabel={copy.noMissingTasks}
+              locale={locale}
+              tasks={participantWorkspace.taskBuckets.missingRequired}
+            />
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.pendingTasks}</p>
+            <WorkspaceTaskList
+              copy={copy}
+              emptyLabel={copy.noMissingTasks}
+              locale={locale}
+              tasks={participantWorkspace.taskBuckets.pending}
+            />
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.reviewRequired}</p>
+            <WorkspaceTaskList
+              copy={copy}
+              emptyLabel={copy.riskClear}
+              locale={locale}
+              tasks={participantWorkspace.taskBuckets.review}
+            />
+          </article>
+        </div>
+
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.myPoints}</p>
+            <div style={rowStyle}>
+              <strong style={{ color: "#071426", fontSize: 22 }}>
+                {participantWorkspace.points.currentPoints}
+              </strong>
+              <PublishStateBadge
+                label={participantWorkspace.points.ledgerState}
+                state="warning"
+              />
+            </div>
+            <div aria-label={copy.completedRequired} style={progressTrackStyle}>
+              <span
+                style={{
+                  background: "#1c64f2",
+                  display: "block",
+                  height: "100%",
+                  width: `${participantWorkspace.points.progressPercent}%`,
+                }}
+              />
+            </div>
+            <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+              {getLocalizedText(participantWorkspace.points.boundary, locale)}
+            </p>
+          </article>
+
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.referral}</p>
+            <dl style={{ display: "grid", gap: 10, margin: 0 }}>
+              {[
+                [copy.inviteLink, participantWorkspace.referral.inviteLink],
+                [copy.invitedCount, String(participantWorkspace.referral.rawInvites)],
+                [copy.qualifiedInvitees, String(participantWorkspace.referral.qualifiedInvitees)],
+                [copy.referralPoints, String(participantWorkspace.referral.referralPoints)],
+                [copy.riskFlags, participantWorkspace.referral.riskFlags.join(", ") || copy.riskClear],
+              ].map(([label, value]) => (
+                <div key={label} style={rowStyle}>
+                  <dt style={{ color: "#64748b", fontSize: 13, fontWeight: 800 }}>{label}</dt>
+                  <dd style={{ color: "#071426", fontSize: 13, fontWeight: 700, margin: 0, overflowWrap: "anywhere" }}>
+                    {value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+              {getLocalizedText(participantWorkspace.referral.antiFarmRule, locale)}
+            </p>
+            <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+              {getLocalizedText(participantWorkspace.referral.boundary, locale)}
+            </p>
+          </article>
+
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.nextAction}</p>
+            <ul style={listStyle}>
+              {participantWorkspace.nextActions.map((action) => (
+                <li key={action.id} style={listItemStyle}>
+                  <div style={rowStyle}>
+                    <strong>{getLocalizedText(action.label, locale)}</strong>
+                    <PublishStateBadge
+                      label={action.priority}
+                      state={action.priority === "review" ? "warning" : "ready"}
+                    />
+                  </div>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(action.reason, locale)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </article>
+        </div>
+
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+          {getLocalizedText(participantWorkspace.boundary, locale)} {getLocalizedText(participantWorkspace.rewardBoundary, locale)}
         </p>
       </section>
 

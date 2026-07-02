@@ -136,6 +136,9 @@ import type {
   P1LocaleExpansionReadiness,
   P1LocaleExpansionReadinessRow,
   ParticipationMetrics,
+  ParticipantWorkspaceNextAction,
+  ParticipantWorkspaceReadModel,
+  ParticipantWorkspaceTaskRow,
   ParticipantOperationsExportStatus,
   ParticipantOperationsReadModel,
   ParticipantOperationsRow,
@@ -8880,6 +8883,171 @@ export const createParticipationReadModel = (
     referral: participant.referralSummary ?? defaultReferralSummary,
     leaderboard: createLeaderboard(campaign.participants),
     metrics: createParticipationMetrics(campaign.tasks, participant, taskStates),
+    rewardBoundary,
+  };
+};
+
+const participantWorkspaceBoundary: LocalizedText = localized(
+  "Seeded/local participant workspace only. Points, rank, tasks, and referral status are not a live ledger; no Referral backend, wallet SDK action, contract write, claim, winners export approval, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地参与者工作台。积分、排名、任务与推荐状态不是实时账本；不会执行 Referral 后端、钱包 SDK 动作、合约写入、claim、winners 导出批准、奖励托管或发奖。",
+  "Seeded/local participant workspace only. Points, rank, tasks, and referral status are not a live ledger; no Referral backend, wallet SDK action, contract write, claim, winners export approval, reward custody, or reward distribution is executed.",
+);
+
+const participantWorkspacePointsBoundary: LocalizedText = localized(
+  "Seeded preview values only; points and rank are not settled by a live points ledger.",
+  "仅 seeded 预览值；积分和排名不是由实时 points ledger 结算。",
+  "Seeded preview values only; points and rank are not settled by a live points ledger.",
+);
+
+const participantWorkspaceReferralBoundary: LocalizedText = localized(
+  "Referral attribution preview only. Raw invites do not count until invitees complete valid tasks, and no live Referral registry write is executed.",
+  "仅推荐归因预览。原始邀请不会直接计分，只有被邀请人完成有效任务后才计入，且不会执行实时 Referral registry 写入。",
+  "Referral attribution preview only. Raw invites do not count until invitees complete valid tasks, and no live Referral registry write is executed.",
+);
+
+const participantWorkspaceTaskRow = (
+  task: CampaignTask,
+  state: ParticipantTaskState,
+): ParticipantWorkspaceTaskRow => ({
+  taskId: task.id,
+  title: task.title,
+  status: state.status,
+  pointsAwarded: state.pointsAwarded,
+  pointsAvailable: state.pointsAvailable,
+  evidenceSource: state.evidenceSource,
+  missingRequired: state.missingRequired,
+  nextAction: state.nextAction,
+  riskFlags: [...state.riskFlags],
+});
+
+const participantWorkspaceNextActions = (
+  participation: ParticipationReadModel,
+  taskRows: ParticipantWorkspaceTaskRow[],
+): ParticipantWorkspaceNextAction[] => {
+  const missingRequired = taskRows.find((task) => task.missingRequired);
+  const reviewTask = taskRows.find((task) => task.status === "failed" || task.status === "manual_review");
+  const actions: ParticipantWorkspaceNextAction[] = [];
+
+  if (missingRequired) {
+    actions.push({
+      id: "complete-missing-required-task",
+      priority: "primary",
+      label: localized("Complete missing required task", "完成缺失的必做任务", "完成缺失的必做任務"),
+      reason: missingRequired.nextAction,
+      relatedTaskId: missingRequired.taskId,
+    });
+  }
+
+  if (reviewTask) {
+    actions.push({
+      id: "review-task-status",
+      priority: "review",
+      label: localized("Review task status", "审核任务状态", "審核任務狀態"),
+      reason: reviewTask.nextAction,
+      relatedTaskId: reviewTask.taskId,
+    });
+  }
+
+  if (participation.participant.riskFlags.length > 0) {
+    actions.push({
+      id: "wait-for-risk-review",
+      priority: "review",
+      label: localized("Wait for manual review", "等待人工审核", "等待人工審核"),
+      reason: localized(
+        "Risk flags are review inputs, not automatic reward rejection.",
+        "风险标记是审核输入，不代表自动拒绝奖励。",
+        "Risk flags are review inputs, not automatic reward rejection.",
+      ),
+    });
+  }
+
+  if (actions.length === 0) {
+    actions.push({
+      id: "stay-active-until-export-review",
+      priority: "secondary",
+      label: localized("Stay active until export review", "在导出审核前保持活跃", "在匯出審核前保持活躍"),
+      reason: participation.eligibility.nextAction,
+    });
+  }
+
+  return actions;
+};
+
+export const createParticipantWorkspaceReadModel = (
+  campaign: CampaignShellDetail,
+  participant: ParticipantSnapshot,
+): ParticipantWorkspaceReadModel => {
+  const participation = createParticipationReadModel(campaign, participant);
+  const taskRows = campaign.tasks.flatMap((task) => {
+    const state = participation.taskStates.find((candidate) => candidate.taskId === task.id);
+
+    return state ? [participantWorkspaceTaskRow(task, state)] : [];
+  });
+  const completed = taskRows.filter((task) => task.status === "completed");
+  const pending = taskRows.filter((task) => task.status === "ready" || task.status === "pending");
+  const review = taskRows.filter((task) => task.status === "failed" || task.status === "manual_review");
+  const missingRequired = taskRows.filter((task) => task.missingRequired);
+  const totalProgressPercent = Math.round(
+    (participation.metrics.completedTasks / Math.max(1, participation.metrics.totalTasks)) * 100,
+  );
+  const requiredProgress = requiredProgressPercent(participation.metrics);
+  const participantRank = participant.rank ?? null;
+  const referral = participation.referral;
+  const riskFlagCount = new Set([
+    ...participant.riskFlags,
+    ...taskRows.flatMap((task) => task.riskFlags),
+    ...referral.riskFlags,
+  ]).size;
+
+  return {
+    campaignId: campaign.id,
+    participantId: participant.id,
+    walletAddress: participant.walletAddress,
+    summary: {
+      requiredProgressPercent: requiredProgress,
+      totalProgressPercent,
+      completedRequiredTasks: participation.metrics.completedRequiredTasks,
+      totalRequiredTasks: participation.metrics.totalRequiredTasks,
+      completedTasks: participation.metrics.completedTasks,
+      totalTasks: participation.metrics.totalTasks,
+      currentPoints: participant.totalPoints,
+      pointsThreshold: participation.metrics.pointsThreshold,
+      participantRank,
+      eligibleRankCutoff: participation.metrics.eligibleRankCutoff,
+      qualifiedInvitees: referral.qualifiedInvitees,
+      referralPoints: referral.referralPoints,
+      riskFlagCount,
+      reviewRequired:
+        riskFlagCount > 0 ||
+        review.length > 0 ||
+        participation.eligibility.status === "risk_flagged",
+    },
+    taskBuckets: {
+      completed,
+      pending,
+      review,
+      missingRequired,
+    },
+    points: {
+      currentPoints: participant.totalPoints,
+      pointsThreshold: participation.metrics.pointsThreshold,
+      participantRank,
+      eligibleRankCutoff: participation.metrics.eligibleRankCutoff,
+      progressPercent: requiredProgress,
+      ledgerState: "seeded_preview",
+      boundary: participantWorkspacePointsBoundary,
+    },
+    referral: {
+      inviteLink: referral.inviteLink,
+      rawInvites: referral.invitedCount,
+      qualifiedInvitees: referral.qualifiedInvitees,
+      referralPoints: referral.referralPoints,
+      antiFarmRule: referral.antiFarmRule,
+      riskFlags: [...referral.riskFlags],
+      boundary: participantWorkspaceReferralBoundary,
+    },
+    nextActions: participantWorkspaceNextActions(participation, taskRows),
+    boundary: participantWorkspaceBoundary,
     rewardBoundary,
   };
 };
