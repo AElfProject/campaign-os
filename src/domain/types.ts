@@ -1104,6 +1104,59 @@ export interface ContractInterfaceMatrixConsole {
   changeMatrix: ContractChangeMatrixRow[];
 }
 
+export type ContractTransparencyReadiness =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "local_only";
+export type ContractTransparencyLaneId =
+  | "off-chain-mvp"
+  | "export-root-readiness"
+  | "points-batch-root"
+  | "referral-binding-root"
+  | "eligibility-root"
+  | "verifier-role"
+  | "reward-custody-claim";
+
+export interface ContractTransparencyLane {
+  id: ContractTransparencyLaneId;
+  label: LocalizedText;
+  phase: ContractInterfacePhase;
+  readiness: ContractTransparencyReadiness;
+  ownerRole: OwnerRole;
+  sourceEvidence: LocalizedText;
+  sourceSurface: LocalizedText;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  blocksExecution: boolean;
+}
+
+export interface ContractTransparencySummary {
+  totalLanes: number;
+  readyLanes: number;
+  reviewRequiredLanes: number;
+  blockedLanes: number;
+  localOnlyLanes: number;
+  topLaneId: ContractTransparencyLaneId;
+  topNextAction: LocalizedText;
+}
+
+export interface ContractTransparencyCloseoutContext {
+  status: PostCampaignCloseoutStatus;
+  topGateId: string;
+  topAction: LocalizedText;
+  evidence: LocalizedText;
+}
+
+export interface ContractTransparencyMonitor {
+  campaignId: string;
+  summary: ContractTransparencySummary;
+  lanes: ContractTransparencyLane[];
+  closeoutContext: ContractTransparencyCloseoutContext;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface DeliveryChecklistItem {
   id: string;
   groupId: DeliveryChecklistGroupId;
@@ -2280,6 +2333,7 @@ export interface AdminOpsReadModel {
   providerEvidenceRegistry: ProviderEvidenceRegistry;
   contractReviewCenter: AdminContractReviewCenter;
   contractInterfaceMatrix: ContractInterfaceMatrixConsole;
+  contractTransparencyMonitor: ContractTransparencyMonitor;
   aiContentPack: AiContentPackWorkbench;
   templateGovernance: TemplateGovernanceConsole;
   analytics: AnalyticsKpi[];

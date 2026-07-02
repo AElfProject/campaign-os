@@ -24,6 +24,7 @@ import {
   type CampaignLifecycleOperation,
   type CampaignLifecycleOperationState,
   type CampaignLifecycleStatus,
+  type ContractTransparencyReadiness,
   type LaunchConsoleBundleStatus,
   type LaunchConsoleGateState,
   type LaunchConsoleHandoffReviewState,
@@ -263,6 +264,27 @@ const checklistStatusState = (status: ContractReviewChecklistStatus) =>
 
 const contractInterfaceReadinessState = (readiness: ContractInterfaceReadiness) =>
   readiness === "blocker" ? "blocker" : readiness === "warning" ? "warning" : "ready";
+
+const contractTransparencyReadinessState = (readiness: ContractTransparencyReadiness) =>
+  readiness === "blocked"
+    ? "blocker"
+    : readiness === "review_required" || readiness === "local_only"
+      ? "warning"
+      : "ready";
+
+const contractTransparencyReadinessLabel = (
+  readiness: ContractTransparencyReadiness,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<ContractTransparencyReadiness, string> = {
+    blocked: copy.blocked,
+    local_only: copy.localOnlyReadiness,
+    ready: copy.readyActions,
+    review_required: copy.reviewRequired,
+  };
+
+  return labels[readiness];
+};
 
 const deliveryChecklistStatusState = (status: DeliveryChecklistStatus) =>
   status === "blocked"
@@ -584,6 +606,7 @@ export const AdminOpsPanel = ({
   );
   const contractReviewCenter = adminOps.contractReviewCenter;
   const contractInterfaceMatrix = adminOps.contractInterfaceMatrix;
+  const contractTransparencyMonitor = adminOps.contractTransparencyMonitor;
   const columnContract = adminOps.exportBatch.columns.join(",");
   const verificationRows = campaign.participants.flatMap((participant) =>
     createParticipationReadModel(campaign, participant).taskStates.map((state) => ({
@@ -640,6 +663,44 @@ export const AdminOpsPanel = ({
       id: "reward-custody",
       label: copy.rewardCustody,
       value: getLocalizedText(contractReviewCenter.rewardCustody, locale),
+    },
+  ];
+  const contractTransparencySummary = [
+    {
+      id: "total",
+      label: copy.totalLanes,
+      value: contractTransparencyMonitor.summary.totalLanes,
+      state: "ready" as const,
+    },
+    {
+      id: "ready",
+      label: copy.readyActions,
+      value: contractTransparencyMonitor.summary.readyLanes,
+      state: "ready" as const,
+    },
+    {
+      id: "review-required",
+      label: copy.reviewRequired,
+      value: contractTransparencyMonitor.summary.reviewRequiredLanes,
+      state: contractTransparencyMonitor.summary.reviewRequiredLanes > 0
+        ? "warning" as const
+        : "ready" as const,
+    },
+    {
+      id: "blocked",
+      label: copy.blocked,
+      value: contractTransparencyMonitor.summary.blockedLanes,
+      state: contractTransparencyMonitor.summary.blockedLanes > 0
+        ? "blocker" as const
+        : "ready" as const,
+    },
+    {
+      id: "local-only",
+      label: copy.localOnlyReadiness,
+      value: contractTransparencyMonitor.summary.localOnlyLanes,
+      state: contractTransparencyMonitor.summary.localOnlyLanes > 0
+        ? "warning" as const
+        : "ready" as const,
     },
   ];
 
@@ -1075,6 +1136,110 @@ export const AdminOpsPanel = ({
               </p>
               <p style={mutedTextStyle}>
                 {copy.nextAction}: {getLocalizedText(state.nextAction, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.contractTransparencyMonitor} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.contractModes}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.contractTransparencyMonitor}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <PublishStateBadge
+              label={contractTransparencyReadinessLabel(
+                contractTransparencyMonitor.lanes.find(
+                  (lane) => lane.id === contractTransparencyMonitor.summary.topLaneId,
+                )?.readiness ?? "local_only",
+                copy,
+              )}
+              state={contractTransparencyReadinessState(
+                contractTransparencyMonitor.lanes.find(
+                  (lane) => lane.id === contractTransparencyMonitor.summary.topLaneId,
+                )?.readiness ?? "local_only",
+              )}
+            />
+            <Badge
+              label={`${contractTransparencyMonitor.summary.totalLanes} ${copy.totalLanes}`}
+              tone="info"
+            />
+          </span>
+        </div>
+        <p style={boundaryStyle}>{getLocalizedText(contractTransparencyMonitor.boundary, locale)}</p>
+        <div style={compactGridStyle}>
+          {contractTransparencySummary.map((item) => (
+            <article key={item.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <p style={labelStyle}>{item.label}</p>
+                <PublishStateBadge label={item.label} state={item.state} />
+              </div>
+              <p style={valueStyle}>{item.value}</p>
+            </article>
+          ))}
+        </div>
+        <article style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.contractTransparencyCloseout}</p>
+              <strong>{contractTransparencyMonitor.closeoutContext.topGateId}</strong>
+            </div>
+            <PublishStateBadge
+              label={contractTransparencyReadinessLabel(
+                contractTransparencyMonitor.closeoutContext.status,
+                copy,
+              )}
+              state={contractTransparencyReadinessState(contractTransparencyMonitor.closeoutContext.status)}
+            />
+          </div>
+          <p style={wrapTextStyle}>
+            {copy.evidence}: {getLocalizedText(contractTransparencyMonitor.closeoutContext.evidence, locale)}
+          </p>
+          <p style={wrapTextStyle}>
+            {copy.nextAction}: {getLocalizedText(contractTransparencyMonitor.closeoutContext.topAction, locale)}
+          </p>
+        </article>
+        <div style={rowStyle}>
+          <h3 style={{ fontSize: 20, margin: 0 }}>{copy.contractTransparencyLanes}</h3>
+          <Badge
+            label={`${contractTransparencyMonitor.summary.blockedLanes} ${copy.blocker}`}
+            tone={contractTransparencyMonitor.summary.blockedLanes > 0 ? "warning" : "info"}
+          />
+        </div>
+        <div style={gridStyle}>
+          {contractTransparencyMonitor.lanes.map((lane) => (
+            <article key={lane.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.phase}: {lane.phase}</p>
+                  <strong>{getLocalizedText(lane.label, locale)}</strong>
+                </div>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge
+                    label={contractTransparencyReadinessLabel(lane.readiness, copy)}
+                    state={contractTransparencyReadinessState(lane.readiness)}
+                  />
+                  {lane.blocksExecution ? <Badge label={copy.blockedActions} tone="warning" /> : null}
+                </span>
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.ownerRole}: {readableCode(lane.ownerRole)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.linkedSurface}: {getLocalizedText(lane.sourceSurface, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.evidence}: {getLocalizedText(lane.sourceEvidence, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(lane.nextAction, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.localOnlyBoundary}: {getLocalizedText(lane.boundary, locale)}
               </p>
             </article>
           ))}
