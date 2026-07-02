@@ -188,6 +188,24 @@ describe("Admin/Ops shell", () => {
     expect(within(providerRegistry as HTMLElement).getAllByText(/providers\..+\.enabled/).length).toBeGreaterThan(0);
     expect(within(providerRegistry as HTMLElement).getAllByText(/Attach live provider QA evidence/).length).toBeGreaterThan(0);
     expect(within(providerRegistry as HTMLElement).getByText(/No live API, wallet SDK, provider credential/)).toBeInTheDocument();
+    const serviceGovernance = screen.getByLabelText("Service Registry Governance");
+    expect(
+      within(serviceGovernance).getByRole("heading", { name: "Service Registry Governance" }),
+    ).toBeInTheDocument();
+    expect(within(serviceGovernance).getAllByText("Service summary").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("15").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("Enabled preview").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("Maintenance").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("Review required").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("Offline").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("Release blockers").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("High-impact blockers").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getByText("Grouped services")).toBeInTheDocument();
+    expect(within(serviceGovernance).getAllByText("Wallet signing").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("Contract root writer").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getByText(/No-live boundary:/)).toBeInTheDocument();
+    expect(within(serviceGovernance).getAllByText(/No live SDK/).length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText(/Fallback:/).length).toBeGreaterThan(0);
     expectVisibleText("Admin Contract Review Center");
     expectVisibleText("V2 companion needed");
     expect(screen.getByText("No for MVP; recommended for P1 transparency.")).toBeInTheDocument();
@@ -579,6 +597,21 @@ describe("Admin/Ops shell", () => {
     expect(within(zhProviderRegistry as HTMLElement).getByText("社交 API 验证")).toBeInTheDocument();
     expect(within(zhProviderRegistry as HTMLElement).getByText("钱包 provider QA")).toBeInTheDocument();
     expect(within(zhProviderRegistry as HTMLElement).getByText(/不会调用实时 API/)).toBeInTheDocument();
+    const zhServiceGovernance = screen.getByLabelText("Service Registry 治理");
+    expect(
+      within(zhServiceGovernance).getByRole("heading", { name: "Service Registry 治理" }),
+    ).toBeInTheDocument();
+    expect(within(zhServiceGovernance).getAllByText("服务摘要").length).toBeGreaterThan(0);
+    expect(within(zhServiceGovernance).getAllByText("预览启用").length).toBeGreaterThan(0);
+    expect(within(zhServiceGovernance).getAllByText("维护中").length).toBeGreaterThan(0);
+    expect(within(zhServiceGovernance).getAllByText("需要审核").length).toBeGreaterThan(0);
+    expect(within(zhServiceGovernance).getAllByText("已下线").length).toBeGreaterThan(0);
+    expect(within(zhServiceGovernance).getAllByText("高影响阻断").length).toBeGreaterThan(0);
+    expect(within(zhServiceGovernance).getAllByText("钱包签名").length).toBeGreaterThan(0);
+    expect(within(zhServiceGovernance).getAllByText("合约 root 写入器").length).toBeGreaterThan(0);
+    expect(within(zhServiceGovernance).getByText(/无实时执行边界:/)).toBeInTheDocument();
+    expect(within(zhServiceGovernance).getAllByText(/不会执行实时 SDK/).length).toBeGreaterThan(0);
+    expect(within(zhServiceGovernance).getAllByText(/Fallback:/).length).toBeGreaterThan(0);
     expectVisibleText("AI 内容审核");
     expectVisibleText("分析概览");
     const zhAdvancedAnalyticsReview = screen.getByLabelText("高级分析审核");
@@ -789,6 +822,22 @@ describe("Admin/Ops shell", () => {
 
   it("renders Advanced Analytics review copy explicitly in zh-TW", () => {
     render(<AdminOpsPanel locale="zh-TW" />);
+
+    const serviceGovernance = screen.getByLabelText("Service Registry 治理");
+    expect(
+      within(serviceGovernance).getByRole("heading", { name: "Service Registry 治理" }),
+    ).toBeInTheDocument();
+    expect(within(serviceGovernance).getAllByText("服務摘要").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("預覽啟用").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("維護中").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("需要審核").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("已下線").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("高影響阻斷").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("錢包簽名").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText("合約 root 寫入器").length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getByText(/無即時執行邊界:/)).toBeInTheDocument();
+    expect(within(serviceGovernance).getAllByText(/不會執行即時 SDK/).length).toBeGreaterThan(0);
+    expect(within(serviceGovernance).getAllByText(/Fallback:/).length).toBeGreaterThan(0);
 
     const advancedAnalyticsReview = screen.getByLabelText("進階分析審核");
     expect(
