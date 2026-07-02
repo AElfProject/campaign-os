@@ -10,6 +10,64 @@ describe("User App shell", () => {
     window.localStorage.clear();
   });
 
+  it("renders local campaign detail navigation and targets existing sections without URL mutation", () => {
+    render(<UserAppPanel locale="en-US" />);
+
+    const nav = screen.getByRole("navigation", { name: "User campaign detail navigation" });
+    const navButtons = within(nav).getAllByRole("button");
+    const initialUrl = window.location.href;
+
+    expect(navButtons.map((button) => button.textContent)).toEqual([
+      "Campaigns",
+      "Points",
+      "Referrals",
+      "Eligibility",
+    ]);
+    expect(within(nav).getByRole("button", { name: "Campaigns" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(within(nav).getByRole("button", { name: "Points" }));
+    expect(within(nav).getByRole("button", { name: "Points" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("article", { name: "Points section" })).toHaveFocus();
+    expect(window.location.href).toBe(initialUrl);
+
+    fireEvent.click(within(nav).getByRole("button", { name: "Referrals" }));
+    expect(within(nav).getByRole("button", { name: "Referrals" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("article", { name: "Referrals section" })).toHaveFocus();
+    expect(window.location.href).toBe(initialUrl);
+
+    fireEvent.click(within(nav).getByRole("button", { name: "Eligibility" }));
+    expect(within(nav).getByRole("button", { name: "Eligibility" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "Eligibility checker" })).toHaveFocus();
+    expect(window.location.href).toBe(initialUrl);
+
+    fireEvent.click(within(nav).getByRole("button", { name: "Campaigns" }));
+    expect(within(nav).getByRole("button", { name: "Campaigns" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "Campaigns section" })).toHaveFocus();
+    expect(window.location.href).toBe(initialUrl);
+  });
+
+  it("localizes local campaign detail navigation labels", () => {
+    const { rerender } = render(<UserAppPanel locale="zh-CN" />);
+
+    const zhCNNav = screen.getByRole("navigation", { name: "用户活动详情导航" });
+    expect(within(zhCNNav).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "活动",
+      "积分",
+      "推荐",
+      "资格",
+    ]);
+
+    rerender(<UserAppPanel locale="zh-TW" />);
+
+    const zhTWNav = screen.getByRole("navigation", { name: "用戶活動詳情導覽" });
+    expect(within(zhTWNav).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "活動",
+      "積分",
+      "推薦",
+      "資格",
+    ]);
+  });
+
   it("renders participant campaign detail, wallet options, tasks, and eligibility", () => {
     render(<App />);
 

@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties, type RefObject } from "react";
 import {
   campaignDetail,
   createCampaignDiscoveryReadModel,
@@ -154,6 +154,33 @@ const activeChoiceButtonStyle: CSSProperties = {
   border: "1px solid #071426",
 };
 
+const localNavStyle: CSSProperties = {
+  alignItems: "center",
+  borderBottom: "1px solid #dbe6f4",
+  borderTop: "1px solid #dbe6f4",
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  padding: "10px 0",
+};
+
+const localNavButtonStyle: CSSProperties = {
+  ...secondaryButtonStyle,
+  flex: "1 1 128px",
+  justifyContent: "center",
+  maxWidth: "100%",
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  whiteSpace: "normal",
+};
+
+const activeLocalNavButtonStyle: CSSProperties = {
+  ...localNavButtonStyle,
+  background: "#071426",
+  border: "1px solid #071426",
+  color: "#ffffff",
+};
+
 const listStyle: CSSProperties = {
   display: "grid",
   gap: 10,
@@ -292,6 +319,15 @@ const formatSource = (value: string) => value.replace(/_/g, " ");
 const localCampaignService = createCampaignOsLocalService();
 
 type LocalTaskActionResult = LocalServiceResult<ExecuteTaskVerificationActionResponse>;
+
+type UserAppLocalSection = "campaigns" | "points" | "referrals" | "eligibility";
+
+const userAppLocalSectionOrder: UserAppLocalSection[] = [
+  "campaigns",
+  "points",
+  "referrals",
+  "eligibility",
+];
 
 const taskActionLabel = (
   kind: TaskVerificationActionKind,
@@ -882,6 +918,13 @@ export const UserAppPanel = ({
   const [checkedEligibilityAddress, setCheckedEligibilityAddress] = useState(participant.walletAddress);
   const [leaderboardMode, setLeaderboardMode] = useState<LeaderboardModeId>("total_points");
   const [latestTaskActions, setLatestTaskActions] = useState<Record<string, LocalTaskActionResult>>({});
+  const [activeLocalSection, setActiveLocalSection] = useState<UserAppLocalSection>("campaigns");
+  const localSectionRefs = {
+    campaigns: useRef<HTMLElement>(null),
+    eligibility: useRef<HTMLElement>(null),
+    points: useRef<HTMLElement>(null),
+    referrals: useRef<HTMLElement>(null),
+  } satisfies Record<UserAppLocalSection, RefObject<HTMLElement>>;
   const copy = userAppCopy[locale];
   const participation = createParticipationReadModel(campaign, participant);
   const participantWorkspace = createParticipantWorkspaceReadModel(campaign, participant);
@@ -956,6 +999,29 @@ export const UserAppPanel = ({
     setCheckedEligibilityAddress(eligibilityAddressInput.trim());
   };
 
+  const localNavItems = userAppLocalSectionOrder.map((id) => {
+    const labels: Record<UserAppLocalSection, string> = {
+      campaigns: copy.localNavCampaigns,
+      eligibility: copy.localNavEligibility,
+      points: copy.localNavPoints,
+      referrals: copy.localNavReferrals,
+    };
+
+    return { id, label: labels[id] };
+  });
+
+  const focusLocalSection = (section: UserAppLocalSection) => {
+    setActiveLocalSection(section);
+    const target = localSectionRefs[section].current;
+
+    if (!target) {
+      return;
+    }
+
+    target.focus({ preventScroll: true });
+    target.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  };
+
   const runLocalTaskAction = (
     taskId: string,
     kind: TaskVerificationActionKind,
@@ -1001,6 +1067,24 @@ export const UserAppPanel = ({
           {copy.feedBoundary}
         </p>
       </section>
+
+      <nav aria-label={copy.localNavLabel} style={localNavStyle}>
+        {localNavItems.map((item) => {
+          const isSelected = item.id === activeLocalSection;
+
+          return (
+            <button
+              aria-pressed={isSelected}
+              key={item.id}
+              onClick={() => focusLocalSection(item.id)}
+              style={isSelected ? activeLocalNavButtonStyle : localNavButtonStyle}
+              type="button"
+            >
+              {item.label}
+            </button>
+          );
+        })}
+      </nav>
 
       {isWalletModalOpen ? (
         <WalletConnectModal
@@ -1290,7 +1374,12 @@ export const UserAppPanel = ({
         </div>
 
         <div style={gridStyle}>
-          <article style={cardStyle}>
+          <article
+            aria-label={copy.localNavPointsSection}
+            ref={localSectionRefs.points}
+            style={cardStyle}
+            tabIndex={-1}
+          >
             <p style={labelStyle}>{copy.myPoints}</p>
             <div style={rowStyle}>
               <strong style={{ color: "#071426", fontSize: 22 }}>
@@ -1316,7 +1405,12 @@ export const UserAppPanel = ({
             </p>
           </article>
 
-          <article style={cardStyle}>
+          <article
+            aria-label={copy.localNavReferralsSection}
+            ref={localSectionRefs.referrals}
+            style={cardStyle}
+            tabIndex={-1}
+          >
             <p style={labelStyle}>{copy.referralSummary}</p>
             <dl style={{ display: "grid", gap: 10, margin: 0 }}>
               {[
@@ -1368,7 +1462,12 @@ export const UserAppPanel = ({
         </p>
       </section>
 
-      <section style={panelStyle}>
+      <section
+        aria-label={copy.localNavCampaignsSection}
+        ref={localSectionRefs.campaigns}
+        style={panelStyle}
+        tabIndex={-1}
+      >
         <div style={rowStyle}>
           <div>
             <p style={labelStyle}>{copy.campaignDetail}</p>
@@ -1586,7 +1685,12 @@ export const UserAppPanel = ({
 
       <WalletOptionCards copy={copy} options={walletOptions} />
 
-      <section aria-label={copy.eligibility} style={panelStyle}>
+      <section
+        aria-label={copy.eligibility}
+        ref={localSectionRefs.eligibility}
+        style={panelStyle}
+        tabIndex={-1}
+      >
         <div style={rowStyle}>
           <div>
             <p style={labelStyle}>{copy.status}</p>
