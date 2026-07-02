@@ -11,6 +11,7 @@ import {
   createPostCampaignCloseout,
   createProjectCampaignCommandCenter,
   createLiveWalletConnectorBoundary,
+  createStateComponentsDeliveryGallery,
   createVerificationCoverageSummary,
   getLocalizedText,
   seededCampaignDraft,
@@ -45,6 +46,7 @@ import {
   type PostCampaignCloseoutStatus,
   type ProjectPortfolioCommercialOwnerRole,
   type PublishState,
+  type StateComponentReadiness,
   type SupportedLocale,
   type VerificationLiveEvidenceStatus,
   type VerificationProviderReadiness,
@@ -635,6 +637,26 @@ const participantExportBadgeState = (status: ParticipantOperationsExportStatus) 
 const settingsReadinessBadgeState = (state: CampaignSettingsReadinessState) =>
   state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
 
+const stateComponentReadinessBadgeState = (state: StateComponentReadiness) =>
+  state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const stateComponentReadinessLabel = (
+  state: StateComponentReadiness,
+  labels: {
+    stateReadinessBlocked: string;
+    stateReadinessCovered: string;
+    stateReadinessReviewRequired: string;
+  },
+) => {
+  if (state === "covered") {
+    return labels.stateReadinessCovered;
+  }
+
+  return state === "review_required"
+    ? labels.stateReadinessReviewRequired
+    : labels.stateReadinessBlocked;
+};
+
 const aiContentLifecycleState = (lifecycle: AiContentArtifactLifecycle) =>
   lifecycle === "human_approved" || lifecycle === "schedule_intent" || lifecycle === "publish_intent"
     ? "ready"
@@ -697,6 +719,7 @@ const serviceCoverageLabels = [
 
 const projectWorkspaceKeys = [
   "campaigns",
+  "states",
   "create",
   "templates",
   "participants",
@@ -831,6 +854,7 @@ export const ProjectConsole = ({
   const participantOperations = createParticipantOperationsReadModel(campaign);
   const settingsReadiness = createCampaignSettingsReadiness(campaign);
   const postCampaignCloseout = createPostCampaignCloseout(campaign);
+  const stateComponentsDeliveryGallery = createStateComponentsDeliveryGallery(campaign);
 
   const selectWorkspace = (workspace: ProjectWorkspaceKey) => {
     if (!controlledActiveWorkspace) {
@@ -943,6 +967,7 @@ export const ProjectConsole = ({
     export: copy.workspaceExport,
     participants: copy.workspaceParticipants,
     settings: copy.workspaceSettings,
+    states: copy.workspaceStates,
     templates: copy.workspaceTemplates,
   };
 
@@ -955,6 +980,7 @@ export const ProjectConsole = ({
     export: copy.workspaceExportSummary,
     participants: copy.workspaceParticipantsSummary,
     settings: copy.workspaceSettingsSummary,
+    states: copy.workspaceStatesSummary,
     templates: copy.workspaceTemplatesSummary,
   };
 
@@ -1561,6 +1587,143 @@ export const ProjectConsole = ({
       </section>
 
         </>
+      )}
+
+      {activeWorkspace === "states" && (
+        <section aria-label={copy.stateComponentsDeliveryGallery} style={panelStyle}>
+          <div style={headingRowStyle}>
+            <div>
+              <p style={statLabelStyle}>{copy.workspaceStates}</p>
+              <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                {copy.stateComponentsDeliveryGallery}
+              </h3>
+              <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                {copy.stateComponentsSubtitle}
+              </p>
+            </div>
+            <PublishStateBadge
+              label={`${stateComponentsDeliveryGallery.summary.blockedCount} ${copy.stateComponentsBlocked}`}
+              state={stateComponentsDeliveryGallery.summary.blockedCount > 0 ? "blocker" : "ready"}
+            />
+          </div>
+
+          <div aria-label={copy.stateComponentsFamilies} style={gridStyle}>
+            {[
+              {
+                detail: copy.stateComponentsExamples,
+                label: copy.stateComponentsFamilies,
+                value: String(stateComponentsDeliveryGallery.summary.totalFamilies),
+              },
+              {
+                detail: copy.stateComponentsExamples,
+                label: copy.stateComponentsCovered,
+                value: String(stateComponentsDeliveryGallery.summary.coveredCount),
+              },
+              {
+                detail: copy.stateComponentsReadiness,
+                label: copy.stateComponentsReviewRequired,
+                value: String(stateComponentsDeliveryGallery.summary.reviewRequiredCount),
+              },
+              {
+                detail: copy.stateComponentsReadiness,
+                label: copy.stateComponentsBlocked,
+                value: String(stateComponentsDeliveryGallery.summary.blockedCount),
+              },
+            ].map((stat) => (
+              <article key={stat.label} style={cardStyle}>
+                <p style={statLabelStyle}>{stat.label}</p>
+                <p style={statValueStyle}>{stat.value}</p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                  {stat.detail}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <p style={boundaryStyle}>
+            {copy.stateComponentsTopNextAction}:{" "}
+            {getLocalizedText(stateComponentsDeliveryGallery.summary.topNextAction, locale)}
+          </p>
+
+          <div style={sectionGridStyle}>
+            {stateComponentsDeliveryGallery.families.map((family) => (
+              <article key={family.id} style={{ ...workflowStyle, minHeight: 0 }}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>{copy.stateComponentsSource}: {family.sourceReference}</p>
+                    <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                      {getLocalizedText(family.label, locale)}
+                    </h4>
+                  </div>
+                  <Badge label={settingsOwnerLabel(family.ownerRole)} tone="info" />
+                </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.stateComponentsDescription}: {getLocalizedText(family.description, locale)}
+                </p>
+                <div>
+                  <p style={statLabelStyle}>{copy.stateComponentsExamples}</p>
+                  <ul style={listStyle}>
+                    {family.examples.map((example) => (
+                      <li
+                        key={example.id}
+                        style={{
+                          ...listItemStyle,
+                          alignItems: "stretch",
+                          background: "#ffffff",
+                          border: "1px solid #dbe6f4",
+                          borderRadius: 8,
+                          display: "grid",
+                          gap: 8,
+                          padding: 12,
+                        }}
+                      >
+                        <div style={headingRowStyle}>
+                          <strong style={{ color: "#071426", lineHeight: 1.25 }}>
+                            {getLocalizedText(example.label, locale)}
+                          </strong>
+                          <span style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                            <PublishStateBadge
+                              label={stateComponentReadinessLabel(example.readiness, copy)}
+                              state={stateComponentReadinessBadgeState(example.readiness)}
+                            />
+                            <Badge label={settingsOwnerLabel(example.ownerRole)} tone="neutral" />
+                          </span>
+                        </div>
+                        <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                          {copy.stateComponentsMeaning}: {getLocalizedText(example.meaning, locale)}
+                        </p>
+                        <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                          {copy.stateComponentsMessage}: {getLocalizedText(example.userMessage, locale)}
+                        </p>
+                        <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                          {copy.stateComponentsNextAction}: {getLocalizedText(example.nextAction, locale)}
+                        </p>
+                        <p style={{ color: "#64748b", fontSize: 12, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
+                          {copy.stateComponentsSource}: {example.sourceReference}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <div>
+            <p style={statLabelStyle}>{copy.stateComponentsSourceReferences}</p>
+            <ul style={compactListStyle}>
+              {stateComponentsDeliveryGallery.sourceReferences.map((sourceReference) => (
+                <li key={sourceReference} style={chipStyle}>
+                  {sourceReference}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <p style={boundaryStyle}>
+            {copy.stateComponentsBoundary}: {getLocalizedText(stateComponentsDeliveryGallery.boundary, locale)}
+          </p>
+        </section>
       )}
 
       {activeWorkspace === "participants" && (

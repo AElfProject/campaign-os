@@ -2466,6 +2466,54 @@ export interface CompetitorWatchSurface {
   nextAction: LocalizedText;
 }
 
+export type StateComponentFamilyId =
+  | "campaign"
+  | "task_verification"
+  | "eligibility"
+  | "i18n_content"
+  | "wallet_qa"
+  | "export_modal"
+  | "toast_notification"
+  | "blocked_publish";
+export type StateComponentReadiness = "covered" | "review_required" | "blocked";
+
+export interface StateComponentExample {
+  id: string;
+  label: LocalizedText;
+  meaning: LocalizedText;
+  userMessage: LocalizedText;
+  nextAction: LocalizedText;
+  ownerRole: OwnerRole;
+  readiness: StateComponentReadiness;
+  sourceReference: string;
+}
+
+export interface StateComponentFamily {
+  id: StateComponentFamilyId;
+  label: LocalizedText;
+  description: LocalizedText;
+  ownerRole: OwnerRole;
+  sourceReference: string;
+  examples: StateComponentExample[];
+}
+
+export interface StateComponentsDeliveryGallerySummary {
+  totalFamilies: number;
+  totalExamples: number;
+  coveredCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  topNextAction: LocalizedText;
+}
+
+export interface StateComponentsDeliveryGallery {
+  generatedAt: string;
+  summary: StateComponentsDeliveryGallerySummary;
+  families: StateComponentFamily[];
+  boundary: LocalizedText;
+  sourceReferences: string[];
+}
+
 export interface AdminOpsReadModel {
   campaignId: string;
   reviewQueue: ReviewItem[];

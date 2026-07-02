@@ -25,7 +25,7 @@ describe("Project Console shell", () => {
     );
 
     const nav = getProjectWorkspaceNav();
-    for (const workspace of ["Campaigns", "Create", "Templates", "Participants", "AI Content", "Analytics", "Export", "Closeout", "Settings"]) {
+    for (const workspace of ["Campaigns", "States", "Create", "Templates", "Participants", "AI Content", "Analytics", "Export", "Closeout", "Settings"]) {
       expect(within(nav).getByRole("button", { name: workspace })).toBeInTheDocument();
     }
     expect(within(nav).getByRole("button", { name: "Campaigns" })).toHaveAttribute(
@@ -99,6 +99,64 @@ describe("Project Console shell", () => {
     expect(within(portfolioReadiness).queryByText(/payment id/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Analytics & Export Decision" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Task template library" })).not.toBeInTheDocument();
+  });
+
+  it("switches to States workspace and renders state component delivery coverage", () => {
+    render(<App />);
+
+    clickWorkspace("States");
+
+    const nav = getProjectWorkspaceNav();
+    expect(within(nav).getByRole("button", { name: "States" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const gallery = screen.getByLabelText("State Components Delivery Gallery");
+    expect(
+      within(gallery).getByRole("heading", { name: "State Components Delivery Gallery" }),
+    ).toBeInTheDocument();
+    expect(within(gallery).getByText("State families")).toBeInTheDocument();
+    expect(within(gallery).getByText("Covered states")).toBeInTheDocument();
+    expect(within(gallery).getByText("Review-required states")).toBeInTheDocument();
+    expect(within(gallery).getByText("Blocked states")).toBeInTheDocument();
+
+    for (const family of [
+      "Campaign",
+      "Task Verification",
+      "Eligibility",
+      "i18n Content",
+      "Wallet/QA",
+      "Export/Modal",
+      "Toast/Notification",
+      "Blocked Publish",
+    ]) {
+      expect(within(gallery).getByRole("heading", { name: family })).toBeInTheDocument();
+    }
+
+    for (const stateLabel of ["Loading", "Empty", "Error", "Missing", "AI Draft", "Reviewed", "Published", "Fallback"]) {
+      expect(within(gallery).getByText(stateLabel)).toBeInTheDocument();
+    }
+
+    expect(within(gallery).getByText(/No live sync is running/)).toBeInTheDocument();
+    expect(within(gallery).getByText(/Clear filters, add seeded participants/)).toBeInTheDocument();
+    expect(within(gallery).getByText(/Retry the local preview, check seeded data/)).toBeInTheDocument();
+    expect(within(gallery).getByText("Failed")).toBeInTheDocument();
+    expect(within(gallery).getByText(/Retry verification, go to bridge, complete swap/)).toBeInTheDocument();
+    expect(within(gallery).getAllByText(/Export winners does not distribute rewards/).length).toBeGreaterThan(0);
+    expect(within(gallery).getAllByText(/Final rewards are handled by the campaign project/).length).toBeGreaterThan(0);
+    expect(within(gallery).getByText(/Contract claim mode requires admin approval/)).toBeInTheDocument();
+    expect(within(gallery).getByText(/v0.1 full UI design screen 15 state delivery/)).toBeInTheDocument();
+    expect(within(gallery).getByText(/v0.2 interaction design i18n state requirements/)).toBeInTheDocument();
+    expect(within(gallery).getByText(/No live backend or API call/)).toBeInTheDocument();
+    expect(within(gallery).getByText(/no wallet signing/)).toBeInTheDocument();
+    expect(within(gallery).getByText(/no export file generation/)).toBeInTheDocument();
+    expect(within(gallery).getByText(/no contract write/)).toBeInTheDocument();
+    expect(within(gallery).getByText(/no reward custody/)).toBeInTheDocument();
+    expect(
+      within(gallery).queryByRole("button", {
+        name: /publish|export|contract|reward|crawl|sync|sign/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("switches to Participants workspace and renders seeded operations boundaries", () => {
