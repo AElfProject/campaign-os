@@ -1176,6 +1176,14 @@ export type ContractInterfaceReadiness = "ready" | "warning" | "blocker" | "info
 export type ContractInterfacePhase = "MVP" | "P1" | "P2" | "N/A";
 export type DeliveryChecklistStatus = "covered" | "needs_review" | "blocked" | "deferred";
 export type DeliveryChecklistGroupId = "product" | "architecture" | "ui" | "contract" | "qa";
+export type DeliveryAcceptanceStatus =
+  | "proven"
+  | "partial"
+  | "needs_live_evidence"
+  | "blocked"
+  | "deferred";
+export type DeliveryAcceptanceSeverity = "critical" | "high" | "medium" | "low";
+export type DeliveryAcceptanceSolutionSetId = "v0_1_product_ui" | "v0_2_wallet_i18n_contract";
 export type P1LocaleCode = "ko-KR" | "ja-JP" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES";
 export type P1LocaleExpansionReadinessStatus = "deferred";
 
@@ -1353,6 +1361,52 @@ export interface DeliveryChecklistReadinessConsole {
   groups: DeliveryChecklistGroup[];
   blockers: DeliveryChecklistItem[];
   needsReview: DeliveryChecklistItem[];
+}
+
+export interface DeliveryAcceptanceRow {
+  id: string;
+  solutionSetId: DeliveryAcceptanceSolutionSetId;
+  sourceArea: LocalizedText;
+  title: LocalizedText;
+  status: DeliveryAcceptanceStatus;
+  severity: DeliveryAcceptanceSeverity;
+  ownerRole: OwnerRole;
+  evidenceSurface: LocalizedText;
+  evidenceSummary: LocalizedText;
+  nextMissionAction: LocalizedText;
+  boundary?: LocalizedText;
+  launchBlocking: boolean;
+}
+
+export interface DeliveryAcceptanceCounts {
+  proven: number;
+  partial: number;
+  needsLiveEvidence: number;
+  blocked: number;
+  deferred: number;
+}
+
+export interface DeliveryAcceptanceSolutionSet {
+  id: DeliveryAcceptanceSolutionSetId;
+  title: LocalizedText;
+  sourceReference: string;
+  summary: LocalizedText;
+  counts: DeliveryAcceptanceCounts;
+  rows: DeliveryAcceptanceRow[];
+}
+
+export interface DeliveryAcceptanceSummary extends DeliveryAcceptanceCounts {
+  totalRows: number;
+  solutionSetCount: number;
+  topSeverity: DeliveryAcceptanceSeverity;
+  nextAction: LocalizedText;
+}
+
+export interface DeliveryAcceptanceConsole {
+  summary: DeliveryAcceptanceSummary;
+  boundary: LocalizedText;
+  solutionSets: DeliveryAcceptanceSolutionSet[];
+  topResidualGaps: DeliveryAcceptanceRow[];
 }
 
 export interface ExportPreviewRow {
@@ -2864,6 +2918,7 @@ export interface StateComponentsDeliveryGallery {
 export interface AdminOpsReadModel {
   campaignId: string;
   reviewQueue: ReviewItem[];
+  deliveryAcceptance: DeliveryAcceptanceConsole;
   deliveryChecklistReadiness: DeliveryChecklistReadinessConsole;
   walletProviderQaGate: WalletProviderQaReadinessGate;
   aelfWebLoginAdapterReadiness: AelfWebLoginAdapterReadinessModel;

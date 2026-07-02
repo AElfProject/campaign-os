@@ -20,6 +20,8 @@ import {
   type ContractInterfaceReadiness,
   type ContractMode,
   type ContractReviewChecklistStatus,
+  type DeliveryAcceptanceSeverity,
+  type DeliveryAcceptanceStatus,
   type DeliveryChecklistStatus,
   type ExportReadinessState,
   type AiContentArtifactLifecycle,
@@ -315,6 +317,20 @@ const deliveryChecklistStatusState = (status: DeliveryChecklistStatus) =>
       ? "warning"
       : "ready";
 
+const deliveryAcceptanceStatusState = (status: DeliveryAcceptanceStatus) =>
+  status === "blocked"
+    ? "blocker"
+    : status === "partial" || status === "needs_live_evidence" || status === "deferred"
+      ? "warning"
+      : "ready";
+
+const deliveryAcceptanceSeverityState = (severity: DeliveryAcceptanceSeverity) =>
+  severity === "critical" || severity === "high"
+    ? "blocker"
+    : severity === "medium"
+      ? "warning"
+      : "ready";
+
 const aiContentLifecycleState = (lifecycle: AiContentArtifactLifecycle) =>
   lifecycle === "ai_draft" || lifecycle === "edited" ? "warning" : "ready";
 
@@ -521,6 +537,21 @@ const deliveryChecklistStatusLabel = (
   return labels[status];
 };
 
+const deliveryAcceptanceStatusLabel = (
+  status: DeliveryAcceptanceStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<DeliveryAcceptanceStatus, string> = {
+    blocked: copy.blocked,
+    deferred: copy.deferred,
+    needs_live_evidence: copy.needsLiveEvidence,
+    partial: copy.partial,
+    proven: copy.proven,
+  };
+
+  return labels[status];
+};
+
 const walletProviderQaSeededState = (status: WalletProviderQaSeededStatus) =>
   status === "ready" ? "ready" : "warning";
 
@@ -711,6 +742,7 @@ export const AdminOpsPanel = ({
   const aiContentPack = adminOps.aiContentPack;
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
+  const deliveryAcceptance = adminOps.deliveryAcceptance;
   const lifecycleOperations = adminOps.lifecycleOperations;
   const launchConsoleBundles = adminOps.launchConsoleCampaignBundles;
   const launchBlockingGates = launchConsoleBundles.bundles.flatMap((bundle) =>
@@ -890,6 +922,51 @@ export const AdminOpsPanel = ({
       state: contractTransparencyMonitor.summary.localOnlyLanes > 0
         ? "warning" as const
         : "ready" as const,
+    },
+  ];
+
+  const deliveryAcceptanceSummaryItems = [
+    {
+      id: "solution-sets",
+      label: copy.solutionSets,
+      value: deliveryAcceptance.summary.solutionSetCount,
+      state: "ready" as const,
+    },
+    {
+      id: "total-rows",
+      label: copy.totalRows,
+      value: deliveryAcceptance.summary.totalRows,
+      state: "ready" as const,
+    },
+    {
+      id: "proven",
+      label: copy.proven,
+      value: deliveryAcceptance.summary.proven,
+      state: "ready" as const,
+    },
+    {
+      id: "partial",
+      label: copy.partial,
+      value: deliveryAcceptance.summary.partial,
+      state: deliveryAcceptance.summary.partial > 0 ? "warning" as const : "ready" as const,
+    },
+    {
+      id: "needs-live-evidence",
+      label: copy.needsLiveEvidence,
+      value: deliveryAcceptance.summary.needsLiveEvidence,
+      state: deliveryAcceptance.summary.needsLiveEvidence > 0 ? "warning" as const : "ready" as const,
+    },
+    {
+      id: "blocked",
+      label: copy.blocked,
+      value: deliveryAcceptance.summary.blocked,
+      state: deliveryAcceptance.summary.blocked > 0 ? "blocker" as const : "ready" as const,
+    },
+    {
+      id: "deferred",
+      label: copy.deferred,
+      value: deliveryAcceptance.summary.deferred,
+      state: deliveryAcceptance.summary.deferred > 0 ? "warning" as const : "ready" as const,
     },
   ];
 
@@ -1584,6 +1661,186 @@ export const AdminOpsPanel = ({
                     <p style={mutedTextStyle}>
                       {copy.nextAction}: {getLocalizedText(item.nextAction, locale)}
                     </p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.deliveryAcceptanceConsole} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.deliveryAcceptanceSubtitle}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.deliveryAcceptanceConsole}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${deliveryAcceptance.summary.solutionSetCount} ${copy.solutionSets}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${deliveryAcceptance.summary.needsLiveEvidence} ${copy.needsLiveEvidence}`}
+              state={
+                deliveryAcceptance.summary.needsLiveEvidence > 0
+                  ? "warning"
+                  : "ready"
+              }
+            />
+            <PublishStateBadge
+              label={`${deliveryAcceptance.summary.blocked} ${copy.blocked}`}
+              state={deliveryAcceptance.summary.blocked > 0 ? "blocker" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>
+            {copy.nonLiveBoundary}: {getLocalizedText(deliveryAcceptance.boundary, locale)}
+          </p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.nextMissionAction}: {getLocalizedText(deliveryAcceptance.summary.nextAction, locale)}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          {deliveryAcceptanceSummaryItems.map((item) => (
+            <article key={item.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <p style={labelStyle}>{item.label}</p>
+                <PublishStateBadge label={item.label} state={item.state} />
+              </div>
+              <p style={valueStyle}>{item.value}</p>
+            </article>
+          ))}
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.topSeverity}</p>
+            <PublishStateBadge
+              label={deliveryAcceptance.summary.topSeverity}
+              state={deliveryAcceptanceSeverityState(deliveryAcceptance.summary.topSeverity)}
+            />
+            <p style={mutedTextStyle}>{copy.residualGaps}</p>
+          </article>
+        </div>
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <div style={rowStyle}>
+              <strong>{copy.residualGaps}</strong>
+              <PublishStateBadge
+                label={`${deliveryAcceptance.topResidualGaps.length} ${copy.residualGaps}`}
+                state={deliveryAcceptance.topResidualGaps.length > 0 ? "warning" : "ready"}
+              />
+            </div>
+            {deliveryAcceptance.topResidualGaps.map((row) => (
+              <div
+                key={row.id}
+                style={{ borderTop: "1px solid #dbe6f4", display: "grid", gap: 6, paddingTop: 10 }}
+              >
+                <div style={rowStyle}>
+                  <strong>{getLocalizedText(row.title, locale)}</strong>
+                  <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <PublishStateBadge
+                      label={deliveryAcceptanceStatusLabel(row.status, copy)}
+                      state={deliveryAcceptanceStatusState(row.status)}
+                    />
+                    <PublishStateBadge
+                      label={row.severity}
+                      state={deliveryAcceptanceSeverityState(row.severity)}
+                    />
+                    {row.launchBlocking ? (
+                      <PublishStateBadge label={copy.launchBlocking} state="blocker" />
+                    ) : null}
+                  </span>
+                </div>
+                <p style={wrapTextStyle}>
+                  {copy.evidenceSurface}: {getLocalizedText(row.evidenceSurface, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.nextMissionAction}: {getLocalizedText(row.nextMissionAction, locale)}
+                </p>
+              </div>
+            ))}
+          </article>
+          {deliveryAcceptance.solutionSets.map((solutionSet) => (
+            <article key={solutionSet.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>
+                    {copy.solutionSet}: {solutionSet.sourceReference}
+                  </p>
+                  <strong>{getLocalizedText(solutionSet.title, locale)}</strong>
+                </div>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge label={`${solutionSet.counts.proven} ${copy.proven}`} state="ready" />
+                  <PublishStateBadge
+                    label={`${solutionSet.counts.partial} ${copy.partial}`}
+                    state={solutionSet.counts.partial > 0 ? "warning" : "ready"}
+                  />
+                  <PublishStateBadge
+                    label={`${solutionSet.counts.needsLiveEvidence} ${copy.needsLiveEvidence}`}
+                    state={solutionSet.counts.needsLiveEvidence > 0 ? "warning" : "ready"}
+                  />
+                  <PublishStateBadge
+                    label={`${solutionSet.counts.blocked} ${copy.blocked}`}
+                    state={solutionSet.counts.blocked > 0 ? "blocker" : "ready"}
+                  />
+                  <Badge label={`${solutionSet.counts.deferred} ${copy.deferred}`} tone="info" />
+                </span>
+              </div>
+              <p style={mutedTextStyle}>{getLocalizedText(solutionSet.summary, locale)}</p>
+              <div style={stackStyle}>
+                {solutionSet.rows.map((row) => (
+                  <div
+                    key={row.id}
+                    style={{
+                      borderTop: "1px solid #dbe6f4",
+                      display: "grid",
+                      gap: 8,
+                      paddingTop: 10,
+                    }}
+                  >
+                    <div style={rowStyle}>
+                      <strong>{getLocalizedText(row.title, locale)}</strong>
+                      <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        <PublishStateBadge
+                          label={deliveryAcceptanceStatusLabel(row.status, copy)}
+                          state={deliveryAcceptanceStatusState(row.status)}
+                        />
+                        <PublishStateBadge
+                          label={row.severity}
+                          state={deliveryAcceptanceSeverityState(row.severity)}
+                        />
+                        {row.launchBlocking ? (
+                          <PublishStateBadge label={copy.launchBlocking} state="blocker" />
+                        ) : null}
+                      </span>
+                    </div>
+                    <div style={compactGridStyle}>
+                      <div>
+                        <p style={labelStyle}>{copy.sourceArea}</p>
+                        <p style={mutedTextStyle}>{getLocalizedText(row.sourceArea, locale)}</p>
+                      </div>
+                      <div>
+                        <p style={labelStyle}>{copy.evidenceSurface}</p>
+                        <p style={mutedTextStyle}>{getLocalizedText(row.evidenceSurface, locale)}</p>
+                      </div>
+                      <div>
+                        <p style={labelStyle}>{copy.ownerRole}</p>
+                        <p style={mutedTextStyle}>{readableCode(row.ownerRole)}</p>
+                      </div>
+                    </div>
+                    <p style={wrapTextStyle}>
+                      {copy.evidenceSummary}: {getLocalizedText(row.evidenceSummary, locale)}
+                    </p>
+                    <p style={wrapTextStyle}>
+                      {copy.nextMissionAction}: {getLocalizedText(row.nextMissionAction, locale)}
+                    </p>
+                    {row.boundary ? (
+                      <p style={wrapTextStyle}>
+                        {copy.nonLiveBoundary}: {getLocalizedText(row.boundary, locale)}
+                      </p>
+                    ) : null}
                   </div>
                 ))}
               </div>

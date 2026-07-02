@@ -884,6 +884,87 @@ describe("Campaign OS domain foundation", () => {
     });
   });
 
+  it("builds the delivery acceptance console across v0.1 and v0.2 without overclaiming live readiness", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const acceptance = adminOps.deliveryAcceptance;
+    const rows = acceptance.solutionSets.flatMap((solutionSet) => solutionSet.rows);
+    const rowsById = Object.fromEntries(rows.map((row) => [row.id, row]));
+
+    expect(acceptance.solutionSets.map((solutionSet) => solutionSet.id)).toEqual([
+      "v0_1_product_ui",
+      "v0_2_wallet_i18n_contract",
+    ]);
+    expect(acceptance.summary).toMatchObject({
+      solutionSetCount: 2,
+      totalRows: rows.length,
+      proven: rows.filter((row) => row.status === "proven").length,
+      partial: rows.filter((row) => row.status === "partial").length,
+      needsLiveEvidence: rows.filter((row) => row.status === "needs_live_evidence").length,
+      blocked: rows.filter((row) => row.status === "blocked").length,
+      deferred: rows.filter((row) => row.status === "deferred").length,
+      topSeverity: "critical",
+    });
+    expect(new Set(rows.map((row) => row.status))).toEqual(
+      new Set(["proven", "partial", "needs_live_evidence", "blocked", "deferred"]),
+    );
+    expect(acceptance.boundary["en-US"]).toContain("No live wallet SDK");
+    expect(acceptance.boundary["en-US"]).toContain("provider API");
+    expect(acceptance.boundary["en-US"]).toContain("contract write");
+    expect(acceptance.boundary["en-US"]).toContain("export file");
+    expect(acceptance.boundary["en-US"]).toContain("storage write");
+    expect(acceptance.boundary["en-US"]).toContain("reward custody");
+    expect(acceptance.boundary["en-US"]).toContain("reward distribution");
+
+    expect(rowsById["v01-global-navigation-shell"]).toMatchObject({
+      solutionSetId: "v0_1_product_ui",
+      status: "proven",
+      launchBlocking: false,
+    });
+    expect(rowsById["v01-user-participation-loop"]).toMatchObject({
+      status: "partial",
+      severity: "high",
+      ownerRole: "project_owner",
+    });
+    expect(rowsById["v02-live-wallet-provider-evidence"]).toMatchObject({
+      solutionSetId: "v0_2_wallet_i18n_contract",
+      status: "needs_live_evidence",
+      severity: "critical",
+      launchBlocking: true,
+    });
+    expect(rowsById["v02-live-wallet-provider-evidence"]?.boundary?.["en-US"]).toContain(
+      "aelf-web-login adapter readiness preview only",
+    );
+    expect(rowsById["v02-contract-claim-reward-custody"]).toMatchObject({
+      status: "blocked",
+      severity: "critical",
+      launchBlocking: true,
+    });
+    expect(rowsById["v02-p1-locale-expansion"]).toMatchObject({
+      status: "deferred",
+      severity: "low",
+    });
+    expect(
+      rows
+        .filter((row) => row.status === "needs_live_evidence" || row.status === "blocked")
+        .some((row) => row.status === "proven"),
+    ).toBe(false);
+    expect(acceptance.topResidualGaps.map((row) => row.id).slice(0, 2)).toEqual([
+      "v02-contract-claim-reward-custody",
+      "v02-live-wallet-provider-evidence",
+    ]);
+    const lastResidualGap = acceptance.topResidualGaps[acceptance.topResidualGaps.length - 1];
+    expect(lastResidualGap?.id).not.toBe("v02-p1-locale-expansion");
+
+    for (const row of rows) {
+      expect(row.title["en-US"]).toBeTruthy();
+      expect(row.title["zh-CN"]).toBeTruthy();
+      expect(row.title["zh-TW"]).toBeTruthy();
+      expect(row.evidenceSurface["en-US"]).toBeTruthy();
+      expect(row.evidenceSummary["en-US"]).toBeTruthy();
+      expect(row.nextMissionAction["en-US"]).toBeTruthy();
+    }
+  });
+
   it("includes the wallet provider QA gate in the Admin/Ops read model", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
     const readinessItems = adminOps.deliveryChecklistReadiness.groups.flatMap((group) => group.items);

@@ -82,6 +82,13 @@ import type {
   CompetitorWatchReviewState,
   CompetitorWatchSignal,
   CompetitorWatchSurface,
+  DeliveryAcceptanceConsole,
+  DeliveryAcceptanceCounts,
+  DeliveryAcceptanceRow,
+  DeliveryAcceptanceSeverity,
+  DeliveryAcceptanceSolutionSet,
+  DeliveryAcceptanceSolutionSetId,
+  DeliveryAcceptanceStatus,
   DeliveryChecklistGroup,
   DeliveryChecklistGroupId,
   DeliveryChecklistItem,
@@ -230,6 +237,7 @@ import type {
   WalletProviderQaScenarioId,
 } from "./types";
 import {
+  aelfWebLoginAdapterBoundary,
   createAelfWebLoginAdapterReadiness,
   createWalletProviderQaReadinessGate,
   deriveEligibilityWalletStatus,
@@ -8366,6 +8374,12 @@ const deliveryChecklistBoundary: LocalizedText = {
   "zh-TW": "Seeded/local delivery readiness evidence only. No live wallet SDK, API call, contract transaction, export file, reward custody, or reward distribution is executed.",
 };
 
+export const deliveryAcceptanceBoundary: LocalizedText = localized(
+  "Seeded/local delivery acceptance audit only. No live wallet SDK, provider API, contract write, export file, storage write, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地交付验收审计。不会执行实时钱包 SDK、provider API、合约写入、导出文件、存储写入、奖励托管或发奖。",
+  "僅 seeded/本地交付驗收審計。不會執行即時錢包 SDK、provider API、合約寫入、匯出檔案、儲存寫入、獎勵託管或發獎。",
+);
+
 const createContractMethod = ({
   boundary = companionContractBoundary,
   name,
@@ -9614,6 +9628,415 @@ const deliveryChecklistStatusCount = (
   items: DeliveryChecklistItem[],
   status: DeliveryChecklistStatus,
 ) => items.filter((item) => item.status === status).length;
+
+const acceptanceStatusWeight: Record<DeliveryAcceptanceStatus, number> = {
+  blocked: 0,
+  needs_live_evidence: 1,
+  partial: 2,
+  deferred: 3,
+  proven: 4,
+};
+
+const acceptanceSeverityWeight: Record<DeliveryAcceptanceSeverity, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+
+const acceptanceStatusCount = (
+  rows: DeliveryAcceptanceRow[],
+  status: DeliveryAcceptanceStatus,
+) => rows.filter((row) => row.status === status).length;
+
+const deliveryAcceptanceCounts = (rows: DeliveryAcceptanceRow[]): DeliveryAcceptanceCounts => ({
+  blocked: acceptanceStatusCount(rows, "blocked"),
+  deferred: acceptanceStatusCount(rows, "deferred"),
+  needsLiveEvidence: acceptanceStatusCount(rows, "needs_live_evidence"),
+  partial: acceptanceStatusCount(rows, "partial"),
+  proven: acceptanceStatusCount(rows, "proven"),
+});
+
+const deliveryAcceptanceRow = ({
+  boundary,
+  evidenceSummary,
+  evidenceSurface,
+  id,
+  launchBlocking = false,
+  nextMissionAction,
+  ownerRole = "internal_operator",
+  severity,
+  solutionSetId,
+  sourceArea,
+  status,
+  title,
+}: {
+  boundary?: LocalizedText;
+  evidenceSummary: LocalizedText;
+  evidenceSurface: LocalizedText;
+  id: string;
+  launchBlocking?: boolean;
+  nextMissionAction: LocalizedText;
+  ownerRole?: OwnerRole;
+  severity: DeliveryAcceptanceSeverity;
+  solutionSetId: DeliveryAcceptanceSolutionSetId;
+  sourceArea: LocalizedText;
+  status: DeliveryAcceptanceStatus;
+  title: LocalizedText;
+}): DeliveryAcceptanceRow => ({
+  boundary,
+  evidenceSummary,
+  evidenceSurface,
+  id,
+  launchBlocking,
+  nextMissionAction,
+  ownerRole,
+  severity,
+  solutionSetId,
+  sourceArea,
+  status,
+  title,
+});
+
+const v01AcceptanceRows = (): DeliveryAcceptanceRow[] => {
+  const solutionSetId = "v0_1_product_ui" as const;
+
+  return [
+    deliveryAcceptanceRow({
+      id: "v01-global-navigation-shell",
+      solutionSetId,
+      sourceArea: localized("v0.1 UI design: global shell", "v0.1 UI 设计：全局 shell", "v0.1 UI 設計：全局 shell"),
+      title: localized("Global navigation shell", "全局导航 shell", "全局導航 shell"),
+      status: "proven",
+      severity: "medium",
+      ownerRole: "project_owner",
+      evidenceSurface: localized("App shell header and surface navigation", "App shell Header 与 surface 导航", "App shell Header 與 surface 導航"),
+      evidenceSummary: localized(
+        "Project Console, User App, and Admin/Ops surfaces are reachable from the global shell with locale and wallet context visible.",
+        "Project Console、User App 与 Admin/Ops 均可从全局 shell 进入，并展示语言与钱包上下文。",
+        "Project Console、User App 與 Admin/Ops 均可從全局 shell 進入，並展示語言與錢包上下文。",
+      ),
+      nextMissionAction: localized(
+        "Keep shell regression coverage when adding future surfaces.",
+        "新增未来 surface 时保留 shell 回归覆盖。",
+        "新增未來 surface 時保留 shell 回歸覆蓋。",
+      ),
+    }),
+    deliveryAcceptanceRow({
+      id: "v01-project-campaign-builder",
+      solutionSetId,
+      sourceArea: localized("v0.1 UI design: campaign builder", "v0.1 UI 设计：活动构建器", "v0.1 UI 設計：活動構建器"),
+      title: localized("Project campaign builder workflow", "项目方活动构建流程", "專案方活動構建流程"),
+      status: "proven",
+      severity: "medium",
+      ownerRole: "project_owner",
+      evidenceSurface: localized("Campaign Builder and Publish Gates", "Campaign Builder 与发布门禁", "Campaign Builder 與發布門禁"),
+      evidenceSummary: localized(
+        "Goal, task, rewards, i18n, contract, and readiness steps are represented with blockers and owner actions.",
+        "目标、任务、奖励、i18n、合约与 readiness 步骤已展示阻断项和负责人动作。",
+        "目標、任務、獎勵、i18n、合約與 readiness 步驟已展示阻斷項和負責人動作。",
+      ),
+      nextMissionAction: localized(
+        "Use later missions for live persistence and real publish mutation.",
+        "后续 mission 再处理真实持久化与发布变更。",
+        "後續 mission 再處理真實持久化與發布變更。",
+      ),
+    }),
+    deliveryAcceptanceRow({
+      id: "v01-user-participation-loop",
+      solutionSetId,
+      sourceArea: localized("v0.1 UI design: user feed and campaign detail", "v0.1 UI 设计：用户 feed 与活动详情", "v0.1 UI 設計：使用者 feed 與活動詳情"),
+      title: localized("User participation and eligibility loop", "用户参与和资格检查闭环", "使用者參與和資格檢查閉環"),
+      status: "partial",
+      severity: "high",
+      ownerRole: "project_owner",
+      evidenceSurface: localized("User App, task actions, leaderboard, eligibility checker", "User App、任务动作、排行榜、资格检查器", "User App、任務動作、排行榜、資格檢查器"),
+      evidenceSummary: localized(
+        "Seeded task verification, eligibility, referral, leaderboard, and winner export status are visible, but live verification providers remain gated.",
+        "Seeded 任务验证、资格、推荐、排行榜与 winner 导出状态可见，但真实验证 provider 仍受门禁控制。",
+        "Seeded 任務驗證、資格、推薦、排行榜與 winner 匯出狀態可見，但真實驗證 provider 仍受門禁控制。",
+      ),
+      nextMissionAction: localized(
+        "Prioritize live provider evidence before claiming production participation readiness.",
+        "在声明生产参与 readiness 前，优先补真实 provider evidence。",
+        "在聲明生產參與 readiness 前，優先補真實 provider evidence。",
+      ),
+    }),
+    deliveryAcceptanceRow({
+      id: "v01-admin-risk-export",
+      solutionSetId,
+      sourceArea: localized("v0.1 UI design: admin risk and export", "v0.1 UI 设计：admin 风险与导出", "v0.1 UI 設計：admin 風險與匯出"),
+      title: localized("Admin risk review and export preview", "管理员风险审核和导出预览", "管理員風險審核和匯出預覽"),
+      status: "proven",
+      severity: "medium",
+      ownerRole: "internal_operator",
+      evidenceSurface: localized("Admin/Ops risk intelligence and export artifact", "Admin/Ops 风险智能与导出 artifact", "Admin/Ops 風險智能與匯出 artifact"),
+      evidenceSummary: localized(
+        "Risk signals, manual-review queues, export columns, and local export artifact boundaries are visible.",
+        "风险信号、人工审核队列、导出字段与本地导出 artifact 边界可见。",
+        "風險信號、人工審核隊列、匯出欄位與本地匯出 artifact 邊界可見。",
+      ),
+      nextMissionAction: localized(
+        "Keep real export file generation blocked until project-owner confirmation.",
+        "项目方确认前继续阻断真实导出文件生成。",
+        "專案方確認前繼續阻斷真實匯出檔案生成。",
+      ),
+    }),
+    deliveryAcceptanceRow({
+      id: "v01-live-export-download",
+      solutionSetId,
+      sourceArea: localized("v0.1 analytics/export design", "v0.1 analytics/export 设计", "v0.1 analytics/export 設計"),
+      title: localized("Real export download remains non-live", "真实导出下载仍未启用", "真實匯出下載仍未啟用"),
+      status: "needs_live_evidence",
+      severity: "high",
+      ownerRole: "project_owner",
+      launchBlocking: true,
+      boundary: exportArtifactBoundary,
+      evidenceSurface: localized("Local export artifact", "本地导出 artifact", "本地匯出 artifact"),
+      evidenceSummary: localized(
+        "Current implementation creates an in-memory review payload only, with no storage write or download URL.",
+        "当前实现只生成内存审核 payload，不写入存储，也不生成下载链接。",
+        "目前實作只生成記憶體審核 payload，不寫入儲存，也不生成下載連結。",
+      ),
+      nextMissionAction: localized(
+        "Open a dedicated export fulfillment mission when storage, approval, and retention rules are approved.",
+        "存储、审批与保留规则批准后，开启专门的导出履约 mission。",
+        "儲存、審批與保留規則批准後，開啟專門的匯出履約 mission。",
+      ),
+    }),
+  ];
+};
+
+const v02AcceptanceRows = (): DeliveryAcceptanceRow[] => {
+  const solutionSetId = "v0_2_wallet_i18n_contract" as const;
+
+  return [
+    deliveryAcceptanceRow({
+      id: "v02-aa-eoa-wallet-session",
+      solutionSetId,
+      sourceArea: localized("v0.2 wallet integration", "v0.2 钱包集成", "v0.2 錢包整合"),
+      title: localized("AA and EOA wallet session normalization", "AA 与 EOA 钱包 session 归一化", "AA 與 EOA 錢包 session 歸一化"),
+      status: "proven",
+      severity: "high",
+      ownerRole: "project_owner",
+      evidenceSurface: localized("Wallet modal, header badge, API skill contract", "钱包弹窗、Header badge、API skill contract", "錢包彈窗、Header badge、API skill contract"),
+      evidenceSummary: localized(
+        "Seeded sessions carry account type, wallet source, chain, network, capabilities, signature status, and public metadata boundaries.",
+        "Seeded sessions 携带 account type、wallet source、chain、network、capabilities、signature status 与公开 metadata 边界。",
+        "Seeded sessions 攜帶 account type、wallet source、chain、network、capabilities、signature status 與公開 metadata 邊界。",
+      ),
+      nextMissionAction: localized(
+        "Keep live adapter enablement behind provider QA and service registry gates.",
+        "真实 adapter 启用继续放在 provider QA 与 service registry gate 后。",
+        "真實 adapter 啟用繼續放在 provider QA 與 service registry gate 後。",
+      ),
+    }),
+    deliveryAcceptanceRow({
+      id: "v02-live-wallet-provider-evidence",
+      solutionSetId,
+      sourceArea: localized("v0.2 wallet QA checklist", "v0.2 钱包 QA 清单", "v0.2 錢包 QA 清單"),
+      title: localized("Live wallet provider evidence", "真实钱包 provider 证据", "真實錢包 provider 證據"),
+      status: "needs_live_evidence",
+      severity: "critical",
+      ownerRole: "internal_operator",
+      launchBlocking: true,
+      boundary: aelfWebLoginAdapterBoundary,
+      evidenceSurface: localized("Wallet Provider QA Gate and live connector review", "钱包 Provider QA 门禁与 live connector 审核", "錢包 Provider QA 門禁與 live connector 審核"),
+      evidenceSummary: localized(
+        "Seeded Portkey AA, EOA extension, wrong-chain, and unsupported-wallet paths are represented; live provider evidence is still missing.",
+        "Seeded Portkey AA、EOA extension、wrong-chain 与 unsupported-wallet 路径已展示；真实 provider 证据仍缺失。",
+        "Seeded Portkey AA、EOA extension、wrong-chain 與 unsupported-wallet 路徑已展示；真實 provider 證據仍缺失。",
+      ),
+      nextMissionAction: localized(
+        "Open a live wallet provider evidence mission before production wallet onboarding.",
+        "生产钱包 onboarding 前开启真实钱包 provider evidence mission。",
+        "生產錢包 onboarding 前開啟真實錢包 provider evidence mission。",
+      ),
+    }),
+    deliveryAcceptanceRow({
+      id: "v02-i18n-review-workflow",
+      solutionSetId,
+      sourceArea: localized("v0.2 i18n multilingual spec", "v0.2 多语言规范", "v0.2 多語言規範"),
+      title: localized("Default English and multilingual review", "默认英文与多语言审核", "預設英文與多語言審核"),
+      status: "proven",
+      severity: "high",
+      ownerRole: "project_owner",
+      evidenceSurface: localized("Translation Manager and locale selector", "翻译管理与语言选择器", "翻譯管理與語言選擇器"),
+      evidenceSummary: localized(
+        "en-US remains default; zh-CN and zh-TW are supported with AI draft, fallback, and human-review states.",
+        "en-US 保持默认；zh-CN 与 zh-TW 支持 AI 草稿、fallback 与人工审核状态。",
+        "en-US 保持預設；zh-CN 與 zh-TW 支援 AI 草稿、fallback 與人工審核狀態。",
+      ),
+      nextMissionAction: localized(
+        "Keep P1 locales deferred until a dedicated expansion mission approves content, QA, routing, analytics, and publish gates.",
+        "P1 语言继续后置，直到单独扩展 mission 批准内容、QA、路由、analytics 与发布门禁。",
+        "P1 語言繼續後置，直到單獨擴展 mission 批准內容、QA、路由、analytics 與發布門禁。",
+      ),
+    }),
+    deliveryAcceptanceRow({
+      id: "v02-contract-companion-plan",
+      solutionSetId,
+      sourceArea: localized("v0.2 contract modification plan", "v0.2 合约改造方案", "v0.2 合約改造方案"),
+      title: localized("Contract companion plan and MVP off-chain mode", "合约 companion 计划与 MVP 链下模式", "合約 companion 計畫與 MVP 鏈下模式"),
+      status: "partial",
+      severity: "high",
+      ownerRole: "contract_reviewer",
+      boundary: contractInterfaceBoundary,
+      evidenceSurface: localized("Contract review center and interface matrix", "合约审核中心与接口矩阵", "合約審核中心與接口矩陣"),
+      evidenceSummary: localized(
+        "CampaignRegistryV2, points ledger, referral registry, and eligibility root plans are visible, but no ABI or live contract transaction exists.",
+        "CampaignRegistryV2、points ledger、referral registry 与 eligibility root 计划可见，但没有 ABI 或真实合约交易。",
+        "CampaignRegistryV2、points ledger、referral registry 與 eligibility root 計畫可見，但沒有 ABI 或真實合約交易。",
+      ),
+      nextMissionAction: localized(
+        "Keep contract work as planning evidence until a P1 contract implementation mission is approved.",
+        "P1 合约实现 mission 批准前，合约工作保持为规划证据。",
+        "P1 合約實作 mission 批准前，合約工作保持為規劃證據。",
+      ),
+    }),
+    deliveryAcceptanceRow({
+      id: "v02-contract-claim-reward-custody",
+      solutionSetId,
+      sourceArea: localized("v0.2 contract claim mode", "v0.2 合约领取模式", "v0.2 合約領取模式"),
+      title: localized("Contract claim and reward custody remain blocked", "合约领取与奖励托管保持阻断", "合約領取與獎勵託管保持阻斷"),
+      status: "blocked",
+      severity: "critical",
+      ownerRole: "contract_reviewer",
+      launchBlocking: true,
+      boundary: noRewardCustodyBoundary,
+      evidenceSurface: localized("Contract Impact Review and Export Confirmation", "合约影响审核与导出确认", "合約影響審核與匯出確認"),
+      evidenceSummary: localized(
+        "Campaign OS previews winners and contract root options only; reward custody and claim execution require separate security, legal, and audit approval.",
+        "Campaign OS 只预览 winners 与 contract root options；奖励托管和 claim 执行需要单独的安全、法律与审计批准。",
+        "Campaign OS 只預覽 winners 與 contract root options；獎勵託管和 claim 執行需要單獨的安全、法律與審計批准。",
+      ),
+      nextMissionAction: localized(
+        "Do not open claim-mode implementation until custody and audit requirements are separately approved.",
+        "托管与审计要求单独批准前，不开启 claim-mode 实现。",
+        "託管與審計要求單獨批准前，不開啟 claim-mode 實作。",
+      ),
+    }),
+    deliveryAcceptanceRow({
+      id: "v02-p1-locale-expansion",
+      solutionSetId,
+      sourceArea: localized("v0.2 supported locale roadmap", "v0.2 支持语言路线图", "v0.2 支援語言路線圖"),
+      title: localized("P1 locale expansion remains deferred", "P1 语言扩展仍后置", "P1 語言擴展仍後置"),
+      status: "deferred",
+      severity: "low",
+      ownerRole: "project_owner",
+      evidenceSurface: localized("P1 locale expansion readiness", "P1 语言扩展 readiness", "P1 語言擴展 readiness"),
+      evidenceSummary: localized(
+        "ko-KR, ja-JP, vi-VN, id-ID, tr-TR, and es-ES are tracked as backlog rows, not active runtime locales.",
+        "ko-KR、ja-JP、vi-VN、id-ID、tr-TR 与 es-ES 作为 backlog rows 跟踪，不是当前激活 runtime locales。",
+        "ko-KR、ja-JP、vi-VN、id-ID、tr-TR 與 es-ES 作為 backlog rows 跟蹤，不是目前啟用 runtime locales。",
+      ),
+      nextMissionAction: localized(
+        "Open one locale activation mission only after content ownership and QA scope are approved.",
+        "内容归属与 QA 范围批准后，再为单个语言开启激活 mission。",
+        "內容歸屬與 QA 範圍批准後，再為單個語言開啟啟用 mission。",
+      ),
+    }),
+  ];
+};
+
+const deliveryAcceptanceSolutionSet = ({
+  id,
+  rows,
+  sourceReference,
+  summary,
+  title,
+}: {
+  id: DeliveryAcceptanceSolutionSetId;
+  rows: DeliveryAcceptanceRow[];
+  sourceReference: string;
+  summary: LocalizedText;
+  title: LocalizedText;
+}): DeliveryAcceptanceSolutionSet => ({
+  counts: deliveryAcceptanceCounts(rows),
+  id,
+  rows,
+  sourceReference,
+  summary,
+  title,
+});
+
+const deliveryAcceptanceResidualRank = (row: DeliveryAcceptanceRow) => {
+  const launchWeight = row.launchBlocking ? -1 : 0;
+
+  return [
+    acceptanceSeverityWeight[row.severity],
+    acceptanceStatusWeight[row.status],
+    launchWeight,
+    row.id,
+  ] as const;
+};
+
+const compareDeliveryAcceptanceResiduals = (
+  left: DeliveryAcceptanceRow,
+  right: DeliveryAcceptanceRow,
+) => {
+  const leftRank = deliveryAcceptanceResidualRank(left);
+  const rightRank = deliveryAcceptanceResidualRank(right);
+
+  for (let index = 0; index < leftRank.length - 1; index += 1) {
+    const delta = Number(leftRank[index]) - Number(rightRank[index]);
+    if (delta !== 0) {
+      return delta;
+    }
+  }
+
+  return left.id.localeCompare(right.id);
+};
+
+export const createDeliveryAcceptanceConsole = (): DeliveryAcceptanceConsole => {
+  const solutionSets = [
+    deliveryAcceptanceSolutionSet({
+      id: "v0_1_product_ui",
+      title: localized("v0.1 Product/UI foundation", "v0.1 产品/UI 基础", "v0.1 產品/UI 基礎"),
+      sourceReference: "docs/current/aelf_campaign_os_v0.1",
+      summary: localized(
+        "Core project, user, admin, builder, analytics, and export surfaces are product-visible with seeded/local evidence.",
+        "核心项目方、用户、管理员、构建器、analytics 与导出 surface 已具备产品可见 seeded/本地证据。",
+        "核心專案方、使用者、管理員、構建器、analytics 與匯出 surface 已具備產品可見 seeded/本地證據。",
+      ),
+      rows: v01AcceptanceRows(),
+    }),
+    deliveryAcceptanceSolutionSet({
+      id: "v0_2_wallet_i18n_contract",
+      title: localized("v0.2 Wallet/i18n/contract update", "v0.2 钱包/i18n/合约更新", "v0.2 錢包/i18n/合約更新"),
+      sourceReference: "docs/current/aelf_campaign_os_v0.2",
+      summary: localized(
+        "AA+EOA, default English, multilingual review, contract boundaries, API/export shape, and live-evidence gaps are represented.",
+        "AA+EOA、默认英文、多语言审核、合约边界、API/导出形态与真实证据缺口已展示。",
+        "AA+EOA、預設英文、多語言審核、合約邊界、API/匯出形態與真實證據缺口已展示。",
+      ),
+      rows: v02AcceptanceRows(),
+    }),
+  ];
+  const rows = solutionSets.flatMap((solutionSet) => solutionSet.rows);
+  const counts = deliveryAcceptanceCounts(rows);
+  const topResidualGaps = rows
+    .filter((row) => row.status !== "proven")
+    .sort(compareDeliveryAcceptanceResiduals)
+    .slice(0, 5);
+
+  return {
+    boundary: deliveryAcceptanceBoundary,
+    solutionSets,
+    summary: {
+      ...counts,
+      nextAction: topResidualGaps[0]?.nextMissionAction ?? localized(
+        "No residual gap is currently prioritized.",
+        "当前没有优先残留缺口。",
+        "目前沒有優先殘留缺口。",
+      ),
+      solutionSetCount: solutionSets.length,
+      topSeverity: topResidualGaps[0]?.severity ?? "low",
+      totalRows: rows.length,
+    },
+    topResidualGaps,
+  };
+};
 
 const deliveryChecklistCounts = (items: DeliveryChecklistItem[]) => ({
   blocked: deliveryChecklistStatusCount(items, "blocked"),
@@ -12852,6 +13275,7 @@ export const createAdminOpsReadModel = (
   return {
     campaignId: campaign.id,
     reviewQueue: campaign.reviewItems,
+    deliveryAcceptance: createDeliveryAcceptanceConsole(),
     deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
     walletProviderQaGate,
     aelfWebLoginAdapterReadiness,
