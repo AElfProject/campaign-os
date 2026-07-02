@@ -9,6 +9,7 @@ import {
   createLeaderboardReadModel,
   createParticipantWorkspaceReadModel,
   createParticipationReadModel,
+  createPortfolioCampaignHistoryReadModel,
   createUserWinnersExportStatusReadModel,
   createWalletConnectionDiagnostics,
   deriveTaskVerificationAction,
@@ -477,6 +478,36 @@ const ecosystemServiceStateLabel = (
   copy: typeof userAppCopy["en-US"],
 ) => (state === "seeded_preview" ? copy.ecosystemSeededPreview : copy.ecosystemNotConnected);
 
+const portfolioHistoryStateLabel = (
+  state: ReturnType<typeof createPortfolioCampaignHistoryReadModel>["rows"][number]["portfolioState"],
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels = {
+    archived: copy.ended,
+    blocked: copy.ecosystemLocked,
+    in_progress: copy.pending,
+    ready: copy.ready,
+    review_required: copy.reviewRequired,
+    scheduled: copy.comingSoon,
+  };
+
+  return labels[state];
+};
+
+const portfolioHistoryBadgeState = (
+  state: ReturnType<typeof createPortfolioCampaignHistoryReadModel>["rows"][number]["portfolioState"],
+) => {
+  if (state === "ready") {
+    return "ready";
+  }
+
+  if (state === "blocked") {
+    return "blocker";
+  }
+
+  return "warning";
+};
+
 const campaignStatusLabel = (status: CampaignStatus, copy: typeof userAppCopy["en-US"]) => {
   const labels: Record<CampaignStatus, string> = {
     draft: "Draft",
@@ -768,6 +799,78 @@ const MobileEcosystemCard = ({
   </article>
 );
 
+const PortfolioHistoryCard = ({
+  copy,
+  locale,
+  row,
+}: {
+  copy: typeof userAppCopy["en-US"];
+  locale: SupportedLocale;
+  row: ReturnType<typeof createPortfolioCampaignHistoryReadModel>["rows"][number];
+}) => (
+  <article style={{ ...cardStyle, alignContent: "space-between" }}>
+    <div style={rowStyle}>
+      <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+        <p style={labelStyle}>{campaignStatusLabel(row.campaignStatus, copy)}</p>
+        <strong style={{ color: "#071426", fontSize: 18, lineHeight: 1.2 }}>
+          {getLocalizedText(row.title, locale)}
+        </strong>
+      </div>
+      <span style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" }}>
+        <PublishStateBadge
+          label={portfolioHistoryStateLabel(row.portfolioState, copy)}
+          state={portfolioHistoryBadgeState(row.portfolioState)}
+        />
+        <PublishStateBadge
+          label={getLocalizedText(row.winnerExportStatusLabel, locale)}
+          state={winnersExportBadgeState(row.winnerExportStatus)}
+        />
+      </span>
+    </div>
+    <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+      {getLocalizedText(row.subtitle, locale)}
+    </p>
+    <dl style={{ display: "grid", gap: 8, margin: 0 }}>
+      {[
+        [copy.points, String(row.points)],
+        [copy.portfolioWallet, `${row.walletType} · ${formatSource(row.walletSource)}`],
+        [copy.portfolioLocale, row.localePreference],
+        [copy.portfolioEligibility, getLocalizedText(row.eligibilityLabel, locale)],
+        [copy.portfolioWinnerExport, getLocalizedText(row.winnerExportStatusLabel, locale)],
+        [copy.rank, row.rank ? `#${row.rank}` : "-"],
+        [copy.timeWindow, getLocalizedText(row.timeWindow, locale)],
+      ].map(([label, value]) => (
+        <div key={label} style={rowStyle}>
+          <dt style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>{label}</dt>
+          <dd style={{ color: "#071426", fontSize: 13, fontWeight: 700, margin: 0, overflowWrap: "anywhere" }}>
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+    <div style={{ display: "grid", gap: 8 }}>
+      <div style={rowStyle}>
+        <span style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>
+          {copy.missingTasks}
+        </span>
+        {renderChips(row.missingTaskIds, copy.noMissingTasks)}
+      </div>
+      <div style={rowStyle}>
+        <span style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>
+          {copy.riskFlags}
+        </span>
+        {renderChips(row.riskFlags, copy.riskClear)}
+      </div>
+    </div>
+    <p style={{ color: "#475569", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+      {copy.nextAction}: {getLocalizedText(row.nextAction, locale)}
+    </p>
+    <p style={{ color: "#92400e", fontSize: 12, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+      {getLocalizedText(row.boundary, locale)}
+    </p>
+  </article>
+);
+
 export const UserAppPanel = ({
   campaign = campaignDetail,
   locale,
@@ -787,6 +890,7 @@ export const UserAppPanel = ({
   const eligibilityResult = eligibilityChecker.result;
   const leaderboard = createLeaderboardReadModel(campaign, leaderboardMode);
   const ecosystemNextActions = createEcosystemNextActionReadModel(campaign, participant);
+  const portfolioCampaignHistory = createPortfolioCampaignHistoryReadModel(campaign, participant);
   const taskStates = participation.taskStates;
   const completedCount = taskStates.filter((task) => task.completed).length;
   const title = getLocalizedText(campaign.title, locale);
@@ -831,6 +935,22 @@ export const UserAppPanel = ({
       String(ecosystemNextActions.summary.reviewCount),
       ecosystemNextActions.summary.reviewCount > 0 ? "warning" : "ready",
     ],
+  ];
+  const portfolioSummaryMetrics: Array<[string, string, "ready" | "warning" | "blocker"]> = [
+    [copy.portfolioActiveCampaigns, String(portfolioCampaignHistory.summary.activeCount), "ready"],
+    [copy.portfolioHistoricalCampaigns, String(portfolioCampaignHistory.summary.historicalCount), "ready"],
+    [
+      copy.portfolioReviewRows,
+      String(portfolioCampaignHistory.summary.reviewRequiredCount),
+      portfolioCampaignHistory.summary.reviewRequiredCount > 0 ? "warning" : "ready",
+    ],
+    [
+      copy.portfolioBlockedRows,
+      String(portfolioCampaignHistory.summary.blockerCount),
+      portfolioCampaignHistory.summary.blockerCount > 0 ? "blocker" : "ready",
+    ],
+    [copy.portfolioExportReady, String(portfolioCampaignHistory.summary.exportReadyCount), "ready"],
+    [copy.portfolioTotalPoints, String(portfolioCampaignHistory.summary.totalPoints), "ready"],
   ];
   const submitEligibilityCheck = () => {
     setCheckedEligibilityAddress(eligibilityAddressInput.trim());
@@ -1057,6 +1177,49 @@ export const UserAppPanel = ({
         </div>
         <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
           {copy.ecosystemBoundary}
+        </p>
+      </section>
+
+      <section aria-label={copy.portfolioCampaignHistory} style={panelStyle}>
+        <div style={rowStyle}>
+          <div>
+            <p style={labelStyle}>{copy.appHubPortfolio}</p>
+            <h2 style={{ fontSize: 28, lineHeight: 1.1, margin: "4px 0" }}>
+              {copy.portfolioCampaignHistory}
+            </h2>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.portfolioCampaignHistorySubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={`${copy.portfolioState}: ${portfolioHistoryStateLabel(portfolioCampaignHistory.rows[0]?.portfolioState ?? "in_progress", copy)}`}
+            state={portfolioHistoryBadgeState(portfolioCampaignHistory.rows[0]?.portfolioState ?? "in_progress")}
+          />
+        </div>
+        <div style={metricGridStyle}>
+          {portfolioSummaryMetrics.map(([label, value, state]) => (
+            <article key={label} style={cardStyle}>
+              <p style={labelStyle}>{label}</p>
+              <p style={valueStyle}>{value}</p>
+              <PublishStateBadge label={String(state)} state={state} />
+            </article>
+          ))}
+        </div>
+        <p style={{ color: "#071426", fontSize: 15, fontWeight: 900, lineHeight: 1.45, margin: 0 }}>
+          {getLocalizedText(portfolioCampaignHistory.nextAction, locale)}
+        </p>
+        <div style={feedGridStyle}>
+          {portfolioCampaignHistory.rows.map((row) => (
+            <PortfolioHistoryCard
+              copy={copy}
+              key={row.campaignId}
+              locale={locale}
+              row={row}
+            />
+          ))}
+        </div>
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+          {copy.portfolioBoundary}
         </p>
       </section>
 
