@@ -1,4 +1,5 @@
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
+import { CheckCircle2, FileCheck2, RotateCcw, XCircle, type LucideIcon } from "lucide-react";
 import {
   campaignDetail,
   computePublishReadiness,
@@ -7,6 +8,7 @@ import {
   createExportConfirmationReadinessGate,
   createLiveWalletConnectorBoundary,
   createServiceDegradationGovernance,
+  executeWalletProviderEvidenceReviewAction,
   createParticipationReadModel,
   getLocalizedText,
   type AelfWebLoginAdapterLiveEvidenceStatus,
@@ -59,10 +61,14 @@ import {
   type WalletProviderEvidenceApprovalRuleState,
   type WalletProviderEvidenceApprovalState,
   type WalletProviderEvidenceReleaseImpact,
+  type WalletProviderEvidenceReviewActionId,
+  type WalletProviderEvidenceReviewActionResult,
+  type WalletProviderEvidenceReviewArtifactReference,
   type WalletProviderEvidenceRequestStatus,
   type WalletProviderEvidenceReleaseState,
   type WalletProviderEvidenceReviewState,
   type WalletProviderEvidenceStatus,
+  type WalletProviderQaScenarioId,
   type WalletProviderQaLiveEvidenceStatus,
   type WalletProviderQaReleaseImpact,
   type WalletProviderQaSeededStatus,
@@ -301,6 +307,42 @@ const chipStyle: CSSProperties = {
   background: "#eff6ff",
   borderColor: "#93c5fd",
   color: "#1e40af",
+};
+
+const actionButtonStyle: CSSProperties = {
+  alignItems: "center",
+  background: "#0f172a",
+  border: "1px solid #0f172a",
+  borderRadius: 8,
+  color: "#ffffff",
+  cursor: "pointer",
+  display: "inline-flex",
+  fontSize: 12,
+  fontWeight: 850,
+  gap: 7,
+  justifyContent: "center",
+  lineHeight: 1.2,
+  minHeight: 36,
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  padding: "8px 10px",
+  textAlign: "left",
+  wordBreak: "break-word",
+};
+
+const disabledActionButtonStyle: CSSProperties = {
+  ...actionButtonStyle,
+  background: "#f8fafc",
+  border: "1px solid #cbd5e1",
+  color: "#64748b",
+  cursor: "not-allowed",
+};
+
+const actionButtonGridStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(170px, 100%), 1fr))",
+  minWidth: 0,
 };
 
 const sourceMetricToneStyles: Record<AiOptimizationMetricTone, CSSProperties> = {
@@ -1052,6 +1094,52 @@ const walletProviderEvidenceArtifactTypeLabel = (
   return labels[artifactType];
 };
 
+const walletProviderEvidenceReviewActionIcon: Record<WalletProviderEvidenceReviewActionId, LucideIcon> = {
+  approve_evidence: CheckCircle2,
+  reject_evidence: XCircle,
+  reopen_evidence: RotateCcw,
+  submit_evidence: FileCheck2,
+};
+
+const walletProviderEvidenceReviewActionLabel = (
+  actionId: WalletProviderEvidenceReviewActionId,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<WalletProviderEvidenceReviewActionId, string> = {
+    approve_evidence: copy.walletProviderReviewActionApprove,
+    reject_evidence: copy.walletProviderReviewActionReject,
+    reopen_evidence: copy.walletProviderReviewActionReopen,
+    submit_evidence: copy.walletProviderReviewActionSubmit,
+  };
+
+  return labels[actionId];
+};
+
+const walletProviderEvidenceLocalReferences = (
+  scenarioId: WalletProviderQaScenarioId,
+  artifactIds: string[],
+): WalletProviderEvidenceReviewArtifactReference[] => {
+  const artifactTypeById = (artifactId: string): WalletProviderEvidenceArtifactType =>
+    artifactId.endsWith("-qa-run")
+      ? "qa_run"
+      : artifactId.endsWith("-runbook")
+        ? "runbook"
+        : "screenshot";
+
+  return artifactIds.map((artifactId) => ({
+    artifactType: artifactTypeById(artifactId),
+    reference: `local-wallet-qa/${scenarioId}/${artifactId}-review-reference`,
+  }));
+};
+
+const walletProviderEvidenceResultState = (
+  result: WalletProviderEvidenceReviewActionResult,
+): PublishState => result.ok
+  ? result.releaseReadiness.summary.ready
+    ? "ready"
+    : "warning"
+  : "blocker";
+
 const walletCompatibilityLabel = (
   value: string,
   copy: typeof adminOpsCopy["en-US"],
@@ -1072,6 +1160,8 @@ export const AdminOpsPanel = ({
 }: AdminOpsPanelProps) => {
   const copy = adminOpsCopy[locale];
   const adminOps = createAdminOpsReadModel(campaign);
+  const [walletProviderEvidenceActionResult, setWalletProviderEvidenceActionResult] =
+    useState<WalletProviderEvidenceReviewActionResult | null>(null);
   const exportReadiness = createExportConfirmationReadinessGate(campaign);
   const exportArtifact = createExportArtifact(campaign.exportPreview, "csv");
   const exportFulfillmentReadiness = adminOps.exportFulfillmentReadiness;
@@ -1085,11 +1175,16 @@ export const AdminOpsPanel = ({
   const p1LocaleActivationReadiness = adminOps.p1LocaleActivationReadiness;
   const deliveryAcceptance = adminOps.deliveryAcceptance;
   const residualGapMissionQueue = adminOps.residualGapMissionQueue;
-  const walletProviderEvidenceIntake = adminOps.walletProviderEvidenceIntake;
-  const walletProviderEvidenceApprovalAudit = adminOps.walletProviderEvidenceApprovalAudit;
-  const walletProviderEvidenceReleaseReadiness = adminOps.walletProviderEvidenceReleaseReadiness;
-  const walletProviderEvidenceCloseoutPackage = adminOps.walletProviderEvidenceCloseoutPackage;
-  const walletProviderEvidenceRequestPacket = adminOps.walletProviderEvidenceRequestPacket;
+  const walletProviderEvidenceIntake =
+    walletProviderEvidenceActionResult?.updatedIntake ?? adminOps.walletProviderEvidenceIntake;
+  const walletProviderEvidenceApprovalAudit =
+    walletProviderEvidenceActionResult?.approvalAudit ?? adminOps.walletProviderEvidenceApprovalAudit;
+  const walletProviderEvidenceReleaseReadiness =
+    walletProviderEvidenceActionResult?.releaseReadiness ?? adminOps.walletProviderEvidenceReleaseReadiness;
+  const walletProviderEvidenceCloseoutPackage =
+    walletProviderEvidenceActionResult?.closeoutPackage ?? adminOps.walletProviderEvidenceCloseoutPackage;
+  const walletProviderEvidenceRequestPacket =
+    walletProviderEvidenceActionResult?.requestPacket ?? adminOps.walletProviderEvidenceRequestPacket;
   const lifecycleOperations = adminOps.lifecycleOperations;
   const launchConsoleBundles = adminOps.launchConsoleCampaignBundles;
   const launchBlockingGates = launchConsoleBundles.bundles.flatMap((bundle) =>
@@ -1591,6 +1686,53 @@ export const AdminOpsPanel = ({
       value: walletProviderEvidenceRequestPacket.summary.launchBlockingRequests,
     },
   ];
+  const runWalletProviderEvidenceReviewAction = (
+    actionId: WalletProviderEvidenceReviewActionId,
+    scenarioId: WalletProviderQaScenarioId,
+    requiredArtifactIds: string[],
+  ) => {
+    const artifactReferences =
+      actionId === "submit_evidence" || actionId === "reopen_evidence"
+        ? walletProviderEvidenceLocalReferences(scenarioId, requiredArtifactIds)
+        : undefined;
+    const result = executeWalletProviderEvidenceReviewAction(
+      campaign,
+      walletProviderEvidenceIntake,
+      adminOps.walletProviderQaGate,
+      {
+        actionId,
+        artifactReferences,
+        executedAt: "2026-07-03T21:45:00Z",
+        reason:
+          actionId === "reject_evidence"
+            ? {
+              "en-US": "Local reviewer rejected this evidence; replacement references are required before approval.",
+              "zh-CN": "本地审核人已拒绝该证据；批准前需要替代引用。",
+              "zh-TW": "本地審核人已拒絕該證據；批准前需要替代引用。",
+            }
+            : undefined,
+        replaceEvidence: actionId === "reopen_evidence",
+        reviewer: "internal_operator",
+        scenarioId,
+      },
+    );
+
+    setWalletProviderEvidenceActionResult(result);
+  };
+  const walletProviderEvidenceActionsByScenario = Object.fromEntries(
+    walletProviderEvidenceRequestPacket.scenarios.map((scenario) => [
+      scenario.id,
+      executeWalletProviderEvidenceReviewAction(
+        campaign,
+        walletProviderEvidenceIntake,
+        adminOps.walletProviderQaGate,
+        {
+          actionId: "__metadata_only__",
+          scenarioId: scenario.id,
+        },
+      ).actions,
+    ]),
+  );
 
   const riskIntelligenceSummaryItems = [
     {
@@ -3335,6 +3477,27 @@ export const AdminOpsPanel = ({
           </span>
         </div>
         <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.walletProviderReviewActionsBoundary}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.walletProviderReviewActions}: {copy.walletProviderReviewActionsSubtitle}
+          </p>
+          {walletProviderEvidenceActionResult ? (
+            <p style={{ margin: "8px 0 0" }}>
+              {copy.walletProviderReviewLatestResult}:{" "}
+              <strong>{walletProviderEvidenceActionResult.ok
+                ? copy.walletProviderReviewActionSucceeded
+                : copy.walletProviderReviewActionBlocked}</strong>{" "}
+              · {copy.walletProviderReviewScenario}: {walletProviderEvidenceActionResult.scenarioId} ·{" "}
+              {copy.walletProviderApprovedRequiredScenarios}:{" "}
+              {walletProviderEvidenceActionResult.releaseReadiness.summary.approvedRequiredScenarios}/
+              {walletProviderEvidenceActionResult.releaseReadiness.summary.requiredScenarios} ·{" "}
+              {getLocalizedText(walletProviderEvidenceActionResult.nextAction, locale)}
+            </p>
+          ) : (
+            <p style={{ margin: "8px 0 0" }}>{copy.walletProviderReviewNoLatestResult}</p>
+          )}
+        </div>
+        <div style={boundaryStyle}>
           <p style={{ margin: 0 }}>{getLocalizedText(walletProviderEvidenceRequestPacket.boundary, locale)}</p>
           <p style={{ margin: "8px 0 0" }}>
             {copy.walletProviderEvidenceTopScenario}: {walletProviderEvidenceRequestPacket.summary.topScenarioId}
@@ -3457,6 +3620,43 @@ export const AdminOpsPanel = ({
               <p style={wrapTextStyle}>
                 {copy.nonLiveBoundary}: {getLocalizedText(scenario.boundary, locale)}
               </p>
+              <div style={stackStyle}>
+                <p style={labelStyle}>{copy.walletProviderReviewActions}</p>
+                <div style={actionButtonGridStyle}>
+                  {([
+                    "submit_evidence",
+                    "approve_evidence",
+                    "reject_evidence",
+                    "reopen_evidence",
+                  ] as WalletProviderEvidenceReviewActionId[]).map((actionId) => {
+                    const scenarioActions = walletProviderEvidenceActionsByScenario[scenario.id];
+                    const action = scenarioActions?.find((candidate) => candidate.id === actionId);
+                    const disabled = action?.state === "blocked";
+                    const Icon = walletProviderEvidenceReviewActionIcon[actionId];
+
+                    return (
+                      <button
+                        aria-label={`${walletProviderEvidenceReviewActionLabel(actionId, copy)} · ${scenario.id}`}
+                        disabled={disabled}
+                        key={actionId}
+                        onClick={() =>
+                          runWalletProviderEvidenceReviewAction(
+                            actionId,
+                            scenario.id,
+                            scenario.requiredArtifactIds,
+                          )
+                        }
+                        style={disabled ? disabledActionButtonStyle : actionButtonStyle}
+                        title={action ? getLocalizedText(action.blockedReason ?? action.nextAction, locale) : copy.walletProviderReviewActionsBoundary}
+                        type="button"
+                      >
+                        <Icon aria-hidden="true" size={15} strokeWidth={2.4} />
+                        {walletProviderEvidenceReviewActionLabel(actionId, copy)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </article>
           ))}
         </div>
