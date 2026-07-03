@@ -265,6 +265,33 @@ export type EcosystemNextActionProductId = "Pay" | "Forecast" | "Portfolio";
 export type EcosystemRecommendationStatus = "ready" | "locked" | "review" | "completed";
 export type EcosystemRecommendationPriority = "primary" | "secondary" | "tertiary";
 export type EcosystemRecommendationSignalTone = "ready" | "warning" | "blocker";
+export type DaippAgentCoinTaskIntentId =
+  | "daipp-agent-page-visit-readiness"
+  | "daipp-agent-interaction-evidence"
+  | "daipp-agent-coin-buy-hold-review"
+  | "daipp-ai-intro-share-review"
+  | "daipp-launch-leaderboard-review";
+export type DaippAgentCoinTaskProviderState =
+  | "not_connected"
+  | "seeded_preview"
+  | "review_required"
+  | "blocked";
+export type DaippAgentCoinTaskReadinessState =
+  | "ready"
+  | "review_required"
+  | "blocked";
+export type DaippAgentCoinTaskOwnerRole =
+  | "project_owner"
+  | "operator"
+  | "content_reviewer"
+  | "daipp_provider_reviewer";
+export type DaippAgentCoinTaskEvidenceSource =
+  | "seeded_local"
+  | "daipp_api"
+  | "daipp_contract_event"
+  | "agent_interaction_log"
+  | "ai_intro_share_review"
+  | "launch_leaderboard";
 export type ForestNftTaskIntentId =
   | "forest-nft-mint-readiness"
   | "forest-nft-holder-evidence"
@@ -2835,6 +2862,40 @@ export interface MobileTelegramMiniAppHubReadiness {
   aiGuide: MobileHubAiGuide;
   boundary: LocalizedText;
   ownerNextAction: LocalizedText;
+}
+
+export interface DaippAgentCoinTaskReadinessRow {
+  id: string;
+  intentId: DaippAgentCoinTaskIntentId;
+  label: LocalizedText;
+  description: LocalizedText;
+  verificationType: "DAPP_API";
+  evidenceSource: DaippAgentCoinTaskEvidenceSource;
+  providerState: DaippAgentCoinTaskProviderState;
+  readinessState: DaippAgentCoinTaskReadinessState;
+  riskState: LocalizedText;
+  ownerRole: DaippAgentCoinTaskOwnerRole;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface DaippAgentCoinTaskReadinessSummary {
+  totalTasks: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  topState: DaippAgentCoinTaskReadinessState;
+  topIntentId: DaippAgentCoinTaskIntentId;
+  primaryOwnerRole: DaippAgentCoinTaskOwnerRole;
+  boundary: LocalizedText;
+}
+
+export interface DaippAgentCoinTaskReadiness {
+  campaignId: string;
+  summary: DaippAgentCoinTaskReadinessSummary;
+  rows: DaippAgentCoinTaskReadinessRow[];
+  ownerNextAction: LocalizedText;
+  boundary: LocalizedText;
 }
 
 export interface ForestNftTaskReadinessRow {

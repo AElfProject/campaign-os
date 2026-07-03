@@ -133,6 +133,13 @@ import type {
   ExportFulfillmentPackage,
   ExportFulfillmentReadiness,
   ExportFulfillmentSafety,
+  DaippAgentCoinTaskEvidenceSource,
+  DaippAgentCoinTaskIntentId,
+  DaippAgentCoinTaskOwnerRole,
+  DaippAgentCoinTaskProviderState,
+  DaippAgentCoinTaskReadiness,
+  DaippAgentCoinTaskReadinessRow,
+  DaippAgentCoinTaskReadinessState,
   ForestNftTaskEvidenceSource,
   ForestNftTaskIntentId,
   ForestNftTaskOwnerRole,
@@ -13952,6 +13959,246 @@ export const forestNftTaskReadinessBoundary: LocalizedText = localized(
   "仅 seeded/本地 Forest NFT 任务 readiness。不会调用实时 Forest service/API，不会连接 NFT marketplace/indexer，不会执行 NFT mint、NFT transfer、NFT trade/listing、钱包签名、钱包 SDK/provider 调用、后端 mutation、合约读取/发送/写入、奖励托管或发奖。",
   "Seeded/local Forest NFT task readiness only. No live Forest service/API, NFT marketplace/indexer, NFT mint execution, NFT transfer execution, NFT trade/listing execution, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, reward custody, or reward distribution is executed.",
 );
+
+export const daippAgentCoinTaskReadinessBoundary: LocalizedText = localized(
+  "Seeded/local daipp Agent Coin task readiness only. No live daipp service/API, agent execution, AI generation, token launch, token buy/hold/transfer, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地 daipp Agent Coin 任务 readiness。不会调用真实 daipp service/API，不会执行 agent、AI 生成、token launch、token buy/hold/transfer、钱包签名、钱包 SDK/provider 调用、后端 mutation、合约读取/发送/写入、奖励托管或发奖。",
+  "Seeded/local daipp Agent Coin task readiness only. No live daipp service/API, agent execution, AI generation, token launch, token buy/hold/transfer, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, reward custody, or reward distribution is executed.",
+);
+
+const daippAgentCoinTaskIntentLabels: Record<DaippAgentCoinTaskIntentId, LocalizedText> = {
+  "daipp-agent-page-visit-readiness": localized(
+    "Agent page visit readiness",
+    "Agent 页面访问 readiness",
+    "Agent page visit readiness",
+  ),
+  "daipp-agent-interaction-evidence": localized(
+    "Agent interaction evidence",
+    "Agent 互动证据",
+    "Agent interaction evidence",
+  ),
+  "daipp-agent-coin-buy-hold-review": localized(
+    "Agent coin buy/hold review",
+    "Agent coin buy/hold 审核",
+    "Agent coin buy/hold review",
+  ),
+  "daipp-ai-intro-share-review": localized(
+    "AI intro share review",
+    "AI intro 分享审核",
+    "AI intro share review",
+  ),
+  "daipp-launch-leaderboard-review": localized(
+    "Launch leaderboard review",
+    "Launch 排行榜审核",
+    "Launch leaderboard review",
+  ),
+};
+
+const daippAgentCoinTaskIntentDescriptions: Record<DaippAgentCoinTaskIntentId, LocalizedText> = {
+  "daipp-agent-page-visit-readiness": localized(
+    "Review whether an agent page visit task can be represented from seeded campaign metadata before publish.",
+    "发布前审核 agent 页面访问任务是否可由 seeded 活动 metadata 表达。",
+    "Review whether an agent page visit task can be represented from seeded campaign metadata before publish.",
+  ),
+  "daipp-agent-interaction-evidence": localized(
+    "Review daipp agent interaction evidence before using it in campaign scoring.",
+    "将 daipp agent 互动计入活动计分前，先审核互动证据。",
+    "Review daipp agent interaction evidence before using it in campaign scoring.",
+  ),
+  "daipp-agent-coin-buy-hold-review": localized(
+    "Review agent coin buy/hold evidence and contract ownership before counting token participation.",
+    "计入 token 参与前，先审核 agent coin buy/hold 证据与合约归属。",
+    "Review agent coin buy/hold evidence and contract ownership before counting token participation.",
+  ),
+  "daipp-ai-intro-share-review": localized(
+    "Review AI-generated intro share copy before using it as a campaign social task.",
+    "将 AI-generated intro 分享作为活动社交任务前，先审核分享文案。",
+    "Review AI-generated intro share copy before using it as a campaign social task.",
+  ),
+  "daipp-launch-leaderboard-review": localized(
+    "Review launch leaderboard ownership before ranking campaign users by daipp launch participation.",
+    "按 daipp launch 参与为活动用户排名前，先审核 launch 排行榜归属。",
+    "Review launch leaderboard ownership before ranking campaign users by daipp launch participation.",
+  ),
+};
+
+const daippAgentCoinRiskStates: Record<DaippAgentCoinTaskReadinessState, LocalizedText> = {
+  ready: localized(
+    "Local seeded daipp readiness is enough for owner review, but it is not live daipp verification.",
+    "本地 seeded daipp readiness 足够进入 owner review，但不是真实 daipp 验证。",
+    "Local seeded daipp readiness is enough for owner review, but it is not live daipp verification.",
+  ),
+  review_required: localized(
+    "daipp agent, API, or share evidence needs operator review before it can affect campaign scoring.",
+    "daipp agent、API 或分享证据需要运营审核后，才能影响活动计分。",
+    "daipp agent, API, or share evidence needs operator review before it can affect campaign scoring.",
+  ),
+  blocked: localized(
+    "daipp token or launch leaderboard usage is blocked until provider ownership and evidence boundaries are reviewed.",
+    "daipp token 或 launch 排行榜使用在 provider 归属与证据边界审核前保持阻断。",
+    "daipp token or launch leaderboard usage is blocked until provider ownership and evidence boundaries are reviewed.",
+  ),
+};
+
+const daippAgentCoinNextActionFor = (
+  intentId: DaippAgentCoinTaskIntentId,
+  readinessState: DaippAgentCoinTaskReadinessState,
+): LocalizedText => {
+  if (readinessState === "blocked") {
+    return localized(
+      "Review daipp provider ownership, token evidence, and launch leaderboard boundary before campaign publish.",
+      "发布活动前先审核 daipp provider 归属、token 证据与 launch 排行榜边界。",
+      "Review daipp provider ownership, token evidence, and launch leaderboard boundary before campaign publish.",
+    );
+  }
+
+  if (readinessState === "review_required") {
+    return localized(
+      "Ask an operator to confirm daipp agent interaction and intro share evidence remain local-only and reviewable.",
+      "请运营确认 daipp agent 互动与 intro 分享证据保持本地-only 且可审核。",
+      "Ask an operator to confirm daipp agent interaction and intro share evidence remain local-only and reviewable.",
+    );
+  }
+
+  if (intentId === "daipp-agent-page-visit-readiness") {
+    return localized(
+      "Keep agent page visit readiness as a seeded/local campaign task until daipp service ownership is approved.",
+      "在 daipp 服务归属获批前，将 agent 页面访问 readiness 保持为 seeded/本地活动任务。",
+      "Keep agent page visit readiness as a seeded/local campaign task until daipp service ownership is approved.",
+    );
+  }
+
+  return localized(
+    "Keep daipp task readiness in local owner review before live integration.",
+    "在真实集成前，将 daipp 任务 readiness 保持在本地 owner review。",
+    "Keep daipp task readiness in local owner review before live integration.",
+  );
+};
+
+const createDaippAgentCoinReadinessRow = (input: {
+  evidenceSource: DaippAgentCoinTaskEvidenceSource;
+  intentId: DaippAgentCoinTaskIntentId;
+  ownerRole: DaippAgentCoinTaskOwnerRole;
+  providerState: DaippAgentCoinTaskProviderState;
+  readinessState: DaippAgentCoinTaskReadinessState;
+}): DaippAgentCoinTaskReadinessRow => ({
+  id: `daipp-agent-coin-${input.intentId}`,
+  intentId: input.intentId,
+  label: daippAgentCoinTaskIntentLabels[input.intentId],
+  description: daippAgentCoinTaskIntentDescriptions[input.intentId],
+  verificationType: "DAPP_API",
+  evidenceSource: input.evidenceSource,
+  providerState: input.providerState,
+  readinessState: input.readinessState,
+  riskState: daippAgentCoinRiskStates[input.readinessState],
+  ownerRole: input.ownerRole,
+  nextAction: daippAgentCoinNextActionFor(input.intentId, input.readinessState),
+  boundary: daippAgentCoinTaskReadinessBoundary,
+});
+
+const daippAgentCoinTaskStateRank: Record<DaippAgentCoinTaskReadinessState, number> = {
+  blocked: 3,
+  review_required: 2,
+  ready: 1,
+};
+
+const createDaippAgentCoinTaskRows = (): DaippAgentCoinTaskReadinessRow[] => [
+  createDaippAgentCoinReadinessRow({
+    evidenceSource: "seeded_local",
+    intentId: "daipp-agent-page-visit-readiness",
+    ownerRole: "project_owner",
+    providerState: "seeded_preview",
+    readinessState: "ready",
+  }),
+  createDaippAgentCoinReadinessRow({
+    evidenceSource: "agent_interaction_log",
+    intentId: "daipp-agent-interaction-evidence",
+    ownerRole: "operator",
+    providerState: "review_required",
+    readinessState: "review_required",
+  }),
+  createDaippAgentCoinReadinessRow({
+    evidenceSource: "daipp_contract_event",
+    intentId: "daipp-agent-coin-buy-hold-review",
+    ownerRole: "daipp_provider_reviewer",
+    providerState: "blocked",
+    readinessState: "blocked",
+  }),
+  createDaippAgentCoinReadinessRow({
+    evidenceSource: "ai_intro_share_review",
+    intentId: "daipp-ai-intro-share-review",
+    ownerRole: "content_reviewer",
+    providerState: "review_required",
+    readinessState: "review_required",
+  }),
+  createDaippAgentCoinReadinessRow({
+    evidenceSource: "launch_leaderboard",
+    intentId: "daipp-launch-leaderboard-review",
+    ownerRole: "daipp_provider_reviewer",
+    providerState: "not_connected",
+    readinessState: "blocked",
+  }),
+];
+
+const createDaippAgentCoinTaskSummary = (
+  rows: DaippAgentCoinTaskReadinessRow[],
+): DaippAgentCoinTaskReadiness["summary"] => {
+  const topRow = [...rows].sort(
+    (left, right) => daippAgentCoinTaskStateRank[right.readinessState] - daippAgentCoinTaskStateRank[left.readinessState],
+  )[0] ?? rows[0];
+
+  return {
+    totalTasks: rows.length,
+    readyCount: rows.filter((row) => row.readinessState === "ready").length,
+    reviewRequiredCount: rows.filter((row) => row.readinessState === "review_required").length,
+    blockedCount: rows.filter((row) => row.readinessState === "blocked").length,
+    topState: topRow?.readinessState ?? "blocked",
+    topIntentId: topRow?.intentId ?? "daipp-agent-coin-buy-hold-review",
+    primaryOwnerRole: topRow?.ownerRole ?? "daipp_provider_reviewer",
+    boundary: daippAgentCoinTaskReadinessBoundary,
+  };
+};
+
+const daippAgentCoinTaskOwnerNextActionFor = (
+  summary: DaippAgentCoinTaskReadiness["summary"],
+): LocalizedText => {
+  if (summary.blockedCount > 0) {
+    return localized(
+      "Review daipp provider ownership, token evidence, and launch leaderboard boundaries before treating daipp tasks as publish-ready.",
+      "先审核 daipp provider 归属、token 证据与 launch 排行榜边界，再将 daipp 任务视为可发布。",
+      "Review daipp provider ownership, token evidence, and launch leaderboard boundaries before treating daipp tasks as publish-ready.",
+    );
+  }
+
+  if (summary.reviewRequiredCount > 0) {
+    return localized(
+      "Complete operator review for daipp agent interaction and share evidence before publish.",
+      "发布前完成 daipp agent 互动与分享证据的运营审核。",
+      "Complete operator review for daipp agent interaction and share evidence before publish.",
+    );
+  }
+
+  return localized(
+    "Keep daipp Agent Coin tasks in local owner review until live daipp integration is approved.",
+    "在真实 daipp 集成获批前，将 daipp Agent Coin 任务保持在本地 owner review。",
+    "Keep daipp Agent Coin tasks in local owner review until live daipp integration is approved.",
+  );
+};
+
+export const createDaippAgentCoinTaskReadiness = (
+  campaign: CampaignShellDetail,
+): DaippAgentCoinTaskReadiness => {
+  const rows = createDaippAgentCoinTaskRows();
+  const summary = createDaippAgentCoinTaskSummary(rows);
+
+  return {
+    campaignId: campaign.id,
+    summary,
+    rows,
+    ownerNextAction: daippAgentCoinTaskOwnerNextActionFor(summary),
+    boundary: daippAgentCoinTaskReadinessBoundary,
+  };
+};
 
 const forestNftTaskIntentLabels: Record<ForestNftTaskIntentId, LocalizedText> = {
   "forest-nft-mint-readiness": localized(
