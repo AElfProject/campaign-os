@@ -6,6 +6,7 @@ import {
   createAiCampaignPlannerDecisionConsole,
   createCampaignCreationWorkflowReadiness,
   createCampaignTemplatePack,
+  createRewardEligibilityReview,
   createTaskTemplateFilterSummary,
   createPublishGateDecisionCenter,
   defaultTaskTemplateFilters,
@@ -55,6 +56,22 @@ const campaignQualityDraft = (
 
 const qualityGateFrom = (draft: CampaignDraft) =>
   createPublishGateDecisionCenter(draft).gates.find((gate) => gate.id === "campaign-quality");
+
+const socialOnlyDraft = (): CampaignDraft => ({
+  ...seededCampaignDraft,
+  selectedTaskTemplateIds: ["tpl-social-share", "tpl-invite-friend"],
+  eligibilityRule: {
+    ...seededCampaignDraft.eligibilityRule,
+    manualReviewRequired: false,
+    referralValidationEnabled: false,
+    requiredTaskTemplateIds: ["tpl-social-share"],
+    riskFlagsEnabled: false,
+  },
+  rewardPlan: {
+    ...seededCampaignDraft.rewardPlan,
+    estimatedRewardValueUsd: 3000,
+  },
+});
 
 describe("Campaign Builder domain foundation", () => {
   it("keeps builder locale support aligned to exact MVP locales", () => {
@@ -496,6 +513,108 @@ describe("Campaign Builder domain foundation", () => {
     expect(localizedDisclaimerGate?.reason["en-US"]).toContain("zh-CN");
     expect(localizedDisclaimerGate?.reason["en-US"]).toContain("zh-TW");
     expect(localizedDisclaimerGate?.nextAction["en-US"]).toContain("localized reward disclaimers");
+  });
+
+  it("creates deterministic reward eligibility review guidance for the seeded draft", () => {
+    const review = createRewardEligibilityReview(seededCampaignDraft);
+    const repeatedReview = createRewardEligibilityReview(seededCampaignDraft);
+
+    expect(repeatedReview).toEqual(review);
+    expect(review.summary).toMatchObject({
+      exportFormats: ["csv", "json", "task_records", "risk_flags"],
+      pointsThreshold: 160,
+      rewardProvider: "campaign_project",
+      rewardTypes: ["points", "token"],
+      signedMessageRequired: true,
+      walletPolicy: "ANY",
+      winnerRule: "top_n",
+    });
+    expect(review.requiredTasks.map((task) => [task.id, task.required])).toEqual([
+      ["tpl-wallet-connect", true],
+      ["tpl-bridge-ebridge", true],
+      ["tpl-swap-awaken", false],
+      ["tpl-social-share", false],
+    ]);
+    expect(review.requiredTasks.find((task) => task.id === "tpl-bridge-ebridge")).toMatchObject({
+      points: 120,
+      required: true,
+      verificationType: "ON_CHAIN",
+      walletCompatibility: "ANY",
+    });
+    expect(review.riskFlags.map((flag) => flag.id)).toEqual([
+      "wallet_age",
+      "funding_cluster",
+      "invite_tree",
+      "task_pattern",
+      "referral_validation",
+      "manual_review",
+    ]);
+    expect(review.riskFlags.find((flag) => flag.id === "invite_tree")).toMatchObject({
+      enabled: true,
+      severity: "warning",
+    });
+    expect(review.aiRuleAssistant).toMatchObject({
+      ownerRole: "internal_operator",
+      state: "warning",
+    });
+    expect(review.aiRuleAssistant.recommendation["en-US"]).toContain("Reduce referral weight");
+    expect(review.aiRuleAssistant.boundary["en-US"]).toContain("No live AI provider");
+    expect(review.aiRuleAssistant.boundary["en-US"]).toContain("reward distribution");
+    expect(review.boundary["zh-CN"]).toContain("不会执行实时 AI provider");
+  });
+
+  it("blocks reward eligibility assistant when high reward campaigns rely on social tasks only", () => {
+    const review = createRewardEligibilityReview(socialOnlyDraft());
+
+    expect(review.aiRuleAssistant).toMatchObject({
+      ownerRole: "internal_operator",
+      state: "blocked",
+    });
+    expect(review.aiRuleAssistant.recommendation["en-US"]).toContain("Add bridge, swap");
+    expect(review.riskFlags.find((flag) => flag.id === "referral_validation")).toMatchObject({
+      enabled: false,
+      severity: "blocked",
+    });
+    expect(review.riskFlags.find((flag) => flag.id === "manual_review")).toMatchObject({
+      enabled: false,
+      severity: "blocked",
+    });
+  });
+
+  it("keeps reward eligibility review free from live execution and private artifact fields", () => {
+    const serialized = JSON.stringify(createRewardEligibilityReview(seededCampaignDraft)).toLowerCase();
+
+    const privateArtifactSentinels = [
+      ["docs", "current"].join("/"),
+      ["kitty", "specs"].join("-"),
+      "evidence".concat("/"),
+      ["campaign", "os", "kitty"].join("-"),
+    ];
+
+    for (const unsafe of [
+      "private key",
+      "seed phrase",
+      "signed payload",
+      "transaction id",
+      "contract address",
+      "wallet address",
+      ...privateArtifactSentinels,
+    ]) {
+      expect(serialized).not.toContain(unsafe);
+    }
+
+    for (const boundaryPhrase of [
+      "No live AI provider",
+      "backend mutation",
+      "wallet signature",
+      "provider API",
+      "contract transaction",
+      "export file",
+      "reward custody",
+      "reward distribution",
+    ]) {
+      expect(serialized).toContain(boundaryPhrase.toLowerCase());
+    }
   });
 
   it("creates the seeded publish gate decision center read model", () => {

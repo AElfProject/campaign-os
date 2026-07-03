@@ -35,10 +35,21 @@ export type TaskTemplateCategory =
   | "social"
   | "invite";
 export type RewardProvider = "campaign_project" | "partner";
+export type RewardType = "points" | "token" | "nft" | "whitelist";
+export type RewardExportFormat = "csv" | "json" | "task_records" | "risk_flags";
 export type PointsRule = "task_points" | "daily_cap" | "referral_bonus";
 export type WinnerRule = "top_n" | "threshold" | "manual_review";
 export type ReadinessGroup = "basics" | "wallet" | "tasks" | "rewards" | "i18n" | "contract" | "risk" | "export";
 export type ReadinessStatus = "blocker" | "warning" | "passed";
+export type RewardEligibilityRiskFlagId =
+  | "wallet_age"
+  | "funding_cluster"
+  | "invite_tree"
+  | "task_pattern"
+  | "referral_validation"
+  | "manual_review";
+export type RewardEligibilityRiskSeverity = "ready" | "warning" | "blocked";
+export type AiRuleAssistantState = "ready" | "warning" | "blocked";
 export type TaskTemplateWalletFilter = "aa" | "eoa" | "any";
 export type TaskTemplateVerificationFilter =
   | "on_chain"
@@ -166,8 +177,10 @@ export interface RewardPlan {
   description: LocalizedText;
   disclaimer: LocalizedText;
   exportDisclaimer: LocalizedText;
+  rewardTypes: RewardType[];
   pointsRule: PointsRule;
   winnerRule: WinnerRule;
+  exportFormats: RewardExportFormat[];
   exportDisclaimerAccepted: boolean;
   estimatedRewardValueUsd: number;
 }
@@ -259,6 +272,56 @@ export interface PublishGateDecisionCenter {
   counts: PublishGateCounts;
   gates: PublishGateItem[];
   approvalRoutes: PublishGateApprovalRoute[];
+}
+
+export interface RewardEligibilitySummary {
+  rewardProvider: RewardProvider;
+  rewardTypes: RewardType[];
+  winnerRule: WinnerRule;
+  exportFormats: RewardExportFormat[];
+  walletPolicy: WalletPolicy;
+  pointsThreshold?: number;
+  signedMessageRequired: boolean;
+  rewardBoundary: LocalizedText;
+}
+
+export interface RewardEligibilityRequiredTaskRow {
+  id: string;
+  label: LocalizedText;
+  verificationType: VerificationType | "REFERRAL";
+  walletCompatibility: WalletCompatibility;
+  points: number;
+  required: boolean;
+  riskLevel: RiskLevel;
+  nextAction: LocalizedText;
+}
+
+export interface RewardEligibilityRiskFlagRow {
+  id: RewardEligibilityRiskFlagId;
+  label: LocalizedText;
+  enabled: boolean;
+  severity: RewardEligibilityRiskSeverity;
+  evidence: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface AiRuleAssistantReview {
+  state: AiRuleAssistantState;
+  label: LocalizedText;
+  recommendation: LocalizedText;
+  evidence: LocalizedText[];
+  ownerRole: OwnerRole;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface RewardEligibilityReview {
+  draftId: string;
+  summary: RewardEligibilitySummary;
+  requiredTasks: RewardEligibilityRequiredTaskRow[];
+  riskFlags: RewardEligibilityRiskFlagRow[];
+  aiRuleAssistant: AiRuleAssistantReview;
+  boundary: LocalizedText;
 }
 
 export type AiPlannerGroupId =
@@ -1541,8 +1604,10 @@ export const seededCampaignDraft: CampaignDraft = {
       "导出获奖名单不等于发放奖励。",
       "匯出獲獎名單不等於發放獎勵。",
     ),
+    rewardTypes: ["points", "token"],
     pointsRule: "task_points",
     winnerRule: "top_n",
+    exportFormats: ["csv", "json", "task_records", "risk_flags"],
     exportDisclaimerAccepted: true,
     estimatedRewardValueUsd: 2500,
   },
@@ -2034,6 +2099,283 @@ const isHighRewardSocialOnly = (draft: CampaignDraft) => {
   );
 
   return hasHighRewardSocialTask && (hasOnlySocialVerification || draft.rewardPlan.estimatedRewardValueUsd >= highRewardCampaignValueUsd);
+};
+
+const rewardEligibilityBoundary = text(
+  "Seeded/local AI rule review only. No live AI provider, backend mutation, wallet signature, provider API, contract transaction, export file, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地 AI 规则审核。不会执行实时 AI provider、后端变更、钱包签名、provider API、合约交易、导出文件、奖励托管或奖励发放。",
+  "Seeded/local AI rule review only. No live AI provider, backend mutation, wallet signature, provider API, contract transaction, export file, reward custody, or reward distribution is executed.",
+);
+
+const riskFlagLabels: Record<RewardEligibilityRiskFlagId, LocalizedText> = {
+  funding_cluster: text("Funding cluster", "资金来源聚类", "資金來源聚類"),
+  invite_tree: text("Invite tree", "邀请树", "邀請樹"),
+  manual_review: text("Manual review", "人工审核", "人工審核"),
+  referral_validation: text("Referral validation", "邀请验证", "邀請驗證"),
+  task_pattern: text("Task pattern", "任务模式", "任務模式"),
+  wallet_age: text("Wallet age", "钱包年龄", "錢包年齡"),
+};
+
+const riskFlagNextActions: Record<RewardEligibilityRiskFlagId, LocalizedText> = {
+  funding_cluster: text(
+    "Review clustered funding before winner export.",
+    "Winner 导出前审核聚集资金来源。",
+    "Winner 匯出前審核聚集資金來源。",
+  ),
+  invite_tree: text(
+    "Keep qualified invite validation and cap referral-heavy rewards.",
+    "保留合格邀请验证，并限制邀请占比过高的奖励。",
+    "保留合格邀請驗證，並限制邀請占比過高的獎勵。",
+  ),
+  manual_review: text(
+    "Route flagged participants to manual review before eligibility approval.",
+    "资格批准前将风险参与者送入人工审核。",
+    "資格批准前將風險參與者送入人工審核。",
+  ),
+  referral_validation: text(
+    "Require invitees to complete meaningful ecosystem tasks.",
+    "要求被邀请人完成有效生态任务。",
+    "要求被邀請人完成有效生態任務。",
+  ),
+  task_pattern: text(
+    "Review repeated low-effort task patterns before export.",
+    "导出前审核重复低成本任务模式。",
+    "匯出前審核重複低成本任務模式。",
+  ),
+  wallet_age: text(
+    "Review new-wallet concentration before reward fulfillment.",
+    "奖励履约前审核新钱包集中度。",
+    "獎勵履約前審核新錢包集中度。",
+  ),
+};
+
+const createRiskFlagRow = (
+  id: RewardEligibilityRiskFlagId,
+  enabled: boolean,
+  severity: RewardEligibilityRiskSeverity,
+  evidence: LocalizedText,
+): RewardEligibilityRiskFlagRow => ({
+  enabled,
+  evidence,
+  id,
+  label: riskFlagLabels[id],
+  nextAction: riskFlagNextActions[id],
+  severity,
+});
+
+const requiredTaskNextAction = (
+  template: TaskTemplate,
+  required: boolean,
+): LocalizedText => {
+  if (required) {
+    return text(
+      `Keep ${template.title["en-US"]} required before winner eligibility.`,
+      `在 winner 资格前保持${template.title["zh-CN"]}为必做任务。`,
+      `Keep ${template.title["en-US"]} required before winner eligibility.`,
+    );
+  }
+
+  return text(
+    `Keep ${template.title["en-US"]} visible as optional review context.`,
+    `将${template.title["zh-CN"]}作为可选审核上下文展示。`,
+    `Keep ${template.title["en-US"]} visible as optional review context.`,
+  );
+};
+
+const createRequiredTaskRows = (
+  draft: CampaignDraft,
+): RewardEligibilityRequiredTaskRow[] => {
+  const requiredTaskIds = new Set(draft.eligibilityRule.requiredTaskTemplateIds);
+
+  return draft.selectedTaskTemplateIds
+    .map((templateId) => taskTemplateLibrary.find((template) => template.id === templateId))
+    .filter((template): template is TaskTemplate => Boolean(template))
+    .map((template) => ({
+      id: template.id,
+      label: template.title,
+      nextAction: requiredTaskNextAction(template, requiredTaskIds.has(template.id) || template.requiredByDefault),
+      points: template.defaultPoints,
+      required: requiredTaskIds.has(template.id) || template.requiredByDefault,
+      riskLevel: template.riskLevel,
+      verificationType: template.verificationType,
+      walletCompatibility: template.walletCompatibility,
+    }));
+};
+
+const createRewardEligibilityRiskFlags = (
+  draft: CampaignDraft,
+  templates: TaskTemplate[],
+): RewardEligibilityRiskFlagRow[] => {
+  const highReward = draft.rewardPlan.estimatedRewardValueUsd >= highRewardCampaignValueUsd;
+  const socialOrReferral = templates.some((template) => template.category === "social" || template.category === "invite");
+  const missingRiskControls = !draft.eligibilityRule.riskFlagsEnabled;
+  const missingReferralValidation = !draft.eligibilityRule.referralValidationEnabled;
+  const missingManualReview = !draft.eligibilityRule.manualReviewRequired;
+  const blockedRisk = highReward && (missingRiskControls || missingReferralValidation || missingManualReview);
+  const reviewSeverity: RewardEligibilityRiskSeverity = blockedRisk ? "blocked" : "warning";
+
+  return [
+    createRiskFlagRow(
+      "wallet_age",
+      draft.eligibilityRule.riskFlagsEnabled,
+      missingRiskControls ? reviewSeverity : "warning",
+      text(
+        "Review new-wallet concentration before final eligibility.",
+        "最终资格确认前审核新钱包集中度。",
+        "最終資格確認前審核新錢包集中度。",
+      ),
+    ),
+    createRiskFlagRow(
+      "funding_cluster",
+      draft.eligibilityRule.riskFlagsEnabled,
+      missingRiskControls ? reviewSeverity : "warning",
+      text(
+        "Funding cluster is a review signal, not an automatic rejection.",
+        "资金来源聚类是审核信号，不是自动拒绝依据。",
+        "資金來源聚類是審核信號，不是自動拒絕依據。",
+      ),
+    ),
+    createRiskFlagRow(
+      "invite_tree",
+      draft.eligibilityRule.referralValidationEnabled,
+      socialOrReferral ? reviewSeverity : "ready",
+      text(
+        "Referral tree exposure is elevated because invite or social tasks are selected.",
+        "已选择邀请或社交任务，邀请树风险较高。",
+        "已選擇邀請或社群任務，邀請樹風險較高。",
+      ),
+    ),
+    createRiskFlagRow(
+      "task_pattern",
+      draft.eligibilityRule.riskFlagsEnabled,
+      highReward ? "warning" : "ready",
+      text(
+        "Repeated low-effort patterns require review before export.",
+        "导出前需要审核重复低成本任务模式。",
+        "匯出前需要審核重複低成本任務模式。",
+      ),
+    ),
+    createRiskFlagRow(
+      "referral_validation",
+      draft.eligibilityRule.referralValidationEnabled,
+      missingReferralValidation ? reviewSeverity : "ready",
+      text(
+        "Invitees must complete meaningful ecosystem tasks before referral rewards count.",
+        "被邀请人必须完成有效生态任务后才计入邀请奖励。",
+        "被邀請人必須完成有效生態任務後才計入邀請獎勵。",
+      ),
+    ),
+    createRiskFlagRow(
+      "manual_review",
+      draft.eligibilityRule.manualReviewRequired,
+      missingManualReview ? reviewSeverity : "ready",
+      text(
+        "Risk flags stay in a human review queue before winner export.",
+        "风险标记在 winner 导出前保留人工审核队列。",
+        "風險標記在 winner 匯出前保留人工審核佇列。",
+      ),
+    ),
+  ];
+};
+
+const createAiRuleAssistantReview = (
+  draft: CampaignDraft,
+  templates: TaskTemplate[],
+): AiRuleAssistantReview => {
+  const meaningfulActionCount = templates.filter(isMeaningfulEcosystemTask).length;
+  const highReward = draft.rewardPlan.estimatedRewardValueUsd >= highRewardCampaignValueUsd;
+  const socialOrReferral = templates.some((template) => template.category === "social" || template.category === "invite");
+  const missingControls =
+    !draft.eligibilityRule.referralValidationEnabled ||
+    !draft.eligibilityRule.riskFlagsEnabled ||
+    !draft.eligibilityRule.manualReviewRequired;
+
+  if (highReward && meaningfulActionCount === 0) {
+    return {
+      boundary: rewardEligibilityBoundary,
+      evidence: [
+        text("High reward value is configured without a meaningful ecosystem action.", "高奖励金额缺少有效生态任务。"),
+        text("Selected tasks are social or referral heavy.", "已选任务偏社交或邀请。"),
+      ],
+      label: text("AI Rule Assistant", "AI 规则助手", "AI 規則助手"),
+      nextAction: text(
+        "Add bridge, swap, NFT, DAO, dApp API, Pay, Forecast, or another ecosystem task before publish.",
+        "发布前添加 bridge、swap、NFT、DAO、dApp API、Pay、Forecast 或其他生态任务。",
+        "發布前加入 bridge、swap、NFT、DAO、dApp API、Pay、Forecast 或其他生態任務。",
+      ),
+      ownerRole: "internal_operator",
+      recommendation: text(
+        "Add bridge, swap, or another verified ecosystem task before high-reward eligibility.",
+        "高奖励资格前增加 bridge、swap 或其他已验证生态任务。",
+        "Add bridge, swap, or another verified ecosystem task before high-reward eligibility.",
+      ),
+      state: "blocked",
+    };
+  }
+
+  if (highReward && (socialOrReferral || missingControls)) {
+    return {
+      boundary: rewardEligibilityBoundary,
+      evidence: [
+        text("Reward value is above the high-reward review threshold.", "奖励金额高于高奖励审核阈值。"),
+        text("Referral or social tasks can attract farming patterns.", "邀请或社交任务可能吸引刷量模式。"),
+      ],
+      label: text("AI Rule Assistant", "AI 规则助手", "AI 規則助手"),
+      nextAction: text(
+        "Keep manual review enabled and require invitees to complete bridge plus Awaken tasks.",
+        "保持人工审核，并要求被邀请人完成 bridge 与 Awaken 任务。",
+        "Keep manual review enabled and require invitees to complete bridge plus Awaken tasks.",
+      ),
+      ownerRole: "internal_operator",
+      recommendation: text(
+        "Reduce referral weight from 120 to 80 and require bridge plus Awaken completion before referral rewards count.",
+        "建议将邀请积分从 120 降到 80，并要求完成 bridge 与 Awaken 后再计入邀请奖励。",
+        "Reduce referral weight from 120 to 80 and require bridge plus Awaken completion before referral rewards count.",
+      ),
+      state: "warning",
+    };
+  }
+
+  return {
+    boundary: rewardEligibilityBoundary,
+    evidence: [
+      text("Reward value and task mix are within the seeded review posture.", "奖励金额与任务组合符合 seeded 审核姿态。"),
+      text("Risk controls are enabled before export.", "导出前风险控制已启用。"),
+    ],
+    label: text("AI Rule Assistant", "AI 规则助手", "AI 規則助手"),
+    nextAction: text("Keep review evidence visible through publish.", "发布前持续展示审核证据。"),
+    ownerRole: "project_owner",
+    recommendation: text(
+      "Proceed with owner review while keeping reward and export boundaries visible.",
+      "可继续项目方审核，并保持奖励与导出边界可见。",
+      "Proceed with owner review while keeping reward and export boundaries visible.",
+    ),
+    state: "ready",
+  };
+};
+
+export const createRewardEligibilityReview = (
+  draft: CampaignDraft,
+): RewardEligibilityReview => {
+  const templates = selectedTaskTemplates(draft);
+
+  return {
+    aiRuleAssistant: createAiRuleAssistantReview(draft, templates),
+    boundary: rewardEligibilityBoundary,
+    draftId: draft.id,
+    requiredTasks: createRequiredTaskRows(draft),
+    riskFlags: createRewardEligibilityRiskFlags(draft, templates),
+    summary: {
+      exportFormats: [...draft.rewardPlan.exportFormats],
+      pointsThreshold: draft.eligibilityRule.pointsThreshold,
+      rewardBoundary: draft.rewardPlan.disclaimer,
+      rewardProvider: draft.rewardPlan.provider,
+      rewardTypes: [...draft.rewardPlan.rewardTypes],
+      signedMessageRequired: true,
+      walletPolicy: draft.eligibilityRule.walletPolicy,
+      winnerRule: draft.rewardPlan.winnerRule,
+    },
+  };
 };
 
 const createCampaignQualityCheck = (draft: CampaignDraft): ReadinessCheck => {
