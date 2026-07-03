@@ -6,6 +6,7 @@ import {
   createCampaignTemplatePack,
   campaignDetail,
   createCampaignSettingsReadiness,
+  createForestNftTaskReadiness,
   createForecastCampaignTaskReadiness,
   createPayCampaignTaskReadiness,
   createTmrwdaoGovernanceTaskReadiness,
@@ -35,6 +36,9 @@ import {
   type CampaignShellDetail,
   type CampaignSettingsReadinessState,
   type ExportReadinessState,
+  type ForestNftTaskOwnerRole,
+  type ForestNftTaskProviderState,
+  type ForestNftTaskReadinessState,
   type ForecastCampaignTaskOwnerRole,
   type ForecastCampaignTaskProviderState,
   type ForecastCampaignTaskReadinessState,
@@ -360,6 +364,80 @@ const campaignTemplateOwnerLabel = (
       project_owner: "專案方",
     },
   } satisfies Record<SupportedLocale, Record<CampaignTemplatePreset["ownerRole"], string>>;
+
+  return labels[locale][ownerRole];
+};
+
+const forestTaskReadinessBadgeState = (
+  state: ForestNftTaskReadinessState,
+) => state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const forestTaskReadinessLabel = (
+  state: ForestNftTaskReadinessState,
+  labels: {
+    forestTaskBlocked: string;
+    forestTaskReady: string;
+    forestTaskReviewRequired: string;
+  },
+) => {
+  if (state === "ready") {
+    return labels.forestTaskReady;
+  }
+
+  return state === "review_required"
+    ? labels.forestTaskReviewRequired
+    : labels.forestTaskBlocked;
+};
+
+const forestTaskProviderStateLabel = (
+  state: ForestNftTaskProviderState,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      blocked: "Blocked",
+      not_connected: "Not connected",
+      review_required: "Review required",
+      seeded_preview: "Seeded preview",
+    },
+    "zh-CN": {
+      blocked: "阻断",
+      not_connected: "未连接",
+      review_required: "需要审核",
+      seeded_preview: "Seeded 预览",
+    },
+    "zh-TW": {
+      blocked: "阻斷",
+      not_connected: "未連接",
+      review_required: "需要審核",
+      seeded_preview: "Seeded 預覽",
+    },
+  } satisfies Record<SupportedLocale, Record<ForestNftTaskProviderState, string>>;
+
+  return labels[locale][state];
+};
+
+const forestTaskOwnerLabel = (
+  ownerRole: ForestNftTaskOwnerRole,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      forest_provider_reviewer: "Forest provider reviewer",
+      operator: "Operator",
+      project_owner: "Project owner",
+    },
+    "zh-CN": {
+      forest_provider_reviewer: "Forest provider 审核人",
+      operator: "运营",
+      project_owner: "项目方",
+    },
+    "zh-TW": {
+      forest_provider_reviewer: "Forest provider 審核人",
+      operator: "營運",
+      project_owner: "專案方",
+    },
+  } satisfies Record<SupportedLocale, Record<ForestNftTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -1189,6 +1267,7 @@ export const ProjectConsole = ({
   const localeAnalyticsReadiness = createLocaleAnalyticsReadiness(campaign);
   const aiContentPack = createAiContentPackWorkbench(campaign);
   const campaignTemplatePack = createCampaignTemplatePack();
+  const forestTaskReadiness = createForestNftTaskReadiness(campaign);
   const forecastTaskReadiness = createForecastCampaignTaskReadiness(campaign);
   const payTaskReadiness = createPayCampaignTaskReadiness(campaign);
   const tmrwdaoTaskReadiness = createTmrwdaoGovernanceTaskReadiness(campaign);
@@ -3135,6 +3214,115 @@ export const ProjectConsole = ({
           </section>
 
           <TaskTemplateLibrary locale={locale} />
+
+          <section aria-label={copy.forestTaskReadiness} style={panelStyle}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.forestTaskTotal}</p>
+                <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                  {copy.forestTaskReadiness}
+                </h3>
+                <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                  {copy.forestTaskReadinessSubtitle}
+                </p>
+              </div>
+              <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <PublishStateBadge
+                  label={`${forestTaskReadiness.summary.readyCount} ${copy.forestTaskReady}`}
+                  state="ready"
+                />
+                <PublishStateBadge
+                  label={`${forestTaskReadiness.summary.reviewRequiredCount} ${copy.forestTaskReviewRequired}`}
+                  state="warning"
+                />
+                <PublishStateBadge
+                  label={`${forestTaskReadiness.summary.blockedCount} ${copy.forestTaskBlocked}`}
+                  state="blocker"
+                />
+              </span>
+            </div>
+
+            <div style={gridStyle}>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.forestTaskTotal}</p>
+                <p style={statValueStyle}>{forestTaskReadiness.summary.totalTasks}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.forestTaskReady}</p>
+                <p style={statValueStyle}>{forestTaskReadiness.summary.readyCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.forestTaskReviewRequired}</p>
+                <p style={statValueStyle}>{forestTaskReadiness.summary.reviewRequiredCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.forestTaskBlocked}</p>
+                <p style={statValueStyle}>{forestTaskReadiness.summary.blockedCount}</p>
+              </article>
+              <article style={{ ...cardStyle, gridColumn: "1 / -1", minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.forestTaskNextAction}</p>
+                <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(forestTaskReadiness.ownerNextAction, locale)}
+                </p>
+              </article>
+            </div>
+
+            <p style={boundaryStyle}>
+              <strong>{copy.forestTaskBoundary}: </strong>
+              {getLocalizedText(forestTaskReadiness.boundary, locale)}
+            </p>
+
+            <div style={compactSectionGridStyle}>
+              {forestTaskReadiness.rows.map((row) => (
+                <article key={row.id} style={{ ...cardStyle, minHeight: 0 }}>
+                  <div style={headingRowStyle}>
+                    <div>
+                      <p style={statLabelStyle}>{copy.forestTaskProviderState}</p>
+                      <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                        {getLocalizedText(row.label, locale)}
+                      </h4>
+                    </div>
+                    <PublishStateBadge
+                      label={forestTaskReadinessLabel(row.readinessState, copy)}
+                      state={forestTaskReadinessBadgeState(row.readinessState)}
+                    />
+                  </div>
+
+                  <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(row.description, locale)}
+                  </p>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <Badge
+                      label={`${row.verificationType} · ${row.evidenceSource}`}
+                      tone="info"
+                    />
+                    <Badge
+                      label={`${copy.forestTaskProviderState}: ${forestTaskProviderStateLabel(row.providerState, locale)}`}
+                      tone={row.providerState === "seeded_preview" ? "success" : "warning"}
+                    />
+                    <Badge
+                      label={`${copy.forestTaskOwner}: ${forestTaskOwnerLabel(row.ownerRole, locale)}`}
+                      tone="neutral"
+                    />
+                  </div>
+
+                  <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.forestTaskRiskState}: </strong>
+                    {getLocalizedText(row.riskState, locale)}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.forestTaskNextAction}: </strong>
+                    {getLocalizedText(row.nextAction, locale)}
+                  </p>
+                  <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.forestTaskBoundary}: </strong>
+                    {getLocalizedText(row.boundary, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </section>
 
           <section aria-label={copy.forecastTaskReadiness} style={panelStyle}>
             <div style={headingRowStyle}>
