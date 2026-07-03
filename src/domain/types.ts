@@ -1487,6 +1487,74 @@ export interface ContractTransparencyMonitor {
   nextAction: LocalizedText;
 }
 
+export type CompanionContractReadinessStatus =
+  | "proven"
+  | "review_required"
+  | "deferred_non_goal"
+  | "blocked_non_goal";
+export type CompanionContractEvidenceItemKind =
+  | "schema_field"
+  | "method"
+  | "event"
+  | "role"
+  | "test"
+  | "boundary"
+  | "root_hash"
+  | "non_goal";
+export type CompanionContractEvidenceCategoryId =
+  | "campaign-registry-schema"
+  | "campaign-registry-methods-events"
+  | "points-batch-root"
+  | "referral-registry-rules"
+  | "eligibility-root-proof"
+  | "verifier-roles-permissions"
+  | "i18n-off-chain-hash"
+  | "contract-test-checklist"
+  | "reward-custody-claim-exclusion";
+
+export interface CompanionContractEvidenceItem {
+  id: string;
+  label: LocalizedText;
+  kind: CompanionContractEvidenceItemKind;
+  status: CompanionContractReadinessStatus;
+  source: LocalizedText;
+  detail: LocalizedText;
+}
+
+export interface CompanionContractEvidenceCategory {
+  id: CompanionContractEvidenceCategoryId;
+  title: LocalizedText;
+  contractName?: string;
+  phase: ContractInterfacePhase;
+  status: CompanionContractReadinessStatus;
+  requiredForPlan: boolean;
+  ownerRole: OwnerRole;
+  evidenceSurface: LocalizedText;
+  evidenceSummary: LocalizedText;
+  evidenceItems: CompanionContractEvidenceItem[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface CompanionContractReadinessSummary {
+  totalCategories: number;
+  requiredCategories: number;
+  provenCategories: number;
+  reviewRequiredCategories: number;
+  deferredNonGoalCategories: number;
+  blockedExecutionCategories: number;
+  ready: boolean;
+  topCategoryId: CompanionContractEvidenceCategoryId;
+  topNextAction: LocalizedText;
+}
+
+export interface CompanionContractReadiness {
+  summary: CompanionContractReadinessSummary;
+  categories: CompanionContractEvidenceCategory[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface DeliveryChecklistItem {
   id: string;
   groupId: DeliveryChecklistGroupId;
@@ -3192,6 +3260,7 @@ export interface AdminOpsReadModel {
   contractReviewCenter: AdminContractReviewCenter;
   contractInterfaceMatrix: ContractInterfaceMatrixConsole;
   contractTransparencyMonitor: ContractTransparencyMonitor;
+  companionContractReadiness: CompanionContractReadiness;
   pointsRankingReferralReadiness: PointsRankingReferralServiceReadiness;
   aiContentPack: AiContentPackWorkbench;
   templateGovernance: TemplateGovernanceConsole;
