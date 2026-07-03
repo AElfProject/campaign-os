@@ -140,6 +140,13 @@ import type {
   ForecastCampaignTaskReadiness,
   ForecastCampaignTaskReadinessRow,
   ForecastCampaignTaskReadinessState,
+  PayCampaignTaskEvidenceSource,
+  PayCampaignTaskIntentId,
+  PayCampaignTaskOwnerRole,
+  PayCampaignTaskProviderState,
+  PayCampaignTaskReadiness,
+  PayCampaignTaskReadinessRow,
+  PayCampaignTaskReadinessState,
   EvidenceSource,
   ExportPreviewMode,
   ExportPreviewModeReadiness,
@@ -14119,6 +14126,212 @@ export const createForecastCampaignTaskReadiness = (
     rows,
     ownerNextAction: forecastTaskOwnerNextActionFor(summary),
     boundary: forecastCampaignTaskReadinessBoundary,
+  };
+};
+
+export const payCampaignTaskReadinessBoundary: LocalizedText = localized(
+  "Seeded/local Pay campaign task readiness only. No live Pay service, payment transaction, payment link creation, invoice generation, wallet signing, wallet SDK/provider call, backend mutation, contract execution, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地 Pay 活动任务 readiness。不会调用真实 Pay 服务，不会执行支付交易、支付链接创建、发票生成、钱包签名、钱包 SDK/provider 调用、后端 mutation、合约执行、奖励托管或发奖。",
+  "Seeded/local Pay campaign task readiness only. No live Pay service, payment transaction, payment link creation, invoice generation, wallet signing, wallet SDK/provider call, backend mutation, contract execution, reward custody, or reward distribution is executed.",
+);
+
+const payTaskIntentLabels: Record<PayCampaignTaskIntentId, LocalizedText> = {
+  "invoice-completion": localized(
+    "Invoice completion",
+    "发票完成",
+    "Invoice completion",
+  ),
+  "payment-link-completion": localized(
+    "Payment link completion",
+    "支付链接完成",
+    "Payment link completion",
+  ),
+  "pay-follow-up-handoff": localized(
+    "Pay follow-up handoff",
+    "Pay 后续移交",
+    "Pay follow-up handoff",
+  ),
+};
+
+const payTaskIntentDescriptions: Record<PayCampaignTaskIntentId, LocalizedText> = {
+  "invoice-completion": localized(
+    "Review whether a Pay invoice task can be represented from seeded campaign metadata.",
+    "审核 Pay 发票任务是否可由 seeded 活动 metadata 表达。",
+    "Review whether a Pay invoice task can be represented from seeded campaign metadata.",
+  ),
+  "payment-link-completion": localized(
+    "Review payment-link evidence before using Pay completion in campaign scoring.",
+    "在活动计分中使用 Pay 支付链接完成前，先审核支付链接证据。",
+    "Review payment-link evidence before using Pay completion in campaign scoring.",
+  ),
+  "pay-follow-up-handoff": localized(
+    "Review Pay handoff ownership before routing qualified campaign users to a payment follow-up.",
+    "将合格活动用户路由到 Pay 后续行动前，先审核 Pay 移交归属。",
+    "Review Pay handoff ownership before routing qualified campaign users to a payment follow-up.",
+  ),
+};
+
+const payRiskStates: Record<PayCampaignTaskReadinessState, LocalizedText> = {
+  ready: localized(
+    "Local seeded evidence is enough for owner review, but it is not live Pay verification.",
+    "本地 seeded 证据足够进入 owner review，但不是真实 Pay 验证。",
+    "Local seeded evidence is enough for owner review, but it is not live Pay verification.",
+  ),
+  review_required: localized(
+    "Pay status evidence needs operator review before it can affect campaign scoring.",
+    "Pay 状态证据需要运营审核后，才能影响活动计分。",
+    "Pay status evidence needs operator review before it can affect campaign scoring.",
+  ),
+  blocked: localized(
+    "Pay handoff is blocked until provider ownership and payment-status boundary are reviewed.",
+    "Pay 移交在 provider 归属与支付状态边界审核前保持阻断。",
+    "Pay handoff is blocked until provider ownership and payment-status boundary are reviewed.",
+  ),
+};
+
+const payNextActionFor = (
+  intentId: PayCampaignTaskIntentId,
+  readinessState: PayCampaignTaskReadinessState,
+): LocalizedText => {
+  if (readinessState === "blocked") {
+    return localized(
+      "Review Pay provider ownership and payment-status boundary before campaign publish.",
+      "发布活动前先审核 Pay provider 归属与支付状态边界。",
+      "Review Pay provider ownership and payment-status boundary before campaign publish.",
+    );
+  }
+
+  if (readinessState === "review_required") {
+    return localized(
+      "Ask an operator to confirm Pay payment-link evidence remains local-only and reviewable.",
+      "请运营确认 Pay 支付链接证据保持本地-only 且可审核。",
+      "Ask an operator to confirm Pay payment-link evidence remains local-only and reviewable.",
+    );
+  }
+
+  if (intentId === "invoice-completion") {
+    return localized(
+      "Keep invoice completion as a seeded/local campaign task until Pay service ownership is approved.",
+      "在 Pay 服务归属获批前，将发票完成保持为 seeded/本地活动任务。",
+      "Keep invoice completion as a seeded/local campaign task until Pay service ownership is approved.",
+    );
+  }
+
+  return localized(
+    "Keep Pay task readiness in local owner review before live integration.",
+    "在真实集成前，将 Pay 任务 readiness 保持在本地 owner review。",
+    "Keep Pay task readiness in local owner review before live integration.",
+  );
+};
+
+const createPayReadinessRow = (input: {
+  evidenceSource: PayCampaignTaskEvidenceSource;
+  intentId: PayCampaignTaskIntentId;
+  ownerRole: PayCampaignTaskOwnerRole;
+  providerState: PayCampaignTaskProviderState;
+  readinessState: PayCampaignTaskReadinessState;
+}): PayCampaignTaskReadinessRow => ({
+  id: `pay-${input.intentId}`,
+  intentId: input.intentId,
+  label: payTaskIntentLabels[input.intentId],
+  description: payTaskIntentDescriptions[input.intentId],
+  verificationType: "DAPP_API",
+  evidenceSource: input.evidenceSource,
+  providerState: input.providerState,
+  readinessState: input.readinessState,
+  riskState: payRiskStates[input.readinessState],
+  ownerRole: input.ownerRole,
+  nextAction: payNextActionFor(input.intentId, input.readinessState),
+  boundary: payCampaignTaskReadinessBoundary,
+});
+
+const payTaskStateRank: Record<PayCampaignTaskReadinessState, number> = {
+  blocked: 3,
+  review_required: 2,
+  ready: 1,
+};
+
+const createPayTaskRows = (): PayCampaignTaskReadinessRow[] => [
+  createPayReadinessRow({
+    evidenceSource: "seeded_local",
+    intentId: "invoice-completion",
+    ownerRole: "project_owner",
+    providerState: "seeded_preview",
+    readinessState: "ready",
+  }),
+  createPayReadinessRow({
+    evidenceSource: "aelf_pay_status",
+    intentId: "payment-link-completion",
+    ownerRole: "operator",
+    providerState: "review_required",
+    readinessState: "review_required",
+  }),
+  createPayReadinessRow({
+    evidenceSource: "aelf_pay_status",
+    intentId: "pay-follow-up-handoff",
+    ownerRole: "pay_provider_reviewer",
+    providerState: "not_connected",
+    readinessState: "blocked",
+  }),
+];
+
+const createPayTaskSummary = (
+  rows: PayCampaignTaskReadinessRow[],
+): PayCampaignTaskReadiness["summary"] => {
+  const topRow = [...rows].sort(
+    (left, right) => payTaskStateRank[right.readinessState] - payTaskStateRank[left.readinessState],
+  )[0] ?? rows[0];
+
+  return {
+    totalTasks: rows.length,
+    readyCount: rows.filter((row) => row.readinessState === "ready").length,
+    reviewRequiredCount: rows.filter((row) => row.readinessState === "review_required").length,
+    blockedCount: rows.filter((row) => row.readinessState === "blocked").length,
+    topState: topRow?.readinessState ?? "blocked",
+    topIntentId: topRow?.intentId ?? "pay-follow-up-handoff",
+    primaryOwnerRole: topRow?.ownerRole ?? "pay_provider_reviewer",
+    boundary: payCampaignTaskReadinessBoundary,
+  };
+};
+
+const payTaskOwnerNextActionFor = (
+  summary: PayCampaignTaskReadiness["summary"],
+): LocalizedText => {
+  if (summary.blockedCount > 0) {
+    return localized(
+      "Review Pay provider ownership and payment-status boundary before treating Pay campaign tasks as publish-ready.",
+      "先审核 Pay provider 归属与支付状态边界，再将 Pay 活动任务视为可发布。",
+      "Review Pay provider ownership and payment-status boundary before treating Pay campaign tasks as publish-ready.",
+    );
+  }
+
+  if (summary.reviewRequiredCount > 0) {
+    return localized(
+      "Complete operator review for Pay status evidence before publish.",
+      "发布前完成 Pay 状态证据的运营审核。",
+      "Complete operator review for Pay status evidence before publish.",
+    );
+  }
+
+  return localized(
+    "Keep Pay tasks in local owner review until live Pay integration is approved.",
+    "在真实 Pay 集成获批前，将 Pay 任务保持在本地 owner review。",
+    "Keep Pay tasks in local owner review until live Pay integration is approved.",
+  );
+};
+
+export const createPayCampaignTaskReadiness = (
+  campaign: CampaignShellDetail,
+): PayCampaignTaskReadiness => {
+  const rows = createPayTaskRows();
+  const summary = createPayTaskSummary(rows);
+
+  return {
+    campaignId: campaign.id,
+    summary,
+    rows,
+    ownerNextAction: payTaskOwnerNextActionFor(summary),
+    boundary: payCampaignTaskReadinessBoundary,
   };
 };
 
