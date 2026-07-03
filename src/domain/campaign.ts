@@ -112,6 +112,13 @@ import type {
   EcosystemNextActionReadModel,
   EcosystemRecommendationPriority,
   EcosystemRecommendationStatus,
+  EbridgeTaskEvidenceSource,
+  EbridgeTaskIntentId,
+  EbridgeTaskOwnerRole,
+  EbridgeTaskProviderState,
+  EbridgeTaskReadiness,
+  EbridgeTaskReadinessRow,
+  EbridgeTaskReadinessState,
   MobileHubAiGuide,
   MobileTelegramMiniAppHubReadiness,
   MobileTelegramMiniAppHubReadinessLane,
@@ -13973,6 +13980,12 @@ export const schrodingerNftTaskReadinessBoundary: LocalizedText = localized(
   "Seeded/local Schrödinger NFT task readiness only. No live Schrödinger service/API, project API, NFT marketplace/indexer, NFT adopt execution, NFT mint execution, NFT transfer execution, NFT trade/listing execution, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, reward custody, or reward distribution is executed.",
 );
 
+export const ebridgeTaskReadinessBoundary: LocalizedText = localized(
+  "Seeded/local eBridge task readiness only. No live eBridge service/API, bridge transaction, asset transfer, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, export generation, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地 eBridge 任务 readiness。不会调用真实 eBridge service/API，不会执行 bridge 交易、资产转移、钱包签名、钱包 SDK/provider 调用、后端 mutation、合约读取/发送/写入、导出生成、奖励托管或发奖。",
+  "Seeded/local eBridge task readiness only. No live eBridge service/API, bridge transaction, asset transfer, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, export generation, reward custody, or reward distribution is executed.",
+);
+
 export const daippAgentCoinTaskReadinessBoundary: LocalizedText = localized(
   "Seeded/local daipp Agent Coin task readiness only. No live daipp service/API, agent execution, AI generation, token launch, token buy/hold/transfer, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, reward custody, or reward distribution is executed.",
   "仅 seeded/本地 daipp Agent Coin 任务 readiness。不会调用真实 daipp service/API，不会执行 agent、AI 生成、token launch、token buy/hold/transfer、钱包签名、钱包 SDK/provider 调用、后端 mutation、合约读取/发送/写入、奖励托管或发奖。",
@@ -14644,6 +14657,246 @@ export const createSchrodingerNftTaskReadiness = (
     rows,
     ownerNextAction: schrodingerNftTaskOwnerNextActionFor(summary),
     boundary: schrodingerNftTaskReadinessBoundary,
+  };
+};
+
+const ebridgeTaskIntentLabels: Record<EbridgeTaskIntentId, LocalizedText> = {
+  "bridge-intent-readiness": localized(
+    "Bridge intent readiness",
+    "Bridge 意图 readiness",
+    "Bridge intent readiness",
+  ),
+  "bridge-amount-threshold-review": localized(
+    "Bridge amount threshold review",
+    "Bridge 金额门槛审核",
+    "Bridge amount threshold review",
+  ),
+  "bridge-on-chain-evidence": localized(
+    "Bridge on-chain evidence",
+    "Bridge 链上证据",
+    "Bridge on-chain evidence",
+  ),
+  "bridge-awaken-unlock-dependency": localized(
+    "Awaken unlock dependency",
+    "Awaken 解锁依赖",
+    "Awaken unlock dependency",
+  ),
+  "bridge-eligibility-impact": localized(
+    "Bridge eligibility impact",
+    "Bridge 资格影响",
+    "Bridge eligibility impact",
+  ),
+};
+
+const ebridgeTaskIntentDescriptions: Record<EbridgeTaskIntentId, LocalizedText> = {
+  "bridge-intent-readiness": localized(
+    "Review whether an eBridge task can be represented from seeded campaign metadata before publish.",
+    "发布前审核 eBridge 任务是否可由 seeded 活动 metadata 表达。",
+    "Review whether an eBridge task can be represented from seeded campaign metadata before publish.",
+  ),
+  "bridge-amount-threshold-review": localized(
+    "Review minimum bridge amount and asset threshold before using bridge completion in campaign scoring.",
+    "将 bridge 完成计入活动计分前，先审核最低 bridge 金额与资产门槛。",
+    "Review minimum bridge amount and asset threshold before using bridge completion in campaign scoring.",
+  ),
+  "bridge-on-chain-evidence": localized(
+    "Review AeFinder or AelfScan evidence before treating bridge completion as verified.",
+    "将 bridge 完成视为已验证前，先审核 AeFinder 或 AelfScan 证据。",
+    "Review AeFinder or AelfScan evidence before treating bridge completion as verified.",
+  ),
+  "bridge-awaken-unlock-dependency": localized(
+    "Review the bridge completion dependency before unlocking the downstream Awaken swap task.",
+    "解锁下游 Awaken swap 任务前，先审核 bridge 完成依赖。",
+    "Review the bridge completion dependency before unlocking the downstream Awaken swap task.",
+  ),
+  "bridge-eligibility-impact": localized(
+    "Review how bridge completion affects eligibility, missing-task recovery, referral quality, and export review.",
+    "审核 bridge 完成如何影响资格、缺失任务恢复、推荐质量与导出审核。",
+    "Review how bridge completion affects eligibility, missing-task recovery, referral quality, and export review.",
+  ),
+};
+
+const ebridgeRiskStates: Record<EbridgeTaskReadinessState, LocalizedText> = {
+  ready: localized(
+    "Local seeded bridge readiness is enough for owner review, but it is not live eBridge verification.",
+    "本地 seeded bridge readiness 足够进入 owner review，但不是真实 eBridge 验证。",
+    "Local seeded bridge readiness is enough for owner review, but it is not live eBridge verification.",
+  ),
+  review_required: localized(
+    "eBridge amount, on-chain evidence, or Awaken unlock rules need operator review before they can affect campaign scoring.",
+    "eBridge 金额、链上证据或 Awaken 解锁规则需要运营审核后，才能影响活动计分。",
+    "eBridge amount, on-chain evidence, or Awaken unlock rules need operator review before they can affect campaign scoring.",
+  ),
+  blocked: localized(
+    "Bridge eligibility impact is blocked until provider ownership and evidence boundaries are reviewed.",
+    "Bridge 资格影响在 provider 归属与证据边界审核前保持阻断。",
+    "Bridge eligibility impact is blocked until provider ownership and evidence boundaries are reviewed.",
+  ),
+};
+
+const ebridgeNextActionFor = (
+  intentId: EbridgeTaskIntentId,
+  readinessState: EbridgeTaskReadinessState,
+): LocalizedText => {
+  if (readinessState === "blocked") {
+    return localized(
+      "Review eBridge provider ownership, eligibility impact, and export boundary before campaign publish.",
+      "发布活动前先审核 eBridge provider 归属、资格影响与导出边界。",
+      "Review eBridge provider ownership, eligibility impact, and export boundary before campaign publish.",
+    );
+  }
+
+  if (readinessState === "review_required") {
+    return localized(
+      "Ask an operator to confirm bridge threshold, on-chain evidence, and Awaken unlock rules remain local-only and reviewable.",
+      "请运营确认 bridge 门槛、链上证据与 Awaken 解锁规则保持本地-only 且可审核。",
+      "Ask an operator to confirm bridge threshold, on-chain evidence, and Awaken unlock rules remain local-only and reviewable.",
+    );
+  }
+
+  if (intentId === "bridge-intent-readiness") {
+    return localized(
+      "Keep eBridge intent readiness as a seeded/local campaign task until bridge service ownership is approved.",
+      "在 bridge 服务归属获批前，将 eBridge 意图 readiness 保持为 seeded/本地活动任务。",
+      "Keep eBridge intent readiness as a seeded/local campaign task until bridge service ownership is approved.",
+    );
+  }
+
+  return localized(
+    "Keep eBridge task readiness in local owner review before live bridge integration.",
+    "在真实 bridge 集成前，将 eBridge 任务 readiness 保持在本地 owner review。",
+    "Keep eBridge task readiness in local owner review before live bridge integration.",
+  );
+};
+
+const createEbridgeReadinessRow = (input: {
+  evidenceSource: EbridgeTaskEvidenceSource;
+  intentId: EbridgeTaskIntentId;
+  ownerRole: EbridgeTaskOwnerRole;
+  providerState: EbridgeTaskProviderState;
+  readinessState: EbridgeTaskReadinessState;
+  verificationType: "ON_CHAIN" | "DAPP_API";
+}): EbridgeTaskReadinessRow => ({
+  id: `ebridge-${input.intentId}`,
+  intentId: input.intentId,
+  label: ebridgeTaskIntentLabels[input.intentId],
+  description: ebridgeTaskIntentDescriptions[input.intentId],
+  verificationType: input.verificationType,
+  evidenceSource: input.evidenceSource,
+  providerState: input.providerState,
+  readinessState: input.readinessState,
+  riskState: ebridgeRiskStates[input.readinessState],
+  ownerRole: input.ownerRole,
+  nextAction: ebridgeNextActionFor(input.intentId, input.readinessState),
+  boundary: ebridgeTaskReadinessBoundary,
+});
+
+const ebridgeTaskStateRank: Record<EbridgeTaskReadinessState, number> = {
+  blocked: 3,
+  review_required: 2,
+  ready: 1,
+};
+
+const createEbridgeTaskRows = (): EbridgeTaskReadinessRow[] => [
+  createEbridgeReadinessRow({
+    evidenceSource: "seeded_local",
+    intentId: "bridge-intent-readiness",
+    ownerRole: "project_owner",
+    providerState: "seeded_preview",
+    readinessState: "ready",
+    verificationType: "ON_CHAIN",
+  }),
+  createEbridgeReadinessRow({
+    evidenceSource: "ebridge_api",
+    intentId: "bridge-amount-threshold-review",
+    ownerRole: "operator",
+    providerState: "review_required",
+    readinessState: "review_required",
+    verificationType: "DAPP_API",
+  }),
+  createEbridgeReadinessRow({
+    evidenceSource: "aefinder_on_chain",
+    intentId: "bridge-on-chain-evidence",
+    ownerRole: "operator",
+    providerState: "review_required",
+    readinessState: "review_required",
+    verificationType: "ON_CHAIN",
+  }),
+  createEbridgeReadinessRow({
+    evidenceSource: "awaken_unlock_rule",
+    intentId: "bridge-awaken-unlock-dependency",
+    ownerRole: "bridge_provider_reviewer",
+    providerState: "blocked",
+    readinessState: "blocked",
+    verificationType: "DAPP_API",
+  }),
+  createEbridgeReadinessRow({
+    evidenceSource: "eligibility_engine",
+    intentId: "bridge-eligibility-impact",
+    ownerRole: "risk_reviewer",
+    providerState: "not_connected",
+    readinessState: "blocked",
+    verificationType: "DAPP_API",
+  }),
+];
+
+const createEbridgeTaskSummary = (
+  rows: EbridgeTaskReadinessRow[],
+): EbridgeTaskReadiness["summary"] => {
+  const topRow = [...rows].sort(
+    (left, right) => ebridgeTaskStateRank[right.readinessState] - ebridgeTaskStateRank[left.readinessState],
+  )[0] ?? rows[0];
+
+  return {
+    totalTasks: rows.length,
+    readyCount: rows.filter((row) => row.readinessState === "ready").length,
+    reviewRequiredCount: rows.filter((row) => row.readinessState === "review_required").length,
+    blockedCount: rows.filter((row) => row.readinessState === "blocked").length,
+    topState: topRow?.readinessState ?? "blocked",
+    topIntentId: topRow?.intentId ?? "bridge-eligibility-impact",
+    primaryOwnerRole: topRow?.ownerRole ?? "risk_reviewer",
+    boundary: ebridgeTaskReadinessBoundary,
+  };
+};
+
+const ebridgeTaskOwnerNextActionFor = (
+  summary: EbridgeTaskReadiness["summary"],
+): LocalizedText => {
+  if (summary.blockedCount > 0) {
+    return localized(
+      "Review eBridge provider ownership, Awaken unlock dependency, and eligibility impact before treating bridge tasks as publish-ready.",
+      "先审核 eBridge provider 归属、Awaken 解锁依赖与资格影响，再将 bridge 任务视为可发布。",
+      "Review eBridge provider ownership, Awaken unlock dependency, and eligibility impact before treating bridge tasks as publish-ready.",
+    );
+  }
+
+  if (summary.reviewRequiredCount > 0) {
+    return localized(
+      "Complete operator review for eBridge threshold and on-chain evidence before publish.",
+      "发布前完成 eBridge 门槛与链上证据的运营审核。",
+      "Complete operator review for eBridge threshold and on-chain evidence before publish.",
+    );
+  }
+
+  return localized(
+    "Keep eBridge tasks in local owner review until live bridge integration is approved.",
+    "在真实 bridge 集成获批前，将 eBridge 任务保持在本地 owner review。",
+    "Keep eBridge tasks in local owner review until live bridge integration is approved.",
+  );
+};
+
+export const createEbridgeTaskReadiness = (
+  campaign: CampaignShellDetail,
+): EbridgeTaskReadiness => {
+  const rows = createEbridgeTaskRows();
+  const summary = createEbridgeTaskSummary(rows);
+
+  return {
+    campaignId: campaign.id,
+    summary,
+    rows,
+    ownerNextAction: ebridgeTaskOwnerNextActionFor(summary),
+    boundary: ebridgeTaskReadinessBoundary,
   };
 };
 
