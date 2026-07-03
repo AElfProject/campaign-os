@@ -6,6 +6,7 @@ import {
   createCampaignTemplatePack,
   campaignDetail,
   createCampaignSettingsReadiness,
+  createForecastCampaignTaskReadiness,
   createLocaleAnalyticsReadiness,
   createParticipantOperationsReadModel,
   createPostCampaignCloseout,
@@ -32,6 +33,9 @@ import {
   type CampaignShellDetail,
   type CampaignSettingsReadinessState,
   type ExportReadinessState,
+  type ForecastCampaignTaskOwnerRole,
+  type ForecastCampaignTaskProviderState,
+  type ForecastCampaignTaskReadinessState,
   type LaunchConsoleBundleOwnerRole,
   type LaunchConsoleBundleStage,
   type LaunchConsoleBundleStatus,
@@ -348,6 +352,80 @@ const campaignTemplateOwnerLabel = (
       project_owner: "專案方",
     },
   } satisfies Record<SupportedLocale, Record<CampaignTemplatePreset["ownerRole"], string>>;
+
+  return labels[locale][ownerRole];
+};
+
+const forecastTaskReadinessBadgeState = (
+  state: ForecastCampaignTaskReadinessState,
+) => state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const forecastTaskReadinessLabel = (
+  state: ForecastCampaignTaskReadinessState,
+  labels: {
+    forecastTaskBlocked: string;
+    forecastTaskReady: string;
+    forecastTaskReviewRequired: string;
+  },
+) => {
+  if (state === "ready") {
+    return labels.forecastTaskReady;
+  }
+
+  return state === "review_required"
+    ? labels.forecastTaskReviewRequired
+    : labels.forecastTaskBlocked;
+};
+
+const forecastTaskProviderStateLabel = (
+  state: ForecastCampaignTaskProviderState,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      not_connected: "Not connected",
+      ready: "Ready",
+      review_required: "Review required",
+      seeded_preview: "Seeded preview",
+    },
+    "zh-CN": {
+      not_connected: "未连接",
+      ready: "就绪",
+      review_required: "需要审核",
+      seeded_preview: "Seeded 预览",
+    },
+    "zh-TW": {
+      not_connected: "未連接",
+      ready: "就緒",
+      review_required: "需要審核",
+      seeded_preview: "Seeded 預覽",
+    },
+  } satisfies Record<SupportedLocale, Record<ForecastCampaignTaskProviderState, string>>;
+
+  return labels[locale][state];
+};
+
+const forecastTaskOwnerLabel = (
+  ownerRole: ForecastCampaignTaskOwnerRole,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      forecast_provider_reviewer: "Forecast provider reviewer",
+      operator: "Operator",
+      project_owner: "Project owner",
+    },
+    "zh-CN": {
+      forecast_provider_reviewer: "Forecast provider 审核人",
+      operator: "运营",
+      project_owner: "项目方",
+    },
+    "zh-TW": {
+      forecast_provider_reviewer: "Forecast provider 審核人",
+      operator: "營運",
+      project_owner: "專案方",
+    },
+  } satisfies Record<SupportedLocale, Record<ForecastCampaignTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -955,6 +1033,7 @@ export const ProjectConsole = ({
   const localeAnalyticsReadiness = createLocaleAnalyticsReadiness(campaign);
   const aiContentPack = createAiContentPackWorkbench(campaign);
   const campaignTemplatePack = createCampaignTemplatePack();
+  const forecastTaskReadiness = createForecastCampaignTaskReadiness(campaign);
   const participantOperations = createParticipantOperationsReadModel(campaign);
   const settingsReadiness = createCampaignSettingsReadiness(campaign);
   const postCampaignCloseout = createPostCampaignCloseout(campaign);
@@ -2898,6 +2977,115 @@ export const ProjectConsole = ({
           </section>
 
           <TaskTemplateLibrary locale={locale} />
+
+          <section aria-label={copy.forecastTaskReadiness} style={panelStyle}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.forecastTaskTotal}</p>
+                <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                  {copy.forecastTaskReadiness}
+                </h3>
+                <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                  {copy.forecastTaskReadinessSubtitle}
+                </p>
+              </div>
+              <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <PublishStateBadge
+                  label={`${forecastTaskReadiness.summary.readyCount} ${copy.forecastTaskReady}`}
+                  state="ready"
+                />
+                <PublishStateBadge
+                  label={`${forecastTaskReadiness.summary.reviewRequiredCount} ${copy.forecastTaskReviewRequired}`}
+                  state="warning"
+                />
+                <PublishStateBadge
+                  label={`${forecastTaskReadiness.summary.blockedCount} ${copy.forecastTaskBlocked}`}
+                  state="blocker"
+                />
+              </span>
+            </div>
+
+            <div style={gridStyle}>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.forecastTaskTotal}</p>
+                <p style={statValueStyle}>{forecastTaskReadiness.summary.totalTasks}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.forecastTaskReady}</p>
+                <p style={statValueStyle}>{forecastTaskReadiness.summary.readyCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.forecastTaskReviewRequired}</p>
+                <p style={statValueStyle}>{forecastTaskReadiness.summary.reviewRequiredCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.forecastTaskBlocked}</p>
+                <p style={statValueStyle}>{forecastTaskReadiness.summary.blockedCount}</p>
+              </article>
+              <article style={{ ...cardStyle, gridColumn: "1 / -1", minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.forecastTaskNextAction}</p>
+                <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(forecastTaskReadiness.ownerNextAction, locale)}
+                </p>
+              </article>
+            </div>
+
+            <p style={boundaryStyle}>
+              <strong>{copy.forecastTaskBoundary}: </strong>
+              {getLocalizedText(forecastTaskReadiness.boundary, locale)}
+            </p>
+
+            <div style={compactSectionGridStyle}>
+              {forecastTaskReadiness.rows.map((row) => (
+                <article key={row.id} style={{ ...cardStyle, minHeight: 0 }}>
+                  <div style={headingRowStyle}>
+                    <div>
+                      <p style={statLabelStyle}>{copy.forecastTaskProviderState}</p>
+                      <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                        {getLocalizedText(row.label, locale)}
+                      </h4>
+                    </div>
+                    <PublishStateBadge
+                      label={forecastTaskReadinessLabel(row.readinessState, copy)}
+                      state={forecastTaskReadinessBadgeState(row.readinessState)}
+                    />
+                  </div>
+
+                  <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(row.description, locale)}
+                  </p>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <Badge
+                      label={`${row.verificationType} · ${row.evidenceSource}`}
+                      tone="info"
+                    />
+                    <Badge
+                      label={`${copy.forecastTaskProviderState}: ${forecastTaskProviderStateLabel(row.providerState, locale)}`}
+                      tone={row.providerState === "ready" ? "success" : "warning"}
+                    />
+                    <Badge
+                      label={`${copy.forecastTaskOwner}: ${forecastTaskOwnerLabel(row.ownerRole, locale)}`}
+                      tone="neutral"
+                    />
+                  </div>
+
+                  <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.forecastTaskRiskState}: </strong>
+                    {getLocalizedText(row.riskState, locale)}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.forecastTaskNextAction}: </strong>
+                    {getLocalizedText(row.nextAction, locale)}
+                  </p>
+                  <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.forecastTaskBoundary}: </strong>
+                    {getLocalizedText(row.boundary, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </section>
 
           <section aria-label="Task readiness preview" style={panelStyle}>
             <div style={headingRowStyle}>

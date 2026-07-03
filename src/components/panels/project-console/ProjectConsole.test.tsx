@@ -467,9 +467,23 @@ describe("Project Console shell", () => {
     }
     expect(screen.getByText(/no live provider verification/i)).toBeInTheDocument();
     expect(screen.getByText(/automatic campaign creation/i)).toBeInTheDocument();
-    expect(screen.getByText(/reward custody/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/reward custody/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Campaign OS provides preset guidance/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Task template library" })).toBeInTheDocument();
+    const forecastReadiness = screen.getByLabelText("Forecast campaign task readiness");
+    expect(
+      within(forecastReadiness).getByRole("heading", { name: "Forecast campaign task readiness" }),
+    ).toBeInTheDocument();
+    expect(within(forecastReadiness).getByText("Prediction participation")).toBeInTheDocument();
+    expect(within(forecastReadiness).getByText("Win streak")).toBeInTheDocument();
+    expect(within(forecastReadiness).getByText("Forecast leaderboard")).toBeInTheDocument();
+    expect(within(forecastReadiness).getByText("DAPP_API · seeded_local")).toBeInTheDocument();
+    expect(
+      within(forecastReadiness).getAllByText("DAPP_API · forecast_app_data").length,
+    ).toBeGreaterThan(0);
+    expect(within(forecastReadiness).getAllByText(/No live Forecast API/).length).toBeGreaterThan(0);
+    expect(within(forecastReadiness).getAllByText(/prediction transaction/).length).toBeGreaterThan(0);
+    expect(within(forecastReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
     for (const category of [
       "wallet",
       "bridge",
@@ -963,6 +977,17 @@ describe("Project Console shell", () => {
     expect(within(zhServiceReadiness).getAllByText(/不接入实时积分账本/).length).toBeGreaterThan(0);
     expect(within(zhServiceReadiness).getAllByText(/不接入实时 Referral backend/).length).toBeGreaterThan(0);
     expect(within(zhServiceReadiness).getAllByText(/不发放奖励/).length).toBeGreaterThan(0);
+
+    fireEvent.click(within(nav).getByRole("button", { name: "模板" }));
+    const zhForecastReadiness = screen.getByLabelText("Forecast 活动任务 readiness");
+    expect(
+      within(zhForecastReadiness).getByRole("heading", { name: "Forecast 活动任务 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(zhForecastReadiness).getByText("预测参与")).toBeInTheDocument();
+    expect(within(zhForecastReadiness).getByText("连胜任务")).toBeInTheDocument();
+    expect(within(zhForecastReadiness).getByText("Forecast 排行榜")).toBeInTheDocument();
+    expect(within(zhForecastReadiness).getAllByText(/负责人/).length).toBeGreaterThan(0);
+    expect(within(zhForecastReadiness).getAllByText(/不会调用真实 Forecast API/).length).toBeGreaterThan(0);
 
     fireEvent.click(within(nav).getByRole("button", { name: "创建" }));
     for (const step of ["目标", "任务", "奖励与资格", "i18n", "合约", "发布准备度"]) {
