@@ -367,6 +367,33 @@ describe("Admin/Ops shell", () => {
     expectVisibleText(/No ABI generation/);
     expectVisibleText(/No live contract transaction/);
     expectVisibleText(/No reward custody \/ no reward distribution/);
+    const companionContractReadiness = screen.getByLabelText("Companion Contract Readiness");
+    expect(
+      within(companionContractReadiness).getByRole("heading", { name: "Companion Contract Readiness" }),
+    ).toBeInTheDocument();
+    expect(within(companionContractReadiness).getByText(/Reviewer-visible V2 companion evidence/)).toBeInTheDocument();
+    expect(within(companionContractReadiness).getByText("Total categories")).toBeInTheDocument();
+    expect(within(companionContractReadiness).getByText("Required categories")).toBeInTheDocument();
+    expect(within(companionContractReadiness).getByText("Proven categories")).toBeInTheDocument();
+    expect(within(companionContractReadiness).getAllByText("CampaignRegistryV2").length).toBeGreaterThan(0);
+    expect(within(companionContractReadiness).getAllByText("CampaignPointsLedgerV2").length).toBeGreaterThan(0);
+    expect(within(companionContractReadiness).getAllByText("ReferralRegistryV2").length).toBeGreaterThan(0);
+    expect(within(companionContractReadiness).getAllByText("EligibilityRootRegistryV2").length).toBeGreaterThan(0);
+    expect(within(companionContractReadiness).getAllByText(/Schema field:/).length).toBeGreaterThan(0);
+    expect(within(companionContractReadiness).getAllByText(/Role\/permission:/).length).toBeGreaterThan(0);
+    expect(within(companionContractReadiness).getAllByText(/Event:/).length).toBeGreaterThan(0);
+    expect(within(companionContractReadiness).getAllByText(/Test:/).length).toBeGreaterThan(0);
+    expect(within(companionContractReadiness).getAllByText(/Root\/hash:/).length).toBeGreaterThan(0);
+    expect(within(companionContractReadiness).getByText("Reward custody and claim exclusion")).toBeInTheDocument();
+    expect(within(companionContractReadiness).getAllByText(/No ABI generation/).length).toBeGreaterThan(0);
+    expect(within(companionContractReadiness).getAllByText(/live contract transaction/).length).toBeGreaterThan(0);
+    expect(within(companionContractReadiness).getAllByText(/reward custody/).length).toBeGreaterThan(0);
+    expect(within(companionContractReadiness).getAllByText(/reward distribution/).length).toBeGreaterThan(0);
+    expect(
+      within(companionContractReadiness).queryByRole("button", {
+        name: /sign|signature|provider call|contract write|root write|reward custody|reward distribution/i,
+      }),
+    ).not.toBeInTheDocument();
     expectVisibleText("CampaignRegistryV2");
     expectVisibleText("CampaignPointsLedgerV2");
     expectVisibleText("ReferralRegistryV2");
@@ -706,6 +733,24 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("奖励托管排除在 MVP 外");
     expectVisibleText(/这个控制台不会执行实时钱包 SDK/);
     expectVisibleText(/不会执行实时钱包 SDK、API 调用、合约交易、导出文件/);
+    const zhCompanionReadiness = screen.getByLabelText("Companion Contract Readiness");
+    expect(
+      within(zhCompanionReadiness).getByRole("heading", { name: "Companion Contract Readiness" }),
+    ).toBeInTheDocument();
+    expect(within(zhCompanionReadiness).getByText(/面向审核人的 V2 companion 证据/)).toBeInTheDocument();
+    expect(within(zhCompanionReadiness).getByText("总类别")).toBeInTheDocument();
+    expect(within(zhCompanionReadiness).getByText("必需类别")).toBeInTheDocument();
+    expect(within(zhCompanionReadiness).getAllByText(/Schema 字段:/).length).toBeGreaterThan(0);
+    expect(within(zhCompanionReadiness).getAllByText(/角色\/权限:/).length).toBeGreaterThan(0);
+    expect(within(zhCompanionReadiness).getAllByText(/CampaignRegistryV2 schema 证据/).length).toBeGreaterThan(0);
+    expect(within(zhCompanionReadiness).getAllByText("奖励托管与 claim 排除项").length).toBeGreaterThan(0);
+    expect(within(zhCompanionReadiness).getAllByText(/不会生成 ABI/).length).toBeGreaterThan(0);
+    expect(within(zhCompanionReadiness).getAllByText(/奖励托管/).length).toBeGreaterThan(0);
+    expect(
+      within(zhCompanionReadiness).queryByRole("button", {
+        name: /签名|合约写入|root 写入|奖励托管|发奖/i,
+      }),
+    ).not.toBeInTheDocument();
     const zhDeliveryAcceptance = screen.getByLabelText("交付验收控制台");
     expect(
       within(zhDeliveryAcceptance).getByRole("heading", { name: "交付验收控制台" }),
