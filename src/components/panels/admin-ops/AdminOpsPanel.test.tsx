@@ -298,6 +298,35 @@ describe("Admin/Ops shell", () => {
     expect(within(walletProviderEvidenceCloseoutPackage).queryByRole("button", {
       name: /connectWallet|getSignature|sendTransaction|sign|signature|provider call|upload|contract write|reward custody|reward distribution/i,
     })).not.toBeInTheDocument();
+    const walletProviderEvidenceRequestPacket = screen.getByLabelText("Wallet Provider Evidence Request Packet");
+    expect(
+      within(walletProviderEvidenceRequestPacket).getByRole("heading", {
+        name: "Wallet Provider Evidence Request Packet",
+      }),
+    ).toBeInTheDocument();
+    expect(within(walletProviderEvidenceRequestPacket).getAllByText("Evidence request packet").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceRequestPacket).getAllByText("Ready requests").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceRequestPacket).getAllByText("Review-required requests").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceRequestPacket).getAllByText("Blocked requests").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceRequestPacket).getAllByText("Launch-blocking requests").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceRequestPacket).getByText("0/5")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceRequestPacket).getByText("Top failed rule: required-artifacts")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceRequestPacket).getByText("Top scenario: portkey-aa-connect")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceRequestPacket).getAllByText("Target evidence path").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceRequestPacket).getByText("wallet-provider-evidence/portkey-aa-connect/")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceRequestPacket).getByText("wallet-provider-evidence/eoa-extension-connect/")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceRequestPacket).getAllByText("QA capture instructions").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceRequestPacket).getAllByText("Acceptance criteria").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceRequestPacket).getByText("local-wallet-qa/eoa-extension-connect-2026-07-03")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceRequestPacket).getByText("review-note/eoa-extension-connect-pending")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceRequestPacket).getAllByText("portkey-aa-connect-screenshot").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceRequestPacket).getByText(/Capture live QA evidence for portkey-aa-connect/)).toBeInTheDocument();
+    expect(within(walletProviderEvidenceRequestPacket).getAllByText(/without using the app to upload or execute wallet operations/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceRequestPacket).getByText(/Reviewer must approve submitted evidence/)).toBeInTheDocument();
+    expect(within(walletProviderEvidenceRequestPacket).getAllByText(/No live wallet SDK connection/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceRequestPacket).queryByRole("button", {
+      name: /connectWallet|getSignature|sendTransaction|sign|signature|provider call|upload|contract write|reward custody|reward distribution/i,
+    })).not.toBeInTheDocument();
     const walletAdapterReadiness = screen
       .getByRole("heading", { name: "aelf-web-login adapter readiness" })
       .closest("section");
@@ -938,6 +967,32 @@ describe("Admin/Ops shell", () => {
     expect(within(zhWalletProviderEvidenceCloseoutPackage).getByText("local-wallet-qa/eoa-extension-connect-2026-07-03")).toBeInTheDocument();
     expect(within(zhWalletProviderEvidenceCloseoutPackage).getAllByText("portkey-aa-connect-screenshot").length).toBeGreaterThan(0);
     expect(within(zhWalletProviderEvidenceCloseoutPackage).queryByRole("button", {
+      name: /签名|provider 调用|上传|合约写入|奖励托管|发奖|reward distribution/i,
+    })).not.toBeInTheDocument();
+    const zhWalletProviderEvidenceRequestPacket = screen.getByLabelText("钱包 Provider 证据请求包");
+    expect(
+      within(zhWalletProviderEvidenceRequestPacket).getByRole("heading", {
+        name: "钱包 Provider 证据请求包",
+      }),
+    ).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceRequestPacket).getAllByText("证据请求包").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceRequestPacket).getAllByText("就绪请求").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceRequestPacket).getAllByText("需审核请求").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceRequestPacket).getAllByText("已阻断请求").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceRequestPacket).getAllByText("上线阻断请求").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceRequestPacket).getByText("0/5")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceRequestPacket).getByText("首要失败规则: required-artifacts")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceRequestPacket).getByText("首要场景: portkey-aa-connect")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceRequestPacket).getAllByText("目标证据路径").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceRequestPacket).getByText("wallet-provider-evidence/portkey-aa-connect/")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceRequestPacket).getAllByText("QA 采集说明").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceRequestPacket).getAllByText("验收标准").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceRequestPacket).getByText("local-wallet-qa/eoa-extension-connect-2026-07-03")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceRequestPacket).getAllByText("portkey-aa-connect-screenshot").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceRequestPacket).getByText(/采集 portkey-aa-connect 的真实 QA 证据/)).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceRequestPacket).getAllByText(/不要通过应用上传或执行钱包操作/).length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceRequestPacket).getByText(/审核人必须批准已提交证据/)).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceRequestPacket).queryByRole("button", {
       name: /签名|provider 调用|上传|合约写入|奖励托管|发奖|reward distribution/i,
     })).not.toBeInTheDocument();
     const zhLiveConnectorReleaseReview = screen
