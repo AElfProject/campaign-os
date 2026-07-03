@@ -751,6 +751,7 @@ describe("Project Console shell", () => {
     expect(within(serviceFacade).getByText("generateI18nDraft")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("addTask")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("exportWinners")).toBeInTheDocument();
+    expect(within(serviceFacade).getByText("requestAgentWalletAction")).toBeInTheDocument();
     expect(within(serviceFacade).getByText("Verification coverage")).toBeInTheDocument();
     expect(within(serviceFacade).getAllByText("Provider readiness").length).toBeGreaterThan(0);
     expect(within(serviceFacade).getByText("Evidence categories")).toBeInTheDocument();

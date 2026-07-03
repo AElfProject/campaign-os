@@ -791,6 +791,205 @@ describe("Campaign OS local API service facade", () => {
     });
   });
 
+  it("reviews Agent Skill wallet action readiness without live execution", () => {
+    const request = {
+      actionIntent: "balance_query" as const,
+      agentId: "agent-portkey-eoa-001",
+      campaignId: campaignDetail.id,
+      chainId: "AELF",
+      evidencePurpose: "operator_readiness_review",
+      humanApprovalState: "pending_review" as const,
+      network: "mainnet" as const,
+      operatorRole: "internal_operator" as const,
+      taskId: "task-agent-review",
+      walletSource: "AGENT_SKILL" as const,
+    };
+    const readiness = service.requestAgentWalletAction(request);
+    const readinessAgain = service.requestAgentWalletAction(request);
+
+    expect(readiness.ok).toBe(true);
+    expect(readiness).toEqual(readinessAgain);
+    expect(readiness.payload).toMatchObject({
+      actionState: "review_required",
+      allowedOperation: "readiness_review_only",
+      auditTrail: {
+        agentId: "agent-portkey-eoa-001",
+        campaignId: campaignDetail.id,
+        executionAttempted: false,
+        sensitiveMaterialHandled: false,
+        taskId: "task-agent-review",
+      },
+      noContractWrite: true,
+      noExportFile: true,
+      noPrivateKeyBoundary: true,
+      noRewardDistribution: true,
+      noSignatureExecution: true,
+      noTransactionExecution: true,
+      walletSource: "AGENT_SKILL",
+    });
+    expect(readiness.payload?.blockedReason["en-US"]).toContain("review-only");
+    expect(readiness.payload?.nextReviewAction["en-US"]).toContain("operator review");
+    expect(readiness.boundary["en-US"]).toContain("No live API");
+  });
+
+  it("blocks dangerous Agent Skill wallet action intents instead of executing them", () => {
+    const blocked = service.requestAgentWalletAction({
+      actionIntent: "transfer",
+      agentId: "agent-portkey-eoa-001",
+      campaignId: campaignDetail.id,
+      chainId: "AELF",
+      evidencePurpose: "operator_readiness_review",
+      humanApprovalState: "approved",
+      network: "mainnet",
+      operatorRole: "internal_operator",
+      taskId: "task-agent-review",
+      walletSource: "AGENT_SKILL",
+    });
+
+    expect(blocked.ok).toBe(true);
+    expect(blocked.payload).toMatchObject({
+      actionState: "blocked",
+      allowedOperation: "blocked_no_execution",
+      auditTrail: {
+        executionAttempted: false,
+        sensitiveMaterialHandled: false,
+      },
+      noContractWrite: true,
+      noExportFile: true,
+      noPrivateKeyBoundary: true,
+      noRewardDistribution: true,
+      noSignatureExecution: true,
+      noTransactionExecution: true,
+    });
+    expect(blocked.payload?.blockedReason["en-US"]).toContain("blocked");
+    expect(blocked.payload?.nextReviewAction["en-US"]).toContain("runbook");
+  });
+
+  it("fails closed for invalid Agent Skill wallet action provenance", () => {
+    const validRequest = {
+      actionIntent: "qa_smoke_test" as const,
+      agentId: "agent-portkey-eoa-001",
+      campaignId: campaignDetail.id,
+      chainId: "AELF",
+      evidencePurpose: "operator_readiness_review",
+      humanApprovalState: "pending_review" as const,
+      network: "mainnet" as const,
+      operatorRole: "internal_operator" as const,
+      taskId: "task-agent-review",
+      walletSource: "AGENT_SKILL" as const,
+    };
+    const invalidResponses = [
+      {
+        response: service.requestAgentWalletAction({
+          ...validRequest,
+          campaignId: "missing-campaign",
+        }),
+        expected: { code: "CAMPAIGN_NOT_FOUND", field: "campaignId" },
+      },
+      {
+        response: service.requestAgentWalletAction({
+          ...validRequest,
+          taskId: "missing-task",
+        }),
+        expected: { code: "TASK_NOT_FOUND", field: "taskId" },
+      },
+      {
+        response: service.requestAgentWalletAction({
+          ...validRequest,
+          walletSource: "PORTKEY_AA",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "walletSource" },
+      },
+      {
+        response: service.requestAgentWalletAction({
+          ...validRequest,
+          humanApprovalState: undefined,
+        }),
+        expected: { code: "INVALID_REQUEST", field: "humanApprovalState" },
+      },
+      {
+        response: service.requestAgentWalletAction({
+          ...validRequest,
+          humanApprovalState: "not_requested",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "humanApprovalState" },
+      },
+      {
+        response: service.requestAgentWalletAction({
+          ...validRequest,
+          chainId: "tDVV",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "chainId" },
+      },
+      {
+        response: service.requestAgentWalletAction({
+          ...validRequest,
+          actionIntent: "unknown_future_intent",
+        }),
+        expected: { code: "INVALID_REQUEST", field: "actionIntent" },
+      },
+    ];
+
+    for (const { response, expected } of invalidResponses) {
+      expect(response).toMatchObject({
+        ok: false,
+        error: expect.objectContaining(expected),
+      });
+      expect(response.payload).toBeUndefined();
+    }
+  });
+
+  it("keeps Agent Skill wallet action payloads free of secrets and private paths", () => {
+    const responses = [
+      service.requestAgentWalletAction({
+        actionIntent: "contract_view_review",
+        agentId: "agent-portkey-eoa-001",
+        campaignId: campaignDetail.id,
+        chainId: "AELF",
+        evidencePurpose: "operator_readiness_review",
+        humanApprovalState: "approved",
+        network: "mainnet",
+        operatorRole: "contract_reviewer",
+        taskId: "task-agent-review",
+        walletSource: "AGENT_SKILL",
+      }),
+      service.requestAgentWalletAction({
+        actionIntent: "contract_send",
+        agentId: "agent-portkey-eoa-001",
+        campaignId: campaignDetail.id,
+        chainId: "AELF",
+        evidencePurpose: "operator_readiness_review",
+        humanApprovalState: "approved",
+        network: "mainnet",
+        operatorRole: "contract_reviewer",
+        taskId: "task-agent-review",
+        walletSource: "AGENT_SKILL",
+      }),
+    ];
+    const payloadJson = JSON.stringify(responses);
+
+    for (const response of responses) {
+      expect(response.ok).toBe(true);
+      expect(response.payload?.auditTrail.executionAttempted).toBe(false);
+      expect(response.payload?.auditTrail.sensitiveMaterialHandled).toBe(false);
+    }
+    for (const unsafe of [
+      "private key",
+      "seed phrase",
+      "bearer",
+      "raw signature",
+      "signedPayload",
+      "transactionId",
+      "downloadUrl",
+      "contractRoot",
+      "kitty-specs",
+      "docs/current",
+    ]) {
+      expect(payloadJson).not.toContain(unsafe);
+      expect(payloadJson.toLowerCase()).not.toContain(unsafe.toLowerCase());
+    }
+  });
+
   it("executes local task verification actions without live side effects", () => {
     const eoaRequest = {
       accountType: "EOA" as const,
@@ -1684,6 +1883,7 @@ describe("Campaign OS local API service facade", () => {
         "addTask",
         "listCampaigns",
         "getCampaignDetail",
+        "requestAgentWalletAction",
         "executeTaskVerificationAction",
         "generateI18nDraft",
         "getAdvancedAnalyticsReadiness",
@@ -1694,19 +1894,21 @@ describe("Campaign OS local API service facade", () => {
         "addTask",
         "listCampaigns",
         "getCampaignDetail",
+        "requestAgentWalletAction",
         "executeTaskVerificationAction",
         "generateI18nDraft",
         "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
       ]),
-      totalServices: 20,
+      totalServices: 21,
     });
     expect(coverage.payload?.boundary["en-US"]).toContain("advanced analytics readiness");
     expect(coverage.payload?.boundary["en-US"]).toContain("No live analytics SDK");
     expect(coverage.payload?.sampleResponseIds).toEqual(
       expect.arrayContaining([
         "createWalletSession",
+        "requestAgentWalletAction",
         "generateI18nDraft",
         "verifyTask",
         "executeTaskVerificationAction",
