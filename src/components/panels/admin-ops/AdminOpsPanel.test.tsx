@@ -203,6 +203,32 @@ describe("Admin/Ops shell", () => {
     expect(within(walletProviderEvidenceIntake).getAllByText(/No live wallet SDK connection/).length).toBeGreaterThan(0);
     expect(within(walletProviderEvidenceIntake).getAllByText(/provider API call/).length).toBeGreaterThan(0);
     expect(within(walletProviderEvidenceIntake).getAllByText(/file upload/).length).toBeGreaterThan(0);
+    const walletProviderEvidenceApprovalAudit = screen.getByLabelText("Wallet Provider Evidence Approval Audit");
+    expect(
+      within(walletProviderEvidenceApprovalAudit).getByRole("heading", {
+        name: "Wallet Provider Evidence Approval Audit",
+      }),
+    ).toBeInTheDocument();
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText("Rule results").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).getByText("Top failed rule: required-artifacts")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceApprovalAudit).getByText("Top scenario: portkey-aa-connect")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText("Approved scenarios").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText("Artifact coverage").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText("Approval state").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText("Reviewer decision").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText("Missing required artifacts").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).getByText("eoa-extension-connect-screenshot")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceApprovalAudit).getByText("wrong-chain-error-runbook")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText("Review required").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText("Rejected").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText("required-artifacts").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText("reviewer-approval").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText(/Submitted evidence is not approved/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText(/Rejected provider evidence remains blocking/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).getAllByText(/No live wallet SDK connection/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceApprovalAudit).queryByRole("button", {
+      name: /sign|signature|provider call|upload|contract write|reward custody|reward distribution/i,
+    })).not.toBeInTheDocument();
     const walletAdapterReadiness = screen
       .getByRole("heading", { name: "aelf-web-login adapter readiness" })
       .closest("section");
@@ -703,6 +729,32 @@ describe("Admin/Ops shell", () => {
     ).toBeInTheDocument();
     expect(within(zhWalletProviderEvidenceIntake).getAllByText(/不会执行实时钱包 SDK 连接/).length).toBeGreaterThan(0);
     expect(within(zhWalletProviderEvidenceIntake).getAllByText(/provider API 调用/).length).toBeGreaterThan(0);
+    const zhWalletProviderEvidenceApprovalAudit = screen.getByLabelText("钱包 Provider 证据批准审计");
+    expect(
+      within(zhWalletProviderEvidenceApprovalAudit).getByRole("heading", {
+        name: "钱包 Provider 证据批准审计",
+      }),
+    ).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText("规则结果").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getByText("首要失败规则: required-artifacts")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getByText("首要场景: portkey-aa-connect")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText("已批准场景").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText("Artifact 覆盖").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText("批准状态").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText("审核决定").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText("缺失必需 artifacts").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getByText("eoa-extension-connect-screenshot")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getByText("wrong-chain-error-runbook")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText("需要审核").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText("已驳回").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText("required-artifacts").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText("reviewer-approval").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText(/已提交证据尚未批准/).length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText(/已拒绝的 provider 证据/).length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText(/不会执行实时钱包 SDK 连接/).length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceApprovalAudit).queryByRole("button", {
+      name: /签名|provider 调用|上传|合约写入|奖励托管|发奖|reward distribution/i,
+    })).not.toBeInTheDocument();
     const zhLiveConnectorReleaseReview = screen
       .getByRole("heading", { name: "Live 钱包 connector 发布审核" })
       .closest("section");
