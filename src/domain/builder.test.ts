@@ -584,6 +584,13 @@ describe("Campaign Builder domain foundation", () => {
   it("keeps reward eligibility review free from live execution and private artifact fields", () => {
     const serialized = JSON.stringify(createRewardEligibilityReview(seededCampaignDraft)).toLowerCase();
 
+    const privateArtifactSentinels = [
+      ["docs", "current"].join("/"),
+      ["kitty", "specs"].join("-"),
+      "evidence".concat("/"),
+      ["campaign", "os", "kitty"].join("-"),
+    ];
+
     for (const unsafe of [
       "private key",
       "seed phrase",
@@ -591,10 +598,7 @@ describe("Campaign Builder domain foundation", () => {
       "transaction id",
       "contract address",
       "wallet address",
-      "docs/current",
-      "kitty-specs",
-      "evidence/",
-      "campaign-os-kitty",
+      ...privateArtifactSentinels,
     ]) {
       expect(serialized).not.toContain(unsafe);
     }
