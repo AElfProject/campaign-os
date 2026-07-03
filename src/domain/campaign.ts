@@ -235,11 +235,18 @@ import type {
   UserWinnersExportStatusReadModel,
   WalletProviderQaReadinessGate,
   WalletProviderQaScenarioId,
+  WalletProviderArtifactCoverage,
+  WalletProviderEvidenceApprovalAudit,
+  WalletProviderEvidenceApprovalRule,
+  WalletProviderEvidenceApprovalRuleId,
+  WalletProviderEvidenceApprovalRuleState,
+  WalletProviderEvidenceApprovalScenario,
   WalletProviderEvidenceArtifact,
   WalletProviderEvidenceIntake,
   WalletProviderEvidenceReleaseImpact,
   WalletProviderEvidenceScenario,
   WalletProviderEvidenceStatus,
+  WalletProviderReviewerDecision,
 } from "./types";
 import {
   aelfWebLoginAdapterBoundary,
@@ -2060,12 +2067,19 @@ const walletProviderEvidenceNextActions: Record<WalletProviderQaScenarioId, Loca
   ),
 };
 
+type WalletProviderEvidenceScenarioOverrides = Partial<Record<WalletProviderQaScenarioId, {
+  evidenceStatus?: WalletProviderEvidenceStatus;
+  submittedArtifacts?: WalletProviderEvidenceArtifact[];
+}>>;
+
 const createWalletProviderEvidenceScenario = (
   scenarioId: WalletProviderQaScenarioId,
   gate: WalletProviderQaReadinessGate,
+  overrides: WalletProviderEvidenceScenarioOverrides = {},
 ): WalletProviderEvidenceScenario => {
   const qaScenario = gate.scenarios.find((scenario) => scenario.id === scenarioId);
-  const evidenceStatus = walletProviderEvidenceStatusFor(scenarioId, Boolean(qaScenario));
+  const override = overrides[scenarioId];
+  const evidenceStatus = override?.evidenceStatus ?? walletProviderEvidenceStatusFor(scenarioId, Boolean(qaScenario));
   const releaseImpact = walletProviderEvidenceReleaseImpactFor(evidenceStatus);
 
   return {
@@ -2073,7 +2087,7 @@ const createWalletProviderEvidenceScenario = (
     label: walletProviderEvidenceLabels[scenarioId],
     provider: walletProviderEvidenceProviderLabels[scenarioId],
     expectedArtifacts: expectedWalletProviderArtifacts(scenarioId),
-    submittedArtifacts: submittedWalletProviderArtifacts(scenarioId),
+    submittedArtifacts: override?.submittedArtifacts ?? submittedWalletProviderArtifacts(scenarioId),
     evidenceStatus,
     reviewState: walletProviderEvidenceReviewStateFor(evidenceStatus),
     releaseImpact,
@@ -2122,9 +2136,10 @@ const summarizeWalletProviderEvidenceIntake = (
 
 export const createWalletProviderEvidenceIntake = (
   gate: WalletProviderQaReadinessGate,
+  overrides: WalletProviderEvidenceScenarioOverrides = {},
 ): WalletProviderEvidenceIntake => {
   const scenarios = walletProviderEvidenceScenarioOrder.map((scenarioId) =>
-    createWalletProviderEvidenceScenario(scenarioId, gate),
+    createWalletProviderEvidenceScenario(scenarioId, gate, overrides),
   );
   const summary = summarizeWalletProviderEvidenceIntake(scenarios);
 
@@ -2133,6 +2148,365 @@ export const createWalletProviderEvidenceIntake = (
     scenarios,
     boundary: walletProviderEvidenceBoundary,
     nextAction: summary.topNextAction,
+  };
+};
+
+const walletProviderEvidenceApprovalRuleLabels: Record<WalletProviderEvidenceApprovalRuleId, LocalizedText> = {
+  "live-evidence-status": localized("Live evidence status", "真实证据状态", "真實證據狀態"),
+  "non-live-boundary": localized("Non-live boundary", "非实时边界", "非即時邊界"),
+  "required-artifacts": localized("Required artifacts", "必需证据", "必需證據"),
+  "reviewer-approval": localized("Reviewer approval", "审核批准", "審核批准"),
+  "service-gate": localized("Service gate", "服务门禁", "服務門禁"),
+};
+
+const walletProviderEvidenceApprovalStatePriority: Record<WalletProviderEvidenceApprovalScenario["approvalState"], number> = {
+  blocked: 0,
+  review_required: 1,
+  approved: 2,
+  not_applicable: 3,
+};
+
+const walletProviderEvidenceApprovalRuleStatePriority: Record<WalletProviderEvidenceApprovalRuleState, number> = {
+  blocked: 0,
+  needs_review: 1,
+  passed: 2,
+  not_applicable: 3,
+};
+
+const walletProviderEvidenceApprovalReleaseImpact: Record<
+  WalletProviderEvidenceApprovalScenario["approvalState"],
+  WalletProviderEvidenceReleaseImpact
+> = {
+  approved: "ready",
+  blocked: "blocked",
+  not_applicable: "not_applicable",
+  review_required: "review_required",
+};
+
+const walletProviderEvidenceApprovalIds = (ids: string[]) => ids.length > 0 ? ids.join(", ") : "none";
+
+const createWalletProviderArtifactCoverage = (
+  scenario: WalletProviderEvidenceScenario,
+): WalletProviderArtifactCoverage => {
+  const requiredArtifacts = scenario.expectedArtifacts.filter((artifact) => artifact.required);
+  const submittedArtifacts = scenario.submittedArtifacts.filter((artifact) => Boolean(artifact.reference));
+  const submittedArtifactTypes = new Set(submittedArtifacts.map((artifact) => artifact.artifactType));
+  const missingRequiredArtifactIds = requiredArtifacts
+    .filter((artifact) => !submittedArtifactTypes.has(artifact.artifactType))
+    .map((artifact) => artifact.id);
+
+  return {
+    requiredArtifactIds: requiredArtifacts.map((artifact) => artifact.id),
+    submittedArtifactIds: submittedArtifacts.map((artifact) => artifact.id),
+    missingRequiredArtifactIds,
+    requiredCount: requiredArtifacts.length,
+    submittedRequiredCount: requiredArtifacts.length - missingRequiredArtifactIds.length,
+    optionalCount: scenario.expectedArtifacts.filter((artifact) => !artifact.required).length,
+    complete: missingRequiredArtifactIds.length === 0,
+  };
+};
+
+const walletProviderEvidenceApprovalRule = (
+  id: WalletProviderEvidenceApprovalRuleId,
+  state: WalletProviderEvidenceApprovalRuleState,
+  evidence: LocalizedText,
+  nextAction: LocalizedText,
+): WalletProviderEvidenceApprovalRule => ({
+  evidence,
+  id,
+  label: walletProviderEvidenceApprovalRuleLabels[id],
+  nextAction,
+  state,
+});
+
+const createWalletProviderApprovalRules = (
+  scenario: WalletProviderEvidenceScenario,
+  qaScenario: WalletProviderQaReadinessGate["scenarios"][number] | undefined,
+  artifactCoverage: WalletProviderArtifactCoverage,
+): WalletProviderEvidenceApprovalRule[] => {
+  const liveEvidenceStatus = qaScenario?.liveEvidenceStatus ?? "missing";
+  const missingIds = walletProviderEvidenceApprovalIds(artifactCoverage.missingRequiredArtifactIds);
+  const missingArtifactState: WalletProviderEvidenceApprovalRuleState = scenario.evidenceStatus === "not_applicable"
+    ? "not_applicable"
+    : artifactCoverage.complete
+      ? "passed"
+      : scenario.evidenceStatus === "submitted"
+        ? "needs_review"
+        : "blocked";
+  const reviewerApprovalState: WalletProviderEvidenceApprovalRuleState = scenario.evidenceStatus === "not_applicable"
+    ? "not_applicable"
+    : scenario.evidenceStatus === "approved"
+      ? "passed"
+      : scenario.evidenceStatus === "submitted"
+        ? "needs_review"
+        : "blocked";
+  const liveEvidenceRuleState: WalletProviderEvidenceApprovalRuleState =
+    scenario.evidenceStatus === "not_applicable" || liveEvidenceStatus === "not_applicable"
+      ? "not_applicable"
+      : scenario.evidenceStatus === "approved" && liveEvidenceStatus === "ready"
+        ? "passed"
+        : scenario.evidenceStatus === "submitted"
+          ? "needs_review"
+          : "blocked";
+  const serviceGateState: WalletProviderEvidenceApprovalRuleState =
+    scenario.evidenceStatus === "rejected" ||
+    scenario.evidenceStatus === "expired" ||
+    liveEvidenceStatus === "blocked"
+      ? "blocked"
+      : "passed";
+
+  return [
+    walletProviderEvidenceApprovalRule(
+      "required-artifacts",
+      missingArtifactState,
+      localized(
+        `${artifactCoverage.submittedRequiredCount}/${artifactCoverage.requiredCount} required artifacts submitted; missing ${missingIds}.`,
+        `已提交 ${artifactCoverage.submittedRequiredCount}/${artifactCoverage.requiredCount} 个必需证据；缺失 ${missingIds}。`,
+        `已提交 ${artifactCoverage.submittedRequiredCount}/${artifactCoverage.requiredCount} 個必需證據；缺失 ${missingIds}。`,
+      ),
+      artifactCoverage.complete
+        ? localized("Keep required artifact references attached.", "保留已附上的必需证据引用。", "保留已附上的必需證據引用。")
+        : localized(
+          `Attach missing required artifact references: ${missingIds}.`,
+          `补齐缺失的必需证据引用：${missingIds}。`,
+          `補齊缺失的必需證據引用：${missingIds}。`,
+        ),
+    ),
+    walletProviderEvidenceApprovalRule(
+      "reviewer-approval",
+      reviewerApprovalState,
+      localized(
+        `Reviewer state is ${scenario.reviewState}; evidence status is ${scenario.evidenceStatus}.`,
+        `审核状态为 ${scenario.reviewState}；证据状态为 ${scenario.evidenceStatus}。`,
+        `審核狀態為 ${scenario.reviewState}；證據狀態為 ${scenario.evidenceStatus}。`,
+      ),
+      scenario.evidenceStatus === "approved"
+        ? localized("Keep reviewer approval linked to this scenario.", "保留该场景的审核批准关联。", "保留該場景的審核批准關聯。")
+        : scenario.nextAction,
+    ),
+    walletProviderEvidenceApprovalRule(
+      "live-evidence-status",
+      liveEvidenceRuleState,
+      localized(
+        `QA live evidence status is ${liveEvidenceStatus}; intake evidence status is ${scenario.evidenceStatus}.`,
+        `QA 真实证据状态为 ${liveEvidenceStatus}；intake 证据状态为 ${scenario.evidenceStatus}。`,
+        `QA 真實證據狀態為 ${liveEvidenceStatus}；intake 證據狀態為 ${scenario.evidenceStatus}。`,
+      ),
+      liveEvidenceRuleState === "passed"
+        ? localized("Keep live evidence metadata review-linked.", "保留真实证据 metadata 的审核关联。", "保留真實證據 metadata 的審核關聯。")
+        : scenario.nextAction,
+    ),
+    walletProviderEvidenceApprovalRule(
+      "service-gate",
+      serviceGateState,
+      scenario.serviceGate,
+      serviceGateState === "passed"
+        ? localized(
+          "Keep the wallet adapter service gate review-gated until all evidence rules pass.",
+          "在所有证据规则通过前，保持钱包 adapter 服务门禁处于审核控制。",
+          "在所有證據規則通過前，保持錢包 adapter 服務門禁處於審核控制。",
+        )
+        : localized(
+          "Do not enable this wallet provider path while the service gate is blocked.",
+          "服务门禁阻断时不要启用该钱包 provider 路径。",
+          "服務門禁阻斷時不要啟用該錢包 provider 路徑。",
+        ),
+    ),
+    walletProviderEvidenceApprovalRule(
+      "non-live-boundary",
+      "passed",
+      scenario.boundary,
+      localized(
+        "Keep this approval audit as display metadata only.",
+        "保持该 approval audit 仅作为展示 metadata。",
+        "保持該 approval audit 僅作為展示 metadata。",
+      ),
+    ),
+  ];
+};
+
+const createWalletProviderReviewerDecision = (
+  scenario: WalletProviderEvidenceScenario,
+  artifactCoverage: WalletProviderArtifactCoverage,
+  approvalState: WalletProviderEvidenceApprovalScenario["approvalState"],
+): WalletProviderReviewerDecision => {
+  if (approvalState === "approved") {
+    return {
+      state: "approved",
+      label: localized("Approved", "已批准", "已批准"),
+      reason: localized(
+        "Required artifacts, reviewer approval, live evidence status, service gate, and non-live boundary rules pass for this scenario.",
+        "该场景的必需证据、审核批准、真实证据状态、服务门禁和非实时边界规则均已通过。",
+        "該場景的必需證據、審核批准、真實證據狀態、服務門禁和非即時邊界規則均已通過。",
+      ),
+      nextAction: localized("Keep approval evidence attached for release review.", "为发布审核保留批准证据。", "為發布審核保留批准證據。"),
+    };
+  }
+
+  if (scenario.evidenceStatus === "submitted") {
+    const missingIds = walletProviderEvidenceApprovalIds(artifactCoverage.missingRequiredArtifactIds);
+
+    return {
+      state: "in_review",
+      label: localized("Review required", "需要审核", "需要審核"),
+      reason: localized(
+        `Submitted evidence is not approved and is missing required artifacts: ${missingIds}.`,
+        `已提交证据尚未批准，且缺失必需证据：${missingIds}。`,
+        `已提交證據尚未批准，且缺失必需證據：${missingIds}。`,
+      ),
+      nextAction: scenario.nextAction,
+    };
+  }
+
+  if (scenario.evidenceStatus === "rejected") {
+    return {
+      state: "rejected",
+      label: localized("Rejected", "已拒绝", "已拒絕"),
+      reason: localized(
+        "Rejected provider evidence remains blocking until a complete replacement is submitted and approved.",
+        "已拒绝的 provider 证据在提交并批准完整替代证据前持续阻断。",
+        "已拒絕的 provider 證據在提交並批准完整替代證據前持續阻斷。",
+      ),
+      nextAction: scenario.nextAction,
+    };
+  }
+
+  if (scenario.evidenceStatus === "expired") {
+    return {
+      state: "expired",
+      label: localized("Expired", "已过期", "已過期"),
+      reason: localized(
+        "Expired provider evidence must be replaced before release review.",
+        "已过期 provider 证据必须在发布审核前替换。",
+        "已過期 provider 證據必須在發布審核前替換。",
+      ),
+      nextAction: scenario.nextAction,
+    };
+  }
+
+  if (scenario.evidenceStatus === "not_applicable") {
+    return {
+      state: "not_applicable",
+      label: localized("Not applicable", "不适用", "不適用"),
+      reason: localized(
+        "This wallet provider evidence scenario is not applicable.",
+        "该钱包 provider 证据场景不适用。",
+        "該錢包 provider 證據場景不適用。",
+      ),
+      nextAction: scenario.nextAction,
+    };
+  }
+
+  return {
+    state: "not_started",
+    label: localized("Not started", "未开始", "未開始"),
+    reason: localized(
+      "No complete provider evidence has been attached for approval review.",
+      "尚未附上可进入批准审核的完整 provider 证据。",
+      "尚未附上可進入批准審核的完整 provider 證據。",
+    ),
+    nextAction: scenario.nextAction,
+  };
+};
+
+const createWalletProviderEvidenceApprovalScenario = (
+  scenario: WalletProviderEvidenceScenario,
+  gate: WalletProviderQaReadinessGate,
+): WalletProviderEvidenceApprovalScenario => {
+  const qaScenario = gate.scenarios.find((item) => item.id === scenario.id);
+  const artifactCoverage = createWalletProviderArtifactCoverage(scenario);
+  const rules = createWalletProviderApprovalRules(scenario, qaScenario, artifactCoverage);
+  const failedRuleIds = rules
+    .filter((rule) => rule.state === "blocked" || rule.state === "needs_review")
+    .map((rule) => rule.id);
+  const approvalState: WalletProviderEvidenceApprovalScenario["approvalState"] =
+    scenario.evidenceStatus === "not_applicable"
+      ? "not_applicable"
+      : rules.some((rule) => rule.state === "blocked")
+        ? "blocked"
+        : rules.some((rule) => rule.state === "needs_review")
+          ? "review_required"
+          : "approved";
+  const reviewerDecision = createWalletProviderReviewerDecision(scenario, artifactCoverage, approvalState);
+
+  return {
+    approvalState,
+    artifactCoverage,
+    boundary: scenario.boundary,
+    failedRuleIds,
+    id: scenario.id,
+    label: scenario.label,
+    nextAction: reviewerDecision.nextAction,
+    provider: scenario.provider,
+    releaseImpact: walletProviderEvidenceApprovalReleaseImpact[approvalState],
+    reviewerDecision,
+    rules,
+  };
+};
+
+const compareWalletProviderEvidenceApprovalScenarios = (
+  left: WalletProviderEvidenceApprovalScenario,
+  right: WalletProviderEvidenceApprovalScenario,
+) => {
+  const approvalDelta = walletProviderEvidenceApprovalStatePriority[left.approvalState] -
+    walletProviderEvidenceApprovalStatePriority[right.approvalState];
+
+  if (approvalDelta !== 0) {
+    return approvalDelta;
+  }
+
+  const leftFailedRule = left.rules.find((rule) => rule.id === left.failedRuleIds[0]);
+  const rightFailedRule = right.rules.find((rule) => rule.id === right.failedRuleIds[0]);
+  const failedRuleDelta = walletProviderEvidenceApprovalRuleStatePriority[leftFailedRule?.state ?? "passed"] -
+    walletProviderEvidenceApprovalRuleStatePriority[rightFailedRule?.state ?? "passed"];
+
+  if (failedRuleDelta !== 0) {
+    return failedRuleDelta;
+  }
+
+  return walletProviderEvidenceScenarioOrder.indexOf(left.id) - walletProviderEvidenceScenarioOrder.indexOf(right.id);
+};
+
+const summarizeWalletProviderEvidenceApprovalAudit = (
+  scenarios: WalletProviderEvidenceApprovalScenario[],
+): WalletProviderEvidenceApprovalAudit["summary"] => {
+  const topScenario = [...scenarios].sort(compareWalletProviderEvidenceApprovalScenarios)[0] ?? scenarios[0];
+  const topFailedRuleId = topScenario?.failedRuleIds[0] ?? null;
+  const topFailedRule = topFailedRuleId
+    ? topScenario.rules.find((rule) => rule.id === topFailedRuleId) ?? null
+    : null;
+
+  return {
+    totalScenarios: scenarios.length,
+    approvedScenarios: scenarios.filter((scenario) => scenario.approvalState === "approved").length,
+    reviewRequiredScenarios: scenarios.filter((scenario) => scenario.approvalState === "review_required").length,
+    blockedScenarios: scenarios.filter((scenario) => scenario.approvalState === "blocked").length,
+    notApplicableScenarios: scenarios.filter((scenario) => scenario.approvalState === "not_applicable").length,
+    completeArtifactScenarios: scenarios.filter((scenario) => scenario.artifactCoverage.complete).length,
+    incompleteArtifactScenarios: scenarios.filter((scenario) => !scenario.artifactCoverage.complete).length,
+    releaseBlockers: scenarios.filter((scenario) => scenario.releaseImpact === "blocked").length,
+    topScenarioId: topScenario.id,
+    topFailedRuleId,
+    topFailedRuleState: topFailedRule?.state ?? null,
+    topNextAction: topScenario.nextAction,
+  };
+};
+
+export const createWalletProviderEvidenceApprovalAudit = (
+  intake: WalletProviderEvidenceIntake,
+  gate: WalletProviderQaReadinessGate,
+): WalletProviderEvidenceApprovalAudit => {
+  const scenarios = walletProviderEvidenceScenarioOrder
+    .map((scenarioId) => intake.scenarios.find((scenario) => scenario.id === scenarioId))
+    .filter((scenario): scenario is WalletProviderEvidenceScenario => Boolean(scenario))
+    .map((scenario) => createWalletProviderEvidenceApprovalScenario(scenario, gate));
+  const summary = summarizeWalletProviderEvidenceApprovalAudit(scenarios);
+
+  return {
+    boundary: walletProviderEvidenceBoundary,
+    nextAction: summary.topNextAction,
+    scenarios,
+    summary,
   };
 };
 
@@ -10110,7 +10484,39 @@ const v01AcceptanceRows = (): DeliveryAcceptanceRow[] => {
   ];
 };
 
-const v02AcceptanceRows = (): DeliveryAcceptanceRow[] => {
+const walletProviderEvidenceApprovalAcceptanceSurface = (
+  approvalAudit?: WalletProviderEvidenceApprovalAudit,
+): LocalizedText => approvalAudit
+  ? localized(
+    "Wallet Provider Evidence Intake, Wallet Provider Evidence Approval Audit, and sign-off",
+    "钱包 Provider 证据 Intake、Wallet Provider Evidence Approval Audit 与签核",
+    "錢包 Provider 證據 Intake、Wallet Provider Evidence Approval Audit 與簽核",
+  )
+  : localized("Wallet Provider Evidence Intake and sign-off", "钱包 Provider 证据 Intake 与签核", "錢包 Provider 證據 Intake 與簽核");
+
+const walletProviderEvidenceApprovalAcceptanceSummary = (
+  approvalAudit?: WalletProviderEvidenceApprovalAudit,
+): LocalizedText => {
+  if (!approvalAudit) {
+    return localized(
+      "Wallet Provider Evidence Intake tracks 0 approved, 1 submitted, 2 missing, and 1 rejected live-provider evidence scenario; production onboarding remains blocked until review approval.",
+      "钱包 Provider Evidence Intake 跟踪 0 个已批准、1 个已提交、2 个缺失、1 个已拒绝的真实 provider 证据场景；生产 onboarding 在审核批准前仍保持阻断。",
+      "錢包 Provider Evidence Intake 跟蹤 0 個已批准、1 個已提交、2 個缺失、1 個已拒絕的真實 provider 證據場景；生產 onboarding 在審核批准前仍保持阻斷。",
+    );
+  }
+
+  const topFailedRule = approvalAudit.summary.topFailedRuleId ?? "none";
+
+  return localized(
+    `Wallet Provider Evidence Approval Audit tracks ${approvalAudit.summary.approvedScenarios} approved, ${approvalAudit.summary.reviewRequiredScenarios} review-required, and ${approvalAudit.summary.blockedScenarios} blocked scenarios; top failed rule ${topFailedRule} keeps production onboarding blocked.`,
+    `Wallet Provider Evidence Approval Audit 跟踪 ${approvalAudit.summary.approvedScenarios} 个已批准、${approvalAudit.summary.reviewRequiredScenarios} 个需审核、${approvalAudit.summary.blockedScenarios} 个阻断场景；top failed rule ${topFailedRule} 让生产 onboarding 继续阻断。`,
+    `Wallet Provider Evidence Approval Audit 跟蹤 ${approvalAudit.summary.approvedScenarios} 個已批准、${approvalAudit.summary.reviewRequiredScenarios} 個需審核、${approvalAudit.summary.blockedScenarios} 個阻斷場景；top failed rule ${topFailedRule} 讓生產 onboarding 繼續阻斷。`,
+  );
+};
+
+const v02AcceptanceRows = (
+  approvalAudit?: WalletProviderEvidenceApprovalAudit,
+): DeliveryAcceptanceRow[] => {
   const solutionSetId = "v0_2_wallet_i18n_contract" as const;
 
   return [
@@ -10144,12 +10550,8 @@ const v02AcceptanceRows = (): DeliveryAcceptanceRow[] => {
       ownerRole: "internal_operator",
       launchBlocking: true,
       boundary: walletProviderEvidenceBoundary,
-      evidenceSurface: localized("Wallet Provider Evidence Intake and sign-off", "钱包 Provider 证据 Intake 与签核", "錢包 Provider 證據 Intake 與簽核"),
-      evidenceSummary: localized(
-        "Wallet Provider Evidence Intake tracks 0 approved, 1 submitted, 2 missing, and 1 rejected live-provider evidence scenario; production onboarding remains blocked until review approval.",
-        "钱包 Provider Evidence Intake 跟踪 0 个已批准、1 个已提交、2 个缺失、1 个已拒绝的真实 provider 证据场景；生产 onboarding 在审核批准前仍保持阻断。",
-        "錢包 Provider Evidence Intake 跟蹤 0 個已批准、1 個已提交、2 個缺失、1 個已拒絕的真實 provider 證據場景；生產 onboarding 在審核批准前仍保持阻斷。",
-      ),
+      evidenceSurface: walletProviderEvidenceApprovalAcceptanceSurface(approvalAudit),
+      evidenceSummary: walletProviderEvidenceApprovalAcceptanceSummary(approvalAudit),
       nextMissionAction: localized(
         "Attach Portkey AA live connect evidence and approve all wallet provider intake rows before production onboarding.",
         "生产 onboarding 前附上 Portkey AA 真实连接证据，并批准所有钱包 provider intake 行。",
@@ -10295,7 +10697,9 @@ const compareDeliveryAcceptanceResiduals = (
   return left.id.localeCompare(right.id);
 };
 
-export const createDeliveryAcceptanceConsole = (): DeliveryAcceptanceConsole => {
+export const createDeliveryAcceptanceConsole = (
+  walletProviderEvidenceApprovalAudit?: WalletProviderEvidenceApprovalAudit,
+): DeliveryAcceptanceConsole => {
   const solutionSets = [
     deliveryAcceptanceSolutionSet({
       id: "v0_1_product_ui",
@@ -10317,7 +10721,7 @@ export const createDeliveryAcceptanceConsole = (): DeliveryAcceptanceConsole => 
         "AA+EOA、默认英文、多语言审核、合约边界、API/导出形态与真实证据缺口已展示。",
         "AA+EOA、預設英文、多語言審核、合約邊界、API/匯出形態與真實證據缺口已展示。",
       ),
-      rows: v02AcceptanceRows(),
+      rows: v02AcceptanceRows(walletProviderEvidenceApprovalAudit),
     }),
   ];
   const rows = solutionSets.flatMap((solutionSet) => solutionSet.rows);
@@ -13580,6 +13984,10 @@ export const createAdminOpsReadModel = (
   const competitorWatch = createCompetitorWatchSurface(campaign);
   const walletProviderQaGate = createWalletProviderQaReadinessGate(campaign.walletSessions);
   const walletProviderEvidenceIntake = createWalletProviderEvidenceIntake(walletProviderQaGate);
+  const walletProviderEvidenceApprovalAudit = createWalletProviderEvidenceApprovalAudit(
+    walletProviderEvidenceIntake,
+    walletProviderQaGate,
+  );
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
@@ -13590,10 +13998,11 @@ export const createAdminOpsReadModel = (
   return {
     campaignId: campaign.id,
     reviewQueue: campaign.reviewItems,
-    deliveryAcceptance: createDeliveryAcceptanceConsole(),
+    deliveryAcceptance: createDeliveryAcceptanceConsole(walletProviderEvidenceApprovalAudit),
     deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
     walletProviderQaGate,
     walletProviderEvidenceIntake,
+    walletProviderEvidenceApprovalAudit,
     aelfWebLoginAdapterReadiness,
     providerEvidenceRegistry,
     contractReviewCenter: createAdminContractReviewCenter(campaign),
