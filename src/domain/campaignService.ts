@@ -35,6 +35,13 @@ import {
   supportedLocales,
   type AccountType,
   type AdvancedAnalyticsReadinessSurface,
+  type AgentWalletActionAllowedOperation,
+  type AgentWalletActionAuditTrail,
+  type AgentWalletActionHumanApprovalState,
+  type AgentWalletActionIntent,
+  type AgentWalletActionReadinessRequest,
+  type AgentWalletActionReadinessResponse,
+  type AgentWalletActionReadinessState,
   type AiContentArtifactChannel,
   type AiContentArtifactType,
   type ApiSkillApiGroup,
@@ -440,6 +447,9 @@ export interface CampaignOsLocalService {
   ): LocalServiceResult<LaunchConsoleCampaignBundleSurface>;
   getCoverageSummary(): LocalServiceResult<LocalServiceCoverageSummary>;
   listCampaigns(request?: ListCampaignsRequest): LocalServiceResult<CampaignDiscoveryReadModel>;
+  requestAgentWalletAction(
+    request: AgentWalletActionReadinessRequest,
+  ): LocalServiceResult<AgentWalletActionReadinessResponse>;
   summarizeCampaign(request: SummarizeCampaignRequest): LocalServiceResult<{
     campaignId: string;
     localeMetrics: ReturnType<typeof createProjectCampaignCommandCenter>["analyticsExport"]["localeSplit"];
@@ -481,6 +491,47 @@ const generatedCampaignTasksBoundary: LocalizedText = {
     "不会调用实时任务生成 provider、模板 registry、钱包 SDK、验证 provider、storage 写入、奖励发放、合约调用或发布变更。生成任务仅来自 seeded/本地任务模板库投影。",
   "zh-TW":
     "No live task generation provider, template registry, wallet SDK, verification provider, storage write, reward distribution, contract call, or publish mutation is executed. Generated tasks are seeded/local Task Template Library projections only.",
+};
+
+const agentWalletActionBoundary: LocalizedText = {
+  "en-US":
+    "Internal Agent Skill wallet action readiness only. No live API, Agent Skill package execution or import, wallet SDK/provider call, credential handling, signing, transaction send, contract send/write, export file/root write, reward custody, or reward distribution is executed.",
+  "zh-CN":
+    "仅内部 Agent Skill 钱包动作 readiness。不会执行实时 API、Agent Skill 包执行或导入、钱包 SDK/provider 调用、凭证处理、签名、交易发送、合约发送/写入、导出文件/root 写入、奖励托管或发奖。",
+  "zh-TW":
+    "Internal Agent Skill wallet action readiness only. No live API, Agent Skill package execution or import, wallet SDK/provider call, credential handling, signing, transaction send, contract send/write, export file/root write, reward custody, or reward distribution is executed.",
+};
+
+const agentWalletReviewOnlyReason: LocalizedText = {
+  "en-US":
+    "This Agent Skill wallet intent is review-only in the local facade; operators can inspect readiness, but execution remains unavailable.",
+  "zh-CN": "该 Agent Skill 钱包意图在本地 facade 中仅用于审核；运营方可检查 readiness，但执行能力保持不可用。",
+  "zh-TW":
+    "This Agent Skill wallet intent is review-only in the local facade; operators can inspect readiness, but execution remains unavailable.",
+};
+
+const agentWalletBlockedReason: LocalizedText = {
+  "en-US":
+    "This Agent Skill wallet intent is blocked because it would require live wallet, contract, export, or reward execution that this local facade must not perform.",
+  "zh-CN": "该 Agent Skill 钱包意图已阻断，因为它需要真实钱包、合约、导出或发奖执行，而本地 facade 不允许执行这些动作。",
+  "zh-TW":
+    "This Agent Skill wallet intent is blocked because it would require live wallet, contract, export, or reward execution that this local facade must not perform.",
+};
+
+const agentWalletReviewNextAction: LocalizedText = {
+  "en-US":
+    "Complete operator review, attach audited evidence, and keep any future execution design in a separate approval path.",
+  "zh-CN": "完成 operator review、附上已审计 evidence，并将任何未来执行设计放入单独审批路径。",
+  "zh-TW":
+    "Complete operator review, attach audited evidence, and keep any future execution design in a separate approval path.",
+};
+
+const agentWalletBlockedNextAction: LocalizedText = {
+  "en-US":
+    "Keep the request blocked until human approval, custody design, audited evidence, and execution runbooks are separately approved.",
+  "zh-CN": "保持该请求阻断，直到人工审批、托管设计、已审计 evidence 与执行 runbook 分别获批。",
+  "zh-TW":
+    "Keep the request blocked until human approval, custody design, audited evidence, and execution runbooks are separately approved.",
 };
 
 const success = <T>(payload: T): LocalServiceResult<T> => ({
@@ -613,6 +664,94 @@ const filterGeneratedCampaignPostArtifacts = (
 
 const findCampaign = (campaignId: string): CampaignShellDetail | undefined =>
   campaignDetail.id === campaignId ? campaignDetail : undefined;
+
+const reviewOnlyAgentWalletActionIntents = [
+  "balance_query",
+  "contract_view_review",
+  "batch_data_check",
+  "qa_smoke_test",
+] as const satisfies readonly AgentWalletActionIntent[];
+
+const blockedAgentWalletActionIntents = [
+  "private_key_handling",
+  "user_delegated_signing",
+  "transfer",
+  "contract_send",
+  "reward_distribution",
+  "export_generation",
+  "root_write",
+] as const satisfies readonly AgentWalletActionIntent[];
+
+const isReviewOnlyAgentWalletActionIntent = (
+  intent: string,
+): intent is (typeof reviewOnlyAgentWalletActionIntents)[number] =>
+  reviewOnlyAgentWalletActionIntents.includes(intent as (typeof reviewOnlyAgentWalletActionIntents)[number]);
+
+const isBlockedAgentWalletActionIntent = (
+  intent: string,
+): intent is (typeof blockedAgentWalletActionIntents)[number] =>
+  blockedAgentWalletActionIntents.includes(intent as (typeof blockedAgentWalletActionIntents)[number]);
+
+const isKnownAgentWalletActionIntent = (intent: string): intent is AgentWalletActionIntent =>
+  isReviewOnlyAgentWalletActionIntent(intent) || isBlockedAgentWalletActionIntent(intent);
+
+const isApprovedOrReviewPending = (
+  state: AgentWalletActionHumanApprovalState | undefined,
+): state is Exclude<AgentWalletActionHumanApprovalState, "not_requested"> =>
+  state === "pending_review" || state === "approved" || state === "rejected";
+
+const isSupportedAgentWalletNetwork = (
+  chainId: string,
+  network: WalletNetwork,
+): network is Exclude<WalletNetwork, "unknown"> =>
+  chainId.trim() === "AELF" && (network === "mainnet" || network === "testnet");
+
+const createAgentWalletActionReadiness = (
+  request: AgentWalletActionReadinessRequest & {
+    actionIntent: AgentWalletActionIntent;
+    humanApprovalState: Exclude<AgentWalletActionHumanApprovalState, "not_requested">;
+    network: Exclude<WalletNetwork, "unknown">;
+    walletSource: "AGENT_SKILL";
+  },
+): AgentWalletActionReadinessResponse => {
+  const blocked = isBlockedAgentWalletActionIntent(request.actionIntent);
+  const actionState: AgentWalletActionReadinessState = blocked ? "blocked" : "review_required";
+  const allowedOperation: AgentWalletActionAllowedOperation = blocked
+    ? "blocked_no_execution"
+    : "readiness_review_only";
+  const auditTrail: AgentWalletActionAuditTrail = {
+    actionIntent: request.actionIntent,
+    agentId: request.agentId.trim(),
+    campaignId: request.campaignId,
+    chainId: request.chainId.trim(),
+    evidencePurpose: request.evidencePurpose.trim(),
+    executionAttempted: false,
+    humanApprovalState: request.humanApprovalState,
+    network: request.network,
+    operatorRole: request.operatorRole,
+    sensitiveMaterialHandled: false,
+    taskId: request.taskId,
+    walletSource: request.walletSource,
+  };
+
+  return {
+    actionIntent: request.actionIntent,
+    actionState,
+    allowedOperation,
+    auditTrail,
+    blockedReason: blocked ? agentWalletBlockedReason : agentWalletReviewOnlyReason,
+    campaignId: request.campaignId,
+    nextReviewAction: blocked ? agentWalletBlockedNextAction : agentWalletReviewNextAction,
+    noContractWrite: true,
+    noExportFile: true,
+    noPrivateKeyBoundary: true,
+    noRewardDistribution: true,
+    noSignatureExecution: true,
+    noTransactionExecution: true,
+    taskId: request.taskId,
+    walletSource: request.walletSource,
+  };
+};
 
 const createDiscoverySummary = (
   items: CampaignDiscoveryItem[],
@@ -1317,6 +1456,78 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     });
   },
 
+  requestAgentWalletAction: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local Agent Skill wallet action facade.",
+        "本地 Agent Skill 钱包动作 facade 中不存在该活动。",
+      );
+    }
+
+    const task = campaign.tasks.find((candidate) => candidate.id === request.taskId);
+
+    if (!task) {
+      return failure(
+        "TASK_NOT_FOUND",
+        "taskId",
+        "Task is not available in the local Agent Skill wallet action facade.",
+        "本地 Agent Skill 钱包动作 facade 中不存在该任务。",
+      );
+    }
+
+    if (request.walletSource !== "AGENT_SKILL") {
+      return failure(
+        "INVALID_REQUEST",
+        "walletSource",
+        "Agent wallet action readiness requires walletSource to be AGENT_SKILL.",
+        "Agent 钱包动作 readiness 要求 walletSource 必须为 AGENT_SKILL。",
+      );
+    }
+
+    if (!isApprovedOrReviewPending(request.humanApprovalState)) {
+      return failure(
+        "INVALID_REQUEST",
+        "humanApprovalState",
+        "Agent wallet action readiness requires a human approval state other than not_requested.",
+        "Agent 钱包动作 readiness 要求人工审批状态不能缺失，也不能为 not_requested。",
+      );
+    }
+
+    if (!isSupportedAgentWalletNetwork(request.chainId, request.network)) {
+      return failure(
+        "INVALID_REQUEST",
+        "chainId",
+        "Agent wallet action readiness supports only local AELF mainnet or testnet review contexts.",
+        "Agent 钱包动作 readiness 仅支持本地 AELF mainnet 或 testnet 审核上下文。",
+      );
+    }
+
+    if (!isKnownAgentWalletActionIntent(request.actionIntent)) {
+      return failure(
+        "INVALID_REQUEST",
+        "actionIntent",
+        "Agent wallet action readiness received an unsupported action intent.",
+        "Agent 钱包动作 readiness 收到了不支持的动作意图。",
+      );
+    }
+
+    return {
+      ok: true,
+      payload: createAgentWalletActionReadiness({
+        ...request,
+        actionIntent: request.actionIntent,
+        humanApprovalState: request.humanApprovalState,
+        network: request.network,
+        walletSource: request.walletSource,
+      }),
+      boundary: agentWalletActionBoundary,
+    };
+  },
+
   executeTaskVerificationAction: (request) => {
     const campaign = findCampaign(request.campaignId);
 
@@ -1826,6 +2037,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       "getCampaignDetail",
       "addTask",
       "generateCampaignTasks",
+      "requestAgentWalletAction",
       "verifyTask",
       "executeTaskVerificationAction",
       "checkEligibility",
@@ -1872,7 +2084,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       coveredFieldGroups,
       localOnlyCount: surface.summary.localOnlyCount + 3,
       readyCount: surface.summary.readyCount + 1,
-      reviewRequiredCount: surface.summary.reviewRequiredCount + 2,
+      reviewRequiredCount: surface.summary.reviewRequiredCount + 3,
       sampleResponseIds: [
         "createWalletSession",
         "createCampaign",
@@ -1880,6 +2092,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
         "getCampaignDetail",
         "addTask",
         "generateCampaignTasks",
+        "requestAgentWalletAction",
         "generateI18nDraft",
         "verifyTask",
         "executeTaskVerificationAction",

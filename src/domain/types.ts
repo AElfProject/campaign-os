@@ -154,6 +154,68 @@ export type ReviewItemType = "AI_CONTENT" | "CONTRACT_IMPACT" | "RISK_FLAG" | "E
 export type ReviewSeverity = "info" | "warning" | "blocker";
 export type ReviewStatus = "open" | "in_review" | "approved" | "rejected";
 export type OwnerRole = "project_owner" | "internal_operator" | "contract_reviewer";
+export type AgentWalletActionIntent =
+  | "balance_query"
+  | "contract_view_review"
+  | "batch_data_check"
+  | "qa_smoke_test"
+  | "private_key_handling"
+  | "user_delegated_signing"
+  | "transfer"
+  | "contract_send"
+  | "reward_distribution"
+  | "export_generation"
+  | "root_write";
+export type AgentWalletActionReadinessState = "review_required" | "blocked";
+export type AgentWalletActionAllowedOperation = "readiness_review_only" | "blocked_no_execution";
+export type AgentWalletActionHumanApprovalState =
+  | "not_requested"
+  | "pending_review"
+  | "approved"
+  | "rejected";
+export interface AgentWalletActionReadinessRequest {
+  actionIntent: AgentWalletActionIntent | (string & {});
+  agentId: string;
+  campaignId: string;
+  chainId: string;
+  evidencePurpose: string;
+  humanApprovalState?: AgentWalletActionHumanApprovalState;
+  network: WalletNetwork;
+  operatorRole: OwnerRole;
+  taskId: string;
+  walletSource: WalletSource;
+}
+export interface AgentWalletActionAuditTrail {
+  actionIntent: AgentWalletActionIntent;
+  agentId: string;
+  campaignId: string;
+  chainId: string;
+  evidencePurpose: string;
+  executionAttempted: false;
+  humanApprovalState: Exclude<AgentWalletActionHumanApprovalState, "not_requested">;
+  network: Exclude<WalletNetwork, "unknown">;
+  operatorRole: OwnerRole;
+  sensitiveMaterialHandled: false;
+  taskId: string;
+  walletSource: "AGENT_SKILL";
+}
+export interface AgentWalletActionReadinessResponse {
+  actionIntent: AgentWalletActionIntent;
+  actionState: AgentWalletActionReadinessState;
+  allowedOperation: AgentWalletActionAllowedOperation;
+  auditTrail: AgentWalletActionAuditTrail;
+  blockedReason: LocalizedText;
+  campaignId: string;
+  nextReviewAction: LocalizedText;
+  noContractWrite: true;
+  noExportFile: true;
+  noPrivateKeyBoundary: true;
+  noRewardDistribution: true;
+  noSignatureExecution: true;
+  noTransactionExecution: true;
+  taskId: string;
+  walletSource: "AGENT_SKILL";
+}
 export type PublishState = "ready" | "warning" | "blocker";
 export type EligibilityStatus = "eligible" | "not_eligible" | "pending" | "risk_flagged" | "ended";
 export type TaskVerificationStatus = "ready" | "pending" | "completed" | "failed" | "manual_review";
