@@ -40,6 +40,7 @@ describe("WalletConnectModal locale coverage", () => {
     expect(within(dialog).getAllByText("僅 seeded 預覽：不會連接即時錢包 SDK，不會請求真實簽名，不會發起交易，也不會讀寫合約。").length).toBeGreaterThan(0);
     expect(within(dialog).getByText("鏈不匹配：請切換到 AELF mainnet 後再繼續活動驗證。")).toBeInTheDocument();
     expect(within(dialog).getByText("不支援的錢包：請為該 seeded 活動流程選擇 Portkey AA、Portkey EOA App、Portkey EOA Extension 或 NightElf。")).toBeInTheDocument();
+    expect(within(dialog).getByText("擴充套件未安裝：請安裝或開啟你的 EOA 錢包擴充套件。")).toBeInTheDocument();
     expect(within(dialog).getByText("缺少簽名：確認提示內容後只簽署 seeded 驗證訊息；此預覽不會請求真實簽名。")).toBeInTheDocument();
     expect(within(dialog).getByText("帳戶類型限制：如果活動只允許 AA 或只允許 EOA，請切換到該活動策略接受的錢包類型。")).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /connectWallet|getSignature|sendTransaction/i })).not.toBeInTheDocument();
@@ -84,6 +85,20 @@ describe("WalletConnectModal locale coverage", () => {
     expect(connectorBoundary).toHaveTextContent("@aelf-web-login/wallet-adapter-portkey-discover");
     expect(within(dialog).getByText(/Future EOA adapter is maintenance-only/)).toBeInTheDocument();
     expect(within(dialog).getAllByText(/Next action:/).length).toBeGreaterThan(0);
+    expect(
+      within(dialog).getByText("Extension not installed: Install or open your EOA wallet extension."),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /connectWallet|getSignature|sendTransaction/i })).not.toBeInTheDocument();
+  });
+
+  it("renders Simplified Chinese extension install recovery copy", () => {
+    render(<WalletConnectModal locale="zh-CN" onClose={vi.fn()} options={walletOptions} />);
+
+    const dialog = screen.getByRole("dialog", { name: "连接钱包" });
+
+    expect(within(dialog).getByText("插件未安装：请安装或打开你的 EOA 钱包插件。")).toBeInTheDocument();
+    expect(within(dialog).getByText("链不匹配：请切换到 AELF mainnet 后再继续活动验证。")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /connectWallet|getSignature|sendTransaction/i })).not.toBeInTheDocument();
   });
 
   it("renders bridge capability through the existing wallet capability rows", () => {
