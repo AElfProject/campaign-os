@@ -3585,6 +3585,38 @@ export interface ProviderEvidenceRegistry {
   nextAction: LocalizedText;
 }
 
+export interface VerificationRulesProviderEvidenceSummary {
+  totalEntries: number;
+  localOnlyEntries: number;
+  reviewRequiredEntries: number;
+  blockedEntries: number;
+  unavailableEntries: number;
+  launchBlockers: number;
+}
+
+export interface VerificationRulesWorkspaceSummary {
+  totalRulePaths: number;
+  seededReadyPaths: number;
+  missingLiveEvidencePaths: number;
+  blockedPaths: number;
+  manualReviewPaths: number;
+  affectedOutcomeCount: number;
+  providerEvidenceEntries: number;
+  providerLaunchBlockers: number;
+}
+
+export interface VerificationRulesWorkspace {
+  campaignId: string;
+  summary: VerificationRulesWorkspaceSummary;
+  pipeline: VerificationPipelineReadinessGate;
+  providerEvidenceEntries: ProviderEvidenceRegistryEntry[];
+  providerEvidenceSummary: VerificationRulesProviderEvidenceSummary;
+  eligibilityImpact: VerificationPipelineEligibilityImpact;
+  topRulePathId: VerificationPipelinePathId;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface TaskVerificationState {
   taskId: string;
   templateCode: string;

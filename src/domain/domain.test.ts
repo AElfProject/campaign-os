@@ -30,6 +30,7 @@ import {
   createParticipantWorkspaceReadModel,
   createParticipationReadModel,
   createProviderEvidenceRegistry,
+  createVerificationRulesWorkspace,
   createCampaignShareCardReadiness,
   createCampaignLifecycleOperations,
   createCampaignDiscoveryReadModel,
@@ -2517,6 +2518,48 @@ describe("Campaign OS domain foundation", () => {
     expect(hasOwnKeyDeep(registry, "transactionId")).toBe(false);
     expect(JSON.stringify(registry).toLowerCase()).not.toContain("private key");
     expect(JSON.stringify(registry).toLowerCase()).not.toContain("bearer ");
+  });
+
+  it("creates a verification rules workspace from seeded pipeline and provider evidence", () => {
+    const workspace = createVerificationRulesWorkspace(campaignDetail);
+    const repeatedWorkspace = createVerificationRulesWorkspace(campaignDetail);
+
+    expect(workspace).toEqual(repeatedWorkspace);
+    expect(workspace.campaignId).toBe(campaignDetail.id);
+    expect(workspace.summary).toMatchObject({
+      affectedOutcomeCount: 6,
+      blockedPaths: 1,
+      manualReviewPaths: 1,
+      missingLiveEvidencePaths: 5,
+      providerEvidenceEntries: 7,
+      providerLaunchBlockers: 1,
+      seededReadyPaths: 7,
+      totalRulePaths: 7,
+    });
+    expect(workspace.topRulePathId).toBe("social-api");
+    expect(workspace.pipeline.eligibilityImpact.referralQualificationStatus).toBe(
+      "needs_verified_invitee",
+    );
+    expect(workspace.providerEvidenceEntries.every((entry) =>
+      entry.category === "verification" || entry.category === "manual_review",
+    )).toBe(true);
+    expect(workspace.providerEvidenceSummary).toMatchObject({
+      blockedEntries: 1,
+      launchBlockers: 1,
+      reviewRequiredEntries: 1,
+      totalEntries: 7,
+    });
+    expect(workspace.boundary["en-US"]).toContain("No live provider API");
+    expect(workspace.boundary["en-US"]).toContain("wallet signing");
+    expect(workspace.boundary["en-US"]).toContain("contract root write");
+    expect(workspace.boundary["en-US"]).toContain("export file generation");
+    expect(workspace.boundary["en-US"]).toContain("reward distribution");
+    expect(workspace.boundary["zh-CN"]).toContain("不会执行实时 provider API");
+    expect(workspace.nextAction["en-US"]).toContain("Attach live provider evidence");
+    expect(hasOwnKeyDeep(workspace, "downloadUrl")).toBe(false);
+    expect(hasOwnKeyDeep(workspace, "transactionId")).toBe(false);
+    expect(JSON.stringify(workspace).toLowerCase()).not.toContain("private key");
+    expect(JSON.stringify(workspace).toLowerCase()).not.toContain("bearer ");
   });
 
   it("creates a participation read model with actionable eligibility and referral rules", () => {

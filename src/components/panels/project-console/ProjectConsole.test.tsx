@@ -26,7 +26,7 @@ describe("Project Console shell", () => {
     );
 
     const nav = getProjectWorkspaceNav();
-    for (const workspace of ["Campaigns", "States", "Create", "Templates", "Participants", "AI Content", "Analytics", "Export", "Closeout", "Settings"]) {
+    for (const workspace of ["Campaigns", "States", "Create", "Templates", "Participants", "AI Content", "Analytics", "Export", "Verification Rules", "Closeout", "Settings"]) {
       expect(within(nav).getByRole("button", { name: workspace })).toBeInTheDocument();
     }
     expect(within(nav).getByRole("button", { name: "Campaigns" })).toHaveAttribute(
@@ -407,6 +407,47 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText("Task Builder Preview").length).toBeGreaterThan(0);
     expect(screen.getByText("i18n Translation Review")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Task template library" })).not.toBeInTheDocument();
+  });
+
+  it("switches to Verification Rules workspace and renders rule review boundaries", () => {
+    render(<App />);
+
+    clickWorkspace("Verification Rules");
+
+    const nav = getProjectWorkspaceNav();
+    expect(within(nav).getByRole("button", { name: "Verification Rules" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    const workspace = screen.getByLabelText("Verification Rules workspace");
+    expect(within(workspace).getByRole("heading", { name: "Verification Rules" })).toBeInTheDocument();
+    expect(within(workspace).getAllByText("7").length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText("Total paths").length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText("Seeded/local coverage").length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText("Missing live evidence").length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText("Blocked paths").length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText("Manual review paths").length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText("Provider launch blockers").length).toBeGreaterThan(0);
+
+    expect(within(workspace).getAllByText("AeFinder on-chain verification").length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText("Social API verification").length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText("Manual review").length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText("Referral qualification").length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText("needs verified invitee").length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText(/qualified invitees/).length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText(/Fallback/).length).toBeGreaterThan(0);
+    expect(within(workspace).getAllByText(/Feature gate/).length).toBeGreaterThan(0);
+    expect(within(workspace).getByText(/No live provider API call/)).toBeInTheDocument();
+    expect(within(workspace).getByText(/wallet signing/)).toBeInTheDocument();
+    expect(within(workspace).getByText(/contract root write/)).toBeInTheDocument();
+    expect(within(workspace).getByText(/export file generation/)).toBeInTheDocument();
+    expect(within(workspace).getByText(/reward distribution/)).toBeInTheDocument();
+    expect(
+      within(workspace).queryByRole("button", {
+        name: /sign|contract|export|reward|distribute|claim|write/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("switches to Templates workspace and keeps template compatibility signals", () => {
