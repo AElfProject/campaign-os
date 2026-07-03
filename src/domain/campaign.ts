@@ -147,6 +147,13 @@ import type {
   PayCampaignTaskReadiness,
   PayCampaignTaskReadinessRow,
   PayCampaignTaskReadinessState,
+  TmrwdaoGovernanceTaskEvidenceSource,
+  TmrwdaoGovernanceTaskIntentId,
+  TmrwdaoGovernanceTaskOwnerRole,
+  TmrwdaoGovernanceTaskProviderState,
+  TmrwdaoGovernanceTaskReadiness,
+  TmrwdaoGovernanceTaskReadinessRow,
+  TmrwdaoGovernanceTaskReadinessState,
   EvidenceSource,
   ExportPreviewMode,
   ExportPreviewModeReadiness,
@@ -14332,6 +14339,229 @@ export const createPayCampaignTaskReadiness = (
     rows,
     ownerNextAction: payTaskOwnerNextActionFor(summary),
     boundary: payCampaignTaskReadinessBoundary,
+  };
+};
+
+export const tmrwdaoGovernanceTaskReadinessBoundary: LocalizedText = localized(
+  "Seeded/local TMRWDAO governance task readiness only. No live TMRWDAO service/API, proposal creation, DAO vote transaction, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地 TMRWDAO 治理任务 readiness。不会调用实时 TMRWDAO service/API，不会创建提案、执行 DAO 投票交易、钱包签名、钱包 SDK/provider 调用、后端 mutation、合约读取/发送/写入、奖励托管或发奖。",
+  "Seeded/local TMRWDAO governance task readiness only. No live TMRWDAO service/API, proposal creation, DAO vote transaction, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, reward custody, or reward distribution is executed.",
+);
+
+const tmrwdaoTaskIntentLabels: Record<TmrwdaoGovernanceTaskIntentId, LocalizedText> = {
+  "dao-join-readiness": localized(
+    "DAO join readiness",
+    "DAO 加入 readiness",
+    "DAO join readiness",
+  ),
+  "proposal-summary-review": localized(
+    "Proposal summary review",
+    "提案摘要审核",
+    "Proposal summary review",
+  ),
+  "proposal-vote-evidence": localized(
+    "Proposal vote evidence",
+    "提案投票证据",
+    "Proposal vote evidence",
+  ),
+  "governance-result-review": localized(
+    "Governance result review",
+    "治理结果审核",
+    "Governance result review",
+  ),
+};
+
+const tmrwdaoTaskIntentDescriptions: Record<TmrwdaoGovernanceTaskIntentId, LocalizedText> = {
+  "dao-join-readiness": localized(
+    "Review whether DAO participation can be represented from seeded campaign metadata before publish.",
+    "发布前审核 DAO 参与是否可由 seeded 活动 metadata 表达。",
+    "Review whether DAO participation can be represented from seeded campaign metadata before publish.",
+  ),
+  "proposal-summary-review": localized(
+    "Review proposal context, ownership, and summary copy before using it as a governance task anchor.",
+    "将提案作为治理任务锚点前，先审核提案上下文、归属与摘要文案。",
+    "Review proposal context, ownership, and summary copy before using it as a governance task anchor.",
+  ),
+  "proposal-vote-evidence": localized(
+    "Review vote evidence source and voter eligibility posture before it can affect scoring.",
+    "投票证据影响计分前，先审核证据来源与投票者资格状态。",
+    "Review vote evidence source and voter eligibility posture before it can affect scoring.",
+  ),
+  "governance-result-review": localized(
+    "Review governance result ownership before using proposal outcomes in campaign closeout.",
+    "将提案结果用于活动 closeout 前，先审核治理结果归属。",
+    "Review governance result ownership before using proposal outcomes in campaign closeout.",
+  ),
+};
+
+const tmrwdaoRiskStates: Record<TmrwdaoGovernanceTaskReadinessState, LocalizedText> = {
+  ready: localized(
+    "Local seeded DAO readiness is enough for owner review, but it is not live TMRWDAO verification.",
+    "本地 seeded DAO readiness 足够进入 owner review，但不是真实 TMRWDAO 验证。",
+    "Local seeded DAO readiness is enough for owner review, but it is not live TMRWDAO verification.",
+  ),
+  review_required: localized(
+    "TMRWDAO proposal context or vote evidence needs operator review before it can affect campaign scoring.",
+    "TMRWDAO 提案上下文或投票证据需要运营审核后，才能影响活动计分。",
+    "TMRWDAO proposal context or vote evidence needs operator review before it can affect campaign scoring.",
+  ),
+  blocked: localized(
+    "TMRWDAO governance result usage is blocked until DAO provider ownership and evidence boundaries are reviewed.",
+    "TMRWDAO 治理结果使用在 DAO provider 归属与证据边界审核前保持阻断。",
+    "TMRWDAO governance result usage is blocked until DAO provider ownership and evidence boundaries are reviewed.",
+  ),
+};
+
+const tmrwdaoNextActionFor = (
+  intentId: TmrwdaoGovernanceTaskIntentId,
+  readinessState: TmrwdaoGovernanceTaskReadinessState,
+): LocalizedText => {
+  if (readinessState === "blocked") {
+    return localized(
+      "Review TMRWDAO provider ownership and governance-result boundary before campaign publish.",
+      "发布活动前先审核 TMRWDAO provider 归属与治理结果边界。",
+      "Review TMRWDAO provider ownership and governance-result boundary before campaign publish.",
+    );
+  }
+
+  if (readinessState === "review_required") {
+    return localized(
+      "Ask an operator to confirm TMRWDAO proposal and vote evidence remain local-only and reviewable.",
+      "请运营确认 TMRWDAO 提案与投票证据保持本地-only 且可审核。",
+      "Ask an operator to confirm TMRWDAO proposal and vote evidence remain local-only and reviewable.",
+    );
+  }
+
+  if (intentId === "dao-join-readiness") {
+    return localized(
+      "Keep DAO join readiness as a seeded/local campaign task until TMRWDAO service ownership is approved.",
+      "在 TMRWDAO 服务归属获批前，将 DAO 加入 readiness 保持为 seeded/本地活动任务。",
+      "Keep DAO join readiness as a seeded/local campaign task until TMRWDAO service ownership is approved.",
+    );
+  }
+
+  return localized(
+    "Keep TMRWDAO governance task readiness in local owner review before live integration.",
+    "在真实集成前，将 TMRWDAO 治理任务 readiness 保持在本地 owner review。",
+    "Keep TMRWDAO governance task readiness in local owner review before live integration.",
+  );
+};
+
+const createTmrwdaoGovernanceReadinessRow = (input: {
+  evidenceSource: TmrwdaoGovernanceTaskEvidenceSource;
+  intentId: TmrwdaoGovernanceTaskIntentId;
+  ownerRole: TmrwdaoGovernanceTaskOwnerRole;
+  providerState: TmrwdaoGovernanceTaskProviderState;
+  readinessState: TmrwdaoGovernanceTaskReadinessState;
+}): TmrwdaoGovernanceTaskReadinessRow => ({
+  id: `tmrwdao-${input.intentId}`,
+  intentId: input.intentId,
+  label: tmrwdaoTaskIntentLabels[input.intentId],
+  description: tmrwdaoTaskIntentDescriptions[input.intentId],
+  verificationType: "DAPP_API",
+  evidenceSource: input.evidenceSource,
+  providerState: input.providerState,
+  readinessState: input.readinessState,
+  riskState: tmrwdaoRiskStates[input.readinessState],
+  ownerRole: input.ownerRole,
+  nextAction: tmrwdaoNextActionFor(input.intentId, input.readinessState),
+  boundary: tmrwdaoGovernanceTaskReadinessBoundary,
+});
+
+const tmrwdaoTaskStateRank: Record<TmrwdaoGovernanceTaskReadinessState, number> = {
+  blocked: 3,
+  review_required: 2,
+  ready: 1,
+};
+
+const createTmrwdaoGovernanceTaskRows = (): TmrwdaoGovernanceTaskReadinessRow[] => [
+  createTmrwdaoGovernanceReadinessRow({
+    evidenceSource: "seeded_local",
+    intentId: "dao-join-readiness",
+    ownerRole: "project_owner",
+    providerState: "seeded_preview",
+    readinessState: "ready",
+  }),
+  createTmrwdaoGovernanceReadinessRow({
+    evidenceSource: "proposal_metadata",
+    intentId: "proposal-summary-review",
+    ownerRole: "operator",
+    providerState: "review_required",
+    readinessState: "review_required",
+  }),
+  createTmrwdaoGovernanceReadinessRow({
+    evidenceSource: "dao_contract_event",
+    intentId: "proposal-vote-evidence",
+    ownerRole: "operator",
+    providerState: "review_required",
+    readinessState: "review_required",
+  }),
+  createTmrwdaoGovernanceReadinessRow({
+    evidenceSource: "dao_contract_event",
+    intentId: "governance-result-review",
+    ownerRole: "dao_provider_reviewer",
+    providerState: "not_connected",
+    readinessState: "blocked",
+  }),
+];
+
+const createTmrwdaoGovernanceTaskSummary = (
+  rows: TmrwdaoGovernanceTaskReadinessRow[],
+): TmrwdaoGovernanceTaskReadiness["summary"] => {
+  const topRow = [...rows].sort(
+    (left, right) => tmrwdaoTaskStateRank[right.readinessState] - tmrwdaoTaskStateRank[left.readinessState],
+  )[0] ?? rows[0];
+
+  return {
+    totalTasks: rows.length,
+    readyCount: rows.filter((row) => row.readinessState === "ready").length,
+    reviewRequiredCount: rows.filter((row) => row.readinessState === "review_required").length,
+    blockedCount: rows.filter((row) => row.readinessState === "blocked").length,
+    topState: topRow?.readinessState ?? "blocked",
+    topIntentId: topRow?.intentId ?? "governance-result-review",
+    primaryOwnerRole: topRow?.ownerRole ?? "dao_provider_reviewer",
+    boundary: tmrwdaoGovernanceTaskReadinessBoundary,
+  };
+};
+
+const tmrwdaoTaskOwnerNextActionFor = (
+  summary: TmrwdaoGovernanceTaskReadiness["summary"],
+): LocalizedText => {
+  if (summary.blockedCount > 0) {
+    return localized(
+      "Review TMRWDAO provider ownership and DAO contract evidence boundaries before treating governance tasks as publish-ready.",
+      "先审核 TMRWDAO provider 归属与 DAO 合约证据边界，再将治理任务视为可发布。",
+      "Review TMRWDAO provider ownership and DAO contract evidence boundaries before treating governance tasks as publish-ready.",
+    );
+  }
+
+  if (summary.reviewRequiredCount > 0) {
+    return localized(
+      "Complete operator review for TMRWDAO proposal context and vote evidence before publish.",
+      "发布前完成 TMRWDAO 提案上下文与投票证据的运营审核。",
+      "Complete operator review for TMRWDAO proposal context and vote evidence before publish.",
+    );
+  }
+
+  return localized(
+    "Keep TMRWDAO governance tasks in local owner review until live DAO integration is approved.",
+    "在真实 DAO 集成获批前，将 TMRWDAO 治理任务保持在本地 owner review。",
+    "Keep TMRWDAO governance tasks in local owner review until live DAO integration is approved.",
+  );
+};
+
+export const createTmrwdaoGovernanceTaskReadiness = (
+  campaign: CampaignShellDetail,
+): TmrwdaoGovernanceTaskReadiness => {
+  const rows = createTmrwdaoGovernanceTaskRows();
+  const summary = createTmrwdaoGovernanceTaskSummary(rows);
+
+  return {
+    campaignId: campaign.id,
+    summary,
+    rows,
+    ownerNextAction: tmrwdaoTaskOwnerNextActionFor(summary),
+    boundary: tmrwdaoGovernanceTaskReadinessBoundary,
   };
 };
 

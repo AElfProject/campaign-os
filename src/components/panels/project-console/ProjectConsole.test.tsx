@@ -500,6 +500,26 @@ describe("Project Console shell", () => {
     expect(within(payReadiness).getAllByText(/payment link creation/).length).toBeGreaterThan(0);
     expect(within(payReadiness).getAllByText(/invoice generation/).length).toBeGreaterThan(0);
     expect(within(payReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
+    const tmrwdaoReadiness = screen.getByLabelText("TMRWDAO governance task readiness");
+    expect(
+      within(tmrwdaoReadiness).getByRole("heading", { name: "TMRWDAO governance task readiness" }),
+    ).toBeInTheDocument();
+    expect(within(tmrwdaoReadiness).getByText("DAO join readiness")).toBeInTheDocument();
+    expect(within(tmrwdaoReadiness).getByText("Proposal summary review")).toBeInTheDocument();
+    expect(within(tmrwdaoReadiness).getByText("Proposal vote evidence")).toBeInTheDocument();
+    expect(within(tmrwdaoReadiness).getByText("Governance result review")).toBeInTheDocument();
+    expect(within(tmrwdaoReadiness).getByText("DAPP_API · seeded_local")).toBeInTheDocument();
+    expect(
+      within(tmrwdaoReadiness).getAllByText("DAPP_API · proposal_metadata").length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(tmrwdaoReadiness).getAllByText("DAPP_API · dao_contract_event").length,
+    ).toBeGreaterThan(0);
+    expect(within(tmrwdaoReadiness).getAllByText(/No live TMRWDAO service\/API/).length).toBeGreaterThan(0);
+    expect(within(tmrwdaoReadiness).getAllByText(/proposal creation/).length).toBeGreaterThan(0);
+    expect(within(tmrwdaoReadiness).getAllByText(/DAO vote transaction/).length).toBeGreaterThan(0);
+    expect(within(tmrwdaoReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
+    expect(within(tmrwdaoReadiness).getAllByText(/contract read\/send\/write/).length).toBeGreaterThan(0);
     for (const category of [
       "wallet",
       "bridge",
@@ -520,6 +540,29 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Task Builder Preview" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Publish Gate Decision Center" })).not.toBeInTheDocument();
+  });
+
+  it("renders localized TMRWDAO governance task readiness in zh-CN", () => {
+    render(
+      <ProjectConsole
+        activeWorkspace="templates"
+        campaign={campaignDetail}
+        locale="zh-CN"
+      />,
+    );
+
+    const tmrwdaoReadiness = screen.getByLabelText("TMRWDAO 治理任务 readiness");
+    expect(
+      within(tmrwdaoReadiness).getByRole("heading", { name: "TMRWDAO 治理任务 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(tmrwdaoReadiness).getByText("DAO 加入 readiness")).toBeInTheDocument();
+    expect(within(tmrwdaoReadiness).getByText("提案摘要审核")).toBeInTheDocument();
+    expect(within(tmrwdaoReadiness).getByText("提案投票证据")).toBeInTheDocument();
+    expect(within(tmrwdaoReadiness).getByText("治理结果审核")).toBeInTheDocument();
+    expect(within(tmrwdaoReadiness).getAllByText(/不会调用实时 TMRWDAO service\/API/).length).toBeGreaterThan(0);
+    expect(within(tmrwdaoReadiness).getAllByText(/不会创建提案/).length).toBeGreaterThan(0);
+    expect(within(tmrwdaoReadiness).getAllByText(/执行 DAO 投票交易/).length).toBeGreaterThan(0);
+    expect(within(tmrwdaoReadiness).getAllByText(/合约读取\/发送\/写入/).length).toBeGreaterThan(0);
   });
 
   it("switches to AI Content workspace and preserves review-only AI boundaries", () => {

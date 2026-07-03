@@ -305,6 +305,28 @@ export type PayCampaignTaskOwnerRole =
 export type PayCampaignTaskEvidenceSource =
   | "aelf_pay_status"
   | "seeded_local";
+export type TmrwdaoGovernanceTaskIntentId =
+  | "dao-join-readiness"
+  | "proposal-summary-review"
+  | "proposal-vote-evidence"
+  | "governance-result-review";
+export type TmrwdaoGovernanceTaskProviderState =
+  | "not_connected"
+  | "seeded_preview"
+  | "review_required"
+  | "blocked";
+export type TmrwdaoGovernanceTaskReadinessState =
+  | "ready"
+  | "review_required"
+  | "blocked";
+export type TmrwdaoGovernanceTaskOwnerRole =
+  | "project_owner"
+  | "operator"
+  | "dao_provider_reviewer";
+export type TmrwdaoGovernanceTaskEvidenceSource =
+  | "dao_contract_event"
+  | "proposal_metadata"
+  | "seeded_local";
 
 export type LocalizedText = Record<SupportedLocale, string>;
 
@@ -2856,6 +2878,40 @@ export interface PayCampaignTaskReadiness {
   campaignId: string;
   summary: PayCampaignTaskReadinessSummary;
   rows: PayCampaignTaskReadinessRow[];
+  ownerNextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface TmrwdaoGovernanceTaskReadinessRow {
+  id: string;
+  intentId: TmrwdaoGovernanceTaskIntentId;
+  label: LocalizedText;
+  description: LocalizedText;
+  verificationType: "DAPP_API";
+  evidenceSource: TmrwdaoGovernanceTaskEvidenceSource;
+  providerState: TmrwdaoGovernanceTaskProviderState;
+  readinessState: TmrwdaoGovernanceTaskReadinessState;
+  riskState: LocalizedText;
+  ownerRole: TmrwdaoGovernanceTaskOwnerRole;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface TmrwdaoGovernanceTaskReadinessSummary {
+  totalTasks: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  topState: TmrwdaoGovernanceTaskReadinessState;
+  topIntentId: TmrwdaoGovernanceTaskIntentId;
+  primaryOwnerRole: TmrwdaoGovernanceTaskOwnerRole;
+  boundary: LocalizedText;
+}
+
+export interface TmrwdaoGovernanceTaskReadiness {
+  campaignId: string;
+  summary: TmrwdaoGovernanceTaskReadinessSummary;
+  rows: TmrwdaoGovernanceTaskReadinessRow[];
   ownerNextAction: LocalizedText;
   boundary: LocalizedText;
 }
