@@ -212,7 +212,7 @@ export const App = () => {
           onWorkspaceChange={selectProjectWorkspace}
         />
       ) : activeSurface === "user" ? (
-        <UserAppPanel locale={contentLocale} shareLocale={locale} />
+        <UserAppPanel locale={contentLocale} shareLocale={locale} walletModalLocale={locale} />
       ) : (
         <AdminOpsPanel locale={contentLocale} />
       )}
