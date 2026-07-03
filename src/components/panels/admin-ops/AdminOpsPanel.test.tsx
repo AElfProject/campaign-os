@@ -83,6 +83,52 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("MVP locale coverage");
     expectVisibleText(/Traditional Chinese/);
     expectVisibleText(/P1 locale/);
+    const p1LocaleActivationReadiness = screen.getByLabelText("P1 locale activation readiness");
+    expect(
+      within(p1LocaleActivationReadiness).getByRole("heading", {
+        name: "P1 locale activation readiness",
+      }),
+    ).toBeInTheDocument();
+    expect(within(p1LocaleActivationReadiness).getByText("Readiness summary")).toBeInTheDocument();
+    expect(within(p1LocaleActivationReadiness).getByText("Total candidates")).toBeInTheDocument();
+    expect(within(p1LocaleActivationReadiness).getByText("Blocked candidates")).toBeInTheDocument();
+    expect(within(p1LocaleActivationReadiness).getByText("Review-required candidates")).toBeInTheDocument();
+    expect(within(p1LocaleActivationReadiness).getByText("Ready candidates")).toBeInTheDocument();
+    expect(within(p1LocaleActivationReadiness).getByText("Required evidence")).toBeInTheDocument();
+    expect(within(p1LocaleActivationReadiness).getByText("Completed evidence")).toBeInTheDocument();
+    expect(within(p1LocaleActivationReadiness).getAllByText("Recommended first locale").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("ja-JP").length).toBeGreaterThan(0);
+    for (const localeCode of ["ko-KR", "ja-JP", "vi-VN", "id-ID", "tr-TR", "es-ES"]) {
+      expect(within(p1LocaleActivationReadiness).getAllByText(localeCode).length).toBeGreaterThan(0);
+    }
+    expect(within(p1LocaleActivationReadiness).getByText("Korean")).toBeInTheDocument();
+    expect(within(p1LocaleActivationReadiness).getByText("Japanese")).toBeInTheDocument();
+    expect(within(p1LocaleActivationReadiness).getAllByText("Blocked").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("Review required").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("Routing readiness").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("Analytics readiness").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("Publish-gate readiness").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("Content ownership readiness").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("QA readiness").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("Blockers").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("Evidence references").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText(/Closed runtime boundary/).length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText(/Activation next action/).length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("content-owner-missing").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("ja-jp-activation-mission-required").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("mission/p1-locale-expansion").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("product-future-locale-expansion").length).toBeGreaterThan(0);
+    expect(
+      within(p1LocaleActivationReadiness).getAllByText(/Runtime support remains limited to en-US, zh-CN, and zh-TW/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(p1LocaleActivationReadiness).getAllByText(/Open the dedicated ja-JP activation mission only after content ownership/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(p1LocaleActivationReadiness).queryByRole("button", {
+        name: /activate|activation|auto-translation|route publish|publish route|create ticket|storage write|contract action|contract write|export|wallet signing|reward custody|reward distribution|distribute rewards/i,
+      }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "P1 locale expansion readiness" })).toBeInTheDocument();
     expectVisibleText(/Runtime support remains limited to en-US, zh-CN, and zh-TW/);
     expectVisibleText("6 Deferred");
@@ -821,6 +867,29 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("奖励托管排除在 MVP 外");
     expectVisibleText(/这个控制台不会执行实时钱包 SDK/);
     expectVisibleText(/不会执行实时钱包 SDK、API 调用、合约交易、导出文件/);
+    const zhP1LocaleActivationReadiness = screen.getByLabelText("P1 语言激活 readiness");
+    expect(
+      within(zhP1LocaleActivationReadiness).getByRole("heading", {
+        name: "P1 语言激活 readiness",
+      }),
+    ).toBeInTheDocument();
+    expect(within(zhP1LocaleActivationReadiness).getByText("Readiness 摘要")).toBeInTheDocument();
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("建议首个语言").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("ja-JP").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getByText("日语")).toBeInTheDocument();
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("路由 readiness").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("Analytics readiness").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("发布门禁 readiness").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("内容归属 readiness").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("QA readiness").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("阻断项").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("证据引用").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText(/运行时关闭边界/).length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("激活下一步").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("ja-jp-activation-mission-required").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/p1-locale-expansion").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText(/运行时支持仍限定为 en-US、zh-CN 与 zh-TW/).length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText(/开启专门的 ja-JP 激活 mission/).length).toBeGreaterThan(0);
     const zhCompanionReadiness = screen.getByLabelText("Companion Contract Readiness");
     expect(
       within(zhCompanionReadiness).getByRole("heading", { name: "Companion Contract Readiness" }),
