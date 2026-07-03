@@ -49,6 +49,7 @@ import {
   createMobileTelegramMiniAppHubReadiness,
   createPortfolioCampaignHistoryReadModel,
   createTranslationManagerReadModel,
+  executeI18nReviewAction,
   createLocaleAnalyticsReadiness,
   createLaunchConsoleCampaignBundles,
   createRiskIntelligenceReviewSurface,
@@ -6318,5 +6319,179 @@ describe("Campaign OS domain foundation", () => {
     ]) {
       expect(hasOwnKeyDeep(readiness, unsafe)).toBe(false);
     }
+  });
+
+  it("executes local i18n review actions without mutating source revisions or live boundaries", () => {
+    const originalRevisions = structuredClone(campaignDetail.contentRevisions);
+    const generated = executeI18nReviewAction(campaignDetail, {
+      actionId: "generate_with_ai",
+      reviewer: "project_owner",
+      targetLocale: "zh-TW",
+    });
+
+    expect(generated.ok).toBe(true);
+    expect(campaignDetail.contentRevisions).toEqual(originalRevisions);
+    expect(generated.auditTrail).toMatchObject({
+      actionId: "generate_with_ai",
+      contractWriteExecuted: false,
+      exportFileGenerated: false,
+      externalProviderCalled: false,
+      publishMutationExecuted: false,
+      rewardDistributed: false,
+      storageWriteExecuted: false,
+      walletActionExecuted: false,
+    });
+    expect(generated.updatedRevisions.find((revision) => revision.locale === "en-US")).toEqual(
+      originalRevisions.find((revision) => revision.locale === "en-US"),
+    );
+    expect(generated.updatedRevisions.find((revision) => revision.locale === "zh-TW")).toMatchObject({
+      status: "ai_draft",
+      title: "Awaken Sprint",
+    });
+    expect(generated.translationManager.localeItems.find((item) => item.locale === "zh-TW")).toMatchObject({
+      fallbackToEnglish: true,
+      status: "ai_draft",
+    });
+    expect(generated.actions.find((action) => action.id === "publish_revision")).toMatchObject({
+      state: "blocked",
+    });
+    expect(generated.boundary["en-US"]).toContain("No live AI provider");
+
+    const compared = executeI18nReviewAction(
+      {
+        ...campaignDetail,
+        contentRevisions: generated.updatedRevisions,
+      },
+      {
+        actionId: "compare_with_english",
+        reviewer: "project_owner",
+        targetLocale: "zh-TW",
+      },
+    );
+
+    expect(compared.ok).toBe(true);
+    expect(compared.updatedRevisions).toEqual(generated.updatedRevisions);
+    expect(compared.auditTrail.mutatedContent).toBe(false);
+    expect(compared.translationManager.comparisonRows.map((row) => row.id)).toEqual([
+      "title",
+      "description",
+      "socialPost",
+      "rewardDisclaimer",
+    ]);
+
+    const reviewed = executeI18nReviewAction(
+      {
+        ...campaignDetail,
+        contentRevisions: generated.updatedRevisions,
+      },
+      {
+        actionId: "mark_reviewed",
+        reviewer: "project_owner",
+        targetLocale: "zh-TW",
+      },
+    );
+
+    expect(reviewed.ok).toBe(true);
+    expect(reviewed.updatedRevisions.find((revision) => revision.locale === "zh-TW")).toMatchObject({
+      reviewer: "project_owner",
+      status: "human_reviewed",
+    });
+    expect(reviewed.translationManager.rewardDisclaimers.find((row) => row.locale === "zh-TW")).toMatchObject({
+      blocksPublish: false,
+      publishState: "ready",
+      reviewState: "reviewed",
+    });
+    expect(reviewed.actions.find((action) => action.id === "publish_revision")).toMatchObject({
+      state: "available",
+    });
+
+    const published = executeI18nReviewAction(
+      {
+        ...campaignDetail,
+        contentRevisions: reviewed.updatedRevisions,
+      },
+      {
+        actionId: "publish_revision",
+        reviewer: "project_owner",
+        targetLocale: "zh-TW",
+      },
+    );
+
+    expect(published.ok).toBe(true);
+    expect(published.updatedRevisions.find((revision) => revision.locale === "zh-TW")).toMatchObject({
+      reviewer: "project_owner",
+      status: "published",
+    });
+    expect(published.auditTrail.publishMutationExecuted).toBe(false);
+
+    const fallback = executeI18nReviewAction(
+      {
+        ...campaignDetail,
+        contentRevisions: published.updatedRevisions,
+      },
+      {
+        actionId: "use_english_fallback",
+        reviewer: "project_owner",
+        targetLocale: "zh-TW",
+      },
+    );
+
+    expect(fallback.ok).toBe(true);
+    expect(fallback.updatedRevisions.find((revision) => revision.locale === "zh-TW")).toMatchObject({
+      description: "",
+      rewardDisclaimer: "",
+      status: "empty",
+      title: "",
+    });
+    expect(fallback.translationManager.rewardDisclaimers.find((row) => row.locale === "zh-TW")).toMatchObject({
+      blocksPublish: true,
+      publishState: "blocker",
+      reviewState: "missing",
+    });
+    expect(executeI18nReviewAction(campaignDetail, {
+      actionId: "generate_with_ai",
+      reviewer: "project_owner",
+      targetLocale: "zh-TW",
+    })).toEqual(generated);
+  });
+
+  it("blocks invalid local i18n review transitions", () => {
+    const publishBeforeReview = executeI18nReviewAction(campaignDetail, {
+      actionId: "publish_revision",
+      reviewer: "project_owner",
+      targetLocale: "zh-CN",
+    });
+    const reviewMissingDraft = executeI18nReviewAction(campaignDetail, {
+      actionId: "mark_reviewed",
+      reviewer: "project_owner",
+      targetLocale: "zh-TW",
+    });
+    const unsupportedLocale = executeI18nReviewAction(campaignDetail, {
+      actionId: "compare_with_english",
+      reviewer: "project_owner",
+      targetLocale: "ja-JP" as never,
+    });
+    const unsupportedAction = executeI18nReviewAction(campaignDetail, {
+      actionId: "publish_live_backend" as never,
+      reviewer: "project_owner",
+      targetLocale: "zh-CN",
+    });
+
+    expect(publishBeforeReview).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "ACTION_BLOCKED", field: "actionId" }),
+    });
+    expect(reviewMissingDraft).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "ACTION_BLOCKED", field: "targetLocale" }),
+    });
+    expect(unsupportedLocale).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "UNSUPPORTED_LOCALE", field: "targetLocale" }),
+    });
+    expect(unsupportedAction).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "UNSUPPORTED_ACTION", field: "actionId" }),
+    });
   });
 });

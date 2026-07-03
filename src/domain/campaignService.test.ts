@@ -1242,6 +1242,56 @@ describe("Campaign OS local API service facade", () => {
     });
   });
 
+  it("executes local i18n review actions without live provider or publish side effects", () => {
+    const reviewed = service.executeI18nReviewAction({
+      actionId: "mark_reviewed",
+      campaignId: campaignDetail.id,
+      reviewer: "project_owner",
+      targetLocale: "zh-CN",
+    });
+    const unsupportedLocale = service.executeI18nReviewAction({
+      actionId: "compare_with_english",
+      campaignId: campaignDetail.id,
+      targetLocale: "ja-JP" as never,
+    });
+    const unsupportedAction = service.executeI18nReviewAction({
+      actionId: "publish_live_backend" as never,
+      campaignId: campaignDetail.id,
+      targetLocale: "zh-CN",
+    });
+
+    expect(reviewed).toMatchObject({
+      ok: true,
+      payload: expect.objectContaining({
+        action: expect.objectContaining({ id: "mark_reviewed", state: "completed" }),
+        auditTrail: expect.objectContaining({
+          contractWriteExecuted: false,
+          exportFileGenerated: false,
+          externalProviderCalled: false,
+          publishMutationExecuted: false,
+          rewardDistributed: false,
+          storageWriteExecuted: false,
+          walletActionExecuted: false,
+        }),
+        targetLocale: "zh-CN",
+      }),
+    });
+    expect(reviewed.payload?.translationManager.rewardDisclaimers.find((row) => row.locale === "zh-CN")).toMatchObject({
+      blocksPublish: false,
+      reviewState: "reviewed",
+    });
+    expect(reviewed.payload?.boundary["en-US"]).toContain("No live AI provider");
+    expect(reviewed.boundary["en-US"]).toContain("No live API");
+    expect(unsupportedLocale).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "UNSUPPORTED_LOCALE", field: "targetLocale" }),
+    });
+    expect(unsupportedAction).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "INVALID_REQUEST", field: "actionId" }),
+    });
+  });
+
   it("returns analytics, campaign posts, summaries, and export previews without live outputs", () => {
     const analytics = service.getCampaignAnalytics({ campaignId: campaignDetail.id });
     const advancedAnalytics = service.getAdvancedAnalyticsReadiness({ campaignId: campaignDetail.id });
@@ -1892,6 +1942,7 @@ describe("Campaign OS local API service facade", () => {
         "requestAgentWalletAction",
         "executeTaskVerificationAction",
         "generateI18nDraft",
+        "executeI18nReviewAction",
         "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
@@ -1904,12 +1955,13 @@ describe("Campaign OS local API service facade", () => {
         "requestAgentWalletAction",
         "executeTaskVerificationAction",
         "generateI18nDraft",
+        "executeI18nReviewAction",
         "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
         "getAntiSybilV2GraphReadiness",
       ]),
-      totalServices: 22,
+      totalServices: 23,
     });
     expect(coverage.payload?.boundary["en-US"]).toContain("advanced analytics readiness");
     expect(coverage.payload?.boundary["en-US"]).toContain("No live analytics SDK");
@@ -1918,6 +1970,7 @@ describe("Campaign OS local API service facade", () => {
         "createWalletSession",
         "requestAgentWalletAction",
         "generateI18nDraft",
+        "executeI18nReviewAction",
         "verifyTask",
         "executeTaskVerificationAction",
         "checkEligibility",

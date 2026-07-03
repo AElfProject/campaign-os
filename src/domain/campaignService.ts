@@ -18,6 +18,7 @@ import {
   createVerificationPipelineReadinessGate,
   deriveTaskVerificationAction,
   deriveParticipantTaskStates,
+  executeI18nReviewAction,
   verificationBoundary,
 } from "./campaign";
 import { createApiSkillContractSurface } from "./apiSkillContracts";
@@ -65,6 +66,10 @@ import {
   type ExportPreviewMode,
   type ExportPreviewRow,
   type LocalizedText,
+  type I18nReviewAction,
+  type I18nReviewActionAuditTrail,
+  type I18nReviewActionId,
+  type I18nReviewActionResult,
   type LaunchConsoleCampaignBundleSurface,
   type DimensionSplit,
   type NormalizedWalletSession,
@@ -74,6 +79,7 @@ import {
   type ReferralRiskTier,
   type ReferralWalletRiskMetric,
   type SupportedLocale,
+  type TranslationManagerReadModel,
   type TaskVerificationStatus,
   type TaskVerificationActionKind,
   type TaskVerificationActionProof,
@@ -290,6 +296,25 @@ export interface GenerateI18nDraftResponse {
   targetLocale: Exclude<SupportedLocale, "en-US">;
 }
 
+export interface ExecuteI18nReviewActionRequest {
+  actionId: I18nReviewActionId | (string & {});
+  campaignId: string;
+  reviewer?: string;
+  targetLocale: SupportedLocale | (string & {});
+}
+
+export interface ExecuteI18nReviewActionResponse {
+  action: I18nReviewAction;
+  actions: I18nReviewAction[];
+  auditTrail: I18nReviewActionAuditTrail;
+  boundary: LocalizedText;
+  campaignId: string;
+  nextAction: LocalizedText;
+  targetLocale: SupportedLocale | (string & {});
+  translationManager: TranslationManagerReadModel;
+  updatedRevisions: I18nReviewActionResult["updatedRevisions"];
+}
+
 export interface GenerateCampaignTasksRequest {
   campaignId: string;
   goal: string;
@@ -429,6 +454,9 @@ export interface CampaignOsLocalService {
     noAutoPublishNotice: LocalizedText;
   }>;
   generateI18nDraft(request: GenerateI18nDraftRequest): LocalServiceResult<GenerateI18nDraftResponse>;
+  executeI18nReviewAction(
+    request: ExecuteI18nReviewActionRequest,
+  ): LocalServiceResult<ExecuteI18nReviewActionResponse>;
   getCampaignDetail(request: GetCampaignDetailRequest): LocalServiceResult<CampaignDiscoveryDetail>;
   getCampaignAnalytics(request: GetCampaignAnalyticsRequest): LocalServiceResult<
     ReturnType<typeof createProjectCampaignCommandCenter>["analyticsExport"]
@@ -1758,6 +1786,46 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     });
   },
 
+  executeI18nReviewAction: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local service facade.",
+        "本地 service facade 中不存在该活动。",
+      );
+    }
+
+    const result = executeI18nReviewAction(campaign, {
+      actionId: request.actionId,
+      reviewer: request.reviewer,
+      targetLocale: request.targetLocale,
+    });
+
+    if (!result.ok) {
+      return failure(
+        result.error?.code === "UNSUPPORTED_LOCALE" ? "UNSUPPORTED_LOCALE" : "INVALID_REQUEST",
+        result.error?.field ?? "actionId",
+        result.error?.message["en-US"] ?? "Local i18n review action is not available.",
+        result.error?.message["zh-CN"] ?? "本地 i18n 审核动作不可用。",
+      );
+    }
+
+    return success({
+      action: result.action,
+      actions: result.actions,
+      auditTrail: result.auditTrail,
+      boundary: result.boundary,
+      campaignId: result.campaignId,
+      nextAction: result.nextAction,
+      targetLocale: result.targetLocale,
+      translationManager: result.translationManager,
+      updatedRevisions: result.updatedRevisions,
+    });
+  },
+
   getCampaignAnalytics: (request) => {
     const campaign = findCampaign(request.campaignId);
 
@@ -2066,6 +2134,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       "executeTaskVerificationAction",
       "checkEligibility",
       "generateI18nDraft",
+      "executeI18nReviewAction",
       "getCampaignAnalytics",
       "getAdvancedAnalyticsReadiness",
       "exportWinners",
@@ -2119,6 +2188,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
         "generateCampaignTasks",
         "requestAgentWalletAction",
         "generateI18nDraft",
+        "executeI18nReviewAction",
         "verifyTask",
         "executeTaskVerificationAction",
         "checkEligibility",
