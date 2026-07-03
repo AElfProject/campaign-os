@@ -28,6 +28,7 @@ import {
   createExportFulfillmentReadiness,
   createExportArtifact,
   createExportPreview,
+  createAwakenSwapLiquidityTaskReadiness,
   createDaippAgentCoinTaskReadiness,
   createEbridgeTaskReadiness,
   createForestNftTaskReadiness,
@@ -3462,6 +3463,125 @@ describe("Campaign OS domain foundation", () => {
       "bearerToken",
       "signedPayload",
       "bridgeId",
+      "transactionId",
+      "contractAddress",
+      "walletAddress",
+    ]) {
+      expect(hasOwnKeyDeep(firstReadModel, unsafeKey)).toBe(false);
+    }
+    for (const unsafeText of ["private key", "seed phrase", "bearer token", "signed payload"]) {
+      expect(serialized.toLowerCase()).not.toContain(unsafeText);
+    }
+  });
+
+  it("derives deterministic Awaken swap and liquidity task readiness without live DEX execution claims", () => {
+    const firstReadModel = createAwakenSwapLiquidityTaskReadiness(campaignDetail);
+    const secondReadModel = createAwakenSwapLiquidityTaskReadiness(campaignDetail);
+    const rowsByIntent = Object.fromEntries(firstReadModel.rows.map((row) => [row.intentId, row]));
+    const serialized = JSON.stringify(firstReadModel);
+    const boundaryText = [
+      firstReadModel.boundary["en-US"],
+      firstReadModel.summary.boundary["en-US"],
+      ...firstReadModel.rows.flatMap((row) => [
+        row.boundary["en-US"],
+        row.nextAction["en-US"],
+        row.riskState["en-US"],
+      ]),
+    ].join(" ");
+
+    expect(firstReadModel).toEqual(secondReadModel);
+    expect(firstReadModel.rows.map((row) => row.intentId)).toEqual([
+      "awaken-swap-readiness",
+      "awaken-liquidity-add-review",
+      "awaken-lp-hold-evidence",
+      "awaken-bridge-unlock-dependency",
+      "awaken-ranking-eligibility-impact",
+    ]);
+    expect(firstReadModel.summary).toMatchObject({
+      totalTasks: 5,
+      readyCount: 1,
+      reviewRequiredCount: 2,
+      blockedCount: 2,
+      topState: "blocked",
+      topIntentId: "awaken-bridge-unlock-dependency",
+      primaryOwnerRole: "awaken_provider_reviewer",
+    });
+    expect(
+      firstReadModel.summary.readyCount +
+        firstReadModel.summary.reviewRequiredCount +
+        firstReadModel.summary.blockedCount,
+    ).toBe(firstReadModel.summary.totalTasks);
+    expect(rowsByIntent["awaken-swap-readiness"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "seeded_local",
+      providerState: "seeded_preview",
+      readinessState: "ready",
+      ownerRole: "project_owner",
+    });
+    expect(rowsByIntent["awaken-liquidity-add-review"]).toMatchObject({
+      verificationType: "ON_CHAIN",
+      evidenceSource: "awaken_swap_event",
+      providerState: "review_required",
+      readinessState: "review_required",
+      ownerRole: "operator",
+    });
+    expect(rowsByIntent["awaken-lp-hold-evidence"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "lp_position_snapshot",
+      providerState: "review_required",
+      readinessState: "review_required",
+      ownerRole: "operator",
+    });
+    expect(rowsByIntent["awaken-bridge-unlock-dependency"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "bridge_unlock_rule",
+      providerState: "blocked",
+      readinessState: "blocked",
+      ownerRole: "awaken_provider_reviewer",
+    });
+    expect(rowsByIntent["awaken-ranking-eligibility-impact"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "ranking_engine",
+      providerState: "not_connected",
+      readinessState: "blocked",
+      ownerRole: "risk_reviewer",
+    });
+
+    for (const row of firstReadModel.rows) {
+      expect(row.label["en-US"]).toBeTruthy();
+      expect(row.label["zh-CN"]).toBeTruthy();
+      expect(row.description["en-US"]).toBeTruthy();
+      expect(row.description["zh-CN"]).toBeTruthy();
+      expect(row.riskState["en-US"]).toBeTruthy();
+      expect(row.riskState["zh-CN"]).toBeTruthy();
+      expect(row.nextAction["en-US"]).toBeTruthy();
+      expect(row.nextAction["zh-CN"]).toBeTruthy();
+      expect(row.boundary["en-US"]).toContain("No live Awaken API");
+      expect(row.boundary["zh-CN"]).toContain("不会调用真实 Awaken API");
+    }
+
+    expect(firstReadModel.ownerNextAction["en-US"]).toContain("Awaken provider");
+    expect(firstReadModel.ownerNextAction["en-US"]).toContain("bridge unlock dependency");
+    expect(boundaryText).toContain("No live Awaken API");
+    expect(boundaryText).toContain("DEX/indexer/provider");
+    expect(boundaryText).toContain("swap transaction");
+    expect(boundaryText).toContain("LP add/remove");
+    expect(boundaryText).toContain("asset transfer");
+    expect(boundaryText).toContain("wallet signing");
+    expect(boundaryText).toContain("wallet SDK/provider");
+    expect(boundaryText).toContain("backend mutation");
+    expect(boundaryText).toContain("contract read/send/write");
+    expect(boundaryText).toContain("export generation");
+    expect(boundaryText).toContain("reward custody");
+    expect(boundaryText).toContain("reward distribution");
+
+    for (const unsafeKey of [
+      "privateKey",
+      "seedPhrase",
+      "bearerToken",
+      "signedPayload",
+      "swapTxId",
+      "liquidityTxId",
       "transactionId",
       "contractAddress",
       "walletAddress",

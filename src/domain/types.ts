@@ -367,6 +367,34 @@ export type EbridgeTaskEvidenceSource =
   | "aelfscan_transaction"
   | "awaken_unlock_rule"
   | "eligibility_engine";
+export type AwakenSwapLiquidityTaskIntentId =
+  | "awaken-swap-readiness"
+  | "awaken-liquidity-add-review"
+  | "awaken-lp-hold-evidence"
+  | "awaken-bridge-unlock-dependency"
+  | "awaken-ranking-eligibility-impact";
+export type AwakenSwapLiquidityTaskProviderState =
+  | "not_connected"
+  | "seeded_preview"
+  | "review_required"
+  | "blocked";
+export type AwakenSwapLiquidityTaskReadinessState =
+  | "ready"
+  | "review_required"
+  | "blocked";
+export type AwakenSwapLiquidityTaskOwnerRole =
+  | "project_owner"
+  | "operator"
+  | "awaken_provider_reviewer"
+  | "risk_reviewer";
+export type AwakenSwapLiquidityTaskEvidenceSource =
+  | "seeded_local"
+  | "awaken_api"
+  | "awaken_swap_event"
+  | "awaken_liquidity_event"
+  | "lp_position_snapshot"
+  | "bridge_unlock_rule"
+  | "ranking_engine";
 export type ForecastCampaignTaskIntentId =
   | "prediction-participation"
   | "win-streak"
@@ -3048,6 +3076,40 @@ export interface EbridgeTaskReadiness {
   campaignId: string;
   summary: EbridgeTaskReadinessSummary;
   rows: EbridgeTaskReadinessRow[];
+  ownerNextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface AwakenSwapLiquidityTaskReadinessRow {
+  id: string;
+  intentId: AwakenSwapLiquidityTaskIntentId;
+  label: LocalizedText;
+  description: LocalizedText;
+  verificationType: "ON_CHAIN" | "DAPP_API";
+  evidenceSource: AwakenSwapLiquidityTaskEvidenceSource;
+  providerState: AwakenSwapLiquidityTaskProviderState;
+  readinessState: AwakenSwapLiquidityTaskReadinessState;
+  riskState: LocalizedText;
+  ownerRole: AwakenSwapLiquidityTaskOwnerRole;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface AwakenSwapLiquidityTaskReadinessSummary {
+  totalTasks: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  topState: AwakenSwapLiquidityTaskReadinessState;
+  topIntentId: AwakenSwapLiquidityTaskIntentId;
+  primaryOwnerRole: AwakenSwapLiquidityTaskOwnerRole;
+  boundary: LocalizedText;
+}
+
+export interface AwakenSwapLiquidityTaskReadiness {
+  campaignId: string;
+  summary: AwakenSwapLiquidityTaskReadinessSummary;
+  rows: AwakenSwapLiquidityTaskReadinessRow[];
   ownerNextAction: LocalizedText;
   boundary: LocalizedText;
 }
