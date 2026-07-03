@@ -229,6 +229,32 @@ describe("Admin/Ops shell", () => {
     expect(within(walletProviderEvidenceApprovalAudit).queryByRole("button", {
       name: /sign|signature|provider call|upload|contract write|reward custody|reward distribution/i,
     })).not.toBeInTheDocument();
+    const walletProviderEvidenceReleaseReadiness = screen.getByLabelText("Wallet Provider Evidence Release Readiness");
+    expect(
+      within(walletProviderEvidenceReleaseReadiness).getByRole("heading", {
+        name: "Wallet Provider Evidence Release Readiness",
+      }),
+    ).toBeInTheDocument();
+    expect(within(walletProviderEvidenceReleaseReadiness).getAllByText("Release gate state").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceReleaseReadiness).getAllByText("Approved required scenarios").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceReleaseReadiness).getByText("0/4")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceReleaseReadiness).getByText("Top failed rule: required-artifacts")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceReleaseReadiness).getByText("Top scenario: portkey-aa-connect")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceReleaseReadiness).getAllByText("Required for release").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceReleaseReadiness).getAllByText("Blocking rules").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceReleaseReadiness).getByText("Portkey AA connect evidence")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceReleaseReadiness).getByText("EOA extension connect evidence")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceReleaseReadiness).getByText("Wrong-chain recovery evidence")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceReleaseReadiness).getByText("Unsupported-wallet recovery evidence")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceReleaseReadiness).getAllByText(/No live wallet SDK connection/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceReleaseReadiness).getAllByText(/provider API call/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceReleaseReadiness).getAllByText(/file upload/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceReleaseReadiness).getAllByText(/storage write/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceReleaseReadiness).getAllByText(/contract write/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceReleaseReadiness).getAllByText(/reward distribution/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceReleaseReadiness).queryByRole("button", {
+      name: /sign|signature|provider call|upload|contract write|reward custody|reward distribution/i,
+    })).not.toBeInTheDocument();
     const walletAdapterReadiness = screen
       .getByRole("heading", { name: "aelf-web-login adapter readiness" })
       .closest("section");
