@@ -153,6 +153,11 @@ describe("Admin/Ops shell", () => {
     expect(within(walletProviderEvidenceIntake).getAllByText("Approved evidence").length).toBeGreaterThan(0);
     expect(within(walletProviderEvidenceIntake).getAllByText("Submitted / review required").length).toBeGreaterThan(0);
     expect(within(walletProviderEvidenceIntake).getAllByText("Missing / rejected / expired").length).toBeGreaterThan(0);
+    const submittedReviewMetric = within(walletProviderEvidenceIntake)
+      .getAllByText("Submitted / review required")[0]
+      .closest("article");
+    expect(submittedReviewMetric).not.toBeNull();
+    expect(within(submittedReviewMetric as HTMLElement).getByText("1")).toBeInTheDocument();
     expect(within(walletProviderEvidenceIntake).getAllByText("Evidence status").length).toBeGreaterThan(0);
     expect(within(walletProviderEvidenceIntake).getAllByText("Review state").length).toBeGreaterThan(0);
     expect(within(walletProviderEvidenceIntake).getAllByText("Release impact").length).toBeGreaterThan(0);
@@ -658,6 +663,11 @@ describe("Admin/Ops shell", () => {
     expect(within(zhWalletProviderEvidenceIntake).getAllByText("已批准证据").length).toBeGreaterThan(0);
     expect(within(zhWalletProviderEvidenceIntake).getAllByText("已提交 / 需审核").length).toBeGreaterThan(0);
     expect(within(zhWalletProviderEvidenceIntake).getAllByText("缺失 / 驳回 / 过期").length).toBeGreaterThan(0);
+    const zhSubmittedReviewMetric = within(zhWalletProviderEvidenceIntake)
+      .getAllByText("已提交 / 需审核")[0]
+      .closest("article");
+    expect(zhSubmittedReviewMetric).not.toBeNull();
+    expect(within(zhSubmittedReviewMetric as HTMLElement).getByText("1")).toBeInTheDocument();
     expect(within(zhWalletProviderEvidenceIntake).getAllByText("证据状态").length).toBeGreaterThan(0);
     expect(within(zhWalletProviderEvidenceIntake).getAllByText("审核状态").length).toBeGreaterThan(0);
     expect(within(zhWalletProviderEvidenceIntake).getAllByText("服务门禁").length).toBeGreaterThan(0);

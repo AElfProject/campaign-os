@@ -1072,9 +1072,10 @@ export const AdminOpsPanel = ({
       id: "submitted-review",
       label: copy.walletProviderEvidenceSubmittedReviewRequired,
       state: walletProviderEvidenceIntake.summary.reviewRequiredScenarios > 0 ? "warning" as const : "ready" as const,
-      value:
-        walletProviderEvidenceIntake.summary.submittedScenarios +
+      value: Math.max(
+        walletProviderEvidenceIntake.summary.submittedScenarios,
         walletProviderEvidenceIntake.summary.reviewRequiredScenarios,
+      ),
     },
     {
       id: "missing-rejected-expired",
