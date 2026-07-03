@@ -866,6 +866,7 @@ export const AdminOpsPanel = ({
   const adminOps = createAdminOpsReadModel(campaign);
   const exportReadiness = createExportConfirmationReadinessGate(campaign);
   const exportArtifact = createExportArtifact(campaign.exportPreview, "csv");
+  const exportFulfillmentReadiness = adminOps.exportFulfillmentReadiness;
   const aiOptimization = adminOps.aiOptimization;
   const aiReportHandoff = adminOps.aiReportHandoff;
   const competitorWatch = adminOps.competitorWatch;
@@ -4595,6 +4596,104 @@ export const AdminOpsPanel = ({
           <div style={scrollContainerStyle}>
             <code style={contractCodeStyle}>{columnContract}</code>
           </div>
+        </div>
+        <div aria-label={copy.exportFulfillmentReadiness} style={cardStyle}>
+          <div style={rowStyle}>
+            <div>
+              <p style={labelStyle}>{copy.exportFulfillmentStatus}</p>
+              <h4 style={{ fontSize: 18, margin: "2px 0 0" }}>{copy.exportFulfillmentReadiness}</h4>
+              <p style={mutedTextStyle}>{copy.exportFulfillmentReadinessSubtitle}</p>
+            </div>
+            <PublishStateBadge
+              label={readableCode(exportFulfillmentReadiness.summary.status)}
+              state={exportReadinessState(exportFulfillmentReadiness.summary.status)}
+            />
+          </div>
+          <div style={compactGridStyle}>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportFulfillmentRows}</p>
+              <p style={{ ...valueStyle, fontSize: 20 }}>
+                {exportFulfillmentReadiness.summary.readyRows} / {exportFulfillmentReadiness.summary.reviewRequiredRows} / {exportFulfillmentReadiness.summary.blockedRows}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.exportFulfillmentBatch}: {exportFulfillmentReadiness.batchId}
+              </p>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportFulfillmentAcknowledgements}</p>
+              <p style={{ ...valueStyle, fontSize: 20 }}>
+                {exportFulfillmentReadiness.summary.acknowledgedItems}/{exportFulfillmentReadiness.summary.requiredAcknowledgements}
+              </p>
+              <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <PublishStateBadge
+                  label={copy.exportFulfillmentOwnerApproved}
+                  state={exportFulfillmentReadiness.summary.ownerApproved ? "ready" : "warning"}
+                />
+                <PublishStateBadge
+                  label={copy.exportFulfillmentOperatorReviewed}
+                  state={exportFulfillmentReadiness.summary.operatorReviewed ? "ready" : "warning"}
+                />
+              </span>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportFulfillmentFutureStorage}</p>
+              <p style={wrapTextStyle}>{getLocalizedText(exportFulfillmentReadiness.nextAction, locale)}</p>
+            </article>
+          </div>
+          <div style={gridStyle}>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportFulfillmentPackages}</p>
+              <div style={sourceMetricListStyle}>
+                {exportFulfillmentReadiness.packages.map((pack) => (
+                  <div key={pack.id} style={rowStyle}>
+                    <span style={{ ...mutedTextStyle, overflowWrap: "anywhere" }}>
+                      {pack.format.toUpperCase()} · {pack.fileName}
+                    </span>
+                    <PublishStateBadge
+                      label={pack.handoffReady ? copy.exportLocalPreviewOnly : copy.reviewRequired}
+                      state={pack.handoffReady ? "ready" : "warning"}
+                    />
+                  </div>
+                ))}
+              </div>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportFulfillmentChecksum}</p>
+              <div style={sourceMetricListStyle}>
+                {exportFulfillmentReadiness.packages.map((pack) => (
+                  <div key={`${pack.id}-checksum`} style={rowStyle}>
+                    <span style={{ ...mutedTextStyle, overflowWrap: "anywhere" }}>{pack.checksum}</span>
+                    <span style={mutedTextStyle}>
+                      {copy.exportFulfillmentPayloadBytes}: {pack.payloadBytes.toLocaleString("en-US")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </div>
+          <article style={{ ...cardStyle, minHeight: 0 }}>
+            <div style={rowStyle}>
+              <p style={labelStyle}>{copy.exportFulfillmentSafety}</p>
+              <PublishStateBadge label={copy.exportLocalPreviewOnly} state="ready" />
+            </div>
+            <div style={sourceMetricListStyle}>
+              {[
+                copy.exportFulfillmentNoDownloadUrl,
+                copy.exportFulfillmentNoStorageWrite,
+                copy.exportFulfillmentNoContractRoot,
+                copy.exportFulfillmentNoRewardDistribution,
+              ].map((boundary) => (
+                <div key={boundary} style={rowStyle}>
+                  <span style={mutedTextStyle}>{boundary}</span>
+                  <PublishStateBadge label={copy.covered} state="ready" />
+                </div>
+              ))}
+            </div>
+            <p style={boundaryStyle}>{getLocalizedText(exportFulfillmentReadiness.boundary, locale)}</p>
+            <p style={boundaryStyle}>
+              {copy.exportFulfillmentBoundary}: {getLocalizedText(exportFulfillmentReadiness.safety.boundary, locale)}
+            </p>
+          </article>
         </div>
         <article aria-label={copy.exportArtifact} style={cardStyle}>
           <div style={rowStyle}>
