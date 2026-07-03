@@ -29,6 +29,7 @@ import {
   type AiContentArtifactLifecycle,
   type AiContentQualityGateStatus,
   type AdvancedAnalyticsReadinessState,
+  type AntiSybilV2ReadinessState,
   type CampaignLifecycleOperation,
   type CampaignLifecycleOperationState,
   type CampaignLifecycleStatus,
@@ -316,6 +317,22 @@ const signalState = (severity: SignalSeverity) =>
 
 const riskReviewState = (state: RiskIntelligenceReviewState) =>
   state === "blocked" ? "blocker" : state === "review_required" || state === "monitor" ? "warning" : "ready";
+
+const antiSybilReadinessState = (state: AntiSybilV2ReadinessState) =>
+  state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const antiSybilReadinessLabel = (
+  state: AntiSybilV2ReadinessState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<AntiSybilV2ReadinessState, string> = {
+    blocked: copy.riskIntelligenceReviewStateBlocked,
+    ready: copy.readyActions,
+    review_required: copy.riskIntelligenceReviewStateReviewRequired,
+  };
+
+  return labels[state];
+};
 
 const riskReviewStateLabel = (
   state: RiskIntelligenceReviewState,
@@ -988,6 +1005,7 @@ export const AdminOpsPanel = ({
       .map((gate) => ({ bundle, gate })),
   );
   const riskIntelligence = adminOps.riskIntelligence;
+  const antiSybilV2Readiness = adminOps.antiSybilV2GraphReadiness;
   const lifecycleReviewRows = lifecycleOperations.operations.filter((operation) =>
     [
       "generate-ai-draft",
@@ -4461,6 +4479,128 @@ export const AdminOpsPanel = ({
               </p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.antiSybilV2Title} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.antiSybilV2Subtitle}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.antiSybilV2Title}
+            </h3>
+          </div>
+          <PublishStateBadge
+            label={antiSybilReadinessLabel(antiSybilV2Readiness.summary.overallReadiness, copy)}
+            state={antiSybilReadinessState(antiSybilV2Readiness.summary.overallReadiness)}
+          />
+        </div>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.antiSybilV2TotalFamilies}</p>
+            <p style={valueStyle}>{antiSybilV2Readiness.summary.totalFamilies}</p>
+            <p style={wrapTextStyle}>{copy.antiSybilV2SignalFamilies}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.readyActions}</p>
+            <p style={valueStyle}>{antiSybilV2Readiness.summary.readyCount}</p>
+            <p style={wrapTextStyle}>{copy.antiSybilV2OverallReadiness}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.reviewRequired}</p>
+            <p style={valueStyle}>{antiSybilV2Readiness.summary.reviewRequiredCount}</p>
+            <p style={wrapTextStyle}>{copy.humanReviewRequired}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.blocked}</p>
+            <p style={valueStyle}>{antiSybilV2Readiness.summary.blockedCount}</p>
+            <p style={wrapTextStyle}>{copy.riskReview}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.antiSybilV2OverallReadiness}</p>
+            <p style={valueStyle}>
+              {antiSybilReadinessLabel(antiSybilV2Readiness.summary.overallReadiness, copy)}
+            </p>
+            <p style={wrapTextStyle}>{copy.antiSybilV2OwnerNextAction}</p>
+          </article>
+        </div>
+        <article style={cardStyle}>
+          <p style={labelStyle}>{copy.antiSybilV2OwnerNextAction}</p>
+          <p style={wrapTextStyle}>
+            {getLocalizedText(antiSybilV2Readiness.ownerNextAction, locale)}
+          </p>
+        </article>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.antiSybilV2Boundary}</p>
+          <p style={{ margin: "8px 0 0" }}>{getLocalizedText(antiSybilV2Readiness.boundary, locale)}</p>
+        </div>
+        <div style={gridStyle}>
+          {antiSybilV2Readiness.signalFamilies.map((family) => (
+            <article key={family.id} style={{ ...cardStyle, alignContent: "start" }}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.antiSybilV2SignalFamilies}: {readableCode(family.id)}</p>
+                  <strong style={{ overflowWrap: "anywhere" }}>
+                    {getLocalizedText(family.label, locale)}
+                  </strong>
+                </div>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
+                  <PublishStateBadge
+                    label={antiSybilReadinessLabel(family.readiness, copy)}
+                    state={antiSybilReadinessState(family.readiness)}
+                  />
+                  <PublishStateBadge label={family.severity} state={signalState(family.severity)} />
+                </span>
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.riskIntelligenceReviewState}</p>
+                  <p style={wrapTextStyle}>{antiSybilReadinessLabel(family.readiness, copy)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.ownerRole}</p>
+                  <p style={wrapTextStyle}>{readableCode(family.ownerRole)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.riskLevel}</p>
+                  <p style={wrapTextStyle}>{family.severity}</p>
+                </div>
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.riskIntelligenceAffectedCohort}: {getLocalizedText(family.affectedCohort, locale)}
+              </p>
+              <p style={labelStyle}>{copy.antiSybilV2EvidenceBasis}</p>
+              <p style={wrapTextStyle}>{getLocalizedText(family.evidenceBasis, locale)}</p>
+              <p style={wrapTextStyle}>
+                {copy.riskIntelligenceSourceSignal}: {getLocalizedText(family.sourceSignals, locale)}
+              </p>
+              <p style={wrapTextStyle}>{getLocalizedText(family.reviewGuidance, locale)}</p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(family.nextAction, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
+        <div style={stackStyle}>
+          <p style={labelStyle}>{copy.antiSybilV2AffectedOutcomes}</p>
+          <div style={gridStyle}>
+            {antiSybilV2Readiness.affectedOutcomes.map((outcome) => (
+              <article key={outcome.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <strong>{getLocalizedText(outcome.label, locale)}</strong>
+                  <PublishStateBadge
+                    label={antiSybilReadinessLabel(outcome.state, copy)}
+                    state={antiSybilReadinessState(outcome.state)}
+                  />
+                </div>
+                <p style={wrapTextStyle}>{getLocalizedText(outcome.impact, locale)}</p>
+                <p style={wrapTextStyle}>{copy.ownerRole}: {readableCode(outcome.ownerRole)}</p>
+                <p style={wrapTextStyle}>
+                  {copy.nextAction}: {getLocalizedText(outcome.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
 
