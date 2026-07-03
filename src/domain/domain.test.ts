@@ -22,6 +22,7 @@ import {
   computePublishReadiness,
   createAdminOpsReadModel,
   createExportConfirmationReadinessGate,
+  createExportFulfillmentReadiness,
   createExportArtifact,
   createExportPreview,
   createParticipantWorkspaceReadModel,
@@ -937,6 +938,24 @@ describe("Campaign OS domain foundation", () => {
       severity: "high",
       ownerRole: "project_owner",
     });
+    expect(rowsById["v01-live-export-download"]).toMatchObject({
+      status: "proven",
+      severity: "medium",
+      launchBlocking: false,
+      ownerRole: "project_owner",
+    });
+    expect(rowsById["v01-live-export-download"]?.title["en-US"]).toBe(
+      "Local export fulfillment handoff readiness",
+    );
+    expect(rowsById["v01-live-export-download"]?.evidenceSummary["en-US"]).toContain(
+      "2 local packages ready",
+    );
+    expect(rowsById["v01-live-export-download"]?.evidenceSummary["en-US"]).toContain(
+      "download availability remains false",
+    );
+    expect(rowsById["v01-live-export-download"]?.nextMissionAction["en-US"]).toContain(
+      "storage-backed export",
+    );
     expect(rowsById["v02-live-wallet-provider-evidence"]).toMatchObject({
       solutionSetId: "v0_2_wallet_i18n_contract",
       status: "needs_live_evidence",
@@ -964,6 +983,7 @@ describe("Campaign OS domain foundation", () => {
         .some((row) => row.status === "proven"),
     ).toBe(false);
     expect(acceptance.topResidualGaps[0]?.id).toBe("v02-live-wallet-provider-evidence");
+    expect(acceptance.topResidualGaps.map((row) => row.id)).not.toContain("v01-live-export-download");
     expect(acceptance.topResidualGaps.map((row) => row.id).slice(0, 2)).not.toContain(
       "v02-contract-claim-reward-custody",
     );
@@ -1584,6 +1604,81 @@ describe("Campaign OS domain foundation", () => {
     ]) {
       expect(hasOwnKeyDeep(csvArtifact, unsafe)).toBe(false);
       expect(hasOwnKeyDeep(jsonArtifact, unsafe)).toBe(false);
+    }
+  });
+
+  it("derives local export fulfillment readiness from deterministic CSV and JSON packages", () => {
+    const readiness = createExportFulfillmentReadiness(campaignDetail);
+    const repeated = createExportFulfillmentReadiness(campaignDetail);
+    const packagesByFormat = Object.fromEntries(readiness.packages.map((pack) => [pack.format, pack]));
+    const commandCenter = createProjectCampaignCommandCenter(campaignDetail);
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+
+    expect(readiness.summary).toMatchObject({
+      status: "ready",
+      packageCount: 2,
+      readyPackages: 2,
+      readyRows: 1,
+      reviewRequiredRows: 3,
+      blockedRows: 0,
+      requiredAcknowledgements: 5,
+      acknowledgedItems: 5,
+      ownerApproved: true,
+      operatorReviewed: true,
+    });
+    expect(readiness.packages.map((pack) => pack.format)).toEqual(["csv", "json"]);
+    expect(packagesByFormat.csv).toMatchObject({
+      id: "camp-awaken-sprint-export-awaken-sprint-preview-csv-local-fulfillment",
+      checksum: expect.stringMatching(/^local-[0-9a-f]{8}$/),
+      downloadAvailable: false,
+      handoffReady: true,
+      includedColumns: EXPORT_CSV_COLUMNS,
+      readyRows: 1,
+      reviewRequiredRows: 3,
+      storageBacked: false,
+      totalRows: 4,
+    });
+    expect(packagesByFormat.json).toMatchObject({
+      id: "camp-awaken-sprint-export-awaken-sprint-preview-json-local-fulfillment",
+      downloadAvailable: false,
+      handoffReady: true,
+      includedColumns: EXPORT_CSV_COLUMNS,
+      storageBacked: false,
+    });
+    expect(readiness.packages.map((pack) => [pack.id, pack.checksum])).toEqual(
+      repeated.packages.map((pack) => [pack.id, pack.checksum]),
+    );
+    expect(readiness.approval.acknowledgements.map((item) => item.id)).toEqual([
+      "verified-records-only",
+      "project-owned-reward-distribution",
+      "no-reward-custody",
+      "no-reward-distribution",
+      "no-real-export-file",
+    ]);
+    expect(readiness.safety).toMatchObject({
+      forbiddenFieldsAbsent: true,
+      localOnly: true,
+      noContractRoot: true,
+      noContractTransaction: true,
+      noDownloadUrl: true,
+      noRewardCustody: true,
+      noRewardDistribution: true,
+      noStorageWrite: true,
+    });
+    expect(readiness.boundary["en-US"]).toContain("Local export fulfillment handoff only");
+    expect(readiness.nextAction["en-US"]).toContain("storage-backed export");
+    expect(commandCenter.exportFulfillmentReadiness).toEqual(readiness);
+    expect(adminOps.exportFulfillmentReadiness).toEqual(readiness);
+
+    for (const unsafe of [
+      "downloadUrl",
+      "storageKey",
+      "contractRoot",
+      "transactionId",
+      "privateKey",
+      "signedPayload",
+    ]) {
+      expect(hasOwnKeyDeep(readiness, unsafe)).toBe(false);
     }
   });
 

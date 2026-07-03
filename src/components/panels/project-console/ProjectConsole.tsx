@@ -933,6 +933,7 @@ export const ProjectConsole = ({
   );
   const commandCenter = createProjectCampaignCommandCenter(campaign);
   const exportDecision = commandCenter.analyticsExport;
+  const exportFulfillmentReadiness = commandCenter.exportFulfillmentReadiness;
   const advancedAnalytics = commandCenter.advancedAnalytics;
   const aiOptimizationSummary = commandCenter.aiOptimization.projectOwnerSummary;
   const aiOpsKpiAdoption = commandCenter.aiOpsKpiAdoption;
@@ -3035,6 +3036,109 @@ export const ProjectConsole = ({
 
         <p style={boundaryStyle}>{getLocalizedText(exportDecision.boundary, locale)}</p>
         <p style={boundaryStyle}>{getLocalizedText(commandCenter.boundary, locale)}</p>
+      </section>
+
+      <section aria-label={copy.exportFulfillmentReadiness} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.exportFulfillmentStatus}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.exportFulfillmentReadiness}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.exportFulfillmentReadinessSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={readableCode(exportFulfillmentReadiness.summary.status)}
+            state={exportReadinessBadgeState(exportFulfillmentReadiness.summary.status)}
+          />
+        </div>
+
+        <div style={gridStyle}>
+          <article style={cardStyle}>
+            <p style={statLabelStyle}>{copy.exportFulfillmentRows}</p>
+            <p style={{ ...statValueStyle, fontSize: 22 }}>
+              {exportFulfillmentReadiness.summary.readyRows} / {exportFulfillmentReadiness.summary.reviewRequiredRows} / {exportFulfillmentReadiness.summary.blockedRows}
+            </p>
+            <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+              {copy.exportBatch}: {exportFulfillmentReadiness.batchId}
+            </p>
+          </article>
+          <article style={cardStyle}>
+            <p style={statLabelStyle}>{copy.exportFulfillmentAcknowledgementState}</p>
+            <p style={{ ...statValueStyle, fontSize: 22 }}>
+              {exportFulfillmentReadiness.summary.acknowledgedItems}/{exportFulfillmentReadiness.summary.requiredAcknowledgements}
+            </p>
+            <PublishStateBadge
+              label={copy.exportFulfillmentOwnerApproved}
+              state={exportFulfillmentReadiness.summary.ownerApproved ? "ready" : "warning"}
+            />
+          </article>
+          <article style={cardStyle}>
+            <p style={statLabelStyle}>{copy.exportFulfillmentFutureStorage}</p>
+            <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+              {getLocalizedText(exportFulfillmentReadiness.nextAction, locale)}
+            </p>
+          </article>
+        </div>
+
+        <article style={{ ...workflowStyle, minHeight: 0 }}>
+          <h4 style={{ fontSize: 18, margin: 0 }}>{copy.exportFulfillmentPackages}</h4>
+          <div style={sectionGridStyle}>
+            {exportFulfillmentReadiness.packages.map((pack) => (
+              <article key={pack.id} style={{ ...cardStyle, minHeight: 0 }}>
+                <div style={headingRowStyle}>
+                  <div>
+                    <p style={statLabelStyle}>{copy.exportFulfillmentPackageId}</p>
+                    <strong style={{ overflowWrap: "anywhere" }}>{pack.id}</strong>
+                  </div>
+                  <PublishStateBadge label={pack.format.toUpperCase()} state="ready" />
+                </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0, overflowWrap: "anywhere" }}>
+                  {pack.fileName}
+                </p>
+                <div style={gridStyle}>
+                  <div>
+                    <p style={statLabelStyle}>{copy.exportFulfillmentChecksum}</p>
+                    <p style={{ color: "#071426", fontSize: 13, fontWeight: 900, lineHeight: 1.35, margin: 0, overflowWrap: "anywhere" }}>
+                      {pack.checksum}
+                    </p>
+                  </div>
+                  <div>
+                    <p style={statLabelStyle}>{copy.exportFulfillmentPayloadBytes}</p>
+                    <p style={{ color: "#071426", fontSize: 18, fontWeight: 900, lineHeight: 1.1, margin: 0 }}>
+                      {formatNumber(pack.payloadBytes)}
+                    </p>
+                  </div>
+                </div>
+                <p style={statLabelStyle}>{copy.exportFulfillmentIncludedColumns}</p>
+                <div style={tableWrapStyle}>
+                  <p style={{ color: "#071426", fontSize: 12, fontWeight: 800, lineHeight: 1.45, margin: 0, minWidth: 680 }}>
+                    {pack.includedColumns.join(",")}
+                  </p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </article>
+
+        <article style={{ ...workflowStyle, minHeight: 0 }}>
+          <h4 style={{ fontSize: 18, margin: 0 }}>{copy.exportFulfillmentSafety}</h4>
+          <ul style={compactListStyle}>
+            <li style={chipStyle}>{copy.exportFulfillmentNoDownloadUrl}</li>
+            <li style={chipStyle}>{copy.exportFulfillmentNoStorageWrite}</li>
+            <li style={chipStyle}>{copy.exportFulfillmentNoContractRoot}</li>
+            <li style={chipStyle}>{copy.exportFulfillmentNoRewardDistribution}</li>
+          </ul>
+          <p style={boundaryStyle}>{getLocalizedText(exportFulfillmentReadiness.boundary, locale)}</p>
+          <p style={boundaryStyle}>
+            {copy.exportFulfillmentBoundary}: {getLocalizedText(exportFulfillmentReadiness.safety.boundary, locale)}
+          </p>
+          <p style={boundaryStyle}>
+            {copy.exportFulfillmentNextAction}: {getLocalizedText(exportFulfillmentReadiness.approval.nextAction, locale)}
+          </p>
+        </article>
       </section>
 
       {exportReadiness && (

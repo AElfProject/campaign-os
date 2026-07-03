@@ -6,6 +6,7 @@ import {
   createCampaignLifecycleOperations,
   createExportArtifact,
   createExportConfirmationReadinessGate,
+  createExportFulfillmentReadiness,
   createExportPreview,
   createLaunchConsoleCampaignBundles,
   createParticipationReadModel,
@@ -51,6 +52,7 @@ import {
   type ExportArtifact,
   type ExportContractRootMode,
   type ExportCsvColumn,
+  type ExportFulfillmentReadiness,
   type ExportPreviewMode,
   type ExportPreviewRow,
   type LocalizedText,
@@ -364,6 +366,7 @@ export interface ExportWinnersResponse {
   columns: readonly ExportCsvColumn[];
   confirmation: ReturnType<typeof createExportPreview>["confirmation"];
   disclaimer: string;
+  exportFulfillmentReadiness: ExportFulfillmentReadiness;
   exportReadiness: ExportConfirmationReadinessGate;
   format: ExportPreviewMode;
   rows: ExportPreviewRow[];
@@ -1760,6 +1763,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       confirmation: preview.confirmation,
       contractRootMode: request.contractRootMode,
       disclaimer: preview.disclaimer,
+      exportFulfillmentReadiness: createExportFulfillmentReadiness(campaign),
       exportReadiness: createExportConfirmationReadinessGate(campaign),
       format: request.format,
       readyRows: rows.filter((row) => row.rowStatus === "ready").length,

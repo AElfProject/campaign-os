@@ -120,6 +120,9 @@ import type {
   ExportBatchSummary,
   ExportEvidenceRow,
   ExportFieldCoverage,
+  ExportFulfillmentPackage,
+  ExportFulfillmentReadiness,
+  ExportFulfillmentSafety,
   EvidenceSource,
   ExportPreviewMode,
   ExportPreviewModeReadiness,
@@ -3802,6 +3805,154 @@ export const createExportArtifact = (
       noRewardDistribution: true,
       boundary: exportArtifactBoundary,
     },
+  };
+};
+
+const exportFulfillmentBoundary: LocalizedText = {
+  "en-US":
+    "Local export fulfillment handoff only. Campaign OS prepares auditable CSV and JSON review packages without download URLs, storage writes, contract roots, contract transactions, reward custody, or reward distribution.",
+  "zh-CN":
+    "仅本地导出履约交接。Campaign OS 准备可审核的 CSV 和 JSON review package，不生成下载链接、存储写入、合约 root、合约交易、奖励托管或发奖。",
+  "zh-TW":
+    "Local export fulfillment handoff only. Campaign OS prepares auditable CSV and JSON review packages without download URLs, storage writes, contract roots, contract transactions, reward custody, or reward distribution.",
+};
+
+const exportFulfillmentNextAction: LocalizedText = {
+  "en-US":
+    "Future production work must define storage-backed export, retention, access control, audit logging, and rollback before enabling a real download.",
+  "zh-CN":
+    "未来生产化前必须先定义存储型导出、保留策略、访问控制、审计日志与回滚，再启用真实下载。",
+  "zh-TW":
+    "Future production work must define storage-backed export, retention, access control, audit logging, and rollback before enabling a real download.",
+};
+
+const unsafeExportFulfillmentFields = [
+  "downloadUrl",
+  "storageKey",
+  "contractRoot",
+  "transactionId",
+  "privateKey",
+  "signedPayload",
+] as const;
+
+const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasOwnKeyDeep(item, key));
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return Object.prototype.hasOwnProperty.call(record, key)
+    || Object.values(record).some((item) => hasOwnKeyDeep(item, key));
+};
+
+const createExportFulfillmentPackage = (
+  artifact: ExportArtifact,
+): ExportFulfillmentPackage => ({
+  id: `${artifact.campaignId}-${artifact.batchId}-${artifact.format}-local-fulfillment`,
+  format: artifact.format,
+  fileName: artifact.fileName,
+  mimeType: artifact.mimeType,
+  checksum: artifact.metadata.checksum,
+  checksumAlgorithm: artifact.metadata.checksumAlgorithm,
+  payloadBytes: artifact.metadata.payloadBytes,
+  totalRows: artifact.metadata.totalRows,
+  readyRows: artifact.metadata.readyRows,
+  reviewRequiredRows: artifact.metadata.reviewRequiredRows,
+  blockedRows: artifact.metadata.blockedRows,
+  includedColumns: artifact.metadata.columns,
+  handoffReady: artifact.safety.localOnly
+    && artifact.safety.noDownloadUrl
+    && artifact.safety.noStorageWrite
+    && artifact.safety.noContractRoot
+    && artifact.safety.noContractTransaction
+    && artifact.safety.noRewardCustody
+    && artifact.safety.noRewardDistribution,
+  downloadAvailable: false,
+  storageBacked: false,
+});
+
+const createExportFulfillmentSafety = (
+  packages: readonly ExportFulfillmentPackage[],
+): ExportFulfillmentSafety => ({
+  localOnly: true,
+  noDownloadUrl: true,
+  noStorageWrite: true,
+  noContractRoot: true,
+  noContractTransaction: true,
+  noRewardCustody: true,
+  noRewardDistribution: true,
+  forbiddenFieldsAbsent: unsafeExportFulfillmentFields.every(
+    (field) => !packages.some((pack) => hasOwnKeyDeep(pack, field)),
+  ),
+  boundary: exportFulfillmentBoundary,
+});
+
+export const createExportFulfillmentReadiness = (
+  campaign: CampaignShellDetail,
+): ExportFulfillmentReadiness => {
+  const preview = createExportPreview(
+    campaign.id,
+    campaign.participants,
+    campaign.tasks,
+    campaign.walletSessions,
+  );
+  const packages = (["csv", "json"] as const)
+    .map((format) => createExportFulfillmentPackage(createExportArtifact(preview, format)));
+  const acknowledgements = createExportAcknowledgements();
+  const requiredAcknowledgements = acknowledgements.filter((item) => item.required).length;
+  const acknowledgedItems = acknowledgements.filter((item) => item.required && item.acknowledged).length;
+  const ownerApproved = requiredAcknowledgements === acknowledgedItems;
+  const operatorReviewed = acknowledgements
+    .filter((item) => item.ownerRole === "internal_operator")
+    .every((item) => !item.required || item.acknowledged);
+  const safety = createExportFulfillmentSafety(packages);
+  const readyPackages = packages.filter((pack) => pack.handoffReady && !pack.downloadAvailable && !pack.storageBacked).length;
+  const blockedRows = preview.rows.filter((row) => row.rowStatus === "blocked").length;
+  const status: ExportReadinessState = blockedRows > 0
+    ? "blocked"
+    : ownerApproved && operatorReviewed && safety.forbiddenFieldsAbsent
+      ? "ready"
+      : "review_required";
+
+  return {
+    campaignId: campaign.id,
+    batchId: preview.rows[0]?.exportBatchId ?? exportBatchId,
+    summary: {
+      status,
+      packageCount: packages.length,
+      readyPackages,
+      readyRows: preview.rows.filter((row) => row.rowStatus === "ready").length,
+      reviewRequiredRows: preview.rows.filter((row) => row.rowStatus === "review_required").length,
+      blockedRows,
+      requiredAcknowledgements,
+      acknowledgedItems,
+      ownerApproved,
+      operatorReviewed,
+    },
+    packages,
+    approval: {
+      ownerRole: "project_owner",
+      ownerApproved,
+      operatorReviewed,
+      acknowledgements,
+      requiredAcknowledgements,
+      acknowledgedItems,
+      nextAction: ownerApproved && operatorReviewed
+        ? exportFulfillmentNextAction
+        : localized(
+            "Project owner and operator must acknowledge local handoff boundaries before using the package.",
+            "项目方和运营方必须确认本地交接边界后再使用 package。",
+            "Project owner and operator must acknowledge local handoff boundaries before using the package.",
+          ),
+    },
+    safety,
+    boundary: exportFulfillmentBoundary,
+    nextAction: exportFulfillmentNextAction,
   };
 };
 
@@ -8368,6 +8519,7 @@ export const createProjectCampaignCommandCenter = (
   const exportBatch = createExportBatch(campaign);
   const campaigns = createSeededCampaignCommandItems(campaign, exportBatch);
   const analyticsExport = createAnalyticsExportDecision(campaign, exportBatch);
+  const exportFulfillmentReadiness = createExportFulfillmentReadiness(campaign);
   const advancedAnalytics = createAdvancedAnalyticsReadiness(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const aiOpsKpiAdoption = createAiOpsKpiAdoptionConsole(campaign, aiOptimization);
@@ -8387,6 +8539,7 @@ export const createProjectCampaignCommandCenter = (
     summary: createCommandSummary(campaigns, analyticsExport.readyRows),
     campaigns,
     analyticsExport,
+    exportFulfillmentReadiness,
     advancedAnalytics,
     aiOptimization,
     aiOpsKpiAdoption,
@@ -10375,8 +10528,11 @@ const deliveryAcceptanceRow = ({
   title,
 });
 
-const v01AcceptanceRows = (): DeliveryAcceptanceRow[] => {
+const v01AcceptanceRows = (
+  exportFulfillmentReadiness?: ExportFulfillmentReadiness,
+): DeliveryAcceptanceRow[] => {
   const solutionSetId = "v0_1_product_ui" as const;
+  const exportFulfillmentReady = exportFulfillmentReadiness?.summary.status === "ready";
 
   return [
     deliveryAcceptanceRow({
@@ -10463,19 +10619,25 @@ const v01AcceptanceRows = (): DeliveryAcceptanceRow[] => {
       id: "v01-live-export-download",
       solutionSetId,
       sourceArea: localized("v0.1 analytics/export design", "v0.1 analytics/export 设计", "v0.1 analytics/export 設計"),
-      title: localized("Real export download remains non-live", "真实导出下载仍未启用", "真實匯出下載仍未啟用"),
-      status: "needs_live_evidence",
-      severity: "high",
+      title: localized("Local export fulfillment handoff readiness", "本地导出履约交接准备度", "本地匯出履約交接準備度"),
+      status: exportFulfillmentReady ? "proven" : "partial",
+      severity: exportFulfillmentReady ? "medium" : "high",
       ownerRole: "project_owner",
-      launchBlocking: true,
-      boundary: exportArtifactBoundary,
-      evidenceSurface: localized("Local export artifact", "本地导出 artifact", "本地匯出 artifact"),
-      evidenceSummary: localized(
-        "Current implementation creates an in-memory review payload only, with no storage write or download URL.",
-        "当前实现只生成内存审核 payload，不写入存储，也不生成下载链接。",
-        "目前實作只生成記憶體審核 payload，不寫入儲存，也不生成下載連結。",
-      ),
-      nextMissionAction: localized(
+      launchBlocking: false,
+      boundary: exportFulfillmentReadiness?.boundary ?? exportArtifactBoundary,
+      evidenceSurface: localized("Export Fulfillment Readiness", "导出履约准备度", "匯出履約準備度"),
+      evidenceSummary: exportFulfillmentReadiness
+        ? localized(
+            `${exportFulfillmentReadiness.summary.packageCount} local packages ready for project-owner handoff: ${exportFulfillmentReadiness.summary.readyRows} ready / ${exportFulfillmentReadiness.summary.reviewRequiredRows} review / ${exportFulfillmentReadiness.summary.blockedRows} blocked rows; download availability remains false.`,
+            `${exportFulfillmentReadiness.summary.packageCount} 个本地 package 已可供项目方交接：${exportFulfillmentReadiness.summary.readyRows} 个就绪 / ${exportFulfillmentReadiness.summary.reviewRequiredRows} 个需审核 / ${exportFulfillmentReadiness.summary.blockedRows} 个阻断行；download availability 仍为 false。`,
+            `${exportFulfillmentReadiness.summary.packageCount} local packages ready for project-owner handoff: ${exportFulfillmentReadiness.summary.readyRows} ready / ${exportFulfillmentReadiness.summary.reviewRequiredRows} review / ${exportFulfillmentReadiness.summary.blockedRows} blocked rows; download availability remains false.`,
+          )
+        : localized(
+            "Current implementation creates an in-memory review payload only, with no storage write or download URL.",
+            "当前实现只生成内存审核 payload，不写入存储，也不生成下载链接。",
+            "目前實作只生成記憶體審核 payload，不寫入儲存，也不生成下載連結。",
+          ),
+      nextMissionAction: exportFulfillmentReadiness?.nextAction ?? localized(
         "Open a dedicated export fulfillment mission when storage, approval, and retention rules are approved.",
         "存储、审批与保留规则批准后，开启专门的导出履约 mission。",
         "儲存、審批與保留規則批准後，開啟專門的匯出履約 mission。",
@@ -10699,6 +10861,7 @@ const compareDeliveryAcceptanceResiduals = (
 
 export const createDeliveryAcceptanceConsole = (
   walletProviderEvidenceApprovalAudit?: WalletProviderEvidenceApprovalAudit,
+  exportFulfillmentReadiness?: ExportFulfillmentReadiness,
 ): DeliveryAcceptanceConsole => {
   const solutionSets = [
     deliveryAcceptanceSolutionSet({
@@ -10710,7 +10873,7 @@ export const createDeliveryAcceptanceConsole = (
         "核心项目方、用户、管理员、构建器、analytics 与导出 surface 已具备产品可见 seeded/本地证据。",
         "核心專案方、使用者、管理員、構建器、analytics 與匯出 surface 已具備產品可見 seeded/本地證據。",
       ),
-      rows: v01AcceptanceRows(),
+      rows: v01AcceptanceRows(exportFulfillmentReadiness),
     }),
     deliveryAcceptanceSolutionSet({
       id: "v0_2_wallet_i18n_contract",
@@ -10727,7 +10890,7 @@ export const createDeliveryAcceptanceConsole = (
   const rows = solutionSets.flatMap((solutionSet) => solutionSet.rows);
   const counts = deliveryAcceptanceCounts(rows);
   const topResidualGaps = rows
-    .filter((row) => row.status !== "proven")
+    .filter((row) => row.status !== "proven" && row.status !== "deferred")
     .sort(compareDeliveryAcceptanceResiduals)
     .slice(0, 5);
 
@@ -13978,6 +14141,7 @@ export const createAdminOpsReadModel = (
   campaign: CampaignShellDetail,
 ): AdminOpsReadModel => {
   const exportBatch = createExportBatch(campaign);
+  const exportFulfillmentReadiness = createExportFulfillmentReadiness(campaign);
   const advancedAnalytics = createAdvancedAnalyticsReadiness(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const aiReportHandoff = createAiReportHandoffSurface(aiOptimization);
@@ -13998,7 +14162,10 @@ export const createAdminOpsReadModel = (
   return {
     campaignId: campaign.id,
     reviewQueue: campaign.reviewItems,
-    deliveryAcceptance: createDeliveryAcceptanceConsole(walletProviderEvidenceApprovalAudit),
+    deliveryAcceptance: createDeliveryAcceptanceConsole(
+      walletProviderEvidenceApprovalAudit,
+      exportFulfillmentReadiness,
+    ),
     deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
     walletProviderQaGate,
     walletProviderEvidenceIntake,
@@ -14025,6 +14192,7 @@ export const createAdminOpsReadModel = (
     competitorWatch,
     ecosystemMetrics: campaign.ecosystemMetrics,
     exportBatch,
+    exportFulfillmentReadiness,
     lifecycleOperations,
   };
 };

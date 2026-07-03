@@ -627,9 +627,9 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText("Ready rows").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Review-required rows").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Blocked rows").length).toBeGreaterThan(0);
-    expect(screen.getByText("1 / 3 / 0")).toBeInTheDocument();
+    expect(screen.getAllByText("1 / 3 / 0").length).toBeGreaterThan(0);
     expect(screen.getByText("CSV columns")).toBeInTheDocument();
-    expect(screen.getByText(EXPORT_CSV_COLUMNS.join(","))).toBeInTheDocument();
+    expect(screen.getAllByText(EXPORT_CSV_COLUMNS.join(",")).length).toBeGreaterThan(0);
     expect(screen.getByText(/Campaign OS exports verified records only/)).toBeInTheDocument();
     expect(screen.getByText(/Local export artifact only/)).toBeInTheDocument();
     const localArtifact = screen.getByLabelText("Local export artifact");
@@ -649,6 +649,28 @@ describe("Project Console shell", () => {
     expect(within(localArtifact).queryByText(/Stored/i)).not.toBeInTheDocument();
     expect(within(localArtifact).queryByText(/Contract root generated/i)).not.toBeInTheDocument();
     expect(within(localArtifact).queryByText(/Rewards distributed/i)).not.toBeInTheDocument();
+
+    const fulfillmentReadiness = screen.getByLabelText("Export fulfillment readiness");
+    expect(
+      within(fulfillmentReadiness).getByRole("heading", { name: "Export fulfillment readiness" }),
+    ).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("Handoff status")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("Owner approved")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("1 / 3 / 0")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("camp-awaken-sprint-export-awaken-sprint-preview-csv-local-fulfillment")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("camp-awaken-sprint-export-awaken-sprint-preview-json-local-fulfillment")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getAllByText(/^local-[0-9a-f]{8}$/).length).toBeGreaterThan(1);
+    expect(within(fulfillmentReadiness).getAllByText("No download URL").length).toBeGreaterThan(0);
+    expect(within(fulfillmentReadiness).getAllByText("No storage write").length).toBeGreaterThan(0);
+    expect(within(fulfillmentReadiness).getAllByText("No contract root").length).toBeGreaterThan(0);
+    expect(within(fulfillmentReadiness).getAllByText("No reward distribution").length).toBeGreaterThan(0);
+    expect(within(fulfillmentReadiness).getAllByText(/storage-backed export/).length).toBeGreaterThan(0);
+    expect(within(fulfillmentReadiness).getAllByText(/Local export fulfillment handoff only/).length).toBeGreaterThan(0);
+    expect(
+      within(fulfillmentReadiness).queryByRole("button", {
+        name: /download|storage|claim|reward|contract/i,
+      }),
+    ).not.toBeInTheDocument();
 
     const exportReadiness = screen.getByLabelText("Export confirmation readiness");
     expect(
@@ -950,7 +972,7 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText("就绪行").length).toBeGreaterThan(0);
     expect(screen.getAllByText("需复核行").length).toBeGreaterThan(0);
     expect(screen.getAllByText("阻断行").length).toBeGreaterThan(0);
-    expect(screen.getByText(EXPORT_CSV_COLUMNS.join(","))).toBeInTheDocument();
+    expect(screen.getAllByText(EXPORT_CSV_COLUMNS.join(",")).length).toBeGreaterThan(0);
     expect(screen.getByText(/只导出已验证记录/)).toBeInTheDocument();
     const exportArtifact = screen.getByLabelText("本地导出 artifact");
     expect(within(exportArtifact).getByText("camp-awaken-sprint-export-awaken-sprint-preview-local-review.csv")).toBeInTheDocument();
@@ -960,6 +982,18 @@ describe("Project Console shell", () => {
     expect(within(exportArtifact).getByText("不生成合约 root")).toBeInTheDocument();
     expect(within(exportArtifact).getByText("不发奖")).toBeInTheDocument();
     expect(within(exportArtifact).getByText(/仅本地导出 artifact/)).toBeInTheDocument();
+    const fulfillmentReadiness = screen.getByLabelText("导出履约 readiness");
+    expect(
+      within(fulfillmentReadiness).getByRole("heading", { name: "导出履约 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("项目方已批准")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("本地 package readiness")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("不生成下载链接")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("不写入存储")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("不生成合约 root")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("不发奖")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText(/storage-backed 导出/)).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getAllByText(/本地导出履约交接/).length).toBeGreaterThan(0);
     const exportReadiness = screen.getByLabelText("导出确认 readiness");
     expect(
       within(exportReadiness).getByRole("heading", { name: "导出确认 readiness" }),

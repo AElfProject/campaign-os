@@ -550,6 +550,25 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Final reward distribution is handled by the campaign project.");
     expect(screen.getByText("Risk flags and eligibility results are review inputs; Campaign OS does not distribute rewards.")).toBeInTheDocument();
     expectVisibleText("Export batch: export-awaken-sprint-preview");
+    const fulfillmentReadiness = screen.getByLabelText("Export fulfillment readiness");
+    expect(
+      within(fulfillmentReadiness).getByRole("heading", { name: "Export fulfillment readiness" }),
+    ).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("Operator reviewed")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("Owner approved")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("1 / 3 / 0")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getAllByText(/^local-[0-9a-f]{8}$/).length).toBeGreaterThan(1);
+    expect(within(fulfillmentReadiness).getAllByText(/storage-backed export/).length).toBeGreaterThan(0);
+    expect(within(fulfillmentReadiness).getByText("No download URL")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("No storage write")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("No contract root")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("No reward distribution")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getAllByText(/Local export fulfillment handoff only/).length).toBeGreaterThan(0);
+    expect(
+      within(fulfillmentReadiness).queryByRole("button", {
+        name: /download|storage|claim|reward|contract/i,
+      }),
+    ).not.toBeInTheDocument();
     const localArtifact = screen.getByLabelText("Local export artifact");
     expect(within(localArtifact).getByText("camp-awaken-sprint-export-awaken-sprint-preview-local-review.csv")).toBeInTheDocument();
     expect(within(localArtifact).getByText("CSV")).toBeInTheDocument();
@@ -991,6 +1010,17 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Campaign OS 仅导出已验证记录。");
     expectVisibleText("最终奖励发放由活动项目方处理。");
     expectVisibleText("风险标记与资格结果仅作为审核输入；Campaign OS 不执行发奖。");
+    const fulfillmentReadiness = screen.getByLabelText("导出履约 readiness");
+    expect(
+      within(fulfillmentReadiness).getByRole("heading", { name: "导出履约 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("运营已审核")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("项目方已批准")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("不生成下载链接")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("不写入存储")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("不生成合约 root")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getByText("不发奖")).toBeInTheDocument();
+    expect(within(fulfillmentReadiness).getAllByText(/本地导出履约交接/).length).toBeGreaterThan(0);
     const exportArtifact = screen.getByLabelText("本地导出 artifact");
     expect(within(exportArtifact).getByText("camp-awaken-sprint-export-awaken-sprint-preview-local-review.csv")).toBeInTheDocument();
     expect(within(exportArtifact).getByText(/Artifact 批次: export-awaken-sprint-preview/)).toBeInTheDocument();
