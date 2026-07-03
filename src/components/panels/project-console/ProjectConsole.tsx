@@ -8,6 +8,7 @@ import {
   createCampaignSettingsReadiness,
   createDaippAgentCoinTaskReadiness,
   createForestNftTaskReadiness,
+  createSchrodingerNftTaskReadiness,
   createForecastCampaignTaskReadiness,
   createPayCampaignTaskReadiness,
   createTmrwdaoGovernanceTaskReadiness,
@@ -43,6 +44,9 @@ import {
   type ForestNftTaskOwnerRole,
   type ForestNftTaskProviderState,
   type ForestNftTaskReadinessState,
+  type SchrodingerNftTaskOwnerRole,
+  type SchrodingerNftTaskProviderState,
+  type SchrodingerNftTaskReadinessState,
   type ForecastCampaignTaskOwnerRole,
   type ForecastCampaignTaskProviderState,
   type ForecastCampaignTaskReadinessState,
@@ -519,6 +523,80 @@ const forestTaskOwnerLabel = (
       project_owner: "專案方",
     },
   } satisfies Record<SupportedLocale, Record<ForestNftTaskOwnerRole, string>>;
+
+  return labels[locale][ownerRole];
+};
+
+const schrodingerTaskReadinessBadgeState = (
+  state: SchrodingerNftTaskReadinessState,
+) => state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const schrodingerTaskReadinessLabel = (
+  state: SchrodingerNftTaskReadinessState,
+  labels: {
+    schrodingerTaskBlocked: string;
+    schrodingerTaskReady: string;
+    schrodingerTaskReviewRequired: string;
+  },
+) => {
+  if (state === "ready") {
+    return labels.schrodingerTaskReady;
+  }
+
+  return state === "review_required"
+    ? labels.schrodingerTaskReviewRequired
+    : labels.schrodingerTaskBlocked;
+};
+
+const schrodingerTaskProviderStateLabel = (
+  state: SchrodingerNftTaskProviderState,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      blocked: "Blocked",
+      not_connected: "Not connected",
+      review_required: "Review required",
+      seeded_preview: "Seeded preview",
+    },
+    "zh-CN": {
+      blocked: "阻断",
+      not_connected: "未连接",
+      review_required: "需要审核",
+      seeded_preview: "Seeded 预览",
+    },
+    "zh-TW": {
+      blocked: "阻斷",
+      not_connected: "未連接",
+      review_required: "需要審核",
+      seeded_preview: "Seeded 預覽",
+    },
+  } satisfies Record<SupportedLocale, Record<SchrodingerNftTaskProviderState, string>>;
+
+  return labels[locale][state];
+};
+
+const schrodingerTaskOwnerLabel = (
+  ownerRole: SchrodingerNftTaskOwnerRole,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      operator: "Operator",
+      project_owner: "Project owner",
+      schrodinger_provider_reviewer: "Schrödinger provider reviewer",
+    },
+    "zh-CN": {
+      operator: "运营",
+      project_owner: "项目方",
+      schrodinger_provider_reviewer: "Schrödinger provider 审核人",
+    },
+    "zh-TW": {
+      operator: "營運",
+      project_owner: "專案方",
+      schrodinger_provider_reviewer: "Schrödinger provider 審核人",
+    },
+  } satisfies Record<SupportedLocale, Record<SchrodingerNftTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -1350,6 +1428,7 @@ export const ProjectConsole = ({
   const campaignTemplatePack = createCampaignTemplatePack();
   const daippTaskReadiness = createDaippAgentCoinTaskReadiness(campaign);
   const forestTaskReadiness = createForestNftTaskReadiness(campaign);
+  const schrodingerTaskReadiness = createSchrodingerNftTaskReadiness(campaign);
   const forecastTaskReadiness = createForecastCampaignTaskReadiness(campaign);
   const payTaskReadiness = createPayCampaignTaskReadiness(campaign);
   const tmrwdaoTaskReadiness = createTmrwdaoGovernanceTaskReadiness(campaign);
@@ -3399,6 +3478,115 @@ export const ProjectConsole = ({
                   </p>
                   <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
                     <strong>{copy.forestTaskBoundary}: </strong>
+                    {getLocalizedText(row.boundary, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section aria-label={copy.schrodingerTaskReadiness} style={panelStyle}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.schrodingerTaskTotal}</p>
+                <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                  {copy.schrodingerTaskReadiness}
+                </h3>
+                <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                  {copy.schrodingerTaskReadinessSubtitle}
+                </p>
+              </div>
+              <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <PublishStateBadge
+                  label={`${schrodingerTaskReadiness.summary.readyCount} ${copy.schrodingerTaskReady}`}
+                  state="ready"
+                />
+                <PublishStateBadge
+                  label={`${schrodingerTaskReadiness.summary.reviewRequiredCount} ${copy.schrodingerTaskReviewRequired}`}
+                  state="warning"
+                />
+                <PublishStateBadge
+                  label={`${schrodingerTaskReadiness.summary.blockedCount} ${copy.schrodingerTaskBlocked}`}
+                  state="blocker"
+                />
+              </span>
+            </div>
+
+            <div style={gridStyle}>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.schrodingerTaskTotal}</p>
+                <p style={statValueStyle}>{schrodingerTaskReadiness.summary.totalTasks}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.schrodingerTaskReady}</p>
+                <p style={statValueStyle}>{schrodingerTaskReadiness.summary.readyCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.schrodingerTaskReviewRequired}</p>
+                <p style={statValueStyle}>{schrodingerTaskReadiness.summary.reviewRequiredCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.schrodingerTaskBlocked}</p>
+                <p style={statValueStyle}>{schrodingerTaskReadiness.summary.blockedCount}</p>
+              </article>
+              <article style={{ ...cardStyle, gridColumn: "1 / -1", minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.schrodingerTaskNextAction}</p>
+                <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(schrodingerTaskReadiness.ownerNextAction, locale)}
+                </p>
+              </article>
+            </div>
+
+            <p style={boundaryStyle}>
+              <strong>{copy.schrodingerTaskBoundary}: </strong>
+              {getLocalizedText(schrodingerTaskReadiness.boundary, locale)}
+            </p>
+
+            <div style={compactSectionGridStyle}>
+              {schrodingerTaskReadiness.rows.map((row) => (
+                <article key={row.id} style={{ ...cardStyle, minHeight: 0 }}>
+                  <div style={headingRowStyle}>
+                    <div>
+                      <p style={statLabelStyle}>{copy.schrodingerTaskProviderState}</p>
+                      <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                        {getLocalizedText(row.label, locale)}
+                      </h4>
+                    </div>
+                    <PublishStateBadge
+                      label={schrodingerTaskReadinessLabel(row.readinessState, copy)}
+                      state={schrodingerTaskReadinessBadgeState(row.readinessState)}
+                    />
+                  </div>
+
+                  <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(row.description, locale)}
+                  </p>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <Badge
+                      label={`${row.verificationType} · ${row.evidenceSource}`}
+                      tone="info"
+                    />
+                    <Badge
+                      label={`${copy.schrodingerTaskProviderState}: ${schrodingerTaskProviderStateLabel(row.providerState, locale)}`}
+                      tone={row.providerState === "seeded_preview" ? "success" : "warning"}
+                    />
+                    <Badge
+                      label={`${copy.schrodingerTaskOwner}: ${schrodingerTaskOwnerLabel(row.ownerRole, locale)}`}
+                      tone="neutral"
+                    />
+                  </div>
+
+                  <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.schrodingerTaskRiskState}: </strong>
+                    {getLocalizedText(row.riskState, locale)}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.schrodingerTaskNextAction}: </strong>
+                    {getLocalizedText(row.nextAction, locale)}
+                  </p>
+                  <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.schrodingerTaskBoundary}: </strong>
                     {getLocalizedText(row.boundary, locale)}
                   </p>
                 </article>
