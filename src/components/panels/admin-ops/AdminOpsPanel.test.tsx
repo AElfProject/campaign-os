@@ -98,6 +98,23 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Export CSV columns tested");
     expectVisibleText("Contract claim mode requires admin approval");
     expectVisibleText("Reward custody excluded from MVP");
+    expectVisibleText("Contract claim disabled for MVP");
+    expectVisibleText("Reward custody is outside Campaign OS");
+    expectVisibleText("Security review");
+    expectVisibleText("Custody/legal approval");
+    expectVisibleText("External audit");
+    expectVisibleText("Admin approval");
+    const contractReviewCenter = screen
+      .getByRole("heading", {
+        name: "MVP stays off-chain: verification, ranking, and export are reviewed without contract migration.",
+      })
+      .closest("section");
+    expect(contractReviewCenter).not.toBeNull();
+    expect(
+      within(contractReviewCenter as HTMLElement).queryByRole("button", {
+        name: /claim|contract write|wallet signing|reward distribution|distribute rewards/i,
+      }),
+    ).not.toBeInTheDocument();
     expectVisibleText(/This console does not execute live wallet SDK/);
     expectVisibleText(/No live wallet SDK, API call, contract transaction, export file/);
     const deliveryAcceptance = screen.getByLabelText("Delivery Acceptance Console");
@@ -112,7 +129,9 @@ describe("Admin/Ops shell", () => {
     expect(within(deliveryAcceptance).getByText("Global navigation shell")).toBeInTheDocument();
     expect(within(deliveryAcceptance).getAllByText("Live wallet provider evidence").length).toBeGreaterThan(0);
     expect(
-      within(deliveryAcceptance).getAllByText("Contract claim and reward custody remain blocked").length,
+      within(deliveryAcceptance).getAllByText(
+        "Contract claim and reward custody are accepted MVP non-goals",
+      ).length,
     ).toBeGreaterThan(0);
     expect(within(deliveryAcceptance).getAllByText("Evidence surface").length).toBeGreaterThan(0);
     expect(within(deliveryAcceptance).getAllByText(/Next mission action/).length).toBeGreaterThan(0);
@@ -628,7 +647,7 @@ describe("Admin/Ops shell", () => {
     expect(within(zhDeliveryAcceptance).getByText("全局导航 shell")).toBeInTheDocument();
     expect(within(zhDeliveryAcceptance).getAllByText("真实钱包 provider 证据").length).toBeGreaterThan(0);
     expect(
-      within(zhDeliveryAcceptance).getAllByText("合约领取与奖励托管保持阻断").length,
+      within(zhDeliveryAcceptance).getAllByText("合约领取与奖励托管是已接受的 MVP 非目标").length,
     ).toBeGreaterThan(0);
     expect(within(zhDeliveryAcceptance).getAllByText("证据界面").length).toBeGreaterThan(0);
     expect(within(zhDeliveryAcceptance).getAllByText(/下个 mission 动作/).length).toBeGreaterThan(0);

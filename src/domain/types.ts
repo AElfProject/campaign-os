@@ -1218,6 +1218,14 @@ export interface ContractReviewChecklistItem {
   nextAction: LocalizedText;
 }
 
+export interface ContractReviewMvpBoundary {
+  status: LocalizedText;
+  custody: LocalizedText;
+  ownerRole: OwnerRole;
+  approvalGates: LocalizedText[];
+  rewardDistribution: LocalizedText;
+}
+
 export interface ContractEvolutionStep {
   id: string;
   phase: LocalizedText;
@@ -1239,6 +1247,7 @@ export interface AdminContractReviewCenter {
   summary: LocalizedText;
   boundary: LocalizedText;
   nextAction: LocalizedText;
+  mvpBoundary: ContractReviewMvpBoundary;
   checklist: ContractReviewChecklistItem[];
   evolution: ContractEvolutionStep[];
 }

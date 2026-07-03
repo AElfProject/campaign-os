@@ -3065,6 +3065,31 @@ export const AdminOpsPanel = ({
             </article>
           ))}
         </div>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.boundaryState}</p>
+            <strong>{getLocalizedText(contractReviewCenter.mvpBoundary.status, locale)}</strong>
+            <p style={mutedTextStyle}>{getLocalizedText(contractReviewCenter.mvpBoundary.custody, locale)}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.ownerRole}</p>
+            <strong>{readableCode(contractReviewCenter.mvpBoundary.ownerRole)}</strong>
+            <p style={mutedTextStyle}>
+              {copy.rewardDistributionBoundary}:{" "}
+              {getLocalizedText(contractReviewCenter.mvpBoundary.rewardDistribution, locale)}
+            </p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.futureApprovalGates}</p>
+            <div style={chipListStyle}>
+              {contractReviewCenter.mvpBoundary.approvalGates.map((gate) => (
+                <span key={getLocalizedText(gate, locale)} style={chipStyle}>
+                  {getLocalizedText(gate, locale)}
+                </span>
+              ))}
+            </div>
+          </article>
+        </div>
         <div style={rowStyle}>
           <h3 style={{ fontSize: 20, margin: 0 }}>{copy.highImpactChecklist}</h3>
           <PublishStateBadge label={contractReviewCenter.publishState} state={contractReviewCenter.publishState} />
