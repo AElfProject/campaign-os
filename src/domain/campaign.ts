@@ -133,6 +133,13 @@ import type {
   ExportFulfillmentPackage,
   ExportFulfillmentReadiness,
   ExportFulfillmentSafety,
+  ForecastCampaignTaskEvidenceSource,
+  ForecastCampaignTaskIntentId,
+  ForecastCampaignTaskOwnerRole,
+  ForecastCampaignTaskProviderState,
+  ForecastCampaignTaskReadiness,
+  ForecastCampaignTaskReadinessRow,
+  ForecastCampaignTaskReadinessState,
   EvidenceSource,
   ExportPreviewMode,
   ExportPreviewModeReadiness,
@@ -13910,6 +13917,208 @@ export const createCampaignDiscoveryReadModel = (
     summary: createDiscoverySummary(items),
     boundary: campaignDiscoveryBoundary,
     nextAction: campaignDiscoveryNextAction,
+  };
+};
+
+export const forecastCampaignTaskReadinessBoundary: LocalizedText = localized(
+  "Seeded/local Forecast campaign task readiness only. No live Forecast API, prediction transaction, wallet signing, backend persistence, contract execution, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地 Forecast 活动任务 readiness。不会调用真实 Forecast API，不会执行预测交易、钱包签名、后端持久化、合约执行、奖励托管或发奖。",
+  "Seeded/local Forecast campaign task readiness only. No live Forecast API, prediction transaction, wallet signing, backend persistence, contract execution, reward custody, or reward distribution is executed.",
+);
+
+const forecastTaskIntentLabels: Record<ForecastCampaignTaskIntentId, LocalizedText> = {
+  "prediction-participation": localized(
+    "Prediction participation",
+    "预测参与",
+    "Prediction participation",
+  ),
+  "win-streak": localized("Win streak", "连胜任务", "Win streak"),
+  "forecast-leaderboard": localized(
+    "Forecast leaderboard",
+    "Forecast 排行榜",
+    "Forecast leaderboard",
+  ),
+};
+
+const forecastTaskIntentDescriptions: Record<ForecastCampaignTaskIntentId, LocalizedText> = {
+  "prediction-participation": localized(
+    "Review whether a Forecast participation task can be represented from seeded campaign metadata.",
+    "审核 Forecast 参与任务是否可由 seeded 活动 metadata 表达。",
+    "Review whether a Forecast participation task can be represented from seeded campaign metadata.",
+  ),
+  "win-streak": localized(
+    "Review win-streak evidence before using Forecast streak mechanics in campaign scoring.",
+    "在活动计分中使用 Forecast 连胜机制前，先审核连胜证据。",
+    "Review win-streak evidence before using Forecast streak mechanics in campaign scoring.",
+  ),
+  "forecast-leaderboard": localized(
+    "Review Forecast leaderboard ownership before ranking campaign users by prediction outcomes.",
+    "按预测结果为活动用户排名前，先审核 Forecast 排行榜归属。",
+    "Review Forecast leaderboard ownership before ranking campaign users by prediction outcomes.",
+  ),
+};
+
+const forecastRiskStates: Record<ForecastCampaignTaskReadinessState, LocalizedText> = {
+  ready: localized(
+    "Local seeded evidence is enough for owner review, but it is not live Forecast verification.",
+    "本地 seeded 证据足够进入 owner review，但不是真实 Forecast 验证。",
+    "Local seeded evidence is enough for owner review, but it is not live Forecast verification.",
+  ),
+  review_required: localized(
+    "Forecast evidence needs operator review before it can affect campaign scoring.",
+    "Forecast 证据需要运营审核后，才能影响活动计分。",
+    "Forecast evidence needs operator review before it can affect campaign scoring.",
+  ),
+  blocked: localized(
+    "Forecast leaderboard is blocked until provider ownership and data contract are reviewed.",
+    "Forecast 排行榜在 provider 归属与数据 contract 审核前保持阻断。",
+    "Forecast leaderboard is blocked until provider ownership and data contract are reviewed.",
+  ),
+};
+
+const forecastNextActionFor = (
+  intentId: ForecastCampaignTaskIntentId,
+  readinessState: ForecastCampaignTaskReadinessState,
+): LocalizedText => {
+  if (readinessState === "blocked") {
+    return localized(
+      "Review Forecast leaderboard provider ownership before campaign publish.",
+      "发布活动前先审核 Forecast 排行榜 provider 归属。",
+      "Review Forecast leaderboard provider ownership before campaign publish.",
+    );
+  }
+
+  if (readinessState === "review_required") {
+    return localized(
+      "Ask an operator to confirm Forecast win-streak evidence remains local-only and reviewable.",
+      "请运营确认 Forecast 连胜证据保持本地-only 且可审核。",
+      "Ask an operator to confirm Forecast win-streak evidence remains local-only and reviewable.",
+    );
+  }
+
+  if (intentId === "prediction-participation") {
+    return localized(
+      "Keep prediction participation as a seeded/local campaign task until Forecast API ownership is approved.",
+      "在 Forecast API 归属获批前，将预测参与保持为 seeded/本地活动任务。",
+      "Keep prediction participation as a seeded/local campaign task until Forecast API ownership is approved.",
+    );
+  }
+
+  return localized(
+    "Keep Forecast task readiness in local owner review before live integration.",
+    "在真实集成前，将 Forecast 任务 readiness 保持在本地 owner review。",
+    "Keep Forecast task readiness in local owner review before live integration.",
+  );
+};
+
+const createForecastReadinessRow = (input: {
+  evidenceSource: ForecastCampaignTaskEvidenceSource;
+  intentId: ForecastCampaignTaskIntentId;
+  ownerRole: ForecastCampaignTaskOwnerRole;
+  providerState: ForecastCampaignTaskProviderState;
+  readinessState: ForecastCampaignTaskReadinessState;
+}): ForecastCampaignTaskReadinessRow => ({
+  id: `forecast-${input.intentId}`,
+  intentId: input.intentId,
+  label: forecastTaskIntentLabels[input.intentId],
+  description: forecastTaskIntentDescriptions[input.intentId],
+  verificationType: "DAPP_API",
+  evidenceSource: input.evidenceSource,
+  providerState: input.providerState,
+  readinessState: input.readinessState,
+  riskState: forecastRiskStates[input.readinessState],
+  ownerRole: input.ownerRole,
+  nextAction: forecastNextActionFor(input.intentId, input.readinessState),
+  boundary: forecastCampaignTaskReadinessBoundary,
+});
+
+const forecastTaskStateRank: Record<ForecastCampaignTaskReadinessState, number> = {
+  blocked: 3,
+  review_required: 2,
+  ready: 1,
+};
+
+const createForecastTaskRows = (): ForecastCampaignTaskReadinessRow[] => [
+  createForecastReadinessRow({
+    evidenceSource: "seeded_local",
+    intentId: "prediction-participation",
+    ownerRole: "project_owner",
+    providerState: "seeded_preview",
+    readinessState: "ready",
+  }),
+  createForecastReadinessRow({
+    evidenceSource: "forecast_app_data",
+    intentId: "win-streak",
+    ownerRole: "operator",
+    providerState: "review_required",
+    readinessState: "review_required",
+  }),
+  createForecastReadinessRow({
+    evidenceSource: "forecast_app_data",
+    intentId: "forecast-leaderboard",
+    ownerRole: "forecast_provider_reviewer",
+    providerState: "not_connected",
+    readinessState: "blocked",
+  }),
+];
+
+const createForecastTaskSummary = (
+  rows: ForecastCampaignTaskReadinessRow[],
+): ForecastCampaignTaskReadiness["summary"] => {
+  const topRow = [...rows].sort(
+    (left, right) => forecastTaskStateRank[right.readinessState] - forecastTaskStateRank[left.readinessState],
+  )[0] ?? rows[0];
+
+  return {
+    totalTasks: rows.length,
+    readyCount: rows.filter((row) => row.readinessState === "ready").length,
+    reviewRequiredCount: rows.filter((row) => row.readinessState === "review_required").length,
+    blockedCount: rows.filter((row) => row.readinessState === "blocked").length,
+    topState: topRow?.readinessState ?? "blocked",
+    topIntentId: topRow?.intentId ?? "forecast-leaderboard",
+    primaryOwnerRole: topRow?.ownerRole ?? "forecast_provider_reviewer",
+    boundary: forecastCampaignTaskReadinessBoundary,
+  };
+};
+
+const forecastTaskOwnerNextActionFor = (
+  summary: ForecastCampaignTaskReadiness["summary"],
+): LocalizedText => {
+  if (summary.blockedCount > 0) {
+    return localized(
+      "Review Forecast leaderboard ownership and data contract before treating Forecast campaign tasks as publish-ready.",
+      "先审核 Forecast 排行榜归属与数据 contract，再将 Forecast 活动任务视为可发布。",
+      "Review Forecast leaderboard ownership and data contract before treating Forecast campaign tasks as publish-ready.",
+    );
+  }
+
+  if (summary.reviewRequiredCount > 0) {
+    return localized(
+      "Complete operator review for Forecast task evidence before publish.",
+      "发布前完成 Forecast 任务证据的运营审核。",
+      "Complete operator review for Forecast task evidence before publish.",
+    );
+  }
+
+  return localized(
+    "Keep Forecast tasks in local owner review until live Forecast integration is approved.",
+    "在真实 Forecast 集成获批前，将 Forecast 任务保持在本地 owner review。",
+    "Keep Forecast tasks in local owner review until live Forecast integration is approved.",
+  );
+};
+
+export const createForecastCampaignTaskReadiness = (
+  campaign: CampaignShellDetail,
+): ForecastCampaignTaskReadiness => {
+  const rows = createForecastTaskRows();
+  const summary = createForecastTaskSummary(rows);
+
+  return {
+    campaignId: campaign.id,
+    summary,
+    rows,
+    ownerNextAction: forecastTaskOwnerNextActionFor(summary),
+    boundary: forecastCampaignTaskReadinessBoundary,
   };
 };
 
