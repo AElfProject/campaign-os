@@ -262,6 +262,27 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
   });
 
+  it("uses the active zh-TW locale for the User App wallet modal while content falls back", () => {
+    pushRoute("/zh-TW/campaigns/awaken-sprint");
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "使用者應用" }));
+
+    expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+
+    const dialog = screen.getByRole("dialog", { name: "連接錢包" });
+
+    expect(dialog).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("擴充套件未安裝：請安裝或開啟你的 EOA 錢包擴充套件。"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).queryByText("Extension not installed: Install or open your EOA wallet extension."),
+    ).not.toBeInTheDocument();
+  });
+
   it("falls back safely for unsupported URL locales", () => {
     pushRoute("/ja-JP/campaigns/awaken-sprint");
 

@@ -38,6 +38,7 @@ const modalCopy = {
     connectorPackage: "Candidate package",
     degradedGroup: "Unavailable / maintenance",
     eoaGroup: "EOA Wallets",
+    extensionNotInstalled: "Extension not installed: Install or open your EOA wallet extension.",
     featureGate: "Feature gate",
     liveEvidence: "Live evidence",
     missingSignature:
@@ -70,6 +71,7 @@ const modalCopy = {
     connectorPackage: "候选 package",
     degradedGroup: "不可用 / 维护中",
     eoaGroup: "EOA 钱包",
+    extensionNotInstalled: "插件未安装：请安装或打开你的 EOA 钱包插件。",
     featureGate: "功能门禁",
     liveEvidence: "真实证据",
     missingSignature:
@@ -102,6 +104,7 @@ const modalCopy = {
     connectorPackage: "候選 package",
     degradedGroup: "不可用 / 維護中",
     eoaGroup: "EOA 錢包",
+    extensionNotInstalled: "擴充套件未安裝：請安裝或開啟你的 EOA 錢包擴充套件。",
     featureGate: "功能門禁",
     liveEvidence: "真實證據",
     missingSignature:
@@ -545,6 +548,7 @@ export const WalletConnectModal = ({
           <ul style={issueListStyle}>
             <li>{copy.wrongChain}</li>
             <li>{copy.unsupportedWallet}</li>
+            <li>{copy.extensionNotInstalled}</li>
             <li>{copy.missingSignature}</li>
             <li>{copy.accountRestriction}</li>
           </ul>

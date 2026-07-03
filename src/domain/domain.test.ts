@@ -98,6 +98,7 @@ const v02CampaignStatuses = [
 const walletProviderScenarioIds: WalletProviderQaScenarioId[] = [
   "portkey-aa-connect",
   "eoa-extension-connect",
+  "extension-not-installed-error",
   "wrong-chain-error",
   "unsupported-wallet-error",
 ];
@@ -130,7 +131,11 @@ const approvedWalletProviderArtifacts = (
     },
   ];
 
-  if (scenarioId === "wrong-chain-error" || scenarioId === "unsupported-wallet-error") {
+  if (
+    scenarioId === "wrong-chain-error" ||
+    scenarioId === "unsupported-wallet-error" ||
+    scenarioId === "extension-not-installed-error"
+  ) {
     artifacts.push({
       artifactType: "runbook",
       id: `${scenarioId}-approved-runbook`,
@@ -1094,6 +1099,13 @@ describe("Campaign OS domain foundation", () => {
     expect(itemsById["qa-eoa-extension-connect"]?.evidence["en-US"]).toContain(
       "Live EOA browser-extension evidence is not attached yet",
     );
+    expect(itemsById["qa-extension-not-installed-error"]).toMatchObject({
+      status: "needs_review",
+      blocksDelivery: false,
+    });
+    expect(itemsById["qa-extension-not-installed-error"]?.evidence["en-US"]).toContain(
+      "extension-not-installed recovery evidence is not attached yet",
+    );
     expect(itemsById["qa-wrong-chain-error"]?.nextAction["en-US"]).toContain("live wrong-chain");
     expect(itemsById["qa-unsupported-wallet-error"]?.evidence["zh-TW"]).toContain(
       "真實不支援錢包",
@@ -1126,6 +1138,7 @@ describe("Campaign OS domain foundation", () => {
       expect.arrayContaining([
         "qa-portkey-aa-connect",
         "qa-eoa-extension-connect",
+        "qa-extension-not-installed-error",
         "qa-wrong-chain-error",
         "qa-unsupported-wallet-error",
       ]),
@@ -1217,15 +1230,15 @@ describe("Campaign OS domain foundation", () => {
       "Release Readiness",
     );
     expect(rowsById["v02-live-wallet-provider-evidence"]?.evidenceSummary["en-US"]).toContain(
-      "0/4 required scenarios",
+      "0/5 required scenarios",
     );
     expect(adminOps.walletProviderEvidenceReleaseReadiness.summary).toMatchObject({
-      totalScenarios: 4,
-      requiredScenarios: 4,
+      totalScenarios: 5,
+      requiredScenarios: 5,
       approvedRequiredScenarios: 0,
       reviewRequiredScenarios: 1,
-      blockedScenarios: 3,
-      releaseBlockers: 3,
+      blockedScenarios: 4,
+      releaseBlockers: 4,
       ready: false,
       topScenarioId: "portkey-aa-connect",
       topFailedRuleId: "required-artifacts",
@@ -1291,14 +1304,15 @@ describe("Campaign OS domain foundation", () => {
     const readinessById = Object.fromEntries(readinessItems.map((item) => [item.id, item]));
 
     expect(adminOps.walletProviderQaGate.summary).toMatchObject({
-      totalScenarios: 4,
-      seededReadyScenarios: 4,
+      totalScenarios: 5,
+      seededReadyScenarios: 5,
       liveEvidenceReadyScenarios: 0,
-      missingLiveEvidenceScenarios: 4,
+      missingLiveEvidenceScenarios: 5,
     });
     expect(adminOps.walletProviderQaGate.scenarios.map((scenario) => scenario.id)).toEqual([
       "portkey-aa-connect",
       "eoa-extension-connect",
+      "extension-not-installed-error",
       "wrong-chain-error",
       "unsupported-wallet-error",
     ]);
@@ -1324,17 +1338,18 @@ describe("Campaign OS domain foundation", () => {
     expect(intake.scenarios.map((scenario) => scenario.id)).toEqual([
       "portkey-aa-connect",
       "eoa-extension-connect",
+      "extension-not-installed-error",
       "wrong-chain-error",
       "unsupported-wallet-error",
     ]);
     expect(intake.summary).toMatchObject({
-      totalScenarios: 4,
+      totalScenarios: 5,
       approvedScenarios: 0,
       submittedScenarios: 1,
-      missingScenarios: 2,
+      missingScenarios: 3,
       rejectedScenarios: 1,
       expiredScenarios: 0,
-      releaseBlockers: 3,
+      releaseBlockers: 4,
       reviewRequiredScenarios: 1,
       topScenarioId: "portkey-aa-connect",
     });
@@ -1349,6 +1364,16 @@ describe("Campaign OS domain foundation", () => {
       reviewState: "rejected",
       releaseImpact: "blocked",
     });
+    expect(scenariosById["extension-not-installed-error"]).toMatchObject({
+      evidenceStatus: "missing",
+      reviewState: "not_started",
+      releaseImpact: "blocked",
+    });
+    expect(scenariosById["extension-not-installed-error"].expectedArtifacts.map((artifact) => artifact.id)).toEqual([
+      "extension-not-installed-error-screenshot",
+      "extension-not-installed-error-qa-run",
+      "extension-not-installed-error-runbook",
+    ]);
     expect(
       intake.scenarios
         .filter((scenario) => scenario.evidenceStatus !== "approved")
@@ -1385,7 +1410,7 @@ describe("Campaign OS domain foundation", () => {
         "en-US": expect.stringContaining("Wallet Provider Evidence Intake"),
       }),
     });
-    expect(liveWalletAcceptance?.evidenceSummary["en-US"]).toContain("0/4 required scenarios");
+    expect(liveWalletAcceptance?.evidenceSummary["en-US"]).toContain("0/5 required scenarios");
     expect(liveWalletAcceptance?.nextMissionAction["en-US"]).toContain("Portkey AA");
   });
 
@@ -1397,14 +1422,14 @@ describe("Campaign OS domain foundation", () => {
     const liveWalletAcceptance = acceptanceRows.find((row) => row.id === "v02-live-wallet-provider-evidence");
 
     expect(audit.summary).toMatchObject({
-      totalScenarios: 4,
+      totalScenarios: 5,
       approvedScenarios: 0,
       reviewRequiredScenarios: 1,
-      blockedScenarios: 3,
+      blockedScenarios: 4,
       notApplicableScenarios: 0,
       completeArtifactScenarios: 0,
-      incompleteArtifactScenarios: 4,
-      releaseBlockers: 3,
+      incompleteArtifactScenarios: 5,
+      releaseBlockers: 4,
       topScenarioId: "portkey-aa-connect",
       topFailedRuleId: "required-artifacts",
       topFailedRuleState: "blocked",
@@ -1412,6 +1437,7 @@ describe("Campaign OS domain foundation", () => {
     expect(audit.scenarios.map((scenario) => scenario.id)).toEqual([
       "portkey-aa-connect",
       "eoa-extension-connect",
+      "extension-not-installed-error",
       "wrong-chain-error",
       "unsupported-wallet-error",
     ]);
@@ -1449,6 +1475,11 @@ describe("Campaign OS domain foundation", () => {
       "wrong-chain-error-screenshot",
       "wrong-chain-error-qa-run",
       "wrong-chain-error-runbook",
+    ]);
+    expect(scenariosById["extension-not-installed-error"].artifactCoverage.missingRequiredArtifactIds).toEqual([
+      "extension-not-installed-error-screenshot",
+      "extension-not-installed-error-qa-run",
+      "extension-not-installed-error-runbook",
     ]);
     expect(
       audit.scenarios
@@ -1526,10 +1557,10 @@ describe("Campaign OS domain foundation", () => {
     expect(audit.summary).toMatchObject({
       approvedScenarios: 1,
       reviewRequiredScenarios: 1,
-      blockedScenarios: 2,
+      blockedScenarios: 3,
       completeArtifactScenarios: 1,
-      releaseBlockers: 2,
-      topScenarioId: "wrong-chain-error",
+      releaseBlockers: 3,
+      topScenarioId: "extension-not-installed-error",
       topFailedRuleId: "required-artifacts",
     });
     expect(scenariosById["portkey-aa-connect"]).toMatchObject({
@@ -1551,13 +1582,13 @@ describe("Campaign OS domain foundation", () => {
       releaseImpact: "review_required",
     });
     expect(releaseReadiness.summary).toMatchObject({
-      requiredScenarios: 4,
+      requiredScenarios: 5,
       approvedRequiredScenarios: 1,
       reviewRequiredScenarios: 1,
-      blockedScenarios: 2,
-      releaseBlockers: 2,
+      blockedScenarios: 3,
+      releaseBlockers: 3,
       ready: false,
-      topScenarioId: "wrong-chain-error",
+      topScenarioId: "extension-not-installed-error",
       topFailedRuleId: "required-artifacts",
     });
     expect(releaseReadiness.scenarios.find((scenario) => scenario.id === "portkey-aa-connect")).toMatchObject({
@@ -1583,6 +1614,7 @@ describe("Campaign OS domain foundation", () => {
   it("proves wallet provider release readiness only when every required scenario is approved", () => {
     const liveReadyGate = createWalletProviderQaReadinessGate(walletSessions, {
       "eoa-extension-connect": "ready",
+      "extension-not-installed-error": "ready",
       "portkey-aa-connect": "ready",
       "unsupported-wallet-error": "ready",
       "wrong-chain-error": "ready",
@@ -1609,9 +1641,9 @@ describe("Campaign OS domain foundation", () => {
     const liveWalletAcceptance = rows.find((row) => row.id === "v02-live-wallet-provider-evidence");
 
     expect(releaseReadiness.summary).toMatchObject({
-      totalScenarios: 4,
-      requiredScenarios: 4,
-      approvedRequiredScenarios: 4,
+      totalScenarios: 5,
+      requiredScenarios: 5,
+      approvedRequiredScenarios: 5,
       reviewRequiredScenarios: 0,
       blockedScenarios: 0,
       releaseBlockers: 0,
@@ -1634,7 +1666,7 @@ describe("Campaign OS domain foundation", () => {
       severity: "high",
       launchBlocking: false,
     });
-    expect(liveWalletAcceptance?.evidenceSummary["en-US"]).toContain("approved all 4/4 required scenarios");
+    expect(liveWalletAcceptance?.evidenceSummary["en-US"]).toContain("approved all 5/5 required scenarios");
     expect(acceptance.topResidualGaps.map((row) => row.id)).not.toContain("v02-live-wallet-provider-evidence");
   });
 
@@ -1667,6 +1699,7 @@ describe("Campaign OS domain foundation", () => {
       "sess-agent-skill-001",
       "sess-eoa-001",
       "sess-eoa-app-001",
+      "sess-eoa-extension-missing-001",
       "sess-missing-signature-001",
       "sess-nightelf-001",
       "sess-unknown-001",
@@ -1693,6 +1726,16 @@ describe("Campaign OS domain foundation", () => {
       verificationStatus: "verified",
       walletTypeVerified: true,
     });
+    expect(sessionsById["sess-eoa-extension-missing-001"]).toMatchObject({
+      accountType: "EOA",
+      signatureStatus: "not_available",
+      verificationStatus: "extension_not_installed",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: false,
+    });
+    expect(sessionsById["sess-eoa-extension-missing-001"].userAction?.["en-US"]).toContain(
+      "Install or open your EOA wallet extension",
+    );
     expect(sessionsById["sess-nightelf-001"]).toMatchObject({
       accountType: "EOA",
       walletSource: "NIGHTELF",
@@ -1741,9 +1784,9 @@ describe("Campaign OS domain foundation", () => {
     );
 
     expect(diagnostics).toMatchObject({
-      totalSessions: 10,
+      totalSessions: 11,
       verifiedSessions: 4,
-      issueSessions: 6,
+      issueSessions: 7,
       recommendedPathReady: true,
       eoaPathsReady: 3,
     });
@@ -1759,6 +1802,7 @@ describe("Campaign OS domain foundation", () => {
     expect(groupsById["connection-issues"]).toMatchObject({ state: "blocker" });
     expect(groupsById["connection-issues"].items.map((item) => item.verificationStatus).sort()).toEqual([
       "account_restricted",
+      "extension_not_installed",
       "missing_signature",
       "unsupported_wallet",
       "wrong_chain",
@@ -1775,6 +1819,12 @@ describe("Campaign OS domain foundation", () => {
       sessionIds: ["sess-aa-001"],
     });
     expect(checklistById["eoa-extension-connect"].sessionIds).toEqual(["sess-eoa-001"]);
+    expect(checklistById["extension-not-installed-error"].sessionIds).toEqual([
+      "sess-eoa-extension-missing-001",
+    ]);
+    expect(checklistById["extension-not-installed-error"].evidence["en-US"]).toContain(
+      "install/open recovery",
+    );
     expect(checklistById["wrong-chain-error"].evidence["en-US"]).toContain("AELF mainnet");
     expect(checklistById["unsupported-wallet-error"].sessionIds).toEqual(["sess-unsupported-001"]);
     expect(checklistById["missing-signature"].sessionIds).toEqual(["sess-missing-signature-001"]);
@@ -1785,12 +1835,12 @@ describe("Campaign OS domain foundation", () => {
     const gate = createWalletProviderQaReadinessGate(walletSessions);
     const scenariosById = Object.fromEntries(gate.scenarios.map((scenario) => [scenario.id, scenario]));
 
-    expect(gate.scenarios).toHaveLength(4);
+    expect(gate.scenarios).toHaveLength(5);
     expect(gate.summary).toEqual({
-      totalScenarios: 4,
-      seededReadyScenarios: 4,
+      totalScenarios: 5,
+      seededReadyScenarios: 5,
       liveEvidenceReadyScenarios: 0,
-      missingLiveEvidenceScenarios: 4,
+      missingLiveEvidenceScenarios: 5,
       releaseBlockers: 0,
     });
     expect(scenariosById["portkey-aa-connect"]).toMatchObject({
@@ -1803,6 +1853,14 @@ describe("Campaign OS domain foundation", () => {
       liveEvidenceStatus: "missing",
       matchedSessionIds: ["sess-eoa-001"],
     });
+    expect(scenariosById["extension-not-installed-error"]).toMatchObject({
+      seededStatus: "ready",
+      liveEvidenceStatus: "missing",
+      matchedSessionIds: ["sess-eoa-extension-missing-001"],
+    });
+    expect(scenariosById["extension-not-installed-error"].evidence["en-US"]).toContain(
+      "extension-not-installed session",
+    );
     expect(scenariosById["wrong-chain-error"].evidence["en-US"]).toContain(
       "Live wrong-chain recovery evidence is not attached yet",
     );
@@ -1818,9 +1876,9 @@ describe("Campaign OS domain foundation", () => {
 
     expect(liveReadyGate.summary).toMatchObject({
       liveEvidenceReadyScenarios: 1,
-      missingLiveEvidenceScenarios: 2,
+      missingLiveEvidenceScenarios: 3,
       releaseBlockers: 1,
-      seededReadyScenarios: 4,
+      seededReadyScenarios: 5,
     });
     expect(liveReadyGate.scenarios.find((scenario) => scenario.id === "portkey-aa-connect")).toMatchObject({
       liveEvidenceStatus: "ready",

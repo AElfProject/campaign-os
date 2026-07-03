@@ -13,6 +13,7 @@ export type WalletPolicy = "ANY" | "AA_ONLY" | "EOA_ONLY";
 export type WalletVerificationStatus =
   | "verified"
   | "address_only"
+  | "extension_not_installed"
   | "unsupported_wallet"
   | "wrong_chain"
   | "missing_signature"
@@ -642,6 +643,7 @@ export interface WalletAdapterFixture {
   supported: boolean;
   allowedByCampaignPolicy: boolean;
   addressOnly?: boolean;
+  extensionAvailable?: boolean;
   recommended: boolean;
   audience: "NORMAL_USER" | "EXISTING_USER" | "INTERNAL_AGENT";
 }
@@ -690,6 +692,7 @@ export type WalletDiagnosticGroupId =
 export type WalletQaChecklistId =
   | "portkey-aa-connect"
   | "eoa-extension-connect"
+  | "extension-not-installed-error"
   | "wrong-chain-error"
   | "unsupported-wallet-error"
   | "missing-signature"
@@ -697,6 +700,7 @@ export type WalletQaChecklistId =
 export type WalletProviderQaScenarioId =
   | "portkey-aa-connect"
   | "eoa-extension-connect"
+  | "extension-not-installed-error"
   | "wrong-chain-error"
   | "unsupported-wallet-error";
 export type WalletProviderQaSeededStatus = "ready" | "missing";
@@ -963,6 +967,7 @@ export interface AdapterWalletInfoCandidate {
   accountTypeHint?: AccountType;
   walletSourceHint?: WalletSource;
   signaturePresent?: boolean;
+  extensionAvailable?: boolean;
   extraInfoKeys?: string[];
   internalAgent?: boolean;
 }

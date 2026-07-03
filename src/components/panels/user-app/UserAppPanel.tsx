@@ -65,6 +65,7 @@ interface UserAppPanelProps {
   locale: SupportedLocale;
   participant?: ParticipantSnapshot;
   shareLocale?: SupportedLocale;
+  walletModalLocale?: SupportedLocale;
 }
 
 const panelStyle: CSSProperties = {
@@ -1179,6 +1180,7 @@ export const UserAppPanel = ({
   locale,
   participant = campaignDetail.participants[1],
   shareLocale = locale,
+  walletModalLocale = locale,
 }: UserAppPanelProps) => {
   const [isWalletModalOpen, setWalletModalOpen] = useState(false);
   const [eligibilityAddressInput, setEligibilityAddressInput] = useState(participant.walletAddress);
@@ -1401,7 +1403,7 @@ export const UserAppPanel = ({
 
       {isWalletModalOpen ? (
         <WalletConnectModal
-          locale={locale}
+          locale={walletModalLocale}
           onClose={() => setWalletModalOpen(false)}
           options={walletOptions}
         />
