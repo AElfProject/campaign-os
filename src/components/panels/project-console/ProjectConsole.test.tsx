@@ -514,6 +514,28 @@ describe("Project Console shell", () => {
     expect(within(ebridgeReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
     expect(within(ebridgeReadiness).getAllByText(/contract read\/send\/write/).length).toBeGreaterThan(0);
     expect(within(ebridgeReadiness).getAllByText(/export generation/).length).toBeGreaterThan(0);
+    const awakenReadiness = screen.getByLabelText("Awaken swap / liquidity task readiness");
+    expect(
+      within(awakenReadiness).getByRole("heading", { name: "Awaken swap / liquidity task readiness" }),
+    ).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("Awaken swap readiness")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("Awaken liquidity add review")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("Awaken LP hold evidence")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("Bridge unlock dependency")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("Awaken ranking eligibility impact")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("DAPP_API · seeded_local")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("ON_CHAIN · awaken_swap_event")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("DAPP_API · lp_position_snapshot")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("DAPP_API · bridge_unlock_rule")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("DAPP_API · ranking_engine")).toBeInTheDocument();
+    expect(within(awakenReadiness).getAllByText(/No live Awaken API/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/DEX\/indexer\/provider/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/swap transaction/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/LP add\/remove/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/asset transfer/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/contract read\/send\/write/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/export generation/).length).toBeGreaterThan(0);
     const schrodingerReadiness = screen.getByLabelText("Schrödinger NFT task readiness");
     expect(
       within(schrodingerReadiness).getByRole("heading", { name: "Schrödinger NFT task readiness" }),
@@ -718,6 +740,39 @@ describe("Project Console shell", () => {
     expect(within(ebridgeReadiness).getAllByText(/钱包签名/).length).toBeGreaterThan(0);
     expect(within(ebridgeReadiness).getAllByText(/合约读取\/发送\/写入/).length).toBeGreaterThan(0);
     expect(within(ebridgeReadiness).getAllByText(/导出生成/).length).toBeGreaterThan(0);
+  });
+
+  it("renders localized Awaken swap and liquidity task readiness in zh-CN", () => {
+    render(
+      <ProjectConsole
+        activeWorkspace="templates"
+        campaign={campaignDetail}
+        locale="zh-CN"
+      />,
+    );
+
+    const awakenReadiness = screen.getByLabelText("Awaken swap / liquidity 任务 readiness");
+    expect(
+      within(awakenReadiness).getByRole("heading", { name: "Awaken swap / liquidity 任务 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("Awaken swap readiness")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("Awaken 添加流动性审核")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("Awaken LP 持有证据")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("Bridge 解锁依赖")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("Awaken 排名资格影响")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("DAPP_API · seeded_local")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("ON_CHAIN · awaken_swap_event")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("DAPP_API · lp_position_snapshot")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("DAPP_API · bridge_unlock_rule")).toBeInTheDocument();
+    expect(within(awakenReadiness).getByText("DAPP_API · ranking_engine")).toBeInTheDocument();
+    expect(within(awakenReadiness).getAllByText(/不会调用真实 Awaken API/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/DEX\/indexer\/provider/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/不会执行 swap 交易/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/LP 添加\/移除/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/资产转移/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/钱包签名/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/合约读取\/发送\/写入/).length).toBeGreaterThan(0);
+    expect(within(awakenReadiness).getAllByText(/导出生成/).length).toBeGreaterThan(0);
   });
 
   it("renders localized daipp Agent Coin task readiness in zh-CN", () => {

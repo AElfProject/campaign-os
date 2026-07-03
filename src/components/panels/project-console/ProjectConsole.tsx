@@ -6,6 +6,7 @@ import {
   createCampaignTemplatePack,
   campaignDetail,
   createCampaignSettingsReadiness,
+  createAwakenSwapLiquidityTaskReadiness,
   createDaippAgentCoinTaskReadiness,
   createEbridgeTaskReadiness,
   createForestNftTaskReadiness,
@@ -39,6 +40,9 @@ import {
   type CampaignShellDetail,
   type CampaignSettingsReadinessState,
   type ExportReadinessState,
+  type AwakenSwapLiquidityTaskOwnerRole,
+  type AwakenSwapLiquidityTaskProviderState,
+  type AwakenSwapLiquidityTaskReadinessState,
   type DaippAgentCoinTaskOwnerRole,
   type DaippAgentCoinTaskProviderState,
   type DaippAgentCoinTaskReadinessState,
@@ -604,6 +608,83 @@ const ebridgeTaskOwnerLabel = (
       risk_reviewer: "風險審核人",
     },
   } satisfies Record<SupportedLocale, Record<EbridgeTaskOwnerRole, string>>;
+
+  return labels[locale][ownerRole];
+};
+
+const awakenTaskReadinessBadgeState = (
+  state: AwakenSwapLiquidityTaskReadinessState,
+) => state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const awakenTaskReadinessLabel = (
+  state: AwakenSwapLiquidityTaskReadinessState,
+  labels: {
+    awakenTaskBlocked: string;
+    awakenTaskReady: string;
+    awakenTaskReviewRequired: string;
+  },
+) => {
+  if (state === "ready") {
+    return labels.awakenTaskReady;
+  }
+
+  return state === "review_required"
+    ? labels.awakenTaskReviewRequired
+    : labels.awakenTaskBlocked;
+};
+
+const awakenTaskProviderStateLabel = (
+  state: AwakenSwapLiquidityTaskProviderState,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      blocked: "Blocked",
+      not_connected: "Not connected",
+      review_required: "Review required",
+      seeded_preview: "Seeded preview",
+    },
+    "zh-CN": {
+      blocked: "阻断",
+      not_connected: "未连接",
+      review_required: "需要审核",
+      seeded_preview: "Seeded 预览",
+    },
+    "zh-TW": {
+      blocked: "阻斷",
+      not_connected: "未連接",
+      review_required: "需要審核",
+      seeded_preview: "Seeded 預覽",
+    },
+  } satisfies Record<SupportedLocale, Record<AwakenSwapLiquidityTaskProviderState, string>>;
+
+  return labels[locale][state];
+};
+
+const awakenTaskOwnerLabel = (
+  ownerRole: AwakenSwapLiquidityTaskOwnerRole,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      awaken_provider_reviewer: "Awaken provider reviewer",
+      operator: "Operator",
+      project_owner: "Project owner",
+      risk_reviewer: "Risk reviewer",
+    },
+    "zh-CN": {
+      awaken_provider_reviewer: "Awaken provider 审核人",
+      operator: "运营",
+      project_owner: "项目方",
+      risk_reviewer: "风险审核人",
+    },
+    "zh-TW": {
+      awaken_provider_reviewer: "Awaken provider 審核人",
+      operator: "營運",
+      project_owner: "專案方",
+      risk_reviewer: "風險審核人",
+    },
+  } satisfies Record<SupportedLocale, Record<AwakenSwapLiquidityTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -1507,6 +1588,7 @@ export const ProjectConsole = ({
   const localeAnalyticsReadiness = createLocaleAnalyticsReadiness(campaign);
   const aiContentPack = createAiContentPackWorkbench(campaign);
   const campaignTemplatePack = createCampaignTemplatePack();
+  const awakenTaskReadiness = createAwakenSwapLiquidityTaskReadiness(campaign);
   const daippTaskReadiness = createDaippAgentCoinTaskReadiness(campaign);
   const ebridgeTaskReadiness = createEbridgeTaskReadiness(campaign);
   const forestTaskReadiness = createForestNftTaskReadiness(campaign);
@@ -3669,6 +3751,115 @@ export const ProjectConsole = ({
                   </p>
                   <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
                     <strong>{copy.ebridgeTaskBoundary}: </strong>
+                    {getLocalizedText(row.boundary, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section aria-label={copy.awakenTaskReadiness} style={panelStyle}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.awakenTaskTotal}</p>
+                <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                  {copy.awakenTaskReadiness}
+                </h3>
+                <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                  {copy.awakenTaskReadinessSubtitle}
+                </p>
+              </div>
+              <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <PublishStateBadge
+                  label={`${awakenTaskReadiness.summary.readyCount} ${copy.awakenTaskReady}`}
+                  state="ready"
+                />
+                <PublishStateBadge
+                  label={`${awakenTaskReadiness.summary.reviewRequiredCount} ${copy.awakenTaskReviewRequired}`}
+                  state="warning"
+                />
+                <PublishStateBadge
+                  label={`${awakenTaskReadiness.summary.blockedCount} ${copy.awakenTaskBlocked}`}
+                  state="blocker"
+                />
+              </span>
+            </div>
+
+            <div style={gridStyle}>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.awakenTaskTotal}</p>
+                <p style={statValueStyle}>{awakenTaskReadiness.summary.totalTasks}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.awakenTaskReady}</p>
+                <p style={statValueStyle}>{awakenTaskReadiness.summary.readyCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.awakenTaskReviewRequired}</p>
+                <p style={statValueStyle}>{awakenTaskReadiness.summary.reviewRequiredCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.awakenTaskBlocked}</p>
+                <p style={statValueStyle}>{awakenTaskReadiness.summary.blockedCount}</p>
+              </article>
+              <article style={{ ...cardStyle, gridColumn: "1 / -1", minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.awakenTaskNextAction}</p>
+                <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(awakenTaskReadiness.ownerNextAction, locale)}
+                </p>
+              </article>
+            </div>
+
+            <p style={boundaryStyle}>
+              <strong>{copy.awakenTaskBoundary}: </strong>
+              {getLocalizedText(awakenTaskReadiness.boundary, locale)}
+            </p>
+
+            <div style={compactSectionGridStyle}>
+              {awakenTaskReadiness.rows.map((row) => (
+                <article key={row.id} style={{ ...cardStyle, minHeight: 0 }}>
+                  <div style={headingRowStyle}>
+                    <div>
+                      <p style={statLabelStyle}>{copy.awakenTaskProviderState}</p>
+                      <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                        {getLocalizedText(row.label, locale)}
+                      </h4>
+                    </div>
+                    <PublishStateBadge
+                      label={awakenTaskReadinessLabel(row.readinessState, copy)}
+                      state={awakenTaskReadinessBadgeState(row.readinessState)}
+                    />
+                  </div>
+
+                  <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(row.description, locale)}
+                  </p>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <Badge
+                      label={`${row.verificationType} · ${row.evidenceSource}`}
+                      tone="info"
+                    />
+                    <Badge
+                      label={`${copy.awakenTaskProviderState}: ${awakenTaskProviderStateLabel(row.providerState, locale)}`}
+                      tone={row.providerState === "seeded_preview" ? "success" : "warning"}
+                    />
+                    <Badge
+                      label={`${copy.awakenTaskOwner}: ${awakenTaskOwnerLabel(row.ownerRole, locale)}`}
+                      tone="neutral"
+                    />
+                  </div>
+
+                  <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.awakenTaskRiskState}: </strong>
+                    {getLocalizedText(row.riskState, locale)}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.awakenTaskNextAction}: </strong>
+                    {getLocalizedText(row.nextAction, locale)}
+                  </p>
+                  <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.awakenTaskBoundary}: </strong>
                     {getLocalizedText(row.boundary, locale)}
                   </p>
                 </article>

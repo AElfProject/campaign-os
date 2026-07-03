@@ -112,6 +112,13 @@ import type {
   EcosystemNextActionReadModel,
   EcosystemRecommendationPriority,
   EcosystemRecommendationStatus,
+  AwakenSwapLiquidityTaskEvidenceSource,
+  AwakenSwapLiquidityTaskIntentId,
+  AwakenSwapLiquidityTaskOwnerRole,
+  AwakenSwapLiquidityTaskProviderState,
+  AwakenSwapLiquidityTaskReadiness,
+  AwakenSwapLiquidityTaskReadinessRow,
+  AwakenSwapLiquidityTaskReadinessState,
   EbridgeTaskEvidenceSource,
   EbridgeTaskIntentId,
   EbridgeTaskOwnerRole,
@@ -14897,6 +14904,252 @@ export const createEbridgeTaskReadiness = (
     rows,
     ownerNextAction: ebridgeTaskOwnerNextActionFor(summary),
     boundary: ebridgeTaskReadinessBoundary,
+  };
+};
+
+export const awakenSwapLiquidityTaskReadinessBoundary: LocalizedText = localized(
+  "Seeded/local Awaken swap and liquidity task readiness only. No live Awaken API, DEX/indexer/provider, swap transaction, LP add/remove, asset transfer, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, export generation, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地 Awaken swap 与 liquidity 任务 readiness。不会调用真实 Awaken API、DEX/indexer/provider，不会执行 swap 交易、LP 添加/移除、资产转移、钱包签名、钱包 SDK/provider 调用、后端 mutation、合约读取/发送/写入、导出生成、奖励托管或发奖。",
+  "Seeded/local Awaken swap and liquidity task readiness only. No live Awaken API, DEX/indexer/provider, swap transaction, LP add/remove, asset transfer, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, export generation, reward custody, or reward distribution is executed.",
+);
+
+const awakenTaskIntentLabels: Record<AwakenSwapLiquidityTaskIntentId, LocalizedText> = {
+  "awaken-swap-readiness": localized(
+    "Awaken swap readiness",
+    "Awaken swap readiness",
+    "Awaken swap readiness",
+  ),
+  "awaken-liquidity-add-review": localized(
+    "Awaken liquidity add review",
+    "Awaken 添加流动性审核",
+    "Awaken liquidity add review",
+  ),
+  "awaken-lp-hold-evidence": localized(
+    "Awaken LP hold evidence",
+    "Awaken LP 持有证据",
+    "Awaken LP hold evidence",
+  ),
+  "awaken-bridge-unlock-dependency": localized(
+    "Bridge unlock dependency",
+    "Bridge 解锁依赖",
+    "Bridge unlock dependency",
+  ),
+  "awaken-ranking-eligibility-impact": localized(
+    "Awaken ranking eligibility impact",
+    "Awaken 排名资格影响",
+    "Awaken ranking eligibility impact",
+  ),
+};
+
+const awakenTaskIntentDescriptions: Record<AwakenSwapLiquidityTaskIntentId, LocalizedText> = {
+  "awaken-swap-readiness": localized(
+    "Review whether an Awaken swap task can be represented from seeded campaign metadata before publish.",
+    "发布前审核 Awaken swap 任务是否可由 seeded 活动 metadata 表达。",
+    "Review whether an Awaken swap task can be represented from seeded campaign metadata before publish.",
+  ),
+  "awaken-liquidity-add-review": localized(
+    "Review add-liquidity task rules before using liquidity actions in campaign scoring.",
+    "将添加流动性行为计入活动计分前，先审核添加流动性任务规则。",
+    "Review add-liquidity task rules before using liquidity actions in campaign scoring.",
+  ),
+  "awaken-lp-hold-evidence": localized(
+    "Review LP position and hold-duration evidence before treating liquidity participation as verified.",
+    "将流动性参与视为已验证前，先审核 LP position 与持有时长证据。",
+    "Review LP position and hold-duration evidence before treating liquidity participation as verified.",
+  ),
+  "awaken-bridge-unlock-dependency": localized(
+    "Review bridge completion dependency before unlocking downstream Awaken swap or liquidity tasks.",
+    "解锁下游 Awaken swap 或 liquidity 任务前，先审核 bridge 完成依赖。",
+    "Review bridge completion dependency before unlocking downstream Awaken swap or liquidity tasks.",
+  ),
+  "awaken-ranking-eligibility-impact": localized(
+    "Review how swap volume, LP hold evidence, and qualified referrals affect leaderboard eligibility.",
+    "审核 swap 量、LP 持有证据与合格推荐如何影响排行榜资格。",
+    "Review how swap volume, LP hold evidence, and qualified referrals affect leaderboard eligibility.",
+  ),
+};
+
+const awakenRiskStates: Record<AwakenSwapLiquidityTaskReadinessState, LocalizedText> = {
+  ready: localized(
+    "Local seeded Awaken readiness is enough for owner review, but it is not live Awaken verification.",
+    "本地 seeded Awaken readiness 足够进入 owner review，但不是真实 Awaken 验证。",
+    "Local seeded Awaken readiness is enough for owner review, but it is not live Awaken verification.",
+  ),
+  review_required: localized(
+    "Awaken swap, liquidity, LP hold, or bridge-unlock evidence needs operator review before it can affect campaign scoring.",
+    "Awaken swap、liquidity、LP 持有或 bridge 解锁证据需要运营审核后，才能影响活动计分。",
+    "Awaken swap, liquidity, LP hold, or bridge-unlock evidence needs operator review before it can affect campaign scoring.",
+  ),
+  blocked: localized(
+    "Awaken ranking and eligibility impact is blocked until provider ownership and evidence boundaries are reviewed.",
+    "Awaken 排名与资格影响在 provider 归属与证据边界审核前保持阻断。",
+    "Awaken ranking and eligibility impact is blocked until provider ownership and evidence boundaries are reviewed.",
+  ),
+};
+
+const awakenNextActionFor = (
+  intentId: AwakenSwapLiquidityTaskIntentId,
+  readinessState: AwakenSwapLiquidityTaskReadinessState,
+): LocalizedText => {
+  if (readinessState === "blocked") {
+    return localized(
+      "Review Awaken provider ownership, ranking eligibility impact, and reward/export boundary before campaign publish.",
+      "发布活动前先审核 Awaken provider 归属、排名资格影响与奖励/导出边界。",
+      "Review Awaken provider ownership, ranking eligibility impact, and reward/export boundary before campaign publish.",
+    );
+  }
+
+  if (readinessState === "review_required") {
+    return localized(
+      "Ask an operator to confirm Awaken swap, liquidity, LP hold, and bridge-unlock evidence remain local-only and reviewable.",
+      "请运营确认 Awaken swap、liquidity、LP 持有与 bridge 解锁证据保持本地-only 且可审核。",
+      "Ask an operator to confirm Awaken swap, liquidity, LP hold, and bridge-unlock evidence remain local-only and reviewable.",
+    );
+  }
+
+  if (intentId === "awaken-swap-readiness") {
+    return localized(
+      "Keep Awaken swap readiness as a seeded/local campaign task until Awaken service ownership is approved.",
+      "在 Awaken 服务归属获批前，将 Awaken swap readiness 保持为 seeded/本地活动任务。",
+      "Keep Awaken swap readiness as a seeded/local campaign task until Awaken service ownership is approved.",
+    );
+  }
+
+  return localized(
+    "Keep Awaken swap and liquidity task readiness in local owner review before live integration.",
+    "在真实集成前，将 Awaken swap 与 liquidity 任务 readiness 保持在本地 owner review。",
+    "Keep Awaken swap and liquidity task readiness in local owner review before live integration.",
+  );
+};
+
+const createAwakenReadinessRow = (input: {
+  evidenceSource: AwakenSwapLiquidityTaskEvidenceSource;
+  intentId: AwakenSwapLiquidityTaskIntentId;
+  ownerRole: AwakenSwapLiquidityTaskOwnerRole;
+  providerState: AwakenSwapLiquidityTaskProviderState;
+  readinessState: AwakenSwapLiquidityTaskReadinessState;
+  verificationType: "ON_CHAIN" | "DAPP_API";
+}): AwakenSwapLiquidityTaskReadinessRow => ({
+  id: `awaken-${input.intentId}`,
+  intentId: input.intentId,
+  label: awakenTaskIntentLabels[input.intentId],
+  description: awakenTaskIntentDescriptions[input.intentId],
+  verificationType: input.verificationType,
+  evidenceSource: input.evidenceSource,
+  providerState: input.providerState,
+  readinessState: input.readinessState,
+  riskState: awakenRiskStates[input.readinessState],
+  ownerRole: input.ownerRole,
+  nextAction: awakenNextActionFor(input.intentId, input.readinessState),
+  boundary: awakenSwapLiquidityTaskReadinessBoundary,
+});
+
+const awakenTaskStateRank: Record<AwakenSwapLiquidityTaskReadinessState, number> = {
+  blocked: 3,
+  review_required: 2,
+  ready: 1,
+};
+
+const createAwakenTaskRows = (): AwakenSwapLiquidityTaskReadinessRow[] => [
+  createAwakenReadinessRow({
+    evidenceSource: "seeded_local",
+    intentId: "awaken-swap-readiness",
+    ownerRole: "project_owner",
+    providerState: "seeded_preview",
+    readinessState: "ready",
+    verificationType: "DAPP_API",
+  }),
+  createAwakenReadinessRow({
+    evidenceSource: "awaken_swap_event",
+    intentId: "awaken-liquidity-add-review",
+    ownerRole: "operator",
+    providerState: "review_required",
+    readinessState: "review_required",
+    verificationType: "ON_CHAIN",
+  }),
+  createAwakenReadinessRow({
+    evidenceSource: "lp_position_snapshot",
+    intentId: "awaken-lp-hold-evidence",
+    ownerRole: "operator",
+    providerState: "review_required",
+    readinessState: "review_required",
+    verificationType: "DAPP_API",
+  }),
+  createAwakenReadinessRow({
+    evidenceSource: "bridge_unlock_rule",
+    intentId: "awaken-bridge-unlock-dependency",
+    ownerRole: "awaken_provider_reviewer",
+    providerState: "blocked",
+    readinessState: "blocked",
+    verificationType: "DAPP_API",
+  }),
+  createAwakenReadinessRow({
+    evidenceSource: "ranking_engine",
+    intentId: "awaken-ranking-eligibility-impact",
+    ownerRole: "risk_reviewer",
+    providerState: "not_connected",
+    readinessState: "blocked",
+    verificationType: "DAPP_API",
+  }),
+];
+
+const createAwakenTaskSummary = (
+  rows: AwakenSwapLiquidityTaskReadinessRow[],
+): AwakenSwapLiquidityTaskReadiness["summary"] => {
+  const topRow = [...rows].sort(
+    (left, right) => awakenTaskStateRank[right.readinessState] - awakenTaskStateRank[left.readinessState],
+  )[0] ?? rows[0];
+
+  return {
+    totalTasks: rows.length,
+    readyCount: rows.filter((row) => row.readinessState === "ready").length,
+    reviewRequiredCount: rows.filter((row) => row.readinessState === "review_required").length,
+    blockedCount: rows.filter((row) => row.readinessState === "blocked").length,
+    topState: topRow?.readinessState ?? "blocked",
+    topIntentId: topRow?.intentId ?? "awaken-ranking-eligibility-impact",
+    primaryOwnerRole: topRow?.ownerRole ?? "risk_reviewer",
+    boundary: awakenSwapLiquidityTaskReadinessBoundary,
+  };
+};
+
+const awakenTaskOwnerNextActionFor = (
+  summary: AwakenSwapLiquidityTaskReadiness["summary"],
+): LocalizedText => {
+  if (summary.blockedCount > 0) {
+    return localized(
+      "Review Awaken provider ownership, bridge unlock dependency, and ranking eligibility impact before treating swap or liquidity tasks as publish-ready.",
+      "先审核 Awaken provider 归属、bridge 解锁依赖与排名资格影响，再将 swap 或 liquidity 任务视为可发布。",
+      "Review Awaken provider ownership, bridge unlock dependency, and ranking eligibility impact before treating swap or liquidity tasks as publish-ready.",
+    );
+  }
+
+  if (summary.reviewRequiredCount > 0) {
+    return localized(
+      "Complete operator review for Awaken swap events, liquidity evidence, and LP hold snapshots before publish.",
+      "发布前完成 Awaken swap event、流动性证据与 LP 持有快照的运营审核。",
+      "Complete operator review for Awaken swap events, liquidity evidence, and LP hold snapshots before publish.",
+    );
+  }
+
+  return localized(
+    "Keep Awaken swap and liquidity tasks in local owner review until live Awaken integration is approved.",
+    "在真实 Awaken 集成获批前，将 Awaken swap 与 liquidity 任务保持在本地 owner review。",
+    "Keep Awaken swap and liquidity tasks in local owner review until live Awaken integration is approved.",
+  );
+};
+
+export const createAwakenSwapLiquidityTaskReadiness = (
+  campaign: CampaignShellDetail,
+): AwakenSwapLiquidityTaskReadiness => {
+  const rows = createAwakenTaskRows();
+  const summary = createAwakenTaskSummary(rows);
+
+  return {
+    campaignId: campaign.id,
+    summary,
+    rows,
+    ownerNextAction: awakenTaskOwnerNextActionFor(summary),
+    boundary: awakenSwapLiquidityTaskReadinessBoundary,
   };
 };
 
