@@ -46,6 +46,7 @@ import {
   type MetricTone,
   type ProviderFeatureGateState,
   type ProviderLiveEvidenceStatus,
+  type ResidualGapMissionQueueStatus,
   type RiskIntelligenceReviewState,
   type SignalSeverity,
   type SupportedLocale,
@@ -77,6 +78,8 @@ interface AdminOpsPanelProps {
   campaign?: CampaignShellDetail;
   locale: SupportedLocale;
 }
+
+type PublishState = "blocker" | "warning" | "ready";
 
 const panelStyle: CSSProperties = {
   background: "#ffffff",
@@ -428,7 +431,18 @@ const deliveryAcceptanceStatusState = (status: DeliveryAcceptanceStatus) =>
       ? "warning"
       : "ready";
 
-const deliveryAcceptanceSeverityState = (severity: DeliveryAcceptanceSeverity) =>
+const residualGapMissionQueueStatusState = (
+  status: ResidualGapMissionQueueStatus,
+): PublishState =>
+  status === "launch_blocking"
+    ? "blocker"
+    : status === "needs_live_evidence" || status === "review_required" || status === "backlog"
+      ? "warning"
+      : "ready";
+
+const deliveryAcceptanceSeverityState = (
+  severity: DeliveryAcceptanceSeverity,
+): PublishState =>
   severity === "critical" || severity === "high"
     ? "blocker"
     : severity === "medium"
@@ -651,6 +665,20 @@ const deliveryAcceptanceStatusLabel = (
     needs_live_evidence: copy.needsLiveEvidence,
     partial: copy.partial,
     proven: copy.proven,
+  };
+
+  return labels[status];
+};
+
+const residualGapMissionQueueStatusLabel = (
+  status: ResidualGapMissionQueueStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<ResidualGapMissionQueueStatus, string> = {
+    backlog: copy.backlogItems,
+    launch_blocking: copy.launchBlocking,
+    needs_live_evidence: copy.needsLiveEvidence,
+    review_required: copy.reviewRequired,
   };
 
   return labels[status];
@@ -994,6 +1022,7 @@ export const AdminOpsPanel = ({
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
   const deliveryAcceptance = adminOps.deliveryAcceptance;
+  const residualGapMissionQueue = adminOps.residualGapMissionQueue;
   const walletProviderEvidenceIntake = adminOps.walletProviderEvidenceIntake;
   const walletProviderEvidenceApprovalAudit = adminOps.walletProviderEvidenceApprovalAudit;
   const walletProviderEvidenceReleaseReadiness = adminOps.walletProviderEvidenceReleaseReadiness;
@@ -1268,6 +1297,39 @@ export const AdminOpsPanel = ({
       label: copy.deferred,
       value: deliveryAcceptance.summary.deferred,
       state: deliveryAcceptance.summary.deferred > 0 ? "warning" as const : "ready" as const,
+    },
+  ];
+
+  const residualGapMissionQueueSummaryItems = [
+    {
+      id: "total-items",
+      label: copy.totalItems,
+      value: residualGapMissionQueue.summary.totalItems,
+      state: residualGapMissionQueue.summary.totalItems > 0 ? "warning" as const : "ready" as const,
+    },
+    {
+      id: "launch-blocking",
+      label: copy.launchBlockingItems,
+      value: residualGapMissionQueue.summary.launchBlockingItems,
+      state: residualGapMissionQueue.summary.launchBlockingItems > 0 ? "blocker" as const : "ready" as const,
+    },
+    {
+      id: "review-required",
+      label: copy.reviewRequiredItems,
+      value: residualGapMissionQueue.summary.reviewRequiredItems,
+      state: residualGapMissionQueue.summary.reviewRequiredItems > 0 ? "warning" as const : "ready" as const,
+    },
+    {
+      id: "backlog",
+      label: copy.backlogItems,
+      value: residualGapMissionQueue.summary.backlogItems,
+      state: residualGapMissionQueue.summary.backlogItems > 0 ? "warning" as const : "ready" as const,
+    },
+    {
+      id: "top-severity",
+      label: copy.topSeverity,
+      value: residualGapMissionQueue.summary.topSeverity,
+      state: deliveryAcceptanceSeverityState(residualGapMissionQueue.summary.topSeverity),
     },
   ];
 
@@ -2368,6 +2430,114 @@ export const AdminOpsPanel = ({
                   </div>
                 ))}
               </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.residualGapMissionQueue} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.residualGaps}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.residualGapMissionQueue}
+            </h3>
+            <p style={mutedTextStyle}>{copy.residualGapMissionQueueSubtitle}</p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${residualGapMissionQueue.summary.totalItems} ${copy.totalItems}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${residualGapMissionQueue.summary.launchBlockingItems} ${copy.launchBlockingItems}`}
+              state={
+                residualGapMissionQueue.summary.launchBlockingItems > 0
+                  ? "blocker"
+                  : "ready"
+              }
+            />
+            <PublishStateBadge
+              label={`${residualGapMissionQueue.summary.backlogItems} ${copy.backlogItems}`}
+              state={
+                residualGapMissionQueue.summary.backlogItems > 0
+                  ? "warning"
+                  : "ready"
+              }
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.residualGapMissionQueueBoundary}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.nonLiveBoundary}: {getLocalizedText(residualGapMissionQueue.boundary, locale)}
+          </p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.nextMissionAction}: {getLocalizedText(residualGapMissionQueue.summary.nextAction, locale)}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          {residualGapMissionQueueSummaryItems.map((item) => (
+            <article key={item.id} style={cardStyle}>
+              <p style={labelStyle}>{item.label}</p>
+              <p style={valueStyle}>{item.value}</p>
+              <PublishStateBadge label={item.label} state={item.state} />
+            </article>
+          ))}
+        </div>
+        <div style={gridStyle}>
+          {residualGapMissionQueue.items.map((item) => (
+            <article key={item.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>
+                    {copy.priority}: {item.priority}
+                  </p>
+                  <strong>{getLocalizedText(item.suggestedMissionTitle, locale)}</strong>
+                </div>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge
+                    label={residualGapMissionQueueStatusLabel(item.status, copy)}
+                    state={residualGapMissionQueueStatusState(item.status)}
+                  />
+                  <PublishStateBadge
+                    label={item.severity}
+                    state={deliveryAcceptanceSeverityState(item.severity)}
+                  />
+                  {item.launchBlocking ? (
+                    <PublishStateBadge label={copy.launchBlocking} state="blocker" />
+                  ) : null}
+                </span>
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.suggestedBranch}</p>
+                  <p style={codeListStyle}>{item.suggestedBranch}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.sourceGap}</p>
+                  <p style={wrapTextStyle}>{getLocalizedText(item.sourceGap, locale)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.ownerRole}</p>
+                  <p style={mutedTextStyle}>{readableCode(item.ownerRole)}</p>
+                </div>
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.dependency}: {getLocalizedText(item.dependency, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.evidenceNeeded}: {getLocalizedText(item.evidenceNeeded, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.launchImpact}: {getLocalizedText(item.launchImpact, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(item.nextAction, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nonLiveBoundary}: {getLocalizedText(item.boundary, locale)}
+              </p>
             </article>
           ))}
         </div>

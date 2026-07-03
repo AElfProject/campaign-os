@@ -139,6 +139,28 @@ describe("Admin/Ops shell", () => {
     expect(within(deliveryAcceptance).getAllByText(/Non-live boundary:/).length).toBeGreaterThan(0);
     expect(within(deliveryAcceptance).getByText(/Seeded\/local delivery acceptance audit only/)).toBeInTheDocument();
     expect(within(deliveryAcceptance).getAllByText(/No live wallet SDK/).length).toBeGreaterThan(0);
+    const residualGapMissionQueue = screen.getByLabelText("Residual Gap Mission Queue");
+    expect(
+      within(residualGapMissionQueue).getByRole("heading", {
+        name: "Residual Gap Mission Queue",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(residualGapMissionQueue).getByText(
+        "Review-only intake for the next missions implied by delivery acceptance residuals.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(residualGapMissionQueue).getByText("Live wallet provider evidence mission")).toBeInTheDocument();
+    expect(within(residualGapMissionQueue).getByText("mission/live-wallet-provider-evidence")).toBeInTheDocument();
+    expect(within(residualGapMissionQueue).getByText(/Wallet Provider Evidence Release Readiness must approve all required scenarios/)).toBeInTheDocument();
+    expect(within(residualGapMissionQueue).getByText("mission/p1-locale-expansion")).toBeInTheDocument();
+    expect(within(residualGapMissionQueue).getAllByText("Backlog items").length).toBeGreaterThan(0);
+    expect(within(residualGapMissionQueue).getAllByText("Launch-blocking items").length).toBeGreaterThan(0);
+    expect(
+      within(residualGapMissionQueue).queryByRole("button", {
+        name: /connectWallet|getSignature|sendTransaction|sign|signature|provider call|upload|contract write|reward custody|reward distribution/i,
+      }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Wallet Provider QA Readiness" })).toBeInTheDocument();
     expectVisibleText("Live provider evidence gate");
     expectVisibleText("Total scenarios");
@@ -237,7 +259,7 @@ describe("Admin/Ops shell", () => {
     ).toBeInTheDocument();
     expect(within(walletProviderEvidenceReleaseReadiness).getAllByText("Release gate state").length).toBeGreaterThan(0);
     expect(within(walletProviderEvidenceReleaseReadiness).getAllByText("Approved required scenarios").length).toBeGreaterThan(0);
-    expect(within(walletProviderEvidenceReleaseReadiness).getByText("0/4")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceReleaseReadiness).getByText("0/5")).toBeInTheDocument();
     expect(within(walletProviderEvidenceReleaseReadiness).getByText("Top failed rule: required-artifacts")).toBeInTheDocument();
     expect(within(walletProviderEvidenceReleaseReadiness).getByText("Top scenario: portkey-aa-connect")).toBeInTheDocument();
     expect(within(walletProviderEvidenceReleaseReadiness).getAllByText("Required for release").length).toBeGreaterThan(0);
@@ -787,6 +809,24 @@ describe("Admin/Ops shell", () => {
     expect(within(zhDeliveryAcceptance).getAllByText(/非实时边界:/).length).toBeGreaterThan(0);
     expect(within(zhDeliveryAcceptance).getByText(/仅 seeded\/本地交付验收审计/)).toBeInTheDocument();
     expect(within(zhDeliveryAcceptance).getAllByText(/不会执行实时钱包 SDK/).length).toBeGreaterThan(0);
+    const zhResidualGapMissionQueue = screen.getByLabelText("Residual Gap Mission Queue");
+    expect(
+      within(zhResidualGapMissionQueue).getByRole("heading", {
+        name: "Residual Gap Mission Queue",
+      }),
+    ).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getByText(/按交付验收残留缺口整理下一批 mission/)).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getByText("真实钱包 provider 证据 mission")).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getByText("mission/live-wallet-provider-evidence")).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getByText(/Wallet Provider Evidence Release Readiness 必须批准所有必需场景/)).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getByText("mission/p1-locale-expansion")).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getAllByText("Backlog 条目").length).toBeGreaterThan(0);
+    expect(within(zhResidualGapMissionQueue).getAllByText("上线阻断条目").length).toBeGreaterThan(0);
+    expect(
+      within(zhResidualGapMissionQueue).queryByRole("button", {
+        name: /connectWallet|getSignature|sendTransaction|签名|provider 调用|上传|合约写入|奖励托管|发奖|reward distribution/i,
+      }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "钱包 Provider QA Readiness" })).toBeInTheDocument();
     expectVisibleText("真实 provider 证据门禁");
     expectVisibleText("场景总数");
