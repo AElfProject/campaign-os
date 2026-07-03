@@ -48,11 +48,14 @@ const modalCopy = {
     nextAction: "Next action",
     privateKeySafety:
       "Campaign OS never asks for private keys, seed phrases, recovery phrases, or password exports.",
+    privateKeyFooter: "Campaign OS never asks for your private key.",
     recommended: "Recommended",
     recommendedGroup: "Recommended",
+    subtitle: "Choose how you want to join this campaign.",
     title: "Connect Wallet",
     unsupportedWallet:
       "Unsupported wallet: choose Portkey AA, Portkey EOA App, Portkey EOA Extension, or NightElf for this seeded campaign flow.",
+    verificationOnlyFooter: "By connecting, you agree to sign messages only for verification.",
     wrongChain:
       "Wrong chain: switch to AELF mainnet before continuing with campaign verification.",
   },
@@ -81,11 +84,14 @@ const modalCopy = {
     nextAction: "下一步",
     privateKeySafety:
       "Campaign OS 永远不会索要私钥、助记词、恢复短语或密码导出。",
+    privateKeyFooter: "Campaign OS 永远不会索要你的私钥。",
     recommended: "推荐",
     recommendedGroup: "推荐",
+    subtitle: "选择你想如何加入这个活动。",
     title: "连接钱包",
     unsupportedWallet:
       "不支持的钱包：请为该 seeded 活动流程选择 Portkey AA、Portkey EOA App、Portkey EOA Extension 或 NightElf。",
+    verificationOnlyFooter: "连接即表示你同意仅为验证签署消息。",
     wrongChain:
       "链不匹配：请切换到 AELF mainnet 后再继续活动验证。",
   },
@@ -114,11 +120,14 @@ const modalCopy = {
     nextAction: "下一步",
     privateKeySafety:
       "Campaign OS 永遠不會索要私鑰、助記詞、恢復短語或密碼匯出。",
+    privateKeyFooter: "Campaign OS 永遠不會索要你的私鑰。",
     recommended: "推薦",
     recommendedGroup: "推薦",
+    subtitle: "選擇你想如何加入這個活動。",
     title: "連接錢包",
     unsupportedWallet:
       "不支援的錢包：請為該 seeded 活動流程選擇 Portkey AA、Portkey EOA App、Portkey EOA Extension 或 NightElf。",
+    verificationOnlyFooter: "連接即表示你同意僅為驗證簽署訊息。",
     wrongChain:
       "鏈不匹配：請切換到 AELF mainnet 後再繼續活動驗證。",
   },
@@ -474,6 +483,9 @@ export const WalletConnectModal = ({
             <h2 id="wallet-connect-modal-title" style={{ fontSize: 26, lineHeight: 1.1, margin: "4px 0 0" }}>
               {copy.title}
             </h2>
+            <p style={{ color: "#475569", fontSize: 14, fontWeight: 700, lineHeight: 1.45, margin: "8px 0 0" }}>
+              {copy.subtitle}
+            </p>
           </div>
           <button
             aria-label={copy.close}
@@ -553,6 +565,11 @@ export const WalletConnectModal = ({
             <li>{copy.accountRestriction}</li>
           </ul>
         </section>
+
+        <footer aria-label="Wallet connection safety agreement" role="note" style={alertStyle}>
+          <span>{copy.verificationOnlyFooter}</span>
+          <span>{copy.privateKeyFooter}</span>
+        </footer>
       </section>
     </div>
   );
