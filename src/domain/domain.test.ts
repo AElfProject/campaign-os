@@ -39,6 +39,7 @@ import {
   createParticipantWorkspaceReadModel,
   createParticipationReadModel,
   createProviderEvidenceRegistry,
+  createResidualGapMissionQueue,
   createVerificationRulesWorkspace,
   createCampaignShareCardReadiness,
   createCampaignLifecycleOperations,
@@ -1295,6 +1296,72 @@ describe("Campaign OS domain foundation", () => {
       expect(row.evidenceSurface["en-US"]).toBeTruthy();
       expect(row.evidenceSummary["en-US"]).toBeTruthy();
       expect(row.nextMissionAction["en-US"]).toBeTruthy();
+    }
+  });
+
+  it("turns delivery acceptance residuals into a conservative mission queue", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const queue = adminOps.residualGapMissionQueue;
+    const repeatedQueue = createResidualGapMissionQueue(adminOps.deliveryAcceptance);
+    const itemsById = Object.fromEntries(queue.items.map((item) => [item.id, item]));
+
+    expect(repeatedQueue).toEqual(queue);
+    expect(queue.summary).toMatchObject({
+      totalItems: queue.items.length,
+      launchBlockingItems: queue.items.filter((item) => item.launchBlocking).length,
+      backlogItems: queue.items.filter((item) => item.status === "backlog").length,
+      topItemId: "mission-v02-live-wallet-provider-evidence",
+      topSeverity: "critical",
+    });
+    expect(queue.summary.nextAction["en-US"]).toContain("Portkey AA");
+    expect(queue.boundary["en-US"]).toContain("does not create missions");
+    expect(queue.boundary["en-US"]).toContain("No live wallet SDK");
+
+    expect(queue.items[0]).toMatchObject({
+      id: "mission-v02-live-wallet-provider-evidence",
+      sourceRowId: "v02-live-wallet-provider-evidence",
+      sourceSolutionSetId: "v0_2_wallet_i18n_contract",
+      priority: 1,
+      status: "needs_live_evidence",
+      severity: "critical",
+      ownerRole: "internal_operator",
+      launchBlocking: true,
+      suggestedBranch: "mission/live-wallet-provider-evidence",
+    });
+    expect(queue.items[0]?.suggestedMissionTitle["en-US"]).toBe(
+      "Live wallet provider evidence mission",
+    );
+    expect(queue.items[0]?.sourceGap["en-US"]).toBe("Live wallet provider evidence");
+    expect(queue.items[0]?.dependency["en-US"]).toContain("Wallet Provider Evidence Release Readiness");
+    expect(queue.items[0]?.evidenceNeeded["en-US"]).toContain("0/5 required scenarios");
+    expect(queue.items[0]?.launchImpact["en-US"]).toContain("launch-blocking");
+
+    expect(adminOps.deliveryAcceptance.topResidualGaps[0]?.status).toBe("needs_live_evidence");
+    expect(adminOps.deliveryAcceptance.topResidualGaps[0]?.id).toBe("v02-live-wallet-provider-evidence");
+
+    expect(itemsById["mission-v02-contract-claim-reward-custody"]).toMatchObject({
+      sourceRowId: "v02-contract-claim-reward-custody",
+      status: "backlog",
+      launchBlocking: false,
+      suggestedBranch: "mission/contract-claim-reward-custody",
+    });
+    expect(itemsById["mission-v02-p1-locale-expansion"]).toMatchObject({
+      sourceRowId: "v02-p1-locale-expansion",
+      status: "backlog",
+      launchBlocking: false,
+      ownerRole: "project_owner",
+      suggestedBranch: "mission/p1-locale-expansion",
+    });
+
+    for (const item of queue.items) {
+      expect(item.suggestedMissionTitle["en-US"]).toBeTruthy();
+      expect(item.suggestedMissionTitle["zh-CN"]).toBeTruthy();
+      expect(item.suggestedMissionTitle["zh-TW"]).toBeTruthy();
+      expect(item.dependency["en-US"]).toBeTruthy();
+      expect(item.evidenceNeeded["en-US"]).toBeTruthy();
+      expect(item.nextAction["en-US"]).toBeTruthy();
+      expect(item.suggestedBranch).toMatch(/^mission\//);
+      expect(item.suggestedBranch).not.toMatch(/^mission\/(?:main|master)$/);
     }
   });
 
