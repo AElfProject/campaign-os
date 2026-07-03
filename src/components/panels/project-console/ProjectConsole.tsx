@@ -8,6 +8,7 @@ import {
   createCampaignSettingsReadiness,
   createForecastCampaignTaskReadiness,
   createPayCampaignTaskReadiness,
+  createTmrwdaoGovernanceTaskReadiness,
   createLocaleAnalyticsReadiness,
   createParticipantOperationsReadModel,
   createPostCampaignCloseout,
@@ -40,6 +41,9 @@ import {
   type PayCampaignTaskOwnerRole,
   type PayCampaignTaskProviderState,
   type PayCampaignTaskReadinessState,
+  type TmrwdaoGovernanceTaskOwnerRole,
+  type TmrwdaoGovernanceTaskProviderState,
+  type TmrwdaoGovernanceTaskReadinessState,
   type LaunchConsoleBundleOwnerRole,
   type LaunchConsoleBundleStage,
   type LaunchConsoleBundleStatus,
@@ -504,6 +508,80 @@ const payTaskOwnerLabel = (
       project_owner: "專案方",
     },
   } satisfies Record<SupportedLocale, Record<PayCampaignTaskOwnerRole, string>>;
+
+  return labels[locale][ownerRole];
+};
+
+const tmrwdaoTaskReadinessBadgeState = (
+  state: TmrwdaoGovernanceTaskReadinessState,
+) => state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const tmrwdaoTaskReadinessLabel = (
+  state: TmrwdaoGovernanceTaskReadinessState,
+  labels: {
+    tmrwdaoTaskBlocked: string;
+    tmrwdaoTaskReady: string;
+    tmrwdaoTaskReviewRequired: string;
+  },
+) => {
+  if (state === "ready") {
+    return labels.tmrwdaoTaskReady;
+  }
+
+  return state === "review_required"
+    ? labels.tmrwdaoTaskReviewRequired
+    : labels.tmrwdaoTaskBlocked;
+};
+
+const tmrwdaoTaskProviderStateLabel = (
+  state: TmrwdaoGovernanceTaskProviderState,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      blocked: "Blocked",
+      not_connected: "Not connected",
+      review_required: "Review required",
+      seeded_preview: "Seeded preview",
+    },
+    "zh-CN": {
+      blocked: "阻断",
+      not_connected: "未连接",
+      review_required: "需要审核",
+      seeded_preview: "Seeded 预览",
+    },
+    "zh-TW": {
+      blocked: "阻斷",
+      not_connected: "未連接",
+      review_required: "需要審核",
+      seeded_preview: "Seeded 預覽",
+    },
+  } satisfies Record<SupportedLocale, Record<TmrwdaoGovernanceTaskProviderState, string>>;
+
+  return labels[locale][state];
+};
+
+const tmrwdaoTaskOwnerLabel = (
+  ownerRole: TmrwdaoGovernanceTaskOwnerRole,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      dao_provider_reviewer: "DAO provider reviewer",
+      operator: "Operator",
+      project_owner: "Project owner",
+    },
+    "zh-CN": {
+      dao_provider_reviewer: "DAO provider 审核人",
+      operator: "运营",
+      project_owner: "项目方",
+    },
+    "zh-TW": {
+      dao_provider_reviewer: "DAO provider 審核人",
+      operator: "營運",
+      project_owner: "專案方",
+    },
+  } satisfies Record<SupportedLocale, Record<TmrwdaoGovernanceTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -1113,6 +1191,7 @@ export const ProjectConsole = ({
   const campaignTemplatePack = createCampaignTemplatePack();
   const forecastTaskReadiness = createForecastCampaignTaskReadiness(campaign);
   const payTaskReadiness = createPayCampaignTaskReadiness(campaign);
+  const tmrwdaoTaskReadiness = createTmrwdaoGovernanceTaskReadiness(campaign);
   const participantOperations = createParticipantOperationsReadModel(campaign);
   const settingsReadiness = createCampaignSettingsReadiness(campaign);
   const postCampaignCloseout = createPostCampaignCloseout(campaign);
@@ -3268,6 +3347,115 @@ export const ProjectConsole = ({
                   </p>
                   <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
                     <strong>{copy.payTaskBoundary}: </strong>
+                    {getLocalizedText(row.boundary, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section aria-label={copy.tmrwdaoTaskReadiness} style={panelStyle}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.tmrwdaoTaskTotal}</p>
+                <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                  {copy.tmrwdaoTaskReadiness}
+                </h3>
+                <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                  {copy.tmrwdaoTaskReadinessSubtitle}
+                </p>
+              </div>
+              <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <PublishStateBadge
+                  label={`${tmrwdaoTaskReadiness.summary.readyCount} ${copy.tmrwdaoTaskReady}`}
+                  state="ready"
+                />
+                <PublishStateBadge
+                  label={`${tmrwdaoTaskReadiness.summary.reviewRequiredCount} ${copy.tmrwdaoTaskReviewRequired}`}
+                  state="warning"
+                />
+                <PublishStateBadge
+                  label={`${tmrwdaoTaskReadiness.summary.blockedCount} ${copy.tmrwdaoTaskBlocked}`}
+                  state="blocker"
+                />
+              </span>
+            </div>
+
+            <div style={gridStyle}>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.tmrwdaoTaskTotal}</p>
+                <p style={statValueStyle}>{tmrwdaoTaskReadiness.summary.totalTasks}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.tmrwdaoTaskReady}</p>
+                <p style={statValueStyle}>{tmrwdaoTaskReadiness.summary.readyCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.tmrwdaoTaskReviewRequired}</p>
+                <p style={statValueStyle}>{tmrwdaoTaskReadiness.summary.reviewRequiredCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.tmrwdaoTaskBlocked}</p>
+                <p style={statValueStyle}>{tmrwdaoTaskReadiness.summary.blockedCount}</p>
+              </article>
+              <article style={{ ...cardStyle, gridColumn: "1 / -1", minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.tmrwdaoTaskNextAction}</p>
+                <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(tmrwdaoTaskReadiness.ownerNextAction, locale)}
+                </p>
+              </article>
+            </div>
+
+            <p style={boundaryStyle}>
+              <strong>{copy.tmrwdaoTaskBoundary}: </strong>
+              {getLocalizedText(tmrwdaoTaskReadiness.boundary, locale)}
+            </p>
+
+            <div style={compactSectionGridStyle}>
+              {tmrwdaoTaskReadiness.rows.map((row) => (
+                <article key={row.id} style={{ ...cardStyle, minHeight: 0 }}>
+                  <div style={headingRowStyle}>
+                    <div>
+                      <p style={statLabelStyle}>{copy.tmrwdaoTaskProviderState}</p>
+                      <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                        {getLocalizedText(row.label, locale)}
+                      </h4>
+                    </div>
+                    <PublishStateBadge
+                      label={tmrwdaoTaskReadinessLabel(row.readinessState, copy)}
+                      state={tmrwdaoTaskReadinessBadgeState(row.readinessState)}
+                    />
+                  </div>
+
+                  <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(row.description, locale)}
+                  </p>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <Badge
+                      label={`${row.verificationType} · ${row.evidenceSource}`}
+                      tone="info"
+                    />
+                    <Badge
+                      label={`${copy.tmrwdaoTaskProviderState}: ${tmrwdaoTaskProviderStateLabel(row.providerState, locale)}`}
+                      tone={row.providerState === "seeded_preview" ? "success" : "warning"}
+                    />
+                    <Badge
+                      label={`${copy.tmrwdaoTaskOwner}: ${tmrwdaoTaskOwnerLabel(row.ownerRole, locale)}`}
+                      tone="neutral"
+                    />
+                  </div>
+
+                  <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.tmrwdaoTaskRiskState}: </strong>
+                    {getLocalizedText(row.riskState, locale)}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.tmrwdaoTaskNextAction}: </strong>
+                    {getLocalizedText(row.nextAction, locale)}
+                  </p>
+                  <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.tmrwdaoTaskBoundary}: </strong>
                     {getLocalizedText(row.boundary, locale)}
                   </p>
                 </article>
