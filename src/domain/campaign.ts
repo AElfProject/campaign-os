@@ -241,6 +241,10 @@ import type {
   LocaleAnalyticsReadinessRow,
   LocalizedText,
   OwnerRole,
+  P1LocaleActivationCandidate,
+  P1LocaleActivationEvidenceState,
+  P1LocaleActivationReadiness,
+  P1LocaleActivationStatus,
   P1LocaleCode,
   P1LocaleExpansionReadiness,
   P1LocaleExpansionReadinessRow,
@@ -11958,6 +11962,205 @@ const createP1LocaleExpansionReadiness = (): P1LocaleExpansionReadiness => {
   };
 };
 
+const p1LocaleActivationBoundary = localized(
+  "P1 locale activation readiness is review-only. Runtime support remains limited to en-US, zh-CN, and zh-TW until a later per-locale activation mission approves content, QA, routing, analytics, and publish gates.",
+  "P1 语言激活 readiness 仅用于审核。运行时支持仍限定为 en-US、zh-CN 与 zh-TW，直到后续单语言激活 mission 批准内容、QA、路由、analytics 与发布门禁。",
+  "P1 語言啟用 readiness 僅用於審核。執行時支援仍限定為 en-US、zh-CN 與 zh-TW，直到後續單語言啟用 mission 批准內容、QA、routing、analytics 與發布門禁。",
+);
+
+type P1LocaleActivationSeed = {
+  locale: P1LocaleCode;
+  status: P1LocaleActivationStatus;
+  ownerRole: OwnerRole;
+  recommendedFirst?: boolean;
+  contentOwnershipReadiness: P1LocaleActivationEvidenceState;
+  qaReadiness: P1LocaleActivationEvidenceState;
+  routingReadiness: P1LocaleActivationEvidenceState;
+  analyticsReadiness: P1LocaleActivationEvidenceState;
+  publishGateReadiness: P1LocaleActivationEvidenceState;
+  blockerIds: string[];
+  evidenceReferences: string[];
+};
+
+const p1LocaleActivationSeeds: P1LocaleActivationSeed[] = [
+  {
+    locale: "ko-KR",
+    status: "blocked",
+    ownerRole: "project_owner",
+    contentOwnershipReadiness: "missing",
+    qaReadiness: "missing",
+    routingReadiness: "missing",
+    analyticsReadiness: "partial",
+    publishGateReadiness: "missing",
+    blockerIds: ["content-owner-missing", "locale-qa-scope-missing", "publish-gate-not-approved"],
+    evidenceReferences: ["v02-p1-locale-expansion", "product-future-locale-expansion"],
+  },
+  {
+    locale: "ja-JP",
+    status: "review_required",
+    ownerRole: "project_owner",
+    recommendedFirst: true,
+    contentOwnershipReadiness: "partial",
+    qaReadiness: "partial",
+    routingReadiness: "missing",
+    analyticsReadiness: "partial",
+    publishGateReadiness: "missing",
+    blockerIds: ["ja-jp-activation-mission-required", "runtime-route-gate-not-approved"],
+    evidenceReferences: ["v02-p1-locale-expansion", "mission/p1-locale-expansion"],
+  },
+  {
+    locale: "vi-VN",
+    status: "blocked",
+    ownerRole: "project_owner",
+    contentOwnershipReadiness: "missing",
+    qaReadiness: "missing",
+    routingReadiness: "missing",
+    analyticsReadiness: "missing",
+    publishGateReadiness: "missing",
+    blockerIds: ["content-owner-missing", "analytics-split-missing", "publish-gate-not-approved"],
+    evidenceReferences: ["v02-p1-locale-expansion"],
+  },
+  {
+    locale: "id-ID",
+    status: "deferred",
+    ownerRole: "project_owner",
+    contentOwnershipReadiness: "missing",
+    qaReadiness: "missing",
+    routingReadiness: "missing",
+    analyticsReadiness: "missing",
+    publishGateReadiness: "missing",
+    blockerIds: ["activation-sequence-deferred"],
+    evidenceReferences: ["v02-p1-locale-expansion"],
+  },
+  {
+    locale: "tr-TR",
+    status: "deferred",
+    ownerRole: "project_owner",
+    contentOwnershipReadiness: "missing",
+    qaReadiness: "missing",
+    routingReadiness: "missing",
+    analyticsReadiness: "missing",
+    publishGateReadiness: "missing",
+    blockerIds: ["activation-sequence-deferred"],
+    evidenceReferences: ["v02-p1-locale-expansion"],
+  },
+  {
+    locale: "es-ES",
+    status: "review_required",
+    ownerRole: "project_owner",
+    contentOwnershipReadiness: "partial",
+    qaReadiness: "missing",
+    routingReadiness: "missing",
+    analyticsReadiness: "partial",
+    publishGateReadiness: "missing",
+    blockerIds: ["locale-qa-scope-missing", "publish-gate-not-approved"],
+    evidenceReferences: ["v02-p1-locale-expansion", "product-future-locale-expansion"],
+  },
+];
+
+const p1LocaleActivationContentScope = (code: P1LocaleCode): LocalizedText => localized(
+  `Reviewed campaign title, task instructions, reward disclaimer, share card, and support copy for ${code}.`,
+  `${code} 的已审核活动标题、任务说明、奖励免责声明、分享卡片与支持文案。`,
+  `${code} 的已審核活動標題、任務說明、獎勵免責聲明、分享卡片與支援文案。`,
+);
+
+const p1LocaleActivationQaScope = (code: P1LocaleCode): LocalizedText => localized(
+  `Locale QA must cover route fallback, language selector, campaign creation validation, analytics split, and publish gates for ${code}.`,
+  `${code} 的语言 QA 必须覆盖路由 fallback、语言选择器、活动创建校验、analytics 拆分与发布门禁。`,
+  `${code} 的語言 QA 必須覆蓋 route fallback、語言選擇器、活動建立校驗、analytics 拆分與發布門禁。`,
+);
+
+const p1LocaleActivationNextAction = (
+  code: P1LocaleCode,
+  recommendedFirst: boolean,
+): LocalizedText => recommendedFirst
+  ? localized(
+    `Open the dedicated ${code} activation mission only after content ownership, QA scope, runtime routing, analytics, and publish gates are approved.`,
+    `仅在内容归属、QA 范围、运行时路由、analytics 与发布门禁获批后，开启专门的 ${code} 激活 mission。`,
+    `僅在內容歸屬、QA 範圍、執行時 routing、analytics 與發布門禁獲批後，開啟專門的 ${code} 啟用 mission。`,
+  )
+  : localized(
+    `Keep ${code} queued behind the first locale activation mission until ownership and QA evidence are stronger.`,
+    `在首个语言激活 mission 完成且归属与 QA 证据更充分前，将 ${code} 留在队列中。`,
+    `在首個語言啟用 mission 完成且歸屬與 QA 證據更充分前，將 ${code} 留在佇列中。`,
+  );
+
+const createP1LocaleActivationCandidate = (
+  seed: P1LocaleActivationSeed,
+  priority: number,
+): P1LocaleActivationCandidate => {
+  const locale = p1LocaleExpansionRegistry.find((candidate) => candidate.code === seed.locale);
+  const recommendedFirst = seed.recommendedFirst === true;
+
+  return {
+    locale: seed.locale,
+    label: locale?.displayName ?? localized(seed.locale, seed.locale, seed.locale),
+    targetMarket: locale?.marketSignal ?? localized(seed.locale, seed.locale, seed.locale),
+    priority,
+    status: seed.status,
+    ownerRole: seed.ownerRole,
+    recommendedFirst,
+    contentScope: p1LocaleActivationContentScope(seed.locale),
+    qaScope: p1LocaleActivationQaScope(seed.locale),
+    routingReadiness: seed.routingReadiness,
+    analyticsReadiness: seed.analyticsReadiness,
+    publishGateReadiness: seed.publishGateReadiness,
+    contentOwnershipReadiness: seed.contentOwnershipReadiness,
+    qaReadiness: seed.qaReadiness,
+    blockerIds: [...seed.blockerIds],
+    evidenceReferences: [...seed.evidenceReferences],
+    nextAction: p1LocaleActivationNextAction(seed.locale, recommendedFirst),
+    boundary: p1LocaleActivationBoundary,
+  };
+};
+
+const p1LocaleActivationEvidenceStates = (
+  candidate: P1LocaleActivationCandidate,
+): P1LocaleActivationEvidenceState[] => [
+  candidate.contentOwnershipReadiness,
+  candidate.qaReadiness,
+  candidate.routingReadiness,
+  candidate.analyticsReadiness,
+  candidate.publishGateReadiness,
+];
+
+export const createP1LocaleActivationReadiness = (): P1LocaleActivationReadiness => {
+  const candidates = p1LocaleActivationSeeds.map(createP1LocaleActivationCandidate);
+  const recommendedFirst = candidates.find((candidate) => candidate.recommendedFirst) ?? candidates[0];
+  const topBlocker = recommendedFirst.blockerIds[0] ?? candidates.find((candidate) => candidate.blockerIds.length > 0)
+    ?.blockerIds[0] ?? null;
+  const requiredEvidenceItems = candidates.reduce(
+    (count, candidate) => count + p1LocaleActivationEvidenceStates(candidate).length,
+    0,
+  );
+  const completedEvidenceItems = candidates.reduce(
+    (count, candidate) =>
+      count + p1LocaleActivationEvidenceStates(candidate).filter((state) => state === "ready").length,
+    0,
+  );
+  const readyCandidates = candidates.filter((candidate) => candidate.status === "ready").length;
+  const nextAction = recommendedFirst.nextAction;
+
+  return {
+    summary: {
+      totalCandidates: candidates.length,
+      blockedCandidates: candidates.filter((candidate) => candidate.status === "blocked").length,
+      reviewRequiredCandidates: candidates.filter((candidate) => candidate.status === "review_required").length,
+      readyCandidates,
+      deferredCandidates: candidates.filter((candidate) => candidate.status === "deferred").length,
+      requiredEvidenceItems,
+      completedEvidenceItems,
+      recommendedFirstLocale: recommendedFirst.locale,
+      topBlockerId: topBlocker,
+      ready: readyCandidates > 0 && recommendedFirst.blockerIds.length === 0,
+      nextAction,
+    },
+    candidates,
+    boundary: p1LocaleActivationBoundary,
+    nextAction,
+  };
+};
+
 const deliveryChecklistStatusCount = (
   items: DeliveryChecklistItem[],
   status: DeliveryChecklistStatus,
@@ -17698,6 +17901,7 @@ export const createAdminOpsReadModel = (
     reviewQueue: campaign.reviewItems,
     deliveryAcceptance,
     residualGapMissionQueue: createResidualGapMissionQueue(deliveryAcceptance),
+    p1LocaleActivationReadiness: createP1LocaleActivationReadiness(),
     deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
     walletProviderQaGate,
     walletProviderEvidenceIntake,

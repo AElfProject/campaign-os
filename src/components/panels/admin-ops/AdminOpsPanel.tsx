@@ -44,6 +44,8 @@ import {
   type LiveWalletConnectorLiveEvidenceStatus,
   type LiveWalletConnectorReadiness,
   type MetricTone,
+  type P1LocaleActivationEvidenceState,
+  type P1LocaleActivationStatus,
   type ProviderFeatureGateState,
   type ProviderLiveEvidenceStatus,
   type ResidualGapMissionQueueStatus,
@@ -424,6 +426,42 @@ const deliveryChecklistStatusState = (status: DeliveryChecklistStatus) =>
     : status === "needs_review" || status === "deferred"
       ? "warning"
       : "ready";
+
+const p1LocaleActivationStatusState = (
+  status: P1LocaleActivationStatus,
+): PublishState =>
+  status === "blocked" ? "blocker" : status === "ready" ? "ready" : "warning";
+
+const p1LocaleActivationStatusLabel = (
+  status: P1LocaleActivationStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<P1LocaleActivationStatus, string> = {
+    blocked: copy.blocked,
+    deferred: copy.deferred,
+    ready: copy.readyActions,
+    review_required: copy.reviewRequired,
+  };
+
+  return labels[status];
+};
+
+const p1LocaleActivationEvidenceState = (
+  state: P1LocaleActivationEvidenceState,
+): PublishState => state === "missing" ? "blocker" : state === "ready" ? "ready" : "warning";
+
+const p1LocaleActivationEvidenceLabel = (
+  state: P1LocaleActivationEvidenceState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<P1LocaleActivationEvidenceState, string> = {
+    missing: copy.missing,
+    partial: copy.partial,
+    ready: copy.readyActions,
+  };
+
+  return labels[state];
+};
 
 const deliveryAcceptanceStatusState = (status: DeliveryAcceptanceStatus) =>
   status === "blocked"
@@ -1044,6 +1082,7 @@ export const AdminOpsPanel = ({
   const aiContentPack = adminOps.aiContentPack;
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
+  const p1LocaleActivationReadiness = adminOps.p1LocaleActivationReadiness;
   const deliveryAcceptance = adminOps.deliveryAcceptance;
   const residualGapMissionQueue = adminOps.residualGapMissionQueue;
   const walletProviderEvidenceIntake = adminOps.walletProviderEvidenceIntake;
@@ -4050,6 +4089,172 @@ export const AdminOpsPanel = ({
             </article>
           ))}
         </div>
+        <article aria-label={copy.p1LocaleActivationReadiness} style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.p1LocaleActivationSubtitle}</p>
+              <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: 0 }}>
+                {copy.p1LocaleActivationReadiness}
+              </h4>
+            </div>
+            <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <Badge
+                label={`${p1LocaleActivationReadiness.summary.totalCandidates} ${copy.localePreference}`}
+                tone="info"
+              />
+              <PublishStateBadge
+                label={`${p1LocaleActivationReadiness.summary.blockedCandidates} ${copy.blocked}`}
+                state={p1LocaleActivationReadiness.summary.blockedCandidates > 0 ? "blocker" : "ready"}
+              />
+              <PublishStateBadge
+                label={`${p1LocaleActivationReadiness.summary.reviewRequiredCandidates} ${copy.reviewRequired}`}
+                state={p1LocaleActivationReadiness.summary.reviewRequiredCandidates > 0 ? "warning" : "ready"}
+              />
+            </span>
+          </div>
+          <div style={boundaryStyle}>
+            <p style={{ margin: 0 }}>
+              {copy.p1LocaleActivationClosedRuntimeBoundary}: {getLocalizedText(p1LocaleActivationReadiness.boundary, locale)}
+            </p>
+            <p style={{ margin: "8px 0 0" }}>
+              {copy.p1LocaleActivationNextAction}: {getLocalizedText(p1LocaleActivationReadiness.nextAction, locale)}
+            </p>
+          </div>
+          <div style={compactGridStyle}>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.p1LocaleActivationTotalCandidates}</p>
+              <p style={valueStyle}>{p1LocaleActivationReadiness.summary.totalCandidates}</p>
+              <p style={mutedTextStyle}>{copy.p1LocaleActivationCandidateList}</p>
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.p1LocaleActivationBlockedCandidates}</p>
+              <p style={valueStyle}>{p1LocaleActivationReadiness.summary.blockedCandidates}</p>
+              <p style={mutedTextStyle}>{p1LocaleActivationReadiness.summary.topBlockerId}</p>
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.p1LocaleActivationReviewRequiredCandidates}</p>
+              <p style={valueStyle}>{p1LocaleActivationReadiness.summary.reviewRequiredCandidates}</p>
+              <p style={mutedTextStyle}>{copy.reviewRequired}</p>
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.p1LocaleActivationReadyCandidates}</p>
+              <p style={valueStyle}>{p1LocaleActivationReadiness.summary.readyCandidates}</p>
+              <p style={mutedTextStyle}>{copy.readyActions}</p>
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.p1LocaleActivationRequiredEvidence}</p>
+              <p style={valueStyle}>{p1LocaleActivationReadiness.summary.requiredEvidenceItems}</p>
+              <p style={mutedTextStyle}>{copy.p1LocaleActivationSummary}</p>
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.p1LocaleActivationCompletedEvidence}</p>
+              <p style={valueStyle}>{p1LocaleActivationReadiness.summary.completedEvidenceItems}</p>
+              <p style={mutedTextStyle}>{copy.evidenceStatus}</p>
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.p1LocaleActivationRecommendedFirst}</p>
+              <p style={valueStyle}>{p1LocaleActivationReadiness.summary.recommendedFirstLocale}</p>
+              <p style={mutedTextStyle}>{copy.p1LocaleActivationNextAction}</p>
+            </article>
+          </div>
+          <div style={gridStyle}>
+            {p1LocaleActivationReadiness.candidates.map((candidate) => (
+              <article key={candidate.locale} style={cardStyle}>
+                <div style={rowStyle}>
+                  <div style={stackStyle}>
+                    <p style={labelStyle}>{candidate.locale}</p>
+                    <strong>{getLocalizedText(candidate.label, locale)}</strong>
+                  </div>
+                  <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {candidate.recommendedFirst ? (
+                      <Badge label={copy.p1LocaleActivationRecommendedFirst} tone="info" />
+                    ) : null}
+                    <PublishStateBadge
+                      label={p1LocaleActivationStatusLabel(candidate.status, copy)}
+                      state={p1LocaleActivationStatusState(candidate.status)}
+                    />
+                  </span>
+                </div>
+                <div style={compactGridStyle}>
+                  <div>
+                    <p style={labelStyle}>{copy.priority}</p>
+                    <p style={mutedTextStyle}>{candidate.priority}</p>
+                  </div>
+                  <div>
+                    <p style={labelStyle}>{copy.p1LocaleActivationContentOwner}</p>
+                    <p style={mutedTextStyle}>{readableCode(candidate.ownerRole)}</p>
+                  </div>
+                  <div>
+                    <p style={labelStyle}>{copy.p1LocaleActivationRoutingReadiness}</p>
+                    <PublishStateBadge
+                      label={p1LocaleActivationEvidenceLabel(candidate.routingReadiness, copy)}
+                      state={p1LocaleActivationEvidenceState(candidate.routingReadiness)}
+                    />
+                  </div>
+                  <div>
+                    <p style={labelStyle}>{copy.p1LocaleActivationAnalyticsReadiness}</p>
+                    <PublishStateBadge
+                      label={p1LocaleActivationEvidenceLabel(candidate.analyticsReadiness, copy)}
+                      state={p1LocaleActivationEvidenceState(candidate.analyticsReadiness)}
+                    />
+                  </div>
+                  <div>
+                    <p style={labelStyle}>{copy.p1LocaleActivationPublishGateReadiness}</p>
+                    <PublishStateBadge
+                      label={p1LocaleActivationEvidenceLabel(candidate.publishGateReadiness, copy)}
+                      state={p1LocaleActivationEvidenceState(candidate.publishGateReadiness)}
+                    />
+                  </div>
+                  <div>
+                    <p style={labelStyle}>{copy.p1LocaleActivationContentOwnershipReadiness}</p>
+                    <PublishStateBadge
+                      label={p1LocaleActivationEvidenceLabel(candidate.contentOwnershipReadiness, copy)}
+                      state={p1LocaleActivationEvidenceState(candidate.contentOwnershipReadiness)}
+                    />
+                  </div>
+                  <div>
+                    <p style={labelStyle}>{copy.p1LocaleActivationQaReadiness}</p>
+                    <PublishStateBadge
+                      label={p1LocaleActivationEvidenceLabel(candidate.qaReadiness, copy)}
+                      state={p1LocaleActivationEvidenceState(candidate.qaReadiness)}
+                    />
+                  </div>
+                </div>
+                <p style={wrapTextStyle}>
+                  {copy.p1LocaleActivationTargetMarket}: {getLocalizedText(candidate.targetMarket, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.p1LocaleActivationContentScope}: {getLocalizedText(candidate.contentScope, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.p1LocaleActivationQaScope}: {getLocalizedText(candidate.qaScope, locale)}
+                </p>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.p1LocaleActivationBlockers}</p>
+                  <span style={chipListStyle}>
+                    {candidate.blockerIds.map((blockerId) => (
+                      <Badge key={`${candidate.locale}-${blockerId}`} label={blockerId} tone="warning" />
+                    ))}
+                  </span>
+                </div>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.p1LocaleActivationEvidenceReferences}</p>
+                  <span style={chipListStyle}>
+                    {candidate.evidenceReferences.map((reference) => (
+                      <Badge key={`${candidate.locale}-${reference}`} label={reference} tone="info" />
+                    ))}
+                  </span>
+                </div>
+                <p style={wrapTextStyle}>
+                  {copy.p1LocaleActivationClosedRuntimeBoundary}: {getLocalizedText(candidate.boundary, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.p1LocaleActivationNextAction}: {getLocalizedText(candidate.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+        </article>
         <article style={cardStyle}>
           <div style={rowStyle}>
             <div style={stackStyle}>
