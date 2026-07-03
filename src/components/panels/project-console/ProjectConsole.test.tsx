@@ -494,6 +494,31 @@ describe("Project Console shell", () => {
     expect(within(forestReadiness).getAllByText(/NFT trade\/listing execution/).length).toBeGreaterThan(0);
     expect(within(forestReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
     expect(within(forestReadiness).getAllByText(/contract read\/send\/write/).length).toBeGreaterThan(0);
+    const schrodingerReadiness = screen.getByLabelText("Schrödinger NFT task readiness");
+    expect(
+      within(schrodingerReadiness).getByRole("heading", { name: "Schrödinger NFT task readiness" }),
+    ).toBeInTheDocument();
+    expect(within(schrodingerReadiness).getByText("Schrödinger NFT adopt readiness")).toBeInTheDocument();
+    expect(within(schrodingerReadiness).getByText("Schrödinger NFT holder evidence")).toBeInTheDocument();
+    expect(within(schrodingerReadiness).getByText("Schrödinger NFT trade/listing review")).toBeInTheDocument();
+    expect(within(schrodingerReadiness).getByText("Schrödinger holder leaderboard review")).toBeInTheDocument();
+    expect(within(schrodingerReadiness).getByText("DAPP_API · seeded_local")).toBeInTheDocument();
+    expect(
+      within(schrodingerReadiness).getAllByText("DAPP_API · project_api").length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(schrodingerReadiness).getAllByText("DAPP_API · schrodinger_trade_listing_event").length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(schrodingerReadiness).getAllByText("DAPP_API · holder_leaderboard").length,
+    ).toBeGreaterThan(0);
+    expect(within(schrodingerReadiness).getAllByText(/No live Schrödinger service\/API/).length).toBeGreaterThan(0);
+    expect(within(schrodingerReadiness).getAllByText(/project API/).length).toBeGreaterThan(0);
+    expect(within(schrodingerReadiness).getAllByText(/NFT marketplace\/indexer/).length).toBeGreaterThan(0);
+    expect(within(schrodingerReadiness).getAllByText(/NFT adopt execution/).length).toBeGreaterThan(0);
+    expect(within(schrodingerReadiness).getAllByText(/NFT trade\/listing execution/).length).toBeGreaterThan(0);
+    expect(within(schrodingerReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
+    expect(within(schrodingerReadiness).getAllByText(/contract read\/send\/write/).length).toBeGreaterThan(0);
     const daippReadiness = screen.getByLabelText("daipp Agent Coin task readiness");
     expect(
       within(daippReadiness).getByRole("heading", { name: "daipp Agent Coin task readiness" }),
@@ -617,6 +642,31 @@ describe("Project Console shell", () => {
     expect(within(forestReadiness).getAllByText(/不会执行 NFT mint/).length).toBeGreaterThan(0);
     expect(within(forestReadiness).getAllByText(/NFT trade\/listing/).length).toBeGreaterThan(0);
     expect(within(forestReadiness).getAllByText(/合约读取\/发送\/写入/).length).toBeGreaterThan(0);
+  });
+
+  it("renders localized Schrödinger NFT task readiness in zh-CN", () => {
+    render(
+      <ProjectConsole
+        activeWorkspace="templates"
+        campaign={campaignDetail}
+        locale="zh-CN"
+      />,
+    );
+
+    const schrodingerReadiness = screen.getByLabelText("Schrödinger NFT 任务 readiness");
+    expect(
+      within(schrodingerReadiness).getByRole("heading", { name: "Schrödinger NFT 任务 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(schrodingerReadiness).getByText("Schrödinger NFT adopt readiness")).toBeInTheDocument();
+    expect(within(schrodingerReadiness).getByText("Schrödinger NFT holder 证据")).toBeInTheDocument();
+    expect(within(schrodingerReadiness).getByText("Schrödinger NFT trade/listing 审核")).toBeInTheDocument();
+    expect(within(schrodingerReadiness).getByText("Schrödinger holder 排行榜审核")).toBeInTheDocument();
+    expect(within(schrodingerReadiness).getAllByText(/不会调用实时 Schrödinger service\/API/).length).toBeGreaterThan(0);
+    expect(within(schrodingerReadiness).getAllByText(/project API/).length).toBeGreaterThan(0);
+    expect(within(schrodingerReadiness).getAllByText(/不会连接 NFT marketplace\/indexer/).length).toBeGreaterThan(0);
+    expect(within(schrodingerReadiness).getAllByText(/不会执行 NFT adopt/).length).toBeGreaterThan(0);
+    expect(within(schrodingerReadiness).getAllByText(/NFT trade\/listing/).length).toBeGreaterThan(0);
+    expect(within(schrodingerReadiness).getAllByText(/合约读取\/发送\/写入/).length).toBeGreaterThan(0);
   });
 
   it("renders localized daipp Agent Coin task readiness in zh-CN", () => {

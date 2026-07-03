@@ -315,6 +315,31 @@ export type ForestNftTaskEvidenceSource =
   | "forest_marketplace_event"
   | "holder_snapshot"
   | "seeded_local";
+export type SchrodingerNftTaskIntentId =
+  | "schrodinger-nft-adopt-readiness"
+  | "schrodinger-nft-holder-evidence"
+  | "schrodinger-nft-trade-listing-review"
+  | "schrodinger-holder-leaderboard-review";
+export type SchrodingerNftTaskProviderState =
+  | "not_connected"
+  | "seeded_preview"
+  | "review_required"
+  | "blocked";
+export type SchrodingerNftTaskReadinessState =
+  | "ready"
+  | "review_required"
+  | "blocked";
+export type SchrodingerNftTaskOwnerRole =
+  | "project_owner"
+  | "operator"
+  | "schrodinger_provider_reviewer";
+export type SchrodingerNftTaskEvidenceSource =
+  | "holder_leaderboard"
+  | "holder_snapshot"
+  | "project_api"
+  | "schrodinger_nft_contract_event"
+  | "schrodinger_trade_listing_event"
+  | "seeded_local";
 export type ForecastCampaignTaskIntentId =
   | "prediction-participation"
   | "win-streak"
@@ -2928,6 +2953,40 @@ export interface ForestNftTaskReadiness {
   campaignId: string;
   summary: ForestNftTaskReadinessSummary;
   rows: ForestNftTaskReadinessRow[];
+  ownerNextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface SchrodingerNftTaskReadinessRow {
+  id: string;
+  intentId: SchrodingerNftTaskIntentId;
+  label: LocalizedText;
+  description: LocalizedText;
+  verificationType: "DAPP_API";
+  evidenceSource: SchrodingerNftTaskEvidenceSource;
+  providerState: SchrodingerNftTaskProviderState;
+  readinessState: SchrodingerNftTaskReadinessState;
+  riskState: LocalizedText;
+  ownerRole: SchrodingerNftTaskOwnerRole;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface SchrodingerNftTaskReadinessSummary {
+  totalTasks: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  topState: SchrodingerNftTaskReadinessState;
+  topIntentId: SchrodingerNftTaskIntentId;
+  primaryOwnerRole: SchrodingerNftTaskOwnerRole;
+  boundary: LocalizedText;
+}
+
+export interface SchrodingerNftTaskReadiness {
+  campaignId: string;
+  summary: SchrodingerNftTaskReadinessSummary;
+  rows: SchrodingerNftTaskReadinessRow[];
   ownerNextAction: LocalizedText;
   boundary: LocalizedText;
 }
