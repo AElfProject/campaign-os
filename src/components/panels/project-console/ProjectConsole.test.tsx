@@ -494,6 +494,26 @@ describe("Project Console shell", () => {
     expect(within(forestReadiness).getAllByText(/NFT trade\/listing execution/).length).toBeGreaterThan(0);
     expect(within(forestReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
     expect(within(forestReadiness).getAllByText(/contract read\/send\/write/).length).toBeGreaterThan(0);
+    const ebridgeReadiness = screen.getByLabelText("eBridge task readiness");
+    expect(
+      within(ebridgeReadiness).getByRole("heading", { name: "eBridge task readiness" }),
+    ).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("Bridge intent readiness")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("Bridge amount threshold review")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("Bridge on-chain evidence")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("Awaken unlock dependency")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("Bridge eligibility impact")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("ON_CHAIN · seeded_local")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("DAPP_API · ebridge_api")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("ON_CHAIN · aefinder_on_chain")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("DAPP_API · awaken_unlock_rule")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("DAPP_API · eligibility_engine")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getAllByText(/No live eBridge service\/API/).length).toBeGreaterThan(0);
+    expect(within(ebridgeReadiness).getAllByText(/bridge transaction/).length).toBeGreaterThan(0);
+    expect(within(ebridgeReadiness).getAllByText(/asset transfer/).length).toBeGreaterThan(0);
+    expect(within(ebridgeReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
+    expect(within(ebridgeReadiness).getAllByText(/contract read\/send\/write/).length).toBeGreaterThan(0);
+    expect(within(ebridgeReadiness).getAllByText(/export generation/).length).toBeGreaterThan(0);
     const schrodingerReadiness = screen.getByLabelText("Schrödinger NFT task readiness");
     expect(
       within(schrodingerReadiness).getByRole("heading", { name: "Schrödinger NFT task readiness" }),
@@ -667,6 +687,37 @@ describe("Project Console shell", () => {
     expect(within(schrodingerReadiness).getAllByText(/不会执行 NFT adopt/).length).toBeGreaterThan(0);
     expect(within(schrodingerReadiness).getAllByText(/NFT trade\/listing/).length).toBeGreaterThan(0);
     expect(within(schrodingerReadiness).getAllByText(/合约读取\/发送\/写入/).length).toBeGreaterThan(0);
+  });
+
+  it("renders localized eBridge task readiness in zh-CN", () => {
+    render(
+      <ProjectConsole
+        activeWorkspace="templates"
+        campaign={campaignDetail}
+        locale="zh-CN"
+      />,
+    );
+
+    const ebridgeReadiness = screen.getByLabelText("eBridge 任务 readiness");
+    expect(
+      within(ebridgeReadiness).getByRole("heading", { name: "eBridge 任务 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("Bridge 意图 readiness")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("Bridge 金额门槛审核")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("Bridge 链上证据")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("Awaken 解锁依赖")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("Bridge 资格影响")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("ON_CHAIN · seeded_local")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("DAPP_API · ebridge_api")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("ON_CHAIN · aefinder_on_chain")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("DAPP_API · awaken_unlock_rule")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getByText("DAPP_API · eligibility_engine")).toBeInTheDocument();
+    expect(within(ebridgeReadiness).getAllByText(/不会调用真实 eBridge service\/API/).length).toBeGreaterThan(0);
+    expect(within(ebridgeReadiness).getAllByText(/不会执行 bridge 交易/).length).toBeGreaterThan(0);
+    expect(within(ebridgeReadiness).getAllByText(/资产转移/).length).toBeGreaterThan(0);
+    expect(within(ebridgeReadiness).getAllByText(/钱包签名/).length).toBeGreaterThan(0);
+    expect(within(ebridgeReadiness).getAllByText(/合约读取\/发送\/写入/).length).toBeGreaterThan(0);
+    expect(within(ebridgeReadiness).getAllByText(/导出生成/).length).toBeGreaterThan(0);
   });
 
   it("renders localized daipp Agent Coin task readiness in zh-CN", () => {

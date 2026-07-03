@@ -340,6 +340,33 @@ export type SchrodingerNftTaskEvidenceSource =
   | "schrodinger_nft_contract_event"
   | "schrodinger_trade_listing_event"
   | "seeded_local";
+export type EbridgeTaskIntentId =
+  | "bridge-intent-readiness"
+  | "bridge-amount-threshold-review"
+  | "bridge-on-chain-evidence"
+  | "bridge-awaken-unlock-dependency"
+  | "bridge-eligibility-impact";
+export type EbridgeTaskProviderState =
+  | "not_connected"
+  | "seeded_preview"
+  | "review_required"
+  | "blocked";
+export type EbridgeTaskReadinessState =
+  | "ready"
+  | "review_required"
+  | "blocked";
+export type EbridgeTaskOwnerRole =
+  | "project_owner"
+  | "operator"
+  | "bridge_provider_reviewer"
+  | "risk_reviewer";
+export type EbridgeTaskEvidenceSource =
+  | "seeded_local"
+  | "ebridge_api"
+  | "aefinder_on_chain"
+  | "aelfscan_transaction"
+  | "awaken_unlock_rule"
+  | "eligibility_engine";
 export type ForecastCampaignTaskIntentId =
   | "prediction-participation"
   | "win-streak"
@@ -2987,6 +3014,40 @@ export interface SchrodingerNftTaskReadiness {
   campaignId: string;
   summary: SchrodingerNftTaskReadinessSummary;
   rows: SchrodingerNftTaskReadinessRow[];
+  ownerNextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface EbridgeTaskReadinessRow {
+  id: string;
+  intentId: EbridgeTaskIntentId;
+  label: LocalizedText;
+  description: LocalizedText;
+  verificationType: "ON_CHAIN" | "DAPP_API";
+  evidenceSource: EbridgeTaskEvidenceSource;
+  providerState: EbridgeTaskProviderState;
+  readinessState: EbridgeTaskReadinessState;
+  riskState: LocalizedText;
+  ownerRole: EbridgeTaskOwnerRole;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface EbridgeTaskReadinessSummary {
+  totalTasks: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  topState: EbridgeTaskReadinessState;
+  topIntentId: EbridgeTaskIntentId;
+  primaryOwnerRole: EbridgeTaskOwnerRole;
+  boundary: LocalizedText;
+}
+
+export interface EbridgeTaskReadiness {
+  campaignId: string;
+  summary: EbridgeTaskReadinessSummary;
+  rows: EbridgeTaskReadinessRow[];
   ownerNextAction: LocalizedText;
   boundary: LocalizedText;
 }

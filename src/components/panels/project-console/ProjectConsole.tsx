@@ -7,6 +7,7 @@ import {
   campaignDetail,
   createCampaignSettingsReadiness,
   createDaippAgentCoinTaskReadiness,
+  createEbridgeTaskReadiness,
   createForestNftTaskReadiness,
   createSchrodingerNftTaskReadiness,
   createForecastCampaignTaskReadiness,
@@ -41,6 +42,9 @@ import {
   type DaippAgentCoinTaskOwnerRole,
   type DaippAgentCoinTaskProviderState,
   type DaippAgentCoinTaskReadinessState,
+  type EbridgeTaskOwnerRole,
+  type EbridgeTaskProviderState,
+  type EbridgeTaskReadinessState,
   type ForestNftTaskOwnerRole,
   type ForestNftTaskProviderState,
   type ForestNftTaskReadinessState,
@@ -523,6 +527,83 @@ const forestTaskOwnerLabel = (
       project_owner: "專案方",
     },
   } satisfies Record<SupportedLocale, Record<ForestNftTaskOwnerRole, string>>;
+
+  return labels[locale][ownerRole];
+};
+
+const ebridgeTaskReadinessBadgeState = (
+  state: EbridgeTaskReadinessState,
+) => state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const ebridgeTaskReadinessLabel = (
+  state: EbridgeTaskReadinessState,
+  labels: {
+    ebridgeTaskBlocked: string;
+    ebridgeTaskReady: string;
+    ebridgeTaskReviewRequired: string;
+  },
+) => {
+  if (state === "ready") {
+    return labels.ebridgeTaskReady;
+  }
+
+  return state === "review_required"
+    ? labels.ebridgeTaskReviewRequired
+    : labels.ebridgeTaskBlocked;
+};
+
+const ebridgeTaskProviderStateLabel = (
+  state: EbridgeTaskProviderState,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      blocked: "Blocked",
+      not_connected: "Not connected",
+      review_required: "Review required",
+      seeded_preview: "Seeded preview",
+    },
+    "zh-CN": {
+      blocked: "阻断",
+      not_connected: "未连接",
+      review_required: "需要审核",
+      seeded_preview: "Seeded 预览",
+    },
+    "zh-TW": {
+      blocked: "阻斷",
+      not_connected: "未連接",
+      review_required: "需要審核",
+      seeded_preview: "Seeded 預覽",
+    },
+  } satisfies Record<SupportedLocale, Record<EbridgeTaskProviderState, string>>;
+
+  return labels[locale][state];
+};
+
+const ebridgeTaskOwnerLabel = (
+  ownerRole: EbridgeTaskOwnerRole,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      bridge_provider_reviewer: "Bridge provider reviewer",
+      operator: "Operator",
+      project_owner: "Project owner",
+      risk_reviewer: "Risk reviewer",
+    },
+    "zh-CN": {
+      bridge_provider_reviewer: "Bridge provider 审核人",
+      operator: "运营",
+      project_owner: "项目方",
+      risk_reviewer: "风险审核人",
+    },
+    "zh-TW": {
+      bridge_provider_reviewer: "Bridge provider 審核人",
+      operator: "營運",
+      project_owner: "專案方",
+      risk_reviewer: "風險審核人",
+    },
+  } satisfies Record<SupportedLocale, Record<EbridgeTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -1427,6 +1508,7 @@ export const ProjectConsole = ({
   const aiContentPack = createAiContentPackWorkbench(campaign);
   const campaignTemplatePack = createCampaignTemplatePack();
   const daippTaskReadiness = createDaippAgentCoinTaskReadiness(campaign);
+  const ebridgeTaskReadiness = createEbridgeTaskReadiness(campaign);
   const forestTaskReadiness = createForestNftTaskReadiness(campaign);
   const schrodingerTaskReadiness = createSchrodingerNftTaskReadiness(campaign);
   const forecastTaskReadiness = createForecastCampaignTaskReadiness(campaign);
@@ -3478,6 +3560,115 @@ export const ProjectConsole = ({
                   </p>
                   <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
                     <strong>{copy.forestTaskBoundary}: </strong>
+                    {getLocalizedText(row.boundary, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section aria-label={copy.ebridgeTaskReadiness} style={panelStyle}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.ebridgeTaskTotal}</p>
+                <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                  {copy.ebridgeTaskReadiness}
+                </h3>
+                <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                  {copy.ebridgeTaskReadinessSubtitle}
+                </p>
+              </div>
+              <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <PublishStateBadge
+                  label={`${ebridgeTaskReadiness.summary.readyCount} ${copy.ebridgeTaskReady}`}
+                  state="ready"
+                />
+                <PublishStateBadge
+                  label={`${ebridgeTaskReadiness.summary.reviewRequiredCount} ${copy.ebridgeTaskReviewRequired}`}
+                  state="warning"
+                />
+                <PublishStateBadge
+                  label={`${ebridgeTaskReadiness.summary.blockedCount} ${copy.ebridgeTaskBlocked}`}
+                  state="blocker"
+                />
+              </span>
+            </div>
+
+            <div style={gridStyle}>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.ebridgeTaskTotal}</p>
+                <p style={statValueStyle}>{ebridgeTaskReadiness.summary.totalTasks}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.ebridgeTaskReady}</p>
+                <p style={statValueStyle}>{ebridgeTaskReadiness.summary.readyCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.ebridgeTaskReviewRequired}</p>
+                <p style={statValueStyle}>{ebridgeTaskReadiness.summary.reviewRequiredCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.ebridgeTaskBlocked}</p>
+                <p style={statValueStyle}>{ebridgeTaskReadiness.summary.blockedCount}</p>
+              </article>
+              <article style={{ ...cardStyle, gridColumn: "1 / -1", minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.ebridgeTaskNextAction}</p>
+                <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(ebridgeTaskReadiness.ownerNextAction, locale)}
+                </p>
+              </article>
+            </div>
+
+            <p style={boundaryStyle}>
+              <strong>{copy.ebridgeTaskBoundary}: </strong>
+              {getLocalizedText(ebridgeTaskReadiness.boundary, locale)}
+            </p>
+
+            <div style={compactSectionGridStyle}>
+              {ebridgeTaskReadiness.rows.map((row) => (
+                <article key={row.id} style={{ ...cardStyle, minHeight: 0 }}>
+                  <div style={headingRowStyle}>
+                    <div>
+                      <p style={statLabelStyle}>{copy.ebridgeTaskProviderState}</p>
+                      <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                        {getLocalizedText(row.label, locale)}
+                      </h4>
+                    </div>
+                    <PublishStateBadge
+                      label={ebridgeTaskReadinessLabel(row.readinessState, copy)}
+                      state={ebridgeTaskReadinessBadgeState(row.readinessState)}
+                    />
+                  </div>
+
+                  <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(row.description, locale)}
+                  </p>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <Badge
+                      label={`${row.verificationType} · ${row.evidenceSource}`}
+                      tone="info"
+                    />
+                    <Badge
+                      label={`${copy.ebridgeTaskProviderState}: ${ebridgeTaskProviderStateLabel(row.providerState, locale)}`}
+                      tone={row.providerState === "seeded_preview" ? "success" : "warning"}
+                    />
+                    <Badge
+                      label={`${copy.ebridgeTaskOwner}: ${ebridgeTaskOwnerLabel(row.ownerRole, locale)}`}
+                      tone="neutral"
+                    />
+                  </div>
+
+                  <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.ebridgeTaskRiskState}: </strong>
+                    {getLocalizedText(row.riskState, locale)}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.ebridgeTaskNextAction}: </strong>
+                    {getLocalizedText(row.nextAction, locale)}
+                  </p>
+                  <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.ebridgeTaskBoundary}: </strong>
                     {getLocalizedText(row.boundary, locale)}
                   </p>
                 </article>
