@@ -30,6 +30,7 @@ import {
   createExportPreview,
   createForecastCampaignTaskReadiness,
   createPayCampaignTaskReadiness,
+  createTmrwdaoGovernanceTaskReadiness,
   createParticipantWorkspaceReadModel,
   createParticipationReadModel,
   createProviderEvidenceRegistry,
@@ -3100,6 +3101,111 @@ describe("Campaign OS domain foundation", () => {
     expect(boundaryText).toContain("reward distribution");
 
     for (const unsafeKey of ["privateKey", "seedPhrase", "bearerToken", "signedPayload", "invoiceId", "paymentId"]) {
+      expect(hasOwnKeyDeep(firstReadModel, unsafeKey)).toBe(false);
+    }
+    for (const unsafeText of ["private key", "seed phrase", "bearer token", "signed payload"]) {
+      expect(serialized.toLowerCase()).not.toContain(unsafeText);
+    }
+  });
+
+  it("derives deterministic TMRWDAO governance task readiness without live DAO execution claims", () => {
+    const firstReadModel = createTmrwdaoGovernanceTaskReadiness(campaignDetail);
+    const secondReadModel = createTmrwdaoGovernanceTaskReadiness(campaignDetail);
+    const rowsByIntent = Object.fromEntries(firstReadModel.rows.map((row) => [row.intentId, row]));
+    const serialized = JSON.stringify(firstReadModel);
+    const boundaryText = [
+      firstReadModel.boundary["en-US"],
+      firstReadModel.summary.boundary["en-US"],
+      ...firstReadModel.rows.flatMap((row) => [
+        row.boundary["en-US"],
+        row.nextAction["en-US"],
+        row.riskState["en-US"],
+      ]),
+    ].join(" ");
+
+    expect(firstReadModel).toEqual(secondReadModel);
+    expect(firstReadModel.rows.map((row) => row.intentId)).toEqual([
+      "dao-join-readiness",
+      "proposal-summary-review",
+      "proposal-vote-evidence",
+      "governance-result-review",
+    ]);
+    expect(firstReadModel.summary).toMatchObject({
+      totalTasks: 4,
+      readyCount: 1,
+      reviewRequiredCount: 2,
+      blockedCount: 1,
+      topState: "blocked",
+      topIntentId: "governance-result-review",
+      primaryOwnerRole: "dao_provider_reviewer",
+    });
+    expect(
+      firstReadModel.summary.readyCount +
+        firstReadModel.summary.reviewRequiredCount +
+        firstReadModel.summary.blockedCount,
+    ).toBe(firstReadModel.summary.totalTasks);
+    expect(rowsByIntent["dao-join-readiness"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "seeded_local",
+      providerState: "seeded_preview",
+      readinessState: "ready",
+      ownerRole: "project_owner",
+    });
+    expect(rowsByIntent["proposal-summary-review"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "proposal_metadata",
+      providerState: "review_required",
+      readinessState: "review_required",
+      ownerRole: "operator",
+    });
+    expect(rowsByIntent["proposal-vote-evidence"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "dao_contract_event",
+      providerState: "review_required",
+      readinessState: "review_required",
+      ownerRole: "operator",
+    });
+    expect(rowsByIntent["governance-result-review"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "dao_contract_event",
+      providerState: "not_connected",
+      readinessState: "blocked",
+      ownerRole: "dao_provider_reviewer",
+    });
+
+    for (const row of firstReadModel.rows) {
+      expect(row.label["en-US"]).toBeTruthy();
+      expect(row.label["zh-CN"]).toBeTruthy();
+      expect(row.description["en-US"]).toBeTruthy();
+      expect(row.description["zh-CN"]).toBeTruthy();
+      expect(row.riskState["en-US"]).toBeTruthy();
+      expect(row.riskState["zh-CN"]).toBeTruthy();
+      expect(row.nextAction["en-US"]).toBeTruthy();
+      expect(row.nextAction["zh-CN"]).toBeTruthy();
+      expect(row.boundary["en-US"]).toContain("No live TMRWDAO service/API");
+      expect(row.boundary["zh-CN"]).toContain("不会调用实时 TMRWDAO service/API");
+    }
+
+    expect(firstReadModel.ownerNextAction["en-US"]).toContain("TMRWDAO provider");
+    expect(firstReadModel.ownerNextAction["en-US"]).toContain("DAO contract evidence");
+    expect(boundaryText).toContain("No live TMRWDAO service/API");
+    expect(boundaryText).toContain("proposal creation");
+    expect(boundaryText).toContain("DAO vote transaction");
+    expect(boundaryText).toContain("wallet signing");
+    expect(boundaryText).toContain("wallet SDK/provider");
+    expect(boundaryText).toContain("backend mutation");
+    expect(boundaryText).toContain("contract read/send/write");
+    expect(boundaryText).toContain("reward custody");
+    expect(boundaryText).toContain("reward distribution");
+
+    for (const unsafeKey of [
+      "privateKey",
+      "seedPhrase",
+      "bearerToken",
+      "signedPayload",
+      "proposalId",
+      "voteTransactionId",
+    ]) {
       expect(hasOwnKeyDeep(firstReadModel, unsafeKey)).toBe(false);
     }
     for (const unsafeText of ["private key", "seed phrase", "bearer token", "signed payload"]) {
