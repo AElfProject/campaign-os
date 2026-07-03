@@ -48,6 +48,10 @@ import {
   type SupportedLocale,
   type TemplateGovernanceSignal,
   type TemplateGovernanceStatus,
+  type WalletProviderEvidenceArtifactType,
+  type WalletProviderEvidenceReleaseImpact,
+  type WalletProviderEvidenceReviewState,
+  type WalletProviderEvidenceStatus,
   type WalletProviderQaLiveEvidenceStatus,
   type WalletProviderQaReleaseImpact,
   type WalletProviderQaSeededStatus,
@@ -561,6 +565,25 @@ const walletProviderQaLiveState = (status: WalletProviderQaLiveEvidenceStatus) =
 const walletProviderQaImpactState = (impact: WalletProviderQaReleaseImpact) =>
   impact === "release_blocker" ? "blocker" : impact === "ready" ? "ready" : "warning";
 
+const walletProviderEvidenceStatusState = (status: WalletProviderEvidenceStatus) => {
+  if (status === "approved" || status === "not_applicable") {
+    return "ready";
+  }
+
+  return status === "rejected" || status === "expired" ? "blocker" : "warning";
+};
+
+const walletProviderEvidenceReviewState = (state: WalletProviderEvidenceReviewState) => {
+  if (state === "approved" || state === "not_applicable") {
+    return "ready";
+  }
+
+  return state === "rejected" || state === "expired" ? "blocker" : "warning";
+};
+
+const walletProviderEvidenceReleaseImpactState = (impact: WalletProviderEvidenceReleaseImpact) =>
+  impact === "blocked" ? "blocker" : impact === "review_required" ? "warning" : "ready";
+
 const providerLiveEvidenceState = (status: ProviderLiveEvidenceStatus) =>
   status === "blocked" ? "blocker" : status === "ready" ? "ready" : "warning";
 
@@ -713,6 +736,67 @@ const walletProviderQaImpactLabel = (
   return labels[impact];
 };
 
+const walletProviderEvidenceStatusLabel = (
+  status: WalletProviderEvidenceStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<WalletProviderEvidenceStatus, string> = {
+    approved: copy.walletProviderEvidenceStatusApproved,
+    expired: copy.walletProviderEvidenceStatusExpired,
+    missing: copy.walletProviderEvidenceStatusMissing,
+    not_applicable: copy.walletProviderEvidenceStatusNotApplicable,
+    rejected: copy.walletProviderEvidenceStatusRejected,
+    submitted: copy.walletProviderEvidenceStatusSubmitted,
+  };
+
+  return labels[status];
+};
+
+const walletProviderEvidenceReviewLabel = (
+  state: WalletProviderEvidenceReviewState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<WalletProviderEvidenceReviewState, string> = {
+    approved: copy.walletProviderEvidenceReviewApproved,
+    expired: copy.walletProviderEvidenceReviewExpired,
+    in_review: copy.walletProviderEvidenceReviewInReview,
+    not_applicable: copy.walletProviderEvidenceReviewNotApplicable,
+    not_started: copy.walletProviderEvidenceReviewNotStarted,
+    rejected: copy.walletProviderEvidenceReviewRejected,
+  };
+
+  return labels[state];
+};
+
+const walletProviderEvidenceReleaseImpactLabel = (
+  impact: WalletProviderEvidenceReleaseImpact,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<WalletProviderEvidenceReleaseImpact, string> = {
+    blocked: copy.walletProviderEvidenceReleaseImpactBlocked,
+    not_applicable: copy.walletProviderEvidenceReleaseImpactNotApplicable,
+    ready: copy.walletProviderEvidenceReleaseImpactReady,
+    review_required: copy.walletProviderEvidenceReleaseImpactReviewRequired,
+  };
+
+  return labels[impact];
+};
+
+const walletProviderEvidenceArtifactTypeLabel = (
+  artifactType: WalletProviderEvidenceArtifactType,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<WalletProviderEvidenceArtifactType, string> = {
+    config_snapshot: copy.walletProviderEvidenceArtifactConfigSnapshot,
+    qa_run: copy.walletProviderEvidenceArtifactQaRun,
+    review_note: copy.walletProviderEvidenceArtifactReviewNote,
+    runbook: copy.walletProviderEvidenceArtifactRunbook,
+    screenshot: copy.walletProviderEvidenceArtifactScreenshot,
+  };
+
+  return labels[artifactType];
+};
+
 const walletCompatibilityLabel = (
   value: string,
   copy: typeof adminOpsCopy["en-US"],
@@ -743,6 +827,7 @@ export const AdminOpsPanel = ({
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
   const deliveryAcceptance = adminOps.deliveryAcceptance;
+  const walletProviderEvidenceIntake = adminOps.walletProviderEvidenceIntake;
   const lifecycleOperations = adminOps.lifecycleOperations;
   const launchConsoleBundles = adminOps.launchConsoleCampaignBundles;
   const launchBlockingGates = launchConsoleBundles.bundles.flatMap((bundle) =>
@@ -967,6 +1052,50 @@ export const AdminOpsPanel = ({
       label: copy.deferred,
       value: deliveryAcceptance.summary.deferred,
       state: deliveryAcceptance.summary.deferred > 0 ? "warning" as const : "ready" as const,
+    },
+  ];
+
+  const walletProviderEvidenceSummaryItems = [
+    {
+      id: "total-scenarios",
+      label: copy.totalScenarios,
+      state: "ready" as const,
+      value: walletProviderEvidenceIntake.summary.totalScenarios,
+    },
+    {
+      id: "approved",
+      label: copy.walletProviderEvidenceApproved,
+      state: "ready" as const,
+      value: walletProviderEvidenceIntake.summary.approvedScenarios,
+    },
+    {
+      id: "submitted-review",
+      label: copy.walletProviderEvidenceSubmittedReviewRequired,
+      state: walletProviderEvidenceIntake.summary.reviewRequiredScenarios > 0 ? "warning" as const : "ready" as const,
+      value:
+        walletProviderEvidenceIntake.summary.submittedScenarios +
+        walletProviderEvidenceIntake.summary.reviewRequiredScenarios,
+    },
+    {
+      id: "missing-rejected-expired",
+      label: copy.walletProviderEvidenceMissingRejectedExpired,
+      state:
+        walletProviderEvidenceIntake.summary.missingScenarios +
+          walletProviderEvidenceIntake.summary.rejectedScenarios +
+          walletProviderEvidenceIntake.summary.expiredScenarios >
+        0
+          ? "blocker" as const
+          : "ready" as const,
+      value:
+        walletProviderEvidenceIntake.summary.missingScenarios +
+        walletProviderEvidenceIntake.summary.rejectedScenarios +
+        walletProviderEvidenceIntake.summary.expiredScenarios,
+    },
+    {
+      id: "release-blockers",
+      label: copy.releaseBlockers,
+      state: walletProviderEvidenceIntake.summary.releaseBlockers > 0 ? "blocker" as const : "ready" as const,
+      value: walletProviderEvidenceIntake.summary.releaseBlockers,
     },
   ];
 
@@ -1953,6 +2082,140 @@ export const AdminOpsPanel = ({
               </p>
               <p style={mutedTextStyle}>
                 {copy.matchedSessions}: {scenario.matchedSessionIds.join(", ") || "-"}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.walletProviderEvidenceIntake} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.evidenceIntake}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.walletProviderEvidenceIntake}
+            </h3>
+            <p style={mutedTextStyle}>{copy.walletProviderEvidenceIntakeSubtitle}</p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${walletProviderEvidenceIntake.summary.totalScenarios} ${copy.totalScenarios}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${walletProviderEvidenceIntake.summary.reviewRequiredScenarios} ${copy.reviewRequired}`}
+              state={walletProviderEvidenceIntake.summary.reviewRequiredScenarios > 0 ? "warning" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${walletProviderEvidenceIntake.summary.releaseBlockers} ${copy.releaseBlockers}`}
+              state={walletProviderEvidenceIntake.summary.releaseBlockers > 0 ? "blocker" : "ready"}
+            />
+          </span>
+        </div>
+        <p style={boundaryStyle}>{getLocalizedText(walletProviderEvidenceIntake.boundary, locale)}</p>
+        <div style={compactGridStyle}>
+          {walletProviderEvidenceSummaryItems.map((item) => (
+            <article key={item.id} style={cardStyle}>
+              <p style={labelStyle}>{item.label}</p>
+              <p style={valueStyle}>{item.value}</p>
+              <PublishStateBadge label={item.label} state={item.state} />
+            </article>
+          ))}
+        </div>
+        <div style={gridStyle}>
+          {walletProviderEvidenceIntake.scenarios.map((scenario) => (
+            <article key={scenario.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{getLocalizedText(scenario.provider, locale)}</p>
+                  <strong>{getLocalizedText(scenario.label, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={walletProviderEvidenceReleaseImpactLabel(scenario.releaseImpact, copy)}
+                  state={walletProviderEvidenceReleaseImpactState(scenario.releaseImpact)}
+                />
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.evidenceStatus}</p>
+                  <PublishStateBadge
+                    label={walletProviderEvidenceStatusLabel(scenario.evidenceStatus, copy)}
+                    state={walletProviderEvidenceStatusState(scenario.evidenceStatus)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.reviewState}</p>
+                  <PublishStateBadge
+                    label={walletProviderEvidenceReviewLabel(scenario.reviewState, copy)}
+                    state={walletProviderEvidenceReviewState(scenario.reviewState)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.releaseImpact}</p>
+                  <PublishStateBadge
+                    label={walletProviderEvidenceReleaseImpactLabel(scenario.releaseImpact, copy)}
+                    state={walletProviderEvidenceReleaseImpactState(scenario.releaseImpact)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.walletProviderEvidenceReviewer}</p>
+                  <p style={mutedTextStyle}>{readableCode(scenario.reviewerRole)}</p>
+                </div>
+              </div>
+              <div style={stackStyle}>
+                <p style={labelStyle}>{copy.walletProviderEvidenceExpectedArtifacts}</p>
+                <div style={chipListStyle}>
+                  {scenario.expectedArtifacts.map((artifact) => (
+                    <span key={artifact.id} style={chipStyle}>
+                      {getLocalizedText(artifact.label, locale)} ·{" "}
+                      {walletProviderEvidenceArtifactTypeLabel(artifact.artifactType, copy)} ·{" "}
+                      {artifact.required
+                        ? copy.walletProviderEvidenceRequired
+                        : copy.walletProviderEvidenceOptional}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div style={stackStyle}>
+                <p style={labelStyle}>{copy.walletProviderEvidenceSubmittedArtifacts}</p>
+                {scenario.submittedArtifacts.length > 0 ? (
+                  <div style={sourceMetricListStyle}>
+                    {scenario.submittedArtifacts.map((artifact) => (
+                      <div key={artifact.id} style={sourceMetricChipStyle}>
+                        <span>
+                          {getLocalizedText(artifact.label, locale)} ·{" "}
+                          {walletProviderEvidenceArtifactTypeLabel(artifact.artifactType, copy)}
+                        </span>
+                        {artifact.reference ? (
+                          <span style={codeListStyle}>{artifact.reference}</span>
+                        ) : null}
+                        {artifact.capturedAt ? (
+                          <span>
+                            {copy.walletProviderEvidenceCaptured}: {artifact.capturedAt}
+                          </span>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={mutedTextStyle}>{copy.walletProviderEvidenceNoSubmittedArtifacts}</p>
+                )}
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.walletProviderEvidenceServiceGate}</p>
+                  <p style={wrapTextStyle}>{getLocalizedText(scenario.serviceGate, locale)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.walletProviderEvidenceDegradationPath}</p>
+                  <p style={wrapTextStyle}>{getLocalizedText(scenario.degradationPath, locale)}</p>
+                </div>
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(scenario.nextAction, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nonLiveBoundary}: {getLocalizedText(scenario.boundary, locale)}
               </p>
             </article>
           ))}
