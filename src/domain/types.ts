@@ -1934,6 +1934,47 @@ export interface DeliveryAcceptanceConsole {
   topResidualGaps: DeliveryAcceptanceRow[];
 }
 
+export type ResidualGapMissionQueueStatus =
+  | "needs_live_evidence"
+  | "launch_blocking"
+  | "review_required"
+  | "backlog";
+
+export interface ResidualGapMissionQueueItem {
+  id: string;
+  sourceRowId: string;
+  sourceSolutionSetId: DeliveryAcceptanceSolutionSetId;
+  priority: number;
+  suggestedMissionTitle: LocalizedText;
+  suggestedBranch: string;
+  status: ResidualGapMissionQueueStatus;
+  severity: DeliveryAcceptanceSeverity;
+  ownerRole: OwnerRole;
+  launchBlocking: boolean;
+  dependency: LocalizedText;
+  evidenceNeeded: LocalizedText;
+  sourceGap: LocalizedText;
+  launchImpact: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface ResidualGapMissionQueueSummary {
+  totalItems: number;
+  launchBlockingItems: number;
+  backlogItems: number;
+  reviewRequiredItems: number;
+  topItemId: string | null;
+  topSeverity: DeliveryAcceptanceSeverity;
+  nextAction: LocalizedText;
+}
+
+export interface ResidualGapMissionQueue {
+  summary: ResidualGapMissionQueueSummary;
+  items: ResidualGapMissionQueueItem[];
+  boundary: LocalizedText;
+}
+
 export interface ExportPreviewRow {
   campaignId: string;
   walletAddress: string;
@@ -3839,6 +3880,7 @@ export interface AdminOpsReadModel {
   campaignId: string;
   reviewQueue: ReviewItem[];
   deliveryAcceptance: DeliveryAcceptanceConsole;
+  residualGapMissionQueue: ResidualGapMissionQueue;
   deliveryChecklistReadiness: DeliveryChecklistReadinessConsole;
   walletProviderQaGate: WalletProviderQaReadinessGate;
   walletProviderEvidenceIntake: WalletProviderEvidenceIntake;

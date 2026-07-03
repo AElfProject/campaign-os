@@ -99,6 +99,9 @@ import type {
   DeliveryAcceptanceSolutionSet,
   DeliveryAcceptanceSolutionSetId,
   DeliveryAcceptanceStatus,
+  ResidualGapMissionQueue,
+  ResidualGapMissionQueueItem,
+  ResidualGapMissionQueueStatus,
   DeliveryChecklistGroup,
   DeliveryChecklistGroupId,
   DeliveryChecklistItem,
@@ -12064,6 +12067,176 @@ const compareDeliveryAcceptanceResiduals = (
   return left.id.localeCompare(right.id);
 };
 
+const residualGapMissionQueueBoundary = localized(
+  "Review-only mission intake. This queue does not create missions, branches, issues, PRs, wallet signatures, provider calls, storage writes, export files, contract writes, reward custody, or reward distribution. No live wallet SDK is executed.",
+  "仅用于审核的 mission intake。此队列不会创建 mission、分支、issue、PR、钱包签名、provider 调用、存储写入、导出文件、合约写入、奖励托管或发奖，也不会执行实时钱包 SDK。",
+  "僅用於審核的 mission intake。此佇列不會建立 mission、分支、issue、PR、錢包簽名、provider 呼叫、儲存寫入、匯出檔案、合約寫入、獎勵託管或發獎，也不會執行即時錢包 SDK。",
+);
+
+const residualGapMissionSlugByRowId: Record<string, string> = {
+  "v01-user-participation-loop": "user-participation-live-provider-readiness",
+  "v02-contract-claim-reward-custody": "contract-claim-reward-custody",
+  "v02-live-wallet-provider-evidence": "live-wallet-provider-evidence",
+  "v02-p1-locale-expansion": "p1-locale-expansion",
+};
+
+const residualGapQueueStatusForRow = (
+  row: DeliveryAcceptanceRow,
+): ResidualGapMissionQueueStatus => {
+  if (row.status === "deferred") {
+    return "backlog";
+  }
+
+  if (row.status === "needs_live_evidence") {
+    return "needs_live_evidence";
+  }
+
+  if (row.launchBlocking || row.status === "blocked") {
+    return "launch_blocking";
+  }
+
+  return "review_required";
+};
+
+const residualGapDependencyForRow = (row: DeliveryAcceptanceRow): LocalizedText => {
+  switch (row.id) {
+    case "v02-live-wallet-provider-evidence":
+      return localized(
+        "Wallet Provider Evidence Release Readiness must approve all required scenarios before production onboarding.",
+        "Wallet Provider Evidence Release Readiness 必须批准所有必需场景后才能进入生产 onboarding。",
+        "Wallet Provider Evidence Release Readiness 必須批准所有必需場景後才能進入生產 onboarding。",
+      );
+    case "v02-contract-claim-reward-custody":
+      return localized(
+        "Security, custody/legal, external audit, and admin approvals must exist before claim-mode implementation.",
+        "启动 claim-mode 实现前必须具备安全、托管/法律、外部审计与管理员批准。",
+        "啟動 claim-mode 實作前必須具備安全、託管/法律、外部審計與管理員批准。",
+      );
+    case "v02-p1-locale-expansion":
+      return localized(
+        "Content ownership, locale QA scope, runtime routing, analytics, and publish gates must be approved first.",
+        "必须先批准内容归属、语言 QA 范围、运行时路由、analytics 与发布门禁。",
+        "必須先批准內容歸屬、語言 QA 範圍、執行時路由、analytics 與發布門禁。",
+      );
+    default:
+      return localized(
+        "Review the linked delivery acceptance evidence before opening the next mission.",
+        "开启下一个 mission 前先审核关联的 delivery acceptance 证据。",
+        "開啟下一個 mission 前先審核關聯的 delivery acceptance 證據。",
+      );
+  }
+};
+
+const residualGapLaunchImpactForRow = (row: DeliveryAcceptanceRow): LocalizedText => {
+  if (row.launchBlocking) {
+    return localized(
+      "This is launch-blocking for production readiness until the required evidence is approved.",
+      "必需证据批准前，这是生产 readiness 的上线阻断项。",
+      "必需證據批准前，這是生產 readiness 的上線阻斷項。",
+    );
+  }
+
+  if (row.status === "deferred") {
+    return localized(
+      "This is a non-blocking backlog follow-up and does not block MVP delivery.",
+      "这是非阻断 backlog 后续项，不阻断 MVP 交付。",
+      "這是非阻斷 backlog 後續項，不阻斷 MVP 交付。",
+    );
+  }
+
+  return localized(
+    "This requires review before claiming complete production readiness.",
+    "声明完整生产 readiness 前需要审核此项。",
+    "宣告完整生產 readiness 前需要審核此項。",
+  );
+};
+
+const residualGapEvidenceNeededForRow = (row: DeliveryAcceptanceRow): LocalizedText => localized(
+  `${row.evidenceSurface["en-US"]}: ${row.evidenceSummary["en-US"]}`,
+  `${row.evidenceSurface["zh-CN"]}: ${row.evidenceSummary["zh-CN"]}`,
+  `${row.evidenceSurface["zh-TW"]}: ${row.evidenceSummary["zh-TW"]}`,
+);
+
+const missionQueueRank = (item: ResidualGapMissionQueueItem) => [
+  item.launchBlocking ? 0 : 1,
+  acceptanceSeverityWeight[item.severity],
+  item.status === "backlog" ? 1 : 0,
+  item.sourceRowId,
+] as const;
+
+const compareMissionQueueItems = (
+  left: ResidualGapMissionQueueItem,
+  right: ResidualGapMissionQueueItem,
+) => {
+  const leftRank = missionQueueRank(left);
+  const rightRank = missionQueueRank(right);
+
+  for (let index = 0; index < leftRank.length - 1; index += 1) {
+    const delta = Number(leftRank[index]) - Number(rightRank[index]);
+    if (delta !== 0) {
+      return delta;
+    }
+  }
+
+  return left.sourceRowId.localeCompare(right.sourceRowId);
+};
+
+export const createResidualGapMissionQueue = (
+  deliveryAcceptance: DeliveryAcceptanceConsole,
+): ResidualGapMissionQueue => {
+  const sourceRows = deliveryAcceptance.solutionSets
+    .flatMap((solutionSet) => solutionSet.rows)
+    .filter((row) => row.status !== "proven");
+
+  const items = sourceRows
+    .map((row): ResidualGapMissionQueueItem => {
+      const missionSlug = residualGapMissionSlugByRowId[row.id] ?? row.id;
+
+      return {
+        boundary: row.boundary ?? deliveryAcceptance.boundary,
+        dependency: residualGapDependencyForRow(row),
+        evidenceNeeded: residualGapEvidenceNeededForRow(row),
+        id: `mission-${row.id}`,
+        launchBlocking: row.launchBlocking,
+        launchImpact: residualGapLaunchImpactForRow(row),
+        nextAction: row.nextMissionAction,
+        ownerRole: row.ownerRole,
+        priority: 0,
+        severity: row.severity,
+        sourceGap: row.title,
+        sourceRowId: row.id,
+        sourceSolutionSetId: row.solutionSetId,
+        status: residualGapQueueStatusForRow(row),
+        suggestedBranch: `mission/${missionSlug}`,
+        suggestedMissionTitle: localized(
+          `${row.title["en-US"]} mission`,
+          `${row.title["zh-CN"]} mission`,
+          `${row.title["zh-TW"]} mission`,
+        ),
+      };
+    })
+    .sort(compareMissionQueueItems)
+    .map((item, index) => ({ ...item, priority: index + 1 }));
+
+  return {
+    boundary: residualGapMissionQueueBoundary,
+    items,
+    summary: {
+      backlogItems: items.filter((item) => item.status === "backlog").length,
+      launchBlockingItems: items.filter((item) => item.launchBlocking).length,
+      nextAction: items[0]?.nextAction ?? localized(
+        "No residual mission is currently prioritized.",
+        "当前没有优先 residual mission。",
+        "目前沒有優先 residual mission。",
+      ),
+      reviewRequiredItems: items.filter((item) => item.status === "review_required").length,
+      topItemId: items[0]?.id ?? null,
+      topSeverity: items[0]?.severity ?? "low",
+      totalItems: items.length,
+    },
+  };
+};
+
 export const createDeliveryAcceptanceConsole = (
   walletProviderEvidenceReleaseReadiness?: WalletProviderEvidenceReleaseReadiness,
   exportFulfillmentReadiness?: ExportFulfillmentReadiness,
@@ -17196,14 +17369,17 @@ export const createAdminOpsReadModel = (
     contractTransparencyMonitor,
   );
 
+  const deliveryAcceptance = createDeliveryAcceptanceConsole(
+    walletProviderEvidenceReleaseReadiness,
+    exportFulfillmentReadiness,
+    companionContractReadiness,
+  );
+
   return {
     campaignId: campaign.id,
     reviewQueue: campaign.reviewItems,
-    deliveryAcceptance: createDeliveryAcceptanceConsole(
-      walletProviderEvidenceReleaseReadiness,
-      exportFulfillmentReadiness,
-      companionContractReadiness,
-    ),
+    deliveryAcceptance,
+    residualGapMissionQueue: createResidualGapMissionQueue(deliveryAcceptance),
     deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
     walletProviderQaGate,
     walletProviderEvidenceIntake,
