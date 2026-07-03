@@ -1026,6 +1026,7 @@ export const AdminOpsPanel = ({
   const walletProviderEvidenceIntake = adminOps.walletProviderEvidenceIntake;
   const walletProviderEvidenceApprovalAudit = adminOps.walletProviderEvidenceApprovalAudit;
   const walletProviderEvidenceReleaseReadiness = adminOps.walletProviderEvidenceReleaseReadiness;
+  const walletProviderEvidenceCloseoutPackage = adminOps.walletProviderEvidenceCloseoutPackage;
   const lifecycleOperations = adminOps.lifecycleOperations;
   const launchConsoleBundles = adminOps.launchConsoleCampaignBundles;
   const launchBlockingGates = launchConsoleBundles.bundles.flatMap((bundle) =>
@@ -1443,6 +1444,47 @@ export const AdminOpsPanel = ({
       label: copy.releaseBlockers,
       state: walletProviderEvidenceReleaseReadiness.summary.releaseBlockers > 0 ? "blocker" as const : "ready" as const,
       value: walletProviderEvidenceReleaseReadiness.summary.releaseBlockers,
+    },
+  ];
+
+  const walletProviderEvidenceCloseoutSummaryItems = [
+    {
+      id: "approved-required",
+      label: copy.walletProviderApprovedRequiredScenarios,
+      state: walletProviderEvidenceCloseoutPackage.summary.ready ? "ready" as const : "warning" as const,
+      value: `${walletProviderEvidenceCloseoutPackage.summary.approvedRequiredScenarios}/${walletProviderEvidenceCloseoutPackage.summary.requiredScenarios}`,
+    },
+    {
+      id: "ready-for-review",
+      label: copy.walletProviderCloseoutReadyForReview,
+      state: walletProviderEvidenceCloseoutPackage.summary.readyForReviewScenarios > 0
+        ? "ready" as const
+        : "warning" as const,
+      value: walletProviderEvidenceCloseoutPackage.summary.readyForReviewScenarios,
+    },
+    {
+      id: "missing-artifacts",
+      label: copy.walletProviderCloseoutMissingArtifacts,
+      state: walletProviderEvidenceCloseoutPackage.summary.missingRequiredArtifacts > 0
+        ? "blocker" as const
+        : "ready" as const,
+      value: walletProviderEvidenceCloseoutPackage.summary.missingRequiredArtifacts,
+    },
+    {
+      id: "attached-evidence",
+      label: copy.walletProviderCloseoutAttachedEvidence,
+      state: walletProviderEvidenceCloseoutPackage.summary.attachedEvidenceReferences > 0
+        ? "warning" as const
+        : "blocker" as const,
+      value: walletProviderEvidenceCloseoutPackage.summary.attachedEvidenceReferences,
+    },
+    {
+      id: "closeout-blockers",
+      label: copy.walletProviderCloseoutBlockers,
+      state: walletProviderEvidenceCloseoutPackage.summary.closeoutBlockers > 0
+        ? "blocker" as const
+        : "ready" as const,
+      value: walletProviderEvidenceCloseoutPackage.summary.closeoutBlockers,
     },
   ];
 
@@ -3003,6 +3045,141 @@ export const AdminOpsPanel = ({
                     state={scenario.requiredForRelease ? "warning" : "ready"}
                   />
                 </div>
+              </div>
+              <div style={stackStyle}>
+                <p style={labelStyle}>{copy.walletProviderBlockingRules}</p>
+                {scenario.failedRuleIds.length > 0 ? (
+                  <div style={chipListStyle}>
+                    {scenario.failedRuleIds.map((ruleId) => (
+                      <span key={ruleId} style={chipStyle}>{ruleId}</span>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={mutedTextStyle}>{copy.walletProviderEvidenceNoFailedRules}</p>
+                )}
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(scenario.nextAction, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nonLiveBoundary}: {getLocalizedText(scenario.boundary, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.walletProviderEvidenceCloseoutPackage} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.walletProviderCloseoutSignoffState}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.walletProviderEvidenceCloseoutPackage}
+            </h3>
+            <p style={mutedTextStyle}>{copy.walletProviderEvidenceCloseoutPackageSubtitle}</p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <PublishStateBadge
+              label={walletProviderEvidenceCloseoutPackage.summary.ready
+                ? copy.walletProviderReleaseStateReady
+                : copy.walletProviderReleaseStateBlocked}
+              state={walletProviderEvidenceCloseoutPackage.summary.ready ? "ready" : "blocker"}
+            />
+            <PublishStateBadge
+              label={`${walletProviderEvidenceCloseoutPackage.summary.closeoutBlockers} ${copy.walletProviderCloseoutBlockers}`}
+              state={walletProviderEvidenceCloseoutPackage.summary.closeoutBlockers > 0 ? "blocker" : "ready"}
+            />
+            <Badge
+              label={`${walletProviderEvidenceCloseoutPackage.summary.attachedEvidenceReferences} ${copy.walletProviderCloseoutAttachedEvidence}`}
+              tone="info"
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{getLocalizedText(walletProviderEvidenceCloseoutPackage.boundary, locale)}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.walletProviderEvidenceTopScenario}: {walletProviderEvidenceCloseoutPackage.summary.topScenarioId}
+          </p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.walletProviderEvidenceTopFailedRule}:{" "}
+            {walletProviderEvidenceCloseoutPackage.summary.topFailedRuleId ??
+              copy.walletProviderEvidenceNoFailedRules}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          {walletProviderEvidenceCloseoutSummaryItems.map((item) => (
+            <article key={item.id} style={cardStyle}>
+              <p style={labelStyle}>{item.label}</p>
+              <p style={valueStyle}>{item.value}</p>
+              <PublishStateBadge label={item.label} state={item.state} />
+            </article>
+          ))}
+        </div>
+        <div style={gridStyle}>
+          {walletProviderEvidenceCloseoutPackage.scenarios.map((scenario) => (
+            <article key={scenario.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{getLocalizedText(scenario.provider, locale)}</p>
+                  <strong>{getLocalizedText(scenario.label, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={walletProviderEvidenceReleaseStateLabel(scenario.signoffState, copy)}
+                  state={walletProviderEvidenceReleaseState(scenario.signoffState)}
+                />
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{copy.walletProviderReleaseState}</p>
+                  <PublishStateBadge
+                    label={walletProviderEvidenceReleaseStateLabel(scenario.releaseState, copy)}
+                    state={walletProviderEvidenceReleaseState(scenario.releaseState)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.walletProviderEvidenceApprovalState}</p>
+                  <PublishStateBadge
+                    label={walletProviderEvidenceApprovalStateLabel(scenario.approvalState, copy)}
+                    state={walletProviderEvidenceApprovalState(scenario.approvalState)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.walletProviderCloseoutSignoffState}</p>
+                  <PublishStateBadge
+                    label={walletProviderEvidenceReleaseStateLabel(scenario.signoffState, copy)}
+                    state={walletProviderEvidenceReleaseState(scenario.signoffState)}
+                  />
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.walletProviderEvidenceArtifactCoverage}</p>
+                  <p style={mutedTextStyle}>
+                    {scenario.submittedRequiredArtifactCount}/{scenario.requiredArtifactCount}
+                  </p>
+                </div>
+              </div>
+              <div style={stackStyle}>
+                <p style={labelStyle}>{copy.walletProviderCloseoutAttachedEvidence}</p>
+                {scenario.attachedEvidenceReferences.length > 0 ? (
+                  <div style={chipListStyle}>
+                    {scenario.attachedEvidenceReferences.map((reference) => (
+                      <span key={reference} style={chipStyle}>{reference}</span>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={mutedTextStyle}>{copy.walletProviderCloseoutNoAttachedEvidence}</p>
+                )}
+              </div>
+              <div style={stackStyle}>
+                <p style={labelStyle}>{copy.walletProviderEvidenceMissingRequiredArtifacts}</p>
+                {scenario.missingRequiredArtifactIds.length > 0 ? (
+                  <div style={chipListStyle}>
+                    {scenario.missingRequiredArtifactIds.map((artifactId) => (
+                      <span key={artifactId} style={chipStyle}>{artifactId}</span>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={mutedTextStyle}>{copy.walletProviderEvidenceNoMissingArtifacts}</p>
+                )}
               </div>
               <div style={stackStyle}>
                 <p style={labelStyle}>{copy.walletProviderBlockingRules}</p>

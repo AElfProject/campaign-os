@@ -316,6 +316,9 @@ import type {
   WalletProviderEvidenceApprovalRuleState,
   WalletProviderEvidenceApprovalScenario,
   WalletProviderEvidenceArtifact,
+  WalletProviderEvidenceCloseoutPackage,
+  WalletProviderEvidenceCloseoutScenario,
+  WalletProviderEvidenceCloseoutSignoffState,
   WalletProviderEvidenceIntake,
   WalletProviderEvidenceReleaseReadiness,
   WalletProviderEvidenceReleaseScenario,
@@ -2313,6 +2316,7 @@ const createWalletProviderArtifactCoverage = (
   return {
     requiredArtifactIds: requiredArtifacts.map((artifact) => artifact.id),
     submittedArtifactIds: submittedArtifacts.map((artifact) => artifact.id),
+    submittedArtifactReferences: submittedArtifacts.map((artifact) => artifact.reference ?? artifact.id),
     missingRequiredArtifactIds,
     requiredCount: requiredArtifacts.length,
     submittedRequiredCount: requiredArtifacts.length - missingRequiredArtifactIds.length,
@@ -2744,6 +2748,135 @@ export const createWalletProviderEvidenceReleaseReadiness = (
 
   return {
     boundary: walletProviderEvidenceBoundary,
+    nextAction: summary.topNextAction,
+    scenarios,
+    summary,
+  };
+};
+
+const walletProviderEvidenceCloseoutSignoffState = (
+  scenario: WalletProviderEvidenceReleaseScenario,
+): WalletProviderEvidenceCloseoutSignoffState => {
+  if (!scenario.requiredForRelease && scenario.releaseState === "not_applicable") {
+    return "not_applicable";
+  }
+
+  if (scenario.releaseState === "ready") {
+    return "ready";
+  }
+
+  return scenario.releaseState === "review_required" ? "review_required" : "blocked";
+};
+
+const walletProviderEvidenceCloseoutScenario = (
+  scenario: WalletProviderEvidenceReleaseScenario,
+): WalletProviderEvidenceCloseoutScenario => {
+  const attachedEvidenceReferences = scenario.artifactCoverage.submittedArtifactReferences;
+
+  return {
+    approvalState: scenario.approvalState,
+    attachedEvidenceReferences,
+    blockingRuleIds: scenario.blockingRuleIds,
+    boundary: scenario.boundary,
+    failedRuleIds: scenario.failedRuleIds,
+    id: scenario.id,
+    label: scenario.label,
+    missingRequiredArtifactIds: scenario.artifactCoverage.missingRequiredArtifactIds,
+    nextAction: scenario.nextAction,
+    provider: scenario.provider,
+    releaseState: scenario.releaseState,
+    requiredArtifactCount: scenario.artifactCoverage.requiredCount,
+    requiredForRelease: scenario.requiredForRelease,
+    reviewRequiredRuleIds: scenario.reviewRequiredRuleIds,
+    signoffState: walletProviderEvidenceCloseoutSignoffState(scenario),
+    submittedRequiredArtifactCount: scenario.artifactCoverage.submittedRequiredCount,
+  };
+};
+
+const walletProviderEvidenceCloseoutStatePriority: Record<WalletProviderEvidenceCloseoutSignoffState, number> = {
+  blocked: 0,
+  review_required: 1,
+  ready: 2,
+  not_applicable: 3,
+};
+
+const compareWalletProviderEvidenceCloseoutScenarios = (
+  left: WalletProviderEvidenceCloseoutScenario,
+  right: WalletProviderEvidenceCloseoutScenario,
+) => {
+  const stateDelta = walletProviderEvidenceCloseoutStatePriority[left.signoffState] -
+    walletProviderEvidenceCloseoutStatePriority[right.signoffState];
+
+  if (stateDelta !== 0) {
+    return stateDelta;
+  }
+
+  const requiredDelta = Number(right.requiredForRelease) - Number(left.requiredForRelease);
+
+  if (requiredDelta !== 0) {
+    return requiredDelta;
+  }
+
+  return walletProviderEvidenceScenarioOrder.indexOf(left.id) - walletProviderEvidenceScenarioOrder.indexOf(right.id);
+};
+
+const summarizeWalletProviderEvidenceCloseoutPackage = (
+  scenarios: WalletProviderEvidenceCloseoutScenario[],
+): WalletProviderEvidenceCloseoutPackage["summary"] => {
+  const requiredScenarios = scenarios.filter((scenario) => scenario.requiredForRelease);
+  const topScenario = [...requiredScenarios].sort(compareWalletProviderEvidenceCloseoutScenarios)[0] ??
+    [...scenarios].sort(compareWalletProviderEvidenceCloseoutScenarios)[0] ??
+    scenarios[0];
+  const approvedRequiredScenarios = requiredScenarios.filter((scenario) => scenario.signoffState === "ready").length;
+  const reviewRequiredScenarios = requiredScenarios.filter((scenario) => scenario.signoffState === "review_required").length;
+  const blockedScenarios = requiredScenarios.filter((scenario) => scenario.signoffState === "blocked").length;
+  const closeoutBlockers = blockedScenarios;
+  const ready =
+    requiredScenarios.length > 0 &&
+    approvedRequiredScenarios === requiredScenarios.length &&
+    reviewRequiredScenarios === 0 &&
+    closeoutBlockers === 0;
+
+  return {
+    approvedRequiredScenarios,
+    attachedEvidenceReferences: scenarios.reduce(
+      (total, scenario) => total + scenario.attachedEvidenceReferences.length,
+      0,
+    ),
+    blockedScenarios,
+    closeoutBlockers,
+    missingRequiredArtifacts: scenarios.reduce(
+      (total, scenario) => total + scenario.missingRequiredArtifactIds.length,
+      0,
+    ),
+    ready,
+    readyForReviewScenarios: requiredScenarios.filter((scenario) => scenario.signoffState === "ready").length,
+    requiredScenarios: requiredScenarios.length,
+    reviewRequiredScenarios,
+    topFailedRuleId: topScenario?.failedRuleIds[0] ?? null,
+    topNextAction: ready
+      ? localized(
+        "Closeout package is ready for release review; keep the no-live boundary until a separate production enablement decision.",
+        "Closeout package 已可进入发布审核；在单独生产启用决策前继续保留非实时边界。",
+        "Closeout package 已可進入發布審核；在單獨生產啟用決策前繼續保留非即時邊界。",
+      )
+      : topScenario.nextAction,
+    topScenarioId: topScenario.id,
+    totalScenarios: scenarios.length,
+  };
+};
+
+export const createWalletProviderEvidenceCloseoutPackage = (
+  releaseReadiness: WalletProviderEvidenceReleaseReadiness,
+): WalletProviderEvidenceCloseoutPackage => {
+  const scenarios = walletProviderEvidenceScenarioOrder
+    .map((scenarioId) => releaseReadiness.scenarios.find((scenario) => scenario.id === scenarioId))
+    .filter((scenario): scenario is WalletProviderEvidenceReleaseScenario => Boolean(scenario))
+    .map(walletProviderEvidenceCloseoutScenario);
+  const summary = summarizeWalletProviderEvidenceCloseoutPackage(scenarios);
+
+  return {
+    boundary: releaseReadiness.boundary,
     nextAction: summary.topNextAction,
     scenarios,
     summary,
@@ -17355,6 +17488,9 @@ export const createAdminOpsReadModel = (
   const walletProviderEvidenceReleaseReadiness = createWalletProviderEvidenceReleaseReadiness(
     walletProviderEvidenceApprovalAudit,
   );
+  const walletProviderEvidenceCloseoutPackage = createWalletProviderEvidenceCloseoutPackage(
+    walletProviderEvidenceReleaseReadiness,
+  );
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
@@ -17385,6 +17521,7 @@ export const createAdminOpsReadModel = (
     walletProviderEvidenceIntake,
     walletProviderEvidenceApprovalAudit,
     walletProviderEvidenceReleaseReadiness,
+    walletProviderEvidenceCloseoutPackage,
     aelfWebLoginAdapterReadiness,
     providerEvidenceRegistry,
     contractReviewCenter: createAdminContractReviewCenter(campaign),

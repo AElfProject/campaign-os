@@ -756,6 +756,11 @@ export type WalletProviderEvidenceReleaseState =
   | "review_required"
   | "blocked"
   | "not_applicable";
+export type WalletProviderEvidenceCloseoutSignoffState =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "not_applicable";
 export type AelfWebLoginIntegrationId = "aelf-web-login";
 export type AelfWebLoginAdapterAudience =
   | "NORMAL_USER"
@@ -1096,6 +1101,7 @@ export interface WalletProviderEvidenceIntake {
 export interface WalletProviderArtifactCoverage {
   requiredArtifactIds: string[];
   submittedArtifactIds: string[];
+  submittedArtifactReferences: string[];
   missingRequiredArtifactIds: string[];
   requiredCount: number;
   submittedRequiredCount: number;
@@ -1186,6 +1192,48 @@ export interface WalletProviderEvidenceReleaseSummary {
 export interface WalletProviderEvidenceReleaseReadiness {
   summary: WalletProviderEvidenceReleaseSummary;
   scenarios: WalletProviderEvidenceReleaseScenario[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface WalletProviderEvidenceCloseoutScenario {
+  id: WalletProviderQaScenarioId;
+  label: LocalizedText;
+  provider: LocalizedText;
+  releaseState: WalletProviderEvidenceReleaseState;
+  approvalState: WalletProviderEvidenceApprovalState;
+  signoffState: WalletProviderEvidenceCloseoutSignoffState;
+  requiredForRelease: boolean;
+  requiredArtifactCount: number;
+  submittedRequiredArtifactCount: number;
+  missingRequiredArtifactIds: string[];
+  attachedEvidenceReferences: string[];
+  failedRuleIds: WalletProviderEvidenceApprovalRuleId[];
+  blockingRuleIds: WalletProviderEvidenceApprovalRuleId[];
+  reviewRequiredRuleIds: WalletProviderEvidenceApprovalRuleId[];
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface WalletProviderEvidenceCloseoutSummary {
+  totalScenarios: number;
+  requiredScenarios: number;
+  approvedRequiredScenarios: number;
+  readyForReviewScenarios: number;
+  reviewRequiredScenarios: number;
+  blockedScenarios: number;
+  missingRequiredArtifacts: number;
+  attachedEvidenceReferences: number;
+  closeoutBlockers: number;
+  ready: boolean;
+  topScenarioId: WalletProviderQaScenarioId;
+  topFailedRuleId: WalletProviderEvidenceApprovalRuleId | null;
+  topNextAction: LocalizedText;
+}
+
+export interface WalletProviderEvidenceCloseoutPackage {
+  summary: WalletProviderEvidenceCloseoutSummary;
+  scenarios: WalletProviderEvidenceCloseoutScenario[];
   boundary: LocalizedText;
   nextAction: LocalizedText;
 }
@@ -3886,6 +3934,7 @@ export interface AdminOpsReadModel {
   walletProviderEvidenceIntake: WalletProviderEvidenceIntake;
   walletProviderEvidenceApprovalAudit: WalletProviderEvidenceApprovalAudit;
   walletProviderEvidenceReleaseReadiness: WalletProviderEvidenceReleaseReadiness;
+  walletProviderEvidenceCloseoutPackage: WalletProviderEvidenceCloseoutPackage;
   aelfWebLoginAdapterReadiness: AelfWebLoginAdapterReadinessModel;
   providerEvidenceRegistry: ProviderEvidenceRegistry;
   contractReviewCenter: AdminContractReviewCenter;

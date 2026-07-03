@@ -277,6 +277,27 @@ describe("Admin/Ops shell", () => {
     expect(within(walletProviderEvidenceReleaseReadiness).queryByRole("button", {
       name: /sign|signature|provider call|upload|contract write|reward custody|reward distribution/i,
     })).not.toBeInTheDocument();
+    const walletProviderEvidenceCloseoutPackage = screen.getByLabelText("Wallet Provider Evidence Closeout Package");
+    expect(
+      within(walletProviderEvidenceCloseoutPackage).getByRole("heading", {
+        name: "Wallet Provider Evidence Closeout Package",
+      }),
+    ).toBeInTheDocument();
+    expect(within(walletProviderEvidenceCloseoutPackage).getAllByText("Closeout sign-off").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceCloseoutPackage).getAllByText("Closeout blockers").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceCloseoutPackage).getAllByText("Attached evidence references").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceCloseoutPackage).getAllByText("Closeout missing artifacts").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceCloseoutPackage).getByText("0/5")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceCloseoutPackage).getByText("Top failed rule: required-artifacts")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceCloseoutPackage).getByText("Top scenario: portkey-aa-connect")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceCloseoutPackage).getByText("local-wallet-qa/eoa-extension-connect-2026-07-03")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceCloseoutPackage).getByText("review-note/eoa-extension-connect-pending")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceCloseoutPackage).getAllByText("portkey-aa-connect-screenshot").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceCloseoutPackage).getAllByText("required-artifacts").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceCloseoutPackage).getAllByText(/No live wallet SDK connection/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceCloseoutPackage).queryByRole("button", {
+      name: /connectWallet|getSignature|sendTransaction|sign|signature|provider call|upload|contract write|reward custody|reward distribution/i,
+    })).not.toBeInTheDocument();
     const walletAdapterReadiness = screen
       .getByRole("heading", { name: "aelf-web-login adapter readiness" })
       .closest("section");
@@ -899,6 +920,24 @@ describe("Admin/Ops shell", () => {
     expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText(/已拒绝的 provider 证据/).length).toBeGreaterThan(0);
     expect(within(zhWalletProviderEvidenceApprovalAudit).getAllByText(/不会执行实时钱包 SDK 连接/).length).toBeGreaterThan(0);
     expect(within(zhWalletProviderEvidenceApprovalAudit).queryByRole("button", {
+      name: /签名|provider 调用|上传|合约写入|奖励托管|发奖|reward distribution/i,
+    })).not.toBeInTheDocument();
+    const zhWalletProviderEvidenceCloseoutPackage = screen.getByLabelText("钱包 Provider 证据 Closeout Package");
+    expect(
+      within(zhWalletProviderEvidenceCloseoutPackage).getByRole("heading", {
+        name: "钱包 Provider 证据 Closeout Package",
+      }),
+    ).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceCloseoutPackage).getAllByText("Closeout 签核").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceCloseoutPackage).getAllByText("Closeout 阻断").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceCloseoutPackage).getAllByText("已附证据引用").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceCloseoutPackage).getAllByText("Closeout 缺失 artifacts").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceCloseoutPackage).getByText("0/5")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceCloseoutPackage).getByText("首要失败规则: required-artifacts")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceCloseoutPackage).getByText("首要场景: portkey-aa-connect")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceCloseoutPackage).getByText("local-wallet-qa/eoa-extension-connect-2026-07-03")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceCloseoutPackage).getAllByText("portkey-aa-connect-screenshot").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceCloseoutPackage).queryByRole("button", {
       name: /签名|provider 调用|上传|合约写入|奖励托管|发奖|reward distribution/i,
     })).not.toBeInTheDocument();
     const zhLiveConnectorReleaseReview = screen
