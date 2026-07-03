@@ -265,6 +265,29 @@ export type EcosystemNextActionProductId = "Pay" | "Forecast" | "Portfolio";
 export type EcosystemRecommendationStatus = "ready" | "locked" | "review" | "completed";
 export type EcosystemRecommendationPriority = "primary" | "secondary" | "tertiary";
 export type EcosystemRecommendationSignalTone = "ready" | "warning" | "blocker";
+export type ForestNftTaskIntentId =
+  | "forest-nft-mint-readiness"
+  | "forest-nft-holder-evidence"
+  | "forest-nft-trade-listing-review"
+  | "forest-holder-leaderboard-review";
+export type ForestNftTaskProviderState =
+  | "not_connected"
+  | "seeded_preview"
+  | "review_required"
+  | "blocked";
+export type ForestNftTaskReadinessState =
+  | "ready"
+  | "review_required"
+  | "blocked";
+export type ForestNftTaskOwnerRole =
+  | "project_owner"
+  | "operator"
+  | "forest_provider_reviewer";
+export type ForestNftTaskEvidenceSource =
+  | "forest_nft_contract_event"
+  | "forest_marketplace_event"
+  | "holder_snapshot"
+  | "seeded_local";
 export type ForecastCampaignTaskIntentId =
   | "prediction-participation"
   | "win-streak"
@@ -2812,6 +2835,40 @@ export interface MobileTelegramMiniAppHubReadiness {
   aiGuide: MobileHubAiGuide;
   boundary: LocalizedText;
   ownerNextAction: LocalizedText;
+}
+
+export interface ForestNftTaskReadinessRow {
+  id: string;
+  intentId: ForestNftTaskIntentId;
+  label: LocalizedText;
+  description: LocalizedText;
+  verificationType: "DAPP_API";
+  evidenceSource: ForestNftTaskEvidenceSource;
+  providerState: ForestNftTaskProviderState;
+  readinessState: ForestNftTaskReadinessState;
+  riskState: LocalizedText;
+  ownerRole: ForestNftTaskOwnerRole;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface ForestNftTaskReadinessSummary {
+  totalTasks: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  topState: ForestNftTaskReadinessState;
+  topIntentId: ForestNftTaskIntentId;
+  primaryOwnerRole: ForestNftTaskOwnerRole;
+  boundary: LocalizedText;
+}
+
+export interface ForestNftTaskReadiness {
+  campaignId: string;
+  summary: ForestNftTaskReadinessSummary;
+  rows: ForestNftTaskReadinessRow[];
+  ownerNextAction: LocalizedText;
+  boundary: LocalizedText;
 }
 
 export interface ForecastCampaignTaskReadinessRow {

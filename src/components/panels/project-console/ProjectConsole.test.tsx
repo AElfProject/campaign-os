@@ -470,6 +470,30 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText(/reward custody/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Campaign OS provides preset guidance/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Task template library" })).toBeInTheDocument();
+    const forestReadiness = screen.getByLabelText("Forest NFT task readiness");
+    expect(
+      within(forestReadiness).getByRole("heading", { name: "Forest NFT task readiness" }),
+    ).toBeInTheDocument();
+    expect(within(forestReadiness).getByText("Forest NFT mint readiness")).toBeInTheDocument();
+    expect(within(forestReadiness).getByText("Forest NFT holder evidence")).toBeInTheDocument();
+    expect(within(forestReadiness).getByText("Forest NFT trade/listing review")).toBeInTheDocument();
+    expect(within(forestReadiness).getByText("Forest holder leaderboard review")).toBeInTheDocument();
+    expect(within(forestReadiness).getByText("DAPP_API · seeded_local")).toBeInTheDocument();
+    expect(
+      within(forestReadiness).getAllByText("DAPP_API · holder_snapshot").length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(forestReadiness).getAllByText("DAPP_API · forest_marketplace_event").length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(forestReadiness).getAllByText("DAPP_API · forest_nft_contract_event").length,
+    ).toBeGreaterThan(0);
+    expect(within(forestReadiness).getAllByText(/No live Forest service\/API/).length).toBeGreaterThan(0);
+    expect(within(forestReadiness).getAllByText(/NFT marketplace\/indexer/).length).toBeGreaterThan(0);
+    expect(within(forestReadiness).getAllByText(/NFT mint execution/).length).toBeGreaterThan(0);
+    expect(within(forestReadiness).getAllByText(/NFT trade\/listing execution/).length).toBeGreaterThan(0);
+    expect(within(forestReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
+    expect(within(forestReadiness).getAllByText(/contract read\/send\/write/).length).toBeGreaterThan(0);
     const forecastReadiness = screen.getByLabelText("Forecast campaign task readiness");
     expect(
       within(forecastReadiness).getByRole("heading", { name: "Forecast campaign task readiness" }),
@@ -540,6 +564,30 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Task Builder Preview" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Publish Gate Decision Center" })).not.toBeInTheDocument();
+  });
+
+  it("renders localized Forest NFT task readiness in zh-CN", () => {
+    render(
+      <ProjectConsole
+        activeWorkspace="templates"
+        campaign={campaignDetail}
+        locale="zh-CN"
+      />,
+    );
+
+    const forestReadiness = screen.getByLabelText("Forest NFT 任务 readiness");
+    expect(
+      within(forestReadiness).getByRole("heading", { name: "Forest NFT 任务 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(forestReadiness).getByText("Forest NFT mint readiness")).toBeInTheDocument();
+    expect(within(forestReadiness).getByText("Forest NFT holder 证据")).toBeInTheDocument();
+    expect(within(forestReadiness).getByText("Forest NFT trade/listing 审核")).toBeInTheDocument();
+    expect(within(forestReadiness).getByText("Forest holder 排行榜审核")).toBeInTheDocument();
+    expect(within(forestReadiness).getAllByText(/不会调用实时 Forest service\/API/).length).toBeGreaterThan(0);
+    expect(within(forestReadiness).getAllByText(/不会连接 NFT marketplace\/indexer/).length).toBeGreaterThan(0);
+    expect(within(forestReadiness).getAllByText(/不会执行 NFT mint/).length).toBeGreaterThan(0);
+    expect(within(forestReadiness).getAllByText(/NFT trade\/listing/).length).toBeGreaterThan(0);
+    expect(within(forestReadiness).getAllByText(/合约读取\/发送\/写入/).length).toBeGreaterThan(0);
   });
 
   it("renders localized TMRWDAO governance task readiness in zh-CN", () => {
