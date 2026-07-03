@@ -748,7 +748,7 @@ describe("Campaign OS domain foundation", () => {
       deferredItems: items.filter((item) => item.status === "deferred").length,
     });
     expect(new Set(items.map((item) => item.status))).toEqual(
-      new Set(["covered", "needs_review", "blocked", "deferred"]),
+      new Set(["covered", "needs_review", "deferred"]),
     );
     expect(readiness.boundary["en-US"]).toContain("No live wallet SDK");
     expect(readiness.boundary["en-US"]).toContain("contract transaction");
@@ -830,7 +830,9 @@ describe("Campaign OS domain foundation", () => {
       expect(row.prerequisites.every((prerequisite) => prerequisite["en-US"].includes(row.code))).toBe(true);
       expect(row.nextAction["en-US"]).toContain(row.code);
     }
-    expect(itemsById["product-contract-impact-review"]?.evidence["en-US"]).toContain("claim-mode blockers");
+    expect(itemsById["product-contract-impact-review"]?.evidence["en-US"]).toContain(
+      "claim-mode disabled and future approval-gated",
+    );
     expect(itemsById["qa-wrong-chain-error"]).toMatchObject({
       status: "needs_review",
       blocksDelivery: false,
@@ -851,17 +853,25 @@ describe("Campaign OS domain foundation", () => {
       ownerRole: "project_owner",
     });
     expect(itemsById["qa-contract-claim-admin-approval"]).toMatchObject({
-      status: "blocked",
-      blocksDelivery: true,
+      status: "deferred",
+      blocksDelivery: false,
       ownerRole: "contract_reviewer",
     });
-    expect(itemsById["contract-reward-custody-excluded"]?.nextAction["en-US"]).toContain(
-      "Block any reward custody",
+    expect(itemsById["qa-contract-claim-admin-approval"]?.evidence["en-US"]).toContain(
+      "security, custody/legal, external audit, and admin approval",
     );
-    expect(readiness.blockers.map((item) => item.id)).toEqual([
-      "contract-reward-custody-excluded",
-      "qa-contract-claim-admin-approval",
-    ]);
+    expect(itemsById["contract-reward-custody-excluded"]).toMatchObject({
+      status: "deferred",
+      blocksDelivery: false,
+      ownerRole: "contract_reviewer",
+    });
+    expect(itemsById["contract-reward-custody-excluded"]?.evidence["en-US"]).toContain(
+      "accepted MVP exclusion",
+    );
+    expect(itemsById["contract-reward-custody-excluded"]?.nextAction["en-US"]).toContain(
+      "Keep reward custody outside Campaign OS",
+    );
+    expect(readiness.blockers.map((item) => item.id)).toEqual([]);
     expect(readiness.needsReview.map((item) => item.id)).toEqual(
       expect.arrayContaining([
         "qa-portkey-aa-connect",
@@ -906,7 +916,7 @@ describe("Campaign OS domain foundation", () => {
       topSeverity: "critical",
     });
     expect(new Set(rows.map((row) => row.status))).toEqual(
-      new Set(["proven", "partial", "needs_live_evidence", "blocked", "deferred"]),
+      new Set(["proven", "partial", "needs_live_evidence", "deferred"]),
     );
     expect(acceptance.boundary["en-US"]).toContain("No live wallet SDK");
     expect(acceptance.boundary["en-US"]).toContain("provider API");
@@ -936,10 +946,13 @@ describe("Campaign OS domain foundation", () => {
       "Wallet Provider Evidence Intake",
     );
     expect(rowsById["v02-contract-claim-reward-custody"]).toMatchObject({
-      status: "blocked",
-      severity: "critical",
-      launchBlocking: true,
+      status: "deferred",
+      severity: "low",
+      launchBlocking: false,
     });
+    expect(rowsById["v02-contract-claim-reward-custody"]?.evidenceSummary["en-US"]).toContain(
+      "accepted MVP non-goal boundary",
+    );
     expect(rowsById["v02-p1-locale-expansion"]).toMatchObject({
       status: "deferred",
       severity: "low",
@@ -949,10 +962,10 @@ describe("Campaign OS domain foundation", () => {
         .filter((row) => row.status === "needs_live_evidence" || row.status === "blocked")
         .some((row) => row.status === "proven"),
     ).toBe(false);
-    expect(acceptance.topResidualGaps.map((row) => row.id).slice(0, 2)).toEqual([
+    expect(acceptance.topResidualGaps[0]?.id).toBe("v02-live-wallet-provider-evidence");
+    expect(acceptance.topResidualGaps.map((row) => row.id).slice(0, 2)).not.toContain(
       "v02-contract-claim-reward-custody",
-      "v02-live-wallet-provider-evidence",
-    ]);
+    );
     const lastResidualGap = acceptance.topResidualGaps[acceptance.topResidualGaps.length - 1];
     expect(lastResidualGap?.id).not.toBe("v02-p1-locale-expansion");
 
