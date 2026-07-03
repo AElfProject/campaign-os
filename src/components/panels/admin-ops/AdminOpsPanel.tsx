@@ -93,7 +93,8 @@ const gridStyle: CSSProperties = {
 const compactGridStyle: CSSProperties = {
   display: "grid",
   gap: 10,
-  gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
+  minWidth: 0,
 };
 
 const cardStyle: CSSProperties = {
@@ -126,7 +127,10 @@ const labelStyle: CSSProperties = {
   fontWeight: 800,
   letterSpacing: 0,
   margin: 0,
+  minWidth: 0,
+  overflowWrap: "anywhere",
   textTransform: "uppercase",
+  wordBreak: "break-word",
 };
 
 const valueStyle: CSSProperties = {
@@ -135,6 +139,9 @@ const valueStyle: CSSProperties = {
   fontWeight: 900,
   lineHeight: 1,
   margin: 0,
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
 };
 
 const mutedTextStyle: CSSProperties = {
