@@ -265,6 +265,26 @@ export type EcosystemNextActionProductId = "Pay" | "Forecast" | "Portfolio";
 export type EcosystemRecommendationStatus = "ready" | "locked" | "review" | "completed";
 export type EcosystemRecommendationPriority = "primary" | "secondary" | "tertiary";
 export type EcosystemRecommendationSignalTone = "ready" | "warning" | "blocker";
+export type ForecastCampaignTaskIntentId =
+  | "prediction-participation"
+  | "win-streak"
+  | "forecast-leaderboard";
+export type ForecastCampaignTaskProviderState =
+  | "not_connected"
+  | "seeded_preview"
+  | "review_required"
+  | "ready";
+export type ForecastCampaignTaskReadinessState =
+  | "ready"
+  | "review_required"
+  | "blocked";
+export type ForecastCampaignTaskOwnerRole =
+  | "project_owner"
+  | "operator"
+  | "forecast_provider_reviewer";
+export type ForecastCampaignTaskEvidenceSource =
+  | "forecast_app_data"
+  | "seeded_local";
 
 export type LocalizedText = Record<SupportedLocale, string>;
 
@@ -2750,6 +2770,40 @@ export interface MobileTelegramMiniAppHubReadiness {
   aiGuide: MobileHubAiGuide;
   boundary: LocalizedText;
   ownerNextAction: LocalizedText;
+}
+
+export interface ForecastCampaignTaskReadinessRow {
+  id: string;
+  intentId: ForecastCampaignTaskIntentId;
+  label: LocalizedText;
+  description: LocalizedText;
+  verificationType: "DAPP_API";
+  evidenceSource: ForecastCampaignTaskEvidenceSource;
+  providerState: ForecastCampaignTaskProviderState;
+  readinessState: ForecastCampaignTaskReadinessState;
+  riskState: LocalizedText;
+  ownerRole: ForecastCampaignTaskOwnerRole;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface ForecastCampaignTaskReadinessSummary {
+  totalTasks: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  topState: ForecastCampaignTaskReadinessState;
+  topIntentId: ForecastCampaignTaskIntentId;
+  primaryOwnerRole: ForecastCampaignTaskOwnerRole;
+  boundary: LocalizedText;
+}
+
+export interface ForecastCampaignTaskReadiness {
+  campaignId: string;
+  summary: ForecastCampaignTaskReadinessSummary;
+  rows: ForecastCampaignTaskReadinessRow[];
+  ownerNextAction: LocalizedText;
+  boundary: LocalizedText;
 }
 
 export type CampaignMarketplaceReadinessLane =
