@@ -484,6 +484,22 @@ describe("Project Console shell", () => {
     expect(within(forecastReadiness).getAllByText(/No live Forecast API/).length).toBeGreaterThan(0);
     expect(within(forecastReadiness).getAllByText(/prediction transaction/).length).toBeGreaterThan(0);
     expect(within(forecastReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
+    const payReadiness = screen.getByLabelText("Pay campaign task readiness");
+    expect(
+      within(payReadiness).getByRole("heading", { name: "Pay campaign task readiness" }),
+    ).toBeInTheDocument();
+    expect(within(payReadiness).getByText("Invoice completion")).toBeInTheDocument();
+    expect(within(payReadiness).getByText("Payment link completion")).toBeInTheDocument();
+    expect(within(payReadiness).getByText("Pay follow-up handoff")).toBeInTheDocument();
+    expect(within(payReadiness).getByText("DAPP_API · seeded_local")).toBeInTheDocument();
+    expect(
+      within(payReadiness).getAllByText("DAPP_API · aelf_pay_status").length,
+    ).toBeGreaterThan(0);
+    expect(within(payReadiness).getAllByText(/No live Pay service/).length).toBeGreaterThan(0);
+    expect(within(payReadiness).getAllByText(/payment transaction/).length).toBeGreaterThan(0);
+    expect(within(payReadiness).getAllByText(/payment link creation/).length).toBeGreaterThan(0);
+    expect(within(payReadiness).getAllByText(/invoice generation/).length).toBeGreaterThan(0);
+    expect(within(payReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
     for (const category of [
       "wallet",
       "bridge",
@@ -988,6 +1004,17 @@ describe("Project Console shell", () => {
     expect(within(zhForecastReadiness).getByText("Forecast 排行榜")).toBeInTheDocument();
     expect(within(zhForecastReadiness).getAllByText(/负责人/).length).toBeGreaterThan(0);
     expect(within(zhForecastReadiness).getAllByText(/不会调用真实 Forecast API/).length).toBeGreaterThan(0);
+    const zhPayReadiness = screen.getByLabelText("Pay 活动任务 readiness");
+    expect(
+      within(zhPayReadiness).getByRole("heading", { name: "Pay 活动任务 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(zhPayReadiness).getByText("发票完成")).toBeInTheDocument();
+    expect(within(zhPayReadiness).getByText("支付链接完成")).toBeInTheDocument();
+    expect(within(zhPayReadiness).getByText("Pay 后续移交")).toBeInTheDocument();
+    expect(within(zhPayReadiness).getAllByText(/负责人/).length).toBeGreaterThan(0);
+    expect(within(zhPayReadiness).getAllByText(/不会调用真实 Pay 服务/).length).toBeGreaterThan(0);
+    expect(within(zhPayReadiness).getAllByText(/支付链接创建/).length).toBeGreaterThan(0);
+    expect(within(zhPayReadiness).getAllByText(/发票生成/).length).toBeGreaterThan(0);
 
     fireEvent.click(within(nav).getByRole("button", { name: "创建" }));
     for (const step of ["目标", "任务", "奖励与资格", "i18n", "合约", "发布准备度"]) {

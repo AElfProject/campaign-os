@@ -7,6 +7,7 @@ import {
   campaignDetail,
   createCampaignSettingsReadiness,
   createForecastCampaignTaskReadiness,
+  createPayCampaignTaskReadiness,
   createLocaleAnalyticsReadiness,
   createParticipantOperationsReadModel,
   createPostCampaignCloseout,
@@ -36,6 +37,9 @@ import {
   type ForecastCampaignTaskOwnerRole,
   type ForecastCampaignTaskProviderState,
   type ForecastCampaignTaskReadinessState,
+  type PayCampaignTaskOwnerRole,
+  type PayCampaignTaskProviderState,
+  type PayCampaignTaskReadinessState,
   type LaunchConsoleBundleOwnerRole,
   type LaunchConsoleBundleStage,
   type LaunchConsoleBundleStatus,
@@ -426,6 +430,80 @@ const forecastTaskOwnerLabel = (
       project_owner: "專案方",
     },
   } satisfies Record<SupportedLocale, Record<ForecastCampaignTaskOwnerRole, string>>;
+
+  return labels[locale][ownerRole];
+};
+
+const payTaskReadinessBadgeState = (
+  state: PayCampaignTaskReadinessState,
+) => state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const payTaskReadinessLabel = (
+  state: PayCampaignTaskReadinessState,
+  labels: {
+    payTaskBlocked: string;
+    payTaskReady: string;
+    payTaskReviewRequired: string;
+  },
+) => {
+  if (state === "ready") {
+    return labels.payTaskReady;
+  }
+
+  return state === "review_required"
+    ? labels.payTaskReviewRequired
+    : labels.payTaskBlocked;
+};
+
+const payTaskProviderStateLabel = (
+  state: PayCampaignTaskProviderState,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      blocked: "Blocked",
+      not_connected: "Not connected",
+      review_required: "Review required",
+      seeded_preview: "Seeded preview",
+    },
+    "zh-CN": {
+      blocked: "阻断",
+      not_connected: "未连接",
+      review_required: "需要审核",
+      seeded_preview: "Seeded 预览",
+    },
+    "zh-TW": {
+      blocked: "阻斷",
+      not_connected: "未連接",
+      review_required: "需要審核",
+      seeded_preview: "Seeded 預覽",
+    },
+  } satisfies Record<SupportedLocale, Record<PayCampaignTaskProviderState, string>>;
+
+  return labels[locale][state];
+};
+
+const payTaskOwnerLabel = (
+  ownerRole: PayCampaignTaskOwnerRole,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      operator: "Operator",
+      pay_provider_reviewer: "Pay provider reviewer",
+      project_owner: "Project owner",
+    },
+    "zh-CN": {
+      operator: "运营",
+      pay_provider_reviewer: "Pay provider 审核人",
+      project_owner: "项目方",
+    },
+    "zh-TW": {
+      operator: "營運",
+      pay_provider_reviewer: "Pay provider 審核人",
+      project_owner: "專案方",
+    },
+  } satisfies Record<SupportedLocale, Record<PayCampaignTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -1034,6 +1112,7 @@ export const ProjectConsole = ({
   const aiContentPack = createAiContentPackWorkbench(campaign);
   const campaignTemplatePack = createCampaignTemplatePack();
   const forecastTaskReadiness = createForecastCampaignTaskReadiness(campaign);
+  const payTaskReadiness = createPayCampaignTaskReadiness(campaign);
   const participantOperations = createParticipantOperationsReadModel(campaign);
   const settingsReadiness = createCampaignSettingsReadiness(campaign);
   const postCampaignCloseout = createPostCampaignCloseout(campaign);
@@ -3080,6 +3159,115 @@ export const ProjectConsole = ({
                   </p>
                   <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
                     <strong>{copy.forecastTaskBoundary}: </strong>
+                    {getLocalizedText(row.boundary, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section aria-label={copy.payTaskReadiness} style={panelStyle}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.payTaskTotal}</p>
+                <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                  {copy.payTaskReadiness}
+                </h3>
+                <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                  {copy.payTaskReadinessSubtitle}
+                </p>
+              </div>
+              <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <PublishStateBadge
+                  label={`${payTaskReadiness.summary.readyCount} ${copy.payTaskReady}`}
+                  state="ready"
+                />
+                <PublishStateBadge
+                  label={`${payTaskReadiness.summary.reviewRequiredCount} ${copy.payTaskReviewRequired}`}
+                  state="warning"
+                />
+                <PublishStateBadge
+                  label={`${payTaskReadiness.summary.blockedCount} ${copy.payTaskBlocked}`}
+                  state="blocker"
+                />
+              </span>
+            </div>
+
+            <div style={gridStyle}>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.payTaskTotal}</p>
+                <p style={statValueStyle}>{payTaskReadiness.summary.totalTasks}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.payTaskReady}</p>
+                <p style={statValueStyle}>{payTaskReadiness.summary.readyCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.payTaskReviewRequired}</p>
+                <p style={statValueStyle}>{payTaskReadiness.summary.reviewRequiredCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.payTaskBlocked}</p>
+                <p style={statValueStyle}>{payTaskReadiness.summary.blockedCount}</p>
+              </article>
+              <article style={{ ...cardStyle, gridColumn: "1 / -1", minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.payTaskNextAction}</p>
+                <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(payTaskReadiness.ownerNextAction, locale)}
+                </p>
+              </article>
+            </div>
+
+            <p style={boundaryStyle}>
+              <strong>{copy.payTaskBoundary}: </strong>
+              {getLocalizedText(payTaskReadiness.boundary, locale)}
+            </p>
+
+            <div style={compactSectionGridStyle}>
+              {payTaskReadiness.rows.map((row) => (
+                <article key={row.id} style={{ ...cardStyle, minHeight: 0 }}>
+                  <div style={headingRowStyle}>
+                    <div>
+                      <p style={statLabelStyle}>{copy.payTaskProviderState}</p>
+                      <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                        {getLocalizedText(row.label, locale)}
+                      </h4>
+                    </div>
+                    <PublishStateBadge
+                      label={payTaskReadinessLabel(row.readinessState, copy)}
+                      state={payTaskReadinessBadgeState(row.readinessState)}
+                    />
+                  </div>
+
+                  <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(row.description, locale)}
+                  </p>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <Badge
+                      label={`${row.verificationType} · ${row.evidenceSource}`}
+                      tone="info"
+                    />
+                    <Badge
+                      label={`${copy.payTaskProviderState}: ${payTaskProviderStateLabel(row.providerState, locale)}`}
+                      tone={row.providerState === "seeded_preview" ? "success" : "warning"}
+                    />
+                    <Badge
+                      label={`${copy.payTaskOwner}: ${payTaskOwnerLabel(row.ownerRole, locale)}`}
+                      tone="neutral"
+                    />
+                  </div>
+
+                  <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.payTaskRiskState}: </strong>
+                    {getLocalizedText(row.riskState, locale)}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.payTaskNextAction}: </strong>
+                    {getLocalizedText(row.nextAction, locale)}
+                  </p>
+                  <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.payTaskBoundary}: </strong>
                     {getLocalizedText(row.boundary, locale)}
                   </p>
                 </article>
