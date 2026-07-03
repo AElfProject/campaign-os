@@ -232,6 +232,8 @@ import type {
   VerificationProviderId,
   VerificationProviderReadiness,
   VerificationProviderState,
+  VerificationRulesProviderEvidenceSummary,
+  VerificationRulesWorkspace,
   VerificationReleaseImpact,
   VerificationSeededCoverageStatus,
   TranslationCompareField,
@@ -2809,6 +2811,83 @@ export const createProviderEvidenceRegistry = (
     adapterContracts: entries.map(createAdapterContract),
     boundary: providerEvidenceRegistryBoundary,
     nextAction: providerEvidenceRegistryNextAction,
+  };
+};
+
+const verificationRulesWorkspaceBoundary = localized(
+  "Seeded/local Verification Rules workspace only. No live provider API call, wallet signing, contract write, contract root write, export file generation, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地 Verification Rules 工作区。不会执行实时 provider API 调用、钱包签名、合约写入、合约 root 写入、导出文件生成、奖励托管或发奖。",
+  "Seeded/local Verification Rules workspace only. No live provider API call, wallet signing, contract write, contract root write, export file generation, reward custody, or reward distribution is executed.",
+);
+
+const verificationRulesWorkspaceNextAction = localized(
+  "Attach live provider evidence and complete manual-review fallback approval before treating verification rules as production-ready.",
+  "在将验证规则视为生产就绪前，先附上真实 provider 证据并完成人工审核 fallback 批准。",
+  "Attach live provider evidence and complete manual-review fallback approval before treating verification rules as production-ready.",
+);
+
+const isVerificationRulesProviderEntry = (entry: ProviderEvidenceRegistryEntry) =>
+  entry.category === "verification" || entry.category === "manual_review";
+
+const summarizeVerificationRulesProviderEvidence = (
+  entries: ProviderEvidenceRegistryEntry[],
+): VerificationRulesProviderEvidenceSummary => ({
+  totalEntries: entries.length,
+  localOnlyEntries: entries.filter((entry) => entry.adapterReadiness === "local_only").length,
+  reviewRequiredEntries: entries.filter((entry) => entry.adapterReadiness === "review_required").length,
+  blockedEntries: entries.filter((entry) => entry.adapterReadiness === "blocked").length,
+  unavailableEntries: entries.filter((entry) => entry.adapterReadiness === "unavailable").length,
+  launchBlockers: entries.filter(
+    (entry) => entry.fallback.blocksLaunch || entry.adapterReadiness === "blocked",
+  ).length,
+});
+
+const selectTopVerificationRulePathId = (
+  paths: VerificationPipelinePath[],
+): VerificationPipelinePathId => {
+  const topPath =
+    paths.find((path) => path.releaseImpact === "blocker" || path.providerReadiness === "blocked")
+    ?? paths.find((path) => path.liveEvidenceStatus === "missing")
+    ?? paths.find((path) => path.providerReadiness === "review_required")
+    ?? paths[0];
+
+  return topPath.id;
+};
+
+export const createVerificationRulesWorkspace = (
+  campaign: CampaignShellDetail,
+): VerificationRulesWorkspace => {
+  const pipeline = createVerificationPipelineReadinessGate(campaign);
+  const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
+  const providerEvidenceEntries = providerEvidenceRegistry.entries.filter(
+    isVerificationRulesProviderEntry,
+  );
+  const providerEvidenceSummary = summarizeVerificationRulesProviderEvidence(
+    providerEvidenceEntries,
+  );
+  const affectedOutcomes = new Set(
+    pipeline.paths.flatMap((path) => path.affectedOutcomes),
+  );
+
+  return {
+    campaignId: campaign.id,
+    summary: {
+      totalRulePaths: pipeline.summary.totalPaths,
+      seededReadyPaths: pipeline.summary.seededReadyPaths,
+      missingLiveEvidencePaths: pipeline.summary.missingLiveEvidencePaths,
+      blockedPaths: pipeline.summary.blockedPaths,
+      manualReviewPaths: pipeline.summary.manualReviewPaths,
+      affectedOutcomeCount: affectedOutcomes.size,
+      providerEvidenceEntries: providerEvidenceEntries.length,
+      providerLaunchBlockers: providerEvidenceSummary.launchBlockers,
+    },
+    pipeline,
+    providerEvidenceEntries,
+    providerEvidenceSummary,
+    eligibilityImpact: pipeline.eligibilityImpact,
+    topRulePathId: selectTopVerificationRulePathId(pipeline.paths),
+    boundary: verificationRulesWorkspaceBoundary,
+    nextAction: verificationRulesWorkspaceNextAction,
   };
 };
 
