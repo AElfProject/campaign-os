@@ -143,6 +143,47 @@ describe("Admin/Ops shell", () => {
     expectVisibleText(/transaction/);
     expectVisibleText(/contract call/);
     expectVisibleText(/reward distribution/);
+    const walletProviderEvidenceIntake = screen.getByLabelText("Wallet Provider Evidence Intake and sign-off");
+    expect(
+      within(walletProviderEvidenceIntake).getByRole("heading", {
+        name: "Wallet Provider Evidence Intake and sign-off",
+      }),
+    ).toBeInTheDocument();
+    expect(within(walletProviderEvidenceIntake).getByText("Evidence intake")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceIntake).getAllByText("Approved evidence").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Submitted / review required").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Missing / rejected / expired").length).toBeGreaterThan(0);
+    const submittedReviewMetric = within(walletProviderEvidenceIntake)
+      .getAllByText("Submitted / review required")[0]
+      .closest("article");
+    expect(submittedReviewMetric).not.toBeNull();
+    expect(within(submittedReviewMetric as HTMLElement).getByText("1")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceIntake).getAllByText("Evidence status").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Review state").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Release impact").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Expected artifacts").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Submitted artifacts").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Service gate").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Degradation path").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Reviewer").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getByText("Portkey AA connect evidence")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceIntake).getByText("EOA extension connect evidence")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceIntake).getByText("Wrong-chain recovery evidence")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceIntake).getByText("Unsupported-wallet recovery evidence")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceIntake).getByText("Portkey AA provider")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceIntake).getByText("Portkey EOA Extension")).toBeInTheDocument();
+    expect(within(walletProviderEvidenceIntake).getAllByText("Submitted").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("In review").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Review required").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Missing").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Rejected").length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText("Blocked").length).toBeGreaterThan(0);
+    expect(
+      within(walletProviderEvidenceIntake).getByText("local-wallet-qa/eoa-extension-connect-2026-07-03"),
+    ).toBeInTheDocument();
+    expect(within(walletProviderEvidenceIntake).getAllByText(/No live wallet SDK connection/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText(/provider API call/).length).toBeGreaterThan(0);
+    expect(within(walletProviderEvidenceIntake).getAllByText(/file upload/).length).toBeGreaterThan(0);
     const walletAdapterReadiness = screen
       .getByRole("heading", { name: "aelf-web-login adapter readiness" })
       .closest("section");
@@ -612,6 +653,37 @@ describe("Admin/Ops shell", () => {
     expect(screen.getAllByText("缺失").length).toBeGreaterThan(0);
     expectVisibleText(/尚未附上真实 Portkey AA provider 证据/);
     expectVisibleText(/不会执行实时钱包 SDK 连接、真实签名、交易、合约调用/);
+    const zhWalletProviderEvidenceIntake = screen.getByLabelText("钱包 Provider 证据 Intake 与签核");
+    expect(
+      within(zhWalletProviderEvidenceIntake).getByRole("heading", {
+        name: "钱包 Provider 证据 Intake 与签核",
+      }),
+    ).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceIntake).getByText("证据 intake")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceIntake).getAllByText("已批准证据").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceIntake).getAllByText("已提交 / 需审核").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceIntake).getAllByText("缺失 / 驳回 / 过期").length).toBeGreaterThan(0);
+    const zhSubmittedReviewMetric = within(zhWalletProviderEvidenceIntake)
+      .getAllByText("已提交 / 需审核")[0]
+      .closest("article");
+    expect(zhSubmittedReviewMetric).not.toBeNull();
+    expect(within(zhSubmittedReviewMetric as HTMLElement).getByText("1")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceIntake).getAllByText("证据状态").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceIntake).getAllByText("审核状态").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceIntake).getAllByText("服务门禁").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceIntake).getAllByText("降级路径").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceIntake).getByText("Portkey AA 连接证据")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceIntake).getByText("EOA 插件连接证据")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceIntake).getByText("错误链恢复证据")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceIntake).getByText("不支持钱包恢复证据")).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceIntake).getAllByText("已提交").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceIntake).getAllByText("审核中").length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceIntake).getAllByText("已阻断").length).toBeGreaterThan(0);
+    expect(
+      within(zhWalletProviderEvidenceIntake).getByText("local-wallet-qa/eoa-extension-connect-2026-07-03"),
+    ).toBeInTheDocument();
+    expect(within(zhWalletProviderEvidenceIntake).getAllByText(/不会执行实时钱包 SDK 连接/).length).toBeGreaterThan(0);
+    expect(within(zhWalletProviderEvidenceIntake).getAllByText(/provider API 调用/).length).toBeGreaterThan(0);
     const zhLiveConnectorReleaseReview = screen
       .getByRole("heading", { name: "Live 钱包 connector 发布审核" })
       .closest("section");

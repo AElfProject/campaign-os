@@ -235,6 +235,11 @@ import type {
   UserWinnersExportStatusReadModel,
   WalletProviderQaReadinessGate,
   WalletProviderQaScenarioId,
+  WalletProviderEvidenceArtifact,
+  WalletProviderEvidenceIntake,
+  WalletProviderEvidenceReleaseImpact,
+  WalletProviderEvidenceScenario,
+  WalletProviderEvidenceStatus,
 } from "./types";
 import {
   aelfWebLoginAdapterBoundary,
@@ -1856,6 +1861,280 @@ const createWalletProviderEvidenceEntry = (
     "zh-TW": "Review wallet provider QA before trusting wallet sessions in production.",
   },
 });
+
+const walletProviderEvidenceBoundary = localized(
+  "Seeded/local Wallet Provider Evidence Intake only. No live wallet SDK connection, provider API call, signature request, file upload, storage write, transaction, contract write, export file, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地 Wallet Provider Evidence Intake。不会执行实时钱包 SDK 连接、provider API 调用、签名请求、文件上传、存储写入、交易、合约写入、导出文件、奖励托管或发奖。",
+  "僅 seeded/本地 Wallet Provider Evidence Intake。不會執行即時錢包 SDK 連接、provider API 呼叫、簽名請求、檔案上傳、儲存寫入、交易、合約寫入、匯出檔案、獎勵託管或發獎。",
+);
+
+const walletProviderEvidenceScenarioOrder: WalletProviderQaScenarioId[] = [
+  "portkey-aa-connect",
+  "eoa-extension-connect",
+  "wrong-chain-error",
+  "unsupported-wallet-error",
+];
+
+const walletProviderEvidenceProviderLabels: Record<WalletProviderQaScenarioId, LocalizedText> = {
+  "eoa-extension-connect": localized("Portkey EOA Extension", "Portkey EOA 插件", "Portkey EOA 擴充套件"),
+  "portkey-aa-connect": localized("Portkey AA provider", "Portkey AA provider", "Portkey AA provider"),
+  "unsupported-wallet-error": localized("Unsupported wallet fallback", "不支持钱包 fallback", "不支援錢包 fallback"),
+  "wrong-chain-error": localized("Wrong-chain recovery", "错误链恢复", "錯誤鏈恢復"),
+};
+
+const walletProviderEvidenceServiceGates: Record<WalletProviderQaScenarioId, LocalizedText> = {
+  "eoa-extension-connect": localized(
+    "wallet.adapters.portkeyExtension.enabled must remain review-gated until evidence is approved.",
+    "wallet.adapters.portkeyExtension.enabled 在证据批准前必须保持审核门禁。",
+    "wallet.adapters.portkeyExtension.enabled 在證據批准前必須保持審核門禁。",
+  ),
+  "portkey-aa-connect": localized(
+    "wallet.adapters.portkeyAa.enabled must remain review-gated until evidence is approved.",
+    "wallet.adapters.portkeyAa.enabled 在证据批准前必须保持审核门禁。",
+    "wallet.adapters.portkeyAa.enabled 在證據批准前必須保持審核門禁。",
+  ),
+  "unsupported-wallet-error": localized(
+    "wallet.adapters.unsupportedFallback.enabled must prove graceful recovery before release.",
+    "wallet.adapters.unsupportedFallback.enabled 发布前必须证明可优雅恢复。",
+    "wallet.adapters.unsupportedFallback.enabled 發布前必須證明可優雅恢復。",
+  ),
+  "wrong-chain-error": localized(
+    "wallet.adapters.chainGuard.enabled must prove wrong-chain recovery before release.",
+    "wallet.adapters.chainGuard.enabled 发布前必须证明错误链恢复。",
+    "wallet.adapters.chainGuard.enabled 發布前必須證明錯誤鏈恢復。",
+  ),
+};
+
+const walletProviderEvidenceDegradationPaths: Record<WalletProviderQaScenarioId, LocalizedText> = {
+  "eoa-extension-connect": localized(
+    "Keep EOA extension onboarding in seeded/local preview and route users to manual review if provider evidence is missing.",
+    "EOA 插件 onboarding 保持 seeded/本地预览；缺少 provider 证据时将用户引导到人工审核。",
+    "EOA 擴充套件 onboarding 保持 seeded/本地預覽；缺少 provider 證據時將使用者引導到人工審核。",
+  ),
+  "portkey-aa-connect": localized(
+    "Keep Portkey AA as recommended seeded path only until live connect evidence is approved.",
+    "真实连接证据批准前，仅将 Portkey AA 保持为推荐 seeded 路径。",
+    "真實連接證據批准前，僅將 Portkey AA 保持為推薦 seeded 路徑。",
+  ),
+  "unsupported-wallet-error": localized(
+    "Show unsupported-wallet fallback copy and keep task verification unavailable for unsupported providers.",
+    "展示不支持钱包 fallback 文案，并让不支持 provider 的任务验证保持不可用。",
+    "展示不支援錢包 fallback 文案，並讓不支援 provider 的任務驗證保持不可用。",
+  ),
+  "wrong-chain-error": localized(
+    "Show switch-to-AELF recovery copy and keep task verification pending until the chain is corrected.",
+    "展示切换到 AELF 的恢复文案，并在链纠正前保持任务验证 pending。",
+    "展示切換到 AELF 的恢復文案，並在鏈修正前保持任務驗證 pending。",
+  ),
+};
+
+const walletProviderEvidenceLabels: Record<WalletProviderQaScenarioId, LocalizedText> = {
+  "eoa-extension-connect": localized("EOA extension connect evidence", "EOA 插件连接证据", "EOA 擴充套件連接證據"),
+  "portkey-aa-connect": localized("Portkey AA connect evidence", "Portkey AA 连接证据", "Portkey AA 連接證據"),
+  "unsupported-wallet-error": localized("Unsupported-wallet recovery evidence", "不支持钱包恢复证据", "不支援錢包恢復證據"),
+  "wrong-chain-error": localized("Wrong-chain recovery evidence", "错误链恢复证据", "錯誤鏈恢復證據"),
+};
+
+const expectedWalletProviderArtifacts = (
+  scenarioId: WalletProviderQaScenarioId,
+): WalletProviderEvidenceArtifact[] => [
+  {
+    id: `${scenarioId}-screenshot`,
+    label: localized("Reviewer screenshot reference", "审核截图引用", "審核截圖引用"),
+    artifactType: "screenshot",
+    required: true,
+  },
+  {
+    id: `${scenarioId}-qa-run`,
+    label: localized("QA run identifier", "QA run 标识", "QA run 識別"),
+    artifactType: "qa_run",
+    required: true,
+  },
+  {
+    id: `${scenarioId}-runbook`,
+    label: localized("Recovery runbook note", "恢复 runbook 备注", "恢復 runbook 備註"),
+    artifactType: "runbook",
+    required: scenarioId === "wrong-chain-error" || scenarioId === "unsupported-wallet-error",
+  },
+];
+
+const submittedWalletProviderArtifacts = (
+  scenarioId: WalletProviderQaScenarioId,
+): WalletProviderEvidenceArtifact[] => {
+  if (scenarioId !== "eoa-extension-connect") {
+    return [];
+  }
+
+  return [
+    {
+      id: "eoa-extension-connect-local-qa-run",
+      label: localized("Local EOA extension QA run", "本地 EOA 插件 QA run", "本地 EOA 擴充套件 QA run"),
+      artifactType: "qa_run",
+      required: true,
+      reference: "local-wallet-qa/eoa-extension-connect-2026-07-03",
+      capturedAt: "2026-07-03T00:00:00Z",
+    },
+    {
+      id: "eoa-extension-connect-review-note",
+      label: localized("Reviewer note pending", "待审核备注", "待審核備註"),
+      artifactType: "review_note",
+      required: true,
+      reference: "review-note/eoa-extension-connect-pending",
+      capturedAt: "2026-07-03T00:00:00Z",
+    },
+  ];
+};
+
+const walletProviderEvidenceStatusFor = (
+  scenarioId: WalletProviderQaScenarioId,
+  qaGateScenario = false,
+): WalletProviderEvidenceStatus => {
+  if (!qaGateScenario) {
+    return "missing";
+  }
+
+  if (scenarioId === "eoa-extension-connect") {
+    return "submitted";
+  }
+
+  if (scenarioId === "unsupported-wallet-error") {
+    return "rejected";
+  }
+
+  return "missing";
+};
+
+const walletProviderEvidenceReviewStateFor = (
+  status: WalletProviderEvidenceStatus,
+): WalletProviderEvidenceScenario["reviewState"] => {
+  const states: Record<WalletProviderEvidenceStatus, WalletProviderEvidenceScenario["reviewState"]> = {
+    approved: "approved",
+    expired: "expired",
+    missing: "not_started",
+    not_applicable: "not_applicable",
+    rejected: "rejected",
+    submitted: "in_review",
+  };
+
+  return states[status];
+};
+
+const walletProviderEvidenceReleaseImpactFor = (
+  status: WalletProviderEvidenceStatus,
+): WalletProviderEvidenceReleaseImpact => {
+  if (status === "approved") {
+    return "ready";
+  }
+
+  if (status === "submitted") {
+    return "review_required";
+  }
+
+  if (status === "not_applicable") {
+    return "not_applicable";
+  }
+
+  return "blocked";
+};
+
+const walletProviderEvidenceNextActions: Record<WalletProviderQaScenarioId, LocalizedText> = {
+  "eoa-extension-connect": localized(
+    "Review the submitted EOA extension QA run and attach approval before EOA onboarding is live-ready.",
+    "审核已提交的 EOA 插件 QA run，并在 EOA onboarding 视为 live-ready 前附上批准。",
+    "審核已提交的 EOA 擴充套件 QA run，並在 EOA onboarding 視為 live-ready 前附上批准。",
+  ),
+  "portkey-aa-connect": localized(
+    "Attach Portkey AA live connect screenshot, QA run, and reviewer approval before release.",
+    "发布前附上 Portkey AA 真实连接截图、QA run 与审核批准。",
+    "發布前附上 Portkey AA 真實連接截圖、QA run 與審核批准。",
+  ),
+  "unsupported-wallet-error": localized(
+    "Rework unsupported-wallet fallback evidence and resubmit reviewer proof before release.",
+    "重做不支持钱包 fallback 证据，并在发布前重新提交审核证明。",
+    "重做不支援錢包 fallback 證據，並在發布前重新提交審核證明。",
+  ),
+  "wrong-chain-error": localized(
+    "Attach wrong-chain switch/recovery evidence before wallet task verification can be live-ready.",
+    "在钱包任务验证可视为 live-ready 前，附上错误链切换/恢复证据。",
+    "在錢包任務驗證可視為 live-ready 前，附上錯誤鏈切換/恢復證據。",
+  ),
+};
+
+const createWalletProviderEvidenceScenario = (
+  scenarioId: WalletProviderQaScenarioId,
+  gate: WalletProviderQaReadinessGate,
+): WalletProviderEvidenceScenario => {
+  const qaScenario = gate.scenarios.find((scenario) => scenario.id === scenarioId);
+  const evidenceStatus = walletProviderEvidenceStatusFor(scenarioId, Boolean(qaScenario));
+  const releaseImpact = walletProviderEvidenceReleaseImpactFor(evidenceStatus);
+
+  return {
+    id: scenarioId,
+    label: walletProviderEvidenceLabels[scenarioId],
+    provider: walletProviderEvidenceProviderLabels[scenarioId],
+    expectedArtifacts: expectedWalletProviderArtifacts(scenarioId),
+    submittedArtifacts: submittedWalletProviderArtifacts(scenarioId),
+    evidenceStatus,
+    reviewState: walletProviderEvidenceReviewStateFor(evidenceStatus),
+    releaseImpact,
+    reviewerRole: "internal_operator",
+    serviceGate: walletProviderEvidenceServiceGates[scenarioId],
+    degradationPath: walletProviderEvidenceDegradationPaths[scenarioId],
+    nextAction: walletProviderEvidenceNextActions[scenarioId],
+    boundary: walletProviderEvidenceBoundary,
+  };
+};
+
+const walletProviderEvidenceImpactPriority: Record<WalletProviderEvidenceReleaseImpact, number> = {
+  blocked: 0,
+  review_required: 1,
+  ready: 2,
+  not_applicable: 3,
+};
+
+const summarizeWalletProviderEvidenceIntake = (
+  scenarios: WalletProviderEvidenceScenario[],
+): WalletProviderEvidenceIntake["summary"] => {
+  const topScenario = [...scenarios].sort((left, right) => {
+    const impactDelta = walletProviderEvidenceImpactPriority[left.releaseImpact] -
+      walletProviderEvidenceImpactPriority[right.releaseImpact];
+
+    if (impactDelta !== 0) {
+      return impactDelta;
+    }
+
+    return walletProviderEvidenceScenarioOrder.indexOf(left.id) - walletProviderEvidenceScenarioOrder.indexOf(right.id);
+  })[0] ?? scenarios[0];
+
+  return {
+    totalScenarios: scenarios.length,
+    approvedScenarios: scenarios.filter((scenario) => scenario.evidenceStatus === "approved").length,
+    submittedScenarios: scenarios.filter((scenario) => scenario.evidenceStatus === "submitted").length,
+    missingScenarios: scenarios.filter((scenario) => scenario.evidenceStatus === "missing").length,
+    rejectedScenarios: scenarios.filter((scenario) => scenario.evidenceStatus === "rejected").length,
+    expiredScenarios: scenarios.filter((scenario) => scenario.evidenceStatus === "expired").length,
+    releaseBlockers: scenarios.filter((scenario) => scenario.releaseImpact === "blocked").length,
+    reviewRequiredScenarios: scenarios.filter((scenario) => scenario.releaseImpact === "review_required").length,
+    topScenarioId: topScenario.id,
+    topNextAction: topScenario.nextAction,
+  };
+};
+
+export const createWalletProviderEvidenceIntake = (
+  gate: WalletProviderQaReadinessGate,
+): WalletProviderEvidenceIntake => {
+  const scenarios = walletProviderEvidenceScenarioOrder.map((scenarioId) =>
+    createWalletProviderEvidenceScenario(scenarioId, gate),
+  );
+  const summary = summarizeWalletProviderEvidenceIntake(scenarios);
+
+  return {
+    summary,
+    scenarios,
+    boundary: walletProviderEvidenceBoundary,
+    nextAction: summary.topNextAction,
+  };
+};
 
 const createAnalyticsExportProviderEvidenceEntry = (
   exportReadiness: ExportConfirmationReadinessGate,
@@ -9840,17 +10119,17 @@ const v02AcceptanceRows = (): DeliveryAcceptanceRow[] => {
       severity: "critical",
       ownerRole: "internal_operator",
       launchBlocking: true,
-      boundary: aelfWebLoginAdapterBoundary,
-      evidenceSurface: localized("Wallet Provider QA Gate and live connector review", "钱包 Provider QA 门禁与 live connector 审核", "錢包 Provider QA 門禁與 live connector 審核"),
+      boundary: walletProviderEvidenceBoundary,
+      evidenceSurface: localized("Wallet Provider Evidence Intake and sign-off", "钱包 Provider 证据 Intake 与签核", "錢包 Provider 證據 Intake 與簽核"),
       evidenceSummary: localized(
-        "Seeded Portkey AA, EOA extension, wrong-chain, and unsupported-wallet paths are represented; live provider evidence is still missing.",
-        "Seeded Portkey AA、EOA extension、wrong-chain 与 unsupported-wallet 路径已展示；真实 provider 证据仍缺失。",
-        "Seeded Portkey AA、EOA extension、wrong-chain 與 unsupported-wallet 路徑已展示；真實 provider 證據仍缺失。",
+        "Wallet Provider Evidence Intake tracks 0 approved, 1 submitted, 2 missing, and 1 rejected live-provider evidence scenario; production onboarding remains blocked until review approval.",
+        "钱包 Provider Evidence Intake 跟踪 0 个已批准、1 个已提交、2 个缺失、1 个已拒绝的真实 provider 证据场景；生产 onboarding 在审核批准前仍保持阻断。",
+        "錢包 Provider Evidence Intake 跟蹤 0 個已批准、1 個已提交、2 個缺失、1 個已拒絕的真實 provider 證據場景；生產 onboarding 在審核批准前仍保持阻斷。",
       ),
       nextMissionAction: localized(
-        "Open a live wallet provider evidence mission before production wallet onboarding.",
-        "生产钱包 onboarding 前开启真实钱包 provider evidence mission。",
-        "生產錢包 onboarding 前開啟真實錢包 provider evidence mission。",
+        "Attach Portkey AA live connect evidence and approve all wallet provider intake rows before production onboarding.",
+        "生产 onboarding 前附上 Portkey AA 真实连接证据，并批准所有钱包 provider intake 行。",
+        "生產 onboarding 前附上 Portkey AA 真實連接證據，並批准所有錢包 provider intake 行。",
       ),
     }),
     deliveryAcceptanceRow({
@@ -13265,6 +13544,7 @@ export const createAdminOpsReadModel = (
   const aiReportHandoff = createAiReportHandoffSurface(aiOptimization);
   const competitorWatch = createCompetitorWatchSurface(campaign);
   const walletProviderQaGate = createWalletProviderQaReadinessGate(campaign.walletSessions);
+  const walletProviderEvidenceIntake = createWalletProviderEvidenceIntake(walletProviderQaGate);
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
@@ -13278,6 +13558,7 @@ export const createAdminOpsReadModel = (
     deliveryAcceptance: createDeliveryAcceptanceConsole(),
     deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
     walletProviderQaGate,
+    walletProviderEvidenceIntake,
     aelfWebLoginAdapterReadiness,
     providerEvidenceRegistry,
     contractReviewCenter: createAdminContractReviewCenter(campaign),
