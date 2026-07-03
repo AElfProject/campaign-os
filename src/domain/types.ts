@@ -777,6 +777,16 @@ export type WalletProviderEvidenceRequestStatus =
   | "review_required"
   | "blocked"
   | "not_applicable";
+export type WalletProviderEvidenceReviewActionId =
+  | "submit_evidence"
+  | "approve_evidence"
+  | "reject_evidence"
+  | "reopen_evidence";
+export type WalletProviderEvidenceReviewActionState = "available" | "blocked" | "completed";
+export type WalletProviderEvidenceReviewActionErrorCode =
+  | "UNSUPPORTED_ACTION"
+  | "UNSUPPORTED_SCENARIO"
+  | "ACTION_BLOCKED";
 export type AelfWebLoginIntegrationId = "aelf-web-login";
 export type AelfWebLoginAdapterAudience =
   | "NORMAL_USER"
@@ -1296,6 +1306,75 @@ export interface WalletProviderEvidenceRequestPacket {
   scenarios: WalletProviderEvidenceRequestScenario[];
   boundary: LocalizedText;
   nextAction: LocalizedText;
+}
+
+export interface WalletProviderEvidenceReviewAction {
+  id: WalletProviderEvidenceReviewActionId;
+  label: LocalizedText;
+  state: WalletProviderEvidenceReviewActionState;
+  scenarioId: WalletProviderQaScenarioId;
+  mutatesEvidence: boolean;
+  blockedReason?: LocalizedText;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface WalletProviderEvidenceReviewActionAuditTrail {
+  actionId: WalletProviderEvidenceReviewActionId;
+  scenarioId: string;
+  campaignId: string;
+  reviewer: OwnerRole;
+  executedAt: string;
+  mutatedEvidence: boolean;
+  externalProviderCalled: false;
+  walletSdkExecuted: false;
+  signatureRequested: false;
+  fileUploaded: false;
+  storageWriteExecuted: false;
+  contractWriteExecuted: false;
+  exportFileGenerated: false;
+  rewardDistributed: false;
+}
+
+export interface WalletProviderEvidenceReviewActionError {
+  code: WalletProviderEvidenceReviewActionErrorCode;
+  field: "actionId" | "scenarioId";
+  message: LocalizedText;
+}
+
+export interface WalletProviderEvidenceReviewArtifactReference {
+  artifactType: WalletProviderEvidenceArtifactType;
+  reference: string;
+  label?: LocalizedText;
+  capturedAt?: string;
+}
+
+export interface WalletProviderEvidenceReviewActionRequest {
+  actionId: WalletProviderEvidenceReviewActionId | string;
+  scenarioId: WalletProviderQaScenarioId | string;
+  reviewer?: OwnerRole;
+  executedAt?: string;
+  artifactReferences?: WalletProviderEvidenceReviewArtifactReference[];
+  replaceEvidence?: boolean;
+  reason?: LocalizedText | string;
+}
+
+export interface WalletProviderEvidenceReviewActionResult {
+  ok: boolean;
+  campaignId: string;
+  scenarioId: string;
+  action: WalletProviderEvidenceReviewAction;
+  actions: WalletProviderEvidenceReviewAction[];
+  auditTrail: WalletProviderEvidenceReviewActionAuditTrail;
+  updatedIntake: WalletProviderEvidenceIntake;
+  approvalAudit: WalletProviderEvidenceApprovalAudit;
+  releaseReadiness: WalletProviderEvidenceReleaseReadiness;
+  closeoutPackage: WalletProviderEvidenceCloseoutPackage;
+  requestPacket: WalletProviderEvidenceRequestPacket;
+  deliveryAcceptance: DeliveryAcceptanceConsole;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  error?: WalletProviderEvidenceReviewActionError;
 }
 
 export interface WalletDiagnosticSummary {

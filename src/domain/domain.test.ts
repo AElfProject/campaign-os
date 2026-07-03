@@ -49,6 +49,7 @@ import {
   createMobileTelegramMiniAppHubReadiness,
   createPortfolioCampaignHistoryReadModel,
   createTranslationManagerReadModel,
+  executeWalletProviderEvidenceReviewAction,
   executeI18nReviewAction,
   createLocaleAnalyticsReadiness,
   createLaunchConsoleCampaignBundles,
@@ -85,6 +86,8 @@ import {
 } from "./index";
 import type {
   WalletProviderEvidenceArtifact,
+  WalletProviderEvidenceIntake,
+  WalletProviderEvidenceReviewArtifactReference,
   WalletProviderQaScenarioId,
 } from "./types";
 
@@ -2094,6 +2097,325 @@ describe("Campaign OS domain foundation", () => {
       expect(scenario.boundary["en-US"]).toContain("No live wallet SDK");
     }
     expect(packet.nextAction["en-US"]).toContain("ready for release review");
+  });
+
+  it("executes local wallet provider evidence review actions without mutating source intake or live boundaries", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const intake = createWalletProviderEvidenceIntake(gate);
+    const originalIntake = structuredClone(intake);
+    const references: WalletProviderEvidenceReviewArtifactReference[] = [
+      {
+        artifactType: "screenshot",
+        reference: "local-wallet-qa/portkey-aa-connect/screenshot-2026-07-03",
+      },
+      {
+        artifactType: "qa_run",
+        reference: "local-wallet-qa/portkey-aa-connect/run-2026-07-03",
+      },
+    ];
+
+    const submitted = executeWalletProviderEvidenceReviewAction(campaignDetail, intake, gate, {
+      actionId: "submit_evidence",
+      artifactReferences: references,
+      executedAt: "2026-07-03T21:10:00Z",
+      reviewer: "internal_operator",
+      scenarioId: "portkey-aa-connect",
+    });
+
+    expect(submitted.ok).toBe(true);
+    expect(intake).toEqual(originalIntake);
+    expect(submitted.auditTrail).toMatchObject({
+      actionId: "submit_evidence",
+      contractWriteExecuted: false,
+      exportFileGenerated: false,
+      externalProviderCalled: false,
+      fileUploaded: false,
+      rewardDistributed: false,
+      signatureRequested: false,
+      storageWriteExecuted: false,
+      walletSdkExecuted: false,
+    });
+    expect(submitted.updatedIntake.scenarios.find((scenario) => scenario.id === "portkey-aa-connect")).toMatchObject({
+      evidenceStatus: "submitted",
+      reviewState: "in_review",
+      releaseImpact: "review_required",
+      submittedArtifacts: expect.arrayContaining([
+        expect.objectContaining({
+          artifactType: "screenshot",
+          reference: "local-wallet-qa/portkey-aa-connect/screenshot-2026-07-03",
+        }),
+        expect.objectContaining({
+          artifactType: "qa_run",
+          reference: "local-wallet-qa/portkey-aa-connect/run-2026-07-03",
+        }),
+      ]),
+    });
+    expect(submitted.releaseReadiness.summary).toMatchObject({
+      approvedRequiredScenarios: 0,
+      ready: false,
+    });
+    expect(submitted.actions.find((action) => action.id === "approve_evidence")).toMatchObject({
+      state: "available",
+    });
+    expect(submitted.actions.find((action) => action.id === "submit_evidence")).toMatchObject({
+      state: "completed",
+    });
+    expect(
+      submitted.deliveryAcceptance.solutionSets
+        .flatMap((solutionSet) => solutionSet.rows)
+        .find((row) => row.id === "v02-live-wallet-provider-evidence"),
+    ).toMatchObject({
+      status: "needs_live_evidence",
+      launchBlocking: true,
+    });
+    expect(submitted.boundary["en-US"]).toContain("No live wallet SDK");
+    expect(executeWalletProviderEvidenceReviewAction(campaignDetail, intake, gate, {
+      actionId: "submit_evidence",
+      artifactReferences: references,
+      executedAt: "2026-07-03T21:10:00Z",
+      reviewer: "internal_operator",
+      scenarioId: "portkey-aa-connect",
+    })).toEqual(submitted);
+  });
+
+  it("blocks incomplete wallet provider evidence approval and preserves projections", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const intake = createWalletProviderEvidenceIntake(gate);
+    const attempted = executeWalletProviderEvidenceReviewAction(campaignDetail, intake, gate, {
+      actionId: "approve_evidence",
+      scenarioId: "portkey-aa-connect",
+    });
+
+    expect(attempted).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "ACTION_BLOCKED", field: "actionId" }),
+      updatedIntake: intake,
+    });
+    expect(attempted.releaseReadiness.summary).toMatchObject({
+      approvedRequiredScenarios: 0,
+      blockedScenarios: 4,
+      ready: false,
+      reviewRequiredScenarios: 1,
+    });
+    expect(attempted.actions.find((action) => action.id === "approve_evidence")).toMatchObject({
+      state: "blocked",
+      blockedReason: expect.objectContaining({
+        "en-US": expect.stringContaining("Approval requires"),
+      }),
+    });
+  });
+
+  it("approves one wallet provider scenario without proving the whole delivery acceptance gate", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const submitted = executeWalletProviderEvidenceReviewAction(campaignDetail, createWalletProviderEvidenceIntake(gate), gate, {
+      actionId: "submit_evidence",
+      artifactReferences: [
+        {
+          artifactType: "screenshot",
+          reference: "local-wallet-qa/portkey-aa-connect/screenshot-2026-07-03",
+        },
+        {
+          artifactType: "qa_run",
+          reference: "local-wallet-qa/portkey-aa-connect/run-2026-07-03",
+        },
+      ],
+      scenarioId: "portkey-aa-connect",
+    });
+    const approved = executeWalletProviderEvidenceReviewAction(campaignDetail, submitted.updatedIntake, gate, {
+      actionId: "approve_evidence",
+      executedAt: "2026-07-03T21:20:00Z",
+      scenarioId: "portkey-aa-connect",
+    });
+    const liveWalletAcceptance = approved.deliveryAcceptance.solutionSets
+      .flatMap((solutionSet) => solutionSet.rows)
+      .find((row) => row.id === "v02-live-wallet-provider-evidence");
+
+    expect(approved.ok).toBe(true);
+    expect(approved.updatedIntake.scenarios.find((scenario) => scenario.id === "portkey-aa-connect")).toMatchObject({
+      evidenceStatus: "approved",
+      reviewState: "approved",
+      releaseImpact: "ready",
+    });
+    expect(approved.approvalAudit.scenarios.find((scenario) => scenario.id === "portkey-aa-connect")).toMatchObject({
+      approvalState: "approved",
+      failedRuleIds: [],
+      releaseImpact: "ready",
+    });
+    expect(approved.releaseReadiness.summary).toMatchObject({
+      approvedRequiredScenarios: 1,
+      requiredScenarios: 5,
+      ready: false,
+    });
+    expect(liveWalletAcceptance).toMatchObject({
+      status: "needs_live_evidence",
+      launchBlocking: true,
+    });
+    expect(approved.auditTrail.mutatedEvidence).toBe(true);
+    expect(approved.auditTrail.walletSdkExecuted).toBe(false);
+  });
+
+  it("rejects and reopens wallet provider evidence with replacement references", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const intake = createWalletProviderEvidenceIntake(gate);
+    const rejectedScenario = intake.scenarios.find((scenario) => scenario.id === "unsupported-wallet-error");
+
+    expect(rejectedScenario).toMatchObject({
+      evidenceStatus: "rejected",
+      reviewState: "rejected",
+    });
+
+    const reopened = executeWalletProviderEvidenceReviewAction(campaignDetail, intake, gate, {
+      actionId: "reopen_evidence",
+      artifactReferences: [
+        {
+          artifactType: "screenshot",
+          reference: "local-wallet-qa/unsupported-wallet/replacement-screenshot",
+        },
+        {
+          artifactType: "qa_run",
+          reference: "local-wallet-qa/unsupported-wallet/replacement-run",
+        },
+        {
+          artifactType: "runbook",
+          reference: "local-wallet-qa/unsupported-wallet/replacement-runbook",
+        },
+      ],
+      reason: "Replacement fallback evidence captured locally.",
+      scenarioId: "unsupported-wallet-error",
+    });
+
+    expect(reopened.ok).toBe(true);
+    expect(reopened.updatedIntake.scenarios.find((scenario) => scenario.id === "unsupported-wallet-error")).toMatchObject({
+      evidenceStatus: "submitted",
+      reviewState: "in_review",
+      submittedArtifacts: [
+        expect.objectContaining({ reference: "local-wallet-qa/unsupported-wallet/replacement-screenshot" }),
+        expect.objectContaining({ reference: "local-wallet-qa/unsupported-wallet/replacement-run" }),
+        expect.objectContaining({ reference: "local-wallet-qa/unsupported-wallet/replacement-runbook" }),
+      ],
+    });
+    expect(reopened.approvalAudit.scenarios.find((scenario) => scenario.id === "unsupported-wallet-error")).toMatchObject({
+      approvalState: "review_required",
+      failedRuleIds: ["reviewer-approval", "live-evidence-status"],
+      reviewerDecision: expect.objectContaining({ state: "in_review" }),
+    });
+
+    const rejected = executeWalletProviderEvidenceReviewAction(campaignDetail, reopened.updatedIntake, gate, {
+      actionId: "reject_evidence",
+      reason: "Runbook does not match unsupported-provider fallback copy.",
+      scenarioId: "unsupported-wallet-error",
+    });
+
+    expect(rejected.ok).toBe(true);
+    expect(rejected.updatedIntake.scenarios.find((scenario) => scenario.id === "unsupported-wallet-error")).toMatchObject({
+      evidenceStatus: "rejected",
+      nextAction: expect.objectContaining({
+        "en-US": "Runbook does not match unsupported-provider fallback copy.",
+      }),
+      submittedArtifacts: [
+        expect.objectContaining({ reference: "local-wallet-qa/unsupported-wallet/replacement-screenshot" }),
+        expect.objectContaining({ reference: "local-wallet-qa/unsupported-wallet/replacement-run" }),
+        expect.objectContaining({ reference: "local-wallet-qa/unsupported-wallet/replacement-runbook" }),
+      ],
+    });
+    expect(rejected.actions.find((action) => action.id === "reopen_evidence")).toMatchObject({
+      state: "available",
+    });
+  });
+
+  it("proves returned wallet provider projections after all local scenarios are approved", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const completed = walletProviderScenarioIds.reduce((current, scenarioId) => {
+      const submitted = executeWalletProviderEvidenceReviewAction(campaignDetail, current.updatedIntake, gate, {
+        actionId: "submit_evidence",
+        artifactReferences: approvedWalletProviderArtifacts(scenarioId).map((artifact) => ({
+          artifactType: artifact.artifactType,
+          reference: artifact.reference ?? artifact.id,
+        })),
+        replaceEvidence: true,
+        scenarioId,
+      });
+
+      expect(submitted.ok).toBe(true);
+
+      const approved = executeWalletProviderEvidenceReviewAction(campaignDetail, submitted.updatedIntake, gate, {
+        actionId: "approve_evidence",
+        scenarioId,
+      });
+
+      expect(approved.ok).toBe(true);
+
+      return approved;
+    }, executeWalletProviderEvidenceReviewAction(
+      campaignDetail,
+      createWalletProviderEvidenceIntake(gate),
+      gate,
+      {
+        actionId: "submit_evidence",
+        artifactReferences: [],
+        scenarioId: "portkey-aa-connect",
+      },
+    ));
+    const finalResult = completed;
+    const liveWalletAcceptance = finalResult.deliveryAcceptance.solutionSets
+      .flatMap((solutionSet) => solutionSet.rows)
+      .find((row) => row.id === "v02-live-wallet-provider-evidence");
+
+    expect(finalResult.ok).toBe(true);
+    expect(finalResult.releaseReadiness.summary).toMatchObject({
+      approvedRequiredScenarios: 5,
+      blockedScenarios: 0,
+      ready: true,
+      releaseBlockers: 0,
+      requiredScenarios: 5,
+      reviewRequiredScenarios: 0,
+    });
+    expect(finalResult.requestPacket.summary).toMatchObject({
+      ready: true,
+      readyRequests: 5,
+      launchBlockingRequests: 0,
+    });
+    expect(liveWalletAcceptance).toMatchObject({
+      status: "proven",
+      launchBlocking: false,
+    });
+    expect(finalResult.boundary["en-US"]).toContain("No live wallet SDK");
+    expect(finalResult.auditTrail).toMatchObject({
+      contractWriteExecuted: false,
+      exportFileGenerated: false,
+      externalProviderCalled: false,
+      fileUploaded: false,
+      rewardDistributed: false,
+      signatureRequested: false,
+      storageWriteExecuted: false,
+      walletSdkExecuted: false,
+    });
+  });
+
+  it("returns stable errors for unsupported wallet provider evidence actions and scenarios", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const intake = createWalletProviderEvidenceIntake(gate);
+    const unsupportedAction = executeWalletProviderEvidenceReviewAction(campaignDetail, intake, gate, {
+      actionId: "connect_live_wallet" as never,
+      scenarioId: "portkey-aa-connect",
+    });
+    const unsupportedScenario = executeWalletProviderEvidenceReviewAction(campaignDetail, intake, gate, {
+      actionId: "submit_evidence",
+      scenarioId: "nightelf-live-connect" as never,
+    });
+
+    expect(unsupportedAction).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "UNSUPPORTED_ACTION", field: "actionId" }),
+      updatedIntake: intake,
+    });
+    expect(unsupportedScenario).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "UNSUPPORTED_SCENARIO", field: "scenarioId" }),
+      updatedIntake: intake,
+    });
+    expect(unsupportedAction.auditTrail.externalProviderCalled).toBe(false);
+    expect(unsupportedScenario.auditTrail.walletSdkExecuted).toBe(false);
   });
 
   it("labels AA and EOA wallet states", () => {

@@ -337,6 +337,13 @@ import type {
   WalletProviderEvidenceReleaseScenario,
   WalletProviderEvidenceReleaseState,
   WalletProviderEvidenceReleaseImpact,
+  WalletProviderEvidenceReviewAction,
+  WalletProviderEvidenceReviewActionAuditTrail,
+  WalletProviderEvidenceReviewActionError,
+  WalletProviderEvidenceReviewActionId,
+  WalletProviderEvidenceReviewActionRequest,
+  WalletProviderEvidenceReviewActionResult,
+  WalletProviderEvidenceReviewArtifactReference,
   WalletProviderEvidenceScenario,
   WalletProviderEvidenceStatus,
   WalletProviderReviewerDecision,
@@ -3143,6 +3150,521 @@ export const createWalletProviderEvidenceRequestPacket = (
     scenarios,
     summary,
   };
+};
+
+const walletProviderEvidenceReviewActionIds: WalletProviderEvidenceReviewActionId[] = [
+  "submit_evidence",
+  "approve_evidence",
+  "reject_evidence",
+  "reopen_evidence",
+];
+
+const walletProviderEvidenceReviewActionLabels: Record<WalletProviderEvidenceReviewActionId, LocalizedText> = {
+  approve_evidence: localized("Approve evidence", "批准证据", "批准證據"),
+  reject_evidence: localized("Reject evidence", "拒绝证据", "拒絕證據"),
+  reopen_evidence: localized("Reopen / resubmit evidence", "重开/重交证据", "重開/重交證據"),
+  submit_evidence: localized("Submit evidence", "提交证据", "提交證據"),
+};
+
+const walletProviderEvidenceReviewActionSuccess: Record<WalletProviderEvidenceReviewActionId, LocalizedText> = {
+  approve_evidence: localized(
+    "Scenario evidence is locally approved for release-review projection; live execution remains separately gated.",
+    "该场景证据已在本地发布审核 projection 中批准；真实执行仍由单独门禁控制。",
+    "該場景證據已在本地發布審核 projection 中批准；真實執行仍由單獨門禁控制。",
+  ),
+  reject_evidence: localized(
+    "Scenario evidence is locally rejected; submit replacement references before approval.",
+    "该场景证据已在本地拒绝；批准前需要提交替代引用。",
+    "該場景證據已在本地拒絕；批准前需要提交替代引用。",
+  ),
+  reopen_evidence: localized(
+    "Scenario evidence is reopened with replacement local references and is ready for review.",
+    "该场景证据已用替代本地引用重开，并等待审核。",
+    "該場景證據已用替代本地引用重開，並等待審核。",
+  ),
+  submit_evidence: localized(
+    "Scenario evidence references are submitted locally for review.",
+    "该场景证据引用已在本地提交并等待审核。",
+    "該場景證據引用已在本地提交並等待審核。",
+  ),
+};
+
+const walletProviderEvidenceReviewActionUnavailable: Record<WalletProviderEvidenceReviewActionId, LocalizedText> = {
+  approve_evidence: localized(
+    "Approval requires a submitted scenario with all required artifact references.",
+    "批准需要该场景已提交所有必需 artifact 引用。",
+    "批准需要該場景已提交所有必需 artifact 引用。",
+  ),
+  reject_evidence: localized(
+    "Only submitted, approved, or review-required evidence can be rejected.",
+    "只有已提交、已批准或需要审核的证据可以拒绝。",
+    "只有已提交、已批准或需要審核的證據可以拒絕。",
+  ),
+  reopen_evidence: localized(
+    "Reopen is available after evidence is rejected or still needs review.",
+    "证据被拒绝或仍需审核后可重开。",
+    "證據被拒絕或仍需審核後可重開。",
+  ),
+  submit_evidence: localized(
+    "Submit is available for missing, rejected, expired, or review-required evidence.",
+    "缺失、已拒绝、已过期或仍需审核的证据可以提交。",
+    "缺失、已拒絕、已過期或仍需審核的證據可以提交。",
+  ),
+};
+
+const walletProviderEvidenceReviewError = (
+  code: WalletProviderEvidenceReviewActionError["code"],
+  field: WalletProviderEvidenceReviewActionError["field"],
+  message: LocalizedText,
+): WalletProviderEvidenceReviewActionError => ({
+  code,
+  field,
+  message,
+});
+
+const unsupportedWalletProviderEvidenceReviewActionError = walletProviderEvidenceReviewError(
+  "UNSUPPORTED_ACTION",
+  "actionId",
+  localized(
+    "Unsupported wallet provider evidence review action.",
+    "不支持的钱包 provider 证据审核动作。",
+    "不支援的錢包 provider 證據審核動作。",
+  ),
+);
+
+const unsupportedWalletProviderEvidenceReviewScenarioError = walletProviderEvidenceReviewError(
+  "UNSUPPORTED_SCENARIO",
+  "scenarioId",
+  localized(
+    "Unsupported wallet provider evidence scenario.",
+    "不支持的钱包 provider 证据场景。",
+    "不支援的錢包 provider 證據場景。",
+  ),
+);
+
+const isWalletProviderEvidenceReviewActionId = (
+  actionId: string,
+): actionId is WalletProviderEvidenceReviewActionId =>
+  walletProviderEvidenceReviewActionIds.includes(actionId as WalletProviderEvidenceReviewActionId);
+
+const isWalletProviderEvidenceScenarioId = (
+  scenarioId: string,
+): scenarioId is WalletProviderQaScenarioId =>
+  walletProviderEvidenceScenarioOrder.includes(scenarioId as WalletProviderQaScenarioId);
+
+const cloneWalletProviderEvidenceArtifact = (
+  artifact: WalletProviderEvidenceArtifact,
+): WalletProviderEvidenceArtifact => ({ ...artifact, label: { ...artifact.label } });
+
+const cloneWalletProviderEvidenceScenario = (
+  scenario: WalletProviderEvidenceScenario,
+): WalletProviderEvidenceScenario => ({
+  ...scenario,
+  boundary: { ...scenario.boundary },
+  degradationPath: { ...scenario.degradationPath },
+  expectedArtifacts: scenario.expectedArtifacts.map(cloneWalletProviderEvidenceArtifact),
+  label: { ...scenario.label },
+  nextAction: { ...scenario.nextAction },
+  provider: { ...scenario.provider },
+  serviceGate: { ...scenario.serviceGate },
+  submittedArtifacts: scenario.submittedArtifacts.map(cloneWalletProviderEvidenceArtifact),
+});
+
+const cloneWalletProviderEvidenceIntake = (
+  intake: WalletProviderEvidenceIntake,
+): WalletProviderEvidenceIntake => {
+  const scenarios = intake.scenarios.map(cloneWalletProviderEvidenceScenario);
+  const summary = summarizeWalletProviderEvidenceIntake(scenarios);
+
+  return {
+    boundary: { ...intake.boundary },
+    nextAction: { ...summary.topNextAction },
+    scenarios,
+    summary,
+  };
+};
+
+const createWalletProviderEvidenceIntakeFromScenarios = (
+  scenarios: WalletProviderEvidenceScenario[],
+): WalletProviderEvidenceIntake => {
+  const copiedScenarios = walletProviderEvidenceScenarioOrder
+    .map((scenarioId) => scenarios.find((scenario) => scenario.id === scenarioId))
+    .filter((scenario): scenario is WalletProviderEvidenceScenario => Boolean(scenario))
+    .map(cloneWalletProviderEvidenceScenario);
+  const summary = summarizeWalletProviderEvidenceIntake(copiedScenarios);
+
+  return {
+    boundary: walletProviderEvidenceBoundary,
+    nextAction: summary.topNextAction,
+    scenarios: copiedScenarios,
+    summary,
+  };
+};
+
+const walletProviderEvidenceScenarioHasCompleteReferences = (
+  scenario: WalletProviderEvidenceScenario,
+) => createWalletProviderArtifactCoverage(scenario).complete;
+
+const shouldEnableWalletProviderEvidenceAction = (
+  actionId: WalletProviderEvidenceReviewActionId,
+  scenario: WalletProviderEvidenceScenario,
+) => {
+  switch (actionId) {
+    case "approve_evidence":
+      return scenario.evidenceStatus === "submitted" &&
+        walletProviderEvidenceScenarioHasCompleteReferences(scenario);
+    case "reject_evidence":
+      return scenario.evidenceStatus === "submitted" || scenario.evidenceStatus === "approved";
+    case "reopen_evidence":
+      return scenario.evidenceStatus === "rejected" || scenario.evidenceStatus === "submitted";
+    case "submit_evidence":
+      return scenario.evidenceStatus !== "approved" && scenario.evidenceStatus !== "not_applicable";
+  }
+};
+
+const createWalletProviderEvidenceReviewActions = (
+  scenario: WalletProviderEvidenceScenario,
+  completedActionId?: WalletProviderEvidenceReviewActionId,
+): WalletProviderEvidenceReviewAction[] =>
+  walletProviderEvidenceReviewActionIds.map((id) => {
+    const available = shouldEnableWalletProviderEvidenceAction(id, scenario);
+
+    return {
+      boundary: walletProviderEvidenceBoundary,
+      id,
+      label: walletProviderEvidenceReviewActionLabels[id],
+      mutatesEvidence: true,
+      nextAction: available
+        ? walletProviderEvidenceReviewActionSuccess[id]
+        : walletProviderEvidenceReviewActionUnavailable[id],
+      scenarioId: scenario.id,
+      state: completedActionId === id ? "completed" : available ? "available" : "blocked",
+      ...(!available ? { blockedReason: walletProviderEvidenceReviewActionUnavailable[id] } : {}),
+    };
+  });
+
+const walletProviderEvidenceActionBlockedError = (
+  actionId: WalletProviderEvidenceReviewActionId,
+): WalletProviderEvidenceReviewActionError =>
+  walletProviderEvidenceReviewError("ACTION_BLOCKED", "actionId", walletProviderEvidenceReviewActionUnavailable[actionId]);
+
+const walletProviderEvidenceReviewReason = (
+  reason: WalletProviderEvidenceReviewActionRequest["reason"],
+): LocalizedText | undefined => {
+  if (!reason) {
+    return undefined;
+  }
+
+  if (typeof reason === "string") {
+    return localized(reason, reason, reason);
+  }
+
+  return reason;
+};
+
+const walletProviderEvidenceReviewReferenceLabel = (
+  scenarioId: WalletProviderQaScenarioId,
+  reference: WalletProviderEvidenceReviewArtifactReference,
+): LocalizedText =>
+  reference.label ?? localized(
+    `${scenarioId} local ${reference.artifactType} reference`,
+    `${scenarioId} 本地 ${reference.artifactType} 引用`,
+    `${scenarioId} 本地 ${reference.artifactType} 引用`,
+  );
+
+const walletProviderEvidenceReviewReferencesToArtifacts = (
+  scenarioId: WalletProviderQaScenarioId,
+  references: WalletProviderEvidenceReviewArtifactReference[] = [],
+  executedAt = "2026-07-03T21:00:00Z",
+): WalletProviderEvidenceArtifact[] =>
+  references
+    .filter((reference) => reference.reference.trim().length > 0)
+    .map((reference, index) => ({
+      artifactType: reference.artifactType,
+      capturedAt: reference.capturedAt ?? executedAt,
+      id: `${scenarioId}-local-${reference.artifactType}-${index + 1}`,
+      label: walletProviderEvidenceReviewReferenceLabel(scenarioId, reference),
+      reference: reference.reference.trim(),
+      required: expectedWalletProviderArtifacts(scenarioId).some(
+        (artifact) => artifact.required && artifact.artifactType === reference.artifactType,
+      ),
+    }));
+
+const mergeWalletProviderEvidenceArtifacts = (
+  scenario: WalletProviderEvidenceScenario,
+  references: WalletProviderEvidenceReviewArtifactReference[] | undefined,
+  executedAt: string,
+  replaceEvidence = false,
+): WalletProviderEvidenceArtifact[] => {
+  const newArtifacts = walletProviderEvidenceReviewReferencesToArtifacts(scenario.id, references, executedAt);
+
+  if (replaceEvidence) {
+    return newArtifacts;
+  }
+
+  const byType = new Map(scenario.submittedArtifacts.map((artifact) => [artifact.artifactType, artifact]));
+  newArtifacts.forEach((artifact) => byType.set(artifact.artifactType, artifact));
+
+  return Array.from(byType.values()).map(cloneWalletProviderEvidenceArtifact);
+};
+
+const applyWalletProviderEvidenceScenarioStatus = (
+  scenario: WalletProviderEvidenceScenario,
+  evidenceStatus: WalletProviderEvidenceStatus,
+  submittedArtifacts = scenario.submittedArtifacts,
+  nextAction = scenario.nextAction,
+): WalletProviderEvidenceScenario => ({
+  ...cloneWalletProviderEvidenceScenario(scenario),
+  evidenceStatus,
+  nextAction,
+  releaseImpact: walletProviderEvidenceReleaseImpactFor(evidenceStatus),
+  reviewState: walletProviderEvidenceReviewStateFor(evidenceStatus),
+  submittedArtifacts: submittedArtifacts.map(cloneWalletProviderEvidenceArtifact),
+});
+
+const applyWalletProviderEvidenceActionToScenario = (
+  scenario: WalletProviderEvidenceScenario,
+  request: WalletProviderEvidenceReviewActionRequest,
+  actionId: WalletProviderEvidenceReviewActionId,
+): WalletProviderEvidenceScenario => {
+  const executedAt = request.executedAt ?? "2026-07-03T21:00:00Z";
+
+  if (actionId === "approve_evidence") {
+    return applyWalletProviderEvidenceScenarioStatus(
+      scenario,
+      "approved",
+      scenario.submittedArtifacts.map((artifact) => ({
+        ...artifact,
+        reviewedAt: artifact.reviewedAt ?? executedAt,
+      })),
+      localized(
+        "Keep this approved local evidence linked for release review.",
+        "为发布审核保留该已批准的本地证据关联。",
+        "為發布審核保留該已批准的本地證據關聯。",
+      ),
+    );
+  }
+
+  if (actionId === "reject_evidence") {
+    return applyWalletProviderEvidenceScenarioStatus(
+      scenario,
+      "rejected",
+      scenario.submittedArtifacts,
+      walletProviderEvidenceReviewReason(request.reason) ?? localized(
+        "Submit replacement wallet provider evidence references before approval.",
+        "批准前提交替代钱包 provider 证据引用。",
+        "批准前提交替代錢包 provider 證據引用。",
+      ),
+    );
+  }
+
+  const submittedArtifacts = mergeWalletProviderEvidenceArtifacts(
+    scenario,
+    request.artifactReferences,
+    executedAt,
+    request.replaceEvidence ?? actionId === "reopen_evidence",
+  );
+
+  return applyWalletProviderEvidenceScenarioStatus(
+    scenario,
+    "submitted",
+    submittedArtifacts,
+    actionId === "reopen_evidence"
+      ? localized(
+        "Review replacement wallet provider evidence references before approval.",
+        "批准前审核替代钱包 provider 证据引用。",
+        "批准前審核替代錢包 provider 證據引用。",
+      )
+      : localized(
+        "Review submitted wallet provider evidence references before approval.",
+        "批准前审核已提交的钱包 provider 证据引用。",
+        "批准前審核已提交的錢包 provider 證據引用。",
+      ),
+  );
+};
+
+const createWalletProviderEvidenceReviewProjectionGate = (
+  gate: WalletProviderQaReadinessGate,
+  intake: WalletProviderEvidenceIntake,
+): WalletProviderQaReadinessGate => {
+  const scenarios = gate.scenarios.map((scenario) => {
+    const evidenceScenario = intake.scenarios.find((candidate) => candidate.id === scenario.id);
+    const liveEvidenceStatus = evidenceScenario?.evidenceStatus === "approved" ? "ready" : scenario.liveEvidenceStatus;
+    const releaseImpact: WalletProviderQaReadinessGate["scenarios"][number]["releaseImpact"] = liveEvidenceStatus === "ready"
+      ? "ready"
+      : liveEvidenceStatus === "not_applicable"
+        ? "informational"
+        : liveEvidenceStatus === "blocked"
+          ? "release_blocker"
+          : "needs_review";
+
+    return {
+      ...scenario,
+      evidence: liveEvidenceStatus === "ready"
+        ? localized(
+          "Local review action projection treats approved metadata references as reviewed wallet provider evidence; no live provider was called.",
+          "本地审核动作 projection 将已批准 metadata 引用视为已审核钱包 provider 证据；没有调用真实 provider。",
+          "本地審核動作 projection 將已批准 metadata 引用視為已審核錢包 provider 證據；沒有呼叫真實 provider。",
+        )
+        : scenario.evidence,
+      liveEvidenceStatus,
+      releaseImpact,
+    };
+  });
+
+  return {
+    boundary: { ...gate.boundary },
+    scenarios,
+    summary: {
+      liveEvidenceReadyScenarios: scenarios.filter((scenario) => scenario.liveEvidenceStatus === "ready").length,
+      missingLiveEvidenceScenarios: scenarios.filter((scenario) => scenario.liveEvidenceStatus === "missing").length,
+      releaseBlockers: scenarios.filter((scenario) => scenario.releaseImpact === "release_blocker").length,
+      seededReadyScenarios: scenarios.filter((scenario) => scenario.seededStatus === "ready").length,
+      totalScenarios: scenarios.length,
+    },
+  };
+};
+
+const createWalletProviderEvidenceReviewAuditTrail = (
+  campaignId: string,
+  request: WalletProviderEvidenceReviewActionRequest,
+  actionId: WalletProviderEvidenceReviewActionId,
+  mutatedEvidence: boolean,
+): WalletProviderEvidenceReviewActionAuditTrail => ({
+  actionId,
+  campaignId,
+  contractWriteExecuted: false,
+  executedAt: request.executedAt ?? "2026-07-03T21:00:00Z",
+  exportFileGenerated: false,
+  externalProviderCalled: false,
+  fileUploaded: false,
+  mutatedEvidence,
+  rewardDistributed: false,
+  reviewer: request.reviewer ?? "internal_operator",
+  scenarioId: request.scenarioId,
+  signatureRequested: false,
+  storageWriteExecuted: false,
+  walletSdkExecuted: false,
+});
+
+const createWalletProviderEvidenceReviewActionResult = (
+  campaign: Pick<CampaignShellDetail, "id">,
+  current: WalletProviderEvidenceIntake,
+  gate: WalletProviderQaReadinessGate,
+  request: WalletProviderEvidenceReviewActionRequest,
+  updatedIntake: WalletProviderEvidenceIntake,
+  actionId: WalletProviderEvidenceReviewActionId,
+  mutatedEvidence: boolean,
+  error?: WalletProviderEvidenceReviewActionError,
+): WalletProviderEvidenceReviewActionResult => {
+  const fallbackScenario = updatedIntake.scenarios[0] ?? current.scenarios[0];
+  const scenario = isWalletProviderEvidenceScenarioId(request.scenarioId)
+    ? updatedIntake.scenarios.find((candidate) => candidate.id === request.scenarioId) ?? fallbackScenario
+    : fallbackScenario;
+  const projectionGate = createWalletProviderEvidenceReviewProjectionGate(gate, updatedIntake);
+  const approvalAudit = createWalletProviderEvidenceApprovalAudit(updatedIntake, projectionGate);
+  const releaseReadiness = createWalletProviderEvidenceReleaseReadiness(approvalAudit);
+  const closeoutPackage = createWalletProviderEvidenceCloseoutPackage(releaseReadiness);
+  const requestPacket = createWalletProviderEvidenceRequestPacket(closeoutPackage);
+  const deliveryAcceptance = createDeliveryAcceptanceConsole(releaseReadiness);
+  const actions = createWalletProviderEvidenceReviewActions(scenario, error ? undefined : actionId);
+  const action = actions.find((candidate) => candidate.id === actionId) ?? actions[0];
+
+  return {
+    action,
+    actions,
+    approvalAudit,
+    auditTrail: createWalletProviderEvidenceReviewAuditTrail(campaign.id, request, actionId, mutatedEvidence),
+    boundary: walletProviderEvidenceBoundary,
+    campaignId: campaign.id,
+    closeoutPackage,
+    deliveryAcceptance,
+    ...(error ? { error } : {}),
+    nextAction: error?.message ?? action.nextAction,
+    ok: !error,
+    releaseReadiness,
+    requestPacket,
+    scenarioId: request.scenarioId,
+    updatedIntake,
+  };
+};
+
+export const executeWalletProviderEvidenceReviewAction = (
+  campaign: Pick<CampaignShellDetail, "id">,
+  current: WalletProviderEvidenceIntake,
+  gate: WalletProviderQaReadinessGate,
+  request: WalletProviderEvidenceReviewActionRequest,
+): WalletProviderEvidenceReviewActionResult => {
+  const copiedIntake = cloneWalletProviderEvidenceIntake(current);
+
+  if (!isWalletProviderEvidenceReviewActionId(request.actionId)) {
+    return createWalletProviderEvidenceReviewActionResult(
+      campaign,
+      current,
+      gate,
+      request,
+      copiedIntake,
+      "submit_evidence",
+      false,
+      unsupportedWalletProviderEvidenceReviewActionError,
+    );
+  }
+
+  if (!isWalletProviderEvidenceScenarioId(request.scenarioId)) {
+    return createWalletProviderEvidenceReviewActionResult(
+      campaign,
+      current,
+      gate,
+      request,
+      copiedIntake,
+      request.actionId,
+      false,
+      unsupportedWalletProviderEvidenceReviewScenarioError,
+    );
+  }
+
+  const scenario = copiedIntake.scenarios.find((candidate) => candidate.id === request.scenarioId);
+
+  if (!scenario) {
+    return createWalletProviderEvidenceReviewActionResult(
+      campaign,
+      current,
+      gate,
+      request,
+      copiedIntake,
+      request.actionId,
+      false,
+      unsupportedWalletProviderEvidenceReviewScenarioError,
+    );
+  }
+
+  if (!shouldEnableWalletProviderEvidenceAction(request.actionId, scenario)) {
+    return createWalletProviderEvidenceReviewActionResult(
+      campaign,
+      current,
+      gate,
+      request,
+      copiedIntake,
+      request.actionId,
+      false,
+      walletProviderEvidenceActionBlockedError(request.actionId),
+    );
+  }
+
+  const updatedScenario = applyWalletProviderEvidenceActionToScenario(scenario, request, request.actionId);
+  const updatedIntake = createWalletProviderEvidenceIntakeFromScenarios(
+    copiedIntake.scenarios.map((candidate) => candidate.id === request.scenarioId ? updatedScenario : candidate),
+  );
+
+  return createWalletProviderEvidenceReviewActionResult(
+    campaign,
+    current,
+    gate,
+    request,
+    updatedIntake,
+    request.actionId,
+    true,
+  );
 };
 
 const createAnalyticsExportProviderEvidenceEntry = (
