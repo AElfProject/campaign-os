@@ -54,6 +54,7 @@ import {
   createVerificationPipelineReadinessGate,
   createWalletConnectionDiagnostics,
   createWalletProviderEvidenceApprovalAudit,
+  createWalletProviderEvidenceCloseoutPackage,
   createWalletProviderEvidenceIntake,
   createWalletProviderEvidenceReleaseReadiness,
   createWalletProviderQaReadinessGate,
@@ -1519,6 +1520,10 @@ describe("Campaign OS domain foundation", () => {
     expect(scenariosById["eoa-extension-connect"].artifactCoverage).toMatchObject({
       requiredArtifactIds: ["eoa-extension-connect-screenshot", "eoa-extension-connect-qa-run"],
       submittedArtifactIds: ["eoa-extension-connect-local-qa-run", "eoa-extension-connect-review-note"],
+      submittedArtifactReferences: [
+        "local-wallet-qa/eoa-extension-connect-2026-07-03",
+        "review-note/eoa-extension-connect-pending",
+      ],
       missingRequiredArtifactIds: ["eoa-extension-connect-screenshot"],
       requiredCount: 2,
       submittedRequiredCount: 1,
@@ -1747,6 +1752,147 @@ describe("Campaign OS domain foundation", () => {
     );
 
     expect(secondReleaseReadiness).toEqual(firstReleaseReadiness);
+  });
+
+  it("packages wallet provider evidence closeout without overclaiming default readiness", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const closeout = adminOps.walletProviderEvidenceCloseoutPackage;
+    const standalone = createWalletProviderEvidenceCloseoutPackage(adminOps.walletProviderEvidenceReleaseReadiness);
+    const scenariosById = Object.fromEntries(closeout.scenarios.map((scenario) => [scenario.id, scenario]));
+    const acceptanceRows = adminOps.deliveryAcceptance.solutionSets.flatMap((solutionSet) => solutionSet.rows);
+    const liveWalletAcceptance = acceptanceRows.find((row) => row.id === "v02-live-wallet-provider-evidence");
+
+    expect(standalone).toEqual(closeout);
+    expect(closeout.scenarios.map((scenario) => scenario.id)).toEqual([
+      "portkey-aa-connect",
+      "eoa-extension-connect",
+      "extension-not-installed-error",
+      "wrong-chain-error",
+      "unsupported-wallet-error",
+    ]);
+    expect(closeout.summary).toMatchObject({
+      totalScenarios: 5,
+      requiredScenarios: 5,
+      approvedRequiredScenarios: 0,
+      readyForReviewScenarios: 0,
+      reviewRequiredScenarios: 1,
+      blockedScenarios: 4,
+      missingRequiredArtifacts: 12,
+      attachedEvidenceReferences: 2,
+      closeoutBlockers: 4,
+      ready: false,
+      topScenarioId: "portkey-aa-connect",
+      topFailedRuleId: "required-artifacts",
+    });
+    expect(scenariosById["portkey-aa-connect"]).toMatchObject({
+      signoffState: "blocked",
+      releaseState: "blocked",
+      approvalState: "blocked",
+      requiredArtifactCount: 2,
+      submittedRequiredArtifactCount: 0,
+      missingRequiredArtifactIds: ["portkey-aa-connect-screenshot", "portkey-aa-connect-qa-run"],
+      failedRuleIds: [
+        "required-artifacts",
+        "reviewer-approval",
+        "live-evidence-status",
+      ],
+    });
+    expect(scenariosById["eoa-extension-connect"]).toMatchObject({
+      signoffState: "review_required",
+      releaseState: "review_required",
+      approvalState: "review_required",
+      attachedEvidenceReferences: [
+        "local-wallet-qa/eoa-extension-connect-2026-07-03",
+        "review-note/eoa-extension-connect-pending",
+      ],
+      missingRequiredArtifactIds: ["eoa-extension-connect-screenshot"],
+    });
+    expect(scenariosById["unsupported-wallet-error"]).toMatchObject({
+      signoffState: "blocked",
+      failedRuleIds: [
+        "required-artifacts",
+        "reviewer-approval",
+        "live-evidence-status",
+        "service-gate",
+      ],
+    });
+    for (const scenario of closeout.scenarios) {
+      expect(scenario.label["en-US"]).toBeTruthy();
+      expect(scenario.label["zh-CN"]).toBeTruthy();
+      expect(scenario.label["zh-TW"]).toBeTruthy();
+      expect(scenario.boundary["en-US"]).toContain("No live wallet SDK");
+      expect(scenario.boundary["en-US"]).toContain("provider API");
+      expect(scenario.boundary["en-US"]).toContain("storage write");
+      expect(scenario.boundary["en-US"]).toContain("contract write");
+      expect(scenario.boundary["en-US"]).toContain("reward distribution");
+    }
+    expect(closeout.boundary["en-US"]).toContain("No live wallet SDK");
+    expect(closeout.nextAction).toEqual(closeout.summary.topNextAction);
+    expect(liveWalletAcceptance).toMatchObject({
+      status: "needs_live_evidence",
+      severity: "critical",
+      launchBlocking: true,
+    });
+  });
+
+  it("derives wallet provider evidence closeout deterministically", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const releaseReadiness = createWalletProviderEvidenceReleaseReadiness(
+      createWalletProviderEvidenceApprovalAudit(createWalletProviderEvidenceIntake(gate), gate),
+    );
+    const firstCloseout = createWalletProviderEvidenceCloseoutPackage(releaseReadiness);
+    const secondCloseout = createWalletProviderEvidenceCloseoutPackage(releaseReadiness);
+
+    expect(secondCloseout).toEqual(firstCloseout);
+  });
+
+  it("marks wallet provider evidence closeout ready only for all-approved evidence", () => {
+    const liveReadyGate = createWalletProviderQaReadinessGate(walletSessions, {
+      "eoa-extension-connect": "ready",
+      "extension-not-installed-error": "ready",
+      "portkey-aa-connect": "ready",
+      "unsupported-wallet-error": "ready",
+      "wrong-chain-error": "ready",
+    });
+    const approvedIntake = createWalletProviderEvidenceIntake(
+      liveReadyGate,
+      Object.fromEntries(
+        walletProviderScenarioIds.map((scenarioId) => [
+          scenarioId,
+          {
+            evidenceStatus: "approved",
+            submittedArtifacts: approvedWalletProviderArtifacts(scenarioId),
+          },
+        ]),
+      ),
+    );
+    const releaseReadiness = createWalletProviderEvidenceReleaseReadiness(
+      createWalletProviderEvidenceApprovalAudit(approvedIntake, liveReadyGate),
+    );
+    const closeout = createWalletProviderEvidenceCloseoutPackage(releaseReadiness);
+
+    expect(closeout.summary).toMatchObject({
+      totalScenarios: 5,
+      requiredScenarios: 5,
+      approvedRequiredScenarios: 5,
+      readyForReviewScenarios: 5,
+      reviewRequiredScenarios: 0,
+      blockedScenarios: 0,
+      missingRequiredArtifacts: 0,
+      attachedEvidenceReferences: 13,
+      closeoutBlockers: 0,
+      ready: true,
+      topFailedRuleId: null,
+    });
+    expect(closeout.scenarios.every((scenario) => scenario.signoffState === "ready")).toBe(true);
+    for (const scenario of closeout.scenarios) {
+      expect(scenario.requiredForRelease).toBe(true);
+      expect(scenario.missingRequiredArtifactIds).toEqual([]);
+      expect(scenario.failedRuleIds).toEqual([]);
+      expect(scenario.attachedEvidenceReferences.length).toBeGreaterThanOrEqual(2);
+      expect(scenario.boundary["en-US"]).toContain("No live wallet SDK");
+    }
+    expect(closeout.nextAction["en-US"]).toContain("ready for release review");
   });
 
   it("labels AA and EOA wallet states", () => {
