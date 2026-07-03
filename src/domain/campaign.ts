@@ -246,6 +246,9 @@ import type {
   WalletProviderEvidenceApprovalScenario,
   WalletProviderEvidenceArtifact,
   WalletProviderEvidenceIntake,
+  WalletProviderEvidenceReleaseReadiness,
+  WalletProviderEvidenceReleaseScenario,
+  WalletProviderEvidenceReleaseState,
   WalletProviderEvidenceReleaseImpact,
   WalletProviderEvidenceScenario,
   WalletProviderEvidenceStatus,
@@ -2504,6 +2507,131 @@ export const createWalletProviderEvidenceApprovalAudit = (
     .filter((scenario): scenario is WalletProviderEvidenceScenario => Boolean(scenario))
     .map((scenario) => createWalletProviderEvidenceApprovalScenario(scenario, gate));
   const summary = summarizeWalletProviderEvidenceApprovalAudit(scenarios);
+
+  return {
+    boundary: walletProviderEvidenceBoundary,
+    nextAction: summary.topNextAction,
+    scenarios,
+    summary,
+  };
+};
+
+const requiredWalletProviderReleaseScenarioIds = new Set<WalletProviderQaScenarioId>(
+  walletProviderEvidenceScenarioOrder,
+);
+
+const walletProviderEvidenceReleaseStatePriority: Record<WalletProviderEvidenceReleaseState, number> = {
+  blocked: 0,
+  review_required: 1,
+  ready: 2,
+  not_applicable: 3,
+};
+
+const createWalletProviderEvidenceReleaseScenario = (
+  scenario: WalletProviderEvidenceApprovalScenario,
+): WalletProviderEvidenceReleaseScenario => {
+  const requiredForRelease = requiredWalletProviderReleaseScenarioIds.has(scenario.id);
+  const blockingRuleIds = scenario.rules
+    .filter((rule) => rule.state === "blocked")
+    .map((rule) => rule.id);
+  const reviewRequiredRuleIds = scenario.rules
+    .filter((rule) => rule.state === "needs_review")
+    .map((rule) => rule.id);
+  const completeRequiredApproval =
+    scenario.approvalState === "approved" &&
+    scenario.artifactCoverage.complete &&
+    scenario.failedRuleIds.length === 0;
+  const releaseState: WalletProviderEvidenceReleaseState =
+    !requiredForRelease && scenario.approvalState === "not_applicable"
+      ? "not_applicable"
+      : completeRequiredApproval
+        ? "ready"
+        : blockingRuleIds.length > 0 || (requiredForRelease && scenario.approvalState === "not_applicable")
+          ? "blocked"
+          : "review_required";
+
+  return {
+    approvalState: scenario.approvalState,
+    artifactCoverage: scenario.artifactCoverage,
+    blockingRuleIds,
+    boundary: scenario.boundary,
+    failedRuleIds: scenario.failedRuleIds,
+    id: scenario.id,
+    label: scenario.label,
+    nextAction: scenario.nextAction,
+    provider: scenario.provider,
+    releaseState,
+    requiredForRelease,
+    reviewRequiredRuleIds,
+  };
+};
+
+const compareWalletProviderEvidenceReleaseScenarios = (
+  left: WalletProviderEvidenceReleaseScenario,
+  right: WalletProviderEvidenceReleaseScenario,
+) => {
+  const stateDelta = walletProviderEvidenceReleaseStatePriority[left.releaseState] -
+    walletProviderEvidenceReleaseStatePriority[right.releaseState];
+
+  if (stateDelta !== 0) {
+    return stateDelta;
+  }
+
+  const requiredDelta = Number(right.requiredForRelease) - Number(left.requiredForRelease);
+
+  if (requiredDelta !== 0) {
+    return requiredDelta;
+  }
+
+  return walletProviderEvidenceScenarioOrder.indexOf(left.id) - walletProviderEvidenceScenarioOrder.indexOf(right.id);
+};
+
+const summarizeWalletProviderEvidenceReleaseReadiness = (
+  scenarios: WalletProviderEvidenceReleaseScenario[],
+): WalletProviderEvidenceReleaseReadiness["summary"] => {
+  const requiredScenarios = scenarios.filter((scenario) => scenario.requiredForRelease);
+  const topScenario = [...requiredScenarios].sort(compareWalletProviderEvidenceReleaseScenarios)[0] ??
+    [...scenarios].sort(compareWalletProviderEvidenceReleaseScenarios)[0] ??
+    scenarios[0];
+  const approvedRequiredScenarios = requiredScenarios.filter((scenario) => scenario.releaseState === "ready").length;
+  const reviewRequiredScenarios = requiredScenarios.filter((scenario) => scenario.releaseState === "review_required").length;
+  const blockedScenarios = requiredScenarios.filter((scenario) => scenario.releaseState === "blocked").length;
+  const topFailedRuleId = topScenario?.failedRuleIds[0] ?? null;
+  const ready =
+    requiredScenarios.length > 0 &&
+    approvedRequiredScenarios === requiredScenarios.length &&
+    reviewRequiredScenarios === 0 &&
+    blockedScenarios === 0;
+
+  return {
+    approvedRequiredScenarios,
+    blockedScenarios,
+    notApplicableScenarios: scenarios.filter((scenario) => scenario.releaseState === "not_applicable").length,
+    ready,
+    releaseBlockers: blockedScenarios,
+    requiredScenarios: requiredScenarios.length,
+    reviewRequiredScenarios,
+    topFailedRuleId,
+    topNextAction: ready
+      ? localized(
+        "Keep all approved wallet provider evidence attached for release review; live execution still requires a separate enablement decision.",
+        "为发布审核保留所有已批准的钱包 provider 证据；真实执行仍需要单独启用决策。",
+        "為發布審核保留所有已批准的錢包 provider 證據；真實執行仍需要單獨啟用決策。",
+      )
+      : topScenario.nextAction,
+    topScenarioId: topScenario.id,
+    totalScenarios: scenarios.length,
+  };
+};
+
+export const createWalletProviderEvidenceReleaseReadiness = (
+  approvalAudit: WalletProviderEvidenceApprovalAudit,
+): WalletProviderEvidenceReleaseReadiness => {
+  const scenarios = walletProviderEvidenceScenarioOrder
+    .map((scenarioId) => approvalAudit.scenarios.find((scenario) => scenario.id === scenarioId))
+    .filter((scenario): scenario is WalletProviderEvidenceApprovalScenario => Boolean(scenario))
+    .map(createWalletProviderEvidenceReleaseScenario);
+  const summary = summarizeWalletProviderEvidenceReleaseReadiness(scenarios);
 
   return {
     boundary: walletProviderEvidenceBoundary,
@@ -10647,19 +10775,19 @@ const v01AcceptanceRows = (
 };
 
 const walletProviderEvidenceApprovalAcceptanceSurface = (
-  approvalAudit?: WalletProviderEvidenceApprovalAudit,
-): LocalizedText => approvalAudit
+  releaseReadiness?: WalletProviderEvidenceReleaseReadiness,
+): LocalizedText => releaseReadiness
   ? localized(
-    "Wallet Provider Evidence Intake, Wallet Provider Evidence Approval Audit, and sign-off",
-    "钱包 Provider 证据 Intake、Wallet Provider Evidence Approval Audit 与签核",
-    "錢包 Provider 證據 Intake、Wallet Provider Evidence Approval Audit 與簽核",
+    "Wallet Provider Evidence Intake, Approval Audit, Release Readiness, and sign-off",
+    "钱包 Provider 证据 Intake、Approval Audit、Release Readiness 与签核",
+    "錢包 Provider 證據 Intake、Approval Audit、Release Readiness 與簽核",
   )
   : localized("Wallet Provider Evidence Intake and sign-off", "钱包 Provider 证据 Intake 与签核", "錢包 Provider 證據 Intake 與簽核");
 
 const walletProviderEvidenceApprovalAcceptanceSummary = (
-  approvalAudit?: WalletProviderEvidenceApprovalAudit,
+  releaseReadiness?: WalletProviderEvidenceReleaseReadiness,
 ): LocalizedText => {
-  if (!approvalAudit) {
+  if (!releaseReadiness) {
     return localized(
       "Wallet Provider Evidence Intake tracks 0 approved, 1 submitted, 2 missing, and 1 rejected live-provider evidence scenario; production onboarding remains blocked until review approval.",
       "钱包 Provider Evidence Intake 跟踪 0 个已批准、1 个已提交、2 个缺失、1 个已拒绝的真实 provider 证据场景；生产 onboarding 在审核批准前仍保持阻断。",
@@ -10667,19 +10795,28 @@ const walletProviderEvidenceApprovalAcceptanceSummary = (
     );
   }
 
-  const topFailedRule = approvalAudit.summary.topFailedRuleId ?? "none";
+  const topFailedRule = releaseReadiness.summary.topFailedRuleId ?? "none";
+
+  if (releaseReadiness.summary.ready) {
+    return localized(
+      `Wallet Provider Evidence Release Readiness has approved all ${releaseReadiness.summary.requiredScenarios}/${releaseReadiness.summary.requiredScenarios} required scenarios; live execution remains separately gated by the non-live boundary.`,
+      `Wallet Provider Evidence Release Readiness 已批准全部 ${releaseReadiness.summary.requiredScenarios}/${releaseReadiness.summary.requiredScenarios} 个必需场景；真实执行仍受非实时边界单独门禁控制。`,
+      `Wallet Provider Evidence Release Readiness 已批准全部 ${releaseReadiness.summary.requiredScenarios}/${releaseReadiness.summary.requiredScenarios} 個必需場景；真實執行仍受非即時邊界單獨門禁控制。`,
+    );
+  }
 
   return localized(
-    `Wallet Provider Evidence Approval Audit tracks ${approvalAudit.summary.approvedScenarios} approved, ${approvalAudit.summary.reviewRequiredScenarios} review-required, and ${approvalAudit.summary.blockedScenarios} blocked scenarios; top failed rule ${topFailedRule} keeps production onboarding blocked.`,
-    `Wallet Provider Evidence Approval Audit 跟踪 ${approvalAudit.summary.approvedScenarios} 个已批准、${approvalAudit.summary.reviewRequiredScenarios} 个需审核、${approvalAudit.summary.blockedScenarios} 个阻断场景；top failed rule ${topFailedRule} 让生产 onboarding 继续阻断。`,
-    `Wallet Provider Evidence Approval Audit 跟蹤 ${approvalAudit.summary.approvedScenarios} 個已批准、${approvalAudit.summary.reviewRequiredScenarios} 個需審核、${approvalAudit.summary.blockedScenarios} 個阻斷場景；top failed rule ${topFailedRule} 讓生產 onboarding 繼續阻斷。`,
+    `Wallet Provider Evidence Release Readiness has approved ${releaseReadiness.summary.approvedRequiredScenarios}/${releaseReadiness.summary.requiredScenarios} required scenarios; ${releaseReadiness.summary.releaseBlockers} release blockers and top failed rule ${topFailedRule} keep production onboarding blocked.`,
+    `Wallet Provider Evidence Release Readiness 已批准 ${releaseReadiness.summary.approvedRequiredScenarios}/${releaseReadiness.summary.requiredScenarios} 个必需场景；${releaseReadiness.summary.releaseBlockers} 个发布阻断与 top failed rule ${topFailedRule} 让生产 onboarding 继续阻断。`,
+    `Wallet Provider Evidence Release Readiness 已批准 ${releaseReadiness.summary.approvedRequiredScenarios}/${releaseReadiness.summary.requiredScenarios} 個必需場景；${releaseReadiness.summary.releaseBlockers} 個發布阻斷與 top failed rule ${topFailedRule} 讓生產 onboarding 繼續阻斷。`,
   );
 };
 
 const v02AcceptanceRows = (
-  approvalAudit?: WalletProviderEvidenceApprovalAudit,
+  releaseReadiness?: WalletProviderEvidenceReleaseReadiness,
 ): DeliveryAcceptanceRow[] => {
   const solutionSetId = "v0_2_wallet_i18n_contract" as const;
+  const liveWalletProviderReady = releaseReadiness?.summary.ready ?? false;
 
   return [
     deliveryAcceptanceRow({
@@ -10707,14 +10844,14 @@ const v02AcceptanceRows = (
       solutionSetId,
       sourceArea: localized("v0.2 wallet QA checklist", "v0.2 钱包 QA 清单", "v0.2 錢包 QA 清單"),
       title: localized("Live wallet provider evidence", "真实钱包 provider 证据", "真實錢包 provider 證據"),
-      status: "needs_live_evidence",
-      severity: "critical",
+      status: liveWalletProviderReady ? "proven" : "needs_live_evidence",
+      severity: liveWalletProviderReady ? "high" : "critical",
       ownerRole: "internal_operator",
-      launchBlocking: true,
+      launchBlocking: !liveWalletProviderReady,
       boundary: walletProviderEvidenceBoundary,
-      evidenceSurface: walletProviderEvidenceApprovalAcceptanceSurface(approvalAudit),
-      evidenceSummary: walletProviderEvidenceApprovalAcceptanceSummary(approvalAudit),
-      nextMissionAction: localized(
+      evidenceSurface: walletProviderEvidenceApprovalAcceptanceSurface(releaseReadiness),
+      evidenceSummary: walletProviderEvidenceApprovalAcceptanceSummary(releaseReadiness),
+      nextMissionAction: releaseReadiness?.nextAction ?? localized(
         "Attach Portkey AA live connect evidence and approve all wallet provider intake rows before production onboarding.",
         "生产 onboarding 前附上 Portkey AA 真实连接证据，并批准所有钱包 provider intake 行。",
         "生產 onboarding 前附上 Portkey AA 真實連接證據，並批准所有錢包 provider intake 行。",
@@ -10860,7 +10997,7 @@ const compareDeliveryAcceptanceResiduals = (
 };
 
 export const createDeliveryAcceptanceConsole = (
-  walletProviderEvidenceApprovalAudit?: WalletProviderEvidenceApprovalAudit,
+  walletProviderEvidenceReleaseReadiness?: WalletProviderEvidenceReleaseReadiness,
   exportFulfillmentReadiness?: ExportFulfillmentReadiness,
 ): DeliveryAcceptanceConsole => {
   const solutionSets = [
@@ -10884,7 +11021,7 @@ export const createDeliveryAcceptanceConsole = (
         "AA+EOA、默认英文、多语言审核、合约边界、API/导出形态与真实证据缺口已展示。",
         "AA+EOA、預設英文、多語言審核、合約邊界、API/匯出形態與真實證據缺口已展示。",
       ),
-      rows: v02AcceptanceRows(walletProviderEvidenceApprovalAudit),
+      rows: v02AcceptanceRows(walletProviderEvidenceReleaseReadiness),
     }),
   ];
   const rows = solutionSets.flatMap((solutionSet) => solutionSet.rows);
@@ -14152,6 +14289,9 @@ export const createAdminOpsReadModel = (
     walletProviderEvidenceIntake,
     walletProviderQaGate,
   );
+  const walletProviderEvidenceReleaseReadiness = createWalletProviderEvidenceReleaseReadiness(
+    walletProviderEvidenceApprovalAudit,
+  );
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
@@ -14163,13 +14303,14 @@ export const createAdminOpsReadModel = (
     campaignId: campaign.id,
     reviewQueue: campaign.reviewItems,
     deliveryAcceptance: createDeliveryAcceptanceConsole(
-      walletProviderEvidenceApprovalAudit,
+      walletProviderEvidenceReleaseReadiness,
       exportFulfillmentReadiness,
     ),
     deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
     walletProviderQaGate,
     walletProviderEvidenceIntake,
     walletProviderEvidenceApprovalAudit,
+    walletProviderEvidenceReleaseReadiness,
     aelfWebLoginAdapterReadiness,
     providerEvidenceRegistry,
     contractReviewCenter: createAdminContractReviewCenter(campaign),

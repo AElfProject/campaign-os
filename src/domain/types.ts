@@ -493,6 +493,11 @@ export type WalletProviderEvidenceApprovalRuleId =
   | "live-evidence-status"
   | "service-gate"
   | "non-live-boundary";
+export type WalletProviderEvidenceReleaseState =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "not_applicable";
 export type AelfWebLoginIntegrationId = "aelf-web-login";
 export type AelfWebLoginAdapterAudience =
   | "NORMAL_USER"
@@ -886,6 +891,42 @@ export interface WalletProviderEvidenceApprovalSummary {
 export interface WalletProviderEvidenceApprovalAudit {
   summary: WalletProviderEvidenceApprovalSummary;
   scenarios: WalletProviderEvidenceApprovalScenario[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface WalletProviderEvidenceReleaseScenario {
+  id: WalletProviderQaScenarioId;
+  label: LocalizedText;
+  provider: LocalizedText;
+  requiredForRelease: boolean;
+  releaseState: WalletProviderEvidenceReleaseState;
+  approvalState: WalletProviderEvidenceApprovalState;
+  artifactCoverage: WalletProviderArtifactCoverage;
+  failedRuleIds: WalletProviderEvidenceApprovalRuleId[];
+  blockingRuleIds: WalletProviderEvidenceApprovalRuleId[];
+  reviewRequiredRuleIds: WalletProviderEvidenceApprovalRuleId[];
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface WalletProviderEvidenceReleaseSummary {
+  totalScenarios: number;
+  requiredScenarios: number;
+  approvedRequiredScenarios: number;
+  reviewRequiredScenarios: number;
+  blockedScenarios: number;
+  notApplicableScenarios: number;
+  releaseBlockers: number;
+  ready: boolean;
+  topScenarioId: WalletProviderQaScenarioId;
+  topFailedRuleId: WalletProviderEvidenceApprovalRuleId | null;
+  topNextAction: LocalizedText;
+}
+
+export interface WalletProviderEvidenceReleaseReadiness {
+  summary: WalletProviderEvidenceReleaseSummary;
+  scenarios: WalletProviderEvidenceReleaseScenario[];
   boundary: LocalizedText;
   nextAction: LocalizedText;
 }
@@ -3145,6 +3186,7 @@ export interface AdminOpsReadModel {
   walletProviderQaGate: WalletProviderQaReadinessGate;
   walletProviderEvidenceIntake: WalletProviderEvidenceIntake;
   walletProviderEvidenceApprovalAudit: WalletProviderEvidenceApprovalAudit;
+  walletProviderEvidenceReleaseReadiness: WalletProviderEvidenceReleaseReadiness;
   aelfWebLoginAdapterReadiness: AelfWebLoginAdapterReadinessModel;
   providerEvidenceRegistry: ProviderEvidenceRegistry;
   contractReviewCenter: AdminContractReviewCenter;
