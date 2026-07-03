@@ -13,6 +13,7 @@ import {
   createLiveWalletConnectorBoundary,
   createStateComponentsDeliveryGallery,
   createVerificationCoverageSummary,
+  createVerificationRulesWorkspace,
   getLocalizedText,
   seededCampaignDraft,
   type AiContentArtifactLifecycle,
@@ -816,6 +817,7 @@ const projectWorkspaceKeys = [
   "aiContent",
   "analytics",
   "export",
+  "verificationRules",
   "closeout",
   "settings",
 ] as const;
@@ -957,6 +959,10 @@ export const ProjectConsole = ({
   const settingsReadiness = createCampaignSettingsReadiness(campaign);
   const postCampaignCloseout = createPostCampaignCloseout(campaign);
   const stateComponentsDeliveryGallery = createStateComponentsDeliveryGallery(campaign);
+  const verificationRulesWorkspace = createVerificationRulesWorkspace(campaign);
+  const topVerificationRule = verificationRulesWorkspace.pipeline.paths.find(
+    (path) => path.id === verificationRulesWorkspace.topRulePathId,
+  );
 
   const selectWorkspace = (workspace: ProjectWorkspaceKey) => {
     if (!controlledActiveWorkspace) {
@@ -1071,6 +1077,7 @@ export const ProjectConsole = ({
     settings: copy.workspaceSettings,
     states: copy.workspaceStates,
     templates: copy.workspaceTemplates,
+    verificationRules: copy.workspaceVerificationRules,
   };
 
   const workspaceSummaries: Record<ProjectWorkspaceKey, string> = {
@@ -1084,6 +1091,7 @@ export const ProjectConsole = ({
     settings: copy.workspaceSettingsSummary,
     states: copy.workspaceStatesSummary,
     templates: copy.workspaceTemplatesSummary,
+    verificationRules: copy.workspaceVerificationRulesSummary,
   };
 
   const createSteps = [
@@ -4381,6 +4389,305 @@ export const ProjectConsole = ({
           <p style={boundaryStyle}>
             {copy.settingsReadOnlyBoundary}: {getLocalizedText(settingsReadiness.boundary, locale)}
           </p>
+        </section>
+      )}
+
+      {activeWorkspace === "verificationRules" && (
+        <section aria-label={`${copy.workspaceVerificationRules} workspace`} style={panelStyle}>
+          <div style={headingRowStyle}>
+            <div>
+              <p style={statLabelStyle}>{copy.verificationRulesSummary}</p>
+              <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                {copy.workspaceVerificationRules}
+              </h3>
+              <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                {copy.workspaceVerificationRulesSummary}
+              </p>
+            </div>
+            <PublishStateBadge
+              label={`${verificationRulesWorkspace.summary.missingLiveEvidencePaths} ${copy.verificationPipelineMissingLiveEvidence}`}
+              state={verificationRulesWorkspace.summary.blockedPaths > 0 ? "blocker" : "warning"}
+            />
+          </div>
+
+          <div aria-label={copy.verificationRulesSummary} style={gridStyle}>
+            {[
+              {
+                detail: `${verificationRulesWorkspace.summary.seededReadyPaths} ${copy.verificationPipelineSeededReady}`,
+                label: copy.verificationPipelineTotalPaths,
+                value: String(verificationRulesWorkspace.summary.totalRulePaths),
+              },
+              {
+                detail: `${verificationRulesWorkspace.summary.seededReadyPaths}/${verificationRulesWorkspace.summary.totalRulePaths}`,
+                label: copy.verificationPipelineSeededCoverage,
+                value: String(verificationRulesWorkspace.summary.seededReadyPaths),
+              },
+              {
+                detail: `${verificationRulesWorkspace.pipeline.summary.liveEvidenceReadyPaths} ${copy.verificationPipelineLiveReady}`,
+                label: copy.verificationPipelineMissingLiveEvidence,
+                value: String(verificationRulesWorkspace.summary.missingLiveEvidencePaths),
+              },
+              {
+                detail: `${verificationRulesWorkspace.summary.manualReviewPaths} ${copy.verificationPipelineManualReviewPaths}`,
+                label: copy.verificationPipelineBlockedPaths,
+                value: String(verificationRulesWorkspace.summary.blockedPaths),
+              },
+              {
+                detail: copy.verificationPipelineEligibilityImpact,
+                label: copy.verificationPipelineManualReviewPaths,
+                value: String(verificationRulesWorkspace.summary.manualReviewPaths),
+              },
+              {
+                detail: `${verificationRulesWorkspace.providerEvidenceSummary.totalEntries} ${copy.verificationRulesProviderEvidence}`,
+                label: copy.verificationRulesProviderLaunchBlockers,
+                value: String(verificationRulesWorkspace.summary.providerLaunchBlockers),
+              },
+              {
+                detail: copy.verificationRulesAffectedOutcomes,
+                label: copy.verificationRulesAffectedOutcomes,
+                value: String(verificationRulesWorkspace.summary.affectedOutcomeCount),
+              },
+            ].map((stat) => (
+              <article key={stat.label} style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={statLabelStyle}>{stat.label}</p>
+                <p style={{ ...statValueStyle, fontSize: 20 }}>{stat.value}</p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                  {stat.detail}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <div style={sectionGridStyle}>
+            <article style={{ ...workflowStyle, minHeight: 0 }}>
+              <div style={headingRowStyle}>
+                <div>
+                  <p style={statLabelStyle}>{copy.verificationPipelineEligibilityImpact}</p>
+                  <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                    {copy.verificationPipelineReferralQualification}
+                  </h4>
+                </div>
+                <PublishStateBadge
+                  label={readableCode(verificationRulesWorkspace.eligibilityImpact.referralQualificationStatus)}
+                  state={
+                    verificationRulesWorkspace.eligibilityImpact.referralQualificationStatus === "qualified"
+                      ? "ready"
+                      : "warning"
+                  }
+                />
+              </div>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {getLocalizedText(verificationRulesWorkspace.eligibilityImpact.summary, locale)}
+              </p>
+              <div>
+                <p style={statLabelStyle}>{copy.verificationPipelineMissingRequiredTasks}</p>
+                <ul style={compactListStyle}>
+                  {(verificationRulesWorkspace.eligibilityImpact.missingRequiredTasks.length > 0
+                    ? verificationRulesWorkspace.eligibilityImpact.missingRequiredTasks
+                    : [copy.verificationPipelineNone]
+                  ).map((task) => (
+                    <li key={task} style={chipStyle}>
+                      {task}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <p style={statLabelStyle}>{copy.verificationPipelineRiskFlags}</p>
+                <ul style={compactListStyle}>
+                  {(verificationRulesWorkspace.eligibilityImpact.riskFlags.length > 0
+                    ? verificationRulesWorkspace.eligibilityImpact.riskFlags
+                    : [copy.verificationPipelineNone]
+                  ).map((riskFlag) => (
+                    <li key={riskFlag} style={chipStyle}>
+                      {riskFlag}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </article>
+
+            <article style={{ ...workflowStyle, minHeight: 0 }}>
+              <p style={statLabelStyle}>{copy.verificationRulesTopRule}</p>
+              <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: 0 }}>
+                {topVerificationRule ? getLocalizedText(topVerificationRule.label, locale) : copy.verificationPipelineNone}
+              </h4>
+              {topVerificationRule ? (
+                <>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <PublishStateBadge
+                      label={`${copy.verificationPipelineReleaseImpact}: ${readableCode(topVerificationRule.releaseImpact)}`}
+                      state={pipelineReleaseImpactState(topVerificationRule.releaseImpact)}
+                    />
+                    <PublishStateBadge
+                      label={`${copy.verificationProviderReadiness}: ${readableCode(topVerificationRule.providerReadiness)}`}
+                      state={pipelineProviderState(topVerificationRule.providerReadiness)}
+                    />
+                  </div>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {copy.verificationPipelineNextAction}: {getLocalizedText(topVerificationRule.nextAction, locale)}
+                  </p>
+                </>
+              ) : null}
+            </article>
+          </div>
+
+          <div aria-label={copy.workspaceVerificationRules} style={sectionGridStyle}>
+            {verificationRulesWorkspace.pipeline.paths.map((path) => (
+              <article key={path.id} style={{ ...cardStyle, minHeight: 0 }}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>{path.evidenceSource}</p>
+                    <h4 style={{ fontSize: 16, lineHeight: 1.2, margin: "4px 0" }}>
+                      {getLocalizedText(path.label, locale)}
+                    </h4>
+                  </div>
+                  <PublishStateBadge
+                    label={readableCode(path.releaseImpact)}
+                    state={pipelineReleaseImpactState(path.releaseImpact)}
+                  />
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge
+                    label={`${copy.verificationPipelineSeededCoverage}: ${readableCode(path.seededCoverageStatus)}`}
+                    state={pipelineSeededCoverageState(path.seededCoverageStatus)}
+                  />
+                  <PublishStateBadge
+                    label={`${copy.verificationPipelineLiveEvidence}: ${readableCode(path.liveEvidenceStatus)}`}
+                    state={pipelineLiveEvidenceState(path.liveEvidenceStatus)}
+                  />
+                  <PublishStateBadge
+                    label={`${copy.verificationProviderReadiness}: ${readableCode(path.providerReadiness)}`}
+                    state={pipelineProviderState(path.providerReadiness)}
+                  />
+                </div>
+                <div>
+                  <p style={statLabelStyle}>{copy.verificationRulesAffectedOutcomes}</p>
+                  <ul style={compactListStyle}>
+                    {path.affectedOutcomes.map((outcome) => (
+                      <li key={`${path.id}-${outcome}`} style={chipStyle}>
+                        {readableCode(outcome)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  <strong>{copy.settingsOwner}: </strong>
+                  {settingsOwnerLabel(path.owner)}
+                </p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  <strong>{copy.verificationPipelineEligibilityImpact}: </strong>
+                  {getLocalizedText(path.eligibilityImpact, locale)}
+                </p>
+                <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  <strong>{copy.verificationPipelineFallbackReason}: </strong>
+                  {getLocalizedText(path.fallbackReason, locale)}
+                </p>
+                <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.verificationPipelineNextAction}: {getLocalizedText(path.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <article style={{ ...workflowStyle, minHeight: 0 }}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.providerRegistryLocalOnlyBoundary}</p>
+                <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                  {copy.verificationRulesProviderEvidence}
+                </h4>
+              </div>
+              <PublishStateBadge
+                label={`${verificationRulesWorkspace.providerEvidenceSummary.launchBlockers} ${copy.providerRegistryLaunchBlockers}`}
+                state={verificationRulesWorkspace.providerEvidenceSummary.launchBlockers > 0 ? "blocker" : "ready"}
+              />
+            </div>
+
+            <div aria-label={copy.verificationRulesProviderEvidence} style={gridStyle}>
+              {[
+                {
+                  detail: `${verificationRulesWorkspace.providerEvidenceSummary.localOnlyEntries} ${copy.providerRegistryLocalOnly}`,
+                  label: copy.providerRegistryTotalEntries,
+                  value: String(verificationRulesWorkspace.providerEvidenceSummary.totalEntries),
+                },
+                {
+                  detail: copy.providerRegistryAdapterReadiness,
+                  label: copy.providerRegistryReviewRequired,
+                  value: String(verificationRulesWorkspace.providerEvidenceSummary.reviewRequiredEntries),
+                },
+                {
+                  detail: copy.providerRegistryUnavailableReadiness,
+                  label: copy.providerRegistryUnavailable,
+                  value: String(verificationRulesWorkspace.providerEvidenceSummary.unavailableEntries),
+                },
+                {
+                  detail: copy.providerRegistryBlockedReadiness,
+                  label: copy.providerRegistryBlocked,
+                  value: String(verificationRulesWorkspace.providerEvidenceSummary.blockedEntries),
+                },
+              ].map((stat) => (
+                <article key={stat.label} style={{ ...cardStyle, minHeight: 0 }}>
+                  <p style={statLabelStyle}>{stat.label}</p>
+                  <p style={{ ...statValueStyle, fontSize: 20 }}>{stat.value}</p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+                    {stat.detail}
+                  </p>
+                </article>
+              ))}
+            </div>
+
+            <div style={sectionGridStyle}>
+              {verificationRulesWorkspace.providerEvidenceEntries.map((entry) => (
+                <article key={entry.id} style={{ ...cardStyle, minHeight: 0 }}>
+                  <div style={headingRowStyle}>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={statLabelStyle}>{entry.providerId}</p>
+                      <h5 style={{ fontSize: 16, lineHeight: 1.2, margin: "4px 0" }}>
+                        {getLocalizedText(entry.label, locale)}
+                      </h5>
+                    </div>
+                    <PublishStateBadge
+                      label={readableCode(entry.adapterReadiness)}
+                      state={providerEvidenceRegistryState(entry.adapterReadiness)}
+                    />
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <PublishStateBadge
+                      label={`${copy.verificationPipelineSeededCoverage}: ${readableCode(entry.seededCoverageStatus)}`}
+                      state={entry.seededCoverageStatus === "ready" ? "ready" : "warning"}
+                    />
+                    <PublishStateBadge
+                      label={`${copy.verificationPipelineLiveEvidence}: ${readableCode(entry.liveEvidenceStatus)}`}
+                      state={pipelineLiveEvidenceState(entry.liveEvidenceStatus)}
+                    />
+                    <PublishStateBadge
+                      label={`${copy.providerRegistryFeatureGate}: ${readableCode(entry.featureGate.state)}`}
+                      state={entry.featureGate.state === "disabled" ? "blocker" : "warning"}
+                    />
+                  </div>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0, overflowWrap: "anywhere" }}>
+                    {copy.providerRegistryFeatureGate}: {entry.featureGate.configKey}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {copy.verificationPipelineNextAction}: {getLocalizedText(entry.evidenceRequired, locale)}
+                  </p>
+                  <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                    {copy.providerRegistryFallback}: {getLocalizedText(entry.fallback.label, locale)}
+                    {" - "}
+                    {getLocalizedText(entry.fallback.description, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </article>
+
+          <div style={boundaryStyle}>
+            <p style={{ margin: 0 }}>{getLocalizedText(verificationRulesWorkspace.boundary, locale)}</p>
+            <p style={{ margin: "8px 0 0" }}>
+              {copy.verificationPipelineNextAction}: {getLocalizedText(verificationRulesWorkspace.nextAction, locale)}
+            </p>
+          </div>
         </section>
       )}
 

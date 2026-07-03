@@ -560,6 +560,11 @@ const enUS = {
   verificationEvidenceCategories: "Evidence categories",
   verificationManualReview: "Manual review",
   verificationProviderReadiness: "Provider readiness",
+  verificationRulesAffectedOutcomes: "Affected outcome types",
+  verificationRulesProviderEvidence: "Verification provider evidence",
+  verificationRulesProviderLaunchBlockers: "Provider launch blockers",
+  verificationRulesSummary: "Verification rules summary",
+  verificationRulesTopRule: "Top rule",
   verificationRiskStates: "Risk-sensitive states",
   workspaceAiContent: "AI Content",
   workspaceAiContentSummary: "Review generated content, optimization recommendations, human approval state, and no-auto-publish boundaries.",
@@ -581,6 +586,8 @@ const enUS = {
   workspaceStatesSummary: "Audit state component coverage, recovery actions, source references, and no-live boundaries in one place.",
   workspaceTemplates: "Templates",
   workspaceTemplatesSummary: "Choose wallet-aware task templates with verification and language readiness context.",
+  workspaceVerificationRules: "Verification Rules",
+  workspaceVerificationRulesSummary: "Review on-chain, API, manual-review, referral, provider evidence, release impact, and no-live boundaries.",
 } satisfies Record<string, string>;
 
 const zhCN = {
@@ -1143,6 +1150,11 @@ const zhCN = {
   verificationEvidenceCategories: "Evidence 分类",
   verificationManualReview: "人工审核",
   verificationProviderReadiness: "Provider readiness",
+  verificationRulesAffectedOutcomes: "影响结果类型",
+  verificationRulesProviderEvidence: "验证 provider 证据",
+  verificationRulesProviderLaunchBlockers: "Provider 上线阻断",
+  verificationRulesSummary: "验证规则摘要",
+  verificationRulesTopRule: "最高优先级规则",
   verificationRiskStates: "风险敏感状态",
   workspaceAiContent: "AI 内容",
   workspaceAiContentSummary: "审核生成内容、优化建议、人工批准状态与不自动发布边界。",
@@ -1164,6 +1176,8 @@ const zhCN = {
   workspaceStatesSummary: "集中审计状态组件覆盖、恢复动作、来源引用与 no-live 边界。",
   workspaceTemplates: "模板",
   workspaceTemplatesSummary: "选择钱包感知任务模板，并查看验证方式与语言 readiness 上下文。",
+  workspaceVerificationRules: "验证规则",
+  workspaceVerificationRulesSummary: "审核链上、API、人工审核、邀请、provider 证据、发布影响与 no-live 边界。",
 } satisfies typeof enUS;
 
 export const projectConsoleCopy = {
@@ -1428,6 +1442,11 @@ export const projectConsoleCopy = {
     stateComponentsSubtitle: "基於 seeded/本地資料集中審核 loading、empty、error、toast、modal、發布阻斷、活動、任務、資格、i18n、錢包 QA 與匯出審核狀態。",
     templatesWorkspaceBoundary: "模板選擇保持本地預覽，並保留錢包相容性、驗證方式與語言 readiness 訊號。",
     translationReviewState: "英文已發布；繁中目前為 fallback/readiness lane，需人工審核後才可視為最終翻譯。",
+    verificationRulesAffectedOutcomes: "影響結果類型",
+    verificationRulesProviderEvidence: "驗證 provider 證據",
+    verificationRulesProviderLaunchBlockers: "Provider 上線阻斷",
+    verificationRulesSummary: "驗證規則摘要",
+    verificationRulesTopRule: "最高優先級規則",
     workspaceAiContentSummary: "審核生成內容、優化建議、人工批准狀態與不自動發布邊界。",
     workspaceAnalyticsSummary: "查看 seeded KPI、漏斗流失、錢包占比、語言占比與語言 analytics readiness。",
     workspaceCampaigns: "活動",
@@ -1443,6 +1462,8 @@ export const projectConsoleCopy = {
     workspaceStates: "狀態",
     workspaceStatesSummary: "集中審核狀態元件覆蓋、恢復動作、來源引用與 no-live 邊界。",
     workspaceTemplatesSummary: "選擇錢包感知任務模板，並查看驗證方式與語言 readiness 上下文。",
+    workspaceVerificationRules: "驗證規則",
+    workspaceVerificationRulesSummary: "審核鏈上、API、人工審核、邀請、provider 證據、發布影響與 no-live 邊界。",
     zhFallbackWarning: "繁中內容目前回退展示英文或簡中草稿，需人工審核。",
   },
 } satisfies Record<SupportedLocale, typeof enUS>;
