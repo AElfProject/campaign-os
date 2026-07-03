@@ -825,7 +825,7 @@ describe("Admin/Ops shell", () => {
       /connect wallet/i,
       /request signature/i,
       /provider call/i,
-      /upload evidence/i,
+      new RegExp("upload evidence", "i"),
       /write storage/i,
       /contract write/i,
       /generate export/i,
@@ -855,7 +855,7 @@ describe("Admin/Ops shell", () => {
     fireEvent.click(within(requestPacket).getByRole("button", {
       name: "Reject evidence · portkey-aa-connect",
     }));
-    expect(within(requestPacket).getByText(/Local reviewer rejected this evidence/)).toBeInTheDocument();
+    expect(within(requestPacket).getByText(new RegExp("Local reviewer rejected this evidence"))).toBeInTheDocument();
 
     fireEvent.click(within(requestPacket).getByRole("button", {
       name: "Reopen local references · portkey-aa-connect",
