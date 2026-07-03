@@ -761,6 +761,11 @@ export type WalletProviderEvidenceCloseoutSignoffState =
   | "review_required"
   | "blocked"
   | "not_applicable";
+export type WalletProviderEvidenceRequestStatus =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "not_applicable";
 export type AelfWebLoginIntegrationId = "aelf-web-login";
 export type AelfWebLoginAdapterAudience =
   | "NORMAL_USER"
@@ -1234,6 +1239,50 @@ export interface WalletProviderEvidenceCloseoutSummary {
 export interface WalletProviderEvidenceCloseoutPackage {
   summary: WalletProviderEvidenceCloseoutSummary;
   scenarios: WalletProviderEvidenceCloseoutScenario[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface WalletProviderEvidenceRequestScenario {
+  id: WalletProviderQaScenarioId;
+  label: LocalizedText;
+  provider: LocalizedText;
+  priority: number;
+  requestStatus: WalletProviderEvidenceRequestStatus;
+  requiredForRelease: boolean;
+  requiredArtifactIds: string[];
+  missingRequiredArtifactIds: string[];
+  attachedEvidenceReferences: string[];
+  acceptanceCriteria: LocalizedText;
+  qaCaptureInstructions: LocalizedText;
+  targetEvidencePath: string;
+  ownerRole: OwnerRole;
+  reviewerRole: OwnerRole;
+  failedRuleIds: WalletProviderEvidenceApprovalRuleId[];
+  blockingRuleIds: WalletProviderEvidenceApprovalRuleId[];
+  reviewRequiredRuleIds: WalletProviderEvidenceApprovalRuleId[];
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface WalletProviderEvidenceRequestPacketSummary {
+  totalRequests: number;
+  readyRequests: number;
+  reviewRequiredRequests: number;
+  blockedRequests: number;
+  notApplicableRequests: number;
+  missingRequiredArtifacts: number;
+  attachedEvidenceReferences: number;
+  launchBlockingRequests: number;
+  ready: boolean;
+  topScenarioId: WalletProviderQaScenarioId;
+  topFailedRuleId: WalletProviderEvidenceApprovalRuleId | null;
+  topNextAction: LocalizedText;
+}
+
+export interface WalletProviderEvidenceRequestPacket {
+  summary: WalletProviderEvidenceRequestPacketSummary;
+  scenarios: WalletProviderEvidenceRequestScenario[];
   boundary: LocalizedText;
   nextAction: LocalizedText;
 }
@@ -3935,6 +3984,7 @@ export interface AdminOpsReadModel {
   walletProviderEvidenceApprovalAudit: WalletProviderEvidenceApprovalAudit;
   walletProviderEvidenceReleaseReadiness: WalletProviderEvidenceReleaseReadiness;
   walletProviderEvidenceCloseoutPackage: WalletProviderEvidenceCloseoutPackage;
+  walletProviderEvidenceRequestPacket: WalletProviderEvidenceRequestPacket;
   aelfWebLoginAdapterReadiness: AelfWebLoginAdapterReadinessModel;
   providerEvidenceRegistry: ProviderEvidenceRegistry;
   contractReviewCenter: AdminContractReviewCenter;
