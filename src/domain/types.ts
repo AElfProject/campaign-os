@@ -61,6 +61,17 @@ export type ContentRevisionStatus =
   | "human_reviewed"
   | "published"
   | "archived";
+export type I18nReviewActionId =
+  | "generate_with_ai"
+  | "compare_with_english"
+  | "mark_reviewed"
+  | "publish_revision"
+  | "use_english_fallback";
+export type I18nReviewActionState = "available" | "blocked" | "completed";
+export type I18nReviewActionErrorCode =
+  | "UNSUPPORTED_LOCALE"
+  | "UNSUPPORTED_ACTION"
+  | "ACTION_BLOCKED";
 export type AiContentArtifactType =
   | "x_thread"
   | "telegram_announcement"
@@ -1448,6 +1459,60 @@ export interface ContentRevision {
   status: ContentRevisionStatus;
   reviewer?: string;
   updatedAt: string;
+}
+
+export interface I18nReviewAction {
+  id: I18nReviewActionId;
+  label: LocalizedText;
+  state: I18nReviewActionState;
+  targetLocale: Exclude<SupportedLocale, "en-US">;
+  mutatesContent: boolean;
+  boundary: LocalizedText;
+  blockedReason?: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface I18nReviewActionAuditTrail {
+  actionId: I18nReviewActionId | (string & {});
+  campaignId: string;
+  targetLocale: SupportedLocale | (string & {});
+  reviewer: string;
+  mutatedContent: boolean;
+  externalProviderCalled: false;
+  publishMutationExecuted: false;
+  storageWriteExecuted: false;
+  contractWriteExecuted: false;
+  walletActionExecuted: false;
+  exportFileGenerated: false;
+  rewardDistributed: false;
+  executedAt: string;
+}
+
+export interface I18nReviewActionError {
+  code: I18nReviewActionErrorCode;
+  field: "actionId" | "targetLocale";
+  message: LocalizedText;
+}
+
+export interface I18nReviewActionRequest {
+  actionId: I18nReviewActionId | (string & {});
+  targetLocale: SupportedLocale | (string & {});
+  reviewer?: string;
+  executedAt?: string;
+}
+
+export interface I18nReviewActionResult {
+  ok: boolean;
+  campaignId: string;
+  targetLocale: SupportedLocale | (string & {});
+  action: I18nReviewAction;
+  actions: I18nReviewAction[];
+  updatedRevisions: ContentRevision[];
+  translationManager: TranslationManagerReadModel;
+  auditTrail: I18nReviewActionAuditTrail;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  error?: I18nReviewActionError;
 }
 
 export interface CampaignRouteContext {

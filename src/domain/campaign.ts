@@ -240,6 +240,12 @@ import type {
   LocaleAnalyticsMetric,
   LocaleAnalyticsReadinessRow,
   LocalizedText,
+  I18nReviewAction,
+  I18nReviewActionAuditTrail,
+  I18nReviewActionError,
+  I18nReviewActionId,
+  I18nReviewActionRequest,
+  I18nReviewActionResult,
   OwnerRole,
   P1LocaleActivationCandidate,
   P1LocaleActivationEvidenceState,
@@ -443,6 +449,79 @@ const noAutoPublishNotice: LocalizedText = {
   "zh-CN": "AI 生成翻译必须经过人工审核后才能发布。",
   "zh-TW": "AI generated translation cannot auto-publish before human review.",
 };
+
+export const i18nReviewActionBoundary: LocalizedText = {
+  "en-US":
+    "Local i18n review workflow only. No live AI provider, backend persistence, publish mutation, storage write, contract write, wallet action, export file, reward custody, or reward distribution is executed.",
+  "zh-CN":
+    "仅本地 i18n 审核工作流。不会执行实时 AI provider、后端持久化、发布变更、storage 写入、合约写入、钱包动作、导出文件、奖励托管或发奖。",
+  "zh-TW":
+    "Local i18n review workflow only. No live AI provider, backend persistence, publish mutation, storage write, contract write, wallet action, export file, reward custody, or reward distribution is executed.",
+};
+
+const i18nReviewActionLabels: Record<I18nReviewActionId, LocalizedText> = {
+  compare_with_english: localized("Compare with English", "对照英文", "對照英文"),
+  generate_with_ai: localized("Generate with AI", "用 AI 生成", "用 AI 生成"),
+  mark_reviewed: localized("Mark reviewed", "标记已审核", "標記已審核"),
+  publish_revision: localized("Publish revision", "发布版本", "發布版本"),
+  use_english_fallback: localized("Use English fallback", "使用英文回退", "使用英文回退"),
+};
+
+const i18nReviewActionSuccess: Record<I18nReviewActionId, LocalizedText> = {
+  compare_with_english: localized(
+    "Comparison refreshed locally; no content was changed.",
+    "已刷新本地对照；未修改内容。",
+    "Comparison refreshed locally; no content was changed.",
+  ),
+  generate_with_ai: localized(
+    "Local AI draft is ready for human review.",
+    "本地 AI 草稿已准备进入人工审核。",
+    "Local AI draft is ready for human review.",
+  ),
+  mark_reviewed: localized(
+    "Human review is complete; publish revision can be reviewed next.",
+    "人工审核已完成；下一步可审核发布版本。",
+    "Human review is complete; publish revision can be reviewed next.",
+  ),
+  publish_revision: localized(
+    "Revision is published in the local preview only.",
+    "版本仅在本地预览中标记为已发布。",
+    "Revision is published in the local preview only.",
+  ),
+  use_english_fallback: localized(
+    "English fallback is active until a reviewed translation is available.",
+    "在已审核翻译可用前启用英文回退。",
+    "English fallback is active until a reviewed translation is available.",
+  ),
+};
+
+const unsupportedLocaleError: I18nReviewActionError = {
+  code: "UNSUPPORTED_LOCALE",
+  field: "targetLocale",
+  message: localized(
+    "Only zh-CN and zh-TW can be target locales for this local review workflow.",
+    "该本地审核工作流仅支持 zh-CN 与 zh-TW 作为目标语言。",
+    "Only zh-CN and zh-TW can be target locales for this local review workflow.",
+  ),
+};
+
+const unsupportedActionError: I18nReviewActionError = {
+  code: "UNSUPPORTED_ACTION",
+  field: "actionId",
+  message: localized(
+    "Unsupported i18n review action.",
+    "不支持的 i18n 审核动作。",
+    "Unsupported i18n review action.",
+  ),
+};
+
+const i18nActionIds: I18nReviewActionId[] = [
+  "generate_with_ai",
+  "compare_with_english",
+  "mark_reviewed",
+  "publish_revision",
+  "use_english_fallback",
+];
 
 const verificationActionText = (
   enUS: string,
@@ -870,7 +949,7 @@ const rewardDisclaimerReviewState = (
     return "missing";
   }
 
-  if (panel.humanReviewed && panel.published) {
+  if (panel.humanReviewed) {
     return "reviewed";
   }
 
@@ -17961,6 +18040,248 @@ export const createTranslationManagerReadModel = (
     compareReviewPrompt,
     noAutoPublishNotice,
   };
+};
+
+const isI18nReviewActionId = (actionId: string): actionId is I18nReviewActionId =>
+  i18nActionIds.includes(actionId as I18nReviewActionId);
+
+const isI18nReviewTargetLocale = (
+  locale: SupportedLocale | (string & {}),
+): locale is Exclude<SupportedLocale, "en-US"> => locale === "zh-CN" || locale === "zh-TW";
+
+const cloneContentRevisions = (revisions: readonly ContentRevision[]): ContentRevision[] =>
+  revisions.map((revision) => ({ ...revision }));
+
+const targetRevisionHasLocalizedDraft = (revision: ContentRevision | undefined) =>
+  Boolean(revision?.title.trim() && revision.description.trim() && revision.rewardDisclaimer.trim());
+
+const createI18nAuditTrail = (
+  campaignId: string,
+  request: I18nReviewActionRequest,
+  mutatedContent: boolean,
+): I18nReviewActionAuditTrail => ({
+  actionId: request.actionId,
+  campaignId,
+  targetLocale: request.targetLocale,
+  reviewer: request.reviewer ?? "project_owner",
+  mutatedContent,
+  externalProviderCalled: false,
+  publishMutationExecuted: false,
+  storageWriteExecuted: false,
+  contractWriteExecuted: false,
+  walletActionExecuted: false,
+  exportFileGenerated: false,
+  rewardDistributed: false,
+  executedAt: request.executedAt ?? "2026-07-03T20:00:00Z",
+});
+
+const createFallbackRevision = (
+  campaignId: string,
+  targetLocale: Exclude<SupportedLocale, "en-US">,
+  request: I18nReviewActionRequest,
+  existing?: ContentRevision,
+): ContentRevision => ({
+  campaignId,
+  description: "",
+  id: existing?.id ?? `rev-${targetLocale.toLowerCase()}-local`,
+  locale: targetLocale,
+  rewardDisclaimer: "",
+  reviewer: request.reviewer,
+  socialPost: "",
+  sourceLocale: "en-US",
+  status: "empty",
+  title: "",
+  updatedAt: request.executedAt ?? "2026-07-03T20:00:00Z",
+});
+
+const createLocalAiDraftRevision = (
+  campaignId: string,
+  source: ContentRevision | undefined,
+  targetLocale: Exclude<SupportedLocale, "en-US">,
+  request: I18nReviewActionRequest,
+  existing?: ContentRevision,
+): ContentRevision => {
+  const seededZhCnDraft = targetLocale === "zh-CN" ? existing : undefined;
+
+  return {
+    campaignId,
+    description: seededZhCnDraft?.description.trim() || source?.description || missingTargetDraft["en-US"],
+    id: existing?.id ?? `rev-${targetLocale.toLowerCase()}-local`,
+    locale: targetLocale,
+    rewardDisclaimer: seededZhCnDraft?.rewardDisclaimer.trim() || source?.rewardDisclaimer || "",
+    reviewer: request.reviewer,
+    socialPost: seededZhCnDraft?.socialPost.trim() || source?.socialPost || "",
+    sourceLocale: "en-US",
+    status: "ai_draft",
+    title: seededZhCnDraft?.title.trim() || source?.title || missingTargetDraft["en-US"],
+    updatedAt: request.executedAt ?? "2026-07-03T20:00:00Z",
+  };
+};
+
+const replaceTargetRevision = (
+  revisions: readonly ContentRevision[],
+  targetLocale: Exclude<SupportedLocale, "en-US">,
+  replacement: ContentRevision,
+) => {
+  let replaced = false;
+  const nextRevisions = revisions.map((revision) => {
+    if (revision.locale !== targetLocale) {
+      return { ...revision };
+    }
+
+    replaced = true;
+    return replacement;
+  });
+
+  return replaced ? nextRevisions : [...nextRevisions, replacement];
+};
+
+const actionBlocked = (
+  actionId: I18nReviewActionId,
+  targetRevision: ContentRevision | undefined,
+): I18nReviewActionError | undefined => {
+  if (actionId === "mark_reviewed" && !targetRevisionHasLocalizedDraft(targetRevision)) {
+    return {
+      code: "ACTION_BLOCKED",
+      field: "targetLocale",
+      message: localized(
+        "Localized draft content is required before marking this locale reviewed.",
+        "标记已审核前必须先有本地化草稿内容。",
+        "Localized draft content is required before marking this locale reviewed.",
+      ),
+    };
+  }
+
+  if (
+    actionId === "publish_revision" &&
+    targetRevision?.status !== "human_reviewed" &&
+    targetRevision?.status !== "published"
+  ) {
+    return {
+      code: "ACTION_BLOCKED",
+      field: "actionId",
+      message: localized(
+        "Publish revision is blocked until human review is complete.",
+        "人工审核完成前不能发布版本。",
+        "Publish revision is blocked until human review is complete.",
+      ),
+    };
+  }
+
+  return undefined;
+};
+
+const createI18nReviewActions = (
+  targetLocale: Exclude<SupportedLocale, "en-US">,
+  targetRevision: ContentRevision | undefined,
+  completedActionId?: I18nReviewActionId,
+): I18nReviewAction[] =>
+  i18nActionIds.map((id) => {
+    const blocked = actionBlocked(id, targetRevision);
+
+    return {
+      id,
+      label: i18nReviewActionLabels[id],
+      state: completedActionId === id ? "completed" : blocked ? "blocked" : "available",
+      targetLocale,
+      mutatesContent: id !== "compare_with_english",
+      boundary: i18nReviewActionBoundary,
+      ...(blocked ? { blockedReason: blocked.message } : {}),
+      nextAction: blocked?.message ?? i18nReviewActionSuccess[id],
+    };
+  });
+
+const createI18nReviewResult = (
+  campaign: Pick<CampaignShellDetail, "id" | "defaultLocale" | "supportedLocales" | "contentRevisions">,
+  request: I18nReviewActionRequest,
+  updatedRevisions: ContentRevision[],
+  mutatedContent: boolean,
+  actionId: I18nReviewActionId,
+  error?: I18nReviewActionError,
+): I18nReviewActionResult => {
+  const targetLocale = isI18nReviewTargetLocale(request.targetLocale) ? request.targetLocale : "zh-CN";
+  const targetRevision = updatedRevisions.find((revision) => revision.locale === targetLocale);
+  const actions = createI18nReviewActions(targetLocale, targetRevision, error ? undefined : actionId);
+  const action = actions.find((candidate) => candidate.id === actionId) ?? actions[1];
+  const translationManager = createTranslationManagerReadModel({
+    ...campaign,
+    contentRevisions: updatedRevisions,
+  });
+
+  return {
+    ok: !error,
+    action,
+    actions,
+    auditTrail: createI18nAuditTrail(campaign.id, request, mutatedContent),
+    boundary: i18nReviewActionBoundary,
+    campaignId: campaign.id,
+    ...(error ? { error } : {}),
+    nextAction: error?.message ?? action.nextAction,
+    targetLocale: request.targetLocale,
+    translationManager,
+    updatedRevisions,
+  };
+};
+
+export const executeI18nReviewAction = (
+  campaign: Pick<CampaignShellDetail, "id" | "defaultLocale" | "supportedLocales" | "contentRevisions">,
+  request: I18nReviewActionRequest,
+): I18nReviewActionResult => {
+  const copiedRevisions = cloneContentRevisions(campaign.contentRevisions);
+  const sourceRevision = copiedRevisions.find((revision) => revision.locale === "en-US");
+
+  if (!isI18nReviewTargetLocale(request.targetLocale)) {
+    return createI18nReviewResult(
+      campaign,
+      request,
+      copiedRevisions,
+      false,
+      isI18nReviewActionId(request.actionId) ? request.actionId : "compare_with_english",
+      unsupportedLocaleError,
+    );
+  }
+
+  if (!isI18nReviewActionId(request.actionId)) {
+    return createI18nReviewResult(
+      campaign,
+      request,
+      copiedRevisions,
+      false,
+      "compare_with_english",
+      unsupportedActionError,
+    );
+  }
+
+  const targetRevision = copiedRevisions.find((revision) => revision.locale === request.targetLocale);
+  const blocked = actionBlocked(request.actionId, targetRevision);
+
+  if (blocked) {
+    return createI18nReviewResult(campaign, request, copiedRevisions, false, request.actionId, blocked);
+  }
+
+  if (request.actionId === "compare_with_english") {
+    return createI18nReviewResult(campaign, request, copiedRevisions, false, request.actionId);
+  }
+
+  const replacement: ContentRevision =
+    request.actionId === "generate_with_ai"
+      ? createLocalAiDraftRevision(campaign.id, sourceRevision, request.targetLocale, request, targetRevision)
+      : request.actionId === "use_english_fallback"
+        ? createFallbackRevision(campaign.id, request.targetLocale, request, targetRevision)
+        : {
+            ...(targetRevision ?? createFallbackRevision(campaign.id, request.targetLocale, request)),
+            reviewer: request.reviewer ?? "project_owner",
+            status: request.actionId === "publish_revision" ? "published" : "human_reviewed",
+            updatedAt: request.executedAt ?? "2026-07-03T20:00:00Z",
+          };
+
+  return createI18nReviewResult(
+    campaign,
+    request,
+    replaceTargetRevision(copiedRevisions, request.targetLocale, replacement),
+    true,
+    request.actionId,
+  );
 };
 
 const createContractImpactOption = (
