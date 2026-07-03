@@ -285,6 +285,26 @@ export type ForecastCampaignTaskOwnerRole =
 export type ForecastCampaignTaskEvidenceSource =
   | "forecast_app_data"
   | "seeded_local";
+export type PayCampaignTaskIntentId =
+  | "invoice-completion"
+  | "payment-link-completion"
+  | "pay-follow-up-handoff";
+export type PayCampaignTaskProviderState =
+  | "not_connected"
+  | "seeded_preview"
+  | "review_required"
+  | "blocked";
+export type PayCampaignTaskReadinessState =
+  | "ready"
+  | "review_required"
+  | "blocked";
+export type PayCampaignTaskOwnerRole =
+  | "project_owner"
+  | "operator"
+  | "pay_provider_reviewer";
+export type PayCampaignTaskEvidenceSource =
+  | "aelf_pay_status"
+  | "seeded_local";
 
 export type LocalizedText = Record<SupportedLocale, string>;
 
@@ -2802,6 +2822,40 @@ export interface ForecastCampaignTaskReadiness {
   campaignId: string;
   summary: ForecastCampaignTaskReadinessSummary;
   rows: ForecastCampaignTaskReadinessRow[];
+  ownerNextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface PayCampaignTaskReadinessRow {
+  id: string;
+  intentId: PayCampaignTaskIntentId;
+  label: LocalizedText;
+  description: LocalizedText;
+  verificationType: "DAPP_API";
+  evidenceSource: PayCampaignTaskEvidenceSource;
+  providerState: PayCampaignTaskProviderState;
+  readinessState: PayCampaignTaskReadinessState;
+  riskState: LocalizedText;
+  ownerRole: PayCampaignTaskOwnerRole;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface PayCampaignTaskReadinessSummary {
+  totalTasks: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  topState: PayCampaignTaskReadinessState;
+  topIntentId: PayCampaignTaskIntentId;
+  primaryOwnerRole: PayCampaignTaskOwnerRole;
+  boundary: LocalizedText;
+}
+
+export interface PayCampaignTaskReadiness {
+  campaignId: string;
+  summary: PayCampaignTaskReadinessSummary;
+  rows: PayCampaignTaskReadinessRow[];
   ownerNextAction: LocalizedText;
   boundary: LocalizedText;
 }

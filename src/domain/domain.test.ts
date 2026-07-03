@@ -29,6 +29,7 @@ import {
   createExportArtifact,
   createExportPreview,
   createForecastCampaignTaskReadiness,
+  createPayCampaignTaskReadiness,
   createParticipantWorkspaceReadModel,
   createParticipationReadModel,
   createProviderEvidenceRegistry,
@@ -3014,6 +3015,96 @@ describe("Campaign OS domain foundation", () => {
     expect(boundaryText).toContain("contract execution");
     expect(boundaryText).toContain("reward custody");
     expect(boundaryText).toContain("reward distribution");
+  });
+
+  it("derives deterministic Pay campaign task readiness without live payment claims", () => {
+    const firstReadModel = createPayCampaignTaskReadiness(campaignDetail);
+    const secondReadModel = createPayCampaignTaskReadiness(campaignDetail);
+    const rowsByIntent = Object.fromEntries(firstReadModel.rows.map((row) => [row.intentId, row]));
+    const serialized = JSON.stringify(firstReadModel);
+    const boundaryText = [
+      firstReadModel.boundary["en-US"],
+      firstReadModel.summary.boundary["en-US"],
+      ...firstReadModel.rows.flatMap((row) => [
+        row.boundary["en-US"],
+        row.nextAction["en-US"],
+        row.riskState["en-US"],
+      ]),
+    ].join(" ");
+
+    expect(firstReadModel).toEqual(secondReadModel);
+    expect(firstReadModel.rows.map((row) => row.intentId)).toEqual([
+      "invoice-completion",
+      "payment-link-completion",
+      "pay-follow-up-handoff",
+    ]);
+    expect(firstReadModel.summary).toMatchObject({
+      totalTasks: 3,
+      readyCount: 1,
+      reviewRequiredCount: 1,
+      blockedCount: 1,
+      topState: "blocked",
+      topIntentId: "pay-follow-up-handoff",
+      primaryOwnerRole: "pay_provider_reviewer",
+    });
+    expect(
+      firstReadModel.summary.readyCount +
+        firstReadModel.summary.reviewRequiredCount +
+        firstReadModel.summary.blockedCount,
+    ).toBe(firstReadModel.summary.totalTasks);
+    expect(rowsByIntent["invoice-completion"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "seeded_local",
+      providerState: "seeded_preview",
+      readinessState: "ready",
+      ownerRole: "project_owner",
+    });
+    expect(rowsByIntent["payment-link-completion"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "aelf_pay_status",
+      providerState: "review_required",
+      readinessState: "review_required",
+      ownerRole: "operator",
+    });
+    expect(rowsByIntent["pay-follow-up-handoff"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "aelf_pay_status",
+      providerState: "not_connected",
+      readinessState: "blocked",
+      ownerRole: "pay_provider_reviewer",
+    });
+
+    for (const row of firstReadModel.rows) {
+      expect(row.label["en-US"]).toBeTruthy();
+      expect(row.label["zh-CN"]).toBeTruthy();
+      expect(row.description["en-US"]).toBeTruthy();
+      expect(row.description["zh-CN"]).toBeTruthy();
+      expect(row.riskState["en-US"]).toBeTruthy();
+      expect(row.riskState["zh-CN"]).toBeTruthy();
+      expect(row.nextAction["en-US"]).toBeTruthy();
+      expect(row.nextAction["zh-CN"]).toBeTruthy();
+      expect(row.boundary["en-US"]).toContain("No live Pay service");
+      expect(row.boundary["zh-CN"]).toContain("不会调用真实 Pay 服务");
+    }
+
+    expect(firstReadModel.ownerNextAction["en-US"]).toContain("Pay provider");
+    expect(boundaryText).toContain("No live Pay service");
+    expect(boundaryText).toContain("payment transaction");
+    expect(boundaryText).toContain("payment link creation");
+    expect(boundaryText).toContain("invoice generation");
+    expect(boundaryText).toContain("wallet signing");
+    expect(boundaryText).toContain("wallet SDK/provider");
+    expect(boundaryText).toContain("backend mutation");
+    expect(boundaryText).toContain("contract execution");
+    expect(boundaryText).toContain("reward custody");
+    expect(boundaryText).toContain("reward distribution");
+
+    for (const unsafeKey of ["privateKey", "seedPhrase", "bearerToken", "signedPayload", "invoiceId", "paymentId"]) {
+      expect(hasOwnKeyDeep(firstReadModel, unsafeKey)).toBe(false);
+    }
+    for (const unsafeText of ["private key", "seed phrase", "bearer token", "signed payload"]) {
+      expect(serialized.toLowerCase()).not.toContain(unsafeText);
+    }
   });
 
   it("keeps Campaign Marketplace readiness local-only, localized, and free of live-service secrets", () => {
