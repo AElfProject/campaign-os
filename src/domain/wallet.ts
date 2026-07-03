@@ -78,6 +78,11 @@ export const walletVerificationLabels: Record<WalletVerificationStatus, Localize
     "zh-CN": "仅地址，钱包类型未知",
     "zh-TW": "僅地址，錢包類型未知",
   },
+  extension_not_installed: {
+    "en-US": "EOA extension not installed",
+    "zh-CN": "EOA 插件未安装",
+    "zh-TW": "EOA 擴充套件未安裝",
+  },
   internal_agent: {
     "en-US": "Internal Agent Skill wallet",
     "zh-CN": "内部 Agent Skill 钱包",
@@ -115,6 +120,11 @@ const walletNextActions: Record<WalletVerificationStatus, LocalizedText> = {
     "en-US": "Connect and sign a verification message before task verification.",
     "zh-CN": "请连接钱包并签署验证消息后再进行任务验证。",
     "zh-TW": "請連接錢包並簽署驗證訊息後再進行任務驗證。",
+  },
+  extension_not_installed: {
+    "en-US": "Install or open your EOA wallet extension.",
+    "zh-CN": "请安装或打开你的 EOA 钱包插件。",
+    "zh-TW": "請安裝或開啟你的 EOA 錢包擴充套件。",
   },
   internal_agent: {
     "en-US": "Keep Agent Skill wallets for internal automation, not normal campaign users.",
@@ -219,6 +229,11 @@ const groupCopy: Record<WalletDiagnosticGroupId, { description: LocalizedText; t
 const qaLabels: Record<WalletQaChecklistId, LocalizedText> = {
   "account-policy-restriction": text("Account policy restriction", "账户策略限制", "帳戶策略限制"),
   "eoa-extension-connect": text("EOA extension connect", "EOA 插件连接", "EOA 擴充套件連接"),
+  "extension-not-installed-error": text(
+    "Extension not installed recovery",
+    "插件未安装恢复",
+    "擴充套件未安裝恢復",
+  ),
   "missing-signature": text("Missing signature recovery", "缺少签名恢复", "缺少簽名恢復"),
   "portkey-aa-connect": text("Portkey AA connect", "Portkey AA 连接", "Portkey AA 連接"),
   "unsupported-wallet-error": text("Unsupported wallet error", "不支持钱包错误", "不支援錢包錯誤"),
@@ -227,6 +242,11 @@ const qaLabels: Record<WalletQaChecklistId, LocalizedText> = {
 
 const providerQaLabels: Record<WalletProviderQaScenarioId, LocalizedText> = {
   "eoa-extension-connect": text("EOA extension connect", "EOA 插件连接", "EOA 擴充套件連接"),
+  "extension-not-installed-error": text(
+    "Extension-not-installed recovery",
+    "插件未安装恢复",
+    "擴充套件未安裝恢復",
+  ),
   "portkey-aa-connect": text("Portkey AA connect", "Portkey AA 连接", "Portkey AA 連接"),
   "unsupported-wallet-error": text("Unsupported wallet recovery", "不支持钱包恢复", "不支援錢包恢復"),
   "wrong-chain-error": text("Wrong-chain recovery", "错误链恢复", "錯誤鏈恢復"),
@@ -246,6 +266,18 @@ const providerQaSeededEvidence: Record<
       "Seeded EOA extension session covers the existing-user connect path.",
       "Seeded EOA 插件会话覆盖已有用户连接路径。",
       "Seeded EOA 擴充套件會話覆蓋既有使用者連接路徑。",
+    ),
+  },
+  "extension-not-installed-error": {
+    missing: text(
+      "No seeded EOA extension-not-installed recovery session is available.",
+      "缺少 seeded EOA 插件未安装恢复会话。",
+      "缺少 seeded EOA 擴充套件未安裝恢復會話。",
+    ),
+    ready: text(
+      "Seeded EOA extension-not-installed session shows the install/open recovery message.",
+      "Seeded EOA 插件未安装会话展示安装或打开恢复提示。",
+      "Seeded EOA 擴充套件未安裝會話展示安裝或開啟恢復提示。",
     ),
   },
   "portkey-aa-connect": {
@@ -292,6 +324,11 @@ const providerQaLiveMissingEvidence: Record<WalletProviderQaScenarioId, Localize
     "尚未附上真实 EOA 浏览器插件证据。",
     "尚未附上真實 EOA 瀏覽器擴充套件證據。",
   ),
+  "extension-not-installed-error": text(
+    "Live EOA extension-not-installed recovery evidence is not attached yet.",
+    "尚未附上真实 EOA 插件未安装恢复证据。",
+    "尚未附上真實 EOA 擴充套件未安裝恢復證據。",
+  ),
   "portkey-aa-connect": text(
     "Live Portkey AA provider evidence is not attached yet.",
     "尚未附上真实 Portkey AA provider 证据。",
@@ -315,6 +352,11 @@ const providerQaLiveReadyEvidence: Record<WalletProviderQaScenarioId, LocalizedT
     "真实 EOA 浏览器插件证据已审核。",
     "真實 EOA 瀏覽器擴充套件證據已審核。",
   ),
+  "extension-not-installed-error": text(
+    "Live EOA extension-not-installed recovery evidence has been reviewed.",
+    "真实 EOA 插件未安装恢复证据已审核。",
+    "真實 EOA 擴充套件未安裝恢復證據已審核。",
+  ),
   "portkey-aa-connect": text(
     "Live Portkey AA provider evidence has been reviewed.",
     "真实 Portkey AA provider 证据已审核。",
@@ -337,6 +379,11 @@ const providerQaNextActions: Record<WalletProviderQaScenarioId, LocalizedText> =
     "Attach Chrome extension connect and disconnect evidence before release approval.",
     "发布批准前附上 Chrome 插件连接与断开证据。",
     "發布批准前附上 Chrome 擴充套件連接與斷開證據。",
+  ),
+  "extension-not-installed-error": text(
+    "Attach Chrome extension-not-installed recovery evidence before release approval.",
+    "发布批准前附上 Chrome 插件未安装恢复证据。",
+    "發布批准前附上 Chrome 擴充套件未安裝恢復證據。",
   ),
   "portkey-aa-connect": text(
     "Attach live Portkey AA connect evidence before release approval.",
@@ -1170,6 +1217,10 @@ const verificationStatusForLiveInfo = (
   input: AdapterWalletInfoCandidate,
   mapping: LiveWalletAdapterMapping | undefined,
 ): WalletVerificationStatus => {
+  if (input.adapterName === "PortkeyExtensionWallet" && input.extensionAvailable === false) {
+    return "extension_not_installed";
+  }
+
   if (!input.address) {
     return "address_only";
   }
@@ -1197,7 +1248,11 @@ const signatureStatusForLiveInfo = (
   input: AdapterWalletInfoCandidate,
   verificationStatus: WalletVerificationStatus,
 ): WalletSignatureStatus => {
-  if (verificationStatus === "address_only" || verificationStatus === "unsupported_wallet") {
+  if (
+    verificationStatus === "address_only" ||
+    verificationStatus === "extension_not_installed" ||
+    verificationStatus === "unsupported_wallet"
+  ) {
     return "not_available";
   }
 
@@ -1246,6 +1301,10 @@ const signatureStatusFor = (fixture: WalletAdapterFixture): WalletSignatureStatu
     return "not_available";
   }
 
+  if (fixture.extensionAvailable === false) {
+    return "not_available";
+  }
+
   if (!fixture.signatureRequired) {
     return "not_required";
   }
@@ -1259,6 +1318,10 @@ const verificationStatusFor = (
 ): WalletVerificationStatus => {
   if (fixture.addressOnly) {
     return "address_only";
+  }
+
+  if (fixture.adapterName === "PortkeyExtensionWallet" && fixture.extensionAvailable === false) {
+    return "extension_not_installed";
   }
 
   if (!fixture.supported) {
@@ -1329,6 +1392,7 @@ export const isWalletSessionVerified = (session: NormalizedWalletSession) =>
 const providerQaScenarioOrder: WalletProviderQaScenarioId[] = [
   "portkey-aa-connect",
   "eoa-extension-connect",
+  "extension-not-installed-error",
   "wrong-chain-error",
   "unsupported-wallet-error",
 ];
@@ -1352,6 +1416,10 @@ const providerQaSessionMatches = (
 
   if (scenarioId === "eoa-extension-connect") {
     return session.walletSource === "PORTKEY_EOA_EXTENSION" && session.verificationStatus === "verified";
+  }
+
+  if (scenarioId === "extension-not-installed-error") {
+    return session.verificationStatus === "extension_not_installed";
   }
 
   if (scenarioId === "wrong-chain-error") {
@@ -1524,6 +1592,14 @@ const qaScenarioForSession = (session: NormalizedWalletSession): LocalizedText =
     );
   }
 
+  if (session.verificationStatus === "extension_not_installed") {
+    return text(
+      "EOA extension install/open recovery message is visible.",
+      "EOA 插件安装或打开恢复提示可见。",
+      "EOA 擴充套件安裝或開啟恢復提示可見。",
+    );
+  }
+
   if (session.verificationStatus === "missing_signature") {
     return text(
       "Missing-signature recovery message is visible.",
@@ -1586,6 +1662,7 @@ const createQaChecklist = (sessions: NormalizedWalletSession[]): WalletQaCheckli
   );
   const wrongChainIds = idsBy((session) => session.verificationStatus === "wrong_chain");
   const unsupportedIds = idsBy((session) => session.verificationStatus === "unsupported_wallet");
+  const extensionNotInstalledIds = idsBy((session) => session.verificationStatus === "extension_not_installed");
   const missingSignatureIds = idsBy((session) => session.verificationStatus === "missing_signature");
   const restrictedIds = idsBy((session) => session.verificationStatus === "account_restricted");
 
@@ -1640,6 +1717,19 @@ const createQaChecklist = (sessions: NormalizedWalletSession[]): WalletQaCheckli
         "缺少不支持钱包 seeded 会话。",
         "不支援錢包 seeded 會話展示安全錢包選擇。",
         "缺少不支援錢包 seeded 會話。",
+      ),
+    ],
+    [
+      "extension-not-installed-error",
+      extensionNotInstalledIds,
+      qaEvidenceText(
+        extensionNotInstalledIds.length > 0,
+        "EOA extension-not-installed seeded session shows install/open recovery.",
+        "No EOA extension-not-installed seeded session is available.",
+        "EOA 插件未安装 seeded 会话展示安装或打开恢复提示。",
+        "缺少 EOA 插件未安装 seeded 会话。",
+        "EOA 擴充套件未安裝 seeded 會話展示安裝或開啟恢復提示。",
+        "缺少 EOA 擴充套件未安裝 seeded 會話。",
       ),
     ],
     [

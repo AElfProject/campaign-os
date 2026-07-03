@@ -208,14 +208,15 @@ describe("wallet locale coverage", () => {
     expect(gate.scenarios.map((scenario) => scenario.id)).toEqual([
       "portkey-aa-connect",
       "eoa-extension-connect",
+      "extension-not-installed-error",
       "wrong-chain-error",
       "unsupported-wallet-error",
     ]);
     expect(gate.summary).toEqual({
-      totalScenarios: 4,
-      seededReadyScenarios: 4,
+      totalScenarios: 5,
+      seededReadyScenarios: 5,
       liveEvidenceReadyScenarios: 0,
-      missingLiveEvidenceScenarios: 4,
+      missingLiveEvidenceScenarios: 5,
       releaseBlockers: 0,
     });
     expect(scenariosById["portkey-aa-connect"]).toMatchObject({
@@ -225,6 +226,14 @@ describe("wallet locale coverage", () => {
       matchedSessionIds: ["sess-aa-001"],
     });
     expect(scenariosById["eoa-extension-connect"].matchedSessionIds).toEqual(["sess-eoa-001"]);
+    expect(scenariosById["extension-not-installed-error"]).toMatchObject({
+      seededStatus: "ready",
+      liveEvidenceStatus: "missing",
+      matchedSessionIds: ["sess-eoa-extension-missing-001"],
+    });
+    expect(scenariosById["extension-not-installed-error"].nextAction["en-US"]).toContain(
+      "extension-not-installed",
+    );
     expect(scenariosById["wrong-chain-error"].matchedSessionIds).toEqual(["sess-wrong-chain-001"]);
     expect(scenariosById["unsupported-wallet-error"].matchedSessionIds).toEqual([
       "sess-unsupported-001",
@@ -249,7 +258,7 @@ describe("wallet locale coverage", () => {
     expect(gate.summary).toMatchObject({
       seededReadyScenarios: 0,
       liveEvidenceReadyScenarios: 1,
-      missingLiveEvidenceScenarios: 3,
+      missingLiveEvidenceScenarios: 4,
     });
     expect(gate.scenarios.every((scenario) => scenario.matchedSessionIds.length === 0)).toBe(true);
     expect(gate.scenarios.find((scenario) => scenario.id === "portkey-aa-connect")).toMatchObject({
@@ -471,6 +480,24 @@ describe("wallet locale coverage", () => {
       verificationStatus: "unsupported_wallet",
       walletSource: "OTHER",
       walletTypeVerified: false,
+    });
+    expect(
+      mapLiveWalletInfoToSessionCandidate({
+        adapterName: "PortkeyExtensionWallet",
+        chainId: "AELF",
+        extensionAvailable: false,
+        network: "mainnet",
+        signaturePresent: true,
+      }),
+    ).toMatchObject({
+      accountType: "EOA",
+      signatureStatus: "not_available",
+      verificationStatus: "extension_not_installed",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: false,
+      nextAction: expect.objectContaining({
+        "en-US": expect.stringContaining("Install or open your EOA wallet extension"),
+      }),
     });
     expect(
       mapLiveWalletInfoToSessionCandidate({

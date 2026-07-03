@@ -1961,12 +1961,18 @@ const walletProviderEvidenceBoundary = localized(
 const walletProviderEvidenceScenarioOrder: WalletProviderQaScenarioId[] = [
   "portkey-aa-connect",
   "eoa-extension-connect",
+  "extension-not-installed-error",
   "wrong-chain-error",
   "unsupported-wallet-error",
 ];
 
 const walletProviderEvidenceProviderLabels: Record<WalletProviderQaScenarioId, LocalizedText> = {
   "eoa-extension-connect": localized("Portkey EOA Extension", "Portkey EOA 插件", "Portkey EOA 擴充套件"),
+  "extension-not-installed-error": localized(
+    "Portkey EOA Extension install recovery",
+    "Portkey EOA 插件安装恢复",
+    "Portkey EOA 擴充套件安裝恢復",
+  ),
   "portkey-aa-connect": localized("Portkey AA provider", "Portkey AA provider", "Portkey AA provider"),
   "unsupported-wallet-error": localized("Unsupported wallet fallback", "不支持钱包 fallback", "不支援錢包 fallback"),
   "wrong-chain-error": localized("Wrong-chain recovery", "错误链恢复", "錯誤鏈恢復"),
@@ -1977,6 +1983,11 @@ const walletProviderEvidenceServiceGates: Record<WalletProviderQaScenarioId, Loc
     "wallet.adapters.portkeyExtension.enabled must remain review-gated until evidence is approved.",
     "wallet.adapters.portkeyExtension.enabled 在证据批准前必须保持审核门禁。",
     "wallet.adapters.portkeyExtension.enabled 在證據批准前必須保持審核門禁。",
+  ),
+  "extension-not-installed-error": localized(
+    "wallet.adapters.portkeyExtension.installRecovery.enabled must prove install/open recovery before release.",
+    "wallet.adapters.portkeyExtension.installRecovery.enabled 发布前必须证明安装或打开恢复路径。",
+    "wallet.adapters.portkeyExtension.installRecovery.enabled 發布前必須證明安裝或開啟恢復路徑。",
   ),
   "portkey-aa-connect": localized(
     "wallet.adapters.portkeyAa.enabled must remain review-gated until evidence is approved.",
@@ -2001,6 +2012,11 @@ const walletProviderEvidenceDegradationPaths: Record<WalletProviderQaScenarioId,
     "EOA 插件 onboarding 保持 seeded/本地预览；缺少 provider 证据时将用户引导到人工审核。",
     "EOA 擴充套件 onboarding 保持 seeded/本地預覽；缺少 provider 證據時將使用者引導到人工審核。",
   ),
+  "extension-not-installed-error": localized(
+    "Show install/open recovery copy and route users to available AA, EOA app, or NightElf paths until extension evidence is approved.",
+    "展示安装或打开恢复文案；在插件证据批准前，将用户引导到可用的 AA、EOA App 或 NightElf 路径。",
+    "展示安裝或開啟恢復文案；在擴充套件證據批准前，將使用者引導到可用的 AA、EOA App 或 NightElf 路徑。",
+  ),
   "portkey-aa-connect": localized(
     "Keep Portkey AA as recommended seeded path only until live connect evidence is approved.",
     "真实连接证据批准前，仅将 Portkey AA 保持为推荐 seeded 路径。",
@@ -2020,6 +2036,11 @@ const walletProviderEvidenceDegradationPaths: Record<WalletProviderQaScenarioId,
 
 const walletProviderEvidenceLabels: Record<WalletProviderQaScenarioId, LocalizedText> = {
   "eoa-extension-connect": localized("EOA extension connect evidence", "EOA 插件连接证据", "EOA 擴充套件連接證據"),
+  "extension-not-installed-error": localized(
+    "EOA extension install recovery evidence",
+    "EOA 插件安装恢复证据",
+    "EOA 擴充套件安裝恢復證據",
+  ),
   "portkey-aa-connect": localized("Portkey AA connect evidence", "Portkey AA 连接证据", "Portkey AA 連接證據"),
   "unsupported-wallet-error": localized("Unsupported-wallet recovery evidence", "不支持钱包恢复证据", "不支援錢包恢復證據"),
   "wrong-chain-error": localized("Wrong-chain recovery evidence", "错误链恢复证据", "錯誤鏈恢復證據"),
@@ -2044,7 +2065,10 @@ const expectedWalletProviderArtifacts = (
     id: `${scenarioId}-runbook`,
     label: localized("Recovery runbook note", "恢复 runbook 备注", "恢復 runbook 備註"),
     artifactType: "runbook",
-    required: scenarioId === "wrong-chain-error" || scenarioId === "unsupported-wallet-error",
+    required:
+      scenarioId === "wrong-chain-error" ||
+      scenarioId === "unsupported-wallet-error" ||
+      scenarioId === "extension-not-installed-error",
   },
 ];
 
@@ -2132,6 +2156,11 @@ const walletProviderEvidenceNextActions: Record<WalletProviderQaScenarioId, Loca
     "Review the submitted EOA extension QA run and attach approval before EOA onboarding is live-ready.",
     "审核已提交的 EOA 插件 QA run，并在 EOA onboarding 视为 live-ready 前附上批准。",
     "審核已提交的 EOA 擴充套件 QA run，並在 EOA onboarding 視為 live-ready 前附上批准。",
+  ),
+  "extension-not-installed-error": localized(
+    "Attach EOA extension install/open recovery screenshot, QA run, runbook note, and reviewer approval before release.",
+    "发布前附上 EOA 插件安装/打开恢复截图、QA run、runbook 备注与审核批准。",
+    "發布前附上 EOA 擴充套件安裝/開啟恢復截圖、QA run、runbook 備註與審核批准。",
   ),
   "portkey-aa-connect": localized(
     "Attach Portkey AA live connect screenshot, QA run, and reviewer approval before release.",
@@ -12676,6 +12705,7 @@ const createContractDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
 
 const liveWalletQaChecklistItemIds: Record<WalletProviderQaScenarioId, string> = {
   "eoa-extension-connect": "qa-eoa-extension-connect",
+  "extension-not-installed-error": "qa-extension-not-installed-error",
   "portkey-aa-connect": "qa-portkey-aa-connect",
   "unsupported-wallet-error": "qa-unsupported-wallet-error",
   "wrong-chain-error": "qa-wrong-chain-error",
@@ -12683,6 +12713,7 @@ const liveWalletQaChecklistItemIds: Record<WalletProviderQaScenarioId, string> =
 
 const liveWalletQaSourceRequirements: Record<WalletProviderQaScenarioId, string> = {
   "eoa-extension-connect": "QA checklist: EOA extension connect",
+  "extension-not-installed-error": "QA checklist: extension not installed error",
   "portkey-aa-connect": "QA checklist: Portkey AA connect",
   "unsupported-wallet-error": "QA checklist: unsupported wallet error",
   "wrong-chain-error": "QA checklist: wrong chain error",
@@ -12690,6 +12721,11 @@ const liveWalletQaSourceRequirements: Record<WalletProviderQaScenarioId, string>
 
 const liveWalletQaSurfaces: Record<WalletProviderQaScenarioId, LocalizedText> = {
   "eoa-extension-connect": localized("Wallet Provider QA Gate", "钱包 Provider QA 门禁"),
+  "extension-not-installed-error": localized(
+    "Wallet Provider QA Gate extension recovery",
+    "钱包 Provider QA 门禁插件恢复",
+    "錢包 Provider QA 門禁擴充套件恢復",
+  ),
   "portkey-aa-connect": localized("Wallet Provider QA Gate", "钱包 Provider QA 门禁"),
   "unsupported-wallet-error": localized(
     "Wallet Provider QA Gate error recovery",
@@ -12703,6 +12739,11 @@ const liveWalletQaSurfaces: Record<WalletProviderQaScenarioId, LocalizedText> = 
 
 const liveWalletQaLabels: Record<WalletProviderQaScenarioId, LocalizedText> = {
   "eoa-extension-connect": localized("EOA extension connect tested", "EOA extension 连接测试"),
+  "extension-not-installed-error": localized(
+    "Extension not installed error tested",
+    "插件未安装错误状态测试",
+    "擴充套件未安裝錯誤狀態測試",
+  ),
   "portkey-aa-connect": localized("Portkey AA connect tested", "Portkey AA 连接测试"),
   "unsupported-wallet-error": localized("Unsupported wallet error tested", "不支持钱包错误状态测试"),
   "wrong-chain-error": localized("Wrong chain error tested", "错误链错误状态测试"),
