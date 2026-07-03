@@ -452,6 +452,31 @@ export type WalletProviderQaReleaseImpact =
   | "needs_review"
   | "ready"
   | "informational";
+export type WalletProviderEvidenceArtifactType =
+  | "screenshot"
+  | "qa_run"
+  | "review_note"
+  | "runbook"
+  | "config_snapshot";
+export type WalletProviderEvidenceStatus =
+  | "missing"
+  | "submitted"
+  | "approved"
+  | "rejected"
+  | "expired"
+  | "not_applicable";
+export type WalletProviderEvidenceReviewState =
+  | "not_started"
+  | "in_review"
+  | "approved"
+  | "rejected"
+  | "expired"
+  | "not_applicable";
+export type WalletProviderEvidenceReleaseImpact =
+  | "ready"
+  | "review_required"
+  | "blocked"
+  | "not_applicable";
 export type AelfWebLoginIntegrationId = "aelf-web-login";
 export type AelfWebLoginAdapterAudience =
   | "NORMAL_USER"
@@ -740,6 +765,52 @@ export interface WalletProviderQaReadinessGate {
   boundary: LocalizedText;
   summary: WalletProviderQaSummary;
   scenarios: WalletProviderQaScenario[];
+}
+
+export interface WalletProviderEvidenceArtifact {
+  id: string;
+  label: LocalizedText;
+  artifactType: WalletProviderEvidenceArtifactType;
+  required: boolean;
+  reference?: string;
+  capturedAt?: string;
+  reviewedAt?: string;
+}
+
+export interface WalletProviderEvidenceScenario {
+  id: WalletProviderQaScenarioId;
+  label: LocalizedText;
+  provider: LocalizedText;
+  expectedArtifacts: WalletProviderEvidenceArtifact[];
+  submittedArtifacts: WalletProviderEvidenceArtifact[];
+  evidenceStatus: WalletProviderEvidenceStatus;
+  reviewState: WalletProviderEvidenceReviewState;
+  releaseImpact: WalletProviderEvidenceReleaseImpact;
+  reviewerRole: OwnerRole;
+  serviceGate: LocalizedText;
+  degradationPath: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface WalletProviderEvidenceSummary {
+  totalScenarios: number;
+  approvedScenarios: number;
+  submittedScenarios: number;
+  missingScenarios: number;
+  rejectedScenarios: number;
+  expiredScenarios: number;
+  releaseBlockers: number;
+  reviewRequiredScenarios: number;
+  topScenarioId: WalletProviderQaScenarioId;
+  topNextAction: LocalizedText;
+}
+
+export interface WalletProviderEvidenceIntake {
+  summary: WalletProviderEvidenceSummary;
+  scenarios: WalletProviderEvidenceScenario[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
 }
 
 export interface WalletDiagnosticSummary {
@@ -2921,6 +2992,7 @@ export interface AdminOpsReadModel {
   deliveryAcceptance: DeliveryAcceptanceConsole;
   deliveryChecklistReadiness: DeliveryChecklistReadinessConsole;
   walletProviderQaGate: WalletProviderQaReadinessGate;
+  walletProviderEvidenceIntake: WalletProviderEvidenceIntake;
   aelfWebLoginAdapterReadiness: AelfWebLoginAdapterReadinessModel;
   providerEvidenceRegistry: ProviderEvidenceRegistry;
   contractReviewCenter: AdminContractReviewCenter;

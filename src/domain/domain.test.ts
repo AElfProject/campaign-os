@@ -39,6 +39,7 @@ import {
   createRiskIntelligenceReviewSurface,
   createVerificationPipelineReadinessGate,
   createWalletConnectionDiagnostics,
+  createWalletProviderEvidenceIntake,
   createWalletProviderQaReadinessGate,
   deriveEligibilityWalletStatus,
   deriveParticipantTaskActions,
@@ -932,7 +933,7 @@ describe("Campaign OS domain foundation", () => {
       launchBlocking: true,
     });
     expect(rowsById["v02-live-wallet-provider-evidence"]?.boundary?.["en-US"]).toContain(
-      "aelf-web-login adapter readiness preview only",
+      "Wallet Provider Evidence Intake",
     );
     expect(rowsById["v02-contract-claim-reward-custody"]).toMatchObject({
       status: "blocked",
@@ -990,6 +991,83 @@ describe("Campaign OS domain foundation", () => {
     expect(adminOps.walletProviderQaGate.boundary["en-US"]).toContain("no live wallet SDK connection");
     expect(adminOps.walletProviderQaGate.boundary["zh-CN"]).toContain("奖励发放");
     expect(adminOps.walletProviderQaGate.boundary["zh-TW"]).toContain("獎勵發放");
+  });
+
+  it("models live wallet provider evidence intake without counting unapproved evidence as live-ready", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const intake = adminOps.walletProviderEvidenceIntake;
+    const standalone = createWalletProviderEvidenceIntake(adminOps.walletProviderQaGate);
+    const scenariosById = Object.fromEntries(intake.scenarios.map((scenario) => [scenario.id, scenario]));
+    const acceptanceRows = adminOps.deliveryAcceptance.solutionSets.flatMap((solutionSet) => solutionSet.rows);
+    const liveWalletAcceptance = acceptanceRows.find((row) => row.id === "v02-live-wallet-provider-evidence");
+
+    expect(standalone.summary).toEqual(intake.summary);
+    expect(intake.scenarios.map((scenario) => scenario.id)).toEqual([
+      "portkey-aa-connect",
+      "eoa-extension-connect",
+      "wrong-chain-error",
+      "unsupported-wallet-error",
+    ]);
+    expect(intake.summary).toMatchObject({
+      totalScenarios: 4,
+      approvedScenarios: 0,
+      submittedScenarios: 1,
+      missingScenarios: 2,
+      rejectedScenarios: 1,
+      expiredScenarios: 0,
+      releaseBlockers: 3,
+      reviewRequiredScenarios: 1,
+      topScenarioId: "portkey-aa-connect",
+    });
+    expect(scenariosById["eoa-extension-connect"]).toMatchObject({
+      evidenceStatus: "submitted",
+      reviewState: "in_review",
+      releaseImpact: "review_required",
+      reviewerRole: "internal_operator",
+    });
+    expect(scenariosById["unsupported-wallet-error"]).toMatchObject({
+      evidenceStatus: "rejected",
+      reviewState: "rejected",
+      releaseImpact: "blocked",
+    });
+    expect(
+      intake.scenarios
+        .filter((scenario) => scenario.evidenceStatus !== "approved")
+        .some((scenario) => scenario.releaseImpact === "ready"),
+    ).toBe(false);
+    expect(scenariosById["eoa-extension-connect"].submittedArtifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          artifactType: "qa_run",
+          reference: "local-wallet-qa/eoa-extension-connect-2026-07-03",
+        }),
+      ]),
+    );
+
+    for (const scenario of intake.scenarios) {
+      expect(scenario.label["en-US"]).toBeTruthy();
+      expect(scenario.label["zh-CN"]).toBeTruthy();
+      expect(scenario.label["zh-TW"]).toBeTruthy();
+      expect(scenario.serviceGate["en-US"]).toContain("wallet.adapters");
+      expect(scenario.degradationPath["en-US"]).toBeTruthy();
+      expect(scenario.expectedArtifacts.length).toBeGreaterThan(0);
+      expect(scenario.boundary["en-US"]).toContain("No live wallet SDK");
+      expect(scenario.boundary["en-US"]).toContain("provider API");
+      expect(scenario.boundary["en-US"]).toContain("signature");
+      expect(scenario.boundary["en-US"]).toContain("storage write");
+      expect(scenario.boundary["en-US"]).toContain("contract write");
+      expect(scenario.boundary["en-US"]).toContain("reward distribution");
+    }
+    expect(intake.boundary["zh-CN"]).toContain("不会执行实时钱包 SDK");
+    expect(intake.nextAction).toEqual(intake.summary.topNextAction);
+    expect(liveWalletAcceptance).toMatchObject({
+      status: "needs_live_evidence",
+      evidenceSurface: expect.objectContaining({
+        "en-US": expect.stringContaining("Wallet Provider Evidence Intake"),
+      }),
+    });
+    expect(liveWalletAcceptance?.evidenceSummary["en-US"]).toContain("0 approved");
+    expect(liveWalletAcceptance?.nextMissionAction["en-US"]).toContain("Portkey AA");
   });
 
   it("labels AA and EOA wallet states", () => {
