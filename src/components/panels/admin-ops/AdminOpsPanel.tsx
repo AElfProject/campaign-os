@@ -20,6 +20,8 @@ import {
   type ContractInterfaceReadiness,
   type ContractMode,
   type ContractReviewChecklistStatus,
+  type CompanionContractEvidenceItemKind,
+  type CompanionContractReadinessStatus,
   type DeliveryAcceptanceSeverity,
   type DeliveryAcceptanceStatus,
   type DeliveryChecklistStatus,
@@ -113,6 +115,37 @@ const rowStyle: CSSProperties = {
   flexWrap: "wrap",
   gap: 8,
   justifyContent: "space-between",
+};
+
+const companionEvidenceDetailHeaderStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+  minWidth: 0,
+};
+
+const companionEvidenceDetailStyle: CSSProperties = {
+  borderTop: "1px solid #dbe6f4",
+  display: "grid",
+  gap: 6,
+  minWidth: 0,
+  paddingTop: 8,
+};
+
+const companionEvidenceTitleStyle: CSSProperties = {
+  color: "#071426",
+  fontSize: 13,
+  fontWeight: 800,
+  lineHeight: 1.35,
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
+const companionEvidenceBadgeGroupStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  minWidth: 0,
 };
 
 const stackStyle: CSSProperties = {
@@ -323,6 +356,45 @@ const contractTransparencyReadinessLabel = (
   };
 
   return labels[readiness];
+};
+
+const companionContractReadinessState = (status: CompanionContractReadinessStatus) =>
+  status === "blocked_non_goal"
+    ? "blocker"
+    : status === "review_required" || status === "deferred_non_goal"
+      ? "warning"
+      : "ready";
+
+const companionContractReadinessLabel = (
+  status: CompanionContractReadinessStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<CompanionContractReadinessStatus, string> = {
+    blocked_non_goal: copy.blockedNonGoal,
+    deferred_non_goal: copy.deferredNonGoal,
+    proven: copy.proven,
+    review_required: copy.reviewRequired,
+  };
+
+  return labels[status];
+};
+
+const companionEvidenceKindLabel = (
+  kind: CompanionContractEvidenceItemKind,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<CompanionContractEvidenceItemKind, string> = {
+    boundary: copy.rootHashBoundary,
+    event: copy.eventEvidence,
+    method: copy.methodEvidence,
+    non_goal: copy.nonGoalEvidence,
+    role: copy.rolePermissionEvidence,
+    root_hash: copy.rootHashEvidence,
+    schema_field: copy.schemaFieldEvidence,
+    test: copy.testChecklistEvidence,
+  };
+
+  return labels[kind];
 };
 
 const deliveryChecklistStatusState = (status: DeliveryChecklistStatus) =>
@@ -993,6 +1065,7 @@ export const AdminOpsPanel = ({
   const contractReviewCenter = adminOps.contractReviewCenter;
   const contractInterfaceMatrix = adminOps.contractInterfaceMatrix;
   const contractTransparencyMonitor = adminOps.contractTransparencyMonitor;
+  const companionContractReadiness = adminOps.companionContractReadiness;
   const columnContract = adminOps.exportBatch.columns.join(",");
   const verificationRows = campaign.participants.flatMap((participant) =>
     createParticipationReadModel(campaign, participant).taskStates.map((state) => ({
@@ -1086,6 +1159,51 @@ export const AdminOpsPanel = ({
       value: contractTransparencyMonitor.summary.localOnlyLanes,
       state: contractTransparencyMonitor.summary.localOnlyLanes > 0
         ? "warning" as const
+        : "ready" as const,
+    },
+  ];
+
+  const companionReadinessSummary = [
+    {
+      id: "total",
+      label: copy.totalCategories,
+      value: companionContractReadiness.summary.totalCategories,
+      state: "ready" as const,
+    },
+    {
+      id: "required",
+      label: copy.requiredCategories,
+      value: companionContractReadiness.summary.requiredCategories,
+      state: "ready" as const,
+    },
+    {
+      id: "proven",
+      label: copy.provenCategories,
+      value: companionContractReadiness.summary.provenCategories,
+      state: companionContractReadiness.summary.ready ? "ready" as const : "warning" as const,
+    },
+    {
+      id: "review-required",
+      label: copy.reviewRequired,
+      value: companionContractReadiness.summary.reviewRequiredCategories,
+      state: companionContractReadiness.summary.reviewRequiredCategories > 0
+        ? "warning" as const
+        : "ready" as const,
+    },
+    {
+      id: "deferred",
+      label: copy.deferredNonGoals,
+      value: companionContractReadiness.summary.deferredNonGoalCategories,
+      state: companionContractReadiness.summary.deferredNonGoalCategories > 0
+        ? "warning" as const
+        : "ready" as const,
+    },
+    {
+      id: "blocked",
+      label: copy.blockedNonGoals,
+      value: companionContractReadiness.summary.blockedExecutionCategories,
+      state: companionContractReadiness.summary.blockedExecutionCategories > 0
+        ? "blocker" as const
         : "ready" as const,
     },
   ];
@@ -1301,6 +1419,116 @@ export const AdminOpsPanel = ({
       key: "CONTRACT_CLAIM",
     },
   ];
+
+  const companionContractReadinessSection = (
+    <section aria-label={copy.companionContractReadiness} style={panelStyle}>
+      <div style={rowStyle}>
+        <div style={stackStyle}>
+          <p style={labelStyle}>{copy.companionContracts}</p>
+          <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+            {copy.companionContractReadiness}
+          </h3>
+          <p style={mutedTextStyle}>{copy.companionContractReadinessSubtitle}</p>
+        </div>
+        <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <PublishStateBadge
+            label={companionContractReadiness.summary.ready ? copy.readyActions : copy.reviewRequired}
+            state={companionContractReadiness.summary.ready ? "ready" : "warning"}
+          />
+          <PublishStateBadge
+            label={companionContractReadiness.summary.topCategoryId}
+            state={companionContractReadinessState(
+              companionContractReadiness.categories.find(
+                (category) => category.id === companionContractReadiness.summary.topCategoryId,
+              )?.status ?? "review_required",
+            )}
+          />
+        </span>
+      </div>
+      <div style={boundaryStyle}>
+        <p style={{ margin: 0 }}>
+          {copy.nonLiveBoundary}: {getLocalizedText(companionContractReadiness.boundary, locale)}
+        </p>
+        <p style={{ margin: "8px 0 0" }}>
+          {copy.noAbiGeneration} · {copy.noLiveContractTransaction} · {copy.noRewardCustodyDistribution}
+        </p>
+      </div>
+      <div style={compactGridStyle}>
+        {companionReadinessSummary.map((item) => (
+          <article key={item.id} style={cardStyle}>
+            <div style={rowStyle}>
+              <p style={labelStyle}>{item.label}</p>
+              <PublishStateBadge label={String(item.value)} state={item.state} />
+            </div>
+            <p style={valueStyle}>{item.value}</p>
+          </article>
+        ))}
+      </div>
+      <div style={gridStyle}>
+        {companionContractReadiness.categories.map((category) => (
+          <article key={category.id} style={cardStyle}>
+            <div style={rowStyle}>
+              <div style={stackStyle}>
+                <p style={labelStyle}>{category.contractName ?? copy.companionContracts}</p>
+                <strong>{getLocalizedText(category.title, locale)}</strong>
+              </div>
+              <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <Badge label={category.phase} tone="info" />
+                <PublishStateBadge
+                  label={companionContractReadinessLabel(category.status, copy)}
+                  state={companionContractReadinessState(category.status)}
+                />
+                <Badge
+                  label={category.requiredForPlan ? copy.requiredForPlan : copy.acceptedNonGoal}
+                  tone={category.requiredForPlan ? "info" : "warning"}
+                />
+              </span>
+            </div>
+            <p style={wrapTextStyle}>
+              {copy.evidenceSurface}: {getLocalizedText(category.evidenceSurface, locale)}
+            </p>
+            <p style={wrapTextStyle}>
+              {copy.evidenceSummary}: {getLocalizedText(category.evidenceSummary, locale)}
+            </p>
+            <p style={wrapTextStyle}>
+              {copy.ownerRole}: {readableCode(category.ownerRole)}
+            </p>
+            <div style={chipListStyle}>
+              {category.evidenceItems.map((item) => (
+                <span key={item.id} style={chipStyle} title={getLocalizedText(item.detail, locale)}>
+                  {companionEvidenceKindLabel(item.kind, copy)}: {getLocalizedText(item.label, locale)}
+                </span>
+              ))}
+            </div>
+            <div style={stackStyle}>
+              {category.evidenceItems.slice(0, 4).map((item) => (
+                <div key={`${category.id}-${item.id}-detail`} style={companionEvidenceDetailStyle}>
+                  <div style={companionEvidenceDetailHeaderStyle}>
+                    <strong style={companionEvidenceTitleStyle}>{getLocalizedText(item.label, locale)}</strong>
+                    <span style={companionEvidenceBadgeGroupStyle}>
+                      <Badge label={companionEvidenceKindLabel(item.kind, copy)} tone="info" />
+                      <PublishStateBadge
+                        label={companionContractReadinessLabel(item.status, copy)}
+                        state={companionContractReadinessState(item.status)}
+                      />
+                    </span>
+                  </div>
+                  <p style={wrapTextStyle}>
+                    {copy.evidenceSource}: {getLocalizedText(item.source, locale)}
+                  </p>
+                  <p style={wrapTextStyle}>{getLocalizedText(item.detail, locale)}</p>
+                </div>
+              ))}
+            </div>
+            <p style={boundaryStyle}>{getLocalizedText(category.boundary, locale)}</p>
+            <p style={wrapTextStyle}>
+              {copy.nextAction}: {getLocalizedText(category.nextAction, locale)}
+            </p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -3537,6 +3765,8 @@ export const AdminOpsPanel = ({
           ))}
         </div>
       </section>
+
+      {companionContractReadinessSection}
 
       <section style={panelStyle}>
         <div style={rowStyle}>

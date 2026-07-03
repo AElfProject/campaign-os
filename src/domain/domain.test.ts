@@ -7,6 +7,7 @@ import {
   createAelfWebLoginAdapterReadiness,
   createAiOpsKpiAdoptionConsole,
   createAiOptimizationWorkflow,
+  createCompanionContractReadiness,
   createContractImpactReviewModel,
   createContractTransparencyMonitor,
   createEligibilityCheckerReadModel,
@@ -786,6 +787,185 @@ describe("Campaign OS domain foundation", () => {
     }
   });
 
+  it("proves V2 companion contract readiness with deterministic local evidence", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const readiness = createCompanionContractReadiness(
+      adminOps.contractInterfaceMatrix,
+      adminOps.contractTransparencyMonitor,
+    );
+    const categoriesById = Object.fromEntries(readiness.categories.map((category) => [category.id, category]));
+    const itemsFor = (categoryId: string) => categoriesById[categoryId]?.evidenceItems ?? [];
+    const itemLabelsFor = (categoryId: string) =>
+      itemsFor(categoryId).map((item) => item.label["en-US"]);
+    const serialized = JSON.stringify(readiness);
+
+    expect(readiness.categories.map((category) => category.id)).toEqual([
+      "campaign-registry-schema",
+      "campaign-registry-methods-events",
+      "points-batch-root",
+      "referral-registry-rules",
+      "eligibility-root-proof",
+      "verifier-roles-permissions",
+      "i18n-off-chain-hash",
+      "contract-test-checklist",
+      "reward-custody-claim-exclusion",
+    ]);
+    expect(readiness.summary).toMatchObject({
+      totalCategories: 9,
+      requiredCategories: 8,
+      provenCategories: 8,
+      reviewRequiredCategories: 0,
+      deferredNonGoalCategories: 0,
+      blockedExecutionCategories: 1,
+      ready: true,
+      topCategoryId: "reward-custody-claim-exclusion",
+    });
+    expect(adminOps.companionContractReadiness).toEqual(readiness);
+    expect(createCompanionContractReadiness(
+      adminOps.contractInterfaceMatrix,
+      adminOps.contractTransparencyMonitor,
+    )).toEqual(readiness);
+
+    expect(itemLabelsFor("campaign-registry-schema")).toEqual([
+      "campaign_id",
+      "project_owner",
+      "status",
+      "start_time",
+      "end_time",
+      "default_locale",
+      "supported_locales",
+      "wallet_policy",
+      "metadata_uri",
+      "metadata_hash",
+      "task_config_hash",
+      "reward_disclaimer_hash",
+    ]);
+    expect(itemLabelsFor("campaign-registry-methods-events")).toEqual(
+      expect.arrayContaining([
+        "CreateCampaign",
+        "UpdateCampaignMetadata",
+        "UpdateTaskConfigHash",
+        "SetCampaignStatus",
+        "SetWalletPolicy",
+        "SetSupportedLocales",
+        "TransferCampaignOwner",
+        "PauseCampaign",
+        "GetCampaign",
+        "CampaignCreated",
+        "SupportedLocalesUpdated",
+        "CampaignPaused",
+      ]),
+    );
+    expect(itemLabelsFor("points-batch-root")).toEqual(
+      expect.arrayContaining([
+        "CommitPointsBatch",
+        "RevokePointsBatch",
+        "GetPointsBatch",
+        "points_batch_root",
+        "single-write points approval boundary",
+      ]),
+    );
+    expect(itemLabelsFor("referral-registry-rules")).toEqual(
+      expect.arrayContaining([
+        "BindReferral",
+        "MarkReferralQualified",
+        "RemoveReferral",
+        "GetReferral",
+        "duplicate/self/circular referral policy",
+      ]),
+    );
+    expect(itemLabelsFor("eligibility-root-proof")).toEqual(
+      expect.arrayContaining([
+        "SetEligibilityRoot",
+        "UpdateEligibilityRoot",
+        "GetEligibilityRoot",
+        "VerifyEligibilityProof",
+        "eligibility_root proof hash",
+        "no reward distribution",
+      ]),
+    );
+    expect(itemLabelsFor("verifier-roles-permissions")).toEqual([
+      "Admin",
+      "ProjectOwner",
+      "Verifier",
+      "Exporter",
+      "Pauser",
+    ]);
+    expect(itemLabelsFor("i18n-off-chain-hash")).toEqual([
+      "metadata_uri",
+      "metadata_hash",
+      "default_locale",
+      "supported_locales",
+      "reward_disclaimer_hash",
+    ]);
+    expect(itemLabelsFor("contract-test-checklist")).toEqual([
+      "invalid start/end time",
+      "owner/admin update",
+      "default locale publish",
+      "unsupported wallet policy",
+      "pause behavior",
+      "referral self/duplicate",
+      "root reason hash",
+      "verifier role",
+      "events",
+    ]);
+    expect(categoriesById["reward-custody-claim-exclusion"]).toMatchObject({
+      requiredForPlan: false,
+      status: "blocked_non_goal",
+      phase: "P2",
+      ownerRole: "contract_reviewer",
+    });
+    expect(itemLabelsFor("reward-custody-claim-exclusion")).toEqual(
+      expect.arrayContaining([
+        "Security review",
+        "Custody/legal approval",
+        "External audit",
+        "Admin approval",
+        "Reward custody exclusion",
+        "Reward distribution exclusion",
+      ]),
+    );
+    expect(categoriesById["reward-custody-claim-exclusion"]?.evidenceSummary["en-US"]).toContain(
+      "accepted non-goals",
+    );
+    expect(categoriesById["reward-custody-claim-exclusion"]?.evidenceSummary["en-US"]).toContain(
+      "custody/legal",
+    );
+    expect(categoriesById["reward-custody-claim-exclusion"]?.evidenceSummary["en-US"]).toContain(
+      "external audit",
+    );
+    expect(readiness.boundary["en-US"]).toContain("No ABI generation");
+    expect(readiness.boundary["en-US"]).toContain("live contract transaction");
+    expect(readiness.boundary["en-US"]).toContain("backend call");
+    expect(readiness.boundary["en-US"]).toContain("wallet signing");
+    expect(readiness.boundary["en-US"]).toContain("contract write");
+    expect(readiness.boundary["en-US"]).toContain("root write");
+    expect(readiness.boundary["en-US"]).toContain("storage write");
+    expect(readiness.boundary["en-US"]).toContain("export file generation");
+    expect(readiness.boundary["en-US"]).toContain("reward custody");
+    expect(readiness.boundary["en-US"]).toContain("reward distribution");
+    expect(serialized).not.toContain("sendTransaction");
+    expect(serialized).not.toContain("writeContract");
+
+    for (const category of readiness.categories) {
+      for (const locale of supportedLocales) {
+        expect(category.title[locale]).toBeTruthy();
+        expect(category.evidenceSurface[locale]).toBeTruthy();
+        expect(category.evidenceSummary[locale]).toBeTruthy();
+        expect(category.boundary[locale]).toBeTruthy();
+        expect(category.nextAction[locale]).toBeTruthy();
+      }
+
+      for (const item of category.evidenceItems) {
+        for (const locale of supportedLocales) {
+          expect(item.label[locale]).toBeTruthy();
+          expect(item.source[locale]).toBeTruthy();
+          expect(item.detail[locale]).toBeTruthy();
+        }
+      }
+    }
+  });
+
   it("builds the delivery checklist readiness console with conservative v0.2 evidence", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
     const readiness = adminOps.deliveryChecklistReadiness;
@@ -1041,6 +1221,24 @@ describe("Campaign OS domain foundation", () => {
       topFailedRuleId: "required-artifacts",
     });
     expect(adminOps.walletProviderEvidenceReleaseReadiness.boundary["en-US"]).toContain("No live wallet SDK");
+    expect(rowsById["v02-contract-companion-plan"]).toMatchObject({
+      status: "proven",
+      severity: "high",
+      launchBlocking: false,
+      ownerRole: "contract_reviewer",
+    });
+    expect(rowsById["v02-contract-companion-plan"]?.evidenceSurface["en-US"]).toContain(
+      "Companion Contract Readiness",
+    );
+    expect(rowsById["v02-contract-companion-plan"]?.evidenceSummary["en-US"]).toContain("schema");
+    expect(rowsById["v02-contract-companion-plan"]?.evidenceSummary["en-US"]).toContain("roles");
+    expect(rowsById["v02-contract-companion-plan"]?.evidenceSummary["en-US"]).toContain("events");
+    expect(rowsById["v02-contract-companion-plan"]?.evidenceSummary["en-US"]).toContain("tests");
+    expect(rowsById["v02-contract-companion-plan"]?.evidenceSummary["en-US"]).toContain("roots");
+    expect(rowsById["v02-contract-companion-plan"]?.evidenceSummary["en-US"]).toContain("i18n off-chain");
+    expect(rowsById["v02-contract-companion-plan"]?.evidenceSummary["en-US"]).toContain(
+      "reward custody exclusion",
+    );
     expect(rowsById["v02-contract-claim-reward-custody"]).toMatchObject({
       status: "deferred",
       severity: "low",
@@ -1060,6 +1258,7 @@ describe("Campaign OS domain foundation", () => {
     ).toBe(false);
     expect(acceptance.topResidualGaps[0]?.id).toBe("v02-live-wallet-provider-evidence");
     expect(acceptance.topResidualGaps.map((row) => row.id)).not.toContain("v01-live-export-download");
+    expect(acceptance.topResidualGaps.map((row) => row.id)).not.toContain("v02-contract-companion-plan");
     expect(acceptance.topResidualGaps.map((row) => row.id).slice(0, 2)).not.toContain(
       "v02-contract-claim-reward-custody",
     );

@@ -79,6 +79,12 @@ import type {
   ContractTransparencyLaneId,
   ContractTransparencyMonitor,
   ContractTransparencyReadiness,
+  CompanionContractEvidenceCategory,
+  CompanionContractEvidenceCategoryId,
+  CompanionContractEvidenceItem,
+  CompanionContractEvidenceItemKind,
+  CompanionContractReadiness,
+  CompanionContractReadinessStatus,
   CompetitorWatchReviewState,
   CompetitorWatchSignal,
   CompetitorWatchSurface,
@@ -10478,6 +10484,592 @@ export const createContractTransparencyMonitor = (
   };
 };
 
+const companionReadinessBoundary: LocalizedText = localized(
+  "Seeded/local V2 companion contract readiness evidence only. No ABI generation, live contract transaction, backend call, wallet signing, contract write, root write, storage write, export file generation, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地 V2 companion contract readiness 证据。不会生成 ABI、执行真实合约交易、调用后端、钱包签名、合约写入、root 写入、存储写入、生成导出文件、奖励托管或发奖。",
+  "僅 seeded/本地 V2 companion contract readiness 證據。不會生成 ABI、執行真實合約交易、呼叫後端、錢包簽名、合約寫入、root 寫入、儲存寫入、生成匯出檔案、獎勵託管或發獎。",
+);
+
+const companionContractPlanSource = localized(
+  "docs/current/aelf_campaign_os_v0.2/docs/07_contract_modification_plan_v0.2.md",
+  "docs/current/aelf_campaign_os_v0.2/docs/07_contract_modification_plan_v0.2.md",
+  "docs/current/aelf_campaign_os_v0.2/docs/07_contract_modification_plan_v0.2.md",
+);
+
+const companionEvidenceItem = ({
+  detail,
+  id,
+  kind,
+  label,
+  source = companionContractPlanSource,
+  status = "proven",
+}: {
+  detail: LocalizedText;
+  id: string;
+  kind: CompanionContractEvidenceItemKind;
+  label: LocalizedText;
+  source?: LocalizedText;
+  status?: CompanionContractReadinessStatus;
+}): CompanionContractEvidenceItem => ({
+  detail,
+  id,
+  kind,
+  label,
+  source,
+  status,
+});
+
+const companionCategory = ({
+  boundary = companionReadinessBoundary,
+  contractName,
+  evidenceItems,
+  evidenceSummary,
+  evidenceSurface,
+  id,
+  nextAction,
+  ownerRole,
+  phase = "P1",
+  requiredForPlan = true,
+  status = "proven",
+  title,
+}: {
+  boundary?: LocalizedText;
+  contractName?: string;
+  evidenceItems: CompanionContractEvidenceItem[];
+  evidenceSummary: LocalizedText;
+  evidenceSurface: LocalizedText;
+  id: CompanionContractEvidenceCategoryId;
+  nextAction: LocalizedText;
+  ownerRole: OwnerRole;
+  phase?: ContractInterfacePhase;
+  requiredForPlan?: boolean;
+  status?: CompanionContractReadinessStatus;
+  title: LocalizedText;
+}): CompanionContractEvidenceCategory => ({
+  boundary,
+  contractName,
+  evidenceItems,
+  evidenceSummary,
+  evidenceSurface,
+  id,
+  nextAction,
+  ownerRole,
+  phase,
+  requiredForPlan,
+  status,
+  title,
+});
+
+const companionMethodEvidenceItems = (
+  group: ContractInterfaceGroup | undefined,
+  methodNames: readonly string[],
+): CompanionContractEvidenceItem[] => methodNames.map((methodName) => {
+  const method = findContractMethod(group, methodName);
+
+  return companionEvidenceItem({
+    id: `method-${methodName}`,
+    kind: "method",
+    label: localized(methodName, methodName, methodName),
+    source: method?.purpose ?? companionContractPlanSource,
+    detail: method?.nextAction ?? localized(
+      `${methodName} is present in the V2 companion contract method plan.`,
+      `${methodName} 已纳入 V2 companion contract 方法规划。`,
+      `${methodName} 已納入 V2 companion contract 方法規劃。`,
+    ),
+  });
+});
+
+const companionEventEvidenceItems = (eventNames: readonly string[]): CompanionContractEvidenceItem[] =>
+  eventNames.map((eventName) => companionEvidenceItem({
+    id: `event-${eventName}`,
+    kind: "event",
+    label: localized(eventName, eventName, eventName),
+    source: companionContractPlanSource,
+    detail: localized(
+      `${eventName} is required for reviewer-visible history and audit replay.`,
+      `${eventName} 用于审核人可见的历史记录和审计回放。`,
+      `${eventName} 用於審核人可見的歷史記錄和審計回放。`,
+    ),
+  }));
+
+const companionRootSource = (
+  transparency: ContractTransparencyMonitor | undefined,
+  laneId: ContractTransparencyLaneId,
+  fallback: LocalizedText,
+): LocalizedText => transparency?.lanes.find((lane) => lane.id === laneId)?.sourceEvidence ?? fallback;
+
+const createCompanionContractEvidenceCategories = (
+  matrix: ContractInterfaceMatrixConsole,
+  transparency?: ContractTransparencyMonitor,
+): CompanionContractEvidenceCategory[] => {
+  const registry = findContractGroup(matrix, "CampaignRegistryV2");
+  const pointsLedger = findContractGroup(matrix, "CampaignPointsLedgerV2");
+  const referralRegistry = findContractGroup(matrix, "ReferralRegistryV2");
+  const eligibilityRegistry = findContractGroup(matrix, "EligibilityRootRegistryV2");
+  const pointsRootSource = companionRootSource(
+    transparency,
+    "points-batch-root",
+    localized(
+      "CampaignPointsLedgerV2 batch root plan is present in the contract interface matrix.",
+      "CampaignPointsLedgerV2 批次 root 计划已在合约接口矩阵中展示。",
+      "CampaignPointsLedgerV2 批次 root 計畫已在合約接口矩陣中展示。",
+    ),
+  );
+  const referralRootSource = companionRootSource(
+    transparency,
+    "referral-binding-root",
+    localized(
+      "ReferralRegistryV2 binding root plan is present in the contract interface matrix.",
+      "ReferralRegistryV2 绑定 root 计划已在合约接口矩阵中展示。",
+      "ReferralRegistryV2 綁定 root 計畫已在合約接口矩陣中展示。",
+    ),
+  );
+  const eligibilityRootSource = companionRootSource(
+    transparency,
+    "eligibility-root",
+    localized(
+      "EligibilityRootRegistryV2 proof/root plan is present in the contract interface matrix.",
+      "EligibilityRootRegistryV2 proof/root 计划已在合约接口矩阵中展示。",
+      "EligibilityRootRegistryV2 proof/root 計畫已在合約接口矩陣中展示。",
+    ),
+  );
+  const verifierSource = companionRootSource(
+    transparency,
+    "verifier-role",
+    localized(
+      "Verifier role remains local/review-only before proof surfaces are exposed.",
+      "Verifier role 在 proof 界面开放前保持本地/审核用途。",
+      "Verifier role 在 proof 介面開放前保持本地/審核用途。",
+    ),
+  );
+
+  return [
+    companionCategory({
+      id: "campaign-registry-schema",
+      title: localized("CampaignRegistryV2 schema evidence", "CampaignRegistryV2 schema 证据", "CampaignRegistryV2 schema 證據"),
+      contractName: "CampaignRegistryV2",
+      ownerRole: "contract_reviewer",
+      evidenceSurface: localized("Contract Interface Matrix: CampaignRegistryV2 fields", "合约接口矩阵：CampaignRegistryV2 字段", "合約接口矩陣：CampaignRegistryV2 欄位"),
+      evidenceSummary: localized(
+        "CampaignRegistryV2 stores only campaign IDs, ownership, lifecycle, wallet policy, locale scope, metadata hashes, task config hashes, and reward disclaimer hashes.",
+        "CampaignRegistryV2 仅存活动 ID、owner、生命周期、钱包策略、语言范围、metadata hash、任务配置 hash 与奖励免责声明 hash。",
+        "CampaignRegistryV2 僅存活動 ID、owner、生命週期、錢包策略、語言範圍、metadata hash、任務配置 hash 與獎勵免責聲明 hash。",
+      ),
+      evidenceItems: [
+        "campaign_id",
+        "project_owner",
+        "status",
+        "start_time",
+        "end_time",
+        "default_locale",
+        "supported_locales",
+        "wallet_policy",
+        "metadata_uri",
+        "metadata_hash",
+        "task_config_hash",
+        "reward_disclaimer_hash",
+      ].map((fieldName) => companionEvidenceItem({
+        id: `schema-${fieldName}`,
+        kind: "schema_field",
+        label: localized(fieldName, fieldName, fieldName),
+        source: registry?.purpose ?? companionContractPlanSource,
+        detail: localized(
+          `${fieldName} is included as planning evidence without storing full campaign, task, risk, or i18n text on-chain.`,
+          `${fieldName} 作为规划证据纳入，但不把完整活动、任务、风控或 i18n 文案上链。`,
+          `${fieldName} 作為規劃證據納入，但不把完整活動、任務、風控或 i18n 文案上鏈。`,
+        ),
+      })),
+      boundary: registry?.boundary ?? companionReadinessBoundary,
+      nextAction: registry?.nextAction ?? localized(
+        "Keep CampaignRegistryV2 schema under P1 reviewer approval before any contract implementation.",
+        "任何合约实现前，先保持 CampaignRegistryV2 schema 处于 P1 审核人批准流程。",
+        "任何合約實作前，先保持 CampaignRegistryV2 schema 處於 P1 審核人批准流程。",
+      ),
+    }),
+    companionCategory({
+      id: "campaign-registry-methods-events",
+      title: localized("CampaignRegistryV2 methods and events", "CampaignRegistryV2 方法与事件", "CampaignRegistryV2 方法與事件"),
+      contractName: "CampaignRegistryV2",
+      ownerRole: "contract_reviewer",
+      evidenceSurface: localized("Contract Interface Matrix: CampaignRegistryV2 methods/events", "合约接口矩阵：CampaignRegistryV2 方法/事件", "合約接口矩陣：CampaignRegistryV2 方法/事件"),
+      evidenceSummary: localized(
+        "CampaignRegistryV2 method and event coverage is explicit for create/update/status/wallet/locale/owner/pause/read flows.",
+        "CampaignRegistryV2 已明确覆盖创建、更新、状态、钱包、语言、owner、暂停和读取流程的方法与事件。",
+        "CampaignRegistryV2 已明確覆蓋建立、更新、狀態、錢包、語言、owner、暫停和讀取流程的方法與事件。",
+      ),
+      evidenceItems: [
+        ...companionMethodEvidenceItems(registry, [
+          "CreateCampaign",
+          "UpdateCampaignMetadata",
+          "UpdateTaskConfigHash",
+          "SetCampaignStatus",
+          "SetWalletPolicy",
+          "SetSupportedLocales",
+          "TransferCampaignOwner",
+          "PauseCampaign",
+          "GetCampaign",
+        ]),
+        ...companionEventEvidenceItems([
+          "CampaignCreated",
+          "CampaignMetadataUpdated",
+          "TaskConfigHashUpdated",
+          "CampaignStatusChanged",
+          "WalletPolicyUpdated",
+          "SupportedLocalesUpdated",
+          "CampaignOwnerTransferred",
+          "CampaignPaused",
+        ]),
+      ],
+      boundary: registry?.boundary ?? companionReadinessBoundary,
+      nextAction: localized(
+        "Review method authorization and event payload semantics before a P1 contract mission starts.",
+        "P1 合约 mission 启动前，先审核方法授权与事件 payload 语义。",
+        "P1 合約 mission 啟動前，先審核方法授權與事件 payload 語義。",
+      ),
+    }),
+    companionCategory({
+      id: "points-batch-root",
+      title: localized("Points batch root evidence", "积分批次 root 证据", "積分批次 root 證據"),
+      contractName: "CampaignPointsLedgerV2",
+      ownerRole: "internal_operator",
+      evidenceSurface: localized("Contract Transparency Monitor: points batch root", "合约透明度监控：points batch root", "合約透明度監控：points batch root"),
+      evidenceSummary: localized(
+        "Points use batch roots for auditability; high-frequency single-write points remain optional and separately gated.",
+        "积分使用批次 root 做审计；高频单条写入仍为可选路径并单独门禁。",
+        "積分使用批次 root 做審計；高頻單筆寫入仍為可選路徑並單獨門禁。",
+      ),
+      evidenceItems: [
+        ...companionMethodEvidenceItems(pointsLedger, [
+          "CommitPointsBatch",
+          "RevokePointsBatch",
+          "GetPointsBatch",
+        ]),
+        companionEvidenceItem({
+          id: "root-points-batch",
+          kind: "root_hash",
+          label: localized("points_batch_root", "points_batch_root", "points_batch_root"),
+          source: pointsRootSource,
+          detail: localized(
+            "Batch cadence, root format, reason hash, and rollback semantics are documented before any root write.",
+            "任何 root 写入前，先记录批次周期、root 格式、reason hash 与回滚语义。",
+            "任何 root 寫入前，先記錄批次週期、root 格式、reason hash 與回滾語義。",
+          ),
+        }),
+        companionEvidenceItem({
+          id: "boundary-single-write-points",
+          kind: "boundary",
+          label: localized("single-write points approval boundary", "单条积分写链审批边界", "單筆積分寫鏈審批邊界"),
+          source: pointsLedger?.boundary ?? companionContractPlanSource,
+          detail: localized(
+            "AwardTaskPoints and RevokeTaskPoints are optional high-transparency paths, not MVP-ready execution.",
+            "AwardTaskPoints 与 RevokeTaskPoints 是可选高透明度路径，不是 MVP-ready 执行。",
+            "AwardTaskPoints 與 RevokeTaskPoints 是可選高透明度路徑，不是 MVP-ready 執行。",
+          ),
+        }),
+      ],
+      boundary: pointsLedger?.boundary ?? companionReadinessBoundary,
+      nextAction: pointsLedger?.nextAction ?? localized(
+        "Prefer batch root commits until throughput, audit, and dispute procedures are approved.",
+        "吞吐、审计与争议流程批准前，优先使用批次 root 规划。",
+        "吞吐、審計與爭議流程批准前，優先使用批次 root 規劃。",
+      ),
+    }),
+    companionCategory({
+      id: "referral-registry-rules",
+      title: localized("Referral registry rule evidence", "Referral registry 规则证据", "Referral registry 規則證據"),
+      contractName: "ReferralRegistryV2",
+      ownerRole: "contract_reviewer",
+      evidenceSurface: localized("Contract Interface Matrix: ReferralRegistryV2", "合约接口矩阵：ReferralRegistryV2", "合約接口矩陣：ReferralRegistryV2"),
+      evidenceSummary: localized(
+        "Referral binding, qualification, removal, duplicate, self-referral, and circular-referral policies are explicit planning evidence.",
+        "邀请绑定、资格标记、移除、重复邀请、自邀请与循环邀请策略已有明确规划证据。",
+        "邀請綁定、資格標記、移除、重複邀請、自邀請與循環邀請策略已有明確規劃證據。",
+      ),
+      evidenceItems: [
+        ...companionMethodEvidenceItems(referralRegistry, [
+          "BindReferral",
+          "MarkReferralQualified",
+          "RemoveReferral",
+          "GetReferral",
+        ]),
+        companionEvidenceItem({
+          id: "test-referral-duplicate-self-circular",
+          kind: "test",
+          label: localized("duplicate/self/circular referral policy", "重复/自邀请/循环邀请策略", "重複/自邀請/循環邀請策略"),
+          source: referralRootSource,
+          detail: localized(
+            "Referral tests must reject duplicate, self, and circular referral attempts before any contract implementation.",
+            "任何合约实现前，referral 测试必须拒绝重复、自邀请与循环邀请。",
+            "任何合約實作前，referral 測試必須拒絕重複、自邀請與循環邀請。",
+          ),
+        }),
+      ],
+      boundary: referralRegistry?.boundary ?? companionReadinessBoundary,
+      nextAction: referralRegistry?.nextAction ?? localized(
+        "Review duplicate, self, and circular referral rules before contract design.",
+        "合约设计前审核重复、自邀请与循环邀请规则。",
+        "合約設計前審核重複、自邀請與循環邀請規則。",
+      ),
+    }),
+    companionCategory({
+      id: "eligibility-root-proof",
+      title: localized("Eligibility root/proof evidence", "Eligibility root/proof 证据", "Eligibility root/proof 證據"),
+      contractName: "EligibilityRootRegistryV2",
+      ownerRole: "contract_reviewer",
+      evidenceSurface: localized("Contract Transparency Monitor: eligibility root", "合约透明度监控：eligibility root", "合約透明度監控：eligibility root"),
+      evidenceSummary: localized(
+        "Eligibility root and proof methods are planned for audit and verification only, with no reward distribution.",
+        "Eligibility root 与 proof 方法仅用于审计和验证规划，不执行发奖。",
+        "Eligibility root 與 proof 方法僅用於審計和驗證規劃，不執行發獎。",
+      ),
+      evidenceItems: [
+        ...companionMethodEvidenceItems(eligibilityRegistry, [
+          "SetEligibilityRoot",
+          "UpdateEligibilityRoot",
+          "GetEligibilityRoot",
+          "VerifyEligibilityProof",
+        ]),
+        companionEvidenceItem({
+          id: "root-eligibility-proof",
+          kind: "root_hash",
+          label: localized("eligibility_root proof hash", "eligibility_root proof hash", "eligibility_root proof hash"),
+          source: eligibilityRootSource,
+          detail: localized(
+            "Eligibility root, reason hash, proof verification, and winner review remain non-custodial.",
+            "Eligibility root、reason hash、proof verification 与 winner review 保持非托管。",
+            "Eligibility root、reason hash、proof verification 與 winner review 保持非託管。",
+          ),
+        }),
+        companionEvidenceItem({
+          id: "boundary-no-reward-distribution",
+          kind: "boundary",
+          label: localized("no reward distribution", "不执行发奖", "不執行發獎"),
+          source: noRewardCustodyBoundary,
+          detail: localized(
+            "Eligibility proof does not custody rewards, distribute rewards, or enable claim execution.",
+            "Eligibility proof 不托管奖励、不发奖，也不启用 claim 执行。",
+            "Eligibility proof 不託管獎勵、不發獎，也不啟用 claim 執行。",
+          ),
+        }),
+      ],
+      boundary: eligibilityRegistry?.boundary ?? companionReadinessBoundary,
+      nextAction: eligibilityRegistry?.nextAction ?? localized(
+        "Define root format, reason hash, proof review, and privacy boundaries before implementation.",
+        "实现前定义 root 格式、reason hash、proof 审核与隐私边界。",
+        "實作前定義 root 格式、reason hash、proof 審核與隱私邊界。",
+      ),
+    }),
+    companionCategory({
+      id: "verifier-roles-permissions",
+      title: localized("Verifier roles and permissions", "Verifier 角色与权限", "Verifier 角色與權限"),
+      ownerRole: "contract_reviewer",
+      evidenceSurface: localized("Contract Interface Matrix + verifier role lane", "合约接口矩阵 + verifier role lane", "合約接口矩陣 + verifier role lane"),
+      evidenceSummary: localized(
+        "Admin, ProjectOwner, Verifier, Exporter, and Pauser roles are separated before any live authority exists.",
+        "Admin、ProjectOwner、Verifier、Exporter 与 Pauser 角色在任何真实权限存在前已分离。",
+        "Admin、ProjectOwner、Verifier、Exporter 與 Pauser 角色在任何真實權限存在前已分離。",
+      ),
+      evidenceItems: [
+        ["Admin", "role-admin"],
+        ["ProjectOwner", "role-project-owner"],
+        ["Verifier", "role-verifier"],
+        ["Exporter", "role-exporter"],
+        ["Pauser", "role-pauser"],
+      ].map(([role, id]) => companionEvidenceItem({
+        id,
+        kind: "role",
+        label: localized(role, role, role),
+        source: verifierSource,
+        detail: localized(
+          `${role} permission is review evidence only; this model grants no live contract write authority.`,
+          `${role} 权限仅是审核证据；此模型不会授予真实合约写权限。`,
+          `${role} 權限僅是審核證據；此模型不會授予真實合約寫權限。`,
+        ),
+      })),
+      boundary: localized(
+        "Role evidence is review-only. No wallet signing, contract write, permission grant, or backend mutation is executed.",
+        "角色证据仅供审核。不会执行钱包签名、合约写入、权限授予或后端变更。",
+        "角色證據僅供審核。不會執行錢包簽名、合約寫入、權限授予或後端變更。",
+      ),
+      nextAction: localized(
+        "Map roles to implementation permissions only in a future approved P1 contract mission.",
+        "仅在未来批准的 P1 合约 mission 中把角色映射到实现权限。",
+        "僅在未來批准的 P1 合約 mission 中把角色映射到實作權限。",
+      ),
+    }),
+    companionCategory({
+      id: "i18n-off-chain-hash",
+      title: localized("i18n off-chain hash policy", "i18n 链下 hash 策略", "i18n 鏈下 hash 策略"),
+      contractName: "CampaignRegistryV2",
+      ownerRole: "project_owner",
+      evidenceSurface: localized("CampaignRegistryV2 metadata and locale fields", "CampaignRegistryV2 metadata 与 locale 字段", "CampaignRegistryV2 metadata 與 locale 欄位"),
+      evidenceSummary: localized(
+        "Only metadata URI/hash, locale codes, and reward disclaimer hash are planned on-chain; full localized text stays off-chain.",
+        "仅 metadata URI/hash、语言代码与奖励免责声明 hash 规划上链；完整多语言文本保持链下。",
+        "僅 metadata URI/hash、語言代碼與獎勵免責聲明 hash 規劃上鏈；完整多語言文本保持鏈下。",
+      ),
+      evidenceItems: [
+        "metadata_uri",
+        "metadata_hash",
+        "default_locale",
+        "supported_locales",
+        "reward_disclaimer_hash",
+      ].map((fieldName) => companionEvidenceItem({
+        id: `i18n-${fieldName}`,
+        kind: fieldName.includes("hash") ? "root_hash" : "schema_field",
+        label: localized(fieldName, fieldName, fieldName),
+        source: registry?.purpose ?? companionContractPlanSource,
+        detail: localized(
+          `${fieldName} supports auditability while localized campaign copy, AI drafts, risk details, and disclaimers remain off-chain.`,
+          `${fieldName} 支持审计性，同时活动多语言正文、AI 草稿、风控细节与 disclaimer 保持链下。`,
+          `${fieldName} 支援審計性，同時活動多語言正文、AI 草稿、風控細節與 disclaimer 保持鏈下。`,
+        ),
+      })),
+      boundary: localized(
+        "Full translated copy, AI drafts, risk details, leaderboard data, wallet proofs, and social account details stay off-chain.",
+        "完整翻译文案、AI 草稿、风控细节、排行榜数据、钱包 proof 与社交账号细节保持链下。",
+        "完整翻譯文案、AI 草稿、風控細節、排行榜資料、錢包 proof 與社交帳號細節保持鏈下。",
+      ),
+      nextAction: localized(
+        "Keep i18n text review and P1 locale expansion outside contract execution.",
+        "将 i18n 文案审核与 P1 语言扩展继续放在合约执行之外。",
+        "將 i18n 文案審核與 P1 語言擴展繼續放在合約執行之外。",
+      ),
+    }),
+    companionCategory({
+      id: "contract-test-checklist",
+      title: localized("Contract test checklist evidence", "合约测试清单证据", "合約測試清單證據"),
+      ownerRole: "contract_reviewer",
+      evidenceSurface: localized("V2 companion contract test checklist", "V2 companion contract 测试清单", "V2 companion contract 測試清單"),
+      evidenceSummary: localized(
+        "The P1 implementation backlog has explicit tests for time windows, owner/admin updates, locales, wallet policy, pause, referrals, roots, verifier role, and events.",
+        "P1 实现 backlog 明确包含时间窗口、owner/admin 更新、语言、钱包策略、暂停、邀请、root、verifier role 与事件测试。",
+        "P1 實作 backlog 明確包含時間窗口、owner/admin 更新、語言、錢包策略、暫停、邀請、root、verifier role 與事件測試。",
+      ),
+      evidenceItems: [
+        ["test-invalid-time", "invalid start/end time"],
+        ["test-owner-admin-update", "owner/admin update"],
+        ["test-default-locale-publish", "default locale publish"],
+        ["test-unsupported-wallet-policy", "unsupported wallet policy"],
+        ["test-pause-behavior", "pause behavior"],
+        ["test-referral-self-duplicate", "referral self/duplicate"],
+        ["test-root-reason-hash", "root reason hash"],
+        ["test-verifier-role", "verifier role"],
+        ["test-events", "events"],
+      ].map(([id, label]) => companionEvidenceItem({
+        id,
+        kind: "test",
+        label: localized(label, label, label),
+        source: companionContractPlanSource,
+        detail: localized(
+          `${label} coverage is required before a real P1 contract implementation can claim readiness.`,
+          `${label} 覆盖是未来真实 P1 合约实现声明 readiness 前的必需项。`,
+          `${label} 覆蓋是未來真實 P1 合約實作聲明 readiness 前的必需項。`,
+        ),
+      })),
+      boundary: localized(
+        "Checklist evidence is review planning only; it does not generate tests, ABI, transactions, roots, storage files, or reward actions.",
+        "清单证据仅用于审核规划；不会生成测试、ABI、交易、root、存储文件或奖励动作。",
+        "清單證據僅用於審核規劃；不會生成測試、ABI、交易、root、儲存檔案或獎勵動作。",
+      ),
+      nextAction: localized(
+        "Use this checklist as the required acceptance input for a future P1 contract implementation mission.",
+        "将此清单作为未来 P1 合约实现 mission 的必需验收输入。",
+        "將此清單作為未來 P1 合約實作 mission 的必需驗收輸入。",
+      ),
+    }),
+    companionCategory({
+      id: "reward-custody-claim-exclusion",
+      title: localized("Reward custody and claim exclusion", "奖励托管与 claim 排除项", "獎勵託管與 claim 排除項"),
+      ownerRole: "contract_reviewer",
+      phase: "P2",
+      requiredForPlan: false,
+      status: "blocked_non_goal",
+      evidenceSurface: localized("Contract Impact Review and Export Confirmation", "合约影响审核与导出确认", "合約影響審核與匯出確認"),
+      evidenceSummary: localized(
+        "Reward custody, contract claim execution, and distribution remain accepted non-goals that require security, custody/legal, external audit, and admin approval.",
+        "奖励托管、合约 claim 执行与发奖保持为已接受的非目标，需要安全、托管/法律、外部审计与管理员批准。",
+        "獎勵託管、合約 claim 執行與發獎保持為已接受的非目標，需要安全、託管/法律、外部審計與管理員批准。",
+      ),
+      evidenceItems: [
+        ["non-goal-security-review", "Security review"],
+        ["non-goal-custody-legal", "Custody/legal approval"],
+        ["non-goal-external-audit", "External audit"],
+        ["non-goal-admin-approval", "Admin approval"],
+        ["non-goal-reward-custody", "Reward custody exclusion"],
+        ["non-goal-reward-distribution", "Reward distribution exclusion"],
+      ].map(([id, label]) => companionEvidenceItem({
+        id,
+        kind: "non_goal",
+        label: localized(label, label, label),
+        source: noRewardCustodyBoundary,
+        status: "blocked_non_goal",
+        detail: localized(
+          `${label} is outside MVP/P1 companion readiness and must be separately approved before any claim mode work.`,
+          `${label} 不属于 MVP/P1 companion readiness，任何 claim mode 工作前必须单独批准。`,
+          `${label} 不屬於 MVP/P1 companion readiness，任何 claim mode 工作前必須單獨批准。`,
+        ),
+      })),
+      boundary: noRewardCustodyBoundary,
+      nextAction: localized(
+        "Keep claim mode blocked until security, custody/legal, external audit, and admin approvals exist.",
+        "在安全、托管/法律、外部审计与管理员批准前继续阻断 claim mode。",
+        "在安全、託管/法律、外部審計與管理員批准前繼續阻斷 claim mode。",
+      ),
+    }),
+  ];
+};
+
+const companionReadinessPriority: Record<CompanionContractReadinessStatus, number> = {
+  blocked_non_goal: 0,
+  review_required: 1,
+  deferred_non_goal: 2,
+  proven: 3,
+};
+
+const createCompanionContractReadinessSummary = (
+  categories: readonly CompanionContractEvidenceCategory[],
+): CompanionContractReadiness["summary"] => {
+  const topCategory = [...categories].sort((left, right) => {
+    const priorityDelta = companionReadinessPriority[left.status] - companionReadinessPriority[right.status];
+
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+
+    return categories.findIndex((category) => category.id === left.id) -
+      categories.findIndex((category) => category.id === right.id);
+  })[0] ?? categories[0];
+  const requiredCategories = categories.filter((category) => category.requiredForPlan);
+
+  return {
+    totalCategories: categories.length,
+    requiredCategories: requiredCategories.length,
+    provenCategories: categories.filter((category) => category.status === "proven").length,
+    reviewRequiredCategories: categories.filter((category) => category.status === "review_required").length,
+    deferredNonGoalCategories: categories.filter((category) => category.status === "deferred_non_goal").length,
+    blockedExecutionCategories: categories.filter((category) => category.status === "blocked_non_goal").length,
+    ready: requiredCategories.every((category) => category.status === "proven"),
+    topCategoryId: topCategory.id,
+    topNextAction: topCategory.nextAction,
+  };
+};
+
+export const createCompanionContractReadiness = (
+  matrix: ContractInterfaceMatrixConsole = createContractInterfaceMatrixConsole(),
+  transparency?: ContractTransparencyMonitor,
+): CompanionContractReadiness => {
+  const categories = createCompanionContractEvidenceCategories(matrix, transparency);
+  const summary = createCompanionContractReadinessSummary(categories);
+
+  return {
+    summary,
+    categories,
+    boundary: companionReadinessBoundary,
+    nextAction: summary.topNextAction,
+  };
+};
+
 const p1LocaleExpansionRegistry: Array<{
   code: P1LocaleCode;
   displayName: LocalizedText;
@@ -10814,9 +11406,11 @@ const walletProviderEvidenceApprovalAcceptanceSummary = (
 
 const v02AcceptanceRows = (
   releaseReadiness?: WalletProviderEvidenceReleaseReadiness,
+  companionReadiness: CompanionContractReadiness = createCompanionContractReadiness(),
 ): DeliveryAcceptanceRow[] => {
   const solutionSetId = "v0_2_wallet_i18n_contract" as const;
   const liveWalletProviderReady = releaseReadiness?.summary.ready ?? false;
+  const companionReady = companionReadiness.summary.ready;
 
   return [
     deliveryAcceptanceRow({
@@ -10882,21 +11476,26 @@ const v02AcceptanceRows = (
       solutionSetId,
       sourceArea: localized("v0.2 contract modification plan", "v0.2 合约改造方案", "v0.2 合約改造方案"),
       title: localized("Contract companion plan and MVP off-chain mode", "合约 companion 计划与 MVP 链下模式", "合約 companion 計畫與 MVP 鏈下模式"),
-      status: "partial",
+      status: companionReady ? "proven" : "partial",
       severity: "high",
       ownerRole: "contract_reviewer",
-      boundary: contractInterfaceBoundary,
-      evidenceSurface: localized("Contract review center and interface matrix", "合约审核中心与接口矩阵", "合約審核中心與接口矩陣"),
-      evidenceSummary: localized(
-        "CampaignRegistryV2, points ledger, referral registry, and eligibility root plans are visible, but no ABI or live contract transaction exists.",
-        "CampaignRegistryV2、points ledger、referral registry 与 eligibility root 计划可见，但没有 ABI 或真实合约交易。",
-        "CampaignRegistryV2、points ledger、referral registry 與 eligibility root 計畫可見，但沒有 ABI 或真實合約交易。",
+      launchBlocking: false,
+      boundary: companionReadiness.boundary,
+      evidenceSurface: localized(
+        "Companion Contract Readiness, Contract Review Center, and Interface Matrix",
+        "Companion Contract Readiness、合约审核中心与接口矩阵",
+        "Companion Contract Readiness、合約審核中心與接口矩陣",
       ),
-      nextMissionAction: localized(
-        "Keep contract work as planning evidence until a P1 contract implementation mission is approved.",
-        "P1 合约实现 mission 批准前，合约工作保持为规划证据。",
-        "P1 合約實作 mission 批准前，合約工作保持為規劃證據。",
+      evidenceSummary: companionReady ? localized(
+        `${companionReadiness.summary.requiredCategories}/${companionReadiness.summary.requiredCategories} required evidence categories are proven across schema, roles, events, tests, roots, i18n off-chain hashes, and reward custody exclusion.`,
+        `${companionReadiness.summary.requiredCategories}/${companionReadiness.summary.requiredCategories} 个必需证据类别已 proven，覆盖 schema、角色、事件、测试、root、i18n 链下 hash 与奖励托管排除项。`,
+        `${companionReadiness.summary.requiredCategories}/${companionReadiness.summary.requiredCategories} 個必需證據類別已 proven，覆蓋 schema、角色、事件、測試、root、i18n 鏈下 hash 與獎勵託管排除項。`,
+      ) : localized(
+        `${companionReadiness.summary.provenCategories}/${companionReadiness.summary.requiredCategories} required evidence categories are proven; companion plan remains partial until schema, roles, events, tests, roots, and i18n boundaries are complete.`,
+        `${companionReadiness.summary.provenCategories}/${companionReadiness.summary.requiredCategories} 个必需证据类别已 proven；schema、角色、事件、测试、root 与 i18n 边界完整前 companion plan 仍为 partial。`,
+        `${companionReadiness.summary.provenCategories}/${companionReadiness.summary.requiredCategories} 個必需證據類別已 proven；schema、角色、事件、測試、root 與 i18n 邊界完整前 companion plan 仍為 partial。`,
       ),
+      nextMissionAction: companionReadiness.nextAction,
     }),
     deliveryAcceptanceRow({
       id: "v02-contract-claim-reward-custody",
@@ -10999,6 +11598,7 @@ const compareDeliveryAcceptanceResiduals = (
 export const createDeliveryAcceptanceConsole = (
   walletProviderEvidenceReleaseReadiness?: WalletProviderEvidenceReleaseReadiness,
   exportFulfillmentReadiness?: ExportFulfillmentReadiness,
+  companionContractReadiness: CompanionContractReadiness = createCompanionContractReadiness(),
 ): DeliveryAcceptanceConsole => {
   const solutionSets = [
     deliveryAcceptanceSolutionSet({
@@ -11021,7 +11621,7 @@ export const createDeliveryAcceptanceConsole = (
         "AA+EOA、默认英文、多语言审核、合约边界、API/导出形态与真实证据缺口已展示。",
         "AA+EOA、預設英文、多語言審核、合約邊界、API/匯出形態與真實證據缺口已展示。",
       ),
-      rows: v02AcceptanceRows(walletProviderEvidenceReleaseReadiness),
+      rows: v02AcceptanceRows(walletProviderEvidenceReleaseReadiness, companionContractReadiness),
     }),
   ];
   const rows = solutionSets.flatMap((solutionSet) => solutionSet.rows);
@@ -14298,6 +14898,12 @@ export const createAdminOpsReadModel = (
   const riskIntelligence = createRiskIntelligenceReviewSurface(campaign);
   const launchConsoleCampaignBundles = createLaunchConsoleCampaignBundles(campaign);
   const pointsRankingReferralReadiness = createPointsRankingReferralServiceReadiness(campaign);
+  const contractInterfaceMatrix = createContractInterfaceMatrixConsole();
+  const contractTransparencyMonitor = createContractTransparencyMonitor(campaign);
+  const companionContractReadiness = createCompanionContractReadiness(
+    contractInterfaceMatrix,
+    contractTransparencyMonitor,
+  );
 
   return {
     campaignId: campaign.id,
@@ -14305,6 +14911,7 @@ export const createAdminOpsReadModel = (
     deliveryAcceptance: createDeliveryAcceptanceConsole(
       walletProviderEvidenceReleaseReadiness,
       exportFulfillmentReadiness,
+      companionContractReadiness,
     ),
     deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
     walletProviderQaGate,
@@ -14314,8 +14921,9 @@ export const createAdminOpsReadModel = (
     aelfWebLoginAdapterReadiness,
     providerEvidenceRegistry,
     contractReviewCenter: createAdminContractReviewCenter(campaign),
-    contractInterfaceMatrix: createContractInterfaceMatrixConsole(),
-    contractTransparencyMonitor: createContractTransparencyMonitor(campaign),
+    contractInterfaceMatrix,
+    contractTransparencyMonitor,
+    companionContractReadiness,
     pointsRankingReferralReadiness,
     aiContentPack: createAiContentPackWorkbench(campaign),
     templateGovernance: createTemplateGovernanceConsole(),
