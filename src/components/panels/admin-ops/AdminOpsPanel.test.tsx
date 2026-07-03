@@ -523,6 +523,22 @@ describe("Admin/Ops shell", () => {
     expect(within(riskIntelligenceSection as HTMLElement).getAllByText(/Next action:/).length).toBeGreaterThan(0);
     expect(within(riskIntelligenceSection as HTMLElement).getByText(/Wallet, on-chain, and dApp API/)).toBeInTheDocument();
     expect(within(riskIntelligenceSection as HTMLElement).getByText(/Referral-heavy winners stay review-required/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Anti-Sybil v2 graph intelligence" })).toBeInTheDocument();
+    const antiSybilSection = screen
+      .getByRole("heading", { name: "Anti-Sybil v2 graph intelligence" })
+      .closest("section");
+    expect(antiSybilSection).not.toBeNull();
+    expect(within(antiSybilSection as HTMLElement).getByText("Funding graph")).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText("Invite tree")).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText("Behavior cluster")).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText("Referral scoring")).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText("Leaderboard trust")).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText("Winner export review")).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText("AI optimization")).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText(/No live graph provider/)).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText(/provider API/)).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText(/contract write/)).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText(/reward distribution/)).toBeInTheDocument();
     expectVisibleText("Bot/sybil review");
     expectVisibleText("AI Ops reports");
     expect(screen.getByRole("heading", { name: "AI Optimization action queue" })).toBeInTheDocument();

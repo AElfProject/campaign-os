@@ -2346,6 +2346,64 @@ export interface RiskIntelligenceReviewSurface {
   boundary: LocalizedText;
 }
 
+export type AntiSybilV2SignalFamilyId =
+  | "funding_graph"
+  | "invite_tree"
+  | "behavior_cluster";
+export type AntiSybilV2ReadinessState =
+  | "ready"
+  | "review_required"
+  | "blocked";
+export type AntiSybilV2OwnerRole = RiskIntelligenceOwnerRole;
+export type AntiSybilV2AffectedOutcomeId =
+  | "referral_scoring"
+  | "leaderboard_trust"
+  | "winner_export_review"
+  | "ai_optimization";
+
+export interface AntiSybilV2SignalFamily {
+  id: AntiSybilV2SignalFamilyId;
+  label: LocalizedText;
+  readiness: AntiSybilV2ReadinessState;
+  severity: Exclude<SignalSeverity, "blocked">;
+  sourceSignals: LocalizedText;
+  evidenceBasis: LocalizedText;
+  affectedCohort: LocalizedText;
+  ownerRole: AntiSybilV2OwnerRole;
+  reviewGuidance: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface AntiSybilV2AffectedOutcome {
+  id: AntiSybilV2AffectedOutcomeId;
+  label: LocalizedText;
+  state: AntiSybilV2ReadinessState;
+  impact: LocalizedText;
+  ownerRole: AntiSybilV2OwnerRole;
+  nextAction: LocalizedText;
+}
+
+export interface AntiSybilV2Summary {
+  totalFamilies: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  topFamilyId: AntiSybilV2SignalFamilyId;
+  overallReadiness: AntiSybilV2ReadinessState;
+  topOutcomeId: AntiSybilV2AffectedOutcomeId;
+  topNextAction: LocalizedText;
+}
+
+export interface AntiSybilV2GraphReadiness {
+  campaignId: string;
+  summary: AntiSybilV2Summary;
+  signalFamilies: AntiSybilV2SignalFamily[];
+  affectedOutcomes: AntiSybilV2AffectedOutcome[];
+  ownerNextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
 export interface AiOpsRecommendation {
   id: string;
   title: LocalizedText;
@@ -3333,6 +3391,7 @@ export interface AdminOpsReadModel {
   advancedAnalytics: AdvancedAnalyticsReadinessSurface;
   riskSignals: RiskSignal[];
   riskIntelligence: RiskIntelligenceReviewSurface;
+  antiSybilV2GraphReadiness: AntiSybilV2GraphReadiness;
   launchConsoleCampaignBundles: LaunchConsoleCampaignBundleSurface;
   aiReports: AiOpsReportCard[];
   aiOptimization: AiOptimizationWorkflow;

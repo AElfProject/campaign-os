@@ -7,6 +7,7 @@ import {
   createAelfWebLoginAdapterReadiness,
   createAiOpsKpiAdoptionConsole,
   createAiOptimizationWorkflow,
+  createAntiSybilV2GraphReadiness,
   createCompanionContractReadiness,
   createContractImpactReviewModel,
   createContractTransparencyMonitor,
@@ -3706,6 +3707,75 @@ describe("Campaign OS domain foundation", () => {
     expect(publicSafetyText).not.toContain("apikey");
     expect(publicSafetyText).not.toContain("access_token");
     expect(publicSafetyText).not.toContain("seed phrase");
+  });
+
+  it("derives anti-sybil v2 graph readiness from seeded review intelligence", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const surface = createAntiSybilV2GraphReadiness(campaignDetail);
+    const repeated = createAntiSybilV2GraphReadiness(campaignDetail);
+    const signalIds = surface.signalFamilies.map((family) => family.id);
+    const outcomeIds = surface.affectedOutcomes.map((outcome) => outcome.id);
+    const safetyText = JSON.stringify(surface);
+    const lowerSafetyText = safetyText.toLowerCase();
+
+    expect(surface).toEqual(repeated);
+    expect(adminOps.antiSybilV2GraphReadiness).toEqual(surface);
+    expect(surface.campaignId).toBe(campaignDetail.id);
+    expect(signalIds).toEqual(["funding_graph", "invite_tree", "behavior_cluster"]);
+    expect(outcomeIds).toEqual([
+      "referral_scoring",
+      "leaderboard_trust",
+      "winner_export_review",
+      "ai_optimization",
+    ]);
+    expect(surface.summary).toMatchObject({
+      totalFamilies: surface.signalFamilies.length,
+      readyCount: surface.signalFamilies.filter((family) => family.readiness === "ready").length,
+      reviewRequiredCount: surface.signalFamilies.filter((family) => family.readiness === "review_required").length,
+      blockedCount: surface.signalFamilies.filter((family) => family.readiness === "blocked").length,
+      topFamilyId: expect.any(String),
+      topOutcomeId: expect.any(String),
+      overallReadiness: expect.any(String),
+    });
+    expect(surface.summary.totalFamilies).toBe(3);
+    expect(surface.affectedOutcomes.length).toBeGreaterThanOrEqual(4);
+    expect(surface.summary.overallReadiness).toBe(
+      surface.summary.blockedCount > 0
+        ? "blocked"
+        : surface.summary.reviewRequiredCount > 0
+          ? "review_required"
+          : "ready",
+    );
+    expect(surface.boundary["en-US"]).toContain("No live graph provider");
+    expect(surface.boundary["en-US"]).toContain("provider API");
+    expect(surface.boundary["en-US"]).toContain("wallet action");
+    expect(surface.boundary["en-US"]).toContain("contract write");
+    expect(surface.boundary["en-US"]).toContain("reward custody");
+    expect(surface.boundary["en-US"]).toContain("reward distribution");
+    expect(surface.signalFamilies.find((family) => family.id === "invite_tree")).toMatchObject({
+      ownerRole: "project_owner",
+      readiness: "blocked",
+    });
+    expect(surface.signalFamilies.find((family) => family.id === "behavior_cluster")?.evidenceBasis["en-US"]).toContain(
+      "no device fingerprint",
+    );
+
+    for (const unsafeText of [
+      "privateKey",
+      "seedPhrase",
+      "bearerToken",
+      "signedPayload",
+      "rawGraphEdge",
+      "deviceFingerprint",
+      "privateThreshold",
+      "contractRoot",
+      "downloadUrl",
+      "kitty-specs",
+      "docs/current",
+    ]) {
+      expect(safetyText).not.toContain(unsafeText);
+      expect(lowerSafetyText).not.toContain(unsafeText.toLowerCase());
+    }
   });
 
   it("derives deterministic AI optimization actions with review guardrails", () => {

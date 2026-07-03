@@ -504,6 +504,16 @@ describe("Campaign OS app shell", () => {
 
     expect(screen.getByText("Analytics overview")).toBeInTheDocument();
     expect(screen.getByText("Risk dashboard")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Anti-Sybil v2 graph intelligence" })).toBeInTheDocument();
+    const antiSybilSection = screen
+      .getByRole("heading", { name: "Anti-Sybil v2 graph intelligence" })
+      .closest("section");
+    expect(antiSybilSection).not.toBeNull();
+    expect(within(antiSybilSection as HTMLElement).getByText("Funding graph")).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText("Invite tree")).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText("Behavior cluster")).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText(/No live graph provider/)).toBeInTheDocument();
+    expect(within(antiSybilSection as HTMLElement).getByText(/reward distribution/)).toBeInTheDocument();
     expect(screen.getByText("Bot/sybil review")).toBeInTheDocument();
     expect(screen.getByText("AI Ops reports")).toBeInTheDocument();
     expect(screen.getByText("Ecosystem metrics")).toBeInTheDocument();

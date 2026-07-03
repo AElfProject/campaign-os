@@ -8,6 +8,10 @@ import type {
   AdvancedAnalyticsReadinessSurface,
   AdvancedAnalyticsRetentionWindow,
   AdminOpsReadModel,
+  AntiSybilV2AffectedOutcome,
+  AntiSybilV2GraphReadiness,
+  AntiSybilV2ReadinessState,
+  AntiSybilV2SignalFamily,
   AiOpsKpiAdoptionConsole,
   AiOpsKpiMetric,
   AiOpsKpiReadiness,
@@ -415,6 +419,15 @@ const riskIntelligenceBoundary: LocalizedText = {
     "风险标记仅作为审核输入。Campaign OS 不会自动封禁钱包、剔除 winners、批准导出、发奖、暴露私有阈值或展示原始 IP/设备/会话数据。",
   "zh-TW":
     "Risk flags are review inputs only. Campaign OS does not automatically ban wallets, exclude winners, approve exports, distribute rewards, reveal private thresholds, or expose raw IP/device/session data.",
+};
+
+const antiSybilV2GraphReadinessBoundary: LocalizedText = {
+  "en-US":
+    "Anti-Sybil v2 readiness is seeded/local review intelligence only. No live graph provider, provider API, wallet action, raw graph export, storage write, contract write, contract root write, reward custody, or reward distribution is executed.",
+  "zh-CN":
+    "Anti-Sybil v2 readiness 仅为 seeded/本地审核智能。不会执行实时 graph provider、provider API、钱包动作、原始图谱导出、storage 写入、合约写入、合约 root 写入、奖励托管或发奖。",
+  "zh-TW":
+    "Anti-Sybil v2 readiness is seeded/local review intelligence only. No live graph provider, provider API, wallet action, raw graph export, storage write, contract write, contract root write, reward custody, or reward distribution is executed.",
 };
 
 const launchConsoleBundleBoundary: LocalizedText = {
@@ -6777,6 +6790,298 @@ export const createRiskIntelligenceReviewSurface = (
     dimensions,
     meaningfulAction,
     boundary: riskIntelligenceBoundary,
+  };
+};
+
+const antiSybilReadinessPriority: Record<AntiSybilV2ReadinessState, number> = {
+  blocked: 0,
+  review_required: 1,
+  ready: 2,
+};
+
+const antiSybilSeverityFromDimensions = (
+  dimensions: readonly RiskIntelligenceDimension[],
+): Exclude<RiskSignal["severity"], "blocked"> => {
+  if (dimensions.some((dimension) => dimension.severity === "blocked" || dimension.severity === "high")) {
+    return "high";
+  }
+
+  if (dimensions.some((dimension) => dimension.severity === "medium")) {
+    return "medium";
+  }
+
+  return "low";
+};
+
+const antiSybilReadinessFromDimensions = (
+  dimensions: readonly RiskIntelligenceDimension[],
+): AntiSybilV2ReadinessState => {
+  if (dimensions.some((dimension) => dimension.reviewState === "blocked")) {
+    return "blocked";
+  }
+
+  if (dimensions.some((dimension) => dimension.reviewState !== "clear")) {
+    return "review_required";
+  }
+
+  return "ready";
+};
+
+const antiSybilFamily = (
+  input: Omit<AntiSybilV2SignalFamily, "boundary">,
+): AntiSybilV2SignalFamily => ({
+  ...input,
+  boundary: antiSybilV2GraphReadinessBoundary,
+});
+
+const findRiskDimensionByCategory = (
+  riskIntelligence: RiskIntelligenceReviewSurface,
+  category: RiskIntelligenceCategory,
+) => riskIntelligence.dimensions.find((dimension) => dimension.category === category);
+
+const createAntiSybilV2SignalFamilies = (
+  campaign: CampaignShellDetail,
+  riskIntelligence: RiskIntelligenceReviewSurface,
+): AntiSybilV2SignalFamily[] => {
+  const fundingCluster = findRiskDimensionByCategory(riskIntelligence, "funding_cluster");
+  const walletAge = findRiskDimensionByCategory(riskIntelligence, "wallet_age");
+  const inviteTree = findRiskDimensionByCategory(riskIntelligence, "invite_tree");
+  const meaningfulAction = findRiskDimensionByCategory(riskIntelligence, "meaningful_action");
+  const deviceSession = findRiskDimensionByCategory(riskIntelligence, "device_session");
+  const taskPattern = findRiskDimensionByCategory(riskIntelligence, "task_pattern");
+  const manualReview = findRiskDimensionByCategory(riskIntelligence, "manual_review_queue");
+  const fundingDimensions = [fundingCluster, walletAge].filter(
+    (dimension): dimension is RiskIntelligenceDimension => Boolean(dimension),
+  );
+  const inviteDimensions = [inviteTree, meaningfulAction].filter(
+    (dimension): dimension is RiskIntelligenceDimension => Boolean(dimension),
+  );
+  const behaviorDimensions = [deviceSession, taskPattern, manualReview].filter(
+    (dimension): dimension is RiskIntelligenceDimension => Boolean(dimension),
+  );
+  const invitedCount = campaign.participants.reduce(
+    (count, participant) => count + (participant.referralSummary?.invitedCount ?? 0),
+    0,
+  );
+  const qualifiedInvitees = campaign.participants.reduce(
+    (count, participant) => count + (participant.referralSummary?.qualifiedInvitees ?? 0),
+    0,
+  );
+  const behaviorReviewCount = campaign.participants.filter((participant) => participant.riskFlags.length > 0).length;
+
+  return [
+    antiSybilFamily({
+      id: "funding_graph",
+      label: localized("Funding graph", "资金图谱", "Funding graph"),
+      readiness: antiSybilReadinessFromDimensions(fundingDimensions),
+      severity: antiSybilSeverityFromDimensions(fundingDimensions),
+      sourceSignals: localized(
+        "Seeded funding-source and wallet-age risk dimensions.",
+        "Seeded 资金来源与钱包年龄风险维度。",
+      ),
+      evidenceBasis: fundingCluster?.evidenceCoverage ?? localized(
+        "Funding-source evidence is aggregate-only and reviewed without raw graph edges.",
+        "资金来源证据仅为聚合信息，审核时不暴露原始图谱边。",
+      ),
+      affectedCohort: fundingCluster?.affectedCohort ?? localized(
+        "Shared funding-source review cohort.",
+        "共享资金来源审核队列。",
+      ),
+      ownerRole: "risk_reviewer",
+      reviewGuidance: localized(
+        "Treat shared funding as a reviewer-safe graph readiness signal, not automatic exclusion.",
+        "将共享资金来源视为 reviewer-safe 图谱 readiness 信号，而不是自动剔除规则。",
+      ),
+      nextAction: fundingCluster?.nextAction ?? localized(
+        "Review sample wallets before export approval.",
+        "导出批准前抽样审核钱包。",
+      ),
+    }),
+    antiSybilFamily({
+      id: "invite_tree",
+      label: localized("Invite tree", "邀请树", "Invite tree"),
+      readiness: antiSybilReadinessFromDimensions(inviteDimensions),
+      severity: antiSybilSeverityFromDimensions(inviteDimensions),
+      sourceSignals: localized(
+        "Seeded referral-tree concentration and qualified referral summaries.",
+        "Seeded 邀请树集中度与合格邀请摘要。",
+      ),
+      evidenceBasis: localized(
+        `${qualifiedInvitees}/${invitedCount} invited wallets qualify; referral weighting stays advisory until review.`,
+        `${invitedCount} 个被邀请钱包中 ${qualifiedInvitees} 个合格；邀请权重在审核前保持建议态。`,
+      ),
+      affectedCohort: inviteTree?.affectedCohort ?? localized(
+        "Qualified invite cluster needs owner review.",
+        "合格邀请聚类需要项目方审核。",
+      ),
+      ownerRole: "project_owner",
+      reviewGuidance: localized(
+        "Qualified invitees anchor referral scoring; raw signup trees are not enough for rewards or export decisions.",
+        "Referral scoring 以合格被邀请人为锚点；原始注册邀请树不足以支持奖励或导出决定。",
+      ),
+      nextAction: inviteTree?.nextAction ?? localized(
+        "Keep referral points advisory until project owner approval.",
+        "项目方批准前将邀请积分保持为建议状态。",
+      ),
+    }),
+    antiSybilFamily({
+      id: "behavior_cluster",
+      label: localized("Behavior cluster", "行为聚类", "Behavior cluster"),
+      readiness: antiSybilReadinessFromDimensions(behaviorDimensions),
+      severity: antiSybilSeverityFromDimensions(behaviorDimensions),
+      sourceSignals: localized(
+        "Seeded device/session, task-pattern, and manual-review queue dimensions.",
+        "Seeded 设备/会话、任务模式与人工审核队列维度。",
+      ),
+      evidenceBasis: localized(
+        `${behaviorReviewCount} seeded participants carry behavior or manual-review signals; no device fingerprint is exposed.`,
+        `${behaviorReviewCount} 个 seeded 参与者带有行为或人工审核信号；不暴露设备指纹。`,
+      ),
+      affectedCohort: deviceSession?.affectedCohort ?? localized(
+        "Similar-session review cohort.",
+        "相似会话审核队列。",
+      ),
+      ownerRole: "internal_operator",
+      reviewGuidance: localized(
+        "Use aggregate behavior clusters to prioritize review before changing eligibility or export readiness.",
+        "使用聚合行为聚类来排序审核，再考虑资格或导出准备度变更。",
+      ),
+      nextAction: deviceSession?.nextAction ?? localized(
+        "Compare with verified on-chain actions.",
+        "与已验证链上行为交叉检查。",
+      ),
+    }),
+  ];
+};
+
+const createAntiSybilV2AffectedOutcomes = (
+  families: readonly AntiSybilV2SignalFamily[],
+  exportReadiness: ExportConfirmationReadinessGate,
+  aiOptimization: AiOptimizationWorkflow,
+): AntiSybilV2AffectedOutcome[] => {
+  const familyById = new Map(families.map((family) => [family.id, family]));
+  const inviteTree = familyById.get("invite_tree");
+  const fundingGraph = familyById.get("funding_graph");
+  const behaviorCluster = familyById.get("behavior_cluster");
+  const exportState: AntiSybilV2ReadinessState = exportReadiness.summary.blockedRows > 0
+    ? "blocked"
+    : exportReadiness.summary.reviewRequiredRows > 0
+      ? "review_required"
+      : "ready";
+  const aiState: AntiSybilV2ReadinessState = aiOptimization.summary.blockedCount > 0
+    ? "blocked"
+    : aiOptimization.summary.reviewRequiredCount > 0
+      ? "review_required"
+      : "ready";
+
+  return [
+    {
+      id: "referral_scoring",
+      label: localized("Referral scoring", "邀请评分", "Referral scoring"),
+      state: inviteTree?.readiness ?? "review_required",
+      impact: localized(
+        "Invite-tree readiness decides whether referral points stay advisory or can be trusted for project review.",
+        "邀请树 readiness 决定邀请积分保持建议态，还是可作为项目方审核输入。",
+      ),
+      ownerRole: "project_owner",
+      nextAction: inviteTree?.nextAction ?? localized(
+        "Review qualified invite rules before scoring referrals.",
+        "评分邀请前先审核合格邀请规则。",
+      ),
+    },
+    {
+      id: "leaderboard_trust",
+      label: localized("Leaderboard trust", "排行榜可信度", "Leaderboard trust"),
+      state: behaviorCluster?.readiness ?? "review_required",
+      impact: localized(
+        "Behavior clusters influence low-risk verified leaderboard trust without changing rankings automatically.",
+        "行为聚类会影响低风险已验证排行榜可信度，但不会自动改变排名。",
+      ),
+      ownerRole: "internal_operator",
+      nextAction: behaviorCluster?.nextAction ?? localized(
+        "Compare clustered behavior with verified task evidence.",
+        "将聚类行为与已验证任务证据交叉检查。",
+      ),
+    },
+    {
+      id: "winner_export_review",
+      label: localized("Winner export review", "Winner 导出审核", "Winner export review"),
+      state: exportState === "ready" && fundingGraph
+        ? fundingGraph.readiness
+        : exportState,
+      impact: localized(
+        `${exportReadiness.summary.reviewRequiredRows} export rows need review and ${exportReadiness.summary.blockedRows} are blocked before project-owned fulfillment.`,
+        `${exportReadiness.summary.reviewRequiredRows} 条导出记录需要审核，${exportReadiness.summary.blockedRows} 条在项目方履约前阻断。`,
+      ),
+      ownerRole: "risk_reviewer",
+      nextAction: exportReadiness.nextAction,
+    },
+    {
+      id: "ai_optimization",
+      label: localized("AI optimization", "AI 优化", "AI optimization"),
+      state: aiState === "ready" && behaviorCluster
+        ? behaviorCluster.readiness
+        : aiState,
+      impact: localized(
+        "AI optimization can reference graph readiness as a human-reviewed guardrail, not a live scoring engine.",
+        "AI 优化可以把图谱 readiness 作为人工审核 guardrail，而不是实时评分引擎。",
+      ),
+      ownerRole: "growth_lead",
+      nextAction: aiOptimization.summary.nextAction,
+    },
+  ];
+};
+
+const topAntiSybilOutcome = (
+  outcomes: readonly AntiSybilV2AffectedOutcome[],
+): AntiSybilV2AffectedOutcome =>
+  [...outcomes].sort(
+    (left, right) =>
+      antiSybilReadinessPriority[left.state] - antiSybilReadinessPriority[right.state] ||
+      left.id.localeCompare(right.id),
+  )[0] ?? outcomes[0];
+
+export const createAntiSybilV2GraphReadiness = (
+  campaign: CampaignShellDetail,
+): AntiSybilV2GraphReadiness => {
+  const riskIntelligence = createRiskIntelligenceReviewSurface(campaign);
+  const exportReadiness = createExportConfirmationReadinessGate(campaign);
+  const aiOptimization = createAiOptimizationWorkflow(campaign);
+  const signalFamilies = createAntiSybilV2SignalFamilies(campaign, riskIntelligence);
+  const affectedOutcomes = createAntiSybilV2AffectedOutcomes(signalFamilies, exportReadiness, aiOptimization);
+  const sortedFamilies = [...signalFamilies].sort(
+    (left, right) =>
+      antiSybilReadinessPriority[left.readiness] - antiSybilReadinessPriority[right.readiness] ||
+      riskSeverityPriority[left.severity] - riskSeverityPriority[right.severity] ||
+      left.id.localeCompare(right.id),
+  );
+  const topFamily = sortedFamilies[0] ?? signalFamilies[0];
+  const topOutcome = topAntiSybilOutcome(affectedOutcomes);
+  const readyCount = signalFamilies.filter((family) => family.readiness === "ready").length;
+  const reviewRequiredCount = signalFamilies.filter((family) => family.readiness === "review_required").length;
+  const blockedCount = signalFamilies.filter((family) => family.readiness === "blocked").length;
+  const overallReadiness = blockedCount > 0
+    ? "blocked"
+    : reviewRequiredCount > 0
+      ? "review_required"
+      : "ready";
+
+  return {
+    campaignId: campaign.id,
+    summary: {
+      totalFamilies: signalFamilies.length,
+      readyCount,
+      reviewRequiredCount,
+      blockedCount,
+      topFamilyId: topFamily?.id ?? "funding_graph",
+      overallReadiness,
+      topOutcomeId: topOutcome.id,
+      topNextAction: topFamily?.nextAction ?? topOutcome.nextAction,
+    },
+    signalFamilies,
+    affectedOutcomes,
+    ownerNextAction: topFamily?.nextAction ?? topOutcome.nextAction,
+    boundary: antiSybilV2GraphReadinessBoundary,
   };
 };
 
@@ -14975,6 +15280,7 @@ export const createAdminOpsReadModel = (
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
   const riskIntelligence = createRiskIntelligenceReviewSurface(campaign);
+  const antiSybilV2GraphReadiness = createAntiSybilV2GraphReadiness(campaign);
   const launchConsoleCampaignBundles = createLaunchConsoleCampaignBundles(campaign);
   const pointsRankingReferralReadiness = createPointsRankingReferralServiceReadiness(campaign);
   const contractInterfaceMatrix = createContractInterfaceMatrixConsole();
@@ -15013,6 +15319,7 @@ export const createAdminOpsReadModel = (
     advancedAnalytics,
     riskSignals: campaign.riskSignals,
     riskIntelligence,
+    antiSybilV2GraphReadiness,
     launchConsoleCampaignBundles,
     aiReports: campaign.aiOpsReports,
     aiOptimization,
