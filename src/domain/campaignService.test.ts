@@ -1840,6 +1840,9 @@ describe("Campaign OS local API service facade", () => {
 
   it("summarizes service coverage across API and field groups", () => {
     const coverage = service.getCoverageSummary();
+    const antiSybilReadiness = service.getAntiSybilV2GraphReadiness({
+      campaignId: campaignDetail.id,
+    });
     const pipeline = service.getVerificationPipelineReadiness({
       campaignId: campaignDetail.id,
     });
@@ -1850,6 +1853,9 @@ describe("Campaign OS local API service facade", () => {
       campaignId: "missing-campaign",
     });
     const missingProviderRegistry = service.getProviderEvidenceRegistry({
+      campaignId: "missing-campaign",
+    });
+    const missingAntiSybilReadiness = service.getAntiSybilV2GraphReadiness({
       campaignId: "missing-campaign",
     });
 
@@ -1889,6 +1895,7 @@ describe("Campaign OS local API service facade", () => {
         "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
+        "getAntiSybilV2GraphReadiness",
       ]),
       sampleResponseIds: expect.arrayContaining([
         "addTask",
@@ -1900,8 +1907,9 @@ describe("Campaign OS local API service facade", () => {
         "getAdvancedAnalyticsReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
+        "getAntiSybilV2GraphReadiness",
       ]),
-      totalServices: 21,
+      totalServices: 22,
     });
     expect(coverage.payload?.boundary["en-US"]).toContain("advanced analytics readiness");
     expect(coverage.payload?.boundary["en-US"]).toContain("No live analytics SDK");
@@ -1918,10 +1926,35 @@ describe("Campaign OS local API service facade", () => {
         "getProviderEvidenceRegistry",
         "getExportConfirmationReadiness",
         "getLaunchConsoleCampaignBundles",
+        "getAntiSybilV2GraphReadiness",
         "exportWinners",
       ]),
     );
     expect(coverage.payload?.verificationBoundary["en-US"]).toContain("No live AeFinder");
+    expect(antiSybilReadiness).toMatchObject({
+      ok: true,
+      payload: expect.objectContaining({
+        campaignId: campaignDetail.id,
+        summary: expect.objectContaining({
+          totalFamilies: 3,
+          overallReadiness: expect.any(String),
+        }),
+      }),
+    });
+    expect(antiSybilReadiness.payload?.signalFamilies.map((family) => family.id)).toEqual([
+      "funding_graph",
+      "invite_tree",
+      "behavior_cluster",
+    ]);
+    expect(antiSybilReadiness.payload?.affectedOutcomes.map((outcome) => outcome.id)).toEqual(
+      expect.arrayContaining([
+        "referral_scoring",
+        "leaderboard_trust",
+        "winner_export_review",
+        "ai_optimization",
+      ]),
+    );
+    expect(antiSybilReadiness.payload?.boundary["en-US"]).toContain("No live graph provider");
     expect(pipeline.payload).toMatchObject({
       summary: expect.objectContaining({
         totalPaths: 7,
@@ -1979,6 +2012,10 @@ describe("Campaign OS local API service facade", () => {
       error: expect.objectContaining({ code: "CAMPAIGN_NOT_FOUND", field: "campaignId" }),
     });
     expect(missingProviderRegistry).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ code: "CAMPAIGN_NOT_FOUND", field: "campaignId" }),
+    });
+    expect(missingAntiSybilReadiness).toMatchObject({
       ok: false,
       error: expect.objectContaining({ code: "CAMPAIGN_NOT_FOUND", field: "campaignId" }),
     });

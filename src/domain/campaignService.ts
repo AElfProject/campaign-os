@@ -2,6 +2,7 @@ import {
   createAdminOpsReadModel,
   createAdvancedAnalyticsReadiness,
   createAiContentPackWorkbench,
+  createAntiSybilV2GraphReadiness,
   createCampaignDiscoveryReadModel,
   createCampaignLifecycleOperations,
   createExportArtifact,
@@ -42,6 +43,7 @@ import {
   type AgentWalletActionReadinessRequest,
   type AgentWalletActionReadinessResponse,
   type AgentWalletActionReadinessState,
+  type AntiSybilV2GraphReadiness,
   type AiContentArtifactChannel,
   type AiContentArtifactType,
   type ApiSkillApiGroup,
@@ -251,6 +253,10 @@ export interface GetLaunchConsoleCampaignBundlesRequest {
   campaignId: string;
 }
 
+export interface GetAntiSybilV2GraphReadinessRequest {
+  campaignId: string;
+}
+
 export interface CheckEligibilityResponse {
   accountType: AccountType;
   campaignId: string;
@@ -445,6 +451,9 @@ export interface CampaignOsLocalService {
   getLaunchConsoleCampaignBundles(
     request: GetLaunchConsoleCampaignBundlesRequest,
   ): LocalServiceResult<LaunchConsoleCampaignBundleSurface>;
+  getAntiSybilV2GraphReadiness(
+    request: GetAntiSybilV2GraphReadinessRequest,
+  ): LocalServiceResult<AntiSybilV2GraphReadiness>;
   getCoverageSummary(): LocalServiceResult<LocalServiceCoverageSummary>;
   listCampaigns(request?: ListCampaignsRequest): LocalServiceResult<CampaignDiscoveryReadModel>;
   requestAgentWalletAction(
@@ -2028,6 +2037,21 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     return success(createLaunchConsoleCampaignBundles(campaign));
   },
 
+  getAntiSybilV2GraphReadiness: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local service facade.",
+        "本地 service facade 中不存在该活动。",
+      );
+    }
+
+    return success(createAntiSybilV2GraphReadiness(campaign));
+  },
+
   getCoverageSummary: () => {
     const surface = createApiSkillContractSurface();
     const serviceNames = [
@@ -2050,6 +2074,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       "getExportConfirmationReadiness",
       "getCampaignLifecycleOperations",
       "getLaunchConsoleCampaignBundles",
+      "getAntiSybilV2GraphReadiness",
       "generateCampaignPosts",
       "summarizeCampaign",
     ];
@@ -2103,6 +2128,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
         "getExportConfirmationReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
+        "getAntiSybilV2GraphReadiness",
         "exportWinners",
       ],
       serviceNames,
