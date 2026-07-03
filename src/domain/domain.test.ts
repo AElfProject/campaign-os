@@ -30,6 +30,7 @@ import {
   createExportPreview,
   createDaippAgentCoinTaskReadiness,
   createForestNftTaskReadiness,
+  createSchrodingerNftTaskReadiness,
   createForecastCampaignTaskReadiness,
   createPayCampaignTaskReadiness,
   createTmrwdaoGovernanceTaskReadiness,
@@ -3236,6 +3237,117 @@ describe("Campaign OS domain foundation", () => {
       "nftId",
       "listingId",
       "tradeTransactionId",
+    ]) {
+      expect(hasOwnKeyDeep(firstReadModel, unsafeKey)).toBe(false);
+    }
+    for (const unsafeText of ["private key", "seed phrase", "bearer token", "signed payload"]) {
+      expect(serialized.toLowerCase()).not.toContain(unsafeText);
+    }
+  });
+
+  it("derives deterministic Schrödinger NFT task readiness without live project API or NFT execution claims", () => {
+    const firstReadModel = createSchrodingerNftTaskReadiness(campaignDetail);
+    const secondReadModel = createSchrodingerNftTaskReadiness(campaignDetail);
+    const rowsByIntent = Object.fromEntries(firstReadModel.rows.map((row) => [row.intentId, row]));
+    const serialized = JSON.stringify(firstReadModel);
+    const boundaryText = [
+      firstReadModel.boundary["en-US"],
+      firstReadModel.summary.boundary["en-US"],
+      ...firstReadModel.rows.flatMap((row) => [
+        row.boundary["en-US"],
+        row.nextAction["en-US"],
+        row.riskState["en-US"],
+      ]),
+    ].join(" ");
+
+    expect(firstReadModel).toEqual(secondReadModel);
+    expect(firstReadModel.rows.map((row) => row.intentId)).toEqual([
+      "schrodinger-nft-adopt-readiness",
+      "schrodinger-nft-holder-evidence",
+      "schrodinger-nft-trade-listing-review",
+      "schrodinger-holder-leaderboard-review",
+    ]);
+    expect(firstReadModel.summary).toMatchObject({
+      totalTasks: 4,
+      readyCount: 1,
+      reviewRequiredCount: 2,
+      blockedCount: 1,
+      topState: "blocked",
+      topIntentId: "schrodinger-holder-leaderboard-review",
+      primaryOwnerRole: "schrodinger_provider_reviewer",
+    });
+    expect(
+      firstReadModel.summary.readyCount +
+        firstReadModel.summary.reviewRequiredCount +
+        firstReadModel.summary.blockedCount,
+    ).toBe(firstReadModel.summary.totalTasks);
+    expect(rowsByIntent["schrodinger-nft-adopt-readiness"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "seeded_local",
+      providerState: "seeded_preview",
+      readinessState: "ready",
+      ownerRole: "project_owner",
+    });
+    expect(rowsByIntent["schrodinger-nft-holder-evidence"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "project_api",
+      providerState: "review_required",
+      readinessState: "review_required",
+      ownerRole: "operator",
+    });
+    expect(rowsByIntent["schrodinger-nft-trade-listing-review"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "schrodinger_trade_listing_event",
+      providerState: "review_required",
+      readinessState: "review_required",
+      ownerRole: "operator",
+    });
+    expect(rowsByIntent["schrodinger-holder-leaderboard-review"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "holder_leaderboard",
+      providerState: "not_connected",
+      readinessState: "blocked",
+      ownerRole: "schrodinger_provider_reviewer",
+    });
+
+    for (const row of firstReadModel.rows) {
+      expect(row.label["en-US"]).toBeTruthy();
+      expect(row.label["zh-CN"]).toBeTruthy();
+      expect(row.description["en-US"]).toBeTruthy();
+      expect(row.description["zh-CN"]).toBeTruthy();
+      expect(row.riskState["en-US"]).toBeTruthy();
+      expect(row.riskState["zh-CN"]).toBeTruthy();
+      expect(row.nextAction["en-US"]).toBeTruthy();
+      expect(row.nextAction["zh-CN"]).toBeTruthy();
+      expect(row.boundary["en-US"]).toContain("No live Schrödinger service/API");
+      expect(row.boundary["zh-CN"]).toContain("不会调用实时 Schrödinger service/API");
+    }
+
+    expect(firstReadModel.ownerNextAction["en-US"]).toContain("Schrödinger provider");
+    expect(firstReadModel.ownerNextAction["en-US"]).toContain("project API evidence");
+    expect(boundaryText).toContain("No live Schrödinger service/API");
+    expect(boundaryText).toContain("project API");
+    expect(boundaryText).toContain("NFT marketplace/indexer");
+    expect(boundaryText).toContain("NFT adopt execution");
+    expect(boundaryText).toContain("NFT mint execution");
+    expect(boundaryText).toContain("NFT transfer execution");
+    expect(boundaryText).toContain("NFT trade/listing execution");
+    expect(boundaryText).toContain("wallet signing");
+    expect(boundaryText).toContain("wallet SDK/provider");
+    expect(boundaryText).toContain("backend mutation");
+    expect(boundaryText).toContain("contract read/send/write");
+    expect(boundaryText).toContain("reward custody");
+    expect(boundaryText).toContain("reward distribution");
+
+    for (const unsafeKey of [
+      "privateKey",
+      "seedPhrase",
+      "bearerToken",
+      "signedPayload",
+      "nftId",
+      "tokenId",
+      "contractAddress",
+      "transactionId",
     ]) {
       expect(hasOwnKeyDeep(firstReadModel, unsafeKey)).toBe(false);
     }

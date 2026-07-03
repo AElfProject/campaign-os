@@ -147,6 +147,13 @@ import type {
   ForestNftTaskReadiness,
   ForestNftTaskReadinessRow,
   ForestNftTaskReadinessState,
+  SchrodingerNftTaskEvidenceSource,
+  SchrodingerNftTaskIntentId,
+  SchrodingerNftTaskOwnerRole,
+  SchrodingerNftTaskProviderState,
+  SchrodingerNftTaskReadiness,
+  SchrodingerNftTaskReadinessRow,
+  SchrodingerNftTaskReadinessState,
   ForecastCampaignTaskEvidenceSource,
   ForecastCampaignTaskIntentId,
   ForecastCampaignTaskOwnerRole,
@@ -13960,6 +13967,12 @@ export const forestNftTaskReadinessBoundary: LocalizedText = localized(
   "Seeded/local Forest NFT task readiness only. No live Forest service/API, NFT marketplace/indexer, NFT mint execution, NFT transfer execution, NFT trade/listing execution, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, reward custody, or reward distribution is executed.",
 );
 
+export const schrodingerNftTaskReadinessBoundary: LocalizedText = localized(
+  "Seeded/local Schrödinger NFT task readiness only. No live Schrödinger service/API, project API, NFT marketplace/indexer, NFT adopt execution, NFT mint execution, NFT transfer execution, NFT trade/listing execution, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, reward custody, or reward distribution is executed.",
+  "仅 seeded/本地 Schrödinger NFT 任务 readiness。不会调用实时 Schrödinger service/API 或 project API，不会连接 NFT marketplace/indexer，不会执行 NFT adopt、NFT mint、NFT transfer、NFT trade/listing、钱包签名、钱包 SDK/provider 调用、后端 mutation、合约读取/发送/写入、奖励托管或发奖。",
+  "Seeded/local Schrödinger NFT task readiness only. No live Schrödinger service/API, project API, NFT marketplace/indexer, NFT adopt execution, NFT mint execution, NFT transfer execution, NFT trade/listing execution, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, reward custody, or reward distribution is executed.",
+);
+
 export const daippAgentCoinTaskReadinessBoundary: LocalizedText = localized(
   "Seeded/local daipp Agent Coin task readiness only. No live daipp service/API, agent execution, AI generation, token launch, token buy/hold/transfer, wallet signing, wallet SDK/provider call, backend mutation, contract read/send/write, reward custody, or reward distribution is executed.",
   "仅 seeded/本地 daipp Agent Coin 任务 readiness。不会调用真实 daipp service/API，不会执行 agent、AI 生成、token launch、token buy/hold/transfer、钱包签名、钱包 SDK/provider 调用、后端 mutation、合约读取/发送/写入、奖励托管或发奖。",
@@ -14414,6 +14427,223 @@ export const createForestNftTaskReadiness = (
     rows,
     ownerNextAction: forestNftTaskOwnerNextActionFor(summary),
     boundary: forestNftTaskReadinessBoundary,
+  };
+};
+
+const schrodingerNftTaskIntentLabels: Record<SchrodingerNftTaskIntentId, LocalizedText> = {
+  "schrodinger-nft-adopt-readiness": localized(
+    "Schrödinger NFT adopt readiness",
+    "Schrödinger NFT adopt readiness",
+    "Schrödinger NFT adopt readiness",
+  ),
+  "schrodinger-nft-holder-evidence": localized(
+    "Schrödinger NFT holder evidence",
+    "Schrödinger NFT holder 证据",
+    "Schrödinger NFT holder evidence",
+  ),
+  "schrodinger-nft-trade-listing-review": localized(
+    "Schrödinger NFT trade/listing review",
+    "Schrödinger NFT trade/listing 审核",
+    "Schrödinger NFT trade/listing review",
+  ),
+  "schrodinger-holder-leaderboard-review": localized(
+    "Schrödinger holder leaderboard review",
+    "Schrödinger holder 排行榜审核",
+    "Schrödinger holder leaderboard review",
+  ),
+};
+
+const schrodingerNftTaskIntentDescriptions: Record<SchrodingerNftTaskIntentId, LocalizedText> = {
+  "schrodinger-nft-adopt-readiness": localized(
+    "Review whether a Schrödinger NFT adopt task can be represented from seeded campaign metadata before publish.",
+    "发布前审核 Schrödinger NFT adopt 任务是否可由 seeded 活动 metadata 表达。",
+    "Review whether a Schrödinger NFT adopt task can be represented from seeded campaign metadata before publish.",
+  ),
+  "schrodinger-nft-holder-evidence": localized(
+    "Review holder snapshot and project API evidence before using Schrödinger ownership in campaign scoring.",
+    "在活动计分中使用 Schrödinger 持有前，先审核 holder snapshot 与 project API 证据。",
+    "Review holder snapshot and project API evidence before using Schrödinger ownership in campaign scoring.",
+  ),
+  "schrodinger-nft-trade-listing-review": localized(
+    "Review trade or listing evidence before counting Schrödinger marketplace actions.",
+    "计入 Schrödinger marketplace 行为前，先审核 trade 或 listing 证据。",
+    "Review trade or listing evidence before counting Schrödinger marketplace actions.",
+  ),
+  "schrodinger-holder-leaderboard-review": localized(
+    "Review holder leaderboard ownership before ranking campaign users by Schrödinger NFT status.",
+    "按 Schrödinger NFT 状态为活动用户排名前，先审核 holder 排行榜归属。",
+    "Review holder leaderboard ownership before ranking campaign users by Schrödinger NFT status.",
+  ),
+};
+
+const schrodingerNftRiskStates: Record<SchrodingerNftTaskReadinessState, LocalizedText> = {
+  ready: localized(
+    "Local seeded Schrödinger NFT readiness is enough for owner review, but it is not live project API or NFT verification.",
+    "本地 seeded Schrödinger NFT readiness 足够进入 owner review，但不是真实 project API 或 NFT 验证。",
+    "Local seeded Schrödinger NFT readiness is enough for owner review, but it is not live project API or NFT verification.",
+  ),
+  review_required: localized(
+    "Schrödinger holder, project API, or trade/listing evidence needs operator review before it can affect campaign scoring.",
+    "Schrödinger holder、project API 或 trade/listing 证据需要运营审核后，才能影响活动计分。",
+    "Schrödinger holder, project API, or trade/listing evidence needs operator review before it can affect campaign scoring.",
+  ),
+  blocked: localized(
+    "Schrödinger holder leaderboard usage is blocked until provider ownership and evidence boundaries are reviewed.",
+    "Schrödinger holder 排行榜使用在 provider 归属与证据边界审核前保持阻断。",
+    "Schrödinger holder leaderboard usage is blocked until provider ownership and evidence boundaries are reviewed.",
+  ),
+};
+
+const schrodingerNftNextActionFor = (
+  intentId: SchrodingerNftTaskIntentId,
+  readinessState: SchrodingerNftTaskReadinessState,
+): LocalizedText => {
+  if (readinessState === "blocked") {
+    return localized(
+      "Review Schrödinger provider ownership, project API evidence, and holder-leaderboard boundary before campaign publish.",
+      "发布活动前先审核 Schrödinger provider 归属、project API 证据与 holder 排行榜边界。",
+      "Review Schrödinger provider ownership, project API evidence, and holder-leaderboard boundary before campaign publish.",
+    );
+  }
+
+  if (readinessState === "review_required") {
+    return localized(
+      "Ask an operator to confirm Schrödinger holder and trade/listing evidence remain local-only and reviewable.",
+      "请运营确认 Schrödinger holder 与 trade/listing 证据保持本地-only 且可审核。",
+      "Ask an operator to confirm Schrödinger holder and trade/listing evidence remain local-only and reviewable.",
+    );
+  }
+
+  if (intentId === "schrodinger-nft-adopt-readiness") {
+    return localized(
+      "Keep Schrödinger NFT adopt readiness as a seeded/local campaign task until project API ownership is approved.",
+      "在 project API 归属获批前，将 Schrödinger NFT adopt readiness 保持为 seeded/本地活动任务。",
+      "Keep Schrödinger NFT adopt readiness as a seeded/local campaign task until project API ownership is approved.",
+    );
+  }
+
+  return localized(
+    "Keep Schrödinger NFT task readiness in local owner review before live integration.",
+    "在真实集成前，将 Schrödinger NFT 任务 readiness 保持在本地 owner review。",
+    "Keep Schrödinger NFT task readiness in local owner review before live integration.",
+  );
+};
+
+const createSchrodingerNftReadinessRow = (input: {
+  evidenceSource: SchrodingerNftTaskEvidenceSource;
+  intentId: SchrodingerNftTaskIntentId;
+  ownerRole: SchrodingerNftTaskOwnerRole;
+  providerState: SchrodingerNftTaskProviderState;
+  readinessState: SchrodingerNftTaskReadinessState;
+}): SchrodingerNftTaskReadinessRow => ({
+  id: `schrodinger-nft-${input.intentId}`,
+  intentId: input.intentId,
+  label: schrodingerNftTaskIntentLabels[input.intentId],
+  description: schrodingerNftTaskIntentDescriptions[input.intentId],
+  verificationType: "DAPP_API",
+  evidenceSource: input.evidenceSource,
+  providerState: input.providerState,
+  readinessState: input.readinessState,
+  riskState: schrodingerNftRiskStates[input.readinessState],
+  ownerRole: input.ownerRole,
+  nextAction: schrodingerNftNextActionFor(input.intentId, input.readinessState),
+  boundary: schrodingerNftTaskReadinessBoundary,
+});
+
+const schrodingerNftTaskStateRank: Record<SchrodingerNftTaskReadinessState, number> = {
+  blocked: 3,
+  review_required: 2,
+  ready: 1,
+};
+
+const createSchrodingerNftTaskRows = (): SchrodingerNftTaskReadinessRow[] => [
+  createSchrodingerNftReadinessRow({
+    evidenceSource: "seeded_local",
+    intentId: "schrodinger-nft-adopt-readiness",
+    ownerRole: "project_owner",
+    providerState: "seeded_preview",
+    readinessState: "ready",
+  }),
+  createSchrodingerNftReadinessRow({
+    evidenceSource: "project_api",
+    intentId: "schrodinger-nft-holder-evidence",
+    ownerRole: "operator",
+    providerState: "review_required",
+    readinessState: "review_required",
+  }),
+  createSchrodingerNftReadinessRow({
+    evidenceSource: "schrodinger_trade_listing_event",
+    intentId: "schrodinger-nft-trade-listing-review",
+    ownerRole: "operator",
+    providerState: "review_required",
+    readinessState: "review_required",
+  }),
+  createSchrodingerNftReadinessRow({
+    evidenceSource: "holder_leaderboard",
+    intentId: "schrodinger-holder-leaderboard-review",
+    ownerRole: "schrodinger_provider_reviewer",
+    providerState: "not_connected",
+    readinessState: "blocked",
+  }),
+];
+
+const createSchrodingerNftTaskSummary = (
+  rows: SchrodingerNftTaskReadinessRow[],
+): SchrodingerNftTaskReadiness["summary"] => {
+  const topRow = [...rows].sort(
+    (left, right) => schrodingerNftTaskStateRank[right.readinessState] - schrodingerNftTaskStateRank[left.readinessState],
+  )[0] ?? rows[0];
+
+  return {
+    totalTasks: rows.length,
+    readyCount: rows.filter((row) => row.readinessState === "ready").length,
+    reviewRequiredCount: rows.filter((row) => row.readinessState === "review_required").length,
+    blockedCount: rows.filter((row) => row.readinessState === "blocked").length,
+    topState: topRow?.readinessState ?? "blocked",
+    topIntentId: topRow?.intentId ?? "schrodinger-holder-leaderboard-review",
+    primaryOwnerRole: topRow?.ownerRole ?? "schrodinger_provider_reviewer",
+    boundary: schrodingerNftTaskReadinessBoundary,
+  };
+};
+
+const schrodingerNftTaskOwnerNextActionFor = (
+  summary: SchrodingerNftTaskReadiness["summary"],
+): LocalizedText => {
+  if (summary.blockedCount > 0) {
+    return localized(
+      "Review Schrödinger provider ownership, project API evidence, and NFT task boundaries before treating Schrödinger NFT tasks as publish-ready.",
+      "先审核 Schrödinger provider 归属、project API 证据与 NFT 任务边界，再将 Schrödinger NFT 任务视为可发布。",
+      "Review Schrödinger provider ownership, project API evidence, and NFT task boundaries before treating Schrödinger NFT tasks as publish-ready.",
+    );
+  }
+
+  if (summary.reviewRequiredCount > 0) {
+    return localized(
+      "Complete operator review for Schrödinger holder and trade/listing evidence before publish.",
+      "发布前完成 Schrödinger holder 与 trade/listing 证据的运营审核。",
+      "Complete operator review for Schrödinger holder and trade/listing evidence before publish.",
+    );
+  }
+
+  return localized(
+    "Keep Schrödinger NFT tasks in local owner review until live project API integration is approved.",
+    "在真实 project API 集成获批前，将 Schrödinger NFT 任务保持在本地 owner review。",
+    "Keep Schrödinger NFT tasks in local owner review until live project API integration is approved.",
+  );
+};
+
+export const createSchrodingerNftTaskReadiness = (
+  campaign: CampaignShellDetail,
+): SchrodingerNftTaskReadiness => {
+  const rows = createSchrodingerNftTaskRows();
+  const summary = createSchrodingerNftTaskSummary(rows);
+
+  return {
+    campaignId: campaign.id,
+    summary,
+    rows,
+    ownerNextAction: schrodingerNftTaskOwnerNextActionFor(summary),
+    boundary: schrodingerNftTaskReadinessBoundary,
   };
 };
 
