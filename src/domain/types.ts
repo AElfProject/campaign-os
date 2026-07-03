@@ -1740,6 +1740,50 @@ export type DeliveryAcceptanceSeverity = "critical" | "high" | "medium" | "low";
 export type DeliveryAcceptanceSolutionSetId = "v0_1_product_ui" | "v0_2_wallet_i18n_contract";
 export type P1LocaleCode = "ko-KR" | "ja-JP" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES";
 export type P1LocaleExpansionReadinessStatus = "deferred";
+export type P1LocaleActivationStatus = "blocked" | "review_required" | "ready" | "deferred";
+export type P1LocaleActivationEvidenceState = "missing" | "partial" | "ready";
+
+export interface P1LocaleActivationCandidate {
+  locale: P1LocaleCode;
+  label: LocalizedText;
+  targetMarket: LocalizedText;
+  priority: number;
+  status: P1LocaleActivationStatus;
+  ownerRole: OwnerRole;
+  recommendedFirst: boolean;
+  contentScope: LocalizedText;
+  qaScope: LocalizedText;
+  routingReadiness: P1LocaleActivationEvidenceState;
+  analyticsReadiness: P1LocaleActivationEvidenceState;
+  publishGateReadiness: P1LocaleActivationEvidenceState;
+  contentOwnershipReadiness: P1LocaleActivationEvidenceState;
+  qaReadiness: P1LocaleActivationEvidenceState;
+  blockerIds: string[];
+  evidenceReferences: string[];
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface P1LocaleActivationReadinessSummary {
+  totalCandidates: number;
+  blockedCandidates: number;
+  reviewRequiredCandidates: number;
+  readyCandidates: number;
+  deferredCandidates: number;
+  requiredEvidenceItems: number;
+  completedEvidenceItems: number;
+  recommendedFirstLocale: P1LocaleCode;
+  topBlockerId: string | null;
+  ready: boolean;
+  nextAction: LocalizedText;
+}
+
+export interface P1LocaleActivationReadiness {
+  summary: P1LocaleActivationReadinessSummary;
+  candidates: P1LocaleActivationCandidate[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
 
 export interface ContractInterfaceMethod {
   name: string;
@@ -3978,6 +4022,7 @@ export interface AdminOpsReadModel {
   reviewQueue: ReviewItem[];
   deliveryAcceptance: DeliveryAcceptanceConsole;
   residualGapMissionQueue: ResidualGapMissionQueue;
+  p1LocaleActivationReadiness: P1LocaleActivationReadiness;
   deliveryChecklistReadiness: DeliveryChecklistReadinessConsole;
   walletProviderQaGate: WalletProviderQaReadinessGate;
   walletProviderEvidenceIntake: WalletProviderEvidenceIntake;

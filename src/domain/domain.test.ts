@@ -38,6 +38,7 @@ import {
   createTmrwdaoGovernanceTaskReadiness,
   createParticipantWorkspaceReadModel,
   createParticipationReadModel,
+  createP1LocaleActivationReadiness,
   createProviderEvidenceRegistry,
   createResidualGapMissionQueue,
   createVerificationRulesWorkspace,
@@ -1088,6 +1089,61 @@ describe("Campaign OS domain foundation", () => {
       expect(row.prerequisites.every((prerequisite) => prerequisite["en-US"].includes(row.code))).toBe(true);
       expect(row.nextAction["en-US"]).toContain(row.code);
     }
+    const activationReadiness = createP1LocaleActivationReadiness();
+    const candidatesByLocale = Object.fromEntries(
+      activationReadiness.candidates.map((candidate) => [candidate.locale, candidate]),
+    );
+
+    expect(activationReadiness).toEqual(createP1LocaleActivationReadiness());
+    expect(adminOps.p1LocaleActivationReadiness).toEqual(activationReadiness);
+    expect(activationReadiness.candidates.map((candidate) => candidate.locale)).toEqual([
+      "ko-KR",
+      "ja-JP",
+      "vi-VN",
+      "id-ID",
+      "tr-TR",
+      "es-ES",
+    ]);
+    expect(activationReadiness.summary).toMatchObject({
+      totalCandidates: 6,
+      blockedCandidates: 2,
+      reviewRequiredCandidates: 2,
+      readyCandidates: 0,
+      deferredCandidates: 2,
+      requiredEvidenceItems: 30,
+      completedEvidenceItems: 0,
+      recommendedFirstLocale: "ja-JP",
+      topBlockerId: "ja-jp-activation-mission-required",
+      ready: false,
+    });
+    expect(activationReadiness.boundary["en-US"]).toContain(
+      "Runtime support remains limited to en-US, zh-CN, and zh-TW",
+    );
+    expect(activationReadiness.nextAction["en-US"]).toContain("dedicated ja-JP activation mission");
+    expect(candidatesByLocale["ja-JP"]).toMatchObject({
+      ownerRole: "project_owner",
+      priority: 1,
+      recommendedFirst: true,
+      status: "review_required",
+      contentOwnershipReadiness: "partial",
+      qaReadiness: "partial",
+      routingReadiness: "missing",
+      analyticsReadiness: "partial",
+      publishGateReadiness: "missing",
+      blockerIds: ["ja-jp-activation-mission-required", "runtime-route-gate-not-approved"],
+      evidenceReferences: ["v02-p1-locale-expansion", "mission/p1-locale-expansion"],
+    });
+    expect(candidatesByLocale["ja-JP"]?.contentScope["en-US"]).toContain("ja-JP");
+    expect(candidatesByLocale["ja-JP"]?.qaScope["en-US"]).toContain("ja-JP");
+    expect(candidatesByLocale["ja-JP"]?.boundary["en-US"]).toContain("review-only");
+    expect(candidatesByLocale["ko-KR"]).toMatchObject({
+      status: "blocked",
+      recommendedFirst: false,
+      contentOwnershipReadiness: "missing",
+      qaReadiness: "missing",
+      publishGateReadiness: "missing",
+    });
+    expect(supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
     expect(itemsById["product-contract-impact-review"]?.evidence["en-US"]).toContain(
       "claim-mode disabled and future approval-gated",
     );
