@@ -1424,6 +1424,38 @@ describe("Campaign OS local API service facade", () => {
       "does not distribute rewards",
     );
     expect(exportPreview.payload?.exportReadiness.previewModes.map((mode) => mode.mode)).toEqual(["csv", "json"]);
+    expect(exportPreview.payload?.exportFulfillmentReadiness).toMatchObject({
+      batchId: "export-awaken-sprint-preview",
+      summary: {
+        acknowledgedItems: 5,
+        blockedRows: 0,
+        ownerApproved: true,
+        packageCount: 2,
+        readyPackages: 2,
+        readyRows: 1,
+        requiredAcknowledgements: 5,
+        reviewRequiredRows: 3,
+        status: "ready",
+      },
+      safety: {
+        forbiddenFieldsAbsent: true,
+        noContractRoot: true,
+        noContractTransaction: true,
+        noDownloadUrl: true,
+        noRewardCustody: true,
+        noRewardDistribution: true,
+        noStorageWrite: true,
+      },
+    });
+    expect(exportPreview.payload?.exportFulfillmentReadiness.packages.map((pack) => pack.format)).toEqual([
+      "csv",
+      "json",
+    ]);
+    expect(exportPreview.payload?.exportFulfillmentReadiness.packages[0]).toMatchObject({
+      downloadAvailable: false,
+      includedColumns: EXPORT_CSV_COLUMNS,
+      storageBacked: false,
+    });
     expect(jsonExportPreview.payload).toMatchObject({
       artifact: expect.objectContaining({
         format: "json",

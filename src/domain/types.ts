@@ -1949,6 +1949,7 @@ export interface ProjectCampaignCommandCenter {
   summary: CampaignCommandCenterSummary;
   campaigns: CampaignCommandItem[];
   analyticsExport: AnalyticsExportDecision;
+  exportFulfillmentReadiness: ExportFulfillmentReadiness;
   advancedAnalytics: AdvancedAnalyticsReadinessSurface;
   aiOptimization: AiOptimizationWorkflow;
   aiOpsKpiAdoption: AiOpsKpiAdoptionConsole;
@@ -2709,6 +2710,70 @@ export interface ExportArtifact {
   safety: ExportArtifactSafety;
 }
 
+export interface ExportFulfillmentSummary {
+  status: ExportReadinessState;
+  packageCount: number;
+  readyPackages: number;
+  readyRows: number;
+  reviewRequiredRows: number;
+  blockedRows: number;
+  requiredAcknowledgements: number;
+  acknowledgedItems: number;
+  ownerApproved: boolean;
+  operatorReviewed: boolean;
+}
+
+export interface ExportFulfillmentPackage {
+  id: string;
+  format: ExportPreviewMode;
+  fileName: string;
+  mimeType: string;
+  checksum: string;
+  checksumAlgorithm: string;
+  payloadBytes: number;
+  totalRows: number;
+  readyRows: number;
+  reviewRequiredRows: number;
+  blockedRows: number;
+  includedColumns: readonly ExportCsvColumn[];
+  handoffReady: boolean;
+  downloadAvailable: false;
+  storageBacked: false;
+}
+
+export interface ExportFulfillmentApproval {
+  ownerRole: "project_owner";
+  ownerApproved: boolean;
+  operatorReviewed: boolean;
+  acknowledgements: ExportAcknowledgement[];
+  requiredAcknowledgements: number;
+  acknowledgedItems: number;
+  nextAction: LocalizedText;
+}
+
+export interface ExportFulfillmentSafety {
+  localOnly: true;
+  noDownloadUrl: true;
+  noStorageWrite: true;
+  noContractRoot: true;
+  noContractTransaction: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  forbiddenFieldsAbsent: boolean;
+  boundary: LocalizedText;
+}
+
+export interface ExportFulfillmentReadiness {
+  campaignId: string;
+  batchId: string;
+  summary: ExportFulfillmentSummary;
+  packages: ExportFulfillmentPackage[];
+  approval: ExportFulfillmentApproval;
+  safety: ExportFulfillmentSafety;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface ExportPreviewModeReadiness {
   mode: ExportPreviewMode;
   label: LocalizedText;
@@ -3102,6 +3167,7 @@ export interface AdminOpsReadModel {
   competitorWatch: CompetitorWatchSurface;
   ecosystemMetrics: EcosystemMetricRow[];
   exportBatch: ExportBatchSummary;
+  exportFulfillmentReadiness: ExportFulfillmentReadiness;
   lifecycleOperations: CampaignLifecycleOperations;
 }
 
