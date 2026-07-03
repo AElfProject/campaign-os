@@ -36,6 +36,8 @@ describe("WalletConnectModal locale coverage", () => {
     expect(within(dialog).getByTestId("wallet-modal-group-recommended")).toBeInTheDocument();
     expect(within(dialog).getByTestId("wallet-modal-group-eoa")).toBeInTheDocument();
     expect(within(dialog).getByTestId("wallet-modal-group-advanced")).toBeInTheDocument();
+    expect(within(dialog).getByText("連接即表示你同意僅為驗證簽署訊息。")).toBeInTheDocument();
+    expect(within(dialog).getByText("Campaign OS 永遠不會索要你的私鑰。")).toBeInTheDocument();
     expect(within(dialog).getByText("Campaign OS 永遠不會索要私鑰、助記詞、恢復短語或密碼匯出。")).toBeInTheDocument();
     expect(within(dialog).getAllByText("僅 seeded 預覽：不會連接即時錢包 SDK，不會請求真實簽名，不會發起交易，也不會讀寫合約。").length).toBeGreaterThan(0);
     expect(within(dialog).getByText("鏈不匹配：請切換到 AELF mainnet 後再繼續活動驗證。")).toBeInTheDocument();
@@ -61,6 +63,11 @@ describe("WalletConnectModal locale coverage", () => {
     );
 
     const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    expect(within(dialog).getByText("Choose how you want to join this campaign.")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("By connecting, you agree to sign messages only for verification."),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("Campaign OS never asks for your private key.")).toBeInTheDocument();
     const normalUserGroups = [
       within(dialog).getByTestId("wallet-modal-adapter-recommended"),
       within(dialog).getByTestId("wallet-modal-adapter-eoa"),
@@ -96,6 +103,8 @@ describe("WalletConnectModal locale coverage", () => {
 
     const dialog = screen.getByRole("dialog", { name: "连接钱包" });
 
+    expect(within(dialog).getByText("连接即表示你同意仅为验证签署消息。")).toBeInTheDocument();
+    expect(within(dialog).getByText("Campaign OS 永远不会索要你的私钥。")).toBeInTheDocument();
     expect(within(dialog).getByText("插件未安装：请安装或打开你的 EOA 钱包插件。")).toBeInTheDocument();
     expect(within(dialog).getByText("链不匹配：请切换到 AELF mainnet 后再继续活动验证。")).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /connectWallet|getSignature|sendTransaction/i })).not.toBeInTheDocument();
