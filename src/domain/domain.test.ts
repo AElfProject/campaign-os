@@ -28,6 +28,7 @@ import {
   createExportFulfillmentReadiness,
   createExportArtifact,
   createExportPreview,
+  createForestNftTaskReadiness,
   createForecastCampaignTaskReadiness,
   createPayCampaignTaskReadiness,
   createTmrwdaoGovernanceTaskReadiness,
@@ -3016,6 +3017,114 @@ describe("Campaign OS domain foundation", () => {
     expect(boundaryText).toContain("contract execution");
     expect(boundaryText).toContain("reward custody");
     expect(boundaryText).toContain("reward distribution");
+  });
+
+  it("derives deterministic Forest NFT task readiness without live NFT execution claims", () => {
+    const firstReadModel = createForestNftTaskReadiness(campaignDetail);
+    const secondReadModel = createForestNftTaskReadiness(campaignDetail);
+    const rowsByIntent = Object.fromEntries(firstReadModel.rows.map((row) => [row.intentId, row]));
+    const serialized = JSON.stringify(firstReadModel);
+    const boundaryText = [
+      firstReadModel.boundary["en-US"],
+      firstReadModel.summary.boundary["en-US"],
+      ...firstReadModel.rows.flatMap((row) => [
+        row.boundary["en-US"],
+        row.nextAction["en-US"],
+        row.riskState["en-US"],
+      ]),
+    ].join(" ");
+
+    expect(firstReadModel).toEqual(secondReadModel);
+    expect(firstReadModel.rows.map((row) => row.intentId)).toEqual([
+      "forest-nft-mint-readiness",
+      "forest-nft-holder-evidence",
+      "forest-nft-trade-listing-review",
+      "forest-holder-leaderboard-review",
+    ]);
+    expect(firstReadModel.summary).toMatchObject({
+      totalTasks: 4,
+      readyCount: 1,
+      reviewRequiredCount: 2,
+      blockedCount: 1,
+      topState: "blocked",
+      topIntentId: "forest-holder-leaderboard-review",
+      primaryOwnerRole: "forest_provider_reviewer",
+    });
+    expect(
+      firstReadModel.summary.readyCount +
+        firstReadModel.summary.reviewRequiredCount +
+        firstReadModel.summary.blockedCount,
+    ).toBe(firstReadModel.summary.totalTasks);
+    expect(rowsByIntent["forest-nft-mint-readiness"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "seeded_local",
+      providerState: "seeded_preview",
+      readinessState: "ready",
+      ownerRole: "project_owner",
+    });
+    expect(rowsByIntent["forest-nft-holder-evidence"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "holder_snapshot",
+      providerState: "review_required",
+      readinessState: "review_required",
+      ownerRole: "operator",
+    });
+    expect(rowsByIntent["forest-nft-trade-listing-review"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "forest_marketplace_event",
+      providerState: "review_required",
+      readinessState: "review_required",
+      ownerRole: "operator",
+    });
+    expect(rowsByIntent["forest-holder-leaderboard-review"]).toMatchObject({
+      verificationType: "DAPP_API",
+      evidenceSource: "forest_nft_contract_event",
+      providerState: "not_connected",
+      readinessState: "blocked",
+      ownerRole: "forest_provider_reviewer",
+    });
+
+    for (const row of firstReadModel.rows) {
+      expect(row.label["en-US"]).toBeTruthy();
+      expect(row.label["zh-CN"]).toBeTruthy();
+      expect(row.description["en-US"]).toBeTruthy();
+      expect(row.description["zh-CN"]).toBeTruthy();
+      expect(row.riskState["en-US"]).toBeTruthy();
+      expect(row.riskState["zh-CN"]).toBeTruthy();
+      expect(row.nextAction["en-US"]).toBeTruthy();
+      expect(row.nextAction["zh-CN"]).toBeTruthy();
+      expect(row.boundary["en-US"]).toContain("No live Forest service/API");
+      expect(row.boundary["zh-CN"]).toContain("不会调用实时 Forest service/API");
+    }
+
+    expect(firstReadModel.ownerNextAction["en-US"]).toContain("Forest provider");
+    expect(firstReadModel.ownerNextAction["en-US"]).toContain("NFT evidence");
+    expect(boundaryText).toContain("No live Forest service/API");
+    expect(boundaryText).toContain("NFT marketplace/indexer");
+    expect(boundaryText).toContain("NFT mint execution");
+    expect(boundaryText).toContain("NFT transfer execution");
+    expect(boundaryText).toContain("NFT trade/listing execution");
+    expect(boundaryText).toContain("wallet signing");
+    expect(boundaryText).toContain("wallet SDK/provider");
+    expect(boundaryText).toContain("backend mutation");
+    expect(boundaryText).toContain("contract read/send/write");
+    expect(boundaryText).toContain("reward custody");
+    expect(boundaryText).toContain("reward distribution");
+
+    for (const unsafeKey of [
+      "privateKey",
+      "seedPhrase",
+      "bearerToken",
+      "signedPayload",
+      "nftId",
+      "listingId",
+      "tradeTransactionId",
+    ]) {
+      expect(hasOwnKeyDeep(firstReadModel, unsafeKey)).toBe(false);
+    }
+    for (const unsafeText of ["private key", "seed phrase", "bearer token", "signed payload"]) {
+      expect(serialized.toLowerCase()).not.toContain(unsafeText);
+    }
   });
 
   it("derives deterministic Pay campaign task readiness without live payment claims", () => {
