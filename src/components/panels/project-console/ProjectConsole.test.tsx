@@ -494,6 +494,35 @@ describe("Project Console shell", () => {
     expect(within(forestReadiness).getAllByText(/NFT trade\/listing execution/).length).toBeGreaterThan(0);
     expect(within(forestReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
     expect(within(forestReadiness).getAllByText(/contract read\/send\/write/).length).toBeGreaterThan(0);
+    const daippReadiness = screen.getByLabelText("daipp Agent Coin task readiness");
+    expect(
+      within(daippReadiness).getByRole("heading", { name: "daipp Agent Coin task readiness" }),
+    ).toBeInTheDocument();
+    expect(within(daippReadiness).getByText("Agent page visit readiness")).toBeInTheDocument();
+    expect(within(daippReadiness).getByText("Agent interaction evidence")).toBeInTheDocument();
+    expect(within(daippReadiness).getByText("Agent coin buy/hold review")).toBeInTheDocument();
+    expect(within(daippReadiness).getByText("AI intro share review")).toBeInTheDocument();
+    expect(within(daippReadiness).getByText("Launch leaderboard review")).toBeInTheDocument();
+    expect(within(daippReadiness).getByText("DAPP_API · seeded_local")).toBeInTheDocument();
+    expect(
+      within(daippReadiness).getAllByText("DAPP_API · agent_interaction_log").length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(daippReadiness).getAllByText("DAPP_API · daipp_contract_event").length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(daippReadiness).getAllByText("DAPP_API · ai_intro_share_review").length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(daippReadiness).getAllByText("DAPP_API · launch_leaderboard").length,
+    ).toBeGreaterThan(0);
+    expect(within(daippReadiness).getAllByText(/No live daipp service\/API/).length).toBeGreaterThan(0);
+    expect(within(daippReadiness).getAllByText(/agent execution/).length).toBeGreaterThan(0);
+    expect(within(daippReadiness).getAllByText(/AI generation/).length).toBeGreaterThan(0);
+    expect(within(daippReadiness).getAllByText(/token launch/).length).toBeGreaterThan(0);
+    expect(within(daippReadiness).getAllByText(/token buy\/hold\/transfer/).length).toBeGreaterThan(0);
+    expect(within(daippReadiness).getAllByText(/wallet signing/).length).toBeGreaterThan(0);
+    expect(within(daippReadiness).getAllByText(/contract read\/send\/write/).length).toBeGreaterThan(0);
     const forecastReadiness = screen.getByLabelText("Forecast campaign task readiness");
     expect(
       within(forecastReadiness).getByRole("heading", { name: "Forecast campaign task readiness" }),
@@ -588,6 +617,31 @@ describe("Project Console shell", () => {
     expect(within(forestReadiness).getAllByText(/不会执行 NFT mint/).length).toBeGreaterThan(0);
     expect(within(forestReadiness).getAllByText(/NFT trade\/listing/).length).toBeGreaterThan(0);
     expect(within(forestReadiness).getAllByText(/合约读取\/发送\/写入/).length).toBeGreaterThan(0);
+  });
+
+  it("renders localized daipp Agent Coin task readiness in zh-CN", () => {
+    render(
+      <ProjectConsole
+        activeWorkspace="templates"
+        campaign={campaignDetail}
+        locale="zh-CN"
+      />,
+    );
+
+    const daippReadiness = screen.getByLabelText("daipp Agent Coin 任务 readiness");
+    expect(
+      within(daippReadiness).getByRole("heading", { name: "daipp Agent Coin 任务 readiness" }),
+    ).toBeInTheDocument();
+    expect(within(daippReadiness).getByText("Agent 页面访问 readiness")).toBeInTheDocument();
+    expect(within(daippReadiness).getByText("Agent 互动证据")).toBeInTheDocument();
+    expect(within(daippReadiness).getByText("Agent coin buy/hold 审核")).toBeInTheDocument();
+    expect(within(daippReadiness).getByText("AI intro 分享审核")).toBeInTheDocument();
+    expect(within(daippReadiness).getByText("Launch 排行榜审核")).toBeInTheDocument();
+    expect(within(daippReadiness).getAllByText(/不会调用真实 daipp service\/API/).length).toBeGreaterThan(0);
+    expect(within(daippReadiness).getAllByText(/不会执行 agent/).length).toBeGreaterThan(0);
+    expect(within(daippReadiness).getAllByText(/token launch/).length).toBeGreaterThan(0);
+    expect(within(daippReadiness).getAllByText(/token buy\/hold\/transfer/).length).toBeGreaterThan(0);
+    expect(within(daippReadiness).getAllByText(/合约读取\/发送\/写入/).length).toBeGreaterThan(0);
   });
 
   it("renders localized TMRWDAO governance task readiness in zh-CN", () => {

@@ -6,6 +6,7 @@ import {
   createCampaignTemplatePack,
   campaignDetail,
   createCampaignSettingsReadiness,
+  createDaippAgentCoinTaskReadiness,
   createForestNftTaskReadiness,
   createForecastCampaignTaskReadiness,
   createPayCampaignTaskReadiness,
@@ -36,6 +37,9 @@ import {
   type CampaignShellDetail,
   type CampaignSettingsReadinessState,
   type ExportReadinessState,
+  type DaippAgentCoinTaskOwnerRole,
+  type DaippAgentCoinTaskProviderState,
+  type DaippAgentCoinTaskReadinessState,
   type ForestNftTaskOwnerRole,
   type ForestNftTaskProviderState,
   type ForestNftTaskReadinessState,
@@ -364,6 +368,83 @@ const campaignTemplateOwnerLabel = (
       project_owner: "專案方",
     },
   } satisfies Record<SupportedLocale, Record<CampaignTemplatePreset["ownerRole"], string>>;
+
+  return labels[locale][ownerRole];
+};
+
+const daippTaskReadinessBadgeState = (
+  state: DaippAgentCoinTaskReadinessState,
+) => state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const daippTaskReadinessLabel = (
+  state: DaippAgentCoinTaskReadinessState,
+  labels: {
+    daippTaskBlocked: string;
+    daippTaskReady: string;
+    daippTaskReviewRequired: string;
+  },
+) => {
+  if (state === "ready") {
+    return labels.daippTaskReady;
+  }
+
+  return state === "review_required"
+    ? labels.daippTaskReviewRequired
+    : labels.daippTaskBlocked;
+};
+
+const daippTaskProviderStateLabel = (
+  state: DaippAgentCoinTaskProviderState,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      blocked: "Blocked",
+      not_connected: "Not connected",
+      review_required: "Review required",
+      seeded_preview: "Seeded preview",
+    },
+    "zh-CN": {
+      blocked: "阻断",
+      not_connected: "未连接",
+      review_required: "需要审核",
+      seeded_preview: "Seeded 预览",
+    },
+    "zh-TW": {
+      blocked: "阻斷",
+      not_connected: "未連接",
+      review_required: "需要審核",
+      seeded_preview: "Seeded 預覽",
+    },
+  } satisfies Record<SupportedLocale, Record<DaippAgentCoinTaskProviderState, string>>;
+
+  return labels[locale][state];
+};
+
+const daippTaskOwnerLabel = (
+  ownerRole: DaippAgentCoinTaskOwnerRole,
+  locale: SupportedLocale,
+) => {
+  const labels = {
+    "en-US": {
+      content_reviewer: "Content reviewer",
+      daipp_provider_reviewer: "daipp provider reviewer",
+      operator: "Operator",
+      project_owner: "Project owner",
+    },
+    "zh-CN": {
+      content_reviewer: "内容审核人",
+      daipp_provider_reviewer: "daipp provider 审核人",
+      operator: "运营",
+      project_owner: "项目方",
+    },
+    "zh-TW": {
+      content_reviewer: "內容審核人",
+      daipp_provider_reviewer: "daipp provider 審核人",
+      operator: "營運",
+      project_owner: "專案方",
+    },
+  } satisfies Record<SupportedLocale, Record<DaippAgentCoinTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -1267,6 +1348,7 @@ export const ProjectConsole = ({
   const localeAnalyticsReadiness = createLocaleAnalyticsReadiness(campaign);
   const aiContentPack = createAiContentPackWorkbench(campaign);
   const campaignTemplatePack = createCampaignTemplatePack();
+  const daippTaskReadiness = createDaippAgentCoinTaskReadiness(campaign);
   const forestTaskReadiness = createForestNftTaskReadiness(campaign);
   const forecastTaskReadiness = createForecastCampaignTaskReadiness(campaign);
   const payTaskReadiness = createPayCampaignTaskReadiness(campaign);
@@ -3317,6 +3399,115 @@ export const ProjectConsole = ({
                   </p>
                   <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
                     <strong>{copy.forestTaskBoundary}: </strong>
+                    {getLocalizedText(row.boundary, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section aria-label={copy.daippTaskReadiness} style={panelStyle}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.daippTaskTotal}</p>
+                <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+                  {copy.daippTaskReadiness}
+                </h3>
+                <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+                  {copy.daippTaskReadinessSubtitle}
+                </p>
+              </div>
+              <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <PublishStateBadge
+                  label={`${daippTaskReadiness.summary.readyCount} ${copy.daippTaskReady}`}
+                  state="ready"
+                />
+                <PublishStateBadge
+                  label={`${daippTaskReadiness.summary.reviewRequiredCount} ${copy.daippTaskReviewRequired}`}
+                  state="warning"
+                />
+                <PublishStateBadge
+                  label={`${daippTaskReadiness.summary.blockedCount} ${copy.daippTaskBlocked}`}
+                  state="blocker"
+                />
+              </span>
+            </div>
+
+            <div style={gridStyle}>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.daippTaskTotal}</p>
+                <p style={statValueStyle}>{daippTaskReadiness.summary.totalTasks}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.daippTaskReady}</p>
+                <p style={statValueStyle}>{daippTaskReadiness.summary.readyCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.daippTaskReviewRequired}</p>
+                <p style={statValueStyle}>{daippTaskReadiness.summary.reviewRequiredCount}</p>
+              </article>
+              <article style={cardStyle}>
+                <p style={statLabelStyle}>{copy.daippTaskBlocked}</p>
+                <p style={statValueStyle}>{daippTaskReadiness.summary.blockedCount}</p>
+              </article>
+              <article style={{ ...cardStyle, gridColumn: "1 / -1", minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.daippTaskNextAction}</p>
+                <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(daippTaskReadiness.ownerNextAction, locale)}
+                </p>
+              </article>
+            </div>
+
+            <p style={boundaryStyle}>
+              <strong>{copy.daippTaskBoundary}: </strong>
+              {getLocalizedText(daippTaskReadiness.boundary, locale)}
+            </p>
+
+            <div style={compactSectionGridStyle}>
+              {daippTaskReadiness.rows.map((row) => (
+                <article key={row.id} style={{ ...cardStyle, minHeight: 0 }}>
+                  <div style={headingRowStyle}>
+                    <div>
+                      <p style={statLabelStyle}>{copy.daippTaskProviderState}</p>
+                      <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                        {getLocalizedText(row.label, locale)}
+                      </h4>
+                    </div>
+                    <PublishStateBadge
+                      label={daippTaskReadinessLabel(row.readinessState, copy)}
+                      state={daippTaskReadinessBadgeState(row.readinessState)}
+                    />
+                  </div>
+
+                  <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                    {getLocalizedText(row.description, locale)}
+                  </p>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <Badge
+                      label={`${row.verificationType} · ${row.evidenceSource}`}
+                      tone="info"
+                    />
+                    <Badge
+                      label={`${copy.daippTaskProviderState}: ${daippTaskProviderStateLabel(row.providerState, locale)}`}
+                      tone={row.providerState === "seeded_preview" ? "success" : "warning"}
+                    />
+                    <Badge
+                      label={`${copy.daippTaskOwner}: ${daippTaskOwnerLabel(row.ownerRole, locale)}`}
+                      tone="neutral"
+                    />
+                  </div>
+
+                  <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.daippTaskRiskState}: </strong>
+                    {getLocalizedText(row.riskState, locale)}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.daippTaskNextAction}: </strong>
+                    {getLocalizedText(row.nextAction, locale)}
+                  </p>
+                  <p style={{ color: "#9a3412", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                    <strong>{copy.daippTaskBoundary}: </strong>
                     {getLocalizedText(row.boundary, locale)}
                   </p>
                 </article>
