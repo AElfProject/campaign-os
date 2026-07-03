@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { I18nContractReadiness } from "./I18nContractReadiness";
 
@@ -20,7 +20,7 @@ describe("I18nContractReadiness", () => {
       expect(screen.getByRole("button", { name: action })).toBeInTheDocument();
     }
 
-    const compareConsole = screen.getByLabelText("Compare with English");
+    const compareConsole = screen.getByLabelText("Source and draft comparison");
     expect(within(compareConsole).getByText("Source and draft comparison")).toBeInTheDocument();
     expect(within(compareConsole).getAllByText("English source · en-US").length).toBeGreaterThan(0);
     expect(within(compareConsole).getAllByText("Translation draft · zh-CN").length).toBeGreaterThan(0);
@@ -60,7 +60,7 @@ describe("I18nContractReadiness", () => {
     expect(screen.getAllByText("AI 生成翻译必须经过人工审核后才能发布。").length).toBeGreaterThan(0);
     expect(screen.getByText("中文草稿在项目方完成人工审核前回退展示英文。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "对照英文" })).toBeInTheDocument();
-    const zhCompareConsole = screen.getByLabelText("对照英文");
+    const zhCompareConsole = screen.getByLabelText("源内容与草稿对照");
     expect(zhCompareConsole).toBeInTheDocument();
     expect(within(zhCompareConsole).getByText("源内容与草稿对照")).toBeInTheDocument();
     expect(within(zhCompareConsole).getAllByText("英文源内容 · en-US").length).toBeGreaterThan(0);
@@ -80,6 +80,82 @@ describe("I18nContractReadiness", () => {
     expect(screen.getByText(/繁中目前為 fallback\/readiness lane/)).toBeInTheDocument();
     expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("回退").length).toBeGreaterThan(0);
+  });
+
+  it("drives local i18n review actions without live side-effect controls", () => {
+    render(<I18nContractReadiness locale="en-US" />);
+
+    const publishButton = screen.getByRole("button", { name: "Publish revision" });
+    expect(publishButton).toBeDisabled();
+    expect(publishButton).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByLabelText("Source and draft comparison")).toBeInTheDocument();
+    expect(screen.getByLabelText("Latest local action")).toHaveTextContent("Compare with English");
+
+    fireEvent.click(screen.getByRole("button", { name: "Compare with English" }));
+    const compareConsole = screen.getByLabelText("Source and draft comparison");
+    expect(within(compareConsole).getByText("Campaign title")).toBeInTheDocument();
+    expect(within(compareConsole).getByText("Reward disclaimer")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark reviewed" }));
+    expect(screen.getByLabelText("Latest local action")).toHaveTextContent("Mark reviewed");
+    expect(screen.getAllByText("zh-CN Reviewed").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Publish revision" })).not.toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Publish revision" }));
+    expect(screen.getByLabelText("Latest local action")).toHaveTextContent("Publish revision");
+    expect(screen.getAllByText("zh-CN Published").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use English fallback" }));
+    expect(screen.getByLabelText("Latest local action")).toHaveTextContent("Use English fallback");
+    expect(screen.getByRole("button", { name: "Publish revision" })).toBeDisabled();
+    expect(screen.getAllByText("zh-CN Not published").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Fallback").length).toBeGreaterThan(0);
+
+    for (const boundary of [
+      "No live AI provider",
+      "No backend persistence",
+      "No publish mutation",
+      "No storage write",
+      "No contract write",
+      "No wallet action",
+      "No export file",
+      "No reward custody or distribution",
+    ]) {
+      expect(screen.getAllByText(boundary).length).toBeGreaterThan(0);
+    }
+
+    for (const forbidden of [
+      /connect wallet/i,
+      /send transaction/i,
+      /publish to backend/i,
+      /write contract/i,
+      /export file/i,
+      /distribute reward/i,
+      /trigger ai provider/i,
+    ]) {
+      expect(screen.queryByRole("button", { name: forbidden })).not.toBeInTheDocument();
+    }
+  });
+
+  it("shows zh-CN localized action results and no-live boundaries", () => {
+    render(<I18nContractReadiness locale="zh-CN" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "标记已审核" }));
+
+    expect(screen.getByLabelText("最新本地动作")).toHaveTextContent("标记已审核");
+    expect(screen.getByLabelText("最新本地动作")).toHaveTextContent("人工审核已完成");
+    for (const boundary of [
+      "无实时 AI provider",
+      "无后端持久化",
+      "无发布变更",
+      "无 storage 写入",
+      "无合约写入",
+      "无钱包动作",
+      "无导出文件",
+      "无奖励托管或发奖",
+    ]) {
+      expect(screen.getAllByText(boundary).length).toBeGreaterThan(0);
+    }
   });
 
   it("shows Off-chain MVP as default, V2 companion as planned, and contract claim as blocker", () => {

@@ -1,13 +1,18 @@
-import type { CSSProperties } from "react";
-import { CheckCircle2, Languages, RotateCcw, Sparkles, Upload } from "lucide-react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { CheckCircle2, Languages, RotateCcw, Sparkles, Upload, type LucideIcon } from "lucide-react";
 import {
   campaignDetail,
   createContractImpactReviewModel,
   createTranslationManagerReadModel,
+  executeI18nReviewAction,
   getLocalizedText,
   type CampaignShellDetail,
   type ContractImpactReviewOption,
+  type ContentRevision,
   type ContentRevisionStatus,
+  type I18nReviewAction,
+  type I18nReviewActionId,
+  type I18nReviewActionResult,
   type PublishState,
   type RewardDisclaimerReviewRow,
   type ReviewSeverity,
@@ -25,11 +30,15 @@ interface I18nContractReadinessProps {
 
 const copy = {
   "en-US": {
+    actionResult: "Latest local action",
+    actionWorkflow: "Local action workflow",
     aiCannotPublish: "AI generated translation cannot auto-publish before human review.",
     aiDraft: "AI draft",
+    available: "Available",
     blockedHighImpact: "Blocked pending high-impact manual review",
     blocksPublish: "Blocks publish",
     boundary: "Boundary",
+    completedLocally: "Completed locally",
     compareReview: "Compare with English",
     compareReviewPrompt: "Source and draft comparison",
     contractNoExecution: "This review workbench does not distribute rewards, take reward custody, or execute contract transactions.",
@@ -45,9 +54,19 @@ const copy = {
     generateWithAi: "Generate with AI",
     highImpactBlocker: "High-impact manual review blocker",
     humanReview: "Human review",
+    latestAction: "Latest action",
     localeList: "Locale list",
+    localOnlyBoundary: "Local-only boundary",
     markReviewed: "Mark reviewed",
     missing: "Missing",
+    noBackendPersistence: "No backend persistence",
+    noContractWrite: "No contract write",
+    noExportFile: "No export file",
+    noLiveAiProvider: "No live AI provider",
+    noPublishMutation: "No publish mutation",
+    noRewardCustodyDistribution: "No reward custody or distribution",
+    noStorageWrite: "No storage write",
+    noWalletAction: "No wallet action",
     nextAction: "Next action",
     notPublished: "Not published",
     ownerNextAction: "Owner next action",
@@ -65,6 +84,7 @@ const copy = {
     sourceColumn: "English source",
     sourceLocale: "Source locale",
     supportedLocales: "Supported locales",
+    targetLocale: "Target locale",
     targetColumn: "Translation draft",
     title: "i18n, contract, and review gates",
     translationManager: "Translation Manager",
@@ -73,11 +93,15 @@ const copy = {
     zhDraft: "Chinese AI draft",
   },
   "zh-CN": {
+    actionResult: "最新本地动作",
+    actionWorkflow: "本地动作工作流",
     aiCannotPublish: "AI 生成翻译必须经过人工审核后才能发布。",
     aiDraft: "AI 草稿",
+    available: "可用",
     blockedHighImpact: "等待高影响人工审核，已阻断",
     blocksPublish: "阻断发布",
     boundary: "边界",
+    completedLocally: "已在本地完成",
     compareReview: "对照英文",
     compareReviewPrompt: "源内容与草稿对照",
     contractNoExecution: "这个审核工作台不会发放奖励、托管奖励，也不会执行合约交易。",
@@ -93,9 +117,19 @@ const copy = {
     generateWithAi: "用 AI 生成",
     highImpactBlocker: "高影响人工审核阻断",
     humanReview: "人工审核",
+    latestAction: "最新动作",
     localeList: "语言列表",
+    localOnlyBoundary: "仅本地边界",
     markReviewed: "标记已审核",
     missing: "缺失",
+    noBackendPersistence: "无后端持久化",
+    noContractWrite: "无合约写入",
+    noExportFile: "无导出文件",
+    noLiveAiProvider: "无实时 AI provider",
+    noPublishMutation: "无发布变更",
+    noRewardCustodyDistribution: "无奖励托管或发奖",
+    noStorageWrite: "无 storage 写入",
+    noWalletAction: "无钱包动作",
     nextAction: "下一步",
     notPublished: "未发布",
     ownerNextAction: "项目方下一步",
@@ -113,6 +147,7 @@ const copy = {
     sourceColumn: "英文源内容",
     sourceLocale: "源语言",
     supportedLocales: "支持语言",
+    targetLocale: "目标语言",
     targetColumn: "翻译草稿",
     title: "多语言、合约与审核门禁",
     translationManager: "翻译管理",
@@ -121,11 +156,15 @@ const copy = {
     zhDraft: "中文 AI 草稿",
   },
   "zh-TW": {
+    actionResult: "最新本地動作",
+    actionWorkflow: "本地動作工作流",
     aiCannotPublish: "AI 生成翻譯必須經過人工審核後才能發布。",
     aiDraft: "AI 草稿",
+    available: "可用",
     blockedHighImpact: "等待高影響人工審核，已阻斷",
     blocksPublish: "阻斷發布",
     boundary: "邊界",
+    completedLocally: "已在本地完成",
     compareReview: "對照英文",
     compareReviewPrompt: "源內容與草稿對照",
     contractNoExecution: "這個審核工作台不會發放獎勵、託管獎勵，也不會執行合約交易。",
@@ -141,9 +180,19 @@ const copy = {
     generateWithAi: "用 AI 生成",
     highImpactBlocker: "高影響人工審核阻斷",
     humanReview: "人工審核",
+    latestAction: "最新動作",
     localeList: "語言列表",
+    localOnlyBoundary: "僅本地邊界",
     markReviewed: "標記已審核",
     missing: "缺失",
+    noBackendPersistence: "無後端持久化",
+    noContractWrite: "無合約寫入",
+    noExportFile: "無匯出檔案",
+    noLiveAiProvider: "無即時 AI provider",
+    noPublishMutation: "無發布變更",
+    noRewardCustodyDistribution: "無獎勵託管或發獎",
+    noStorageWrite: "無 storage 寫入",
+    noWalletAction: "無錢包動作",
     nextAction: "下一步",
     notPublished: "未發布",
     ownerNextAction: "專案方下一步",
@@ -161,6 +210,7 @@ const copy = {
     sourceColumn: "英文源內容",
     sourceLocale: "源語言",
     supportedLocales: "支援語言",
+    targetLocale: "目標語言",
     targetColumn: "翻譯草稿",
     title: "多語言、合約與審核門禁",
     translationManager: "翻譯管理",
@@ -258,6 +308,25 @@ const actionButtonStyle: CSSProperties = {
   gap: 6,
   minHeight: 34,
   padding: "0 10px",
+};
+
+const actionStatePillStyle: CSSProperties = {
+  background: "#eef6ff",
+  border: "1px solid #c7ddf6",
+  borderRadius: 999,
+  color: "#1d4ed8",
+  fontSize: 11,
+  fontWeight: 800,
+  lineHeight: 1,
+  padding: "4px 6px",
+  whiteSpace: "nowrap",
+};
+
+const disabledActionStatePillStyle: CSSProperties = {
+  ...actionStatePillStyle,
+  background: "#f1f5f9",
+  border: "1px solid #cbd5e1",
+  color: "#64748b",
 };
 
 const statStripStyle: CSSProperties = {
@@ -419,25 +488,112 @@ const rewardDisclaimerReviewStateLabel = (
   return labels.missing;
 };
 
-const reviewActions = (labels: (typeof copy)[SupportedLocale]) => [
-  { Icon: Sparkles, label: labels.generateWithAi },
-  { Icon: Languages, label: labels.compareReview },
-  { Icon: CheckCircle2, label: labels.markReviewed },
-  { Icon: Upload, label: labels.publishRevision },
-  { Icon: RotateCcw, label: labels.useEnglishFallback },
+const reviewActionIcons: Record<I18nReviewActionId, LucideIcon> = {
+  compare_with_english: Languages,
+  generate_with_ai: Sparkles,
+  mark_reviewed: CheckCircle2,
+  publish_revision: Upload,
+  use_english_fallback: RotateCcw,
+};
+
+const noLiveBoundaryItems = (labels: (typeof copy)[SupportedLocale]) => [
+  labels.noLiveAiProvider,
+  labels.noBackendPersistence,
+  labels.noPublishMutation,
+  labels.noStorageWrite,
+  labels.noContractWrite,
+  labels.noWalletAction,
+  labels.noExportFile,
+  labels.noRewardCustodyDistribution,
 ];
+
+const reviewActionStateLabel = (
+  state: I18nReviewAction["state"],
+  labels: (typeof copy)[SupportedLocale],
+) => {
+  if (state === "blocked") {
+    return labels.blocksPublish;
+  }
+
+  if (state === "completed") {
+    return labels.completedLocally;
+  }
+
+  return labels.available;
+};
+
+const cloneContentRevisions = (revisions: readonly ContentRevision[]) =>
+  revisions.map((revision) => ({ ...revision }));
 
 const WorkbenchActionButton = ({
   Icon,
-  label,
+  action,
+  labels,
+  locale,
+  onRun,
 }: {
-  Icon: typeof Sparkles;
-  label: string;
+  Icon: LucideIcon;
+  action: I18nReviewAction;
+  labels: (typeof copy)[SupportedLocale];
+  locale: SupportedLocale;
+  onRun: (actionId: I18nReviewActionId) => void;
 }) => (
-  <button style={actionButtonStyle} type="button">
+  <button
+    aria-disabled={action.state === "blocked"}
+    aria-label={getLocalizedText(action.label, locale)}
+    disabled={action.state === "blocked"}
+    onClick={() => onRun(action.id)}
+    style={{
+      ...actionButtonStyle,
+      background: action.state === "completed" ? "#f8fbff" : actionButtonStyle.background,
+      color: action.state === "blocked" ? "#64748b" : actionButtonStyle.color,
+      cursor: action.state === "blocked" ? "not-allowed" : "pointer",
+      opacity: action.state === "blocked" ? 0.72 : 1,
+    }}
+    title={getLocalizedText(action.blockedReason ?? action.nextAction, locale)}
+    type="button"
+  >
     <Icon aria-hidden="true" size={15} strokeWidth={2.4} />
-    {label}
+    {getLocalizedText(action.label, locale)}
+    <span
+      aria-hidden="true"
+      style={action.state === "blocked" ? disabledActionStatePillStyle : actionStatePillStyle}
+    >
+      {reviewActionStateLabel(action.state, labels)}
+    </span>
   </button>
+);
+
+const ActionResultPanel = ({
+  labels,
+  locale,
+  result,
+}: {
+  labels: (typeof copy)[SupportedLocale];
+  locale: SupportedLocale;
+  result: I18nReviewActionResult;
+}) => (
+  <article aria-label={labels.actionResult} style={cardStyle}>
+    <span style={badgeRowStyle}>
+      <PublishStateBadge
+        label={result.ok ? labels.completedLocally : labels.blocksPublish}
+        state={result.ok ? "ready" : "blocker"}
+      />
+      <PublishStateBadge label={`${labels.targetLocale}: ${result.targetLocale}`} state="ready" />
+    </span>
+    <div>
+      <p style={labelStyle}>{labels.latestAction}</p>
+      <p style={valueStyle}>{getLocalizedText(result.action.label, locale)}</p>
+    </div>
+    <div>
+      <p style={labelStyle}>{labels.nextAction}</p>
+      <p style={bodyStyle}>{getLocalizedText(result.nextAction, locale)}</p>
+    </div>
+    <div>
+      <p style={labelStyle}>{labels.localOnlyBoundary}</p>
+      <p style={bodyStyle}>{getLocalizedText(result.boundary, locale)}</p>
+    </div>
+  </article>
 );
 
 const TranslationPanelCard = ({
@@ -523,7 +679,7 @@ const TranslationCompareConsole = ({
   rows: TranslationComparisonRow[];
   reviewPrompt: string;
 }) => (
-  <article aria-label={labels.compareReview} style={cardStyle}>
+  <article aria-label={labels.compareReviewPrompt} style={cardStyle}>
     <div style={statStripStyle}>
       <span>
         <p style={labelStyle}>{labels.compareReviewPrompt}</p>
@@ -672,10 +828,53 @@ export const I18nContractReadiness = ({
   locale,
 }: I18nContractReadinessProps) => {
   const labels = copy[locale];
-  const translationManager = createTranslationManagerReadModel(campaign);
+  const targetLocale: Exclude<SupportedLocale, "en-US"> = "zh-CN";
+  const [contentRevisions, setContentRevisions] = useState(() => cloneContentRevisions(campaign.contentRevisions));
+  const localCampaign = useMemo(
+    () => ({
+      ...campaign,
+      contentRevisions,
+    }),
+    [campaign, contentRevisions],
+  );
+  const translationManager = createTranslationManagerReadModel(localCampaign);
   const contractReview = createContractImpactReviewModel(campaign);
   const englishPanel = translationManager.panels.find((panel) => panel.locale === "en-US");
-  const chinesePanel = translationManager.panels.find((panel) => panel.locale === "zh-CN");
+  const chinesePanel = translationManager.panels.find((panel) => panel.locale === targetLocale);
+  const [lastActionResult, setLastActionResult] = useState<I18nReviewActionResult>(() =>
+    executeI18nReviewAction(localCampaign, {
+      actionId: "compare_with_english",
+      reviewer: "project_owner",
+      targetLocale,
+    }),
+  );
+  const actionReadiness = useMemo(
+    () =>
+      executeI18nReviewAction(localCampaign, {
+        actionId: "compare_with_english",
+        reviewer: "project_owner",
+        targetLocale,
+      }),
+    [localCampaign],
+  );
+
+  useEffect(() => {
+    setContentRevisions(cloneContentRevisions(campaign.contentRevisions));
+  }, [campaign]);
+
+  const handleRunAction = (actionId: I18nReviewActionId) => {
+    const result = executeI18nReviewAction(localCampaign, {
+      actionId,
+      reviewer: "project_owner",
+      targetLocale,
+    });
+
+    if (result.ok) {
+      setContentRevisions(result.updatedRevisions);
+    }
+
+    setLastActionResult(result);
+  };
 
   return (
     <section aria-label={labels.title} style={sectionStyle}>
@@ -704,12 +903,30 @@ export const I18nContractReadiness = ({
         />
         <p style={bodyStyle}>{getLocalizedText(translationManager.noAutoPublishNotice, locale)}</p>
         <p style={bodyStyle}>{labels.fallbackWarning}</p>
+        <div>
+          <p style={labelStyle}>{labels.localOnlyBoundary}</p>
+          <p style={bodyStyle}>{getLocalizedText(actionReadiness.boundary, locale)}</p>
+        </div>
+        <span style={badgeRowStyle}>
+          {noLiveBoundaryItems(labels).map((item) => (
+            <PublishStateBadge key={item} label={item} state="ready" />
+          ))}
+        </span>
         <div style={actionRowStyle}>
-          {reviewActions(labels).map((action) => (
-            <WorkbenchActionButton key={action.label} Icon={action.Icon} label={action.label} />
+          {actionReadiness.actions.map((action) => (
+            <WorkbenchActionButton
+              key={action.id}
+              Icon={reviewActionIcons[action.id]}
+              action={action}
+              labels={labels}
+              locale={locale}
+              onRun={handleRunAction}
+            />
           ))}
         </div>
       </article>
+
+      <ActionResultPanel labels={labels} locale={locale} result={lastActionResult} />
 
       <div style={gridStyle}>
         {englishPanel ? (
