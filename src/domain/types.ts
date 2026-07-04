@@ -2025,6 +2025,13 @@ export type ContractInterfaceReadiness = "ready" | "warning" | "blocker" | "info
 export type ContractInterfacePhase = "MVP" | "P1" | "P2" | "N/A";
 export type DeliveryChecklistStatus = "covered" | "needs_review" | "blocked" | "deferred";
 export type DeliveryChecklistGroupId = "product" | "architecture" | "ui" | "contract" | "qa";
+export type DeliveryChecklistTraceabilityProofLevel =
+  | "seeded_readiness"
+  | "focused_test"
+  | "browser_reviewed"
+  | "private_evidence"
+  | "live_evidence_required"
+  | "future_scope";
 export type DeliveryAcceptanceStatus =
   | "proven"
   | "partial"
@@ -2250,6 +2257,12 @@ export interface CompanionContractReadiness {
   nextAction: LocalizedText;
 }
 
+export interface DeliveryChecklistTraceabilityRef {
+  label: LocalizedText;
+  path: string;
+  detail: LocalizedText;
+}
+
 export interface DeliveryChecklistItem {
   id: string;
   groupId: DeliveryChecklistGroupId;
@@ -2261,6 +2274,12 @@ export interface DeliveryChecklistItem {
   nextAction: LocalizedText;
   sourceRequirement: string;
   blocksDelivery: boolean;
+  sourceDocs: DeliveryChecklistTraceabilityRef[];
+  implementationRefs: DeliveryChecklistTraceabilityRef[];
+  verificationCommands: DeliveryChecklistTraceabilityRef[];
+  evidenceArtifacts: DeliveryChecklistTraceabilityRef[];
+  proofLevel: DeliveryChecklistTraceabilityProofLevel;
+  riskNote: LocalizedText;
 }
 
 export interface DeliveryChecklistCounts {
@@ -2287,6 +2306,39 @@ export interface DeliveryChecklistReadinessSummary {
   deferredItems: number;
   groupCount: number;
   nextAction: LocalizedText;
+}
+
+export interface DeliveryChecklistTraceabilityRow {
+  id: string;
+  groupId: DeliveryChecklistGroupId;
+  itemId: string;
+  label: LocalizedText;
+  status: DeliveryChecklistStatus;
+  sourceRequirement: string;
+  sourceDocs: DeliveryChecklistTraceabilityRef[];
+  implementationRefs: DeliveryChecklistTraceabilityRef[];
+  verificationCommands: DeliveryChecklistTraceabilityRef[];
+  evidenceArtifacts: DeliveryChecklistTraceabilityRef[];
+  proofLevel: DeliveryChecklistTraceabilityProofLevel;
+  riskNote: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface DeliveryChecklistTraceabilitySummary {
+  totalRows: number;
+  verifiedRows: number;
+  reviewRequiredRows: number;
+  deferredRows: number;
+  missingVerificationRows: number;
+  missingEvidenceRows: number;
+  proofLevelCounts: Record<DeliveryChecklistTraceabilityProofLevel, number>;
+  nextAction: LocalizedText;
+}
+
+export interface DeliveryChecklistTraceabilityMatrix {
+  summary: DeliveryChecklistTraceabilitySummary;
+  boundary: LocalizedText;
+  rows: DeliveryChecklistTraceabilityRow[];
 }
 
 export interface P1LocaleExpansionReadinessRow {
@@ -2318,6 +2370,7 @@ export interface P1LocaleExpansionReadiness {
 export interface DeliveryChecklistReadinessConsole {
   summary: DeliveryChecklistReadinessSummary;
   boundary: LocalizedText;
+  traceability: DeliveryChecklistTraceabilityMatrix;
   p1LocaleExpansion: P1LocaleExpansionReadiness;
   groups: DeliveryChecklistGroup[];
   blockers: DeliveryChecklistItem[];

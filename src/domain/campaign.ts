@@ -107,6 +107,9 @@ import type {
   DeliveryChecklistItem,
   DeliveryChecklistReadinessConsole,
   DeliveryChecklistStatus,
+  DeliveryChecklistTraceabilityMatrix,
+  DeliveryChecklistTraceabilityProofLevel,
+  DeliveryChecklistTraceabilityRef,
   DimensionSplit,
   EligibilityResult,
   EcosystemProduct,
@@ -13458,6 +13461,234 @@ const deliveryChecklistStatusCount = (
   status: DeliveryChecklistStatus,
 ) => items.filter((item) => item.status === status).length;
 
+const deliveryChecklistProofLevels: DeliveryChecklistTraceabilityProofLevel[] = [
+  "seeded_readiness",
+  "focused_test",
+  "browser_reviewed",
+  "private_evidence",
+  "live_evidence_required",
+  "future_scope",
+];
+
+const deliveryChecklistTraceabilityBoundary: LocalizedText = localized(
+  "Read-only audit matrix. Public code may show private evidence path references, but it does not read private docs, upload files, connect wallets, sign messages, write contracts, export files, store data, or distribute rewards.",
+  "只读审计矩阵。Public code 可以展示 private evidence path 引用，但不会读取 private docs、上传文件、连接钱包、签名、写合约、导出文件、存储数据或发放奖励。",
+  "唯讀審計矩陣。Public code 可以展示 private evidence path 引用，但不會讀取 private docs、上傳檔案、連接錢包、簽名、寫合約、匯出檔案、儲存資料或發放獎勵。",
+);
+
+const traceabilityRef = (
+  label: string,
+  path: string,
+  detail: string,
+): DeliveryChecklistTraceabilityRef => ({
+  detail: localized(detail, detail),
+  label: localized(label, label),
+  path,
+});
+
+const sourceDocRef = (
+  groupId: DeliveryChecklistGroupId,
+  requirement: string,
+): DeliveryChecklistTraceabilityRef => {
+  const sectionByGroup: Record<DeliveryChecklistGroupId, string> = {
+    architecture: "architecture-checklist",
+    contract: "contract-checklist",
+    product: "product-checklist",
+    qa: "qa-checklist",
+    ui: "ui-checklist",
+  };
+
+  return traceabilityRef(
+    "Delivery checklist source",
+    `docs/current/aelf_campaign_os_v0.2/docs/09_delivery_checklist_v0.2.md#${sectionByGroup[groupId]}`,
+    requirement,
+  );
+};
+
+const productRequirementRef = traceabilityRef(
+  "Product requirements",
+  "docs/current/aelf_campaign_os_v0.2/docs/01_product_requirements_v0.2.md",
+  "Cross-check product-facing v0.2 wallet, locale, reward, and contract expectations.",
+);
+
+const apiDataModelRef = traceabilityRef(
+  "API and data model",
+  "docs/current/aelf_campaign_os_v0.2/docs/08_api_and_data_model_v0.2.md",
+  "Cross-check wallet, locale, export, and evidence data fields.",
+);
+
+const publicImplementationRefs = (id: string): DeliveryChecklistTraceabilityRef[] => {
+  const refs: DeliveryChecklistTraceabilityRef[] = [
+    traceabilityRef(
+      "Delivery checklist domain model",
+      "src/domain/campaign.ts#createDeliveryChecklistReadinessConsole",
+      `Public read model derives delivery checklist item ${id}.`,
+    ),
+    traceabilityRef(
+      "Delivery checklist types",
+      "src/domain/types.ts#DeliveryChecklistItem",
+      `Public domain type captures delivery checklist item ${id}.`,
+    ),
+  ];
+
+  if (id.startsWith("qa-")) {
+    refs.push(
+      traceabilityRef(
+        "QA domain tests",
+        "src/domain/domain.test.ts",
+        `Focused domain coverage asserts QA checklist behavior for ${id}.`,
+      ),
+    );
+  }
+
+  if (id.startsWith("ui-") || id.startsWith("product-")) {
+    refs.push(
+      traceabilityRef(
+        "Admin/Ops checklist UI",
+        "src/components/panels/admin-ops/AdminOpsPanel.tsx",
+        `Admin/Ops renders delivery checklist traceability for ${id}.`,
+      ),
+    );
+  }
+
+  if (id.startsWith("contract-") || id.includes("contract")) {
+    refs.push(
+      traceabilityRef(
+        "Contract readiness surfaces",
+        "src/domain/campaign.ts#createCompanionContractReadiness",
+        `Contract readiness evidence supports ${id}.`,
+      ),
+    );
+  }
+
+  return refs;
+};
+
+const verificationCommandRefs = (
+  id: string,
+  status: DeliveryChecklistStatus,
+): DeliveryChecklistTraceabilityRef[] => {
+  if (status === "deferred") {
+    return [];
+  }
+
+  const commands = [
+    "npm test -- src/domain/domain.test.ts src/components/panels/admin-ops/AdminOpsPanel.test.tsx -- --runInBand",
+  ];
+
+  if (id.startsWith("ui-")) {
+    commands.push("browser review: Admin/Ops 1280x900 and 390x844");
+  }
+
+  if (id.startsWith("qa-") || id.includes("wallet")) {
+    commands.push("npm test -- src/domain/domain.test.ts -- --runInBand");
+  }
+
+  return commands.map((command) =>
+    traceabilityRef(
+      command.startsWith("browser review") ? "Browser review" : "Focused validation",
+      command,
+      `Verification command for delivery checklist row ${id}.`,
+    ),
+  );
+};
+
+const evidenceArtifactRefs = (
+  id: string,
+  status: DeliveryChecklistStatus,
+): DeliveryChecklistTraceabilityRef[] => {
+  if (status === "deferred") {
+    return [];
+  }
+
+  const refs = [
+    traceabilityRef(
+      "Mission evidence index",
+      "evidence/delivery-checklist-evidence-traceability-01KWPAY5/WP02/implementation-evidence.md",
+      `Private evidence pointer for delivery checklist traceability row ${id}.`,
+    ),
+  ];
+
+  if (id.startsWith("qa-") || id.includes("wallet")) {
+    refs.push(
+      traceabilityRef(
+        "Wallet provider evidence",
+        "evidence/live-wallet-provider-evidence-activation-01KWP7B5/WP02/browser-review.json",
+        `Private wallet-provider evidence pointer for row ${id}.`,
+      ),
+    );
+  }
+
+  return refs;
+};
+
+const proofLevelForDeliveryChecklistItem = ({
+  id,
+  status,
+}: {
+  id: string;
+  status: DeliveryChecklistStatus;
+}): DeliveryChecklistTraceabilityProofLevel => {
+  if (status === "deferred") {
+    return "future_scope";
+  }
+
+  if (id.startsWith("qa-") && (id.includes("connect") || id.includes("wallet") || id.includes("chain"))) {
+    return "live_evidence_required";
+  }
+
+  if (id.startsWith("ui-")) {
+    return "browser_reviewed";
+  }
+
+  if (id.includes("reward-disclaimer") || id.includes("contract")) {
+    return "private_evidence";
+  }
+
+  return "focused_test";
+};
+
+const riskNoteForProofLevel = (proofLevel: DeliveryChecklistTraceabilityProofLevel): LocalizedText => {
+  switch (proofLevel) {
+    case "future_scope":
+      return localized(
+        "Future-scope row; do not claim MVP production coverage.",
+        "未来范围行；不要声明 MVP 生产覆盖。",
+        "未來範圍列；不要聲明 MVP 生產覆蓋。",
+      );
+    case "live_evidence_required":
+      return localized(
+        "Implementation exists, but production readiness still depends on live-provider evidence.",
+        "实现已存在，但生产 readiness 仍依赖真实 provider evidence。",
+        "實作已存在，但生產 readiness 仍依賴真實 provider evidence。",
+      );
+    case "browser_reviewed":
+      return localized(
+        "UI proof requires desktop and mobile browser review evidence.",
+        "UI 证明需要桌面与移动端 browser review evidence。",
+        "UI 證明需要桌面與行動端 browser review evidence。",
+      );
+    case "private_evidence":
+      return localized(
+        "Private evidence reference must remain outside the public repository.",
+        "Private evidence 引用必须保留在 public repository 外。",
+        "Private evidence 引用必須保留在 public repository 外。",
+      );
+    case "seeded_readiness":
+      return localized(
+        "Seeded readiness proves local behavior only.",
+        "Seeded readiness 只证明本地行为。",
+        "Seeded readiness 只證明本地行為。",
+      );
+    case "focused_test":
+      return localized(
+        "Focused tests prove the modeled behavior; keep browser/live proof separate where applicable.",
+        "Focused tests 证明建模行为；适用时需将 browser/live proof 分开。",
+        "Focused tests 證明建模行為；適用時需將 browser/live proof 分開。",
+      );
+  }
+};
+
 const acceptanceStatusWeight: Record<DeliveryAcceptanceStatus, number> = {
   blocked: 0,
   needs_live_evidence: 1,
@@ -14127,18 +14358,37 @@ const deliveryChecklistItem = ({
   sourceRequirement: string;
   status: DeliveryChecklistStatus;
   surface: LocalizedText;
-}): DeliveryChecklistItem => ({
-  blocksDelivery,
-  evidence,
-  groupId,
-  id,
-  label,
-  nextAction,
-  ownerRole,
-  sourceRequirement,
-  status,
-  surface,
-});
+}): DeliveryChecklistItem => {
+  const proofLevel = proofLevelForDeliveryChecklistItem({ id, status });
+  const sourceDocs = [sourceDocRef(groupId, sourceRequirement)];
+
+  if (groupId === "product" || groupId === "ui" || id.includes("reward")) {
+    sourceDocs.push(productRequirementRef);
+  }
+
+  if (groupId === "architecture" || groupId === "contract" || id.includes("export")) {
+    sourceDocs.push(apiDataModelRef);
+  }
+
+  return {
+    blocksDelivery,
+    evidence,
+    evidenceArtifacts: evidenceArtifactRefs(id, status),
+    groupId,
+    id,
+    implementationRefs: publicImplementationRefs(id),
+    label,
+    nextAction,
+    ownerRole,
+    proofLevel,
+    riskNote: riskNoteForProofLevel(proofLevel),
+    sourceDocs,
+    sourceRequirement,
+    status,
+    surface,
+    verificationCommands: verificationCommandRefs(id, status),
+  };
+};
 
 const deliveryChecklistGroup = ({
   id,
@@ -14160,6 +14410,59 @@ const deliveryChecklistGroup = ({
   summary,
   title,
 });
+
+const createDeliveryChecklistTraceabilityMatrix = (
+  groups: DeliveryChecklistGroup[],
+): DeliveryChecklistTraceabilityMatrix => {
+  const rows = groups.flatMap((group) =>
+    group.items.map((item) => ({
+      evidenceArtifacts: item.evidenceArtifacts,
+      groupId: group.id,
+      id: `${group.id}:${item.id}`,
+      implementationRefs: item.implementationRefs,
+      itemId: item.id,
+      label: item.label,
+      nextAction: item.nextAction,
+      proofLevel: item.proofLevel,
+      riskNote: item.riskNote,
+      sourceDocs: item.sourceDocs,
+      sourceRequirement: item.sourceRequirement,
+      status: item.status,
+      verificationCommands: item.verificationCommands,
+    })),
+  );
+
+  const proofLevelCounts = Object.fromEntries(
+    deliveryChecklistProofLevels.map((proofLevel) => [
+      proofLevel,
+      rows.filter((row) => row.proofLevel === proofLevel).length,
+    ]),
+  ) as Record<DeliveryChecklistTraceabilityProofLevel, number>;
+
+  return {
+    boundary: deliveryChecklistTraceabilityBoundary,
+    rows,
+    summary: {
+      deferredRows: rows.filter((row) => row.status === "deferred").length,
+      missingEvidenceRows: rows.filter((row) => row.evidenceArtifacts.length === 0).length,
+      missingVerificationRows: rows.filter((row) => row.verificationCommands.length === 0).length,
+      nextAction: localized(
+        "Use rows with live-evidence-required, missing verification, or missing private evidence as the next mission queue.",
+        "将 live-evidence-required、缺少 verification 或缺少 private evidence 的行作为下一轮 mission queue。",
+        "將 live-evidence-required、缺少 verification 或缺少 private evidence 的列作為下一輪 mission queue。",
+      ),
+      proofLevelCounts,
+      reviewRequiredRows: rows.filter((row) => row.status === "needs_review").length,
+      totalRows: rows.length,
+      verifiedRows: rows.filter(
+        (row) =>
+          row.status === "covered" &&
+          row.verificationCommands.length > 0 &&
+          row.evidenceArtifacts.length > 0,
+      ).length,
+    },
+  };
+};
 
 const createProductDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
   const groupId = "product" as const;
@@ -14911,6 +15214,7 @@ export const createDeliveryChecklistReadinessConsole = (
     }),
   ];
   const items = groups.flatMap((group) => group.items);
+  const traceability = createDeliveryChecklistTraceabilityMatrix(groups);
 
   return {
     boundary: deliveryChecklistBoundary,
@@ -14930,6 +15234,7 @@ export const createDeliveryChecklistReadinessConsole = (
       ),
       totalItems: items.length,
     },
+    traceability,
   };
 };
 

@@ -1035,6 +1035,31 @@ describe("Campaign OS domain foundation", () => {
     expect(new Set(items.map((item) => item.status))).toEqual(
       new Set(["covered", "needs_review", "deferred"]),
     );
+    expect(readiness.traceability.rows).toHaveLength(items.length);
+    expect(readiness.traceability.summary).toMatchObject({
+      deferredRows: items.filter((item) => item.status === "deferred").length,
+      missingEvidenceRows: readiness.traceability.rows.filter((row) => row.evidenceArtifacts.length === 0).length,
+      missingVerificationRows: readiness.traceability.rows.filter((row) => row.verificationCommands.length === 0).length,
+      reviewRequiredRows: items.filter((item) => item.status === "needs_review").length,
+      totalRows: items.length,
+      verifiedRows: readiness.traceability.rows.filter(
+        (row) =>
+          row.status === "covered" &&
+          row.verificationCommands.length > 0 &&
+          row.evidenceArtifacts.length > 0,
+      ).length,
+    });
+    expect(readiness.traceability.boundary["en-US"]).toContain("Read-only audit matrix");
+    expect(readiness.traceability.boundary["en-US"]).toContain("does not read private docs");
+    expect(
+      Object.values(readiness.traceability.summary.proofLevelCounts).reduce((sum, count) => sum + count, 0),
+    ).toBe(items.length);
+    expect(
+      readiness.traceability.rows.filter((row) => row.proofLevel === "live_evidence_required").length,
+    ).toBeGreaterThan(0);
+    expect(
+      readiness.traceability.rows.filter((row) => row.proofLevel === "future_scope").length,
+    ).toBe(readiness.traceability.summary.deferredRows);
     expect(readiness.boundary["en-US"]).toContain("No live wallet SDK");
     expect(readiness.boundary["en-US"]).toContain("contract transaction");
     expect(readiness.boundary["en-US"]).toContain("reward distribution");
@@ -1087,6 +1112,52 @@ describe("Campaign OS domain foundation", () => {
     expect(itemsById["product-future-locale-expansion"]?.nextAction["en-US"]).toContain(
       "readiness matrix",
     );
+    const traceabilityByItemId = Object.fromEntries(
+      readiness.traceability.rows.map((row) => [row.itemId, row]),
+    );
+    expect(traceabilityByItemId["product-aa-eoa-support"]).toMatchObject({
+      groupId: "product",
+      proofLevel: "focused_test",
+      sourceRequirement: "Product checklist: AA and EOA support",
+      status: "covered",
+    });
+    expect(traceabilityByItemId["product-aa-eoa-support"]?.sourceDocs[0].path).toContain(
+      "09_delivery_checklist_v0.2.md#product-checklist",
+    );
+    expect(traceabilityByItemId["product-aa-eoa-support"]?.implementationRefs.map((ref) => ref.path)).toContain(
+      "src/domain/campaign.ts#createDeliveryChecklistReadinessConsole",
+    );
+    expect(traceabilityByItemId["product-aa-eoa-support"]?.verificationCommands[0].path).toContain(
+      "npm test -- src/domain/domain.test.ts",
+    );
+    expect(traceabilityByItemId["product-aa-eoa-support"]?.evidenceArtifacts[0].path).toContain(
+      "evidence/delivery-checklist-evidence-traceability-01KWPAY5/WP02/implementation-evidence.md",
+    );
+    expect(traceabilityByItemId["qa-portkey-aa-connect"]?.proofLevel).toBe("live_evidence_required");
+    expect(traceabilityByItemId["qa-portkey-aa-connect"]?.riskNote["en-US"]).toContain(
+      "live-provider evidence",
+    );
+    expect(traceabilityByItemId["contract-reward-custody-excluded"]).toMatchObject({
+      proofLevel: "future_scope",
+      status: "deferred",
+    });
+    expect(traceabilityByItemId["contract-reward-custody-excluded"]?.verificationCommands).toHaveLength(0);
+    const repeated = createAdminOpsReadModel(campaignDetail).deliveryChecklistReadiness.traceability;
+    expect(repeated).toEqual(readiness.traceability);
+    const serializedTraceability = JSON.stringify(readiness.traceability).toLowerCase();
+    for (const forbidden of [
+      "privatekey",
+      "private key",
+      "seed phrase",
+      "raw signature",
+      "contract write",
+      "upload url",
+      "storage write",
+      "reward custody action",
+      "distribute rewards button",
+    ]) {
+      expect(serializedTraceability).not.toContain(forbidden);
+    }
     expect(readiness.p1LocaleExpansion.summary).toMatchObject({
       totalLocales: 6,
       deferredLocales: 6,
