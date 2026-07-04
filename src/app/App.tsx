@@ -20,7 +20,7 @@ import {
 } from "../components/panels/project-console/ProjectConsole";
 import { UserAppPanel } from "../components/panels/user-app/UserAppPanel";
 
-type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR">;
 
 const surfaceCopy = {
   "en-US": {
@@ -74,6 +74,21 @@ const surfaceCopy = {
     browserLocalePromptDismiss: "Keep English",
     browserLocalePromptMessage: "Japanese is active with English fallback for business copy.",
     browserLocalePromptSwitch: "Switch to Japanese",
+    productAnalytics: "Analytics",
+    productCampaigns: "Campaigns",
+    productCreate: "Create",
+    productExport: "Export",
+    localeLabel: "Language",
+    project: "Project Console",
+    shellTitle: "Campaign operations shell",
+    userTitle: "User App",
+  },
+  "ko-KR": {
+    adminTitle: "Admin/Ops",
+    brand: "aelf Campaign OS",
+    browserLocalePromptDismiss: "Keep English",
+    browserLocalePromptMessage: "Korean is active with English fallback for business copy.",
+    browserLocalePromptSwitch: "Switch to Korean",
     productAnalytics: "Analytics",
     productCampaigns: "Campaigns",
     productCreate: "Create",
@@ -158,7 +173,8 @@ export const App = () => {
   const [activeSurface, setActiveSurface] = useState<SurfaceKey>("project");
   const copy = surfaceCopy[locale];
   const contentLocale: BusinessContentLocale = locale === "zh-CN" ? "zh-CN" : "en-US";
-  const walletModalLocale: BusinessContentLocale = locale === "ja-JP" ? "en-US" : locale;
+  const walletModalLocale: BusinessContentLocale =
+    locale === "zh-CN" || locale === "zh-TW" ? locale : "en-US";
   const connectedWallet = walletSessions[0];
   const shareCard = useMemo(
     () => createCampaignShareCardReadiness(campaignDetail, locale),

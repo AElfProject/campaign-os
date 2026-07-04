@@ -104,7 +104,7 @@ import { RewardsEligibilityBuilder } from "./builder/RewardsEligibilityBuilder";
 import { TaskTemplateLibrary } from "./builder/TaskTemplateLibrary";
 import { projectConsoleCopy } from "./copy";
 
-type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR">;
 
 interface ProjectConsoleProps {
   locale: BusinessContentLocale;

@@ -1463,4 +1463,9 @@ export const adminOpsCopy = {
     p1LocaleActivationSubtitle: "ja-JP runtime is active with English fallback until reviewed Japanese business copy is complete.",
     zhDraft: "Japanese English fallback/readiness",
   },
+  "ko-KR": {
+    ...enUS,
+    p1LocaleActivationSubtitle: "ja-JP and ko-KR runtimes are active with English fallback until reviewed locale business copy is complete.",
+    zhDraft: "Korean English fallback/readiness",
+  },
 } satisfies Record<SupportedLocale, typeof enUS>;

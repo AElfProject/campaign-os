@@ -23,7 +23,7 @@ import {
 } from "../../../../domain";
 import { ContractModeBadge, LocaleStatusBadge, PublishStateBadge, ReviewSeverityBadge } from "../../../badges/Badges";
 
-type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR">;
 
 interface I18nContractReadinessProps {
   campaign?: CampaignShellDetail;
