@@ -11,6 +11,7 @@ import {
   createServiceDegradationGovernance,
   createWalletProviderEvidenceAllApprovedSampleSnapshot,
   createWalletProviderEvidenceActivation,
+  createWalletProviderEvidenceRecoveryInitialUiState,
   executeWalletProviderEvidenceReviewAction,
   createParticipationReadModel,
   getLocalizedText,
@@ -73,6 +74,7 @@ import {
   type WalletProviderEvidenceApprovalRuleState,
   type WalletProviderEvidenceApprovalState,
   type WalletProviderEvidenceReleaseImpact,
+  type WalletProviderEvidenceRecoveryInitialUiState,
   type WalletProviderEvidenceRecoverySnapshot,
   type WalletProviderEvidenceRecoverySource,
   type WalletProviderEvidenceRecoveryStatus,
@@ -363,13 +365,6 @@ const actionButtonGridStyle: CSSProperties = {
 };
 
 const walletProviderEvidenceRecoveryStorageKey = "campaign-os.wallet-provider-evidence.recovery";
-
-interface WalletProviderEvidenceRecoveryUiState {
-  lastRecoveredAt: string;
-  snapshot: WalletProviderEvidenceRecoverySnapshot | null;
-  source: WalletProviderEvidenceRecoverySource;
-  storageState: WalletProviderEvidenceRecoveryStorageState;
-}
 
 const nowIso = () => new Date().toISOString();
 
@@ -1677,12 +1672,11 @@ export const AdminOpsPanel = ({
   const [deliveryChecklistCloseoutFilter, setDeliveryChecklistCloseoutFilter] =
     useState<DeliveryChecklistCloseoutQueueFilter>("all");
   const [walletProviderEvidenceRecoveryUi, setWalletProviderEvidenceRecoveryUi] =
-    useState<WalletProviderEvidenceRecoveryUiState>(() => ({
-      lastRecoveredAt: "2026-07-04T00:00:00Z",
-      snapshot: null,
-      source: "seeded_default",
-      storageState: "not_requested",
-    }));
+    useState<WalletProviderEvidenceRecoveryInitialUiState>(() =>
+      createWalletProviderEvidenceRecoveryInitialUiState(
+        readWalletProviderEvidenceRecoverySnapshot(),
+        nowIso(),
+      ));
   const exportReadiness = createExportConfirmationReadinessGate(campaign);
   const exportArtifact = createExportArtifact(campaign.exportPreview, "csv");
   const exportFulfillmentReadiness = adminOps.exportFulfillmentReadiness;
