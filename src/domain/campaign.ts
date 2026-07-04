@@ -14614,10 +14614,6 @@ const closeoutHandoffFor = (
     return "live_wallet_qa";
   }
 
-  if (queueId === "missing_verification" || queueId === "missing_evidence") {
-    return "evidence_traceability";
-  }
-
   if (item.ownerRole === "contract_reviewer") {
     return "contract_reviewer";
   }
@@ -14628,6 +14624,10 @@ const closeoutHandoffFor = (
 
   if (item.ownerRole === "project_owner") {
     return "project_owner_review";
+  }
+
+  if (queueId === "missing_verification" || queueId === "missing_evidence") {
+    return "evidence_traceability";
   }
 
   return "evidence_traceability";
@@ -14710,7 +14710,10 @@ const createDeliveryChecklistCloseoutWorkflow = (
   const unresolvedRows = rows.filter(
     (row) => closeoutQueueCopy[row.queueId].unresolved,
   );
-  const topRow = [...unresolvedRows].sort((a, b) => a.priority - b.priority)[0] ?? null;
+  const topRow = unresolvedRows.reduce<DeliveryChecklistCloseoutRow | null>(
+    (current, row) => (current === null || row.priority < current.priority ? row : current),
+    null,
+  );
   const topQueueId = topRow?.queueId ?? queues.find((queue) => queue.count > 0)?.id ?? "covered";
 
   return {
