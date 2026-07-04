@@ -1,18 +1,29 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../../app/App";
 import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
 import { AdminOpsPanel } from "./AdminOpsPanel";
 
 const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
+const walletProviderEvidenceRecoveryStorageKey = "campaign-os.wallet-provider-evidence.recovery";
 
 const expectVisibleText = (text: string | RegExp) => {
   expect(screen.getAllByText(text).length).toBeGreaterThan(0);
 };
 
+const getWalletProviderEvidenceReleaseReadiness = () =>
+  screen.getByLabelText("Wallet Provider Evidence Release Readiness");
+
+const getWalletProviderEvidenceRecovery = () =>
+  screen.getByLabelText("Wallet Provider Evidence State Recovery");
+
+const forbiddenWalletProviderRecoveryActionName =
+  /connect|sign|signature|provider call|upload|storage write|contract write|claim|distribute|reward custody|reward distribution|production enablement/i;
+
 describe("Admin/Ops shell", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     window.localStorage.clear();
   });
 
@@ -812,6 +823,130 @@ describe("Admin/Ops shell", () => {
     expect(within(lifecycleReview).queryByText(/production mutation is enabled/i)).not.toBeInTheDocument();
   });
 
+  it("renders wallet provider evidence recovery seeded defaults without live-operation controls", () => {
+    render(<AdminOpsPanel locale="en-US" />);
+
+    const recovery = getWalletProviderEvidenceRecovery();
+    const releaseReadiness = getWalletProviderEvidenceReleaseReadiness();
+
+    expect(within(recovery).getByRole("heading", {
+      name: "Wallet Provider Evidence State Recovery",
+    })).toBeInTheDocument();
+    expect(within(recovery).getAllByText("Seeded default").length).toBeGreaterThan(0);
+    expect(within(recovery).getAllByText("Storage not requested").length).toBeGreaterThan(0);
+    expect(within(recovery).getByText("0/5")).toBeInTheDocument();
+    expect(within(releaseReadiness).getByText("0/5")).toBeInTheDocument();
+    expect(within(recovery).getByRole("button", { name: "Load approved sample" })).toBeInTheDocument();
+    expect(within(recovery).getByRole("button", { name: "Save current state" })).toBeInTheDocument();
+    expect(within(recovery).getByRole("button", { name: "Restore saved state" })).toBeInTheDocument();
+    expect(within(recovery).getByRole("button", { name: "Reset local state" })).toBeInTheDocument();
+    expect(
+      within(recovery).queryByRole("button", {
+        name: forbiddenWalletProviderRecoveryActionName,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("loads an approved local sample into visible wallet provider evidence release readiness", () => {
+    render(<AdminOpsPanel locale="en-US" />);
+
+    const recovery = getWalletProviderEvidenceRecovery();
+
+    fireEvent.click(within(recovery).getByRole("button", { name: "Load approved sample" }));
+
+    expect(within(recovery).getAllByText("Local approved sample").length).toBeGreaterThan(0);
+    expect(within(recovery).getByText("5/5")).toBeInTheDocument();
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("5/5")).toBeInTheDocument();
+  });
+
+  it("saves and restores wallet provider evidence recovery state from local storage", () => {
+    const { unmount } = render(<AdminOpsPanel locale="en-US" />);
+
+    fireEvent.click(within(getWalletProviderEvidenceRecovery()).getByRole("button", {
+      name: "Load approved sample",
+    }));
+    fireEvent.click(within(getWalletProviderEvidenceRecovery()).getByRole("button", {
+      name: "Save current state",
+    }));
+
+    const storedSnapshot = window.localStorage.getItem(walletProviderEvidenceRecoveryStorageKey);
+    expect(storedSnapshot).not.toBeNull();
+    const parsedSnapshot = JSON.parse(storedSnapshot ?? "{}") as {
+      scenarios: Array<{ evidenceStatus: string }>;
+      source: string;
+      version: number;
+    };
+    expect(parsedSnapshot.source).toBe("local_storage");
+    expect(parsedSnapshot.version).toBe(1);
+    expect(parsedSnapshot.scenarios.every((scenario) => scenario.evidenceStatus === "approved")).toBe(true);
+
+    unmount();
+    render(<AdminOpsPanel locale="en-US" />);
+
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("0/5")).toBeInTheDocument();
+    fireEvent.click(within(getWalletProviderEvidenceRecovery()).getByRole("button", {
+      name: "Restore saved state",
+    }));
+
+    expect(within(getWalletProviderEvidenceRecovery()).getAllByText("Saved local state").length).toBeGreaterThan(0);
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("5/5")).toBeInTheDocument();
+  });
+
+  it("resets wallet provider evidence recovery state back to seeded defaults", () => {
+    render(<AdminOpsPanel locale="en-US" />);
+
+    fireEvent.click(within(getWalletProviderEvidenceRecovery()).getByRole("button", {
+      name: "Load approved sample",
+    }));
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("5/5")).toBeInTheDocument();
+
+    fireEvent.click(within(getWalletProviderEvidenceRecovery()).getByRole("button", {
+      name: "Reset local state",
+    }));
+
+    expect(within(getWalletProviderEvidenceRecovery()).getAllByText("Seeded default").length).toBeGreaterThan(0);
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("0/5")).toBeInTheDocument();
+  });
+
+  it("keeps wallet provider evidence recovery controls usable when browser storage fails", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("storage denied");
+    });
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("storage denied");
+    });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("storage denied");
+    });
+    render(<AdminOpsPanel locale="en-US" />);
+
+    fireEvent.click(within(getWalletProviderEvidenceRecovery()).getByRole("button", {
+      name: "Load approved sample",
+    }));
+    fireEvent.click(within(getWalletProviderEvidenceRecovery()).getByRole("button", {
+      name: "Save current state",
+    }));
+    expect(within(getWalletProviderEvidenceRecovery()).getAllByText("Storage save fallback").length).toBeGreaterThan(0);
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("5/5")).toBeInTheDocument();
+
+    fireEvent.click(within(getWalletProviderEvidenceRecovery()).getByRole("button", {
+      name: "Restore saved state",
+    }));
+    expect(within(getWalletProviderEvidenceRecovery()).getAllByText("Storage read fallback").length).toBeGreaterThan(0);
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("0/5")).toBeInTheDocument();
+
+    fireEvent.click(within(getWalletProviderEvidenceRecovery()).getByRole("button", {
+      name: "Load approved sample",
+    }));
+    fireEvent.click(within(getWalletProviderEvidenceRecovery()).getByRole("button", {
+      name: "Reset local state",
+    }));
+    expect(within(getWalletProviderEvidenceRecovery()).getAllByText("Storage unavailable").length).toBeGreaterThan(0);
+    expect(within(getWalletProviderEvidenceRecovery()).getByRole("button", {
+      name: "Load approved sample",
+    })).toBeEnabled();
+  });
+
   it("runs wallet provider evidence review actions as local-only Admin/Ops preview", () => {
     render(<AdminOpsPanel locale="en-US" />);
 
@@ -879,6 +1014,27 @@ describe("Admin/Ops shell", () => {
     expect(within(requestPacket).getByText(/最新本地结果:/)).toBeInTheDocument();
     expect(within(requestPacket).getByText(/场景: portkey-aa-connect/)).toBeInTheDocument();
     expect(within(requestPacket).getByText(/已完成/)).toBeInTheDocument();
+  });
+
+  it("renders wallet provider evidence recovery labels in zh-CN", () => {
+    render(<AdminOpsPanel locale="zh-CN" />);
+
+    const recovery = screen.getByLabelText("钱包 Provider 证据状态恢复");
+
+    expect(within(recovery).getByRole("heading", {
+      name: "钱包 Provider 证据状态恢复",
+    })).toBeInTheDocument();
+    expect(within(recovery).getByText("本地恢复")).toBeInTheDocument();
+    expect(within(recovery).getAllByText("Seeded 默认").length).toBeGreaterThan(0);
+    expect(within(recovery).getByRole("button", { name: "加载已批准样例" })).toBeInTheDocument();
+    expect(within(recovery).getByRole("button", { name: "保存当前状态" })).toBeInTheDocument();
+    expect(within(recovery).getByRole("button", { name: "恢复已保存状态" })).toBeInTheDocument();
+    expect(within(recovery).getByRole("button", { name: "重置本地状态" })).toBeInTheDocument();
+
+    fireEvent.click(within(recovery).getByRole("button", { name: "加载已批准样例" }));
+
+    expect(within(recovery).getAllByText("本地已批准样例").length).toBeGreaterThan(0);
+    expect(within(recovery).getByText("5/5")).toBeInTheDocument();
   });
 
   it("switches Admin/Ops copy manually to zh-CN", () => {
