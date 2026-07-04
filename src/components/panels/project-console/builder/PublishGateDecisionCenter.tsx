@@ -12,7 +12,7 @@ import {
 } from "../../../../domain";
 import { PublishStateBadge } from "../../../badges/Badges";
 
-type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR">;
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
 
 interface PublishGateDecisionCenterProps {
   draft?: CampaignDraft;

@@ -18,7 +18,7 @@ import {
 } from "../../../../domain";
 import { LocaleStatusBadge, WalletCompatibilityBadge } from "../../../badges/Badges";
 
-type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR">;
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
 
 interface TaskTemplateLibraryProps {
   locale: BusinessContentLocale;

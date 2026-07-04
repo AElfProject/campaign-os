@@ -20,7 +20,7 @@ import {
 } from "../components/panels/project-console/ProjectConsole";
 import { UserAppPanel } from "../components/panels/user-app/UserAppPanel";
 
-type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR">;
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
 
 const surfaceCopy = {
   "en-US": {
@@ -134,6 +134,21 @@ const surfaceCopy = {
     browserLocalePromptDismiss: "Keep English",
     browserLocalePromptMessage: "Turkish is active with English fallback for business copy.",
     browserLocalePromptSwitch: "Switch to Turkish",
+    productAnalytics: "Analytics",
+    productCampaigns: "Campaigns",
+    productCreate: "Create",
+    productExport: "Export",
+    localeLabel: "Language",
+    project: "Project Console",
+    shellTitle: "Campaign operations shell",
+    userTitle: "User App",
+  },
+  "es-ES": {
+    adminTitle: "Admin/Ops",
+    brand: "aelf Campaign OS",
+    browserLocalePromptDismiss: "Keep English",
+    browserLocalePromptMessage: "Spanish is active with English fallback for business copy.",
+    browserLocalePromptSwitch: "Switch to Spanish",
     productAnalytics: "Analytics",
     productCampaigns: "Campaigns",
     productCreate: "Create",

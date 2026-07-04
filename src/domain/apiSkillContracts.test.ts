@@ -273,19 +273,19 @@ describe("API Skill Contract registry", () => {
     }
   });
 
-  it("documents activated locale targets with ja-JP, ko-KR, vi-VN, id-ID, and tr-TR runtime support", () => {
+  it("documents activated locale targets with all P1 runtime locales", () => {
     const createCampaignFields = contractsById.create_campaign.inputFields;
     const postFields = contractsById.generate_campaign_posts.inputFields;
     const supportedLocales = createCampaignFields.find((field) => field.name === "supportedLocales");
     const targetLocales = postFields.find((field) => field.name === "targetLocales");
 
-    expect(supportedLocales?.description["en-US"]).toContain("en-US, zh-CN, zh-TW, ja-JP, ko-KR, vi-VN, id-ID, and tr-TR");
-    expect(supportedLocales?.example).toBe("en-US,zh-CN,zh-TW,ja-JP,ko-KR,vi-VN,id-ID,tr-TR");
-    expect(targetLocales?.description["en-US"]).toContain("zh-CN, zh-TW, ja-JP, ko-KR, vi-VN, id-ID, and tr-TR");
-    expect(targetLocales?.example).toBe("zh-CN,zh-TW,ja-JP,ko-KR,vi-VN,id-ID,tr-TR");
+    expect(supportedLocales?.description["en-US"]).toContain("en-US, zh-CN, zh-TW, ja-JP, ko-KR, vi-VN, id-ID, tr-TR, and es-ES");
+    expect(supportedLocales?.example).toBe("en-US,zh-CN,zh-TW,ja-JP,ko-KR,vi-VN,id-ID,tr-TR,es-ES");
+    expect(targetLocales?.description["en-US"]).toContain("zh-CN, zh-TW, ja-JP, ko-KR, vi-VN, id-ID, tr-TR, and es-ES");
+    expect(targetLocales?.example).toBe("zh-CN,zh-TW,ja-JP,ko-KR,vi-VN,id-ID,tr-TR,es-ES");
     expect(JSON.stringify([supportedLocales, targetLocales])).toContain("id-ID");
     expect(JSON.stringify([supportedLocales, targetLocales])).toContain("tr-TR");
-    expect(JSON.stringify([supportedLocales, targetLocales])).not.toContain("es-ES");
+    expect(JSON.stringify([supportedLocales, targetLocales])).toContain("es-ES");
   });
 
   it("covers v0.2 wallet, locale, contract, export, and evidence field groups", () => {

@@ -14,7 +14,7 @@ import {
 } from "../../domain";
 import { WalletBadge } from "../badges/Badges";
 
-type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR">;
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
 
 interface WalletConnectModalProps {
   adapterReadiness?: AelfWebLoginAdapterReadinessModel;
