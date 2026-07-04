@@ -1470,12 +1470,17 @@ export const adminOpsCopy = {
   },
   "vi-VN": {
     ...enUS,
-    p1LocaleActivationSubtitle: "ja-JP, ko-KR, vi-VN, and id-ID runtimes are active with English fallback until reviewed locale business copy is complete.",
+    p1LocaleActivationSubtitle: "ja-JP, ko-KR, vi-VN, id-ID, and tr-TR runtimes are active with English fallback until reviewed locale business copy is complete.",
     zhDraft: "Vietnamese English fallback/readiness",
   },
   "id-ID": {
     ...enUS,
-    p1LocaleActivationSubtitle: "ja-JP, ko-KR, vi-VN, and id-ID runtimes are active with English fallback until reviewed locale business copy is complete.",
+    p1LocaleActivationSubtitle: "ja-JP, ko-KR, vi-VN, id-ID, and tr-TR runtimes are active with English fallback until reviewed locale business copy is complete.",
     zhDraft: "Indonesian English fallback/readiness",
+  },
+  "tr-TR": {
+    ...enUS,
+    p1LocaleActivationSubtitle: "ja-JP, ko-KR, vi-VN, id-ID, and tr-TR runtimes are active with English fallback until reviewed locale business copy is complete.",
+    zhDraft: "Turkish English fallback/readiness",
   },
 } satisfies Record<SupportedLocale, typeof enUS>;
