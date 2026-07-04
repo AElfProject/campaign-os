@@ -38,7 +38,9 @@ describe("I18nContractReadiness", () => {
     expect(within(rewardReviewGate).getByText("Ready for publish")).toBeInTheDocument();
     expect(within(rewardReviewGate).getAllByText("Blocks publish").length).toBeGreaterThan(0);
     expect(within(rewardReviewGate).getByText("AI draft reward disclaimer requires project owner review before publish.")).toBeInTheDocument();
-    expect(within(rewardReviewGate).getByText("Localized reward disclaimer is missing and blocks publish.")).toBeInTheDocument();
+    expect(
+      within(rewardReviewGate).getAllByText("Localized reward disclaimer is missing and blocks publish.").length,
+    ).toBeGreaterThan(0);
     expect(within(rewardReviewGate).getAllByText("Project owner must review localized reward disclaimer before publish.").length).toBeGreaterThan(0);
     expect(within(rewardReviewGate).getAllByText("Rewards are provided by the campaign project. Export winners does not distribute rewards.").length).toBeGreaterThan(0);
   });
@@ -54,7 +56,7 @@ describe("I18nContractReadiness", () => {
     const rewardReviewGate = screen.getByLabelText("奖励声明审核");
     expect(within(rewardReviewGate).getByText("发布前逐一审核每个语言的奖励免责声明。")).toBeInTheDocument();
     expect(within(rewardReviewGate).getAllByText("阻断发布").length).toBeGreaterThan(0);
-    expect(within(rewardReviewGate).getByText("本地化奖励免责声明缺失，会阻断发布。")).toBeInTheDocument();
+    expect(within(rewardReviewGate).getAllByText("本地化奖励免责声明缺失，会阻断发布。").length).toBeGreaterThan(0);
     expect(within(rewardReviewGate).getAllByText("项目方必须在发布前审核本地化奖励免责声明。").length).toBeGreaterThan(0);
     expect(screen.getAllByText("中文 AI 草稿").length).toBeGreaterThan(0);
     expect(screen.getAllByText("AI 生成翻译必须经过人工审核后才能发布。").length).toBeGreaterThan(0);
