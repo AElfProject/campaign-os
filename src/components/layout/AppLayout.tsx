@@ -276,6 +276,7 @@ export const AppLayout = ({
               <option value="ja-JP">日本語</option>
               <option value="ko-KR">한국어</option>
               <option value="vi-VN">Tiếng Việt</option>
+              <option value="id-ID">Bahasa Indonesia</option>
             </select>
           </label>
         </div>
