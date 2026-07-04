@@ -57,11 +57,16 @@ import {
   createVerificationPipelineReadinessGate,
   createWalletConnectionDiagnostics,
   createWalletProviderEvidenceApprovalAudit,
+  createDefaultWalletProviderEvidenceRecoveryResult,
+  createWalletProviderEvidenceAllApprovedSampleSnapshot,
   createWalletProviderEvidenceCloseoutPackage,
   createWalletProviderEvidenceIntake,
   createWalletProviderEvidenceReleaseReadiness,
   createWalletProviderEvidenceRequestPacket,
   createWalletProviderQaReadinessGate,
+  recoverWalletProviderEvidenceState,
+  serializeWalletProviderEvidenceRecoverySnapshot,
+  validateWalletProviderEvidenceRecoverySnapshot,
   deriveEligibilityWalletStatus,
   deriveParticipantTaskActions,
   deriveParticipantTaskStates,
@@ -2416,6 +2421,251 @@ describe("Campaign OS domain foundation", () => {
     });
     expect(unsupportedAction.auditTrail.externalProviderCalled).toBe(false);
     expect(unsupportedScenario.auditTrail.walletSdkExecuted).toBe(false);
+  });
+
+  it("recovers seeded wallet provider evidence state conservatively by default", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const defaultRecovery = createDefaultWalletProviderEvidenceRecoveryResult(campaignDetail, gate);
+    const recovered = recoverWalletProviderEvidenceState(campaignDetail, gate);
+    const liveWalletAcceptance = recovered.deliveryAcceptance.solutionSets
+      .flatMap((solutionSet) => solutionSet.rows)
+      .find((row) => row.id === "v02-live-wallet-provider-evidence");
+
+    expect(recovered).toEqual(defaultRecovery);
+    expect(recovered).toMatchObject({
+      campaignId: campaignDetail.id,
+      source: "seeded_default",
+      status: "seeded_default",
+      snapshot: null,
+      validationErrors: [],
+      storage: {
+        state: "not_requested",
+      },
+    });
+    expect(recovered.releaseReadiness.summary).toMatchObject({
+      approvedRequiredScenarios: 0,
+      blockedScenarios: 4,
+      ready: false,
+      requiredScenarios: 5,
+      reviewRequiredScenarios: 1,
+    });
+    expect(recovered.requestPacket.summary).toMatchObject({
+      ready: false,
+      readyRequests: 0,
+      launchBlockingRequests: 4,
+    });
+    expect(liveWalletAcceptance).toMatchObject({
+      status: "needs_live_evidence",
+      launchBlocking: true,
+    });
+  });
+
+  it("restores an all-approved local wallet provider evidence snapshot to 5/5 readiness", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const snapshot = createWalletProviderEvidenceAllApprovedSampleSnapshot("2026-07-04T00:00:00Z");
+    const recovered = recoverWalletProviderEvidenceState(campaignDetail, gate, snapshot, {
+      source: "local_sample",
+      storageState: "available",
+      storageKey: "campaign-os.wallet-provider-evidence",
+    });
+    const liveWalletAcceptance = recovered.deliveryAcceptance.solutionSets
+      .flatMap((solutionSet) => solutionSet.rows)
+      .find((row) => row.id === "v02-live-wallet-provider-evidence");
+
+    expect(validateWalletProviderEvidenceRecoverySnapshot(snapshot)).toEqual([]);
+    expect(recovered).toMatchObject({
+      source: "local_sample",
+      status: "restored",
+      storage: {
+        state: "available",
+        storageKey: "campaign-os.wallet-provider-evidence",
+      },
+      validationErrors: [],
+    });
+    expect(recovered.intake.summary).toMatchObject({
+      approvedScenarios: 5,
+      submittedScenarios: 0,
+      missingScenarios: 0,
+      releaseBlockers: 0,
+    });
+    expect(recovered.releaseReadiness.summary).toMatchObject({
+      approvedRequiredScenarios: 5,
+      blockedScenarios: 0,
+      ready: true,
+      releaseBlockers: 0,
+      requiredScenarios: 5,
+      reviewRequiredScenarios: 0,
+      topFailedRuleId: null,
+    });
+    expect(recovered.requestPacket.summary).toMatchObject({
+      ready: true,
+      readyRequests: 5,
+      launchBlockingRequests: 0,
+      missingRequiredArtifacts: 0,
+    });
+    expect(liveWalletAcceptance).toMatchObject({
+      status: "proven",
+      launchBlocking: false,
+    });
+    expect(recovered.boundary["en-US"]).toContain("No live wallet SDK");
+  });
+
+  it("falls back for unsupported wallet provider recovery snapshot versions", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const snapshot = {
+      ...createWalletProviderEvidenceAllApprovedSampleSnapshot(),
+      version: 2,
+    };
+    const recovered = recoverWalletProviderEvidenceState(campaignDetail, gate, snapshot);
+
+    expect(recovered.status).toBe("fallback_invalid_snapshot");
+    expect(recovered.validationErrors).toEqual([
+      expect.objectContaining({
+        code: "UNSUPPORTED_VERSION",
+        field: "version",
+      }),
+    ]);
+    expect(recovered.releaseReadiness.summary).toMatchObject({
+      approvedRequiredScenarios: 0,
+      ready: false,
+    });
+    expect(recovered.deliveryAcceptance.solutionSets
+      .flatMap((solutionSet) => solutionSet.rows)
+      .find((row) => row.id === "v02-live-wallet-provider-evidence")).toMatchObject({
+        status: "needs_live_evidence",
+        launchBlocking: true,
+      });
+  });
+
+  it("falls back for unknown wallet provider evidence recovery scenario ids", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const snapshot = createWalletProviderEvidenceAllApprovedSampleSnapshot();
+    snapshot.scenarios[0] = {
+      ...snapshot.scenarios[0],
+      scenarioId: "nightelf-live-connect",
+    };
+    const recovered = recoverWalletProviderEvidenceState(campaignDetail, gate, snapshot);
+
+    expect(recovered.status).toBe("fallback_invalid_snapshot");
+    expect(recovered.validationErrors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "UNKNOWN_SCENARIO",
+          field: "scenarios[0].scenarioId",
+          scenarioId: "nightelf-live-connect",
+        }),
+        expect.objectContaining({
+          code: "MISSING_REQUIRED_SCENARIO",
+          scenarioId: "portkey-aa-connect",
+        }),
+      ]),
+    );
+    expect(recovered.releaseReadiness.summary).toMatchObject({
+      approvedRequiredScenarios: 0,
+      ready: false,
+    });
+  });
+
+  it("falls back for incomplete required wallet provider recovery coverage", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const snapshot = createWalletProviderEvidenceAllApprovedSampleSnapshot();
+    snapshot.scenarios = snapshot.scenarios.filter((scenario) => scenario.scenarioId !== "wrong-chain-error");
+    const recovered = recoverWalletProviderEvidenceState(campaignDetail, gate, snapshot);
+
+    expect(recovered.status).toBe("fallback_invalid_snapshot");
+    expect(recovered.validationErrors).toEqual([
+      expect.objectContaining({
+        code: "MISSING_REQUIRED_SCENARIO",
+        scenarioId: "wrong-chain-error",
+      }),
+    ]);
+    expect(recovered.releaseReadiness.summary).toMatchObject({
+      approvedRequiredScenarios: 0,
+      ready: false,
+    });
+  });
+
+  it("keeps partial valid wallet provider recovery snapshots not-ready", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const snapshot = serializeWalletProviderEvidenceRecoverySnapshot(
+      createWalletProviderEvidenceIntake(gate, {
+        "portkey-aa-connect": {
+          evidenceStatus: "approved",
+          submittedArtifacts: approvedWalletProviderArtifacts("portkey-aa-connect"),
+        },
+      }),
+      "in_memory_action",
+      "2026-07-04T01:00:00Z",
+    );
+    const recovered = recoverWalletProviderEvidenceState(campaignDetail, gate, snapshot);
+    const liveWalletAcceptance = recovered.deliveryAcceptance.solutionSets
+      .flatMap((solutionSet) => solutionSet.rows)
+      .find((row) => row.id === "v02-live-wallet-provider-evidence");
+
+    expect(validateWalletProviderEvidenceRecoverySnapshot(snapshot)).toEqual([]);
+    expect(recovered.status).toBe("restored");
+    expect(recovered.releaseReadiness.summary).toMatchObject({
+      approvedRequiredScenarios: 1,
+      requiredScenarios: 5,
+      ready: false,
+    });
+    expect(recovered.requestPacket.summary).toMatchObject({
+      ready: false,
+      readyRequests: 1,
+      launchBlockingRequests: 3,
+    });
+    expect(liveWalletAcceptance).toMatchObject({
+      status: "needs_live_evidence",
+      launchBlocking: true,
+    });
+  });
+
+  it("recovers wallet provider evidence snapshots deterministically without mutating input", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const snapshot = createWalletProviderEvidenceAllApprovedSampleSnapshot();
+    const originalSnapshot = structuredClone(snapshot);
+    const first = recoverWalletProviderEvidenceState(campaignDetail, gate, snapshot);
+    const second = recoverWalletProviderEvidenceState(campaignDetail, gate, snapshot);
+
+    expect(second).toEqual(first);
+    expect(snapshot).toEqual(originalSnapshot);
+  });
+
+  it("preserves wallet provider recovery no-live boundaries and localized labels", () => {
+    const gate = createWalletProviderQaReadinessGate(walletSessions);
+    const recovered = recoverWalletProviderEvidenceState(
+      campaignDetail,
+      gate,
+      createWalletProviderEvidenceAllApprovedSampleSnapshot(),
+    );
+    const boundaryText = recovered.boundary["en-US"];
+
+    for (const forbiddenBoundary of [
+      "No live wallet SDK",
+      "provider API",
+      "file upload",
+      "storage write",
+      "contract write",
+      "export file",
+      "reward custody",
+      "reward distribution",
+    ]) {
+      expect(boundaryText).toContain(forbiddenBoundary);
+    }
+
+    for (const scenario of recovered.intake.scenarios) {
+      expect(scenario.label["en-US"]).toBeTruthy();
+      expect(scenario.label["zh-CN"]).toBeTruthy();
+      expect(scenario.label["zh-TW"]).toBeTruthy();
+      expect(scenario.boundary["en-US"]).toContain("No live wallet SDK");
+      expect(scenario.boundary["zh-CN"]).toContain("不会执行实时钱包 SDK");
+      expect(scenario.boundary["zh-TW"]).toContain("不會執行即時錢包 SDK");
+    }
+    for (const scenario of recovered.requestPacket.scenarios) {
+      expect(scenario.acceptanceCriteria["en-US"]).toBeTruthy();
+      expect(scenario.acceptanceCriteria["zh-CN"]).toBeTruthy();
+      expect(scenario.acceptanceCriteria["zh-TW"]).toBeTruthy();
+    }
   });
 
   it("labels AA and EOA wallet states", () => {

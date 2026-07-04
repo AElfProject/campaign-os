@@ -787,6 +787,29 @@ export type WalletProviderEvidenceReviewActionErrorCode =
   | "UNSUPPORTED_ACTION"
   | "UNSUPPORTED_SCENARIO"
   | "ACTION_BLOCKED";
+export type WalletProviderEvidenceRecoverySource =
+  | "seeded_default"
+  | "local_sample"
+  | "local_storage"
+  | "in_memory_action";
+export type WalletProviderEvidenceRecoveryStorageState =
+  | "not_requested"
+  | "available"
+  | "unavailable"
+  | "read_failed"
+  | "write_failed";
+export type WalletProviderEvidenceRecoveryStatus =
+  | "seeded_default"
+  | "restored"
+  | "fallback_invalid_snapshot";
+export type WalletProviderEvidenceRecoverySnapshotVersion = 1;
+export type WalletProviderEvidenceRecoveryValidationErrorCode =
+  | "UNSUPPORTED_VERSION"
+  | "UNKNOWN_SCENARIO"
+  | "DUPLICATE_SCENARIO"
+  | "MISSING_REQUIRED_SCENARIO"
+  | "INVALID_STATUS"
+  | "APPROVED_ARTIFACTS_INCOMPLETE";
 export type AelfWebLoginIntegrationId = "aelf-web-login";
 export type AelfWebLoginAdapterAudience =
   | "NORMAL_USER"
@@ -1375,6 +1398,57 @@ export interface WalletProviderEvidenceReviewActionResult {
   boundary: LocalizedText;
   nextAction: LocalizedText;
   error?: WalletProviderEvidenceReviewActionError;
+}
+
+export interface WalletProviderEvidenceRecoveryScenarioState {
+  scenarioId: WalletProviderQaScenarioId | string;
+  evidenceStatus: WalletProviderEvidenceStatus | string;
+  artifactReferences: WalletProviderEvidenceReviewArtifactReference[];
+  reviewedAt?: string;
+}
+
+export interface WalletProviderEvidenceRecoverySnapshot {
+  version: WalletProviderEvidenceRecoverySnapshotVersion | number;
+  capturedAt: string;
+  source: WalletProviderEvidenceRecoverySource;
+  scenarios: WalletProviderEvidenceRecoveryScenarioState[];
+}
+
+export interface WalletProviderEvidenceRecoveryValidationError {
+  code: WalletProviderEvidenceRecoveryValidationErrorCode;
+  field: string;
+  scenarioId?: string;
+  message: LocalizedText;
+}
+
+export interface WalletProviderEvidenceRecoveryStorageStatus {
+  state: WalletProviderEvidenceRecoveryStorageState;
+  storageKey?: string;
+  message: LocalizedText;
+}
+
+export interface WalletProviderEvidenceRecoveryOptions {
+  source?: WalletProviderEvidenceRecoverySource;
+  storageState?: WalletProviderEvidenceRecoveryStorageState;
+  storageKey?: string;
+  recoveredAt?: string;
+}
+
+export interface WalletProviderEvidenceRecoveryResult {
+  campaignId: string;
+  source: WalletProviderEvidenceRecoverySource;
+  status: WalletProviderEvidenceRecoveryStatus;
+  storage: WalletProviderEvidenceRecoveryStorageStatus;
+  snapshot: WalletProviderEvidenceRecoverySnapshot | null;
+  validationErrors: WalletProviderEvidenceRecoveryValidationError[];
+  intake: WalletProviderEvidenceIntake;
+  approvalAudit: WalletProviderEvidenceApprovalAudit;
+  releaseReadiness: WalletProviderEvidenceReleaseReadiness;
+  closeoutPackage: WalletProviderEvidenceCloseoutPackage;
+  requestPacket: WalletProviderEvidenceRequestPacket;
+  deliveryAcceptance: DeliveryAcceptanceConsole;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
 }
 
 export interface WalletDiagnosticSummary {
