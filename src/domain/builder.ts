@@ -1,7 +1,9 @@
+import { supportedLocales } from "./types";
 import type {
   ContractMode,
   AiConfidence,
   LocalizedText,
+  LocaleStatusMap,
   LocaleStatus,
   OwnerRole,
   RiskLevel,
@@ -15,7 +17,7 @@ import type {
   WalletPolicy,
 } from "./types";
 
-export const builderSupportedLocales = ["en-US", "zh-CN", "zh-TW"] as const satisfies readonly SupportedLocale[];
+export const builderSupportedLocales = supportedLocales;
 
 export type BuilderStepStatus = "incomplete" | "warning" | "blocked" | "ready" | "reviewed";
 export type BuilderStepId = "goal" | "tasks" | "rewards" | "i18n" | "contract" | "readiness";
@@ -91,7 +93,7 @@ export interface TaskTemplate {
   defaultPoints: number;
   requiredByDefault: boolean;
   riskLevel: RiskLevel;
-  localeReadiness: Record<SupportedLocale, LocaleStatus>;
+  localeReadiness: LocaleStatusMap;
 }
 
 export type CampaignTemplatePresetId =
@@ -418,7 +420,7 @@ export interface AiPlannerLaunchTemplateSelection {
 
 export interface AiPlannerLaunchTaskSelection {
   defaultPoints: number;
-  localeReadiness: Record<SupportedLocale, LocaleStatus>;
+  localeReadiness: LocaleStatusMap;
   nextAction: LocalizedText;
   reviewRequired: boolean;
   riskLevel: RiskLevel;
@@ -1208,7 +1210,7 @@ const verificationFilterValues = {
   wallet: "WALLET",
 } as const satisfies Record<TaskTemplateVerificationFilter, TaskTemplate["verificationType"]>;
 
-const isLocaleReady = (status: LocaleStatus) => status === "ready" || status === "reviewed";
+const isLocaleReady = (status?: LocaleStatus) => status === "ready" || status === "reviewed";
 
 const selectedGroupMatches = <TValue extends string>(
   selectedValues: readonly TValue[],

@@ -1,4 +1,4 @@
-import { supportedLocales, type CampaignRouteContext, type SupportedLocale } from "./types";
+import { supportedLocales, type CampaignRouteContext, type LocaleFallbackMap, type SupportedLocale } from "./types";
 
 export const defaultLocale: SupportedLocale = "en-US";
 export const fallbackLocale: SupportedLocale = "en-US";
@@ -65,7 +65,7 @@ export const shouldRecommendChineseLocale = ({
   browserLanguages.some(isChineseBrowserLanguage);
 
 export const getLocalizedText = (
-  text: Record<SupportedLocale, string>,
+  text: LocaleFallbackMap<string>,
   locale: SupportedLocale,
 ) => text[locale] || text[fallbackLocale];
 

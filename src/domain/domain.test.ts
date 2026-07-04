@@ -75,6 +75,7 @@ import {
   defaultLocale,
   EXPORT_CSV_COLUMNS,
   fallbackLocale,
+  getLocalizedText,
   getWalletBadgeLabel,
   getWalletCompatibilityLabel,
   isChineseBrowserLanguage,
@@ -197,15 +198,21 @@ const containsTextDeep = (value: unknown, term: string): boolean => {
   return Object.values(value as Record<string, unknown>).some((item) => containsTextDeep(item, term));
 };
 
+const expectLocalizedText = (value: Parameters<typeof getLocalizedText>[0]) => {
+  for (const locale of supportedLocales) {
+    expect(getLocalizedText(value, locale).trim()).not.toBe("");
+  }
+};
+
 describe("Campaign OS domain foundation", () => {
-  it("defines exact v0.2 MVP locales with English default and fallback", () => {
-    expect(supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
+  it("defines activated v0.2 runtime locales with English default and fallback", () => {
+    expect(supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW", "ja-JP"]);
     expect(defaultLocale).toBe("en-US");
     expect(fallbackLocale).toBe("en-US");
     expect(isSupportedLocale("zh-CN")).toBe(true);
     expect(isSupportedLocale("zh-TW")).toBe(true);
     expect(isSupportedLocale("ko-KR")).toBe(false);
-    for (const p1Locale of ["ko-KR", "ja-JP", "vi-VN", "id-ID", "tr-TR", "es-ES"]) {
+    for (const p1Locale of ["ko-KR", "vi-VN", "id-ID", "tr-TR", "es-ES"]) {
       expect(isSupportedLocale(p1Locale)).toBe(false);
     }
   });
@@ -250,7 +257,7 @@ describe("Campaign OS domain foundation", () => {
     });
   });
 
-  it("parses localized campaign route paths without widening locale support", () => {
+  it("parses localized campaign route paths with ja-JP runtime support", () => {
     expect(parseCampaignRoutePath("/en-US/campaigns/awaken-sprint")).toMatchObject({
       campaignId: "awaken-sprint",
       canonicalPath: "/en-US/campaigns/awaken-sprint",
@@ -275,11 +282,11 @@ describe("Campaign OS domain foundation", () => {
     });
     expect(parseCampaignRoutePath("/ja-JP/campaigns/awaken-sprint")).toMatchObject({
       campaignId: "awaken-sprint",
-      canonicalPath: "/en-US/campaigns/awaken-sprint",
-      localeSource: "fallback",
-      matched: false,
-      unsupportedLocale: "ja-JP",
-      urlLocale: null,
+      canonicalPath: "/ja-JP/campaigns/awaken-sprint",
+      localeSource: "url",
+      matched: true,
+      unsupportedLocale: null,
+      urlLocale: "ja-JP",
     });
     expect(() => parseCampaignRoutePath("/zh-CN/campaigns/%E0%A4%A")).not.toThrow();
     expect(parseCampaignRoutePath("/zh-CN/campaigns/%E0%A4%A")).toMatchObject({
@@ -335,15 +342,16 @@ describe("Campaign OS domain foundation", () => {
     expect(JSON.stringify(defaultResolution)).not.toContain("zh-TW");
   });
 
-  it("derives translation manager review state for supported MVP locales only", () => {
+  it("derives translation manager review state for activated runtime locales", () => {
     const translationManager = createTranslationManagerReadModel(campaignDetail);
     const englishPanel = translationManager.panels.find((panel) => panel.locale === "en-US");
     const chinesePanel = translationManager.panels.find((panel) => panel.locale === "zh-CN");
     const traditionalChinesePanel = translationManager.panels.find((panel) => panel.locale === "zh-TW");
+    const japanesePanel = translationManager.panels.find((panel) => panel.locale === "ja-JP");
 
     expect(translationManager.defaultLocale).toBe("en-US");
     expect(translationManager.fallbackLocale).toBe("en-US");
-    expect(translationManager.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
+    expect(translationManager.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW", "ja-JP"]);
     expect(translationManager.noAutoPublishNotice["en-US"]).toContain("cannot auto-publish");
     expect(translationManager.compareReviewPrompt["en-US"]).toContain("Compare Chinese locale drafts");
     expect(translationManager.localeItems).toEqual([
@@ -369,6 +377,16 @@ describe("Campaign OS domain foundation", () => {
       }),
       expect.objectContaining({
         locale: "zh-TW",
+        role: "translation",
+        isDefault: false,
+        isFallback: false,
+        status: "empty",
+        publishState: "warning",
+        fallbackToEnglish: true,
+        humanReviewed: false,
+      }),
+      expect.objectContaining({
+        locale: "ja-JP",
         role: "translation",
         isDefault: false,
         isFallback: false,
@@ -410,6 +428,17 @@ describe("Campaign OS domain foundation", () => {
       publishState: "warning",
     });
     expect(traditionalChinesePanel?.nextAction["zh-TW"]).toContain("English fallback");
+    expect(japanesePanel).toMatchObject({
+      locale: "ja-JP",
+      sourceLocale: "en-US",
+      aiDraft: false,
+      fallbackToEnglish: true,
+      humanReviewed: false,
+      published: false,
+      publishState: "warning",
+    });
+    expect(japanesePanel?.title).toBe("");
+    expect(japanesePanel?.nextAction["en-US"]).toContain("English fallback");
   });
 
   it("builds field-level translation comparison rows from English source and zh-CN draft", () => {
@@ -474,6 +503,14 @@ describe("Campaign OS domain foundation", () => {
         blocksPublish: true,
         publishState: "blocker",
       }),
+      expect.objectContaining({
+        locale: "ja-JP",
+        reviewed: false,
+        fallbackToEnglish: true,
+        reviewState: "missing",
+        blocksPublish: true,
+        publishState: "blocker",
+      }),
     ]);
     expect(translationManager.rewardDisclaimers[0].disclaimer).toContain(
       "does not distribute rewards",
@@ -494,7 +531,7 @@ describe("Campaign OS domain foundation", () => {
     );
 
     expect(workbench.defaultLocale).toBe("en-US");
-    expect(workbench.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
+    expect(workbench.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW", "ja-JP"]);
     expect(workbench.summary).toMatchObject({
       totalArtifacts: 7,
       aiDrafts: 2,
@@ -804,13 +841,11 @@ describe("Campaign OS domain foundation", () => {
     expect(monitor.boundary["zh-TW"]).toContain("託管獎勵");
 
     for (const lane of monitor.lanes) {
-      expect(lane.label["en-US"].length).toBeGreaterThan(0);
-      expect(lane.label["zh-CN"].length).toBeGreaterThan(0);
-      expect(lane.label["zh-TW"].length).toBeGreaterThan(0);
-      expect(lane.sourceEvidence["en-US"].length).toBeGreaterThan(0);
-      expect(lane.sourceSurface["en-US"].length).toBeGreaterThan(0);
-      expect(lane.boundary["en-US"].length).toBeGreaterThan(0);
-      expect(lane.nextAction["en-US"].length).toBeGreaterThan(0);
+      expectLocalizedText(lane.label);
+      expectLocalizedText(lane.sourceEvidence);
+      expectLocalizedText(lane.sourceSurface);
+      expectLocalizedText(lane.boundary);
+      expectLocalizedText(lane.nextAction);
     }
 
     for (const unsafe of [
@@ -993,20 +1028,16 @@ describe("Campaign OS domain foundation", () => {
     expect(serialized).not.toContain("writeContract");
 
     for (const category of readiness.categories) {
-      for (const locale of supportedLocales) {
-        expect(category.title[locale]).toBeTruthy();
-        expect(category.evidenceSurface[locale]).toBeTruthy();
-        expect(category.evidenceSummary[locale]).toBeTruthy();
-        expect(category.boundary[locale]).toBeTruthy();
-        expect(category.nextAction[locale]).toBeTruthy();
-      }
+      expectLocalizedText(category.title);
+      expectLocalizedText(category.evidenceSurface);
+      expectLocalizedText(category.evidenceSummary);
+      expectLocalizedText(category.boundary);
+      expectLocalizedText(category.nextAction);
 
       for (const item of category.evidenceItems) {
-        for (const locale of supportedLocales) {
-          expect(item.label[locale]).toBeTruthy();
-          expect(item.source[locale]).toBeTruthy();
-          expect(item.detail[locale]).toBeTruthy();
-        }
+        expectLocalizedText(item.label);
+        expectLocalizedText(item.source);
+        expectLocalizedText(item.detail);
       }
     }
   });
@@ -1160,11 +1191,11 @@ describe("Campaign OS domain foundation", () => {
     }
     expect(readiness.p1LocaleExpansion.summary).toMatchObject({
       totalLocales: 6,
-      deferredLocales: 6,
-      runtimeSupportedLocales: 0,
+      deferredLocales: 5,
+      runtimeSupportedLocales: 1,
     });
     expect(readiness.p1LocaleExpansion.summary.boundary["en-US"]).toContain(
-      "Runtime support remains limited to en-US, zh-CN, and zh-TW",
+      "ja-JP",
     );
     expect(readiness.p1LocaleExpansion.rows.map((row) => row.code)).toEqual([
       "ko-KR",
@@ -1177,8 +1208,8 @@ describe("Campaign OS domain foundation", () => {
     for (const row of readiness.p1LocaleExpansion.rows) {
       expect(row).toMatchObject({
         ownerRole: "project_owner",
-        runtimeSupported: false,
-        status: "deferred",
+        runtimeSupported: row.code === "ja-JP",
+        status: row.code === "ja-JP" ? "ready" : "deferred",
       });
       expect(row.displayName["en-US"].length).toBeGreaterThan(0);
       expect(row.reason["en-US"]).toContain(row.code);
@@ -1204,35 +1235,35 @@ describe("Campaign OS domain foundation", () => {
     expect(activationReadiness.summary).toMatchObject({
       totalCandidates: 6,
       blockedCandidates: 2,
-      reviewRequiredCandidates: 2,
-      readyCandidates: 0,
+      reviewRequiredCandidates: 1,
+      readyCandidates: 1,
       deferredCandidates: 2,
       requiredEvidenceItems: 30,
-      completedEvidenceItems: 0,
+      completedEvidenceItems: 3,
       recommendedFirstLocale: "ja-JP",
-      topBlockerId: "ja-jp-activation-mission-required",
-      ready: false,
+      topBlockerId: "content-owner-missing",
+      ready: true,
     });
     expect(activationReadiness.boundary["en-US"]).toContain(
-      "Runtime support remains limited to en-US, zh-CN, and zh-TW",
+      "ja-JP is runtime-active",
     );
-    expect(activationReadiness.nextAction["en-US"]).toContain("dedicated ja-JP activation mission");
+    expect(activationReadiness.nextAction["en-US"]).toContain("English fallback");
     expect(candidatesByLocale["ja-JP"]).toMatchObject({
       ownerRole: "project_owner",
       priority: 1,
       recommendedFirst: true,
-      status: "review_required",
+      status: "ready",
       contentOwnershipReadiness: "partial",
-      qaReadiness: "partial",
-      routingReadiness: "missing",
-      analyticsReadiness: "partial",
-      publishGateReadiness: "missing",
-      blockerIds: ["ja-jp-activation-mission-required", "runtime-route-gate-not-approved"],
-      evidenceReferences: ["v02-p1-locale-expansion", "mission/p1-locale-expansion"],
+      qaReadiness: "ready",
+      routingReadiness: "ready",
+      analyticsReadiness: "ready",
+      publishGateReadiness: "partial",
+      blockerIds: [],
+      evidenceReferences: ["v02-p1-locale-expansion", "mission/p1-locale-expansion", "mission/124-ja-jp-locale-activation"],
     });
     expect(candidatesByLocale["ja-JP"]?.contentScope["en-US"]).toContain("ja-JP");
     expect(candidatesByLocale["ja-JP"]?.qaScope["en-US"]).toContain("ja-JP");
-    expect(candidatesByLocale["ja-JP"]?.boundary["en-US"]).toContain("review-only");
+    expect(candidatesByLocale["ja-JP"]?.boundary["en-US"]).toContain("runtime-active");
     expect(candidatesByLocale["ko-KR"]).toMatchObject({
       status: "blocked",
       recommendedFirst: false,
@@ -1240,7 +1271,7 @@ describe("Campaign OS domain foundation", () => {
       qaReadiness: "missing",
       publishGateReadiness: "missing",
     });
-    expect(supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
+    expect(supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW", "ja-JP"]);
     expect(itemsById["product-contract-impact-review"]?.evidence["en-US"]).toContain(
       "claim-mode disabled and future approval-gated",
     );
@@ -4060,9 +4091,9 @@ describe("Campaign OS domain foundation", () => {
       expect(recommendation.boundary["en-US"]).not.toContain("seed phrase");
     }
 
-    expect(supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW"]);
+    expect(supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW", "ja-JP"]);
     expect(isSupportedLocale("zh-TW")).toBe(true);
-    expect(isSupportedLocale("ja-JP")).toBe(false);
+    expect(isSupportedLocale("ja-JP")).toBe(true);
   });
 
   it("derives deterministic campaign discovery for User App, App Hub, Portfolio, and Forecast", () => {
@@ -5286,11 +5317,15 @@ describe("Campaign OS domain foundation", () => {
       expect(lane.nextAction["zh-TW"]).toBeTruthy();
     }
     for (const locale of supportedLocales) {
-      expect(readModel.aiGuide.headline[locale]).toBeTruthy();
-      expect(readModel.aiGuide.body[locale]).toBeTruthy();
-      expect(readModel.aiGuide.evidenceBasis[locale]).toBeTruthy();
-      expect(readModel.summary.aiGuideHeadline[locale]).toBe(readModel.aiGuide.headline[locale]);
-      expect(readModel.summary.ownerNextAction[locale]).toBe(readModel.ownerNextAction[locale]);
+      expect(getLocalizedText(readModel.aiGuide.headline, locale)).toBeTruthy();
+      expect(getLocalizedText(readModel.aiGuide.body, locale)).toBeTruthy();
+      expect(getLocalizedText(readModel.aiGuide.evidenceBasis, locale)).toBeTruthy();
+      expect(getLocalizedText(readModel.summary.aiGuideHeadline, locale)).toBe(
+        getLocalizedText(readModel.aiGuide.headline, locale),
+      );
+      expect(getLocalizedText(readModel.summary.ownerNextAction, locale)).toBe(
+        getLocalizedText(readModel.ownerNextAction, locale),
+      );
     }
 
     for (const unsafe of [
@@ -5659,7 +5694,7 @@ describe("Campaign OS domain foundation", () => {
         expect.objectContaining({ label: "EOA" }),
       ]),
     );
-    expect(adminOps.localeSplit.map((row) => row.label)).toEqual(["en-US", "zh-CN", "zh-TW"]);
+    expect(adminOps.localeSplit.map((row) => row.label)).toEqual(["en-US", "zh-CN", "zh-TW", "ja-JP"]);
     expect(adminOps.templateGovernance.summary.totalTemplates).toBe(taskTemplateLibrary.length);
     expect(adminOps.templateGovernance.rows.map((row) => row.category)).toEqual(
       expect.arrayContaining([
@@ -6069,13 +6104,11 @@ describe("Campaign OS domain foundation", () => {
         nextAction: expect.objectContaining({ "en-US": expect.any(String) }),
       });
       expect(row.sourceMetrics.length).toBeGreaterThan(0);
-      for (const locale of supportedLocales) {
-        expect(row.title[locale]).not.toHaveLength(0);
-        expect(row.summary[locale]).not.toHaveLength(0);
-        expect(row.sourceEvidence[locale]).not.toHaveLength(0);
-        expect(row.guardrail[locale]).not.toHaveLength(0);
-        expect(row.nextAction[locale]).not.toHaveLength(0);
-      }
+      expectLocalizedText(row.title);
+      expectLocalizedText(row.summary);
+      expectLocalizedText(row.sourceEvidence);
+      expectLocalizedText(row.guardrail);
+      expectLocalizedText(row.nextAction);
     }
 
     expect(handoffsByCategory.bot_pattern).toMatchObject({
@@ -6163,14 +6196,14 @@ describe("Campaign OS domain foundation", () => {
       });
 
       for (const locale of supportedLocales) {
-        expect(metric.label[locale].trim()).not.toBe("");
-        expect(metric.description[locale].trim()).not.toBe("");
-        expect(metric.target[locale].trim()).not.toBe("");
-        expect(metric.trend[locale].trim()).not.toBe("");
-        expect(metric.evidenceBasis[locale].trim()).not.toBe("");
-        expect(metric.sourceSurface[locale].trim()).not.toBe("");
-        expect(metric.nextAction[locale].trim()).not.toBe("");
-        expect(metric.boundary[locale].trim()).not.toBe("");
+        expect(getLocalizedText(metric.label, locale).trim()).not.toBe("");
+        expect(getLocalizedText(metric.description, locale).trim()).not.toBe("");
+        expect(getLocalizedText(metric.target, locale).trim()).not.toBe("");
+        expect(getLocalizedText(metric.trend, locale).trim()).not.toBe("");
+        expect(getLocalizedText(metric.evidenceBasis, locale).trim()).not.toBe("");
+        expect(getLocalizedText(metric.sourceSurface, locale).trim()).not.toBe("");
+        expect(getLocalizedText(metric.nextAction, locale).trim()).not.toBe("");
+        expect(getLocalizedText(metric.boundary, locale).trim()).not.toBe("");
       }
     }
 
@@ -6275,10 +6308,10 @@ describe("Campaign OS domain foundation", () => {
 
     for (const lane of readiness.lanes) {
       for (const locale of supportedLocales) {
-        expect(lane.label[locale].trim()).not.toBe("");
-        expect(lane.description[locale].trim()).not.toBe("");
-        expect(lane.evidence[locale].trim()).not.toBe("");
-        expect(lane.nextAction[locale].trim()).not.toBe("");
+        expect(getLocalizedText(lane.label, locale).trim()).not.toBe("");
+        expect(getLocalizedText(lane.description, locale).trim()).not.toBe("");
+        expect(getLocalizedText(lane.evidence, locale).trim()).not.toBe("");
+        expect(getLocalizedText(lane.nextAction, locale).trim()).not.toBe("");
       }
     }
 
@@ -6345,9 +6378,7 @@ describe("Campaign OS domain foundation", () => {
     expect(competitorWatch.boundary["en-US"]).toContain("no reward distribution");
 
     for (const localizedText of localizedFields) {
-      for (const locale of supportedLocales) {
-        expect(localizedText[locale]).not.toHaveLength(0);
-      }
+      expectLocalizedText(localizedText);
     }
 
     for (const forbidden of [
@@ -6428,9 +6459,7 @@ describe("Campaign OS domain foundation", () => {
     expect(gallery.boundary["en-US"]).toContain("no reward distribution");
 
     for (const localizedText of localizedFields) {
-      for (const locale of supportedLocales) {
-        expect(localizedText[locale]).not.toHaveLength(0);
-      }
+      expectLocalizedText(localizedText);
     }
 
     for (const forbidden of [
@@ -6901,6 +6930,7 @@ describe("Campaign OS domain foundation", () => {
     expect(decision.walletSplit.map((split) => split.label).sort()).toEqual(["AA", "EOA"]);
     expect(decision.localeSplit.map((split) => split.label).sort()).toEqual([
       "en-US",
+      "ja-JP",
       "zh-CN",
       "zh-TW",
     ]);
@@ -7030,6 +7060,7 @@ describe("Campaign OS domain foundation", () => {
     });
     expect(traditionalCard.alternateUrls).toEqual({
       "en-US": "https://campaign.local/en-US/campaigns/awaken-sprint",
+      "ja-JP": "https://campaign.local/ja-JP/campaigns/awaken-sprint",
       "zh-CN": "https://campaign.local/zh-CN/campaigns/awaken-sprint",
       "zh-TW": "https://campaign.local/zh-TW/campaigns/awaken-sprint",
     });
@@ -7301,10 +7332,10 @@ describe("Campaign OS domain foundation", () => {
       reviewer: "project_owner",
       targetLocale: "zh-TW",
     });
-    const unsupportedLocale = executeI18nReviewAction(campaignDetail, {
+    const japaneseCompare = executeI18nReviewAction(campaignDetail, {
       actionId: "compare_with_english",
       reviewer: "project_owner",
-      targetLocale: "ja-JP" as never,
+      targetLocale: "ja-JP",
     });
     const unsupportedAction = executeI18nReviewAction(campaignDetail, {
       actionId: "publish_live_backend" as never,
@@ -7320,9 +7351,10 @@ describe("Campaign OS domain foundation", () => {
       ok: false,
       error: expect.objectContaining({ code: "ACTION_BLOCKED", field: "targetLocale" }),
     });
-    expect(unsupportedLocale).toMatchObject({
-      ok: false,
-      error: expect.objectContaining({ code: "UNSUPPORTED_LOCALE", field: "targetLocale" }),
+    expect(japaneseCompare).toMatchObject({
+      ok: true,
+      targetLocale: "ja-JP",
+      action: expect.objectContaining({ id: "compare_with_english" }),
     });
     expect(unsupportedAction).toMatchObject({
       ok: false,

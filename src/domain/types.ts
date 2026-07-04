@@ -1,4 +1,4 @@
-export const supportedLocales = ["en-US", "zh-CN", "zh-TW"] as const;
+export const supportedLocales = ["en-US", "zh-CN", "zh-TW", "ja-JP"] as const;
 
 export type SupportedLocale = (typeof supportedLocales)[number];
 export type AccountType = "AA" | "EOA" | "UNKNOWN";
@@ -470,7 +470,9 @@ export type TmrwdaoGovernanceTaskEvidenceSource =
   | "proposal_metadata"
   | "seeded_local";
 
-export type LocalizedText = Record<SupportedLocale, string>;
+export type LocaleFallbackMap<T> = Record<"en-US", T> & Partial<Record<SupportedLocale, T>>;
+export type LocalizedText = LocaleFallbackMap<string>;
+export type LocaleStatusMap = LocaleFallbackMap<LocaleStatus>;
 
 export type ExternalServiceId =
   | "wallet-connector"
@@ -1575,7 +1577,7 @@ export interface CampaignTask {
   points: number;
   required: boolean;
   riskLevel: RiskLevel;
-  localeStatus: Record<SupportedLocale, LocaleStatus>;
+  localeStatus: Partial<Record<SupportedLocale, LocaleStatus>> & Record<"en-US", LocaleStatus>;
 }
 
 export type CampaignDiscoveryConsumerSurface =
@@ -1815,7 +1817,7 @@ export interface AiContentArtifactDraft {
   purpose: LocalizedText;
   title: LocalizedText;
   body: LocalizedText;
-  localeStatus: Record<SupportedLocale, LocaleStatus>;
+  localeStatus: Partial<Record<SupportedLocale, LocaleStatus>> & Record<"en-US", LocaleStatus>;
   lifecycle: AiContentArtifactLifecycle;
   reviewer?: string;
   updatedAt: string;
@@ -2041,7 +2043,7 @@ export type DeliveryAcceptanceStatus =
 export type DeliveryAcceptanceSeverity = "critical" | "high" | "medium" | "low";
 export type DeliveryAcceptanceSolutionSetId = "v0_1_product_ui" | "v0_2_wallet_i18n_contract";
 export type P1LocaleCode = "ko-KR" | "ja-JP" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES";
-export type P1LocaleExpansionReadinessStatus = "deferred";
+export type P1LocaleExpansionReadinessStatus = "deferred" | "ready";
 export type P1LocaleActivationStatus = "blocked" | "review_required" | "ready" | "deferred";
 export type P1LocaleActivationEvidenceState = "missing" | "partial" | "ready";
 
@@ -2349,7 +2351,7 @@ export interface P1LocaleExpansionReadinessRow {
   reason: LocalizedText;
   prerequisites: LocalizedText[];
   nextAction: LocalizedText;
-  runtimeSupported: false;
+  runtimeSupported: boolean;
 }
 
 export interface P1LocaleExpansionReadinessSummary {
@@ -2876,7 +2878,7 @@ export interface ParticipantOperationsSummary {
   aaWalletParticipants: number;
   eoaWalletParticipants: number;
   riskFlaggedParticipants: number;
-  localeCounts: Record<SupportedLocale, number>;
+  localeCounts: LocaleFallbackMap<number>;
 }
 
 export interface ParticipantOperationsRow {
@@ -4103,7 +4105,7 @@ export interface TemplateGovernanceRow {
   defaultPoints: number;
   requiredByDefault: boolean;
   riskLevel: RiskLevel;
-  localeReadiness: Record<SupportedLocale, LocaleStatus>;
+  localeReadiness: LocaleStatusMap;
   status: TemplateGovernanceStatus;
   statusReason: LocalizedText;
   nextAction: LocalizedText;
