@@ -1699,7 +1699,7 @@ describe("Campaign OS domain foundation", () => {
       topSeverity: "critical",
     });
     expect(new Set(rows.map((row) => row.status))).toEqual(
-      new Set(["proven", "partial", "needs_live_evidence", "deferred"]),
+      new Set(["proven", "needs_live_evidence", "deferred"]),
     );
     expect(acceptance.boundary["en-US"]).toContain("No live wallet SDK");
     expect(acceptance.boundary["en-US"]).toContain("provider API");
@@ -1715,10 +1715,34 @@ describe("Campaign OS domain foundation", () => {
       launchBlocking: false,
     });
     expect(rowsById["v01-user-participation-loop"]).toMatchObject({
-      status: "partial",
+      status: "proven",
       severity: "high",
       ownerRole: "project_owner",
     });
+    expect(rowsById["v01-user-participation-loop"]?.evidenceSummary["en-US"]).toContain(
+      "Seeded/local User App participation",
+    );
+    expect(rowsById["v01-user-participation-loop"]?.evidenceSummary["en-US"]).toContain(
+      "task verification states and actions",
+    );
+    expect(rowsById["v01-user-participation-loop"]?.evidenceSummary["en-US"]).toContain(
+      "eligibility checker",
+    );
+    expect(rowsById["v01-user-participation-loop"]?.evidenceSummary["en-US"]).toContain(
+      "referral evidence",
+    );
+    expect(rowsById["v01-user-participation-loop"]?.evidenceSummary["en-US"]).toContain(
+      "leaderboard points",
+    );
+    expect(rowsById["v01-user-participation-loop"]?.evidenceSummary["en-US"]).toContain(
+      "winner export status",
+    );
+    expect(rowsById["v01-user-participation-loop"]?.evidenceSummary["en-US"]).toContain(
+      "live verification providers remain gated separately",
+    );
+    expect(rowsById["v01-user-participation-loop"]?.nextMissionAction["en-US"]).toContain(
+      "live wallet provider evidence path",
+    );
     expect(rowsById["v01-live-export-download"]).toMatchObject({
       status: "proven",
       severity: "medium",
@@ -1801,6 +1825,7 @@ describe("Campaign OS domain foundation", () => {
         .some((row) => row.status === "proven"),
     ).toBe(false);
     expect(acceptance.topResidualGaps[0]?.id).toBe("v02-live-wallet-provider-evidence");
+    expect(acceptance.topResidualGaps.map((row) => row.id)).not.toContain("v01-user-participation-loop");
     expect(acceptance.topResidualGaps.map((row) => row.id)).not.toContain("v01-live-export-download");
     expect(acceptance.topResidualGaps.map((row) => row.id)).not.toContain("v02-contract-companion-plan");
     expect(acceptance.topResidualGaps.map((row) => row.id).slice(0, 2)).not.toContain(
@@ -1858,6 +1883,7 @@ describe("Campaign OS domain foundation", () => {
 
     expect(adminOps.deliveryAcceptance.topResidualGaps[0]?.status).toBe("needs_live_evidence");
     expect(adminOps.deliveryAcceptance.topResidualGaps[0]?.id).toBe("v02-live-wallet-provider-evidence");
+    expect(itemsById["mission-v01-user-participation-loop"]).toBeUndefined();
 
     expect(itemsById["mission-v02-contract-claim-reward-custody"]).toMatchObject({
       sourceRowId: "v02-contract-claim-reward-custody",
