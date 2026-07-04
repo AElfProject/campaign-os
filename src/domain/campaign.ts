@@ -352,10 +352,12 @@ import type {
   WalletProviderEvidenceReleaseState,
   WalletProviderEvidenceReleaseImpact,
   WalletProviderEvidenceRecoveryOptions,
+  WalletProviderEvidenceRecoveryInitialUiState,
   WalletProviderEvidenceRecoveryResult,
   WalletProviderEvidenceRecoveryScenarioState,
   WalletProviderEvidenceRecoverySnapshot,
   WalletProviderEvidenceRecoverySource,
+  WalletProviderEvidenceRecoveryStartupRead,
   WalletProviderEvidenceRecoveryStorageState,
   WalletProviderEvidenceRecoveryValidationError,
   WalletProviderEvidenceReviewAction,
@@ -4057,6 +4059,23 @@ export const createDefaultWalletProviderEvidenceRecoveryResult = (
     [],
     null,
   );
+
+export const createWalletProviderEvidenceRecoveryInitialUiState = (
+  readResult: WalletProviderEvidenceRecoveryStartupRead,
+  lastRecoveredAt: string,
+): WalletProviderEvidenceRecoveryInitialUiState => {
+  const source: WalletProviderEvidenceRecoverySource =
+    readResult.storageState === "read_failed" || readResult.snapshot === null
+      ? "seeded_default"
+      : "local_storage";
+
+  return {
+    lastRecoveredAt,
+    snapshot: readResult.snapshot,
+    source,
+    storageState: readResult.storageState,
+  };
+};
 
 export const createWalletProviderEvidenceAllApprovedSampleSnapshot = (
   capturedAt = "2026-07-04T00:00:00Z",
