@@ -157,6 +157,36 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Export CSV columns tested");
     expectVisibleText("Contract claim mode requires admin approval");
     expectVisibleText("Reward custody excluded from MVP");
+    const deliveryChecklistCloseout = screen.getByLabelText("Delivery Checklist Closeout");
+    expect(
+      within(deliveryChecklistCloseout).getByRole("heading", {
+        name: "Delivery Checklist Closeout",
+      }),
+    ).toBeInTheDocument();
+    expect(within(deliveryChecklistCloseout).getByText("Operator queue and handoff review")).toBeInTheDocument();
+    expect(within(deliveryChecklistCloseout).getByText("Review-only closeout boundary")).toBeInTheDocument();
+    expect(within(deliveryChecklistCloseout).getAllByText("Unresolved").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getAllByText("Needs review").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getAllByText("Missing verification").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getAllByText("Missing evidence").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getAllByText("Deferred").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getAllByText("Covered").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getByText(/All queues ·/)).toBeInTheDocument();
+    expect(within(deliveryChecklistCloseout).getAllByText(/Top queue:/).length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getAllByText(/Handoff target:/).length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getAllByText("Portkey AA connect tested").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getAllByText("EOA extension connect tested").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getAllByText(/Live wallet QA/).length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getAllByText(/live_wallet_qa/).length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getByText("Reward custody excluded from MVP")).toBeInTheDocument();
+    expect(within(deliveryChecklistCloseout).getAllByText(/Future mission/).length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getAllByText(/future_scope/).length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistCloseout).getAllByText(/does not execute live wallet SDKs/).length).toBeGreaterThan(0);
+    expect(
+      within(deliveryChecklistCloseout).queryByRole("button", {
+        name: /upload|connect wallet|sign|signature|transact|contract write|export file|store|storage write|claim|reward custody|reward distribution|distribute rewards/i,
+      }),
+    ).not.toBeInTheDocument();
     const deliveryChecklistTraceability = screen.getByLabelText("Delivery Checklist Traceability");
     expect(
       within(deliveryChecklistTraceability).getByRole("heading", {

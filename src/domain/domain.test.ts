@@ -1173,9 +1173,79 @@ describe("Campaign OS domain foundation", () => {
       status: "deferred",
     });
     expect(traceabilityByItemId["contract-reward-custody-excluded"]?.verificationCommands).toHaveLength(0);
+    const closeout = readiness.closeout;
+    const unresolvedQueueIds = ["blocked", "needs_review", "missing_verification", "missing_evidence"];
+    const closeoutByItemId = Object.fromEntries(closeout.rows.map((row) => [row.itemId, row]));
+
+    expect(closeout.rows).toHaveLength(readiness.traceability.rows.length);
+    expect(closeout.queues.map((queue) => queue.id)).toEqual([
+      "blocked",
+      "needs_review",
+      "missing_verification",
+      "missing_evidence",
+      "deferred",
+      "covered",
+    ]);
+    expect(closeout.summary).toMatchObject({
+      totalRows: closeout.rows.length,
+      unresolvedRows: closeout.rows.filter((row) => unresolvedQueueIds.includes(row.queueId)).length,
+      coveredRows: closeout.rows.filter((row) => row.queueId === "covered").length,
+      blockedRows: closeout.rows.filter((row) => row.queueId === "blocked").length,
+      needsReviewRows: closeout.rows.filter((row) => row.queueId === "needs_review").length,
+      missingVerificationRows: closeout.rows.filter((row) => row.missingVerification).length,
+      missingEvidenceRows: closeout.rows.filter((row) => row.missingEvidence).length,
+      deferredRows: closeout.rows.filter((row) => row.queueId === "deferred").length,
+      ready: false,
+    });
+    expect(closeout.summary.topQueueId).toBe("needs_review");
+    expect(closeout.summary.topHandoffTarget).toBe("live_wallet_qa");
+    expect(closeout.summary.topRowId).toBe(closeoutByItemId["qa-portkey-aa-connect"]?.id);
+    expect(closeout.boundary["en-US"]).toContain("Review-only closeout workflow");
+    expect(closeout.boundary["en-US"]).toContain("does not execute live wallet SDKs");
+    expect(closeoutByItemId["qa-portkey-aa-connect"]).toMatchObject({
+      queueId: "needs_review",
+      handoffTarget: "live_wallet_qa",
+      proofLevel: "live_evidence_required",
+      status: "needs_review",
+      missingEvidence: false,
+      missingVerification: false,
+    });
+    expect(closeoutByItemId["qa-portkey-aa-connect"]?.handoffLabel["en-US"]).toBe("Live wallet QA");
+    expect(closeoutByItemId["qa-eoa-extension-connect"]).toMatchObject({
+      queueId: "needs_review",
+      handoffTarget: "live_wallet_qa",
+      proofLevel: "live_evidence_required",
+      status: "needs_review",
+    });
+    expect(closeoutByItemId["product-aa-eoa-support"]).toMatchObject({
+      queueId: "covered",
+      handoffTarget: "none",
+      status: "covered",
+      proofLevel: "focused_test",
+    });
+    expect(closeoutByItemId["contract-reward-custody-excluded"]).toMatchObject({
+      queueId: "deferred",
+      handoffTarget: "future_scope",
+      status: "deferred",
+      missingEvidence: true,
+      missingVerification: true,
+    });
+    for (const row of closeout.rows) {
+      expect(row.id).toBe(`closeout:${row.groupId}:${row.itemId}`);
+      expectLocalizedText(row.label);
+      expectLocalizedText(row.handoffLabel);
+      expectLocalizedText(row.nextAction);
+      expectLocalizedText(row.boundary);
+      expect(row.priority).toBeGreaterThanOrEqual(0);
+      expect(row.sourceRequirement.length).toBeGreaterThan(0);
+    }
     const repeated = createAdminOpsReadModel(campaignDetail).deliveryChecklistReadiness.traceability;
     expect(repeated).toEqual(readiness.traceability);
+    expect(createAdminOpsReadModel(campaignDetail).deliveryChecklistReadiness.closeout).toEqual(
+      closeout,
+    );
     const serializedTraceability = JSON.stringify(readiness.traceability).toLowerCase();
+    const serializedCloseout = JSON.stringify(closeout).toLowerCase();
     for (const forbidden of [
       "privatekey",
       "private key",
@@ -1188,6 +1258,17 @@ describe("Campaign OS domain foundation", () => {
       "distribute rewards button",
     ]) {
       expect(serializedTraceability).not.toContain(forbidden);
+    }
+    for (const forbiddenAction of [
+      "wallet sdk button",
+      "provider api button",
+      "contract transaction button",
+      "storage write button",
+      "export file generation button",
+      "reward custody button",
+      "reward distribution button",
+    ]) {
+      expect(serializedCloseout).not.toContain(forbiddenAction);
     }
     expect(readiness.p1LocaleExpansion.summary).toMatchObject({
       totalLocales: 6,

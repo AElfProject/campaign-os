@@ -102,6 +102,10 @@ import type {
   ResidualGapMissionQueue,
   ResidualGapMissionQueueItem,
   ResidualGapMissionQueueStatus,
+  DeliveryChecklistCloseoutHandoffTarget,
+  DeliveryChecklistCloseoutQueueId,
+  DeliveryChecklistCloseoutRow,
+  DeliveryChecklistCloseoutWorkflow,
   DeliveryChecklistGroup,
   DeliveryChecklistGroupId,
   DeliveryChecklistItem,
@@ -14469,6 +14473,278 @@ const createDeliveryChecklistTraceabilityMatrix = (
   };
 };
 
+const deliveryChecklistCloseoutQueueOrder: DeliveryChecklistCloseoutQueueId[] = [
+  "blocked",
+  "needs_review",
+  "missing_verification",
+  "missing_evidence",
+  "deferred",
+  "covered",
+];
+
+const deliveryChecklistCloseoutBoundary = localized(
+  "Review-only closeout workflow. It prioritizes delivery checklist rows but does not execute live wallet SDKs, provider APIs, contract transactions, storage writes, export file generation, reward custody, or reward distribution.",
+  "仅审核用 closeout workflow。它用于排序交付清单行，但不会执行实时钱包 SDK、provider API、合约交易、storage 写入、导出文件生成、奖励托管或发奖。",
+  "Review-only closeout workflow. It prioritizes delivery checklist rows but does not execute live wallet SDKs, provider APIs, contract transactions, storage writes, export file generation, reward custody, or reward distribution.",
+);
+
+const closeoutQueueCopy: Record<
+  DeliveryChecklistCloseoutQueueId,
+  { description: LocalizedText; label: LocalizedText; unresolved: boolean }
+> = {
+  blocked: {
+    description: localized(
+      "Rows that block delivery or publish until the owner resolves them.",
+      "在负责人解决前阻断交付或发布的行。",
+    ),
+    label: localized("Blocked", "阻断"),
+    unresolved: true,
+  },
+  needs_review: {
+    description: localized(
+      "Rows that need human review, live evidence, or explicit owner sign-off.",
+      "需要人工审核、真实 evidence 或负责人明确签核的行。",
+    ),
+    label: localized("Needs review", "需要审核"),
+    unresolved: true,
+  },
+  missing_verification: {
+    description: localized(
+      "Rows that need a focused verification command before closeout.",
+      "closeout 前需要补 focused verification command 的行。",
+    ),
+    label: localized("Missing verification", "缺少验证"),
+    unresolved: true,
+  },
+  missing_evidence: {
+    description: localized(
+      "Rows that need a private evidence pointer before closeout.",
+      "closeout 前需要补 private evidence pointer 的行。",
+    ),
+    label: localized("Missing evidence", "缺少证据"),
+    unresolved: true,
+  },
+  deferred: {
+    description: localized(
+      "Accepted future-scope rows that should not be claimed as MVP production coverage.",
+      "已接受的未来范围行，不应声明为 MVP 生产覆盖。",
+    ),
+    label: localized("Deferred", "后置"),
+    unresolved: false,
+  },
+  covered: {
+    description: localized(
+      "Rows covered for the current seeded/local delivery scope.",
+      "当前 seeded/local 交付范围已覆盖的行。",
+    ),
+    label: localized("Covered", "已覆盖"),
+    unresolved: false,
+  },
+};
+
+const closeoutHandoffLabels: Record<DeliveryChecklistCloseoutHandoffTarget, LocalizedText> = {
+  contract_reviewer: localized("Contract reviewer", "合约审核人"),
+  evidence_traceability: localized("Evidence traceability", "证据追踪"),
+  future_scope: localized("Future mission", "未来 mission"),
+  i18n_reviewer: localized("i18n reviewer", "多语言审核人"),
+  live_wallet_qa: localized("Live wallet QA", "真实钱包 QA"),
+  none: localized("No immediate handoff", "暂无立即交接"),
+  project_owner_review: localized("Project owner review", "项目方审核"),
+};
+
+const closeoutQueueRank = (
+  queueId: DeliveryChecklistCloseoutQueueId,
+) => deliveryChecklistCloseoutQueueOrder.indexOf(queueId);
+
+const closeoutQueueFor = (
+  item: DeliveryChecklistItem,
+  traceabilityRow: DeliveryChecklistTraceabilityMatrix["rows"][number],
+): DeliveryChecklistCloseoutQueueId => {
+  if (item.status === "blocked" || item.blocksDelivery) {
+    return "blocked";
+  }
+
+  if (item.status === "needs_review") {
+    return "needs_review";
+  }
+
+  if (item.status === "deferred") {
+    return "deferred";
+  }
+
+  if (traceabilityRow.verificationCommands.length === 0) {
+    return "missing_verification";
+  }
+
+  if (traceabilityRow.evidenceArtifacts.length === 0) {
+    return "missing_evidence";
+  }
+
+  return "covered";
+};
+
+const isI18nChecklistRow = (item: Pick<DeliveryChecklistItem, "id" | "sourceRequirement">) => {
+  const text = `${item.id} ${item.sourceRequirement}`.toLowerCase();
+
+  return (
+    text.includes("i18n") ||
+    text.includes("locale") ||
+    text.includes("language") ||
+    text.includes("translation")
+  );
+};
+
+const closeoutHandoffFor = (
+  item: Pick<DeliveryChecklistItem, "id" | "ownerRole" | "sourceRequirement">,
+  traceabilityRow: DeliveryChecklistTraceabilityMatrix["rows"][number],
+  queueId: DeliveryChecklistCloseoutQueueId,
+): DeliveryChecklistCloseoutHandoffTarget => {
+  if (queueId === "covered") {
+    return "none";
+  }
+
+  if (queueId === "deferred") {
+    return "future_scope";
+  }
+
+  if (
+    traceabilityRow.proofLevel === "live_evidence_required" ||
+    item.id.startsWith("qa-")
+  ) {
+    return "live_wallet_qa";
+  }
+
+  if (item.ownerRole === "contract_reviewer") {
+    return "contract_reviewer";
+  }
+
+  if (isI18nChecklistRow(item)) {
+    return "i18n_reviewer";
+  }
+
+  if (item.ownerRole === "project_owner") {
+    return "project_owner_review";
+  }
+
+  if (queueId === "missing_verification" || queueId === "missing_evidence") {
+    return "evidence_traceability";
+  }
+
+  return "evidence_traceability";
+};
+
+const createDeliveryChecklistCloseoutWorkflow = (
+  groups: DeliveryChecklistGroup[],
+  traceability: DeliveryChecklistTraceabilityMatrix,
+): DeliveryChecklistCloseoutWorkflow => {
+  const itemByKey = new Map(
+    groups.flatMap((group) =>
+      group.items.map((item) => [`${group.id}:${item.id}`, item] as const),
+    ),
+  );
+  const rows: DeliveryChecklistCloseoutRow[] = traceability.rows.map(
+    (traceabilityRow, index) => {
+      const item = itemByKey.get(`${traceabilityRow.groupId}:${traceabilityRow.itemId}`);
+      const queueId = item ? closeoutQueueFor(item, traceabilityRow) : "missing_evidence";
+      const sourceItem = item ?? {
+        blocksDelivery: false,
+        evidence: traceabilityRow.riskNote,
+        groupId: traceabilityRow.groupId,
+        id: traceabilityRow.itemId,
+        label: traceabilityRow.label,
+        nextAction: traceabilityRow.nextAction,
+        ownerRole: "internal_operator" as const,
+        sourceRequirement: traceabilityRow.sourceRequirement,
+        status: traceabilityRow.status,
+        surface: localized("Delivery checklist traceability", "交付清单追踪"),
+      };
+      const handoffTarget = closeoutHandoffFor(sourceItem, traceabilityRow, queueId);
+
+      return {
+        blocksDelivery: sourceItem.blocksDelivery,
+        boundary:
+          queueId === "covered"
+            ? localized(
+                "Covered for seeded/local delivery scope; keep live operations separately gated.",
+                "已覆盖 seeded/local 交付范围；真实操作继续单独门禁。",
+              )
+            : queueId === "deferred"
+              ? localized(
+                  "Accepted future-scope row; do not treat as MVP production coverage.",
+                  "已接受的未来范围行；不要视为 MVP 生产覆盖。",
+                )
+              : deliveryChecklistCloseoutBoundary,
+        evidence: sourceItem.evidence,
+        groupId: traceabilityRow.groupId,
+        handoffLabel: closeoutHandoffLabels[handoffTarget],
+        handoffTarget,
+        id: `closeout:${traceabilityRow.id}`,
+        itemId: traceabilityRow.itemId,
+        label: traceabilityRow.label,
+        missingEvidence: traceabilityRow.evidenceArtifacts.length === 0,
+        missingVerification: traceabilityRow.verificationCommands.length === 0,
+        nextAction: traceabilityRow.nextAction,
+        ownerRole: sourceItem.ownerRole,
+        priority: closeoutQueueRank(queueId) * 1000 + index,
+        proofLevel: traceabilityRow.proofLevel,
+        queueId,
+        riskNote: traceabilityRow.riskNote,
+        sourceRequirement: traceabilityRow.sourceRequirement,
+        status: traceabilityRow.status,
+        surface: sourceItem.surface,
+      };
+    },
+  );
+  const queues = deliveryChecklistCloseoutQueueOrder.map((queueId) => {
+    const queueRows = rows.filter((row) => row.queueId === queueId);
+
+    return {
+      count: queueRows.length,
+      description: closeoutQueueCopy[queueId].description,
+      id: queueId,
+      label: closeoutQueueCopy[queueId].label,
+      rows: queueRows,
+      unresolved: closeoutQueueCopy[queueId].unresolved,
+    };
+  });
+  const unresolvedRows = rows.filter(
+    (row) => closeoutQueueCopy[row.queueId].unresolved,
+  );
+  const topRow = unresolvedRows.reduce<DeliveryChecklistCloseoutRow | null>(
+    (current, row) => (current === null || row.priority < current.priority ? row : current),
+    null,
+  );
+  const topQueueId = topRow?.queueId ?? queues.find((queue) => queue.count > 0)?.id ?? "covered";
+
+  return {
+    boundary: deliveryChecklistCloseoutBoundary,
+    nextAction: topRow?.nextAction ?? localized(
+      "All current delivery checklist rows are covered or intentionally deferred for seeded/local scope.",
+      "当前交付清单行均已覆盖或按 seeded/local 范围有意后置。",
+    ),
+    queues,
+    rows,
+    summary: {
+      blockedRows: rows.filter((row) => row.queueId === "blocked").length,
+      coveredRows: rows.filter((row) => row.queueId === "covered").length,
+      deferredRows: rows.filter((row) => row.queueId === "deferred").length,
+      missingEvidenceRows: rows.filter((row) => row.missingEvidence).length,
+      missingVerificationRows: rows.filter((row) => row.missingVerification).length,
+      needsReviewRows: rows.filter((row) => row.queueId === "needs_review").length,
+      ready: unresolvedRows.length === 0,
+      topHandoffTarget: topRow?.handoffTarget ?? "none",
+      topNextAction: topRow?.nextAction ?? localized(
+        "Keep monitoring future-scope rows through separate missions.",
+        "通过单独 mission 持续监控未来范围行。",
+      ),
+      topQueueId,
+      topRowId: topRow?.id ?? null,
+      totalRows: rows.length,
+      unresolvedRows: unresolvedRows.length,
+    },
+  };
+};
+
 const createProductDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
   const groupId = "product" as const;
 
@@ -15220,10 +15496,12 @@ export const createDeliveryChecklistReadinessConsole = (
   ];
   const items = groups.flatMap((group) => group.items);
   const traceability = createDeliveryChecklistTraceabilityMatrix(groups);
+  const closeout = createDeliveryChecklistCloseoutWorkflow(groups, traceability);
 
   return {
     boundary: deliveryChecklistBoundary,
     blockers: items.filter((item) => item.status === "blocked"),
+    closeout,
     groups,
     needsReview: items.filter((item) => item.status === "needs_review"),
     p1LocaleExpansion: createP1LocaleExpansionReadiness(),
