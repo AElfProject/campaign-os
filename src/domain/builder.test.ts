@@ -28,6 +28,8 @@ import { campaignDetail } from "./fixtures";
 import { getLocalizedText } from "./locale";
 import type { ContentRevision, ContentRevisionStatus } from "./types";
 
+const activatedRuntimeLocales = ["en-US", "zh-CN", "zh-TW", "ja-JP", "ko-KR"] as const;
+
 const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
   if (!value || typeof value !== "object") {
     return false;
@@ -76,12 +78,12 @@ const socialOnlyDraft = (): CampaignDraft => ({
 
 describe("Campaign Builder domain foundation", () => {
   it("keeps builder locale support aligned to activated runtime locales", () => {
-    expect(builderSupportedLocales).toEqual(["en-US", "zh-CN", "zh-TW", "ja-JP"]);
+    expect(builderSupportedLocales).toEqual(activatedRuntimeLocales);
     expect(seededCampaignDraft.defaultLocale).toBe("en-US");
     expect(seededCampaignDraft.fallbackLocale).toBe("en-US");
-    expect(seededCampaignDraft.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW", "ja-JP"]);
+    expect(seededCampaignDraft.supportedLocales).toEqual(activatedRuntimeLocales);
     expect(seededCampaignDraft.supportedLocales).not.toEqual(
-      expect.arrayContaining(["ko-KR", "vi-VN", "id-ID", "tr-TR", "es-ES"]),
+      expect.arrayContaining(["vi-VN", "id-ID", "tr-TR", "es-ES"]),
     );
   });
 
@@ -721,7 +723,7 @@ describe("Campaign Builder domain foundation", () => {
         "wallet-policy",
       ]),
     );
-    expect(seededCampaignDraft.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW", "ja-JP"]);
+    expect(seededCampaignDraft.supportedLocales).toEqual(activatedRuntimeLocales);
     expect(JSON.stringify(decisionCenter)).toContain("zh-TW");
   });
 
@@ -755,20 +757,15 @@ describe("Campaign Builder domain foundation", () => {
       supportedLocales: seededCampaignDraft.supportedLocales,
     });
 
-    expect(translationManager.supportedLocales).toEqual(["en-US", "zh-CN", "zh-TW", "ja-JP"]);
-    expect(translationManager.localeItems.map((item) => item.locale)).toEqual(["en-US", "zh-CN", "zh-TW", "ja-JP"]);
+    expect(translationManager.supportedLocales).toEqual(activatedRuntimeLocales);
+    expect(translationManager.localeItems.map((item) => item.locale)).toEqual(activatedRuntimeLocales);
     expect(translationManager.localeItems.find((item) => item.locale === "zh-TW")).toMatchObject({
       fallbackToEnglish: true,
       humanReviewed: false,
       publishState: "warning",
       status: "empty",
     });
-    expect(translationManager.rewardDisclaimers.map((row) => row.locale)).toEqual([
-      "en-US",
-      "zh-CN",
-      "zh-TW",
-      "ja-JP",
-    ]);
+    expect(translationManager.rewardDisclaimers.map((row) => row.locale)).toEqual(activatedRuntimeLocales);
     expect(translationManager.panels.find((panel) => panel.locale === "zh-TW")).toMatchObject({
       fallbackToEnglish: true,
       humanReviewed: false,
@@ -785,7 +782,7 @@ describe("Campaign Builder domain foundation", () => {
       contractMode: "OFF_CHAIN_MVP",
       defaultLocale: "en-US",
       reviewedByHuman: true,
-      supportedLocales: ["en-US", "zh-CN", "zh-TW", "ja-JP"],
+      supportedLocales: activatedRuntimeLocales,
       walletPolicy: "ANY",
     });
     expect(planner.summary.prompt).toContain("activation campaign");
@@ -1032,6 +1029,7 @@ describe("Campaign Builder domain foundation", () => {
       "zh-CN": 1,
       "zh-TW": 1,
       "ja-JP": 0,
+      "ko-KR": 0,
     });
 
     const rowsById = new Map(operations.rows.map((row) => [row.participantId, row]));

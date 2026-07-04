@@ -56,6 +56,7 @@ describe("i18n messages", () => {
     expect(Object.keys(messages["zh-CN"]).sort()).toEqual(canonicalSchemaKeys);
     expect(Object.keys(messages["zh-TW"]).sort()).toEqual(canonicalSchemaKeys);
     expect(Object.keys(messages["ja-JP"]).sort()).toEqual(canonicalSchemaKeys);
+    expect(Object.keys(messages["ko-KR"]).sort()).toEqual(canonicalSchemaKeys);
   });
 
   it("keeps English values equal to the v0.2 i18n schema", () => {
@@ -76,6 +77,13 @@ describe("i18n messages", () => {
     expect(translate("ja-JP", "common.defaultLanguage")).toContain("English fallback");
   });
 
+  it("keeps ko-KR runtime messages on explicit English fallback copy", () => {
+    expect(messages["ko-KR"]["common.language"]).toBe("한국어");
+    expect(translate("ko-KR", "common.connectWallet")).toBe("Connect Wallet");
+    expect(translate("ko-KR", "campaign.translationManager")).toBe("Translation Manager");
+    expect(translate("ko-KR", "common.defaultLanguage")).toContain("English fallback");
+  });
+
   it("provides English, Simplified Chinese, and Traditional Chinese UI copy", () => {
     expect(translate("en-US", "common.connectWallet")).toBe("Connect Wallet");
     expect(translate("zh-CN", "common.connectWallet")).toBe("连接钱包");
@@ -91,11 +99,11 @@ describe("i18n messages", () => {
   });
 
   it("restores and persists supported locale preferences", () => {
-    window.localStorage.setItem(localePreferenceStorageKey, "ja-JP");
+    window.localStorage.setItem(localePreferenceStorageKey, "ko-KR");
 
     const { result } = renderHook(() => useLocale());
 
-    expect(result.current.locale).toBe("ja-JP");
+    expect(result.current.locale).toBe("ko-KR");
     expect(result.current.localeSource).toBe("storage");
 
     act(() => result.current.setLocale("en-US"));
@@ -107,9 +115,9 @@ describe("i18n messages", () => {
   it("uses URL locale before stored locale for initial resolution", () => {
     window.localStorage.setItem(localePreferenceStorageKey, "en-US");
 
-    const { result } = renderHook(() => useLocale("ja-JP"));
+    const { result } = renderHook(() => useLocale("ko-KR"));
 
-    expect(result.current.locale).toBe("ja-JP");
+    expect(result.current.locale).toBe("ko-KR");
     expect(result.current.localeSource).toBe("url");
   });
 

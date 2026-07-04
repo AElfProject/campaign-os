@@ -8,6 +8,8 @@ import {
 } from "./index";
 
 const service = createCampaignOsLocalService();
+const activatedRuntimeLocales = ["en-US", "zh-CN", "zh-TW", "ja-JP", "ko-KR"] as const;
+const unsupportedP1RuntimeLocales = ["vi-VN", "id-ID", "tr-TR", "es-ES"] as const;
 
 const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
   if (!value || typeof value !== "object") {
@@ -215,7 +217,7 @@ describe("Campaign OS local API service facade", () => {
       rewardDisclaimerHash: "sha256:reward-disclaimer",
       startTime: "2026-08-01T00:00:00Z",
       status: "scheduled",
-      supportedLocales: ["zh-TW", "en-US", "zh-CN", "ja-JP"],
+      supportedLocales: ["zh-TW", "en-US", "zh-CN", "ja-JP", "ko-KR"],
       walletPolicy: "AA_ONLY",
     });
     const task = service.addTask({
@@ -227,7 +229,7 @@ describe("Campaign OS local API service facade", () => {
       verificationType: "ON_CHAIN",
       walletCompatibility: "ANY",
     });
-    const unsupportedLocaleResponses = ["ko-KR", "vi-VN", "id-ID", "tr-TR", "es-ES"].map(
+    const unsupportedLocaleResponses = unsupportedP1RuntimeLocales.map(
       (locale) =>
         service.createCampaign({
           duration: "2026-07-01/2026-07-14",
@@ -257,7 +259,7 @@ describe("Campaign OS local API service facade", () => {
       endTime: "2026-07-14T23:59:59Z",
       goal: "Activate Awaken traders",
       ownerAddress: "2F4...9aB",
-      supportedLocales: ["en-US", "zh-CN", "zh-TW", "ja-JP"],
+      supportedLocales: activatedRuntimeLocales,
       startTime: "2026-07-01T00:00:00Z",
       status: "draft",
       walletPolicy: "ANY",
@@ -275,7 +277,7 @@ describe("Campaign OS local API service facade", () => {
       rewardDisclaimerHash: "sha256:reward-disclaimer",
       startTime: "2026-08-01T00:00:00Z",
       status: "scheduled",
-      supportedLocales: ["en-US", "zh-CN", "zh-TW", "ja-JP"],
+      supportedLocales: activatedRuntimeLocales,
       walletPolicy: "AA_ONLY",
     });
     expect(campaign.payload?.publishReadiness.ready).toBe(true);
@@ -1217,11 +1219,17 @@ describe("Campaign OS local API service facade", () => {
       sourceLocale: "en-US",
       targetLocale: "ja-JP",
     });
+    const koKrDraft = service.generateI18nDraft({
+      campaignId: campaignDetail.id,
+      contentKeys: ["title"],
+      sourceLocale: "en-US",
+      targetLocale: "ko-KR",
+    });
     const unsupported = service.generateI18nDraft({
       campaignId: campaignDetail.id,
       contentKeys: ["title"],
       sourceLocale: "en-US",
-      targetLocale: "ko-KR" as never,
+      targetLocale: "vi-VN" as never,
     });
 
     expect(zhCnDraft.payload).toMatchObject({
@@ -1250,6 +1258,14 @@ describe("Campaign OS local API service facade", () => {
       targetLocale: "ja-JP",
     });
     expect(jaJpDraft.payload?.draft.title).toBe("Awaken Sprint");
+    expect(koKrDraft.payload).toMatchObject({
+      aiDraft: false,
+      fallbackToEnglish: true,
+      humanReviewRequired: true,
+      sourceLocale: "en-US",
+      targetLocale: "ko-KR",
+    });
+    expect(koKrDraft.payload?.draft.title).toBe("Awaken Sprint");
     expect(unsupported).toMatchObject({
       ok: false,
       error: expect.objectContaining({ code: "UNSUPPORTED_LOCALE", field: "targetLocale" }),
@@ -1445,10 +1461,12 @@ describe("Campaign OS local API service facade", () => {
     expect(analytics.payload?.localeSplit.map((split) => split.label).sort()).toEqual([
       "en-US",
       "ja-JP",
+      "ko-KR",
       "zh-CN",
       "zh-TW",
     ]);
     expect(JSON.stringify(analytics.payload?.localeSplit)).toContain("ja-JP");
+    expect(JSON.stringify(analytics.payload?.localeSplit)).toContain("ko-KR");
     expect(JSON.stringify(analytics.payload?.localeSplit)).toContain("zh-TW");
     expect(advancedAnalytics.ok).toBe(true);
     expect(advancedAnalytics.payload).toMatchObject({
@@ -1635,6 +1653,14 @@ describe("Campaign OS local API service facade", () => {
         walletType: "AA",
       },
       {
+        count: 0,
+        id: "wallet-locale-aa-ko-kr",
+        label: "AA / ko-KR",
+        locale: "ko-KR",
+        percentage: 0,
+        walletType: "AA",
+      },
+      {
         count: 1,
         id: "wallet-locale-eoa-en-us",
         label: "EOA / en-US",
@@ -1663,6 +1689,14 @@ describe("Campaign OS local API service facade", () => {
         id: "wallet-locale-eoa-ja-jp",
         label: "EOA / ja-JP",
         locale: "ja-JP",
+        percentage: 0,
+        walletType: "EOA",
+      },
+      {
+        count: 0,
+        id: "wallet-locale-eoa-ko-kr",
+        label: "EOA / ko-KR",
+        locale: "ko-KR",
         percentage: 0,
         walletType: "EOA",
       },
