@@ -215,7 +215,7 @@ describe("Campaign OS local API service facade", () => {
       rewardDisclaimerHash: "sha256:reward-disclaimer",
       startTime: "2026-08-01T00:00:00Z",
       status: "scheduled",
-      supportedLocales: ["zh-TW", "en-US", "zh-CN"],
+      supportedLocales: ["zh-TW", "en-US", "zh-CN", "ja-JP"],
       walletPolicy: "AA_ONLY",
     });
     const task = service.addTask({
@@ -227,7 +227,7 @@ describe("Campaign OS local API service facade", () => {
       verificationType: "ON_CHAIN",
       walletCompatibility: "ANY",
     });
-    const unsupportedLocaleResponses = ["ko-KR", "ja-JP", "vi-VN", "id-ID", "tr-TR", "es-ES"].map(
+    const unsupportedLocaleResponses = ["ko-KR", "vi-VN", "id-ID", "tr-TR", "es-ES"].map(
       (locale) =>
         service.createCampaign({
           duration: "2026-07-01/2026-07-14",
@@ -257,7 +257,7 @@ describe("Campaign OS local API service facade", () => {
       endTime: "2026-07-14T23:59:59Z",
       goal: "Activate Awaken traders",
       ownerAddress: "2F4...9aB",
-      supportedLocales: ["en-US", "zh-CN", "zh-TW"],
+      supportedLocales: ["en-US", "zh-CN", "zh-TW", "ja-JP"],
       startTime: "2026-07-01T00:00:00Z",
       status: "draft",
       walletPolicy: "ANY",
@@ -275,7 +275,7 @@ describe("Campaign OS local API service facade", () => {
       rewardDisclaimerHash: "sha256:reward-disclaimer",
       startTime: "2026-08-01T00:00:00Z",
       status: "scheduled",
-      supportedLocales: ["en-US", "zh-CN", "zh-TW"],
+      supportedLocales: ["en-US", "zh-CN", "zh-TW", "ja-JP"],
       walletPolicy: "AA_ONLY",
     });
     expect(campaign.payload?.publishReadiness.ready).toBe(true);
@@ -1211,11 +1211,17 @@ describe("Campaign OS local API service facade", () => {
       sourceLocale: "en-US",
       targetLocale: "zh-TW",
     });
+    const jaJpDraft = service.generateI18nDraft({
+      campaignId: campaignDetail.id,
+      contentKeys: ["title"],
+      sourceLocale: "en-US",
+      targetLocale: "ja-JP",
+    });
     const unsupported = service.generateI18nDraft({
       campaignId: campaignDetail.id,
       contentKeys: ["title"],
       sourceLocale: "en-US",
-      targetLocale: "ja-JP" as never,
+      targetLocale: "ko-KR" as never,
     });
 
     expect(zhCnDraft.payload).toMatchObject({
@@ -1236,6 +1242,14 @@ describe("Campaign OS local API service facade", () => {
     });
     expect(zhTwDraft.payload?.draft.title).toBe("Awaken Sprint");
     expect(zhTwDraft.payload?.noAutoPublishNotice["zh-TW"]).toContain("AI generated translation");
+    expect(jaJpDraft.payload).toMatchObject({
+      aiDraft: false,
+      fallbackToEnglish: true,
+      humanReviewRequired: true,
+      sourceLocale: "en-US",
+      targetLocale: "ja-JP",
+    });
+    expect(jaJpDraft.payload?.draft.title).toBe("Awaken Sprint");
     expect(unsupported).toMatchObject({
       ok: false,
       error: expect.objectContaining({ code: "UNSUPPORTED_LOCALE", field: "targetLocale" }),
@@ -1249,10 +1263,10 @@ describe("Campaign OS local API service facade", () => {
       reviewer: "project_owner",
       targetLocale: "zh-CN",
     });
-    const unsupportedLocale = service.executeI18nReviewAction({
+    const japaneseCompare = service.executeI18nReviewAction({
       actionId: "compare_with_english",
       campaignId: campaignDetail.id,
-      targetLocale: "ja-JP" as never,
+      targetLocale: "ja-JP",
     });
     const unsupportedAction = service.executeI18nReviewAction({
       actionId: "publish_live_backend" as never,
@@ -1282,9 +1296,12 @@ describe("Campaign OS local API service facade", () => {
     });
     expect(reviewed.payload?.boundary["en-US"]).toContain("No live AI provider");
     expect(reviewed.boundary["en-US"]).toContain("No live API");
-    expect(unsupportedLocale).toMatchObject({
-      ok: false,
-      error: expect.objectContaining({ code: "UNSUPPORTED_LOCALE", field: "targetLocale" }),
+    expect(japaneseCompare).toMatchObject({
+      ok: true,
+      payload: expect.objectContaining({
+        action: expect.objectContaining({ id: "compare_with_english" }),
+        targetLocale: "ja-JP",
+      }),
     });
     expect(unsupportedAction).toMatchObject({
       ok: false,
@@ -1427,9 +1444,11 @@ describe("Campaign OS local API service facade", () => {
     expect(analytics.payload?.walletSplit.map((split) => split.label).sort()).toEqual(["AA", "EOA"]);
     expect(analytics.payload?.localeSplit.map((split) => split.label).sort()).toEqual([
       "en-US",
+      "ja-JP",
       "zh-CN",
       "zh-TW",
     ]);
+    expect(JSON.stringify(analytics.payload?.localeSplit)).toContain("ja-JP");
     expect(JSON.stringify(analytics.payload?.localeSplit)).toContain("zh-TW");
     expect(advancedAnalytics.ok).toBe(true);
     expect(advancedAnalytics.payload).toMatchObject({
@@ -1608,6 +1627,14 @@ describe("Campaign OS local API service facade", () => {
         walletType: "AA",
       },
       {
+        count: 0,
+        id: "wallet-locale-aa-ja-jp",
+        label: "AA / ja-JP",
+        locale: "ja-JP",
+        percentage: 0,
+        walletType: "AA",
+      },
+      {
         count: 1,
         id: "wallet-locale-eoa-en-us",
         label: "EOA / en-US",
@@ -1628,6 +1655,14 @@ describe("Campaign OS local API service facade", () => {
         id: "wallet-locale-eoa-zh-tw",
         label: "EOA / zh-TW",
         locale: "zh-TW",
+        percentage: 0,
+        walletType: "EOA",
+      },
+      {
+        count: 0,
+        id: "wallet-locale-eoa-ja-jp",
+        label: "EOA / ja-JP",
+        locale: "ja-JP",
         percentage: 0,
         walletType: "EOA",
       },

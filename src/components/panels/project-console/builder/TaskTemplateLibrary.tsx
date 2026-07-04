@@ -18,8 +18,10 @@ import {
 } from "../../../../domain";
 import { LocaleStatusBadge, WalletCompatibilityBadge } from "../../../badges/Badges";
 
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+
 interface TaskTemplateLibraryProps {
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
   templates?: TaskTemplate[];
 }
 
@@ -81,7 +83,7 @@ const copy = {
     verification: "驗證方式",
     walletCompatibility: "錢包相容性",
   },
-} satisfies Record<SupportedLocale, TaskTemplateLibraryCopy>;
+} satisfies Record<BusinessContentLocale, TaskTemplateLibraryCopy>;
 
 const sectionStyle: CSSProperties = {
   display: "grid",
@@ -234,7 +236,7 @@ interface FilterGroupProps<TValue extends string> {
   legend: string;
   options: readonly TaskTemplateFilterOption<TValue>[];
   selectedValues: readonly TValue[];
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
   onToggle: (value: TValue) => void;
 }
 

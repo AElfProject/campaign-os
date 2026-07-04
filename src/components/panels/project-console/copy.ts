@@ -1,5 +1,7 @@
 import type { SupportedLocale } from "../../../domain";
 
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+
 const enUS = {
   active: "Live",
   activeWorkspace: "Active workspace",
@@ -1656,6 +1658,6 @@ export const projectConsoleCopy = {
     workspaceVerificationRulesSummary: "審核鏈上、API、人工審核、邀請、provider 證據、發布影響與 no-live 邊界。",
     zhFallbackWarning: "繁中內容目前回退展示英文或簡中草稿，需人工審核。",
   },
-} satisfies Record<SupportedLocale, typeof enUS>;
+} satisfies Record<BusinessContentLocale, typeof enUS>;
 
 export type ProjectConsoleCopy = (typeof projectConsoleCopy)["en-US"];

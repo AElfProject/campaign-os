@@ -12,9 +12,11 @@ import {
 } from "../../../../domain";
 import { PublishStateBadge } from "../../../badges/Badges";
 
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+
 interface PublishGateDecisionCenterProps {
   draft?: CampaignDraft;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
 }
 
 const copy = {
@@ -66,7 +68,7 @@ const copy = {
     title: "發布門禁決策中心",
     warnings: "警告",
   },
-} satisfies Record<SupportedLocale, Record<string, string>>;
+} satisfies Record<BusinessContentLocale, Record<string, string>>;
 
 const ownerRoleLabels = {
   "en-US": {
@@ -84,7 +86,7 @@ const ownerRoleLabels = {
     internal_operator: "內部營運",
     project_owner: "專案方",
   },
-} satisfies Record<SupportedLocale, Record<OwnerRole, string>>;
+} satisfies Record<BusinessContentLocale, Record<OwnerRole, string>>;
 
 const groupLabels = {
   "en-US": {
@@ -117,7 +119,7 @@ const groupLabels = {
     tasks: "任務",
     wallet: "錢包",
   },
-} satisfies Record<SupportedLocale, Record<ReadinessGroup, string>>;
+} satisfies Record<BusinessContentLocale, Record<ReadinessGroup, string>>;
 
 const statusLabels = {
   "en-US": {
@@ -135,7 +137,7 @@ const statusLabels = {
     passed: "已通過",
     warning: "警告",
   },
-} satisfies Record<SupportedLocale, Record<PublishGateItem["status"], string>>;
+} satisfies Record<BusinessContentLocale, Record<PublishGateItem["status"], string>>;
 
 const sectionStyle: CSSProperties = {
   display: "grid",
@@ -237,7 +239,7 @@ const statusState = (status: PublishGateItem["status"] | PublishGateApprovalRout
 
 const statusLabel = (
   status: PublishGateItem["status"] | PublishGateApprovalRoute["status"],
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   if (status === "ready") {
     return statusLabels[locale].passed;
@@ -251,7 +253,7 @@ const GateCard = ({
   locale,
 }: {
   gate: PublishGateItem;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
 }) => {
   const labels = copy[locale];
 
@@ -286,7 +288,7 @@ const ApprovalRouteCard = ({
   locale,
   route,
 }: {
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
   route: PublishGateApprovalRoute;
 }) => {
   const labels = copy[locale];

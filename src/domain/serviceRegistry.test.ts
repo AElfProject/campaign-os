@@ -3,6 +3,7 @@ import {
   createServiceDegradationGovernance,
   createServiceRegistry,
   externalServiceRegistryEntries,
+  getLocalizedText,
   getExternalService,
   getServiceFallback,
   isServiceEnabled,
@@ -11,9 +12,9 @@ import {
 
 const localizedFields = ["en-US", "zh-CN", "zh-TW"] as const;
 
-const expectLocalized = (value: Record<(typeof localizedFields)[number], string>) => {
+const expectLocalized = (value: Parameters<typeof getLocalizedText>[0]) => {
   for (const locale of localizedFields) {
-    expect(value[locale]?.trim().length).toBeGreaterThan(0);
+    expect(getLocalizedText(value, locale).trim().length).toBeGreaterThan(0);
   }
 };
 

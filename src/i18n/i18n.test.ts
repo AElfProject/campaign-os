@@ -55,6 +55,7 @@ describe("i18n messages", () => {
     expect(Object.keys(messages["en-US"]).sort()).toEqual(canonicalSchemaKeys);
     expect(Object.keys(messages["zh-CN"]).sort()).toEqual(canonicalSchemaKeys);
     expect(Object.keys(messages["zh-TW"]).sort()).toEqual(canonicalSchemaKeys);
+    expect(Object.keys(messages["ja-JP"]).sort()).toEqual(canonicalSchemaKeys);
   });
 
   it("keeps English values equal to the v0.2 i18n schema", () => {
@@ -66,6 +67,13 @@ describe("i18n messages", () => {
       expect(messages["zh-CN"][key].trim()).not.toBe("");
       expect(messages["zh-TW"][key].trim()).not.toBe("");
     }
+  });
+
+  it("keeps ja-JP runtime messages on explicit English fallback copy", () => {
+    expect(messages["ja-JP"]["common.language"]).toBe("日本語");
+    expect(translate("ja-JP", "common.connectWallet")).toBe("Connect Wallet");
+    expect(translate("ja-JP", "campaign.translationManager")).toBe("Translation Manager");
+    expect(translate("ja-JP", "common.defaultLanguage")).toContain("English fallback");
   });
 
   it("provides English, Simplified Chinese, and Traditional Chinese UI copy", () => {
@@ -83,11 +91,11 @@ describe("i18n messages", () => {
   });
 
   it("restores and persists supported locale preferences", () => {
-    window.localStorage.setItem(localePreferenceStorageKey, "zh-TW");
+    window.localStorage.setItem(localePreferenceStorageKey, "ja-JP");
 
     const { result } = renderHook(() => useLocale());
 
-    expect(result.current.locale).toBe("zh-TW");
+    expect(result.current.locale).toBe("ja-JP");
     expect(result.current.localeSource).toBe("storage");
 
     act(() => result.current.setLocale("en-US"));
@@ -99,9 +107,9 @@ describe("i18n messages", () => {
   it("uses URL locale before stored locale for initial resolution", () => {
     window.localStorage.setItem(localePreferenceStorageKey, "en-US");
 
-    const { result } = renderHook(() => useLocale("zh-CN"));
+    const { result } = renderHook(() => useLocale("ja-JP"));
 
-    expect(result.current.locale).toBe("zh-CN");
+    expect(result.current.locale).toBe("ja-JP");
     expect(result.current.localeSource).toBe("url");
   });
 

@@ -1458,4 +1458,9 @@ export const adminOpsCopy = {
     unavailableReadiness: "不可用",
     zhDraft: "繁中 fallback/readiness",
   },
+  "ja-JP": {
+    ...enUS,
+    p1LocaleActivationSubtitle: "ja-JP runtime is active with English fallback until reviewed Japanese business copy is complete.",
+    zhDraft: "Japanese English fallback/readiness",
+  },
 } satisfies Record<SupportedLocale, typeof enUS>;

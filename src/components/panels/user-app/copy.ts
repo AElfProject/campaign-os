@@ -1,5 +1,7 @@
 import type { SupportedLocale } from "../../../domain";
 
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+
 const enUS = {
     active: "Live campaign",
     appHubTitle: "aelf App Hub",
@@ -612,6 +614,6 @@ export const userAppCopy = {
     shareReadyLocal: "本地預覽就緒",
     taskVerification: "任務驗證狀態",
   },
-} satisfies Record<SupportedLocale, typeof enUS>;
+} satisfies Record<BusinessContentLocale, typeof enUS>;
 
 export type UserAppCopy = (typeof userAppCopy)["en-US"];

@@ -17,10 +17,12 @@ import {
 import { LocaleStatusBadge, PublishStateBadge, WalletCompatibilityBadge } from "../../../badges/Badges";
 import type { ProjectConsoleCopy } from "../copy";
 
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+
 interface CampaignBuilderPanelProps {
   copy: ProjectConsoleCopy;
   draft?: CampaignDraft;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
 }
 
 const panelStyle: CSSProperties = {
@@ -138,7 +140,7 @@ const selectedButtonStyle: CSSProperties = {
   color: "#ffffff",
 };
 
-const formatDate = (value: string, locale: SupportedLocale) =>
+const formatDate = (value: string, locale: BusinessContentLocale) =>
   new Intl.DateTimeFormat(locale, {
     day: "2-digit",
     month: "short",
@@ -169,7 +171,7 @@ const ownerRoleLabels = {
     internal_operator: "內部營運",
     project_owner: "專案方",
   },
-} satisfies Record<SupportedLocale, Record<OwnerRole, string>>;
+} satisfies Record<BusinessContentLocale, Record<OwnerRole, string>>;
 
 const plannerStatusLabel = (
   status: AiPlannerDecisionStatus,
@@ -630,13 +632,17 @@ export const CampaignBuilderPanel = ({
                     </span>
                   </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    {launchDecisionLocales.map((statusLocale) => (
-                      <LocaleStatusBadge
-                        key={`${task.taskId}-${statusLocale}`}
-                        label={`${statusLocale} ${compactLocalizedText(task.localeReadiness[statusLocale])}`}
-                        status={task.localeReadiness[statusLocale]}
-                      />
-                    ))}
+                    {launchDecisionLocales.map((statusLocale) => {
+                      const status = task.localeReadiness[statusLocale] ?? task.localeReadiness["en-US"];
+
+                      return (
+                        <LocaleStatusBadge
+                          key={`${task.taskId}-${statusLocale}`}
+                          label={`${statusLocale} ${compactLocalizedText(status)}`}
+                          status={status}
+                        />
+                      );
+                    })}
                   </div>
                   <p style={bodyTextStyle}>
                     <strong>{copy.aiPlannerNextAction}: </strong>

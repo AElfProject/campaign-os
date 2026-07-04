@@ -273,17 +273,17 @@ describe("API Skill Contract registry", () => {
     }
   });
 
-  it("documents exact MVP locale targets without widening to P1 locales", () => {
+  it("documents activated locale targets with ja-JP runtime support", () => {
     const createCampaignFields = contractsById.create_campaign.inputFields;
     const postFields = contractsById.generate_campaign_posts.inputFields;
     const supportedLocales = createCampaignFields.find((field) => field.name === "supportedLocales");
     const targetLocales = postFields.find((field) => field.name === "targetLocales");
 
-    expect(supportedLocales?.description["en-US"]).toContain("en-US, zh-CN, and zh-TW");
-    expect(supportedLocales?.example).toBe("en-US,zh-CN,zh-TW");
-    expect(targetLocales?.description["en-US"]).toContain("zh-CN and zh-TW");
-    expect(targetLocales?.example).toBe("zh-CN,zh-TW");
-    expect(JSON.stringify([supportedLocales, targetLocales])).not.toContain("ja-JP");
+    expect(supportedLocales?.description["en-US"]).toContain("en-US, zh-CN, zh-TW, and ja-JP");
+    expect(supportedLocales?.example).toBe("en-US,zh-CN,zh-TW,ja-JP");
+    expect(targetLocales?.description["en-US"]).toContain("zh-CN, zh-TW, and ja-JP");
+    expect(targetLocales?.example).toBe("zh-CN,zh-TW,ja-JP");
+    expect(JSON.stringify([supportedLocales, targetLocales])).not.toContain("ko-KR");
   });
 
   it("covers v0.2 wallet, locale, contract, export, and evidence field groups", () => {

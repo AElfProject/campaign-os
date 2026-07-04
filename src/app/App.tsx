@@ -20,6 +20,8 @@ import {
 } from "../components/panels/project-console/ProjectConsole";
 import { UserAppPanel } from "../components/panels/user-app/UserAppPanel";
 
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+
 const surfaceCopy = {
   "en-US": {
     adminTitle: "Admin/Ops",
@@ -65,6 +67,21 @@ const surfaceCopy = {
     project: "專案控制台",
     shellTitle: "活動營運工作台",
     userTitle: "使用者應用",
+  },
+  "ja-JP": {
+    adminTitle: "Admin/Ops",
+    brand: "aelf Campaign OS",
+    browserLocalePromptDismiss: "Keep English",
+    browserLocalePromptMessage: "Japanese is active with English fallback for business copy.",
+    browserLocalePromptSwitch: "Switch to Japanese",
+    productAnalytics: "Analytics",
+    productCampaigns: "Campaigns",
+    productCreate: "Create",
+    productExport: "Export",
+    localeLabel: "Language",
+    project: "Project Console",
+    shellTitle: "Campaign operations shell",
+    userTitle: "User App",
   },
 } satisfies Record<SupportedLocale, Record<string, string>>;
 
@@ -140,7 +157,8 @@ export const App = () => {
     useState<ProjectWorkspaceKey>("campaigns");
   const [activeSurface, setActiveSurface] = useState<SurfaceKey>("project");
   const copy = surfaceCopy[locale];
-  const contentLocale: SupportedLocale = locale === "zh-TW" ? "en-US" : locale;
+  const contentLocale: BusinessContentLocale = locale === "zh-CN" ? "zh-CN" : "en-US";
+  const walletModalLocale: BusinessContentLocale = locale === "ja-JP" ? "en-US" : locale;
   const connectedWallet = walletSessions[0];
   const shareCard = useMemo(
     () => createCampaignShareCardReadiness(campaignDetail, locale),
@@ -212,7 +230,7 @@ export const App = () => {
           onWorkspaceChange={selectProjectWorkspace}
         />
       ) : activeSurface === "user" ? (
-        <UserAppPanel locale={contentLocale} shareLocale={locale} walletModalLocale={locale} />
+        <UserAppPanel locale={contentLocale} shareLocale={locale} walletModalLocale={walletModalLocale} />
       ) : (
         <AdminOpsPanel locale={contentLocale} />
       )}

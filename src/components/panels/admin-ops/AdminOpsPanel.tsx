@@ -54,6 +54,7 @@ import {
   type MetricTone,
   type P1LocaleActivationEvidenceState,
   type P1LocaleActivationStatus,
+  type P1LocaleExpansionReadinessStatus,
   type ProviderFeatureGateState,
   type ProviderLiveEvidenceStatus,
   type ResidualGapMissionQueueStatus,
@@ -579,7 +580,36 @@ const deliveryChecklistTraceabilityCopy = {
     traceabilitySubtitle: "docs/current 到實作證據",
     verificationCommands: "驗證命令",
   },
+  "ja-JP": {
+    boundary: "Audit-only source-to-evidence matrix",
+    deliveryChecklistTraceability: "Delivery Checklist Traceability",
+    evidenceArtifacts: "Evidence artifacts",
+    implementationRefs: "Implementation refs",
+    missingEvidence: "Missing evidence refs",
+    missingVerification: "Missing verification",
+    proofLevel: "Proof level",
+    riskNote: "Risk note",
+    sourceDocs: "Source docs",
+    traceabilitySubtitle: "docs/current to implementation evidence",
+    verificationCommands: "Verification commands",
+  },
 } satisfies Record<SupportedLocale, Record<string, string>>;
+
+const p1LocaleExpansionStatusState = (
+  status: P1LocaleExpansionReadinessStatus,
+): PublishState => status === "ready" ? "ready" : "warning";
+
+const p1LocaleExpansionStatusLabel = (
+  status: P1LocaleExpansionReadinessStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<P1LocaleExpansionReadinessStatus, string> = {
+    deferred: copy.deferred,
+    ready: copy.readyActions,
+  };
+
+  return labels[status];
+};
 
 const deliveryChecklistProofLevelState = (
   proofLevel: DeliveryChecklistTraceabilityProofLevel,
@@ -5299,8 +5329,8 @@ export const AdminOpsPanel = ({
                     <strong>{getLocalizedText(row.displayName, locale)}</strong>
                   </div>
                   <PublishStateBadge
-                    label={deliveryChecklistStatusLabel(row.status, copy)}
-                    state={deliveryChecklistStatusState(row.status)}
+                    label={p1LocaleExpansionStatusLabel(row.status, copy)}
+                    state={p1LocaleExpansionStatusState(row.status)}
                   />
                 </div>
                 <p style={mutedTextStyle}>{getLocalizedText(row.reason, locale)}</p>

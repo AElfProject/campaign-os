@@ -523,9 +523,9 @@ const unsupportedLocaleError: I18nReviewActionError = {
   code: "UNSUPPORTED_LOCALE",
   field: "targetLocale",
   message: localized(
-    "Only zh-CN and zh-TW can be target locales for this local review workflow.",
-    "该本地审核工作流仅支持 zh-CN 与 zh-TW 作为目标语言。",
-    "Only zh-CN and zh-TW can be target locales for this local review workflow.",
+    "Only zh-CN, zh-TW, and ja-JP can be target locales for this local review workflow.",
+    "该本地审核工作流仅支持 zh-CN、zh-TW 与 ja-JP 作为目标语言。",
+    "Only zh-CN, zh-TW, and ja-JP can be target locales for this local review workflow.",
   ),
 };
 
@@ -669,6 +669,11 @@ const localeLabels: Record<ContentRevision["locale"], LocalizedText> = {
     "en-US": "Traditional Chinese fallback",
     "zh-CN": "繁体中文回退",
     "zh-TW": "Traditional Chinese fallback",
+  },
+  "ja-JP": {
+    "en-US": "Japanese fallback",
+    "zh-CN": "日语英文回退",
+    "zh-TW": "Japanese fallback",
   },
 };
 
@@ -13214,9 +13219,9 @@ const p1LocalePrerequisites = (code: P1LocaleCode): LocalizedText[] => [
 ];
 
 const p1LocaleExpansionBoundary = localized(
-  "P1 locale rows are backlog planning only. Runtime support remains limited to en-US, zh-CN, and zh-TW.",
-  "P1 语言行仅用于 backlog 规划。运行时支持仍限定为 en-US、zh-CN 与 zh-TW。",
-  "P1 語言行僅用於 backlog 規劃。執行時支援仍限定為 en-US、zh-CN 與 zh-TW。",
+  "P1 locale rows are backlog planning except ja-JP, which is active with English fallback until reviewed Japanese copy is complete.",
+  "除已激活且在日文审核完成前使用英文 fallback 的 ja-JP 外，P1 语言行仅用于 backlog 规划。",
+  "除已啟用且在日文審核完成前使用英文 fallback 的 ja-JP 外，P1 語言行僅用於 backlog 規劃。",
 );
 
 const createP1LocaleExpansionReadiness = (): P1LocaleExpansionReadiness => {
@@ -13235,8 +13240,8 @@ const createP1LocaleExpansionReadiness = (): P1LocaleExpansionReadiness => {
       `${locale.code} 是已记录的 P1 语言，用于${locale.marketSignal["zh-CN"]}；但翻译、审核、QA、路由与发布门禁尚未在当前 MVP runtime 启用。`,
       `${locale.code} 是已記錄的 P1 語言，用於${locale.marketSignal["zh-TW"]}；但翻譯、審核、QA、路由與發布門禁尚未在目前 MVP runtime 啟用。`,
     ),
-    runtimeSupported: false,
-    status: "deferred",
+    runtimeSupported: locale.code === "ja-JP",
+    status: locale.code === "ja-JP" ? "ready" : "deferred",
   }));
 
   return {
@@ -13258,9 +13263,9 @@ const createP1LocaleExpansionReadiness = (): P1LocaleExpansionReadiness => {
 };
 
 const p1LocaleActivationBoundary = localized(
-  "P1 locale activation readiness is review-only. Runtime support remains limited to en-US, zh-CN, and zh-TW until a later per-locale activation mission approves content, QA, routing, analytics, and publish gates.",
-  "P1 语言激活 readiness 仅用于审核。运行时支持仍限定为 en-US、zh-CN 与 zh-TW，直到后续单语言激活 mission 批准内容、QA、路由、analytics 与发布门禁。",
-  "P1 語言啟用 readiness 僅用於審核。執行時支援仍限定為 en-US、zh-CN 與 zh-TW，直到後續單語言啟用 mission 批准內容、QA、routing、analytics 與發布門禁。",
+  "ja-JP is runtime-active with English fallback until reviewed Japanese copy is complete. Other P1 locales remain review-only backlog.",
+  "ja-JP 已激活运行时，并在日文审核完成前使用英文 fallback。其他 P1 语言仍为只读审核 backlog。",
+  "ja-JP 已啟用執行時，並在日文審核完成前使用英文 fallback。其他 P1 語言仍為只讀審核 backlog。",
 );
 
 type P1LocaleActivationSeed = {
@@ -13292,16 +13297,16 @@ const p1LocaleActivationSeeds: P1LocaleActivationSeed[] = [
   },
   {
     locale: "ja-JP",
-    status: "review_required",
+    status: "ready",
     ownerRole: "project_owner",
     recommendedFirst: true,
     contentOwnershipReadiness: "partial",
-    qaReadiness: "partial",
-    routingReadiness: "missing",
-    analyticsReadiness: "partial",
-    publishGateReadiness: "missing",
-    blockerIds: ["ja-jp-activation-mission-required", "runtime-route-gate-not-approved"],
-    evidenceReferences: ["v02-p1-locale-expansion", "mission/p1-locale-expansion"],
+    qaReadiness: "ready",
+    routingReadiness: "ready",
+    analyticsReadiness: "ready",
+    publishGateReadiness: "partial",
+    blockerIds: [],
+    evidenceReferences: ["v02-p1-locale-expansion", "mission/p1-locale-expansion", "mission/124-ja-jp-locale-activation"],
   },
   {
     locale: "vi-VN",
@@ -13370,9 +13375,9 @@ const p1LocaleActivationNextAction = (
   recommendedFirst: boolean,
 ): LocalizedText => recommendedFirst
   ? localized(
-    `Open the dedicated ${code} activation mission only after content ownership, QA scope, runtime routing, analytics, and publish gates are approved.`,
-    `仅在内容归属、QA 范围、运行时路由、analytics 与发布门禁获批后，开启专门的 ${code} 激活 mission。`,
-    `僅在內容歸屬、QA 範圍、執行時 routing、analytics 與發布門禁獲批後，開啟專門的 ${code} 啟用 mission。`,
+    `${code} runtime activation is ready with English fallback; complete reviewed Japanese copy before claiming full localization.`,
+    `${code} 运行时激活已就绪并使用英文 fallback；声明完整本地化前需完成已审核日文文案。`,
+    `${code} 執行時啟用已就緒並使用英文 fallback；宣稱完整本地化前需完成已審核日文文案。`,
   )
   : localized(
     `Keep ${code} queued behind the first locale activation mission until ownership and QA evidence are stronger.`,
@@ -14043,14 +14048,14 @@ const v02AcceptanceRows = (
       ownerRole: "project_owner",
       evidenceSurface: localized("P1 locale expansion readiness", "P1 语言扩展 readiness", "P1 語言擴展 readiness"),
       evidenceSummary: localized(
-        "ko-KR, ja-JP, vi-VN, id-ID, tr-TR, and es-ES are tracked as backlog rows, not active runtime locales.",
-        "ko-KR、ja-JP、vi-VN、id-ID、tr-TR 与 es-ES 作为 backlog rows 跟踪，不是当前激活 runtime locales。",
-        "ko-KR、ja-JP、vi-VN、id-ID、tr-TR 與 es-ES 作為 backlog rows 跟蹤，不是目前啟用 runtime locales。",
+        "ja-JP is active with English fallback; ko-KR, vi-VN, id-ID, tr-TR, and es-ES remain backlog rows.",
+        "ja-JP 已激活并使用英文 fallback；ko-KR、vi-VN、id-ID、tr-TR 与 es-ES 仍作为 backlog rows 跟踪。",
+        "ja-JP 已啟用並使用英文 fallback；ko-KR、vi-VN、id-ID、tr-TR 與 es-ES 仍作為 backlog rows 跟蹤。",
       ),
       nextMissionAction: localized(
-        "Open one locale activation mission only after content ownership and QA scope are approved.",
-        "内容归属与 QA 范围批准后，再为单个语言开启激活 mission。",
-        "內容歸屬與 QA 範圍批准後，再為單個語言開啟啟用 mission。",
+        "Complete reviewed Japanese copy before claiming full localization; keep remaining P1 locales queued for separate activation missions.",
+        "声明完整本地化前先完成已审核日文文案；其余 P1 语言继续排队等待单独激活 mission。",
+        "宣稱完整本地化前先完成已審核日文文案；其餘 P1 語言繼續排隊等待單獨啟用 mission。",
       ),
     }),
   ];
@@ -19242,11 +19247,8 @@ const createParticipantOperationsRow = (
   };
 };
 
-const emptyLocaleCounts = (): Record<SupportedLocale, number> => ({
-  "en-US": 0,
-  "zh-CN": 0,
-  "zh-TW": 0,
-});
+const emptyLocaleCounts = () =>
+  Object.fromEntries(supportedLocales.map((locale) => [locale, 0])) as Record<SupportedLocale, number>;
 
 export const createParticipantOperationsReadModel = (
   campaign: CampaignShellDetail,
@@ -19570,7 +19572,8 @@ const isI18nReviewActionId = (actionId: string): actionId is I18nReviewActionId 
 
 const isI18nReviewTargetLocale = (
   locale: SupportedLocale | (string & {}),
-): locale is Exclude<SupportedLocale, "en-US"> => locale === "zh-CN" || locale === "zh-TW";
+): locale is Exclude<SupportedLocale, "en-US"> =>
+  supportedLocales.includes(locale as SupportedLocale) && locale !== "en-US";
 
 const cloneContentRevisions = (revisions: readonly ContentRevision[]): ContentRevision[] =>
   revisions.map((revision) => ({ ...revision }));
