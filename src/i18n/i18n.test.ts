@@ -59,6 +59,7 @@ describe("i18n messages", () => {
     expect(Object.keys(messages["ko-KR"]).sort()).toEqual(canonicalSchemaKeys);
     expect(Object.keys(messages["vi-VN"]).sort()).toEqual(canonicalSchemaKeys);
     expect(Object.keys(messages["id-ID"]).sort()).toEqual(canonicalSchemaKeys);
+    expect(Object.keys(messages["tr-TR"]).sort()).toEqual(canonicalSchemaKeys);
   });
 
   it("keeps English values equal to the v0.2 i18n schema", () => {
@@ -98,6 +99,13 @@ describe("i18n messages", () => {
     expect(translate("id-ID", "common.connectWallet")).toBe("Connect Wallet");
     expect(translate("id-ID", "campaign.translationManager")).toBe("Translation Manager");
     expect(translate("id-ID", "common.defaultLanguage")).toContain("English fallback");
+  });
+
+  it("keeps tr-TR runtime messages on explicit English fallback copy", () => {
+    expect(messages["tr-TR"]["common.language"]).toBe("Turkish");
+    expect(translate("tr-TR", "common.connectWallet")).toBe("Connect Wallet");
+    expect(translate("tr-TR", "campaign.translationManager")).toBe("Translation Manager");
+    expect(translate("tr-TR", "common.defaultLanguage")).toContain("English fallback");
   });
 
   it("provides English, Simplified Chinese, and Traditional Chinese UI copy", () => {
