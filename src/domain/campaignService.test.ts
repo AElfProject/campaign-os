@@ -8,8 +8,8 @@ import {
 } from "./index";
 
 const service = createCampaignOsLocalService();
-const activatedRuntimeLocales = ["en-US", "zh-CN", "zh-TW", "ja-JP", "ko-KR", "vi-VN", "id-ID"] as const;
-const unsupportedP1RuntimeLocales = ["tr-TR", "es-ES"] as const;
+const activatedRuntimeLocales = ["en-US", "zh-CN", "zh-TW", "ja-JP", "ko-KR", "vi-VN", "id-ID", "tr-TR"] as const;
+const unsupportedP1RuntimeLocales = ["es-ES"] as const;
 
 const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
   if (!value || typeof value !== "object") {
@@ -217,7 +217,7 @@ describe("Campaign OS local API service facade", () => {
       rewardDisclaimerHash: "sha256:reward-disclaimer",
       startTime: "2026-08-01T00:00:00Z",
       status: "scheduled",
-      supportedLocales: ["zh-TW", "en-US", "zh-CN", "ja-JP", "ko-KR", "vi-VN", "id-ID"],
+      supportedLocales: ["zh-TW", "en-US", "zh-CN", "ja-JP", "ko-KR", "vi-VN", "id-ID", "tr-TR"],
       walletPolicy: "AA_ONLY",
     });
     const task = service.addTask({
@@ -1237,11 +1237,17 @@ describe("Campaign OS local API service facade", () => {
       sourceLocale: "en-US",
       targetLocale: "id-ID",
     });
+    const trTrDraft = service.generateI18nDraft({
+      campaignId: campaignDetail.id,
+      contentKeys: ["title"],
+      sourceLocale: "en-US",
+      targetLocale: "tr-TR",
+    });
     const unsupported = service.generateI18nDraft({
       campaignId: campaignDetail.id,
       contentKeys: ["title"],
       sourceLocale: "en-US",
-      targetLocale: "tr-TR" as never,
+      targetLocale: "es-ES" as never,
     });
 
     expect(zhCnDraft.payload).toMatchObject({
@@ -1294,6 +1300,14 @@ describe("Campaign OS local API service facade", () => {
       targetLocale: "id-ID",
     });
     expect(idIdDraft.payload?.draft.title).toBe("Awaken Sprint");
+    expect(trTrDraft.payload).toMatchObject({
+      aiDraft: false,
+      fallbackToEnglish: true,
+      humanReviewRequired: true,
+      sourceLocale: "en-US",
+      targetLocale: "tr-TR",
+    });
+    expect(trTrDraft.payload?.draft.title).toBe("Awaken Sprint");
     expect(unsupported).toMatchObject({
       ok: false,
       error: expect.objectContaining({ code: "UNSUPPORTED_LOCALE", field: "targetLocale" }),
@@ -1491,6 +1505,7 @@ describe("Campaign OS local API service facade", () => {
       "id-ID",
       "ja-JP",
       "ko-KR",
+      "tr-TR",
       "vi-VN",
       "zh-CN",
       "zh-TW",
@@ -1499,6 +1514,7 @@ describe("Campaign OS local API service facade", () => {
     expect(JSON.stringify(analytics.payload?.localeSplit)).toContain("ko-KR");
     expect(JSON.stringify(analytics.payload?.localeSplit)).toContain("vi-VN");
     expect(JSON.stringify(analytics.payload?.localeSplit)).toContain("id-ID");
+    expect(JSON.stringify(analytics.payload?.localeSplit)).toContain("tr-TR");
     expect(JSON.stringify(analytics.payload?.localeSplit)).toContain("zh-TW");
     expect(advancedAnalytics.ok).toBe(true);
     expect(advancedAnalytics.payload).toMatchObject({
@@ -1709,6 +1725,14 @@ describe("Campaign OS local API service facade", () => {
         walletType: "AA",
       },
       {
+        count: 0,
+        id: "wallet-locale-aa-tr-tr",
+        label: "AA / tr-TR",
+        locale: "tr-TR",
+        percentage: 0,
+        walletType: "AA",
+      },
+      {
         count: 1,
         id: "wallet-locale-eoa-en-us",
         label: "EOA / en-US",
@@ -1761,6 +1785,14 @@ describe("Campaign OS local API service facade", () => {
         id: "wallet-locale-eoa-id-id",
         label: "EOA / id-ID",
         locale: "id-ID",
+        percentage: 0,
+        walletType: "EOA",
+      },
+      {
+        count: 0,
+        id: "wallet-locale-eoa-tr-tr",
+        label: "EOA / tr-TR",
+        locale: "tr-TR",
         percentage: 0,
         walletType: "EOA",
       },
