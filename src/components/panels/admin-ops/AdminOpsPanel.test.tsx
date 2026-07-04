@@ -145,6 +145,9 @@ describe("Admin/Ops shell", () => {
       within(p1LocaleActivationReadiness).getAllByText("mission/136-ja-jp-locale-copy-publish-readiness").length,
     ).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/127-vi-vn-locale-activation").length).toBeGreaterThan(0);
+    expect(
+      within(p1LocaleActivationReadiness).getAllByText("mission/137-vi-vn-locale-copy-publish-readiness").length,
+    ).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/128-id-id-locale-activation").length).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/129-tr-tr-locale-activation").length).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/130-es-es-locale-activation").length).toBeGreaterThan(0);
@@ -159,6 +162,12 @@ describe("Admin/Ops shell", () => {
     ).toBeGreaterThan(0);
     expect(
       within(p1LocaleActivationReadiness).getAllByText(/reviewed Japanese business copy separate from full localization claims/i).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(p1LocaleActivationReadiness).getAllByText(/vi-VN runtime activation, English fallback-copy evidence, and publish-gate evidence are ready/i).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(p1LocaleActivationReadiness).getAllByText(/reviewed Vietnamese business copy separate from full localization claims/i).length,
     ).toBeGreaterThan(0);
     expect(
       within(p1LocaleActivationReadiness).getAllByText(/ko-KR runtime activation, English fallback-copy evidence, and publish-gate evidence are ready/i).length,
@@ -1415,6 +1424,9 @@ describe("Admin/Ops shell", () => {
       within(zhP1LocaleActivationReadiness).getAllByText("mission/136-ja-jp-locale-copy-publish-readiness").length,
     ).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/127-vi-vn-locale-activation").length).toBeGreaterThan(0);
+    expect(
+      within(zhP1LocaleActivationReadiness).getAllByText("mission/137-vi-vn-locale-copy-publish-readiness").length,
+    ).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/128-id-id-locale-activation").length).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/129-tr-tr-locale-activation").length).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/130-es-es-locale-activation").length).toBeGreaterThan(0);
@@ -1424,6 +1436,9 @@ describe("Admin/Ops shell", () => {
     expect(within(zhP1LocaleActivationReadiness).getAllByText(/ja-JP、ko-KR、vi-VN、id-ID、tr-TR 与 es-ES 已激活运行时/).length).toBeGreaterThan(0);
     expect(
       within(zhP1LocaleActivationReadiness).getAllByText(/ja-JP 运行时激活、本地 fallback 文案证据与发布门禁证据已就绪/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(zhP1LocaleActivationReadiness).getAllByText(/vi-VN 运行时激活、本地 fallback 文案证据与发布门禁证据已就绪/).length,
     ).toBeGreaterThan(0);
     expect(
       within(zhP1LocaleActivationReadiness).getAllByText(/ko-KR 运行时激活、本地 fallback 文案证据与发布门禁证据已就绪/).length,
