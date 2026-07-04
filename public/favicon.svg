@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="aelf Campaign OS">
+  <rect width="64" height="64" rx="12" fill="#071426" />
+  <path d="M18 42L32 14l14 28h-8l-2.8-6.3H28.8L26 42h-8zm14-21.2l-4.7 10.7h9.4L32 20.8z" fill="#ffffff" />
+  <path d="M17 48h30v5H17z" fill="#1c64f2" />
+</svg>

@@ -83,6 +83,7 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("option", { name: "繁體中文" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "日本語" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "한국어" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Tiếng Việt" })).toBeInTheDocument();
     expect(
       screen.getByRole("navigation", { name: "Project Console workspace navigation" }),
     ).toBeInTheDocument();
@@ -307,6 +308,17 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
   });
 
+  it("initializes vi-VN from the URL while business content falls back safely", () => {
+    pushRoute("/vi-VN/campaigns/awaken-sprint");
+
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: "Campaign operations shell" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Language")).toHaveValue("vi-VN");
+    expect(screen.getByRole("option", { name: "Tiếng Việt" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
+  });
+
   it("updates campaign metadata from the active share card without duplicate tags", () => {
     pushRoute("/zh-CN/campaigns/awaken-sprint");
 
@@ -389,6 +401,18 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
   });
 
+  it("switches the app shell manually to vi-VN while preserving English business fallback", () => {
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Language"), { target: { value: "vi-VN" } });
+
+    expect(screen.getByRole("heading", { name: "Campaign operations shell" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Language")).toHaveValue("vi-VN");
+    expect(window.localStorage.getItem(localePreferenceStorageKey)).toBe("vi-VN");
+    expect(screen.getByRole("option", { name: "Tiếng Việt" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
+  });
+
   it("preserves ja-JP share readiness while wallet modal copy falls back to English", () => {
     pushRoute("/ja-JP/campaigns/awaken-sprint");
 
@@ -431,6 +455,33 @@ describe("Campaign OS app shell", () => {
     expect(
       within(canonicalUrlCard as HTMLElement).getByText(
         "https://campaign.local/ko-KR/campaigns/awaken-sprint",
+      ),
+    ).toBeInTheDocument();
+    expect(within(shareReadiness).getByText("English fallback")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+
+    expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Extension not installed: Install or open your EOA wallet extension."),
+    ).toBeInTheDocument();
+  });
+
+  it("preserves vi-VN share readiness while wallet modal copy falls back to English", () => {
+    pushRoute("/vi-VN/campaigns/awaken-sprint");
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    const shareReadiness = screen.getByRole("region", { name: "Share card readiness" });
+    const canonicalUrlCard = within(shareReadiness)
+      .getByText("Canonical URL")
+      .closest("article");
+
+    expect(canonicalUrlCard).not.toBeNull();
+    expect(
+      within(canonicalUrlCard as HTMLElement).getByText(
+        "https://campaign.local/vi-VN/campaigns/awaken-sprint",
       ),
     ).toBeInTheDocument();
     expect(within(shareReadiness).getByText("English fallback")).toBeInTheDocument();
