@@ -32,6 +32,7 @@ import {
   type DeliveryAcceptanceSeverity,
   type DeliveryAcceptanceStatus,
   type DeliveryChecklistStatus,
+  type DeliveryChecklistTraceabilityProofLevel,
   type ExportReadinessState,
   type AiContentArtifactLifecycle,
   type AiContentQualityGateStatus,
@@ -537,6 +538,61 @@ const deliveryChecklistStatusState = (status: DeliveryChecklistStatus) =>
     : status === "needs_review" || status === "deferred"
       ? "warning"
       : "ready";
+
+const deliveryChecklistTraceabilityCopy = {
+  "en-US": {
+    boundary: "Audit-only source-to-evidence matrix",
+    deliveryChecklistTraceability: "Delivery Checklist Traceability",
+    evidenceArtifacts: "Evidence artifacts",
+    implementationRefs: "Implementation refs",
+    missingEvidence: "Missing evidence refs",
+    missingVerification: "Missing verification",
+    proofLevel: "Proof level",
+    riskNote: "Risk note",
+    sourceDocs: "Source docs",
+    traceabilitySubtitle: "docs/current to implementation evidence",
+    verificationCommands: "Verification commands",
+  },
+  "zh-CN": {
+    boundary: "仅审计的来源到证据矩阵",
+    deliveryChecklistTraceability: "交付清单追踪矩阵",
+    evidenceArtifacts: "证据 artifacts",
+    implementationRefs: "实现引用",
+    missingEvidence: "缺少证据引用",
+    missingVerification: "缺少验证",
+    proofLevel: "证明级别",
+    riskNote: "风险说明",
+    sourceDocs: "来源文档",
+    traceabilitySubtitle: "docs/current 到实现证据",
+    verificationCommands: "验证命令",
+  },
+  "zh-TW": {
+    boundary: "僅審計的來源到證據矩陣",
+    deliveryChecklistTraceability: "交付清單追蹤矩陣",
+    evidenceArtifacts: "證據 artifacts",
+    implementationRefs: "實作引用",
+    missingEvidence: "缺少證據引用",
+    missingVerification: "缺少驗證",
+    proofLevel: "證明級別",
+    riskNote: "風險說明",
+    sourceDocs: "來源文件",
+    traceabilitySubtitle: "docs/current 到實作證據",
+    verificationCommands: "驗證命令",
+  },
+} satisfies Record<SupportedLocale, Record<string, string>>;
+
+const deliveryChecklistProofLevelState = (
+  proofLevel: DeliveryChecklistTraceabilityProofLevel,
+): PublishState =>
+  proofLevel === "live_evidence_required"
+    ? "blocker"
+    : proofLevel === "future_scope"
+      ? "warning"
+      : "ready";
+
+const deliveryChecklistProofLevelLabel = (
+  proofLevel: DeliveryChecklistTraceabilityProofLevel,
+) => readableCode(proofLevel);
 
 const p1LocaleActivationStatusState = (
   status: P1LocaleActivationStatus,
@@ -1369,6 +1425,8 @@ export const AdminOpsPanel = ({
   const aiContentPack = adminOps.aiContentPack;
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
+  const deliveryChecklistTraceability = deliveryChecklist.traceability;
+  const traceCopy = deliveryChecklistTraceabilityCopy[locale];
   const p1LocaleActivationReadiness = adminOps.p1LocaleActivationReadiness;
   const walletProviderEvidenceRecovery = recoverWalletProviderEvidenceState(
     campaign,
@@ -2864,6 +2922,125 @@ export const AdminOpsPanel = ({
                   </div>
                 ))}
               </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={traceCopy.deliveryChecklistTraceability} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{traceCopy.traceabilitySubtitle}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {traceCopy.deliveryChecklistTraceability}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${deliveryChecklistTraceability.summary.totalRows} ${copy.totalItems}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${deliveryChecklistTraceability.summary.reviewRequiredRows} ${copy.needsReview}`}
+              state={deliveryChecklistTraceability.summary.reviewRequiredRows > 0 ? "warning" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${deliveryChecklistTraceability.summary.missingVerificationRows} ${traceCopy.missingVerification}`}
+              state={deliveryChecklistTraceability.summary.missingVerificationRows > 0 ? "warning" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{traceCopy.boundary}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {getLocalizedText(deliveryChecklistTraceability.boundary, locale)}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.covered}</p>
+            <p style={valueStyle}>{deliveryChecklistTraceability.summary.verifiedRows}</p>
+            <p style={mutedTextStyle}>{deliveryChecklistProofLevelLabel("focused_test")}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.needsReview}</p>
+            <p style={valueStyle}>{deliveryChecklistTraceability.summary.reviewRequiredRows}</p>
+            <p style={mutedTextStyle}>{deliveryChecklistProofLevelLabel("live_evidence_required")}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.deferred}</p>
+            <p style={valueStyle}>{deliveryChecklistTraceability.summary.deferredRows}</p>
+            <p style={mutedTextStyle}>{deliveryChecklistProofLevelLabel("future_scope")}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{traceCopy.missingEvidence}</p>
+            <p style={valueStyle}>{deliveryChecklistTraceability.summary.missingEvidenceRows}</p>
+            <p style={mutedTextStyle}>{getLocalizedText(deliveryChecklistTraceability.summary.nextAction, locale)}</p>
+          </article>
+        </div>
+        <div style={gridStyle}>
+          {deliveryChecklistTraceability.rows.map((row) => (
+            <article key={row.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{row.sourceRequirement}</p>
+                  <strong>{getLocalizedText(row.label, locale)}</strong>
+                </div>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge
+                    label={deliveryChecklistStatusLabel(row.status, copy)}
+                    state={deliveryChecklistStatusState(row.status)}
+                  />
+                  <PublishStateBadge
+                    label={deliveryChecklistProofLevelLabel(row.proofLevel)}
+                    state={deliveryChecklistProofLevelState(row.proofLevel)}
+                  />
+                </span>
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{traceCopy.proofLevel}</p>
+                  <p style={wrapTextStyle}>{deliveryChecklistProofLevelLabel(row.proofLevel)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{traceCopy.sourceDocs}</p>
+                  {row.sourceDocs.slice(0, 3).map((ref) => (
+                    <p key={`${row.id}-${ref.path}`} style={wrapTextStyle}>
+                      {ref.path}
+                    </p>
+                  ))}
+                </div>
+                <div>
+                  <p style={labelStyle}>{traceCopy.implementationRefs}</p>
+                  {row.implementationRefs.slice(0, 3).map((ref) => (
+                    <p key={`${row.id}-${ref.path}`} style={wrapTextStyle}>
+                      {ref.path}
+                    </p>
+                  ))}
+                </div>
+                <div>
+                  <p style={labelStyle}>{traceCopy.verificationCommands}</p>
+                  {row.verificationCommands.length > 0 ? row.verificationCommands.slice(0, 3).map((ref) => (
+                    <p key={`${row.id}-${ref.path}`} style={wrapTextStyle}>
+                      {ref.path}
+                    </p>
+                  )) : <p style={wrapTextStyle}>{traceCopy.missingVerification}</p>}
+                </div>
+                <div>
+                  <p style={labelStyle}>{traceCopy.evidenceArtifacts}</p>
+                  {row.evidenceArtifacts.length > 0 ? row.evidenceArtifacts.slice(0, 3).map((ref) => (
+                    <p key={`${row.id}-${ref.path}`} style={wrapTextStyle}>
+                      {ref.path}
+                    </p>
+                  )) : <p style={wrapTextStyle}>{traceCopy.missingEvidence}</p>}
+                </div>
+              </div>
+              <p style={wrapTextStyle}>
+                {traceCopy.riskNote}: {getLocalizedText(row.riskNote, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(row.nextAction, locale)}
+              </p>
             </article>
           ))}
         </div>

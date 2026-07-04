@@ -155,6 +155,48 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Export CSV columns tested");
     expectVisibleText("Contract claim mode requires admin approval");
     expectVisibleText("Reward custody excluded from MVP");
+    const deliveryChecklistTraceability = screen.getByLabelText("Delivery Checklist Traceability");
+    expect(
+      within(deliveryChecklistTraceability).getByRole("heading", {
+        name: "Delivery Checklist Traceability",
+      }),
+    ).toBeInTheDocument();
+    expect(within(deliveryChecklistTraceability).getByText("docs/current to implementation evidence")).toBeInTheDocument();
+    expect(within(deliveryChecklistTraceability).getByText("Audit-only source-to-evidence matrix")).toBeInTheDocument();
+    expect(within(deliveryChecklistTraceability).getByText(/does not read private docs/)).toBeInTheDocument();
+    expect(within(deliveryChecklistTraceability).getAllByText("Proof level").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistTraceability).getAllByText("Source docs").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistTraceability).getAllByText("Implementation refs").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistTraceability).getAllByText("Verification commands").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistTraceability).getAllByText("Evidence artifacts").length).toBeGreaterThan(0);
+    expect(
+      within(deliveryChecklistTraceability).getAllByText(
+        "docs/current/aelf_campaign_os_v0.2/docs/09_delivery_checklist_v0.2.md#product-checklist",
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(deliveryChecklistTraceability).getAllByText(
+        "src/domain/campaign.ts#createDeliveryChecklistReadinessConsole",
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(deliveryChecklistTraceability).getAllByText(
+        "npm test -- src/domain/domain.test.ts src/components/panels/admin-ops/AdminOpsPanel.test.tsx -- --runInBand",
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(deliveryChecklistTraceability).getAllByText(
+        "evidence/delivery-checklist-evidence-traceability-01KWPAY5/WP02/implementation-evidence.md",
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(within(deliveryChecklistTraceability).getAllByText("live evidence required").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistTraceability).getAllByText("future scope").length).toBeGreaterThan(0);
+    expect(within(deliveryChecklistTraceability).getAllByText("Missing verification").length).toBeGreaterThan(0);
+    expect(
+      within(deliveryChecklistTraceability).queryByRole("button", {
+        name: /upload|connect|sign|signature|transact|export file|store|reward custody|distribute/i,
+      }),
+    ).not.toBeInTheDocument();
     expectVisibleText("Contract claim disabled for MVP");
     expectVisibleText("Reward custody is outside Campaign OS");
     expectVisibleText("Security review");
