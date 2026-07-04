@@ -2,7 +2,11 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../../app/App";
-import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
+import {
+  campaignDetail,
+  createWalletProviderEvidenceAllApprovedSampleSnapshot,
+  EXPORT_CSV_COLUMNS,
+} from "../../../domain";
 import { AdminOpsPanel } from "./AdminOpsPanel";
 
 const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
@@ -919,7 +923,7 @@ describe("Admin/Ops shell", () => {
       name: "Wallet Provider Evidence State Recovery",
     })).toBeInTheDocument();
     expect(within(recovery).getAllByText("Seeded default").length).toBeGreaterThan(0);
-    expect(within(recovery).getAllByText("Storage not requested").length).toBeGreaterThan(0);
+    expect(within(recovery).getAllByText("Storage available").length).toBeGreaterThan(0);
     expect(within(recovery).getByText("0/5")).toBeInTheDocument();
     expect(within(releaseReadiness).getByText("0/5")).toBeInTheDocument();
     expect(within(recovery).getByRole("button", { name: "Load approved sample" })).toBeInTheDocument();
@@ -931,6 +935,67 @@ describe("Admin/Ops shell", () => {
         name: forbiddenWalletProviderRecoveryActionName,
       }),
     ).not.toBeInTheDocument();
+  });
+
+  it("recovers a saved all-approved wallet provider evidence snapshot on first render", () => {
+    window.localStorage.setItem(
+      walletProviderEvidenceRecoveryStorageKey,
+      JSON.stringify(createWalletProviderEvidenceAllApprovedSampleSnapshot("2026-07-04T02:00:00Z")),
+    );
+
+    render(<AdminOpsPanel locale="en-US" />);
+
+    expect(within(getWalletProviderEvidenceRecovery()).getAllByText("Saved local state").length).toBeGreaterThan(0);
+    expect(within(getWalletProviderEvidenceRecovery()).getAllByText("Storage available").length).toBeGreaterThan(0);
+    expect(within(getWalletProviderEvidenceRecovery()).getByText("5/5")).toBeInTheDocument();
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("5/5")).toBeInTheDocument();
+  });
+
+  it("starts from seeded defaults on first render when no saved wallet provider evidence snapshot exists", () => {
+    render(<AdminOpsPanel locale="en-US" />);
+
+    const recovery = getWalletProviderEvidenceRecovery();
+
+    expect(within(recovery).getAllByText("Seeded default").length).toBeGreaterThan(0);
+    expect(within(recovery).getAllByText("Storage available").length).toBeGreaterThan(0);
+    expect(within(recovery).getByText("0/5")).toBeInTheDocument();
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("0/5")).toBeInTheDocument();
+  });
+
+  it("keeps seeded defaults on first render when saved wallet provider evidence cannot be read", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("storage denied");
+    });
+
+    render(<AdminOpsPanel locale="en-US" />);
+
+    const recovery = getWalletProviderEvidenceRecovery();
+
+    expect(within(recovery).getAllByText("Seeded default").length).toBeGreaterThan(0);
+    expect(within(recovery).getAllByText("Storage read fallback").length).toBeGreaterThan(0);
+    expect(within(recovery).getByText("0/5")).toBeInTheDocument();
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("0/5")).toBeInTheDocument();
+  });
+
+  it("falls back to blocked readiness on first render for an invalid saved wallet provider evidence snapshot", () => {
+    window.localStorage.setItem(
+      walletProviderEvidenceRecoveryStorageKey,
+      JSON.stringify({
+        ...createWalletProviderEvidenceAllApprovedSampleSnapshot("2026-07-04T02:00:00Z"),
+        version: 2,
+      }),
+    );
+
+    render(<AdminOpsPanel locale="en-US" />);
+
+    const recovery = getWalletProviderEvidenceRecovery();
+
+    expect(within(recovery).getAllByText("Saved local state").length).toBeGreaterThan(0);
+    expect(within(recovery).getAllByText("Fallback active").length).toBeGreaterThan(0);
+    expect(within(recovery).getAllByText("Blocked").length).toBeGreaterThan(0);
+    expect(within(recovery).getByText("0/5")).toBeInTheDocument();
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("0/5")).toBeInTheDocument();
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getAllByText("Blocked").length).toBeGreaterThan(0);
   });
 
   it("loads an approved local sample into visible wallet provider evidence release readiness", () => {
@@ -969,7 +1034,19 @@ describe("Admin/Ops shell", () => {
     unmount();
     render(<AdminOpsPanel locale="en-US" />);
 
+    expect(within(getWalletProviderEvidenceRecovery()).getAllByText("Saved local state").length).toBeGreaterThan(0);
+    expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("5/5")).toBeInTheDocument();
+  });
+
+  it("keeps the manual wallet provider evidence restore action available after startup", () => {
+    render(<AdminOpsPanel locale="en-US" />);
+
     expect(within(getWalletProviderEvidenceReleaseReadiness()).getByText("0/5")).toBeInTheDocument();
+
+    window.localStorage.setItem(
+      walletProviderEvidenceRecoveryStorageKey,
+      JSON.stringify(createWalletProviderEvidenceAllApprovedSampleSnapshot("2026-07-04T03:00:00Z")),
+    );
     fireEvent.click(within(getWalletProviderEvidenceRecovery()).getByRole("button", {
       name: "Restore saved state",
     }));

@@ -1506,6 +1506,16 @@ export interface WalletProviderEvidenceRecoveryStorageStatus {
   message: LocalizedText;
 }
 
+export interface WalletProviderEvidenceRecoveryStartupRead {
+  snapshot: WalletProviderEvidenceRecoverySnapshot | null;
+  storageState: WalletProviderEvidenceRecoveryStorageState;
+}
+
+export interface WalletProviderEvidenceRecoveryInitialUiState extends WalletProviderEvidenceRecoveryStartupRead {
+  lastRecoveredAt: string;
+  source: WalletProviderEvidenceRecoverySource;
+}
+
 export interface WalletProviderEvidenceRecoveryOptions {
   source?: WalletProviderEvidenceRecoverySource;
   storageState?: WalletProviderEvidenceRecoveryStorageState;

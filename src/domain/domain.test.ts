@@ -62,6 +62,7 @@ import {
   createWalletProviderEvidenceCloseoutPackage,
   createWalletProviderEvidenceIntake,
   createWalletProviderEvidenceActivation,
+  createWalletProviderEvidenceRecoveryInitialUiState,
   createWalletProviderEvidenceReleaseReadiness,
   createWalletProviderEvidenceRequestPacket,
   createWalletProviderQaReadinessGate,
@@ -3081,6 +3082,47 @@ describe("Campaign OS domain foundation", () => {
     });
   });
 
+  it("derives wallet provider evidence startup recovery state from storage reads", () => {
+    const snapshot = createWalletProviderEvidenceAllApprovedSampleSnapshot("2026-07-04T00:00:00Z");
+
+    expect(createWalletProviderEvidenceRecoveryInitialUiState(
+      {
+        snapshot,
+        storageState: "available",
+      },
+      "2026-07-04T01:00:00Z",
+    )).toEqual({
+      lastRecoveredAt: "2026-07-04T01:00:00Z",
+      snapshot,
+      source: "local_storage",
+      storageState: "available",
+    });
+    expect(createWalletProviderEvidenceRecoveryInitialUiState(
+      {
+        snapshot: null,
+        storageState: "available",
+      },
+      "2026-07-04T01:00:00Z",
+    )).toMatchObject({
+      lastRecoveredAt: "2026-07-04T01:00:00Z",
+      snapshot: null,
+      source: "seeded_default",
+      storageState: "available",
+    });
+    expect(createWalletProviderEvidenceRecoveryInitialUiState(
+      {
+        snapshot,
+        storageState: "read_failed",
+      },
+      "2026-07-04T01:00:00Z",
+    )).toMatchObject({
+      lastRecoveredAt: "2026-07-04T01:00:00Z",
+      snapshot,
+      source: "seeded_default",
+      storageState: "read_failed",
+    });
+  });
+
   it("restores an all-approved local wallet provider evidence snapshot to 5/5 readiness", () => {
     const gate = createWalletProviderQaReadinessGate(walletSessions);
     const snapshot = createWalletProviderEvidenceAllApprovedSampleSnapshot("2026-07-04T00:00:00Z");
@@ -3137,9 +3179,25 @@ describe("Campaign OS domain foundation", () => {
       ...createWalletProviderEvidenceAllApprovedSampleSnapshot(),
       version: 2,
     };
-    const recovered = recoverWalletProviderEvidenceState(campaignDetail, gate, snapshot);
+    const initialState = createWalletProviderEvidenceRecoveryInitialUiState(
+      {
+        snapshot,
+        storageState: "available",
+      },
+      "2026-07-04T01:00:00Z",
+    );
+    const recovered = recoverWalletProviderEvidenceState(
+      campaignDetail,
+      gate,
+      initialState.snapshot,
+      {
+        source: initialState.source,
+        storageState: initialState.storageState,
+      },
+    );
 
     expect(recovered.status).toBe("fallback_invalid_snapshot");
+    expect(recovered.source).toBe("local_storage");
     expect(recovered.validationErrors).toEqual([
       expect.objectContaining({
         code: "UNSUPPORTED_VERSION",
