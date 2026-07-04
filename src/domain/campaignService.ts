@@ -647,6 +647,7 @@ const defaultGeneratedPostTargetLocales: readonly Exclude<SupportedLocale, "en-U
   "vi-VN",
   "id-ID",
   "tr-TR",
+  "es-ES",
 ];
 
 const isSupportedGeneratedPostTargetLocale = (
@@ -1267,8 +1268,8 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       return failure(
         "UNSUPPORTED_LOCALE",
         "supportedLocales",
-        "Only the exact activated locale set en-US, zh-CN, zh-TW, ja-JP, ko-KR, vi-VN, id-ID, and tr-TR is supported by this local runtime.",
-        "当前本地运行时仅支持完整已激活语言集合 en-US、zh-CN、zh-TW、ja-JP、ko-KR、vi-VN、id-ID 与 tr-TR。",
+        "Only the exact activated locale set en-US, zh-CN, zh-TW, ja-JP, ko-KR, vi-VN, id-ID, tr-TR, and es-ES is supported by this local runtime.",
+        "当前本地运行时仅支持完整已激活语言集合 en-US、zh-CN、zh-TW、ja-JP、ko-KR、vi-VN、id-ID、tr-TR 与 es-ES。",
       );
     }
 
@@ -1928,8 +1929,8 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       return failure(
         "UNSUPPORTED_LOCALE",
         "targetLocales",
-        "Campaign posts support activated target locales zh-CN, zh-TW, ja-JP, ko-KR, vi-VN, id-ID, and tr-TR only.",
-        "活动帖子仅支持已激活目标语言 zh-CN、zh-TW、ja-JP、ko-KR、vi-VN、id-ID 与 tr-TR。",
+        "Campaign posts support activated target locales zh-CN, zh-TW, ja-JP, ko-KR, vi-VN, id-ID, tr-TR, and es-ES only.",
+        "活动帖子仅支持已激活目标语言 zh-CN、zh-TW、ja-JP、ko-KR、vi-VN、id-ID、tr-TR 与 es-ES。",
       );
     }
 

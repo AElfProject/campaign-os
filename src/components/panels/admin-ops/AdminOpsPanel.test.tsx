@@ -117,8 +117,9 @@ describe("Admin/Ops shell", () => {
     expect(within(p1LocaleActivationReadiness).getByText("Vietnamese")).toBeInTheDocument();
     expect(within(p1LocaleActivationReadiness).getByText("Indonesian")).toBeInTheDocument();
     expect(within(p1LocaleActivationReadiness).getByText("Turkish")).toBeInTheDocument();
+    expect(within(p1LocaleActivationReadiness).getByText("Spanish")).toBeInTheDocument();
     expect(within(p1LocaleActivationReadiness).getByText("0 Blocked")).toBeInTheDocument();
-    expect(within(p1LocaleActivationReadiness).getAllByText("Review required").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("0 Review required").length).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("Routing readiness").length).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("Analytics readiness").length).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("Publish-gate readiness").length).toBeGreaterThan(0);
@@ -136,12 +137,12 @@ describe("Admin/Ops shell", () => {
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/127-vi-vn-locale-activation").length).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/128-id-id-locale-activation").length).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/129-tr-tr-locale-activation").length).toBeGreaterThan(0);
-    expect(within(p1LocaleActivationReadiness).getAllByText("product-future-locale-expansion").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("mission/130-es-es-locale-activation").length).toBeGreaterThan(0);
     expect(
-      within(p1LocaleActivationReadiness).getAllByText(/ja-JP, ko-KR, vi-VN, id-ID, and tr-TR are runtime-active with English fallback/).length,
+      within(p1LocaleActivationReadiness).getAllByText(/ja-JP, ko-KR, vi-VN, id-ID, tr-TR, and es-ES are runtime-active with English fallback/).length,
     ).toBeGreaterThan(0);
     expect(
-      within(p1LocaleActivationReadiness).getAllByText(/tr-TR runtime activation is ready with English fallback/i).length,
+      within(p1LocaleActivationReadiness).getAllByText(/es-ES runtime activation is ready with English fallback/i).length,
     ).toBeGreaterThan(0);
     expect(
       within(p1LocaleActivationReadiness).queryByRole("button", {
@@ -149,9 +150,9 @@ describe("Admin/Ops shell", () => {
       }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "P1 locale expansion readiness" })).toBeInTheDocument();
-    expectVisibleText(/ja-JP, ko-KR, vi-VN, id-ID, and tr-TR, which are runtime-active with English fallback/);
-    expectVisibleText("1 Deferred");
-    expectVisibleText("5 Covered");
+    expectVisibleText(/All P1 locale rows are runtime-active with English fallback/);
+    expectVisibleText("0 Deferred");
+    expectVisibleText("6 Covered");
     for (const localeCode of ["ko-KR", "ja-JP", "vi-VN", "id-ID", "tr-TR", "es-ES"]) {
       expectVisibleText(localeCode);
     }
@@ -159,7 +160,8 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Vietnamese");
     expectVisibleText("Indonesian");
     expectVisibleText("Turkish");
-    expectVisibleText(/tr-TR runtime activation is ready with English fallback/);
+    expectVisibleText("Spanish");
+    expectVisibleText(/es-ES is runtime-active with English fallback/);
     expectVisibleText(/complete reviewed locale copy before claiming full localization/i);
     expectVisibleText("Contract impact review before publish");
     expectVisibleText("Portkey AA connect tested");
@@ -294,7 +296,7 @@ describe("Admin/Ops shell", () => {
     expect(within(residualGapMissionQueue).getByText("Live wallet provider evidence mission")).toBeInTheDocument();
     expect(within(residualGapMissionQueue).getByText("mission/live-wallet-provider-evidence")).toBeInTheDocument();
     expect(within(residualGapMissionQueue).getByText(/Wallet Provider Evidence Release Readiness must approve all required scenarios/)).toBeInTheDocument();
-    expect(within(residualGapMissionQueue).getByText("mission/p1-locale-expansion")).toBeInTheDocument();
+    expect(within(residualGapMissionQueue).queryByText("mission/p1-locale-expansion")).not.toBeInTheDocument();
     expect(within(residualGapMissionQueue).getAllByText("Backlog items").length).toBeGreaterThan(0);
     expect(within(residualGapMissionQueue).getAllByText("Launch-blocking items").length).toBeGreaterThan(0);
     expect(
@@ -1299,8 +1301,9 @@ describe("Admin/Ops shell", () => {
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/127-vi-vn-locale-activation").length).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/128-id-id-locale-activation").length).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/129-tr-tr-locale-activation").length).toBeGreaterThan(0);
-    expect(within(zhP1LocaleActivationReadiness).getAllByText(/ja-JP、ko-KR、vi-VN、id-ID 与 tr-TR 已激活运行时/).length).toBeGreaterThan(0);
-    expect(within(zhP1LocaleActivationReadiness).getAllByText(/tr-TR 运行时激活已就绪并使用英文 fallback/).length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/130-es-es-locale-activation").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText(/ja-JP、ko-KR、vi-VN、id-ID、tr-TR 与 es-ES 已激活运行时/).length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText(/es-ES 运行时激活已就绪并使用英文 fallback/).length).toBeGreaterThan(0);
     const zhCompanionReadiness = screen.getByLabelText("Companion Contract Readiness");
     expect(
       within(zhCompanionReadiness).getByRole("heading", { name: "Companion Contract Readiness" }),
@@ -1349,7 +1352,7 @@ describe("Admin/Ops shell", () => {
     expect(within(zhResidualGapMissionQueue).getByText("真实钱包 provider 证据 mission")).toBeInTheDocument();
     expect(within(zhResidualGapMissionQueue).getByText("mission/live-wallet-provider-evidence")).toBeInTheDocument();
     expect(within(zhResidualGapMissionQueue).getByText(/Wallet Provider Evidence Release Readiness 必须批准所有必需场景/)).toBeInTheDocument();
-    expect(within(zhResidualGapMissionQueue).getByText("mission/p1-locale-expansion")).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).queryByText("mission/p1-locale-expansion")).not.toBeInTheDocument();
     expect(within(zhResidualGapMissionQueue).getAllByText("Backlog 条目").length).toBeGreaterThan(0);
     expect(within(zhResidualGapMissionQueue).getAllByText("上线阻断条目").length).toBeGreaterThan(0);
     expect(

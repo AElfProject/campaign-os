@@ -644,6 +644,18 @@ export const contentRevisions: ContentRevision[] = [
     status: "empty",
     updatedAt: "2026-07-04T17:30:00Z",
   },
+  {
+    id: "rev-es-es-001",
+    campaignId: "camp-awaken-sprint",
+    locale: "es-ES",
+    sourceLocale: "en-US",
+    title: "",
+    description: "",
+    socialPost: "",
+    rewardDisclaimer: "",
+    status: "empty",
+    updatedAt: "2026-07-04T18:30:00Z",
+  },
 ];
 
 export const aiContentArtifacts: AiContentArtifactDraft[] = [
@@ -1573,7 +1585,7 @@ export const campaignSummary: CampaignShellSummary = {
   },
   status: "live",
   defaultLocale: "en-US",
-  supportedLocales: ["en-US", "zh-CN", "zh-TW", "ja-JP", "ko-KR", "vi-VN", "id-ID", "tr-TR"],
+  supportedLocales: ["en-US", "zh-CN", "zh-TW", "ja-JP", "ko-KR", "vi-VN", "id-ID", "tr-TR", "es-ES"],
   walletPolicy: "ANY",
   contractMode: "OFF_CHAIN_MVP",
   startTime: "2026-06-20T00:00:00Z",

@@ -28,7 +28,7 @@ import { campaignDetail } from "./fixtures";
 import { getLocalizedText } from "./locale";
 import type { ContentRevision, ContentRevisionStatus } from "./types";
 
-const activatedRuntimeLocales = ["en-US", "zh-CN", "zh-TW", "ja-JP", "ko-KR", "vi-VN", "id-ID", "tr-TR"] as const;
+const activatedRuntimeLocales = ["en-US", "zh-CN", "zh-TW", "ja-JP", "ko-KR", "vi-VN", "id-ID", "tr-TR", "es-ES"] as const;
 
 const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
   if (!value || typeof value !== "object") {
@@ -82,9 +82,6 @@ describe("Campaign Builder domain foundation", () => {
     expect(seededCampaignDraft.defaultLocale).toBe("en-US");
     expect(seededCampaignDraft.fallbackLocale).toBe("en-US");
     expect(seededCampaignDraft.supportedLocales).toEqual(activatedRuntimeLocales);
-    expect(seededCampaignDraft.supportedLocales).not.toEqual(
-      expect.arrayContaining(["es-ES"]),
-    );
   });
 
   it("covers the required v0.1 task template categories", () => {
@@ -1033,6 +1030,7 @@ describe("Campaign Builder domain foundation", () => {
       "vi-VN": 0,
       "id-ID": 0,
       "tr-TR": 0,
+      "es-ES": 0,
     });
 
     const rowsById = new Map(operations.rows.map((row) => [row.participantId, row]));
