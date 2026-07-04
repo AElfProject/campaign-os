@@ -61,6 +61,7 @@ import {
   createWalletProviderEvidenceAllApprovedSampleSnapshot,
   createWalletProviderEvidenceCloseoutPackage,
   createWalletProviderEvidenceIntake,
+  createWalletProviderEvidenceActivation,
   createWalletProviderEvidenceReleaseReadiness,
   createWalletProviderEvidenceRequestPacket,
   createWalletProviderQaReadinessGate,
@@ -178,6 +179,22 @@ const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
 
   return Object.prototype.hasOwnProperty.call(record, key)
     || Object.values(record).some((item) => hasOwnKeyDeep(item, key));
+};
+
+const containsTextDeep = (value: unknown, term: string): boolean => {
+  if (typeof value === "string") {
+    return value.includes(term);
+  }
+
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => containsTextDeep(item, term));
+  }
+
+  return Object.values(value as Record<string, unknown>).some((item) => containsTextDeep(item, term));
 };
 
 describe("Campaign OS domain foundation", () => {
@@ -2102,6 +2119,181 @@ describe("Campaign OS domain foundation", () => {
       expect(scenario.boundary["en-US"]).toContain("No live wallet SDK");
     }
     expect(packet.nextAction["en-US"]).toContain("ready for release review");
+  });
+
+  it("derives wallet provider evidence activation from request packet without changing default acceptance", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const activation = adminOps.walletProviderEvidenceActivation;
+    const standalone = createWalletProviderEvidenceActivation(
+      adminOps.walletProviderEvidenceRequestPacket,
+      adminOps.walletProviderEvidenceReleaseReadiness,
+    );
+    const liveWalletAcceptance = adminOps.deliveryAcceptance.solutionSets
+      .flatMap((solutionSet) => solutionSet.rows)
+      .find((row) => row.id === "v02-live-wallet-provider-evidence");
+
+    expect(standalone).toEqual(activation);
+    expect(activation.scenarios.map((scenario) => scenario.id)).toEqual([
+      "portkey-aa-connect",
+      "eoa-extension-connect",
+      "extension-not-installed-error",
+      "wrong-chain-error",
+      "unsupported-wallet-error",
+    ]);
+    expect(activation.summary).toMatchObject({
+      totalScenarios: 5,
+      readyScenarios: 0,
+      blockedScenarios: 4,
+      reviewRequiredScenarios: 1,
+      missingArtifactTypeCount: 12,
+      approvedFeatureGates: 0,
+      reviewerApprovedScenarios: 0,
+      ready: false,
+      topScenarioId: "portkey-aa-connect",
+      topBlockerId: "missing-artifacts",
+    });
+    expect(activation.scenarios[0]).toMatchObject({
+      id: "portkey-aa-connect",
+      activationState: "blocked",
+      featureGateState: "disabled",
+      reviewerState: "pending",
+      releaseState: "blocked",
+      liveEvidenceStatus: "blocked",
+      requiredArtifactTypes: ["screenshot", "qa_run"],
+      missingArtifactTypes: ["screenshot", "qa_run"],
+      blockerIds: [
+        "missing-artifacts",
+        "live-evidence-not-ready",
+        "feature-gate-not-approved",
+        "reviewer-approval-required",
+        "release-readiness-not-ready",
+      ],
+    });
+    expect(activation.scenarios.find((scenario) => scenario.id === "eoa-extension-connect")).toMatchObject({
+      activationState: "review_required",
+      featureGateState: "disabled",
+      reviewerState: "pending",
+      releaseState: "review_required",
+      liveEvidenceStatus: "missing",
+      submittedArtifacts: expect.arrayContaining([
+        expect.objectContaining({
+          artifactType: "qa_run",
+          reference: "local-wallet-qa/eoa-extension-connect-2026-07-03",
+          status: "submitted",
+        }),
+      ]),
+    });
+    expect(liveWalletAcceptance).toMatchObject({
+      status: "needs_live_evidence",
+      launchBlocking: true,
+    });
+  });
+
+  it("marks wallet provider evidence activation ready only for all-approved local projection", () => {
+    const liveReadyGate = createWalletProviderQaReadinessGate(walletSessions, {
+      "eoa-extension-connect": "ready",
+      "extension-not-installed-error": "ready",
+      "portkey-aa-connect": "ready",
+      "unsupported-wallet-error": "ready",
+      "wrong-chain-error": "ready",
+    });
+    const approvedIntake = createWalletProviderEvidenceIntake(
+      liveReadyGate,
+      Object.fromEntries(
+        walletProviderScenarioIds.map((scenarioId) => [
+          scenarioId,
+          {
+            evidenceStatus: "approved",
+            submittedArtifacts: approvedWalletProviderArtifacts(scenarioId),
+          },
+        ]),
+      ),
+    );
+    const releaseReadiness = createWalletProviderEvidenceReleaseReadiness(
+      createWalletProviderEvidenceApprovalAudit(approvedIntake, liveReadyGate),
+    );
+    const closeout = createWalletProviderEvidenceCloseoutPackage(releaseReadiness);
+    const requestPacket = createWalletProviderEvidenceRequestPacket(closeout);
+    const activation = createWalletProviderEvidenceActivation(requestPacket, releaseReadiness);
+
+    expect(activation.summary).toMatchObject({
+      totalScenarios: 5,
+      readyScenarios: 5,
+      blockedScenarios: 0,
+      reviewRequiredScenarios: 0,
+      missingArtifactTypeCount: 0,
+      approvedFeatureGates: 5,
+      reviewerApprovedScenarios: 5,
+      ready: true,
+      topBlockerId: null,
+    });
+    expect(activation.scenarios.every((scenario) => scenario.activationState === "ready")).toBe(true);
+    for (const scenario of activation.scenarios) {
+      expect(scenario.blockerIds).toEqual([]);
+      expect(scenario.featureGateState).toBe("approved");
+      expect(scenario.reviewerState).toBe("approved");
+      expect(scenario.liveEvidenceStatus).toBe("ready");
+      expect(scenario.releaseState).toBe("ready");
+      expect(scenario.missingArtifactTypes).toEqual([]);
+      expect(scenario.submittedArtifacts.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("derives wallet provider evidence activation deterministically without mutating inputs", () => {
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const requestPacket = structuredClone(adminOps.walletProviderEvidenceRequestPacket);
+    const releaseReadiness = structuredClone(adminOps.walletProviderEvidenceReleaseReadiness);
+    const first = createWalletProviderEvidenceActivation(requestPacket, releaseReadiness);
+    const second = createWalletProviderEvidenceActivation(requestPacket, releaseReadiness);
+
+    expect(second).toEqual(first);
+    expect(requestPacket).toEqual(adminOps.walletProviderEvidenceRequestPacket);
+    expect(releaseReadiness).toEqual(adminOps.walletProviderEvidenceReleaseReadiness);
+  });
+
+  it("keeps wallet provider evidence activation localized and free of unsafe live-operation fields", () => {
+    const activation = createAdminOpsReadModel(campaignDetail).walletProviderEvidenceActivation;
+
+    for (const scenario of activation.scenarios) {
+      for (const localizedField of [
+        scenario.title,
+        scenario.dependency,
+        scenario.evidenceNeeded,
+        scenario.boundary,
+        scenario.nextAction,
+      ]) {
+        expect(localizedField["en-US"]).toBeTruthy();
+        expect(localizedField["zh-CN"]).toBeTruthy();
+        expect(localizedField["zh-TW"]).toBeTruthy();
+      }
+      expect(scenario.boundary["en-US"]).toContain("No live wallet SDK");
+      expect(scenario.boundary["en-US"]).toContain("provider call");
+      expect(scenario.boundary["en-US"]).toContain("signature");
+      expect(scenario.boundary["en-US"]).toContain("contract write");
+      expect(scenario.boundary["en-US"]).toContain("storage write");
+      expect(scenario.boundary["en-US"]).toContain("export file");
+      expect(scenario.boundary["en-US"]).toContain("reward custody");
+      expect(scenario.boundary["en-US"]).toContain("reward distribution");
+    }
+
+    for (const unsafeTerm of [
+      "privateKey",
+      "seedPhrase",
+      "recoveryPhrase",
+      "oauthToken",
+      "apiKey",
+      "rawSignature",
+      "signedPayload",
+      "transactionId",
+      "contractWrite",
+      "downloadUrl",
+      "fileUrl",
+      "providerCredential",
+      "rewardDistribution",
+    ]) {
+      expect(hasOwnKeyDeep(activation, unsafeTerm)).toBe(false);
+      expect(containsTextDeep(activation, unsafeTerm)).toBe(false);
+    }
   });
 
   it("executes local wallet provider evidence review actions without mutating source intake or live boundaries", () => {

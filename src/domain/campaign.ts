@@ -320,6 +320,13 @@ import type {
   WalletProviderQaReadinessGate,
   WalletProviderQaScenarioId,
   WalletProviderArtifactCoverage,
+  WalletProviderEvidenceActivation,
+  WalletProviderEvidenceActivationArtifactRow,
+  WalletProviderEvidenceActivationBlockerId,
+  WalletProviderEvidenceActivationFeatureGateState,
+  WalletProviderEvidenceActivationOverrides,
+  WalletProviderEvidenceActivationReviewerState,
+  WalletProviderEvidenceActivationScenario,
   WalletProviderEvidenceApprovalAudit,
   WalletProviderEvidenceApprovalRule,
   WalletProviderEvidenceApprovalRuleId,
@@ -3154,6 +3161,296 @@ export const createWalletProviderEvidenceRequestPacket = (
   return {
     boundary: closeoutPackage.boundary,
     nextAction: summary.topNextAction,
+    scenarios,
+    summary,
+  };
+};
+
+const walletProviderEvidenceActivationBoundary = localized(
+  "No live wallet SDK, provider call, signature, contract write, storage write, export file, reward custody, or reward distribution is executed by this activation projection.",
+  "该 activation projection 不会执行实时钱包 SDK、provider 调用、签名、合约写入、存储写入、导出文件、奖励托管或发奖。",
+  "該 activation projection 不會執行即時錢包 SDK、provider 呼叫、簽名、合約寫入、儲存寫入、匯出檔案、獎勵託管或發獎。",
+);
+
+const walletProviderEvidenceActivationReadyAction = localized(
+  "Scenario is ready for local activation review; keep the no-live boundary until production enablement is approved.",
+  "该场景已可进入本地 activation 审核；在生产启用批准前继续保持非实时边界。",
+  "該場景已可進入本地 activation 審核；在生產啟用批准前繼續保持非即時邊界。",
+);
+
+const walletProviderEvidenceActivationArtifactTypeFromId = (
+  value: string,
+): WalletProviderEvidenceActivationArtifactRow["artifactType"] => {
+  if (value.includes("screenshot")) {
+    return "screenshot";
+  }
+
+  if (value.includes("qa-run") || value.includes("qa_run") || value.includes("run-")) {
+    return "qa_run";
+  }
+
+  if (value.includes("runbook")) {
+    return "runbook";
+  }
+
+  if (value.includes("config")) {
+    return "config_snapshot";
+  }
+
+  return "review_note";
+};
+
+const walletProviderEvidenceActivationSubmittedArtifacts = (
+  releaseScenario: WalletProviderEvidenceReleaseScenario | undefined,
+): WalletProviderEvidenceActivationArtifactRow[] => {
+  if (!releaseScenario) {
+    return [];
+  }
+
+  const status: WalletProviderEvidenceActivationArtifactRow["status"] =
+    releaseScenario.releaseState === "ready" ? "approved" : "submitted";
+
+  return releaseScenario.artifactCoverage.submittedArtifactReferences.map((reference, index) => {
+    const artifactId = releaseScenario.artifactCoverage.submittedArtifactIds[index] ?? reference;
+
+    return {
+      artifactType: walletProviderEvidenceActivationArtifactTypeFromId(artifactId),
+      reference,
+      status,
+    };
+  });
+};
+
+const walletProviderEvidenceActivationLiveEvidenceStatus = (
+  releaseScenario: WalletProviderEvidenceReleaseScenario | undefined,
+) => {
+  if (!releaseScenario) {
+    return "missing" as const;
+  }
+
+  if (releaseScenario.releaseState === "ready") {
+    return "ready" as const;
+  }
+
+  if (releaseScenario.blockingRuleIds.includes("live-evidence-status")) {
+    return "blocked" as const;
+  }
+
+  return "missing" as const;
+};
+
+const walletProviderEvidenceActivationFeatureGateState = (
+  releaseScenario: WalletProviderEvidenceReleaseScenario | undefined,
+): WalletProviderEvidenceActivationFeatureGateState => {
+  if (!releaseScenario) {
+    return "disabled";
+  }
+
+  if (releaseScenario.releaseState === "ready") {
+    return "approved";
+  }
+
+  if (releaseScenario.blockingRuleIds.includes("service-gate")) {
+    return "blocked";
+  }
+
+  if (releaseScenario.reviewRequiredRuleIds.includes("service-gate")) {
+    return "review_required";
+  }
+
+  return "disabled";
+};
+
+const walletProviderEvidenceActivationReviewerState = (
+  releaseScenario: WalletProviderEvidenceReleaseScenario | undefined,
+): WalletProviderEvidenceActivationReviewerState => {
+  if (!releaseScenario) {
+    return "pending";
+  }
+
+  if (releaseScenario.approvalState === "approved") {
+    return "approved";
+  }
+
+  if (
+    releaseScenario.releaseState === "blocked" &&
+    releaseScenario.blockingRuleIds.includes("service-gate")
+  ) {
+    return "rejected";
+  }
+
+  return "pending";
+};
+
+const walletProviderEvidenceActivationBlockerIds = ({
+  featureGateState,
+  liveEvidenceStatus,
+  missingArtifactTypes,
+  releaseState,
+  reviewerState,
+}: Pick<
+  WalletProviderEvidenceActivationScenario,
+  "featureGateState" | "liveEvidenceStatus" | "missingArtifactTypes" | "releaseState" | "reviewerState"
+>): WalletProviderEvidenceActivationBlockerId[] => {
+  const blockerIds: WalletProviderEvidenceActivationBlockerId[] = [];
+
+  if (missingArtifactTypes.length > 0) {
+    blockerIds.push("missing-artifacts");
+  }
+
+  if (liveEvidenceStatus !== "ready") {
+    blockerIds.push("live-evidence-not-ready");
+  }
+
+  if (featureGateState !== "approved") {
+    blockerIds.push("feature-gate-not-approved");
+  }
+
+  if (reviewerState !== "approved") {
+    blockerIds.push("reviewer-approval-required");
+  }
+
+  if (releaseState !== "ready") {
+    blockerIds.push("release-readiness-not-ready");
+  }
+
+  return blockerIds;
+};
+
+const walletProviderEvidenceActivationStateFor = (
+  blockerIds: WalletProviderEvidenceActivationBlockerId[],
+  releaseState: WalletProviderEvidenceReleaseState,
+): WalletProviderEvidenceActivationScenario["activationState"] => {
+  if (blockerIds.length === 0) {
+    return "ready";
+  }
+
+  return releaseState === "review_required" ? "review_required" : "blocked";
+};
+
+const walletProviderEvidenceActivationDependency = (
+  scenario: WalletProviderEvidenceRequestScenario,
+): LocalizedText => localized(
+  `Feature gate and reviewer approval for ${scenario.id} must remain linked to ${scenario.targetEvidencePath}.`,
+  `${scenario.id} 的 feature gate 与审核批准必须继续关联到 ${scenario.targetEvidencePath}。`,
+  `${scenario.id} 的 feature gate 與審核批准必須繼續關聯到 ${scenario.targetEvidencePath}。`,
+);
+
+const createWalletProviderEvidenceActivationScenario = (
+  scenario: WalletProviderEvidenceRequestScenario,
+  releaseReadiness: WalletProviderEvidenceReleaseReadiness,
+  overrides: WalletProviderEvidenceActivationOverrides = {},
+): WalletProviderEvidenceActivationScenario => {
+  const releaseScenario = releaseReadiness.scenarios.find((candidate) => candidate.id === scenario.id);
+  const override = overrides[scenario.id];
+  const requiredArtifactTypes = expectedWalletProviderArtifacts(scenario.id)
+    .filter((artifact) => artifact.required)
+    .map((artifact) => artifact.artifactType);
+  const submittedArtifacts =
+    override?.submittedArtifacts ?? walletProviderEvidenceActivationSubmittedArtifacts(releaseScenario);
+  const missingArtifactTypes =
+    override?.missingArtifactTypes ??
+    scenario.missingRequiredArtifactIds.map(walletProviderEvidenceActivationArtifactTypeFromId);
+  const liveEvidenceStatus =
+    override?.liveEvidenceStatus ?? walletProviderEvidenceActivationLiveEvidenceStatus(releaseScenario);
+  const featureGateState =
+    override?.featureGateState ?? walletProviderEvidenceActivationFeatureGateState(releaseScenario);
+  const reviewerState =
+    override?.reviewerState ?? walletProviderEvidenceActivationReviewerState(releaseScenario);
+  const releaseState = override?.releaseState ?? releaseScenario?.releaseState ?? "blocked";
+  const blockerIds = walletProviderEvidenceActivationBlockerIds({
+    featureGateState,
+    liveEvidenceStatus,
+    missingArtifactTypes,
+    releaseState,
+    reviewerState,
+  });
+  const activationState = walletProviderEvidenceActivationStateFor(blockerIds, releaseState);
+
+  return {
+    activationState,
+    blockerIds,
+    boundary: walletProviderEvidenceActivationBoundary,
+    dependency: walletProviderEvidenceActivationDependency(scenario),
+    evidenceNeeded: scenario.qaCaptureInstructions,
+    featureGateState,
+    id: scenario.id,
+    liveEvidenceStatus,
+    missingArtifactTypes,
+    nextAction: activationState === "ready" ? walletProviderEvidenceActivationReadyAction : scenario.nextAction,
+    ownerRole: scenario.ownerRole,
+    releaseState,
+    requiredArtifactTypes,
+    reviewerState,
+    submittedArtifacts,
+    title: scenario.label,
+  };
+};
+
+const walletProviderEvidenceActivationStatePriority: Record<
+  WalletProviderEvidenceActivationScenario["activationState"],
+  number
+> = {
+  blocked: 0,
+  review_required: 1,
+  ready: 2,
+};
+
+const compareWalletProviderEvidenceActivationScenarios = (
+  left: WalletProviderEvidenceActivationScenario,
+  right: WalletProviderEvidenceActivationScenario,
+) => {
+  const stateDelta = walletProviderEvidenceActivationStatePriority[left.activationState] -
+    walletProviderEvidenceActivationStatePriority[right.activationState];
+
+  if (stateDelta !== 0) {
+    return stateDelta;
+  }
+
+  return walletProviderEvidenceScenarioOrder.indexOf(left.id) - walletProviderEvidenceScenarioOrder.indexOf(right.id);
+};
+
+const summarizeWalletProviderEvidenceActivation = (
+  scenarios: WalletProviderEvidenceActivationScenario[],
+): WalletProviderEvidenceActivation["summary"] => {
+  const topScenario = [...scenarios].sort(compareWalletProviderEvidenceActivationScenarios)[0] ?? scenarios[0];
+  const readyScenarios = scenarios.filter((scenario) => scenario.activationState === "ready").length;
+  const blockedScenarios = scenarios.filter((scenario) => scenario.activationState === "blocked").length;
+  const reviewRequiredScenarios = scenarios.filter((scenario) => scenario.activationState === "review_required").length;
+  const ready = scenarios.length > 0 && readyScenarios === scenarios.length;
+
+  return {
+    approvedFeatureGates: scenarios.filter((scenario) => scenario.featureGateState === "approved").length,
+    blockedScenarios,
+    missingArtifactTypeCount: scenarios.reduce(
+      (total, scenario) => total + scenario.missingArtifactTypes.length,
+      0,
+    ),
+    ready,
+    readyScenarios,
+    reviewRequiredScenarios,
+    reviewerApprovedScenarios: scenarios.filter((scenario) => scenario.reviewerState === "approved").length,
+    topBlockerId: topScenario?.blockerIds[0] ?? null,
+    topScenarioId: topScenario.id,
+    totalScenarios: scenarios.length,
+  };
+};
+
+export const createWalletProviderEvidenceActivation = (
+  requestPacket: WalletProviderEvidenceRequestPacket,
+  releaseReadiness: WalletProviderEvidenceReleaseReadiness,
+  overrides: WalletProviderEvidenceActivationOverrides = {},
+): WalletProviderEvidenceActivation => {
+  const scenarios = walletProviderEvidenceScenarioOrder
+    .map((scenarioId) => requestPacket.scenarios.find((scenario) => scenario.id === scenarioId))
+    .filter((scenario): scenario is WalletProviderEvidenceRequestScenario => Boolean(scenario))
+    .map((scenario) => createWalletProviderEvidenceActivationScenario(scenario, releaseReadiness, overrides));
+  const summary = summarizeWalletProviderEvidenceActivation(scenarios);
+
+  return {
+    boundary: walletProviderEvidenceActivationBoundary,
+    nextAction: summary.ready ? walletProviderEvidenceActivationReadyAction : scenarios
+      .find((scenario) => scenario.id === summary.topScenarioId)?.nextAction ?? requestPacket.nextAction,
     scenarios,
     summary,
   };
@@ -18871,6 +19168,10 @@ export const createAdminOpsReadModel = (
   const walletProviderEvidenceRequestPacket = createWalletProviderEvidenceRequestPacket(
     walletProviderEvidenceCloseoutPackage,
   );
+  const walletProviderEvidenceActivation = createWalletProviderEvidenceActivation(
+    walletProviderEvidenceRequestPacket,
+    walletProviderEvidenceReleaseReadiness,
+  );
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
@@ -18904,6 +19205,7 @@ export const createAdminOpsReadModel = (
     walletProviderEvidenceReleaseReadiness,
     walletProviderEvidenceCloseoutPackage,
     walletProviderEvidenceRequestPacket,
+    walletProviderEvidenceActivation,
     aelfWebLoginAdapterReadiness,
     providerEvidenceRegistry,
     contractReviewCenter: createAdminContractReviewCenter(campaign),

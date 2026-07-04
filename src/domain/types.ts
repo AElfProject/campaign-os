@@ -777,6 +777,25 @@ export type WalletProviderEvidenceRequestStatus =
   | "review_required"
   | "blocked"
   | "not_applicable";
+export type WalletProviderEvidenceActivationState =
+  | "ready"
+  | "review_required"
+  | "blocked";
+export type WalletProviderEvidenceActivationFeatureGateState =
+  | "disabled"
+  | "review_required"
+  | "approved"
+  | "blocked";
+export type WalletProviderEvidenceActivationReviewerState =
+  | "pending"
+  | "approved"
+  | "rejected";
+export type WalletProviderEvidenceActivationBlockerId =
+  | "missing-artifacts"
+  | "live-evidence-not-ready"
+  | "feature-gate-not-approved"
+  | "reviewer-approval-required"
+  | "release-readiness-not-ready";
 export type WalletProviderEvidenceReviewActionId =
   | "submit_evidence"
   | "approve_evidence"
@@ -1330,6 +1349,64 @@ export interface WalletProviderEvidenceRequestPacket {
   boundary: LocalizedText;
   nextAction: LocalizedText;
 }
+
+export interface WalletProviderEvidenceActivationArtifactRow {
+  artifactType: WalletProviderEvidenceArtifactType;
+  reference: string;
+  status: WalletProviderEvidenceStatus;
+}
+
+export interface WalletProviderEvidenceActivationScenario {
+  id: WalletProviderQaScenarioId;
+  title: LocalizedText;
+  ownerRole: OwnerRole;
+  requiredArtifactTypes: WalletProviderEvidenceArtifactType[];
+  submittedArtifacts: WalletProviderEvidenceActivationArtifactRow[];
+  missingArtifactTypes: WalletProviderEvidenceArtifactType[];
+  liveEvidenceStatus: WalletProviderQaLiveEvidenceStatus;
+  featureGateState: WalletProviderEvidenceActivationFeatureGateState;
+  reviewerState: WalletProviderEvidenceActivationReviewerState;
+  releaseState: WalletProviderEvidenceReleaseState;
+  activationState: WalletProviderEvidenceActivationState;
+  blockerIds: WalletProviderEvidenceActivationBlockerId[];
+  dependency: LocalizedText;
+  evidenceNeeded: LocalizedText;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface WalletProviderEvidenceActivationSummary {
+  totalScenarios: number;
+  readyScenarios: number;
+  blockedScenarios: number;
+  reviewRequiredScenarios: number;
+  missingArtifactTypeCount: number;
+  approvedFeatureGates: number;
+  reviewerApprovedScenarios: number;
+  topScenarioId: WalletProviderQaScenarioId;
+  topBlockerId: WalletProviderEvidenceActivationBlockerId | null;
+  ready: boolean;
+}
+
+export interface WalletProviderEvidenceActivation {
+  summary: WalletProviderEvidenceActivationSummary;
+  scenarios: WalletProviderEvidenceActivationScenario[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface WalletProviderEvidenceActivationScenarioOverride {
+  liveEvidenceStatus?: WalletProviderQaLiveEvidenceStatus;
+  featureGateState?: WalletProviderEvidenceActivationFeatureGateState;
+  reviewerState?: WalletProviderEvidenceActivationReviewerState;
+  releaseState?: WalletProviderEvidenceReleaseState;
+  submittedArtifacts?: WalletProviderEvidenceActivationArtifactRow[];
+  missingArtifactTypes?: WalletProviderEvidenceArtifactType[];
+}
+
+export type WalletProviderEvidenceActivationOverrides = Partial<
+  Record<WalletProviderQaScenarioId, WalletProviderEvidenceActivationScenarioOverride>
+>;
 
 export interface WalletProviderEvidenceReviewAction {
   id: WalletProviderEvidenceReviewActionId;
@@ -4248,6 +4325,7 @@ export interface AdminOpsReadModel {
   walletProviderEvidenceReleaseReadiness: WalletProviderEvidenceReleaseReadiness;
   walletProviderEvidenceCloseoutPackage: WalletProviderEvidenceCloseoutPackage;
   walletProviderEvidenceRequestPacket: WalletProviderEvidenceRequestPacket;
+  walletProviderEvidenceActivation: WalletProviderEvidenceActivation;
   aelfWebLoginAdapterReadiness: AelfWebLoginAdapterReadinessModel;
   providerEvidenceRegistry: ProviderEvidenceRegistry;
   contractReviewCenter: AdminContractReviewCenter;
