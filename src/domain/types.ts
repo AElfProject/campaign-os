@@ -2034,6 +2034,21 @@ export type DeliveryChecklistTraceabilityProofLevel =
   | "private_evidence"
   | "live_evidence_required"
   | "future_scope";
+export type DeliveryChecklistCloseoutQueueId =
+  | "blocked"
+  | "needs_review"
+  | "missing_verification"
+  | "missing_evidence"
+  | "deferred"
+  | "covered";
+export type DeliveryChecklistCloseoutHandoffTarget =
+  | "live_wallet_qa"
+  | "project_owner_review"
+  | "contract_reviewer"
+  | "i18n_reviewer"
+  | "evidence_traceability"
+  | "future_scope"
+  | "none";
 export type DeliveryAcceptanceStatus =
   | "proven"
   | "partial"
@@ -2343,6 +2358,62 @@ export interface DeliveryChecklistTraceabilityMatrix {
   rows: DeliveryChecklistTraceabilityRow[];
 }
 
+export interface DeliveryChecklistCloseoutRow {
+  id: string;
+  itemId: string;
+  groupId: DeliveryChecklistGroupId;
+  label: LocalizedText;
+  status: DeliveryChecklistStatus;
+  queueId: DeliveryChecklistCloseoutQueueId;
+  priority: number;
+  ownerRole: OwnerRole;
+  proofLevel: DeliveryChecklistTraceabilityProofLevel;
+  sourceRequirement: string;
+  handoffTarget: DeliveryChecklistCloseoutHandoffTarget;
+  handoffLabel: LocalizedText;
+  surface: LocalizedText;
+  evidence: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+  riskNote: LocalizedText;
+  blocksDelivery: boolean;
+  missingVerification: boolean;
+  missingEvidence: boolean;
+}
+
+export interface DeliveryChecklistCloseoutQueue {
+  id: DeliveryChecklistCloseoutQueueId;
+  label: LocalizedText;
+  description: LocalizedText;
+  count: number;
+  unresolved: boolean;
+  rows: DeliveryChecklistCloseoutRow[];
+}
+
+export interface DeliveryChecklistCloseoutSummary {
+  totalRows: number;
+  unresolvedRows: number;
+  coveredRows: number;
+  blockedRows: number;
+  needsReviewRows: number;
+  missingVerificationRows: number;
+  missingEvidenceRows: number;
+  deferredRows: number;
+  topQueueId: DeliveryChecklistCloseoutQueueId;
+  topRowId: string | null;
+  topHandoffTarget: DeliveryChecklistCloseoutHandoffTarget;
+  topNextAction: LocalizedText;
+  ready: boolean;
+}
+
+export interface DeliveryChecklistCloseoutWorkflow {
+  summary: DeliveryChecklistCloseoutSummary;
+  queues: DeliveryChecklistCloseoutQueue[];
+  rows: DeliveryChecklistCloseoutRow[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface P1LocaleExpansionReadinessRow {
   code: P1LocaleCode;
   displayName: LocalizedText;
@@ -2373,6 +2444,7 @@ export interface DeliveryChecklistReadinessConsole {
   summary: DeliveryChecklistReadinessSummary;
   boundary: LocalizedText;
   traceability: DeliveryChecklistTraceabilityMatrix;
+  closeout: DeliveryChecklistCloseoutWorkflow;
   p1LocaleExpansion: P1LocaleExpansionReadiness;
   groups: DeliveryChecklistGroup[];
   blockers: DeliveryChecklistItem[];
