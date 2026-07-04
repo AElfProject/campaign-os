@@ -1016,6 +1016,103 @@ describe("Admin/Ops shell", () => {
     expect(within(requestPacket).getByText(/已完成/)).toBeInTheDocument();
   });
 
+  it("renders wallet provider evidence activation without live-operation controls", () => {
+    render(<AdminOpsPanel locale="en-US" />);
+
+    const activation = screen.getByLabelText("Wallet Provider Evidence Activation");
+
+    expect(within(activation).getByRole("heading", {
+      name: "Wallet Provider Evidence Activation",
+    })).toBeInTheDocument();
+    expect(within(activation).getAllByText("Ready scenarios").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Blocked scenarios").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Review-required scenarios").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Missing artifacts").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Approved feature gates").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Reviewer-approved scenarios").length).toBeGreaterThan(0);
+    expect(within(activation).getByText("0/5 Ready scenarios")).toBeInTheDocument();
+    expect(within(activation).getByText("Top scenario: portkey-aa-connect")).toBeInTheDocument();
+    expect(within(activation).getByText("Top blocker: missing-artifacts")).toBeInTheDocument();
+    for (const scenarioId of [
+      "portkey-aa-connect",
+      "eoa-extension-connect",
+      "extension-not-installed-error",
+      "wrong-chain-error",
+      "unsupported-wallet-error",
+    ]) {
+      expect(within(activation).getAllByText(scenarioId).length).toBeGreaterThan(0);
+    }
+    expect(within(activation).getByText("Portkey AA connect evidence")).toBeInTheDocument();
+    expect(within(activation).getByText("EOA extension connect evidence")).toBeInTheDocument();
+    expect(within(activation).getByText("Wrong-chain recovery evidence")).toBeInTheDocument();
+    expect(within(activation).getByText("Unsupported-wallet recovery evidence")).toBeInTheDocument();
+    expect(within(activation).getAllByText("Feature gate").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Reviewer state").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Release state").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Live evidence").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Required artifacts").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Submitted artifacts").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Missing artifact types").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Dependency").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText(/Activation next action/).length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("Screenshot").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("QA run").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("missing-artifacts").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("feature-gate-not-approved").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText(/No live wallet SDK/).length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText(/provider call/).length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText(/signature/).length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText(/contract write/).length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText(/storage write/).length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText(/export file/).length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText(/reward custody/).length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText(/reward distribution/).length).toBeGreaterThan(0);
+    [
+      /connect/i,
+      /sign/i,
+      /upload/i,
+      /storage/i,
+      /contract/i,
+      /export/i,
+      /claim/i,
+      /reward/i,
+      /custody/i,
+      /distribute/i,
+    ].forEach((forbiddenActionName) => {
+      expect(within(activation).queryByRole("button", { name: forbiddenActionName })).not.toBeInTheDocument();
+    });
+  });
+
+  it("renders wallet provider evidence activation labels in zh-CN", () => {
+    render(<AdminOpsPanel locale="zh-CN" />);
+
+    const activation = screen.getByLabelText("钱包 Provider 证据激活");
+
+    expect(within(activation).getByRole("heading", {
+      name: "钱包 Provider 证据激活",
+    })).toBeInTheDocument();
+    expect(within(activation).getAllByText("就绪场景").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("已阻断场景").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("需审核场景").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("缺失 artifacts").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("已批准 feature gates").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("审核人已批准场景").length).toBeGreaterThan(0);
+    expect(within(activation).getByText("首要场景: portkey-aa-connect")).toBeInTheDocument();
+    expect(within(activation).getByText("首要阻断: missing-artifacts")).toBeInTheDocument();
+    expect(within(activation).getAllByText("Feature gate").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("审核人状态").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("真实证据").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("必需 artifacts").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("已提交 artifacts").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("缺失 artifact 类型").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText("依赖项").length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText(/激活下一步/).length).toBeGreaterThan(0);
+    expect(within(activation).getAllByText(/不会执行实时钱包 SDK/).length).toBeGreaterThan(0);
+    expect(within(activation).queryByRole("button", {
+      name: /connect|sign|签名|上传|存储|合约|导出|领取|奖励|托管|发奖|distribute/i,
+    })).not.toBeInTheDocument();
+  });
+
   it("renders wallet provider evidence recovery labels in zh-CN", () => {
     render(<AdminOpsPanel locale="zh-CN" />);
 
