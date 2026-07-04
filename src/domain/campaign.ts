@@ -337,6 +337,13 @@ import type {
   WalletProviderEvidenceReleaseScenario,
   WalletProviderEvidenceReleaseState,
   WalletProviderEvidenceReleaseImpact,
+  WalletProviderEvidenceRecoveryOptions,
+  WalletProviderEvidenceRecoveryResult,
+  WalletProviderEvidenceRecoveryScenarioState,
+  WalletProviderEvidenceRecoverySnapshot,
+  WalletProviderEvidenceRecoverySource,
+  WalletProviderEvidenceRecoveryStorageState,
+  WalletProviderEvidenceRecoveryValidationError,
   WalletProviderEvidenceReviewAction,
   WalletProviderEvidenceReviewActionAuditTrail,
   WalletProviderEvidenceReviewActionError,
@@ -3587,6 +3594,393 @@ const createWalletProviderEvidenceReviewActionResult = (
     scenarioId: request.scenarioId,
     updatedIntake,
   };
+};
+
+const walletProviderEvidenceRecoveryMessage = (
+  enUS: string,
+  zhCN: string,
+  zhTW: string,
+): LocalizedText => localized(enUS, zhCN, zhTW);
+
+const createWalletProviderEvidenceRecoveryError = (
+  code: WalletProviderEvidenceRecoveryValidationError["code"],
+  field: string,
+  message: LocalizedText,
+  scenarioId?: string,
+): WalletProviderEvidenceRecoveryValidationError => ({
+  code,
+  field,
+  message,
+  ...(scenarioId ? { scenarioId } : {}),
+});
+
+const walletProviderEvidenceRecoveryStorageMessage = (
+  state: WalletProviderEvidenceRecoveryStorageState,
+): LocalizedText => {
+  const messages: Record<WalletProviderEvidenceRecoveryStorageState, LocalizedText> = {
+    available: walletProviderEvidenceRecoveryMessage(
+      "Local review snapshot storage is available for recovery metadata.",
+      "本地审核 snapshot 存储可用于恢复 metadata。",
+      "本地審核 snapshot 儲存可用於恢復 metadata。",
+    ),
+    not_requested: walletProviderEvidenceRecoveryMessage(
+      "Local review snapshot storage was not requested.",
+      "未请求本地审核 snapshot 存储。",
+      "未請求本地審核 snapshot 儲存。",
+    ),
+    read_failed: walletProviderEvidenceRecoveryMessage(
+      "Local review snapshot could not be read; conservative seeded defaults remain active.",
+      "无法读取本地审核 snapshot；继续使用保守 seeded 默认值。",
+      "無法讀取本地審核 snapshot；繼續使用保守 seeded 預設值。",
+    ),
+    unavailable: walletProviderEvidenceRecoveryMessage(
+      "Local review snapshot storage is unavailable; the domain fallback remains usable.",
+      "本地审核 snapshot 存储不可用；domain fallback 仍可使用。",
+      "本地審核 snapshot 儲存不可用；domain fallback 仍可使用。",
+    ),
+    write_failed: walletProviderEvidenceRecoveryMessage(
+      "Local review snapshot could not be written; current recovery projections remain in memory only.",
+      "无法写入本地审核 snapshot；当前恢复 projection 仅保留在内存中。",
+      "無法寫入本地審核 snapshot；目前恢復 projection 僅保留在記憶體中。",
+    ),
+  };
+
+  return messages[state];
+};
+
+const createWalletProviderEvidenceRecoveryStorageStatus = (
+  options: WalletProviderEvidenceRecoveryOptions = {},
+) => ({
+  message: walletProviderEvidenceRecoveryStorageMessage(options.storageState ?? "not_requested"),
+  ...(options.storageKey ? { storageKey: options.storageKey } : {}),
+  state: options.storageState ?? "not_requested",
+});
+
+const cloneWalletProviderEvidenceRecoverySnapshot = (
+  snapshot: WalletProviderEvidenceRecoverySnapshot,
+): WalletProviderEvidenceRecoverySnapshot => ({
+  capturedAt: snapshot.capturedAt,
+  scenarios: snapshot.scenarios.map((scenario) => ({
+    ...scenario,
+    artifactReferences: scenario.artifactReferences.map((reference) => ({
+      ...reference,
+      ...(reference.label ? { label: { ...reference.label } } : {}),
+    })),
+  })),
+  source: snapshot.source,
+  version: snapshot.version,
+});
+
+const walletProviderEvidenceRecoveryResult = (
+  campaign: Pick<CampaignShellDetail, "id">,
+  gate: WalletProviderQaReadinessGate,
+  intake: WalletProviderEvidenceIntake,
+  source: WalletProviderEvidenceRecoverySource,
+  options: WalletProviderEvidenceRecoveryOptions,
+  validationErrors: WalletProviderEvidenceRecoveryValidationError[],
+  snapshot: WalletProviderEvidenceRecoverySnapshot | null,
+): WalletProviderEvidenceRecoveryResult => {
+  const projectionGate = createWalletProviderEvidenceReviewProjectionGate(gate, intake);
+  const approvalAudit = createWalletProviderEvidenceApprovalAudit(intake, projectionGate);
+  const releaseReadiness = createWalletProviderEvidenceReleaseReadiness(approvalAudit);
+  const closeoutPackage = createWalletProviderEvidenceCloseoutPackage(releaseReadiness);
+  const requestPacket = createWalletProviderEvidenceRequestPacket(closeoutPackage);
+  const deliveryAcceptance = createDeliveryAcceptanceConsole(releaseReadiness);
+
+  return {
+    approvalAudit,
+    boundary: walletProviderEvidenceBoundary,
+    campaignId: campaign.id,
+    closeoutPackage,
+    deliveryAcceptance,
+    intake,
+    nextAction: validationErrors[0]?.message ?? releaseReadiness.nextAction,
+    releaseReadiness,
+    requestPacket,
+    snapshot: snapshot ? cloneWalletProviderEvidenceRecoverySnapshot(snapshot) : null,
+    source,
+    status: validationErrors.length > 0
+      ? "fallback_invalid_snapshot"
+      : snapshot
+        ? "restored"
+        : "seeded_default",
+    storage: createWalletProviderEvidenceRecoveryStorageStatus(options),
+    validationErrors,
+  };
+};
+
+export const createDefaultWalletProviderEvidenceRecoveryResult = (
+  campaign: Pick<CampaignShellDetail, "id">,
+  gate: WalletProviderQaReadinessGate,
+  options: WalletProviderEvidenceRecoveryOptions = {},
+): WalletProviderEvidenceRecoveryResult =>
+  walletProviderEvidenceRecoveryResult(
+    campaign,
+    gate,
+    createWalletProviderEvidenceIntake(gate),
+    "seeded_default",
+    options,
+    [],
+    null,
+  );
+
+export const createWalletProviderEvidenceAllApprovedSampleSnapshot = (
+  capturedAt = "2026-07-04T00:00:00Z",
+): WalletProviderEvidenceRecoverySnapshot => ({
+  capturedAt,
+  scenarios: walletProviderEvidenceScenarioOrder.map((scenarioId) => ({
+    artifactReferences: expectedWalletProviderArtifacts(scenarioId)
+      .filter((artifact) => artifact.required)
+      .map((artifact) => ({
+        artifactType: artifact.artifactType,
+        capturedAt,
+        label: localized(
+          `${scenarioId} approved ${artifact.artifactType}`,
+          `${scenarioId} 已批准 ${artifact.artifactType}`,
+          `${scenarioId} 已批准 ${artifact.artifactType}`,
+        ),
+        reference: `local-wallet-qa/${scenarioId}/approved-${artifact.artifactType}`,
+      })),
+    evidenceStatus: "approved",
+    reviewedAt: capturedAt,
+    scenarioId,
+  })),
+  source: "local_sample",
+  version: 1,
+});
+
+export const serializeWalletProviderEvidenceRecoverySnapshot = (
+  intake: WalletProviderEvidenceIntake,
+  source: WalletProviderEvidenceRecoverySource = "in_memory_action",
+  capturedAt = "2026-07-04T00:00:00Z",
+): WalletProviderEvidenceRecoverySnapshot => ({
+  capturedAt,
+  scenarios: walletProviderEvidenceScenarioOrder.map((scenarioId) => {
+    const scenario = intake.scenarios.find((candidate) => candidate.id === scenarioId);
+
+    return {
+      artifactReferences: (scenario?.submittedArtifacts ?? [])
+        .filter((artifact) => Boolean(artifact.reference))
+        .map((artifact) => ({
+          artifactType: artifact.artifactType,
+          ...(artifact.capturedAt ? { capturedAt: artifact.capturedAt } : {}),
+          label: { ...artifact.label },
+          reference: artifact.reference ?? artifact.id,
+        })),
+      evidenceStatus: scenario?.evidenceStatus ?? "missing",
+      scenarioId,
+    };
+  }),
+  source,
+  version: 1,
+});
+
+const walletProviderEvidenceRecoveryAllowedStatuses = new Set<WalletProviderEvidenceStatus>([
+  "approved",
+  "expired",
+  "missing",
+  "rejected",
+  "submitted",
+]);
+
+const validateWalletProviderEvidenceRecoveryScenario = (
+  scenario: WalletProviderEvidenceRecoveryScenarioState,
+  index: number,
+): WalletProviderEvidenceRecoveryValidationError[] => {
+  const errors: WalletProviderEvidenceRecoveryValidationError[] = [];
+  const scenarioId = String(scenario.scenarioId);
+
+  if (!isWalletProviderEvidenceScenarioId(scenarioId)) {
+    errors.push(createWalletProviderEvidenceRecoveryError(
+      "UNKNOWN_SCENARIO",
+      `scenarios[${index}].scenarioId`,
+      walletProviderEvidenceRecoveryMessage(
+        `Unknown wallet provider evidence scenario: ${scenarioId}.`,
+        `未知的钱包 provider 证据场景：${scenarioId}。`,
+        `未知的錢包 provider 證據場景：${scenarioId}。`,
+      ),
+      scenarioId,
+    ));
+  }
+
+  if (!walletProviderEvidenceRecoveryAllowedStatuses.has(scenario.evidenceStatus as WalletProviderEvidenceStatus)) {
+    errors.push(createWalletProviderEvidenceRecoveryError(
+      "INVALID_STATUS",
+      `scenarios[${index}].evidenceStatus`,
+      walletProviderEvidenceRecoveryMessage(
+        `Unsupported wallet provider evidence status: ${scenario.evidenceStatus}.`,
+        `不支持的钱包 provider 证据状态：${scenario.evidenceStatus}。`,
+        `不支援的錢包 provider 證據狀態：${scenario.evidenceStatus}。`,
+      ),
+      scenarioId,
+    ));
+  }
+
+  if (isWalletProviderEvidenceScenarioId(scenarioId) && scenario.evidenceStatus === "approved") {
+    const requiredArtifactTypes = new Set(
+      expectedWalletProviderArtifacts(scenarioId)
+        .filter((artifact) => artifact.required)
+        .map((artifact) => artifact.artifactType),
+    );
+    const submittedArtifactTypes = new Set(
+      scenario.artifactReferences
+        .filter((reference) => reference.reference.trim().length > 0)
+        .map((reference) => reference.artifactType),
+    );
+    const missingArtifactTypes = Array.from(requiredArtifactTypes)
+      .filter((artifactType) => !submittedArtifactTypes.has(artifactType));
+
+    if (missingArtifactTypes.length > 0) {
+      errors.push(createWalletProviderEvidenceRecoveryError(
+        "APPROVED_ARTIFACTS_INCOMPLETE",
+        `scenarios[${index}].artifactReferences`,
+        walletProviderEvidenceRecoveryMessage(
+          `Approved scenario ${scenarioId} is missing required artifact types: ${missingArtifactTypes.join(", ")}.`,
+          `已批准场景 ${scenarioId} 缺少必需 artifact 类型：${missingArtifactTypes.join(", ")}。`,
+          `已批准場景 ${scenarioId} 缺少必需 artifact 類型：${missingArtifactTypes.join(", ")}。`,
+        ),
+        scenarioId,
+      ));
+    }
+  }
+
+  return errors;
+};
+
+export const validateWalletProviderEvidenceRecoverySnapshot = (
+  snapshot: WalletProviderEvidenceRecoverySnapshot,
+): WalletProviderEvidenceRecoveryValidationError[] => {
+  const errors: WalletProviderEvidenceRecoveryValidationError[] = [];
+
+  if (snapshot.version !== 1) {
+    errors.push(createWalletProviderEvidenceRecoveryError(
+      "UNSUPPORTED_VERSION",
+      "version",
+      walletProviderEvidenceRecoveryMessage(
+        `Unsupported wallet provider evidence recovery snapshot version: ${snapshot.version}.`,
+        `不支持的钱包 provider 证据恢复 snapshot 版本：${snapshot.version}。`,
+        `不支援的錢包 provider 證據恢復 snapshot 版本：${snapshot.version}。`,
+      ),
+    ));
+  }
+
+  const seenScenarioIds = new Set<string>();
+  snapshot.scenarios.forEach((scenario, index) => {
+    const scenarioId = String(scenario.scenarioId);
+
+    if (seenScenarioIds.has(scenarioId)) {
+      errors.push(createWalletProviderEvidenceRecoveryError(
+        "DUPLICATE_SCENARIO",
+        `scenarios[${index}].scenarioId`,
+        walletProviderEvidenceRecoveryMessage(
+          `Duplicate wallet provider evidence scenario: ${scenarioId}.`,
+          `重复的钱包 provider 证据场景：${scenarioId}。`,
+          `重複的錢包 provider 證據場景：${scenarioId}。`,
+        ),
+        scenarioId,
+      ));
+    }
+    seenScenarioIds.add(scenarioId);
+    errors.push(...validateWalletProviderEvidenceRecoveryScenario(scenario, index));
+  });
+
+  for (const scenarioId of walletProviderEvidenceScenarioOrder) {
+    if (!seenScenarioIds.has(scenarioId)) {
+      errors.push(createWalletProviderEvidenceRecoveryError(
+        "MISSING_REQUIRED_SCENARIO",
+        "scenarios",
+        walletProviderEvidenceRecoveryMessage(
+          `Missing required wallet provider evidence scenario: ${scenarioId}.`,
+          `缺少必需的钱包 provider 证据场景：${scenarioId}。`,
+          `缺少必需的錢包 provider 證據場景：${scenarioId}。`,
+        ),
+        scenarioId,
+      ));
+    }
+  }
+
+  return errors;
+};
+
+const walletProviderEvidenceRecoveryReferencesToArtifacts = (
+  scenarioId: WalletProviderQaScenarioId,
+  scenario: WalletProviderEvidenceRecoveryScenarioState,
+): WalletProviderEvidenceArtifact[] =>
+  scenario.artifactReferences
+    .filter((reference) => reference.reference.trim().length > 0)
+    .map((reference, index) => ({
+      artifactType: reference.artifactType,
+      ...(reference.capturedAt ? { capturedAt: reference.capturedAt } : {}),
+      id: `${scenarioId}-recovered-${reference.artifactType}-${index + 1}`,
+      label: reference.label ?? localized(
+        `${scenarioId} recovered ${reference.artifactType}`,
+        `${scenarioId} 已恢复 ${reference.artifactType}`,
+        `${scenarioId} 已恢復 ${reference.artifactType}`,
+      ),
+      reference: reference.reference.trim(),
+      required: expectedWalletProviderArtifacts(scenarioId).some(
+        (artifact) => artifact.required && artifact.artifactType === reference.artifactType,
+      ),
+      ...(scenario.reviewedAt ? { reviewedAt: scenario.reviewedAt } : {}),
+    }));
+
+const createWalletProviderEvidenceIntakeFromRecoverySnapshot = (
+  gate: WalletProviderQaReadinessGate,
+  snapshot: WalletProviderEvidenceRecoverySnapshot,
+): WalletProviderEvidenceIntake => {
+  const overrides = Object.fromEntries(
+    walletProviderEvidenceScenarioOrder.map((scenarioId) => {
+      const scenario = snapshot.scenarios.find((candidate) => candidate.scenarioId === scenarioId);
+
+      return [
+        scenarioId,
+        {
+          evidenceStatus: (scenario?.evidenceStatus ?? "missing") as WalletProviderEvidenceStatus,
+          submittedArtifacts: scenario
+            ? walletProviderEvidenceRecoveryReferencesToArtifacts(scenarioId, scenario)
+            : [],
+        },
+      ];
+    }),
+  ) as WalletProviderEvidenceScenarioOverrides;
+
+  return createWalletProviderEvidenceIntake(gate, overrides);
+};
+
+export const recoverWalletProviderEvidenceState = (
+  campaign: Pick<CampaignShellDetail, "id">,
+  gate: WalletProviderQaReadinessGate,
+  snapshot?: WalletProviderEvidenceRecoverySnapshot | null,
+  options: WalletProviderEvidenceRecoveryOptions = {},
+): WalletProviderEvidenceRecoveryResult => {
+  if (!snapshot) {
+    return createDefaultWalletProviderEvidenceRecoveryResult(campaign, gate, options);
+  }
+
+  const snapshotCopy = cloneWalletProviderEvidenceRecoverySnapshot(snapshot);
+  const validationErrors = validateWalletProviderEvidenceRecoverySnapshot(snapshotCopy);
+
+  if (validationErrors.length > 0) {
+    return walletProviderEvidenceRecoveryResult(
+      campaign,
+      gate,
+      createWalletProviderEvidenceIntake(gate),
+      options.source ?? snapshotCopy.source,
+      options,
+      validationErrors,
+      snapshotCopy,
+    );
+  }
+
+  return walletProviderEvidenceRecoveryResult(
+    campaign,
+    gate,
+    createWalletProviderEvidenceIntakeFromRecoverySnapshot(gate, snapshotCopy),
+    options.source ?? snapshotCopy.source,
+    options,
+    [],
+    snapshotCopy,
+  );
 };
 
 export const executeWalletProviderEvidenceReviewAction = (

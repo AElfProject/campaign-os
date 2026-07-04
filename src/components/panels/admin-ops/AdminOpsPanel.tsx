@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from "react";
-import { CheckCircle2, FileCheck2, RotateCcw, XCircle, type LucideIcon } from "lucide-react";
+import { CheckCircle2, FileCheck2, FolderOpen, RotateCcw, Save, XCircle, type LucideIcon } from "lucide-react";
 import {
   campaignDetail,
   computePublishReadiness,
@@ -7,10 +7,14 @@ import {
   createExportArtifact,
   createExportConfirmationReadinessGate,
   createLiveWalletConnectorBoundary,
+  createResidualGapMissionQueue,
   createServiceDegradationGovernance,
+  createWalletProviderEvidenceAllApprovedSampleSnapshot,
   executeWalletProviderEvidenceReviewAction,
   createParticipationReadModel,
   getLocalizedText,
+  recoverWalletProviderEvidenceState,
+  serializeWalletProviderEvidenceRecoverySnapshot,
   type AelfWebLoginAdapterLiveEvidenceStatus,
   type AelfWebLoginAdapterReadiness,
   type AiOpsReportHandoffStatus,
@@ -61,6 +65,10 @@ import {
   type WalletProviderEvidenceApprovalRuleState,
   type WalletProviderEvidenceApprovalState,
   type WalletProviderEvidenceReleaseImpact,
+  type WalletProviderEvidenceRecoverySnapshot,
+  type WalletProviderEvidenceRecoverySource,
+  type WalletProviderEvidenceRecoveryStatus,
+  type WalletProviderEvidenceRecoveryStorageState,
   type WalletProviderEvidenceReviewActionId,
   type WalletProviderEvidenceReviewActionResult,
   type WalletProviderEvidenceReviewArtifactReference,
@@ -343,6 +351,63 @@ const actionButtonGridStyle: CSSProperties = {
   gap: 8,
   gridTemplateColumns: "repeat(auto-fit, minmax(min(170px, 100%), 1fr))",
   minWidth: 0,
+};
+
+const walletProviderEvidenceRecoveryStorageKey = "campaign-os.wallet-provider-evidence.recovery";
+
+interface WalletProviderEvidenceRecoveryUiState {
+  lastRecoveredAt: string;
+  snapshot: WalletProviderEvidenceRecoverySnapshot | null;
+  source: WalletProviderEvidenceRecoverySource;
+  storageState: WalletProviderEvidenceRecoveryStorageState;
+}
+
+const nowIso = () => new Date().toISOString();
+
+const readWalletProviderEvidenceRecoverySnapshot = (
+  storageKey = walletProviderEvidenceRecoveryStorageKey,
+): {
+  snapshot: WalletProviderEvidenceRecoverySnapshot | null;
+  storageState: WalletProviderEvidenceRecoveryStorageState;
+} => {
+  try {
+    const rawSnapshot = window.localStorage.getItem(storageKey);
+
+    return {
+      snapshot: rawSnapshot ? JSON.parse(rawSnapshot) as WalletProviderEvidenceRecoverySnapshot : null,
+      storageState: "available",
+    };
+  } catch {
+    return {
+      snapshot: null,
+      storageState: "read_failed",
+    };
+  }
+};
+
+const writeWalletProviderEvidenceRecoverySnapshot = (
+  snapshot: WalletProviderEvidenceRecoverySnapshot,
+  storageKey = walletProviderEvidenceRecoveryStorageKey,
+): WalletProviderEvidenceRecoveryStorageState => {
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(snapshot));
+
+    return "available";
+  } catch {
+    return "write_failed";
+  }
+};
+
+const removeWalletProviderEvidenceRecoverySnapshot = (
+  storageKey = walletProviderEvidenceRecoveryStorageKey,
+): WalletProviderEvidenceRecoveryStorageState => {
+  try {
+    window.localStorage.removeItem(storageKey);
+
+    return "available";
+  } catch {
+    return "unavailable";
+  }
 };
 
 const sourceMetricToneStyles: Record<AiOptimizationMetricTone, CSSProperties> = {
@@ -1138,7 +1203,60 @@ const walletProviderEvidenceResultState = (
   ? result.releaseReadiness.summary.ready
     ? "ready"
     : "warning"
-  : "blocker";
+    : "blocker";
+
+const walletProviderEvidenceRecoverySourceLabel = (
+  source: WalletProviderEvidenceRecoverySource,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<WalletProviderEvidenceRecoverySource, string> = {
+    in_memory_action: copy.walletProviderRecoverySourceInMemoryAction,
+    local_sample: copy.walletProviderRecoverySourceLocalSample,
+    local_storage: copy.walletProviderRecoverySourceLocalStorage,
+    seeded_default: copy.walletProviderRecoverySourceSeededDefault,
+  };
+
+  return labels[source];
+};
+
+const walletProviderEvidenceRecoveryStorageLabel = (
+  state: WalletProviderEvidenceRecoveryStorageState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<WalletProviderEvidenceRecoveryStorageState, string> = {
+    available: copy.walletProviderRecoveryStorageAvailable,
+    not_requested: copy.walletProviderRecoveryStorageNotRequested,
+    read_failed: copy.walletProviderRecoveryStorageReadFailed,
+    unavailable: copy.walletProviderRecoveryStorageUnavailable,
+    write_failed: copy.walletProviderRecoveryStorageWriteFailed,
+  };
+
+  return labels[state];
+};
+
+const walletProviderEvidenceRecoveryStorageBadgeState = (
+  state: WalletProviderEvidenceRecoveryStorageState,
+): PublishState =>
+  state === "available" || state === "not_requested"
+    ? "ready"
+    : state === "write_failed" || state === "read_failed"
+      ? "warning"
+      : "blocker";
+
+const walletProviderEvidenceRecoveryStatusLabel = (
+  status: WalletProviderEvidenceRecoveryStatus,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  if (status === "fallback_invalid_snapshot") {
+    return copy.walletProviderRecoveryFallback;
+  }
+
+  if (status === "seeded_default") {
+    return copy.walletProviderRecoverySourceSeededDefault;
+  }
+
+  return copy.walletProviderRecoveryRestored;
+};
 
 const walletCompatibilityLabel = (
   value: string,
@@ -1162,6 +1280,13 @@ export const AdminOpsPanel = ({
   const adminOps = createAdminOpsReadModel(campaign);
   const [walletProviderEvidenceActionResult, setWalletProviderEvidenceActionResult] =
     useState<WalletProviderEvidenceReviewActionResult | null>(null);
+  const [walletProviderEvidenceRecoveryUi, setWalletProviderEvidenceRecoveryUi] =
+    useState<WalletProviderEvidenceRecoveryUiState>(() => ({
+      lastRecoveredAt: "2026-07-04T00:00:00Z",
+      snapshot: null,
+      source: "seeded_default",
+      storageState: "not_requested",
+    }));
   const exportReadiness = createExportConfirmationReadinessGate(campaign);
   const exportArtifact = createExportArtifact(campaign.exportPreview, "csv");
   const exportFulfillmentReadiness = adminOps.exportFulfillmentReadiness;
@@ -1173,18 +1298,23 @@ export const AdminOpsPanel = ({
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
   const p1LocaleActivationReadiness = adminOps.p1LocaleActivationReadiness;
-  const deliveryAcceptance = adminOps.deliveryAcceptance;
-  const residualGapMissionQueue = adminOps.residualGapMissionQueue;
-  const walletProviderEvidenceIntake =
-    walletProviderEvidenceActionResult?.updatedIntake ?? adminOps.walletProviderEvidenceIntake;
-  const walletProviderEvidenceApprovalAudit =
-    walletProviderEvidenceActionResult?.approvalAudit ?? adminOps.walletProviderEvidenceApprovalAudit;
-  const walletProviderEvidenceReleaseReadiness =
-    walletProviderEvidenceActionResult?.releaseReadiness ?? adminOps.walletProviderEvidenceReleaseReadiness;
-  const walletProviderEvidenceCloseoutPackage =
-    walletProviderEvidenceActionResult?.closeoutPackage ?? adminOps.walletProviderEvidenceCloseoutPackage;
-  const walletProviderEvidenceRequestPacket =
-    walletProviderEvidenceActionResult?.requestPacket ?? adminOps.walletProviderEvidenceRequestPacket;
+  const walletProviderEvidenceRecovery = recoverWalletProviderEvidenceState(
+    campaign,
+    adminOps.walletProviderQaGate,
+    walletProviderEvidenceRecoveryUi.snapshot,
+    {
+      source: walletProviderEvidenceRecoveryUi.source,
+      storageKey: walletProviderEvidenceRecoveryStorageKey,
+      storageState: walletProviderEvidenceRecoveryUi.storageState,
+    },
+  );
+  const deliveryAcceptance = walletProviderEvidenceRecovery.deliveryAcceptance;
+  const residualGapMissionQueue = createResidualGapMissionQueue(deliveryAcceptance);
+  const walletProviderEvidenceIntake = walletProviderEvidenceRecovery.intake;
+  const walletProviderEvidenceApprovalAudit = walletProviderEvidenceRecovery.approvalAudit;
+  const walletProviderEvidenceReleaseReadiness = walletProviderEvidenceRecovery.releaseReadiness;
+  const walletProviderEvidenceCloseoutPackage = walletProviderEvidenceRecovery.closeoutPackage;
+  const walletProviderEvidenceRequestPacket = walletProviderEvidenceRecovery.requestPacket;
   const lifecycleOperations = adminOps.lifecycleOperations;
   const launchConsoleBundles = adminOps.launchConsoleCampaignBundles;
   const launchBlockingGates = launchConsoleBundles.bundles.flatMap((bundle) =>
@@ -1718,6 +1848,64 @@ export const AdminOpsPanel = ({
     );
 
     setWalletProviderEvidenceActionResult(result);
+    setWalletProviderEvidenceRecoveryUi({
+      lastRecoveredAt: result.auditTrail.executedAt,
+      snapshot: serializeWalletProviderEvidenceRecoverySnapshot(
+        result.updatedIntake,
+        "in_memory_action",
+        result.auditTrail.executedAt,
+      ),
+      source: "in_memory_action",
+      storageState: walletProviderEvidenceRecoveryUi.storageState,
+    });
+  };
+  const loadWalletProviderEvidenceApprovedSample = () => {
+    const recoveredAt = nowIso();
+
+    setWalletProviderEvidenceActionResult(null);
+    setWalletProviderEvidenceRecoveryUi({
+      lastRecoveredAt: recoveredAt,
+      snapshot: createWalletProviderEvidenceAllApprovedSampleSnapshot(recoveredAt),
+      source: "local_sample",
+      storageState: "available",
+    });
+  };
+  const saveWalletProviderEvidenceRecoveryState = () => {
+    const snapshot = serializeWalletProviderEvidenceRecoverySnapshot(
+      walletProviderEvidenceIntake,
+      "local_storage",
+      nowIso(),
+    );
+    const storageState = writeWalletProviderEvidenceRecoverySnapshot(snapshot);
+
+    setWalletProviderEvidenceRecoveryUi({
+      lastRecoveredAt: snapshot.capturedAt,
+      snapshot,
+      source: "local_storage",
+      storageState,
+    });
+  };
+  const restoreWalletProviderEvidenceRecoveryState = () => {
+    const stored = readWalletProviderEvidenceRecoverySnapshot();
+
+    setWalletProviderEvidenceActionResult(null);
+    setWalletProviderEvidenceRecoveryUi({
+      lastRecoveredAt: nowIso(),
+      snapshot: stored.snapshot,
+      source: stored.snapshot ? "local_storage" : "seeded_default",
+      storageState: stored.storageState,
+    });
+  };
+  const resetWalletProviderEvidenceRecoveryState = () => {
+    const storageState = removeWalletProviderEvidenceRecoverySnapshot();
+
+    setWalletProviderEvidenceActionResult(null);
+    setWalletProviderEvidenceRecoveryUi({
+      lastRecoveredAt: nowIso(),
+      snapshot: null,
+      source: "seeded_default",
+      storageState,
+    });
   };
   const walletProviderEvidenceActionsByScenario = Object.fromEntries(
     walletProviderEvidenceRequestPacket.scenarios.map((scenario) => [
@@ -1733,6 +1921,11 @@ export const AdminOpsPanel = ({
       ).actions,
     ]),
   );
+  const walletProviderEvidenceLatestActionNextAction = walletProviderEvidenceActionResult
+    ? walletProviderEvidenceActionResult.updatedIntake.scenarios.find(
+      (scenario) => scenario.id === walletProviderEvidenceActionResult.scenarioId,
+    )?.nextAction ?? walletProviderEvidenceActionResult.nextAction
+    : walletProviderEvidenceRecovery.nextAction;
 
   const riskIntelligenceSummaryItems = [
     {
@@ -3450,6 +3643,123 @@ export const AdminOpsPanel = ({
         </div>
       </section>
 
+      <section aria-label={copy.walletProviderEvidenceStateRecovery} style={panelStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.walletProviderEvidenceStateRecoveryEyebrow}</p>
+              <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+                {copy.walletProviderEvidenceStateRecovery}
+              </h3>
+              <p style={mutedTextStyle}>{copy.walletProviderEvidenceStateRecoverySubtitle}</p>
+            </div>
+            <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <PublishStateBadge
+                label={walletProviderEvidenceRecoverySourceLabel(walletProviderEvidenceRecovery.source, copy)}
+                state={walletProviderEvidenceRecovery.status === "fallback_invalid_snapshot" ? "warning" : "ready"}
+              />
+              <PublishStateBadge
+                label={walletProviderEvidenceReleaseReadiness.summary.ready
+                  ? copy.walletProviderReleaseStateReady
+                  : copy.walletProviderReleaseStateBlocked}
+                state={walletProviderEvidenceReleaseReadiness.summary.ready ? "ready" : "blocker"}
+              />
+            </span>
+          </div>
+          <div style={boundaryStyle}>
+            <p style={{ margin: 0 }}>{copy.walletProviderEvidenceStateRecoveryBoundary}</p>
+            <p style={{ margin: "8px 0 0" }}>
+              {copy.nonLiveBoundary}: {getLocalizedText(walletProviderEvidenceRecovery.boundary, locale)}
+            </p>
+            {walletProviderEvidenceRecovery.validationErrors.length > 0 ? (
+              <p style={{ margin: "8px 0 0" }}>
+                {copy.walletProviderRecoveryFallback}:{" "}
+                {getLocalizedText(walletProviderEvidenceRecovery.validationErrors[0].message, locale)}
+              </p>
+            ) : null}
+          </div>
+          <div style={compactGridStyle}>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.walletProviderRecoveryActiveSource}</p>
+              <p style={valueStyle}>
+                {walletProviderEvidenceRecoverySourceLabel(walletProviderEvidenceRecovery.source, copy)}
+              </p>
+              <PublishStateBadge
+                label={walletProviderEvidenceRecoveryStatusLabel(walletProviderEvidenceRecovery.status, copy)}
+                state={walletProviderEvidenceRecovery.status === "fallback_invalid_snapshot" ? "warning" : "ready"}
+              />
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.walletProviderApprovedRequiredScenarios}</p>
+              <p style={valueStyle}>
+                {walletProviderEvidenceReleaseReadiness.summary.approvedRequiredScenarios}/
+                {walletProviderEvidenceReleaseReadiness.summary.requiredScenarios}
+              </p>
+              <PublishStateBadge
+                label={walletProviderEvidenceReleaseReadiness.summary.ready
+                  ? copy.walletProviderReleaseStateReady
+                  : copy.walletProviderReleaseStateBlocked}
+                state={walletProviderEvidenceReleaseReadiness.summary.ready ? "ready" : "blocker"}
+              />
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.walletProviderRecoveryStorageStatus}</p>
+              <p style={valueStyle}>
+                {walletProviderEvidenceRecoveryStorageLabel(walletProviderEvidenceRecovery.storage.state, copy)}
+              </p>
+              <PublishStateBadge
+                label={walletProviderEvidenceRecoveryStorageLabel(walletProviderEvidenceRecovery.storage.state, copy)}
+                state={walletProviderEvidenceRecoveryStorageBadgeState(walletProviderEvidenceRecovery.storage.state)}
+              />
+            </article>
+            <article style={cardStyle}>
+              <p style={labelStyle}>{copy.walletProviderRecoveryLastRecoveredAt}</p>
+              <p style={valueStyle}>{walletProviderEvidenceRecoveryUi.lastRecoveredAt}</p>
+              <p style={mutedTextStyle}>{getLocalizedText(walletProviderEvidenceRecovery.storage.message, locale)}</p>
+            </article>
+          </div>
+          <div style={actionButtonGridStyle}>
+            <button
+              aria-label={copy.walletProviderRecoveryLoadApprovedSample}
+              onClick={loadWalletProviderEvidenceApprovedSample}
+              style={actionButtonStyle}
+              type="button"
+            >
+              <FileCheck2 aria-hidden="true" size={15} strokeWidth={2.4} />
+              {copy.walletProviderRecoveryLoadApprovedSample}
+            </button>
+            <button
+              aria-label={copy.walletProviderRecoverySaveCurrentState}
+              onClick={saveWalletProviderEvidenceRecoveryState}
+              style={actionButtonStyle}
+              type="button"
+            >
+              <Save aria-hidden="true" size={15} strokeWidth={2.4} />
+              {copy.walletProviderRecoverySaveCurrentState}
+            </button>
+            <button
+              aria-label={copy.walletProviderRecoveryRestoreSavedState}
+              onClick={restoreWalletProviderEvidenceRecoveryState}
+              style={actionButtonStyle}
+              type="button"
+            >
+              <FolderOpen aria-hidden="true" size={15} strokeWidth={2.4} />
+              {copy.walletProviderRecoveryRestoreSavedState}
+            </button>
+            <button
+              aria-label={copy.walletProviderRecoveryResetLocalState}
+              onClick={resetWalletProviderEvidenceRecoveryState}
+              style={actionButtonStyle}
+              type="button"
+            >
+              <RotateCcw aria-hidden="true" size={15} strokeWidth={2.4} />
+              {copy.walletProviderRecoveryResetLocalState}
+            </button>
+          </div>
+          <p style={wrapTextStyle}>
+            {copy.nextAction}: {getLocalizedText(walletProviderEvidenceRecovery.nextAction, locale)}
+          </p>
+      </section>
+
       <section aria-label={copy.walletProviderEvidenceRequestPacket} style={panelStyle}>
         <div style={rowStyle}>
           <div style={stackStyle}>
@@ -3491,7 +3801,7 @@ export const AdminOpsPanel = ({
               {copy.walletProviderApprovedRequiredScenarios}:{" "}
               {walletProviderEvidenceActionResult.releaseReadiness.summary.approvedRequiredScenarios}/
               {walletProviderEvidenceActionResult.releaseReadiness.summary.requiredScenarios} ·{" "}
-              {getLocalizedText(walletProviderEvidenceActionResult.nextAction, locale)}
+              {getLocalizedText(walletProviderEvidenceLatestActionNextAction, locale)}
             </p>
           ) : (
             <p style={{ margin: "8px 0 0" }}>{copy.walletProviderReviewNoLatestResult}</p>
