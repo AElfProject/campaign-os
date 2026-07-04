@@ -17,7 +17,7 @@ import {
 } from "../../../../domain";
 import { PublishStateBadge } from "../../../badges/Badges";
 
-type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR">;
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN">;
 
 interface RewardsEligibilityBuilderProps {
   draft?: CampaignDraft;

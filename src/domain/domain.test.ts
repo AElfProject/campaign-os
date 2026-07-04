@@ -110,8 +110,8 @@ const v02CampaignStatuses = [
   "archived",
 ] as const;
 
-const activatedRuntimeLocales = ["en-US", "zh-CN", "zh-TW", "ja-JP", "ko-KR"] as const;
-const unsupportedP1RuntimeLocales = ["vi-VN", "id-ID", "tr-TR", "es-ES"] as const;
+const activatedRuntimeLocales = ["en-US", "zh-CN", "zh-TW", "ja-JP", "ko-KR", "vi-VN"] as const;
+const unsupportedP1RuntimeLocales = ["id-ID", "tr-TR", "es-ES"] as const;
 
 const walletProviderScenarioIds: WalletProviderQaScenarioId[] = [
   "portkey-aa-connect",
@@ -216,6 +216,7 @@ describe("Campaign OS domain foundation", () => {
     expect(isSupportedLocale("zh-TW")).toBe(true);
     expect(isSupportedLocale("ja-JP")).toBe(true);
     expect(isSupportedLocale("ko-KR")).toBe(true);
+    expect(isSupportedLocale("vi-VN")).toBe(true);
     for (const p1Locale of unsupportedP1RuntimeLocales) {
       expect(isSupportedLocale(p1Locale)).toBe(false);
     }
@@ -259,9 +260,14 @@ describe("Campaign OS domain foundation", () => {
       locale: "ko-KR",
       source: "storage",
     });
+
+    expect(resolveLocalePreference({ storedLocale: "vi-VN" })).toEqual({
+      locale: "vi-VN",
+      source: "storage",
+    });
   });
 
-  it("parses localized campaign route paths with ja-JP and ko-KR runtime support", () => {
+  it("parses localized campaign route paths with ja-JP, ko-KR, and vi-VN runtime support", () => {
     expect(parseCampaignRoutePath("/en-US/campaigns/awaken-sprint")).toMatchObject({
       campaignId: "awaken-sprint",
       canonicalPath: "/en-US/campaigns/awaken-sprint",
@@ -299,6 +305,14 @@ describe("Campaign OS domain foundation", () => {
       matched: true,
       unsupportedLocale: null,
       urlLocale: "ko-KR",
+    });
+    expect(parseCampaignRoutePath("/vi-VN/campaigns/awaken-sprint")).toMatchObject({
+      campaignId: "awaken-sprint",
+      canonicalPath: "/vi-VN/campaigns/awaken-sprint",
+      localeSource: "url",
+      matched: true,
+      unsupportedLocale: null,
+      urlLocale: "vi-VN",
     });
     expect(() => parseCampaignRoutePath("/zh-CN/campaigns/%E0%A4%A")).not.toThrow();
     expect(parseCampaignRoutePath("/zh-CN/campaigns/%E0%A4%A")).toMatchObject({
@@ -360,6 +374,7 @@ describe("Campaign OS domain foundation", () => {
     const chinesePanel = translationManager.panels.find((panel) => panel.locale === "zh-CN");
     const traditionalChinesePanel = translationManager.panels.find((panel) => panel.locale === "zh-TW");
     const japanesePanel = translationManager.panels.find((panel) => panel.locale === "ja-JP");
+    const vietnamesePanel = translationManager.panels.find((panel) => panel.locale === "vi-VN");
 
     expect(translationManager.defaultLocale).toBe("en-US");
     expect(translationManager.fallbackLocale).toBe("en-US");
@@ -417,6 +432,16 @@ describe("Campaign OS domain foundation", () => {
         fallbackToEnglish: true,
         humanReviewed: false,
       }),
+      expect.objectContaining({
+        locale: "vi-VN",
+        role: "translation",
+        isDefault: false,
+        isFallback: false,
+        status: "empty",
+        publishState: "warning",
+        fallbackToEnglish: true,
+        humanReviewed: false,
+      }),
     ]);
     expect(englishPanel).toMatchObject({
       locale: "en-US",
@@ -461,6 +486,17 @@ describe("Campaign OS domain foundation", () => {
     });
     expect(japanesePanel?.title).toBe("");
     expect(japanesePanel?.nextAction["en-US"]).toContain("English fallback");
+    expect(vietnamesePanel).toMatchObject({
+      locale: "vi-VN",
+      sourceLocale: "en-US",
+      aiDraft: false,
+      fallbackToEnglish: true,
+      humanReviewed: false,
+      published: false,
+      publishState: "warning",
+    });
+    expect(vietnamesePanel?.title).toBe("");
+    expect(vietnamesePanel?.nextAction["en-US"]).toContain("English fallback");
   });
 
   it("builds field-level translation comparison rows from English source and zh-CN draft", () => {
@@ -535,6 +571,14 @@ describe("Campaign OS domain foundation", () => {
       }),
       expect.objectContaining({
         locale: "ko-KR",
+        reviewed: false,
+        fallbackToEnglish: true,
+        reviewState: "missing",
+        blocksPublish: true,
+        publishState: "blocker",
+      }),
+      expect.objectContaining({
+        locale: "vi-VN",
         reviewed: false,
         fallbackToEnglish: true,
         reviewState: "missing",
@@ -1302,8 +1346,8 @@ describe("Campaign OS domain foundation", () => {
     }
     expect(readiness.p1LocaleExpansion.summary).toMatchObject({
       totalLocales: 6,
-      deferredLocales: 4,
-      runtimeSupportedLocales: 2,
+      deferredLocales: 3,
+      runtimeSupportedLocales: 3,
     });
     expect(readiness.p1LocaleExpansion.summary.boundary["en-US"]).toContain(
       "ja-JP",
@@ -1320,7 +1364,7 @@ describe("Campaign OS domain foundation", () => {
       "es-ES",
     ]);
     for (const row of readiness.p1LocaleExpansion.rows) {
-      const isRuntimeSupported = row.code === "ja-JP" || row.code === "ko-KR";
+      const isRuntimeSupported = row.code === "ja-JP" || row.code === "ko-KR" || row.code === "vi-VN";
       expect(row).toMatchObject({
         ownerRole: "project_owner",
         runtimeSupported: isRuntimeSupported,
@@ -1349,24 +1393,24 @@ describe("Campaign OS domain foundation", () => {
     ]);
     expect(activationReadiness.summary).toMatchObject({
       totalCandidates: 6,
-      blockedCandidates: 1,
+      blockedCandidates: 0,
       reviewRequiredCandidates: 1,
-      readyCandidates: 2,
+      readyCandidates: 3,
       deferredCandidates: 2,
       requiredEvidenceItems: 30,
-      completedEvidenceItems: 6,
-      recommendedFirstLocale: "ko-KR",
-      topBlockerId: "content-owner-missing",
+      completedEvidenceItems: 9,
+      recommendedFirstLocale: "vi-VN",
+      topBlockerId: "activation-sequence-deferred",
       ready: true,
     });
     expect(activationReadiness.boundary["en-US"]).toContain(
-      "ja-JP and ko-KR are runtime-active",
+      "ja-JP, ko-KR, and vi-VN are runtime-active",
     );
     expect(activationReadiness.nextAction["en-US"]).toContain("English fallback");
     expect(candidatesByLocale["ko-KR"]).toMatchObject({
       ownerRole: "project_owner",
       priority: 0,
-      recommendedFirst: true,
+      recommendedFirst: false,
       status: "ready",
       contentOwnershipReadiness: "partial",
       qaReadiness: "ready",
@@ -1395,6 +1439,22 @@ describe("Campaign OS domain foundation", () => {
     expect(candidatesByLocale["ja-JP"]?.contentScope["en-US"]).toContain("ja-JP");
     expect(candidatesByLocale["ja-JP"]?.qaScope["en-US"]).toContain("ja-JP");
     expect(candidatesByLocale["ja-JP"]?.boundary["en-US"]).toContain("runtime-active");
+    expect(candidatesByLocale["vi-VN"]).toMatchObject({
+      ownerRole: "project_owner",
+      priority: 2,
+      recommendedFirst: true,
+      status: "ready",
+      contentOwnershipReadiness: "partial",
+      qaReadiness: "ready",
+      routingReadiness: "ready",
+      analyticsReadiness: "ready",
+      publishGateReadiness: "partial",
+      blockerIds: [],
+      evidenceReferences: ["v02-p1-locale-expansion", "mission/p1-locale-expansion", "mission/127-vi-vn-locale-activation"],
+    });
+    expect(candidatesByLocale["vi-VN"]?.contentScope["en-US"]).toContain("vi-VN");
+    expect(candidatesByLocale["vi-VN"]?.qaScope["en-US"]).toContain("vi-VN");
+    expect(candidatesByLocale["vi-VN"]?.boundary["en-US"]).toContain("runtime-active");
     expect(supportedLocales).toEqual(activatedRuntimeLocales);
     expect(itemsById["product-contract-impact-review"]?.evidence["en-US"]).toContain(
       "claim-mode disabled and future approval-gated",
@@ -4219,6 +4279,7 @@ describe("Campaign OS domain foundation", () => {
     expect(isSupportedLocale("zh-TW")).toBe(true);
     expect(isSupportedLocale("ja-JP")).toBe(true);
     expect(isSupportedLocale("ko-KR")).toBe(true);
+    expect(isSupportedLocale("vi-VN")).toBe(true);
   });
 
   it("derives deterministic campaign discovery for User App, App Hub, Portfolio, and Forecast", () => {
@@ -7057,6 +7118,7 @@ describe("Campaign OS domain foundation", () => {
       "en-US",
       "ja-JP",
       "ko-KR",
+      "vi-VN",
       "zh-CN",
       "zh-TW",
     ]);
@@ -7188,6 +7250,7 @@ describe("Campaign OS domain foundation", () => {
       "en-US": "https://campaign.local/en-US/campaigns/awaken-sprint",
       "ja-JP": "https://campaign.local/ja-JP/campaigns/awaken-sprint",
       "ko-KR": "https://campaign.local/ko-KR/campaigns/awaken-sprint",
+      "vi-VN": "https://campaign.local/vi-VN/campaigns/awaken-sprint",
       "zh-CN": "https://campaign.local/zh-CN/campaigns/awaken-sprint",
       "zh-TW": "https://campaign.local/zh-TW/campaigns/awaken-sprint",
     });

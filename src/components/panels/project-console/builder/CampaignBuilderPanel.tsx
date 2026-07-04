@@ -17,7 +17,7 @@ import {
 import { LocaleStatusBadge, PublishStateBadge, WalletCompatibilityBadge } from "../../../badges/Badges";
 import type { ProjectConsoleCopy } from "../copy";
 
-type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR">;
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN">;
 
 interface CampaignBuilderPanelProps {
   copy: ProjectConsoleCopy;

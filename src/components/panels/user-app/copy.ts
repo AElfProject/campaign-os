@@ -1,6 +1,6 @@
 import type { SupportedLocale } from "../../../domain";
 
-type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR">;
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN">;
 
 const enUS = {
     active: "Live campaign",

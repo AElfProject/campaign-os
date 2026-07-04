@@ -1465,7 +1465,12 @@ export const adminOpsCopy = {
   },
   "ko-KR": {
     ...enUS,
-    p1LocaleActivationSubtitle: "ja-JP and ko-KR runtimes are active with English fallback until reviewed locale business copy is complete.",
+    p1LocaleActivationSubtitle: "ja-JP, ko-KR, and vi-VN runtimes are active with English fallback until reviewed locale business copy is complete.",
     zhDraft: "Korean English fallback/readiness",
+  },
+  "vi-VN": {
+    ...enUS,
+    p1LocaleActivationSubtitle: "ja-JP, ko-KR, and vi-VN runtimes are active with English fallback until reviewed locale business copy is complete.",
+    zhDraft: "Vietnamese English fallback/readiness",
   },
 } satisfies Record<SupportedLocale, typeof enUS>;
