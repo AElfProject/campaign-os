@@ -527,9 +527,9 @@ const unsupportedLocaleError: I18nReviewActionError = {
   code: "UNSUPPORTED_LOCALE",
   field: "targetLocale",
   message: localized(
-    "Only zh-CN, zh-TW, and ja-JP can be target locales for this local review workflow.",
-    "该本地审核工作流仅支持 zh-CN、zh-TW 与 ja-JP 作为目标语言。",
-    "Only zh-CN, zh-TW, and ja-JP can be target locales for this local review workflow.",
+    "Only zh-CN, zh-TW, ja-JP, and ko-KR can be target locales for this local review workflow.",
+    "该本地审核工作流仅支持 zh-CN、zh-TW、ja-JP 与 ko-KR 作为目标语言。",
+    "Only zh-CN, zh-TW, ja-JP, and ko-KR can be target locales for this local review workflow.",
   ),
 };
 
@@ -678,6 +678,11 @@ const localeLabels: Record<ContentRevision["locale"], LocalizedText> = {
     "en-US": "Japanese fallback",
     "zh-CN": "日语英文回退",
     "zh-TW": "Japanese fallback",
+  },
+  "ko-KR": {
+    "en-US": "Korean fallback",
+    "zh-CN": "韩语英文回退",
+    "zh-TW": "Korean fallback",
   },
 };
 
@@ -13222,10 +13227,12 @@ const p1LocalePrerequisites = (code: P1LocaleCode): LocalizedText[] => [
   ),
 ];
 
+const activatedP1RuntimeLocales = new Set<P1LocaleCode>(["ja-JP", "ko-KR"]);
+
 const p1LocaleExpansionBoundary = localized(
-  "P1 locale rows are backlog planning except ja-JP, which is active with English fallback until reviewed Japanese copy is complete.",
-  "除已激活且在日文审核完成前使用英文 fallback 的 ja-JP 外，P1 语言行仅用于 backlog 规划。",
-  "除已啟用且在日文審核完成前使用英文 fallback 的 ja-JP 外，P1 語言行僅用於 backlog 規劃。",
+  "P1 locale rows are backlog planning except ja-JP and ko-KR, which are runtime-active with English fallback until reviewed locale copy is complete.",
+  "除已激活且在语言审核完成前使用英文 fallback 的 ja-JP 与 ko-KR 外，P1 语言行仅用于 backlog 规划。",
+  "除已啟用且在語言審核完成前使用英文 fallback 的 ja-JP 與 ko-KR 外，P1 語言行僅用於 backlog 規劃。",
 );
 
 const createP1LocaleExpansionReadiness = (): P1LocaleExpansionReadiness => {
@@ -13239,13 +13246,19 @@ const createP1LocaleExpansionReadiness = (): P1LocaleExpansionReadiness => {
     ),
     ownerRole: "project_owner",
     prerequisites: p1LocalePrerequisites(locale.code),
-    reason: localized(
-      `${locale.code} is a documented P1 locale for ${locale.marketSignal["en-US"]}, but translation, review, QA, routing, and publish gates are not active in this MVP runtime.`,
-      `${locale.code} 是已记录的 P1 语言，用于${locale.marketSignal["zh-CN"]}；但翻译、审核、QA、路由与发布门禁尚未在当前 MVP runtime 启用。`,
-      `${locale.code} 是已記錄的 P1 語言，用於${locale.marketSignal["zh-TW"]}；但翻譯、審核、QA、路由與發布門禁尚未在目前 MVP runtime 啟用。`,
-    ),
-    runtimeSupported: locale.code === "ja-JP",
-    status: locale.code === "ja-JP" ? "ready" : "deferred",
+    reason: activatedP1RuntimeLocales.has(locale.code)
+      ? localized(
+        `${locale.code} is runtime-active with English fallback while reviewed locale copy remains pending.`,
+        `${locale.code} 已激活运行时，并在已审核语言文案完成前使用英文 fallback。`,
+        `${locale.code} 已啟用執行時，並在已審核語言文案完成前使用英文 fallback。`,
+      )
+      : localized(
+        `${locale.code} is a documented P1 locale for ${locale.marketSignal["en-US"]}, but translation, review, QA, routing, and publish gates are not active in this MVP runtime.`,
+        `${locale.code} 是已记录的 P1 语言，用于${locale.marketSignal["zh-CN"]}；但翻译、审核、QA、路由与发布门禁尚未在当前 MVP runtime 启用。`,
+        `${locale.code} 是已記錄的 P1 語言，用於${locale.marketSignal["zh-TW"]}；但翻譯、審核、QA、路由與發布門禁尚未在目前 MVP runtime 啟用。`,
+      ),
+    runtimeSupported: activatedP1RuntimeLocales.has(locale.code),
+    status: activatedP1RuntimeLocales.has(locale.code) ? "ready" : "deferred",
   }));
 
   return {
@@ -13267,9 +13280,9 @@ const createP1LocaleExpansionReadiness = (): P1LocaleExpansionReadiness => {
 };
 
 const p1LocaleActivationBoundary = localized(
-  "ja-JP is runtime-active with English fallback until reviewed Japanese copy is complete. Other P1 locales remain review-only backlog.",
-  "ja-JP 已激活运行时，并在日文审核完成前使用英文 fallback。其他 P1 语言仍为只读审核 backlog。",
-  "ja-JP 已啟用執行時，並在日文審核完成前使用英文 fallback。其他 P1 語言仍為只讀審核 backlog。",
+  "ja-JP and ko-KR are runtime-active with English fallback until reviewed locale copy is complete. Other P1 locales remain review-only backlog.",
+  "ja-JP 与 ko-KR 已激活运行时，并在语言审核完成前使用英文 fallback。其他 P1 语言仍为只读审核 backlog。",
+  "ja-JP 與 ko-KR 已啟用執行時，並在語言審核完成前使用英文 fallback。其他 P1 語言仍為只讀審核 backlog。",
 );
 
 type P1LocaleActivationSeed = {
@@ -13289,21 +13302,21 @@ type P1LocaleActivationSeed = {
 const p1LocaleActivationSeeds: P1LocaleActivationSeed[] = [
   {
     locale: "ko-KR",
-    status: "blocked",
+    status: "ready",
     ownerRole: "project_owner",
-    contentOwnershipReadiness: "missing",
-    qaReadiness: "missing",
-    routingReadiness: "missing",
-    analyticsReadiness: "partial",
-    publishGateReadiness: "missing",
-    blockerIds: ["content-owner-missing", "locale-qa-scope-missing", "publish-gate-not-approved"],
-    evidenceReferences: ["v02-p1-locale-expansion", "product-future-locale-expansion"],
+    recommendedFirst: true,
+    contentOwnershipReadiness: "partial",
+    qaReadiness: "ready",
+    routingReadiness: "ready",
+    analyticsReadiness: "ready",
+    publishGateReadiness: "partial",
+    blockerIds: [],
+    evidenceReferences: ["v02-p1-locale-expansion", "mission/p1-locale-expansion", "mission/126-ko-kr-locale-activation"],
   },
   {
     locale: "ja-JP",
     status: "ready",
     ownerRole: "project_owner",
-    recommendedFirst: true,
     contentOwnershipReadiness: "partial",
     qaReadiness: "ready",
     routingReadiness: "ready",
@@ -13379,9 +13392,9 @@ const p1LocaleActivationNextAction = (
   recommendedFirst: boolean,
 ): LocalizedText => recommendedFirst
   ? localized(
-    `${code} runtime activation is ready with English fallback; complete reviewed Japanese copy before claiming full localization.`,
-    `${code} 运行时激活已就绪并使用英文 fallback；声明完整本地化前需完成已审核日文文案。`,
-    `${code} 執行時啟用已就緒並使用英文 fallback；宣稱完整本地化前需完成已審核日文文案。`,
+    `${code} runtime activation is ready with English fallback; complete reviewed locale copy before claiming full localization.`,
+    `${code} 运行时激活已就绪并使用英文 fallback；声明完整本地化前需完成已审核语言文案。`,
+    `${code} 執行時啟用已就緒並使用英文 fallback；宣稱完整本地化前需完成已審核語言文案。`,
   )
   : localized(
     `Keep ${code} queued behind the first locale activation mission until ownership and QA evidence are stronger.`,
@@ -14052,14 +14065,14 @@ const v02AcceptanceRows = (
       ownerRole: "project_owner",
       evidenceSurface: localized("P1 locale expansion readiness", "P1 语言扩展 readiness", "P1 語言擴展 readiness"),
       evidenceSummary: localized(
-        "ja-JP is active with English fallback; ko-KR, vi-VN, id-ID, tr-TR, and es-ES remain backlog rows.",
-        "ja-JP 已激活并使用英文 fallback；ko-KR、vi-VN、id-ID、tr-TR 与 es-ES 仍作为 backlog rows 跟踪。",
-        "ja-JP 已啟用並使用英文 fallback；ko-KR、vi-VN、id-ID、tr-TR 與 es-ES 仍作為 backlog rows 跟蹤。",
+        "ja-JP and ko-KR are active with English fallback; vi-VN, id-ID, tr-TR, and es-ES remain backlog rows.",
+        "ja-JP 与 ko-KR 已激活并使用英文 fallback；vi-VN、id-ID、tr-TR 与 es-ES 仍作为 backlog rows 跟踪。",
+        "ja-JP 與 ko-KR 已啟用並使用英文 fallback；vi-VN、id-ID、tr-TR 與 es-ES 仍作為 backlog rows 跟蹤。",
       ),
       nextMissionAction: localized(
-        "Complete reviewed Japanese copy before claiming full localization; keep remaining P1 locales queued for separate activation missions.",
-        "声明完整本地化前先完成已审核日文文案；其余 P1 语言继续排队等待单独激活 mission。",
-        "宣稱完整本地化前先完成已審核日文文案；其餘 P1 語言繼續排隊等待單獨啟用 mission。",
+        "Complete reviewed Japanese and Korean copy before claiming full localization; keep remaining P1 locales queued for separate activation missions.",
+        "声明完整本地化前先完成已审核日文与韩文文案；其余 P1 语言继续排队等待单独激活 mission。",
+        "宣稱完整本地化前先完成已審核日文與韓文文案；其餘 P1 語言繼續排隊等待單獨啟用 mission。",
       ),
     }),
   ];
@@ -14854,8 +14867,8 @@ const createProductDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
         "运行时已覆盖 v0.2 MVP 语言：en-US、zh-CN 与 zh-TW。",
       ),
       nextAction: localized(
-        "Keep P1 locales such as ko-KR, ja-JP, vi-VN, id-ID, tr-TR, and es-ES deferred to a separate expansion mission.",
-        "将 ko-KR、ja-JP、vi-VN、id-ID、tr-TR、es-ES 等 P1 语言继续后置到单独扩展 mission。",
+        "Keep remaining P1 locales such as vi-VN, id-ID, tr-TR, and es-ES deferred to separate activation missions.",
+        "将 vi-VN、id-ID、tr-TR、es-ES 等剩余 P1 语言继续后置到单独激活 mission。",
       ),
       sourceRequirement: "Product checklist: MVP locale coverage",
     }),
@@ -14918,8 +14931,8 @@ const createProductDeliveryChecklistItems = (): DeliveryChecklistItem[] => {
       ownerRole: "project_owner",
       surface: localized("Locale governance", "语言治理"),
       evidence: localized(
-        "The v0.2 MVP locales are covered; P1 locales such as ko-KR, ja-JP, vi-VN, id-ID, tr-TR, and es-ES remain future scope.",
-        "v0.2 MVP 语言已覆盖；ko-KR、ja-JP、vi-VN、id-ID、tr-TR、es-ES 等 P1 语言仍为未来范围。",
+        "The v0.2 MVP locales plus ja-JP and ko-KR runtime activation are covered; remaining P1 locales vi-VN, id-ID, tr-TR, and es-ES remain future scope.",
+        "v0.2 MVP 语言以及 ja-JP、ko-KR 运行时激活已覆盖；剩余 P1 语言 vi-VN、id-ID、tr-TR、es-ES 仍为未来范围。",
       ),
       nextAction: localized(
         "Use the P1 locale expansion readiness matrix before opening any activation mission.",
