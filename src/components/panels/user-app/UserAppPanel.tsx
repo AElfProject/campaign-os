@@ -60,12 +60,14 @@ import { WalletOptionCards } from "../../wallet/WalletOptionCards";
 import { WalletConnectModal } from "../../wallet/WalletConnectModal";
 import { userAppCopy } from "./copy";
 
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+
 interface UserAppPanelProps {
   campaign?: CampaignShellDetail;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
   participant?: ParticipantSnapshot;
   shareLocale?: SupportedLocale;
-  walletModalLocale?: SupportedLocale;
+  walletModalLocale?: BusinessContentLocale;
 }
 
 const panelStyle: CSSProperties = {
@@ -377,7 +379,7 @@ const formatTimestamp = (iso?: string) =>
       }).format(new Date(iso))
     : "-";
 
-const localeStatusLabel = (status: LocaleStatus, locale: SupportedLocale) => {
+const localeStatusLabel = (status: LocaleStatus, locale: BusinessContentLocale) => {
   const labels = {
     "en-US": {
       ai_draft: "AI draft",
@@ -403,7 +405,7 @@ const localeStatusLabel = (status: LocaleStatus, locale: SupportedLocale) => {
       ready: "就緒",
       reviewed: "已審核",
     },
-  } satisfies Record<SupportedLocale, Record<LocaleStatus, string>>;
+  } satisfies Record<BusinessContentLocale, Record<LocaleStatus, string>>;
 
   return labels[locale][status];
 };
@@ -716,7 +718,7 @@ const WalletSessionCard = ({
   session,
 }: {
   copy: typeof userAppCopy["en-US"];
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
   session: NormalizedWalletSession;
 }) => (
   <article style={cardStyle}>
@@ -768,7 +770,7 @@ const CampaignFeedCard = ({
 }: {
   copy: typeof userAppCopy["en-US"];
   item: CampaignDiscoveryItem;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
 }) => (
   <article style={{ ...cardStyle, alignContent: "space-between" }}>
     <div style={rowStyle}>
@@ -835,7 +837,7 @@ const WorkspaceTaskList = ({
 }: {
   copy: typeof userAppCopy["en-US"];
   emptyLabel: string;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
   tasks: ParticipantWorkspaceTaskRow[];
 }) => (
   <ul style={listStyle}>
@@ -882,7 +884,7 @@ const EcosystemRecommendationCard = ({
   recommendation,
 }: {
   copy: typeof userAppCopy["en-US"];
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
   recommendation: ReturnType<typeof createEcosystemNextActionReadModel>["recommendations"][number];
 }) => (
   <article style={{ ...cardStyle, alignContent: "space-between" }}>
@@ -948,7 +950,7 @@ const MobileHubLaneCard = ({
   copy: typeof userAppCopy["en-US"];
   compact?: boolean;
   lane: MobileTelegramMiniAppHubReadinessLane;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
 }) => (
   <article
     style={{
@@ -1029,7 +1031,7 @@ const MarketplaceReadinessCard = ({
   row,
 }: {
   copy: typeof userAppCopy["en-US"];
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
   row: ReturnType<typeof createCampaignMarketplaceReadiness>["rows"][number];
 }) => (
   <article style={{ ...cardStyle, alignContent: "space-between" }}>
@@ -1109,7 +1111,7 @@ const PortfolioHistoryCard = ({
   row,
 }: {
   copy: typeof userAppCopy["en-US"];
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
   row: ReturnType<typeof createPortfolioCampaignHistoryReadModel>["rows"][number];
 }) => (
   <article style={{ ...cardStyle, alignContent: "space-between" }}>
@@ -2441,10 +2443,16 @@ export const UserAppPanel = ({
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   <WalletCompatibilityBadge compatibility={task.walletCompatibility} />
-                  <LocaleStatusBadge
-                    label={`${copy.localeReadiness}: ${localeStatusLabel(task.localeStatus[locale], locale)}`}
-                    status={task.localeStatus[locale]}
-                  />
+                  {(() => {
+                    const localeStatus = task.localeStatus[locale] ?? task.localeStatus["en-US"];
+
+                    return (
+                      <LocaleStatusBadge
+                        label={`${copy.localeReadiness}: ${localeStatusLabel(localeStatus, locale)}`}
+                        status={localeStatus}
+                      />
+                    );
+                  })()}
                   <span style={{ color: "#64748b", fontSize: 13, fontWeight: 700 }}>
                     {copy.verification}: {task.verificationType}
                   </span>

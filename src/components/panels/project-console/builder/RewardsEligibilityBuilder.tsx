@@ -17,9 +17,11 @@ import {
 } from "../../../../domain";
 import { PublishStateBadge } from "../../../badges/Badges";
 
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+
 interface RewardsEligibilityBuilderProps {
   draft?: CampaignDraft;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
 }
 
 const copy = {
@@ -98,7 +100,7 @@ const copy = {
     walletPolicy: "錢包策略",
     winnerRule: "獲獎規則",
   },
-} satisfies Record<SupportedLocale, Record<string, string>>;
+} satisfies Record<BusinessContentLocale, Record<string, string>>;
 
 const rewardProviderLabels = {
   "en-US": {
@@ -113,7 +115,7 @@ const rewardProviderLabels = {
     campaign_project: "活動專案方",
     partner: "合作夥伴",
   },
-} satisfies Record<SupportedLocale, Record<RewardProvider, string>>;
+} satisfies Record<BusinessContentLocale, Record<RewardProvider, string>>;
 
 const rewardTypeLabels = {
   "en-US": {
@@ -134,7 +136,7 @@ const rewardTypeLabels = {
     token: "代幣",
     whitelist: "白名單",
   },
-} satisfies Record<SupportedLocale, Record<RewardType, string>>;
+} satisfies Record<BusinessContentLocale, Record<RewardType, string>>;
 
 const exportFormatLabels = {
   "en-US": {
@@ -155,7 +157,7 @@ const exportFormatLabels = {
     risk_flags: "風險標記匯出",
     task_records: "任務記錄",
   },
-} satisfies Record<SupportedLocale, Record<RewardExportFormat, string>>;
+} satisfies Record<BusinessContentLocale, Record<RewardExportFormat, string>>;
 
 const walletPolicyLabels = {
   "en-US": {
@@ -173,7 +175,7 @@ const walletPolicyLabels = {
     AA_ONLY: "僅 AA 錢包",
     EOA_ONLY: "僅 EOA 錢包",
   },
-} satisfies Record<SupportedLocale, Record<WalletPolicy, string>>;
+} satisfies Record<BusinessContentLocale, Record<WalletPolicy, string>>;
 
 const pointsRuleLabels = {
   "en-US": {
@@ -191,7 +193,7 @@ const pointsRuleLabels = {
     daily_cap: "每日上限",
     referral_bonus: "邀請獎勵",
   },
-} satisfies Record<SupportedLocale, Record<PointsRule, string>>;
+} satisfies Record<BusinessContentLocale, Record<PointsRule, string>>;
 
 const winnerRuleLabels = {
   "en-US": {
@@ -209,7 +211,7 @@ const winnerRuleLabels = {
     threshold: "門檻達標",
     manual_review: "人工審核",
   },
-} satisfies Record<SupportedLocale, Record<WinnerRule, string>>;
+} satisfies Record<BusinessContentLocale, Record<WinnerRule, string>>;
 
 const sectionStyle: CSSProperties = {
   display: "grid",
@@ -297,7 +299,7 @@ const detailListItemStyle: CSSProperties = {
   paddingTop: 8,
 };
 
-const readinessConcernLabels = (draft: CampaignDraft, locale: SupportedLocale) => {
+const readinessConcernLabels = (draft: CampaignDraft, locale: BusinessContentLocale) => {
   const readiness = draft.id === seededCampaignDraft.id ? seededBuilderReadiness : null;
   const warnings = readiness?.warnings ?? [];
   const blockers = readiness?.blockers ?? [];

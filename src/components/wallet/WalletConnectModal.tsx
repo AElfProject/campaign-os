@@ -14,10 +14,12 @@ import {
 } from "../../domain";
 import { WalletBadge } from "../badges/Badges";
 
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+
 interface WalletConnectModalProps {
   adapterReadiness?: AelfWebLoginAdapterReadinessModel;
   connectorBoundary?: LiveWalletConnectorBoundary;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
   onClose: () => void;
   options: WalletOption[];
 }
@@ -131,7 +133,7 @@ const modalCopy = {
     wrongChain:
       "鏈不匹配：請切換到 AELF mainnet 後再繼續活動驗證。",
   },
-} satisfies Record<SupportedLocale, Record<string, string>>;
+} satisfies Record<BusinessContentLocale, Record<string, string>>;
 
 const backdropStyle: CSSProperties = {
   alignItems: "center",
@@ -318,7 +320,7 @@ const AdapterEntryCard = ({
 }: {
   copy: (typeof modalCopy)["en-US"];
   entry: AelfWebLoginAdapterReadinessEntry;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
 }) => (
   <article style={cardStyle}>
     <div style={{ alignItems: "start", display: "flex", gap: 8, justifyContent: "space-between" }}>
@@ -354,7 +356,7 @@ const AdapterEntryGroup = ({
 }: {
   copy: (typeof modalCopy)["en-US"];
   entries: AelfWebLoginAdapterReadinessEntry[];
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
   testId: string;
   title: string;
 }) => (
@@ -378,7 +380,7 @@ const ConnectorEntryCard = ({
 }: {
   copy: (typeof modalCopy)["en-US"];
   entry: LiveWalletConnectorEntry;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
 }) => (
   <article style={cardStyle}>
     <div style={{ alignItems: "start", display: "flex", gap: 8, justifyContent: "space-between" }}>
@@ -412,7 +414,7 @@ const ConnectorBoundarySection = ({
 }: {
   boundary: LiveWalletConnectorBoundary;
   copy: (typeof modalCopy)["en-US"];
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
 }) => {
   const disabledOrReviewRequired =
     boundary.summary.disabledConnectors + boundary.summary.reviewRequiredConnectors;

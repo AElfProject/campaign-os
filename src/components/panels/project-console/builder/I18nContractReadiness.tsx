@@ -23,9 +23,11 @@ import {
 } from "../../../../domain";
 import { ContractModeBadge, LocaleStatusBadge, PublishStateBadge, ReviewSeverityBadge } from "../../../badges/Badges";
 
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+
 interface I18nContractReadinessProps {
   campaign?: CampaignShellDetail;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
 }
 
 const copy = {
@@ -218,7 +220,7 @@ const copy = {
     useEnglishFallback: "使用英文回退",
     zhDraft: "繁中 fallback 草稿",
   },
-} satisfies Record<SupportedLocale, Record<string, string>>;
+} satisfies Record<BusinessContentLocale, Record<string, string>>;
 
 const reviewSeverityLabels = {
   "en-US": {
@@ -236,7 +238,7 @@ const reviewSeverityLabels = {
     info: "資訊",
     warning: "警告",
   },
-} satisfies Record<SupportedLocale, Record<ReviewSeverity, string>>;
+} satisfies Record<BusinessContentLocale, Record<ReviewSeverity, string>>;
 
 const sectionStyle: CSSProperties = {
   display: "grid",
@@ -390,7 +392,7 @@ const contractModeState = (option: ContractImpactReviewOption): PublishState =>
 
 const revisionStatusLabel = (
   status: ContentRevisionStatus,
-  labels: (typeof copy)[SupportedLocale],
+  labels: (typeof copy)[BusinessContentLocale],
 ) => {
   if (status === "published") {
     return labels.published;
@@ -452,7 +454,7 @@ const localeStatusFromRewardDisclaimer = (
 const modeGateLabel = (
   option: ContractImpactReviewOption,
   selectedMode: CampaignShellDetail["contractMode"],
-  labels: (typeof copy)[SupportedLocale],
+  labels: (typeof copy)[BusinessContentLocale],
 ) => {
   if (option.mode === "OFF_CHAIN_MVP") {
     return labels.defaultMode;
@@ -471,7 +473,7 @@ const modeGateLabel = (
 
 const rewardDisclaimerReviewStateLabel = (
   row: RewardDisclaimerReviewRow,
-  labels: (typeof copy)[SupportedLocale],
+  labels: (typeof copy)[BusinessContentLocale],
 ) => {
   if (row.reviewState === "reviewed") {
     return labels.reviewed;
@@ -496,7 +498,7 @@ const reviewActionIcons: Record<I18nReviewActionId, LucideIcon> = {
   use_english_fallback: RotateCcw,
 };
 
-const noLiveBoundaryItems = (labels: (typeof copy)[SupportedLocale]) => [
+const noLiveBoundaryItems = (labels: (typeof copy)[BusinessContentLocale]) => [
   labels.noLiveAiProvider,
   labels.noBackendPersistence,
   labels.noPublishMutation,
@@ -509,7 +511,7 @@ const noLiveBoundaryItems = (labels: (typeof copy)[SupportedLocale]) => [
 
 const reviewActionStateLabel = (
   state: I18nReviewAction["state"],
-  labels: (typeof copy)[SupportedLocale],
+  labels: (typeof copy)[BusinessContentLocale],
 ) => {
   if (state === "blocked") {
     return labels.blocksPublish;
@@ -534,8 +536,8 @@ const WorkbenchActionButton = ({
 }: {
   Icon: LucideIcon;
   action: I18nReviewAction;
-  labels: (typeof copy)[SupportedLocale];
-  locale: SupportedLocale;
+  labels: (typeof copy)[BusinessContentLocale];
+  locale: BusinessContentLocale;
   onRun: (actionId: I18nReviewActionId) => void;
 }) => (
   <button
@@ -569,8 +571,8 @@ const ActionResultPanel = ({
   locale,
   result,
 }: {
-  labels: (typeof copy)[SupportedLocale];
-  locale: SupportedLocale;
+  labels: (typeof copy)[BusinessContentLocale];
+  locale: BusinessContentLocale;
   result: I18nReviewActionResult;
 }) => (
   <article aria-label={labels.actionResult} style={cardStyle}>
@@ -601,8 +603,8 @@ const TranslationPanelCard = ({
   locale,
   panel,
 }: {
-  labels: (typeof copy)[SupportedLocale];
-  locale: SupportedLocale;
+  labels: (typeof copy)[BusinessContentLocale];
+  locale: BusinessContentLocale;
   panel: TranslationReviewPanel;
 }) => (
   <article style={cardStyle}>
@@ -638,8 +640,8 @@ const TranslationLocaleList = ({
   locale,
   localeItems,
 }: {
-  labels: (typeof copy)[SupportedLocale];
-  locale: SupportedLocale;
+  labels: (typeof copy)[BusinessContentLocale];
+  locale: BusinessContentLocale;
   localeItems: TranslationLocaleItem[];
 }) => (
   <div>
@@ -674,8 +676,8 @@ const TranslationCompareConsole = ({
   rows,
   reviewPrompt,
 }: {
-  labels: (typeof copy)[SupportedLocale];
-  locale: SupportedLocale;
+  labels: (typeof copy)[BusinessContentLocale];
+  locale: BusinessContentLocale;
   rows: TranslationComparisonRow[];
   reviewPrompt: string;
 }) => (
@@ -724,8 +726,8 @@ const RewardDisclaimerReviewGate = ({
   locale,
   rows,
 }: {
-  labels: (typeof copy)[SupportedLocale];
-  locale: SupportedLocale;
+  labels: (typeof copy)[BusinessContentLocale];
+  locale: BusinessContentLocale;
   rows: RewardDisclaimerReviewRow[];
 }) => {
   const blocksPublish = rows.some((row) => row.blocksPublish);
@@ -787,8 +789,8 @@ const ContractModeRow = ({
   option,
   selectedMode,
 }: {
-  labels: (typeof copy)[SupportedLocale];
-  locale: SupportedLocale;
+  labels: (typeof copy)[BusinessContentLocale];
+  locale: BusinessContentLocale;
   option: ContractImpactReviewOption;
   selectedMode: CampaignShellDetail["contractMode"];
 }) => (

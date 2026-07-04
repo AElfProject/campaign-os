@@ -11,9 +11,11 @@ import {
 } from "../../../../domain";
 import { PublishStateBadge } from "../../../badges/Badges";
 
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+
 interface PublishReadinessPanelProps {
   draft?: CampaignDraft;
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
 }
 
 const copy = {
@@ -44,7 +46,7 @@ const copy = {
     title: "發布準備度",
     warnings: "警告",
   },
-} satisfies Record<SupportedLocale, Record<string, string>>;
+} satisfies Record<BusinessContentLocale, Record<string, string>>;
 
 const ownerRoleLabels = {
   "en-US": {
@@ -62,7 +64,7 @@ const ownerRoleLabels = {
     internal_operator: "內部營運",
     project_owner: "專案方",
   },
-} satisfies Record<SupportedLocale, Record<OwnerRole, string>>;
+} satisfies Record<BusinessContentLocale, Record<OwnerRole, string>>;
 
 const readinessGroupLabels = {
   "en-US": {
@@ -95,7 +97,7 @@ const readinessGroupLabels = {
     tasks: "任務",
     wallet: "錢包",
   },
-} satisfies Record<SupportedLocale, Record<ReadinessGroup, string>>;
+} satisfies Record<BusinessContentLocale, Record<ReadinessGroup, string>>;
 
 const sectionStyle: CSSProperties = {
   display: "grid",
@@ -156,7 +158,7 @@ const badgeRowStyle: CSSProperties = {
   gap: 8,
 };
 
-const statusLabel = (check: ReadinessCheck, locale: SupportedLocale) => {
+const statusLabel = (check: ReadinessCheck, locale: BusinessContentLocale) => {
   if (check.status === "blocker") {
     return copy[locale].blockers;
   }
@@ -176,7 +178,7 @@ const CheckList = ({
   locale,
 }: {
   checks: ReadinessCheck[];
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
 }) => {
   const labels = copy[locale];
 

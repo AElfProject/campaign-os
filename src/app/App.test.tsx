@@ -283,13 +283,15 @@ describe("Campaign OS app shell", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("falls back safely for unsupported URL locales", () => {
+  it("initializes ja-JP from the URL while business content falls back safely", () => {
     pushRoute("/ja-JP/campaigns/awaken-sprint");
 
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "Campaign operations shell" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Language")).toHaveValue("en-US");
+    expect(screen.getByLabelText("Language")).toHaveValue("ja-JP");
+    expect(screen.getByRole("option", { name: "日本語" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
   });
 
   it("updates campaign metadata from the active share card without duplicate tags", () => {
@@ -348,6 +350,45 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByLabelText("語言")).toHaveValue("zh-TW");
     expect(window.localStorage.getItem(localePreferenceStorageKey)).toBe("zh-TW");
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
+  });
+
+  it("switches the app shell manually to ja-JP while preserving English business fallback", () => {
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Language"), { target: { value: "ja-JP" } });
+
+    expect(screen.getByRole("heading", { name: "Campaign operations shell" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Language")).toHaveValue("ja-JP");
+    expect(window.localStorage.getItem(localePreferenceStorageKey)).toBe("ja-JP");
+    expect(screen.getByRole("option", { name: "日本語" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
+  });
+
+  it("preserves ja-JP share readiness while wallet modal copy falls back to English", () => {
+    pushRoute("/ja-JP/campaigns/awaken-sprint");
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    const shareReadiness = screen.getByRole("region", { name: "Share card readiness" });
+    const canonicalUrlCard = within(shareReadiness)
+      .getByText("Canonical URL")
+      .closest("article");
+
+    expect(canonicalUrlCard).not.toBeNull();
+    expect(
+      within(canonicalUrlCard as HTMLElement).getByText(
+        "https://campaign.local/ja-JP/campaigns/awaken-sprint",
+      ),
+    ).toBeInTheDocument();
+    expect(within(shareReadiness).getByText("English fallback")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+
+    expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Extension not installed: Install or open your EOA wallet extension."),
+    ).toBeInTheDocument();
   });
 
   it("keeps zh-TW browser language as prompt-only on first load", () => {

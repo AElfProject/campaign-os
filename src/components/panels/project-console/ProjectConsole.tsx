@@ -104,8 +104,10 @@ import { RewardsEligibilityBuilder } from "./builder/RewardsEligibilityBuilder";
 import { TaskTemplateLibrary } from "./builder/TaskTemplateLibrary";
 import { projectConsoleCopy } from "./copy";
 
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP">;
+
 interface ProjectConsoleProps {
-  locale: SupportedLocale;
+  locale: BusinessContentLocale;
   campaign?: CampaignShellDetail;
   activeWorkspace?: ProjectWorkspaceKey;
   onWorkspaceChange?: (workspace: ProjectWorkspaceKey) => void;
@@ -361,7 +363,7 @@ const campaignTemplateReadinessState = (readiness: CampaignTemplateReadiness) =>
 
 const campaignTemplateOwnerLabel = (
   ownerRole: CampaignTemplatePreset["ownerRole"],
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -379,7 +381,7 @@ const campaignTemplateOwnerLabel = (
       internal_operator: "內部營運",
       project_owner: "專案方",
     },
-  } satisfies Record<SupportedLocale, Record<CampaignTemplatePreset["ownerRole"], string>>;
+  } satisfies Record<BusinessContentLocale, Record<CampaignTemplatePreset["ownerRole"], string>>;
 
   return labels[locale][ownerRole];
 };
@@ -407,7 +409,7 @@ const daippTaskReadinessLabel = (
 
 const daippTaskProviderStateLabel = (
   state: DaippAgentCoinTaskProviderState,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -428,14 +430,14 @@ const daippTaskProviderStateLabel = (
       review_required: "需要審核",
       seeded_preview: "Seeded 預覽",
     },
-  } satisfies Record<SupportedLocale, Record<DaippAgentCoinTaskProviderState, string>>;
+  } satisfies Record<BusinessContentLocale, Record<DaippAgentCoinTaskProviderState, string>>;
 
   return labels[locale][state];
 };
 
 const daippTaskOwnerLabel = (
   ownerRole: DaippAgentCoinTaskOwnerRole,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -456,7 +458,7 @@ const daippTaskOwnerLabel = (
       operator: "營運",
       project_owner: "專案方",
     },
-  } satisfies Record<SupportedLocale, Record<DaippAgentCoinTaskOwnerRole, string>>;
+  } satisfies Record<BusinessContentLocale, Record<DaippAgentCoinTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -484,7 +486,7 @@ const forestTaskReadinessLabel = (
 
 const forestTaskProviderStateLabel = (
   state: ForestNftTaskProviderState,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -505,14 +507,14 @@ const forestTaskProviderStateLabel = (
       review_required: "需要審核",
       seeded_preview: "Seeded 預覽",
     },
-  } satisfies Record<SupportedLocale, Record<ForestNftTaskProviderState, string>>;
+  } satisfies Record<BusinessContentLocale, Record<ForestNftTaskProviderState, string>>;
 
   return labels[locale][state];
 };
 
 const forestTaskOwnerLabel = (
   ownerRole: ForestNftTaskOwnerRole,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -530,7 +532,7 @@ const forestTaskOwnerLabel = (
       operator: "營運",
       project_owner: "專案方",
     },
-  } satisfies Record<SupportedLocale, Record<ForestNftTaskOwnerRole, string>>;
+  } satisfies Record<BusinessContentLocale, Record<ForestNftTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -558,7 +560,7 @@ const ebridgeTaskReadinessLabel = (
 
 const ebridgeTaskProviderStateLabel = (
   state: EbridgeTaskProviderState,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -579,14 +581,14 @@ const ebridgeTaskProviderStateLabel = (
       review_required: "需要審核",
       seeded_preview: "Seeded 預覽",
     },
-  } satisfies Record<SupportedLocale, Record<EbridgeTaskProviderState, string>>;
+  } satisfies Record<BusinessContentLocale, Record<EbridgeTaskProviderState, string>>;
 
   return labels[locale][state];
 };
 
 const ebridgeTaskOwnerLabel = (
   ownerRole: EbridgeTaskOwnerRole,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -607,7 +609,7 @@ const ebridgeTaskOwnerLabel = (
       project_owner: "專案方",
       risk_reviewer: "風險審核人",
     },
-  } satisfies Record<SupportedLocale, Record<EbridgeTaskOwnerRole, string>>;
+  } satisfies Record<BusinessContentLocale, Record<EbridgeTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -635,7 +637,7 @@ const awakenTaskReadinessLabel = (
 
 const awakenTaskProviderStateLabel = (
   state: AwakenSwapLiquidityTaskProviderState,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -656,14 +658,14 @@ const awakenTaskProviderStateLabel = (
       review_required: "需要審核",
       seeded_preview: "Seeded 預覽",
     },
-  } satisfies Record<SupportedLocale, Record<AwakenSwapLiquidityTaskProviderState, string>>;
+  } satisfies Record<BusinessContentLocale, Record<AwakenSwapLiquidityTaskProviderState, string>>;
 
   return labels[locale][state];
 };
 
 const awakenTaskOwnerLabel = (
   ownerRole: AwakenSwapLiquidityTaskOwnerRole,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -684,7 +686,7 @@ const awakenTaskOwnerLabel = (
       project_owner: "專案方",
       risk_reviewer: "風險審核人",
     },
-  } satisfies Record<SupportedLocale, Record<AwakenSwapLiquidityTaskOwnerRole, string>>;
+  } satisfies Record<BusinessContentLocale, Record<AwakenSwapLiquidityTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -712,7 +714,7 @@ const schrodingerTaskReadinessLabel = (
 
 const schrodingerTaskProviderStateLabel = (
   state: SchrodingerNftTaskProviderState,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -733,14 +735,14 @@ const schrodingerTaskProviderStateLabel = (
       review_required: "需要審核",
       seeded_preview: "Seeded 預覽",
     },
-  } satisfies Record<SupportedLocale, Record<SchrodingerNftTaskProviderState, string>>;
+  } satisfies Record<BusinessContentLocale, Record<SchrodingerNftTaskProviderState, string>>;
 
   return labels[locale][state];
 };
 
 const schrodingerTaskOwnerLabel = (
   ownerRole: SchrodingerNftTaskOwnerRole,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -758,7 +760,7 @@ const schrodingerTaskOwnerLabel = (
       project_owner: "專案方",
       schrodinger_provider_reviewer: "Schrödinger provider 審核人",
     },
-  } satisfies Record<SupportedLocale, Record<SchrodingerNftTaskOwnerRole, string>>;
+  } satisfies Record<BusinessContentLocale, Record<SchrodingerNftTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -786,7 +788,7 @@ const forecastTaskReadinessLabel = (
 
 const forecastTaskProviderStateLabel = (
   state: ForecastCampaignTaskProviderState,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -807,14 +809,14 @@ const forecastTaskProviderStateLabel = (
       review_required: "需要審核",
       seeded_preview: "Seeded 預覽",
     },
-  } satisfies Record<SupportedLocale, Record<ForecastCampaignTaskProviderState, string>>;
+  } satisfies Record<BusinessContentLocale, Record<ForecastCampaignTaskProviderState, string>>;
 
   return labels[locale][state];
 };
 
 const forecastTaskOwnerLabel = (
   ownerRole: ForecastCampaignTaskOwnerRole,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -832,7 +834,7 @@ const forecastTaskOwnerLabel = (
       operator: "營運",
       project_owner: "專案方",
     },
-  } satisfies Record<SupportedLocale, Record<ForecastCampaignTaskOwnerRole, string>>;
+  } satisfies Record<BusinessContentLocale, Record<ForecastCampaignTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -860,7 +862,7 @@ const payTaskReadinessLabel = (
 
 const payTaskProviderStateLabel = (
   state: PayCampaignTaskProviderState,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -881,14 +883,14 @@ const payTaskProviderStateLabel = (
       review_required: "需要審核",
       seeded_preview: "Seeded 預覽",
     },
-  } satisfies Record<SupportedLocale, Record<PayCampaignTaskProviderState, string>>;
+  } satisfies Record<BusinessContentLocale, Record<PayCampaignTaskProviderState, string>>;
 
   return labels[locale][state];
 };
 
 const payTaskOwnerLabel = (
   ownerRole: PayCampaignTaskOwnerRole,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -906,7 +908,7 @@ const payTaskOwnerLabel = (
       pay_provider_reviewer: "Pay provider 審核人",
       project_owner: "專案方",
     },
-  } satisfies Record<SupportedLocale, Record<PayCampaignTaskOwnerRole, string>>;
+  } satisfies Record<BusinessContentLocale, Record<PayCampaignTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
@@ -934,7 +936,7 @@ const tmrwdaoTaskReadinessLabel = (
 
 const tmrwdaoTaskProviderStateLabel = (
   state: TmrwdaoGovernanceTaskProviderState,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -955,14 +957,14 @@ const tmrwdaoTaskProviderStateLabel = (
       review_required: "需要審核",
       seeded_preview: "Seeded 預覽",
     },
-  } satisfies Record<SupportedLocale, Record<TmrwdaoGovernanceTaskProviderState, string>>;
+  } satisfies Record<BusinessContentLocale, Record<TmrwdaoGovernanceTaskProviderState, string>>;
 
   return labels[locale][state];
 };
 
 const tmrwdaoTaskOwnerLabel = (
   ownerRole: TmrwdaoGovernanceTaskOwnerRole,
-  locale: SupportedLocale,
+  locale: BusinessContentLocale,
 ) => {
   const labels = {
     "en-US": {
@@ -980,7 +982,7 @@ const tmrwdaoTaskOwnerLabel = (
       operator: "營運",
       project_owner: "專案方",
     },
-  } satisfies Record<SupportedLocale, Record<TmrwdaoGovernanceTaskOwnerRole, string>>;
+  } satisfies Record<BusinessContentLocale, Record<TmrwdaoGovernanceTaskOwnerRole, string>>;
 
   return labels[locale][ownerRole];
 };
