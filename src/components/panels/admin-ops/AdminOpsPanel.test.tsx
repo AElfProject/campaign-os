@@ -115,6 +115,7 @@ describe("Admin/Ops shell", () => {
     expect(within(p1LocaleActivationReadiness).getByText("Korean")).toBeInTheDocument();
     expect(within(p1LocaleActivationReadiness).getByText("Japanese")).toBeInTheDocument();
     expect(within(p1LocaleActivationReadiness).getByText("Vietnamese")).toBeInTheDocument();
+    expect(within(p1LocaleActivationReadiness).getByText("Indonesian")).toBeInTheDocument();
     expect(within(p1LocaleActivationReadiness).getByText("0 Blocked")).toBeInTheDocument();
     expect(within(p1LocaleActivationReadiness).getAllByText("Review required").length).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("Routing readiness").length).toBeGreaterThan(0);
@@ -132,12 +133,13 @@ describe("Admin/Ops shell", () => {
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/126-ko-kr-locale-activation").length).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/124-ja-jp-locale-activation").length).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/127-vi-vn-locale-activation").length).toBeGreaterThan(0);
+    expect(within(p1LocaleActivationReadiness).getAllByText("mission/128-id-id-locale-activation").length).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("product-future-locale-expansion").length).toBeGreaterThan(0);
     expect(
-      within(p1LocaleActivationReadiness).getAllByText(/ja-JP, ko-KR, and vi-VN are runtime-active with English fallback/).length,
+      within(p1LocaleActivationReadiness).getAllByText(/ja-JP, ko-KR, vi-VN, and id-ID are runtime-active with English fallback/).length,
     ).toBeGreaterThan(0);
     expect(
-      within(p1LocaleActivationReadiness).getAllByText(/vi-VN runtime activation is ready with English fallback/i).length,
+      within(p1LocaleActivationReadiness).getAllByText(/id-ID runtime activation is ready with English fallback/i).length,
     ).toBeGreaterThan(0);
     expect(
       within(p1LocaleActivationReadiness).queryByRole("button", {
@@ -145,15 +147,16 @@ describe("Admin/Ops shell", () => {
       }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "P1 locale expansion readiness" })).toBeInTheDocument();
-    expectVisibleText(/ja-JP, ko-KR, and vi-VN, which are runtime-active with English fallback/);
-    expectVisibleText("3 Deferred");
-    expectVisibleText("3 Covered");
+    expectVisibleText(/ja-JP, ko-KR, vi-VN, and id-ID, which are runtime-active with English fallback/);
+    expectVisibleText("2 Deferred");
+    expectVisibleText("4 Covered");
     for (const localeCode of ["ko-KR", "ja-JP", "vi-VN", "id-ID", "tr-TR", "es-ES"]) {
       expectVisibleText(localeCode);
     }
     expectVisibleText("Korean");
     expectVisibleText("Vietnamese");
-    expectVisibleText(/vi-VN runtime activation is ready with English fallback/);
+    expectVisibleText("Indonesian");
+    expectVisibleText(/id-ID runtime activation is ready with English fallback/);
     expectVisibleText(/complete reviewed locale copy before claiming full localization/i);
     expectVisibleText("Contract impact review before publish");
     expectVisibleText("Portkey AA connect tested");
@@ -1291,8 +1294,9 @@ describe("Admin/Ops shell", () => {
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/126-ko-kr-locale-activation").length).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/124-ja-jp-locale-activation").length).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/127-vi-vn-locale-activation").length).toBeGreaterThan(0);
-    expect(within(zhP1LocaleActivationReadiness).getAllByText(/ja-JP、ko-KR 与 vi-VN 已激活运行时/).length).toBeGreaterThan(0);
-    expect(within(zhP1LocaleActivationReadiness).getAllByText(/vi-VN 运行时激活已就绪并使用英文 fallback/).length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/128-id-id-locale-activation").length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText(/ja-JP、ko-KR、vi-VN 与 id-ID 已激活运行时/).length).toBeGreaterThan(0);
+    expect(within(zhP1LocaleActivationReadiness).getAllByText(/id-ID 运行时激活已就绪并使用英文 fallback/).length).toBeGreaterThan(0);
     const zhCompanionReadiness = screen.getByLabelText("Companion Contract Readiness");
     expect(
       within(zhCompanionReadiness).getByRole("heading", { name: "Companion Contract Readiness" }),

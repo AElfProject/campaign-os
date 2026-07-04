@@ -60,7 +60,7 @@ import { WalletOptionCards } from "../../wallet/WalletOptionCards";
 import { WalletConnectModal } from "../../wallet/WalletConnectModal";
 import { userAppCopy } from "./copy";
 
-type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN">;
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID">;
 
 interface UserAppPanelProps {
   campaign?: CampaignShellDetail;

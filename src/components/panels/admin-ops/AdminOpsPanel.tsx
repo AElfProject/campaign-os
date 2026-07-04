@@ -622,6 +622,19 @@ const deliveryChecklistTraceabilityCopy = {
     traceabilitySubtitle: "docs/current to implementation evidence",
     verificationCommands: "Verification commands",
   },
+  "id-ID": {
+    boundary: "Audit-only source-to-evidence matrix",
+    deliveryChecklistTraceability: "Delivery Checklist Traceability",
+    evidenceArtifacts: "Evidence artifacts",
+    implementationRefs: "Implementation refs",
+    missingEvidence: "Missing evidence refs",
+    missingVerification: "Missing verification",
+    proofLevel: "Proof level",
+    riskNote: "Risk note",
+    sourceDocs: "Source docs",
+    traceabilitySubtitle: "docs/current to implementation evidence",
+    verificationCommands: "Verification commands",
+  },
 } satisfies Record<SupportedLocale, Record<string, string>>;
 
 const deliveryChecklistCloseoutCopy = {
@@ -701,6 +714,21 @@ const deliveryChecklistCloseoutCopy = {
     unresolved: "Unresolved",
   },
   "vi-VN": {
+    allQueues: "All queues",
+    closeoutBoundary: "Review-only closeout boundary",
+    closeoutSubtitle: "Operator queue and handoff review",
+    deliveryChecklistCloseout: "Delivery Checklist Closeout",
+    handoffTarget: "Handoff target",
+    missingEvidence: "Missing evidence",
+    missingVerification: "Missing verification",
+    queue: "Queue",
+    rowsShown: "Rows shown",
+    topAction: "Top action",
+    topQueue: "Top queue",
+    topRow: "Top row",
+    unresolved: "Unresolved",
+  },
+  "id-ID": {
     allQueues: "All queues",
     closeoutBoundary: "Review-only closeout boundary",
     closeoutSubtitle: "Operator queue and handoff review",

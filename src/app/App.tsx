@@ -20,7 +20,7 @@ import {
 } from "../components/panels/project-console/ProjectConsole";
 import { UserAppPanel } from "../components/panels/user-app/UserAppPanel";
 
-type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN">;
+type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID">;
 
 const surfaceCopy = {
   "en-US": {
@@ -104,6 +104,21 @@ const surfaceCopy = {
     browserLocalePromptDismiss: "Keep English",
     browserLocalePromptMessage: "Vietnamese is active with English fallback for business copy.",
     browserLocalePromptSwitch: "Switch to Vietnamese",
+    productAnalytics: "Analytics",
+    productCampaigns: "Campaigns",
+    productCreate: "Create",
+    productExport: "Export",
+    localeLabel: "Language",
+    project: "Project Console",
+    shellTitle: "Campaign operations shell",
+    userTitle: "User App",
+  },
+  "id-ID": {
+    adminTitle: "Admin/Ops",
+    brand: "aelf Campaign OS",
+    browserLocalePromptDismiss: "Keep English",
+    browserLocalePromptMessage: "Indonesian is active with English fallback for business copy.",
+    browserLocalePromptSwitch: "Switch to Indonesian",
     productAnalytics: "Analytics",
     productCampaigns: "Campaigns",
     productCreate: "Create",
