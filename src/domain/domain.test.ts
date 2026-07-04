@@ -1499,8 +1499,8 @@ describe("Campaign OS domain foundation", () => {
       readyCandidates: 6,
       deferredCandidates: 0,
       requiredEvidenceItems: 30,
-      completedEvidenceItems: 26,
-      recommendedFirstLocale: "vi-VN",
+      completedEvidenceItems: 28,
+      recommendedFirstLocale: "id-ID",
       topBlockerId: null,
       ready: true,
     });
@@ -1510,7 +1510,7 @@ describe("Campaign OS domain foundation", () => {
     expect(activationReadiness.nextAction["en-US"]).toContain("English fallback");
     expect(activationReadiness.nextAction["en-US"]).toContain("English fallback-copy evidence");
     expect(activationReadiness.nextAction["en-US"]).toContain("publish-gate evidence are ready");
-    expect(activationReadiness.nextAction["en-US"]).toContain("reviewed Vietnamese business copy");
+    expect(activationReadiness.nextAction["en-US"]).toContain("reviewed Indonesian business copy");
     expect(activationReadiness.nextAction["en-US"]).toContain("full localization claims");
     expect(candidatesByLocale["ko-KR"]).toMatchObject({
       ownerRole: "project_owner",
@@ -1559,7 +1559,7 @@ describe("Campaign OS domain foundation", () => {
     expect(candidatesByLocale["vi-VN"]).toMatchObject({
       ownerRole: "project_owner",
       priority: 2,
-      recommendedFirst: true,
+      recommendedFirst: false,
       status: "ready",
       contentOwnershipReadiness: "ready",
       qaReadiness: "ready",
@@ -1581,19 +1581,25 @@ describe("Campaign OS domain foundation", () => {
     expect(candidatesByLocale["id-ID"]).toMatchObject({
       ownerRole: "project_owner",
       priority: 3,
-      recommendedFirst: false,
+      recommendedFirst: true,
       status: "ready",
-      contentOwnershipReadiness: "partial",
+      contentOwnershipReadiness: "ready",
       qaReadiness: "ready",
       routingReadiness: "ready",
       analyticsReadiness: "ready",
-      publishGateReadiness: "partial",
+      publishGateReadiness: "ready",
       blockerIds: [],
-      evidenceReferences: ["v02-p1-locale-expansion", "mission/p1-locale-expansion", "mission/128-id-id-locale-activation"],
+      evidenceReferences: [
+        "v02-p1-locale-expansion",
+        "mission/p1-locale-expansion",
+        "mission/128-id-id-locale-activation",
+        "mission/138-id-id-locale-copy-publish-readiness",
+      ],
     });
     expect(candidatesByLocale["id-ID"]?.contentScope["en-US"]).toContain("id-ID");
     expect(candidatesByLocale["id-ID"]?.qaScope["en-US"]).toContain("id-ID");
     expect(candidatesByLocale["id-ID"]?.boundary["en-US"]).toContain("runtime-active");
+    expect(candidatesByLocale["id-ID"]?.nextAction["en-US"]).toContain("reviewed Indonesian business copy");
     expect(candidatesByLocale["tr-TR"]).toMatchObject({
       ownerRole: "project_owner",
       priority: 4,
@@ -1632,7 +1638,7 @@ describe("Campaign OS domain foundation", () => {
     expect(candidatesByLocale["es-ES"]?.qaScope["en-US"]).toContain("es-ES");
     expect(candidatesByLocale["es-ES"]?.boundary["en-US"]).toContain("runtime-active");
     expect(candidatesByLocale["es-ES"]?.nextAction["en-US"]).toContain("reviewed Spanish business copy");
-    for (const localeCode of ["id-ID", "tr-TR"] as const) {
+    for (const localeCode of ["tr-TR"] as const) {
       expect(candidatesByLocale[localeCode]).toMatchObject({
         contentOwnershipReadiness: "partial",
         publishGateReadiness: "partial",
