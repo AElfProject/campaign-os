@@ -274,6 +274,14 @@ describe("Admin/Ops shell", () => {
     expect(within(deliveryAcceptance).getAllByText("v0.1 Product/UI foundation").length).toBeGreaterThan(0);
     expect(within(deliveryAcceptance).getAllByText("v0.2 Wallet/i18n/contract update").length).toBeGreaterThan(0);
     expect(within(deliveryAcceptance).getByText("Global navigation shell")).toBeInTheDocument();
+    expect(within(deliveryAcceptance).getAllByText("User participation and eligibility loop").length).toBeGreaterThan(0);
+    expect(
+      within(deliveryAcceptance).getByText(/Seeded\/local User App participation, task verification states and actions/),
+    ).toBeInTheDocument();
+    expect(
+      within(deliveryAcceptance).getByText(/live verification providers remain gated separately/),
+    ).toBeInTheDocument();
+    expect(within(deliveryAcceptance).getByText(/live wallet provider evidence path/)).toBeInTheDocument();
     expect(within(deliveryAcceptance).getAllByText("Live wallet provider evidence").length).toBeGreaterThan(0);
     expect(
       within(deliveryAcceptance).getAllByText(
