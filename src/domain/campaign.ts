@@ -13349,13 +13349,19 @@ const p1LocaleActivationSeeds: P1LocaleActivationSeed[] = [
     locale: "ko-KR",
     status: "ready",
     ownerRole: "project_owner",
-    contentOwnershipReadiness: "partial",
+    recommendedFirst: true,
+    contentOwnershipReadiness: "ready",
     qaReadiness: "ready",
     routingReadiness: "ready",
     analyticsReadiness: "ready",
-    publishGateReadiness: "partial",
+    publishGateReadiness: "ready",
     blockerIds: [],
-    evidenceReferences: ["v02-p1-locale-expansion", "mission/p1-locale-expansion", "mission/126-ko-kr-locale-activation"],
+    evidenceReferences: [
+      "v02-p1-locale-expansion",
+      "mission/p1-locale-expansion",
+      "mission/126-ko-kr-locale-activation",
+      "mission/135-ko-kr-locale-copy-publish-readiness",
+    ],
   },
   {
     locale: "ja-JP",
@@ -13409,7 +13415,6 @@ const p1LocaleActivationSeeds: P1LocaleActivationSeed[] = [
     locale: "es-ES",
     status: "ready",
     ownerRole: "project_owner",
-    recommendedFirst: true,
     contentOwnershipReadiness: "ready",
     qaReadiness: "ready",
     routingReadiness: "ready",
@@ -13438,19 +13443,25 @@ const p1LocaleActivationQaScope = (code: P1LocaleCode): LocalizedText => localiz
 );
 
 const p1LocaleActivationNextAction = (
-  code: P1LocaleCode,
-  recommendedFirst: boolean,
-): LocalizedText => recommendedFirst
-  ? localized(
-    `${code} runtime activation, English fallback-copy evidence, and publish-gate evidence are ready; keep reviewed Spanish business copy separate from full localization claims.`,
-    `${code} 运行时激活、本地 fallback 文案证据与发布门禁证据已就绪；仍需将已审核西语业务文案与完整本地化声明分开管理。`,
-    `${code} 執行時啟用、本地 fallback 文案證據與發布門禁證據已就緒；仍需將已審核西語業務文案與完整本地化宣稱分開管理。`,
-  )
-  : localized(
-    `Keep ${code} queued behind the first locale activation mission until ownership and QA evidence are stronger.`,
-    `在首个语言激活 mission 完成且归属与 QA 证据更充分前，将 ${code} 留在队列中。`,
-    `在首個語言啟用 mission 完成且歸屬與 QA 證據更充分前，將 ${code} 留在佇列中。`,
+  seed: P1LocaleActivationSeed,
+): LocalizedText => {
+  if (seed.contentOwnershipReadiness === "ready" && seed.publishGateReadiness === "ready") {
+    const locale = p1LocaleExpansionRegistry.find((candidate) => candidate.code === seed.locale);
+    const businessCopyLabel = locale?.displayName ?? localized(seed.locale, seed.locale, seed.locale);
+
+    return localized(
+      `${seed.locale} runtime activation, English fallback-copy evidence, and publish-gate evidence are ready; keep reviewed ${businessCopyLabel["en-US"]} business copy separate from full localization claims.`,
+      `${seed.locale} 运行时激活、本地 fallback 文案证据与发布门禁证据已就绪；仍需将已审核${businessCopyLabel["zh-CN"]}业务文案与完整本地化声明分开管理。`,
+      `${seed.locale} 執行時啟用、本地 fallback 文案證據與發布門禁證據已就緒；仍需將已審核${businessCopyLabel["zh-TW"]}業務文案與完整本地化宣稱分開管理。`,
+    );
+  }
+
+  return localized(
+    `Keep ${seed.locale} queued behind the first locale activation mission until ownership and QA evidence are stronger.`,
+    `在首个语言激活 mission 完成且归属与 QA 证据更充分前，将 ${seed.locale} 留在队列中。`,
+    `在首個語言啟用 mission 完成且歸屬與 QA 證據更充分前，將 ${seed.locale} 留在佇列中。`,
   );
+};
 
 const createP1LocaleActivationCandidate = (
   seed: P1LocaleActivationSeed,
@@ -13476,7 +13487,7 @@ const createP1LocaleActivationCandidate = (
     qaReadiness: seed.qaReadiness,
     blockerIds: [...seed.blockerIds],
     evidenceReferences: [...seed.evidenceReferences],
-    nextAction: p1LocaleActivationNextAction(seed.locale, recommendedFirst),
+    nextAction: p1LocaleActivationNextAction(seed),
     boundary: p1LocaleActivationBoundary,
   };
 };
