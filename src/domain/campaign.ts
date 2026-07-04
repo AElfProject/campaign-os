@@ -14583,7 +14583,7 @@ const closeoutQueueFor = (
   return "covered";
 };
 
-const isI18nChecklistRow = (item: DeliveryChecklistItem) => {
+const isI18nChecklistRow = (item: Pick<DeliveryChecklistItem, "id" | "sourceRequirement">) => {
   const text = `${item.id} ${item.sourceRequirement}`.toLowerCase();
 
   return (
@@ -14595,7 +14595,7 @@ const isI18nChecklistRow = (item: DeliveryChecklistItem) => {
 };
 
 const closeoutHandoffFor = (
-  item: DeliveryChecklistItem,
+  item: Pick<DeliveryChecklistItem, "id" | "ownerRole" | "sourceRequirement">,
   traceabilityRow: DeliveryChecklistTraceabilityMatrix["rows"][number],
   queueId: DeliveryChecklistCloseoutQueueId,
 ): DeliveryChecklistCloseoutHandoffTarget => {

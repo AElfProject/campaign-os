@@ -31,6 +31,8 @@ import {
   type CompanionContractReadinessStatus,
   type DeliveryAcceptanceSeverity,
   type DeliveryAcceptanceStatus,
+  type DeliveryChecklistCloseoutHandoffTarget,
+  type DeliveryChecklistCloseoutQueueId,
   type DeliveryChecklistStatus,
   type DeliveryChecklistTraceabilityProofLevel,
   type ExportReadinessState,
@@ -103,6 +105,7 @@ interface AdminOpsPanelProps {
 }
 
 type PublishState = "blocker" | "warning" | "ready";
+type DeliveryChecklistCloseoutQueueFilter = "all" | DeliveryChecklistCloseoutQueueId;
 
 const panelStyle: CSSProperties = {
   background: "#ffffff",
@@ -595,6 +598,69 @@ const deliveryChecklistTraceabilityCopy = {
   },
 } satisfies Record<SupportedLocale, Record<string, string>>;
 
+const deliveryChecklistCloseoutCopy = {
+  "en-US": {
+    allQueues: "All queues",
+    closeoutBoundary: "Review-only closeout boundary",
+    closeoutSubtitle: "Operator queue and handoff review",
+    deliveryChecklistCloseout: "Delivery Checklist Closeout",
+    handoffTarget: "Handoff target",
+    missingEvidence: "Missing evidence",
+    missingVerification: "Missing verification",
+    queue: "Queue",
+    rowsShown: "Rows shown",
+    topAction: "Top action",
+    topQueue: "Top queue",
+    topRow: "Top row",
+    unresolved: "Unresolved",
+  },
+  "zh-CN": {
+    allQueues: "全部队列",
+    closeoutBoundary: "仅审核 closeout 边界",
+    closeoutSubtitle: "运营队列与交接审核",
+    deliveryChecklistCloseout: "交付清单 Closeout",
+    handoffTarget: "交接目标",
+    missingEvidence: "缺少证据",
+    missingVerification: "缺少验证",
+    queue: "队列",
+    rowsShown: "展示行",
+    topAction: "最高优先级动作",
+    topQueue: "最高优先级队列",
+    topRow: "最高优先级行",
+    unresolved: "未解决",
+  },
+  "zh-TW": {
+    allQueues: "全部佇列",
+    closeoutBoundary: "僅審核 closeout 邊界",
+    closeoutSubtitle: "營運佇列與交接審核",
+    deliveryChecklistCloseout: "交付清單 Closeout",
+    handoffTarget: "交接目標",
+    missingEvidence: "缺少證據",
+    missingVerification: "缺少驗證",
+    queue: "佇列",
+    rowsShown: "顯示列",
+    topAction: "最高優先級動作",
+    topQueue: "最高優先級佇列",
+    topRow: "最高優先級列",
+    unresolved: "未解決",
+  },
+  "ja-JP": {
+    allQueues: "All queues",
+    closeoutBoundary: "Review-only closeout boundary",
+    closeoutSubtitle: "Operator queue and handoff review",
+    deliveryChecklistCloseout: "Delivery Checklist Closeout",
+    handoffTarget: "Handoff target",
+    missingEvidence: "Missing evidence",
+    missingVerification: "Missing verification",
+    queue: "Queue",
+    rowsShown: "Rows shown",
+    topAction: "Top action",
+    topQueue: "Top queue",
+    topRow: "Top row",
+    unresolved: "Unresolved",
+  },
+} satisfies Record<SupportedLocale, Record<string, string>>;
+
 const p1LocaleExpansionStatusState = (
   status: P1LocaleExpansionReadinessStatus,
 ): PublishState => status === "ready" ? "ready" : "warning";
@@ -623,6 +689,36 @@ const deliveryChecklistProofLevelState = (
 const deliveryChecklistProofLevelLabel = (
   proofLevel: DeliveryChecklistTraceabilityProofLevel,
 ) => readableCode(proofLevel);
+
+const deliveryChecklistCloseoutQueueState = (
+  queueId: DeliveryChecklistCloseoutQueueId,
+): PublishState =>
+  queueId === "blocked"
+    ? "blocker"
+    : queueId === "covered"
+      ? "ready"
+      : "warning";
+
+const deliveryChecklistCloseoutQueueLabel = (
+  queueId: DeliveryChecklistCloseoutQueueId,
+  copy: typeof adminOpsCopy["en-US"],
+  closeoutCopy: typeof deliveryChecklistCloseoutCopy["en-US"],
+) => {
+  const labels: Record<DeliveryChecklistCloseoutQueueId, string> = {
+    blocked: copy.blocked,
+    covered: copy.covered,
+    deferred: copy.deferred,
+    missing_evidence: closeoutCopy.missingEvidence,
+    missing_verification: closeoutCopy.missingVerification,
+    needs_review: copy.needsReview,
+  };
+
+  return labels[queueId];
+};
+
+const deliveryChecklistCloseoutHandoffTargetLabel = (
+  target: DeliveryChecklistCloseoutHandoffTarget,
+) => target;
 
 const p1LocaleActivationStatusState = (
   status: P1LocaleActivationStatus,
@@ -1438,6 +1534,8 @@ export const AdminOpsPanel = ({
   const adminOps = createAdminOpsReadModel(campaign);
   const [walletProviderEvidenceActionResult, setWalletProviderEvidenceActionResult] =
     useState<WalletProviderEvidenceReviewActionResult | null>(null);
+  const [deliveryChecklistCloseoutFilter, setDeliveryChecklistCloseoutFilter] =
+    useState<DeliveryChecklistCloseoutQueueFilter>("all");
   const [walletProviderEvidenceRecoveryUi, setWalletProviderEvidenceRecoveryUi] =
     useState<WalletProviderEvidenceRecoveryUiState>(() => ({
       lastRecoveredAt: "2026-07-04T00:00:00Z",
@@ -1457,6 +1555,16 @@ export const AdminOpsPanel = ({
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
   const deliveryChecklistTraceability = deliveryChecklist.traceability;
   const traceCopy = deliveryChecklistTraceabilityCopy[locale];
+  const deliveryChecklistCloseout = deliveryChecklist.closeout;
+  const closeoutCopy = deliveryChecklistCloseoutCopy[locale];
+  const deliveryChecklistCloseoutRows =
+    deliveryChecklistCloseoutFilter === "all"
+      ? deliveryChecklistCloseout.rows
+      : deliveryChecklistCloseout.queues.find((queue) => queue.id === deliveryChecklistCloseoutFilter)?.rows ?? [];
+  const deliveryChecklistCloseoutTopRow =
+    deliveryChecklistCloseout.summary.topRowId === null
+      ? null
+      : deliveryChecklistCloseout.rows.find((row) => row.id === deliveryChecklistCloseout.summary.topRowId) ?? null;
   const p1LocaleActivationReadiness = adminOps.p1LocaleActivationReadiness;
   const walletProviderEvidenceRecovery = recoverWalletProviderEvidenceState(
     campaign,
@@ -2952,6 +3060,172 @@ export const AdminOpsPanel = ({
                   </div>
                 ))}
               </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={closeoutCopy.deliveryChecklistCloseout} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{closeoutCopy.closeoutSubtitle}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {closeoutCopy.deliveryChecklistCloseout}
+            </h3>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${deliveryChecklistCloseout.summary.totalRows} ${copy.totalItems}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${deliveryChecklistCloseout.summary.unresolvedRows} ${closeoutCopy.unresolved}`}
+              state={deliveryChecklistCloseout.summary.unresolvedRows > 0 ? "warning" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${deliveryChecklistCloseout.summary.needsReviewRows} ${copy.needsReview}`}
+              state={deliveryChecklistCloseout.summary.needsReviewRows > 0 ? "warning" : "ready"}
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{closeoutCopy.closeoutBoundary}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {getLocalizedText(deliveryChecklistCloseout.boundary, locale)}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.totalItems}</p>
+            <p style={valueStyle}>{deliveryChecklistCloseout.summary.totalRows}</p>
+            <p style={mutedTextStyle}>{closeoutCopy.rowsShown}: {deliveryChecklistCloseoutRows.length}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{closeoutCopy.unresolved}</p>
+            <p style={valueStyle}>{deliveryChecklistCloseout.summary.unresolvedRows}</p>
+            <p style={mutedTextStyle}>{copy.humanReviewRequired}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.needsReview}</p>
+            <p style={valueStyle}>{deliveryChecklistCloseout.summary.needsReviewRows}</p>
+            <p style={mutedTextStyle}>{deliveryChecklistCloseoutHandoffTargetLabel("live_wallet_qa")}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{closeoutCopy.missingVerification}</p>
+            <p style={valueStyle}>{deliveryChecklistCloseout.summary.missingVerificationRows}</p>
+            <p style={mutedTextStyle}>{deliveryChecklistCloseoutHandoffTargetLabel("evidence_traceability")}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{closeoutCopy.missingEvidence}</p>
+            <p style={valueStyle}>{deliveryChecklistCloseout.summary.missingEvidenceRows}</p>
+            <p style={mutedTextStyle}>{deliveryChecklistCloseoutHandoffTargetLabel("evidence_traceability")}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.deferred}</p>
+            <p style={valueStyle}>{deliveryChecklistCloseout.summary.deferredRows}</p>
+            <p style={mutedTextStyle}>{deliveryChecklistCloseoutHandoffTargetLabel("future_scope")}</p>
+          </article>
+          <article style={cardStyle}>
+            <p style={labelStyle}>{copy.covered}</p>
+            <p style={valueStyle}>{deliveryChecklistCloseout.summary.coveredRows}</p>
+            <p style={mutedTextStyle}>{copy.seededBoundary}</p>
+          </article>
+        </div>
+        <div aria-label="Delivery checklist closeout queue filters" style={chipListStyle}>
+          <button
+            type="button"
+            onClick={() => setDeliveryChecklistCloseoutFilter("all")}
+            style={deliveryChecklistCloseoutFilter === "all" ? actionButtonStyle : disabledActionButtonStyle}
+          >
+            {closeoutCopy.allQueues} · {deliveryChecklistCloseout.rows.length}
+          </button>
+          {deliveryChecklistCloseout.queues.map((queue) => (
+            <button
+              key={queue.id}
+              type="button"
+              onClick={() => setDeliveryChecklistCloseoutFilter(queue.id)}
+              style={deliveryChecklistCloseoutFilter === queue.id ? actionButtonStyle : disabledActionButtonStyle}
+            >
+              {deliveryChecklistCloseoutQueueLabel(queue.id, copy, closeoutCopy)} · {queue.count}
+            </button>
+          ))}
+        </div>
+        <article style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{closeoutCopy.topAction}</p>
+              <strong>{deliveryChecklistCloseoutTopRow ? getLocalizedText(deliveryChecklistCloseoutTopRow.label, locale) : closeoutCopy.allQueues}</strong>
+            </div>
+            <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <PublishStateBadge
+                label={`${closeoutCopy.topQueue}: ${deliveryChecklistCloseoutQueueLabel(deliveryChecklistCloseout.summary.topQueueId, copy, closeoutCopy)}`}
+                state={deliveryChecklistCloseoutQueueState(deliveryChecklistCloseout.summary.topQueueId)}
+              />
+              <Badge
+                label={`${closeoutCopy.handoffTarget}: ${deliveryChecklistCloseoutHandoffTargetLabel(deliveryChecklistCloseout.summary.topHandoffTarget)}`}
+                tone="info"
+              />
+            </span>
+          </div>
+          <p style={wrapTextStyle}>
+            {closeoutCopy.topRow}: {deliveryChecklistCloseout.summary.topRowId ?? "-"}
+          </p>
+          <p style={wrapTextStyle}>
+            {copy.nextAction}: {getLocalizedText(deliveryChecklistCloseout.summary.topNextAction, locale)}
+          </p>
+        </article>
+        <div style={gridStyle}>
+          {deliveryChecklistCloseoutRows.map((row) => (
+            <article key={row.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{row.sourceRequirement}</p>
+                  <strong>{getLocalizedText(row.label, locale)}</strong>
+                </div>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge
+                    label={deliveryChecklistCloseoutQueueLabel(row.queueId, copy, closeoutCopy)}
+                    state={deliveryChecklistCloseoutQueueState(row.queueId)}
+                  />
+                  <PublishStateBadge
+                    label={deliveryChecklistStatusLabel(row.status, copy)}
+                    state={deliveryChecklistStatusState(row.status)}
+                  />
+                  <PublishStateBadge
+                    label={deliveryChecklistProofLevelLabel(row.proofLevel)}
+                    state={deliveryChecklistProofLevelState(row.proofLevel)}
+                  />
+                </span>
+              </div>
+              <div style={compactGridStyle}>
+                <div>
+                  <p style={labelStyle}>{closeoutCopy.handoffTarget}</p>
+                  <p style={wrapTextStyle}>
+                    {getLocalizedText(row.handoffLabel, locale)} · {deliveryChecklistCloseoutHandoffTargetLabel(row.handoffTarget)}
+                  </p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.ownerRole}</p>
+                  <p style={wrapTextStyle}>{readableCode(row.ownerRole)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{traceCopy.proofLevel}</p>
+                  <p style={wrapTextStyle}>{deliveryChecklistProofLevelLabel(row.proofLevel)}</p>
+                </div>
+                <div>
+                  <p style={labelStyle}>{copy.linkedSurface}</p>
+                  <p style={wrapTextStyle}>{getLocalizedText(row.surface, locale)}</p>
+                </div>
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.evidence}: {getLocalizedText(row.evidence, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(row.nextAction, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nonLiveBoundary}: {getLocalizedText(row.boundary, locale)}
+              </p>
             </article>
           ))}
         </div>
