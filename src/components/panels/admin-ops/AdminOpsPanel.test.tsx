@@ -143,10 +143,16 @@ describe("Admin/Ops shell", () => {
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/129-tr-tr-locale-activation").length).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/130-es-es-locale-activation").length).toBeGreaterThan(0);
     expect(
+      within(p1LocaleActivationReadiness).getAllByText("mission/134-es-es-locale-copy-publish-readiness").length,
+    ).toBeGreaterThan(0);
+    expect(
       within(p1LocaleActivationReadiness).getAllByText(/ja-JP, ko-KR, vi-VN, id-ID, tr-TR, and es-ES are runtime-active with English fallback/).length,
     ).toBeGreaterThan(0);
     expect(
-      within(p1LocaleActivationReadiness).getAllByText(/es-ES runtime activation is ready with English fallback/i).length,
+      within(p1LocaleActivationReadiness).getAllByText(/es-ES runtime activation, English fallback-copy evidence, and publish-gate evidence are ready/i).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(p1LocaleActivationReadiness).getAllByText(/reviewed Spanish business copy separate from full localization claims/i).length,
     ).toBeGreaterThan(0);
     expect(
       within(p1LocaleActivationReadiness).queryByRole("button", {
@@ -166,7 +172,8 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Turkish");
     expectVisibleText("Spanish");
     expectVisibleText(/es-ES is runtime-active with English fallback/);
-    expectVisibleText(/complete reviewed locale copy before claiming full localization/i);
+    expectVisibleText(/English fallback-copy evidence, and publish-gate evidence are ready/i);
+    expectVisibleText(/reviewed Spanish business copy separate from full localization claims/i);
     expectVisibleText("Contract impact review before publish");
     expectVisibleText("Portkey AA connect tested");
     expectVisibleText("Wrong chain error tested");
@@ -1387,8 +1394,13 @@ describe("Admin/Ops shell", () => {
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/128-id-id-locale-activation").length).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/129-tr-tr-locale-activation").length).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/130-es-es-locale-activation").length).toBeGreaterThan(0);
+    expect(
+      within(zhP1LocaleActivationReadiness).getAllByText("mission/134-es-es-locale-copy-publish-readiness").length,
+    ).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText(/ja-JP、ko-KR、vi-VN、id-ID、tr-TR 与 es-ES 已激活运行时/).length).toBeGreaterThan(0);
-    expect(within(zhP1LocaleActivationReadiness).getAllByText(/es-ES 运行时激活已就绪并使用英文 fallback/).length).toBeGreaterThan(0);
+    expect(
+      within(zhP1LocaleActivationReadiness).getAllByText(/es-ES 运行时激活、本地 fallback 文案证据与发布门禁证据已就绪/).length,
+    ).toBeGreaterThan(0);
     const zhCompanionReadiness = screen.getByLabelText("Companion Contract Readiness");
     expect(
       within(zhCompanionReadiness).getByRole("heading", { name: "Companion Contract Readiness" }),

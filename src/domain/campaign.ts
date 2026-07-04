@@ -13410,13 +13410,18 @@ const p1LocaleActivationSeeds: P1LocaleActivationSeed[] = [
     status: "ready",
     ownerRole: "project_owner",
     recommendedFirst: true,
-    contentOwnershipReadiness: "partial",
+    contentOwnershipReadiness: "ready",
     qaReadiness: "ready",
     routingReadiness: "ready",
     analyticsReadiness: "ready",
-    publishGateReadiness: "partial",
+    publishGateReadiness: "ready",
     blockerIds: [],
-    evidenceReferences: ["v02-p1-locale-expansion", "mission/p1-locale-expansion", "mission/130-es-es-locale-activation"],
+    evidenceReferences: [
+      "v02-p1-locale-expansion",
+      "mission/p1-locale-expansion",
+      "mission/130-es-es-locale-activation",
+      "mission/134-es-es-locale-copy-publish-readiness",
+    ],
   },
 ];
 
@@ -13437,9 +13442,9 @@ const p1LocaleActivationNextAction = (
   recommendedFirst: boolean,
 ): LocalizedText => recommendedFirst
   ? localized(
-    `${code} runtime activation is ready with English fallback; complete reviewed locale copy before claiming full localization.`,
-    `${code} 运行时激活已就绪并使用英文 fallback；声明完整本地化前需完成已审核语言文案。`,
-    `${code} 執行時啟用已就緒並使用英文 fallback；宣稱完整本地化前需完成已審核語言文案。`,
+    `${code} runtime activation, English fallback-copy evidence, and publish-gate evidence are ready; keep reviewed Spanish business copy separate from full localization claims.`,
+    `${code} 运行时激活、本地 fallback 文案证据与发布门禁证据已就绪；仍需将已审核西语业务文案与完整本地化声明分开管理。`,
+    `${code} 執行時啟用、本地 fallback 文案證據與發布門禁證據已就緒；仍需將已審核西語業務文案與完整本地化宣稱分開管理。`,
   )
   : localized(
     `Keep ${code} queued behind the first locale activation mission until ownership and QA evidence are stronger.`,

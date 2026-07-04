@@ -1499,7 +1499,7 @@ describe("Campaign OS domain foundation", () => {
       readyCandidates: 6,
       deferredCandidates: 0,
       requiredEvidenceItems: 30,
-      completedEvidenceItems: 18,
+      completedEvidenceItems: 20,
       recommendedFirstLocale: "es-ES",
       topBlockerId: null,
       ready: true,
@@ -1508,6 +1508,9 @@ describe("Campaign OS domain foundation", () => {
       "ja-JP, ko-KR, vi-VN, id-ID, tr-TR, and es-ES are runtime-active",
     );
     expect(activationReadiness.nextAction["en-US"]).toContain("English fallback");
+    expect(activationReadiness.nextAction["en-US"]).toContain("English fallback-copy evidence");
+    expect(activationReadiness.nextAction["en-US"]).toContain("publish-gate evidence are ready");
+    expect(activationReadiness.nextAction["en-US"]).toContain("full localization claims");
     expect(candidatesByLocale["ko-KR"]).toMatchObject({
       ownerRole: "project_owner",
       priority: 0,
@@ -1593,17 +1596,28 @@ describe("Campaign OS domain foundation", () => {
       priority: 5,
       recommendedFirst: true,
       status: "ready",
-      contentOwnershipReadiness: "partial",
+      contentOwnershipReadiness: "ready",
       qaReadiness: "ready",
       routingReadiness: "ready",
       analyticsReadiness: "ready",
-      publishGateReadiness: "partial",
+      publishGateReadiness: "ready",
       blockerIds: [],
-      evidenceReferences: ["v02-p1-locale-expansion", "mission/p1-locale-expansion", "mission/130-es-es-locale-activation"],
+      evidenceReferences: [
+        "v02-p1-locale-expansion",
+        "mission/p1-locale-expansion",
+        "mission/130-es-es-locale-activation",
+        "mission/134-es-es-locale-copy-publish-readiness",
+      ],
     });
     expect(candidatesByLocale["es-ES"]?.contentScope["en-US"]).toContain("es-ES");
     expect(candidatesByLocale["es-ES"]?.qaScope["en-US"]).toContain("es-ES");
     expect(candidatesByLocale["es-ES"]?.boundary["en-US"]).toContain("runtime-active");
+    for (const localeCode of ["ko-KR", "ja-JP", "vi-VN", "id-ID", "tr-TR"] as const) {
+      expect(candidatesByLocale[localeCode]).toMatchObject({
+        contentOwnershipReadiness: "partial",
+        publishGateReadiness: "partial",
+      });
+    }
     expect(supportedLocales).toEqual(activatedRuntimeLocales);
     expect(itemsById["product-contract-impact-review"]?.evidence["en-US"]).toContain(
       "claim-mode disabled and future approval-gated",
