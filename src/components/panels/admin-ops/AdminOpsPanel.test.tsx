@@ -812,6 +812,75 @@ describe("Admin/Ops shell", () => {
     expect(within(lifecycleReview).queryByText(/production mutation is enabled/i)).not.toBeInTheDocument();
   });
 
+  it("runs wallet provider evidence review actions as local-only Admin/Ops preview", () => {
+    render(<AdminOpsPanel locale="en-US" />);
+
+    const requestPacket = screen.getByLabelText("Wallet Provider Evidence Request Packet");
+
+    expect(within(requestPacket).getAllByText("Local evidence review actions").length).toBeGreaterThan(0);
+    expect(within(requestPacket).getByText("No local review action has run yet.")).toBeInTheDocument();
+    expect(within(requestPacket).getByText(/No live wallet connection/)).toBeInTheDocument();
+    [
+      /live wallet connection/i,
+      /connect wallet/i,
+      /request signature/i,
+      /provider call/i,
+      new RegExp("upload evidence", "i"),
+      /write storage/i,
+      /contract write/i,
+      /generate export/i,
+      /reward custody/i,
+      /reward distribution/i,
+      /distribute rewards/i,
+    ].forEach((forbiddenActionName) => {
+      expect(within(requestPacket).queryByRole("button", { name: forbiddenActionName })).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(within(requestPacket).getByRole("button", {
+      name: "Submit local references · portkey-aa-connect",
+    }));
+    expect(within(requestPacket).getByText(/Latest local result:/)).toBeInTheDocument();
+    expect(within(requestPacket).getByText(/Scenario: portkey-aa-connect/)).toBeInTheDocument();
+    expect(within(requestPacket).getByText(/Approved required scenarios:\s*0\/5/)).toBeInTheDocument();
+    expect(within(requestPacket).getByText("local-wallet-qa/portkey-aa-connect/portkey-aa-connect-screenshot-review-reference")).toBeInTheDocument();
+
+    fireEvent.click(within(requestPacket).getByRole("button", {
+      name: "Approve evidence · portkey-aa-connect",
+    }));
+    expect(within(requestPacket).getAllByText(/1\/5/).length).toBeGreaterThan(0);
+    expect(within(requestPacket).getByText(/Approved required scenarios: 1\/5/)).toBeInTheDocument();
+    expect(within(requestPacket).getAllByText("Ready").length).toBeGreaterThan(0);
+    expect(within(requestPacket).getAllByText(/blocked/i).length).toBeGreaterThan(0);
+
+    fireEvent.click(within(requestPacket).getByRole("button", {
+      name: "Reject evidence · portkey-aa-connect",
+    }));
+    expect(within(requestPacket).getByText(new RegExp("Local reviewer rejected this evidence"))).toBeInTheDocument();
+
+    fireEvent.click(within(requestPacket).getByRole("button", {
+      name: "Reopen local references · portkey-aa-connect",
+    }));
+    expect(within(requestPacket).getByText(/Review replacement wallet provider evidence references before approval/)).toBeInTheDocument();
+  });
+
+  it("renders wallet provider evidence review actions in zh-CN", () => {
+    render(<AdminOpsPanel locale="zh-CN" />);
+
+    const requestPacket = screen.getByLabelText("钱包 Provider 证据请求包");
+
+    expect(within(requestPacket).getAllByText("本地证据审核动作").length).toBeGreaterThan(0);
+    expect(within(requestPacket).getByText("尚未运行本地审核动作。")).toBeInTheDocument();
+    expect(within(requestPacket).getByText(/不会连接实时钱包/)).toBeInTheDocument();
+
+    fireEvent.click(within(requestPacket).getByRole("button", {
+      name: "提交本地引用 · portkey-aa-connect",
+    }));
+
+    expect(within(requestPacket).getByText(/最新本地结果:/)).toBeInTheDocument();
+    expect(within(requestPacket).getByText(/场景: portkey-aa-connect/)).toBeInTheDocument();
+    expect(within(requestPacket).getByText(/已完成/)).toBeInTheDocument();
+  });
+
   it("switches Admin/Ops copy manually to zh-CN", () => {
     render(<App />);
 
