@@ -1392,7 +1392,20 @@ describe("Admin/Ops shell", () => {
     expect(within(preapproval).getAllByText("Total gates").length).toBeGreaterThan(0);
     expect(within(preapproval).getAllByText("Review-required gates").length).toBeGreaterThan(0);
     expect(within(preapproval).getAllByText("Security review").length).toBeGreaterThan(0);
-    expect(within(preapproval).getByText("No-custody/no-distribution boundary")).toBeInTheDocument();
+    const securityReadiness = within(preapproval).getByLabelText("Security Review Readiness");
+    expect(within(securityReadiness).getByText("Security Review Readiness")).toBeInTheDocument();
+    expect(within(securityReadiness).getByText(/Itemized review-only security gate/)).toBeInTheDocument();
+    expect(within(securityReadiness).getAllByText("Approval blocked").length).toBeGreaterThan(0);
+    expect(within(securityReadiness).getAllByText("Blocked items").length).toBeGreaterThan(0);
+    expect(within(securityReadiness).getAllByText("Review-required items").length).toBeGreaterThan(0);
+    expect(within(securityReadiness).getAllByText("Ready items").length).toBeGreaterThan(0);
+    expect(within(securityReadiness).getByText("Top security blocker")).toBeInTheDocument();
+    expect(within(securityReadiness).getAllByText("Claim threat model").length).toBeGreaterThan(0);
+    expect(within(securityReadiness).getByText("claim-threat-model")).toBeInTheDocument();
+    expect(within(securityReadiness).getByText("eligibility-proof-handling")).toBeInTheDocument();
+    expect(within(securityReadiness).getAllByText(/Blocks approval/).length).toBeGreaterThan(0);
+    expect(within(securityReadiness).getAllByText(/No contract write/).length).toBeGreaterThan(0);
+    expect(within(preapproval).getAllByText("No-custody/no-distribution boundary").length).toBeGreaterThan(0);
     expect(within(preapproval).getAllByText(/Owner role:/).length).toBeGreaterThan(0);
     expect(within(preapproval).getAllByText(/Evidence:/).length).toBeGreaterThan(0);
     expect(within(preapproval).getAllByText(/Dependency:/).length).toBeGreaterThan(0);
@@ -1413,7 +1426,17 @@ describe("Admin/Ops shell", () => {
     })).toBeInTheDocument();
     expect(within(preapproval).getByText(/仅用于审核的未来 claim\/custody 前置条件 package/)).toBeInTheDocument();
     expect(within(preapproval).getAllByText("安全审核").length).toBeGreaterThan(0);
-    expect(within(preapproval).getByText("不托管/不发奖边界")).toBeInTheDocument();
+    const securityReadiness = within(preapproval).getByLabelText("安全审核 Readiness");
+    expect(within(securityReadiness).getByText("安全审核 Readiness")).toBeInTheDocument();
+    expect(within(securityReadiness).getByText(/未来 claim 执行分支前的逐项只读安全门禁/)).toBeInTheDocument();
+    expect(within(securityReadiness).getAllByText("批准已阻断").length).toBeGreaterThan(0);
+    expect(within(securityReadiness).getAllByText("已阻断条目").length).toBeGreaterThan(0);
+    expect(within(securityReadiness).getAllByText("需审核条目").length).toBeGreaterThan(0);
+    expect(within(securityReadiness).getAllByText("首要安全阻断").length).toBeGreaterThan(0);
+    expect(within(securityReadiness).getAllByText("Claim 威胁模型").length).toBeGreaterThan(0);
+    expect(within(securityReadiness).getByText("claim-threat-model")).toBeInTheDocument();
+    expect(within(securityReadiness).getAllByText(/阻断批准/).length).toBeGreaterThan(0);
+    expect(within(preapproval).getAllByText("不托管/不发奖边界").length).toBeGreaterThan(0);
     expect(within(preapproval).getAllByText(/合约写入、claim 执行、奖励托管和发奖均保持阻断/).length).toBeGreaterThan(0);
     expect(within(preapproval).queryByRole("button", {
       name: /claim|custody|payout|签名|provider 调用|存储写入|导出文件|合约写入|奖励托管|发奖|reward distribution/i,
