@@ -31,6 +31,7 @@ import {
   createAdminOpsReadModel,
   createDeliveryAcceptanceConsole,
   createExportConfirmationReadinessGate,
+  createExportStorageFulfillmentApprovalReadiness,
   createExportFulfillmentReadiness,
   createExportArtifact,
   createExportPreview,
@@ -4860,6 +4861,92 @@ describe("Campaign OS domain foundation", () => {
     for (const unsafe of [
       "downloadUrl",
       "storageKey",
+      "contractRoot",
+      "transactionId",
+      "privateKey",
+      "signedPayload",
+    ]) {
+      expect(hasOwnKeyDeep(readiness, unsafe)).toBe(false);
+    }
+  });
+
+  it("derives storage-backed export approval readiness without enabling live storage or downloads", () => {
+    const localFulfillment = createExportFulfillmentReadiness(campaignDetail);
+    const readiness = createExportStorageFulfillmentApprovalReadiness(campaignDetail, localFulfillment);
+    const repeated = createExportStorageFulfillmentApprovalReadiness(campaignDetail, localFulfillment);
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+
+    expect(readiness.summary).toMatchObject({
+      approvalBlocked: true,
+      blockedChecks: 4,
+      downloadUrlEnabled: false,
+      highestRiskLevel: "high",
+      readyChecks: 2,
+      reviewRequiredChecks: 3,
+      storageWriteEnabled: false,
+      topCheckId: "storage-provider-approval",
+      totalChecks: 9,
+    });
+    expect(readiness.sourceFulfillmentStatus).toBe(localFulfillment.summary.status);
+    expect(readiness.checks.map((check) => check.id)).toEqual([
+      "storage-provider-approval",
+      "csv-column-contract",
+      "wallet-locale-coverage",
+      "access-control",
+      "retention-privacy",
+      "audit-logging",
+      "rollback-plan",
+      "owner-signoff",
+      "operator-approval",
+    ]);
+    expect(readiness.checks.find((check) => check.id === "csv-column-contract")).toMatchObject({
+      state: "ready",
+      riskLevel: "low",
+      ownerRole: "internal_operator",
+    });
+    expect(readiness.columnCoverage).toMatchObject({
+      columns: EXPORT_CSV_COLUMNS,
+      exactOrder: true,
+      expectedColumns: EXPORT_CSV_COLUMNS,
+      localePreferenceIncluded: true,
+      missingColumns: [],
+      riskFlagsIncluded: true,
+      taskEvidenceIncluded: true,
+      walletSourceIncluded: true,
+      walletTypeIncluded: true,
+    });
+    expect(readiness.safety).toMatchObject({
+      forbiddenFieldsAbsent: true,
+      noContractRootWrite: true,
+      noDownloadUrl: true,
+      noObjectKey: true,
+      noRealExportFile: true,
+      noRewardCustody: true,
+      noRewardDistribution: true,
+      noSignedUrl: true,
+      noStorageWrite: true,
+      noWalletSigning: true,
+    });
+    expect(readiness.boundary["en-US"]).toContain("Storage-backed export approval readiness only");
+    expect(readiness.nextAction["en-US"]).toContain("storage provider");
+    expect(adminOps.exportStorageFulfillmentApprovalReadiness).toEqual(readiness);
+    expect(adminOps.exportFulfillmentReadiness).toEqual(localFulfillment);
+    expect(repeated).toEqual(readiness);
+
+    for (const locale of ["en-US", "zh-CN", "zh-TW"] as const) {
+      for (const check of readiness.checks) {
+        expect(check.label[locale]?.length ?? 0).toBeGreaterThan(0);
+        expect(check.evidenceRequired[locale]?.length ?? 0).toBeGreaterThan(0);
+        expect(check.nextAction[locale]?.length ?? 0).toBeGreaterThan(0);
+      }
+    }
+
+    for (const unsafe of [
+      "downloadUrl",
+      "fileUrl",
+      "storageKey",
+      "objectKey",
+      "signedUrl",
       "contractRoot",
       "transactionId",
       "privateKey",
