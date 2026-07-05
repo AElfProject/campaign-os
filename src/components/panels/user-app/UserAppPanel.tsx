@@ -1202,6 +1202,10 @@ export const UserAppPanel = ({
   const winnersExportStatus = createUserWinnersExportStatusReadModel(campaign, participant);
   const eligibilityChecker = createEligibilityCheckerReadModel(campaign, checkedEligibilityAddress);
   const eligibilityResult = eligibilityChecker.result;
+  const eligibilityInspectionModeLabel =
+    eligibilityResult.inspectionMode === "verified_session"
+      ? copy.verifiedWalletSession
+      : copy.addressOnlyInspection;
   const leaderboard = createLeaderboardReadModel(campaign, leaderboardMode);
   const ecosystemNextActions = createEcosystemNextActionReadModel(campaign, participant);
   const portfolioCampaignHistory = createPortfolioCampaignHistoryReadModel(campaign, participant);
@@ -2225,6 +2229,24 @@ export const UserAppPanel = ({
             {!eligibilityResult.knownParticipant ? (
               <span style={{ color: "#92400e", fontSize: 13, fontWeight: 800 }}>
                 {copy.unknownWalletType}
+              </span>
+            ) : null}
+          </div>
+          <div style={cardStyle}>
+            <p style={labelStyle}>{copy.eligibilityInspectionMode}</p>
+            <strong>{eligibilityInspectionModeLabel}</strong>
+            <span style={{ color: "#475569", fontSize: 13 }}>
+              {eligibilityResult.inspectionMode === "verified_session"
+                ? copy.walletTypeVerified
+                : copy.walletVerification}
+            </span>
+          </div>
+          <div style={cardStyle}>
+            <p style={labelStyle}>{copy.localePreference}</p>
+            <strong>{eligibilityResult.localePreference ?? "-"}</strong>
+            {!eligibilityResult.localePreference ? (
+              <span style={{ color: "#92400e", fontSize: 13, fontWeight: 800 }}>
+                {copy.localeUnavailable}
               </span>
             ) : null}
           </div>

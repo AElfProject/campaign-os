@@ -544,6 +544,8 @@ describe("User App shell", () => {
     expect(within(checker).getByLabelText("Eligibility address")).toHaveValue("3E9...7cD");
     expect(within(checker).getByText("Not eligible")).toBeInTheDocument();
     expect(within(checker).getByText("EOA · Extension")).toBeInTheDocument();
+    expect(within(checker).getByText("Verified wallet session")).toBeInTheDocument();
+    expect(within(checker).getByText("zh-CN")).toBeInTheDocument();
     expect(within(checker).getByText("1/2")).toBeInTheDocument();
     expect(within(checker).getByText("50%")).toBeInTheDocument();
     expect(within(checker).getByText("Bridge via eBridge")).toBeInTheDocument();
@@ -564,6 +566,7 @@ describe("User App shell", () => {
 
     expect(within(checker).getByText("Pending verification")).toBeInTheDocument();
     expect(within(checker).getByText("Unknown · Other")).toBeInTheDocument();
+    expect(within(checker).getByText("Address-only inspection")).toBeInTheDocument();
     expect(within(checker).getByText("Wallet type remains unknown until supported wallet/session verification.")).toBeInTheDocument();
     expect(within(checker).getByText(/cannot infer AA or EOA/)).toBeInTheDocument();
     expect(within(checker).getByText(/Connect or verify/)).toBeInTheDocument();
