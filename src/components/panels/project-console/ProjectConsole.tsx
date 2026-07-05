@@ -31,6 +31,8 @@ import {
   type AelfWebLoginAdapterLiveEvidenceStatus,
   type AelfWebLoginAdapterReadiness,
   type AdvancedAnalyticsReadinessState,
+  type ApiUsagePrerequisiteState,
+  type ApiUsageReadinessState,
   type ApiSkillContractReadiness,
   type CampaignTemplatePreset,
   type CampaignLifecycleOperation,
@@ -1035,6 +1037,59 @@ const advancedAnalyticsReadinessLabel = (
   },
 ) => readinessLabel(readiness, labels);
 
+const apiUsageReadinessBadgeState = (readiness: ApiUsageReadinessState) => {
+  if (readiness === "blocked") {
+    return "blocker";
+  }
+
+  return readiness === "local_ready" ? "ready" : "warning";
+};
+
+const apiUsagePrerequisiteBadgeState = (state: ApiUsagePrerequisiteState) => {
+  if (state === "blocked") {
+    return "blocker";
+  }
+
+  return state === "local_ready" ? "ready" : "warning";
+};
+
+const apiUsageReadinessLabel = (
+  readiness: ApiUsageReadinessState,
+  labels: {
+    apiSkillReadinessBlocked: string;
+    apiSkillReadinessReviewRequired: string;
+    apiUsageLocalReady: string;
+  },
+) => {
+  if (readiness === "local_ready") {
+    return labels.apiUsageLocalReady;
+  }
+
+  return readiness === "review_required"
+    ? labels.apiSkillReadinessReviewRequired
+    : labels.apiSkillReadinessBlocked;
+};
+
+const apiUsagePrerequisiteLabel = (
+  state: ApiUsagePrerequisiteState,
+  labels: {
+    apiSkillReadinessBlocked: string;
+    apiSkillReadinessReviewRequired: string;
+    apiUsageLocalReady: string;
+    apiUsageNotStarted: string;
+  },
+) => {
+  if (state === "local_ready") {
+    return labels.apiUsageLocalReady;
+  }
+
+  return state === "not_started"
+    ? labels.apiUsageNotStarted
+    : state === "review_required"
+      ? labels.apiSkillReadinessReviewRequired
+      : labels.apiSkillReadinessBlocked;
+};
+
 const serviceApiGroupLabel = (group: string) => {
   if (group === "task_verification") {
     return "task verification";
@@ -1584,6 +1639,7 @@ export const ProjectConsole = ({
   const lifecycleOperations = commandCenter.lifecycleOperations;
   const launchConsoleBundles = commandCenter.launchConsoleCampaignBundles;
   const portfolioCommercialReadiness = commandCenter.portfolioCommercialReadiness;
+  const apiUsageCommercializationReadiness = commandCenter.apiUsageCommercializationReadiness;
   const topLifecycleOperation = lifecycleOperations.operations.find(
     (operation) => operation.id === lifecycleOperations.summary.topOperationId,
   );
@@ -2026,6 +2082,113 @@ export const ProjectConsole = ({
           {getLocalizedText(portfolioCommercialReadiness.summary.rewardBoundary, locale)}
         </p>
         <p style={boundaryStyle}>{getLocalizedText(portfolioCommercialReadiness.boundary, locale)}</p>
+      </section>
+
+      <section aria-label={copy.apiUsageReadiness} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.apiUsageSummary}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.apiUsageReadiness}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.apiUsageReadinessSubtitle}
+            </p>
+          </div>
+          <PublishStateBadge
+            label={`${apiUsageCommercializationReadiness.summary.blockedCount} ${copy.apiSkillReadinessBlocked}`}
+            state={apiUsageCommercializationReadiness.summary.blockedCount > 0 ? "blocker" : "ready"}
+          />
+        </div>
+
+        <div aria-label={copy.apiUsageSummary} style={gridStyle}>
+          {[
+            [copy.apiUsageTotalCandidates, String(apiUsageCommercializationReadiness.summary.totalCandidates)],
+            [copy.apiSkillReadinessReviewRequired, String(apiUsageCommercializationReadiness.summary.reviewRequiredCount)],
+            [copy.apiSkillReadinessBlocked, String(apiUsageCommercializationReadiness.summary.blockedCount)],
+            [copy.apiUsageHighRisk, String(apiUsageCommercializationReadiness.summary.highRiskCount)],
+            [copy.apiUsageBillingHandoff, String(apiUsageCommercializationReadiness.summary.billingHandoffCount)],
+            [copy.apiUsageProductionReady, String(apiUsageCommercializationReadiness.summary.productionReadyCount)],
+            [copy.apiUsageMissingCandidates, String(apiUsageCommercializationReadiness.summary.missingCandidateCount)],
+          ].map(([label, value]) => (
+            <article key={label} style={cardStyle}>
+              <p style={statLabelStyle}>{label}</p>
+              <p style={statValueStyle}>{value}</p>
+            </article>
+          ))}
+        </div>
+
+        <div>
+          <p style={statLabelStyle}>{copy.apiUsageCandidates}</p>
+          <div style={sectionGridStyle}>
+            {apiUsageCommercializationReadiness.candidates.map((candidate) => (
+              <article key={candidate.skillId} style={{ ...workflowStyle, minHeight: 0 }}>
+                <div style={headingRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={statLabelStyle}>{candidate.skillId}</p>
+                    <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                      {getLocalizedText(candidate.label, locale)}
+                    </h4>
+                  </div>
+                  <PublishStateBadge
+                    label={apiUsageReadinessLabel(candidate.readiness, copy)}
+                    state={apiUsageReadinessBadgeState(candidate.readiness)}
+                  />
+                </div>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {getLocalizedText(candidate.description, locale)}
+                </p>
+                <div style={gridStyle}>
+                  {[
+                    [copy.apiUsageConsumerTier, readableCode(candidate.consumerTier)],
+                    [copy.apiUsageCommercialModel, readableCode(candidate.commercialModel)],
+                    [copy.apiUsageOwner, readableCode(candidate.ownerRole)],
+                    [copy.apiUsageReviewState, readableCode(candidate.reviewState)],
+                  ].map(([label, value]) => (
+                    <div key={`${candidate.skillId}-${label}`} style={{ minWidth: 0 }}>
+                      <p style={statLabelStyle}>{label}</p>
+                      <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.35, margin: 0 }}>
+                        {value}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                <ul style={compactListStyle}>
+                  {([
+                    [copy.apiUsageAuthKey, candidate.authKeyReadiness.state],
+                    [copy.apiUsageQuota, candidate.quotaPolicy.state],
+                    [copy.apiUsageMetering, candidate.meteringStatus.state],
+                    [copy.apiUsageRateLimit, candidate.rateLimitPolicy.state],
+                    [copy.apiUsageBillingHandoff, candidate.billingHandoff.state],
+                  ] satisfies ReadonlyArray<readonly [string, ApiUsagePrerequisiteState]>).map(([label, state]) => (
+                    <li key={`${candidate.skillId}-${label}`} style={chipStyle}>
+                      {label}: {apiUsagePrerequisiteLabel(state, copy)}
+                    </li>
+                  ))}
+                </ul>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.apiUsageEvidence}: {getLocalizedText(candidate.evidence, locale)}
+                </p>
+                <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+                  {copy.apiUsageNextAction}: {getLocalizedText(candidate.nextAction, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+        </div>
+
+        <p style={boundaryStyle}>
+          {copy.apiUsageTopNextAction}:{" "}
+          {getLocalizedText(apiUsageCommercializationReadiness.summary.topNextAction, locale)}
+        </p>
+        <p style={boundaryStyle}>
+          {copy.apiUsageRewardBoundary}:{" "}
+          {getLocalizedText(apiUsageCommercializationReadiness.rewardBoundary, locale)}
+        </p>
+        <p style={boundaryStyle}>
+          {copy.apiUsageBoundary}:{" "}
+          {getLocalizedText(apiUsageCommercializationReadiness.boundary, locale)}
+        </p>
       </section>
 
       <section aria-label={copy.lifecycleOperations} style={panelStyle}>

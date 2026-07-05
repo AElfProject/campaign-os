@@ -111,8 +111,54 @@ describe("Project Console shell", () => {
     expect(within(portfolioReadiness).getAllByText(/Reward budget is project or partner committed only/).length).toBeGreaterThan(0);
     expect(within(portfolioReadiness).queryByText(/invoice id/i)).not.toBeInTheDocument();
     expect(within(portfolioReadiness).queryByText(/payment id/i)).not.toBeInTheDocument();
+    const apiUsageReadiness = screen.getByLabelText("API usage commercialization readiness");
+    expect(
+      within(apiUsageReadiness).getByRole("heading", {
+        name: "API usage commercialization readiness",
+      }),
+    ).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText("verify_task")).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText("export_winners")).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getAllByText("Auth / key: Blocked").length).toBeGreaterThan(0);
+    expect(within(apiUsageReadiness).getAllByText("Rate-limit: Blocked").length).toBeGreaterThan(0);
+    expect(within(apiUsageReadiness).getAllByText("Billing handoff: Blocked").length).toBeGreaterThan(0);
+    expect(within(apiUsageReadiness).getAllByText("Blocked").length).toBeGreaterThan(0);
+    expect(within(apiUsageReadiness).getByText(/does not custody rewards/)).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText(/aelf-funded reward subsidies/)).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText(/No live API gateway/)).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText(/API key/)).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getAllByText(/billing/).length).toBeGreaterThan(0);
+    expect(within(apiUsageReadiness).getByText(/export file/)).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText(/contract call\/write/)).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText(/reward distribution/)).toBeInTheDocument();
+    expect(within(apiUsageReadiness).queryByText("Production ready")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Analytics & Export Decision" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Task template library" })).not.toBeInTheDocument();
+  });
+
+  it("renders API usage commercialization readiness in Chinese", () => {
+    render(<ProjectConsole campaign={campaignDetail} locale="zh-CN" />);
+
+    const apiUsageReadiness = screen.getByLabelText("API usage 商业化 readiness");
+
+    expect(
+      within(apiUsageReadiness).getByRole("heading", {
+        name: "API usage 商业化 readiness",
+      }),
+    ).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText("API usage 候选项")).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText("verify_task")).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText("export_winners")).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getAllByText("认证 / key: 阻断").length).toBeGreaterThan(0);
+    expect(within(apiUsageReadiness).getAllByText("限流: 阻断").length).toBeGreaterThan(0);
+    expect(within(apiUsageReadiness).getAllByText("Billing handoff: 阻断").length).toBeGreaterThan(0);
+    expect(within(apiUsageReadiness).getByText(/不托管奖励/)).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText(/实时 API gateway/)).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText(/API key/)).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getAllByText(/billing/).length).toBeGreaterThan(0);
+    expect(within(apiUsageReadiness).getByText(/导出文件/)).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getByText(/合约调用\/写入/)).toBeInTheDocument();
+    expect(within(apiUsageReadiness).getAllByText(/发奖/).length).toBeGreaterThan(0);
   });
 
   it("renders AI draft and human review lifecycle states with review-safe owner actions", () => {
