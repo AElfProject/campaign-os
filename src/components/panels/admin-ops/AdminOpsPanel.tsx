@@ -48,6 +48,7 @@ import {
   type CampaignLifecycleOperationState,
   type CampaignLifecycleStatus,
   type ContractClaimPreapprovalGateState,
+  type ContractClaimExecutionApprovalEvidenceState,
   type ContractTransparencyReadiness,
   type ExternalServiceLiveEvidenceStatus,
   type ExternalServiceRegistryEntry,
@@ -506,6 +507,23 @@ const contractClaimPreapprovalGateLabel = (
 ) => {
   const labels: Record<ContractClaimPreapprovalGateState, string> = {
     blocked: copy.blocked,
+    ready: copy.readyActions,
+    review_required: copy.reviewRequired,
+  };
+
+  return labels[state];
+};
+
+const contractClaimExecutionApprovalEvidenceState = (
+  state: ContractClaimExecutionApprovalEvidenceState,
+) => state === "missing" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const contractClaimExecutionApprovalEvidenceLabel = (
+  state: ContractClaimExecutionApprovalEvidenceState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<ContractClaimExecutionApprovalEvidenceState, string> = {
+    missing: copy.missingEvidence,
     ready: copy.readyActions,
     review_required: copy.reviewRequired,
   };
@@ -2159,6 +2177,54 @@ export const AdminOpsPanel = ({
   const contractClaimExecutionApprovalTopItem = contractClaimExecutionApprovalReadiness.items.find(
     (item) => item.id === contractClaimExecutionApprovalReadiness.summary.topItemId,
   ) ?? contractClaimExecutionApprovalReadiness.items[0];
+  const contractClaimExecutionApprovalEvidenceMatrix = contractClaimExecutionApprovalReadiness.evidenceMatrix;
+  const contractClaimExecutionApprovalEvidenceSummary = [
+    {
+      id: "total",
+      label: copy.totalItems,
+      value: contractClaimExecutionApprovalEvidenceMatrix.summary.totalRows,
+      state: "ready" as const,
+    },
+    {
+      id: "missing",
+      label: copy.missingEvidence,
+      value: contractClaimExecutionApprovalEvidenceMatrix.summary.missingRows,
+      state: contractClaimExecutionApprovalEvidenceMatrix.summary.missingRows > 0 ? "blocker" as const : "ready" as const,
+    },
+    {
+      id: "review-required",
+      label: copy.reviewRequiredItems,
+      value: contractClaimExecutionApprovalEvidenceMatrix.summary.reviewRequiredRows,
+      state: contractClaimExecutionApprovalEvidenceMatrix.summary.reviewRequiredRows > 0
+        ? "warning" as const
+        : "ready" as const,
+    },
+    {
+      id: "ready",
+      label: copy.readyItems,
+      value: contractClaimExecutionApprovalEvidenceMatrix.summary.readyRows,
+      state: "ready" as const,
+    },
+    {
+      id: "launch-blocking",
+      label: copy.launchBlockingItems,
+      value: contractClaimExecutionApprovalEvidenceMatrix.summary.launchBlockingRows,
+      state: contractClaimExecutionApprovalEvidenceMatrix.summary.launchBlockingRows > 0
+        ? "blocker" as const
+        : "ready" as const,
+    },
+    {
+      id: "evidence-complete",
+      label: copy.executionApprovalEvidenceIncomplete,
+      value: contractClaimExecutionApprovalEvidenceMatrix.summary.evidenceComplete
+        ? copy.readyActions
+        : copy.blocked,
+      state: contractClaimExecutionApprovalEvidenceMatrix.summary.evidenceComplete ? "ready" as const : "blocker" as const,
+    },
+  ];
+  const contractClaimExecutionApprovalTopEvidenceRow = contractClaimExecutionApprovalEvidenceMatrix.rows.find(
+    (row) => row.id === contractClaimExecutionApprovalEvidenceMatrix.summary.topEvidenceId,
+  ) ?? contractClaimExecutionApprovalEvidenceMatrix.rows[0];
   const contractClaimThreatModelApprovalReadiness = contractClaimPreapprovalPackage.threatModelApprovalReadiness;
   const contractClaimThreatModelApprovalSummary = [
     {
@@ -3898,6 +3964,121 @@ export const AdminOpsPanel = ({
               </article>
             ))}
           </div>
+          <article aria-label={copy.contractClaimExecutionApprovalEvidenceMatrix} style={cardStyle}>
+            <div style={rowStyle}>
+              <div style={stackStyle}>
+                <p style={labelStyle}>{copy.contractClaimExecutionApprovalEvidenceBoundary}</p>
+                <strong>{copy.contractClaimExecutionApprovalEvidenceMatrix}</strong>
+                <p style={mutedTextStyle}>{copy.contractClaimExecutionApprovalEvidenceSubtitle}</p>
+              </div>
+              <PublishStateBadge
+                label={contractClaimExecutionApprovalEvidenceMatrix.summary.evidenceComplete
+                  ? copy.readyActions
+                  : copy.executionApprovalEvidenceIncomplete}
+                state={contractClaimExecutionApprovalEvidenceMatrix.summary.evidenceComplete ? "ready" : "blocker"}
+              />
+            </div>
+            <p style={boundaryStyle}>
+              {copy.nonLiveBoundary}: {getLocalizedText(contractClaimExecutionApprovalEvidenceMatrix.boundary, locale)}
+            </p>
+            <div style={compactGridStyle}>
+              {contractClaimExecutionApprovalEvidenceSummary.map((item) => (
+                <article key={item.id} style={cardStyle}>
+                  <div style={rowStyle}>
+                    <p style={labelStyle}>{item.label}</p>
+                    <PublishStateBadge label={String(item.value)} state={item.state} />
+                  </div>
+                  <p style={valueStyle}>{item.value}</p>
+                </article>
+              ))}
+            </div>
+            {contractClaimExecutionApprovalTopEvidenceRow ? (
+              <article style={cardStyle}>
+                <div style={rowStyle}>
+                  <div style={stackStyle}>
+                    <p style={labelStyle}>{copy.topExecutionApprovalEvidenceGap}</p>
+                    <strong>{getLocalizedText(contractClaimExecutionApprovalTopEvidenceRow.label, locale)}</strong>
+                  </div>
+                  <PublishStateBadge
+                    label={contractClaimExecutionApprovalEvidenceLabel(
+                      contractClaimExecutionApprovalTopEvidenceRow.state,
+                      copy,
+                    )}
+                    state={contractClaimExecutionApprovalEvidenceState(contractClaimExecutionApprovalTopEvidenceRow.state)}
+                  />
+                </div>
+                <p style={wrapTextStyle}>
+                  {copy.sourceItem}: {contractClaimExecutionApprovalTopEvidenceRow.sourceItemId}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.ownerRole}: {readableCode(contractClaimExecutionApprovalTopEvidenceRow.ownerRole)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.evidenceSurface}: {getLocalizedText(contractClaimExecutionApprovalTopEvidenceRow.evidenceSurface, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.missingEvidence}: {getLocalizedText(contractClaimExecutionApprovalTopEvidenceRow.missingEvidence, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.auditRequirement}: {getLocalizedText(contractClaimExecutionApprovalTopEvidenceRow.auditRequirement, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.approvalImpact}: {getLocalizedText(contractClaimExecutionApprovalTopEvidenceRow.approvalImpact, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.nextAction}: {getLocalizedText(contractClaimExecutionApprovalTopEvidenceRow.nextAction, locale)}
+                </p>
+              </article>
+            ) : null}
+            <div style={gridStyle}>
+              {contractClaimExecutionApprovalEvidenceMatrix.rows.map((row) => (
+                <article key={row.id} style={cardStyle}>
+                  <div style={rowStyle}>
+                    <div style={stackStyle}>
+                      <p style={labelStyle}>{row.id}</p>
+                      <strong>{getLocalizedText(row.label, locale)}</strong>
+                    </div>
+                    <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <PublishStateBadge
+                        label={contractClaimExecutionApprovalEvidenceLabel(row.state, copy)}
+                        state={contractClaimExecutionApprovalEvidenceState(row.state)}
+                      />
+                      {row.blocksExecutionApproval
+                        ? <Badge label={copy.blocksExecutionApproval} tone="warning" />
+                        : null}
+                    </span>
+                  </div>
+                  <p style={wrapTextStyle}>
+                    {copy.sourceItem}: {row.sourceItemId}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.ownerRole}: {readableCode(row.ownerRole)}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.evidenceSurface}: {getLocalizedText(row.evidenceSurface, locale)}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.evidenceSummary}: {getLocalizedText(row.evidenceSummary, locale)}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.missingEvidence}: {getLocalizedText(row.missingEvidence, locale)}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.auditRequirement}: {getLocalizedText(row.auditRequirement, locale)}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.approvalImpact}: {getLocalizedText(row.approvalImpact, locale)}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.nextAction}: {getLocalizedText(row.nextAction, locale)}
+                  </p>
+                  <p style={wrapTextStyle}>
+                    {copy.localOnlyBoundary}: {getLocalizedText(row.boundary, locale)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </article>
         </article>
         <article aria-label={copy.contractClaimThreatModelApprovalReadiness} style={cardStyle}>
           <div style={rowStyle}>

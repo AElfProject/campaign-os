@@ -1463,6 +1463,22 @@ describe("Admin/Ops shell", () => {
     expect(within(executionApprovalReadiness).getAllByText(/Blocking reason:/).length).toBeGreaterThan(0);
     expect(within(executionApprovalReadiness).getAllByText(/Blocks execution approval/).length).toBeGreaterThan(0);
     expect(within(executionApprovalReadiness).getAllByText(/No branch, issue, PR, or mission automation/).length).toBeGreaterThan(0);
+    const executionApprovalEvidenceMatrix = within(executionApprovalReadiness).getByLabelText(
+      "Execution Approval Evidence Matrix",
+    );
+    expect(within(executionApprovalEvidenceMatrix).getByText("Execution Approval Evidence Matrix")).toBeInTheDocument();
+    expect(within(executionApprovalEvidenceMatrix).getAllByText(/evidence completeness is not approval/i).length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getAllByText("Execution approval evidence incomplete").length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getByText("Top execution approval evidence gap")).toBeInTheDocument();
+    expect(within(executionApprovalEvidenceMatrix).getAllByText("Security approval evidence").length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getByText("security-approval-evidence")).toBeInTheDocument();
+    expect(within(executionApprovalEvidenceMatrix).getByText("external-audit-acceptance-evidence")).toBeInTheDocument();
+    expect(within(executionApprovalEvidenceMatrix).getByText("no-custody-no-distribution-boundary-evidence")).toBeInTheDocument();
+    expect(within(executionApprovalEvidenceMatrix).getAllByText(/Source item:/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getAllByText(/Missing evidence:/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getAllByText(/Audit requirement:/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getAllByText(/Approval impact:/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getAllByText(/no claim, custody, payout, signing/i).length).toBeGreaterThan(0);
     const adminApprovalReadiness = within(preapproval).getByLabelText("Admin Approval Readiness");
     expect(within(adminApprovalReadiness).getByText("Admin Approval Readiness")).toBeInTheDocument();
     expect(within(adminApprovalReadiness).getByText(/Read-only approval coverage/)).toBeInTheDocument();
@@ -1526,6 +1542,9 @@ describe("Admin/Ops shell", () => {
       name: /claim|custody|payout|sign|signature|provider call|storage write|export file|contract write|reward distribution|reward custody/i,
     })).not.toBeInTheDocument();
     expect(within(executionApprovalReadiness).queryByRole("button", {
+      name: /approve|execute|claim|custody|payout|sign|signature|provider call|storage write|export file|branch|issue|PR|mission|contract write|reward distribution|reward custody/i,
+    })).not.toBeInTheDocument();
+    expect(within(executionApprovalEvidenceMatrix).queryByRole("button", {
       name: /approve|execute|claim|custody|payout|sign|signature|provider call|storage write|export file|branch|issue|PR|mission|contract write|reward distribution|reward custody/i,
     })).not.toBeInTheDocument();
     const threatModelApprovalReadiness = within(preapproval).getByLabelText("Threat Model Approval Readiness");
@@ -1655,6 +1674,19 @@ describe("Admin/Ops shell", () => {
     expect(within(executionApprovalReadiness).getByText("claim-proof-duplicate-safeguards")).toBeInTheDocument();
     expect(within(executionApprovalReadiness).getAllByText(/阻断执行批准/).length).toBeGreaterThan(0);
     expect(within(executionApprovalReadiness).getAllByText(/不会执行合约写入、claim 执行、钱包签名/).length).toBeGreaterThan(0);
+    const executionApprovalEvidenceMatrix = within(executionApprovalReadiness).getByLabelText("执行批准证据矩阵");
+    expect(within(executionApprovalEvidenceMatrix).getByText("执行批准证据矩阵")).toBeInTheDocument();
+    expect(within(executionApprovalEvidenceMatrix).getAllByText(/证据完整不等于批准/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getAllByText("执行批准证据不完整").length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getAllByText("首要执行批准证据缺口").length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getAllByText("安全批准证据").length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getByText("security-approval-evidence")).toBeInTheDocument();
+    expect(within(executionApprovalEvidenceMatrix).getByText("external-audit-acceptance-evidence")).toBeInTheDocument();
+    expect(within(executionApprovalEvidenceMatrix).getAllByText(/来源条目:/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getAllByText(/缺失证据:/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getAllByText(/审计要求:/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getAllByText(/批准影响:/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalEvidenceMatrix).getAllByText(/不会执行 claim、托管、payout、签名/).length).toBeGreaterThan(0);
     const adminApprovalReadiness = within(preapproval).getByLabelText("管理员批准 Readiness");
     expect(within(adminApprovalReadiness).getByText("管理员批准 Readiness")).toBeInTheDocument();
     expect(within(adminApprovalReadiness).getByText(/只读展示 admin、合约审核人/)).toBeInTheDocument();
@@ -1700,6 +1732,9 @@ describe("Admin/Ops shell", () => {
       name: /claim|custody|payout|签名|provider 调用|存储写入|导出文件|合约写入|奖励托管|发奖|reward distribution/i,
     })).not.toBeInTheDocument();
     expect(within(executionApprovalReadiness).queryByRole("button", {
+      name: /批准|执行|approve|execute|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|issue|PR|mission|合约写入|奖励托管|发奖|reward distribution/i,
+    })).not.toBeInTheDocument();
+    expect(within(executionApprovalEvidenceMatrix).queryByRole("button", {
       name: /批准|执行|approve|execute|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|issue|PR|mission|合约写入|奖励托管|发奖|reward distribution/i,
     })).not.toBeInTheDocument();
     const threatModelApprovalReadiness = within(preapproval).getByLabelText("威胁模型批准 Readiness");
