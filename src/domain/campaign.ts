@@ -67,12 +67,16 @@ import type {
   CampaignShellDetail,
   CampaignTask,
   ContentRevision,
+  ContractCampaignStatus,
   ContractImpactReviewModel,
   ContractImpactReviewOption,
   ContractClaimPreapprovalGate,
   ContractClaimPreapprovalGateState,
   ContractClaimPreapprovalPackage,
   ContractChangeMatrixRow,
+  ContractStatusMappingClassification,
+  ContractStatusMappingReadiness,
+  ContractStatusMappingRow,
   ContractReviewChecklistItem,
   ContractMode,
   ContractEvolutionStep,
@@ -12349,6 +12353,157 @@ export const createContractInterfaceMatrixConsole = (): ContractInterfaceMatrixC
   };
 };
 
+const contractStatusMappingBoundary = localized(
+  "CampaignRegistryV2 status mapping readiness only. No ABI generation. No live contract transaction, wallet signing, contract write, root write, storage write, export file generation, reward custody, or reward distribution is executed. AI drafts, human review gates, and exported evidence stay off-chain.",
+  "仅 CampaignRegistryV2 状态映射 readiness。不会生成 ABI、执行真实合约交易、钱包签名、合约写入、root 写入、存储写入、生成导出文件、奖励托管或发奖。AI 草稿、人工审核门禁与 exported evidence 保持链下。",
+  "僅 CampaignRegistryV2 status mapping readiness。不會生成 ABI、執行真實合約交易、錢包簽名、合約寫入、root 寫入、儲存寫入、生成匯出檔案、獎勵託管或發獎。AI drafts、human review gates 與 exported evidence 保持鏈下。",
+);
+
+const contractStatusEvidenceSurface = localized(
+  "CampaignRegistryV2 CampaignStatus planning enum",
+  "CampaignRegistryV2 CampaignStatus 规划 enum",
+  "CampaignRegistryV2 CampaignStatus planning enum",
+);
+
+const contractStatusLabel = (
+  localStatus: CampaignStatus,
+  targetContractStatus: ContractCampaignStatus | null,
+  offChainLabel: string,
+): LocalizedText => localized(
+  `${localStatus} -> ${targetContractStatus ?? offChainLabel}`,
+  `${localStatus} -> ${targetContractStatus ?? offChainLabel}`,
+  `${localStatus} -> ${targetContractStatus ?? offChainLabel}`,
+);
+
+const contractSafeStatusRow = (
+  localStatus: CampaignStatus,
+  targetContractStatus: ContractCampaignStatus,
+): ContractStatusMappingRow => ({
+  localStatus,
+  label: contractStatusLabel(localStatus, targetContractStatus, "off-chain only"),
+  targetContractStatus,
+  classification: "contract_safe",
+  contractWriteAllowed: true,
+  ownerRole: "contract_reviewer",
+  evidenceSurface: contractStatusEvidenceSurface,
+  boundary: localized(
+    `${localStatus} has a CampaignRegistryV2 enum equivalent (${targetContractStatus}); this read model still performs no contract write.`,
+    `${localStatus} 有对应的 CampaignRegistryV2 enum（${targetContractStatus}）；此 read model 仍不执行合约写入。`,
+    `${localStatus} has a CampaignRegistryV2 enum equivalent (${targetContractStatus}); this read model still performs no contract write.`,
+  ),
+  nextAction: localized(
+    `Use ${targetContractStatus} only in a future approved P1 SetCampaignStatus implementation after reviewer authorization.`,
+    `仅在未来获批的 P1 SetCampaignStatus 实现中，经 reviewer 授权后使用 ${targetContractStatus}。`,
+    `Use ${targetContractStatus} only in a future approved P1 SetCampaignStatus implementation after reviewer authorization.`,
+  ),
+});
+
+const offChainReviewStatusRow = (
+  localStatus: "ai_draft" | "human_review",
+): ContractStatusMappingRow => ({
+  localStatus,
+  label: contractStatusLabel(localStatus, null, "off-chain only"),
+  targetContractStatus: null,
+  classification: "off_chain_review",
+  contractWriteAllowed: false,
+  ownerRole: localStatus === "ai_draft" ? "project_owner" : "internal_operator",
+  evidenceSurface: localized(
+    "Campaign OS local AI/human review lifecycle operations",
+    "Campaign OS 本地 AI/人工审核 lifecycle operations",
+    "Campaign OS local AI/human review lifecycle operations",
+  ),
+  boundary: localized(
+    `${localStatus} is an off-chain review gate and must not be sent to CampaignRegistryV2.SetCampaignStatus.`,
+    `${localStatus} 是链下审核门禁，不能发送给 CampaignRegistryV2.SetCampaignStatus。`,
+    `${localStatus} is an off-chain review gate and must not be sent to CampaignRegistryV2.SetCampaignStatus.`,
+  ),
+  nextAction: localized(
+    "Complete local review and move to a V2-safe scheduled or live intent only after launch gates pass.",
+    "先完成本地审核，并且上线门禁通过后，才能进入 V2-safe 的 scheduled 或 live 意图。",
+    "Complete local review and move to a V2-safe scheduled or live intent only after launch gates pass.",
+  ),
+});
+
+const exportedStatusRow = (): ContractStatusMappingRow => ({
+  localStatus: "exported",
+  label: contractStatusLabel("exported", null, "export evidence only"),
+  targetContractStatus: null,
+  classification: "export_evidence",
+  contractWriteAllowed: false,
+  ownerRole: "internal_operator",
+  evidenceSurface: localized(
+    "Export confirmation readiness and eligibility root review",
+    "导出确认 readiness 与 eligibility root 审核",
+    "Export confirmation readiness and eligibility root review",
+  ),
+  boundary: localized(
+    "exported is a local export evidence state. It is not ARCHIVED and must not be written as a CampaignRegistryV2 status.",
+    "exported 是本地导出证据状态。它不是 ARCHIVED，不能作为 CampaignRegistryV2 status 写入。",
+    "exported is a local export evidence state. It is not ARCHIVED and must not be written as a CampaignRegistryV2 status.",
+  ),
+  nextAction: localized(
+    "Review export evidence, eligibility root readiness, and audit visibility before any future archive intent.",
+    "先审核导出证据、eligibility root readiness 与审计可见性，再考虑未来 archive 意图。",
+    "Review export evidence, eligibility root readiness, and audit visibility before any future archive intent.",
+  ),
+});
+
+const contractStatusRowByLocalStatus: Record<CampaignStatus, () => ContractStatusMappingRow> = {
+  draft: () => contractSafeStatusRow("draft", "DRAFT"),
+  ai_draft: () => offChainReviewStatusRow("ai_draft"),
+  human_review: () => offChainReviewStatusRow("human_review"),
+  scheduled: () => contractSafeStatusRow("scheduled", "SCHEDULED"),
+  live: () => contractSafeStatusRow("live", "LIVE"),
+  paused: () => contractSafeStatusRow("paused", "PAUSED"),
+  ended: () => contractSafeStatusRow("ended", "ENDED"),
+  exported: exportedStatusRow,
+  archived: () => contractSafeStatusRow("archived", "ARCHIVED"),
+};
+
+const contractStatusClassificationPriority: Record<ContractStatusMappingClassification, number> = {
+  blocked_non_goal: 0,
+  off_chain_review: 1,
+  export_evidence: 2,
+  contract_safe: 3,
+};
+
+const createContractStatusMappingSummary = (
+  rows: readonly ContractStatusMappingRow[],
+): ContractStatusMappingReadiness["summary"] => {
+  const topRow = [...rows].sort((left, right) => {
+    const classificationDelta = contractStatusClassificationPriority[left.classification] -
+      contractStatusClassificationPriority[right.classification];
+
+    if (classificationDelta !== 0) {
+      return classificationDelta;
+    }
+
+    return rows.findIndex((row) => row.localStatus === left.localStatus) -
+      rows.findIndex((row) => row.localStatus === right.localStatus);
+  })[0] ?? rows[0];
+
+  return {
+    totalStatuses: rows.length,
+    contractSafeCount: rows.filter((row) => row.targetContractStatus !== null).length,
+    offChainOnlyCount: rows.filter((row) => row.targetContractStatus === null).length,
+    blockedWriteCount: rows.filter((row) => !row.contractWriteAllowed).length,
+    topStatus: topRow.localStatus,
+    topNextAction: topRow.nextAction,
+  };
+};
+
+export const createContractStatusMappingReadiness = (): ContractStatusMappingReadiness => {
+  const rows = campaignLifecycleStatuses.map((status) => contractStatusRowByLocalStatus[status]());
+  const summary = createContractStatusMappingSummary(rows);
+
+  return {
+    summary,
+    rows,
+    boundary: contractStatusMappingBoundary,
+    nextAction: summary.topNextAction,
+  };
+};
+
 const contractTransparencyBoundary: LocalizedText = localized(
   "Seeded/local contract transparency monitor only. No live contract transaction, root generation, reward custody, or reward distribution is executed.",
   "仅 seeded/本地合约透明度监控。不会执行真实合约交易、生成 root、托管奖励或发奖。",
@@ -13113,6 +13268,7 @@ const createCompanionContractEvidenceCategories = (
   transparency?: ContractTransparencyMonitor,
 ): CompanionContractEvidenceCategory[] => {
   const registry = findContractGroup(matrix, "CampaignRegistryV2");
+  const statusMapping = createContractStatusMappingReadiness();
   const pointsLedger = findContractGroup(matrix, "CampaignPointsLedgerV2");
   const referralRegistry = findContractGroup(matrix, "ReferralRegistryV2");
   const eligibilityRegistry = findContractGroup(matrix, "EligibilityRootRegistryV2");
@@ -13236,6 +13392,31 @@ const createCompanionContractEvidenceCategories = (
         "P1 合约 mission 启动前，先审核方法授权与事件 payload 语义。",
         "P1 合約 mission 啟動前，先審核方法授權與事件 payload 語義。",
       ),
+    }),
+    companionCategory({
+      id: "campaign-registry-status-mapping",
+      title: localized("CampaignRegistryV2 status mapping", "CampaignRegistryV2 状态映射", "CampaignRegistryV2 status mapping"),
+      contractName: "CampaignRegistryV2",
+      ownerRole: "contract_reviewer",
+      evidenceSurface: localized("Contract status mapping readiness", "合约状态映射 readiness", "Contract status mapping readiness"),
+      evidenceSummary: localized(
+        `${statusMapping.summary.contractSafeCount} local statuses have CampaignRegistryV2 status mapping while ${statusMapping.summary.offChainOnlyCount} stay off-chain only.`,
+        `${statusMapping.summary.contractSafeCount} 个本地状态有 CampaignRegistryV2 状态映射，${statusMapping.summary.offChainOnlyCount} 个保持链下。`,
+        `${statusMapping.summary.contractSafeCount} local statuses have CampaignRegistryV2 status mapping while ${statusMapping.summary.offChainOnlyCount} stay off-chain only.`,
+      ),
+      evidenceItems: statusMapping.rows.map((row) => companionEvidenceItem({
+        id: `status-${row.localStatus}`,
+        kind: row.targetContractStatus ? "schema_field" : "boundary",
+        label: row.label,
+        source: row.evidenceSurface,
+        detail: localized(
+          `${row.localStatus} classification is ${row.classification}; contractWriteAllowed=${String(row.contractWriteAllowed)}. ${row.boundary["en-US"]}`,
+          `${row.localStatus} 分类为 ${row.classification}；contractWriteAllowed=${String(row.contractWriteAllowed)}。${row.boundary["zh-CN"]}`,
+          `${row.localStatus} classification is ${row.classification}; contractWriteAllowed=${String(row.contractWriteAllowed)}. ${row.boundary["zh-TW"]}`,
+        ),
+      })),
+      boundary: statusMapping.boundary,
+      nextAction: statusMapping.nextAction,
     }),
     companionCategory({
       id: "points-batch-root",

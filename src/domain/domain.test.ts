@@ -9,8 +9,9 @@ import {
   createAiOptimizationWorkflow,
   createAntiSybilV2GraphReadiness,
   createCompanionContractReadiness,
-  createContractImpactReviewModel,
   createContractClaimPreapprovalPackage,
+  createContractImpactReviewModel,
+  createContractStatusMappingReadiness,
   createContractTransparencyMonitor,
   createEligibilityCheckerReadModel,
   createEcosystemNextActionReadModel,
@@ -95,6 +96,7 @@ import {
   walletSessions,
 } from "./index";
 import type {
+  ContractCampaignStatus,
   ContractClaimPreapprovalGateId,
   WalletProviderEvidenceArtifact,
   WalletProviderEvidenceIntake,
@@ -1170,6 +1172,7 @@ describe("Campaign OS domain foundation", () => {
     expect(readiness.categories.map((category) => category.id)).toEqual([
       "campaign-registry-schema",
       "campaign-registry-methods-events",
+      "campaign-registry-status-mapping",
       "points-batch-root",
       "referral-registry-rules",
       "eligibility-root-proof",
@@ -1179,9 +1182,9 @@ describe("Campaign OS domain foundation", () => {
       "reward-custody-claim-exclusion",
     ]);
     expect(readiness.summary).toMatchObject({
-      totalCategories: 9,
-      requiredCategories: 8,
-      provenCategories: 8,
+      totalCategories: 10,
+      requiredCategories: 9,
+      provenCategories: 9,
       reviewRequiredCategories: 0,
       deferredNonGoalCategories: 0,
       blockedExecutionCategories: 1,
@@ -1223,6 +1226,28 @@ describe("Campaign OS domain foundation", () => {
         "SupportedLocalesUpdated",
         "CampaignPaused",
       ]),
+    );
+    expect(itemLabelsFor("campaign-registry-status-mapping")).toEqual([
+      "draft -> DRAFT",
+      "ai_draft -> off-chain only",
+      "human_review -> off-chain only",
+      "scheduled -> SCHEDULED",
+      "live -> LIVE",
+      "paused -> PAUSED",
+      "ended -> ENDED",
+      "exported -> export evidence only",
+      "archived -> ARCHIVED",
+    ]);
+    expect(categoriesById["campaign-registry-status-mapping"]).toMatchObject({
+      contractName: "CampaignRegistryV2",
+      ownerRole: "contract_reviewer",
+      status: "proven",
+    });
+    expect(categoriesById["campaign-registry-status-mapping"]?.evidenceSummary["en-US"]).toContain(
+      "CampaignRegistryV2 status mapping",
+    );
+    expect(categoriesById["campaign-registry-status-mapping"]?.evidenceSummary["en-US"]).toContain(
+      "off-chain only",
     );
     expect(itemLabelsFor("points-batch-root")).toEqual(
       expect.arrayContaining([
@@ -7245,6 +7270,68 @@ describe("Campaign OS domain foundation", () => {
       "mutationId",
     ]) {
       expect(serialized).not.toContain(unsafe);
+    }
+  });
+
+  it("maps local campaign lifecycle statuses to V2 contract-safe status readiness", () => {
+    const readiness = createContractStatusMappingReadiness();
+    const rowsByStatus = Object.fromEntries(
+      readiness.rows.map((row) => [row.localStatus, row]),
+    );
+    const expectedV2StatusByLocalStatus: Partial<Record<typeof campaignLifecycleStatuses[number], ContractCampaignStatus>> = {
+      archived: "ARCHIVED",
+      draft: "DRAFT",
+      ended: "ENDED",
+      live: "LIVE",
+      paused: "PAUSED",
+      scheduled: "SCHEDULED",
+    };
+
+    expect(readiness.rows.map((row) => row.localStatus)).toEqual([...campaignLifecycleStatuses]);
+    expect(new Set(readiness.rows.map((row) => row.localStatus)).size).toBe(campaignLifecycleStatuses.length);
+    expect(readiness.summary).toMatchObject({
+      totalStatuses: campaignLifecycleStatuses.length,
+      contractSafeCount: 6,
+      offChainOnlyCount: 3,
+      blockedWriteCount: 3,
+      topStatus: "ai_draft",
+    });
+    expect(readiness.boundary["en-US"]).toContain("No live contract transaction");
+    expect(readiness.boundary["en-US"]).toContain("AI drafts");
+
+    for (const [localStatus, contractStatus] of Object.entries(expectedV2StatusByLocalStatus)) {
+      expect(rowsByStatus[localStatus]).toMatchObject({
+        classification: "contract_safe",
+        contractWriteAllowed: true,
+        localStatus,
+        targetContractStatus: contractStatus,
+      });
+    }
+
+    for (const localStatus of ["ai_draft", "human_review"] as const) {
+      expect(rowsByStatus[localStatus]).toMatchObject({
+        classification: "off_chain_review",
+        contractWriteAllowed: false,
+        localStatus,
+        targetContractStatus: null,
+      });
+      expect(rowsByStatus[localStatus].boundary["en-US"]).toContain("off-chain");
+    }
+
+    expect(rowsByStatus.exported).toMatchObject({
+      classification: "export_evidence",
+      contractWriteAllowed: false,
+      localStatus: "exported",
+      targetContractStatus: null,
+    });
+    expect(rowsByStatus.exported.targetContractStatus).not.toBe("ARCHIVED");
+    expect(rowsByStatus.exported.nextAction["en-US"]).toContain("root");
+
+    for (const row of readiness.rows) {
+      expectLocalizedText(row.label);
+      expectLocalizedText(row.evidenceSurface);
+      expectLocalizedText(row.boundary);
+      expectLocalizedText(row.nextAction);
     }
   });
 

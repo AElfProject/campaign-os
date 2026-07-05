@@ -669,6 +669,26 @@ describe("Admin/Ops shell", () => {
     expect(within(companionContractReadiness).getByText("Total categories")).toBeInTheDocument();
     expect(within(companionContractReadiness).getByText("Required categories")).toBeInTheDocument();
     expect(within(companionContractReadiness).getByText("Proven categories")).toBeInTheDocument();
+    const statusMappingReadiness = within(companionContractReadiness).getByLabelText(
+      "CampaignRegistryV2 status mapping readiness",
+    );
+    expect(within(statusMappingReadiness).getByText("Contract status mapping")).toBeInTheDocument();
+    expect(within(statusMappingReadiness).getByText("CampaignRegistryV2 status mapping")).toBeInTheDocument();
+    expect(within(statusMappingReadiness).getByText("V2-safe statuses")).toBeInTheDocument();
+    expect(within(statusMappingReadiness).getByText("Off-chain only")).toBeInTheDocument();
+    expect(within(statusMappingReadiness).getByText("Direct writes blocked")).toBeInTheDocument();
+    expect(within(statusMappingReadiness).getByText("draft")).toBeInTheDocument();
+    expect(within(statusMappingReadiness).getByText("DRAFT")).toBeInTheDocument();
+    expect(within(statusMappingReadiness).getByText("ai_draft")).toBeInTheDocument();
+    expect(within(statusMappingReadiness).getAllByText("off-chain only").length).toBeGreaterThan(0);
+    expect(within(statusMappingReadiness).getByText("human_review")).toBeInTheDocument();
+    expect(within(statusMappingReadiness).getByText("exported")).toBeInTheDocument();
+    expect(within(statusMappingReadiness).getByText("export evidence only")).toBeInTheDocument();
+    expect(within(statusMappingReadiness).getAllByText(/must not be written as a CampaignRegistryV2 status/).length).toBeGreaterThan(0);
+    const exportedStatusRow = within(statusMappingReadiness).getByText("exported").closest("tr");
+    expect(exportedStatusRow).not.toBeNull();
+    expect(within(statusMappingReadiness).queryByText("exported -> ARCHIVED")).not.toBeInTheDocument();
+    expect(within(exportedStatusRow as HTMLElement).queryByText("ARCHIVED")).not.toBeInTheDocument();
     expect(within(companionContractReadiness).getAllByText("CampaignRegistryV2").length).toBeGreaterThan(0);
     expect(within(companionContractReadiness).getAllByText("CampaignPointsLedgerV2").length).toBeGreaterThan(0);
     expect(within(companionContractReadiness).getAllByText("ReferralRegistryV2").length).toBeGreaterThan(0);
@@ -1547,6 +1567,16 @@ describe("Admin/Ops shell", () => {
     expect(within(zhCompanionReadiness).getByText(/面向审核人的 V2 companion 证据/)).toBeInTheDocument();
     expect(within(zhCompanionReadiness).getByText("总类别")).toBeInTheDocument();
     expect(within(zhCompanionReadiness).getByText("必需类别")).toBeInTheDocument();
+    const zhStatusMappingReadiness = within(zhCompanionReadiness).getByLabelText(
+      "CampaignRegistryV2 status mapping readiness",
+    );
+    expect(within(zhStatusMappingReadiness).getByText("Contract status mapping")).toBeInTheDocument();
+    expect(within(zhStatusMappingReadiness).getByText("CampaignRegistryV2 状态映射")).toBeInTheDocument();
+    expect(within(zhStatusMappingReadiness).getByText("ai_draft")).toBeInTheDocument();
+    expect(within(zhStatusMappingReadiness).getByText("human_review")).toBeInTheDocument();
+    expect(within(zhStatusMappingReadiness).getByText("exported")).toBeInTheDocument();
+    expect(within(zhStatusMappingReadiness).getByText("export evidence only")).toBeInTheDocument();
+    expect(within(zhStatusMappingReadiness).getAllByText(/不能作为 CampaignRegistryV2 status 写入/).length).toBeGreaterThan(0);
     expect(within(zhCompanionReadiness).getAllByText(/Schema 字段:/).length).toBeGreaterThan(0);
     expect(within(zhCompanionReadiness).getAllByText(/角色\/权限:/).length).toBeGreaterThan(0);
     expect(within(zhCompanionReadiness).getAllByText(/CampaignRegistryV2 schema 证据/).length).toBeGreaterThan(0);
