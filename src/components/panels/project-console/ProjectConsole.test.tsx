@@ -7,6 +7,18 @@ import { ProjectConsole } from "./ProjectConsole";
 
 const getProjectWorkspaceNav = () =>
   screen.getByRole("navigation", { name: "Project Console workspace navigation" });
+const getHeader = () => screen.getByRole("banner");
+const getHeaderConnectWalletButton = () =>
+  within(getHeader()).getByRole("button", { name: "Connect Wallet" });
+const getUserAppConnectWalletButton = () => {
+  const header = getHeader();
+  const buttons = screen.getAllByRole("button", { name: "Connect Wallet" });
+  const userAppButton = buttons.find((button) => !header.contains(button));
+
+  expect(userAppButton).toBeDefined();
+
+  return userAppButton as HTMLElement;
+};
 
 const clickWorkspace = (name: string) => {
   fireEvent.click(within(getProjectWorkspaceNav()).getByRole("button", { name }));
@@ -36,7 +48,8 @@ describe("Project Console shell", () => {
 
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
     expect(screen.getByText("Connected wallets")).toBeInTheDocument();
-    expect(screen.getByText("AA · Portkey")).toBeInTheDocument();
+    expect(getHeaderConnectWalletButton()).toBeInTheDocument();
+    expect(within(getHeader()).queryByText("AA · Portkey")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Campaign Command Center" })).toBeInTheDocument();
     expect(screen.getByText("4 campaigns")).toBeInTheDocument();
     expect(screen.getByText("Review live analytics")).toBeInTheDocument();
@@ -1459,7 +1472,7 @@ describe("Project Console shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "User App" }));
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
+    expect(getUserAppConnectWalletButton()).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
     expect(screen.getByRole("heading", { name: "Review queue" })).toBeInTheDocument();
