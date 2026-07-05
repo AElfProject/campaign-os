@@ -9,6 +9,7 @@ import {
   createAiOptimizationWorkflow,
   createAntiSybilV2GraphReadiness,
   createCompanionContractReadiness,
+  createContractClaimAdminApprovalReadiness,
   createContractClaimPreapprovalPackage,
   createContractClaimSecurityReviewReadiness,
   createContractImpactReviewModel,
@@ -98,6 +99,7 @@ import {
 } from "./index";
 import type {
   ContractCampaignStatus,
+  ContractClaimAdminApprovalItemId,
   ContractClaimPreapprovalGateId,
   ContractClaimSecurityReviewItemId,
   WalletProviderEvidenceArtifact,
@@ -1233,6 +1235,118 @@ describe("Campaign OS domain foundation", () => {
       expectCoreLocalizedText(item.label);
       expectCoreLocalizedText(item.dependency);
       expectCoreLocalizedText(item.evidenceNeeded);
+      expectCoreLocalizedText(item.nextAction);
+      expectCoreLocalizedText(item.sourceSurface);
+      expectCoreLocalizedText(item.boundary);
+    }
+
+    for (const unsafeKey of [
+      "privateKey",
+      "signature",
+      "transactionId",
+      "contractRoot",
+      "downloadUrl",
+      "storageUrl",
+    ]) {
+      expect(hasOwnKeyDeep(readiness, unsafeKey)).toBe(false);
+      expect(JSON.stringify(readiness)).not.toContain(`"${unsafeKey}"`);
+    }
+  });
+
+  it("derives contract claim admin approval readiness without approving claim mode", () => {
+    const preapproval = createContractClaimPreapprovalPackage(campaignDetail);
+    const readiness = preapproval.adminApprovalReadiness;
+    const repeated = createContractClaimPreapprovalPackage(campaignDetail).adminApprovalReadiness;
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const directReadiness = createContractClaimAdminApprovalReadiness({
+      campaign: campaignDetail,
+      deliveryAcceptance: adminOps.deliveryAcceptance,
+      gates: preapproval.gates,
+      securityReviewReadiness: preapproval.securityReviewReadiness,
+      sourceContext: preapproval.sourceContext,
+      transparency: adminOps.contractTransparencyMonitor,
+    });
+    const itemsById = Object.fromEntries(readiness.items.map((item) => [item.id, item]));
+    const requiredItemIds: ContractClaimAdminApprovalItemId[] = [
+      "security-readiness-approval",
+      "admin-approval",
+      "contract-reviewer-approval",
+      "custody-legal-approval",
+      "external-audit-approval",
+      "project-owner-funding-approval",
+      "pause-dispute-runbook-approval",
+      "no-custody-no-distribution-boundary",
+    ];
+
+    expect(repeated).toEqual(readiness);
+    expect(directReadiness).toEqual(readiness);
+    expect(adminOps.contractClaimPreapprovalPackage.adminApprovalReadiness).toEqual(readiness);
+    expect(preapproval.adminApprovalReadiness).toEqual(readiness);
+    expect(readiness.campaignId).toBe(campaignDetail.id);
+    expect(readiness.items.map((item) => item.id)).toEqual(requiredItemIds);
+    expect(readiness.summary).toMatchObject({
+      totalItems: readiness.items.length,
+      readyItems: readiness.items.filter((item) => item.state === "ready").length,
+      reviewRequiredItems: readiness.items.filter((item) => item.state === "review_required").length,
+      blockedItems: readiness.items.filter((item) => item.state === "blocked").length,
+      claimModeApprovalBlocked: true,
+      topItemId: "security-readiness-approval",
+    });
+    expect(readiness.nextAction).toEqual(readiness.summary.topNextAction);
+
+    expect(itemsById["security-readiness-approval"]).toMatchObject({
+      state: "blocked",
+      approverRole: "contract_reviewer",
+      sourceGateId: "security-review",
+      blocksClaimMode: true,
+    });
+    expect(itemsById["admin-approval"]).toMatchObject({
+      state: "review_required",
+      approverRole: "internal_operator",
+      sourceGateId: "admin-approval",
+      blocksClaimMode: true,
+    });
+    expect(itemsById["contract-reviewer-approval"]).toMatchObject({
+      state: "blocked",
+      approverRole: "contract_reviewer",
+      sourceGateId: "contract-reviewer-approval",
+      blocksClaimMode: true,
+    });
+    expect(itemsById["custody-legal-approval"]?.blockingReason["en-US"]).toContain("Custody and legal");
+    expect(itemsById["external-audit-approval"]?.blockingReason["en-US"]).toContain("External audit");
+    expect(itemsById["project-owner-funding-approval"]?.dependency["en-US"]).toContain("Project owner");
+    expect(itemsById["pause-dispute-runbook-approval"]?.nextAction["en-US"]).toContain("runbook");
+    expect(itemsById["no-custody-no-distribution-boundary"]).toMatchObject({
+      state: "ready",
+      approverRole: "project_owner",
+      sourceGateId: "no-custody-no-distribution-boundary",
+      blocksClaimMode: true,
+    });
+
+    expect(readiness.claimModeApproved).toBe(false);
+    expect(readiness.claimExecutionEnabled).toBe(false);
+    expect(readiness.noContractWrite).toBe(true);
+    expect(readiness.noClaimExecution).toBe(true);
+    expect(readiness.noRewardCustody).toBe(true);
+    expect(readiness.noRewardDistribution).toBe(true);
+    expect(readiness.noStorageWrite).toBe(true);
+    expect(readiness.noBranchAutomation).toBe(true);
+    expect(readiness.boundary["en-US"]).toContain("Claim mode is not approved");
+    expect(readiness.boundary["en-US"]).toContain("no contract write");
+    expect(readiness.boundary["en-US"]).toContain("reward custody");
+    expect(readiness.sourceContext.securityReview["en-US"]).toContain("approvalBlocked=true");
+    expect(readiness.sourceContext.contractTransparency["en-US"]).toContain("reward-custody-claim");
+    expect(preapproval.claimExecutionEnabled).toBe(false);
+    expect(preapproval.noContractWrite).toBe(true);
+    expect(preapproval.noClaimExecution).toBe(true);
+    expect(preapproval.noRewardCustody).toBe(true);
+    expect(preapproval.noRewardDistribution).toBe(true);
+
+    for (const item of readiness.items) {
+      expectCoreLocalizedText(item.label);
+      expectCoreLocalizedText(item.dependency);
+      expectCoreLocalizedText(item.evidenceRequired);
+      expectCoreLocalizedText(item.blockingReason);
       expectCoreLocalizedText(item.nextAction);
       expectCoreLocalizedText(item.sourceSurface);
       expectCoreLocalizedText(item.boundary);
