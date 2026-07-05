@@ -1570,6 +1570,37 @@ describe("Admin/Ops shell", () => {
     expect(within(actorApprovalReadiness).queryByRole("button", {
       name: /approve|claim|custody|payout|signing|provider call|storage write|export file|branch|issue|PR|mission|contract write|reward custody|reward distribution/i,
     })).not.toBeInTheDocument();
+    const eligibilityLineageApprovalReadiness = within(preapproval).getByLabelText("Eligibility Lineage Approval Readiness");
+    expect(within(eligibilityLineageApprovalReadiness).getByText("Eligibility Lineage Approval Readiness")).toBeInTheDocument();
+    expect(within(eligibilityLineageApprovalReadiness).getByText(/Read-only eligibility lineage approval coverage/)).toBeInTheDocument();
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("Eligibility lineage approval blocked").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("Total lineage rows").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("Blocked lineage rows").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("Review-required lineage rows").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("Ready lineage rows").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("Highest risk level").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("Top eligibility lineage blocker").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("Participant eligibility source").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("participant-eligibility-source").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("exported-list-lineage").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("task-evidence-linkage").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("wallet-account-lineage").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("risk-review-lineage").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("claim-proof-source").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("stale-export-prevention").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("no-custody-no-distribution-boundary").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/Owner role:/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/Dependency:/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/Evidence needed:/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/Lineage gap:/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/Residual risk:/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/Next action:/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/Linked surface:/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/Blocks eligibility lineage approval/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/Eligibility lineage approval and participant approval remain blocked/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).queryByRole("button", {
+      name: /approve|claim|custody|payout|signing|provider call|storage write|export file|branch|issue|PR|mission|contract write|reward custody|reward distribution/i,
+    })).not.toBeInTheDocument();
     const participantApprovalReadiness = within(preapproval).getByLabelText("Participant Approval Readiness");
     expect(within(participantApprovalReadiness).getByText("Participant Approval Readiness")).toBeInTheDocument();
     expect(within(participantApprovalReadiness).getByText(/Read-only participant claimant approval coverage/)).toBeInTheDocument();
@@ -1711,6 +1742,36 @@ describe("Admin/Ops shell", () => {
     expect(within(actorApprovalReadiness).getAllByText(/下一步:/).length).toBeGreaterThan(0);
     expect(within(actorApprovalReadiness).getAllByText(/不会执行 claim、托管、payout、签名、provider 调用/).length).toBeGreaterThan(0);
     expect(within(actorApprovalReadiness).queryByRole("button", {
+      name: /批准|approve|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|issue|PR|mission|合约写入|奖励托管|发奖|reward distribution/i,
+    })).not.toBeInTheDocument();
+    const eligibilityLineageApprovalReadiness = within(preapproval).getByLabelText("资格 Lineage 批准 Readiness");
+    expect(within(eligibilityLineageApprovalReadiness).getByText("资格 Lineage 批准 Readiness")).toBeInTheDocument();
+    expect(within(eligibilityLineageApprovalReadiness).getByText(/只读展示参与者来源/)).toBeInTheDocument();
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("资格 lineage 批准已阻断").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("Lineage 行总数").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("已阻断 Lineage 行").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("需审核 Lineage 行").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("就绪 Lineage 行").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("最高风险级别").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("首要资格 lineage 阻断").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("参与者资格来源").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("participant-eligibility-source").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("exported-list-lineage").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("task-evidence-linkage").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("wallet-account-lineage").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("risk-review-lineage").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("claim-proof-source").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("stale-export-prevention").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText("no-custody-no-distribution-boundary").length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/依赖项:/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/证据/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/Lineage 缺口:/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/残余风险:/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/下一步:/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/关联界面:/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/阻断资格 lineage 批准/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).getAllByText(/资格 lineage 批准和参与者批准保持阻断/).length).toBeGreaterThan(0);
+    expect(within(eligibilityLineageApprovalReadiness).queryByRole("button", {
       name: /批准|approve|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|issue|PR|mission|合约写入|奖励托管|发奖|reward distribution/i,
     })).not.toBeInTheDocument();
     const participantApprovalReadiness = within(preapproval).getByLabelText("参与者批准 Readiness");

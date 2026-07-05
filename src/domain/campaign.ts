@@ -76,6 +76,8 @@ import type {
   ContractClaimAdminApprovalReadiness,
   ContractClaimCustodyLegalItem,
   ContractClaimCustodyLegalReadiness,
+  ContractClaimEligibilityLineageApprovalReadiness,
+  ContractClaimEligibilityLineageRow,
   ContractClaimParticipantApprovalCheck,
   ContractClaimParticipantApprovalReadiness,
   ContractClaimPreapprovalGate,
@@ -14869,6 +14871,12 @@ const contractClaimParticipantApprovalBoundary = localized(
   "僅用於審核的 contract claim 參與者批准 readiness。參與者批准保持阻斷；不會執行合約寫入、claim 執行、錢包簽名、provider 呼叫、儲存寫入、匯出生成、獎勵託管、發獎、分支、issue、PR 或 mission 自動化。",
 );
 
+const contractClaimEligibilityLineageApprovalBoundary = localized(
+  "Review-only contract claim eligibility lineage approval readiness. Eligibility lineage approval and participant approval remain blocked; no contract write, claim execution, wallet signing, provider call, storage write, export generation, reward custody, reward distribution, branch, issue, PR, or mission automation is executed.",
+  "仅用于审核的 contract claim 资格 lineage 批准 readiness。资格 lineage 批准和参与者批准保持阻断；不会执行合约写入、claim 执行、钱包签名、provider 调用、存储写入、导出生成、奖励托管、发奖、分支、issue、PR 或 mission 自动化。",
+  "僅用於審核的 contract claim 資格 lineage 批准 readiness。資格 lineage 批准和參與者批准保持阻斷；不會執行合約寫入、claim 執行、錢包簽名、provider 呼叫、儲存寫入、匯出生成、獎勵託管、發獎、分支、issue、PR 或 mission 自動化。",
+);
+
 const contractClaimActorRiskPriority: Record<RiskLevel, number> = {
   high: 0,
   medium: 1,
@@ -14878,6 +14886,381 @@ const contractClaimActorRiskPriority: Record<RiskLevel, number> = {
 const contractClaimParticipantApprovalCheck = (
   check: ContractClaimParticipantApprovalCheck,
 ): ContractClaimParticipantApprovalCheck => check;
+
+const contractClaimEligibilityLineageRow = (
+  row: ContractClaimEligibilityLineageRow,
+): ContractClaimEligibilityLineageRow => row;
+
+const contractClaimEligibilityLineageApprovalSummary = (
+  rows: readonly ContractClaimEligibilityLineageRow[],
+): ContractClaimEligibilityLineageApprovalReadiness["summary"] => {
+  const topRow = [...rows].sort((left, right) => {
+    const stateDelta = contractClaimPreapprovalStatePriority[left.state] -
+      contractClaimPreapprovalStatePriority[right.state];
+
+    if (stateDelta !== 0) {
+      return stateDelta;
+    }
+
+    const riskDelta = contractClaimActorRiskPriority[left.riskLevel] -
+      contractClaimActorRiskPriority[right.riskLevel];
+
+    if (riskDelta !== 0) {
+      return riskDelta;
+    }
+
+    return rows.findIndex((row) => row.id === left.id) -
+      rows.findIndex((row) => row.id === right.id);
+  })[0] ?? rows[0];
+  const highestRiskLevel = rows.some((row) => row.riskLevel === "high" && row.state !== "ready")
+    ? "high"
+    : rows.some((row) => row.riskLevel === "medium" && row.state !== "ready")
+      ? "medium"
+      : "low";
+
+  return {
+    approvalBlocked: rows.some((row) => row.blocksEligibilityLineageApproval && row.state !== "ready"),
+    blockedRows: rows.filter((row) => row.state === "blocked").length,
+    claimExecutionEnabled: false,
+    eligibilityLineageApproved: false,
+    highestRiskLevel,
+    participantApprovalGranted: false,
+    readyRows: rows.filter((row) => row.state === "ready").length,
+    reviewRequiredRows: rows.filter((row) => row.state === "review_required").length,
+    topNextAction: topRow.nextAction,
+    topRowId: topRow.id,
+    totalRows: rows.length,
+  };
+};
+
+export const createContractClaimEligibilityLineageApprovalReadiness = ({
+  campaign,
+  deliveryAcceptance,
+  participantOperations,
+  securityReviewReadiness,
+  sourceContext,
+  threatModelApprovalReadiness,
+  transparency,
+}: {
+  campaign: CampaignShellDetail;
+  deliveryAcceptance: DeliveryAcceptanceConsole;
+  participantOperations: ParticipantOperationsReadModel;
+  securityReviewReadiness: ContractClaimSecurityReviewReadiness;
+  sourceContext: ContractClaimPreapprovalPackage["sourceContext"];
+  threatModelApprovalReadiness: ContractClaimThreatModelApprovalReadiness;
+  transparency: ContractTransparencyMonitor;
+}): ContractClaimEligibilityLineageApprovalReadiness => {
+  const participantSummary = participantOperations.summary;
+  const exportReadiness = createExportConfirmationReadinessGate(campaign);
+  const claimAcceptanceRow = deliveryAcceptance.solutionSets
+    .flatMap((solutionSet) => solutionSet.rows)
+    .find((row) => row.id === "v02-contract-claim-reward-custody");
+  const claimTransparencyLane = transparency.lanes.find((lane) => lane.id === "reward-custody-claim");
+  const proofHandling = securityReviewReadiness.items.find((item) => item.id === "eligibility-proof-handling");
+  const replayPrevention = securityReviewReadiness.items.find((item) => item.id === "double-claim-replay-prevention");
+  const pauseDispute = securityReviewReadiness.items.find((item) => item.id === "pause-dispute-semantics");
+  const eligibilityAbuse = threatModelApprovalReadiness.sections.find((section) => section.id === "eligibility-proof-abuse");
+  const claimActors = threatModelApprovalReadiness.sections.find((section) => section.id === "claim-actors");
+  const rows: ContractClaimEligibilityLineageRow[] = [
+    contractClaimEligibilityLineageRow({
+      id: "participant-eligibility-source",
+      label: localized("Participant eligibility source", "参与者资格来源", "參與者資格來源"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      riskLevel: "high",
+      dependency: localized(
+        `${participantSummary.eligibleParticipants} of ${participantSummary.totalParticipants} seeded participants are eligible, but the eligibility source is not approved for claim mode.`,
+        `${participantSummary.totalParticipants} 个 seeded 参与者中有 ${participantSummary.eligibleParticipants} 个符合资格，但资格来源尚未获准用于 claim mode。`,
+        `${participantSummary.totalParticipants} 個 seeded 參與者中有 ${participantSummary.eligibleParticipants} 個符合資格，但資格來源尚未獲准用於 claim mode。`,
+      ),
+      evidenceRequired: eligibilityAbuse?.evidenceRequired ?? proofHandling?.evidenceNeeded ?? sourceContext.deliveryAcceptance,
+      lineageGap: localized(
+        "Participant eligibility is not traced to an approved review source, export row, and claim proof input.",
+        "参与者资格尚未追溯到已批准的审核来源、导出行和 claim proof 输入。",
+        "參與者資格尚未追溯到已批准的審核來源、匯出行和 claim proof 輸入。",
+      ),
+      residualRisk: localized(
+        "A claimant could bypass eligibility if the source of truth is not reconciled before participant approval.",
+        "如果 source of truth 未在参与者批准前对齐，claimant 可能绕过资格。",
+        "如果 source of truth 未在參與者批准前對齊，claimant 可能繞過資格。",
+      ),
+      nextAction: localized(
+        "Reconcile participant eligibility source with export and claim proof lineage before approval review.",
+        "在批准审核前，对齐参与者资格来源、导出和 claim proof lineage。",
+        "在批准審核前，對齊參與者資格來源、匯出和 claim proof lineage。",
+      ),
+      sourceSurface: localized("Participant Operations + Threat Model Approval Readiness", "参与者运营 + 威胁模型批准 Readiness", "參與者營運 + 威脅模型批准 Readiness"),
+      blocksEligibilityLineageApproval: true,
+    }),
+    contractClaimEligibilityLineageRow({
+      id: "exported-list-lineage",
+      label: localized("Exported-list lineage", "导出名单 lineage", "匯出名單 lineage"),
+      state: "blocked",
+      ownerRole: "internal_operator",
+      riskLevel: "high",
+      dependency: localized(
+        `Export readiness has ${exportReadiness.summary.blockedRows} blocked rows and ${exportReadiness.summary.reviewRequiredRows} review-required rows.`,
+        `导出 readiness 有 ${exportReadiness.summary.blockedRows} 个阻断行和 ${exportReadiness.summary.reviewRequiredRows} 个需审核行。`,
+        `匯出 readiness 有 ${exportReadiness.summary.blockedRows} 個阻斷列和 ${exportReadiness.summary.reviewRequiredRows} 個需審核列。`,
+      ),
+      evidenceRequired: exportReadiness.boundary,
+      lineageGap: localized(
+        "Exported winners or claimant lists are not approved as a stable source for claim eligibility.",
+        "导出的 winners 或 claimant 名单尚未作为 claim 资格的稳定来源获批。",
+        "匯出的 winners 或 claimant 名單尚未作為 claim 資格的穩定來源獲批。",
+      ),
+      residualRisk: localized(
+        "Stale or partial exported-list lineage could let an ineligible claimant appear claimable.",
+        "过期或不完整的导出名单 lineage 可能让不合格 claimant 看起来可 claim。",
+        "過期或不完整的匯出名單 lineage 可能讓不合格 claimant 看起來可 claim。",
+      ),
+      nextAction: localized(
+        "Review export readiness rows and reconcile the claimable list with participant eligibility.",
+        "审核导出 readiness 行，并将可 claim 名单与参与者资格对齐。",
+        "審核匯出 readiness 列，並將可 claim 名單與參與者資格對齊。",
+      ),
+      sourceSurface: localized("Export Confirmation Readiness", "导出确认 Readiness", "匯出確認 Readiness"),
+      blocksEligibilityLineageApproval: true,
+    }),
+    contractClaimEligibilityLineageRow({
+      id: "task-evidence-linkage",
+      label: localized("Task evidence linkage", "任务证据关联", "任務證據關聯"),
+      state: "blocked",
+      ownerRole: "internal_operator",
+      riskLevel: "high",
+      dependency: localized(
+        `${participantSummary.reviewRequiredParticipants} participant rows need review and ${participantSummary.blockedParticipants} remain blocked before claim proof can rely on task evidence.`,
+        `${participantSummary.reviewRequiredParticipants} 个参与者行需要审核，${participantSummary.blockedParticipants} 个仍阻断，claim proof 才能依赖任务证据。`,
+        `${participantSummary.reviewRequiredParticipants} 個參與者列需要審核，${participantSummary.blockedParticipants} 個仍阻斷，claim proof 才能依賴任務證據。`,
+      ),
+      evidenceRequired: participantOperations.boundary,
+      lineageGap: localized(
+        "Completed tasks, verification evidence, and claim proof source are not connected by approved lineage.",
+        "已完成任务、验证证据和 claim proof 来源尚未通过已批准 lineage 连接。",
+        "已完成任務、驗證證據和 claim proof 來源尚未透過已批准 lineage 連接。",
+      ),
+      residualRisk: localized(
+        "A claimant could reuse weak task evidence if task completion is not linked to the future proof source.",
+        "如果任务完成未关联到未来 proof 来源，claimant 可能复用薄弱任务证据。",
+        "如果任務完成未關聯到未來 proof 來源，claimant 可能複用薄弱任務證據。",
+      ),
+      nextAction: localized(
+        "Map each claimable participant to task evidence and verification source before approval review.",
+        "批准审核前，将每个可 claim 参与者映射到任务证据和验证来源。",
+        "批准審核前，將每個可 claim 參與者映射到任務證據和驗證來源。",
+      ),
+      sourceSurface: localized("Participant Operations", "参与者运营", "參與者營運"),
+      blocksEligibilityLineageApproval: true,
+    }),
+    contractClaimEligibilityLineageRow({
+      id: "wallet-account-lineage",
+      label: localized("Wallet/account lineage", "钱包/账户 lineage", "錢包/帳戶 lineage"),
+      state: "review_required",
+      ownerRole: "internal_operator",
+      riskLevel: "medium",
+      dependency: localized(
+        `${participantSummary.aaWalletParticipants} AA and ${participantSummary.eoaWalletParticipants} EOA wallets require account lineage review.`,
+        `${participantSummary.aaWalletParticipants} 个 AA 和 ${participantSummary.eoaWalletParticipants} 个 EOA 钱包需要账户 lineage 审核。`,
+        `${participantSummary.aaWalletParticipants} 個 AA 和 ${participantSummary.eoaWalletParticipants} 個 EOA 錢包需要帳戶 lineage 審核。`,
+      ),
+      evidenceRequired: participantOperations.boundary,
+      lineageGap: localized(
+        "Wallet ownership, account type, and participant identity remain review inputs rather than approved claim authority.",
+        "钱包所有权、账户类型和参与者身份仍是审核输入，而不是已批准 claim 权限。",
+        "錢包所有權、帳戶類型和參與者身分仍是審核輸入，而不是已批准 claim 權限。",
+      ),
+      residualRisk: localized(
+        "Weak wallet/account lineage could let a claimant use another participant identity.",
+        "薄弱的钱包/账户 lineage 可能让 claimant 使用其他参与者身份。",
+        "薄弱的錢包/帳戶 lineage 可能讓 claimant 使用其他參與者身分。",
+      ),
+      nextAction: localized(
+        "Review AA/EOA wallet account lineage before accepting participant eligibility lineage.",
+        "接受参与者资格 lineage 前先审核 AA/EOA 钱包账户 lineage。",
+        "接受參與者資格 lineage 前先審核 AA/EOA 錢包帳戶 lineage。",
+      ),
+      sourceSurface: localized("Participant Operations", "参与者运营", "參與者營運"),
+      blocksEligibilityLineageApproval: true,
+    }),
+    contractClaimEligibilityLineageRow({
+      id: "risk-review-lineage",
+      label: localized("Risk/manual-review lineage", "风险/人工审核 lineage", "風險/人工審核 lineage"),
+      state: "review_required",
+      ownerRole: "internal_operator",
+      riskLevel: "medium",
+      dependency: pauseDispute?.dependency ?? localized(
+        `${participantSummary.riskFlaggedParticipants} participant rows carry risk flags that need manual review lineage.`,
+        `${participantSummary.riskFlaggedParticipants} 个参与者行带有风险标记，需要人工审核 lineage。`,
+        `${participantSummary.riskFlaggedParticipants} 個參與者列帶有風險標記，需要人工審核 lineage。`,
+      ),
+      evidenceRequired: pauseDispute?.evidenceNeeded ?? sourceContext.exportCloseout,
+      lineageGap: localized(
+        "Risk flags and dispute/manual review decisions are not connected to eligibility lineage acceptance.",
+        "风险标记和争议/人工审核决策尚未连接到资格 lineage 接受记录。",
+        "風險標記和爭議/人工審核決策尚未連接到資格 lineage 接受記錄。",
+      ),
+      residualRisk: localized(
+        "Manual review gaps could approve contested participants or block valid claimants without traceability.",
+        "人工审核缺口可能批准有争议参与者，或在缺少追溯性的情况下阻断有效 claimant。",
+        "人工審核缺口可能批准有爭議參與者，或在缺少追溯性的情況下阻斷有效 claimant。",
+      ),
+      nextAction: pauseDispute?.nextAction ?? localized(
+        "Document manual review lineage for risk-flagged participants.",
+        "记录风险标记参与者的人工审核 lineage。",
+        "記錄風險標記參與者的人工審核 lineage。",
+      ),
+      sourceSurface: localized("Security Review Readiness: pause-dispute-semantics", "安全审核 Readiness：pause-dispute-semantics", "安全審核 Readiness：pause-dispute-semantics"),
+      blocksEligibilityLineageApproval: true,
+    }),
+    contractClaimEligibilityLineageRow({
+      id: "claim-proof-source",
+      label: localized("Claim proof source", "Claim proof 来源", "Claim proof 來源"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      riskLevel: "high",
+      dependency: proofHandling?.dependency ?? localized(
+        "Security review must define claim proof handling before eligibility lineage approval.",
+        "资格 lineage 批准前，安全审核必须定义 claim proof 处理方式。",
+        "資格 lineage 批准前，安全審核必須定義 claim proof 處理方式。",
+      ),
+      evidenceRequired: proofHandling?.evidenceNeeded ?? eligibilityAbuse?.evidenceRequired ?? sourceContext.contractReview,
+      lineageGap: localized(
+        "Claim proof material is not tied to an approved eligibility source, participant, wallet, and task evidence chain.",
+        "Claim proof 材料尚未绑定到已批准的资格来源、参与者、钱包和任务证据链。",
+        "Claim proof 材料尚未綁定到已批准的資格來源、參與者、錢包和任務證據鏈。",
+      ),
+      residualRisk: localized(
+        "Unapproved proof sources could allow forged, replayed, or stale eligibility evidence.",
+        "未经批准的 proof 来源可能允许伪造、replay 或过期资格证据。",
+        "未經批准的 proof 來源可能允許偽造、replay 或過期資格證據。",
+      ),
+      nextAction: proofHandling?.nextAction ?? localized(
+        "Define claim proof source and tie it to eligibility lineage before approval.",
+        "批准前定义 claim proof 来源，并将其绑定到资格 lineage。",
+        "批准前定義 claim proof 來源，並將其綁定到資格 lineage。",
+      ),
+      sourceSurface: localized("Security Review Readiness: eligibility-proof-handling", "安全审核 Readiness：eligibility-proof-handling", "安全審核 Readiness：eligibility-proof-handling"),
+      blocksEligibilityLineageApproval: true,
+    }),
+    contractClaimEligibilityLineageRow({
+      id: "stale-export-prevention",
+      label: localized("Stale export prevention", "过期导出防护", "過期匯出防護"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      riskLevel: "high",
+      dependency: replayPrevention?.dependency ?? localized(
+        "Replay and stale-window prevention must be reviewed before eligibility lineage approval.",
+        "资格 lineage 批准前必须审核 replay 与过期窗口防护。",
+        "資格 lineage 批准前必須審核 replay 與過期視窗防護。",
+      ),
+      evidenceRequired: replayPrevention?.evidenceNeeded ?? claimTransparencyLane?.sourceEvidence ?? sourceContext.contractTransparency,
+      lineageGap: localized(
+        "No approved window prevents a stale export from becoming claimable after participant state changes.",
+        "尚无已批准窗口阻止过期导出在参与者状态变化后变为可 claim。",
+        "尚無已批准視窗阻止過期匯出在參與者狀態變化後變為可 claim。",
+      ),
+      residualRisk: localized(
+        "A stale exported list could be used after eligibility, risk, or task evidence changes.",
+        "过期导出名单可能在资格、风险或任务证据变化后被使用。",
+        "過期匯出名單可能在資格、風險或任務證據變化後被使用。",
+      ),
+      nextAction: replayPrevention?.nextAction ?? localized(
+        "Define stale export prevention and proof freshness rules before approval.",
+        "批准前定义过期导出防护和 proof freshness 规则。",
+        "批准前定義過期匯出防護和 proof freshness 規則。",
+      ),
+      sourceSurface: localized("Security Review Readiness: double-claim-replay-prevention", "安全审核 Readiness：double-claim-replay-prevention", "安全審核 Readiness：double-claim-replay-prevention"),
+      blocksEligibilityLineageApproval: true,
+    }),
+    contractClaimEligibilityLineageRow({
+      id: "no-custody-no-distribution-boundary",
+      label: localized("No-custody/no-distribution boundary", "不托管/不发奖边界", "不託管/不發獎邊界"),
+      state: "ready",
+      ownerRole: "project_owner",
+      riskLevel: "low",
+      dependency: localized(
+        "Campaign OS eligibility lineage review does not custody or distribute rewards.",
+        "Campaign OS 资格 lineage 审核不托管也不发放奖励。",
+        "Campaign OS 資格 lineage 審核不託管也不發放獎勵。",
+      ),
+      evidenceRequired: claimAcceptanceRow?.evidenceSummary ?? noRewardCustodyBoundary,
+      lineageGap: localized(
+        "Boundary is ready only as a restriction; it does not approve eligibility lineage, participants, claims, custody, or distribution.",
+        "边界仅作为限制已就绪；它不批准资格 lineage、参与者、claim、托管或发奖。",
+        "邊界僅作為限制已就緒；它不批准資格 lineage、參與者、claim、託管或發獎。",
+      ),
+      residualRisk: localized(
+        "No-custody/no-distribution is preserved, but eligibility lineage approval remains blocked.",
+        "不托管/不发奖已保留，但资格 lineage 批准保持阻断。",
+        "不託管/不發獎已保留，但資格 lineage 批准保持阻斷。",
+      ),
+      nextAction: localized(
+        "Preserve the project-owned fulfillment boundary while lineage remains under review.",
+        "在 lineage 仍处于审核中时保留项目方自有履约边界。",
+        "在 lineage 仍處於審核中時保留專案方自有履約邊界。",
+      ),
+      sourceSurface: localized("Delivery Acceptance: v02-contract-claim-reward-custody", "Delivery Acceptance：v02-contract-claim-reward-custody", "Delivery Acceptance：v02-contract-claim-reward-custody"),
+      blocksEligibilityLineageApproval: true,
+    }),
+  ];
+  const summary = contractClaimEligibilityLineageApprovalSummary(rows);
+
+  return {
+    boundary: contractClaimEligibilityLineageApprovalBoundary,
+    campaignId: campaign.id,
+    claimExecutionEnabled: false,
+    eligibilityLineageApproved: false,
+    nextAction: summary.topNextAction,
+    noBranchAutomation: true,
+    noClaimExecution: true,
+    noContractWrite: true,
+    noExportGeneration: true,
+    noIssueAutomation: true,
+    noMissionAutomation: true,
+    noPrAutomation: true,
+    noProviderCall: true,
+    noRewardCustody: true,
+    noRewardDistribution: true,
+    noStorageWrite: true,
+    noWalletSigning: true,
+    participantApprovalGranted: false,
+    rows,
+    sourceContext: {
+      contractTransparency: localized(
+        `Contract transparency lane ${claimTransparencyLane?.id ?? "reward-custody-claim"} remains ${claimTransparencyLane?.readiness ?? "blocked"}.`,
+        `合约透明度 lane ${claimTransparencyLane?.id ?? "reward-custody-claim"} 仍为 ${claimTransparencyLane?.readiness ?? "blocked"}。`,
+        `合約透明度 lane ${claimTransparencyLane?.id ?? "reward-custody-claim"} 仍為 ${claimTransparencyLane?.readiness ?? "blocked"}。`,
+      ),
+      deliveryAcceptance: sourceContext.deliveryAcceptance,
+      exportReadiness: localized(
+        `Export Confirmation Readiness has ${exportReadiness.summary.blockedRows} blocked rows and ${exportReadiness.summary.reviewRequiredRows} review-required rows.`,
+        `导出确认 Readiness 有 ${exportReadiness.summary.blockedRows} 个阻断行和 ${exportReadiness.summary.reviewRequiredRows} 个需审核行。`,
+        `匯出確認 Readiness 有 ${exportReadiness.summary.blockedRows} 個阻斷列和 ${exportReadiness.summary.reviewRequiredRows} 個需審核列。`,
+      ),
+      participantApproval: localized(
+        "Participant Approval Readiness keeps eligibility-lineage as the top blocker.",
+        "Participant Approval Readiness 将 eligibility-lineage 保持为 top blocker。",
+        "Participant Approval Readiness 將 eligibility-lineage 保持為 top blocker。",
+      ),
+      participantOperations: localized(
+        `Participant Operations has ${participantSummary.totalParticipants} participants, ${participantSummary.eligibleParticipants} eligible rows, ${participantSummary.riskFlaggedParticipants} risk-flagged rows, and ${participantSummary.exportReadyParticipants} export-ready rows.`,
+        `Participant Operations 有 ${participantSummary.totalParticipants} 个参与者、${participantSummary.eligibleParticipants} 个符合资格行、${participantSummary.riskFlaggedParticipants} 个风险标记行和 ${participantSummary.exportReadyParticipants} 个可导出行。`,
+        `Participant Operations 有 ${participantSummary.totalParticipants} 個參與者、${participantSummary.eligibleParticipants} 個符合資格列、${participantSummary.riskFlaggedParticipants} 個風險標記列和 ${participantSummary.exportReadyParticipants} 個可匯出列。`,
+      ),
+      securityReview: localized(
+        `Security Review Readiness top item is ${securityReviewReadiness.summary.topItemId}; eligibility proof handling is ${proofHandling?.state ?? "blocked"}.`,
+        `Security Review Readiness top item 为 ${securityReviewReadiness.summary.topItemId}；eligibility proof handling 为 ${proofHandling?.state ?? "blocked"}。`,
+        `Security Review Readiness top item 為 ${securityReviewReadiness.summary.topItemId}；eligibility proof handling 為 ${proofHandling?.state ?? "blocked"}。`,
+      ),
+      threatModelApproval: localized(
+        `Threat Model Approval Readiness top section is ${threatModelApprovalReadiness.summary.topSectionId}; claim actor section is ${claimActors?.state ?? "blocked"}.`,
+        `Threat Model Approval Readiness top section 为 ${threatModelApprovalReadiness.summary.topSectionId}；claim actor section 为 ${claimActors?.state ?? "blocked"}。`,
+        `Threat Model Approval Readiness top section 為 ${threatModelApprovalReadiness.summary.topSectionId}；claim actor section 為 ${claimActors?.state ?? "blocked"}。`,
+      ),
+    },
+    summary,
+  };
+};
 
 const contractClaimParticipantApprovalSummary = (
   checks: readonly ContractClaimParticipantApprovalCheck[],
@@ -14951,6 +15334,18 @@ export const createContractClaimParticipantApprovalReadiness = ({
   const duplicateClaimAbuse = threatSection("duplicate-claim-abuse");
   const eligibilityAbuse = threatSection("eligibility-proof-abuse");
   const participantSummary = participantOperations.summary;
+  const eligibilityLineageApprovalReadiness = createContractClaimEligibilityLineageApprovalReadiness({
+    campaign,
+    deliveryAcceptance,
+    participantOperations,
+    securityReviewReadiness,
+    sourceContext,
+    threatModelApprovalReadiness,
+    transparency,
+  });
+  const topEligibilityLineageRow = eligibilityLineageApprovalReadiness.rows.find(
+    (row) => row.id === eligibilityLineageApprovalReadiness.summary.topRowId,
+  );
   const checks: ContractClaimParticipantApprovalCheck[] = [
     contractClaimParticipantApprovalCheck({
       id: "eligibility-lineage",
@@ -14959,27 +15354,23 @@ export const createContractClaimParticipantApprovalReadiness = ({
       ownerRole: "contract_reviewer",
       riskLevel: "high",
       dependency: localized(
-        `Threat Model Approval keeps ${claimActors?.id ?? "claim-actors"} blocked and participant approval cannot move without eligibility lineage.`,
-        `Threat Model Approval 保持 ${claimActors?.id ?? "claim-actors"} 阻断；缺少资格 lineage 时参与者批准不能推进。`,
-        `Threat Model Approval 保持 ${claimActors?.id ?? "claim-actors"} 阻斷；缺少資格 lineage 時參與者批准不能推進。`,
+        `Eligibility Lineage Approval Readiness keeps ${eligibilityLineageApprovalReadiness.summary.topRowId} blocked while Threat Model Approval keeps ${claimActors?.id ?? "claim-actors"} under review.`,
+        `Eligibility Lineage Approval Readiness 将 ${eligibilityLineageApprovalReadiness.summary.topRowId} 保持阻断，同时 Threat Model Approval 仍在审核 ${claimActors?.id ?? "claim-actors"}。`,
+        `Eligibility Lineage Approval Readiness 將 ${eligibilityLineageApprovalReadiness.summary.topRowId} 保持阻斷，同時 Threat Model Approval 仍在審核 ${claimActors?.id ?? "claim-actors"}。`,
       ),
-      evidenceRequired: eligibilityAbuse?.evidenceRequired ?? proofHandling?.evidenceNeeded ?? sourceContext.deliveryAcceptance,
+      evidenceRequired: topEligibilityLineageRow?.evidenceRequired ?? eligibilityAbuse?.evidenceRequired ?? proofHandling?.evidenceNeeded ?? sourceContext.deliveryAcceptance,
       abusePath: localized(
         "A claimant could bypass eligibility or claim with stale exported-list lineage if the proof source is not reconciled.",
         "如果 proof 来源未对齐，claimant 可能绕过资格或使用过期导出名单 lineage claim。",
         "如果 proof 來源未對齊，claimant 可能繞過資格或使用過期匯出名單 lineage claim。",
       ),
       residualRisk: localized(
-        "Eligibility lineage remains unresolved, so participant approval stays blocked.",
-        "资格 lineage 仍未解决，因此参与者批准保持阻断。",
-        "資格 lineage 仍未解決，因此參與者批准保持阻斷。",
+        `Eligibility lineage approval remains blocked=${String(eligibilityLineageApprovalReadiness.summary.approvalBlocked)} with ${eligibilityLineageApprovalReadiness.summary.blockedRows} blocked rows, so participant approval stays blocked.`,
+        `资格 lineage 批准保持 blocked=${String(eligibilityLineageApprovalReadiness.summary.approvalBlocked)}，共有 ${eligibilityLineageApprovalReadiness.summary.blockedRows} 个阻断行，因此参与者批准保持阻断。`,
+        `資格 lineage 批准保持 blocked=${String(eligibilityLineageApprovalReadiness.summary.approvalBlocked)}，共有 ${eligibilityLineageApprovalReadiness.summary.blockedRows} 個阻斷列，因此參與者批准保持阻斷。`,
       ),
-      nextAction: localized(
-        "Reconcile participant eligibility, exported-list lineage, and claim proof source before approval review.",
-        "在批准审核前先对齐参与者资格、导出名单 lineage 和 claim proof 来源。",
-        "在批准審核前先對齊參與者資格、匯出名單 lineage 和 claim proof 來源。",
-      ),
-      sourceSurface: localized("Threat Model Approval Readiness: eligibility-proof-abuse", "威胁模型批准 Readiness：eligibility-proof-abuse", "威脅模型批准 Readiness：eligibility-proof-abuse"),
+      nextAction: eligibilityLineageApprovalReadiness.summary.topNextAction,
+      sourceSurface: localized("Eligibility Lineage Approval Readiness", "资格 Lineage 批准 Readiness", "資格 Lineage 批准 Readiness"),
       blocksParticipantApproval: true,
     }),
     contractClaimParticipantApprovalCheck({
@@ -15204,6 +15595,7 @@ export const createContractClaimParticipantApprovalReadiness = ({
     campaignId: campaign.id,
     checks,
     claimExecutionEnabled: false,
+    eligibilityLineageApprovalReadiness,
     nextAction: summary.topNextAction,
     noBranchAutomation: true,
     noClaimExecution: true,
