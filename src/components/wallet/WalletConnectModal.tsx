@@ -21,6 +21,7 @@ interface WalletConnectModalProps {
   connectorBoundary?: LiveWalletConnectorBoundary;
   locale: BusinessContentLocale;
   onClose: () => void;
+  onPreviewConnect?: () => void;
   options: WalletOption[];
 }
 
@@ -51,6 +52,7 @@ const modalCopy = {
     privateKeySafety:
       "Campaign OS never asks for private keys, seed phrases, recovery phrases, or password exports.",
     privateKeyFooter: "Campaign OS never asks for your private key.",
+    previewConnect: "Use seeded wallet preview",
     recommended: "Recommended",
     recommendedGroup: "Recommended",
     subtitle: "Choose how you want to join this campaign.",
@@ -87,6 +89,7 @@ const modalCopy = {
     privateKeySafety:
       "Campaign OS 永远不会索要私钥、助记词、恢复短语或密码导出。",
     privateKeyFooter: "Campaign OS 永远不会索要你的私钥。",
+    previewConnect: "使用 seeded 钱包预览",
     recommended: "推荐",
     recommendedGroup: "推荐",
     subtitle: "选择你想如何加入这个活动。",
@@ -123,6 +126,7 @@ const modalCopy = {
     privateKeySafety:
       "Campaign OS 永遠不會索要私鑰、助記詞、恢復短語或密碼匯出。",
     privateKeyFooter: "Campaign OS 永遠不會索要你的私鑰。",
+    previewConnect: "使用 seeded 錢包預覽",
     recommended: "推薦",
     recommendedGroup: "推薦",
     subtitle: "選擇你想如何加入這個活動。",
@@ -181,6 +185,22 @@ const closeButtonStyle: CSSProperties = {
   justifyContent: "center",
   minHeight: 40,
   minWidth: 40,
+};
+
+const previewConnectButtonStyle: CSSProperties = {
+  alignItems: "center",
+  background: "#1c64f2",
+  border: "1px solid #1c64f2",
+  borderRadius: 8,
+  color: "#ffffff",
+  cursor: "pointer",
+  display: "inline-flex",
+  fontWeight: 800,
+  justifyContent: "center",
+  lineHeight: 1.2,
+  minHeight: 40,
+  padding: "0 14px",
+  width: "fit-content",
 };
 
 const alertStyle: CSSProperties = {
@@ -450,6 +470,7 @@ export const WalletConnectModal = ({
   connectorBoundary = createLiveWalletConnectorBoundary(),
   locale,
   onClose,
+  onPreviewConnect,
   options,
 }: WalletConnectModalProps) => {
   const copy = modalCopy[locale];
@@ -556,6 +577,12 @@ export const WalletConnectModal = ({
           testId="wallet-modal-group-advanced"
           title={copy.advancedGroup}
         />
+
+        {onPreviewConnect ? (
+          <button onClick={onPreviewConnect} style={previewConnectButtonStyle} type="button">
+            {copy.previewConnect}
+          </button>
+        ) : null}
 
         <section aria-label="Seeded wallet recovery guidance" style={cardStyle}>
           <h3 style={{ fontSize: 18, margin: 0 }}>{copy.nonLiveBoundary}</h3>

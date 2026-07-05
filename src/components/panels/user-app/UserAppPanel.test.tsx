@@ -6,6 +6,16 @@ import { campaignDetail } from "../../../domain";
 import { UserAppPanel } from "./UserAppPanel";
 
 describe("User App shell", () => {
+  const getUserAppConnectWalletButton = (name: string) => {
+    const header = screen.queryByRole("banner");
+    const buttons = screen.getAllByRole("button", { name });
+    const userAppButton = buttons.find((button) => !header?.contains(button));
+
+    expect(userAppButton).toBeDefined();
+
+    return userAppButton as HTMLElement;
+  };
+
   afterEach(() => {
     window.localStorage.clear();
   });
@@ -169,7 +179,7 @@ describe("User App shell", () => {
     expect(within(participantWorkspace).getByText(/reward distribution is executed/)).toBeInTheDocument();
     expect(screen.getAllByText("Complete Bridge via eBridge before this ecosystem action.").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
+    expect(getUserAppConnectWalletButton("Connect Wallet")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Check eligibility" }).length).toBeGreaterThan(0);
     const shareReadiness = screen.getByRole("region", { name: "Share card readiness" });
     expect(within(shareReadiness).getAllByText("https://campaign.local/en-US/campaigns/awaken-sprint").length).toBeGreaterThan(0);
@@ -259,7 +269,7 @@ describe("User App shell", () => {
 
     expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+    fireEvent.click(getUserAppConnectWalletButton("Connect Wallet"));
 
     const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
 
@@ -455,7 +465,7 @@ describe("User App shell", () => {
     expect(within(participantWorkspace).getByText(/不是实时账本/)).toBeInTheDocument();
     expect(within(participantWorkspace).getByText(/奖励托管或发奖/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Awaken 冲刺活动" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "连接钱包" })).toBeInTheDocument();
+    expect(getUserAppConnectWalletButton("连接钱包")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "检查资格" }).length).toBeGreaterThan(0);
     expect(screen.getByRole("region", { name: "分享卡片就绪状态" })).toBeInTheDocument();
     expect(screen.getAllByText("https://campaign.local/zh-CN/campaigns/awaken-sprint").length).toBeGreaterThan(0);
@@ -519,7 +529,7 @@ describe("User App shell", () => {
 
     fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh-CN" } });
     fireEvent.click(screen.getByRole("button", { name: "用户应用" }));
-    fireEvent.click(screen.getByRole("button", { name: "连接钱包" }));
+    fireEvent.click(getUserAppConnectWalletButton("连接钱包"));
 
     const dialog = screen.getByRole("dialog", { name: "连接钱包" });
 

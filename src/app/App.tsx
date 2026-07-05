@@ -3,8 +3,10 @@ import {
   campaignDetail,
   createCampaignShareCardReadiness,
   parseCampaignRoutePath,
+  walletOptions,
   walletSessions,
   type CampaignMetadataField,
+  type NormalizedWalletSession,
   type SupportedLocale,
 } from "../domain";
 import { useLocale } from "../i18n/useLocale";
@@ -19,6 +21,7 @@ import {
   type ProjectWorkspaceKey,
 } from "../components/panels/project-console/ProjectConsole";
 import { UserAppPanel } from "../components/panels/user-app/UserAppPanel";
+import { WalletConnectModal } from "../components/wallet/WalletConnectModal";
 
 type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
 
@@ -33,6 +36,8 @@ const surfaceCopy = {
     productCampaigns: "Campaigns",
     productCreate: "Create",
     productExport: "Export",
+    walletConnectedAction: "Manage wallet connection",
+    walletPreviewConnect: "Connect Wallet",
     localeLabel: "Language",
     project: "Project Console",
     shellTitle: "Campaign operations shell",
@@ -48,6 +53,8 @@ const surfaceCopy = {
     productCampaigns: "活动",
     productCreate: "创建",
     productExport: "导出",
+    walletConnectedAction: "管理钱包连接",
+    walletPreviewConnect: "连接钱包",
     localeLabel: "语言",
     project: "项目控制台",
     shellTitle: "活动运营工作台",
@@ -63,6 +70,8 @@ const surfaceCopy = {
     productCampaigns: "活動",
     productCreate: "建立",
     productExport: "匯出",
+    walletConnectedAction: "管理錢包連接",
+    walletPreviewConnect: "連接錢包",
     localeLabel: "語言",
     project: "專案控制台",
     shellTitle: "活動營運工作台",
@@ -78,6 +87,8 @@ const surfaceCopy = {
     productCampaigns: "Campaigns",
     productCreate: "Create",
     productExport: "Export",
+    walletConnectedAction: "Manage wallet connection",
+    walletPreviewConnect: "Connect Wallet",
     localeLabel: "Language",
     project: "Project Console",
     shellTitle: "Campaign operations shell",
@@ -93,6 +104,8 @@ const surfaceCopy = {
     productCampaigns: "Campaigns",
     productCreate: "Create",
     productExport: "Export",
+    walletConnectedAction: "Manage wallet connection",
+    walletPreviewConnect: "Connect Wallet",
     localeLabel: "Language",
     project: "Project Console",
     shellTitle: "Campaign operations shell",
@@ -108,6 +121,8 @@ const surfaceCopy = {
     productCampaigns: "Campaigns",
     productCreate: "Create",
     productExport: "Export",
+    walletConnectedAction: "Manage wallet connection",
+    walletPreviewConnect: "Connect Wallet",
     localeLabel: "Language",
     project: "Project Console",
     shellTitle: "Campaign operations shell",
@@ -123,6 +138,8 @@ const surfaceCopy = {
     productCampaigns: "Campaigns",
     productCreate: "Create",
     productExport: "Export",
+    walletConnectedAction: "Manage wallet connection",
+    walletPreviewConnect: "Connect Wallet",
     localeLabel: "Language",
     project: "Project Console",
     shellTitle: "Campaign operations shell",
@@ -138,6 +155,8 @@ const surfaceCopy = {
     productCampaigns: "Campaigns",
     productCreate: "Create",
     productExport: "Export",
+    walletConnectedAction: "Manage wallet connection",
+    walletPreviewConnect: "Connect Wallet",
     localeLabel: "Language",
     project: "Project Console",
     shellTitle: "Campaign operations shell",
@@ -153,6 +172,8 @@ const surfaceCopy = {
     productCampaigns: "Campaigns",
     productCreate: "Create",
     productExport: "Export",
+    walletConnectedAction: "Manage wallet connection",
+    walletPreviewConnect: "Connect Wallet",
     localeLabel: "Language",
     project: "Project Console",
     shellTitle: "Campaign operations shell",
@@ -231,11 +252,14 @@ export const App = () => {
   const [activeProjectWorkspace, setActiveProjectWorkspace] =
     useState<ProjectWorkspaceKey>("campaigns");
   const [activeSurface, setActiveSurface] = useState<SurfaceKey>("project");
+  const [headerWalletModalOpen, setHeaderWalletModalOpen] = useState(false);
+  const [headerWalletSession, setHeaderWalletSession] =
+    useState<NormalizedWalletSession | null>(null);
   const copy = surfaceCopy[locale];
   const contentLocale: BusinessContentLocale = locale === "zh-CN" ? "zh-CN" : "en-US";
   const walletModalLocale: BusinessContentLocale =
     locale === "zh-CN" || locale === "zh-TW" ? locale : "en-US";
-  const connectedWallet = walletSessions[0];
+  const previewWalletSession = walletSessions[0];
   const shareCard = useMemo(
     () => createCampaignShareCardReadiness(campaignDetail, locale),
     [locale],
@@ -273,43 +297,61 @@ export const App = () => {
     }
   };
 
+  const connectHeaderPreviewWallet = () => {
+    setHeaderWalletSession(previewWalletSession);
+    setHeaderWalletModalOpen(false);
+  };
+
   return (
-    <AppLayout
-      activeProductDestination={activeProductDestination}
-      activeSurface={activeSurface}
-      brand={copy.brand}
-      browserLocalePrompt={
-        shouldShowBrowserLocalePrompt
-          ? {
-              dismissLabel: copy.browserLocalePromptDismiss,
-              message: copy.browserLocalePromptMessage,
-              onDismiss: dismissBrowserLocalePrompt,
-              onSwitch: acceptBrowserLocalePrompt,
-              switchLabel: copy.browserLocalePromptSwitch,
-            }
-          : undefined
-      }
-      locale={locale}
-      localeLabel={copy.localeLabel}
-      onLocaleChange={setLocale}
-      onProductDestinationChange={selectProductDestination}
-      onSurfaceChange={setActiveSurface}
-      productNavigation={productNavigation}
-      shellTitle={copy.shellTitle}
-      surfaces={surfaces}
-      walletSession={connectedWallet}
-    >
-      {activeSurface === "project" ? (
-        <ProjectConsole
-          activeWorkspace={activeProjectWorkspace}
-          locale={contentLocale}
-          onWorkspaceChange={selectProjectWorkspace}
+    <>
+      <AppLayout
+        activeProductDestination={activeProductDestination}
+        activeSurface={activeSurface}
+        brand={copy.brand}
+        browserLocalePrompt={
+          shouldShowBrowserLocalePrompt
+            ? {
+                dismissLabel: copy.browserLocalePromptDismiss,
+                message: copy.browserLocalePromptMessage,
+                onDismiss: dismissBrowserLocalePrompt,
+                onSwitch: acceptBrowserLocalePrompt,
+                switchLabel: copy.browserLocalePromptSwitch,
+              }
+            : undefined
+        }
+        locale={locale}
+        localeLabel={copy.localeLabel}
+        onLocaleChange={setLocale}
+        onProductDestinationChange={selectProductDestination}
+        onSurfaceChange={setActiveSurface}
+        onWalletAction={() => setHeaderWalletModalOpen(true)}
+        productNavigation={productNavigation}
+        shellTitle={copy.shellTitle}
+        surfaces={surfaces}
+        walletActionLabel={copy.walletPreviewConnect}
+        walletConnectedActionLabel={copy.walletConnectedAction}
+        walletSession={headerWalletSession}
+      >
+        {activeSurface === "project" ? (
+          <ProjectConsole
+            activeWorkspace={activeProjectWorkspace}
+            locale={contentLocale}
+            onWorkspaceChange={selectProjectWorkspace}
+          />
+        ) : activeSurface === "user" ? (
+          <UserAppPanel locale={contentLocale} shareLocale={locale} walletModalLocale={walletModalLocale} />
+        ) : (
+          <AdminOpsPanel locale={contentLocale} />
+        )}
+      </AppLayout>
+      {headerWalletModalOpen ? (
+        <WalletConnectModal
+          locale={walletModalLocale}
+          onClose={() => setHeaderWalletModalOpen(false)}
+          onPreviewConnect={connectHeaderPreviewWallet}
+          options={walletOptions}
         />
-      ) : activeSurface === "user" ? (
-        <UserAppPanel locale={contentLocale} shareLocale={locale} walletModalLocale={walletModalLocale} />
-      ) : (
-        <AdminOpsPanel locale={contentLocale} />
-      )}
-    </AppLayout>
+      ) : null}
+    </>
   );
 };

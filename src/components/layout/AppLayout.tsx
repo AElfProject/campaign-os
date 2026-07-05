@@ -1,6 +1,10 @@
 import type { CSSProperties, ReactNode } from "react";
-import { getLocalizedText, type NormalizedWalletSession, type SupportedLocale } from "../../domain";
-import { WalletBadge, WalletVerificationBadge } from "../badges/Badges";
+import {
+  getLocalizedText,
+  getWalletBadgeLabel,
+  type NormalizedWalletSession,
+  type SupportedLocale,
+} from "../../domain";
 
 export type SurfaceKey = "project" | "user" | "admin";
 export type ProductDestinationKey = "campaigns" | "create" | "analytics" | "export";
@@ -35,9 +39,12 @@ interface AppLayoutProps {
   shellTitle: string;
   onLocaleChange: (locale: SupportedLocale) => void;
   onSurfaceChange: (surface: SurfaceKey) => void;
+  onWalletAction: () => void;
   productNavigation: ProductNavigationOption[];
   surfaces: SurfaceOption[];
-  walletSession: NormalizedWalletSession;
+  walletActionLabel: string;
+  walletConnectedActionLabel?: string;
+  walletSession?: NormalizedWalletSession | null;
 }
 
 const pageStyle: CSSProperties = {
@@ -146,6 +153,31 @@ const buttonBaseStyle: CSSProperties = {
   wordBreak: "break-word",
 };
 
+const walletActionButtonStyle: CSSProperties = {
+  ...buttonBaseStyle,
+  alignItems: "center",
+  background: "#1c64f2",
+  borderColor: "#1c64f2",
+  color: "#ffffff",
+  display: "inline-flex",
+  gap: 7,
+  justifyContent: "center",
+  lineHeight: 1.2,
+  maxWidth: 260,
+  minHeight: 38,
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  textAlign: "center",
+  whiteSpace: "normal",
+};
+
+const connectedWalletButtonStyle: CSSProperties = {
+  ...walletActionButtonStyle,
+  background: "#eff6ff",
+  borderColor: "#93c5fd",
+  color: "#1e40af",
+};
+
 const productButtonBaseStyle: CSSProperties = {
   ...buttonBaseStyle,
   fontSize: 15,
@@ -234,9 +266,12 @@ export const AppLayout = ({
   onLocaleChange,
   onProductDestinationChange,
   onSurfaceChange,
+  onWalletAction,
   productNavigation,
   shellTitle,
   surfaces,
+  walletActionLabel,
+  walletConnectedActionLabel = "Manage wallet connection",
   walletSession,
 }: AppLayoutProps) => (
   <main aria-label={brand} style={pageStyle}>
@@ -248,20 +283,26 @@ export const AppLayout = ({
           <h1 style={titleStyle}>{shellTitle}</h1>
         </div>
         <div data-app-controls style={controlsStyle}>
-          <WalletBadge
-            accountType={walletSession.accountType}
-            walletSource={walletSession.walletSource}
-          />
-          <WalletVerificationBadge
-            label={getLocalizedText(walletSession.statusMessage, locale)}
-            status={walletSession.verificationStatus}
-          />
-          <span style={{ color: "#475569", fontSize: 12, fontWeight: 800 }}>
-            {walletSession.displayAddress}
-          </span>
-          <span style={{ color: "#475569", fontSize: 12, fontWeight: 700 }}>
-            {getLocalizedText(walletSession.statusMessage, locale)}
-          </span>
+          {walletSession ? (
+            <button
+              aria-label={`${walletConnectedActionLabel}: ${getWalletBadgeLabel(
+                walletSession.accountType,
+                walletSession.walletSource,
+              )} ${walletSession.displayAddress}`}
+              onClick={onWalletAction}
+              style={connectedWalletButtonStyle}
+              title={getLocalizedText(walletSession.statusMessage, locale)}
+              type="button"
+            >
+              <span>{getWalletBadgeLabel(walletSession.accountType, walletSession.walletSource)}</span>
+              <span aria-hidden="true">·</span>
+              <span>{walletSession.displayAddress}</span>
+            </button>
+          ) : (
+            <button onClick={onWalletAction} style={walletActionButtonStyle} type="button">
+              {walletActionLabel}
+            </button>
+          )}
           <label>
             <span style={visuallyHiddenStyle}>{localeLabel}</span>
             <select
