@@ -338,7 +338,7 @@ describe("Admin/Ops shell", () => {
     expect(within(deliveryAcceptance).getAllByText("Live wallet provider evidence").length).toBeGreaterThan(0);
     expect(
       within(deliveryAcceptance).getAllByText(
-        "Contract claim and reward custody are accepted MVP non-goals",
+        "Contract claim preapproval package covers future custody approval",
       ).length,
     ).toBeGreaterThan(0);
     expect(within(deliveryAcceptance).getAllByText("Evidence surface").length).toBeGreaterThan(0);
@@ -361,10 +361,21 @@ describe("Admin/Ops shell", () => {
     expect(within(residualGapMissionQueue).queryByText("Live wallet provider evidence mission")).not.toBeInTheDocument();
     expect(within(residualGapMissionQueue).queryByText("mission/live-wallet-provider-evidence")).not.toBeInTheDocument();
     expect(
-      within(residualGapMissionQueue).getByText("Contract claim and reward custody are accepted MVP non-goals mission"),
+      within(residualGapMissionQueue).queryByText(
+        "Contract claim and reward custody are accepted MVP non-goals mission",
+      ),
+    ).not.toBeInTheDocument();
+    expect(within(residualGapMissionQueue).queryByText("mission/contract-claim-reward-custody", {
+      exact: true,
+    })).not.toBeInTheDocument();
+    expect(
+      within(residualGapMissionQueue).getByText("Contract claim preapproval package execution approval mission"),
     ).toBeInTheDocument();
-    expect(within(residualGapMissionQueue).getByText("mission/contract-claim-reward-custody")).toBeInTheDocument();
-    expect(within(residualGapMissionQueue).getByText(/Security, custody\/legal, external audit/)).toBeInTheDocument();
+    expect(
+      within(residualGapMissionQueue).getByText("mission/contract-claim-reward-custody-execution-approval"),
+    ).toBeInTheDocument();
+    expect(within(residualGapMissionQueue).getByText(/Contract Claim Preapproval Package is present but blocked/)).toBeInTheDocument();
+    expect(within(residualGapMissionQueue).getByText(/top gate security-review/)).toBeInTheDocument();
     expect(within(residualGapMissionQueue).queryByText("mission/p1-locale-expansion")).not.toBeInTheDocument();
     expect(within(residualGapMissionQueue).getAllByText("Backlog items").length).toBeGreaterThan(0);
     expect(within(residualGapMissionQueue).getAllByText("Launch-blocking items").length).toBeGreaterThan(0);
@@ -1559,7 +1570,7 @@ describe("Admin/Ops shell", () => {
     expect(within(zhDeliveryAcceptance).getByText("全局导航 shell")).toBeInTheDocument();
     expect(within(zhDeliveryAcceptance).getAllByText("真实钱包 provider 证据").length).toBeGreaterThan(0);
     expect(
-      within(zhDeliveryAcceptance).getAllByText("合约领取与奖励托管是已接受的 MVP 非目标").length,
+      within(zhDeliveryAcceptance).getAllByText("合约领取预批准 package 已覆盖未来托管批准").length,
     ).toBeGreaterThan(0);
     expect(within(zhDeliveryAcceptance).getAllByText("证据界面").length).toBeGreaterThan(0);
     expect(within(zhDeliveryAcceptance).getAllByText(/下个 mission 动作/).length).toBeGreaterThan(0);
@@ -1576,8 +1587,16 @@ describe("Admin/Ops shell", () => {
     expect(within(zhResidualGapMissionQueue).getByText(/按交付验收残留缺口整理下一批 mission/)).toBeInTheDocument();
     expect(within(zhResidualGapMissionQueue).queryByText("真实钱包 provider 证据 mission")).not.toBeInTheDocument();
     expect(within(zhResidualGapMissionQueue).queryByText("mission/live-wallet-provider-evidence")).not.toBeInTheDocument();
-    expect(within(zhResidualGapMissionQueue).getByText("合约领取与奖励托管是已接受的 MVP 非目标 mission")).toBeInTheDocument();
-    expect(within(zhResidualGapMissionQueue).getByText("mission/contract-claim-reward-custody")).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).queryByText("合约领取与奖励托管是已接受的 MVP 非目标 mission")).not.toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).queryByText("mission/contract-claim-reward-custody", {
+      exact: true,
+    })).not.toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getByText("合约领取预批准 package 执行批准 mission")).toBeInTheDocument();
+    expect(
+      within(zhResidualGapMissionQueue).getByText("mission/contract-claim-reward-custody-execution-approval"),
+    ).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getByText(/Contract Claim 预批准 Package 已存在但仍阻断/)).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getByText(/top gate security-review/)).toBeInTheDocument();
     expect(within(zhResidualGapMissionQueue).queryByText("mission/p1-locale-expansion")).not.toBeInTheDocument();
     expect(within(zhResidualGapMissionQueue).getAllByText("Backlog 条目").length).toBeGreaterThan(0);
     expect(within(zhResidualGapMissionQueue).getAllByText("上线阻断条目").length).toBeGreaterThan(0);

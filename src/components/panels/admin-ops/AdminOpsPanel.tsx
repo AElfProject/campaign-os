@@ -1730,7 +1730,10 @@ export const AdminOpsPanel = ({
     },
   );
   const deliveryAcceptance = walletProviderEvidenceRecovery.deliveryAcceptance;
-  const residualGapMissionQueue = createResidualGapMissionQueue(deliveryAcceptance);
+  const contractClaimPreapprovalPackage = adminOps.contractClaimPreapprovalPackage;
+  const residualGapMissionQueue = createResidualGapMissionQueue(deliveryAcceptance, {
+    contractClaimPreapprovalPackage,
+  });
   const walletProviderEvidenceIntake = walletProviderEvidenceRecovery.intake;
   const walletProviderEvidenceApprovalAudit = walletProviderEvidenceRecovery.approvalAudit;
   const walletProviderEvidenceReleaseReadiness = walletProviderEvidenceRecovery.releaseReadiness;
@@ -1826,7 +1829,6 @@ export const AdminOpsPanel = ({
   const contractReviewCenter = adminOps.contractReviewCenter;
   const contractInterfaceMatrix = adminOps.contractInterfaceMatrix;
   const contractTransparencyMonitor = adminOps.contractTransparencyMonitor;
-  const contractClaimPreapprovalPackage = adminOps.contractClaimPreapprovalPackage;
   const companionContractReadiness = adminOps.companionContractReadiness;
   const columnContract = adminOps.exportBatch.columns.join(",");
   const verificationRows = campaign.participants.flatMap((participant) =>
