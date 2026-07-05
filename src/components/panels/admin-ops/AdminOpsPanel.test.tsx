@@ -978,6 +978,31 @@ describe("Admin/Ops shell", () => {
         name: /download|storage|claim|reward|contract/i,
       }),
     ).not.toBeInTheDocument();
+    const storageApprovalReadiness = screen.getByLabelText("Export Storage Fulfillment Approval Readiness");
+    expect(
+      within(storageApprovalReadiness).getByRole("heading", {
+        name: "Export Storage Fulfillment Approval Readiness",
+      }),
+    ).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getByText("Top storage blocker")).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getAllByText("Storage provider approval").length).toBeGreaterThan(1);
+    expect(within(storageApprovalReadiness).getAllByText("Approval blocked").length).toBeGreaterThan(0);
+    expect(within(storageApprovalReadiness).getByText("Storage export column coverage")).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getAllByText("Exact CSV column order").length).toBeGreaterThan(0);
+    expect(within(storageApprovalReadiness).getByText(exportColumnContract)).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getByText("Storage write enabled = false")).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getByText("Download URL enabled = false")).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getByText("No real export file")).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getByText("No object key")).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getByText("No signed URL")).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getByText("No wallet signing")).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getByText("No reward custody")).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getAllByText(/Storage-backed export approval readiness only/).length).toBeGreaterThan(0);
+    expect(
+      within(storageApprovalReadiness).queryByRole("button", {
+        name: /upload|download|generate|create signed URL|write storage|approve payout|custody|distribute|sign wallet|write contract|branch|issue|PR|mission/i,
+      }),
+    ).not.toBeInTheDocument();
     const localArtifact = screen.getByLabelText("Local export artifact");
     expect(within(localArtifact).getByText("camp-awaken-sprint-export-awaken-sprint-preview-local-review.csv")).toBeInTheDocument();
     expect(within(localArtifact).getByText("CSV")).toBeInTheDocument();
@@ -2329,6 +2354,30 @@ describe("Admin/Ops shell", () => {
     expect(within(fulfillmentReadiness).getByText("不生成合约 root")).toBeInTheDocument();
     expect(within(fulfillmentReadiness).getByText("不发奖")).toBeInTheDocument();
     expect(within(fulfillmentReadiness).getAllByText(/本地导出履约交接/).length).toBeGreaterThan(0);
+    const zhStorageApprovalReadiness = screen.getByLabelText("导出 Storage 履约批准 Readiness");
+    expect(
+      within(zhStorageApprovalReadiness).getByRole("heading", {
+        name: "导出 Storage 履约批准 Readiness",
+      }),
+    ).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText("首要 storage 阻断")).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getAllByText("Storage provider 批准").length).toBeGreaterThan(1);
+    expect(within(zhStorageApprovalReadiness).getAllByText("批准已阻断").length).toBeGreaterThan(0);
+    expect(within(zhStorageApprovalReadiness).getByText("Storage 导出字段覆盖")).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText(exportColumnContract)).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText("存储写入启用 = false")).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText("下载链接启用 = false")).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText("不生成真实导出文件")).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText("不生成 object key")).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText("不生成 signed URL")).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText("不执行钱包签名")).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText("不托管奖励")).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getAllByText(/不会写入存储、生成真实导出文件、下载链接/).length).toBeGreaterThan(0);
+    expect(
+      within(zhStorageApprovalReadiness).queryByRole("button", {
+        name: /上传|下载|生成文件|创建 signed URL|写入存储|批准 payout|托管|发奖|钱包签名|合约写入|branch|issue|PR|mission/i,
+      }),
+    ).not.toBeInTheDocument();
     const exportArtifact = screen.getByLabelText("本地导出 artifact");
     expect(within(exportArtifact).getByText("camp-awaken-sprint-export-awaken-sprint-preview-local-review.csv")).toBeInTheDocument();
     expect(within(exportArtifact).getByText(/Artifact 批次: export-awaken-sprint-preview/)).toBeInTheDocument();
