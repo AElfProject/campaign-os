@@ -10,6 +10,7 @@ import {
   createResidualGapMissionQueue,
   createServiceDegradationGovernance,
   createWalletProviderEvidenceAllApprovedSampleSnapshot,
+  createWalletProviderEvidenceReleaseApprovalSnapshot,
   createWalletProviderEvidenceActivation,
   createWalletProviderEvidenceRecoveryInitialUiState,
   executeWalletProviderEvidenceReviewAction,
@@ -370,6 +371,7 @@ const nowIso = () => new Date().toISOString();
 
 const readWalletProviderEvidenceRecoverySnapshot = (
   storageKey = walletProviderEvidenceRecoveryStorageKey,
+  defaultSnapshot: WalletProviderEvidenceRecoverySnapshot | null = createWalletProviderEvidenceReleaseApprovalSnapshot(),
 ): {
   snapshot: WalletProviderEvidenceRecoverySnapshot | null;
   storageState: WalletProviderEvidenceRecoveryStorageState;
@@ -378,7 +380,7 @@ const readWalletProviderEvidenceRecoverySnapshot = (
     const rawSnapshot = window.localStorage.getItem(storageKey);
 
     return {
-      snapshot: rawSnapshot ? JSON.parse(rawSnapshot) as WalletProviderEvidenceRecoverySnapshot : null,
+      snapshot: rawSnapshot ? JSON.parse(rawSnapshot) as WalletProviderEvidenceRecoverySnapshot : defaultSnapshot,
       storageState: "available",
     };
   } catch {

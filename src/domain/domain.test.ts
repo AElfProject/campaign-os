@@ -63,6 +63,7 @@ import {
   createWalletProviderEvidenceIntake,
   createWalletProviderEvidenceActivation,
   createWalletProviderEvidenceRecoveryInitialUiState,
+  createWalletProviderEvidenceReleaseApprovalSnapshot,
   createWalletProviderEvidenceReleaseReadiness,
   createWalletProviderEvidenceRequestPacket,
   createWalletProviderQaReadinessGate,
@@ -1222,7 +1223,7 @@ describe("Campaign OS domain foundation", () => {
     }
   });
 
-  it("builds the delivery checklist readiness console with conservative v0.2 evidence", () => {
+  it("builds the delivery checklist readiness console with release-approved v0.2 wallet evidence", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
     const readiness = adminOps.deliveryChecklistReadiness;
     const items = readiness.groups.flatMap((group) => group.items);
@@ -1243,9 +1244,7 @@ describe("Campaign OS domain foundation", () => {
       blockedItems: items.filter((item) => item.status === "blocked").length,
       deferredItems: items.filter((item) => item.status === "deferred").length,
     });
-    expect(new Set(items.map((item) => item.status))).toEqual(
-      new Set(["covered", "needs_review", "deferred"]),
-    );
+    expect(new Set(items.map((item) => item.status))).toEqual(new Set(["covered", "deferred"]));
     expect(readiness.traceability.rows).toHaveLength(items.length);
     expect(readiness.traceability.summary).toMatchObject({
       deferredRows: items.filter((item) => item.status === "deferred").length,
@@ -1375,27 +1374,27 @@ describe("Campaign OS domain foundation", () => {
       missingVerificationRows: closeout.rows.filter((row) => row.missingVerification).length,
       missingEvidenceRows: closeout.rows.filter((row) => row.missingEvidence).length,
       deferredRows: closeout.rows.filter((row) => row.queueId === "deferred").length,
-      ready: false,
+      ready: true,
     });
-    expect(closeout.summary.topQueueId).toBe("needs_review");
-    expect(closeout.summary.topHandoffTarget).toBe("live_wallet_qa");
-    expect(closeout.summary.topRowId).toBe(closeoutByItemId["qa-portkey-aa-connect"]?.id);
+    expect(closeout.summary.topQueueId).toBe("deferred");
+    expect(closeout.summary.topHandoffTarget).toBe("none");
+    expect(closeout.summary.topRowId).toBeNull();
     expect(closeout.boundary["en-US"]).toContain("Review-only closeout workflow");
     expect(closeout.boundary["en-US"]).toContain("does not execute live wallet SDKs");
     expect(closeoutByItemId["qa-portkey-aa-connect"]).toMatchObject({
-      queueId: "needs_review",
-      handoffTarget: "live_wallet_qa",
+      queueId: "covered",
+      handoffTarget: "none",
       proofLevel: "live_evidence_required",
-      status: "needs_review",
+      status: "covered",
       missingEvidence: false,
       missingVerification: false,
     });
-    expect(closeoutByItemId["qa-portkey-aa-connect"]?.handoffLabel["en-US"]).toBe("Live wallet QA");
+    expect(closeoutByItemId["qa-portkey-aa-connect"]?.handoffLabel["en-US"]).toBe("No immediate handoff");
     expect(closeoutByItemId["qa-eoa-extension-connect"]).toMatchObject({
-      queueId: "needs_review",
-      handoffTarget: "live_wallet_qa",
+      queueId: "covered",
+      handoffTarget: "none",
       proofLevel: "live_evidence_required",
-      status: "needs_review",
+      status: "covered",
     });
     expect(closeoutByItemId["product-aa-eoa-support"]).toMatchObject({
       queueId: "covered",
@@ -1655,26 +1654,28 @@ describe("Campaign OS domain foundation", () => {
       "claim-mode disabled and future approval-gated",
     );
     expect(itemsById["qa-wrong-chain-error"]).toMatchObject({
-      status: "needs_review",
+      status: "covered",
       blocksDelivery: false,
     });
     expect(itemsById["qa-portkey-aa-connect"]?.surface["en-US"]).toBe("Wallet Provider QA Gate");
     expect(itemsById["qa-portkey-aa-connect"]?.evidence["en-US"]).toContain(
-      "Live Portkey AA provider evidence is not attached yet",
+      "Live Portkey AA provider evidence has been reviewed",
     );
     expect(itemsById["qa-eoa-extension-connect"]?.evidence["en-US"]).toContain(
-      "Live EOA browser-extension evidence is not attached yet",
+      "Live EOA browser-extension evidence has been reviewed",
     );
     expect(itemsById["qa-extension-not-installed-error"]).toMatchObject({
-      status: "needs_review",
+      status: "covered",
       blocksDelivery: false,
     });
     expect(itemsById["qa-extension-not-installed-error"]?.evidence["en-US"]).toContain(
-      "extension-not-installed recovery evidence is not attached yet",
+      "extension-not-installed recovery evidence has been reviewed",
     );
-    expect(itemsById["qa-wrong-chain-error"]?.nextAction["en-US"]).toContain("live wrong-chain");
+    expect(itemsById["qa-wrong-chain-error"]?.nextAction["en-US"]).toContain(
+      "Keep reviewed live-provider evidence attached",
+    );
     expect(itemsById["qa-unsupported-wallet-error"]?.evidence["zh-TW"]).toContain(
-      "真實不支援錢包",
+      "真實不支援錢包 provider fallback 證據已審核",
     );
     expect(itemsById["qa-export-csv-columns"]).toMatchObject({
       status: "covered",
@@ -1700,15 +1701,7 @@ describe("Campaign OS domain foundation", () => {
       "Keep reward custody outside Campaign OS",
     );
     expect(readiness.blockers.map((item) => item.id)).toEqual([]);
-    expect(readiness.needsReview.map((item) => item.id)).toEqual(
-      expect.arrayContaining([
-        "qa-portkey-aa-connect",
-        "qa-eoa-extension-connect",
-        "qa-extension-not-installed-error",
-        "qa-wrong-chain-error",
-        "qa-unsupported-wallet-error",
-      ]),
-    );
+    expect(readiness.needsReview.map((item) => item.id)).toEqual([]);
     expect(readiness.needsReview.map((item) => item.id)).not.toEqual(
       expect.arrayContaining(["product-reward-disclaimer-locales", "qa-reward-disclaimer-blocker"]),
     );
@@ -1724,7 +1717,7 @@ describe("Campaign OS domain foundation", () => {
     });
   });
 
-  it("builds the delivery acceptance console across v0.1 and v0.2 without overclaiming live readiness", () => {
+  it("builds the delivery acceptance console across v0.1 and v0.2 with release-approved local wallet evidence", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
     const acceptance = adminOps.deliveryAcceptance;
     const rows = acceptance.solutionSets.flatMap((solutionSet) => solutionSet.rows);
@@ -1742,11 +1735,9 @@ describe("Campaign OS domain foundation", () => {
       needsLiveEvidence: rows.filter((row) => row.status === "needs_live_evidence").length,
       blocked: rows.filter((row) => row.status === "blocked").length,
       deferred: rows.filter((row) => row.status === "deferred").length,
-      topSeverity: "critical",
+      topSeverity: "low",
     });
-    expect(new Set(rows.map((row) => row.status))).toEqual(
-      new Set(["proven", "needs_live_evidence", "deferred"]),
-    );
+    expect(new Set(rows.map((row) => row.status))).toEqual(new Set(["proven", "deferred"]));
     expect(acceptance.boundary["en-US"]).toContain("No live wallet SDK");
     expect(acceptance.boundary["en-US"]).toContain("provider API");
     expect(acceptance.boundary["en-US"]).toContain("contract write");
@@ -1809,9 +1800,9 @@ describe("Campaign OS domain foundation", () => {
     );
     expect(rowsById["v02-live-wallet-provider-evidence"]).toMatchObject({
       solutionSetId: "v0_2_wallet_i18n_contract",
-      status: "needs_live_evidence",
-      severity: "critical",
-      launchBlocking: true,
+      status: "proven",
+      severity: "high",
+      launchBlocking: false,
     });
     expect(rowsById["v02-live-wallet-provider-evidence"]?.boundary?.["en-US"]).toContain(
       "Wallet Provider Evidence Intake",
@@ -1820,18 +1811,18 @@ describe("Campaign OS domain foundation", () => {
       "Release Readiness",
     );
     expect(rowsById["v02-live-wallet-provider-evidence"]?.evidenceSummary["en-US"]).toContain(
-      "0/5 required scenarios",
+      "approved all 5/5 required scenarios",
     );
     expect(adminOps.walletProviderEvidenceReleaseReadiness.summary).toMatchObject({
       totalScenarios: 5,
       requiredScenarios: 5,
-      approvedRequiredScenarios: 0,
-      reviewRequiredScenarios: 1,
-      blockedScenarios: 4,
-      releaseBlockers: 4,
-      ready: false,
+      approvedRequiredScenarios: 5,
+      reviewRequiredScenarios: 0,
+      blockedScenarios: 0,
+      releaseBlockers: 0,
+      ready: true,
       topScenarioId: "portkey-aa-connect",
-      topFailedRuleId: "required-artifacts",
+      topFailedRuleId: null,
     });
     expect(adminOps.walletProviderEvidenceReleaseReadiness.boundary["en-US"]).toContain("No live wallet SDK");
     expect(rowsById["v02-contract-companion-plan"]).toMatchObject({
@@ -1870,15 +1861,15 @@ describe("Campaign OS domain foundation", () => {
         .filter((row) => row.status === "needs_live_evidence" || row.status === "blocked")
         .some((row) => row.status === "proven"),
     ).toBe(false);
-    expect(acceptance.topResidualGaps[0]?.id).toBe("v02-live-wallet-provider-evidence");
+    expect(acceptance.topResidualGaps).toHaveLength(0);
     expect(acceptance.topResidualGaps.map((row) => row.id)).not.toContain("v01-user-participation-loop");
     expect(acceptance.topResidualGaps.map((row) => row.id)).not.toContain("v01-live-export-download");
     expect(acceptance.topResidualGaps.map((row) => row.id)).not.toContain("v02-contract-companion-plan");
+    expect(acceptance.topResidualGaps.map((row) => row.id)).not.toContain("v02-live-wallet-provider-evidence");
     expect(acceptance.topResidualGaps.map((row) => row.id).slice(0, 2)).not.toContain(
       "v02-contract-claim-reward-custody",
     );
-    const lastResidualGap = acceptance.topResidualGaps[acceptance.topResidualGaps.length - 1];
-    expect(lastResidualGap?.id).not.toBe("v02-p1-locale-expansion");
+    expect(acceptance.topResidualGaps.map((row) => row.id)).not.toContain("v02-p1-locale-expansion");
 
     for (const row of rows) {
       expect(row.title["en-US"]).toBeTruthy();
@@ -1901,35 +1892,38 @@ describe("Campaign OS domain foundation", () => {
       totalItems: queue.items.length,
       launchBlockingItems: queue.items.filter((item) => item.launchBlocking).length,
       backlogItems: queue.items.filter((item) => item.status === "backlog").length,
-      topItemId: "mission-v02-live-wallet-provider-evidence",
-      topSeverity: "critical",
+      topItemId: "mission-v02-contract-claim-reward-custody",
+      topSeverity: "low",
     });
-    expect(queue.summary.nextAction["en-US"]).toContain("Portkey AA");
+    expect(queue.summary.nextAction["en-US"]).toContain("claim-mode implementation outside MVP");
     expect(queue.boundary["en-US"]).toContain("does not create missions");
     expect(queue.boundary["en-US"]).toContain("No live wallet SDK");
 
     expect(queue.items[0]).toMatchObject({
-      id: "mission-v02-live-wallet-provider-evidence",
-      sourceRowId: "v02-live-wallet-provider-evidence",
+      id: "mission-v02-contract-claim-reward-custody",
+      sourceRowId: "v02-contract-claim-reward-custody",
       sourceSolutionSetId: "v0_2_wallet_i18n_contract",
       priority: 1,
-      status: "needs_live_evidence",
-      severity: "critical",
-      ownerRole: "internal_operator",
-      launchBlocking: true,
-      suggestedBranch: "mission/live-wallet-provider-evidence",
+      status: "backlog",
+      severity: "low",
+      ownerRole: "contract_reviewer",
+      launchBlocking: false,
+      suggestedBranch: "mission/contract-claim-reward-custody",
     });
     expect(queue.items[0]?.suggestedMissionTitle["en-US"]).toBe(
-      "Live wallet provider evidence mission",
+      "Contract claim and reward custody are accepted MVP non-goals mission",
     );
-    expect(queue.items[0]?.sourceGap["en-US"]).toBe("Live wallet provider evidence");
-    expect(queue.items[0]?.dependency["en-US"]).toContain("Wallet Provider Evidence Release Readiness");
-    expect(queue.items[0]?.evidenceNeeded["en-US"]).toContain("0/5 required scenarios");
-    expect(queue.items[0]?.launchImpact["en-US"]).toContain("launch-blocking");
+    expect(queue.items[0]?.sourceGap["en-US"]).toBe(
+      "Contract claim and reward custody are accepted MVP non-goals",
+    );
+    expect(queue.items[0]?.dependency["en-US"]).toContain(
+      "Security, custody/legal, external audit, and admin approvals",
+    );
+    expect(queue.items[0]?.launchImpact["en-US"]).toContain("non-blocking backlog follow-up");
 
-    expect(adminOps.deliveryAcceptance.topResidualGaps[0]?.status).toBe("needs_live_evidence");
-    expect(adminOps.deliveryAcceptance.topResidualGaps[0]?.id).toBe("v02-live-wallet-provider-evidence");
+    expect(adminOps.deliveryAcceptance.topResidualGaps).toHaveLength(0);
     expect(itemsById["mission-v01-user-participation-loop"]).toBeUndefined();
+    expect(itemsById["mission-v02-live-wallet-provider-evidence"]).toBeUndefined();
 
     expect(itemsById["mission-v02-contract-claim-reward-custody"]).toMatchObject({
       sourceRowId: "v02-contract-claim-reward-custody",
@@ -1959,8 +1953,8 @@ describe("Campaign OS domain foundation", () => {
     expect(adminOps.walletProviderQaGate.summary).toMatchObject({
       totalScenarios: 5,
       seededReadyScenarios: 5,
-      liveEvidenceReadyScenarios: 0,
-      missingLiveEvidenceScenarios: 5,
+      liveEvidenceReadyScenarios: 5,
+      missingLiveEvidenceScenarios: 0,
     });
     expect(adminOps.walletProviderQaGate.scenarios.map((scenario) => scenario.id)).toEqual([
       "portkey-aa-connect",
@@ -1970,24 +1964,26 @@ describe("Campaign OS domain foundation", () => {
       "unsupported-wallet-error",
     ]);
     expect(readinessById["qa-portkey-aa-connect"]).toMatchObject({
-      status: "needs_review",
+      status: "covered",
       evidence: adminOps.walletProviderQaGate.scenarios[0].evidence,
-      nextAction: adminOps.walletProviderQaGate.scenarios[0].nextAction,
     });
+    expect(readinessById["qa-portkey-aa-connect"]?.nextAction["en-US"]).toContain(
+      "Keep reviewed live-provider evidence attached",
+    );
     expect(adminOps.walletProviderQaGate.boundary["en-US"]).toContain("no live wallet SDK connection");
     expect(adminOps.walletProviderQaGate.boundary["zh-CN"]).toContain("奖励发放");
     expect(adminOps.walletProviderQaGate.boundary["zh-TW"]).toContain("獎勵發放");
   });
 
-  it("models live wallet provider evidence intake without counting unapproved evidence as live-ready", () => {
+  it("models release-approved wallet provider evidence intake from the Mission 140 snapshot", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
     const intake = adminOps.walletProviderEvidenceIntake;
-    const standalone = createWalletProviderEvidenceIntake(adminOps.walletProviderQaGate);
+    const conservativeStandalone = createWalletProviderEvidenceIntake(adminOps.walletProviderQaGate);
     const scenariosById = Object.fromEntries(intake.scenarios.map((scenario) => [scenario.id, scenario]));
     const acceptanceRows = adminOps.deliveryAcceptance.solutionSets.flatMap((solutionSet) => solutionSet.rows);
     const liveWalletAcceptance = acceptanceRows.find((row) => row.id === "v02-live-wallet-provider-evidence");
 
-    expect(standalone.summary).toEqual(intake.summary);
+    expect(conservativeStandalone.summary.approvedScenarios).toBe(0);
     expect(intake.scenarios.map((scenario) => scenario.id)).toEqual([
       "portkey-aa-connect",
       "eoa-extension-connect",
@@ -1997,30 +1993,30 @@ describe("Campaign OS domain foundation", () => {
     ]);
     expect(intake.summary).toMatchObject({
       totalScenarios: 5,
-      approvedScenarios: 0,
-      submittedScenarios: 1,
-      missingScenarios: 3,
-      rejectedScenarios: 1,
+      approvedScenarios: 5,
+      submittedScenarios: 0,
+      missingScenarios: 0,
+      rejectedScenarios: 0,
       expiredScenarios: 0,
-      releaseBlockers: 4,
-      reviewRequiredScenarios: 1,
+      releaseBlockers: 0,
+      reviewRequiredScenarios: 0,
       topScenarioId: "portkey-aa-connect",
     });
     expect(scenariosById["eoa-extension-connect"]).toMatchObject({
-      evidenceStatus: "submitted",
-      reviewState: "in_review",
-      releaseImpact: "review_required",
+      evidenceStatus: "approved",
+      reviewState: "approved",
+      releaseImpact: "ready",
       reviewerRole: "internal_operator",
     });
     expect(scenariosById["unsupported-wallet-error"]).toMatchObject({
-      evidenceStatus: "rejected",
-      reviewState: "rejected",
-      releaseImpact: "blocked",
+      evidenceStatus: "approved",
+      reviewState: "approved",
+      releaseImpact: "ready",
     });
     expect(scenariosById["extension-not-installed-error"]).toMatchObject({
-      evidenceStatus: "missing",
-      reviewState: "not_started",
-      releaseImpact: "blocked",
+      evidenceStatus: "approved",
+      reviewState: "approved",
+      releaseImpact: "ready",
     });
     expect(scenariosById["extension-not-installed-error"].expectedArtifacts.map((artifact) => artifact.id)).toEqual([
       "extension-not-installed-error-screenshot",
@@ -2028,15 +2024,13 @@ describe("Campaign OS domain foundation", () => {
       "extension-not-installed-error-runbook",
     ]);
     expect(
-      intake.scenarios
-        .filter((scenario) => scenario.evidenceStatus !== "approved")
-        .some((scenario) => scenario.releaseImpact === "ready"),
-    ).toBe(false);
+      intake.scenarios.every((scenario) => scenario.evidenceStatus === "approved" && scenario.releaseImpact === "ready"),
+    ).toBe(true);
     expect(scenariosById["eoa-extension-connect"].submittedArtifacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           artifactType: "qa_run",
-          reference: "local-wallet-qa/eoa-extension-connect-2026-07-03",
+          reference: "local-wallet-qa/eoa-extension-connect/approved-qa_run",
         }),
       ]),
     );
@@ -2058,16 +2052,16 @@ describe("Campaign OS domain foundation", () => {
     expect(intake.boundary["zh-CN"]).toContain("不会执行实时钱包 SDK");
     expect(intake.nextAction).toEqual(intake.summary.topNextAction);
     expect(liveWalletAcceptance).toMatchObject({
-      status: "needs_live_evidence",
+      status: "proven",
       evidenceSurface: expect.objectContaining({
-        "en-US": expect.stringContaining("Wallet Provider Evidence Intake"),
+        "en-US": expect.stringContaining("Release Readiness"),
       }),
     });
-    expect(liveWalletAcceptance?.evidenceSummary["en-US"]).toContain("0/5 required scenarios");
-    expect(liveWalletAcceptance?.nextMissionAction["en-US"]).toContain("Portkey AA");
+    expect(liveWalletAcceptance?.evidenceSummary["en-US"]).toContain("approved all 5/5 required scenarios");
+    expect(liveWalletAcceptance?.nextMissionAction["en-US"]).toContain("Keep all approved wallet provider evidence");
   });
 
-  it("audits wallet provider evidence approval without promoting submitted or rejected evidence", () => {
+  it("audits release-approved wallet provider evidence without live side effects", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
     const audit = adminOps.walletProviderEvidenceApprovalAudit;
     const scenariosById = Object.fromEntries(audit.scenarios.map((scenario) => [scenario.id, scenario]));
@@ -2076,16 +2070,16 @@ describe("Campaign OS domain foundation", () => {
 
     expect(audit.summary).toMatchObject({
       totalScenarios: 5,
-      approvedScenarios: 0,
-      reviewRequiredScenarios: 1,
-      blockedScenarios: 4,
+      approvedScenarios: 5,
+      reviewRequiredScenarios: 0,
+      blockedScenarios: 0,
       notApplicableScenarios: 0,
-      completeArtifactScenarios: 0,
-      incompleteArtifactScenarios: 5,
-      releaseBlockers: 4,
+      completeArtifactScenarios: 5,
+      incompleteArtifactScenarios: 0,
+      releaseBlockers: 0,
       topScenarioId: "portkey-aa-connect",
-      topFailedRuleId: "required-artifacts",
-      topFailedRuleState: "blocked",
+      topFailedRuleId: null,
+      topFailedRuleState: null,
     });
     expect(audit.scenarios.map((scenario) => scenario.id)).toEqual([
       "portkey-aa-connect",
@@ -2095,54 +2089,39 @@ describe("Campaign OS domain foundation", () => {
       "unsupported-wallet-error",
     ]);
     expect(scenariosById["eoa-extension-connect"]).toMatchObject({
-      approvalState: "review_required",
-      failedRuleIds: ["required-artifacts", "reviewer-approval", "live-evidence-status"],
+      approvalState: "approved",
+      failedRuleIds: [],
       reviewerDecision: expect.objectContaining({
-        state: "in_review",
+        state: "approved",
       }),
-      releaseImpact: "review_required",
+      releaseImpact: "ready",
     });
     expect(scenariosById["eoa-extension-connect"].artifactCoverage).toMatchObject({
       requiredArtifactIds: ["eoa-extension-connect-screenshot", "eoa-extension-connect-qa-run"],
-      submittedArtifactIds: ["eoa-extension-connect-local-qa-run", "eoa-extension-connect-review-note"],
+      submittedArtifactIds: ["eoa-extension-connect-recovered-screenshot-1", "eoa-extension-connect-recovered-qa_run-2"],
       submittedArtifactReferences: [
-        "local-wallet-qa/eoa-extension-connect-2026-07-03",
-        "review-note/eoa-extension-connect-pending",
+        "local-wallet-qa/eoa-extension-connect/approved-screenshot",
+        "local-wallet-qa/eoa-extension-connect/approved-qa_run",
       ],
-      missingRequiredArtifactIds: ["eoa-extension-connect-screenshot"],
+      missingRequiredArtifactIds: [],
       requiredCount: 2,
-      submittedRequiredCount: 1,
+      submittedRequiredCount: 2,
       optionalCount: 1,
-      complete: false,
+      complete: true,
     });
     expect(scenariosById["unsupported-wallet-error"]).toMatchObject({
-      approvalState: "blocked",
-      failedRuleIds: [
-        "required-artifacts",
-        "reviewer-approval",
-        "live-evidence-status",
-        "service-gate",
-      ],
+      approvalState: "approved",
+      failedRuleIds: [],
       reviewerDecision: expect.objectContaining({
-        state: "rejected",
+        state: "approved",
       }),
-      releaseImpact: "blocked",
+      releaseImpact: "ready",
     });
-    expect(scenariosById["wrong-chain-error"].artifactCoverage.missingRequiredArtifactIds).toEqual([
-      "wrong-chain-error-screenshot",
-      "wrong-chain-error-qa-run",
-      "wrong-chain-error-runbook",
-    ]);
-    expect(scenariosById["extension-not-installed-error"].artifactCoverage.missingRequiredArtifactIds).toEqual([
-      "extension-not-installed-error-screenshot",
-      "extension-not-installed-error-qa-run",
-      "extension-not-installed-error-runbook",
-    ]);
+    expect(scenariosById["wrong-chain-error"].artifactCoverage.missingRequiredArtifactIds).toEqual([]);
+    expect(scenariosById["extension-not-installed-error"].artifactCoverage.missingRequiredArtifactIds).toEqual([]);
     expect(
-      audit.scenarios
-        .filter((scenario) => scenario.approvalState !== "approved")
-        .some((scenario) => scenario.releaseImpact === "ready"),
-    ).toBe(false);
+      audit.scenarios.every((scenario) => scenario.approvalState === "approved" && scenario.releaseImpact === "ready"),
+    ).toBe(true);
 
     for (const scenario of audit.scenarios) {
       expect(scenario.label["en-US"]).toBeTruthy();
@@ -2162,14 +2141,14 @@ describe("Campaign OS domain foundation", () => {
     }
     expect(audit.boundary["en-US"]).toContain("No live wallet SDK");
     expect(liveWalletAcceptance).toMatchObject({
-      status: "needs_live_evidence",
-      severity: "critical",
-      launchBlocking: true,
+      status: "proven",
+      severity: "high",
+      launchBlocking: false,
       evidenceSurface: expect.objectContaining({
         "en-US": expect.stringContaining("Release Readiness"),
       }),
       evidenceSummary: expect.objectContaining({
-        "en-US": expect.stringContaining("top failed rule required-artifacts"),
+        "en-US": expect.stringContaining("approved all 5/5 required scenarios"),
       }),
     });
   });
@@ -2339,7 +2318,7 @@ describe("Campaign OS domain foundation", () => {
     expect(secondReleaseReadiness).toEqual(firstReleaseReadiness);
   });
 
-  it("packages wallet provider evidence closeout without overclaiming default readiness", () => {
+  it("packages wallet provider evidence closeout as ready for release review by default", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
     const closeout = adminOps.walletProviderEvidenceCloseoutPackage;
     const standalone = createWalletProviderEvidenceCloseoutPackage(adminOps.walletProviderEvidenceReleaseReadiness);
@@ -2358,48 +2337,39 @@ describe("Campaign OS domain foundation", () => {
     expect(closeout.summary).toMatchObject({
       totalScenarios: 5,
       requiredScenarios: 5,
-      approvedRequiredScenarios: 0,
-      readyForReviewScenarios: 0,
-      reviewRequiredScenarios: 1,
-      blockedScenarios: 4,
-      missingRequiredArtifacts: 12,
-      attachedEvidenceReferences: 2,
-      closeoutBlockers: 4,
-      ready: false,
+      approvedRequiredScenarios: 5,
+      readyForReviewScenarios: 5,
+      reviewRequiredScenarios: 0,
+      blockedScenarios: 0,
+      missingRequiredArtifacts: 0,
+      attachedEvidenceReferences: 13,
+      closeoutBlockers: 0,
+      ready: true,
       topScenarioId: "portkey-aa-connect",
-      topFailedRuleId: "required-artifacts",
+      topFailedRuleId: null,
     });
     expect(scenariosById["portkey-aa-connect"]).toMatchObject({
-      signoffState: "blocked",
-      releaseState: "blocked",
-      approvalState: "blocked",
+      signoffState: "ready",
+      releaseState: "ready",
+      approvalState: "approved",
       requiredArtifactCount: 2,
-      submittedRequiredArtifactCount: 0,
-      missingRequiredArtifactIds: ["portkey-aa-connect-screenshot", "portkey-aa-connect-qa-run"],
-      failedRuleIds: [
-        "required-artifacts",
-        "reviewer-approval",
-        "live-evidence-status",
-      ],
+      submittedRequiredArtifactCount: 2,
+      missingRequiredArtifactIds: [],
+      failedRuleIds: [],
     });
     expect(scenariosById["eoa-extension-connect"]).toMatchObject({
-      signoffState: "review_required",
-      releaseState: "review_required",
-      approvalState: "review_required",
+      signoffState: "ready",
+      releaseState: "ready",
+      approvalState: "approved",
       attachedEvidenceReferences: [
-        "local-wallet-qa/eoa-extension-connect-2026-07-03",
-        "review-note/eoa-extension-connect-pending",
+        "local-wallet-qa/eoa-extension-connect/approved-screenshot",
+        "local-wallet-qa/eoa-extension-connect/approved-qa_run",
       ],
-      missingRequiredArtifactIds: ["eoa-extension-connect-screenshot"],
+      missingRequiredArtifactIds: [],
     });
     expect(scenariosById["unsupported-wallet-error"]).toMatchObject({
-      signoffState: "blocked",
-      failedRuleIds: [
-        "required-artifacts",
-        "reviewer-approval",
-        "live-evidence-status",
-        "service-gate",
-      ],
+      signoffState: "ready",
+      failedRuleIds: [],
     });
     for (const scenario of closeout.scenarios) {
       expect(scenario.label["en-US"]).toBeTruthy();
@@ -2414,9 +2384,9 @@ describe("Campaign OS domain foundation", () => {
     expect(closeout.boundary["en-US"]).toContain("No live wallet SDK");
     expect(closeout.nextAction).toEqual(closeout.summary.topNextAction);
     expect(liveWalletAcceptance).toMatchObject({
-      status: "needs_live_evidence",
-      severity: "critical",
-      launchBlocking: true,
+      status: "proven",
+      severity: "high",
+      launchBlocking: false,
     });
   });
 
@@ -2480,7 +2450,7 @@ describe("Campaign OS domain foundation", () => {
     expect(closeout.nextAction["en-US"]).toContain("ready for release review");
   });
 
-  it("builds a wallet provider evidence request packet without changing default launch blockers", () => {
+  it("builds a wallet provider evidence request packet ready for release review by default", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
     const packet = adminOps.walletProviderEvidenceRequestPacket;
     const standalone = createWalletProviderEvidenceRequestPacket(adminOps.walletProviderEvidenceCloseoutPackage);
@@ -2491,52 +2461,48 @@ describe("Campaign OS domain foundation", () => {
     expect(standalone).toEqual(packet);
     expect(packet.scenarios.map((scenario) => scenario.id)).toEqual([
       "portkey-aa-connect",
+      "eoa-extension-connect",
       "extension-not-installed-error",
       "wrong-chain-error",
       "unsupported-wallet-error",
-      "eoa-extension-connect",
     ]);
     expect(packet.summary).toMatchObject({
       totalRequests: 5,
-      readyRequests: 0,
-      reviewRequiredRequests: 1,
-      blockedRequests: 4,
+      readyRequests: 5,
+      reviewRequiredRequests: 0,
+      blockedRequests: 0,
       notApplicableRequests: 0,
-      missingRequiredArtifacts: 12,
-      attachedEvidenceReferences: 2,
-      launchBlockingRequests: 4,
-      ready: false,
+      missingRequiredArtifacts: 0,
+      attachedEvidenceReferences: 13,
+      launchBlockingRequests: 0,
+      ready: true,
       topScenarioId: "portkey-aa-connect",
-      topFailedRuleId: "required-artifacts",
+      topFailedRuleId: null,
     });
     expect(packet.scenarios[0]).toMatchObject({
       id: "portkey-aa-connect",
       priority: 1,
-      requestStatus: "blocked",
+      requestStatus: "ready",
       requiredForRelease: true,
       targetEvidencePath: "wallet-provider-evidence/portkey-aa-connect/",
       ownerRole: "internal_operator",
       reviewerRole: "internal_operator",
       requiredArtifactIds: ["portkey-aa-connect-screenshot", "portkey-aa-connect-qa-run"],
-      missingRequiredArtifactIds: ["portkey-aa-connect-screenshot", "portkey-aa-connect-qa-run"],
-      failedRuleIds: [
-        "required-artifacts",
-        "reviewer-approval",
-        "live-evidence-status",
-      ],
+      missingRequiredArtifactIds: [],
+      failedRuleIds: [],
     });
     expect(scenariosById["eoa-extension-connect"]).toMatchObject({
-      priority: 5,
-      requestStatus: "review_required",
+      priority: 2,
+      requestStatus: "ready",
       attachedEvidenceReferences: [
-        "local-wallet-qa/eoa-extension-connect-2026-07-03",
-        "review-note/eoa-extension-connect-pending",
+        "local-wallet-qa/eoa-extension-connect/approved-screenshot",
+        "local-wallet-qa/eoa-extension-connect/approved-qa_run",
       ],
-      missingRequiredArtifactIds: ["eoa-extension-connect-screenshot"],
+      missingRequiredArtifactIds: [],
       targetEvidencePath: "wallet-provider-evidence/eoa-extension-connect/",
     });
     expect(scenariosById["eoa-extension-connect"].acceptanceCriteria["en-US"]).toContain(
-      "Reviewer must approve submitted evidence",
+      "approved",
     );
     expect(scenariosById["eoa-extension-connect"].qaCaptureInstructions["en-US"]).toContain(
       "without using the app to upload or execute wallet operations",
@@ -2557,9 +2523,9 @@ describe("Campaign OS domain foundation", () => {
     expect(packet.boundary["en-US"]).toContain("No live wallet SDK");
     expect(packet.nextAction).toEqual(packet.summary.topNextAction);
     expect(liveWalletAcceptance).toMatchObject({
-      status: "needs_live_evidence",
-      severity: "critical",
-      launchBlocking: true,
+      status: "proven",
+      severity: "high",
+      launchBlocking: false,
     });
   });
 
@@ -2623,7 +2589,7 @@ describe("Campaign OS domain foundation", () => {
     expect(packet.nextAction["en-US"]).toContain("ready for release review");
   });
 
-  it("derives wallet provider evidence activation from request packet without changing default acceptance", () => {
+  it("derives wallet provider evidence activation ready from the release-approved request packet", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
     const activation = adminOps.walletProviderEvidenceActivation;
     const standalone = createWalletProviderEvidenceActivation(
@@ -2644,50 +2610,44 @@ describe("Campaign OS domain foundation", () => {
     ]);
     expect(activation.summary).toMatchObject({
       totalScenarios: 5,
-      readyScenarios: 0,
-      blockedScenarios: 4,
-      reviewRequiredScenarios: 1,
-      missingArtifactTypeCount: 12,
-      approvedFeatureGates: 0,
-      reviewerApprovedScenarios: 0,
-      ready: false,
+      readyScenarios: 5,
+      blockedScenarios: 0,
+      reviewRequiredScenarios: 0,
+      missingArtifactTypeCount: 0,
+      approvedFeatureGates: 5,
+      reviewerApprovedScenarios: 5,
+      ready: true,
       topScenarioId: "portkey-aa-connect",
-      topBlockerId: "missing-artifacts",
+      topBlockerId: null,
     });
     expect(activation.scenarios[0]).toMatchObject({
       id: "portkey-aa-connect",
-      activationState: "blocked",
-      featureGateState: "disabled",
-      reviewerState: "pending",
-      releaseState: "blocked",
-      liveEvidenceStatus: "blocked",
+      activationState: "ready",
+      featureGateState: "approved",
+      reviewerState: "approved",
+      releaseState: "ready",
+      liveEvidenceStatus: "ready",
       requiredArtifactTypes: ["screenshot", "qa_run"],
-      missingArtifactTypes: ["screenshot", "qa_run"],
-      blockerIds: [
-        "missing-artifacts",
-        "live-evidence-not-ready",
-        "feature-gate-not-approved",
-        "reviewer-approval-required",
-        "release-readiness-not-ready",
-      ],
+      missingArtifactTypes: [],
+      blockerIds: [],
     });
     expect(activation.scenarios.find((scenario) => scenario.id === "eoa-extension-connect")).toMatchObject({
-      activationState: "review_required",
-      featureGateState: "disabled",
-      reviewerState: "pending",
-      releaseState: "review_required",
-      liveEvidenceStatus: "missing",
+      activationState: "ready",
+      featureGateState: "approved",
+      reviewerState: "approved",
+      releaseState: "ready",
+      liveEvidenceStatus: "ready",
       submittedArtifacts: expect.arrayContaining([
         expect.objectContaining({
           artifactType: "qa_run",
-          reference: "local-wallet-qa/eoa-extension-connect-2026-07-03",
-          status: "submitted",
+          reference: "local-wallet-qa/eoa-extension-connect/approved-qa_run",
+          status: "approved",
         }),
       ]),
     });
     expect(liveWalletAcceptance).toMatchObject({
-      status: "needs_live_evidence",
-      launchBlocking: true,
+      status: "proven",
+      launchBlocking: false,
     });
   });
 

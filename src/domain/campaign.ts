@@ -324,6 +324,7 @@ import type {
   UserWinnersExportRow,
   UserWinnersExportStatus,
   UserWinnersExportStatusReadModel,
+  WalletProviderQaLiveEvidenceStatus,
   WalletProviderQaReadinessGate,
   WalletProviderQaScenarioId,
   WalletProviderArtifactCoverage,
@@ -2117,6 +2118,19 @@ const walletProviderEvidenceScenarioOrder: WalletProviderQaScenarioId[] = [
   "wrong-chain-error",
   "unsupported-wallet-error",
 ];
+
+const walletProviderEvidenceReleaseApprovalCapturedAt = "2026-07-05T00:00:00Z";
+
+export const walletProviderEvidenceReleaseApprovalLiveEvidence: Record<
+  WalletProviderQaScenarioId,
+  WalletProviderQaLiveEvidenceStatus
+> = {
+  "eoa-extension-connect": "ready",
+  "extension-not-installed-error": "ready",
+  "portkey-aa-connect": "ready",
+  "unsupported-wallet-error": "ready",
+  "wrong-chain-error": "ready",
+};
 
 const walletProviderEvidenceProviderLabels: Record<WalletProviderQaScenarioId, LocalizedText> = {
   "eoa-extension-connect": localized("Portkey EOA Extension", "Portkey EOA 插件", "Portkey EOA 擴充套件"),
@@ -4102,6 +4116,13 @@ export const createWalletProviderEvidenceAllApprovedSampleSnapshot = (
   version: 1,
 });
 
+export const createWalletProviderEvidenceReleaseApprovalSnapshot = (
+  capturedAt = walletProviderEvidenceReleaseApprovalCapturedAt,
+): WalletProviderEvidenceRecoverySnapshot => ({
+  ...createWalletProviderEvidenceAllApprovedSampleSnapshot(capturedAt),
+  source: "local_storage",
+});
+
 export const serializeWalletProviderEvidenceRecoverySnapshot = (
   intake: WalletProviderEvidenceIntake,
   source: WalletProviderEvidenceRecoverySource = "in_memory_action",
@@ -4556,9 +4577,9 @@ const summarizeProviderEvidenceRegistry = (
 
 export const createProviderEvidenceRegistry = (
   campaign: CampaignShellDetail,
+  walletProviderQaGate: WalletProviderQaReadinessGate = createWalletProviderQaReadinessGate(campaign.walletSessions),
 ): ProviderEvidenceRegistry => {
   const verificationPipeline = createVerificationPipelineReadinessGate(campaign);
-  const walletProviderQaGate = createWalletProviderQaReadinessGate(campaign.walletSessions);
   const exportReadiness = createExportConfirmationReadinessGate(campaign);
   const aiContentPack = createAiContentPackWorkbench(campaign);
   const entries = [
@@ -19832,27 +19853,30 @@ export const createAdminOpsReadModel = (
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const aiReportHandoff = createAiReportHandoffSurface(aiOptimization);
   const competitorWatch = createCompetitorWatchSurface(campaign);
-  const walletProviderQaGate = createWalletProviderQaReadinessGate(campaign.walletSessions);
-  const walletProviderEvidenceIntake = createWalletProviderEvidenceIntake(walletProviderQaGate);
-  const walletProviderEvidenceApprovalAudit = createWalletProviderEvidenceApprovalAudit(
-    walletProviderEvidenceIntake,
+  const walletProviderQaGate = createWalletProviderQaReadinessGate(
+    campaign.walletSessions,
+    walletProviderEvidenceReleaseApprovalLiveEvidence,
+  );
+  const walletProviderEvidenceRecovery = recoverWalletProviderEvidenceState(
+    campaign,
     walletProviderQaGate,
+    createWalletProviderEvidenceReleaseApprovalSnapshot(),
+    {
+      source: "local_storage",
+      storageState: "available",
+    },
   );
-  const walletProviderEvidenceReleaseReadiness = createWalletProviderEvidenceReleaseReadiness(
-    walletProviderEvidenceApprovalAudit,
-  );
-  const walletProviderEvidenceCloseoutPackage = createWalletProviderEvidenceCloseoutPackage(
-    walletProviderEvidenceReleaseReadiness,
-  );
-  const walletProviderEvidenceRequestPacket = createWalletProviderEvidenceRequestPacket(
-    walletProviderEvidenceCloseoutPackage,
-  );
+  const walletProviderEvidenceIntake = walletProviderEvidenceRecovery.intake;
+  const walletProviderEvidenceApprovalAudit = walletProviderEvidenceRecovery.approvalAudit;
+  const walletProviderEvidenceReleaseReadiness = walletProviderEvidenceRecovery.releaseReadiness;
+  const walletProviderEvidenceCloseoutPackage = walletProviderEvidenceRecovery.closeoutPackage;
+  const walletProviderEvidenceRequestPacket = walletProviderEvidenceRecovery.requestPacket;
   const walletProviderEvidenceActivation = createWalletProviderEvidenceActivation(
     walletProviderEvidenceRequestPacket,
     walletProviderEvidenceReleaseReadiness,
   );
   const aelfWebLoginAdapterReadiness = createAelfWebLoginAdapterReadiness(campaign.walletSessions);
-  const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
+  const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign, walletProviderQaGate);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
   const riskIntelligence = createRiskIntelligenceReviewSurface(campaign);
   const antiSybilV2GraphReadiness = createAntiSybilV2GraphReadiness(campaign);
