@@ -2405,6 +2405,77 @@ export interface ContractClaimActorApprovalSummary {
   highestRiskLevel: RiskLevel;
 }
 
+export type ContractClaimEligibilityLineageRowId =
+  | "participant-eligibility-source"
+  | "exported-list-lineage"
+  | "task-evidence-linkage"
+  | "wallet-account-lineage"
+  | "risk-review-lineage"
+  | "claim-proof-source"
+  | "stale-export-prevention"
+  | "no-custody-no-distribution-boundary";
+
+export interface ContractClaimEligibilityLineageRow {
+  id: ContractClaimEligibilityLineageRowId;
+  label: LocalizedText;
+  state: ContractClaimPreapprovalGateState;
+  ownerRole: OwnerRole;
+  riskLevel: RiskLevel;
+  dependency: LocalizedText;
+  evidenceRequired: LocalizedText;
+  lineageGap: LocalizedText;
+  residualRisk: LocalizedText;
+  nextAction: LocalizedText;
+  sourceSurface: LocalizedText;
+  blocksEligibilityLineageApproval: boolean;
+}
+
+export interface ContractClaimEligibilityLineageApprovalSummary {
+  totalRows: number;
+  readyRows: number;
+  reviewRequiredRows: number;
+  blockedRows: number;
+  approvalBlocked: boolean;
+  eligibilityLineageApproved: false;
+  participantApprovalGranted: false;
+  claimExecutionEnabled: false;
+  topRowId: ContractClaimEligibilityLineageRowId;
+  topNextAction: LocalizedText;
+  highestRiskLevel: RiskLevel;
+}
+
+export interface ContractClaimEligibilityLineageApprovalReadiness {
+  campaignId: string;
+  summary: ContractClaimEligibilityLineageApprovalSummary;
+  rows: ContractClaimEligibilityLineageRow[];
+  sourceContext: {
+    participantApproval: LocalizedText;
+    participantOperations: LocalizedText;
+    exportReadiness: LocalizedText;
+    deliveryAcceptance: LocalizedText;
+    securityReview: LocalizedText;
+    threatModelApproval: LocalizedText;
+    contractTransparency: LocalizedText;
+  };
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  eligibilityLineageApproved: false;
+  participantApprovalGranted: false;
+  claimExecutionEnabled: false;
+  noContractWrite: true;
+  noClaimExecution: true;
+  noWalletSigning: true;
+  noProviderCall: true;
+  noStorageWrite: true;
+  noExportGeneration: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  noBranchAutomation: true;
+  noIssueAutomation: true;
+  noPrAutomation: true;
+  noMissionAutomation: true;
+}
+
 export type ContractClaimParticipantApprovalCheckId =
   | "eligibility-lineage"
   | "wallet-account-binding"
@@ -2447,6 +2518,7 @@ export interface ContractClaimParticipantApprovalReadiness {
   campaignId: string;
   summary: ContractClaimParticipantApprovalSummary;
   checks: ContractClaimParticipantApprovalCheck[];
+  eligibilityLineageApprovalReadiness: ContractClaimEligibilityLineageApprovalReadiness;
   sourceContext: {
     actorApproval: LocalizedText;
     threatModelApproval: LocalizedText;

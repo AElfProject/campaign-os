@@ -105,6 +105,7 @@ import type {
   ContractClaimActorApprovalRowId,
   ContractClaimAdminApprovalItemId,
   ContractClaimCustodyLegalItemId,
+  ContractClaimEligibilityLineageRowId,
   ContractClaimExecutionApprovalItemId,
   ContractClaimParticipantApprovalCheckId,
   ContractClaimPreapprovalGateId,
@@ -1569,6 +1570,7 @@ describe("Campaign OS domain foundation", () => {
     const repeated = createContractClaimPreapprovalPackage(campaignDetail)
       .actorApprovalReadiness.participantApprovalReadiness;
     const readiness = preapproval.actorApprovalReadiness.participantApprovalReadiness;
+    const eligibilityLineageReadiness = readiness.eligibilityLineageApprovalReadiness;
     const participantActor = preapproval.actorApprovalReadiness.actors.find((actor) => actor.id === "participant");
     const checkIds: ContractClaimParticipantApprovalCheckId[] = [
       "eligibility-lineage",
@@ -1581,11 +1583,96 @@ describe("Campaign OS domain foundation", () => {
       "no-custody-no-distribution-boundary",
     ];
     const checksById = Object.fromEntries(readiness.checks.map((check) => [check.id, check]));
+    const eligibilityLineageRowIds: ContractClaimEligibilityLineageRowId[] = [
+      "participant-eligibility-source",
+      "exported-list-lineage",
+      "task-evidence-linkage",
+      "wallet-account-lineage",
+      "risk-review-lineage",
+      "claim-proof-source",
+      "stale-export-prevention",
+      "no-custody-no-distribution-boundary",
+    ];
+    const eligibilityLineageRowsById = Object.fromEntries(
+      eligibilityLineageReadiness.rows.map((row) => [row.id, row]),
+    );
 
     expect(repeated).toEqual(readiness);
     expect(readiness.campaignId).toBe(campaignDetail.id);
     expect(readiness.checks.map((check) => check.id)).toEqual(checkIds);
     expect(new Set(readiness.checks.map((check) => check.id)).size).toBe(checkIds.length);
+    expect(eligibilityLineageReadiness.campaignId).toBe(campaignDetail.id);
+    expect(eligibilityLineageReadiness.rows.map((row) => row.id)).toEqual(eligibilityLineageRowIds);
+    expect(new Set(eligibilityLineageReadiness.rows.map((row) => row.id)).size).toBe(
+      eligibilityLineageRowIds.length,
+    );
+    expect(eligibilityLineageReadiness.summary).toMatchObject({
+      totalRows: 8,
+      readyRows: 1,
+      reviewRequiredRows: 2,
+      blockedRows: 5,
+      approvalBlocked: true,
+      eligibilityLineageApproved: false,
+      participantApprovalGranted: false,
+      claimExecutionEnabled: false,
+      topRowId: "participant-eligibility-source",
+      highestRiskLevel: "high",
+    });
+    expect(eligibilityLineageReadiness.nextAction).toEqual(eligibilityLineageReadiness.summary.topNextAction);
+    expect(eligibilityLineageReadiness.summary.topNextAction).toEqual(
+      eligibilityLineageRowsById["participant-eligibility-source"]?.nextAction,
+    );
+    expect(eligibilityLineageRowsById["participant-eligibility-source"]).toMatchObject({
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      riskLevel: "high",
+      blocksEligibilityLineageApproval: true,
+    });
+    expect(eligibilityLineageRowsById["exported-list-lineage"]?.lineageGap["en-US"]).toContain(
+      "claim eligibility",
+    );
+    expect(eligibilityLineageRowsById["task-evidence-linkage"]?.lineageGap["en-US"]).toContain(
+      "claim proof",
+    );
+    expect(eligibilityLineageRowsById["wallet-account-lineage"]).toMatchObject({
+      state: "review_required",
+      ownerRole: "internal_operator",
+      riskLevel: "medium",
+    });
+    expect(eligibilityLineageRowsById["risk-review-lineage"]).toMatchObject({
+      state: "review_required",
+      ownerRole: "internal_operator",
+      riskLevel: "medium",
+    });
+    expect(eligibilityLineageRowsById["claim-proof-source"]?.lineageGap["en-US"]).toContain("proof");
+    expect(eligibilityLineageRowsById["stale-export-prevention"]?.residualRisk["en-US"]).toContain(
+      "stale exported list",
+    );
+    expect(eligibilityLineageRowsById["no-custody-no-distribution-boundary"]).toMatchObject({
+      state: "ready",
+      ownerRole: "project_owner",
+      riskLevel: "low",
+      blocksEligibilityLineageApproval: true,
+    });
+    expect(eligibilityLineageReadiness.boundary["en-US"]).toContain(
+      "Eligibility lineage approval and participant approval remain blocked",
+    );
+    expect(eligibilityLineageReadiness.sourceContext.participantApproval["en-US"]).toContain("eligibility-lineage");
+    expect(eligibilityLineageReadiness.sourceContext.participantOperations["en-US"]).toContain(
+      "Participant Operations",
+    );
+    expect(eligibilityLineageReadiness.sourceContext.exportReadiness["en-US"]).toContain(
+      "Export Confirmation Readiness",
+    );
+    expect(eligibilityLineageReadiness.sourceContext.securityReview["en-US"]).toContain(
+      "Security Review Readiness",
+    );
+    expect(eligibilityLineageReadiness.sourceContext.threatModelApproval["en-US"]).toContain(
+      "Threat Model Approval Readiness",
+    );
+    expect(eligibilityLineageReadiness.sourceContext.contractTransparency["en-US"]).toContain(
+      "Contract transparency",
+    );
     expect(readiness.summary).toMatchObject({
       totalChecks: readiness.checks.length,
       readyChecks: readiness.checks.filter((check) => check.state === "ready").length,
@@ -1606,7 +1693,15 @@ describe("Campaign OS domain foundation", () => {
       blocksParticipantApproval: true,
     });
     expect(checksById["eligibility-lineage"]?.abusePath["en-US"]).toContain("bypass eligibility");
-    expect(checksById["eligibility-lineage"]?.sourceSurface["en-US"]).toContain("eligibility-proof-abuse");
+    expect(checksById["eligibility-lineage"]?.sourceSurface["en-US"]).toContain(
+      "Eligibility Lineage Approval Readiness",
+    );
+    expect(checksById["eligibility-lineage"]?.nextAction).toEqual(
+      eligibilityLineageReadiness.summary.topNextAction,
+    );
+    expect(checksById["eligibility-lineage"]?.evidenceRequired).toEqual(
+      eligibilityLineageRowsById["participant-eligibility-source"]?.evidenceRequired,
+    );
     expect(checksById["wallet-account-binding"]).toMatchObject({
       state: "review_required",
       ownerRole: "internal_operator",
@@ -1665,6 +1760,43 @@ describe("Campaign OS domain foundation", () => {
     expect(readiness.noIssueAutomation).toBe(true);
     expect(readiness.noPrAutomation).toBe(true);
     expect(readiness.noMissionAutomation).toBe(true);
+    expect(eligibilityLineageReadiness.eligibilityLineageApproved).toBe(false);
+    expect(eligibilityLineageReadiness.participantApprovalGranted).toBe(false);
+    expect(eligibilityLineageReadiness.claimExecutionEnabled).toBe(false);
+    expect(eligibilityLineageReadiness.noContractWrite).toBe(true);
+    expect(eligibilityLineageReadiness.noClaimExecution).toBe(true);
+    expect(eligibilityLineageReadiness.noWalletSigning).toBe(true);
+    expect(eligibilityLineageReadiness.noProviderCall).toBe(true);
+    expect(eligibilityLineageReadiness.noStorageWrite).toBe(true);
+    expect(eligibilityLineageReadiness.noExportGeneration).toBe(true);
+    expect(eligibilityLineageReadiness.noRewardCustody).toBe(true);
+    expect(eligibilityLineageReadiness.noRewardDistribution).toBe(true);
+    expect(eligibilityLineageReadiness.noBranchAutomation).toBe(true);
+    expect(eligibilityLineageReadiness.noIssueAutomation).toBe(true);
+    expect(eligibilityLineageReadiness.noPrAutomation).toBe(true);
+    expect(eligibilityLineageReadiness.noMissionAutomation).toBe(true);
+
+    for (const row of eligibilityLineageReadiness.rows) {
+      expectCoreLocalizedText(row.label);
+      expectCoreLocalizedText(row.dependency);
+      expectCoreLocalizedText(row.evidenceRequired);
+      expectCoreLocalizedText(row.lineageGap);
+      expectCoreLocalizedText(row.residualRisk);
+      expectCoreLocalizedText(row.nextAction);
+      expectCoreLocalizedText(row.sourceSurface);
+    }
+
+    for (const unsafeKey of [
+      "privateKey",
+      "signature",
+      "transactionId",
+      "contractRoot",
+      "downloadUrl",
+      "storageUrl",
+    ]) {
+      expect(hasOwnKeyDeep(eligibilityLineageReadiness, unsafeKey)).toBe(false);
+      expect(JSON.stringify(eligibilityLineageReadiness)).not.toContain(`"${unsafeKey}"`);
+    }
 
     for (const check of readiness.checks) {
       expectCoreLocalizedText(check.label);
