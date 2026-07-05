@@ -2282,6 +2282,66 @@ describe("Campaign OS local API service facade", () => {
     expect(serviceBoundary["en-US"]).toContain("No live API");
   });
 
+  it("serves API usage commercialization readiness with local-only boundaries", () => {
+    const readiness = service.getApiUsageCommercializationReadiness();
+
+    expect(readiness.ok).toBe(true);
+    expect(readiness.boundary["en-US"]).toContain("No live API");
+    expect(readiness.payload?.candidates.map((candidate) => candidate.skillId)).toEqual([
+      "verify_task",
+      "check_eligibility",
+      "get_campaign_analytics",
+      "export_winners",
+      "generate_campaign_posts",
+      "summarize_campaign",
+      "list_campaigns",
+      "get_campaign_detail",
+    ]);
+    expect(readiness.payload?.boundary["en-US"]).toContain("No live API gateway");
+    expect(readiness.payload?.boundary["en-US"]).toContain("billing");
+    expect(readiness.payload?.rewardBoundary["en-US"]).toContain("does not custody rewards");
+    expect(readiness.payload?.rewardBoundary["en-US"]).toContain("aelf-funded reward subsidies");
+    expect(readiness.payload?.summary).toMatchObject({
+      missingCandidateCount: 0,
+      productionReadyCount: 0,
+      totalCandidates: readiness.payload?.candidates.length,
+    });
+
+    const verifyTask = readiness.payload?.candidates.find((candidate) => candidate.skillId === "verify_task");
+    const exportWinners = readiness.payload?.candidates.find((candidate) => candidate.skillId === "export_winners");
+
+    expect(verifyTask).toMatchObject({
+      authKeyReadiness: expect.objectContaining({ state: "blocked" }),
+      rateLimitPolicy: expect.objectContaining({ state: "blocked" }),
+      readiness: "blocked",
+      reviewState: "blocked",
+    });
+    expect(exportWinners).toMatchObject({
+      billingHandoff: expect.objectContaining({ state: "blocked" }),
+      readiness: "blocked",
+      reviewState: "blocked",
+    });
+
+    for (const unsafe of [
+      "apiKey",
+      "token",
+      "privateKey",
+      "signedPayload",
+      "transactionId",
+      "contractRoot",
+      "fileUrl",
+      "webhookSecret",
+      "billingCustomerId",
+      "invoiceId",
+      "paymentId",
+      "ipAddress",
+      "deviceFingerprint",
+      "mutationId",
+    ]) {
+      expect(hasOwnKeyDeep(readiness.payload, unsafe)).toBe(false);
+    }
+  });
+
   it("invokes representative API Skills through a traceable local envelope", () => {
     const createCampaignPayload = {
       duration: "2026-07-01/2026-07-14",

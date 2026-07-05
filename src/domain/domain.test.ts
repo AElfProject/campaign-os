@@ -8,6 +8,7 @@ import {
   createAiOpsKpiAdoptionConsole,
   createAiOptimizationWorkflow,
   createAntiSybilV2GraphReadiness,
+  createApiUsageCommercializationReadiness,
   createCompanionContractReadiness,
   createContractClaimAdminApprovalReadiness,
   createContractClaimPreapprovalPackage,
@@ -7478,6 +7479,91 @@ describe("Campaign OS domain foundation", () => {
       "mutationId",
     ]) {
       expect(serialized).not.toContain(unsafe);
+    }
+  });
+
+  it("derives API usage commercialization readiness from API Skill contracts without live side effects", () => {
+    const surface = createApiUsageCommercializationReadiness();
+    const repeated = createApiUsageCommercializationReadiness();
+    const commandCenter = createProjectCampaignCommandCenter(campaignDetail);
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const candidateIds = surface.candidates.map((candidate) => candidate.skillId);
+
+    expect(surface).toEqual(repeated);
+    expect(commandCenter.apiUsageCommercializationReadiness).toEqual(surface);
+    expect(adminOps.apiUsageCommercializationReadiness).toEqual(surface);
+    expect(candidateIds).toEqual([
+      "verify_task",
+      "check_eligibility",
+      "get_campaign_analytics",
+      "export_winners",
+      "generate_campaign_posts",
+      "summarize_campaign",
+      "list_campaigns",
+      "get_campaign_detail",
+    ]);
+    expect(surface.missingCandidateIds).toEqual([]);
+    expect(surface.summary).toMatchObject({
+      missingCandidateCount: 0,
+      productionReadyCount: 0,
+      totalCandidates: surface.candidates.length,
+    });
+    expect(surface.summary.blockedCount).toBe(
+      surface.candidates.filter((candidate) => candidate.readiness === "blocked").length,
+    );
+    expect(surface.summary.reviewRequiredCount).toBe(
+      surface.candidates.filter((candidate) => candidate.readiness === "review_required").length,
+    );
+    expect(surface.summary.highRiskCount).toBe(
+      surface.candidates.filter((candidate) => candidate.riskLevel === "high").length,
+    );
+    expect(surface.summary.billingHandoffCount).toBe(
+      surface.candidates.filter((candidate) =>
+        candidate.billingHandoff.state === "blocked" || candidate.billingHandoff.state === "review_required"
+      ).length,
+    );
+    expect(surface.candidates.every((candidate) =>
+      candidate.authKeyReadiness.label["en-US"] &&
+      candidate.quotaPolicy.label["en-US"] &&
+      candidate.meteringStatus.label["en-US"] &&
+      candidate.rateLimitPolicy.label["en-US"] &&
+      candidate.billingHandoff.label["en-US"] &&
+      candidate.nextAction["en-US"] &&
+      candidate.boundary["en-US"].includes("No live API gateway")
+    )).toBe(true);
+    expect(surface.candidates.find((candidate) => candidate.skillId === "verify_task")).toMatchObject({
+      readiness: "blocked",
+      reviewState: "blocked",
+      riskLevel: "high",
+    });
+    expect(surface.candidates.find((candidate) => candidate.skillId === "export_winners")).toMatchObject({
+      readiness: "blocked",
+      reviewState: "blocked",
+      riskLevel: "high",
+    });
+    expect(surface.rewardBoundary["en-US"]).toContain("does not custody rewards");
+    expect(surface.rewardBoundary["en-US"]).toContain("aelf-funded reward subsidies");
+    expect(surface.boundary["en-US"]).toContain("No live API gateway");
+    expect(surface.boundary["en-US"]).toContain("billing");
+    expect(surface.boundary["en-US"]).toContain("reward distribution");
+
+    for (const unsafe of [
+      "apiKey",
+      "token",
+      "privateKey",
+      "signedPayload",
+      "transactionId",
+      "contractRoot",
+      "fileUrl",
+      "webhookSecret",
+      "billingCustomerId",
+      "invoiceId",
+      "paymentId",
+      "ipAddress",
+      "deviceFingerprint",
+      "mutationId",
+    ]) {
+      expect(hasOwnKeyDeep(surface, unsafe)).toBe(false);
     }
   });
 

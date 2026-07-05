@@ -3155,6 +3155,7 @@ export interface ProjectCampaignCommandCenter {
   lifecycleOperations: CampaignLifecycleOperations;
   launchConsoleCampaignBundles: LaunchConsoleCampaignBundleSurface;
   portfolioCommercialReadiness: ProjectPortfolioCommercialReadiness;
+  apiUsageCommercializationReadiness: ApiUsageCommercializationReadinessSurface;
   boundary: LocalizedText;
 }
 
@@ -4546,6 +4547,89 @@ export interface ApiSkillInvocationCoverage {
   safety: ApiSkillInvocationSafety;
 }
 
+export type ApiUsageConsumerTier =
+  | "internal_ops"
+  | "ecosystem_partner"
+  | "external_partner"
+  | "public_api_future";
+export type ApiUsageCommercialModel =
+  | "free_ecosystem_mode"
+  | "partner_campaign_fee"
+  | "premium_analytics"
+  | "api_usage";
+export type ApiUsageReadinessState = "local_ready" | "review_required" | "blocked";
+export type ApiUsagePrerequisiteState =
+  | "not_started"
+  | "review_required"
+  | "blocked"
+  | "local_ready";
+export type ApiUsageOwnerRole =
+  | "project_owner"
+  | "internal_operator"
+  | "commercial_reviewer"
+  | "security_reviewer"
+  | "billing_reviewer";
+export type ApiUsageReviewState =
+  | "not_started"
+  | "in_review"
+  | "blocked"
+  | "ready_for_future_approval";
+export type ApiUsagePrerequisiteId =
+  | "auth_key_readiness"
+  | "quota_policy"
+  | "metering_status"
+  | "rate_limit_policy"
+  | "billing_handoff";
+
+export interface ApiUsagePrerequisite {
+  id: ApiUsagePrerequisiteId;
+  label: LocalizedText;
+  state: ApiUsagePrerequisiteState;
+  evidence: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface ApiUsageCommercializationCandidate {
+  skillId: ApiSkillId;
+  label: LocalizedText;
+  description: LocalizedText;
+  consumerTier: ApiUsageConsumerTier;
+  commercialModel: ApiUsageCommercialModel;
+  readiness: ApiUsageReadinessState;
+  riskLevel: ApiSkillRiskLevel;
+  authKeyReadiness: ApiUsagePrerequisite;
+  quotaPolicy: ApiUsagePrerequisite;
+  meteringStatus: ApiUsagePrerequisite;
+  rateLimitPolicy: ApiUsagePrerequisite;
+  billingHandoff: ApiUsagePrerequisite;
+  ownerRole: ApiUsageOwnerRole;
+  reviewState: ApiUsageReviewState;
+  evidence: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface ApiUsageCommercializationSummary {
+  totalCandidates: number;
+  productionReadyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  highRiskCount: number;
+  billingHandoffCount: number;
+  missingCandidateCount: number;
+  topNextAction: LocalizedText;
+  rewardBoundary: LocalizedText;
+}
+
+export interface ApiUsageCommercializationReadinessSurface {
+  summary: ApiUsageCommercializationSummary;
+  candidates: ApiUsageCommercializationCandidate[];
+  missingCandidateIds: ApiSkillId[];
+  boundary: LocalizedText;
+  rewardBoundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export type LaunchConsoleBundleStage = "pre_launch" | "launch" | "post_launch";
 export type LaunchConsoleBundleStatus =
   | "ready"
@@ -4784,6 +4868,7 @@ export interface AdminOpsReadModel {
   aiOptimization: AiOptimizationWorkflow;
   aiReportHandoff: AiOpsReportHandoffSurface;
   competitorWatch: CompetitorWatchSurface;
+  apiUsageCommercializationReadiness: ApiUsageCommercializationReadinessSurface;
   ecosystemMetrics: EcosystemMetricRow[];
   exportBatch: ExportBatchSummary;
   exportFulfillmentReadiness: ExportFulfillmentReadiness;
