@@ -10,6 +10,7 @@ import {
   createAntiSybilV2GraphReadiness,
   createCompanionContractReadiness,
   createContractClaimPreapprovalPackage,
+  createContractClaimSecurityReviewReadiness,
   createContractImpactReviewModel,
   createContractStatusMappingReadiness,
   createContractTransparencyMonitor,
@@ -98,6 +99,7 @@ import {
 import type {
   ContractCampaignStatus,
   ContractClaimPreapprovalGateId,
+  ContractClaimSecurityReviewItemId,
   WalletProviderEvidenceArtifact,
   WalletProviderEvidenceIntake,
   WalletProviderEvidenceReviewArtifactReference,
@@ -1154,6 +1156,98 @@ describe("Campaign OS domain foundation", () => {
     ]) {
       expect(hasOwnKeyDeep(preapproval, unsafeKey)).toBe(false);
       expect(JSON.stringify(preapproval)).not.toContain(`"${unsafeKey}"`);
+    }
+  });
+
+  it("derives contract claim security review readiness without approving claim execution", () => {
+    const readiness = createContractClaimSecurityReviewReadiness(campaignDetail);
+    const repeated = createContractClaimSecurityReviewReadiness(campaignDetail);
+    const preapproval = createContractClaimPreapprovalPackage(campaignDetail);
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const securityGate = preapproval.gates.find((gate) => gate.id === "security-review");
+    const itemsById = Object.fromEntries(readiness.items.map((item) => [item.id, item]));
+    const requiredItemIds: ContractClaimSecurityReviewItemId[] = [
+      "claim-threat-model",
+      "eligibility-proof-handling",
+      "pause-dispute-semantics",
+      "rollback-behavior",
+      "double-claim-replay-prevention",
+      "role-access-review",
+      "external-audit-handoff",
+      "no-custody-no-distribution-boundary",
+    ];
+
+    expect(repeated).toEqual(readiness);
+    expect(preapproval.securityReviewReadiness).toEqual(readiness);
+    expect(adminOps.contractClaimPreapprovalPackage.securityReviewReadiness).toEqual(readiness);
+    expect(readiness.campaignId).toBe(campaignDetail.id);
+    expect(readiness.items.map((item) => item.id)).toEqual(requiredItemIds);
+    expect(readiness.summary).toMatchObject({
+      totalItems: readiness.items.length,
+      readyItems: readiness.items.filter((item) => item.state === "ready").length,
+      reviewRequiredItems: readiness.items.filter((item) => item.state === "review_required").length,
+      blockedItems: readiness.items.filter((item) => item.state === "blocked").length,
+      approvalBlocked: true,
+      topItemId: "claim-threat-model",
+    });
+    expect(readiness.nextAction).toEqual(readiness.summary.topNextAction);
+    expect(readiness.boundary["en-US"]).toContain("No contract write");
+    expect(readiness.boundary["en-US"]).toContain("claim execution");
+    expect(readiness.boundary["en-US"]).toContain("reward custody");
+    expect(readiness.boundary["en-US"]).toContain("reward distribution");
+
+    expect(itemsById["claim-threat-model"]).toMatchObject({
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      blocksApproval: true,
+    });
+    expect(itemsById["claim-threat-model"]?.evidenceNeeded["en-US"]).toContain("threat model");
+    expect(itemsById["eligibility-proof-handling"]?.evidenceNeeded["en-US"]).toContain("eligibility proof");
+    expect(itemsById["pause-dispute-semantics"]?.dependency["en-US"]).toContain("Pause");
+    expect(itemsById["rollback-behavior"]?.nextAction["en-US"]).toContain("rollback");
+    expect(itemsById["double-claim-replay-prevention"]?.evidenceNeeded["en-US"]).toContain("replay");
+    expect(itemsById["role-access-review"]?.sourceSurface["en-US"]).toContain("Admin Contract Review Center");
+    expect(itemsById["external-audit-handoff"]?.state).toBe("blocked");
+    expect(itemsById["no-custody-no-distribution-boundary"]).toMatchObject({
+      state: "ready",
+      ownerRole: "project_owner",
+      blocksApproval: true,
+    });
+
+    expect(securityGate).toMatchObject({
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      blocksClaimExecution: true,
+    });
+    expect(securityGate?.evidenceNeeded["en-US"]).toContain("Security Review Readiness");
+    expect(securityGate?.evidenceNeeded["en-US"]).toContain("claim-threat-model");
+    expect(securityGate?.nextAction).toEqual(readiness.summary.topNextAction);
+
+    expect(preapproval.claimExecutionEnabled).toBe(false);
+    expect(preapproval.noContractWrite).toBe(true);
+    expect(preapproval.noClaimExecution).toBe(true);
+    expect(preapproval.noRewardCustody).toBe(true);
+    expect(preapproval.noRewardDistribution).toBe(true);
+
+    for (const item of readiness.items) {
+      expectCoreLocalizedText(item.label);
+      expectCoreLocalizedText(item.dependency);
+      expectCoreLocalizedText(item.evidenceNeeded);
+      expectCoreLocalizedText(item.nextAction);
+      expectCoreLocalizedText(item.sourceSurface);
+      expectCoreLocalizedText(item.boundary);
+    }
+
+    for (const unsafeKey of [
+      "privateKey",
+      "signature",
+      "transactionId",
+      "contractRoot",
+      "downloadUrl",
+      "storageUrl",
+    ]) {
+      expect(hasOwnKeyDeep(readiness, unsafeKey)).toBe(false);
+      expect(JSON.stringify(readiness)).not.toContain(`"${unsafeKey}"`);
     }
   });
 

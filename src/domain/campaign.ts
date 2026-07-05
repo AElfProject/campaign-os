@@ -73,6 +73,8 @@ import type {
   ContractClaimPreapprovalGate,
   ContractClaimPreapprovalGateState,
   ContractClaimPreapprovalPackage,
+  ContractClaimSecurityReviewItem,
+  ContractClaimSecurityReviewReadiness,
   ContractChangeMatrixRow,
   ContractStatusMappingClassification,
   ContractStatusMappingReadiness,
@@ -12861,6 +12863,47 @@ const contractClaimPreapprovalSummary = (
   };
 };
 
+const contractClaimSecurityReviewBoundary = localized(
+  "No contract write, claim execution, wallet signing, provider call, storage write, export generation, reward custody, or reward distribution is executed by this security review readiness projection.",
+  "此安全审核 readiness projection 不会执行合约写入、claim 执行、钱包签名、provider 调用、存储写入、导出生成、奖励托管或发奖。",
+  "此安全審核 readiness projection 不會執行合約寫入、claim 執行、錢包簽名、provider 呼叫、儲存寫入、匯出生成、獎勵託管或發獎。",
+);
+
+const contractClaimSecurityReviewStatePriority: Record<ContractClaimPreapprovalGateState, number> = {
+  blocked: 0,
+  review_required: 1,
+  ready: 2,
+};
+
+const contractClaimSecurityReviewItem = (
+  item: ContractClaimSecurityReviewItem,
+): ContractClaimSecurityReviewItem => item;
+
+const contractClaimSecurityReviewSummary = (
+  items: readonly ContractClaimSecurityReviewItem[],
+): ContractClaimSecurityReviewReadiness["summary"] => {
+  const topItem = [...items].sort((left, right) => {
+    const stateDelta = contractClaimSecurityReviewStatePriority[left.state] -
+      contractClaimSecurityReviewStatePriority[right.state];
+
+    if (stateDelta !== 0) {
+      return stateDelta;
+    }
+
+    return items.findIndex((item) => item.id === left.id) - items.findIndex((item) => item.id === right.id);
+  })[0] ?? items[0];
+
+  return {
+    approvalBlocked: items.some((item) => item.blocksApproval && item.state !== "ready"),
+    blockedItems: items.filter((item) => item.state === "blocked").length,
+    readyItems: items.filter((item) => item.state === "ready").length,
+    reviewRequiredItems: items.filter((item) => item.state === "review_required").length,
+    topItemId: topItem.id,
+    topNextAction: topItem.nextAction,
+    totalItems: items.length,
+  };
+};
+
 const contractClaimPreapprovalSourceContext = ({
   closeout,
   deliveryAcceptance,
@@ -12901,6 +12944,266 @@ const contractClaimPreapprovalSourceContext = ({
   };
 };
 
+export const createContractClaimSecurityReviewReadiness = (
+  campaign: CampaignShellDetail,
+  context: {
+    closeout?: PostCampaignCloseout;
+    deliveryAcceptance?: DeliveryAcceptanceConsole;
+    reviewCenter?: AdminContractReviewCenter;
+    transparency?: ContractTransparencyMonitor;
+  } = {},
+): ContractClaimSecurityReviewReadiness => {
+  const reviewCenter = context.reviewCenter ?? createAdminContractReviewCenter(campaign);
+  const transparency = context.transparency ?? createContractTransparencyMonitor(campaign);
+  const closeout = context.closeout ?? createPostCampaignCloseout(campaign);
+  const walletProviderQaGate = createWalletProviderQaReadinessGate(
+    campaign.walletSessions,
+    walletProviderEvidenceReleaseApprovalLiveEvidence,
+  );
+  const deliveryAcceptance = context.deliveryAcceptance ?? createDeliveryAcceptanceConsole(
+    createWalletProviderEvidenceReleaseReadiness(
+      createWalletProviderEvidenceApprovalAudit(
+        createWalletProviderEvidenceIntake(
+          walletProviderQaGate,
+        ),
+        walletProviderQaGate,
+      ),
+    ),
+    createExportFulfillmentReadiness(campaign),
+    createCompanionContractReadiness(
+      createContractInterfaceMatrixConsole(),
+      transparency,
+    ),
+  );
+  const claimTransparencyLane = transparency.lanes.find((lane) => lane.id === "reward-custody-claim");
+  const contractClaimGate = reviewCenter.checklist.find((item) => item.id === "contract-claim-gate");
+  const auditStatus = reviewCenter.checklist.find((item) => item.id === "audit-status");
+  const claimAcceptanceRow = deliveryAcceptance.solutionSets
+    .flatMap((solutionSet) => solutionSet.rows)
+    .find((row) => row.id === "v02-contract-claim-reward-custody");
+  const items = [
+    contractClaimSecurityReviewItem({
+      id: "claim-threat-model",
+      label: localized("Claim threat model", "Claim 威胁模型", "Claim 威脅模型"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      dependency: localized(
+        "Threat modeling must cover escrow assumptions, proof tampering, duplicate claims, emergency pause, and non-custodial reward responsibility.",
+        "威胁建模必须覆盖 escrow 假设、proof 篡改、重复 claim、紧急暂停和非托管奖励责任。",
+        "威脅建模必須覆蓋 escrow 假設、proof 竄改、重複 claim、緊急暫停和非託管獎勵責任。",
+      ),
+      evidenceNeeded: localized(
+        "Security threat model evidence is required before any claim execution implementation.",
+        "任何 claim 执行实现前必须具备安全威胁模型证据。",
+        "任何 claim 執行實作前必須具備安全威脅模型證據。",
+      ),
+      nextAction: localized(
+        "Open security review by preparing the claim threat model and keeping claim execution blocked.",
+        "通过准备 claim 威胁模型开启安全审核，并保持 claim 执行阻断。",
+        "透過準備 claim 威脅模型開啟安全審核，並保持 claim 執行阻斷。",
+      ),
+      sourceSurface: localized(
+        "Contract Transparency Monitor: reward-custody-claim",
+        "合约透明度监控：reward-custody-claim",
+        "合約透明度監控：reward-custody-claim",
+      ),
+      boundary: contractClaimSecurityReviewBoundary,
+      blocksApproval: true,
+    }),
+    contractClaimSecurityReviewItem({
+      id: "eligibility-proof-handling",
+      label: localized("Eligibility proof handling", "资格 proof 处理", "資格 proof 處理"),
+      state: "review_required",
+      ownerRole: "contract_reviewer",
+      dependency: localized(
+        "Eligibility root, proof verification, replay handling, and export batch lineage must be reviewed together.",
+        "资格 root、proof 验证、replay 处理和 export batch lineage 必须一起审核。",
+        "資格 root、proof 驗證、replay 處理和 export batch lineage 必須一起審核。",
+      ),
+      evidenceNeeded: localized(
+        `eligibility proof evidence must show roots prove exported-list integrity only; source evidence: ${claimTransparencyLane?.sourceEvidence["en-US"] ?? "not linked"}.`,
+        `资格 proof 证据必须证明 root 只证明导出名单完整性；source evidence：${claimTransparencyLane?.sourceEvidence["zh-CN"] ?? "未关联"}。`,
+        `資格 proof 證據必須證明 root 只證明匯出名單完整性；source evidence：${claimTransparencyLane?.sourceEvidence["zh-TW"] ?? "未關聯"}。`,
+      ),
+      nextAction: localized(
+        "Review eligibility proof handling before any claim verifier is implemented.",
+        "实现任何 claim verifier 前先审核资格 proof 处理。",
+        "實作任何 claim verifier 前先審核資格 proof 處理。",
+      ),
+      sourceSurface: localized("EligibilityRoot + Export evidence", "EligibilityRoot + Export 证据", "EligibilityRoot + Export 證據"),
+      boundary: contractClaimSecurityReviewBoundary,
+      blocksApproval: true,
+    }),
+    contractClaimSecurityReviewItem({
+      id: "pause-dispute-semantics",
+      label: localized("Pause and dispute semantics", "暂停与争议语义", "暫停與爭議語義"),
+      state: "review_required",
+      ownerRole: "internal_operator",
+      dependency: localized(
+        "Pause, dispute, failed claim, duplicate claim, and manual review semantics must be approved before live claim controls exist.",
+        "真实 claim 控件出现前，必须批准暂停、争议、失败 claim、重复 claim 和人工审核语义。",
+        "真實 claim 控件出現前，必須批准暫停、爭議、失敗 claim、重複 claim 和人工審核語義。",
+      ),
+      evidenceNeeded: closeout.summary.topAction,
+      nextAction: localized(
+        "Draft the pause/dispute runbook as review evidence only.",
+        "仅以审核证据形式起草暂停/争议 runbook。",
+        "僅以審核證據形式起草暫停/爭議 runbook。",
+      ),
+      sourceSurface: localized("Post-campaign closeout", "活动后 closeout", "活動後 closeout"),
+      boundary: contractClaimSecurityReviewBoundary,
+      blocksApproval: true,
+    }),
+    contractClaimSecurityReviewItem({
+      id: "rollback-behavior",
+      label: localized("Rollback behavior", "回滚行为", "回滾行為"),
+      state: "review_required",
+      ownerRole: "internal_operator",
+      dependency: localized(
+        "Rollback behavior must cover failed deployment, paused campaign, revoked root, disputed winner, and disabled claim UI states.",
+        "回滚行为必须覆盖部署失败、活动暂停、root 撤销、中奖争议和禁用 claim UI 状态。",
+        "回滾行為必須覆蓋部署失敗、活動暫停、root 撤銷、中獎爭議和停用 claim UI 狀態。",
+      ),
+      evidenceNeeded: localized(
+        `Closeout top gate ${closeout.summary.topGateId} is ${closeout.status}; rollback evidence remains review-only.`,
+        `Closeout top gate ${closeout.summary.topGateId} 为 ${closeout.status}；回滚证据仍为只读审核项。`,
+        `Closeout top gate ${closeout.summary.topGateId} 為 ${closeout.status}；回滾證據仍為唯讀審核項。`,
+      ),
+      nextAction: localized(
+        "Document rollback behavior before enabling any execution approval branch.",
+        "启用任何执行批准分支前先记录回滚行为。",
+        "啟用任何執行批准分支前先記錄回滾行為。",
+      ),
+      sourceSurface: localized("Post-campaign closeout", "活动后 closeout", "活動後 closeout"),
+      boundary: contractClaimSecurityReviewBoundary,
+      blocksApproval: true,
+    }),
+    contractClaimSecurityReviewItem({
+      id: "double-claim-replay-prevention",
+      label: localized("Double-claim and replay prevention", "重复 claim 与 replay 防护", "重複 claim 與 replay 防護"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      dependency: localized(
+        "Security approval must cover duplicate claim prevention, replay protection, idempotent proofs, and indexer reconciliation.",
+        "安全批准必须覆盖重复 claim 防护、replay 保护、幂等 proof 和 indexer 对账。",
+        "安全批准必須覆蓋重複 claim 防護、replay 保護、冪等 proof 和 indexer 對帳。",
+      ),
+      evidenceNeeded: localized(
+        "replay and duplicate-claim analysis is absent for claim mode.",
+        "claim mode 缺少 replay 和重复 claim 分析。",
+        "claim mode 缺少 replay 和重複 claim 分析。",
+      ),
+      nextAction: localized(
+        "Add replay and duplicate-claim analysis to the security review package.",
+        "将 replay 和重复 claim 分析加入安全审核 package。",
+        "將 replay 和重複 claim 分析加入安全審核 package。",
+      ),
+      sourceSurface: localized(
+        "Contract Claim Preapproval Package",
+        "Contract Claim 预批准 Package",
+        "Contract Claim 預批准 Package",
+      ),
+      boundary: contractClaimSecurityReviewBoundary,
+      blocksApproval: true,
+    }),
+    contractClaimSecurityReviewItem({
+      id: "role-access-review",
+      label: localized("Role and access review", "角色与访问审核", "角色與存取審核"),
+      state: "review_required",
+      ownerRole: "contract_reviewer",
+      dependency: localized(
+        "Admin, project owner, verifier, exporter, pauser, and contract reviewer roles must be reviewed for claim execution.",
+        "必须针对 claim 执行审核 Admin、项目方、verifier、exporter、pauser 与 contract reviewer 角色。",
+        "必須針對 claim 執行審核 Admin、專案方、verifier、exporter、pauser 與 contract reviewer 角色。",
+      ),
+      evidenceNeeded: contractClaimGate?.detail ?? localized(
+        "Contract claim gate remains blocked.",
+        "合约 claim gate 仍保持阻断。",
+        "合約 claim gate 仍保持阻斷。",
+      ),
+      nextAction: reviewCenter.nextAction,
+      sourceSurface: localized(
+        "Admin Contract Review Center: contract-claim-gate",
+        "管理员合约审核中心：contract-claim-gate",
+        "管理員合約審核中心：contract-claim-gate",
+      ),
+      boundary: contractClaimSecurityReviewBoundary,
+      blocksApproval: true,
+    }),
+    contractClaimSecurityReviewItem({
+      id: "external-audit-handoff",
+      label: localized("External audit handoff", "外部审计交接", "外部審計交接"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      dependency: localized(
+        "External auditors must receive claim contract scope, proof rules, pause semantics, and no-custody boundaries before implementation approval.",
+        "执行批准前，外部审计方必须收到 claim contract 范围、proof 规则、暂停语义和不托管边界。",
+        "執行批准前，外部審計方必須收到 claim contract 範圍、proof 規則、暫停語義和不託管邊界。",
+      ),
+      evidenceNeeded: auditStatus?.detail ?? localized(
+        "External audit report is absent for claim mode.",
+        "claim mode 缺少外部审计报告。",
+        "claim mode 缺少外部審計報告。",
+      ),
+      nextAction: localized(
+        "Prepare external audit handoff before claim-mode engineering starts.",
+        "claim-mode 工程开始前先准备外部审计交接。",
+        "claim-mode 工程開始前先準備外部審計交接。",
+      ),
+      sourceSurface: localized(
+        "Admin Contract Review Center: audit-status",
+        "管理员合约审核中心：audit-status",
+        "管理員合約審核中心：audit-status",
+      ),
+      boundary: contractClaimSecurityReviewBoundary,
+      blocksApproval: true,
+    }),
+    contractClaimSecurityReviewItem({
+      id: "no-custody-no-distribution-boundary",
+      label: localized(
+        "No-custody/no-distribution boundary",
+        "不托管/不发奖边界",
+        "不託管/不發獎邊界",
+      ),
+      state: "ready",
+      ownerRole: "project_owner",
+      dependency: localized(
+        "Security review must preserve the current MVP boundary: Campaign OS does not custody or distribute rewards.",
+        "安全审核必须保留当前 MVP 边界：Campaign OS 不托管也不发奖。",
+        "安全審核必須保留目前 MVP 邊界：Campaign OS 不託管也不發獎。",
+      ),
+      evidenceNeeded: claimAcceptanceRow?.evidenceSummary ?? noRewardCustodyBoundary,
+      nextAction: localized(
+        "Preserve no-custody/no-distribution language in every claim security review.",
+        "在每次 claim 安全审核中保留不托管/不发奖表述。",
+        "在每次 claim 安全審核中保留不託管/不發獎表述。",
+      ),
+      sourceSurface: localized(
+        "Delivery Acceptance + Contract Review Center",
+        "Delivery Acceptance + 合约审核中心",
+        "Delivery Acceptance + 合約審核中心",
+      ),
+      boundary: noRewardCustodyBoundary,
+      blocksApproval: true,
+    }),
+  ];
+  const summary = contractClaimSecurityReviewSummary(items);
+
+  return {
+    boundary: contractClaimSecurityReviewBoundary,
+    campaignId: campaign.id,
+    items,
+    nextAction: summary.topNextAction,
+    sourceContext: contractClaimPreapprovalSourceContext({
+      closeout,
+      deliveryAcceptance,
+      reviewCenter,
+      transparency,
+    }),
+    summary,
+  };
+};
+
 export const createContractClaimPreapprovalPackage = (
   campaign: CampaignShellDetail,
 ): ContractClaimPreapprovalPackage => {
@@ -12934,6 +13237,12 @@ export const createContractClaimPreapprovalPackage = (
   const claimAcceptanceRow = deliveryAcceptance.solutionSets
     .flatMap((solutionSet) => solutionSet.rows)
     .find((row) => row.id === "v02-contract-claim-reward-custody");
+  const securityReviewReadiness = createContractClaimSecurityReviewReadiness(campaign, {
+    closeout,
+    deliveryAcceptance,
+    reviewCenter,
+    transparency,
+  });
   const gates: ContractClaimPreapprovalGate[] = [
     contractClaimPreapprovalGate({
       id: "security-review",
@@ -12945,16 +13254,12 @@ export const createContractClaimPreapprovalPackage = (
         "安全批准必须覆盖 claim contract 威胁模型、资格 proof 处理、暂停语义和回滚行为。",
         "安全批准必須覆蓋 claim contract 威脅模型、資格 proof 處理、暫停語義和回滾行為。",
       ),
-      evidenceNeeded: claimTransparencyLane?.sourceEvidence ?? localized(
-        "Contract transparency evidence must show claim execution stays blocked.",
-        "合约透明度证据必须证明 claim 执行保持阻断。",
-        "合約透明度證據必須證明 claim 執行保持阻斷。",
+      evidenceNeeded: localized(
+        `Security Review Readiness has ${securityReviewReadiness.summary.blockedItems} blocked items and top item ${securityReviewReadiness.summary.topItemId}; claim execution stays blocked.`,
+        `Security Review Readiness 有 ${securityReviewReadiness.summary.blockedItems} 个 blocked items，top item 为 ${securityReviewReadiness.summary.topItemId}；claim 执行保持阻断。`,
+        `Security Review Readiness 有 ${securityReviewReadiness.summary.blockedItems} 個 blocked items，top item 為 ${securityReviewReadiness.summary.topItemId}；claim 執行保持阻斷。`,
       ),
-      nextAction: localized(
-        "Open security review before any future claim execution implementation.",
-        "任何未来 claim 执行实现前先开启安全审核。",
-        "任何未來 claim 執行實作前先開啟安全審核。",
-      ),
+      nextAction: securityReviewReadiness.summary.topNextAction,
       sourceSurface: localized(
         "Contract Transparency Monitor: reward-custody-claim",
         "合约透明度监控：reward-custody-claim",
@@ -13138,6 +13443,7 @@ export const createContractClaimPreapprovalPackage = (
     noStorageWrite: true,
     noWalletSigning: true,
     overallState: "blocked",
+    securityReviewReadiness,
     sourceContext: contractClaimPreapprovalSourceContext({
       closeout,
       deliveryAcceptance,

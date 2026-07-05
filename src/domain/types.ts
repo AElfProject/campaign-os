@@ -2243,6 +2243,53 @@ export interface ContractClaimPreapprovalGate {
   blocksClaimExecution: boolean;
 }
 
+export type ContractClaimSecurityReviewItemId =
+  | "claim-threat-model"
+  | "eligibility-proof-handling"
+  | "pause-dispute-semantics"
+  | "rollback-behavior"
+  | "double-claim-replay-prevention"
+  | "role-access-review"
+  | "external-audit-handoff"
+  | "no-custody-no-distribution-boundary";
+
+export interface ContractClaimSecurityReviewItem {
+  id: ContractClaimSecurityReviewItemId;
+  label: LocalizedText;
+  state: ContractClaimPreapprovalGateState;
+  ownerRole: OwnerRole;
+  dependency: LocalizedText;
+  evidenceNeeded: LocalizedText;
+  nextAction: LocalizedText;
+  sourceSurface: LocalizedText;
+  boundary: LocalizedText;
+  blocksApproval: boolean;
+}
+
+export interface ContractClaimSecurityReviewSummary {
+  totalItems: number;
+  readyItems: number;
+  reviewRequiredItems: number;
+  blockedItems: number;
+  approvalBlocked: boolean;
+  topItemId: ContractClaimSecurityReviewItemId;
+  topNextAction: LocalizedText;
+}
+
+export interface ContractClaimSecurityReviewReadiness {
+  campaignId: string;
+  summary: ContractClaimSecurityReviewSummary;
+  items: ContractClaimSecurityReviewItem[];
+  sourceContext: {
+    contractReview: LocalizedText;
+    contractTransparency: LocalizedText;
+    deliveryAcceptance: LocalizedText;
+    exportCloseout: LocalizedText;
+  };
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface ContractClaimPreapprovalSummary {
   totalGates: number;
   readyGates: number;
@@ -2259,6 +2306,7 @@ export interface ContractClaimPreapprovalPackage {
   suggestedFutureBranch: string;
   summary: ContractClaimPreapprovalSummary;
   gates: ContractClaimPreapprovalGate[];
+  securityReviewReadiness: ContractClaimSecurityReviewReadiness;
   sourceContext: {
     contractReview: LocalizedText;
     contractTransparency: LocalizedText;
