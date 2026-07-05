@@ -2406,6 +2406,72 @@ export interface ContractClaimCustodyLegalReadiness {
   noBranchAutomation: true;
 }
 
+export type ContractClaimExecutionApprovalItemId =
+  | "security-approval"
+  | "admin-approval"
+  | "contract-reviewer-approval"
+  | "custody-legal-approval"
+  | "external-audit-acceptance"
+  | "project-owner-funding"
+  | "pause-dispute-rollback-runbook"
+  | "claim-proof-duplicate-safeguards"
+  | "no-custody-no-distribution-boundary";
+
+export interface ContractClaimExecutionApprovalItem {
+  id: ContractClaimExecutionApprovalItemId;
+  label: LocalizedText;
+  state: ContractClaimPreapprovalGateState;
+  ownerRole: OwnerRole;
+  sourceGateId: ContractClaimPreapprovalGateId;
+  sourceSurface: LocalizedText;
+  dependency: LocalizedText;
+  evidenceRequired: LocalizedText;
+  blockingReason: LocalizedText;
+  launchImpact: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+  blocksExecutionApproval: boolean;
+}
+
+export interface ContractClaimExecutionApprovalSummary {
+  totalItems: number;
+  readyItems: number;
+  reviewRequiredItems: number;
+  blockedItems: number;
+  launchBlockingItems: number;
+  executionApprovalBlocked: boolean;
+  claimExecutionEnabled: false;
+  topItemId: ContractClaimExecutionApprovalItemId;
+  topNextAction: LocalizedText;
+}
+
+export interface ContractClaimExecutionApprovalReadiness {
+  campaignId: string;
+  summary: ContractClaimExecutionApprovalSummary;
+  items: ContractClaimExecutionApprovalItem[];
+  sourceContext: {
+    preapproval: LocalizedText;
+    securityReview: LocalizedText;
+    adminApproval: LocalizedText;
+    custodyLegal: LocalizedText;
+    deliveryAcceptance: LocalizedText;
+    contractTransparency: LocalizedText;
+  };
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  executionApproved: false;
+  claimExecutionEnabled: false;
+  noContractWrite: true;
+  noClaimExecution: true;
+  noWalletSigning: true;
+  noProviderCall: true;
+  noStorageWrite: true;
+  noExportGeneration: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  noBranchAutomation: true;
+}
+
 export interface ContractClaimPreapprovalSummary {
   totalGates: number;
   readyGates: number;
@@ -2425,6 +2491,7 @@ export interface ContractClaimPreapprovalPackage {
   securityReviewReadiness: ContractClaimSecurityReviewReadiness;
   adminApprovalReadiness: ContractClaimAdminApprovalReadiness;
   custodyLegalReadiness: ContractClaimCustodyLegalReadiness;
+  executionApprovalReadiness: ContractClaimExecutionApprovalReadiness;
   sourceContext: {
     contractReview: LocalizedText;
     contractTransparency: LocalizedText;
