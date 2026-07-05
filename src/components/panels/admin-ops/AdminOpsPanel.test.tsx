@@ -989,7 +989,10 @@ describe("Admin/Ops shell", () => {
     expect(within(storageApprovalReadiness).getAllByText("Approval blocked").length).toBeGreaterThan(0);
     expect(within(storageApprovalReadiness).getByText("Storage export column coverage")).toBeInTheDocument();
     expect(within(storageApprovalReadiness).getAllByText("Exact CSV column order").length).toBeGreaterThan(0);
-    expect(within(storageApprovalReadiness).getByText(exportColumnContract)).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getByText("wallet_source")).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getByText("locale_preference")).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getByText("risk_flags")).toBeInTheDocument();
+    expect(within(storageApprovalReadiness).getByText("evidence_hashes")).toBeInTheDocument();
     expect(within(storageApprovalReadiness).getByText("Storage write enabled = false")).toBeInTheDocument();
     expect(within(storageApprovalReadiness).getByText("Download URL enabled = false")).toBeInTheDocument();
     expect(within(storageApprovalReadiness).getByText("No real export file")).toBeInTheDocument();
@@ -2364,7 +2367,10 @@ describe("Admin/Ops shell", () => {
     expect(within(zhStorageApprovalReadiness).getAllByText("Storage provider 批准").length).toBeGreaterThan(1);
     expect(within(zhStorageApprovalReadiness).getAllByText("批准已阻断").length).toBeGreaterThan(0);
     expect(within(zhStorageApprovalReadiness).getByText("Storage 导出字段覆盖")).toBeInTheDocument();
-    expect(within(zhStorageApprovalReadiness).getByText(exportColumnContract)).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText("wallet_source")).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText("locale_preference")).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText("risk_flags")).toBeInTheDocument();
+    expect(within(zhStorageApprovalReadiness).getByText("evidence_hashes")).toBeInTheDocument();
     expect(within(zhStorageApprovalReadiness).getByText("存储写入启用 = false")).toBeInTheDocument();
     expect(within(zhStorageApprovalReadiness).getByText("下载链接启用 = false")).toBeInTheDocument();
     expect(within(zhStorageApprovalReadiness).getByText("不生成真实导出文件")).toBeInTheDocument();

@@ -9000,10 +9000,12 @@ export const AdminOpsPanel = ({
                   </div>
                 ))}
               </div>
-              <div style={scrollContainerStyle}>
-                <code style={contractCodeStyle}>
-                  {exportStorageFulfillmentApprovalReadiness.columnCoverage.expectedColumns.join(",")}
-                </code>
+              <div style={chipListStyle}>
+                {exportStorageFulfillmentApprovalReadiness.columnCoverage.expectedColumns.map((column) => (
+                  <span key={column} style={chipStyle}>
+                    {column}
+                  </span>
+                ))}
               </div>
               <p style={boundaryStyle}>
                 {getLocalizedText(exportStorageFulfillmentApprovalReadiness.columnCoverage.boundary, locale)}
