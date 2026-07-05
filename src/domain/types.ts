@@ -2347,6 +2347,65 @@ export interface ContractClaimAdminApprovalReadiness {
   noBranchAutomation: true;
 }
 
+export type ContractClaimCustodyLegalItemId =
+  | "custody-model"
+  | "legal-terms"
+  | "project-owner-funding"
+  | "payout-responsibility"
+  | "escrow-exclusion"
+  | "dispute-ownership"
+  | "jurisdiction-compliance"
+  | "no-custody-no-distribution-boundary";
+
+export interface ContractClaimCustodyLegalItem {
+  id: ContractClaimCustodyLegalItemId;
+  label: LocalizedText;
+  state: ContractClaimPreapprovalGateState;
+  ownerRole: OwnerRole;
+  sourceGateId: ContractClaimPreapprovalGateId;
+  dependency: LocalizedText;
+  evidenceRequired: LocalizedText;
+  blockingReason: LocalizedText;
+  nextAction: LocalizedText;
+  sourceSurface: LocalizedText;
+  boundary: LocalizedText;
+  blocksCustodyLegalApproval: boolean;
+}
+
+export interface ContractClaimCustodyLegalSummary {
+  totalItems: number;
+  readyItems: number;
+  reviewRequiredItems: number;
+  blockedItems: number;
+  custodyLegalApprovalBlocked: boolean;
+  topItemId: ContractClaimCustodyLegalItemId;
+  topNextAction: LocalizedText;
+}
+
+export interface ContractClaimCustodyLegalReadiness {
+  campaignId: string;
+  summary: ContractClaimCustodyLegalSummary;
+  items: ContractClaimCustodyLegalItem[];
+  sourceContext: {
+    preapproval: LocalizedText;
+    securityReview: LocalizedText;
+    adminApproval: LocalizedText;
+    deliveryAcceptance: LocalizedText;
+    contractTransparency: LocalizedText;
+    postCampaignCloseout: LocalizedText;
+  };
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  custodyLegalApproved: false;
+  claimExecutionEnabled: false;
+  noContractWrite: true;
+  noClaimExecution: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  noStorageWrite: true;
+  noBranchAutomation: true;
+}
+
 export interface ContractClaimPreapprovalSummary {
   totalGates: number;
   readyGates: number;
@@ -2365,6 +2424,7 @@ export interface ContractClaimPreapprovalPackage {
   gates: ContractClaimPreapprovalGate[];
   securityReviewReadiness: ContractClaimSecurityReviewReadiness;
   adminApprovalReadiness: ContractClaimAdminApprovalReadiness;
+  custodyLegalReadiness: ContractClaimCustodyLegalReadiness;
   sourceContext: {
     contractReview: LocalizedText;
     contractTransparency: LocalizedText;
