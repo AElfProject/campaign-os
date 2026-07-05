@@ -2197,6 +2197,48 @@ export const AdminOpsPanel = ({
   const contractClaimThreatModelApprovalTopSection = contractClaimThreatModelApprovalReadiness.sections.find(
     (section) => section.id === contractClaimThreatModelApprovalReadiness.summary.topSectionId,
   ) ?? contractClaimThreatModelApprovalReadiness.sections[0];
+  const contractClaimActorApprovalReadiness = contractClaimPreapprovalPackage.actorApprovalReadiness;
+  const contractClaimActorApprovalSummary = [
+    {
+      id: "total",
+      label: copy.totalActors,
+      value: contractClaimActorApprovalReadiness.summary.totalActors,
+      state: "ready" as const,
+    },
+    {
+      id: "blocked",
+      label: copy.blockedActors,
+      value: contractClaimActorApprovalReadiness.summary.blockedActors,
+      state: contractClaimActorApprovalReadiness.summary.blockedActors > 0 ? "blocker" as const : "ready" as const,
+    },
+    {
+      id: "review-required",
+      label: copy.reviewRequiredItems,
+      value: contractClaimActorApprovalReadiness.summary.reviewRequiredActors,
+      state: contractClaimActorApprovalReadiness.summary.reviewRequiredActors > 0
+        ? "warning" as const
+        : "ready" as const,
+    },
+    {
+      id: "highest-risk",
+      label: copy.highestRiskLevel,
+      value: contractClaimActorApprovalReadiness.summary.highestRiskLevel,
+      state: contractClaimActorApprovalReadiness.summary.highestRiskLevel === "high"
+        ? "blocker" as const
+        : contractClaimActorApprovalReadiness.summary.highestRiskLevel === "medium"
+          ? "warning" as const
+          : "ready" as const,
+    },
+    {
+      id: "top-actor",
+      label: copy.topActorBlocker,
+      value: contractClaimActorApprovalReadiness.summary.topActorId,
+      state: contractClaimActorApprovalReadiness.summary.approvalBlocked ? "blocker" as const : "ready" as const,
+    },
+  ];
+  const contractClaimActorApprovalTopActor = contractClaimActorApprovalReadiness.actors.find(
+    (actor) => actor.id === contractClaimActorApprovalReadiness.summary.topActorId,
+  ) ?? contractClaimActorApprovalReadiness.actors[0];
 
   const companionReadinessSummary = [
     {
@@ -3848,6 +3890,112 @@ export const AdminOpsPanel = ({
                 </p>
                 <p style={wrapTextStyle}>
                   {copy.localOnlyBoundary}: {getLocalizedText(section.boundary, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+        </article>
+        <article aria-label={copy.contractClaimActorApprovalReadiness} style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.contractClaimActorApprovalBoundary}</p>
+              <strong>{copy.contractClaimActorApprovalReadiness}</strong>
+              <p style={mutedTextStyle}>{copy.contractClaimActorApprovalSubtitle}</p>
+            </div>
+            <PublishStateBadge
+              label={contractClaimActorApprovalReadiness.summary.approvalBlocked
+                ? copy.actorApprovalBlocked
+                : copy.readyActions}
+              state={contractClaimActorApprovalReadiness.summary.approvalBlocked ? "blocker" : "ready"}
+            />
+          </div>
+          <p style={boundaryStyle}>
+            {copy.nonLiveBoundary}: {getLocalizedText(contractClaimActorApprovalReadiness.boundary, locale)}
+          </p>
+          <div style={compactGridStyle}>
+            {contractClaimActorApprovalSummary.map((item) => (
+              <article key={item.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <p style={labelStyle}>{item.label}</p>
+                  <PublishStateBadge label={String(item.value)} state={item.state} />
+                </div>
+                <p style={valueStyle}>{item.value}</p>
+              </article>
+            ))}
+          </div>
+          {contractClaimActorApprovalTopActor ? (
+            <article style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.topActorBlocker}</p>
+                  <strong>{getLocalizedText(contractClaimActorApprovalTopActor.label, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={contractClaimPreapprovalGateLabel(contractClaimActorApprovalTopActor.state, copy)}
+                  state={contractClaimPreapprovalGateState(contractClaimActorApprovalTopActor.state)}
+                />
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.ownerRole}: {readableCode(contractClaimActorApprovalTopActor.ownerRole)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.riskLevel}: {contractClaimActorApprovalTopActor.riskLevel}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.authorityBoundary}: {getLocalizedText(contractClaimActorApprovalTopActor.authorityBoundary, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.evidenceNeeded}: {getLocalizedText(contractClaimActorApprovalTopActor.evidenceRequired, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(contractClaimActorApprovalTopActor.nextAction, locale)}
+              </p>
+            </article>
+          ) : null}
+          <div style={gridStyle}>
+            {contractClaimActorApprovalReadiness.actors.map((actor) => (
+              <article key={actor.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <div style={stackStyle}>
+                    <p style={labelStyle}>{actor.id}</p>
+                    <strong>{getLocalizedText(actor.label, locale)}</strong>
+                  </div>
+                  <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <PublishStateBadge
+                      label={contractClaimPreapprovalGateLabel(actor.state, copy)}
+                      state={contractClaimPreapprovalGateState(actor.state)}
+                    />
+                    {actor.blocksActorApproval
+                      ? <Badge label={copy.actorApprovalBlocked} tone="warning" />
+                      : null}
+                  </span>
+                </div>
+                <p style={wrapTextStyle}>
+                  {copy.ownerRole}: {readableCode(actor.ownerRole)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.riskLevel}: {actor.riskLevel}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.responsibility}: {getLocalizedText(actor.responsibility, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.authorityBoundary}: {getLocalizedText(actor.authorityBoundary, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.abusePath}: {getLocalizedText(actor.abusePath, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.evidenceNeeded}: {getLocalizedText(actor.evidenceRequired, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.residualRisk}: {getLocalizedText(actor.residualRisk, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.nextAction}: {getLocalizedText(actor.nextAction, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.linkedSurface}: {getLocalizedText(actor.sourceSurface, locale)}
                 </p>
               </article>
             ))}
