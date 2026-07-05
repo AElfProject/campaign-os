@@ -2594,6 +2594,10 @@ export interface ResidualGapMissionQueueItem {
   boundary: LocalizedText;
 }
 
+export interface ResidualGapMissionQueueContext {
+  contractClaimPreapprovalPackage?: ContractClaimPreapprovalPackage;
+}
+
 export interface ResidualGapMissionQueueSummary {
   totalItems: number;
   launchBlockingItems: number;
