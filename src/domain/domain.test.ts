@@ -105,6 +105,7 @@ import type {
   ContractClaimAdminApprovalItemId,
   ContractClaimCustodyLegalItemId,
   ContractClaimExecutionApprovalItemId,
+  ContractClaimParticipantApprovalCheckId,
   ContractClaimPreapprovalGateId,
   ContractClaimSecurityReviewItemId,
   ContractClaimThreatModelSectionId,
@@ -1442,6 +1443,12 @@ describe("Campaign OS domain foundation", () => {
     expect(readiness.campaignId).toBe(campaignDetail.id);
     expect(readiness.actors.map((actor) => actor.id)).toEqual(requiredActorIds);
     expect(new Set(readiness.actors.map((actor) => actor.id)).size).toBe(requiredActorIds.length);
+    expect(readiness.participantApprovalReadiness.summary).toMatchObject({
+      approvalBlocked: true,
+      participantApprovalGranted: false,
+      claimExecutionEnabled: false,
+      topCheckId: "eligibility-lineage",
+    });
     expect(readiness.summary).toMatchObject({
       totalActors: readiness.actors.length,
       readyActors: readiness.actors.filter((actor) => actor.state === "ready").length,
@@ -1464,6 +1471,8 @@ describe("Campaign OS domain foundation", () => {
     expect(actorsById.participant?.responsibility["en-US"]).toContain("future claimant");
     expect(actorsById.participant?.authorityBoundary["en-US"]).toContain("no Campaign OS claim execution");
     expect(actorsById.participant?.abusePath["en-US"]).toContain("bypass eligibility");
+    expect(actorsById.participant?.residualRisk["en-US"]).toContain("Participant Approval Readiness");
+    expect(actorsById.participant?.sourceSurface["en-US"]).toBe("Participant Approval Readiness");
     expect(actorsById.participant?.nextAction).toEqual(readiness.summary.topNextAction);
     expect(actorsById["project-owner"]?.responsibility["en-US"]).toContain("funds rewards");
     expect(actorsById["contract-reviewer"]?.evidenceRequired["en-US"]).toContain("audit status");
@@ -1539,6 +1548,131 @@ describe("Campaign OS domain foundation", () => {
       expectCoreLocalizedText(actor.residualRisk);
       expectCoreLocalizedText(actor.nextAction);
       expectCoreLocalizedText(actor.sourceSurface);
+    }
+
+    for (const unsafeKey of [
+      "privateKey",
+      "signature",
+      "transactionId",
+      "contractRoot",
+      "downloadUrl",
+      "storageUrl",
+    ]) {
+      expect(hasOwnKeyDeep(readiness, unsafeKey)).toBe(false);
+      expect(JSON.stringify(readiness)).not.toContain(`"${unsafeKey}"`);
+    }
+  });
+
+  it("derives contract claim participant approval readiness without granting participant approval", () => {
+    const preapproval = createContractClaimPreapprovalPackage(campaignDetail);
+    const repeated = createContractClaimPreapprovalPackage(campaignDetail)
+      .actorApprovalReadiness.participantApprovalReadiness;
+    const readiness = preapproval.actorApprovalReadiness.participantApprovalReadiness;
+    const participantActor = preapproval.actorApprovalReadiness.actors.find((actor) => actor.id === "participant");
+    const checkIds: ContractClaimParticipantApprovalCheckId[] = [
+      "eligibility-lineage",
+      "wallet-account-binding",
+      "proof-replay-prevention",
+      "duplicate-claim-prevention",
+      "dispute-manual-review",
+      "payout-pressure-boundary",
+      "claimant-communication",
+      "no-custody-no-distribution-boundary",
+    ];
+    const checksById = Object.fromEntries(readiness.checks.map((check) => [check.id, check]));
+
+    expect(repeated).toEqual(readiness);
+    expect(readiness.campaignId).toBe(campaignDetail.id);
+    expect(readiness.checks.map((check) => check.id)).toEqual(checkIds);
+    expect(new Set(readiness.checks.map((check) => check.id)).size).toBe(checkIds.length);
+    expect(readiness.summary).toMatchObject({
+      totalChecks: readiness.checks.length,
+      readyChecks: readiness.checks.filter((check) => check.state === "ready").length,
+      reviewRequiredChecks: readiness.checks.filter((check) => check.state === "review_required").length,
+      blockedChecks: readiness.checks.filter((check) => check.state === "blocked").length,
+      approvalBlocked: true,
+      participantApprovalGranted: false,
+      claimExecutionEnabled: false,
+      topCheckId: "eligibility-lineage",
+      highestRiskLevel: "high",
+    });
+    expect(readiness.nextAction).toEqual(readiness.summary.topNextAction);
+    expect(readiness.summary.topNextAction).toEqual(checksById["eligibility-lineage"]?.nextAction);
+    expect(checksById["eligibility-lineage"]).toMatchObject({
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      riskLevel: "high",
+      blocksParticipantApproval: true,
+    });
+    expect(checksById["eligibility-lineage"]?.abusePath["en-US"]).toContain("bypass eligibility");
+    expect(checksById["eligibility-lineage"]?.sourceSurface["en-US"]).toContain("eligibility-proof-abuse");
+    expect(checksById["wallet-account-binding"]).toMatchObject({
+      state: "review_required",
+      ownerRole: "internal_operator",
+      riskLevel: "medium",
+      blocksParticipantApproval: true,
+    });
+    expect(checksById["proof-replay-prevention"]?.abusePath["en-US"]).toContain("reuse proof");
+    expect(checksById["duplicate-claim-prevention"]?.residualRisk["en-US"]).toContain("Duplicate-claim");
+    expect(checksById["dispute-manual-review"]?.nextAction["en-US"]).not.toHaveLength(0);
+    expect(checksById["payout-pressure-boundary"]?.abusePath["en-US"]).toContain("payout");
+    expect(checksById["claimant-communication"]?.residualRisk["en-US"]).toContain("non-live boundary");
+    expect(checksById["no-custody-no-distribution-boundary"]).toMatchObject({
+      state: "ready",
+      ownerRole: "project_owner",
+      riskLevel: "low",
+      blocksParticipantApproval: true,
+    });
+    expect(checksById["no-custody-no-distribution-boundary"]?.residualRisk["en-US"]).toContain(
+      "does not approve participants",
+    );
+    expect(readiness.boundary["en-US"]).toContain("Participant approval remains blocked");
+    expect(readiness.boundary["zh-CN"]).toContain("参与者批准保持阻断");
+    expect(readiness.boundary["zh-TW"]).toContain("參與者批准保持阻斷");
+    expect(readiness.sourceContext.actorApproval["en-US"]).toContain("participant");
+    expect(readiness.sourceContext.participantOperations["en-US"]).toContain("Participant Operations");
+    expect(readiness.sourceContext.executionApproval["en-US"]).toContain("Execution Approval Readiness remains blocked");
+    expect(participantActor?.sourceSurface["en-US"]).toBe("Participant Approval Readiness");
+    expect(participantActor?.nextAction).toEqual(readiness.summary.topNextAction);
+    expect(preapproval.actorApprovalReadiness.summary).toMatchObject({
+      approvalBlocked: true,
+      actorApprovalGranted: false,
+      claimExecutionEnabled: false,
+      topActorId: "participant",
+    });
+    expect(preapproval.threatModelApprovalReadiness.summary).toMatchObject({
+      approvalBlocked: true,
+      threatModelApproved: false,
+      claimExecutionEnabled: false,
+    });
+    expect(preapproval.securityReviewReadiness.summary.approvalBlocked).toBe(true);
+    expect(preapproval.executionApprovalReadiness.summary).toMatchObject({
+      executionApprovalBlocked: true,
+      claimExecutionEnabled: false,
+    });
+    expect(readiness.participantApprovalGranted).toBe(false);
+    expect(readiness.claimExecutionEnabled).toBe(false);
+    expect(readiness.noContractWrite).toBe(true);
+    expect(readiness.noClaimExecution).toBe(true);
+    expect(readiness.noWalletSigning).toBe(true);
+    expect(readiness.noProviderCall).toBe(true);
+    expect(readiness.noStorageWrite).toBe(true);
+    expect(readiness.noExportGeneration).toBe(true);
+    expect(readiness.noRewardCustody).toBe(true);
+    expect(readiness.noRewardDistribution).toBe(true);
+    expect(readiness.noBranchAutomation).toBe(true);
+    expect(readiness.noIssueAutomation).toBe(true);
+    expect(readiness.noPrAutomation).toBe(true);
+    expect(readiness.noMissionAutomation).toBe(true);
+
+    for (const check of readiness.checks) {
+      expectCoreLocalizedText(check.label);
+      expectCoreLocalizedText(check.dependency);
+      expectCoreLocalizedText(check.evidenceRequired);
+      expectCoreLocalizedText(check.abusePath);
+      expectCoreLocalizedText(check.residualRisk);
+      expectCoreLocalizedText(check.nextAction);
+      expectCoreLocalizedText(check.sourceSurface);
     }
 
     for (const unsafeKey of [
