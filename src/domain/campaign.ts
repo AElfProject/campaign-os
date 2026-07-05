@@ -72,6 +72,8 @@ import type {
   ContractImpactReviewOption,
   ContractClaimAdminApprovalItem,
   ContractClaimAdminApprovalReadiness,
+  ContractClaimCustodyLegalItem,
+  ContractClaimCustodyLegalReadiness,
   ContractClaimPreapprovalGate,
   ContractClaimPreapprovalGateState,
   ContractClaimPreapprovalPackage,
@@ -13270,6 +13272,41 @@ const contractClaimAdminApprovalSummary = (
   };
 };
 
+const contractClaimCustodyLegalBoundary = localized(
+  "Review-only contract claim custody/legal readiness. Custody/legal approval is not granted; no contract write, claim execution, reward custody, reward distribution, storage write, branch automation, wallet signing, provider call, export generation, or payout operation is executed.",
+  "仅用于审核的 contract claim 托管/法律 readiness。托管/法律批准尚未授予；不会执行合约写入、claim 执行、奖励托管、发奖、存储写入、分支自动化、钱包签名、provider 调用、导出生成或 payout 操作。",
+  "僅用於審核的 contract claim 託管/法律 readiness。託管/法律批准尚未授予；不會執行合約寫入、claim 執行、獎勵託管、發獎、儲存寫入、分支自動化、錢包簽名、provider 呼叫、匯出生成或 payout 操作。",
+);
+
+const contractClaimCustodyLegalItem = (
+  item: ContractClaimCustodyLegalItem,
+): ContractClaimCustodyLegalItem => item;
+
+const contractClaimCustodyLegalSummary = (
+  items: readonly ContractClaimCustodyLegalItem[],
+): ContractClaimCustodyLegalReadiness["summary"] => {
+  const topItem = [...items].sort((left, right) => {
+    const stateDelta = contractClaimPreapprovalStatePriority[left.state] -
+      contractClaimPreapprovalStatePriority[right.state];
+
+    if (stateDelta !== 0) {
+      return stateDelta;
+    }
+
+    return items.findIndex((item) => item.id === left.id) - items.findIndex((item) => item.id === right.id);
+  })[0] ?? items[0];
+
+  return {
+    blockedItems: items.filter((item) => item.state === "blocked").length,
+    custodyLegalApprovalBlocked: items.some((item) => item.blocksCustodyLegalApproval && item.state !== "ready"),
+    readyItems: items.filter((item) => item.state === "ready").length,
+    reviewRequiredItems: items.filter((item) => item.state === "review_required").length,
+    topItemId: topItem.id,
+    topNextAction: topItem.nextAction,
+    totalItems: items.length,
+  };
+};
+
 const contractClaimPreapprovalSourceContext = ({
   closeout,
   deliveryAcceptance,
@@ -13799,6 +13836,296 @@ export const createContractClaimSecurityReviewReadiness = (
   };
 };
 
+export const createContractClaimCustodyLegalReadiness = ({
+  adminApprovalReadiness,
+  campaign,
+  closeout,
+  deliveryAcceptance,
+  gates,
+  securityReviewReadiness,
+  sourceContext,
+  transparency,
+}: {
+  adminApprovalReadiness: ContractClaimAdminApprovalReadiness;
+  campaign: CampaignShellDetail;
+  closeout: PostCampaignCloseout;
+  deliveryAcceptance: DeliveryAcceptanceConsole;
+  gates: readonly ContractClaimPreapprovalGate[];
+  securityReviewReadiness: ContractClaimSecurityReviewReadiness;
+  sourceContext: ContractClaimPreapprovalPackage["sourceContext"];
+  transparency: ContractTransparencyMonitor;
+}): ContractClaimCustodyLegalReadiness => {
+  const gateById = Object.fromEntries(gates.map((gate) => [gate.id, gate]));
+  const claimAcceptanceRow = deliveryAcceptance.solutionSets
+    .flatMap((solutionSet) => solutionSet.rows)
+    .find((row) => row.id === "v02-contract-claim-reward-custody");
+  const claimTransparencyLane = transparency.lanes.find((lane) => lane.id === "reward-custody-claim");
+  const gate = (id: ContractClaimPreapprovalGate["id"]) => gateById[id];
+  const gateDependency = (id: ContractClaimPreapprovalGate["id"]) =>
+    gate(id)?.dependency ?? localized("Gate dependency is not available.", "门禁依赖不可用。", "門禁依賴不可用。");
+  const gateEvidence = (id: ContractClaimPreapprovalGate["id"]) =>
+    gate(id)?.evidenceNeeded ?? localized("Gate evidence is not available.", "门禁证据不可用。", "門禁證據不可用。");
+  const gateNextAction = (id: ContractClaimPreapprovalGate["id"]) =>
+    gate(id)?.nextAction ?? localized(
+      "Keep custody/legal approval blocked.",
+      "保持托管/法律批准阻断。",
+      "保持託管/法律批准阻斷。",
+    );
+  const gateSurface = (id: ContractClaimPreapprovalGate["id"]) =>
+    gate(id)?.sourceSurface ?? localized(
+      "Contract Claim Preapproval Package",
+      "Contract Claim 预批准 Package",
+      "Contract Claim 預批准 Package",
+    );
+  const items: ContractClaimCustodyLegalItem[] = [
+    contractClaimCustodyLegalItem({
+      id: "custody-model",
+      label: localized("Custody model", "托管模型", "託管模型"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceGateId: "custody-legal-approval",
+      dependency: localized(
+        "Legal and custody owners must approve whether any future claim mode changes reward possession, escrow, or payout responsibility.",
+        "法律与托管负责人必须批准未来 claim mode 是否改变奖励占有、escrow 或 payout 责任。",
+        "法律與託管負責人必須批准未來 claim mode 是否改變獎勵占有、escrow 或 payout 責任。",
+      ),
+      evidenceRequired: gateEvidence("custody-legal-approval"),
+      blockingReason: localized(
+        "Custody model approval is absent; Campaign OS remains non-custodial and cannot imply reward custody.",
+        "托管模型批准缺失；Campaign OS 保持非托管，不能暗示奖励托管。",
+        "託管模型批准缺失；Campaign OS 保持非託管，不能暗示獎勵託管。",
+      ),
+      nextAction: localized(
+        "Document the non-custodial custody model with legal and custody owners before any claim execution approval.",
+        "任何 claim 执行批准前，先与法律和托管负责人记录非托管模型。",
+        "任何 claim 執行批准前，先與法律和託管負責人記錄非託管模型。",
+      ),
+      sourceSurface: gateSurface("custody-legal-approval"),
+      boundary: contractClaimCustodyLegalBoundary,
+      blocksCustodyLegalApproval: true,
+    }),
+    contractClaimCustodyLegalItem({
+      id: "legal-terms",
+      label: localized("Legal terms", "法律条款", "法律條款"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceGateId: "custody-legal-approval",
+      dependency: localized(
+        "Claim-mode terms must define user eligibility, reward source, no-custody boundary, and payout liability before approval.",
+        "claim-mode 条款必须先定义用户资格、奖励来源、不托管边界和 payout 责任，才能批准。",
+        "claim-mode 條款必須先定義使用者資格、獎勵來源、不託管邊界和 payout 責任，才能批准。",
+      ),
+      evidenceRequired: localized(
+        `Custody/legal gate is ${gate("custody-legal-approval")?.state ?? "blocked"} and legal terms are not attached.`,
+        `托管/法律 gate 为 ${gate("custody-legal-approval")?.state ?? "blocked"}，法律条款尚未附加。`,
+        `託管/法律 gate 為 ${gate("custody-legal-approval")?.state ?? "blocked"}，法律條款尚未附加。`,
+      ),
+      blockingReason: localized(
+        "Legal terms are missing for claim mode, reward funding, dispute ownership, and payout responsibility.",
+        "claim mode、奖励资金、争议归属和 payout 责任缺少法律条款。",
+        "claim mode、獎勵資金、爭議歸屬和 payout 責任缺少法律條款。",
+      ),
+      nextAction: localized(
+        "Attach legal terms for claim-mode review while keeping claim execution blocked.",
+        "附加 claim-mode 审核法律条款，同时保持 claim 执行阻断。",
+        "附加 claim-mode 審核法律條款，同時保持 claim 執行阻斷。",
+      ),
+      sourceSurface: localized("Custody/legal approval gate", "托管/法律批准 gate", "託管/法律批准 gate"),
+      boundary: contractClaimCustodyLegalBoundary,
+      blocksCustodyLegalApproval: true,
+    }),
+    contractClaimCustodyLegalItem({
+      id: "project-owner-funding",
+      label: localized("Project owner reward funding", "项目方奖励资金", "專案方獎勵資金"),
+      state: "review_required",
+      ownerRole: "project_owner",
+      sourceGateId: "project-owner-reward-funding",
+      dependency: gateDependency("project-owner-reward-funding"),
+      evidenceRequired: closeout.rewardBoundary,
+      blockingReason: localized(
+        "Project owner funding confirmation is required outside Campaign OS custody.",
+        "项目方资金确认必须在 Campaign OS 托管之外完成。",
+        "專案方資金確認必須在 Campaign OS 託管之外完成。",
+      ),
+      nextAction: gateNextAction("project-owner-reward-funding"),
+      sourceSurface: gateSurface("project-owner-reward-funding"),
+      boundary: noRewardCustodyBoundary,
+      blocksCustodyLegalApproval: true,
+    }),
+    contractClaimCustodyLegalItem({
+      id: "payout-responsibility",
+      label: localized("Payout responsibility", "Payout 责任", "Payout 責任"),
+      state: "blocked",
+      ownerRole: "project_owner",
+      sourceGateId: "custody-legal-approval",
+      dependency: localized(
+        "Payout responsibility must stay with the project owner unless legal/custody approval explicitly changes it.",
+        "除非法律/托管批准明确变更，否则 payout 责任必须保留在项目方。",
+        "除非法律/託管批准明確變更，否則 payout 責任必須保留在專案方。",
+      ),
+      evidenceRequired: localized(
+        `Delivery Acceptance keeps claim/custody as ${claimAcceptanceRow?.status ?? "deferred"} with launchBlocking=${String(claimAcceptanceRow?.launchBlocking ?? false)}.`,
+        `Delivery Acceptance 将 claim/custody 保持为 ${claimAcceptanceRow?.status ?? "deferred"}，launchBlocking=${String(claimAcceptanceRow?.launchBlocking ?? false)}。`,
+        `Delivery Acceptance 將 claim/custody 保持為 ${claimAcceptanceRow?.status ?? "deferred"}，launchBlocking=${String(claimAcceptanceRow?.launchBlocking ?? false)}。`,
+      ),
+      blockingReason: localized(
+        "Payout responsibility has not been legally assigned for claim mode.",
+        "claim mode 的 payout 责任尚未完成法律归属。",
+        "claim mode 的 payout 責任尚未完成法律歸屬。",
+      ),
+      nextAction: localized(
+        "Record payout responsibility before custody/legal approval can move forward.",
+        "先记录 payout 责任，再推进托管/法律批准。",
+        "先記錄 payout 責任，再推進託管/法律批准。",
+      ),
+      sourceSurface: localized("Delivery Acceptance", "Delivery Acceptance", "Delivery Acceptance"),
+      boundary: contractClaimCustodyLegalBoundary,
+      blocksCustodyLegalApproval: true,
+    }),
+    contractClaimCustodyLegalItem({
+      id: "escrow-exclusion",
+      label: localized("Escrow exclusion", "Escrow 排除", "Escrow 排除"),
+      state: "ready",
+      ownerRole: "contract_reviewer",
+      sourceGateId: "no-custody-no-distribution-boundary",
+      dependency: localized(
+        "Current MVP scope excludes Campaign OS escrow, reward custody, and reward distribution.",
+        "当前 MVP 范围排除 Campaign OS escrow、奖励托管和发奖。",
+        "目前 MVP 範圍排除 Campaign OS escrow、獎勵託管和發獎。",
+      ),
+      evidenceRequired: noRewardCustodyBoundary,
+      blockingReason: localized(
+        "Escrow exclusion is documented, but custody/legal approval remains blocked by other items.",
+        "Escrow 排除已记录，但托管/法律批准仍被其他项阻断。",
+        "Escrow 排除已記錄，但託管/法律批准仍被其他項阻斷。",
+      ),
+      nextAction: localized(
+        "Preserve escrow exclusion in every claim-mode custody/legal review.",
+        "在每次 claim-mode 托管/法律审核中保留 escrow 排除。",
+        "在每次 claim-mode 託管/法律審核中保留 escrow 排除。",
+      ),
+      sourceSurface: gateSurface("no-custody-no-distribution-boundary"),
+      boundary: noRewardCustodyBoundary,
+      blocksCustodyLegalApproval: true,
+    }),
+    contractClaimCustodyLegalItem({
+      id: "dispute-ownership",
+      label: localized("Dispute ownership", "争议归属", "爭議歸屬"),
+      state: "review_required",
+      ownerRole: "internal_operator",
+      sourceGateId: "pause-dispute-runbook",
+      dependency: gateDependency("pause-dispute-runbook"),
+      evidenceRequired: closeout.summary.topAction,
+      blockingReason: localized(
+        "Dispute ownership for failed, duplicate, or contested claims still needs review.",
+        "失败、重复或争议 claim 的争议归属仍需审核。",
+        "失敗、重複或爭議 claim 的爭議歸屬仍需審核。",
+      ),
+      nextAction: gateNextAction("pause-dispute-runbook"),
+      sourceSurface: gateSurface("pause-dispute-runbook"),
+      boundary: contractClaimCustodyLegalBoundary,
+      blocksCustodyLegalApproval: true,
+    }),
+    contractClaimCustodyLegalItem({
+      id: "jurisdiction-compliance",
+      label: localized("Jurisdiction compliance", "司法辖区合规", "司法轄區合規"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceGateId: "custody-legal-approval",
+      dependency: localized(
+        "Legal review must confirm jurisdiction, campaign eligibility, reward classification, tax, and sanctions assumptions.",
+        "法律审核必须确认司法辖区、活动资格、奖励分类、税务和制裁假设。",
+        "法律審核必須確認司法轄區、活動資格、獎勵分類、稅務和制裁假設。",
+      ),
+      evidenceRequired: localized(
+        "Jurisdiction compliance evidence is absent for claim mode.",
+        "claim mode 缺少司法辖区合规证据。",
+        "claim mode 缺少司法轄區合規證據。",
+      ),
+      blockingReason: localized(
+        "Jurisdiction compliance is not approved, so custody/legal approval stays blocked.",
+        "司法辖区合规尚未批准，因此托管/法律批准保持阻断。",
+        "司法轄區合規尚未批准，因此託管/法律批准保持阻斷。",
+      ),
+      nextAction: localized(
+        "Attach jurisdiction compliance review before custody/legal approval can pass.",
+        "先附加司法辖区合规审核，再通过托管/法律批准。",
+        "先附加司法轄區合規審核，再通過託管/法律批准。",
+      ),
+      sourceSurface: localized("Legal review", "法律审核", "法律審核"),
+      boundary: contractClaimCustodyLegalBoundary,
+      blocksCustodyLegalApproval: true,
+    }),
+    contractClaimCustodyLegalItem({
+      id: "no-custody-no-distribution-boundary",
+      label: localized(
+        "No-custody/no-distribution boundary",
+        "不托管/不发奖边界",
+        "不託管/不發獎邊界",
+      ),
+      state: "ready",
+      ownerRole: "project_owner",
+      sourceGateId: "no-custody-no-distribution-boundary",
+      dependency: gateDependency("no-custody-no-distribution-boundary"),
+      evidenceRequired: claimAcceptanceRow?.evidenceSummary ?? noRewardCustodyBoundary,
+      blockingReason: localized(
+        "No-custody/no-distribution boundary is documented; it does not approve claim execution.",
+        "不托管/不发奖边界已记录；它不批准 claim 执行。",
+        "不託管/不發獎邊界已記錄；它不批准 claim 執行。",
+      ),
+      nextAction: gateNextAction("no-custody-no-distribution-boundary"),
+      sourceSurface: gateSurface("no-custody-no-distribution-boundary"),
+      boundary: noRewardCustodyBoundary,
+      blocksCustodyLegalApproval: true,
+    }),
+  ];
+  const summary = contractClaimCustodyLegalSummary(items);
+
+  return {
+    boundary: contractClaimCustodyLegalBoundary,
+    campaignId: campaign.id,
+    claimExecutionEnabled: false,
+    custodyLegalApproved: false,
+    items,
+    nextAction: summary.topNextAction,
+    noBranchAutomation: true,
+    noClaimExecution: true,
+    noContractWrite: true,
+    noRewardCustody: true,
+    noRewardDistribution: true,
+    noStorageWrite: true,
+    sourceContext: {
+      adminApproval: localized(
+        `Admin Approval Readiness top item is ${adminApprovalReadiness.summary.topItemId}; claimModeApprovalBlocked=${String(adminApprovalReadiness.summary.claimModeApprovalBlocked)}.`,
+        `Admin Approval Readiness top item 为 ${adminApprovalReadiness.summary.topItemId}；claimModeApprovalBlocked=${String(adminApprovalReadiness.summary.claimModeApprovalBlocked)}。`,
+        `Admin Approval Readiness top item 為 ${adminApprovalReadiness.summary.topItemId}；claimModeApprovalBlocked=${String(adminApprovalReadiness.summary.claimModeApprovalBlocked)}。`,
+      ),
+      contractTransparency: localized(
+        `Contract transparency lane ${claimTransparencyLane?.id ?? "reward-custody-claim"} remains ${claimTransparencyLane?.readiness ?? "blocked"}.`,
+        `合约透明度 lane ${claimTransparencyLane?.id ?? "reward-custody-claim"} 仍为 ${claimTransparencyLane?.readiness ?? "blocked"}。`,
+        `合約透明度 lane ${claimTransparencyLane?.id ?? "reward-custody-claim"} 仍為 ${claimTransparencyLane?.readiness ?? "blocked"}。`,
+      ),
+      deliveryAcceptance: sourceContext.deliveryAcceptance,
+      postCampaignCloseout: localized(
+        `Post-campaign closeout top gate is ${closeout.summary.topGateId}; custody stays outside Campaign OS.`,
+        `活动后 closeout top gate 为 ${closeout.summary.topGateId}；托管仍在 Campaign OS 之外。`,
+        `活動後 closeout top gate 為 ${closeout.summary.topGateId}；託管仍在 Campaign OS 之外。`,
+      ),
+      preapproval: localized(
+        `Contract Claim Preapproval Package has ${gates.length} gates and custody/legal gate state ${gate("custody-legal-approval")?.state ?? "blocked"}.`,
+        `Contract Claim 预批准 Package 有 ${gates.length} 个 gates，托管/法律 gate 状态为 ${gate("custody-legal-approval")?.state ?? "blocked"}。`,
+        `Contract Claim 預批准 Package 有 ${gates.length} 個 gates，託管/法律 gate 狀態為 ${gate("custody-legal-approval")?.state ?? "blocked"}。`,
+      ),
+      securityReview: localized(
+        `Security Review Readiness has ${securityReviewReadiness.summary.blockedItems} blocked items and top item ${securityReviewReadiness.summary.topItemId}.`,
+        `Security Review Readiness 有 ${securityReviewReadiness.summary.blockedItems} 个阻断项，top item 为 ${securityReviewReadiness.summary.topItemId}。`,
+        `Security Review Readiness 有 ${securityReviewReadiness.summary.blockedItems} 個阻斷項，top item 為 ${securityReviewReadiness.summary.topItemId}。`,
+      ),
+    },
+    summary,
+  };
+};
+
 export const createContractClaimPreapprovalPackage = (
   campaign: CampaignShellDetail,
 ): ContractClaimPreapprovalPackage => {
@@ -14020,13 +14347,50 @@ export const createContractClaimPreapprovalPackage = (
       blocksClaimExecution: true,
     }),
   ];
-  const summary = contractClaimPreapprovalSummary(gates);
   const sourceContext = contractClaimPreapprovalSourceContext({
     closeout,
     deliveryAcceptance,
     reviewCenter,
     transparency,
   });
+  const provisionalAdminApprovalReadiness = createContractClaimAdminApprovalReadiness({
+    campaign,
+    deliveryAcceptance,
+    gates,
+    securityReviewReadiness,
+    sourceContext,
+    transparency,
+  });
+  let custodyLegalReadiness = createContractClaimCustodyLegalReadiness({
+    adminApprovalReadiness: provisionalAdminApprovalReadiness,
+    campaign,
+    closeout,
+    deliveryAcceptance,
+    gates,
+    securityReviewReadiness,
+    sourceContext,
+    transparency,
+  });
+  const custodyLegalGateIndex = gates.findIndex((gate) => gate.id === "custody-legal-approval");
+
+  if (custodyLegalGateIndex >= 0) {
+    const custodyLegalGate = gates[custodyLegalGateIndex];
+    gates[custodyLegalGateIndex] = contractClaimPreapprovalGate({
+      ...custodyLegalGate,
+      evidenceNeeded: localized(
+        `Custody/Legal Readiness has ${custodyLegalReadiness.summary.blockedItems} blocked items and top item ${custodyLegalReadiness.summary.topItemId}; claim execution stays blocked.`,
+        `Custody/Legal Readiness 有 ${custodyLegalReadiness.summary.blockedItems} 个 blocked items，top item 为 ${custodyLegalReadiness.summary.topItemId}；claim 执行保持阻断。`,
+        `Custody/Legal Readiness 有 ${custodyLegalReadiness.summary.blockedItems} 個 blocked items，top item 為 ${custodyLegalReadiness.summary.topItemId}；claim 執行保持阻斷。`,
+      ),
+      nextAction: custodyLegalReadiness.summary.topNextAction,
+      sourceSurface: localized(
+        "Custody/Legal Readiness",
+        "托管/法律 Readiness",
+        "託管/法律 Readiness",
+      ),
+    });
+  }
+
   const adminApprovalReadiness = createContractClaimAdminApprovalReadiness({
     campaign,
     deliveryAcceptance,
@@ -14035,12 +14399,24 @@ export const createContractClaimPreapprovalPackage = (
     sourceContext,
     transparency,
   });
+  custodyLegalReadiness = createContractClaimCustodyLegalReadiness({
+    adminApprovalReadiness,
+    campaign,
+    closeout,
+    deliveryAcceptance,
+    gates,
+    securityReviewReadiness,
+    sourceContext,
+    transparency,
+  });
+  const summary = contractClaimPreapprovalSummary(gates);
 
   return {
     adminApprovalReadiness,
     boundary: contractClaimPreapprovalBoundary,
     campaignId: campaign.id,
     claimExecutionEnabled: false,
+    custodyLegalReadiness,
     gates,
     nextAction: summary.topNextAction,
     noBranchAutomation: true,

@@ -11,6 +11,7 @@ import {
   createApiUsageCommercializationReadiness,
   createCompanionContractReadiness,
   createContractClaimAdminApprovalReadiness,
+  createContractClaimCustodyLegalReadiness,
   createContractClaimPreapprovalPackage,
   createContractClaimSecurityReviewReadiness,
   createContractImpactReviewModel,
@@ -101,6 +102,7 @@ import {
 import type {
   ContractCampaignStatus,
   ContractClaimAdminApprovalItemId,
+  ContractClaimCustodyLegalItemId,
   ContractClaimPreapprovalGateId,
   ContractClaimSecurityReviewItemId,
   WalletProviderEvidenceArtifact,
@@ -1342,6 +1344,125 @@ describe("Campaign OS domain foundation", () => {
     expect(preapproval.noClaimExecution).toBe(true);
     expect(preapproval.noRewardCustody).toBe(true);
     expect(preapproval.noRewardDistribution).toBe(true);
+
+    for (const item of readiness.items) {
+      expectCoreLocalizedText(item.label);
+      expectCoreLocalizedText(item.dependency);
+      expectCoreLocalizedText(item.evidenceRequired);
+      expectCoreLocalizedText(item.blockingReason);
+      expectCoreLocalizedText(item.nextAction);
+      expectCoreLocalizedText(item.sourceSurface);
+      expectCoreLocalizedText(item.boundary);
+    }
+
+    for (const unsafeKey of [
+      "privateKey",
+      "signature",
+      "transactionId",
+      "contractRoot",
+      "downloadUrl",
+      "storageUrl",
+    ]) {
+      expect(hasOwnKeyDeep(readiness, unsafeKey)).toBe(false);
+      expect(JSON.stringify(readiness)).not.toContain(`"${unsafeKey}"`);
+    }
+  });
+
+  it("derives contract claim custody legal readiness without approving custody or claim execution", () => {
+    const preapproval = createContractClaimPreapprovalPackage(campaignDetail);
+    const repeated = createContractClaimPreapprovalPackage(campaignDetail).custodyLegalReadiness;
+    const readiness = preapproval.custodyLegalReadiness;
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const closeout = createPostCampaignCloseout(campaignDetail);
+    const directReadiness = createContractClaimCustodyLegalReadiness({
+      adminApprovalReadiness: preapproval.adminApprovalReadiness,
+      campaign: campaignDetail,
+      closeout,
+      deliveryAcceptance: adminOps.deliveryAcceptance,
+      gates: preapproval.gates,
+      securityReviewReadiness: preapproval.securityReviewReadiness,
+      sourceContext: preapproval.sourceContext,
+      transparency: adminOps.contractTransparencyMonitor,
+    });
+    const itemsById = Object.fromEntries(readiness.items.map((item) => [item.id, item]));
+    const custodyLegalGate = preapproval.gates.find((gate) => gate.id === "custody-legal-approval");
+    const requiredItemIds: ContractClaimCustodyLegalItemId[] = [
+      "custody-model",
+      "legal-terms",
+      "project-owner-funding",
+      "payout-responsibility",
+      "escrow-exclusion",
+      "dispute-ownership",
+      "jurisdiction-compliance",
+      "no-custody-no-distribution-boundary",
+    ];
+
+    expect(repeated).toEqual(readiness);
+    expect(directReadiness).toEqual(readiness);
+    expect(adminOps.contractClaimPreapprovalPackage.custodyLegalReadiness).toEqual(readiness);
+    expect(preapproval.custodyLegalReadiness).toEqual(readiness);
+    expect(readiness.campaignId).toBe(campaignDetail.id);
+    expect(readiness.items.map((item) => item.id)).toEqual(requiredItemIds);
+    expect(readiness.summary).toMatchObject({
+      totalItems: readiness.items.length,
+      readyItems: readiness.items.filter((item) => item.state === "ready").length,
+      reviewRequiredItems: readiness.items.filter((item) => item.state === "review_required").length,
+      blockedItems: readiness.items.filter((item) => item.state === "blocked").length,
+      custodyLegalApprovalBlocked: true,
+      topItemId: "custody-model",
+    });
+    expect(readiness.nextAction).toEqual(readiness.summary.topNextAction);
+    expect(readiness.custodyLegalApproved).toBe(false);
+    expect(readiness.claimExecutionEnabled).toBe(false);
+    expect(readiness.noContractWrite).toBe(true);
+    expect(readiness.noClaimExecution).toBe(true);
+    expect(readiness.noRewardCustody).toBe(true);
+    expect(readiness.noRewardDistribution).toBe(true);
+    expect(readiness.noStorageWrite).toBe(true);
+    expect(readiness.noBranchAutomation).toBe(true);
+    expect(readiness.boundary["en-US"]).toContain("Custody/legal approval is not granted");
+    expect(readiness.boundary["en-US"]).toContain("no contract write");
+    expect(readiness.boundary["en-US"]).toContain("claim execution");
+    expect(readiness.boundary["en-US"]).toContain("reward custody");
+    expect(readiness.boundary["en-US"]).toContain("payout operation");
+
+    expect(itemsById["custody-model"]).toMatchObject({
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceGateId: "custody-legal-approval",
+      blocksCustodyLegalApproval: true,
+    });
+    expect(itemsById["legal-terms"]?.blockingReason["en-US"]).toContain("Legal terms");
+    expect(itemsById["project-owner-funding"]).toMatchObject({
+      state: "review_required",
+      ownerRole: "project_owner",
+      sourceGateId: "project-owner-reward-funding",
+    });
+    expect(itemsById["payout-responsibility"]?.dependency["en-US"]).toContain("Payout responsibility");
+    expect(itemsById["escrow-exclusion"]).toMatchObject({
+      state: "ready",
+      sourceGateId: "no-custody-no-distribution-boundary",
+    });
+    expect(itemsById["dispute-ownership"]?.nextAction["en-US"]).toContain("runbook");
+    expect(itemsById["jurisdiction-compliance"]?.evidenceRequired["en-US"]).toContain("Jurisdiction");
+    expect(itemsById["no-custody-no-distribution-boundary"]).toMatchObject({
+      state: "ready",
+      ownerRole: "project_owner",
+      sourceGateId: "no-custody-no-distribution-boundary",
+    });
+
+    expect(custodyLegalGate).toMatchObject({
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      blocksClaimExecution: true,
+    });
+    expect(custodyLegalGate?.evidenceNeeded["en-US"]).toContain("Custody/Legal Readiness");
+    expect(custodyLegalGate?.evidenceNeeded["en-US"]).toContain("custody-model");
+    expect(custodyLegalGate?.nextAction).toEqual(readiness.summary.topNextAction);
+    expect(readiness.sourceContext.preapproval["en-US"]).toContain("custody/legal gate state blocked");
+    expect(readiness.sourceContext.securityReview["en-US"]).toContain("claim-threat-model");
+    expect(readiness.sourceContext.adminApproval["en-US"]).toContain("claimModeApprovalBlocked=true");
+    expect(readiness.sourceContext.contractTransparency["en-US"]).toContain("reward-custody-claim");
 
     for (const item of readiness.items) {
       expectCoreLocalizedText(item.label);

@@ -1436,6 +1436,28 @@ describe("Admin/Ops shell", () => {
     expect(within(adminApprovalReadiness).getAllByText(/Blocking reason:/).length).toBeGreaterThan(0);
     expect(within(adminApprovalReadiness).getAllByText(/No-custody\/no-distribution boundary/).length).toBeGreaterThan(0);
     expect(within(adminApprovalReadiness).getAllByText(/Claim mode is not approved/).length).toBeGreaterThan(0);
+    const custodyLegalReadiness = within(preapproval).getByLabelText("Custody/Legal Readiness");
+    expect(within(custodyLegalReadiness).getByText("Custody/Legal Readiness")).toBeInTheDocument();
+    expect(within(custodyLegalReadiness).getByText(/Read-only custody and legal coverage/)).toBeInTheDocument();
+    expect(within(custodyLegalReadiness).getAllByText("Custody/legal approval blocked").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText("Blocked items").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText("Review-required items").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText("Ready items").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getByText("Top custody/legal blocker")).toBeInTheDocument();
+    expect(within(custodyLegalReadiness).getAllByText("Custody model").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText("Legal terms").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText("Project owner reward funding").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText("No-custody/no-distribution boundary").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getByText("custody-model")).toBeInTheDocument();
+    expect(within(custodyLegalReadiness).getByText("legal-terms")).toBeInTheDocument();
+    expect(within(custodyLegalReadiness).getByText("project-owner-funding")).toBeInTheDocument();
+    expect(within(custodyLegalReadiness).getByText("no-custody-no-distribution-boundary")).toBeInTheDocument();
+    expect(within(custodyLegalReadiness).getAllByText(/Source gate:/).length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText(/Evidence needed:/).length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText(/Blocking reason:/).length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText(/Blocks custody\/legal approval/).length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText(/Custody\/legal approval is not granted/).length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText(/no claim, custody, payout, signing, provider, storage, export, branch, contract, or reward operation is executed/i).length).toBeGreaterThan(0);
     const securityReadiness = within(preapproval).getByLabelText("Security Review Readiness");
     expect(within(securityReadiness).getByText("Security Review Readiness")).toBeInTheDocument();
     expect(within(securityReadiness).getByText(/Itemized review-only security gate/)).toBeInTheDocument();
@@ -1460,6 +1482,9 @@ describe("Admin/Ops shell", () => {
     })).not.toBeInTheDocument();
     expect(within(adminApprovalReadiness).queryByRole("button", {
       name: /approve|claim|custody|payout|sign|signature|provider call|storage write|export file|branch|contract write|reward distribution|reward custody/i,
+    })).not.toBeInTheDocument();
+    expect(within(custodyLegalReadiness).queryByRole("button", {
+      name: /approve|claim|custody|payout|sign|signature|provider call|storage write|export file|branch|contract write|reward distribution|reward custody|reward operation/i,
     })).not.toBeInTheDocument();
   });
 
@@ -1487,6 +1512,21 @@ describe("Admin/Ops shell", () => {
     expect(within(adminApprovalReadiness).getAllByText(/来源门禁:/).length).toBeGreaterThan(0);
     expect(within(adminApprovalReadiness).getAllByText(/阻断原因:/).length).toBeGreaterThan(0);
     expect(within(adminApprovalReadiness).getAllByText(/Claim mode 未获批准/).length).toBeGreaterThan(0);
+    const custodyLegalReadiness = within(preapproval).getByLabelText("托管/法律 Readiness");
+    expect(within(custodyLegalReadiness).getByText("托管/法律 Readiness")).toBeInTheDocument();
+    expect(within(custodyLegalReadiness).getByText(/只读展示奖励占有、payout 责任/)).toBeInTheDocument();
+    expect(within(custodyLegalReadiness).getAllByText("托管/法律批准已阻断").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText("已阻断条目").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText("首要托管/法律阻断").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText("托管模型").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText("法律条款").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText("项目方奖励资金").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText("不托管/不发奖边界").length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getByText("custody-model")).toBeInTheDocument();
+    expect(within(custodyLegalReadiness).getAllByText(/来源门禁:/).length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText(/阻断原因:/).length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText(/阻断托管\/法律批准/).length).toBeGreaterThan(0);
+    expect(within(custodyLegalReadiness).getAllByText(/托管\/法律批准尚未授予/).length).toBeGreaterThan(0);
     const securityReadiness = within(preapproval).getByLabelText("安全审核 Readiness");
     expect(within(securityReadiness).getByText("安全审核 Readiness")).toBeInTheDocument();
     expect(within(securityReadiness).getByText(/未来 claim 执行分支前的逐项只读安全门禁/)).toBeInTheDocument();
@@ -1503,6 +1543,9 @@ describe("Admin/Ops shell", () => {
       name: /claim|custody|payout|签名|provider 调用|存储写入|导出文件|合约写入|奖励托管|发奖|reward distribution/i,
     })).not.toBeInTheDocument();
     expect(within(adminApprovalReadiness).queryByRole("button", {
+      name: /批准|approve|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|合约写入|奖励托管|发奖|reward distribution/i,
+    })).not.toBeInTheDocument();
+    expect(within(custodyLegalReadiness).queryByRole("button", {
       name: /批准|approve|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|合约写入|奖励托管|发奖|reward distribution/i,
     })).not.toBeInTheDocument();
   });
