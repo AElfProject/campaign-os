@@ -6203,7 +6203,7 @@ export const createExportStorageFulfillmentApprovalReadiness = (
             "导出批准前恢复精确 v0.2 字段顺序。",
             "匯出批准前恢復精確 v0.2 欄位順序。",
           ),
-      sourceSurface: localized("docs/current v0.2 API and Data Model", "docs/current v0.2 API 与数据模型", "docs/current v0.2 API 與資料模型"),
+      sourceSurface: localized("v0.2 API and Data Model contract", "v0.2 API 与数据模型合约", "v0.2 API 與資料模型合約"),
     }),
     exportStorageCheck({
       id: "wallet-locale-coverage",
