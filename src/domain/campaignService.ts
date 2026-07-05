@@ -3,6 +3,7 @@ import {
   createAdvancedAnalyticsReadiness,
   createAiContentPackWorkbench,
   createAntiSybilV2GraphReadiness,
+  createApiUsageCommercializationReadiness,
   createCampaignDiscoveryReadModel,
   createCampaignLifecycleOperations,
   createExportArtifact,
@@ -481,6 +482,9 @@ export interface CampaignOsLocalService {
   getAdvancedAnalyticsReadiness(
     request: GetAdvancedAnalyticsReadinessRequest,
   ): LocalServiceResult<AdvancedAnalyticsReadinessSurface>;
+  getApiUsageCommercializationReadiness(): LocalServiceResult<
+    ReturnType<typeof createApiUsageCommercializationReadiness>
+  >;
   getVerificationPipelineReadiness(
     request: GetVerificationPipelineReadinessRequest,
   ): LocalServiceResult<VerificationPipelineReadinessGate>;
@@ -2109,6 +2113,8 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
 
     return success(createAdvancedAnalyticsReadiness(campaign));
   },
+
+  getApiUsageCommercializationReadiness: () => success(createApiUsageCommercializationReadiness()),
 
   getVerificationPipelineReadiness: (request) => {
     const campaign = findCampaign(request.campaignId);

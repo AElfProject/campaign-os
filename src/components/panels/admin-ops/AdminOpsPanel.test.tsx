@@ -81,6 +81,32 @@ describe("Admin/Ops shell", () => {
     expect(within(launchBundleReview).getAllByText(/no contract write/i).length).toBeGreaterThan(0);
     expect(within(launchBundleReview).getAllByText(/no export file/i).length).toBeGreaterThan(0);
     expect(within(launchBundleReview).getAllByText(/no reward distribution/i).length).toBeGreaterThan(0);
+    const apiUsageGovernance = screen.getByLabelText("API usage governance");
+    expect(
+      within(apiUsageGovernance).getByRole("heading", { name: "API usage governance" }),
+    ).toBeInTheDocument();
+    expect(within(apiUsageGovernance).getAllByText("API usage governance summary").length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getByText("verify_task")).toBeInTheDocument();
+    expect(within(apiUsageGovernance).getByText("export_winners")).toBeInTheDocument();
+    expect(within(apiUsageGovernance).getAllByText("Blocked").length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText("Review required").length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText("Auth / key: Blocked").length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText("Rate-limit: Blocked").length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText("Billing handoff: Blocked").length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText("Billing handoff").length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/No live API gateway/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/API key/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/billing/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/wallet action/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/contract call\/write/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/export file/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/reward distribution/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/aelf reward subsidy/).length).toBeGreaterThan(0);
+    expect(
+      within(apiUsageGovernance).queryByRole("button", {
+        name: /api key|approve billing|invoice|gateway|metering|rate limit|wallet|contract|export|reward|subsidy/i,
+      }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Delivery Checklist Readiness" })).toBeInTheDocument();
     expectVisibleText("v0.2 delivery audit");
     expectVisibleText("Product Checklist");
@@ -1479,6 +1505,36 @@ describe("Admin/Ops shell", () => {
     expect(within(adminApprovalReadiness).queryByRole("button", {
       name: /批准|approve|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|合约写入|奖励托管|发奖|reward distribution/i,
     })).not.toBeInTheDocument();
+  });
+
+  it("renders API usage governance labels in zh-CN", () => {
+    render(<AdminOpsPanel locale="zh-CN" />);
+
+    const apiUsageGovernance = screen.getByLabelText("API usage 治理");
+
+    expect(
+      within(apiUsageGovernance).getByRole("heading", { name: "API usage 治理" }),
+    ).toBeInTheDocument();
+    expect(within(apiUsageGovernance).getAllByText("API usage 治理摘要").length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getByText("verify_task")).toBeInTheDocument();
+    expect(within(apiUsageGovernance).getByText("export_winners")).toBeInTheDocument();
+    expect(within(apiUsageGovernance).getAllByText("认证 / key: 已阻断").length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText("限流: 已阻断").length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText("Billing handoff: 已阻断").length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText("Billing handoff").length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/实时 API gateway/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/API key/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/billing/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/钱包动作/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/合约调用\/写入/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/导出文件/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/发奖/).length).toBeGreaterThan(0);
+    expect(within(apiUsageGovernance).getAllByText(/aelf 奖励补贴/).length).toBeGreaterThan(0);
+    expect(
+      within(apiUsageGovernance).queryByRole("button", {
+        name: /API key|批准 billing|发票|gateway|计量|限流|钱包|合约|导出|奖励|补贴/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders wallet provider evidence recovery labels in zh-CN", () => {

@@ -23,6 +23,8 @@ import {
   type AiOpsReportHandoffStatus,
   type AiOptimizationActionStatus,
   type AiOptimizationMetricTone,
+  type ApiUsagePrerequisiteState,
+  type ApiUsageReadinessState,
   type CampaignShellDetail,
   type CompetitorWatchDifferentiator,
   type CompetitorWatchReviewState,
@@ -964,6 +966,38 @@ const advancedAnalyticsReadinessLabel = (
   return readiness === "review_required" ? copy.reviewRequired : copy.blocked;
 };
 
+const apiUsageReadinessState = (readiness: ApiUsageReadinessState): PublishState =>
+  readiness === "blocked" ? "blocker" : readiness === "local_ready" ? "ready" : "warning";
+
+const apiUsagePrerequisiteState = (state: ApiUsagePrerequisiteState): PublishState =>
+  state === "blocked" ? "blocker" : state === "local_ready" ? "ready" : "warning";
+
+const apiUsageReadinessLabel = (
+  readiness: ApiUsageReadinessState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  if (readiness === "local_ready") {
+    return copy.apiUsageLocalReady;
+  }
+
+  return readiness === "review_required" ? copy.reviewRequired : copy.blocked;
+};
+
+const apiUsagePrerequisiteLabel = (
+  state: ApiUsagePrerequisiteState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  if (state === "local_ready") {
+    return copy.apiUsageLocalReady;
+  }
+
+  if (state === "not_started") {
+    return copy.apiUsageNotStarted;
+  }
+
+  return state === "review_required" ? copy.reviewRequired : copy.blocked;
+};
+
 const lifecycleOperationState = (state: CampaignLifecycleOperationState) => {
   if (state === "blocked") {
     return "blocker";
@@ -1703,6 +1737,7 @@ export const AdminOpsPanel = ({
   const aiReportHandoff = adminOps.aiReportHandoff;
   const competitorWatch = adminOps.competitorWatch;
   const advancedAnalytics = adminOps.advancedAnalytics;
+  const apiUsageCommercializationReadiness = adminOps.apiUsageCommercializationReadiness;
   const aiContentPack = adminOps.aiContentPack;
   const templateGovernance = adminOps.templateGovernance;
   const deliveryChecklist = adminOps.deliveryChecklistReadiness;
@@ -3071,6 +3106,153 @@ export const AdminOpsPanel = ({
               <p style={wrapTextStyle}>{getLocalizedText(bundle.publicBoundary, locale)}</p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.apiUsageGovernance} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.apiUsageGovernanceSummary}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.apiUsageGovernance}
+            </h3>
+            <p style={mutedTextStyle}>{copy.apiUsageGovernanceSubtitle}</p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Badge
+              label={`${apiUsageCommercializationReadiness.summary.totalCandidates} ${copy.totalItems}`}
+              tone="info"
+            />
+            <PublishStateBadge
+              label={`${apiUsageCommercializationReadiness.summary.blockedCount} ${copy.blocked}`}
+              state={apiUsageCommercializationReadiness.summary.blockedCount > 0 ? "blocker" : "ready"}
+            />
+            <PublishStateBadge
+              label={`${apiUsageCommercializationReadiness.summary.reviewRequiredCount} ${copy.reviewRequired}`}
+              state={apiUsageCommercializationReadiness.summary.reviewRequiredCount > 0 ? "warning" : "ready"}
+            />
+          </span>
+        </div>
+
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>{copy.apiUsageReviewerBoundary}: {copy.apiUsageGovernanceBoundary}</p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.apiUsageNoRewardSubsidy}: {getLocalizedText(apiUsageCommercializationReadiness.rewardBoundary, locale)}
+          </p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.nonLiveBoundary}: {getLocalizedText(apiUsageCommercializationReadiness.boundary, locale)}
+          </p>
+        </div>
+
+        <div style={compactGridStyle}>
+          {[
+            {
+              detail: copy.apiUsageGovernanceSummary,
+              label: copy.apiUsageTotalCandidates,
+              value: apiUsageCommercializationReadiness.summary.totalCandidates,
+            },
+            {
+              detail: copy.reviewRequired,
+              label: copy.reviewRequiredItems,
+              value: apiUsageCommercializationReadiness.summary.reviewRequiredCount,
+            },
+            {
+              detail: copy.apiUsageBlockedPrereqs,
+              label: copy.blockedItems,
+              value: apiUsageCommercializationReadiness.summary.blockedCount,
+            },
+            {
+              detail: copy.riskLevel,
+              label: copy.riskIntelligenceHighSeverity,
+              value: apiUsageCommercializationReadiness.summary.highRiskCount,
+            },
+            {
+              detail: copy.apiUsageBillingHandoff,
+              label: copy.handoffReadiness,
+              value: apiUsageCommercializationReadiness.summary.billingHandoffCount,
+            },
+            {
+              detail: copy.apiUsageMissingCandidates,
+              label: copy.apiUsageMissingCandidates,
+              value: apiUsageCommercializationReadiness.summary.missingCandidateCount,
+            },
+          ].map((item) => (
+            <article key={item.label} style={cardStyle}>
+              <p style={labelStyle}>{item.label}</p>
+              <p style={valueStyle}>{item.value}</p>
+              <p style={mutedTextStyle}>{item.detail}</p>
+            </article>
+          ))}
+        </div>
+
+        <div style={gridStyle}>
+          {apiUsageCommercializationReadiness.candidates.map((candidate) => {
+            const prerequisiteEntries = [
+              [copy.apiUsageAuthKey, candidate.authKeyReadiness],
+              [copy.apiUsageQuota, candidate.quotaPolicy],
+              [copy.apiUsageMetering, candidate.meteringStatus],
+              [copy.apiUsageRateLimit, candidate.rateLimitPolicy],
+              [copy.apiUsageBillingHandoff, candidate.billingHandoff],
+            ] satisfies ReadonlyArray<readonly [string, typeof candidate.authKeyReadiness]>;
+            const blockedPrereqs = prerequisiteEntries.filter(([, prerequisite]) => prerequisite.state === "blocked");
+
+            return (
+              <article key={candidate.skillId} style={cardStyle}>
+                <div style={rowStyle}>
+                  <div style={stackStyle}>
+                    <p style={labelStyle}>{candidate.skillId}</p>
+                    <strong>{getLocalizedText(candidate.label, locale)}</strong>
+                  </div>
+                  <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <PublishStateBadge
+                      label={apiUsageReadinessLabel(candidate.readiness, copy)}
+                      state={apiUsageReadinessState(candidate.readiness)}
+                    />
+                    <Badge label={candidate.riskLevel} tone={candidate.riskLevel === "high" ? "warning" : "info"} />
+                  </span>
+                </div>
+                <div style={compactGridStyle}>
+                  <div>
+                    <p style={labelStyle}>{copy.ownerRole}</p>
+                    <p style={mutedTextStyle}>{readableCode(candidate.ownerRole)}</p>
+                  </div>
+                  <div>
+                    <p style={labelStyle}>{copy.reviewState}</p>
+                    <p style={mutedTextStyle}>{readableCode(candidate.reviewState)}</p>
+                  </div>
+                  <div>
+                    <p style={labelStyle}>{copy.apiUsageConsumerTier}</p>
+                    <p style={mutedTextStyle}>{readableCode(candidate.consumerTier)}</p>
+                  </div>
+                  <div>
+                    <p style={labelStyle}>{copy.apiUsageCommercialModel}</p>
+                    <p style={mutedTextStyle}>{readableCode(candidate.commercialModel)}</p>
+                  </div>
+                </div>
+                <div style={chipListStyle}>
+                  {prerequisiteEntries.map(([label, prerequisite]) => (
+                    <PublishStateBadge
+                      key={`${candidate.skillId}-${prerequisite.id}`}
+                      label={`${label}: ${apiUsagePrerequisiteLabel(prerequisite.state, copy)}`}
+                      state={apiUsagePrerequisiteState(prerequisite.state)}
+                    />
+                  ))}
+                </div>
+                <p style={wrapTextStyle}>
+                  {copy.apiUsageBlockedPrereqs}:{" "}
+                  {blockedPrereqs.length > 0
+                    ? blockedPrereqs.map(([label]) => label).join(", ")
+                    : copy.readyActions}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.evidence}: {getLocalizedText(candidate.evidence, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.nextAction}: {getLocalizedText(candidate.nextAction, locale)}
+                </p>
+              </article>
+            );
+          })}
         </div>
       </section>
 

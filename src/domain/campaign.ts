@@ -223,6 +223,16 @@ import type {
   EligibilityCheckEntry,
   EligibilityCheckResult,
   EligibilityMissingTaskDetail,
+  ApiUsageCommercializationCandidate,
+  ApiUsageCommercializationReadinessSurface,
+  ApiUsageCommercialModel,
+  ApiUsageConsumerTier,
+  ApiUsageOwnerRole,
+  ApiUsagePrerequisite,
+  ApiUsagePrerequisiteId,
+  ApiUsagePrerequisiteState,
+  ApiUsageReadinessState,
+  ApiUsageReviewState,
   ApiSkillContract,
   ApiSkillId,
   LaunchConsoleBundleOwnerRole,
@@ -6985,6 +6995,323 @@ const createProjectPortfolioCommercialReadiness = ({
   };
 };
 
+const apiUsageCommercializationBoundary: LocalizedText = {
+  "en-US":
+    "Seeded/local API usage commercialization readiness only. No live API gateway, API key, OAuth, JWT, quota enforcement, metering write, rate-limit execution, billing, invoice, CRM, wallet action, contract call/write, export file, reward custody, reward distribution, or aelf reward subsidy is executed.",
+  "zh-CN":
+    "仅 seeded/本地 API usage 商业化 readiness。不会执行实时 API gateway、API key、OAuth、JWT、配额 enforcement、metering 写入、rate-limit 执行、billing、发票、CRM、钱包动作、合约调用/写入、导出文件、奖励托管、发奖或 aelf 奖励补贴。",
+  "zh-TW":
+    "Seeded/local API usage commercialization readiness only. No live API gateway, API key, OAuth, JWT, quota enforcement, metering write, rate-limit execution, billing, invoice, CRM, wallet action, contract call/write, export file, reward custody, reward distribution, or aelf reward subsidy is executed.",
+};
+
+const apiUsageRewardBoundary: LocalizedText = {
+  "en-US":
+    "API usage revenue readiness never changes reward ownership: Campaign OS does not custody rewards, distribute rewards, or use aelf-funded reward subsidies.",
+  "zh-CN":
+    "API usage 收入 readiness 不改变奖励责任：Campaign OS 不托管奖励、不发奖，也不使用 aelf 奖励补贴。",
+  "zh-TW":
+    "API usage revenue readiness never changes reward ownership: Campaign OS does not custody rewards, distribute rewards, or use aelf-funded reward subsidies.",
+};
+
+const requiredApiUsageCommercializationCandidateIds: readonly ApiSkillId[] = [
+  "verify_task",
+  "check_eligibility",
+  "get_campaign_analytics",
+  "export_winners",
+  "generate_campaign_posts",
+  "summarize_campaign",
+  "list_campaigns",
+  "get_campaign_detail",
+];
+
+const apiUsagePrerequisiteLabels: Record<ApiUsagePrerequisiteId, LocalizedText> = {
+  auth_key_readiness: localized("Auth / key readiness", "认证 / key readiness"),
+  quota_policy: localized("Quota policy", "配额策略"),
+  metering_status: localized("Metering status", "计量状态"),
+  rate_limit_policy: localized("Rate-limit policy", "限流策略"),
+  billing_handoff: localized("Billing handoff", "Billing handoff"),
+};
+
+const apiUsagePrerequisite = ({
+  evidence,
+  id,
+  nextAction,
+  state,
+}: {
+  evidence: LocalizedText;
+  id: ApiUsagePrerequisiteId;
+  nextAction: LocalizedText;
+  state: ApiUsagePrerequisiteState;
+}): ApiUsagePrerequisite => ({
+  evidence,
+  id,
+  label: apiUsagePrerequisiteLabels[id],
+  nextAction,
+  state,
+});
+
+const apiUsagePrerequisiteSet = (input: {
+  authState: ApiUsagePrerequisiteState;
+  billingState: ApiUsagePrerequisiteState;
+  meteringState: ApiUsagePrerequisiteState;
+  quotaState: ApiUsagePrerequisiteState;
+  rateLimitState: ApiUsagePrerequisiteState;
+}) => ({
+  authKeyReadiness: apiUsagePrerequisite({
+    evidence: localized(
+      "No API key, OAuth app, JWT issuer, or signed request verifier exists in the seeded app.",
+      "Seeded 应用中不存在 API key、OAuth app、JWT issuer 或签名请求验证器。",
+    ),
+    id: "auth_key_readiness",
+    nextAction: localized(
+      "Define auth owner, key custody, rotation, audit, and revocation before live access.",
+      "实时访问前定义认证负责人、key 托管、轮换、审计和撤销机制。",
+    ),
+    state: input.authState,
+  }),
+  billingHandoff: apiUsagePrerequisite({
+    evidence: localized(
+      "Billing is a review handoff only; no customer, invoice, checkout, payment, or CRM record is created.",
+      "Billing 仅为审核 handoff；不会创建客户、发票、checkout、支付或 CRM 记录。",
+    ),
+    id: "billing_handoff",
+    nextAction: localized(
+      "Route finance, legal, and commercial approval before usage pricing or invoicing.",
+      "Usage 定价或开票前先进入财务、法务和商业审批。",
+    ),
+    state: input.billingState,
+  }),
+  meteringStatus: apiUsagePrerequisite({
+    evidence: localized(
+      "Usage metering is represented as local readiness only; no event warehouse or write path is connected.",
+      "Usage 计量仅作为本地 readiness 展示；未连接事件仓库或写入路径。",
+    ),
+    id: "metering_status",
+    nextAction: localized(
+      "Approve event schema, retention, privacy, and replay rules before live metering.",
+      "实时计量前批准事件 schema、留存、隐私与重放规则。",
+    ),
+    state: input.meteringState,
+  }),
+  quotaPolicy: apiUsagePrerequisite({
+    evidence: localized(
+      "Quota is a seeded policy placeholder; no gateway quota or tenant limit is enforced.",
+      "Quota 是 seeded 策略占位；不会执行 gateway quota 或 tenant limit。",
+    ),
+    id: "quota_policy",
+    nextAction: localized(
+      "Define tenant tiers, burst policy, and abuse handling before external partner access.",
+      "外部合作伙伴访问前定义 tenant tier、突发策略和滥用处理。",
+    ),
+    state: input.quotaState,
+  }),
+  rateLimitPolicy: apiUsagePrerequisite({
+    evidence: localized(
+      "Rate-limit is review-only; no runtime throttle, gateway policy, or client penalty is active.",
+      "Rate-limit 仅用于审核；没有启用运行时 throttle、gateway policy 或 client penalty。",
+    ),
+    id: "rate_limit_policy",
+    nextAction: localized(
+      "Approve per-skill limits and fallback responses before live traffic.",
+      "实时流量前批准每个 skill 的限流和 fallback response。",
+    ),
+    state: input.rateLimitState,
+  }),
+});
+
+const apiUsageCandidateConfig: Record<
+  ApiSkillId,
+  {
+    commercialModel: ApiUsageCommercialModel;
+    consumerTier: ApiUsageConsumerTier;
+    ownerRole: ApiUsageOwnerRole;
+    readiness: ApiUsageReadinessState;
+    reviewState: ApiUsageReviewState;
+  }
+> = {
+  agent_wallet_action: {
+    commercialModel: "free_ecosystem_mode",
+    consumerTier: "internal_ops",
+    ownerRole: "security_reviewer",
+    readiness: "blocked",
+    reviewState: "blocked",
+  },
+  add_campaign_task: {
+    commercialModel: "free_ecosystem_mode",
+    consumerTier: "internal_ops",
+    ownerRole: "internal_operator",
+    readiness: "review_required",
+    reviewState: "in_review",
+  },
+  check_eligibility: {
+    commercialModel: "api_usage",
+    consumerTier: "ecosystem_partner",
+    ownerRole: "commercial_reviewer",
+    readiness: "review_required",
+    reviewState: "in_review",
+  },
+  create_campaign: {
+    commercialModel: "partner_campaign_fee",
+    consumerTier: "external_partner",
+    ownerRole: "project_owner",
+    readiness: "review_required",
+    reviewState: "not_started",
+  },
+  create_wallet_session: {
+    commercialModel: "free_ecosystem_mode",
+    consumerTier: "internal_ops",
+    ownerRole: "security_reviewer",
+    readiness: "blocked",
+    reviewState: "blocked",
+  },
+  export_winners: {
+    commercialModel: "partner_campaign_fee",
+    consumerTier: "external_partner",
+    ownerRole: "billing_reviewer",
+    readiness: "blocked",
+    reviewState: "blocked",
+  },
+  generate_campaign_posts: {
+    commercialModel: "api_usage",
+    consumerTier: "ecosystem_partner",
+    ownerRole: "commercial_reviewer",
+    readiness: "review_required",
+    reviewState: "in_review",
+  },
+  generate_campaign_tasks: {
+    commercialModel: "free_ecosystem_mode",
+    consumerTier: "internal_ops",
+    ownerRole: "internal_operator",
+    readiness: "review_required",
+    reviewState: "in_review",
+  },
+  generate_i18n_draft: {
+    commercialModel: "api_usage",
+    consumerTier: "ecosystem_partner",
+    ownerRole: "commercial_reviewer",
+    readiness: "review_required",
+    reviewState: "in_review",
+  },
+  get_campaign_analytics: {
+    commercialModel: "premium_analytics",
+    consumerTier: "ecosystem_partner",
+    ownerRole: "commercial_reviewer",
+    readiness: "review_required",
+    reviewState: "in_review",
+  },
+  get_campaign_detail: {
+    commercialModel: "api_usage",
+    consumerTier: "ecosystem_partner",
+    ownerRole: "commercial_reviewer",
+    readiness: "local_ready",
+    reviewState: "ready_for_future_approval",
+  },
+  list_campaigns: {
+    commercialModel: "api_usage",
+    consumerTier: "ecosystem_partner",
+    ownerRole: "commercial_reviewer",
+    readiness: "local_ready",
+    reviewState: "ready_for_future_approval",
+  },
+  summarize_campaign: {
+    commercialModel: "premium_analytics",
+    consumerTier: "external_partner",
+    ownerRole: "billing_reviewer",
+    readiness: "review_required",
+    reviewState: "in_review",
+  },
+  verify_task: {
+    commercialModel: "api_usage",
+    consumerTier: "external_partner",
+    ownerRole: "security_reviewer",
+    readiness: "blocked",
+    reviewState: "blocked",
+  },
+};
+
+const createApiUsageCommercializationCandidate = (
+  contract: ApiSkillContract,
+): ApiUsageCommercializationCandidate => {
+  const config = apiUsageCandidateConfig[contract.id];
+  const blocked = config.readiness === "blocked";
+  const localReady = config.readiness === "local_ready";
+  const prerequisites = apiUsagePrerequisiteSet({
+    authState: blocked ? "blocked" : "review_required",
+    billingState: config.ownerRole === "billing_reviewer" ? "blocked" : "review_required",
+    meteringState: localReady ? "local_ready" : "review_required",
+    quotaState: localReady ? "local_ready" : "review_required",
+    rateLimitState: blocked ? "blocked" : "review_required",
+  });
+
+  return {
+    ...prerequisites,
+    boundary: apiUsageCommercializationBoundary,
+    commercialModel: config.commercialModel,
+    consumerTier: config.consumerTier,
+    description: contract.purpose,
+    evidence: localized(
+      `${contract.title["en-US"]} is available as ${contract.readiness} contract metadata only; risk level is ${contract.riskLevel}.`,
+      `${contract.title["zh-CN"]} 仅作为 ${contract.readiness} contract metadata 可见；风险等级为 ${contract.riskLevel}。`,
+    ),
+    label: contract.title,
+    nextAction: blocked
+      ? localized(
+          "Keep this API usage candidate blocked until auth, quota, metering, billing, evidence, and rollback approvals exist.",
+          "在认证、配额、计量、billing、evidence 与回滚审批完成前，保持该 API usage candidate 阻断。",
+        )
+      : localized(
+          "Review commercial, security, quota, metering, and billing handoff before any live API usage.",
+          "任何实时 API usage 前，先审核商业、安全、配额、计量与 billing handoff。",
+        ),
+    ownerRole: config.ownerRole,
+    readiness: config.readiness,
+    reviewState: config.reviewState,
+    riskLevel: contract.riskLevel,
+    skillId: contract.id,
+  };
+};
+
+export const createApiUsageCommercializationReadiness = (): ApiUsageCommercializationReadinessSurface => {
+  const apiSkillSurface = createApiSkillContractSurface();
+  const contractsById = new Map(apiSkillSurface.contracts.map((contract) => [contract.id, contract]));
+  const missingCandidateIds = requiredApiUsageCommercializationCandidateIds.filter(
+    (id) => !contractsById.has(id),
+  );
+  const candidates = requiredApiUsageCommercializationCandidateIds.flatMap((id) => {
+    const contract = contractsById.get(id);
+    return contract ? [createApiUsageCommercializationCandidate(contract)] : [];
+  });
+  const blockedCandidates = candidates.filter((candidate) => candidate.readiness === "blocked");
+  const reviewRequiredCandidates = candidates.filter((candidate) => candidate.readiness === "review_required");
+
+  return {
+    boundary: apiUsageCommercializationBoundary,
+    candidates,
+    missingCandidateIds,
+    nextAction: localized(
+      "Complete API auth, quota, metering, rate-limit, billing, and reward-boundary review before external API usage.",
+      "对外 API usage 前完成 API 认证、配额、计量、限流、billing 与奖励边界审核。",
+    ),
+    rewardBoundary: apiUsageRewardBoundary,
+    summary: {
+      billingHandoffCount: candidates.filter((candidate) =>
+        candidate.billingHandoff.state === "blocked" || candidate.billingHandoff.state === "review_required"
+      ).length,
+      blockedCount: blockedCandidates.length,
+      highRiskCount: candidates.filter((candidate) => candidate.riskLevel === "high").length,
+      missingCandidateCount: missingCandidateIds.length,
+      productionReadyCount: 0,
+      reviewRequiredCount: reviewRequiredCandidates.length,
+      rewardBoundary: apiUsageRewardBoundary,
+      topNextAction: blockedCandidates[0]?.nextAction ?? reviewRequiredCandidates[0]?.nextAction ?? localized(
+        "Keep API usage commercialization in local review.",
+        "保持 API usage 商业化处于本地审核。",
+      ),
+      totalCandidates: candidates.length,
+    },
+  };
+};
+
 const lifecycleBoundary: LocalizedText = {
   "en-US":
     "Seeded/local lifecycle operation intent only. No live backend, scheduler, wallet signing, contract write, export file generation, reward custody, or reward distribution is executed.",
@@ -10834,6 +11161,7 @@ export const createProjectCampaignCommandCenter = (
   const providerEvidenceRegistry = createProviderEvidenceRegistry(campaign);
   const lifecycleOperations = createCampaignLifecycleOperations(campaign);
   const launchConsoleCampaignBundles = createLaunchConsoleCampaignBundles(campaign);
+  const apiUsageCommercializationReadiness = createApiUsageCommercializationReadiness();
   const portfolioCommercialReadiness = createProjectPortfolioCommercialReadiness({
     advancedAnalytics,
     campaigns,
@@ -10855,6 +11183,7 @@ export const createProjectCampaignCommandCenter = (
     lifecycleOperations,
     launchConsoleCampaignBundles,
     portfolioCommercialReadiness,
+    apiUsageCommercializationReadiness,
     boundary: commandCenterBoundary,
   };
 };
@@ -21045,6 +21374,7 @@ export const createAdminOpsReadModel = (
   const riskIntelligence = createRiskIntelligenceReviewSurface(campaign);
   const antiSybilV2GraphReadiness = createAntiSybilV2GraphReadiness(campaign);
   const launchConsoleCampaignBundles = createLaunchConsoleCampaignBundles(campaign);
+  const apiUsageCommercializationReadiness = createApiUsageCommercializationReadiness();
   const pointsRankingReferralReadiness = createPointsRankingReferralServiceReadiness(campaign);
   const contractInterfaceMatrix = createContractInterfaceMatrixConsole();
   const contractTransparencyMonitor = createContractTransparencyMonitor(campaign);
@@ -21099,6 +21429,7 @@ export const createAdminOpsReadModel = (
     aiOptimization,
     aiReportHandoff,
     competitorWatch,
+    apiUsageCommercializationReadiness,
     ecosystemMetrics: campaign.ecosystemMetrics,
     exportBatch,
     exportFulfillmentReadiness,
