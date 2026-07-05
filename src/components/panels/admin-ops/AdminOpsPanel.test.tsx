@@ -1542,6 +1542,30 @@ describe("Admin/Ops shell", () => {
     expect(within(actorApprovalReadiness).queryByRole("button", {
       name: /approve|claim|custody|payout|signing|provider call|storage write|export file|branch|issue|PR|mission|contract write|reward custody|reward distribution/i,
     })).not.toBeInTheDocument();
+    const participantApprovalReadiness = within(preapproval).getByLabelText("Participant Approval Readiness");
+    expect(within(participantApprovalReadiness).getByText("Participant Approval Readiness")).toBeInTheDocument();
+    expect(within(participantApprovalReadiness).getByText(/Read-only participant claimant approval coverage/)).toBeInTheDocument();
+    expect(within(participantApprovalReadiness).getAllByText("Participant approval blocked").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("Total checks").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("Blocked checks").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("Highest risk level").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("Top participant blocker").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("Eligibility lineage").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("No-custody/no-distribution boundary").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("eligibility-lineage").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("wallet-account-binding").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("no-custody-no-distribution-boundary").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText(/Dependency:/).length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText(/Abuse path:/).length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText(/Evidence needed:/).length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText(/Residual risk:/).length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText(/Blocks participant approval/).length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText(/Participant approval remains blocked/).length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("Blocked").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("Ready").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).queryByRole("button", {
+      name: /approve|claim|custody|payout|signing|provider call|storage write|export file|branch|issue|PR|mission|contract write|reward custody|reward distribution/i,
+    })).not.toBeInTheDocument();
     expect(within(adminApprovalReadiness).queryByRole("button", {
       name: /approve|claim|custody|payout|sign|signature|provider call|storage write|export file|branch|contract write|reward distribution|reward custody/i,
     })).not.toBeInTheDocument();
@@ -1659,6 +1683,30 @@ describe("Admin/Ops shell", () => {
     expect(within(actorApprovalReadiness).getAllByText(/下一步:/).length).toBeGreaterThan(0);
     expect(within(actorApprovalReadiness).getAllByText(/不会执行 claim、托管、payout、签名、provider 调用/).length).toBeGreaterThan(0);
     expect(within(actorApprovalReadiness).queryByRole("button", {
+      name: /批准|approve|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|issue|PR|mission|合约写入|奖励托管|发奖|reward distribution/i,
+    })).not.toBeInTheDocument();
+    const participantApprovalReadiness = within(preapproval).getByLabelText("参与者批准 Readiness");
+    expect(within(participantApprovalReadiness).getByText("参与者批准 Readiness")).toBeInTheDocument();
+    expect(within(participantApprovalReadiness).getByText(/只读展示参与者 claimant 批准覆盖/)).toBeInTheDocument();
+    expect(within(participantApprovalReadiness).getAllByText("参与者批准已阻断").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("Check 总数").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("已阻断 Check").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("最高风险级别").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("首要参与者阻断").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("资格 lineage").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("不托管/不发奖边界").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("eligibility-lineage").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("wallet-account-binding").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("no-custody-no-distribution-boundary").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText(/依赖项:/).length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText(/滥用途径:/).length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText(/证据/).length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText(/残余风险:/).length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText(/阻断参与者批准/).length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText(/参与者批准保持阻断/).length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("已阻断").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).getAllByText("可审核").length).toBeGreaterThan(0);
+    expect(within(participantApprovalReadiness).queryByRole("button", {
       name: /批准|approve|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|issue|PR|mission|合约写入|奖励托管|发奖|reward distribution/i,
     })).not.toBeInTheDocument();
     expect(within(adminApprovalReadiness).queryByRole("button", {
