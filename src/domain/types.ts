@@ -2735,10 +2735,76 @@ export interface ContractClaimExecutionApprovalSummary {
   topNextAction: LocalizedText;
 }
 
+export type ContractClaimExecutionApprovalEvidenceState = "missing" | "review_required" | "ready";
+
+export type ContractClaimExecutionApprovalEvidenceRowId =
+  | "security-approval-evidence"
+  | "admin-approval-evidence"
+  | "contract-reviewer-approval-evidence"
+  | "custody-legal-approval-evidence"
+  | "external-audit-acceptance-evidence"
+  | "project-owner-funding-evidence"
+  | "pause-dispute-rollback-runbook-evidence"
+  | "claim-proof-duplicate-safeguards-evidence"
+  | "no-custody-no-distribution-boundary-evidence";
+
+export interface ContractClaimExecutionApprovalEvidenceRow {
+  id: ContractClaimExecutionApprovalEvidenceRowId;
+  sourceItemId: ContractClaimExecutionApprovalItemId;
+  label: LocalizedText;
+  state: ContractClaimExecutionApprovalEvidenceState;
+  ownerRole: OwnerRole;
+  evidenceSurface: LocalizedText;
+  evidenceSummary: LocalizedText;
+  missingEvidence: LocalizedText;
+  auditRequirement: LocalizedText;
+  approvalImpact: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+  blocksExecutionApproval: boolean;
+}
+
+export interface ContractClaimExecutionApprovalEvidenceSummary {
+  totalRows: number;
+  readyRows: number;
+  reviewRequiredRows: number;
+  missingRows: number;
+  launchBlockingRows: number;
+  evidenceComplete: false;
+  executionApprovalBlocked: boolean;
+  claimExecutionEnabled: false;
+  topEvidenceId: ContractClaimExecutionApprovalEvidenceRowId;
+  topNextAction: LocalizedText;
+}
+
+export interface ContractClaimExecutionApprovalEvidenceMatrix {
+  campaignId: string;
+  summary: ContractClaimExecutionApprovalEvidenceSummary;
+  rows: ContractClaimExecutionApprovalEvidenceRow[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  evidenceComplete: false;
+  executionApprovalBlocked: boolean;
+  claimExecutionEnabled: false;
+  noContractWrite: true;
+  noClaimExecution: true;
+  noWalletSigning: true;
+  noProviderCall: true;
+  noStorageWrite: true;
+  noExportGeneration: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  noBranchAutomation: true;
+  noIssueAutomation: true;
+  noPrAutomation: true;
+  noMissionAutomation: true;
+}
+
 export interface ContractClaimExecutionApprovalReadiness {
   campaignId: string;
   summary: ContractClaimExecutionApprovalSummary;
   items: ContractClaimExecutionApprovalItem[];
+  evidenceMatrix: ContractClaimExecutionApprovalEvidenceMatrix;
   sourceContext: {
     preapproval: LocalizedText;
     securityReview: LocalizedText;
@@ -2760,6 +2826,9 @@ export interface ContractClaimExecutionApprovalReadiness {
   noRewardCustody: true;
   noRewardDistribution: true;
   noBranchAutomation: true;
+  noIssueAutomation: true;
+  noPrAutomation: true;
+  noMissionAutomation: true;
 }
 
 export interface ContractClaimPreapprovalSummary {
