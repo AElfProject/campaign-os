@@ -395,13 +395,13 @@ describe("Admin/Ops shell", () => {
       exact: true,
     })).not.toBeInTheDocument();
     expect(
-      within(residualGapMissionQueue).getByText("Contract claim preapproval package execution approval mission"),
+      within(residualGapMissionQueue).getByText("Contract claim Execution Approval Readiness mission"),
     ).toBeInTheDocument();
     expect(
       within(residualGapMissionQueue).getByText("mission/contract-claim-reward-custody-execution-approval"),
     ).toBeInTheDocument();
-    expect(within(residualGapMissionQueue).getByText(/Contract Claim Preapproval Package is present but blocked/)).toBeInTheDocument();
-    expect(within(residualGapMissionQueue).getByText(/top gate security-review/)).toBeInTheDocument();
+    expect(within(residualGapMissionQueue).getByText(/Execution Approval Readiness is present but blocked/)).toBeInTheDocument();
+    expect(within(residualGapMissionQueue).getByText(/top item security-approval/)).toBeInTheDocument();
     expect(within(residualGapMissionQueue).queryByText("mission/p1-locale-expansion")).not.toBeInTheDocument();
     expect(within(residualGapMissionQueue).getAllByText("Backlog items").length).toBeGreaterThan(0);
     expect(within(residualGapMissionQueue).getAllByText("Launch-blocking items").length).toBeGreaterThan(0);
@@ -1418,6 +1418,23 @@ describe("Admin/Ops shell", () => {
     expect(within(preapproval).getAllByText("Total gates").length).toBeGreaterThan(0);
     expect(within(preapproval).getAllByText("Review-required gates").length).toBeGreaterThan(0);
     expect(within(preapproval).getAllByText("Security review").length).toBeGreaterThan(0);
+    const executionApprovalReadiness = within(preapproval).getByLabelText("Execution Approval Readiness");
+    expect(within(executionApprovalReadiness).getByText("Execution Approval Readiness")).toBeInTheDocument();
+    expect(within(executionApprovalReadiness).getByText(/Read-only execution approval coverage/)).toBeInTheDocument();
+    expect(within(executionApprovalReadiness).getAllByText("execution approval remains blocked").length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getAllByText("Launch-blocking items").length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getAllByText(/Launch impact/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getByText("Top execution approval blocker")).toBeInTheDocument();
+    expect(within(executionApprovalReadiness).getAllByText("Security approval").length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getByText("security-approval")).toBeInTheDocument();
+    expect(within(executionApprovalReadiness).getByText("claim-proof-duplicate-safeguards")).toBeInTheDocument();
+    expect(within(executionApprovalReadiness).getByText("no-custody-no-distribution-boundary")).toBeInTheDocument();
+    expect(within(executionApprovalReadiness).getAllByText(/Owner role:/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getAllByText(/Source gate:/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getAllByText(/Evidence needed:/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getAllByText(/Blocking reason:/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getAllByText(/Blocks execution approval/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getAllByText(/No branch, issue, PR, or mission automation/).length).toBeGreaterThan(0);
     const adminApprovalReadiness = within(preapproval).getByLabelText("Admin Approval Readiness");
     expect(within(adminApprovalReadiness).getByText("Admin Approval Readiness")).toBeInTheDocument();
     expect(within(adminApprovalReadiness).getByText(/Read-only approval coverage/)).toBeInTheDocument();
@@ -1480,6 +1497,9 @@ describe("Admin/Ops shell", () => {
     expect(within(preapproval).queryByRole("button", {
       name: /claim|custody|payout|sign|signature|provider call|storage write|export file|contract write|reward distribution|reward custody/i,
     })).not.toBeInTheDocument();
+    expect(within(executionApprovalReadiness).queryByRole("button", {
+      name: /approve|execute|claim|custody|payout|sign|signature|provider call|storage write|export file|branch|issue|PR|mission|contract write|reward distribution|reward custody/i,
+    })).not.toBeInTheDocument();
     expect(within(adminApprovalReadiness).queryByRole("button", {
       name: /approve|claim|custody|payout|sign|signature|provider call|storage write|export file|branch|contract write|reward distribution|reward custody/i,
     })).not.toBeInTheDocument();
@@ -1498,6 +1518,18 @@ describe("Admin/Ops shell", () => {
     })).toBeInTheDocument();
     expect(within(preapproval).getByText(/仅用于审核的未来 claim\/custody 前置条件 package/)).toBeInTheDocument();
     expect(within(preapproval).getAllByText("安全审核").length).toBeGreaterThan(0);
+    const executionApprovalReadiness = within(preapproval).getByLabelText("执行批准 Readiness");
+    expect(within(executionApprovalReadiness).getByText("执行批准 Readiness")).toBeInTheDocument();
+    expect(within(executionApprovalReadiness).getByText(/只读展示安全、admin、合约审核人/)).toBeInTheDocument();
+    expect(within(executionApprovalReadiness).getAllByText("执行批准保持阻断").length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getAllByText("上线阻断条目").length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getAllByText(/上线影响/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getAllByText("首要执行批准阻断").length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getAllByText("安全批准").length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getByText("security-approval")).toBeInTheDocument();
+    expect(within(executionApprovalReadiness).getByText("claim-proof-duplicate-safeguards")).toBeInTheDocument();
+    expect(within(executionApprovalReadiness).getAllByText(/阻断执行批准/).length).toBeGreaterThan(0);
+    expect(within(executionApprovalReadiness).getAllByText(/不会执行合约写入、claim 执行、钱包签名/).length).toBeGreaterThan(0);
     const adminApprovalReadiness = within(preapproval).getByLabelText("管理员批准 Readiness");
     expect(within(adminApprovalReadiness).getByText("管理员批准 Readiness")).toBeInTheDocument();
     expect(within(adminApprovalReadiness).getByText(/只读展示 admin、合约审核人/)).toBeInTheDocument();
@@ -1541,6 +1573,9 @@ describe("Admin/Ops shell", () => {
     expect(within(preapproval).getAllByText(/合约写入、claim 执行、奖励托管和发奖均保持阻断/).length).toBeGreaterThan(0);
     expect(within(preapproval).queryByRole("button", {
       name: /claim|custody|payout|签名|provider 调用|存储写入|导出文件|合约写入|奖励托管|发奖|reward distribution/i,
+    })).not.toBeInTheDocument();
+    expect(within(executionApprovalReadiness).queryByRole("button", {
+      name: /批准|执行|approve|execute|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|issue|PR|mission|合约写入|奖励托管|发奖|reward distribution/i,
     })).not.toBeInTheDocument();
     expect(within(adminApprovalReadiness).queryByRole("button", {
       name: /批准|approve|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|合约写入|奖励托管|发奖|reward distribution/i,
@@ -1781,12 +1816,12 @@ describe("Admin/Ops shell", () => {
     expect(within(zhResidualGapMissionQueue).queryByText("mission/contract-claim-reward-custody", {
       exact: true,
     })).not.toBeInTheDocument();
-    expect(within(zhResidualGapMissionQueue).getByText("合约领取预批准 package 执行批准 mission")).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getByText("合约领取执行批准 Readiness mission")).toBeInTheDocument();
     expect(
       within(zhResidualGapMissionQueue).getByText("mission/contract-claim-reward-custody-execution-approval"),
     ).toBeInTheDocument();
-    expect(within(zhResidualGapMissionQueue).getByText(/Contract Claim 预批准 Package 已存在但仍阻断/)).toBeInTheDocument();
-    expect(within(zhResidualGapMissionQueue).getByText(/top gate security-review/)).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getByText(/执行批准 Readiness 已存在但仍阻断/)).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getByText(/top item security-approval/)).toBeInTheDocument();
     expect(within(zhResidualGapMissionQueue).queryByText("mission/p1-locale-expansion")).not.toBeInTheDocument();
     expect(within(zhResidualGapMissionQueue).getAllByText("Backlog 条目").length).toBeGreaterThan(0);
     expect(within(zhResidualGapMissionQueue).getAllByText("上线阻断条目").length).toBeGreaterThan(0);

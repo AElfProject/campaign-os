@@ -103,6 +103,7 @@ import type {
   ContractCampaignStatus,
   ContractClaimAdminApprovalItemId,
   ContractClaimCustodyLegalItemId,
+  ContractClaimExecutionApprovalItemId,
   ContractClaimPreapprovalGateId,
   ContractClaimSecurityReviewItemId,
   WalletProviderEvidenceArtifact,
@@ -1108,6 +1109,14 @@ describe("Campaign OS domain foundation", () => {
     expect(preapproval.noRewardDistribution).toBe(true);
     expect(preapproval.noBranchAutomation).toBe(true);
     expect(preapproval.noStorageWrite).toBe(true);
+    expect(preapproval.noWalletSigning).toBe(true);
+    expect(preapproval.noProviderCall).toBe(true);
+    expect(preapproval.noExportGeneration).toBe(true);
+    expect(preapproval.executionApprovalReadiness.summary).toMatchObject({
+      executionApprovalBlocked: true,
+      claimExecutionEnabled: false,
+      topItemId: "security-approval",
+    });
 
     expect(gatesById["security-review"]).toMatchObject({
       state: "blocked",
@@ -1143,7 +1152,19 @@ describe("Campaign OS domain foundation", () => {
     )).toMatchObject({
       status: "backlog",
       launchBlocking: false,
+      suggestedMissionTitle: {
+        "en-US": "Contract claim Execution Approval Readiness mission",
+      },
     });
+    const contractClaimResidual = adminOps.residualGapMissionQueue.items.find(
+      (item) => item.sourceRowId === "v02-contract-claim-reward-custody",
+    );
+    expect(contractClaimResidual?.dependency["en-US"]).toContain("Execution Approval Readiness");
+    expect(contractClaimResidual?.dependency["en-US"]).toContain("security-approval");
+    expect(contractClaimResidual?.evidenceNeeded["en-US"]).toContain("Execution Approval Readiness evidence");
+    expect(contractClaimResidual?.boundary["en-US"]).toContain("Execution Approval Readiness boundary");
+    expect(contractClaimResidual?.evidenceNeeded["en-US"]).toContain("claim execution");
+    expect(contractClaimResidual?.evidenceNeeded["en-US"]).not.toContain("claimExecutionEnabled=true");
 
     for (const gate of preapproval.gates) {
       expectCoreLocalizedText(gate.label);
@@ -1472,6 +1493,138 @@ describe("Campaign OS domain foundation", () => {
       expectCoreLocalizedText(item.nextAction);
       expectCoreLocalizedText(item.sourceSurface);
       expectCoreLocalizedText(item.boundary);
+    }
+
+    for (const unsafeKey of [
+      "privateKey",
+      "signature",
+      "transactionId",
+      "contractRoot",
+      "downloadUrl",
+      "storageUrl",
+    ]) {
+      expect(hasOwnKeyDeep(readiness, unsafeKey)).toBe(false);
+      expect(JSON.stringify(readiness)).not.toContain(`"${unsafeKey}"`);
+    }
+  });
+
+  it("derives contract claim execution approval readiness without enabling execution", () => {
+    const preapproval = createContractClaimPreapprovalPackage(campaignDetail);
+    const repeated = createContractClaimPreapprovalPackage(campaignDetail).executionApprovalReadiness;
+    const readiness = preapproval.executionApprovalReadiness;
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const itemsById = Object.fromEntries(readiness.items.map((item) => [item.id, item]));
+    const contractClaimResidual = adminOps.residualGapMissionQueue.items.find(
+      (item) => item.sourceRowId === "v02-contract-claim-reward-custody",
+    );
+    const requiredItemIds: ContractClaimExecutionApprovalItemId[] = [
+      "security-approval",
+      "admin-approval",
+      "contract-reviewer-approval",
+      "custody-legal-approval",
+      "external-audit-acceptance",
+      "project-owner-funding",
+      "pause-dispute-rollback-runbook",
+      "claim-proof-duplicate-safeguards",
+      "no-custody-no-distribution-boundary",
+    ];
+
+    expect(repeated).toEqual(readiness);
+    expect(adminOps.contractClaimPreapprovalPackage.executionApprovalReadiness).toEqual(readiness);
+    expect(readiness.campaignId).toBe(campaignDetail.id);
+    expect(readiness.items.map((item) => item.id)).toEqual(requiredItemIds);
+    expect(readiness.summary).toMatchObject({
+      totalItems: readiness.items.length,
+      readyItems: readiness.items.filter((item) => item.state === "ready").length,
+      reviewRequiredItems: readiness.items.filter((item) => item.state === "review_required").length,
+      blockedItems: readiness.items.filter((item) => item.state === "blocked").length,
+      launchBlockingItems: readiness.items.filter((item) => item.blocksExecutionApproval && item.state !== "ready").length,
+      executionApprovalBlocked: true,
+      claimExecutionEnabled: false,
+      topItemId: "security-approval",
+    });
+    expect(readiness.nextAction).toEqual(readiness.summary.topNextAction);
+
+    expect(itemsById["security-approval"]).toMatchObject({
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceGateId: "security-review",
+      blocksExecutionApproval: true,
+    });
+    expect(itemsById["admin-approval"]).toMatchObject({
+      state: "blocked",
+      ownerRole: "internal_operator",
+      sourceGateId: "admin-approval",
+      blocksExecutionApproval: true,
+    });
+    expect(itemsById["contract-reviewer-approval"]).toMatchObject({
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceGateId: "contract-reviewer-approval",
+    });
+    expect(itemsById["custody-legal-approval"]?.blockingReason["en-US"]).toContain("Custody/legal approval");
+    expect(itemsById["external-audit-acceptance"]?.blockingReason["en-US"]).toContain("External audit");
+    expect(itemsById["project-owner-funding"]?.launchImpact["en-US"]).toContain("Launch impact");
+    expect(itemsById["pause-dispute-rollback-runbook"]?.dependency["en-US"]).toContain("rollback behavior");
+    expect(itemsById["claim-proof-duplicate-safeguards"]?.blockingReason["en-US"]).toContain("duplicate safeguards");
+    expect(itemsById["no-custody-no-distribution-boundary"]).toMatchObject({
+      state: "ready",
+      ownerRole: "project_owner",
+      sourceGateId: "no-custody-no-distribution-boundary",
+      blocksExecutionApproval: true,
+    });
+    expect(itemsById["no-custody-no-distribution-boundary"]?.blockingReason["en-US"]).toContain(
+      "does not approve claim execution",
+    );
+
+    expect(readiness.executionApproved).toBe(false);
+    expect(readiness.claimExecutionEnabled).toBe(false);
+    expect(readiness.noContractWrite).toBe(true);
+    expect(readiness.noClaimExecution).toBe(true);
+    expect(readiness.noWalletSigning).toBe(true);
+    expect(readiness.noProviderCall).toBe(true);
+    expect(readiness.noStorageWrite).toBe(true);
+    expect(readiness.noExportGeneration).toBe(true);
+    expect(readiness.noRewardCustody).toBe(true);
+    expect(readiness.noRewardDistribution).toBe(true);
+    expect(readiness.noBranchAutomation).toBe(true);
+    expect(readiness.boundary["en-US"]).toContain("Execution approval remains blocked");
+    expect(readiness.boundary["en-US"]).toContain("No branch");
+    expect(readiness.boundary["en-US"]).toContain("PR");
+    expect(readiness.boundary["en-US"]).toContain("mission automation");
+    expect(readiness.sourceContext.preapproval["en-US"]).toContain("execution approval remains blocked");
+    expect(readiness.sourceContext.securityReview["en-US"]).toContain("approvalBlocked=true");
+    expect(readiness.sourceContext.adminApproval["en-US"]).toContain("claimModeApprovalBlocked=true");
+    expect(readiness.sourceContext.custodyLegal["en-US"]).toContain("custodyLegalApprovalBlocked=true");
+    expect(readiness.sourceContext.contractTransparency["en-US"]).toContain("reward-custody-claim");
+    expect(preapproval.overallState).toBe("blocked");
+    expect(preapproval.claimExecutionEnabled).toBe(false);
+    expect(preapproval.suggestedFutureBranch).toBe("mission/contract-claim-reward-custody-execution-approval");
+
+    expect(contractClaimResidual).toMatchObject({
+      status: "backlog",
+      launchBlocking: false,
+      suggestedBranch: "mission/contract-claim-reward-custody-execution-approval",
+    });
+    expect(contractClaimResidual?.dependency["en-US"]).toContain("Execution Approval Readiness");
+    expect(contractClaimResidual?.dependency["en-US"]).toContain("security-approval");
+    expect(contractClaimResidual?.nextAction).toEqual(readiness.summary.topNextAction);
+    expect(contractClaimResidual?.evidenceNeeded["en-US"]).toContain("Execution Approval Readiness evidence");
+    expect(contractClaimResidual?.evidenceNeeded["en-US"]).toContain("Execution approval remains blocked");
+
+    for (const item of readiness.items) {
+      expectCoreLocalizedText(item.label);
+      expectCoreLocalizedText(item.dependency);
+      expectCoreLocalizedText(item.evidenceRequired);
+      expectCoreLocalizedText(item.blockingReason);
+      expectCoreLocalizedText(item.launchImpact);
+      expectCoreLocalizedText(item.nextAction);
+      expectCoreLocalizedText(item.sourceSurface);
+      expectCoreLocalizedText(item.boundary);
+    }
+
+    for (const localizedText of Object.values(readiness.sourceContext)) {
+      expectCoreLocalizedText(localizedText);
     }
 
     for (const unsafeKey of [
@@ -2381,19 +2534,23 @@ describe("Campaign OS domain foundation", () => {
       suggestedBranch: "mission/contract-claim-reward-custody-execution-approval",
     });
     expect(queue.items[0]?.suggestedMissionTitle["en-US"]).toBe(
-      "Contract claim preapproval package execution approval mission",
+      "Contract claim Execution Approval Readiness mission",
     );
     expect(queue.items[0]?.sourceGap["en-US"]).toBe(
       "Contract claim preapproval package covers future custody approval",
     );
     expect(queue.items[0]?.dependency["en-US"]).toContain(
-      "Contract Claim Preapproval Package is present but blocked",
+      "Execution Approval Readiness is present but blocked",
     );
-    expect(queue.items[0]?.dependency["en-US"]).toContain(adminOps.contractClaimPreapprovalPackage.summary.topGateId);
+    expect(queue.items[0]?.dependency["en-US"]).toContain(
+      adminOps.contractClaimPreapprovalPackage.executionApprovalReadiness.summary.topItemId,
+    );
     expect(queue.items[0]?.evidenceNeeded["en-US"]).toContain("Mission 141 created");
-    expect(queue.items[0]?.evidenceNeeded["en-US"]).toContain("Package boundary");
-    expect(queue.items[0]?.nextAction).toEqual(adminOps.contractClaimPreapprovalPackage.summary.topNextAction);
-    expect(queue.items[0]?.boundary["en-US"]).toContain("Contract Claim Preapproval Package boundary");
+    expect(queue.items[0]?.evidenceNeeded["en-US"]).toContain("Execution Approval Readiness evidence");
+    expect(queue.items[0]?.nextAction).toEqual(
+      adminOps.contractClaimPreapprovalPackage.executionApprovalReadiness.summary.topNextAction,
+    );
+    expect(queue.items[0]?.boundary["en-US"]).toContain("Execution Approval Readiness boundary");
     expect(queue.items[0]?.boundary["en-US"]).toContain("reward custody");
     expect(queue.items[0]?.boundary["en-US"]).toContain("reward distribution");
     expect(queue.items[0]?.launchImpact["en-US"]).toContain("non-blocking backlog follow-up");
