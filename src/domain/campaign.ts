@@ -12430,7 +12430,7 @@ const exportedStatusRow = (): ContractStatusMappingRow => ({
   targetContractStatus: null,
   classification: "export_evidence",
   contractWriteAllowed: false,
-  ownerRole: "export_reviewer",
+  ownerRole: "internal_operator",
   evidenceSurface: localized(
     "Export confirmation readiness and eligibility root review",
     "导出确认 readiness 与 eligibility root 审核",
