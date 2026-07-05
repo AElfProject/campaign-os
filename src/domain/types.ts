@@ -2278,6 +2278,47 @@ export interface ContractClaimPreapprovalPackage {
   noBranchAutomation: true;
 }
 
+export type ContractCampaignStatus =
+  | "DRAFT"
+  | "SCHEDULED"
+  | "LIVE"
+  | "PAUSED"
+  | "ENDED"
+  | "ARCHIVED";
+export type ContractStatusMappingClassification =
+  | "contract_safe"
+  | "off_chain_review"
+  | "export_evidence"
+  | "blocked_non_goal";
+
+export interface ContractStatusMappingRow {
+  localStatus: CampaignStatus;
+  label: LocalizedText;
+  targetContractStatus: ContractCampaignStatus | null;
+  classification: ContractStatusMappingClassification;
+  contractWriteAllowed: boolean;
+  ownerRole: OwnerRole;
+  evidenceSurface: LocalizedText;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface ContractStatusMappingSummary {
+  totalStatuses: number;
+  contractSafeCount: number;
+  offChainOnlyCount: number;
+  blockedWriteCount: number;
+  topStatus: CampaignStatus;
+  topNextAction: LocalizedText;
+}
+
+export interface ContractStatusMappingReadiness {
+  summary: ContractStatusMappingSummary;
+  rows: ContractStatusMappingRow[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export type CompanionContractReadinessStatus =
   | "proven"
   | "review_required"
@@ -2295,6 +2336,7 @@ export type CompanionContractEvidenceItemKind =
 export type CompanionContractEvidenceCategoryId =
   | "campaign-registry-schema"
   | "campaign-registry-methods-events"
+  | "campaign-registry-status-mapping"
   | "points-batch-root"
   | "referral-registry-rules"
   | "eligibility-root-proof"
