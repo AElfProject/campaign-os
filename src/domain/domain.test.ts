@@ -6081,7 +6081,9 @@ describe("Campaign OS domain foundation", () => {
     expect(eligibleCheck.result).toMatchObject({
       accountType: "AA",
       completedRequiredTasks: 2,
+      inspectionMode: "verified_session",
       knownParticipant: true,
+      localePreference: "en-US",
       missingTasks: [],
       progressPercent: 100,
       score: 270,
@@ -6096,7 +6098,9 @@ describe("Campaign OS domain foundation", () => {
     expect(ineligibleCheck.result).toMatchObject({
       accountType: "EOA",
       completedRequiredTasks: 1,
+      inspectionMode: "verified_session",
       knownParticipant: true,
+      localePreference: "zh-CN",
       progressPercent: 50,
       riskFlags: ["referral_velocity_review"],
       score: 40,
@@ -6120,7 +6124,9 @@ describe("Campaign OS domain foundation", () => {
     );
 
     expect(riskCheck.result).toMatchObject({
+      inspectionMode: "verified_session",
       knownParticipant: true,
+      localePreference: "en-US",
       missingTasks: [],
       riskFlags: ["manual_review_queue"],
       status: "risk_flagged",
@@ -6136,6 +6142,7 @@ describe("Campaign OS domain foundation", () => {
     expect(readModel.selectedAddress).toBe("ELF_UNKNOWN_ADDRESS");
     expect(readModel.result).toMatchObject({
       accountType: "UNKNOWN",
+      inspectionMode: "address_only",
       knownParticipant: false,
       missingTasks: [],
       progressPercent: 0,
@@ -6145,6 +6152,8 @@ describe("Campaign OS domain foundation", () => {
       walletSource: "OTHER",
       walletTypeVerified: false,
     });
+    expect(readModel.result).not.toHaveProperty("localePreference");
+    expect(readModel.result.walletStatus).toBeUndefined();
     expect(readModel.result.reason["en-US"]).toContain("cannot infer AA or EOA");
     expect(readModel.result.nextAction["en-US"]).toContain("Connect or verify");
     expect(readModel.result.reason["zh-TW"]).toContain("cannot infer AA or EOA");

@@ -4608,10 +4608,14 @@ export interface EligibilityMissingTaskDetail {
   nextAction: LocalizedText;
 }
 
+export type EligibilityCheckerInspectionMode = "address_only" | "verified_session";
+
 export interface EligibilityCheckResult {
   walletAddress: string;
   knownParticipant: boolean;
   participantId?: string;
+  inspectionMode: EligibilityCheckerInspectionMode;
+  localePreference?: SupportedLocale;
   status: EligibilityStatus;
   score: number;
   pointsThreshold: number;

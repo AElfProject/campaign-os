@@ -4931,6 +4931,7 @@ const addressOnlyEligibilityResult = (
     accountType: "UNKNOWN",
     boundary: eligibilityCheckerBoundary,
     completedRequiredTasks: 0,
+    inspectionMode: "address_only",
     knownParticipant: false,
     missingTasks: [],
     pointsThreshold: defaultPointsThreshold,
@@ -4967,7 +4968,9 @@ const createKnownEligibilityResult = (
     accountType: participant.accountType,
     boundary: eligibilityCheckerBoundary,
     completedRequiredTasks: metrics.completedRequiredTasks,
+    inspectionMode: "verified_session",
     knownParticipant: true,
+    localePreference: participant.localePreference,
     missingTasks: missingTaskDetails(
       campaign.tasks,
       participation.taskStates,
