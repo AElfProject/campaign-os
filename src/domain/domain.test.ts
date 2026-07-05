@@ -10,6 +10,7 @@ import {
   createAntiSybilV2GraphReadiness,
   createCompanionContractReadiness,
   createContractImpactReviewModel,
+  createContractClaimPreapprovalPackage,
   createContractTransparencyMonitor,
   createEligibilityCheckerReadModel,
   createEcosystemNextActionReadModel,
@@ -94,6 +95,7 @@ import {
   walletSessions,
 } from "./index";
 import type {
+  ContractClaimPreapprovalGateId,
   WalletProviderEvidenceArtifact,
   WalletProviderEvidenceIntake,
   WalletProviderEvidenceReviewArtifactReference,
@@ -204,6 +206,12 @@ const containsTextDeep = (value: unknown, term: string): boolean => {
 
 const expectLocalizedText = (value: Parameters<typeof getLocalizedText>[0]) => {
   for (const locale of supportedLocales) {
+    expect(getLocalizedText(value, locale).trim()).not.toBe("");
+  }
+};
+
+const expectCoreLocalizedText = (value: Parameters<typeof getLocalizedText>[0]) => {
+  for (const locale of ["en-US", "zh-CN", "zh-TW"] as const) {
     expect(getLocalizedText(value, locale).trim()).not.toBe("");
   }
 };
@@ -1045,6 +1053,105 @@ describe("Campaign OS domain foundation", () => {
       "secret",
     ]) {
       expect(serialized).not.toContain(unsafe);
+    }
+  });
+
+  it("builds a deterministic contract claim preapproval package without enabling custody or claim execution", () => {
+    const preapproval = createContractClaimPreapprovalPackage(campaignDetail);
+    const repeated = createContractClaimPreapprovalPackage(campaignDetail);
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const gatesById = Object.fromEntries(preapproval.gates.map((gate) => [gate.id, gate]));
+    const acceptanceRows = adminOps.deliveryAcceptance.solutionSets.flatMap((solutionSet) => solutionSet.rows);
+    const claimCustodyAcceptanceRow = acceptanceRows.find(
+      (row) => row.id === "v02-contract-claim-reward-custody",
+    );
+    const requiredGateIds: ContractClaimPreapprovalGateId[] = [
+      "security-review",
+      "custody-legal-approval",
+      "external-audit",
+      "admin-approval",
+      "contract-reviewer-approval",
+      "project-owner-reward-funding",
+      "pause-dispute-runbook",
+      "no-custody-no-distribution-boundary",
+    ];
+
+    expect(repeated).toEqual(preapproval);
+    expect(adminOps.contractClaimPreapprovalPackage).toEqual(preapproval);
+    expect(preapproval.gates.map((gate) => gate.id)).toEqual(requiredGateIds);
+    expect(preapproval.summary).toMatchObject({
+      totalGates: preapproval.gates.length,
+      readyGates: preapproval.gates.filter((gate) => gate.state === "ready").length,
+      reviewRequiredGates: preapproval.gates.filter((gate) => gate.state === "review_required").length,
+      blockedGates: preapproval.gates.filter((gate) => gate.state === "blocked").length,
+      topGateId: "security-review",
+    });
+    expect(preapproval.overallState).toBe("blocked");
+    expect(preapproval.claimExecutionEnabled).toBe(false);
+    expect(preapproval.suggestedFutureBranch).toBe(
+      "mission/contract-claim-reward-custody-execution-approval",
+    );
+    expect(preapproval.suggestedFutureBranch).toMatch(/^mission\//);
+    expect(preapproval.suggestedFutureBranch).not.toMatch(/^mission\/(?:main|master)$/);
+    expect(preapproval.noContractWrite).toBe(true);
+    expect(preapproval.noClaimExecution).toBe(true);
+    expect(preapproval.noRewardCustody).toBe(true);
+    expect(preapproval.noRewardDistribution).toBe(true);
+    expect(preapproval.noBranchAutomation).toBe(true);
+    expect(preapproval.noStorageWrite).toBe(true);
+
+    expect(gatesById["security-review"]).toMatchObject({
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      blocksClaimExecution: true,
+    });
+    expect(gatesById["admin-approval"]).toMatchObject({
+      state: "review_required",
+      ownerRole: "internal_operator",
+    });
+    expect(gatesById["no-custody-no-distribution-boundary"]).toMatchObject({
+      state: "ready",
+      ownerRole: "project_owner",
+      blocksClaimExecution: true,
+    });
+    expect(preapproval.sourceContext.contractTransparency["en-US"]).toContain("reward-custody-claim");
+    expect(preapproval.sourceContext.deliveryAcceptance["en-US"]).toContain("accepted MVP non-goal");
+    expect(preapproval.sourceContext.exportCloseout["en-US"]).toContain("Export");
+    expect(preapproval.boundary["en-US"]).toContain("Contract write");
+    expect(preapproval.boundary["en-US"]).toContain("claim execution");
+    expect(preapproval.boundary["en-US"]).toContain("reward custody");
+    expect(preapproval.boundary["en-US"]).toContain("reward distribution");
+
+    expect(claimCustodyAcceptanceRow).toMatchObject({
+      status: "deferred",
+      launchBlocking: false,
+    });
+    expect(adminOps.deliveryAcceptance.topResidualGaps.map((row) => row.id)).not.toContain(
+      "v02-contract-claim-reward-custody",
+    );
+    expect(adminOps.residualGapMissionQueue.items.find(
+      (item) => item.sourceRowId === "v02-contract-claim-reward-custody",
+    )).toMatchObject({
+      status: "backlog",
+      launchBlocking: false,
+    });
+
+    for (const gate of preapproval.gates) {
+      expectCoreLocalizedText(gate.label);
+      expectCoreLocalizedText(gate.evidenceNeeded);
+      expectCoreLocalizedText(gate.nextAction);
+    }
+
+    for (const unsafeKey of [
+      "privateKey",
+      "signature",
+      "transactionId",
+      "contractRoot",
+      "downloadUrl",
+      "storageUrl",
+    ]) {
+      expect(hasOwnKeyDeep(preapproval, unsafeKey)).toBe(false);
+      expect(JSON.stringify(preapproval)).not.toContain(`"${unsafeKey}"`);
     }
   });
 
