@@ -3,6 +3,7 @@ import {
   EXPORT_CSV_COLUMNS,
   campaignDetail,
   createCampaignOsLocalService,
+  requiredApiSkillIds,
   serviceBoundary,
   walletAdapterFixtures,
 } from "./index";
@@ -23,6 +24,21 @@ const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
 
   return Object.prototype.hasOwnProperty.call(record, key)
     || Object.values(record).some((item) => hasOwnKeyDeep(item, key));
+};
+
+const expectLocalInvocationSafety = (value: unknown) => {
+  expect(value).toMatchObject({
+    localOnly: true,
+    noContractWrite: true,
+    noExportFile: true,
+    noLiveApi: true,
+    noRewardCustody: true,
+    noRewardDistribution: true,
+    noSecretHandling: true,
+    noStorageWrite: true,
+    noWalletSignature: true,
+    seededDataOnly: true,
+  });
 };
 
 describe("Campaign OS local API service facade", () => {
@@ -2264,5 +2280,282 @@ describe("Campaign OS local API service facade", () => {
       error: expect.objectContaining({ code: "CAMPAIGN_NOT_FOUND", field: "campaignId" }),
     });
     expect(serviceBoundary["en-US"]).toContain("No live API");
+  });
+
+  it("invokes representative API Skills through a traceable local envelope", () => {
+    const createCampaignPayload = {
+      duration: "2026-07-01/2026-07-14",
+      endTime: "2026-07-14T23:59:59Z",
+      goal: "Activate Awaken traders",
+      ownerAddress: "2F4...9aB",
+      projectId: "awaken",
+      rewardDescription: "Rewards remain project owned.",
+      startTime: "2026-07-01T00:00:00Z",
+    };
+    const createCampaign = service.invokeApiSkill({
+      payload: createCampaignPayload,
+      requestSource: "agent",
+      skillId: "create_campaign",
+    });
+    const createCampaignAgain = service.invokeApiSkill({
+      payload: { ...createCampaignPayload },
+      requestSource: "project_console",
+      skillId: "create_campaign",
+    });
+    const verifyTask = service.invokeApiSkill({
+      payload: {
+        accountType: "AA",
+        campaignId: campaignDetail.id,
+        taskId: "task-bridge",
+        walletAddress: "2F4...9aB",
+        walletSource: "PORTKEY_AA",
+      },
+      skillId: "verify_task",
+    });
+    const eligibility = service.invokeApiSkill({
+      payload: {
+        accountType: "EOA",
+        campaignId: campaignDetail.id,
+        walletAddress: "3E9...7cD",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      },
+      skillId: "check_eligibility",
+    });
+    const exportWinners = service.invokeApiSkill({
+      payload: {
+        campaignId: campaignDetail.id,
+        contractRootMode: "none",
+        format: "csv",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      },
+      skillId: "export_winners",
+    });
+    const posts = service.invokeApiSkill({
+      payload: {
+        campaignId: campaignDetail.id,
+        channel: "x",
+        sourceLocale: "en-US",
+        targetLocales: ["zh-CN", "zh-TW"],
+      },
+      skillId: "generate_campaign_posts",
+    });
+    const summary = service.invokeApiSkill({
+      payload: {
+        campaignId: campaignDetail.id,
+        period: "daily",
+      },
+      skillId: "summarize_campaign",
+    });
+
+    expect(createCampaign).toMatchObject({
+      apiGroup: "campaign_creation",
+      contract: expect.objectContaining({
+        id: "create_campaign",
+        readiness: "local_only",
+        riskLevel: "medium",
+      }),
+      ok: true,
+      readiness: "local_only",
+      riskLevel: "medium",
+      skillId: "create_campaign",
+    });
+    expect(createCampaign.traceId).toBe(createCampaignAgain.traceId);
+    expect(createCampaign.traceId).toMatch(/^skill-create-campaign-/);
+    expect(createCampaign.payload).toMatchObject({
+      contractMode: "OFF_CHAIN_MVP",
+      defaultLocale: "en-US",
+      supportedLocales: activatedRuntimeLocales,
+      walletPolicy: "ANY",
+    });
+    expectLocalInvocationSafety(createCampaign.safety);
+
+    expect(verifyTask).toMatchObject({
+      apiGroup: "task_verification",
+      ok: true,
+      readiness: "review_required",
+      riskLevel: "high",
+      skillId: "verify_task",
+      payload: expect.objectContaining({
+        accountType: "AA",
+        canonicalEvidenceSource: "AELFSCAN",
+        evidenceHash: "demo-task-bridge-2F4",
+        riskFlags: [],
+        status: "completed",
+        walletSource: "PORTKEY_AA",
+      }),
+    });
+    expectLocalInvocationSafety(verifyTask.safety);
+
+    expect(eligibility).toMatchObject({
+      apiGroup: "eligibility",
+      ok: true,
+      payload: expect.objectContaining({
+        localePreference: "zh-CN",
+        missingTasks: ["bridge_ebridge"],
+        riskFlags: ["referral_velocity_review"],
+        walletTypeVerified: true,
+      }),
+      skillId: "check_eligibility",
+    });
+    expectLocalInvocationSafety(eligibility.safety);
+
+    expect(exportWinners).toMatchObject({
+      apiGroup: "export",
+      ok: true,
+      readiness: "review_required",
+      riskLevel: "high",
+      payload: expect.objectContaining({
+        columns: EXPORT_CSV_COLUMNS,
+        contractRootMode: "none",
+        format: "csv",
+      }),
+      skillId: "export_winners",
+    });
+    expect(hasOwnKeyDeep(exportWinners.payload, "downloadUrl")).toBe(false);
+    expect(hasOwnKeyDeep(exportWinners.payload, "contractRoot")).toBe(false);
+    expectLocalInvocationSafety(exportWinners.safety);
+
+    expect(posts).toMatchObject({
+      apiGroup: "content_generation",
+      ok: true,
+      payload: expect.objectContaining({
+        humanReviewRequired: true,
+      }),
+      skillId: "generate_campaign_posts",
+    });
+    expect(posts.payload).toHaveProperty("artifacts");
+    expectLocalInvocationSafety(posts.safety);
+
+    expect(summary).toMatchObject({
+      apiGroup: "campaign_summary",
+      ok: true,
+      readiness: "ready",
+      riskLevel: "low",
+      payload: expect.objectContaining({
+        localeMetrics: expect.any(Array),
+        walletLocaleMetrics: expect.any(Array),
+        walletTypeMetrics: expect.any(Array),
+      }),
+      skillId: "summarize_campaign",
+    });
+    expectLocalInvocationSafety(summary.safety);
+  });
+
+  it("reports API Skill invocation coverage parity across contracts and router handlers", () => {
+    const coverage = service.getApiSkillInvocationCoverage();
+
+    expect(coverage.ok).toBe(true);
+    expect(coverage.payload).toMatchObject({
+      missingContractSkillIds: [],
+      missingRouterSkillIds: [],
+      requiredSkillIds: requiredApiSkillIds,
+      routedSkillIds: requiredApiSkillIds,
+      sampleInvocationIds: requiredApiSkillIds,
+    });
+    expect(coverage.payload?.registeredSkillIds).toEqual(requiredApiSkillIds);
+    expect(coverage.payload?.readyCount).toBeGreaterThan(0);
+    expect(coverage.payload?.localOnlyCount).toBeGreaterThan(0);
+    expect(coverage.payload?.reviewRequiredCount).toBeGreaterThan(0);
+    expect(coverage.payload?.highRiskCount).toBeGreaterThan(0);
+    expect(coverage.payload?.boundary["en-US"]).toContain("No live API");
+    expectLocalInvocationSafety(coverage.payload?.safety);
+  });
+
+  it("fails API Skill invocations closed with safety boundaries and without sensitive fields", () => {
+    const unknownSkill = service.invokeApiSkill({
+      payload: { campaignId: campaignDetail.id },
+      skillId: "unknown_skill",
+    });
+    const malformedPayload = service.invokeApiSkill({
+      payload: {},
+      skillId: "create_campaign",
+    });
+    const unsafeExport = service.invokeApiSkill({
+      payload: {
+        campaignId: campaignDetail.id,
+        contractRootMode: "eligibility_root",
+        format: "csv",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      },
+      skillId: "export_winners",
+    });
+    const walletMismatch = service.invokeApiSkill({
+      payload: {
+        accountType: "AA",
+        campaignId: campaignDetail.id,
+        walletAddress: "3E9...7cD",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      },
+      skillId: "check_eligibility",
+    });
+    const missingTask = service.invokeApiSkill({
+      payload: {
+        accountType: "AA",
+        campaignId: campaignDetail.id,
+        taskId: "missing-task",
+        walletAddress: "2F4...9aB",
+        walletSource: "PORTKEY_AA",
+      },
+      skillId: "verify_task",
+    });
+    const responses = [unknownSkill, malformedPayload, unsafeExport, walletMismatch, missingTask];
+
+    expect(unknownSkill).toMatchObject({
+      error: expect.objectContaining({ code: "INVALID_SKILL", field: "skillId" }),
+      ok: false,
+      readiness: "blocked",
+      riskLevel: "high",
+      skillId: "unknown_skill",
+    });
+    expect(unknownSkill.traceId).toMatch(/^skill-unknown-skill-/);
+    expect(malformedPayload).toMatchObject({
+      error: expect.objectContaining({ code: "INVALID_REQUEST", field: "payload" }),
+      ok: false,
+      skillId: "create_campaign",
+    });
+    expect(unsafeExport).toMatchObject({
+      error: expect.objectContaining({ code: "UNSUPPORTED_EXPORT_MODE", field: "contractRootMode" }),
+      ok: false,
+      skillId: "export_winners",
+    });
+    expect(walletMismatch).toMatchObject({
+      error: expect.objectContaining({ code: "INVALID_REQUEST", field: "walletProvenance" }),
+      ok: false,
+      skillId: "check_eligibility",
+    });
+    expect(missingTask).toMatchObject({
+      error: expect.objectContaining({ code: "TASK_NOT_FOUND", field: "taskId" }),
+      ok: false,
+      skillId: "verify_task",
+    });
+
+    for (const response of responses) {
+      expect(response.payload).toBeUndefined();
+      expect(response.traceId).toMatch(/^skill-/);
+      expect(response.boundary["en-US"]).toMatch(/No live|Seeded\/local|Verification contract|Export contract/);
+      expectLocalInvocationSafety(response.safety);
+    }
+
+    for (const unsafeKey of [
+      "privateKey",
+      "seedPhrase",
+      "mnemonic",
+      "password",
+      "token",
+      "secret",
+      "signature",
+      "signedPayload",
+      "credential",
+      "downloadUrl",
+      "contractRoot",
+    ]) {
+      for (const response of responses) {
+        expect(hasOwnKeyDeep(response, unsafeKey)).toBe(false);
+      }
+    }
   });
 });

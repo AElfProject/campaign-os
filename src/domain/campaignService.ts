@@ -21,7 +21,11 @@ import {
   executeI18nReviewAction,
   verificationBoundary,
 } from "./campaign";
-import { createApiSkillContractSurface } from "./apiSkillContracts";
+import {
+  apiSkillContractRegistry,
+  createApiSkillContractSurface,
+  requiredApiSkillIds,
+} from "./apiSkillContracts";
 import {
   taskTemplateLibrary,
   type TaskTemplate,
@@ -48,8 +52,16 @@ import {
   type AiContentArtifactChannel,
   type AiContentArtifactType,
   type ApiSkillApiGroup,
+  type ApiSkillContract,
   type ApiSkillContractReadiness,
   type ApiSkillFieldGroup,
+  type ApiSkillId,
+  type ApiSkillInvocationContractMetadata,
+  type ApiSkillInvocationCoverage,
+  type ApiSkillInvocationEnvelope,
+  type ApiSkillInvocationError,
+  type ApiSkillInvocationRequest,
+  type ApiSkillInvocationSafety,
   type CampaignDiscoveryConsumerSurface,
   type CampaignDiscoveryDetail,
   type CampaignDiscoveryItem,
@@ -428,6 +440,11 @@ export interface LocalServiceCoverageSummary {
   boundary: LocalizedText;
 }
 
+type ApiSkillRouteHandler = (
+  service: CampaignOsLocalService,
+  payload: unknown,
+) => LocalServiceResult<unknown>;
+
 interface WalletLocaleMetric {
   id: string;
   label: string;
@@ -482,7 +499,9 @@ export interface CampaignOsLocalService {
   getAntiSybilV2GraphReadiness(
     request: GetAntiSybilV2GraphReadinessRequest,
   ): LocalServiceResult<AntiSybilV2GraphReadiness>;
+  getApiSkillInvocationCoverage(): LocalServiceResult<ApiSkillInvocationCoverage>;
   getCoverageSummary(): LocalServiceResult<LocalServiceCoverageSummary>;
+  invokeApiSkill(request: ApiSkillInvocationRequest): ApiSkillInvocationEnvelope;
   listCampaigns(request?: ListCampaignsRequest): LocalServiceResult<CampaignDiscoveryReadModel>;
   requestAgentWalletAction(
     request: AgentWalletActionReadinessRequest,
@@ -595,6 +614,229 @@ const failure = <T>(
   },
   boundary: serviceBoundary,
 });
+
+const apiSkillInvocationSafety: ApiSkillInvocationSafety = {
+  localOnly: true,
+  noContractWrite: true,
+  noExportFile: true,
+  noLiveApi: true,
+  noRewardCustody: true,
+  noRewardDistribution: true,
+  noSecretHandling: true,
+  noStorageWrite: true,
+  noWalletSignature: true,
+  seededDataOnly: true,
+};
+
+const apiSkillContractById = new Map<ApiSkillId, ApiSkillContract>(
+  apiSkillContractRegistry.map((contract) => [contract.id, contract]),
+);
+
+const toInvocationContractMetadata = (
+  contract: ApiSkillContract,
+): ApiSkillInvocationContractMetadata => ({
+  apiGroup: contract.apiGroup,
+  id: contract.id,
+  nextAction: contract.nextAction,
+  purpose: contract.purpose,
+  readiness: contract.readiness,
+  riskLevel: contract.riskLevel,
+  securityBoundary: contract.securityBoundary,
+  title: contract.title,
+});
+
+const stableSerialize = (value: unknown): string => {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "undefined";
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
+  }
+
+  return `{${Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`)
+    .join(",")}}`;
+};
+
+const toTracePart = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 64) || "unknown";
+
+const createInvocationTraceId = (skillId: string, payload: unknown) => {
+  const serialized = `${skillId}:${stableSerialize(payload ?? {})}`;
+  let hash = 5381;
+
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash = ((hash << 5) + hash) ^ serialized.charCodeAt(index);
+  }
+
+  return `skill-${toTracePart(skillId)}-${(hash >>> 0).toString(36)}`;
+};
+
+const invocationError = (
+  code: ApiSkillInvocationError["code"],
+  field: string,
+  enUS: string,
+  zhCN: string,
+): ApiSkillInvocationError => ({
+  code,
+  field,
+  message: {
+    "en-US": enUS,
+    "zh-CN": zhCN,
+    "zh-TW": enUS,
+  },
+});
+
+const createInvocationFailure = (
+  request: ApiSkillInvocationRequest,
+  traceId: string,
+  error: ApiSkillInvocationError,
+  contract?: ApiSkillContract,
+): ApiSkillInvocationEnvelope => ({
+  apiGroup: contract?.apiGroup,
+  boundary: contract?.securityBoundary ?? serviceBoundary,
+  contract: contract ? toInvocationContractMetadata(contract) : undefined,
+  error,
+  ok: false,
+  readiness: contract?.readiness ?? "blocked",
+  riskLevel: contract?.riskLevel ?? "high",
+  safety: apiSkillInvocationSafety,
+  skillId: request.skillId,
+  traceId,
+});
+
+const asRequest = <T>(payload: unknown): T => (payload ?? {}) as T;
+
+const apiSkillRouteHandlers: Record<ApiSkillId, ApiSkillRouteHandler> = {
+  add_campaign_task: (service, payload) => service.addTask(asRequest<AddTaskRequest>(payload)),
+  agent_wallet_action: (service, payload) =>
+    service.requestAgentWalletAction(asRequest<AgentWalletActionReadinessRequest>(payload)),
+  check_eligibility: (service, payload) => service.checkEligibility(asRequest<CheckEligibilityRequest>(payload)),
+  create_campaign: (service, payload) => service.createCampaign(asRequest<CreateCampaignRequest>(payload)),
+  create_wallet_session: (service, payload) =>
+    service.createWalletSession(asRequest<CreateWalletSessionRequest>(payload)),
+  export_winners: (service, payload) => service.exportWinners(asRequest<ExportWinnersRequest>(payload)),
+  generate_campaign_posts: (service, payload) =>
+    service.generateCampaignPosts(asRequest<GenerateCampaignPostsRequest>(payload)),
+  generate_campaign_tasks: (service, payload) =>
+    service.generateCampaignTasks(asRequest<GenerateCampaignTasksRequest>(payload)),
+  generate_i18n_draft: (service, payload) => service.generateI18nDraft(asRequest<GenerateI18nDraftRequest>(payload)),
+  get_campaign_analytics: (service, payload) =>
+    service.getCampaignAnalytics(asRequest<GetCampaignAnalyticsRequest>(payload)),
+  get_campaign_detail: (service, payload) => service.getCampaignDetail(asRequest<GetCampaignDetailRequest>(payload)),
+  list_campaigns: (service, payload) =>
+    service.listCampaigns(payload === undefined ? undefined : asRequest<ListCampaignsRequest>(payload)),
+  summarize_campaign: (service, payload) => service.summarizeCampaign(asRequest<SummarizeCampaignRequest>(payload)),
+  verify_task: (service, payload) => service.verifyTask(asRequest<VerifyTaskRequest>(payload)),
+};
+
+const createApiSkillInvocationCoverage = (): ApiSkillInvocationCoverage => {
+  const registeredSkillIds = apiSkillContractRegistry.map((contract) => contract.id);
+  const routedSkillIdSet = new Set(Object.keys(apiSkillRouteHandlers) as ApiSkillId[]);
+  const routedSkillIds = requiredApiSkillIds.filter((id) => routedSkillIdSet.has(id));
+  const registeredSkillIdSet = new Set(registeredSkillIds);
+  const surface = createApiSkillContractSurface();
+
+  return {
+    blockedCount: surface.summary.blockedCount,
+    boundary: serviceBoundary,
+    highRiskCount: surface.summary.highRiskCount,
+    localOnlyCount: surface.summary.localOnlyCount,
+    missingContractSkillIds: requiredApiSkillIds.filter((id) => !registeredSkillIdSet.has(id)),
+    missingRouterSkillIds: requiredApiSkillIds.filter((id) => !routedSkillIdSet.has(id)),
+    readyCount: surface.summary.readyCount,
+    registeredSkillIds,
+    requiredSkillIds: requiredApiSkillIds,
+    reviewRequiredCount: surface.summary.reviewRequiredCount,
+    routedSkillIds,
+    safety: apiSkillInvocationSafety,
+    sampleInvocationIds: requiredApiSkillIds.filter((id) => routedSkillIdSet.has(id)),
+  };
+};
+
+const invokeApiSkill = (
+  service: CampaignOsLocalService,
+  request: ApiSkillInvocationRequest,
+): ApiSkillInvocationEnvelope => {
+  const traceId = createInvocationTraceId(request.skillId, request.payload);
+  const contract = apiSkillContractById.get(request.skillId as ApiSkillId);
+
+  if (!contract) {
+    return createInvocationFailure(
+      request,
+      traceId,
+      invocationError(
+        "INVALID_SKILL",
+        "skillId",
+        "API Skill is not registered in the local invocation surface.",
+        "本地 invocation surface 未注册该 API Skill。",
+      ),
+    );
+  }
+
+  const handler = apiSkillRouteHandlers[contract.id];
+
+  if (!handler) {
+    return createInvocationFailure(
+      request,
+      traceId,
+      invocationError(
+        "SKILL_NOT_AVAILABLE",
+        "skillId",
+        "API Skill is registered but has no local invocation route.",
+        "该 API Skill 已注册，但没有本地 invocation route。",
+      ),
+      contract,
+    );
+  }
+
+  try {
+    const result = handler(service, request.payload);
+    const contractMetadata = toInvocationContractMetadata(contract);
+
+    if (!result.ok) {
+      return {
+        apiGroup: contract.apiGroup,
+        boundary: result.boundary,
+        contract: contractMetadata,
+        error: result.error,
+        ok: false,
+        readiness: contract.readiness,
+        riskLevel: contract.riskLevel,
+        safety: apiSkillInvocationSafety,
+        skillId: contract.id,
+        traceId,
+      };
+    }
+
+    return {
+      apiGroup: contract.apiGroup,
+      boundary: result.boundary,
+      contract: contractMetadata,
+      ok: true,
+      payload: result.payload,
+      readiness: contract.readiness,
+      riskLevel: contract.riskLevel,
+      safety: apiSkillInvocationSafety,
+      skillId: contract.id,
+      traceId,
+    };
+  } catch {
+    return createInvocationFailure(
+      request,
+      traceId,
+      invocationError(
+        "INVALID_REQUEST",
+        "payload",
+        "API Skill invocation payload could not be handled by the local service facade.",
+        "本地 service facade 无法处理该 API Skill invocation payload。",
+      ),
+      contract,
+    );
+  }
+};
 
 const isSupportedServiceLocale = (locale: string): locale is SupportedLocale =>
   supportedLocales.includes(locale as SupportedLocale);
@@ -1187,7 +1429,8 @@ const createDirectWalletFixture = (
   };
 };
 
-export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
+export const createCampaignOsLocalService = (): CampaignOsLocalService => {
+  const service: CampaignOsLocalService = {
   createWalletSession: (request) => {
     const requestedFixture = request.fixtureId
       ? walletAdapterFixtures.find((candidate) => candidate.id === request.fixtureId)
@@ -2126,6 +2369,10 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
     return success(createAntiSybilV2GraphReadiness(campaign));
   },
 
+  getApiSkillInvocationCoverage: () => success(createApiSkillInvocationCoverage()),
+
+  invokeApiSkill: (request) => invokeApiSkill(service, request),
+
   getCoverageSummary: () => {
     const surface = createApiSkillContractSurface();
     const serviceNames = [
@@ -2213,4 +2460,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => ({
       boundary: serviceBoundary,
     });
   },
-});
+  };
+
+  return service;
+};

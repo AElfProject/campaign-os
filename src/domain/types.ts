@@ -4462,6 +4462,90 @@ export interface ApiSkillContractSurface {
   boundary: LocalizedText;
 }
 
+export interface ApiSkillInvocationSafety {
+  localOnly: true;
+  seededDataOnly: true;
+  noLiveApi: true;
+  noWalletSignature: true;
+  noSecretHandling: true;
+  noContractWrite: true;
+  noExportFile: true;
+  noStorageWrite: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+}
+
+export interface ApiSkillInvocationContractMetadata {
+  id: ApiSkillId;
+  apiGroup: ApiSkillApiGroup;
+  readiness: ApiSkillContractReadiness;
+  riskLevel: ApiSkillRiskLevel;
+  title: LocalizedText;
+  purpose: LocalizedText;
+  securityBoundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export type ApiSkillInvocationErrorCode =
+  | "INVALID_SKILL"
+  | "SKILL_NOT_AVAILABLE"
+  | string;
+
+export interface ApiSkillInvocationError {
+  code: ApiSkillInvocationErrorCode;
+  field?: string;
+  message: LocalizedText;
+}
+
+export interface ApiSkillInvocationRequest {
+  skillId: ApiSkillId | (string & {});
+  payload?: unknown;
+  requestSource?: "agent" | "project_console" | "test_fixture" | (string & {});
+}
+
+interface ApiSkillInvocationEnvelopeBase {
+  skillId: ApiSkillId | (string & {});
+  traceId: string;
+  readiness: ApiSkillContractReadiness;
+  riskLevel: ApiSkillRiskLevel;
+  apiGroup?: ApiSkillApiGroup;
+  contract?: ApiSkillInvocationContractMetadata;
+  boundary: LocalizedText;
+  safety: ApiSkillInvocationSafety;
+}
+
+export interface ApiSkillInvocationSuccess<TPayload = unknown> extends ApiSkillInvocationEnvelopeBase {
+  ok: true;
+  payload: TPayload;
+  error?: never;
+}
+
+export interface ApiSkillInvocationFailure extends ApiSkillInvocationEnvelopeBase {
+  ok: false;
+  error: ApiSkillInvocationError;
+  payload?: never;
+}
+
+export type ApiSkillInvocationEnvelope<TPayload = unknown> =
+  | ApiSkillInvocationSuccess<TPayload>
+  | ApiSkillInvocationFailure;
+
+export interface ApiSkillInvocationCoverage {
+  requiredSkillIds: readonly ApiSkillId[];
+  registeredSkillIds: ApiSkillId[];
+  routedSkillIds: ApiSkillId[];
+  missingContractSkillIds: ApiSkillId[];
+  missingRouterSkillIds: ApiSkillId[];
+  readyCount: number;
+  localOnlyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  highRiskCount: number;
+  sampleInvocationIds: ApiSkillId[];
+  boundary: LocalizedText;
+  safety: ApiSkillInvocationSafety;
+}
+
 export type LaunchConsoleBundleStage = "pre_launch" | "launch" | "post_launch";
 export type LaunchConsoleBundleStatus =
   | "ready"
