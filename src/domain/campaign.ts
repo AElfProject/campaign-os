@@ -79,6 +79,8 @@ import type {
   ContractClaimPreapprovalPackage,
   ContractClaimSecurityReviewItem,
   ContractClaimSecurityReviewReadiness,
+  ContractClaimThreatModelApprovalReadiness,
+  ContractClaimThreatModelSection,
   ContractChangeMatrixRow,
   ContractStatusMappingClassification,
   ContractStatusMappingReadiness,
@@ -325,6 +327,7 @@ import type {
   ReferralSummary,
   RewardDisclaimerReviewRow,
   ReviewSeverity,
+  RiskLevel,
   TaskVerificationStatus,
   SupportedLocale,
   VerificationCoverageSummary,
@@ -13239,6 +13242,63 @@ const contractClaimSecurityReviewSummary = (
   };
 };
 
+const contractClaimThreatModelApprovalBoundary = localized(
+  "Review-only contract claim threat model approval readiness. Threat model approval remains blocked; no contract write, claim execution, wallet signing, provider call, storage write, export generation, reward custody, reward distribution, branch, issue, PR, or mission automation is executed.",
+  "仅用于审核的 contract claim 威胁模型批准 readiness。威胁模型批准保持阻断；不会执行合约写入、claim 执行、钱包签名、provider 调用、存储写入、导出生成、奖励托管、发奖、分支、issue、PR 或 mission 自动化。",
+  "僅用於審核的 contract claim 威脅模型批准 readiness。威脅模型批准保持阻斷；不會執行合約寫入、claim 執行、錢包簽名、provider 呼叫、儲存寫入、匯出生成、獎勵託管、發獎、分支、issue、PR 或 mission 自動化。",
+);
+
+const contractClaimThreatModelSection = (
+  section: ContractClaimThreatModelSection,
+): ContractClaimThreatModelSection => section;
+
+const contractClaimThreatModelRiskPriority: Record<RiskLevel, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+};
+
+const contractClaimThreatModelApprovalSummary = (
+  sections: readonly ContractClaimThreatModelSection[],
+): ContractClaimThreatModelApprovalReadiness["summary"] => {
+  const topSection = [...sections].sort((left, right) => {
+    const stateDelta = contractClaimPreapprovalStatePriority[left.state] -
+      contractClaimPreapprovalStatePriority[right.state];
+
+    if (stateDelta !== 0) {
+      return stateDelta;
+    }
+
+    const riskDelta = contractClaimThreatModelRiskPriority[left.riskLevel] -
+      contractClaimThreatModelRiskPriority[right.riskLevel];
+
+    if (riskDelta !== 0) {
+      return riskDelta;
+    }
+
+    return sections.findIndex((section) => section.id === left.id) -
+      sections.findIndex((section) => section.id === right.id);
+  })[0] ?? sections[0];
+  const residualRiskLevel = sections.some((section) => section.riskLevel === "high" && section.state !== "ready")
+    ? "high"
+    : sections.some((section) => section.riskLevel === "medium" && section.state !== "ready")
+      ? "medium"
+      : "low";
+
+  return {
+    approvalBlocked: sections.some((section) => section.blocksThreatModelApproval && section.state !== "ready"),
+    blockedSections: sections.filter((section) => section.state === "blocked").length,
+    claimExecutionEnabled: false,
+    readySections: sections.filter((section) => section.state === "ready").length,
+    residualRiskLevel,
+    reviewRequiredSections: sections.filter((section) => section.state === "review_required").length,
+    threatModelApproved: false,
+    topNextAction: topSection.nextAction,
+    topSectionId: topSection.id,
+    totalSections: sections.length,
+  };
+};
+
 const contractClaimAdminApprovalBoundary = localized(
   "Review-only contract claim admin approval readiness. Claim mode is not approved; no contract write, claim execution, reward custody, reward distribution, wallet signing, provider call, storage write, export generation, branch automation, issue, PR, or mission is created.",
   "仅用于审核的 contract claim 管理员批准 readiness。Claim mode 未获批准；不会创建合约写入、claim 执行、奖励托管、发奖、钱包签名、provider 调用、存储写入、导出生成、分支自动化、issue、PR 或 mission。",
@@ -13872,6 +13932,495 @@ export const createContractClaimSecurityReviewReadiness = (
       transparency,
     }),
     summary,
+  };
+};
+
+export const createContractClaimThreatModelApprovalReadiness = ({
+  adminApprovalReadiness,
+  campaign,
+  custodyLegalReadiness,
+  deliveryAcceptance,
+  gates,
+  securityReviewReadiness,
+  sourceContext,
+  transparency,
+}: {
+  adminApprovalReadiness?: ContractClaimAdminApprovalReadiness;
+  campaign: CampaignShellDetail;
+  custodyLegalReadiness?: ContractClaimCustodyLegalReadiness;
+  deliveryAcceptance: DeliveryAcceptanceConsole;
+  gates: readonly ContractClaimPreapprovalGate[];
+  securityReviewReadiness: ContractClaimSecurityReviewReadiness;
+  sourceContext: ContractClaimPreapprovalPackage["sourceContext"];
+  transparency: ContractTransparencyMonitor;
+}): ContractClaimThreatModelApprovalReadiness => {
+  const gateById = Object.fromEntries(gates.map((gate) => [gate.id, gate]));
+  const securityItemById = Object.fromEntries(securityReviewReadiness.items.map((item) => [item.id, item]));
+  const claimAcceptanceRow = deliveryAcceptance.solutionSets
+    .flatMap((solutionSet) => solutionSet.rows)
+    .find((row) => row.id === "v02-contract-claim-reward-custody");
+  const claimTransparencyLane = transparency.lanes.find((lane) => lane.id === "reward-custody-claim");
+  const gate = (id: ContractClaimPreapprovalGate["id"]) => gateById[id];
+  const securityItem = (id: ContractClaimSecurityReviewItem["id"]) => securityItemById[id];
+  const securityDependency = (id: ContractClaimSecurityReviewItem["id"]) =>
+    securityItem(id)?.dependency ?? localized(
+      "Security review dependency is not available.",
+      "安全审核依赖不可用。",
+      "安全審核依賴不可用。",
+    );
+  const securityEvidence = (id: ContractClaimSecurityReviewItem["id"]) =>
+    securityItem(id)?.evidenceNeeded ?? localized(
+      "Security review evidence is not available.",
+      "安全审核证据不可用。",
+      "安全審核證據不可用。",
+    );
+  const securityNextAction = (id: ContractClaimSecurityReviewItem["id"]) =>
+    securityItem(id)?.nextAction ?? securityReviewReadiness.summary.topNextAction;
+  const sections: ContractClaimThreatModelSection[] = [
+    contractClaimThreatModelSection({
+      id: "claim-actors",
+      label: localized("Claim actors", "Claim 参与角色", "Claim 參與角色"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceSurface: localized("Security Review Readiness", "安全审核 Readiness", "安全審核 Readiness"),
+      riskLevel: "high",
+      dependency: localized(
+        "Actors must include participant, project owner, admin, contract reviewer, verifier, exporter, pauser, and external auditor roles.",
+        "参与角色必须覆盖 participant、项目方、admin、合约审核人、verifier、exporter、pauser 和外部审计方。",
+        "參與角色必須覆蓋 participant、專案方、admin、合約審核人、verifier、exporter、pauser 和外部審計方。",
+      ),
+      evidenceRequired: securityEvidence("role-access-review"),
+      reviewQuestion: localized(
+        "Can any actor bypass eligibility, duplicate-claim protection, pause controls, or reward responsibility boundaries?",
+        "是否有任何角色能绕过资格、重复 claim 防护、暂停控制或奖励责任边界？",
+        "是否有任何角色能繞過資格、重複 claim 防護、暫停控制或獎勵責任邊界？",
+      ),
+      mitigation: localized(
+        "Require role/access review and external audit handoff before approving the threat model.",
+        "批准威胁模型前必须完成角色/访问审核与外部审计交接。",
+        "批准威脅模型前必須完成角色/存取審核與外部審計交接。",
+      ),
+      residualRisk: localized(
+        "Actor misuse remains high until role scope and emergency authority are approved.",
+        "角色范围和紧急权限获批前，角色滥用残余风险仍为 high。",
+        "角色範圍和緊急權限獲批前，角色濫用殘餘風險仍為 high。",
+      ),
+      nextAction: securityNextAction("role-access-review"),
+      boundary: contractClaimThreatModelApprovalBoundary,
+      blocksThreatModelApproval: true,
+    }),
+    contractClaimThreatModelSection({
+      id: "protected-assets",
+      label: localized("Protected assets", "受保护资产", "受保護資產"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceSurface: localized("Contract Claim Preapproval Package", "Contract Claim 预批准 Package", "Contract Claim 預批准 Package"),
+      riskLevel: "high",
+      dependency: localized(
+        "Protected assets cover eligibility roots, claim proofs, winner lists, campaign state, audit evidence, and project-owned reward funds.",
+        "受保护资产覆盖资格 root、claim proof、winner list、活动状态、审计证据和项目方自有奖励资金。",
+        "受保護資產覆蓋資格 root、claim proof、winner list、活動狀態、審計證據和專案方自有獎勵資金。",
+      ),
+      evidenceRequired: localized(
+        `Preapproval top gate is ${contractClaimPreapprovalSummary(gates).topGateId}; protected asset evidence is not approved.`,
+        `Preapproval top gate 为 ${contractClaimPreapprovalSummary(gates).topGateId}；受保护资产证据尚未批准。`,
+        `Preapproval top gate 為 ${contractClaimPreapprovalSummary(gates).topGateId}；受保護資產證據尚未批准。`,
+      ),
+      reviewQuestion: localized(
+        "Which assets would create custody, payout, export, or contract-write risk if compromised?",
+        "哪些资产一旦受损会产生托管、payout、导出或合约写入风险？",
+        "哪些資產一旦受損會產生託管、payout、匯出或合約寫入風險？",
+      ),
+      mitigation: localized(
+        "Keep asset handling local/read-only and require custody/legal approval for reward responsibility changes.",
+        "保持资产处理为本地/只读，并要求任何奖励责任变更先获托管/法律批准。",
+        "保持資產處理為本地/唯讀，並要求任何獎勵責任變更先獲託管/法律批准。",
+      ),
+      residualRisk: localized(
+        "Protected asset ownership is unresolved, so threat model approval remains blocked.",
+        "受保护资产所有权未解决，因此威胁模型批准保持阻断。",
+        "受保護資產所有權未解決，因此威脅模型批准保持阻斷。",
+      ),
+      nextAction: gate("custody-legal-approval")?.nextAction ?? securityReviewReadiness.summary.topNextAction,
+      boundary: contractClaimThreatModelApprovalBoundary,
+      blocksThreatModelApproval: true,
+    }),
+    contractClaimThreatModelSection({
+      id: "claim-entry-points",
+      label: localized("Claim entry points", "Claim 入口点", "Claim 入口點"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceSurface: localized("Contract Transparency Monitor: reward-custody-claim", "合约透明度监控：reward-custody-claim", "合約透明度監控：reward-custody-claim"),
+      riskLevel: "high",
+      dependency: localized(
+        `Contract transparency lane ${claimTransparencyLane?.id ?? "reward-custody-claim"} is ${claimTransparencyLane?.readiness ?? "blocked"}.`,
+        `合约透明度 lane ${claimTransparencyLane?.id ?? "reward-custody-claim"} 为 ${claimTransparencyLane?.readiness ?? "blocked"}。`,
+        `合約透明度 lane ${claimTransparencyLane?.id ?? "reward-custody-claim"} 為 ${claimTransparencyLane?.readiness ?? "blocked"}。`,
+      ),
+      evidenceRequired: claimTransparencyLane?.sourceEvidence ?? securityEvidence("claim-threat-model"),
+      reviewQuestion: localized(
+        "Which UI, API, contract, indexer, and export entry points could initiate or imply a claim?",
+        "哪些 UI、API、合约、indexer 和导出入口可能发起或暗示 claim？",
+        "哪些 UI、API、合約、indexer 和匯出入口可能發起或暗示 claim？",
+      ),
+      mitigation: localized(
+        "Keep all entry points as review-only surfaces with no executable claim controls.",
+        "将所有入口保持为仅审核 surface，不提供可执行 claim 控件。",
+        "將所有入口保持為僅審核 surface，不提供可執行 claim 控件。",
+      ),
+      residualRisk: localized(
+        "Entry point inventory is incomplete until execution approval accepts the scope.",
+        "执行批准接受范围前，入口点清单仍不完整。",
+        "執行批准接受範圍前，入口點清單仍不完整。",
+      ),
+      nextAction: claimTransparencyLane?.nextAction ?? securityReviewReadiness.summary.topNextAction,
+      boundary: contractClaimThreatModelApprovalBoundary,
+      blocksThreatModelApproval: true,
+    }),
+    contractClaimThreatModelSection({
+      id: "trust-boundaries",
+      label: localized("Trust boundaries", "信任边界", "信任邊界"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceSurface: localized("Security Review Readiness", "安全审核 Readiness", "安全審核 Readiness"),
+      riskLevel: "high",
+      dependency: securityDependency("claim-threat-model"),
+      evidenceRequired: securityEvidence("claim-threat-model"),
+      reviewQuestion: localized(
+        "Where do trust boundaries cross wallet signing, contract writes, provider calls, storage writes, exports, and reward custody?",
+        "信任边界在哪里跨越钱包签名、合约写入、provider 调用、存储写入、导出和奖励托管？",
+        "信任邊界在哪裡跨越錢包簽名、合約寫入、provider 呼叫、儲存寫入、匯出和獎勵託管？",
+      ),
+      mitigation: localized(
+        "Preserve the review-only boundary and require explicit approval before any boundary-crossing implementation.",
+        "保留仅审核边界，任何跨边界实现前必须明确批准。",
+        "保留僅審核邊界，任何跨邊界實作前必須明確批准。",
+      ),
+      residualRisk: localized(
+        "Boundary crossing risk remains high while contract write and custody assumptions are unresolved.",
+        "合约写入与托管假设未解决时，跨边界风险仍为 high。",
+        "合約寫入與託管假設未解決時，跨邊界風險仍為 high。",
+      ),
+      nextAction: securityNextAction("claim-threat-model"),
+      boundary: contractClaimThreatModelApprovalBoundary,
+      blocksThreatModelApproval: true,
+    }),
+    contractClaimThreatModelSection({
+      id: "eligibility-proof-abuse",
+      label: localized("Eligibility proof abuse", "资格 proof 滥用", "資格 proof 濫用"),
+      state: "review_required",
+      ownerRole: "contract_reviewer",
+      sourceSurface: securityItem("eligibility-proof-handling")?.sourceSurface ?? localized("Security Review Readiness", "安全审核 Readiness", "安全審核 Readiness"),
+      riskLevel: "medium",
+      dependency: securityDependency("eligibility-proof-handling"),
+      evidenceRequired: securityEvidence("eligibility-proof-handling"),
+      reviewQuestion: localized(
+        "Can proofs be tampered with, replayed across campaigns, or detached from exported-list lineage?",
+        "proof 是否可能被篡改、跨活动 replay，或脱离导出名单 lineage？",
+        "proof 是否可能被竄改、跨活動 replay，或脫離匯出名單 lineage？",
+      ),
+      mitigation: localized(
+        "Require proof lineage, root scope, and verifier behavior review before approval.",
+        "批准前要求审核 proof lineage、root scope 和 verifier 行为。",
+        "批准前要求審核 proof lineage、root scope 和 verifier 行為。",
+      ),
+      residualRisk: localized(
+        "Eligibility proof handling still requires review and cannot approve execution.",
+        "资格 proof 处理仍需审核，不能批准执行。",
+        "資格 proof 處理仍需審核，不能批准執行。",
+      ),
+      nextAction: securityNextAction("eligibility-proof-handling"),
+      boundary: contractClaimThreatModelApprovalBoundary,
+      blocksThreatModelApproval: true,
+    }),
+    contractClaimThreatModelSection({
+      id: "duplicate-claim-abuse",
+      label: localized("Duplicate claim abuse", "重复 claim 滥用", "重複 claim 濫用"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceSurface: securityItem("double-claim-replay-prevention")?.sourceSurface ?? localized("Security Review Readiness", "安全审核 Readiness", "安全審核 Readiness"),
+      riskLevel: "high",
+      dependency: securityDependency("double-claim-replay-prevention"),
+      evidenceRequired: securityEvidence("double-claim-replay-prevention"),
+      reviewQuestion: localized(
+        "How are duplicate claims, replay attempts, indexer drift, and idempotency failures detected and stopped?",
+        "如何检测并阻止重复 claim、replay、indexer 漂移和幂等失败？",
+        "如何偵測並阻止重複 claim、replay、indexer 漂移和冪等失敗？",
+      ),
+      mitigation: localized(
+        "Add replay, nonce/idempotency, and reconciliation evidence to the security package.",
+        "将 replay、nonce/幂等和对账证据加入安全 package。",
+        "將 replay、nonce/冪等和對帳證據加入安全 package。",
+      ),
+      residualRisk: localized(
+        "Duplicate-claim abuse is a blocked high-risk section until replay analysis exists.",
+        "replay 分析存在前，重复 claim 滥用是已阻断的 high-risk section。",
+        "replay 分析存在前，重複 claim 濫用是已阻斷的 high-risk section。",
+      ),
+      nextAction: securityNextAction("double-claim-replay-prevention"),
+      boundary: contractClaimThreatModelApprovalBoundary,
+      blocksThreatModelApproval: true,
+    }),
+    contractClaimThreatModelSection({
+      id: "pause-dispute-abuse",
+      label: localized("Pause and dispute abuse", "暂停与争议滥用", "暫停與爭議濫用"),
+      state: "review_required",
+      ownerRole: "internal_operator",
+      sourceSurface: securityItem("pause-dispute-semantics")?.sourceSurface ?? localized("Post-campaign closeout", "活动后 closeout", "活動後 closeout"),
+      riskLevel: "medium",
+      dependency: securityDependency("pause-dispute-semantics"),
+      evidenceRequired: securityEvidence("pause-dispute-semantics"),
+      reviewQuestion: localized(
+        "Can pause, dispute, failed-claim, or manual review flows be abused to block valid participants or force payouts?",
+        "暂停、争议、失败 claim 或人工审核流程是否可能被滥用来阻断有效用户或强制 payout？",
+        "暫停、爭議、失敗 claim 或人工審核流程是否可能被濫用來阻斷有效使用者或強制 payout？",
+      ),
+      mitigation: localized(
+        "Document runbook ownership and dispute decision boundaries before approval.",
+        "批准前记录 runbook 归属和争议决策边界。",
+        "批准前記錄 runbook 歸屬和爭議決策邊界。",
+      ),
+      residualRisk: localized(
+        "Operational abuse remains possible until runbook approval is complete.",
+        "runbook 批准完成前仍存在运营滥用风险。",
+        "runbook 批准完成前仍存在營運濫用風險。",
+      ),
+      nextAction: securityNextAction("pause-dispute-semantics"),
+      boundary: contractClaimThreatModelApprovalBoundary,
+      blocksThreatModelApproval: true,
+    }),
+    contractClaimThreatModelSection({
+      id: "rollback-failure-abuse",
+      label: localized("Rollback failure abuse", "回滚失败滥用", "回滾失敗濫用"),
+      state: "review_required",
+      ownerRole: "internal_operator",
+      sourceSurface: securityItem("rollback-behavior")?.sourceSurface ?? localized("Post-campaign closeout", "活动后 closeout", "活動後 closeout"),
+      riskLevel: "medium",
+      dependency: securityDependency("rollback-behavior"),
+      evidenceRequired: securityEvidence("rollback-behavior"),
+      reviewQuestion: localized(
+        "What happens when deployment, proof publication, claim UI, or reconciliation must be rolled back?",
+        "部署、proof 发布、claim UI 或对账需要回滚时会发生什么？",
+        "部署、proof 發布、claim UI 或對帳需要回滾時會發生什麼？",
+      ),
+      mitigation: localized(
+        "Require rollback behavior and failed-claim handling evidence before threat model approval.",
+        "威胁模型批准前要求回滚行为和失败 claim 处理证据。",
+        "威脅模型批准前要求回滾行為和失敗 claim 處理證據。",
+      ),
+      residualRisk: localized(
+        "Rollback failure is not fully mitigated while closeout runbooks are still under review.",
+        "closeout runbook 仍在审核时，回滚失败未被完全缓解。",
+        "closeout runbook 仍在審核時，回滾失敗未被完全緩解。",
+      ),
+      nextAction: securityNextAction("rollback-behavior"),
+      boundary: contractClaimThreatModelApprovalBoundary,
+      blocksThreatModelApproval: true,
+    }),
+    contractClaimThreatModelSection({
+      id: "mitigation-coverage",
+      label: localized("Mitigation coverage", "缓解覆盖度", "緩解覆蓋度"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceSurface: localized("Security Review Readiness", "安全审核 Readiness", "安全審核 Readiness"),
+      riskLevel: "high",
+      dependency: localized(
+        `Security review has ${securityReviewReadiness.summary.blockedItems} blocked and ${securityReviewReadiness.summary.reviewRequiredItems} review-required items.`,
+        `Security review 有 ${securityReviewReadiness.summary.blockedItems} 个阻断项和 ${securityReviewReadiness.summary.reviewRequiredItems} 个需审核项。`,
+        `Security review 有 ${securityReviewReadiness.summary.blockedItems} 個阻斷項和 ${securityReviewReadiness.summary.reviewRequiredItems} 個需審核項。`,
+      ),
+      evidenceRequired: localized(
+        "Mitigation matrix is required for all blocked threat model sections.",
+        "所有已阻断威胁模型 section 都需要 mitigation matrix。",
+        "所有已阻斷威脅模型 section 都需要 mitigation matrix。",
+      ),
+      reviewQuestion: localized(
+        "Do mitigations cover every high-risk abuse path without enabling execution?",
+        "缓解措施是否覆盖所有 high-risk 滥用途径且不启用执行？",
+        "緩解措施是否覆蓋所有 high-risk 濫用途徑且不啟用執行？",
+      ),
+      mitigation: localized(
+        "Map every blocked section to owner, evidence, review question, residual risk, and next action.",
+        "将每个已阻断 section 映射到 owner、evidence、review question、residual risk 和 next action。",
+        "將每個已阻斷 section 映射到 owner、evidence、review question、residual risk 和 next action。",
+      ),
+      residualRisk: localized(
+        "Mitigation coverage is incomplete while blocked security items remain.",
+        "仍有 blocked security items 时，缓解覆盖度不完整。",
+        "仍有 blocked security items 時，緩解覆蓋度不完整。",
+      ),
+      nextAction: securityReviewReadiness.summary.topNextAction,
+      boundary: contractClaimThreatModelApprovalBoundary,
+      blocksThreatModelApproval: true,
+    }),
+    contractClaimThreatModelSection({
+      id: "residual-risk-acceptance",
+      label: localized("Residual risk acceptance", "残余风险接受", "殘餘風險接受"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceSurface: localized("Admin Approval Readiness", "管理员批准 Readiness", "管理員批准 Readiness"),
+      riskLevel: "high",
+      dependency: localized(
+        `Admin approval is ${adminApprovalReadiness?.summary.claimModeApprovalBlocked ? "blocked" : "not finalized"} and custody/legal approval is ${custodyLegalReadiness?.summary.custodyLegalApprovalBlocked ? "blocked" : "not finalized"}.`,
+        `管理员批准为 ${adminApprovalReadiness?.summary.claimModeApprovalBlocked ? "blocked" : "not finalized"}，托管/法律批准为 ${custodyLegalReadiness?.summary.custodyLegalApprovalBlocked ? "blocked" : "not finalized"}。`,
+        `管理員批准為 ${adminApprovalReadiness?.summary.claimModeApprovalBlocked ? "blocked" : "not finalized"}，託管/法律批准為 ${custodyLegalReadiness?.summary.custodyLegalApprovalBlocked ? "blocked" : "not finalized"}。`,
+      ),
+      evidenceRequired: localized(
+        "Residual risk acceptance from security, admin, custody/legal, and contract reviewer owners is absent.",
+        "缺少安全、admin、托管/法律和合约审核 owner 的残余风险接受记录。",
+        "缺少安全、admin、託管/法律和合約審核 owner 的殘餘風險接受記錄。",
+      ),
+      reviewQuestion: localized(
+        "Which residual risks are explicitly accepted, rejected, or deferred before any claim execution can be approved?",
+        "任何 claim 执行获批前，哪些残余风险被明确接受、拒绝或延期？",
+        "任何 claim 執行獲批前，哪些殘餘風險被明確接受、拒絕或延期？",
+      ),
+      mitigation: localized(
+        "Require named owner acceptance and keep claim execution disabled until acceptance exists.",
+        "要求具名 owner 接受，并在接受记录存在前保持 claim 执行禁用。",
+        "要求具名 owner 接受，並在接受記錄存在前保持 claim 執行停用。",
+      ),
+      residualRisk: localized(
+        "Residual risk is not accepted, so threat model approval is blocked.",
+        "残余风险尚未接受，因此威胁模型批准被阻断。",
+        "殘餘風險尚未接受，因此威脅模型批准被阻斷。",
+      ),
+      nextAction: adminApprovalReadiness?.summary.topNextAction ?? securityReviewReadiness.summary.topNextAction,
+      boundary: contractClaimThreatModelApprovalBoundary,
+      blocksThreatModelApproval: true,
+    }),
+    contractClaimThreatModelSection({
+      id: "approval-evidence",
+      label: localized("Approval evidence", "批准证据", "批准證據"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      sourceSurface: localized("Contract Claim Preapproval Package", "Contract Claim 预批准 Package", "Contract Claim 預批准 Package"),
+      riskLevel: "high",
+      dependency: localized(
+        "Threat model approval requires signed-off evidence from security, admin, custody/legal, audit, and execution approval readiness.",
+        "威胁模型批准需要安全、admin、托管/法律、审计和执行批准 readiness 的签核证据。",
+        "威脅模型批准需要安全、admin、託管/法律、審計和執行批准 readiness 的簽核證據。",
+      ),
+      evidenceRequired: localized(
+        "Approval evidence package is missing; no approval, export, branch, issue, PR, or mission automation is created.",
+        "批准证据 package 缺失；不会创建批准、导出、分支、issue、PR 或 mission 自动化。",
+        "批准證據 package 缺失；不會建立批准、匯出、分支、issue、PR 或 mission 自動化。",
+      ),
+      reviewQuestion: localized(
+        "Is every approval evidence item traceable to a read-only source without creating live side effects?",
+        "每个批准证据项是否都可追溯到只读来源且不会产生 live side effect？",
+        "每個批准證據項是否都可追溯到唯讀來源且不會產生 live side effect？",
+      ),
+      mitigation: localized(
+        "Collect approval evidence manually in the review package; do not generate files or automate workflow from the UI.",
+        "在审核 package 中人工收集批准证据；不要从 UI 生成文件或自动化 workflow。",
+        "在審核 package 中人工收集批准證據；不要從 UI 生成檔案或自動化 workflow。",
+      ),
+      residualRisk: localized(
+        "Approval evidence absence keeps the threat model unapproved.",
+        "批准证据缺失使威胁模型保持未批准。",
+        "批准證據缺失使威脅模型保持未批准。",
+      ),
+      nextAction: localized(
+        "Prepare approval evidence as a review artifact only.",
+        "仅以审核 artifact 形式准备批准证据。",
+        "僅以審核 artifact 形式準備批准證據。",
+      ),
+      boundary: contractClaimThreatModelApprovalBoundary,
+      blocksThreatModelApproval: true,
+    }),
+    contractClaimThreatModelSection({
+      id: "no-custody-no-distribution-boundary",
+      label: localized("No-custody/no-distribution boundary", "不托管/不发奖边界", "不託管/不發獎邊界"),
+      state: "ready",
+      ownerRole: "project_owner",
+      sourceSurface: localized("Delivery Acceptance + Contract Review Center", "Delivery Acceptance + 合约审核中心", "Delivery Acceptance + 合約審核中心"),
+      riskLevel: "low",
+      dependency: localized(
+        "Campaign OS current MVP boundary already excludes reward custody and reward distribution.",
+        "Campaign OS 当前 MVP 边界已经排除奖励托管和发奖。",
+        "Campaign OS 目前 MVP 邊界已經排除獎勵託管和發獎。",
+      ),
+      evidenceRequired: claimAcceptanceRow?.evidenceSummary ?? noRewardCustodyBoundary,
+      reviewQuestion: localized(
+        "Does this threat model preserve no-custody and no-distribution as hard boundaries?",
+        "此威胁模型是否将不托管和不发奖保留为硬边界？",
+        "此威脅模型是否將不託管和不發獎保留為硬邊界？",
+      ),
+      mitigation: localized(
+        "Keep no-custody/no-distribution language in every section and future claim review.",
+        "在每个 section 和未来 claim 审核中保留不托管/不发奖表述。",
+        "在每個 section 和未來 claim 審核中保留不託管/不發獎表述。",
+      ),
+      residualRisk: localized(
+        "Boundary is ready as a restriction only; it does not approve threat model or claim execution.",
+        "边界仅作为限制已就绪；它不批准威胁模型或 claim 执行。",
+        "邊界僅作為限制已就緒；它不批准威脅模型或 claim 執行。",
+      ),
+      nextAction: localized(
+        "Preserve this boundary while the threat model remains blocked.",
+        "威胁模型保持阻断时保留此边界。",
+        "威脅模型保持阻斷時保留此邊界。",
+      ),
+      boundary: noRewardCustodyBoundary,
+      blocksThreatModelApproval: true,
+    }),
+  ];
+  const summary = contractClaimThreatModelApprovalSummary(sections);
+
+  return {
+    boundary: contractClaimThreatModelApprovalBoundary,
+    campaignId: campaign.id,
+    claimExecutionEnabled: false,
+    nextAction: summary.topNextAction,
+    noBranchAutomation: true,
+    noClaimExecution: true,
+    noContractWrite: true,
+    noExportGeneration: true,
+    noIssueAutomation: true,
+    noMissionAutomation: true,
+    noPrAutomation: true,
+    noProviderCall: true,
+    noRewardCustody: true,
+    noRewardDistribution: true,
+    noStorageWrite: true,
+    noWalletSigning: true,
+    sections,
+    sourceContext: {
+      adminApproval: localized(
+        `Admin Approval Readiness is ${adminApprovalReadiness?.summary.claimModeApprovalBlocked ? "blocked" : "not finalized"} with top item ${adminApprovalReadiness?.summary.topItemId ?? "not-finalized"}.`,
+        `Admin Approval Readiness 为 ${adminApprovalReadiness?.summary.claimModeApprovalBlocked ? "blocked" : "not finalized"}，top item 为 ${adminApprovalReadiness?.summary.topItemId ?? "not-finalized"}。`,
+        `Admin Approval Readiness 為 ${adminApprovalReadiness?.summary.claimModeApprovalBlocked ? "blocked" : "not finalized"}，top item 為 ${adminApprovalReadiness?.summary.topItemId ?? "not-finalized"}。`,
+      ),
+      contractTransparency: localized(
+        `Contract transparency lane ${claimTransparencyLane?.id ?? "reward-custody-claim"} remains ${claimTransparencyLane?.readiness ?? "blocked"}.`,
+        `合约透明度 lane ${claimTransparencyLane?.id ?? "reward-custody-claim"} 仍为 ${claimTransparencyLane?.readiness ?? "blocked"}。`,
+        `合約透明度 lane ${claimTransparencyLane?.id ?? "reward-custody-claim"} 仍為 ${claimTransparencyLane?.readiness ?? "blocked"}。`,
+      ),
+      custodyLegal: localized(
+        `Custody/Legal Readiness is ${custodyLegalReadiness?.summary.custodyLegalApprovalBlocked ? "blocked" : "not finalized"} with top item ${custodyLegalReadiness?.summary.topItemId ?? "not-finalized"}.`,
+        `Custody/Legal Readiness 为 ${custodyLegalReadiness?.summary.custodyLegalApprovalBlocked ? "blocked" : "not finalized"}，top item 为 ${custodyLegalReadiness?.summary.topItemId ?? "not-finalized"}。`,
+        `Custody/Legal Readiness 為 ${custodyLegalReadiness?.summary.custodyLegalApprovalBlocked ? "blocked" : "not finalized"}，top item 為 ${custodyLegalReadiness?.summary.topItemId ?? "not-finalized"}。`,
+      ),
+      deliveryAcceptance: sourceContext.deliveryAcceptance,
+      executionApproval: localized(
+        "Execution approval remains blocked; threat model readiness cannot enable claim execution.",
+        "执行批准保持阻断；威胁模型 readiness 不能启用 claim 执行。",
+        "執行批准保持阻斷；威脅模型 readiness 不能啟用 claim 執行。",
+      ),
+      preapproval: localized(
+        `Contract Claim Preapproval Package has ${gates.length} gates and top gate ${contractClaimPreapprovalSummary(gates).topGateId}.`,
+        `Contract Claim 预批准 Package 有 ${gates.length} 个 gates，top gate 为 ${contractClaimPreapprovalSummary(gates).topGateId}。`,
+        `Contract Claim 預批准 Package 有 ${gates.length} 個 gates，top gate 為 ${contractClaimPreapprovalSummary(gates).topGateId}。`,
+      ),
+      securityReview: localized(
+        `Security Review Readiness top item is ${securityReviewReadiness.summary.topItemId}; approvalBlocked=${String(securityReviewReadiness.summary.approvalBlocked)}.`,
+        `Security Review Readiness top item 为 ${securityReviewReadiness.summary.topItemId}；approvalBlocked=${String(securityReviewReadiness.summary.approvalBlocked)}。`,
+        `Security Review Readiness top item 為 ${securityReviewReadiness.summary.topItemId}；approvalBlocked=${String(securityReviewReadiness.summary.approvalBlocked)}。`,
+      ),
+    },
+    summary,
+    threatModelApproved: false,
   };
 };
 
@@ -14517,7 +15066,7 @@ export const createContractClaimPreapprovalPackage = (
   const claimAcceptanceRow = deliveryAcceptance.solutionSets
     .flatMap((solutionSet) => solutionSet.rows)
     .find((row) => row.id === "v02-contract-claim-reward-custody");
-  const securityReviewReadiness = createContractClaimSecurityReviewReadiness(campaign, {
+  const baseSecurityReviewReadiness = createContractClaimSecurityReviewReadiness(campaign, {
     closeout,
     deliveryAcceptance,
     reviewCenter,
@@ -14535,11 +15084,11 @@ export const createContractClaimPreapprovalPackage = (
         "安全批准必須覆蓋 claim contract 威脅模型、資格 proof 處理、暫停語義和回滾行為。",
       ),
       evidenceNeeded: localized(
-        `Security Review Readiness has ${securityReviewReadiness.summary.blockedItems} blocked items and top item ${securityReviewReadiness.summary.topItemId}; claim execution stays blocked.`,
-        `Security Review Readiness 有 ${securityReviewReadiness.summary.blockedItems} 个 blocked items，top item 为 ${securityReviewReadiness.summary.topItemId}；claim 执行保持阻断。`,
-        `Security Review Readiness 有 ${securityReviewReadiness.summary.blockedItems} 個 blocked items，top item 為 ${securityReviewReadiness.summary.topItemId}；claim 執行保持阻斷。`,
+        `Security Review Readiness has ${baseSecurityReviewReadiness.summary.blockedItems} blocked items and top item ${baseSecurityReviewReadiness.summary.topItemId}; claim execution stays blocked.`,
+        `Security Review Readiness 有 ${baseSecurityReviewReadiness.summary.blockedItems} 个 blocked items，top item 为 ${baseSecurityReviewReadiness.summary.topItemId}；claim 执行保持阻断。`,
+        `Security Review Readiness 有 ${baseSecurityReviewReadiness.summary.blockedItems} 個 blocked items，top item 為 ${baseSecurityReviewReadiness.summary.topItemId}；claim 執行保持阻斷。`,
       ),
-      nextAction: securityReviewReadiness.summary.topNextAction,
+      nextAction: baseSecurityReviewReadiness.summary.topNextAction,
       sourceSurface: localized(
         "Contract Transparency Monitor: reward-custody-claim",
         "合约透明度监控：reward-custody-claim",
@@ -14711,6 +15260,40 @@ export const createContractClaimPreapprovalPackage = (
     reviewCenter,
     transparency,
   });
+  const provisionalThreatModelApprovalReadiness = createContractClaimThreatModelApprovalReadiness({
+    campaign,
+    deliveryAcceptance,
+    gates,
+    securityReviewReadiness: baseSecurityReviewReadiness,
+    sourceContext,
+    transparency,
+  });
+  const threatModelSecurityItem = (item: ContractClaimSecurityReviewItem): ContractClaimSecurityReviewItem => (
+    item.id === "claim-threat-model"
+      ? contractClaimSecurityReviewItem({
+        ...item,
+        evidenceNeeded: localized(
+          `Threat Model Approval Readiness has ${provisionalThreatModelApprovalReadiness.summary.blockedSections} blocked sections and top section ${provisionalThreatModelApprovalReadiness.summary.topSectionId}.`,
+          `Threat Model Approval Readiness 有 ${provisionalThreatModelApprovalReadiness.summary.blockedSections} 个阻断 sections，top section 为 ${provisionalThreatModelApprovalReadiness.summary.topSectionId}。`,
+          `Threat Model Approval Readiness 有 ${provisionalThreatModelApprovalReadiness.summary.blockedSections} 個阻斷 sections，top section 為 ${provisionalThreatModelApprovalReadiness.summary.topSectionId}。`,
+        ),
+        nextAction: provisionalThreatModelApprovalReadiness.summary.topNextAction,
+        sourceSurface: localized(
+          "Threat Model Approval Readiness",
+          "威胁模型批准 Readiness",
+          "威脅模型批准 Readiness",
+        ),
+      })
+      : item
+  );
+  const threatModelSecurityItems = baseSecurityReviewReadiness.items.map(threatModelSecurityItem);
+  const threatModelSecuritySummary = contractClaimSecurityReviewSummary(threatModelSecurityItems);
+  const securityReviewReadiness: ContractClaimSecurityReviewReadiness = {
+    ...baseSecurityReviewReadiness,
+    items: threatModelSecurityItems,
+    nextAction: threatModelSecuritySummary.topNextAction,
+    summary: threatModelSecuritySummary,
+  };
   const provisionalAdminApprovalReadiness = createContractClaimAdminApprovalReadiness({
     campaign,
     deliveryAcceptance,
@@ -14767,6 +15350,16 @@ export const createContractClaimPreapprovalPackage = (
     sourceContext,
     transparency,
   });
+  const threatModelApprovalReadiness = createContractClaimThreatModelApprovalReadiness({
+    adminApprovalReadiness,
+    campaign,
+    custodyLegalReadiness,
+    deliveryAcceptance,
+    gates,
+    securityReviewReadiness,
+    sourceContext,
+    transparency,
+  });
   const executionApprovalReadiness = createContractClaimExecutionApprovalReadiness({
     adminApprovalReadiness,
     campaign,
@@ -14802,6 +15395,7 @@ export const createContractClaimPreapprovalPackage = (
     sourceContext,
     suggestedFutureBranch: "mission/contract-claim-reward-custody-execution-approval",
     summary,
+    threatModelApprovalReadiness,
   };
 };
 
@@ -16597,7 +17191,7 @@ export const createResidualGapMissionQueue = (
         id: `mission-${row.id}`,
         launchBlocking: row.launchBlocking,
         launchImpact: residualGapLaunchImpactForRow(row),
-        nextAction: preapprovalPackage?.summary.topNextAction ?? row.nextMissionAction,
+        nextAction: preapprovalPackage?.executionApprovalReadiness.summary.topNextAction ?? row.nextMissionAction,
         ownerRole: row.ownerRole,
         priority: 0,
         severity: row.severity,

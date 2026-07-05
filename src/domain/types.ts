@@ -2290,6 +2290,81 @@ export interface ContractClaimSecurityReviewReadiness {
   nextAction: LocalizedText;
 }
 
+export type ContractClaimThreatModelSectionId =
+  | "claim-actors"
+  | "protected-assets"
+  | "claim-entry-points"
+  | "trust-boundaries"
+  | "eligibility-proof-abuse"
+  | "duplicate-claim-abuse"
+  | "pause-dispute-abuse"
+  | "rollback-failure-abuse"
+  | "mitigation-coverage"
+  | "residual-risk-acceptance"
+  | "approval-evidence"
+  | "no-custody-no-distribution-boundary";
+
+export interface ContractClaimThreatModelSection {
+  id: ContractClaimThreatModelSectionId;
+  label: LocalizedText;
+  state: ContractClaimPreapprovalGateState;
+  ownerRole: OwnerRole;
+  sourceSurface: LocalizedText;
+  riskLevel: RiskLevel;
+  dependency: LocalizedText;
+  evidenceRequired: LocalizedText;
+  reviewQuestion: LocalizedText;
+  mitigation: LocalizedText;
+  residualRisk: LocalizedText;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+  blocksThreatModelApproval: boolean;
+}
+
+export interface ContractClaimThreatModelApprovalSummary {
+  totalSections: number;
+  readySections: number;
+  reviewRequiredSections: number;
+  blockedSections: number;
+  approvalBlocked: boolean;
+  threatModelApproved: false;
+  claimExecutionEnabled: false;
+  residualRiskLevel: RiskLevel;
+  topSectionId: ContractClaimThreatModelSectionId;
+  topNextAction: LocalizedText;
+}
+
+export interface ContractClaimThreatModelApprovalReadiness {
+  campaignId: string;
+  summary: ContractClaimThreatModelApprovalSummary;
+  sections: ContractClaimThreatModelSection[];
+  sourceContext: {
+    preapproval: LocalizedText;
+    securityReview: LocalizedText;
+    adminApproval: LocalizedText;
+    custodyLegal: LocalizedText;
+    executionApproval: LocalizedText;
+    deliveryAcceptance: LocalizedText;
+    contractTransparency: LocalizedText;
+  };
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  threatModelApproved: false;
+  claimExecutionEnabled: false;
+  noContractWrite: true;
+  noClaimExecution: true;
+  noWalletSigning: true;
+  noProviderCall: true;
+  noStorageWrite: true;
+  noExportGeneration: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  noBranchAutomation: true;
+  noIssueAutomation: true;
+  noPrAutomation: true;
+  noMissionAutomation: true;
+}
+
 export type ContractClaimAdminApprovalItemId =
   | "security-readiness-approval"
   | "admin-approval"
@@ -2489,6 +2564,7 @@ export interface ContractClaimPreapprovalPackage {
   summary: ContractClaimPreapprovalSummary;
   gates: ContractClaimPreapprovalGate[];
   securityReviewReadiness: ContractClaimSecurityReviewReadiness;
+  threatModelApprovalReadiness: ContractClaimThreatModelApprovalReadiness;
   adminApprovalReadiness: ContractClaimAdminApprovalReadiness;
   custodyLegalReadiness: ContractClaimCustodyLegalReadiness;
   executionApprovalReadiness: ContractClaimExecutionApprovalReadiness;

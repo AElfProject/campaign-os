@@ -1500,6 +1500,25 @@ describe("Admin/Ops shell", () => {
     expect(within(executionApprovalReadiness).queryByRole("button", {
       name: /approve|execute|claim|custody|payout|sign|signature|provider call|storage write|export file|branch|issue|PR|mission|contract write|reward distribution|reward custody/i,
     })).not.toBeInTheDocument();
+    const threatModelApprovalReadiness = within(preapproval).getByLabelText("Threat Model Approval Readiness");
+    expect(within(threatModelApprovalReadiness).getByText("Threat Model Approval Readiness")).toBeInTheDocument();
+    expect(within(threatModelApprovalReadiness).getByText(/Read-only threat model approval coverage/)).toBeInTheDocument();
+    expect(within(threatModelApprovalReadiness).getAllByText("Threat model approval blocked").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("Total sections").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("Residual risk level").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("Top threat model blocker").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("Claim actors").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("claim-actors").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("duplicate-claim-abuse").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("no-custody-no-distribution-boundary").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText(/Review question:/).length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText(/Mitigation:/).length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText(/Residual risk:/).length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText(/No-custody\/no-distribution boundary/).length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText(/no claim, custody, payout, signing, provider call, storage write, export file, branch, issue, PR, mission, contract write, reward custody, or reward distribution is executed/i).length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).queryByRole("button", {
+      name: /approve|claim|custody|payout|signing|provider call|storage write|export file|branch|issue|PR|mission|contract write|reward custody|reward distribution/i,
+    })).not.toBeInTheDocument();
     expect(within(adminApprovalReadiness).queryByRole("button", {
       name: /approve|claim|custody|payout|sign|signature|provider call|storage write|export file|branch|contract write|reward distribution|reward custody/i,
     })).not.toBeInTheDocument();
@@ -1576,6 +1595,25 @@ describe("Admin/Ops shell", () => {
     })).not.toBeInTheDocument();
     expect(within(executionApprovalReadiness).queryByRole("button", {
       name: /批准|执行|approve|execute|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|issue|PR|mission|合约写入|奖励托管|发奖|reward distribution/i,
+    })).not.toBeInTheDocument();
+    const threatModelApprovalReadiness = within(preapproval).getByLabelText("威胁模型批准 Readiness");
+    expect(within(threatModelApprovalReadiness).getByText("威胁模型批准 Readiness")).toBeInTheDocument();
+    expect(within(threatModelApprovalReadiness).getByText(/只读展示 claim 角色/)).toBeInTheDocument();
+    expect(within(threatModelApprovalReadiness).getAllByText("威胁模型批准已阻断").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("Section 总数").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("残余风险级别").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("首要威胁模型阻断").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("Claim 参与角色").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("claim-actors").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("duplicate-claim-abuse").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText("no-custody-no-distribution-boundary").length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText(/审核问题:/).length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText(/缓解措施:/).length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText(/残余风险:/).length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText(/不托管\/不发奖边界/).length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).getAllByText(/不会执行 claim、托管、payout、签名、provider 调用/).length).toBeGreaterThan(0);
+    expect(within(threatModelApprovalReadiness).queryByRole("button", {
+      name: /批准|approve|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|issue|PR|mission|合约写入|奖励托管|发奖|reward distribution/i,
     })).not.toBeInTheDocument();
     expect(within(adminApprovalReadiness).queryByRole("button", {
       name: /批准|approve|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|合约写入|奖励托管|发奖|reward distribution/i,

@@ -2155,6 +2155,48 @@ export const AdminOpsPanel = ({
   const contractClaimExecutionApprovalTopItem = contractClaimExecutionApprovalReadiness.items.find(
     (item) => item.id === contractClaimExecutionApprovalReadiness.summary.topItemId,
   ) ?? contractClaimExecutionApprovalReadiness.items[0];
+  const contractClaimThreatModelApprovalReadiness = contractClaimPreapprovalPackage.threatModelApprovalReadiness;
+  const contractClaimThreatModelApprovalSummary = [
+    {
+      id: "total",
+      label: copy.totalSections,
+      value: contractClaimThreatModelApprovalReadiness.summary.totalSections,
+      state: "ready" as const,
+    },
+    {
+      id: "blocked",
+      label: copy.blockedItems,
+      value: contractClaimThreatModelApprovalReadiness.summary.blockedSections,
+      state: contractClaimThreatModelApprovalReadiness.summary.blockedSections > 0 ? "blocker" as const : "ready" as const,
+    },
+    {
+      id: "review-required",
+      label: copy.reviewRequiredItems,
+      value: contractClaimThreatModelApprovalReadiness.summary.reviewRequiredSections,
+      state: contractClaimThreatModelApprovalReadiness.summary.reviewRequiredSections > 0
+        ? "warning" as const
+        : "ready" as const,
+    },
+    {
+      id: "residual-risk",
+      label: copy.residualRiskLevel,
+      value: contractClaimThreatModelApprovalReadiness.summary.residualRiskLevel,
+      state: contractClaimThreatModelApprovalReadiness.summary.residualRiskLevel === "high"
+        ? "blocker" as const
+        : contractClaimThreatModelApprovalReadiness.summary.residualRiskLevel === "medium"
+          ? "warning" as const
+          : "ready" as const,
+    },
+    {
+      id: "top-section",
+      label: copy.topThreatModelBlocker,
+      value: contractClaimThreatModelApprovalReadiness.summary.topSectionId,
+      state: contractClaimThreatModelApprovalReadiness.summary.approvalBlocked ? "blocker" as const : "ready" as const,
+    },
+  ];
+  const contractClaimThreatModelApprovalTopSection = contractClaimThreatModelApprovalReadiness.sections.find(
+    (section) => section.id === contractClaimThreatModelApprovalReadiness.summary.topSectionId,
+  ) ?? contractClaimThreatModelApprovalReadiness.sections[0];
 
   const companionReadinessSummary = [
     {
@@ -3700,6 +3742,112 @@ export const AdminOpsPanel = ({
                 </p>
                 <p style={wrapTextStyle}>
                   {copy.localOnlyBoundary}: {getLocalizedText(item.boundary, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+        </article>
+        <article aria-label={copy.contractClaimThreatModelApprovalReadiness} style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.contractClaimThreatModelApprovalBoundary}</p>
+              <strong>{copy.contractClaimThreatModelApprovalReadiness}</strong>
+              <p style={mutedTextStyle}>{copy.contractClaimThreatModelApprovalSubtitle}</p>
+            </div>
+            <PublishStateBadge
+              label={contractClaimThreatModelApprovalReadiness.summary.approvalBlocked
+                ? copy.threatModelApprovalBlocked
+                : copy.readyActions}
+              state={contractClaimThreatModelApprovalReadiness.summary.approvalBlocked ? "blocker" : "ready"}
+            />
+          </div>
+          <p style={boundaryStyle}>
+            {copy.nonLiveBoundary}: {getLocalizedText(contractClaimThreatModelApprovalReadiness.boundary, locale)}
+          </p>
+          <div style={compactGridStyle}>
+            {contractClaimThreatModelApprovalSummary.map((item) => (
+              <article key={item.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <p style={labelStyle}>{item.label}</p>
+                  <PublishStateBadge label={String(item.value)} state={item.state} />
+                </div>
+                <p style={valueStyle}>{item.value}</p>
+              </article>
+            ))}
+          </div>
+          {contractClaimThreatModelApprovalTopSection ? (
+            <article style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.topThreatModelBlocker}</p>
+                  <strong>{getLocalizedText(contractClaimThreatModelApprovalTopSection.label, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={contractClaimPreapprovalGateLabel(contractClaimThreatModelApprovalTopSection.state, copy)}
+                  state={contractClaimPreapprovalGateState(contractClaimThreatModelApprovalTopSection.state)}
+                />
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.riskLevel}: {contractClaimThreatModelApprovalTopSection.riskLevel}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.reviewQuestion}: {getLocalizedText(contractClaimThreatModelApprovalTopSection.reviewQuestion, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.evidenceNeeded}: {getLocalizedText(contractClaimThreatModelApprovalTopSection.evidenceRequired, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(contractClaimThreatModelApprovalTopSection.nextAction, locale)}
+              </p>
+            </article>
+          ) : null}
+          <div style={gridStyle}>
+            {contractClaimThreatModelApprovalReadiness.sections.map((section) => (
+              <article key={section.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <div style={stackStyle}>
+                    <p style={labelStyle}>{section.id}</p>
+                    <strong>{getLocalizedText(section.label, locale)}</strong>
+                  </div>
+                  <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <PublishStateBadge
+                      label={contractClaimPreapprovalGateLabel(section.state, copy)}
+                      state={contractClaimPreapprovalGateState(section.state)}
+                    />
+                    {section.blocksThreatModelApproval
+                      ? <Badge label={copy.threatModelApprovalBlocked} tone="warning" />
+                      : null}
+                  </span>
+                </div>
+                <p style={wrapTextStyle}>
+                  {copy.ownerRole}: {readableCode(section.ownerRole)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.riskLevel}: {section.riskLevel}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.linkedSurface}: {getLocalizedText(section.sourceSurface, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.evidenceNeeded}: {getLocalizedText(section.evidenceRequired, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.dependency}: {getLocalizedText(section.dependency, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.reviewQuestion}: {getLocalizedText(section.reviewQuestion, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.mitigation}: {getLocalizedText(section.mitigation, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.residualRisk}: {getLocalizedText(section.residualRisk, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.nextAction}: {getLocalizedText(section.nextAction, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.localOnlyBoundary}: {getLocalizedText(section.boundary, locale)}
                 </p>
               </article>
             ))}
