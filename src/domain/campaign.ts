@@ -179,6 +179,11 @@ import type {
   ExportFulfillmentPackage,
   ExportFulfillmentReadiness,
   ExportFulfillmentSafety,
+  ExportStorageApprovalCheck,
+  ExportStorageApprovalCheckId,
+  ExportStorageColumnCoverage,
+  ExportStorageFulfillmentApprovalReadiness,
+  ExportStorageSafetyBoundary,
   DaippAgentCoinTaskEvidenceSource,
   DaippAgentCoinTaskIntentId,
   DaippAgentCoinTaskOwnerRole,
@@ -5988,6 +5993,426 @@ export const createExportFulfillmentReadiness = (
     safety,
     boundary: exportFulfillmentBoundary,
     nextAction: exportFulfillmentNextAction,
+  };
+};
+
+const exportStorageFulfillmentApprovalBoundary = localized(
+  "Storage-backed export approval readiness only. No storage write, real export file, download URL, object key, signed URL, contract root write, wallet signing, reward custody, or reward distribution is executed.",
+  "仅 storage-backed 导出批准 readiness。不会写入存储、生成真实导出文件、下载链接、object key、signed URL、合约 root 写入、钱包签名、奖励托管或发奖。",
+  "僅 storage-backed 匯出批准 readiness。未寫入儲存、產生真實匯出檔案、下載連結、object key、signed URL、合約 root 寫入、錢包簽名、獎勵託管或發獎。",
+);
+
+const exportStorageColumnCoverageBoundary = localized(
+  "Column coverage is read-only validation of the documented v0.2 export contract; it does not generate or upload a file.",
+  "字段覆盖只是对 v0.2 导出合约的只读校验；不会生成或上传文件。",
+  "欄位覆蓋只是對 v0.2 匯出合約的唯讀校驗；不會產生或上傳檔案。",
+);
+
+const exportStorageSafetyBoundary = localized(
+  "Fail-closed production export boundary. Storage write and download URL remain disabled until a future storage adapter mission supplies provider, access, retention, audit, rollback, owner, and operator approvals.",
+  "Fail-closed 生产导出边界。未来 storage adapter mission 提供 provider、访问、保留、审计、回滚、owner 与 operator 批准前，storage write 与 download URL 保持禁用。",
+  "Fail-closed 生產匯出邊界。未來 storage adapter mission 提供 provider、存取、保留、審計、回滾、owner 與 operator 批准前，storage write 與 download URL 保持停用。",
+);
+
+const exportStorageTopNextActionFallback = localized(
+  "Approve storage provider, access control, retention, audit logging, rollback, owner signoff, and operator review before enabling production storage-backed export.",
+  "启用生产 storage-backed 导出前，先批准 storage provider、访问控制、保留、审计日志、回滚、owner 签核与 operator 审核。",
+  "啟用生產 storage-backed 匯出前，先批准 storage provider、存取控制、保留、審計日誌、回滾、owner 簽核與 operator 審核。",
+);
+
+const expectedExportStorageColumns: readonly ExportCsvColumn[] = exportCsvColumns;
+
+const createExportStorageColumnCoverage = (
+  columns: readonly ExportCsvColumn[],
+): ExportStorageColumnCoverage => {
+  const missingColumns = expectedExportStorageColumns.filter((column) => !columns.includes(column));
+  const extraColumns = columns.filter((column) => !expectedExportStorageColumns.includes(column));
+  const exactOrder = columns.length === expectedExportStorageColumns.length
+    && columns.every((column, index) => column === expectedExportStorageColumns[index]);
+
+  return {
+    boundary: exportStorageColumnCoverageBoundary,
+    columns,
+    exactOrder,
+    expectedColumns: expectedExportStorageColumns,
+    extraColumns,
+    localePreferenceIncluded: columns.includes("locale_preference"),
+    missingColumns,
+    riskFlagsIncluded: columns.includes("risk_flags"),
+    taskEvidenceIncluded: columns.includes("task_records") && columns.includes("evidence_hashes"),
+    walletSourceIncluded: columns.includes("wallet_source"),
+    walletTypeIncluded: columns.includes("account_type"),
+  };
+};
+
+const exportStorageCheck = (check: ExportStorageApprovalCheck): ExportStorageApprovalCheck => check;
+
+const exportStorageRiskPriority: Record<RiskLevel, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+};
+
+const exportStorageStatePriority: Record<ExportReadinessState, number> = {
+  blocked: 0,
+  review_required: 1,
+  ready: 2,
+};
+
+const createExportStorageFulfillmentApprovalSummary = (
+  checks: readonly ExportStorageApprovalCheck[],
+): ExportStorageFulfillmentApprovalReadiness["summary"] => {
+  const topCheck = [...checks].sort((left, right) => {
+    const stateDelta = exportStorageStatePriority[left.state] - exportStorageStatePriority[right.state];
+
+    if (stateDelta !== 0) {
+      return stateDelta;
+    }
+
+    const riskDelta = exportStorageRiskPriority[left.riskLevel] - exportStorageRiskPriority[right.riskLevel];
+
+    if (riskDelta !== 0) {
+      return riskDelta;
+    }
+
+    return checks.findIndex((check) => check.id === left.id) -
+      checks.findIndex((check) => check.id === right.id);
+  })[0];
+  const highestRiskLevel = checks.some((check) => check.riskLevel === "high" && check.state !== "ready")
+    ? "high"
+    : checks.some((check) => check.riskLevel === "medium" && check.state !== "ready")
+      ? "medium"
+      : "low";
+
+  return {
+    approvalBlocked: checks.some((check) => check.state !== "ready"),
+    blockedChecks: checks.filter((check) => check.state === "blocked").length,
+    downloadUrlEnabled: false,
+    highestRiskLevel,
+    readyChecks: checks.filter((check) => check.state === "ready").length,
+    reviewRequiredChecks: checks.filter((check) => check.state === "review_required").length,
+    storageWriteEnabled: false,
+    topCheckId: topCheck?.id ?? null,
+    topNextAction: topCheck?.nextAction ?? exportStorageTopNextActionFallback,
+    totalChecks: checks.length,
+  };
+};
+
+const createExportStorageSafetyBoundary = (
+  readinessCandidate: Pick<ExportStorageFulfillmentApprovalReadiness, "checks" | "columnCoverage">,
+): ExportStorageSafetyBoundary => ({
+  boundary: exportStorageSafetyBoundary,
+  forbiddenFieldsAbsent: [
+    "downloadUrl",
+    "fileUrl",
+    "storageKey",
+    "objectKey",
+    "signedUrl",
+    "contractRoot",
+    "transactionId",
+    "privateKey",
+    "signedPayload",
+  ].every((field) => !hasOwnKeyDeep(readinessCandidate, field)),
+  noContractRootWrite: true,
+  noDownloadUrl: true,
+  noObjectKey: true,
+  noRealExportFile: true,
+  noRewardCustody: true,
+  noRewardDistribution: true,
+  noSignedUrl: true,
+  noStorageWrite: true,
+  noWalletSigning: true,
+});
+
+export const createExportStorageFulfillmentApprovalReadiness = (
+  campaign: CampaignShellDetail,
+  exportFulfillmentReadiness = createExportFulfillmentReadiness(campaign),
+): ExportStorageFulfillmentApprovalReadiness => {
+  const firstPackage = exportFulfillmentReadiness.packages[0];
+  const columns = firstPackage?.includedColumns ?? exportCsvColumns;
+  const columnCoverage = createExportStorageColumnCoverage(columns);
+  const walletLocaleReady = columnCoverage.walletTypeIncluded
+    && columnCoverage.walletSourceIncluded
+    && columnCoverage.localePreferenceIncluded
+    && columnCoverage.riskFlagsIncluded
+    && columnCoverage.taskEvidenceIncluded;
+  const checks: ExportStorageApprovalCheck[] = [
+    exportStorageCheck({
+      id: "storage-provider-approval",
+      label: localized("Storage provider approval", "Storage provider 批准", "Storage provider 批准"),
+      state: "blocked",
+      riskLevel: "high",
+      ownerRole: "internal_operator",
+      dependency: localized(
+        "Production export needs an approved provider, bucket/container policy, secret handling, and service registry gate.",
+        "生产导出需要批准 provider、bucket/container 策略、secret 处理与 service registry gate。",
+        "生產匯出需要批准 provider、bucket/container 策略、secret 處理與 service registry gate。",
+      ),
+      evidenceRequired: localized(
+        "Attach provider ownership, environment config, failure mode, maintenance copy, and off switch evidence.",
+        "附上 provider 归属、环境配置、失败模式、维护文案与关闭开关证据。",
+        "附上 provider 歸屬、環境設定、失敗模式、維護文案與關閉開關證據。",
+      ),
+      residualRisk: localized(
+        "Storage provider is not approved, so production export must remain blocked.",
+        "Storage provider 未获批准，因此生产导出必须保持阻断。",
+        "Storage provider 未獲批准，因此生產匯出必須保持阻斷。",
+      ),
+      nextAction: localized(
+        "Approve storage provider configuration before enabling any storage-backed export.",
+        "启用任何 storage-backed 导出前先批准 storage provider 配置。",
+        "啟用任何 storage-backed 匯出前先批准 storage provider 設定。",
+      ),
+      sourceSurface: localized("Service Registry + Export Fulfillment Readiness", "Service Registry + 导出履约 readiness", "Service Registry + 匯出履約 readiness"),
+    }),
+    exportStorageCheck({
+      id: "csv-column-contract",
+      label: localized("CSV column contract", "CSV 字段合约", "CSV 欄位合約"),
+      state: columnCoverage.exactOrder ? "ready" : "blocked",
+      riskLevel: columnCoverage.exactOrder ? "low" : "high",
+      ownerRole: "internal_operator",
+      dependency: localized(
+        "Storage export must preserve the documented v0.2 CSV column order.",
+        "Storage 导出必须保留 v0.2 文档中的 CSV 字段顺序。",
+        "Storage 匯出必須保留 v0.2 文件中的 CSV 欄位順序。",
+      ),
+      evidenceRequired: localized(
+        `Expected ${expectedExportStorageColumns.length} columns and found ${columns.length}.`,
+        `预期 ${expectedExportStorageColumns.length} 个字段，实际 ${columns.length} 个。`,
+        `預期 ${expectedExportStorageColumns.length} 個欄位，實際 ${columns.length} 個。`,
+      ),
+      residualRisk: columnCoverage.exactOrder
+        ? localized(
+            "Column contract is ready as read-only coverage evidence only.",
+            "字段合约仅作为只读覆盖证据已就绪。",
+            "欄位合約僅作為唯讀覆蓋證據已就緒。",
+          )
+        : localized(
+            "Column drift could omit wallet, locale, risk, or task evidence fields.",
+            "字段漂移可能遗漏 wallet、locale、risk 或 task evidence 字段。",
+            "欄位漂移可能遺漏 wallet、locale、risk 或 task evidence 欄位。",
+          ),
+      nextAction: columnCoverage.exactOrder
+        ? localized(
+            "Keep exact v0.2 column order during any future storage adapter implementation.",
+            "未来实现 storage adapter 时保持精确 v0.2 字段顺序。",
+            "未來實作 storage adapter 時保持精確 v0.2 欄位順序。",
+          )
+        : localized(
+            "Restore exact v0.2 column order before export approval.",
+            "导出批准前恢复精确 v0.2 字段顺序。",
+            "匯出批准前恢復精確 v0.2 欄位順序。",
+          ),
+      sourceSurface: localized("v0.2 API and Data Model contract", "v0.2 API 与数据模型合约", "v0.2 API 與資料模型合約"),
+    }),
+    exportStorageCheck({
+      id: "wallet-locale-coverage",
+      label: localized("Wallet and locale coverage", "钱包与语言覆盖", "錢包與語言覆蓋"),
+      state: walletLocaleReady ? "ready" : "blocked",
+      riskLevel: walletLocaleReady ? "low" : "high",
+      ownerRole: "project_owner",
+      dependency: localized(
+        "Export rows must carry account type, wallet source, locale preference, risk flags, task records, and evidence hashes.",
+        "导出行必须携带 account type、wallet source、locale preference、risk flags、task records 与 evidence hashes。",
+        "匯出列必須攜帶 account type、wallet source、locale preference、risk flags、task records 與 evidence hashes。",
+      ),
+      evidenceRequired: localized(
+        `${campaign.metrics.aaWallets} AA wallets, ${campaign.metrics.eoaWallets} EOA wallets, and ${campaign.supportedLocales.length} supported locales are represented in local export context.`,
+        `本地导出上下文包含 ${campaign.metrics.aaWallets} 个 AA 钱包、${campaign.metrics.eoaWallets} 个 EOA 钱包和 ${campaign.supportedLocales.length} 个支持语言。`,
+        `本地匯出上下文包含 ${campaign.metrics.aaWallets} 個 AA 錢包、${campaign.metrics.eoaWallets} 個 EOA 錢包和 ${campaign.supportedLocales.length} 個支援語言。`,
+      ),
+      residualRisk: walletLocaleReady
+        ? localized(
+            "Wallet and locale coverage is ready as field coverage only, not storage approval.",
+            "钱包与语言覆盖仅作为字段覆盖已就绪，不代表 storage 批准。",
+            "錢包與語言覆蓋僅作為欄位覆蓋已就緒，不代表 storage 批准。",
+          )
+        : localized(
+            "Missing wallet or locale fields would make storage-backed export unsafe.",
+            "缺少钱包或语言字段会让 storage-backed 导出不安全。",
+            "缺少錢包或語言欄位會讓 storage-backed 匯出不安全。",
+          ),
+      nextAction: localized(
+        "Keep wallet type, wallet source, locale, risk, task, and evidence fields in every future storage export package.",
+        "在未来每个 storage 导出 package 中保留钱包类型、钱包来源、语言、风险、任务和证据字段。",
+        "在未來每個 storage 匯出 package 中保留錢包類型、錢包來源、語言、風險、任務和證據欄位。",
+      ),
+      sourceSurface: localized("Export Preview + Participant Operations", "导出预览 + 参与者运营", "匯出預覽 + 參與者營運"),
+    }),
+    exportStorageCheck({
+      id: "access-control",
+      label: localized("Access control", "访问控制", "存取控制"),
+      state: "blocked",
+      riskLevel: "high",
+      ownerRole: "internal_operator",
+      dependency: localized(
+        "Download authorization, signed URL policy, operator role, and project-owner access scope are not approved.",
+        "下载授权、signed URL 策略、operator 角色和 project-owner 访问范围尚未批准。",
+        "下載授權、signed URL 策略、operator 角色和 project-owner 存取範圍尚未批准。",
+      ),
+      evidenceRequired: localized(
+        "Provide role matrix, expiration rules, revocation path, and unauthorized-access handling.",
+        "提供角色矩阵、过期规则、撤销路径和未授权访问处理。",
+        "提供角色矩陣、過期規則、撤銷路徑和未授權存取處理。",
+      ),
+      residualRisk: localized(
+        "Exported wallet and locale data could be exposed without access approval.",
+        "没有访问批准时，导出的钱包和语言数据可能暴露。",
+        "沒有存取批准時，匯出的錢包和語言資料可能暴露。",
+      ),
+      nextAction: localized(
+        "Approve access-control and signed URL policy before storage-backed export.",
+        "storage-backed 导出前先批准访问控制和 signed URL 策略。",
+        "storage-backed 匯出前先批准存取控制和 signed URL 策略。",
+      ),
+      sourceSurface: localized("Future storage adapter approval", "未来 storage adapter 批准", "未來 storage adapter 批准"),
+    }),
+    exportStorageCheck({
+      id: "retention-privacy",
+      label: localized("Retention and privacy", "保留与隐私", "保留與隱私"),
+      state: "blocked",
+      riskLevel: "high",
+      ownerRole: "contract_reviewer",
+      dependency: localized(
+        "Retention period, deletion process, PII boundary, and privacy owner are not approved.",
+        "保留周期、删除流程、PII 边界和隐私 owner 尚未批准。",
+        "保留週期、刪除流程、PII 邊界和隱私 owner 尚未批准。",
+      ),
+      evidenceRequired: localized(
+        "Document retention duration, purge trigger, data classification, and wallet-address handling.",
+        "记录保留时长、清理触发器、数据分类和钱包地址处理。",
+        "記錄保留時長、清理觸發器、資料分類和錢包地址處理。",
+      ),
+      residualRisk: localized(
+        "Storage-backed export could retain wallet or locale data longer than approved.",
+        "storage-backed 导出可能保留钱包或语言数据超过批准范围。",
+        "storage-backed 匯出可能保留錢包或語言資料超過批准範圍。",
+      ),
+      nextAction: localized(
+        "Approve retention and privacy rules before any storage write.",
+        "任何 storage write 前先批准保留和隐私规则。",
+        "任何 storage write 前先批准保留和隱私規則。",
+      ),
+      sourceSurface: localized("Compliance review", "合规审核", "合規審核"),
+    }),
+    exportStorageCheck({
+      id: "audit-logging",
+      label: localized("Audit logging", "审计日志", "審計日誌"),
+      state: "review_required",
+      riskLevel: "medium",
+      ownerRole: "internal_operator",
+      dependency: localized(
+        "Export storage needs audit events for create, read, expire, revoke, and failure paths.",
+        "导出存储需要 create、read、expire、revoke 和 failure 路径的审计事件。",
+        "匯出儲存需要 create、read、expire、revoke 和 failure 路徑的審計事件。",
+      ),
+      evidenceRequired: localized(
+        "Define audit event names, actor IDs, batch IDs, checksum capture, and failure evidence.",
+        "定义审计事件名、actor ID、batch ID、checksum 记录和失败证据。",
+        "定義審計事件名、actor ID、batch ID、checksum 記錄和失敗證據。",
+      ),
+      residualRisk: localized(
+        "Operator cannot prove who created or accessed export artifacts without audit logging.",
+        "没有审计日志时，operator 无法证明谁创建或访问了导出 artifacts。",
+        "沒有審計日誌時，operator 無法證明誰建立或存取了匯出 artifacts。",
+      ),
+      nextAction: localized(
+        "Define audit logging contract before implementing storage-backed export.",
+        "实现 storage-backed 导出前先定义审计日志合约。",
+        "實作 storage-backed 匯出前先定義審計日誌合約。",
+      ),
+      sourceSurface: localized("Future audit log contract", "未来审计日志合约", "未來審計日誌合約"),
+    }),
+    exportStorageCheck({
+      id: "rollback-plan",
+      label: localized("Rollback plan", "回滚计划", "回滾計畫"),
+      state: "review_required",
+      riskLevel: "medium",
+      ownerRole: "internal_operator",
+      dependency: localized(
+        "Rollback behavior for wrong file, revoked access, expired URL, storage outage, and checksum mismatch is not finalized.",
+        "错误文件、撤销访问、URL 过期、storage 故障和 checksum 不匹配的回滚行为尚未最终确定。",
+        "錯誤檔案、撤銷存取、URL 過期、storage 故障和 checksum 不匹配的回滾行為尚未最終確定。",
+      ),
+      evidenceRequired: localized(
+        "Provide rollback runbook, user/operator copy, and recovery decision owner.",
+        "提供回滚 runbook、用户/运营文案和恢复决策 owner。",
+        "提供回滾 runbook、使用者/營運文案和恢復決策 owner。",
+      ),
+      residualRisk: localized(
+        "Storage export failure could leave stale or incorrect winner files accessible.",
+        "storage 导出失败可能让过期或错误 winner 文件保持可访问。",
+        "storage 匯出失敗可能讓過期或錯誤 winner 檔案保持可存取。",
+      ),
+      nextAction: localized(
+        "Approve rollback runbook before production storage export.",
+        "生产 storage 导出前先批准回滚 runbook。",
+        "生產 storage 匯出前先批准回滾 runbook。",
+      ),
+      sourceSurface: localized("Operational runbook", "运营 runbook", "營運 runbook"),
+    }),
+    exportStorageCheck({
+      id: "owner-signoff",
+      label: localized("Owner signoff", "项目方签核", "專案方簽核"),
+      state: "review_required",
+      riskLevel: "medium",
+      ownerRole: "project_owner",
+      dependency: localized(
+        "Project owner has approved local handoff, but production storage publication is not signed off.",
+        "项目方已批准本地交接，但生产 storage 发布尚未签核。",
+        "專案方已批准本地交接，但生產 storage 發布尚未簽核。",
+      ),
+      evidenceRequired: exportFulfillmentReadiness.approval.nextAction,
+      residualRisk: localized(
+        "Owner may treat local handoff as production publication without explicit storage signoff.",
+        "没有明确 storage 签核时，owner 可能把本地交接当作生产发布。",
+        "沒有明確 storage 簽核時，owner 可能把本地交接當作生產發布。",
+      ),
+      nextAction: localized(
+        "Collect project-owner signoff for production storage-backed export separately from local handoff.",
+        "将生产 storage-backed 导出项目方签核与本地交接分开收集。",
+        "將生產 storage-backed 匯出專案方簽核與本地交接分開收集。",
+      ),
+      sourceSurface: localized("Export Fulfillment Approval", "导出履约批准", "匯出履約批准"),
+    }),
+    exportStorageCheck({
+      id: "operator-approval",
+      label: localized("Operator approval", "运营批准", "營運批准"),
+      state: "blocked",
+      riskLevel: "high",
+      ownerRole: "internal_operator",
+      dependency: localized(
+        "Operator approval remains blocked until provider, access, retention, audit, rollback, and owner signoff are ready.",
+        "provider、访问、保留、审计、回滚与 owner 签核就绪前，运营批准保持阻断。",
+        "provider、存取、保留、審計、回滾與 owner 簽核就緒前，營運批准保持阻斷。",
+      ),
+      evidenceRequired: localized(
+        "Operator approval package must reference every production storage approval check.",
+        "运营批准 package 必须引用每个生产 storage approval check。",
+        "營運批准 package 必須引用每個生產 storage approval check。",
+      ),
+      residualRisk: localized(
+        "Production export cannot be trusted without final operator approval.",
+        "没有最终运营批准时，生产导出不可被信任。",
+        "沒有最終營運批准時，生產匯出不可被信任。",
+      ),
+      nextAction: exportStorageTopNextActionFallback,
+      sourceSurface: localized("Admin/Ops export approval", "Admin/Ops 导出批准", "Admin/Ops 匯出批准"),
+    }),
+  ];
+  const summary = createExportStorageFulfillmentApprovalSummary(checks);
+  const safety = createExportStorageSafetyBoundary({ checks, columnCoverage });
+
+  return {
+    batchId: exportFulfillmentReadiness.batchId,
+    boundary: exportStorageFulfillmentApprovalBoundary,
+    campaignId: campaign.id,
+    checks,
+    columnCoverage,
+    nextAction: summary.topNextAction,
+    safety,
+    sourceFulfillmentStatus: exportFulfillmentReadiness.summary.status,
+    summary,
   };
 };
 
@@ -23610,6 +24035,10 @@ export const createAdminOpsReadModel = (
 ): AdminOpsReadModel => {
   const exportBatch = createExportBatch(campaign);
   const exportFulfillmentReadiness = createExportFulfillmentReadiness(campaign);
+  const exportStorageFulfillmentApprovalReadiness = createExportStorageFulfillmentApprovalReadiness(
+    campaign,
+    exportFulfillmentReadiness,
+  );
   const advancedAnalytics = createAdvancedAnalyticsReadiness(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const aiReportHandoff = createAiReportHandoffSurface(aiOptimization);
@@ -23701,6 +24130,7 @@ export const createAdminOpsReadModel = (
     ecosystemMetrics: campaign.ecosystemMetrics,
     exportBatch,
     exportFulfillmentReadiness,
+    exportStorageFulfillmentApprovalReadiness,
     lifecycleOperations,
   };
 };

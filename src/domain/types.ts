@@ -4651,6 +4651,83 @@ export interface ExportFulfillmentReadiness {
   nextAction: LocalizedText;
 }
 
+export type ExportStorageApprovalCheckId =
+  | "storage-provider-approval"
+  | "csv-column-contract"
+  | "wallet-locale-coverage"
+  | "access-control"
+  | "retention-privacy"
+  | "audit-logging"
+  | "rollback-plan"
+  | "owner-signoff"
+  | "operator-approval";
+
+export interface ExportStorageApprovalCheck {
+  id: ExportStorageApprovalCheckId;
+  label: LocalizedText;
+  state: ExportReadinessState;
+  riskLevel: RiskLevel;
+  ownerRole: OwnerRole;
+  dependency: LocalizedText;
+  evidenceRequired: LocalizedText;
+  residualRisk: LocalizedText;
+  nextAction: LocalizedText;
+  sourceSurface: LocalizedText;
+}
+
+export interface ExportStorageFulfillmentApprovalSummary {
+  totalChecks: number;
+  readyChecks: number;
+  reviewRequiredChecks: number;
+  blockedChecks: number;
+  approvalBlocked: boolean;
+  storageWriteEnabled: false;
+  downloadUrlEnabled: false;
+  topCheckId: ExportStorageApprovalCheckId | null;
+  topNextAction: LocalizedText;
+  highestRiskLevel: RiskLevel;
+}
+
+export interface ExportStorageColumnCoverage {
+  columns: readonly ExportCsvColumn[];
+  expectedColumns: readonly ExportCsvColumn[];
+  exactOrder: boolean;
+  walletTypeIncluded: boolean;
+  walletSourceIncluded: boolean;
+  localePreferenceIncluded: boolean;
+  riskFlagsIncluded: boolean;
+  taskEvidenceIncluded: boolean;
+  missingColumns: readonly ExportCsvColumn[];
+  extraColumns: readonly string[];
+  boundary: LocalizedText;
+}
+
+export interface ExportStorageSafetyBoundary {
+  noStorageWrite: true;
+  noDownloadUrl: true;
+  noRealExportFile: true;
+  noObjectKey: true;
+  noSignedUrl: true;
+  noContractRootWrite: true;
+  noWalletSigning: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  forbiddenFieldsAbsent: boolean;
+  boundary: LocalizedText;
+}
+
+export interface ExportStorageFulfillmentApprovalReadiness {
+  campaignId: string;
+  batchId: string;
+  sourceFulfillmentStatus: ExportReadinessState;
+  summary: ExportStorageFulfillmentApprovalSummary;
+  checks: ExportStorageApprovalCheck[];
+  columnCoverage: ExportStorageColumnCoverage;
+  safety: ExportStorageSafetyBoundary;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface ExportPreviewModeReadiness {
   mode: ExportPreviewMode;
   label: LocalizedText;
@@ -5222,6 +5299,7 @@ export interface AdminOpsReadModel {
   ecosystemMetrics: EcosystemMetricRow[];
   exportBatch: ExportBatchSummary;
   exportFulfillmentReadiness: ExportFulfillmentReadiness;
+  exportStorageFulfillmentApprovalReadiness: ExportStorageFulfillmentApprovalReadiness;
   lifecycleOperations: CampaignLifecycleOperations;
 }
 
