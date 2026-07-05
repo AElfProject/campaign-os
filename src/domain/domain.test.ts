@@ -101,6 +101,7 @@ import {
 } from "./index";
 import type {
   ContractCampaignStatus,
+  ContractClaimActorApprovalRowId,
   ContractClaimAdminApprovalItemId,
   ContractClaimCustodyLegalItemId,
   ContractClaimExecutionApprovalItemId,
@@ -1331,7 +1332,8 @@ describe("Campaign OS domain foundation", () => {
       riskLevel: "high",
       blocksThreatModelApproval: true,
     });
-    expect(sectionsById["claim-actors"]?.evidenceRequired["en-US"]).toContain("Claim mode");
+    expect(sectionsById["claim-actors"]?.evidenceRequired["en-US"]).toContain("Actor Approval Readiness");
+    expect(sectionsById["claim-actors"]?.evidenceRequired["en-US"]).toContain("participant");
     expect(sectionsById["claim-actors"]?.reviewQuestion["en-US"]).toContain("bypass eligibility");
     expect(sectionsById["duplicate-claim-abuse"]).toMatchObject({
       state: "blocked",
@@ -1399,6 +1401,144 @@ describe("Campaign OS domain foundation", () => {
       expectCoreLocalizedText(section.nextAction);
       expectCoreLocalizedText(section.sourceSurface);
       expectCoreLocalizedText(section.boundary);
+    }
+
+    for (const unsafeKey of [
+      "privateKey",
+      "signature",
+      "transactionId",
+      "contractRoot",
+      "downloadUrl",
+      "storageUrl",
+    ]) {
+      expect(hasOwnKeyDeep(readiness, unsafeKey)).toBe(false);
+      expect(JSON.stringify(readiness)).not.toContain(`"${unsafeKey}"`);
+    }
+  });
+
+  it("derives contract claim actor approval readiness without granting actor approval", () => {
+    const preapproval = createContractClaimPreapprovalPackage(campaignDetail);
+    const repeated = createContractClaimPreapprovalPackage(campaignDetail).actorApprovalReadiness;
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const readiness = preapproval.actorApprovalReadiness;
+    const actorsById = Object.fromEntries(readiness.actors.map((actor) => [actor.id, actor]));
+    const claimActorsSection = preapproval.threatModelApprovalReadiness.sections.find(
+      (section) => section.id === "claim-actors",
+    );
+    const requiredActorIds: ContractClaimActorApprovalRowId[] = [
+      "participant",
+      "project-owner",
+      "admin",
+      "contract-reviewer",
+      "verifier",
+      "exporter",
+      "pauser",
+      "external-auditor",
+      "no-custody-no-distribution-boundary",
+    ];
+
+    expect(repeated).toEqual(readiness);
+    expect(adminOps.contractClaimPreapprovalPackage.actorApprovalReadiness).toEqual(readiness);
+    expect(readiness.campaignId).toBe(campaignDetail.id);
+    expect(readiness.actors.map((actor) => actor.id)).toEqual(requiredActorIds);
+    expect(new Set(readiness.actors.map((actor) => actor.id)).size).toBe(requiredActorIds.length);
+    expect(readiness.summary).toMatchObject({
+      totalActors: readiness.actors.length,
+      readyActors: readiness.actors.filter((actor) => actor.state === "ready").length,
+      reviewRequiredActors: readiness.actors.filter((actor) => actor.state === "review_required").length,
+      blockedActors: readiness.actors.filter((actor) => actor.state === "blocked").length,
+      approvalBlocked: true,
+      actorApprovalGranted: false,
+      claimExecutionEnabled: false,
+      highestRiskLevel: "high",
+      topActorId: "participant",
+    });
+    expect(readiness.nextAction).toEqual(readiness.summary.topNextAction);
+
+    expect(actorsById.participant).toMatchObject({
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      riskLevel: "high",
+      blocksActorApproval: true,
+    });
+    expect(actorsById.participant?.responsibility["en-US"]).toContain("future claimant");
+    expect(actorsById.participant?.authorityBoundary["en-US"]).toContain("no Campaign OS claim execution");
+    expect(actorsById.participant?.abusePath["en-US"]).toContain("bypass eligibility");
+    expect(actorsById.participant?.nextAction).toEqual(readiness.summary.topNextAction);
+    expect(actorsById["project-owner"]?.responsibility["en-US"]).toContain("funds rewards");
+    expect(actorsById["contract-reviewer"]?.evidenceRequired["en-US"]).toContain("audit status");
+    expect(actorsById.verifier?.authorityBoundary["en-US"]).toContain("cannot write roots");
+    expect(actorsById.exporter?.authorityBoundary["en-US"]).toContain("no export generation");
+    expect(actorsById.pauser?.abusePath["en-US"]).toContain("block valid participants");
+    expect(actorsById["external-auditor"]?.residualRisk["en-US"]).toContain("Audit handoff");
+    expect(actorsById["no-custody-no-distribution-boundary"]).toMatchObject({
+      state: "ready",
+      ownerRole: "project_owner",
+      riskLevel: "low",
+      blocksActorApproval: true,
+    });
+    expect(actorsById["no-custody-no-distribution-boundary"]?.residualRisk["en-US"]).toContain(
+      "does not approve actors",
+    );
+
+    expect(claimActorsSection).toMatchObject({
+      state: "blocked",
+      sourceSurface: {
+        "en-US": "Actor Approval Readiness",
+      },
+      blocksThreatModelApproval: true,
+    });
+    expect(claimActorsSection?.evidenceRequired["en-US"]).toContain("Actor Approval Readiness");
+    expect(claimActorsSection?.evidenceRequired["en-US"]).toContain("participant");
+    expect(claimActorsSection?.nextAction).toEqual(readiness.summary.topNextAction);
+
+    expect(preapproval.securityReviewReadiness.summary).toMatchObject({
+      approvalBlocked: true,
+      topItemId: "claim-threat-model",
+    });
+    expect(preapproval.threatModelApprovalReadiness.summary).toMatchObject({
+      approvalBlocked: true,
+      threatModelApproved: false,
+      claimExecutionEnabled: false,
+      topSectionId: "claim-actors",
+    });
+    expect(preapproval.executionApprovalReadiness.summary).toMatchObject({
+      executionApprovalBlocked: true,
+      claimExecutionEnabled: false,
+      topItemId: "security-approval",
+    });
+    expect(readiness.actorApprovalGranted).toBe(false);
+    expect(readiness.claimExecutionEnabled).toBe(false);
+    expect(readiness.noContractWrite).toBe(true);
+    expect(readiness.noClaimExecution).toBe(true);
+    expect(readiness.noWalletSigning).toBe(true);
+    expect(readiness.noProviderCall).toBe(true);
+    expect(readiness.noStorageWrite).toBe(true);
+    expect(readiness.noExportGeneration).toBe(true);
+    expect(readiness.noRewardCustody).toBe(true);
+    expect(readiness.noRewardDistribution).toBe(true);
+    expect(readiness.noBranchAutomation).toBe(true);
+    expect(readiness.noIssueAutomation).toBe(true);
+    expect(readiness.noPrAutomation).toBe(true);
+    expect(readiness.noMissionAutomation).toBe(true);
+    expect(preapproval.noIssueAutomation).toBe(true);
+    expect(preapproval.noPrAutomation).toBe(true);
+    expect(preapproval.noMissionAutomation).toBe(true);
+    expect(readiness.boundary["en-US"]).toContain("Actor approval remains blocked");
+    expect(readiness.boundary["en-US"]).toContain("no contract write");
+    expect(readiness.boundary["en-US"]).toContain("reward custody");
+    expect(readiness.sourceContext.threatModelApproval["en-US"]).toContain("claim-actors");
+    expect(readiness.sourceContext.executionApproval["en-US"]).toContain("Execution Approval Readiness remains blocked");
+
+    for (const actor of readiness.actors) {
+      expectCoreLocalizedText(actor.label);
+      expectCoreLocalizedText(actor.responsibility);
+      expectCoreLocalizedText(actor.authorityBoundary);
+      expectCoreLocalizedText(actor.abusePath);
+      expectCoreLocalizedText(actor.evidenceRequired);
+      expectCoreLocalizedText(actor.residualRisk);
+      expectCoreLocalizedText(actor.nextAction);
+      expectCoreLocalizedText(actor.sourceSurface);
     }
 
     for (const unsafeKey of [

@@ -1519,6 +1519,29 @@ describe("Admin/Ops shell", () => {
     expect(within(threatModelApprovalReadiness).queryByRole("button", {
       name: /approve|claim|custody|payout|signing|provider call|storage write|export file|branch|issue|PR|mission|contract write|reward custody|reward distribution/i,
     })).not.toBeInTheDocument();
+    const actorApprovalReadiness = within(preapproval).getByLabelText("Actor Approval Readiness");
+    expect(within(actorApprovalReadiness).getByText("Actor Approval Readiness")).toBeInTheDocument();
+    expect(within(actorApprovalReadiness).getByText(/Read-only actor approval coverage/)).toBeInTheDocument();
+    expect(within(actorApprovalReadiness).getAllByText("Actor approval blocked").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("Total actors").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("Blocked actors").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("Highest risk level").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("Top actor blocker").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("Participant").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("participant").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("project-owner").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("contract-reviewer").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("no-custody-no-distribution-boundary").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/Responsibility:/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/Authority boundary:/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/Abuse path:/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/Evidence needed:/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/Residual risk:/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/Next action:/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/no claim, custody, payout, signing, provider call, storage write, export file, branch, issue, PR, mission, contract write, reward custody, or reward distribution is executed/i).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).queryByRole("button", {
+      name: /approve|claim|custody|payout|signing|provider call|storage write|export file|branch|issue|PR|mission|contract write|reward custody|reward distribution/i,
+    })).not.toBeInTheDocument();
     expect(within(adminApprovalReadiness).queryByRole("button", {
       name: /approve|claim|custody|payout|sign|signature|provider call|storage write|export file|branch|contract write|reward distribution|reward custody/i,
     })).not.toBeInTheDocument();
@@ -1613,6 +1636,29 @@ describe("Admin/Ops shell", () => {
     expect(within(threatModelApprovalReadiness).getAllByText(/不托管\/不发奖边界/).length).toBeGreaterThan(0);
     expect(within(threatModelApprovalReadiness).getAllByText(/不会执行 claim、托管、payout、签名、provider 调用/).length).toBeGreaterThan(0);
     expect(within(threatModelApprovalReadiness).queryByRole("button", {
+      name: /批准|approve|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|issue|PR|mission|合约写入|奖励托管|发奖|reward distribution/i,
+    })).not.toBeInTheDocument();
+    const actorApprovalReadiness = within(preapproval).getByLabelText("角色批准 Readiness");
+    expect(within(actorApprovalReadiness).getByText("角色批准 Readiness")).toBeInTheDocument();
+    expect(within(actorApprovalReadiness).getByText(/只读展示参与用户/)).toBeInTheDocument();
+    expect(within(actorApprovalReadiness).getAllByText("角色批准已阻断").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("Actor 总数").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("已阻断 Actor").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("最高风险级别").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("首要角色阻断").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("参与用户").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("participant").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("project-owner").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("contract-reviewer").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText("no-custody-no-distribution-boundary").length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/职责:/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/权限边界:/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/滥用途径:/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/证据/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/残余风险:/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/下一步:/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).getAllByText(/不会执行 claim、托管、payout、签名、provider 调用/).length).toBeGreaterThan(0);
+    expect(within(actorApprovalReadiness).queryByRole("button", {
       name: /批准|approve|claim|custody|payout|签名|provider 调用|存储写入|导出文件|分支|issue|PR|mission|合约写入|奖励托管|发奖|reward distribution/i,
     })).not.toBeInTheDocument();
     expect(within(adminApprovalReadiness).queryByRole("button", {

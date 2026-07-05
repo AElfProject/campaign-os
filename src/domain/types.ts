@@ -2365,6 +2365,79 @@ export interface ContractClaimThreatModelApprovalReadiness {
   noMissionAutomation: true;
 }
 
+export type ContractClaimActorApprovalRowId =
+  | "participant"
+  | "project-owner"
+  | "admin"
+  | "contract-reviewer"
+  | "verifier"
+  | "exporter"
+  | "pauser"
+  | "external-auditor"
+  | "no-custody-no-distribution-boundary";
+
+export interface ContractClaimActorApprovalRow {
+  id: ContractClaimActorApprovalRowId;
+  label: LocalizedText;
+  state: ContractClaimPreapprovalGateState;
+  ownerRole: OwnerRole;
+  riskLevel: RiskLevel;
+  responsibility: LocalizedText;
+  authorityBoundary: LocalizedText;
+  abusePath: LocalizedText;
+  evidenceRequired: LocalizedText;
+  residualRisk: LocalizedText;
+  nextAction: LocalizedText;
+  sourceSurface: LocalizedText;
+  blocksActorApproval: boolean;
+}
+
+export interface ContractClaimActorApprovalSummary {
+  totalActors: number;
+  readyActors: number;
+  reviewRequiredActors: number;
+  blockedActors: number;
+  approvalBlocked: boolean;
+  actorApprovalGranted: false;
+  claimExecutionEnabled: false;
+  topActorId: ContractClaimActorApprovalRowId;
+  topNextAction: LocalizedText;
+  highestRiskLevel: RiskLevel;
+}
+
+export interface ContractClaimActorApprovalReadiness {
+  campaignId: string;
+  summary: ContractClaimActorApprovalSummary;
+  actors: ContractClaimActorApprovalRow[];
+  sourceContext: {
+    preapproval: LocalizedText;
+    securityReview: LocalizedText;
+    threatModelApproval: LocalizedText;
+    adminApproval: LocalizedText;
+    custodyLegal: LocalizedText;
+    executionApproval: LocalizedText;
+    deliveryAcceptance: LocalizedText;
+    contractTransparency: LocalizedText;
+    closeout: LocalizedText;
+  };
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  actorApprovalGranted: false;
+  claimExecutionEnabled: false;
+  noContractWrite: true;
+  noClaimExecution: true;
+  noWalletSigning: true;
+  noProviderCall: true;
+  noStorageWrite: true;
+  noExportGeneration: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  noBranchAutomation: true;
+  noIssueAutomation: true;
+  noPrAutomation: true;
+  noMissionAutomation: true;
+}
+
 export type ContractClaimAdminApprovalItemId =
   | "security-readiness-approval"
   | "admin-approval"
@@ -2565,6 +2638,7 @@ export interface ContractClaimPreapprovalPackage {
   gates: ContractClaimPreapprovalGate[];
   securityReviewReadiness: ContractClaimSecurityReviewReadiness;
   threatModelApprovalReadiness: ContractClaimThreatModelApprovalReadiness;
+  actorApprovalReadiness: ContractClaimActorApprovalReadiness;
   adminApprovalReadiness: ContractClaimAdminApprovalReadiness;
   custodyLegalReadiness: ContractClaimCustodyLegalReadiness;
   executionApprovalReadiness: ContractClaimExecutionApprovalReadiness;
@@ -2585,6 +2659,9 @@ export interface ContractClaimPreapprovalPackage {
   noStorageWrite: true;
   noExportGeneration: true;
   noBranchAutomation: true;
+  noIssueAutomation: true;
+  noPrAutomation: true;
+  noMissionAutomation: true;
 }
 
 export type ContractCampaignStatus =
