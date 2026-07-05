@@ -2405,10 +2405,80 @@ export interface ContractClaimActorApprovalSummary {
   highestRiskLevel: RiskLevel;
 }
 
+export type ContractClaimParticipantApprovalCheckId =
+  | "eligibility-lineage"
+  | "wallet-account-binding"
+  | "proof-replay-prevention"
+  | "duplicate-claim-prevention"
+  | "dispute-manual-review"
+  | "payout-pressure-boundary"
+  | "claimant-communication"
+  | "no-custody-no-distribution-boundary";
+
+export interface ContractClaimParticipantApprovalCheck {
+  id: ContractClaimParticipantApprovalCheckId;
+  label: LocalizedText;
+  state: ContractClaimPreapprovalGateState;
+  ownerRole: OwnerRole;
+  riskLevel: RiskLevel;
+  dependency: LocalizedText;
+  evidenceRequired: LocalizedText;
+  abusePath: LocalizedText;
+  residualRisk: LocalizedText;
+  nextAction: LocalizedText;
+  sourceSurface: LocalizedText;
+  blocksParticipantApproval: boolean;
+}
+
+export interface ContractClaimParticipantApprovalSummary {
+  totalChecks: number;
+  readyChecks: number;
+  reviewRequiredChecks: number;
+  blockedChecks: number;
+  approvalBlocked: boolean;
+  participantApprovalGranted: false;
+  claimExecutionEnabled: false;
+  topCheckId: ContractClaimParticipantApprovalCheckId;
+  topNextAction: LocalizedText;
+  highestRiskLevel: RiskLevel;
+}
+
+export interface ContractClaimParticipantApprovalReadiness {
+  campaignId: string;
+  summary: ContractClaimParticipantApprovalSummary;
+  checks: ContractClaimParticipantApprovalCheck[];
+  sourceContext: {
+    actorApproval: LocalizedText;
+    threatModelApproval: LocalizedText;
+    securityReview: LocalizedText;
+    executionApproval: LocalizedText;
+    participantOperations: LocalizedText;
+    deliveryAcceptance: LocalizedText;
+    contractTransparency: LocalizedText;
+  };
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  participantApprovalGranted: false;
+  claimExecutionEnabled: false;
+  noContractWrite: true;
+  noClaimExecution: true;
+  noWalletSigning: true;
+  noProviderCall: true;
+  noStorageWrite: true;
+  noExportGeneration: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  noBranchAutomation: true;
+  noIssueAutomation: true;
+  noPrAutomation: true;
+  noMissionAutomation: true;
+}
+
 export interface ContractClaimActorApprovalReadiness {
   campaignId: string;
   summary: ContractClaimActorApprovalSummary;
   actors: ContractClaimActorApprovalRow[];
+  participantApprovalReadiness: ContractClaimParticipantApprovalReadiness;
   sourceContext: {
     preapproval: LocalizedText;
     securityReview: LocalizedText;

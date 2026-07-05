@@ -2239,6 +2239,58 @@ export const AdminOpsPanel = ({
   const contractClaimActorApprovalTopActor = contractClaimActorApprovalReadiness.actors.find(
     (actor) => actor.id === contractClaimActorApprovalReadiness.summary.topActorId,
   ) ?? contractClaimActorApprovalReadiness.actors[0];
+  const contractClaimParticipantApprovalReadiness = contractClaimActorApprovalReadiness.participantApprovalReadiness;
+  const contractClaimParticipantApprovalSummary = [
+    {
+      id: "total",
+      label: copy.totalChecks,
+      value: contractClaimParticipantApprovalReadiness.summary.totalChecks,
+      state: "ready" as const,
+    },
+    {
+      id: "blocked",
+      label: copy.blockedChecks,
+      value: contractClaimParticipantApprovalReadiness.summary.blockedChecks,
+      state: contractClaimParticipantApprovalReadiness.summary.blockedChecks > 0
+        ? "blocker" as const
+        : "ready" as const,
+    },
+    {
+      id: "review-required",
+      label: copy.reviewRequiredItems,
+      value: contractClaimParticipantApprovalReadiness.summary.reviewRequiredChecks,
+      state: contractClaimParticipantApprovalReadiness.summary.reviewRequiredChecks > 0
+        ? "warning" as const
+        : "ready" as const,
+    },
+    {
+      id: "ready",
+      label: copy.readyItems,
+      value: contractClaimParticipantApprovalReadiness.summary.readyChecks,
+      state: "ready" as const,
+    },
+    {
+      id: "highest-risk",
+      label: copy.highestRiskLevel,
+      value: contractClaimParticipantApprovalReadiness.summary.highestRiskLevel,
+      state: contractClaimParticipantApprovalReadiness.summary.highestRiskLevel === "high"
+        ? "blocker" as const
+        : contractClaimParticipantApprovalReadiness.summary.highestRiskLevel === "medium"
+          ? "warning" as const
+          : "ready" as const,
+    },
+    {
+      id: "top-check",
+      label: copy.topParticipantBlocker,
+      value: contractClaimParticipantApprovalReadiness.summary.topCheckId,
+      state: contractClaimParticipantApprovalReadiness.summary.approvalBlocked
+        ? "blocker" as const
+        : "ready" as const,
+    },
+  ];
+  const contractClaimParticipantApprovalTopCheck = contractClaimParticipantApprovalReadiness.checks.find(
+    (check) => check.id === contractClaimParticipantApprovalReadiness.summary.topCheckId,
+  ) ?? contractClaimParticipantApprovalReadiness.checks[0];
 
   const companionReadinessSummary = [
     {
@@ -3997,6 +4049,124 @@ export const AdminOpsPanel = ({
                 <p style={wrapTextStyle}>
                   {copy.linkedSurface}: {getLocalizedText(actor.sourceSurface, locale)}
                 </p>
+              </article>
+            ))}
+          </div>
+        </article>
+        <article aria-label={copy.contractClaimParticipantApprovalReadiness} style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.contractClaimParticipantApprovalBoundary}</p>
+              <strong>{copy.contractClaimParticipantApprovalReadiness}</strong>
+              <p style={mutedTextStyle}>{copy.contractClaimParticipantApprovalSubtitle}</p>
+            </div>
+            <PublishStateBadge
+              label={contractClaimParticipantApprovalReadiness.summary.approvalBlocked
+                ? copy.participantApprovalBlocked
+                : copy.readyActions}
+              state={contractClaimParticipantApprovalReadiness.summary.approvalBlocked ? "blocker" : "ready"}
+            />
+          </div>
+          <p style={boundaryStyle}>
+            {copy.nonLiveBoundary}: {getLocalizedText(contractClaimParticipantApprovalReadiness.boundary, locale)}
+          </p>
+          <div style={compactGridStyle}>
+            {contractClaimParticipantApprovalSummary.map((item) => (
+              <article key={item.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <p style={labelStyle}>{item.label}</p>
+                  <PublishStateBadge label={String(item.value)} state={item.state} />
+                </div>
+                <p style={valueStyle}>{item.value}</p>
+              </article>
+            ))}
+          </div>
+          {contractClaimParticipantApprovalTopCheck ? (
+            <article style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.topParticipantBlocker}</p>
+                  <strong>{getLocalizedText(contractClaimParticipantApprovalTopCheck.label, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={contractClaimPreapprovalGateLabel(contractClaimParticipantApprovalTopCheck.state, copy)}
+                  state={contractClaimPreapprovalGateState(contractClaimParticipantApprovalTopCheck.state)}
+                />
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.ownerRole}: {readableCode(contractClaimParticipantApprovalTopCheck.ownerRole)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.riskLevel}: {contractClaimParticipantApprovalTopCheck.riskLevel}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.dependency}: {getLocalizedText(contractClaimParticipantApprovalTopCheck.dependency, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.evidenceNeeded}: {getLocalizedText(contractClaimParticipantApprovalTopCheck.evidenceRequired, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.abusePath}: {getLocalizedText(contractClaimParticipantApprovalTopCheck.abusePath, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.residualRisk}: {getLocalizedText(contractClaimParticipantApprovalTopCheck.residualRisk, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(contractClaimParticipantApprovalTopCheck.nextAction, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.linkedSurface}: {getLocalizedText(contractClaimParticipantApprovalTopCheck.sourceSurface, locale)}
+              </p>
+            </article>
+          ) : null}
+          <div style={gridStyle}>
+            {contractClaimParticipantApprovalReadiness.checks.map((check) => (
+              <article key={check.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <div style={stackStyle}>
+                    <p style={labelStyle}>{check.id}</p>
+                    <strong>{getLocalizedText(check.label, locale)}</strong>
+                  </div>
+                  <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <PublishStateBadge
+                      label={contractClaimPreapprovalGateLabel(check.state, copy)}
+                      state={contractClaimPreapprovalGateState(check.state)}
+                    />
+                    {check.blocksParticipantApproval
+                      ? <Badge label={copy.participantApprovalBlocked} tone="warning" />
+                      : null}
+                  </span>
+                </div>
+                <p style={wrapTextStyle}>
+                  {copy.ownerRole}: {readableCode(check.ownerRole)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.riskLevel}: {check.riskLevel}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.dependency}: {getLocalizedText(check.dependency, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.evidenceNeeded}: {getLocalizedText(check.evidenceRequired, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.abusePath}: {getLocalizedText(check.abusePath, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.residualRisk}: {getLocalizedText(check.residualRisk, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.nextAction}: {getLocalizedText(check.nextAction, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.linkedSurface}: {getLocalizedText(check.sourceSurface, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.localOnlyBoundary}: {getLocalizedText(contractClaimParticipantApprovalReadiness.boundary, locale)}
+                </p>
+                {check.blocksParticipantApproval
+                  ? <Badge label={copy.blocksParticipantApproval} tone="warning" />
+                  : null}
               </article>
             ))}
           </div>
