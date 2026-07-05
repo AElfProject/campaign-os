@@ -15,6 +15,14 @@ describe("Campaign OS app shell", () => {
     screen.getByRole("navigation", { name: "Campaign OS product navigation" });
   const getProjectWorkspaceNavigation = () =>
     screen.getByRole("navigation", { name: "Project Console workspace navigation" });
+  const getHeader = () => screen.getByRole("banner");
+  const getHeaderConnectWalletButton = () =>
+    within(getHeader()).getByRole("button", { name: "Connect Wallet" });
+  const getUserAppConnectWalletButton = () => {
+    const buttons = screen.getAllByRole("button", { name: "Connect Wallet" });
+
+    return buttons[buttons.length - 1];
+  };
 
   const setNavigatorLanguages = (languages: readonly string[]) => {
     Object.defineProperty(window.navigator, "languages", {
@@ -98,6 +106,34 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
     expect(screen.getByText("Connected wallets")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Campaign Command Center" })).toBeInTheDocument();
+    expect(getHeaderConnectWalletButton()).toBeInTheDocument();
+    expect(within(getHeader()).queryByText("AA · Portkey")).not.toBeInTheDocument();
+  });
+
+  it("opens the Header wallet modal and connects the local seeded preview wallet", () => {
+    render(<App />);
+
+    fireEvent.click(getHeaderConnectWalletButton());
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+
+    expect(within(dialog).getByTestId("wallet-modal-group-recommended")).toBeInTheDocument();
+    expect(within(dialog).getByTestId("wallet-modal-group-eoa")).toBeInTheDocument();
+    expect(within(dialog).getByTestId("wallet-modal-group-advanced")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Use seeded wallet preview" }));
+
+    const connectedWallet = within(getHeader()).getByRole("button", {
+      name: "Manage wallet connection: AA · Portkey 2F4...9aB",
+    });
+
+    expect(connectedWallet).toHaveTextContent("AA · Portkey");
+    expect(connectedWallet).toHaveTextContent("2F4...9aB");
+    expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
+
+    fireEvent.click(connectedWallet);
+
+    expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
   });
 
   it("routes product navigation to seeded Project Console destinations", () => {
@@ -136,7 +172,7 @@ describe("Campaign OS app shell", () => {
       "true",
     );
     expect(screen.getByLabelText("Language")).toHaveValue("en-US");
-    expect(screen.getByText("2F4...9aB")).toBeInTheDocument();
+    expect(getHeaderConnectWalletButton()).toBeInTheDocument();
   });
 
   it("keeps secondary workspaces reachable after product navigation", () => {
@@ -274,9 +310,9 @@ describe("Campaign OS app shell", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "使用者應用" }));
 
-    expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
+    expect(getUserAppConnectWalletButton()).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+    fireEvent.click(getUserAppConnectWalletButton());
 
     const dialog = screen.getByRole("dialog", { name: "連接錢包" });
 
@@ -504,7 +540,7 @@ describe("Campaign OS app shell", () => {
     ).toBeInTheDocument();
     expect(within(shareReadiness).getByText("English fallback")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+    fireEvent.click(getUserAppConnectWalletButton());
 
     expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
     expect(
@@ -531,7 +567,7 @@ describe("Campaign OS app shell", () => {
     ).toBeInTheDocument();
     expect(within(shareReadiness).getByText("English fallback")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+    fireEvent.click(getUserAppConnectWalletButton());
 
     expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
     expect(
@@ -558,7 +594,7 @@ describe("Campaign OS app shell", () => {
     ).toBeInTheDocument();
     expect(within(shareReadiness).getByText("English fallback")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+    fireEvent.click(getUserAppConnectWalletButton());
 
     expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
     expect(
@@ -585,7 +621,7 @@ describe("Campaign OS app shell", () => {
     ).toBeInTheDocument();
     expect(within(shareReadiness).getByText("English fallback")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+    fireEvent.click(getUserAppConnectWalletButton());
 
     expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
     expect(
@@ -612,7 +648,7 @@ describe("Campaign OS app shell", () => {
     ).toBeInTheDocument();
     expect(within(shareReadiness).getByText("English fallback")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+    fireEvent.click(getUserAppConnectWalletButton());
 
     expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
     expect(
@@ -639,7 +675,7 @@ describe("Campaign OS app shell", () => {
     ).toBeInTheDocument();
     expect(within(shareReadiness).getByText("English fallback")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+    fireEvent.click(getUserAppConnectWalletButton());
 
     expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
     expect(
@@ -798,7 +834,7 @@ describe("Campaign OS app shell", () => {
 
     expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+    fireEvent.click(getUserAppConnectWalletButton());
 
     const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
 
