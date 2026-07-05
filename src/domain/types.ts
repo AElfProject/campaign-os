@@ -2290,6 +2290,63 @@ export interface ContractClaimSecurityReviewReadiness {
   nextAction: LocalizedText;
 }
 
+export type ContractClaimAdminApprovalItemId =
+  | "security-readiness-approval"
+  | "admin-approval"
+  | "contract-reviewer-approval"
+  | "custody-legal-approval"
+  | "external-audit-approval"
+  | "project-owner-funding-approval"
+  | "pause-dispute-runbook-approval"
+  | "no-custody-no-distribution-boundary";
+
+export interface ContractClaimAdminApprovalItem {
+  id: ContractClaimAdminApprovalItemId;
+  label: LocalizedText;
+  state: ContractClaimPreapprovalGateState;
+  approverRole: OwnerRole;
+  sourceGateId: ContractClaimPreapprovalGateId;
+  dependency: LocalizedText;
+  evidenceRequired: LocalizedText;
+  blockingReason: LocalizedText;
+  nextAction: LocalizedText;
+  sourceSurface: LocalizedText;
+  boundary: LocalizedText;
+  blocksClaimMode: boolean;
+}
+
+export interface ContractClaimAdminApprovalSummary {
+  totalItems: number;
+  readyItems: number;
+  reviewRequiredItems: number;
+  blockedItems: number;
+  claimModeApprovalBlocked: boolean;
+  topItemId: ContractClaimAdminApprovalItemId;
+  topNextAction: LocalizedText;
+}
+
+export interface ContractClaimAdminApprovalReadiness {
+  campaignId: string;
+  summary: ContractClaimAdminApprovalSummary;
+  items: ContractClaimAdminApprovalItem[];
+  sourceContext: {
+    preapproval: LocalizedText;
+    securityReview: LocalizedText;
+    deliveryAcceptance: LocalizedText;
+    contractTransparency: LocalizedText;
+  };
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  claimModeApproved: false;
+  claimExecutionEnabled: false;
+  noContractWrite: true;
+  noClaimExecution: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  noStorageWrite: true;
+  noBranchAutomation: true;
+}
+
 export interface ContractClaimPreapprovalSummary {
   totalGates: number;
   readyGates: number;
@@ -2307,6 +2364,7 @@ export interface ContractClaimPreapprovalPackage {
   summary: ContractClaimPreapprovalSummary;
   gates: ContractClaimPreapprovalGate[];
   securityReviewReadiness: ContractClaimSecurityReviewReadiness;
+  adminApprovalReadiness: ContractClaimAdminApprovalReadiness;
   sourceContext: {
     contractReview: LocalizedText;
     contractTransparency: LocalizedText;

@@ -1952,6 +1952,44 @@ export const AdminOpsPanel = ({
   const contractClaimPreapprovalTopGate = contractClaimPreapprovalPackage.gates.find(
     (gate) => gate.id === contractClaimPreapprovalPackage.summary.topGateId,
   ) ?? contractClaimPreapprovalPackage.gates[0];
+  const contractClaimAdminApprovalReadiness = contractClaimPreapprovalPackage.adminApprovalReadiness;
+  const contractClaimAdminApprovalSummary = [
+    {
+      id: "total",
+      label: copy.approvalItems,
+      value: contractClaimAdminApprovalReadiness.summary.totalItems,
+      state: "ready" as const,
+    },
+    {
+      id: "blocked",
+      label: copy.blockedApprovals,
+      value: contractClaimAdminApprovalReadiness.summary.blockedItems,
+      state: contractClaimAdminApprovalReadiness.summary.blockedItems > 0 ? "blocker" as const : "ready" as const,
+    },
+    {
+      id: "review-required",
+      label: copy.reviewRequiredItems,
+      value: contractClaimAdminApprovalReadiness.summary.reviewRequiredItems,
+      state: contractClaimAdminApprovalReadiness.summary.reviewRequiredItems > 0
+        ? "warning" as const
+        : "ready" as const,
+    },
+    {
+      id: "ready",
+      label: copy.readyApprovals,
+      value: contractClaimAdminApprovalReadiness.summary.readyItems,
+      state: "ready" as const,
+    },
+    {
+      id: "claim-mode-blocked",
+      label: copy.claimModeApprovalBlocked,
+      value: contractClaimAdminApprovalReadiness.summary.claimModeApprovalBlocked ? copy.blocked : copy.readyActions,
+      state: contractClaimAdminApprovalReadiness.summary.claimModeApprovalBlocked ? "blocker" as const : "ready" as const,
+    },
+  ];
+  const contractClaimAdminApprovalTopItem = contractClaimAdminApprovalReadiness.items.find(
+    (item) => item.id === contractClaimAdminApprovalReadiness.summary.topItemId,
+  ) ?? contractClaimAdminApprovalReadiness.items[0];
   const contractClaimSecurityReviewReadiness = contractClaimPreapprovalPackage.securityReviewReadiness;
   const contractClaimSecurityReviewSummary = [
     {
@@ -3287,6 +3325,104 @@ export const AdminOpsPanel = ({
             </p>
           </article>
         ) : null}
+        <article aria-label={copy.contractClaimAdminApprovalReadiness} style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.contractClaimAdminApprovalBoundary}</p>
+              <strong>{copy.contractClaimAdminApprovalReadiness}</strong>
+              <p style={mutedTextStyle}>{copy.contractClaimAdminApprovalSubtitle}</p>
+            </div>
+            <PublishStateBadge
+              label={contractClaimAdminApprovalReadiness.summary.claimModeApprovalBlocked
+                ? copy.claimModeApprovalBlocked
+                : copy.readyActions}
+              state={contractClaimAdminApprovalReadiness.summary.claimModeApprovalBlocked ? "blocker" : "ready"}
+            />
+          </div>
+          <p style={boundaryStyle}>
+            {copy.nonLiveBoundary}: {getLocalizedText(contractClaimAdminApprovalReadiness.boundary, locale)}
+          </p>
+          <div style={compactGridStyle}>
+            {contractClaimAdminApprovalSummary.map((item) => (
+              <article key={item.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <p style={labelStyle}>{item.label}</p>
+                  <PublishStateBadge label={String(item.value)} state={item.state} />
+                </div>
+                <p style={valueStyle}>{item.value}</p>
+              </article>
+            ))}
+          </div>
+          {contractClaimAdminApprovalTopItem ? (
+            <article style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.topApprovalBlocker}</p>
+                  <strong>{getLocalizedText(contractClaimAdminApprovalTopItem.label, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={contractClaimPreapprovalGateLabel(contractClaimAdminApprovalTopItem.state, copy)}
+                  state={contractClaimPreapprovalGateState(contractClaimAdminApprovalTopItem.state)}
+                />
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.approverRole}: {readableCode(contractClaimAdminApprovalTopItem.approverRole)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.sourceGate}: {contractClaimAdminApprovalTopItem.sourceGateId}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.blockingReason}: {getLocalizedText(contractClaimAdminApprovalTopItem.blockingReason, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(contractClaimAdminApprovalTopItem.nextAction, locale)}
+              </p>
+            </article>
+          ) : null}
+          <div style={gridStyle}>
+            {contractClaimAdminApprovalReadiness.items.map((item) => (
+              <article key={item.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <div style={stackStyle}>
+                    <p style={labelStyle}>{item.id}</p>
+                    <strong>{getLocalizedText(item.label, locale)}</strong>
+                  </div>
+                  <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <PublishStateBadge
+                      label={contractClaimPreapprovalGateLabel(item.state, copy)}
+                      state={contractClaimPreapprovalGateState(item.state)}
+                    />
+                    {item.blocksClaimMode ? <Badge label={copy.claimModeApprovalBlocked} tone="warning" /> : null}
+                  </span>
+                </div>
+                <p style={wrapTextStyle}>
+                  {copy.approverRole}: {readableCode(item.approverRole)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.sourceGate}: {item.sourceGateId}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.linkedSurface}: {getLocalizedText(item.sourceSurface, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.evidenceNeeded}: {getLocalizedText(item.evidenceRequired, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.dependency}: {getLocalizedText(item.dependency, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.blockingReason}: {getLocalizedText(item.blockingReason, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.nextAction}: {getLocalizedText(item.nextAction, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.localOnlyBoundary}: {getLocalizedText(item.boundary, locale)}
+                </p>
+              </article>
+            ))}
+          </div>
+        </article>
         <article aria-label={copy.contractClaimSecurityReviewReadiness} style={cardStyle}>
           <div style={rowStyle}>
             <div style={stackStyle}>
