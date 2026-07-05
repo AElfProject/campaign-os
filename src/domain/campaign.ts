@@ -94,6 +94,8 @@ import type {
   ContractReviewChecklistItem,
   ContractMode,
   ContractClaimExecutionApprovalItem,
+  ContractClaimExecutionApprovalEvidenceMatrix,
+  ContractClaimExecutionApprovalEvidenceRow,
   ContractClaimExecutionApprovalReadiness,
   ContractEvolutionStep,
   ContractInterfaceGroup,
@@ -13810,6 +13812,16 @@ const contractClaimExecutionApprovalItem = (
   item: ContractClaimExecutionApprovalItem,
 ): ContractClaimExecutionApprovalItem => item;
 
+const contractClaimExecutionApprovalEvidenceState = (
+  state: ContractClaimPreapprovalGateState,
+): ContractClaimExecutionApprovalEvidenceRow["state"] => {
+  if (state === "ready") {
+    return "ready";
+  }
+
+  return state === "review_required" ? "review_required" : "missing";
+};
+
 const contractClaimExecutionApprovalSummary = (
   items: readonly ContractClaimExecutionApprovalItem[],
 ): ContractClaimExecutionApprovalReadiness["summary"] => {
@@ -13834,6 +13846,126 @@ const contractClaimExecutionApprovalSummary = (
     topItemId: topItem.id,
     topNextAction: topItem.nextAction,
     totalItems: items.length,
+  };
+};
+
+const contractClaimExecutionApprovalEvidenceRow = (
+  row: ContractClaimExecutionApprovalEvidenceRow,
+): ContractClaimExecutionApprovalEvidenceRow => row;
+
+const contractClaimExecutionApprovalEvidenceSummary = (
+  rows: readonly ContractClaimExecutionApprovalEvidenceRow[],
+): ContractClaimExecutionApprovalEvidenceMatrix["summary"] => {
+  const topRow = [...rows].sort((left, right) => {
+    const stateRank: Record<ContractClaimExecutionApprovalEvidenceRow["state"], number> = {
+      missing: 0,
+      review_required: 1,
+      ready: 2,
+    };
+    const stateDelta = stateRank[left.state] - stateRank[right.state];
+
+    if (stateDelta !== 0) {
+      return stateDelta;
+    }
+
+    return rows.findIndex((row) => row.id === left.id) - rows.findIndex((row) => row.id === right.id);
+  })[0] ?? rows[0];
+
+  return {
+    claimExecutionEnabled: false,
+    evidenceComplete: false,
+    executionApprovalBlocked: rows.some((row) => row.blocksExecutionApproval && row.state !== "ready"),
+    launchBlockingRows: rows.filter((row) => row.blocksExecutionApproval && row.state !== "ready").length,
+    missingRows: rows.filter((row) => row.state === "missing").length,
+    readyRows: rows.filter((row) => row.state === "ready").length,
+    reviewRequiredRows: rows.filter((row) => row.state === "review_required").length,
+    topEvidenceId: topRow.id,
+    topNextAction: topRow.nextAction,
+    totalRows: rows.length,
+  };
+};
+
+const createContractClaimExecutionApprovalEvidenceMatrix = ({
+  campaignId,
+  items,
+}: {
+  campaignId: string;
+  items: readonly ContractClaimExecutionApprovalItem[];
+}): ContractClaimExecutionApprovalEvidenceMatrix => {
+  const evidenceBoundary = localized(
+    "Review-only execution approval evidence matrix. Evidence completeness is not approval; execution approval remains blocked and no claim, custody, payout, signing, provider, storage, export, contract, branch, issue, PR, mission, reward custody, or reward distribution operation is executed.",
+    "仅用于审核的执行批准证据矩阵。证据完整性不是批准；执行批准保持阻断，也不会执行 claim、托管、payout、签名、provider、存储、导出、合约、分支、issue、PR、mission、奖励托管或发奖操作。",
+    "僅用於審核的執行批准證據矩陣。證據完整性不是批准；執行批准保持阻斷，也不會執行 claim、託管、payout、簽名、provider、儲存、匯出、合約、分支、issue、PR、mission、獎勵託管或發獎操作。",
+  );
+  const rows = items.map((item) => {
+    const state = contractClaimExecutionApprovalEvidenceState(item.state);
+    const evidenceStateText = state === "ready"
+      ? localized("Evidence packet is restriction-ready.", "证据包作为限制已就绪。", "證據包作為限制已就緒。")
+      : state === "review_required"
+        ? localized("Evidence packet requires reviewer sign-off.", "证据包需要审核人签核。", "證據包需要審核人簽核。")
+        : localized("Evidence packet is missing or blocked.", "证据包缺失或阻断。", "證據包缺失或阻斷。");
+
+    return contractClaimExecutionApprovalEvidenceRow({
+      approvalImpact: item.launchImpact,
+      auditRequirement: localized(
+        `Audit requirement: ${item.sourceGateId} evidence must be accepted before execution approval can advance.`,
+        `审计要求：${item.sourceGateId} 证据必须被接受后，执行批准才能推进。`,
+        `審計要求：${item.sourceGateId} 證據必須被接受後，執行批准才能推進。`,
+      ),
+      blocksExecutionApproval: item.blocksExecutionApproval,
+      boundary: evidenceBoundary,
+      evidenceSummary: localized(
+        `${item.label["en-US"]} evidence state is ${state}; source gate ${item.sourceGateId} remains ${item.state}.`,
+        `${item.label["zh-CN"]} 证据状态为 ${state}；source gate ${item.sourceGateId} 仍为 ${item.state}。`,
+        `${item.label["zh-TW"]} 證據狀態為 ${state}；source gate ${item.sourceGateId} 仍為 ${item.state}。`,
+      ),
+      evidenceSurface: item.sourceSurface,
+      id: `${item.id}-evidence`,
+      label: localized(
+        `${item.label["en-US"]} evidence`,
+        `${item.label["zh-CN"]}证据`,
+        `${item.label["zh-TW"]}證據`,
+      ),
+      missingEvidence: state === "ready"
+        ? localized(
+          "No missing evidence for this boundary row; it still does not approve execution.",
+          "此边界行没有缺失证据；它仍不批准执行。",
+          "此邊界列沒有缺失證據；它仍不批准執行。",
+        )
+        : localized(
+          `${item.evidenceRequired["en-US"]} ${item.blockingReason["en-US"]}`,
+          `${item.evidenceRequired["zh-CN"]} ${item.blockingReason["zh-CN"]}`,
+          `${item.evidenceRequired["zh-TW"]} ${item.blockingReason["zh-TW"]}`,
+        ),
+      nextAction: item.nextAction,
+      ownerRole: item.ownerRole,
+      sourceItemId: item.id,
+      state,
+    });
+  });
+  const summary = contractClaimExecutionApprovalEvidenceSummary(rows);
+
+  return {
+    boundary: evidenceBoundary,
+    campaignId,
+    claimExecutionEnabled: false,
+    evidenceComplete: false,
+    executionApprovalBlocked: summary.executionApprovalBlocked,
+    nextAction: summary.topNextAction,
+    noBranchAutomation: true,
+    noClaimExecution: true,
+    noContractWrite: true,
+    noExportGeneration: true,
+    noIssueAutomation: true,
+    noMissionAutomation: true,
+    noPrAutomation: true,
+    noProviderCall: true,
+    noRewardCustody: true,
+    noRewardDistribution: true,
+    noStorageWrite: true,
+    noWalletSigning: true,
+    rows,
+    summary,
   };
 };
 
@@ -16646,11 +16778,16 @@ export const createContractClaimExecutionApprovalReadiness = ({
     }),
   ];
   const summary = contractClaimExecutionApprovalSummary(items);
+  const evidenceMatrix = createContractClaimExecutionApprovalEvidenceMatrix({
+    campaignId: campaign.id,
+    items,
+  });
 
   return {
     boundary: contractClaimExecutionApprovalBoundary,
     campaignId: campaign.id,
     claimExecutionEnabled: false,
+    evidenceMatrix,
     executionApproved: false,
     items,
     nextAction: summary.topNextAction,
@@ -16658,6 +16795,9 @@ export const createContractClaimExecutionApprovalReadiness = ({
     noClaimExecution: true,
     noContractWrite: true,
     noExportGeneration: true,
+    noIssueAutomation: true,
+    noMissionAutomation: true,
+    noPrAutomation: true,
     noProviderCall: true,
     noRewardCustody: true,
     noRewardDistribution: true,

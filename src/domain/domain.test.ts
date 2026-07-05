@@ -106,6 +106,7 @@ import type {
   ContractClaimAdminApprovalItemId,
   ContractClaimCustodyLegalItemId,
   ContractClaimEligibilityLineageRowId,
+  ContractClaimExecutionApprovalEvidenceRowId,
   ContractClaimExecutionApprovalItemId,
   ContractClaimParticipantApprovalCheckId,
   ContractClaimPreapprovalGateId,
@@ -2056,8 +2057,10 @@ describe("Campaign OS domain foundation", () => {
     const preapproval = createContractClaimPreapprovalPackage(campaignDetail);
     const repeated = createContractClaimPreapprovalPackage(campaignDetail).executionApprovalReadiness;
     const readiness = preapproval.executionApprovalReadiness;
+    const evidenceMatrix = readiness.evidenceMatrix;
     const adminOps = createAdminOpsReadModel(campaignDetail);
     const itemsById = Object.fromEntries(readiness.items.map((item) => [item.id, item]));
+    const evidenceRowsById = Object.fromEntries(evidenceMatrix.rows.map((row) => [row.id, row]));
     const contractClaimResidual = adminOps.residualGapMissionQueue.items.find(
       (item) => item.sourceRowId === "v02-contract-claim-reward-custody",
     );
@@ -2072,11 +2075,25 @@ describe("Campaign OS domain foundation", () => {
       "claim-proof-duplicate-safeguards",
       "no-custody-no-distribution-boundary",
     ];
+    const requiredEvidenceRowIds: ContractClaimExecutionApprovalEvidenceRowId[] = [
+      "security-approval-evidence",
+      "admin-approval-evidence",
+      "contract-reviewer-approval-evidence",
+      "custody-legal-approval-evidence",
+      "external-audit-acceptance-evidence",
+      "project-owner-funding-evidence",
+      "pause-dispute-rollback-runbook-evidence",
+      "claim-proof-duplicate-safeguards-evidence",
+      "no-custody-no-distribution-boundary-evidence",
+    ];
 
     expect(repeated).toEqual(readiness);
     expect(adminOps.contractClaimPreapprovalPackage.executionApprovalReadiness).toEqual(readiness);
     expect(readiness.campaignId).toBe(campaignDetail.id);
     expect(readiness.items.map((item) => item.id)).toEqual(requiredItemIds);
+    expect(evidenceMatrix.campaignId).toBe(campaignDetail.id);
+    expect(evidenceMatrix.rows.map((row) => row.id)).toEqual(requiredEvidenceRowIds);
+    expect(evidenceMatrix.rows.map((row) => row.sourceItemId)).toEqual(requiredItemIds);
     expect(readiness.summary).toMatchObject({
       totalItems: readiness.items.length,
       readyItems: readiness.items.filter((item) => item.state === "ready").length,
@@ -2088,6 +2105,40 @@ describe("Campaign OS domain foundation", () => {
       topItemId: "security-approval",
     });
     expect(readiness.nextAction).toEqual(readiness.summary.topNextAction);
+    expect(evidenceMatrix.summary).toMatchObject({
+      totalRows: evidenceMatrix.rows.length,
+      readyRows: evidenceMatrix.rows.filter((row) => row.state === "ready").length,
+      reviewRequiredRows: evidenceMatrix.rows.filter((row) => row.state === "review_required").length,
+      missingRows: evidenceMatrix.rows.filter((row) => row.state === "missing").length,
+      launchBlockingRows: evidenceMatrix.rows.filter((row) => row.blocksExecutionApproval && row.state !== "ready").length,
+      evidenceComplete: false,
+      executionApprovalBlocked: true,
+      claimExecutionEnabled: false,
+      topEvidenceId: "security-approval-evidence",
+    });
+    expect(evidenceMatrix.nextAction).toEqual(evidenceMatrix.summary.topNextAction);
+    expect(evidenceMatrix.summary.topNextAction).toEqual(evidenceRowsById["security-approval-evidence"]?.nextAction);
+    expect(evidenceRowsById["security-approval-evidence"]).toMatchObject({
+      sourceItemId: "security-approval",
+      state: "missing",
+      ownerRole: "contract_reviewer",
+      blocksExecutionApproval: true,
+    });
+    expect(evidenceRowsById["external-audit-acceptance-evidence"]?.missingEvidence["en-US"]).toContain(
+      "External audit",
+    );
+    expect(evidenceRowsById["claim-proof-duplicate-safeguards-evidence"]?.auditRequirement["en-US"]).toContain(
+      "security-review",
+    );
+    expect(evidenceRowsById["no-custody-no-distribution-boundary-evidence"]).toMatchObject({
+      sourceItemId: "no-custody-no-distribution-boundary",
+      state: "ready",
+      ownerRole: "project_owner",
+      blocksExecutionApproval: true,
+    });
+    expect(evidenceRowsById["no-custody-no-distribution-boundary-evidence"]?.missingEvidence["en-US"]).toContain(
+      "does not approve execution",
+    );
 
     expect(itemsById["security-approval"]).toMatchObject({
       state: "blocked",
@@ -2132,6 +2183,28 @@ describe("Campaign OS domain foundation", () => {
     expect(readiness.noRewardCustody).toBe(true);
     expect(readiness.noRewardDistribution).toBe(true);
     expect(readiness.noBranchAutomation).toBe(true);
+    expect(readiness.noIssueAutomation).toBe(true);
+    expect(readiness.noPrAutomation).toBe(true);
+    expect(readiness.noMissionAutomation).toBe(true);
+    expect(evidenceMatrix.evidenceComplete).toBe(false);
+    expect(evidenceMatrix.executionApprovalBlocked).toBe(true);
+    expect(evidenceMatrix.claimExecutionEnabled).toBe(false);
+    expect(evidenceMatrix.noContractWrite).toBe(true);
+    expect(evidenceMatrix.noClaimExecution).toBe(true);
+    expect(evidenceMatrix.noWalletSigning).toBe(true);
+    expect(evidenceMatrix.noProviderCall).toBe(true);
+    expect(evidenceMatrix.noStorageWrite).toBe(true);
+    expect(evidenceMatrix.noExportGeneration).toBe(true);
+    expect(evidenceMatrix.noRewardCustody).toBe(true);
+    expect(evidenceMatrix.noRewardDistribution).toBe(true);
+    expect(evidenceMatrix.noBranchAutomation).toBe(true);
+    expect(evidenceMatrix.noIssueAutomation).toBe(true);
+    expect(evidenceMatrix.noPrAutomation).toBe(true);
+    expect(evidenceMatrix.noMissionAutomation).toBe(true);
+    expect(evidenceMatrix.boundary["en-US"]).toContain("Evidence completeness is not approval");
+    expect(evidenceMatrix.boundary["en-US"]).toContain("issue");
+    expect(evidenceMatrix.boundary["en-US"]).toContain("PR");
+    expect(evidenceMatrix.boundary["en-US"]).toContain("mission");
     expect(readiness.boundary["en-US"]).toContain("Execution approval remains blocked");
     expect(readiness.boundary["en-US"]).toContain("No branch");
     expect(readiness.boundary["en-US"]).toContain("PR");
@@ -2167,6 +2240,17 @@ describe("Campaign OS domain foundation", () => {
       expectCoreLocalizedText(item.boundary);
     }
 
+    for (const row of evidenceMatrix.rows) {
+      expectCoreLocalizedText(row.label);
+      expectCoreLocalizedText(row.evidenceSurface);
+      expectCoreLocalizedText(row.evidenceSummary);
+      expectCoreLocalizedText(row.missingEvidence);
+      expectCoreLocalizedText(row.auditRequirement);
+      expectCoreLocalizedText(row.approvalImpact);
+      expectCoreLocalizedText(row.nextAction);
+      expectCoreLocalizedText(row.boundary);
+    }
+
     for (const localizedText of Object.values(readiness.sourceContext)) {
       expectCoreLocalizedText(localizedText);
     }
@@ -2180,7 +2264,9 @@ describe("Campaign OS domain foundation", () => {
       "storageUrl",
     ]) {
       expect(hasOwnKeyDeep(readiness, unsafeKey)).toBe(false);
+      expect(hasOwnKeyDeep(evidenceMatrix, unsafeKey)).toBe(false);
       expect(JSON.stringify(readiness)).not.toContain(`"${unsafeKey}"`);
+      expect(JSON.stringify(evidenceMatrix)).not.toContain(`"${unsafeKey}"`);
     }
   });
 
