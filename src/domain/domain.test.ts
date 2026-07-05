@@ -1115,7 +1115,7 @@ describe("Campaign OS domain foundation", () => {
       blocksClaimExecution: true,
     });
     expect(preapproval.sourceContext.contractTransparency["en-US"]).toContain("reward-custody-claim");
-    expect(preapproval.sourceContext.deliveryAcceptance["en-US"]).toContain("accepted MVP non-goal");
+    expect(preapproval.sourceContext.deliveryAcceptance["en-US"]).toContain("deferred");
     expect(preapproval.sourceContext.exportCloseout["en-US"]).toContain("Export");
     expect(preapproval.boundary["en-US"]).toContain("Contract write");
     expect(preapproval.boundary["en-US"]).toContain("claim execution");
@@ -1956,7 +1956,11 @@ describe("Campaign OS domain foundation", () => {
       launchBlocking: false,
     });
     expect(rowsById["v02-contract-claim-reward-custody"]?.evidenceSummary["en-US"]).toContain(
-      "accepted MVP non-goal boundary",
+      "Contract Claim Preapproval Package",
+    );
+    expect(rowsById["v02-contract-claim-reward-custody"]?.evidenceSummary["en-US"]).toContain("remain blocked");
+    expect(rowsById["v02-contract-claim-reward-custody"]?.nextMissionAction["en-US"]).toContain(
+      "preapproval package",
     );
     expect(rowsById["v02-p1-locale-expansion"]).toMatchObject({
       status: "proven",
@@ -1991,8 +1995,12 @@ describe("Campaign OS domain foundation", () => {
   it("turns delivery acceptance residuals into a conservative mission queue", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
     const queue = adminOps.residualGapMissionQueue;
-    const repeatedQueue = createResidualGapMissionQueue(adminOps.deliveryAcceptance);
+    const repeatedQueue = createResidualGapMissionQueue(adminOps.deliveryAcceptance, {
+      contractClaimPreapprovalPackage: adminOps.contractClaimPreapprovalPackage,
+    });
+    const fallbackQueue = createResidualGapMissionQueue(adminOps.deliveryAcceptance);
     const itemsById = Object.fromEntries(queue.items.map((item) => [item.id, item]));
+    const fallbackItemsById = Object.fromEntries(fallbackQueue.items.map((item) => [item.id, item]));
 
     expect(repeatedQueue).toEqual(queue);
     expect(queue.summary).toMatchObject({
@@ -2002,7 +2010,7 @@ describe("Campaign OS domain foundation", () => {
       topItemId: "mission-v02-contract-claim-reward-custody",
       topSeverity: "low",
     });
-    expect(queue.summary.nextAction["en-US"]).toContain("claim-mode implementation outside MVP");
+    expect(queue.summary.nextAction["en-US"]).toContain("Open security review");
     expect(queue.boundary["en-US"]).toContain("does not create missions");
     expect(queue.boundary["en-US"]).toContain("No live wallet SDK");
 
@@ -2015,17 +2023,24 @@ describe("Campaign OS domain foundation", () => {
       severity: "low",
       ownerRole: "contract_reviewer",
       launchBlocking: false,
-      suggestedBranch: "mission/contract-claim-reward-custody",
+      suggestedBranch: "mission/contract-claim-reward-custody-execution-approval",
     });
     expect(queue.items[0]?.suggestedMissionTitle["en-US"]).toBe(
-      "Contract claim and reward custody are accepted MVP non-goals mission",
+      "Contract claim preapproval package execution approval mission",
     );
     expect(queue.items[0]?.sourceGap["en-US"]).toBe(
-      "Contract claim and reward custody are accepted MVP non-goals",
+      "Contract claim preapproval package covers future custody approval",
     );
     expect(queue.items[0]?.dependency["en-US"]).toContain(
-      "Security, custody/legal, external audit, and admin approvals",
+      "Contract Claim Preapproval Package is present but blocked",
     );
+    expect(queue.items[0]?.dependency["en-US"]).toContain(adminOps.contractClaimPreapprovalPackage.summary.topGateId);
+    expect(queue.items[0]?.evidenceNeeded["en-US"]).toContain("Mission 141 created");
+    expect(queue.items[0]?.evidenceNeeded["en-US"]).toContain("Package boundary");
+    expect(queue.items[0]?.nextAction).toEqual(adminOps.contractClaimPreapprovalPackage.summary.topNextAction);
+    expect(queue.items[0]?.boundary["en-US"]).toContain("Contract Claim Preapproval Package boundary");
+    expect(queue.items[0]?.boundary["en-US"]).toContain("reward custody");
+    expect(queue.items[0]?.boundary["en-US"]).toContain("reward distribution");
     expect(queue.items[0]?.launchImpact["en-US"]).toContain("non-blocking backlog follow-up");
 
     expect(adminOps.deliveryAcceptance.topResidualGaps).toHaveLength(0);
@@ -2033,6 +2048,15 @@ describe("Campaign OS domain foundation", () => {
     expect(itemsById["mission-v02-live-wallet-provider-evidence"]).toBeUndefined();
 
     expect(itemsById["mission-v02-contract-claim-reward-custody"]).toMatchObject({
+      sourceRowId: "v02-contract-claim-reward-custody",
+      status: "backlog",
+      launchBlocking: false,
+      suggestedBranch: "mission/contract-claim-reward-custody-execution-approval",
+    });
+    expect(itemsById["mission-v02-contract-claim-reward-custody"]?.suggestedBranch).not.toBe(
+      "mission/contract-claim-reward-custody",
+    );
+    expect(fallbackItemsById["mission-v02-contract-claim-reward-custody"]).toMatchObject({
       sourceRowId: "v02-contract-claim-reward-custody",
       status: "backlog",
       launchBlocking: false,

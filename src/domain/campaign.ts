@@ -103,6 +103,7 @@ import type {
   DeliveryAcceptanceSolutionSetId,
   DeliveryAcceptanceStatus,
   ResidualGapMissionQueue,
+  ResidualGapMissionQueueContext,
   ResidualGapMissionQueueItem,
   ResidualGapMissionQueueStatus,
   DeliveryChecklistCloseoutHandoffTarget,
@@ -14485,9 +14486,9 @@ const v02AcceptanceRows = (
       solutionSetId,
       sourceArea: localized("v0.2 contract claim mode", "v0.2 合约领取模式", "v0.2 合約領取模式"),
       title: localized(
-        "Contract claim and reward custody are accepted MVP non-goals",
-        "合约领取与奖励托管是已接受的 MVP 非目标",
-        "合約領取與獎勵託管是已接受的 MVP 非目標",
+        "Contract claim preapproval package covers future custody approval",
+        "合约领取预批准 package 已覆盖未来托管批准",
+        "合約領取預批准 package 已覆蓋未來託管批准",
       ),
       status: "deferred",
       severity: "low",
@@ -14496,14 +14497,14 @@ const v02AcceptanceRows = (
       boundary: noRewardCustodyBoundary,
       evidenceSurface: localized("Contract Impact Review and Export Confirmation", "合约影响审核与导出确认", "合約影響審核與匯出確認"),
       evidenceSummary: localized(
-        "This is an accepted MVP non-goal boundary: Campaign OS previews winners and contract root options only; reward custody and claim execution require separate security, custody/legal, external audit, and admin approval.",
-        "这是已接受的 MVP 非目标边界：Campaign OS 只预览 winners 与 contract root options；奖励托管和 claim 执行需要单独的安全、托管/法律、外部审计与管理员批准。",
-        "這是已接受的 MVP 非目標邊界：Campaign OS 只預覽 winners 與 contract root options；獎勵託管和 claim 執行需要單獨的安全、託管/法律、外部審計與管理員批准。",
+        "Mission 141 created the review-only Contract Claim Preapproval Package; claim execution and reward custody remain blocked until security, custody/legal, external audit, admin, reviewer, owner funding, and runbook gates are approved.",
+        "Mission 141 已创建只读审核用 Contract Claim 预批准 Package；安全、托管/法律、外部审计、管理员、审核人、owner 资金与 runbook gate 批准前，claim 执行和奖励托管继续阻断。",
+        "Mission 141 已建立只讀審核用 Contract Claim 預批准 Package；安全、託管/法律、外部審計、管理員、審核人、owner 資金與 runbook gate 批准前，claim 執行和獎勵託管繼續阻斷。",
       ),
       nextMissionAction: localized(
-        "Keep claim-mode implementation outside MVP until custody, audit, and admin requirements are separately approved.",
-        "托管、审计与管理员要求单独批准前，将 claim-mode 实现保持在 MVP 外。",
-        "託管、審計與管理員要求單獨批准前，將 claim-mode 實作保持在 MVP 外。",
+        "Use the preapproval package for review; only open the execution approval branch after every required gate is approved.",
+        "使用预批准 package 进行审核；只有所有必需 gate 批准后才能开启 execution approval 分支。",
+        "使用預批准 package 進行審核；只有所有必需 gate 批准後才能開啟 execution approval 分支。",
       ),
     }),
     deliveryAcceptanceRow({
@@ -14668,6 +14669,44 @@ const residualGapEvidenceNeededForRow = (row: DeliveryAcceptanceRow): LocalizedT
   `${row.evidenceSurface["zh-TW"]}: ${row.evidenceSummary["zh-TW"]}`,
 );
 
+const residualGapPreapprovalTitle = localized(
+  "Contract claim preapproval package execution approval mission",
+  "合约领取预批准 package 执行批准 mission",
+  "合約領取預批准 package 執行批准 mission",
+);
+
+const residualGapPreapprovalDependency = (
+  packageContext: ContractClaimPreapprovalPackage,
+): LocalizedText => localized(
+  `Contract Claim Preapproval Package is present but blocked: ${packageContext.summary.blockedGates} blocked gates, ${packageContext.summary.reviewRequiredGates} review-required gates, and top gate ${packageContext.summary.topGateId} must be approved before claim execution.`,
+  `Contract Claim 预批准 Package 已存在但仍阻断：${packageContext.summary.blockedGates} 个 blocked gate、${packageContext.summary.reviewRequiredGates} 个 review-required gate，以及 top gate ${packageContext.summary.topGateId} 必须在 claim 执行前批准。`,
+  `Contract Claim 預批准 Package 已存在但仍阻斷：${packageContext.summary.blockedGates} 個 blocked gate、${packageContext.summary.reviewRequiredGates} 個 review-required gate，以及 top gate ${packageContext.summary.topGateId} 必須在 claim 執行前批准。`,
+);
+
+const residualGapPreapprovalEvidence = (
+  row: DeliveryAcceptanceRow,
+  packageContext: ContractClaimPreapprovalPackage,
+): LocalizedText => localized(
+  `${row.evidenceSurface["en-US"]}: ${row.evidenceSummary["en-US"]} Package boundary: ${packageContext.boundary["en-US"]}`,
+  `${row.evidenceSurface["zh-CN"]}: ${row.evidenceSummary["zh-CN"]} Package 边界：${packageContext.boundary["zh-CN"]}`,
+  `${row.evidenceSurface["zh-TW"]}: ${row.evidenceSummary["zh-TW"]} Package 邊界：${packageContext.boundary["zh-TW"]}`,
+);
+
+const residualGapBoundaryForRow = (
+  row: DeliveryAcceptanceRow,
+  packageContext?: ContractClaimPreapprovalPackage,
+): LocalizedText => {
+  if (row.id !== "v02-contract-claim-reward-custody" || !packageContext) {
+    return row.boundary ?? deliveryAcceptanceBoundary;
+  }
+
+  return localized(
+    `${row.boundary?.["en-US"] ?? deliveryAcceptanceBoundary["en-US"]} Contract Claim Preapproval Package boundary: ${packageContext.boundary["en-US"]}`,
+    `${row.boundary?.["zh-CN"] ?? deliveryAcceptanceBoundary["zh-CN"]} Contract Claim 预批准 Package 边界：${packageContext.boundary["zh-CN"]}`,
+    `${row.boundary?.["zh-TW"] ?? deliveryAcceptanceBoundary["zh-TW"]} Contract Claim 預批准 Package 邊界：${packageContext.boundary["zh-TW"]}`,
+  );
+};
+
 const missionQueueRank = (item: ResidualGapMissionQueueItem) => [
   item.launchBlocking ? 0 : 1,
   acceptanceSeverityWeight[item.severity],
@@ -14694,6 +14733,7 @@ const compareMissionQueueItems = (
 
 export const createResidualGapMissionQueue = (
   deliveryAcceptance: DeliveryAcceptanceConsole,
+  context: ResidualGapMissionQueueContext = {},
 ): ResidualGapMissionQueue => {
   const sourceRows = deliveryAcceptance.solutionSets
     .flatMap((solutionSet) => solutionSet.rows)
@@ -14702,15 +14742,22 @@ export const createResidualGapMissionQueue = (
   const items = sourceRows
     .map((row): ResidualGapMissionQueueItem => {
       const missionSlug = residualGapMissionSlugByRowId[row.id] ?? row.id;
+      const preapprovalPackage = row.id === "v02-contract-claim-reward-custody"
+        ? context.contractClaimPreapprovalPackage
+        : undefined;
 
       return {
-        boundary: row.boundary ?? deliveryAcceptance.boundary,
-        dependency: residualGapDependencyForRow(row),
-        evidenceNeeded: residualGapEvidenceNeededForRow(row),
+        boundary: residualGapBoundaryForRow(row, preapprovalPackage),
+        dependency: preapprovalPackage
+          ? residualGapPreapprovalDependency(preapprovalPackage)
+          : residualGapDependencyForRow(row),
+        evidenceNeeded: preapprovalPackage
+          ? residualGapPreapprovalEvidence(row, preapprovalPackage)
+          : residualGapEvidenceNeededForRow(row),
         id: `mission-${row.id}`,
         launchBlocking: row.launchBlocking,
         launchImpact: residualGapLaunchImpactForRow(row),
-        nextAction: row.nextMissionAction,
+        nextAction: preapprovalPackage?.summary.topNextAction ?? row.nextMissionAction,
         ownerRole: row.ownerRole,
         priority: 0,
         severity: row.severity,
@@ -14718,12 +14765,14 @@ export const createResidualGapMissionQueue = (
         sourceRowId: row.id,
         sourceSolutionSetId: row.solutionSetId,
         status: residualGapQueueStatusForRow(row),
-        suggestedBranch: `mission/${missionSlug}`,
-        suggestedMissionTitle: localized(
-          `${row.title["en-US"]} mission`,
-          `${row.title["zh-CN"]} mission`,
-          `${row.title["zh-TW"]} mission`,
-        ),
+        suggestedBranch: preapprovalPackage?.suggestedFutureBranch ?? `mission/${missionSlug}`,
+        suggestedMissionTitle: preapprovalPackage
+          ? residualGapPreapprovalTitle
+          : localized(
+            `${row.title["en-US"]} mission`,
+            `${row.title["zh-CN"]} mission`,
+            `${row.title["zh-TW"]} mission`,
+          ),
       };
     })
     .sort(compareMissionQueueItems)
@@ -20249,7 +20298,9 @@ export const createAdminOpsReadModel = (
     campaignId: campaign.id,
     reviewQueue: campaign.reviewItems,
     deliveryAcceptance,
-    residualGapMissionQueue: createResidualGapMissionQueue(deliveryAcceptance),
+    residualGapMissionQueue: createResidualGapMissionQueue(deliveryAcceptance, {
+      contractClaimPreapprovalPackage,
+    }),
     p1LocaleActivationReadiness: createP1LocaleActivationReadiness(),
     deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
     walletProviderQaGate,
