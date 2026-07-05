@@ -2216,6 +2216,68 @@ export interface ContractTransparencyMonitor {
   nextAction: LocalizedText;
 }
 
+export type ContractClaimPreapprovalGateState =
+  | "ready"
+  | "review_required"
+  | "blocked";
+
+export type ContractClaimPreapprovalGateId =
+  | "security-review"
+  | "custody-legal-approval"
+  | "external-audit"
+  | "admin-approval"
+  | "contract-reviewer-approval"
+  | "project-owner-reward-funding"
+  | "pause-dispute-runbook"
+  | "no-custody-no-distribution-boundary";
+
+export interface ContractClaimPreapprovalGate {
+  id: ContractClaimPreapprovalGateId;
+  label: LocalizedText;
+  state: ContractClaimPreapprovalGateState;
+  ownerRole: OwnerRole;
+  dependency: LocalizedText;
+  evidenceNeeded: LocalizedText;
+  nextAction: LocalizedText;
+  sourceSurface: LocalizedText;
+  blocksClaimExecution: boolean;
+}
+
+export interface ContractClaimPreapprovalSummary {
+  totalGates: number;
+  readyGates: number;
+  reviewRequiredGates: number;
+  blockedGates: number;
+  topGateId: ContractClaimPreapprovalGateId;
+  topNextAction: LocalizedText;
+}
+
+export interface ContractClaimPreapprovalPackage {
+  campaignId: string;
+  overallState: "blocked";
+  claimExecutionEnabled: false;
+  suggestedFutureBranch: string;
+  summary: ContractClaimPreapprovalSummary;
+  gates: ContractClaimPreapprovalGate[];
+  sourceContext: {
+    contractReview: LocalizedText;
+    contractTransparency: LocalizedText;
+    deliveryAcceptance: LocalizedText;
+    exportCloseout: LocalizedText;
+  };
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  noContractWrite: true;
+  noClaimExecution: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  noWalletSigning: true;
+  noProviderCall: true;
+  noStorageWrite: true;
+  noExportGeneration: true;
+  noBranchAutomation: true;
+}
+
 export type CompanionContractReadinessStatus =
   | "proven"
   | "review_required"
@@ -4468,6 +4530,7 @@ export interface AdminOpsReadModel {
   contractReviewCenter: AdminContractReviewCenter;
   contractInterfaceMatrix: ContractInterfaceMatrixConsole;
   contractTransparencyMonitor: ContractTransparencyMonitor;
+  contractClaimPreapprovalPackage: ContractClaimPreapprovalPackage;
   companionContractReadiness: CompanionContractReadiness;
   pointsRankingReferralReadiness: PointsRankingReferralServiceReadiness;
   aiContentPack: AiContentPackWorkbench;

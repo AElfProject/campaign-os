@@ -1347,6 +1347,48 @@ describe("Admin/Ops shell", () => {
     })).not.toBeInTheDocument();
   });
 
+  it("renders contract claim preapproval as review-only in Admin/Ops", () => {
+    render(<AdminOpsPanel locale="en-US" />);
+
+    const preapproval = screen.getByLabelText("Contract Claim Preapproval Package");
+
+    expect(within(preapproval).getByRole("heading", {
+      name: "Contract Claim Preapproval Package",
+    })).toBeInTheDocument();
+    expect(within(preapproval).getByText(/Review-only future claim\/custody prerequisite package/)).toBeInTheDocument();
+    expect(within(preapproval).getByText("Claim execution enabled = false")).toBeInTheDocument();
+    expect(within(preapproval).getByText(/mission\/contract-claim-reward-custody-execution-approval/)).toBeInTheDocument();
+    expect(within(preapproval).getAllByText("Total gates").length).toBeGreaterThan(0);
+    expect(within(preapproval).getAllByText("Review-required gates").length).toBeGreaterThan(0);
+    expect(within(preapproval).getAllByText("Security review").length).toBeGreaterThan(0);
+    expect(within(preapproval).getByText("No-custody/no-distribution boundary")).toBeInTheDocument();
+    expect(within(preapproval).getAllByText(/Owner role:/).length).toBeGreaterThan(0);
+    expect(within(preapproval).getAllByText(/Evidence:/).length).toBeGreaterThan(0);
+    expect(within(preapproval).getAllByText(/Dependency:/).length).toBeGreaterThan(0);
+    expect(within(preapproval).getAllByText(/Next action:/).length).toBeGreaterThan(0);
+    expect(within(preapproval).getByText(/Contract write, claim execution, reward custody, and reward distribution are blocked/)).toBeInTheDocument();
+    expect(within(preapproval).queryByRole("button", {
+      name: /claim|custody|payout|sign|signature|provider call|storage write|export file|contract write|reward distribution|reward custody/i,
+    })).not.toBeInTheDocument();
+  });
+
+  it("renders contract claim preapproval labels in zh-CN", () => {
+    render(<AdminOpsPanel locale="zh-CN" />);
+
+    const preapproval = screen.getByLabelText("Contract Claim 预批准 Package");
+
+    expect(within(preapproval).getByRole("heading", {
+      name: "Contract Claim 预批准 Package",
+    })).toBeInTheDocument();
+    expect(within(preapproval).getByText(/仅用于审核的未来 claim\/custody 前置条件 package/)).toBeInTheDocument();
+    expect(within(preapproval).getAllByText("安全审核").length).toBeGreaterThan(0);
+    expect(within(preapproval).getByText("不托管/不发奖边界")).toBeInTheDocument();
+    expect(within(preapproval).getAllByText(/合约写入、claim 执行、奖励托管和发奖均保持阻断/).length).toBeGreaterThan(0);
+    expect(within(preapproval).queryByRole("button", {
+      name: /claim|custody|payout|签名|provider 调用|存储写入|导出文件|合约写入|奖励托管|发奖|reward distribution/i,
+    })).not.toBeInTheDocument();
+  });
+
   it("renders wallet provider evidence recovery labels in zh-CN", () => {
     render(<AdminOpsPanel locale="zh-CN" />);
 

@@ -69,6 +69,9 @@ import type {
   ContentRevision,
   ContractImpactReviewModel,
   ContractImpactReviewOption,
+  ContractClaimPreapprovalGate,
+  ContractClaimPreapprovalGateState,
+  ContractClaimPreapprovalPackage,
   ContractChangeMatrixRow,
   ContractReviewChecklistItem,
   ContractMode,
@@ -12641,6 +12644,352 @@ export const createContractTransparencyMonitor = (
   };
 };
 
+const contractClaimPreapprovalBoundary: LocalizedText = localized(
+  "Review-only contract claim preapproval package. Contract write, claim execution, reward custody, and reward distribution are blocked; no wallet signing, provider call, storage write, export generation, branch, issue, PR, or mission is created.",
+  "仅用于审核的合约 claim 预批准 package。合约写入、claim 执行、奖励托管和发奖均保持阻断；不会进行钱包签名、provider 调用、存储写入、导出生成，也不会创建分支、issue、PR 或 mission。",
+  "僅用於審核的合約 claim 預批准 package。合約寫入、claim 執行、獎勵託管和發獎均保持阻斷；不會進行錢包簽名、provider 呼叫、儲存寫入、匯出生成，也不會建立分支、issue、PR 或 mission。",
+);
+
+const contractClaimPreapprovalStatePriority: Record<ContractClaimPreapprovalGateState, number> = {
+  blocked: 0,
+  review_required: 1,
+  ready: 2,
+};
+
+const contractClaimPreapprovalGate = ({
+  blocksClaimExecution = true,
+  dependency,
+  evidenceNeeded,
+  id,
+  label,
+  nextAction,
+  ownerRole,
+  sourceSurface,
+  state,
+}: ContractClaimPreapprovalGate): ContractClaimPreapprovalGate => ({
+  blocksClaimExecution,
+  dependency,
+  evidenceNeeded,
+  id,
+  label,
+  nextAction,
+  ownerRole,
+  sourceSurface,
+  state,
+});
+
+const contractClaimPreapprovalSummary = (
+  gates: readonly ContractClaimPreapprovalGate[],
+): ContractClaimPreapprovalPackage["summary"] => {
+  const topGate = [...gates].sort((left, right) => {
+    const stateDelta = contractClaimPreapprovalStatePriority[left.state] -
+      contractClaimPreapprovalStatePriority[right.state];
+
+    if (stateDelta !== 0) {
+      return stateDelta;
+    }
+
+    return gates.findIndex((gate) => gate.id === left.id) - gates.findIndex((gate) => gate.id === right.id);
+  })[0] ?? gates[0];
+
+  return {
+    blockedGates: gates.filter((gate) => gate.state === "blocked").length,
+    readyGates: gates.filter((gate) => gate.state === "ready").length,
+    reviewRequiredGates: gates.filter((gate) => gate.state === "review_required").length,
+    topGateId: topGate.id,
+    topNextAction: topGate.nextAction,
+    totalGates: gates.length,
+  };
+};
+
+const contractClaimPreapprovalSourceContext = ({
+  closeout,
+  deliveryAcceptance,
+  reviewCenter,
+  transparency,
+}: {
+  closeout: PostCampaignCloseout;
+  deliveryAcceptance: DeliveryAcceptanceConsole;
+  reviewCenter: AdminContractReviewCenter;
+  transparency: ContractTransparencyMonitor;
+}): ContractClaimPreapprovalPackage["sourceContext"] => {
+  const claimRow = deliveryAcceptance.solutionSets
+    .flatMap((solutionSet) => solutionSet.rows)
+    .find((row) => row.id === "v02-contract-claim-reward-custody");
+  const claimLane = transparency.lanes.find((lane) => lane.id === "reward-custody-claim");
+
+  return {
+    contractReview: localized(
+      `Contract Review Center keeps ${reviewCenter.selectedMode} selected with publish state ${reviewCenter.publishState}.`,
+      `合约审核中心保持 ${reviewCenter.selectedMode}，发布状态为 ${reviewCenter.publishState}。`,
+      `合約審核中心保持 ${reviewCenter.selectedMode}，發布狀態為 ${reviewCenter.publishState}。`,
+    ),
+    contractTransparency: localized(
+      `Contract transparency top lane ${transparency.summary.topLaneId}; reward-custody-claim is ${claimLane?.readiness ?? "blocked"}.`,
+      `合约透明度 top lane 为 ${transparency.summary.topLaneId}；reward-custody-claim 为 ${claimLane?.readiness ?? "blocked"}。`,
+      `合約透明度 top lane 為 ${transparency.summary.topLaneId}；reward-custody-claim 為 ${claimLane?.readiness ?? "blocked"}。`,
+    ),
+    deliveryAcceptance: localized(
+      `Delivery Acceptance keeps claim/custody as ${claimRow?.status ?? "deferred"} accepted MVP non-goal with launchBlocking=${String(claimRow?.launchBlocking ?? false)}.`,
+      `Delivery Acceptance 将 claim/custody 保持为 ${claimRow?.status ?? "deferred"} 的已接受 MVP 非目标，launchBlocking=${String(claimRow?.launchBlocking ?? false)}。`,
+      `Delivery Acceptance 將 claim/custody 保持為 ${claimRow?.status ?? "deferred"} 的已接受 MVP 非目標，launchBlocking=${String(claimRow?.launchBlocking ?? false)}。`,
+    ),
+    exportCloseout: localized(
+      `Export and closeout remain local review surfaces: ${closeout.summary.topGateId} is ${closeout.status}.`,
+      `Export 与 closeout 仍是本地审核 surface：${closeout.summary.topGateId} 为 ${closeout.status}。`,
+      `Export 與 closeout 仍是本地審核 surface：${closeout.summary.topGateId} 為 ${closeout.status}。`,
+    ),
+  };
+};
+
+export const createContractClaimPreapprovalPackage = (
+  campaign: CampaignShellDetail,
+): ContractClaimPreapprovalPackage => {
+  const reviewCenter = createAdminContractReviewCenter(campaign);
+  const transparency = createContractTransparencyMonitor(campaign);
+  const closeout = createPostCampaignCloseout(campaign);
+  const exportFulfillmentReadiness = createExportFulfillmentReadiness(campaign);
+  const walletProviderQaGate = createWalletProviderQaReadinessGate(
+    campaign.walletSessions,
+    walletProviderEvidenceReleaseApprovalLiveEvidence,
+  );
+  const walletProviderEvidenceRecovery = recoverWalletProviderEvidenceState(
+    campaign,
+    walletProviderQaGate,
+    createWalletProviderEvidenceReleaseApprovalSnapshot(),
+    {
+      source: "local_storage",
+      storageState: "available",
+    },
+  );
+  const companionReadiness = createCompanionContractReadiness(
+    createContractInterfaceMatrixConsole(),
+    transparency,
+  );
+  const deliveryAcceptance = createDeliveryAcceptanceConsole(
+    walletProviderEvidenceRecovery.releaseReadiness,
+    exportFulfillmentReadiness,
+    companionReadiness,
+  );
+  const claimTransparencyLane = transparency.lanes.find((lane) => lane.id === "reward-custody-claim");
+  const claimAcceptanceRow = deliveryAcceptance.solutionSets
+    .flatMap((solutionSet) => solutionSet.rows)
+    .find((row) => row.id === "v02-contract-claim-reward-custody");
+  const gates: ContractClaimPreapprovalGate[] = [
+    contractClaimPreapprovalGate({
+      id: "security-review",
+      label: localized("Security review", "安全审核", "安全審核"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      dependency: localized(
+        "Security approval must cover claim contract threat model, eligibility proof handling, pause semantics, and rollback behavior.",
+        "安全批准必须覆盖 claim contract 威胁模型、资格 proof 处理、暂停语义和回滚行为。",
+        "安全批准必須覆蓋 claim contract 威脅模型、資格 proof 處理、暫停語義和回滾行為。",
+      ),
+      evidenceNeeded: claimTransparencyLane?.sourceEvidence ?? localized(
+        "Contract transparency evidence must show claim execution stays blocked.",
+        "合约透明度证据必须证明 claim 执行保持阻断。",
+        "合約透明度證據必須證明 claim 執行保持阻斷。",
+      ),
+      nextAction: localized(
+        "Open security review before any future claim execution implementation.",
+        "任何未来 claim 执行实现前先开启安全审核。",
+        "任何未來 claim 執行實作前先開啟安全審核。",
+      ),
+      sourceSurface: localized(
+        "Contract Transparency Monitor: reward-custody-claim",
+        "合约透明度监控：reward-custody-claim",
+        "合約透明度監控：reward-custody-claim",
+      ),
+      blocksClaimExecution: true,
+    }),
+    contractClaimPreapprovalGate({
+      id: "custody-legal-approval",
+      label: localized("Custody/legal approval", "托管/法律批准", "託管/法律批准"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      dependency: localized(
+        "Legal and custody owners must approve any model that could alter reward possession, escrow, or payout responsibility.",
+        "法律与托管负责人必须批准任何可能改变奖励占有、escrow 或 payout 责任的模型。",
+        "法律與託管負責人必須批准任何可能改變獎勵占有、escrow 或 payout 責任的模型。",
+      ),
+      evidenceNeeded: claimAcceptanceRow?.evidenceSummary ?? noRewardCustodyBoundary,
+      nextAction: localized(
+        "Keep Campaign OS non-custodial until custody/legal sign-off is documented.",
+        "托管/法律签核记录完成前，Campaign OS 继续保持非托管。",
+        "託管/法律簽核記錄完成前，Campaign OS 繼續保持非託管。",
+      ),
+      sourceSurface: localized("Delivery Acceptance", "Delivery Acceptance", "Delivery Acceptance"),
+      blocksClaimExecution: true,
+    }),
+    contractClaimPreapprovalGate({
+      id: "external-audit",
+      label: localized("External audit", "外部审计", "外部審計"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      dependency: localized(
+        "A third-party audit must cover claim contract code, root/proof verification, and emergency controls.",
+        "第三方审计必须覆盖 claim contract 代码、root/proof 验证和紧急控制。",
+        "第三方審計必須覆蓋 claim contract 程式碼、root/proof 驗證和緊急控制。",
+      ),
+      evidenceNeeded: reviewCenter.checklist.find((item) => item.id === "audit-status")?.detail ?? localized(
+        "Audit report is absent for claim mode.",
+        "claim mode 缺少审计报告。",
+        "claim mode 缺少審計報告。",
+      ),
+      nextAction: localized(
+        "Require audit report acceptance before moving any claim-mode branch forward.",
+        "任何 claim-mode 分支推进前必须先接受审计报告。",
+        "任何 claim-mode 分支推進前必須先接受審計報告。",
+      ),
+      sourceSurface: localized(
+        "Admin Contract Review Center",
+        "管理员合约审核中心",
+        "管理員合約審核中心",
+      ),
+      blocksClaimExecution: true,
+    }),
+    contractClaimPreapprovalGate({
+      id: "admin-approval",
+      label: localized("Admin approval", "管理员批准", "管理員批准"),
+      state: "review_required",
+      ownerRole: "internal_operator",
+      dependency: localized(
+        "Admin/Ops must approve runbook, owner sign-off, rollout, and rollback before claim-mode engineering begins.",
+        "claim-mode 工程开始前，Admin/Ops 必须批准 runbook、owner sign-off、上线和回滚方案。",
+        "claim-mode 工程開始前，Admin/Ops 必須批准 runbook、owner sign-off、上線和回滾方案。",
+      ),
+      evidenceNeeded: localized(
+        `${deliveryAcceptance.summary.totalRows} delivery acceptance rows are available for review; claim/custody stays deferred.`,
+        `${deliveryAcceptance.summary.totalRows} 条 delivery acceptance rows 可供审核；claim/custody 继续 deferred。`,
+        `${deliveryAcceptance.summary.totalRows} 條 delivery acceptance rows 可供審核；claim/custody 繼續 deferred。`,
+      ),
+      nextAction: localized(
+        "Review this package manually; do not create a branch, issue, PR, or mission from the UI.",
+        "人工审核此 package；不要从 UI 创建分支、issue、PR 或 mission。",
+        "人工審核此 package；不要從 UI 建立分支、issue、PR 或 mission。",
+      ),
+      sourceSurface: localized("Admin/Ops", "Admin/Ops", "Admin/Ops"),
+      blocksClaimExecution: true,
+    }),
+    contractClaimPreapprovalGate({
+      id: "contract-reviewer-approval",
+      label: localized("Contract reviewer approval", "合约审核人批准", "合約審核人批准"),
+      state: "blocked",
+      ownerRole: "contract_reviewer",
+      dependency: localized(
+        "Contract reviewer must approve ABI surface, roles, events, pause/dispute behavior, and claim proof boundaries.",
+        "合约审核人必须批准 ABI surface、roles、events、pause/dispute 行为和 claim proof 边界。",
+        "合約審核人必須批准 ABI surface、roles、events、pause/dispute 行為和 claim proof 邊界。",
+      ),
+      evidenceNeeded: reviewCenter.checklist.find((item) => item.id === "contract-claim-gate")?.detail ?? localized(
+        "Contract claim gate remains blocked.",
+        "合约 claim gate 仍保持阻断。",
+        "合約 claim gate 仍保持阻斷。",
+      ),
+      nextAction: reviewCenter.nextAction,
+      sourceSurface: localized(
+        "Admin Contract Review Center: contract-claim-gate",
+        "管理员合约审核中心：contract-claim-gate",
+        "管理員合約審核中心：contract-claim-gate",
+      ),
+      blocksClaimExecution: true,
+    }),
+    contractClaimPreapprovalGate({
+      id: "project-owner-reward-funding",
+      label: localized("Project owner reward funding", "项目方奖励资金确认", "專案方獎勵資金確認"),
+      state: "review_required",
+      ownerRole: "project_owner",
+      dependency: localized(
+        "Project owner must prove reward funding and fulfillment responsibility outside Campaign OS custody.",
+        "项目方必须证明奖励资金与履约责任在 Campaign OS 托管之外。",
+        "專案方必須證明獎勵資金與履約責任在 Campaign OS 託管之外。",
+      ),
+      evidenceNeeded: closeout.rewardBoundary,
+      nextAction: localized(
+        "Attach owner funding confirmation before claim/custody can leave backlog.",
+        "claim/custody 离开 backlog 前先附上 owner 资金确认。",
+        "claim/custody 離開 backlog 前先附上 owner 資金確認。",
+      ),
+      sourceSurface: localized("Post-campaign closeout", "活动后 closeout", "活動後 closeout"),
+      blocksClaimExecution: true,
+    }),
+    contractClaimPreapprovalGate({
+      id: "pause-dispute-runbook",
+      label: localized("Pause/dispute runbook", "暂停/争议 runbook", "暫停/爭議 runbook"),
+      state: "review_required",
+      ownerRole: "internal_operator",
+      dependency: localized(
+        "Pause, dispute, failed claim, duplicate claim, and rollback procedures must be approved before live claim controls exist.",
+        "真实 claim 控件出现前，必须批准暂停、争议、失败 claim、重复 claim 和回滚流程。",
+        "真實 claim 控件出現前，必須批准暫停、爭議、失敗 claim、重複 claim 和回滾流程。",
+      ),
+      evidenceNeeded: closeout.summary.topAction,
+      nextAction: localized(
+        "Prepare the operational runbook as a review artifact only.",
+        "仅以审核 artifact 形式准备运营 runbook。",
+        "僅以審核 artifact 形式準備營運 runbook。",
+      ),
+      sourceSurface: localized("Post-campaign closeout", "活动后 closeout", "活動後 closeout"),
+      blocksClaimExecution: true,
+    }),
+    contractClaimPreapprovalGate({
+      id: "no-custody-no-distribution-boundary",
+      label: localized(
+        "No-custody/no-distribution boundary",
+        "不托管/不发奖边界",
+        "不託管/不發獎邊界",
+      ),
+      state: "ready",
+      ownerRole: "project_owner",
+      dependency: localized(
+        "Current MVP boundary is already explicit: Campaign OS does not custody or distribute rewards.",
+        "当前 MVP 边界已经明确：Campaign OS 不托管也不发奖。",
+        "目前 MVP 邊界已經明確：Campaign OS 不託管也不發獎。",
+      ),
+      evidenceNeeded: noRewardCustodyBoundary,
+      nextAction: localized(
+        "Preserve this boundary in every future claim/custody review.",
+        "在每次未来 claim/custody 审核中保留此边界。",
+        "在每次未來 claim/custody 審核中保留此邊界。",
+      ),
+      sourceSurface: localized(
+        "Contract Review Center + Delivery Acceptance",
+        "合约审核中心 + Delivery Acceptance",
+        "合約審核中心 + Delivery Acceptance",
+      ),
+      blocksClaimExecution: true,
+    }),
+  ];
+  const summary = contractClaimPreapprovalSummary(gates);
+
+  return {
+    boundary: contractClaimPreapprovalBoundary,
+    campaignId: campaign.id,
+    claimExecutionEnabled: false,
+    gates,
+    nextAction: summary.topNextAction,
+    noBranchAutomation: true,
+    noClaimExecution: true,
+    noContractWrite: true,
+    noExportGeneration: true,
+    noProviderCall: true,
+    noRewardCustody: true,
+    noRewardDistribution: true,
+    noStorageWrite: true,
+    noWalletSigning: true,
+    overallState: "blocked",
+    sourceContext: contractClaimPreapprovalSourceContext({
+      closeout,
+      deliveryAcceptance,
+      reviewCenter,
+      transparency,
+    }),
+    suggestedFutureBranch: "mission/contract-claim-reward-custody-execution-approval",
+    summary,
+  };
+};
+
 const companionReadinessBoundary: LocalizedText = localized(
   "Seeded/local V2 companion contract readiness evidence only. No ABI generation, live contract transaction, backend call, wallet signing, contract write, root write, storage write, export file generation, reward custody, or reward distribution is executed.",
   "仅 seeded/本地 V2 companion contract readiness 证据。不会生成 ABI、执行真实合约交易、调用后端、钱包签名、合约写入、root 写入、存储写入、生成导出文件、奖励托管或发奖。",
@@ -19888,6 +20237,7 @@ export const createAdminOpsReadModel = (
     contractInterfaceMatrix,
     contractTransparencyMonitor,
   );
+  const contractClaimPreapprovalPackage = createContractClaimPreapprovalPackage(campaign);
 
   const deliveryAcceptance = createDeliveryAcceptanceConsole(
     walletProviderEvidenceReleaseReadiness,
@@ -19914,6 +20264,7 @@ export const createAdminOpsReadModel = (
     contractReviewCenter: createAdminContractReviewCenter(campaign),
     contractInterfaceMatrix,
     contractTransparencyMonitor,
+    contractClaimPreapprovalPackage,
     companionContractReadiness,
     pointsRankingReferralReadiness,
     aiContentPack: createAiContentPackWorkbench(campaign),

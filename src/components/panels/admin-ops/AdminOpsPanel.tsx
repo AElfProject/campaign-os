@@ -45,6 +45,7 @@ import {
   type CampaignLifecycleOperation,
   type CampaignLifecycleOperationState,
   type CampaignLifecycleStatus,
+  type ContractClaimPreapprovalGateState,
   type ContractTransparencyReadiness,
   type ExternalServiceLiveEvidenceStatus,
   type ExternalServiceRegistryEntry,
@@ -492,6 +493,22 @@ const contractTransparencyReadinessLabel = (
   };
 
   return labels[readiness];
+};
+
+const contractClaimPreapprovalGateState = (state: ContractClaimPreapprovalGateState) =>
+  state === "blocked" ? "blocker" : state === "review_required" ? "warning" : "ready";
+
+const contractClaimPreapprovalGateLabel = (
+  state: ContractClaimPreapprovalGateState,
+  copy: typeof adminOpsCopy["en-US"],
+) => {
+  const labels: Record<ContractClaimPreapprovalGateState, string> = {
+    blocked: copy.blocked,
+    ready: copy.readyActions,
+    review_required: copy.reviewRequired,
+  };
+
+  return labels[state];
 };
 
 const companionContractReadinessState = (status: CompanionContractReadinessStatus) =>
@@ -1809,6 +1826,7 @@ export const AdminOpsPanel = ({
   const contractReviewCenter = adminOps.contractReviewCenter;
   const contractInterfaceMatrix = adminOps.contractInterfaceMatrix;
   const contractTransparencyMonitor = adminOps.contractTransparencyMonitor;
+  const contractClaimPreapprovalPackage = adminOps.contractClaimPreapprovalPackage;
   const companionContractReadiness = adminOps.companionContractReadiness;
   const columnContract = adminOps.exportBatch.columns.join(",");
   const verificationRows = campaign.participants.flatMap((participant) =>
@@ -1906,6 +1924,32 @@ export const AdminOpsPanel = ({
         : "ready" as const,
     },
   ];
+
+  const contractClaimPreapprovalSummary = [
+    {
+      id: "total",
+      label: copy.totalGates,
+      value: contractClaimPreapprovalPackage.summary.totalGates,
+      state: "ready" as const,
+    },
+    {
+      id: "blocked",
+      label: copy.blocked,
+      value: contractClaimPreapprovalPackage.summary.blockedGates,
+      state: contractClaimPreapprovalPackage.summary.blockedGates > 0 ? "blocker" as const : "ready" as const,
+    },
+    {
+      id: "review-required",
+      label: copy.reviewRequiredGates,
+      value: contractClaimPreapprovalPackage.summary.reviewRequiredGates,
+      state: contractClaimPreapprovalPackage.summary.reviewRequiredGates > 0
+        ? "warning" as const
+        : "ready" as const,
+    },
+  ];
+  const contractClaimPreapprovalTopGate = contractClaimPreapprovalPackage.gates.find(
+    (gate) => gate.id === contractClaimPreapprovalPackage.summary.topGateId,
+  ) ?? contractClaimPreapprovalPackage.gates[0];
 
   const companionReadinessSummary = [
     {
@@ -3038,6 +3082,101 @@ export const AdminOpsPanel = ({
               </p>
               <p style={wrapTextStyle}>
                 {copy.localOnlyBoundary}: {getLocalizedText(lane.boundary, locale)}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.contractClaimPreapprovalPackage} style={panelStyle}>
+        <div style={rowStyle}>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.contractClaimPreapprovalBoundary}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: 0 }}>
+              {copy.contractClaimPreapprovalPackage}
+            </h3>
+            <p style={mutedTextStyle}>{copy.contractClaimPreapprovalSubtitle}</p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <PublishStateBadge
+              label={contractClaimPreapprovalPackage.overallState}
+              state="blocker"
+            />
+            <PublishStateBadge
+              label={copy.claimExecutionDisabled}
+              state="blocker"
+            />
+          </span>
+        </div>
+        <div style={boundaryStyle}>
+          <p style={{ margin: 0 }}>
+            {copy.nonLiveBoundary}: {getLocalizedText(contractClaimPreapprovalPackage.boundary, locale)}
+          </p>
+          <p style={{ margin: "8px 0 0" }}>
+            {copy.futureBranch}: {contractClaimPreapprovalPackage.suggestedFutureBranch}
+          </p>
+        </div>
+        <div style={compactGridStyle}>
+          {contractClaimPreapprovalSummary.map((item) => (
+            <article key={item.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <p style={labelStyle}>{item.label}</p>
+                <PublishStateBadge label={String(item.value)} state={item.state} />
+              </div>
+              <p style={valueStyle}>{item.value}</p>
+            </article>
+          ))}
+        </div>
+        {contractClaimPreapprovalTopGate ? (
+          <article style={cardStyle}>
+            <div style={rowStyle}>
+              <div style={stackStyle}>
+                <p style={labelStyle}>{copy.topBlocker}</p>
+                <strong>{getLocalizedText(contractClaimPreapprovalTopGate.label, locale)}</strong>
+              </div>
+              <PublishStateBadge
+                label={contractClaimPreapprovalGateLabel(contractClaimPreapprovalTopGate.state, copy)}
+                state={contractClaimPreapprovalGateState(contractClaimPreapprovalTopGate.state)}
+              />
+            </div>
+            <p style={wrapTextStyle}>
+              {copy.evidence}: {getLocalizedText(contractClaimPreapprovalTopGate.evidenceNeeded, locale)}
+            </p>
+            <p style={wrapTextStyle}>
+              {copy.nextAction}: {getLocalizedText(contractClaimPreapprovalTopGate.nextAction, locale)}
+            </p>
+          </article>
+        ) : null}
+        <div style={gridStyle}>
+          {contractClaimPreapprovalPackage.gates.map((gate) => (
+            <article key={gate.id} style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{gate.id}</p>
+                  <strong>{getLocalizedText(gate.label, locale)}</strong>
+                </div>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge
+                    label={contractClaimPreapprovalGateLabel(gate.state, copy)}
+                    state={contractClaimPreapprovalGateState(gate.state)}
+                  />
+                  {gate.blocksClaimExecution ? <Badge label={copy.blockedActions} tone="warning" /> : null}
+                </span>
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.ownerRole}: {readableCode(gate.ownerRole)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.linkedSurface}: {getLocalizedText(gate.sourceSurface, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.evidence}: {getLocalizedText(gate.evidenceNeeded, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.dependency}: {getLocalizedText(gate.dependency, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(gate.nextAction, locale)}
               </p>
             </article>
           ))}
