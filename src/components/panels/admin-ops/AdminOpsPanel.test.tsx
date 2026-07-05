@@ -153,6 +153,9 @@ describe("Admin/Ops shell", () => {
       within(p1LocaleActivationReadiness).getAllByText("mission/138-id-id-locale-copy-publish-readiness").length,
     ).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/129-tr-tr-locale-activation").length).toBeGreaterThan(0);
+    expect(
+      within(p1LocaleActivationReadiness).getAllByText("mission/139-tr-tr-locale-copy-publish-readiness").length,
+    ).toBeGreaterThan(0);
     expect(within(p1LocaleActivationReadiness).getAllByText("mission/130-es-es-locale-activation").length).toBeGreaterThan(0);
     expect(
       within(p1LocaleActivationReadiness).getAllByText("mission/134-es-es-locale-copy-publish-readiness").length,
@@ -177,6 +180,12 @@ describe("Admin/Ops shell", () => {
     ).toBeGreaterThan(0);
     expect(
       within(p1LocaleActivationReadiness).getAllByText(/reviewed Indonesian business copy separate from full localization claims/i).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(p1LocaleActivationReadiness).getAllByText(/tr-TR runtime activation, English fallback-copy evidence, and publish-gate evidence are ready/i).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(p1LocaleActivationReadiness).getAllByText(/reviewed Turkish business copy separate from full localization claims/i).length,
     ).toBeGreaterThan(0);
     expect(
       within(p1LocaleActivationReadiness).getAllByText(/ko-KR runtime activation, English fallback-copy evidence, and publish-gate evidence are ready/i).length,
@@ -1441,6 +1450,9 @@ describe("Admin/Ops shell", () => {
       within(zhP1LocaleActivationReadiness).getAllByText("mission/138-id-id-locale-copy-publish-readiness").length,
     ).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/129-tr-tr-locale-activation").length).toBeGreaterThan(0);
+    expect(
+      within(zhP1LocaleActivationReadiness).getAllByText("mission/139-tr-tr-locale-copy-publish-readiness").length,
+    ).toBeGreaterThan(0);
     expect(within(zhP1LocaleActivationReadiness).getAllByText("mission/130-es-es-locale-activation").length).toBeGreaterThan(0);
     expect(
       within(zhP1LocaleActivationReadiness).getAllByText("mission/134-es-es-locale-copy-publish-readiness").length,
@@ -1454,6 +1466,9 @@ describe("Admin/Ops shell", () => {
     ).toBeGreaterThan(0);
     expect(
       within(zhP1LocaleActivationReadiness).getAllByText(/id-ID 运行时激活、本地 fallback 文案证据与发布门禁证据已就绪/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(zhP1LocaleActivationReadiness).getAllByText(/tr-TR 运行时激活、本地 fallback 文案证据与发布门禁证据已就绪/).length,
     ).toBeGreaterThan(0);
     expect(
       within(zhP1LocaleActivationReadiness).getAllByText(/ko-KR 运行时激活、本地 fallback 文案证据与发布门禁证据已就绪/).length,
