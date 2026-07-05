@@ -1997,6 +1997,38 @@ export const AdminOpsPanel = ({
         : "ready" as const,
     },
   ];
+  const contractStatusMappingCategory = companionContractReadiness.categories.find(
+    (category) => category.id === "campaign-registry-status-mapping",
+  );
+  const contractStatusMappingItems = contractStatusMappingCategory?.evidenceItems ?? [];
+  const contractStatusMappingSafeItems = contractStatusMappingItems.filter((item) => item.kind === "schema_field");
+  const contractStatusMappingOffChainItems = contractStatusMappingItems.filter((item) => item.kind === "boundary");
+  const contractStatusMappingSummary = [
+    {
+      id: "status-total",
+      label: copy.totalRows,
+      value: contractStatusMappingItems.length,
+      state: "ready" as const,
+    },
+    {
+      id: "status-safe",
+      label: "V2-safe statuses",
+      value: contractStatusMappingSafeItems.length,
+      state: "ready" as const,
+    },
+    {
+      id: "status-off-chain",
+      label: "Off-chain only",
+      value: contractStatusMappingOffChainItems.length,
+      state: contractStatusMappingOffChainItems.length > 0 ? "warning" as const : "ready" as const,
+    },
+    {
+      id: "status-blocked-write",
+      label: "Direct writes blocked",
+      value: contractStatusMappingOffChainItems.length,
+      state: contractStatusMappingOffChainItems.length > 0 ? "warning" as const : "ready" as const,
+    },
+  ];
 
   const deliveryAcceptanceSummaryItems = [
     {
@@ -2536,6 +2568,74 @@ export const AdminOpsPanel = ({
           </article>
         ))}
       </div>
+      {contractStatusMappingCategory ? (
+        <article aria-label="CampaignRegistryV2 status mapping readiness" style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>Contract status mapping</p>
+              <strong>{getLocalizedText(contractStatusMappingCategory.title, locale)}</strong>
+            </div>
+            <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <Badge label="CampaignRegistryV2" tone="info" />
+              <PublishStateBadge
+                label={companionContractReadinessLabel(contractStatusMappingCategory.status, copy)}
+                state={companionContractReadinessState(contractStatusMappingCategory.status)}
+              />
+            </span>
+          </div>
+          <p style={wrapTextStyle}>
+            {copy.evidenceSummary}: {getLocalizedText(contractStatusMappingCategory.evidenceSummary, locale)}
+          </p>
+          <p style={boundaryStyle}>
+            {copy.nonLiveBoundary}: {getLocalizedText(contractStatusMappingCategory.boundary, locale)}
+          </p>
+          <div style={compactGridStyle}>
+            {contractStatusMappingSummary.map((item) => (
+              <article key={item.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <p style={labelStyle}>{item.label}</p>
+                  <PublishStateBadge label={String(item.value)} state={item.state} />
+                </div>
+                <p style={valueStyle}>{item.value}</p>
+              </article>
+            ))}
+          </div>
+          <div style={scrollContainerStyle}>
+            <table style={{ ...tableStyle, minWidth: 980 }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Local status</th>
+                  <th style={thStyle}>Contract target</th>
+                  <th style={thStyle}>{copy.category}</th>
+                  <th style={thStyle}>{copy.evidenceSource}</th>
+                  <th style={thStyle}>{copy.detail}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contractStatusMappingItems.map((item) => {
+                  const label = getLocalizedText(item.label, locale);
+                  const [localStatus, contractTarget = "off-chain only"] = label.split(" -> ");
+
+                  return (
+                    <tr key={item.id}>
+                      <td style={tdStyle}>
+                        <strong>{localStatus}</strong>
+                      </td>
+                      <td style={tdStyle}>{contractTarget}</td>
+                      <td style={tdStyle}>{companionEvidenceKindLabel(item.kind, copy)}</td>
+                      <td style={tdStyle}>{getLocalizedText(item.source, locale)}</td>
+                      <td style={tdStyle}>{getLocalizedText(item.detail, locale)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p style={wrapTextStyle}>
+            {copy.nextAction}: {getLocalizedText(contractStatusMappingCategory.nextAction, locale)}
+          </p>
+        </article>
+      ) : null}
       <div style={gridStyle}>
         {companionContractReadiness.categories.map((category) => (
           <article key={category.id} style={cardStyle}>
