@@ -2295,6 +2295,60 @@ export const AdminOpsPanel = ({
   const contractClaimParticipantApprovalTopCheck = contractClaimParticipantApprovalReadiness.checks.find(
     (check) => check.id === contractClaimParticipantApprovalReadiness.summary.topCheckId,
   ) ?? contractClaimParticipantApprovalReadiness.checks[0];
+  const contractClaimEligibilityLineageApprovalReadiness =
+    contractClaimParticipantApprovalReadiness.eligibilityLineageApprovalReadiness;
+  const contractClaimEligibilityLineageApprovalSummary = [
+    {
+      id: "total",
+      label: copy.totalLineageRows,
+      value: contractClaimEligibilityLineageApprovalReadiness.summary.totalRows,
+      state: "ready" as const,
+    },
+    {
+      id: "blocked",
+      label: copy.blockedLineageRows,
+      value: contractClaimEligibilityLineageApprovalReadiness.summary.blockedRows,
+      state: contractClaimEligibilityLineageApprovalReadiness.summary.blockedRows > 0
+        ? "blocker" as const
+        : "ready" as const,
+    },
+    {
+      id: "review-required",
+      label: copy.reviewRequiredLineageRows,
+      value: contractClaimEligibilityLineageApprovalReadiness.summary.reviewRequiredRows,
+      state: contractClaimEligibilityLineageApprovalReadiness.summary.reviewRequiredRows > 0
+        ? "warning" as const
+        : "ready" as const,
+    },
+    {
+      id: "ready",
+      label: copy.readyLineageRows,
+      value: contractClaimEligibilityLineageApprovalReadiness.summary.readyRows,
+      state: "ready" as const,
+    },
+    {
+      id: "highest-risk",
+      label: copy.highestRiskLevel,
+      value: contractClaimEligibilityLineageApprovalReadiness.summary.highestRiskLevel,
+      state: contractClaimEligibilityLineageApprovalReadiness.summary.highestRiskLevel === "high"
+        ? "blocker" as const
+        : contractClaimEligibilityLineageApprovalReadiness.summary.highestRiskLevel === "medium"
+          ? "warning" as const
+          : "ready" as const,
+    },
+    {
+      id: "top-row",
+      label: copy.topEligibilityLineageBlocker,
+      value: contractClaimEligibilityLineageApprovalReadiness.summary.topRowId,
+      state: contractClaimEligibilityLineageApprovalReadiness.summary.approvalBlocked
+        ? "blocker" as const
+        : "ready" as const,
+    },
+  ];
+  const contractClaimEligibilityLineageApprovalTopRow =
+    contractClaimEligibilityLineageApprovalReadiness.rows.find(
+      (row) => row.id === contractClaimEligibilityLineageApprovalReadiness.summary.topRowId,
+    ) ?? contractClaimEligibilityLineageApprovalReadiness.rows[0];
 
   const companionReadinessSummary = [
     {
@@ -4053,6 +4107,124 @@ export const AdminOpsPanel = ({
                 <p style={wrapTextStyle}>
                   {copy.linkedSurface}: {getLocalizedText(actor.sourceSurface, locale)}
                 </p>
+              </article>
+            ))}
+          </div>
+        </article>
+        <article aria-label={copy.contractClaimEligibilityLineageApprovalReadiness} style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.contractClaimEligibilityLineageApprovalBoundary}</p>
+              <strong>{copy.contractClaimEligibilityLineageApprovalReadiness}</strong>
+              <p style={mutedTextStyle}>{copy.contractClaimEligibilityLineageApprovalSubtitle}</p>
+            </div>
+            <PublishStateBadge
+              label={contractClaimEligibilityLineageApprovalReadiness.summary.approvalBlocked
+                ? copy.eligibilityLineageApprovalBlocked
+                : copy.readyActions}
+              state={contractClaimEligibilityLineageApprovalReadiness.summary.approvalBlocked ? "blocker" : "ready"}
+            />
+          </div>
+          <p style={boundaryStyle}>
+            {copy.nonLiveBoundary}: {getLocalizedText(contractClaimEligibilityLineageApprovalReadiness.boundary, locale)}
+          </p>
+          <div style={compactGridStyle}>
+            {contractClaimEligibilityLineageApprovalSummary.map((item) => (
+              <article key={item.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <p style={labelStyle}>{item.label}</p>
+                  <PublishStateBadge label={String(item.value)} state={item.state} />
+                </div>
+                <p style={valueStyle}>{item.value}</p>
+              </article>
+            ))}
+          </div>
+          {contractClaimEligibilityLineageApprovalTopRow ? (
+            <article style={cardStyle}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.topEligibilityLineageBlocker}</p>
+                  <strong>{getLocalizedText(contractClaimEligibilityLineageApprovalTopRow.label, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={contractClaimPreapprovalGateLabel(contractClaimEligibilityLineageApprovalTopRow.state, copy)}
+                  state={contractClaimPreapprovalGateState(contractClaimEligibilityLineageApprovalTopRow.state)}
+                />
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.ownerRole}: {readableCode(contractClaimEligibilityLineageApprovalTopRow.ownerRole)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.riskLevel}: {contractClaimEligibilityLineageApprovalTopRow.riskLevel}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.dependency}: {getLocalizedText(contractClaimEligibilityLineageApprovalTopRow.dependency, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.evidenceNeeded}: {getLocalizedText(contractClaimEligibilityLineageApprovalTopRow.evidenceRequired, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.lineageGap}: {getLocalizedText(contractClaimEligibilityLineageApprovalTopRow.lineageGap, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.residualRisk}: {getLocalizedText(contractClaimEligibilityLineageApprovalTopRow.residualRisk, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(contractClaimEligibilityLineageApprovalTopRow.nextAction, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.linkedSurface}: {getLocalizedText(contractClaimEligibilityLineageApprovalTopRow.sourceSurface, locale)}
+              </p>
+            </article>
+          ) : null}
+          <div style={gridStyle}>
+            {contractClaimEligibilityLineageApprovalReadiness.rows.map((row) => (
+              <article key={row.id} style={cardStyle}>
+                <div style={rowStyle}>
+                  <div style={stackStyle}>
+                    <p style={labelStyle}>{row.id}</p>
+                    <strong>{getLocalizedText(row.label, locale)}</strong>
+                  </div>
+                  <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <PublishStateBadge
+                      label={contractClaimPreapprovalGateLabel(row.state, copy)}
+                      state={contractClaimPreapprovalGateState(row.state)}
+                    />
+                    {row.blocksEligibilityLineageApproval
+                      ? <Badge label={copy.blocksEligibilityLineageApproval} tone="warning" />
+                      : null}
+                  </span>
+                </div>
+                <p style={wrapTextStyle}>
+                  {copy.ownerRole}: {readableCode(row.ownerRole)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.riskLevel}: {row.riskLevel}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.dependency}: {getLocalizedText(row.dependency, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.evidenceNeeded}: {getLocalizedText(row.evidenceRequired, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.lineageGap}: {getLocalizedText(row.lineageGap, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.residualRisk}: {getLocalizedText(row.residualRisk, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.nextAction}: {getLocalizedText(row.nextAction, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.linkedSurface}: {getLocalizedText(row.sourceSurface, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.localOnlyBoundary}: {getLocalizedText(contractClaimEligibilityLineageApprovalReadiness.boundary, locale)}
+                </p>
+                {row.blocksEligibilityLineageApproval
+                  ? <Badge label={copy.blocksEligibilityLineageApproval} tone="warning" />
+                  : null}
               </article>
             ))}
           </div>
