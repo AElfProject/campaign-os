@@ -7,6 +7,7 @@ import {
 import type { ApiRuntimeEnvelope } from "./envelope";
 import { createFailureEnvelope, createSuccessEnvelope } from "./envelope";
 import {
+  invalidRequest,
   malformedJson,
   methodNotAllowed,
   persistenceUnavailable,
@@ -247,11 +248,28 @@ export const createCampaignOsApiRuntime = ({
   service = createCampaignOsLocalService(),
   version,
 }: CreateCampaignOsApiRuntimeOptions = {}): CampaignOsApiRuntime => {
-  const resolvedConfig = runtimeConfig
-    ?? resolveCampaignOsRuntimeConfig({
-      ...runtimeConfigOptions,
-      version,
-    });
+  let configError: unknown;
+  const resolvedConfig = (() => {
+    if (runtimeConfig) {
+      return runtimeConfig;
+    }
+
+    try {
+      return resolveCampaignOsRuntimeConfig({
+        ...runtimeConfigOptions,
+        version,
+      });
+    } catch (error) {
+      configError = error;
+
+      return resolveCampaignOsRuntimeConfig({
+        persistence: {
+          mode: "memory",
+        },
+        version,
+      });
+    }
+  })();
   const safeRepository = createSafeRepository(
     repository ?? createCampaignOsRepository(resolvedConfig.persistence),
   );
@@ -264,6 +282,10 @@ export const createCampaignOsApiRuntime = ({
       const traceId = createTraceId(request.headers);
 
       try {
+        if (configError) {
+          throw invalidRequest("runtimeConfig.persistence.mode", "Unsupported local runtime configuration.");
+        }
+
         const method = normalizeMethod(request.method);
         const { pathname, query } = parseRequestTarget(request.path);
         const { matcher, params } = findMatchingRoute(matchers, method, pathname);

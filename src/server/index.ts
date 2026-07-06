@@ -1,5 +1,6 @@
 export * from "./config";
 export * from "./contracts";
+export * from "./capabilities";
 export * from "./envelope";
 export * from "./errors";
 export * from "./apiRuntime";

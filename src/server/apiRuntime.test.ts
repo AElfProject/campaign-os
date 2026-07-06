@@ -193,6 +193,13 @@ describe("Campaign OS API runtime", () => {
     expect(health.body.traceId).toBe("trace-health");
     expect(health.headers["x-campaign-os-trace-id"]).toBe("trace-health");
     expect(healthData).toMatchObject({
+      capabilities: expect.objectContaining({
+        summary: expect.objectContaining({
+          deferredCount: expect.any(Number),
+          disabledCount: expect.any(Number),
+          totalCapabilities: expect.any(Number),
+        }),
+      }),
       mode: "local_seeded",
       persistence: expect.objectContaining({
         mode: "memory",
@@ -201,12 +208,24 @@ describe("Campaign OS API runtime", () => {
         status: "ok",
       }),
       routeCount: expect.any(Number),
+      serviceGroups: expect.arrayContaining([
+        expect.objectContaining({
+          id: "wallet_session",
+          deferredDependencies: expect.arrayContaining(["auth_session", "production_database"]),
+        }),
+      ]),
       serviceReadiness: expect.objectContaining({
         totalServices: expect.any(Number),
       }),
       status: "ok",
     });
     expect(contractData).toMatchObject({
+      capabilities: expect.objectContaining({
+        summary: expect.objectContaining({
+          deferredCount: expect.any(Number),
+          disabledCount: expect.any(Number),
+        }),
+      }),
       coverage: expect.objectContaining({
         coveredSkillIds: expect.arrayContaining(["create_wallet_session", "export_winners"]),
       }),
@@ -219,7 +238,10 @@ describe("Campaign OS API runtime", () => {
         }),
       }),
       routes: expect.arrayContaining([
-        expect.objectContaining({ id: "runtime.health", path: "/api/health" }),
+        expect.objectContaining({ id: "runtime.health", path: "/api/health", serviceGroup: "runtime" }),
+      ]),
+      serviceGroups: expect.arrayContaining([
+        expect.objectContaining({ id: "export", deferredDependencies: expect.arrayContaining(["contract_writer"]) }),
       ]),
     });
     expect(serviceData).toMatchObject({
@@ -522,6 +544,36 @@ describe("Campaign OS API runtime", () => {
     expectNoForbiddenResponseKeys(walletSession.body);
   });
 
+  it("fails closed for invalid runtime configuration", async () => {
+    const invalidRuntime = createCampaignOsApiRuntime({
+      runtimeConfigOptions: {
+        persistence: {
+          mode: "unsupported" as never,
+        },
+      },
+    });
+    const health = await invalidRuntime.handle({
+      method: "GET",
+      path: "/api/health",
+      headers: { "x-campaign-os-trace-id": "trace-invalid-config" },
+    });
+
+    expect(health).toMatchObject({
+      status: 400,
+      body: {
+        ok: false,
+        traceId: "trace-invalid-config",
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            field: "runtimeConfig.persistence.mode",
+          },
+        },
+      },
+    });
+    expectNoForbiddenResponseKeys(health.body);
+  });
+
   it("fails closed for invalid routes, methods, JSON, locales, and export modes", async () => {
     const unknown = await runtime.handle({ method: "GET", path: "/api/missing" });
     const wrongMethod = await runtime.handle({ method: "DELETE", path: "/api/health" });
@@ -569,6 +621,28 @@ describe("Campaign OS API runtime", () => {
       path: "/api/campaigns",
       body: JSON.stringify({
         projectId: "awaken",
+      }),
+    });
+    const validationRepository = createCampaignOsMemoryRepository();
+    const validationRuntime = createCampaignOsApiRuntime({ repository: validationRepository });
+    const invalidWalletSource = await runtime.handle({
+      method: "POST",
+      path: "/api/tasks/task-bridge/verify",
+      body: JSON.stringify({
+        accountType: "AA",
+        campaignId: campaignDetail.id,
+        walletAddress: "2F4...9aB",
+        walletSource: "RAW_PRIVATE_KEY",
+      }),
+    });
+    const invalidPersistedWalletSource = await validationRuntime.handle({
+      method: "POST",
+      path: "/api/tasks/task-bridge/verify",
+      body: JSON.stringify({
+        accountType: "AA",
+        campaignId: campaignDetail.id,
+        walletAddress: "2F4...9aB",
+        walletSource: "RAW_PRIVATE_KEY",
       }),
     });
 
@@ -628,6 +702,33 @@ describe("Campaign OS API runtime", () => {
         error: { code: "INVALID_REQUEST" },
       },
     });
+    expect(invalidWalletSource).toMatchObject({
+      status: 400,
+      body: {
+        ok: false,
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            field: "walletSource",
+          },
+        },
+      },
+    });
+    expect(invalidPersistedWalletSource).toMatchObject({
+      status: 400,
+      body: {
+        ok: false,
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            field: "walletSource",
+          },
+        },
+      },
+    });
+    expect(await validationRepository.snapshot()).toMatchObject({
+      recordCount: 0,
+    });
 
     for (const response of [
       unknown,
@@ -638,6 +739,8 @@ describe("Campaign OS API runtime", () => {
       missingCampaign,
       missingTask,
       invalidCreate,
+      invalidWalletSource,
+      invalidPersistedWalletSource,
     ]) {
       expectNoForbiddenResponseKeys(response.body);
       expect(response.body.traceId).not.toHaveLength(0);

@@ -4,6 +4,8 @@ import type { ApiSkillId } from "../domain/types";
 import {
   apiRuntimeRouteById,
   apiRuntimeRoutes,
+  apiRuntimeServiceGroupById,
+  apiRuntimeServiceGroups,
   createApiRuntimeContractCoverage,
   createFailureEnvelope,
   createRuntimeMetadata,
@@ -72,12 +74,15 @@ describe("API runtime route catalog", () => {
       method: "GET",
       path: "/api/health",
       readiness: "ready",
+      serviceGroup: "runtime",
       supportMode: "local_seeded",
     });
     expect(apiRuntimeRouteById["wallet.session.create"]).toMatchObject({
       apiSkillId: "create_wallet_session",
       method: "POST",
       path: "/api/wallet/session",
+      productionDependencies: expect.arrayContaining(["auth_session", "production_database"]),
+      serviceGroup: "wallet_session",
     });
 
     for (const runtimeRoute of apiRuntimeRoutes) {
@@ -89,7 +94,19 @@ describe("API runtime route catalog", () => {
       expect(runtimeRoute.summary["en-US"]).not.toHaveLength(0);
       expect(runtimeRoute.summary["zh-CN"]).not.toHaveLength(0);
       expect(runtimeRoute.boundary["en-US"]).toContain("No live API");
+      expect(apiRuntimeServiceGroupById[runtimeRoute.serviceGroup]).toBeDefined();
+      expect(runtimeRoute.productionDependencies).toEqual(
+        apiRuntimeServiceGroupById[runtimeRoute.serviceGroup].deferredDependencies,
+      );
       expect(runtimeRoute.supportMode).toBe("local_seeded");
+    }
+  });
+
+  it("covers every backend service group with route metadata", () => {
+    const routeServiceGroups = new Set(apiRuntimeRoutes.map((runtimeRoute) => runtimeRoute.serviceGroup));
+
+    for (const serviceGroup of apiRuntimeServiceGroups) {
+      expect(routeServiceGroups.has(serviceGroup.id)).toBe(true);
     }
   });
 

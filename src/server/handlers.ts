@@ -32,76 +32,40 @@ import {
 } from "./errors";
 import type { ApiRuntimeHandler, ApiRuntimeHandlerContext } from "./apiRuntime";
 import {
+  apiRuntimeServiceGroups,
+  createApiRuntimeCapabilityCatalog,
+} from "./capabilities";
+import {
   persistenceBoundary,
   type CampaignOsPersistenceRecordInput,
   type PersistenceRecordKind,
   type PersistenceSummary,
 } from "./persistence";
-
-type JsonRecord = Record<string, unknown>;
-
-const isRecord = (value: unknown): value is JsonRecord =>
-  Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-const bodyRecord = (context: ApiRuntimeHandlerContext): JsonRecord => {
-  if (context.body === undefined) {
-    return {};
-  }
-
-  if (!isRecord(context.body)) {
-    throw invalidRequest("body", "Request body must be a JSON object.");
-  }
-
-  return context.body;
-};
-
-const optionalString = (value: unknown) => (typeof value === "string" ? value : undefined);
-
-const requiredString = (body: JsonRecord, field: string) => {
-  const value = body[field];
-
-  if (typeof value !== "string") {
-    throw invalidRequest(field, `${field} must be a string.`);
-  }
-
-  return value;
-};
-
-const requiredNumber = (body: JsonRecord, field: string) => {
-  const value = body[field];
-
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw invalidRequest(field, `${field} must be a finite number.`);
-  }
-
-  return value;
-};
-
-const requiredBoolean = (body: JsonRecord, field: string) => {
-  const value = body[field];
-
-  if (typeof value !== "boolean") {
-    throw invalidRequest(field, `${field} must be a boolean.`);
-  }
-
-  return value;
-};
-
-const requiredRecord = (body: JsonRecord, field: string) => {
-  const value = body[field];
-
-  if (!isRecord(value)) {
-    throw invalidRequest(field, `${field} must be a JSON object.`);
-  }
-
-  return value as Record<string, string | number | boolean>;
-};
+import {
+  bodyRecord,
+  exportContractRootMode,
+  exportFormat,
+  isJsonRecord,
+  optionalAccountType,
+  optionalLocale,
+  optionalString,
+  optionalWalletSource,
+  requiredAccountType,
+  requiredBoolean,
+  requiredNumber,
+  requiredRecord,
+  requiredRouteParam,
+  requiredString,
+  requiredVerificationType,
+  requiredWalletCompatibility,
+  requiredWalletSource,
+} from "./validation";
 
 const localErrorToRuntimeError = (
   error: LocalServiceError,
   context: ApiRuntimeHandlerContext,
 ) => {
-  const body = isRecord(context.body) ? context.body : {};
+  const body = isJsonRecord(context.body) ? context.body : {};
   const campaignId = optionalString(context.params.campaignId) ?? optionalString(body.campaignId);
   const taskId = optionalString(context.params.taskId) ?? optionalString(body.taskId);
 
@@ -169,7 +133,7 @@ const persistLocalResult = async <TPayload>(
 };
 
 const createCampaignRequest = (context: ApiRuntimeHandlerContext): CreateCampaignRequest => {
-  const body = bodyRecord(context);
+  const body = bodyRecord(context.body);
 
   return {
     ...body,
@@ -184,29 +148,29 @@ const createCampaignRequest = (context: ApiRuntimeHandlerContext): CreateCampaig
 };
 
 const addTaskRequest = (context: ApiRuntimeHandlerContext): AddTaskRequest => {
-  const body = bodyRecord(context);
+  const body = bodyRecord(context.body);
 
   return {
     ...body,
-    campaignId: context.params.campaignId,
+    campaignId: requiredRouteParam(context.params, "campaignId"),
     evidenceRule: requiredRecord(body, "evidenceRule"),
     points: requiredNumber(body, "points"),
     required: requiredBoolean(body, "required"),
     templateCode: requiredString(body, "templateCode"),
-    verificationType: requiredString(body, "verificationType") as AddTaskRequest["verificationType"],
-    walletCompatibility: requiredString(body, "walletCompatibility") as AddTaskRequest["walletCompatibility"],
+    verificationType: requiredVerificationType(body),
+    walletCompatibility: requiredWalletCompatibility(body),
   };
 };
 
 const verifyTaskRequest = (context: ApiRuntimeHandlerContext): VerifyTaskRequest => {
-  const body = bodyRecord(context);
+  const body = bodyRecord(context.body);
 
   return {
-    accountType: requiredString(body, "accountType") as VerifyTaskRequest["accountType"],
+    accountType: requiredAccountType(body),
     campaignId: requiredString(body, "campaignId"),
-    taskId: context.params.taskId,
+    taskId: requiredRouteParam(context.params, "taskId"),
     walletAddress: requiredString(body, "walletAddress"),
-    walletSource: requiredString(body, "walletSource") as VerifyTaskRequest["walletSource"],
+    walletSource: requiredWalletSource(body),
   };
 };
 
@@ -218,7 +182,7 @@ const listCampaignRequest = (context: ApiRuntimeHandlerContext): ListCampaignsRe
 
 const campaignDetailRequest = (context: ApiRuntimeHandlerContext): GetCampaignDetailRequest => ({
   ...listCampaignRequest(context),
-  campaignId: context.params.campaignId,
+  campaignId: requiredRouteParam(context.params, "campaignId"),
 });
 
 const eligibilityRequest = (context: ApiRuntimeHandlerContext): CheckEligibilityRequest => {
@@ -229,20 +193,20 @@ const eligibilityRequest = (context: ApiRuntimeHandlerContext): CheckEligibility
   }
 
   return {
-    accountType: context.query.accountType as CheckEligibilityRequest["accountType"],
-    campaignId: context.params.campaignId,
+    accountType: optionalAccountType(context.query.accountType),
+    campaignId: requiredRouteParam(context.params, "campaignId"),
     walletAddress,
-    walletSource: context.query.walletSource as CheckEligibilityRequest["walletSource"],
+    walletSource: optionalWalletSource(context.query.walletSource),
   };
 };
 
 const exportRequest = (context: ApiRuntimeHandlerContext): ExportWinnersRequest => {
-  const body = bodyRecord(context);
+  const body = bodyRecord(context.body);
 
   return {
-    campaignId: context.params.campaignId,
-    contractRootMode: (body.contractRootMode ?? "none") as ExportWinnersRequest["contractRootMode"],
-    format: (body.format ?? "csv") as ExportWinnersRequest["format"],
+    campaignId: requiredRouteParam(context.params, "campaignId"),
+    contractRootMode: exportContractRootMode(body.contractRootMode),
+    format: exportFormat(body.format),
     includeLocalePreference: body.includeLocalePreference !== false,
     includeRiskFlags: body.includeRiskFlags !== false,
     includeWalletType: body.includeWalletType !== false,
@@ -250,15 +214,15 @@ const exportRequest = (context: ApiRuntimeHandlerContext): ExportWinnersRequest 
 };
 
 const i18nDraftRequest = (context: ApiRuntimeHandlerContext): GenerateI18nDraftRequest => {
-  const body = bodyRecord(context);
+  const body = bodyRecord(context.body);
 
   return {
-    campaignId: context.params.campaignId,
+    campaignId: requiredRouteParam(context.params, "campaignId"),
     contentKeys: Array.isArray(body.contentKeys)
       ? body.contentKeys.filter((key): key is string => typeof key === "string")
       : ["title", "description", "rewardDisclaimer"],
-    sourceLocale: (body.sourceLocale ?? "en-US") as GenerateI18nDraftRequest["sourceLocale"],
-    targetLocale: (body.targetLocale ?? context.query.locale) as GenerateI18nDraftRequest["targetLocale"],
+    sourceLocale: optionalLocale(body.sourceLocale, "sourceLocale") ?? "en-US",
+    targetLocale: optionalLocale(body.targetLocale ?? context.query.locale, "targetLocale") ?? "zh-CN",
   };
 };
 
@@ -271,9 +235,11 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     return {
       boundary: coverage.boundary,
       mode: "local_seeded",
+      capabilities: createApiRuntimeCapabilityCatalog(),
       persistence,
       routeCount: apiRuntimeRoutes.length,
       safety: createRuntimeSafety(),
+      serviceGroups: apiRuntimeServiceGroups,
       serviceReadiness: coverage.ok
         ? {
             blockedCount: coverage.payload.blockedCount,
@@ -295,11 +261,13 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       apiSkillContracts: apiSkillContractRegistry,
       apiSkillSurface: createApiSkillContractSurface(),
       coverage: createApiRuntimeContractCoverage(),
+      capabilities: createApiRuntimeCapabilityCatalog(),
       persistence: {
         boundary: persistenceBoundary,
         health: persistence,
       },
       routes: apiRuntimeRoutes,
+      serviceGroups: apiRuntimeServiceGroups,
     };
   },
   "runtime.services": () => {
@@ -315,7 +283,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
   },
   "wallet.session.create": (context) =>
     persistLocalResult(
-      context.service.createWalletSession(bodyRecord(context) as CreateWalletSessionRequest),
+      context.service.createWalletSession(bodyRecord(context.body) as CreateWalletSessionRequest),
       context,
       (payload) => ({
         accountType: payload.accountType,
