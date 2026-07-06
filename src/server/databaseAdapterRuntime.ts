@@ -12,6 +12,10 @@ import {
   productionDatabaseStoreRegistry,
   type ProductionDatabaseStoreRegistryEntry,
 } from "./productionDatabase";
+import {
+  createProductionDbRuntimeContract,
+  type ProductionDbRuntimeContract,
+} from "./productionDbRuntime";
 
 export type DatabaseAdapterRuntimeStatus = "active_local" | "boundary_ready" | "blocked";
 export type ConnectionPoolState =
@@ -115,6 +119,7 @@ export interface ProductionDatabaseAdapterRuntimeContract {
   liveQueryExecutionEnabled: false;
   migrationExecutor: MigrationExecutorHandoffSummary;
   profileId: BackendRuntimeProfileId;
+  productionDbRuntime: ProductionDbRuntimeReadinessProjection;
   providerId: string;
   queryAdapter: DatabaseQueryAdapterSummary;
   registry: DatabaseProviderRegistryReport;
@@ -122,6 +127,14 @@ export interface ProductionDatabaseAdapterRuntimeContract {
   stores: DatabaseAdapterRuntimeStore[];
   transaction: DatabaseTransactionSummary;
   valid: boolean;
+}
+
+export interface ProductionDbRuntimeReadinessProjection extends ProductionDbRuntimeContract {
+  connectionState: ProductionDbRuntimeContract["connection"]["state"];
+  diagnosticCodes: ProductionDbRuntimeContract["diagnostics"][number]["code"][];
+  driverProductionReady: boolean;
+  migrationGateStatus: ProductionDbRuntimeContract["migrationGate"]["status"];
+  ownerStoreCount: number;
 }
 
 export interface CreateProductionDatabaseAdapterRuntimeContractOptions {
@@ -448,6 +461,17 @@ const createMigrationExecutorHandoffSummary = ({
   };
 };
 
+const createProductionDbRuntimeReadinessProjection = (
+  contract: ProductionDbRuntimeContract,
+): ProductionDbRuntimeReadinessProjection => ({
+  ...contract,
+  connectionState: contract.connection.state,
+  diagnosticCodes: contract.diagnostics.map((item) => item.code),
+  driverProductionReady: contract.driver.productionReady,
+  migrationGateStatus: contract.migrationGate.status,
+  ownerStoreCount: contract.ownerStores.length,
+});
+
 const resolveRuntimeStatus = ({
   deterministicTestMode,
   diagnostics,
@@ -483,6 +507,14 @@ export const createProductionDatabaseAdapterRuntimeContract = ({
     profileId: profileResolution.profile.id,
     requestedConnectionLabel,
   });
+  const productionDbRuntime = createProductionDbRuntimeReadinessProjection(
+    createProductionDbRuntimeContract({
+      driverId: driverId ?? env.CAMPAIGN_OS_DATABASE_DRIVER,
+      env,
+      profileId: profileId ?? env.CAMPAIGN_OS_BACKEND_PROFILE,
+      providerId: providerId ?? env.CAMPAIGN_OS_DATABASE_PROVIDER,
+    }),
+  );
   const deterministicTestMode = registry.activeProvider?.kind === "deterministic_test";
   const diagnostics: DatabaseAdapterRuntimeDiagnostic[] = [
     ...profileResolution.diagnostics.map((item) =>
@@ -518,6 +550,7 @@ export const createProductionDatabaseAdapterRuntimeContract = ({
       profileId: profileResolution.profile.id,
     }),
     profileId: profileResolution.profile.id,
+    productionDbRuntime,
     providerId: registry.selectedProviderId,
     queryAdapter,
     registry,

@@ -37,6 +37,7 @@ import {
   type DatabaseTransactionSummary,
   type MigrationExecutorHandoffSummary,
   type ProductionDatabaseAdapterRuntimeContract,
+  type ProductionDbRuntimeReadinessProjection,
 } from "./databaseAdapterRuntime";
 import {
   createDatabaseMigrationExecutorHandoff,
@@ -180,12 +181,30 @@ export interface BackendDatabaseAdapterRuntimeSummary {
     migrationGateStatus: DatabaseMigrationExecutorHandoffSummary["migrationGateStatus"];
   };
   profileId: BackendConfigContract["profileId"];
+  productionDbRuntime: BackendProductionDbRuntimeSummary;
   providerId: string;
   queryAdapter: DatabaseQueryAdapterSummary;
   requiredStoreCount: number;
   status: DatabaseAdapterRuntimeStatus;
   stores: DatabaseAdapterRuntimeStore[];
   transaction: DatabaseTransactionSummary;
+  valid: boolean;
+}
+
+export interface BackendProductionDbRuntimeSummary {
+  connectionState: ProductionDbRuntimeReadinessProjection["connectionState"];
+  diagnosticCodes: ProductionDbRuntimeReadinessProjection["diagnosticCodes"];
+  driverId: ProductionDbRuntimeReadinessProjection["driverId"];
+  driverProductionReady: boolean;
+  id: ProductionDbRuntimeReadinessProjection["id"];
+  liveConnectionAttempted: false;
+  liveQueryExecutionEnabled: false;
+  migrationGateStatus: ProductionDbRuntimeReadinessProjection["migrationGateStatus"];
+  ownerStoreCount: number;
+  profileId: ProductionDbRuntimeReadinessProjection["profileId"];
+  providerId: ProductionDbRuntimeReadinessProjection["providerId"];
+  schemaManifestId: ProductionDbRuntimeReadinessProjection["schemaManifestId"];
+  status: ProductionDbRuntimeReadinessProjection["status"];
   valid: boolean;
 }
 
@@ -570,6 +589,22 @@ export const createBackendDatabaseAdapterRuntimeSummary = (
     migrationGateStatus: runtime.migrationHandoff.migrationGateStatus,
   },
   profileId: runtime.profileId,
+  productionDbRuntime: {
+    connectionState: runtime.productionDbRuntime.connectionState,
+    diagnosticCodes: runtime.productionDbRuntime.diagnosticCodes,
+    driverId: runtime.productionDbRuntime.driverId,
+    driverProductionReady: runtime.productionDbRuntime.driverProductionReady,
+    id: runtime.productionDbRuntime.id,
+    liveConnectionAttempted: runtime.productionDbRuntime.liveConnectionAttempted,
+    liveQueryExecutionEnabled: runtime.productionDbRuntime.liveQueryExecutionEnabled,
+    migrationGateStatus: runtime.productionDbRuntime.migrationGateStatus,
+    ownerStoreCount: runtime.productionDbRuntime.ownerStoreCount,
+    profileId: runtime.productionDbRuntime.profileId,
+    providerId: runtime.productionDbRuntime.providerId,
+    schemaManifestId: runtime.productionDbRuntime.schemaManifestId,
+    status: runtime.productionDbRuntime.status,
+    valid: runtime.productionDbRuntime.valid,
+  },
   providerId: runtime.providerId,
   queryAdapter: runtime.queryAdapter,
   requiredStoreCount: runtime.stores.filter((store) => store.required).length,

@@ -1,6 +1,7 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import type { MigrationRunnerPlan } from "./migrationRunner";
 import type { ConnectionConfigSummary, ProductionPersistenceRuntimeDiagnostic } from "./persistenceRuntime";
+import { productionDatabaseSchemaManifest } from "./productionDatabase";
 
 export type MigrationExecutionGateMode =
   | "dry_run_only"
@@ -16,12 +17,14 @@ export type MigrationExecutionPreconditionStatus =
   | "missing"
   | "deferred"
   | "blocked";
+export type MigrationRollbackPlanStatus = "not_required_for_dry_run" | "missing" | "ready";
 export type MigrationExecutionGateDiagnosticCode =
   | "MIGRATION_EXECUTION_APPROVAL_MISSING"
   | "MIGRATION_EXECUTION_CONNECTION_MISSING"
   | "MIGRATION_EXECUTION_DRIVER_DEFERRED"
   | "MIGRATION_EXECUTION_LIVE_DEFERRED"
   | "MIGRATION_EXECUTION_PLAN_BLOCKED"
+  | "MIGRATION_EXECUTION_PRECONDITION_MISSING"
   | "MIGRATION_EXECUTION_PRECONDITION_DEFERRED";
 
 export interface MigrationExecutionGateDiagnostic {
@@ -48,6 +51,11 @@ export interface MigrationExecutionGate {
   pendingMigrationIds: string[];
   preconditions: MigrationExecutionPrecondition[];
   profileId: BackendRuntimeProfileId;
+  rollbackPlan: {
+    required: boolean;
+    status: MigrationRollbackPlanStatus;
+  };
+  schemaManifestId: typeof productionDatabaseSchemaManifest.id;
   status: MigrationExecutionGateStatus;
 }
 
@@ -102,8 +110,14 @@ const createPreconditions = ({
   const connectionRequired = profileId === "production-required";
   const connectionStatus: MigrationExecutionPreconditionStatus =
     !connectionRequired || hasConnectionConfig(connection) ? "satisfied" : "missing";
+  const rollbackRequired = profileId === "production-required";
 
   return [
+    {
+      id: "schema-manifest-compatible",
+      required: true,
+      status: "satisfied",
+    },
     {
       id: "connection-config",
       required: connectionRequired,
@@ -116,6 +130,11 @@ const createPreconditions = ({
         profileId === "production-required" && !liveMigrationApproved
           ? "missing"
           : "satisfied",
+    },
+    {
+      id: "rollback-plan",
+      required: rollbackRequired,
+      status: rollbackRequired ? "missing" : "satisfied",
     },
     {
       id: "driver-package",
@@ -156,6 +175,16 @@ export const createMigrationExecutionGate = ({
         ? "live_approved_deferred"
         : "live_blocked";
   const preconditions = createPreconditions({ connection, liveMigrationApproved, profileId });
+  const rollbackPlan: MigrationExecutionGate["rollbackPlan"] =
+    profileId === "production-required"
+      ? {
+        required: true,
+        status: "missing",
+      }
+      : {
+        required: false,
+        status: "not_required_for_dry_run",
+      };
   const diagnostics: MigrationExecutionGateDiagnostic[] = [
     ...mapRuntimeDiagnostics(connection.diagnostics),
     ...migrationPlan.diagnostics.map((item) =>
@@ -174,6 +203,16 @@ export const createMigrationExecutionGate = ({
   }
 
   for (const precondition of preconditions) {
+    if (precondition.required && precondition.status === "missing") {
+      diagnostics.push(
+        diagnostic(
+          "MIGRATION_EXECUTION_PRECONDITION_MISSING",
+          precondition.id,
+          `Migration execution precondition '${precondition.id}' is missing.`,
+        ),
+      );
+    }
+
     if (precondition.required && precondition.status === "deferred") {
       diagnostics.push(
         diagnostic(
@@ -224,6 +263,8 @@ export const createMigrationExecutionGate = ({
     pendingMigrationIds: [...migrationPlan.pendingMigrationIds],
     preconditions,
     profileId,
+    rollbackPlan,
+    schemaManifestId: productionDatabaseSchemaManifest.id,
     status,
   };
 };

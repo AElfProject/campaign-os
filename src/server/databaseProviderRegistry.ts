@@ -36,7 +36,17 @@ export interface DatabaseProviderDescriptor {
   status: DatabaseProviderStatus;
 }
 
+export interface DatabaseDriverCapabilityDescriptor {
+  adHocRawSql: boolean;
+  parameterizedQueries: boolean;
+  pooling: boolean;
+  requiresNetwork: boolean;
+  requiresSecretManager: boolean;
+  transactions: boolean;
+}
+
 export interface DatabaseDriverDescriptor {
+  capability: DatabaseDriverCapabilityDescriptor;
   deferredBy: string[];
   id: string;
   label: string;
@@ -132,6 +142,14 @@ const productionDriverDeferredBy = [
 
 export const databaseDriverDescriptors: DatabaseDriverDescriptor[] = [
   {
+    capability: {
+      adHocRawSql: false,
+      parameterizedQueries: true,
+      pooling: false,
+      requiresNetwork: false,
+      requiresSecretManager: false,
+      transactions: true,
+    },
     deferredBy: [],
     id: defaultLocalDriverId,
     label: "Campaign OS deterministic database driver",
@@ -144,6 +162,14 @@ export const databaseDriverDescriptors: DatabaseDriverDescriptor[] = [
     supportsTransactions: true,
   },
   {
+    capability: {
+      adHocRawSql: false,
+      parameterizedQueries: true,
+      pooling: true,
+      requiresNetwork: true,
+      requiresSecretManager: true,
+      transactions: true,
+    },
     deferredBy: [...productionDriverDeferredBy],
     id: defaultProductionDriverId,
     label: "Campaign OS production database driver placeholder",
@@ -156,6 +182,14 @@ export const databaseDriverDescriptors: DatabaseDriverDescriptor[] = [
     supportsTransactions: true,
   },
   {
+    capability: {
+      adHocRawSql: false,
+      parameterizedQueries: true,
+      pooling: true,
+      requiresNetwork: true,
+      requiresSecretManager: true,
+      transactions: true,
+    },
     deferredBy: [...productionDriverDeferredBy],
     id: "campaign-os-managed-postgres-driver-deferred",
     label: "Managed PostgreSQL driver candidate",
@@ -168,6 +202,14 @@ export const databaseDriverDescriptors: DatabaseDriverDescriptor[] = [
     supportsTransactions: true,
   },
   {
+    capability: {
+      adHocRawSql: false,
+      parameterizedQueries: true,
+      pooling: true,
+      requiresNetwork: true,
+      requiresSecretManager: true,
+      transactions: true,
+    },
     deferredBy: [...productionDriverDeferredBy],
     id: "campaign-os-self-hosted-relational-driver-deferred",
     label: "Self-hosted relational driver candidate",
@@ -197,6 +239,7 @@ const cloneDriver = (
   status = driver.status,
 ): DatabaseDriverDescriptor => ({
   ...driver,
+  capability: { ...driver.capability },
   deferredBy: [...driver.deferredBy],
   requiredConfigKeys: [...driver.requiredConfigKeys],
   status,

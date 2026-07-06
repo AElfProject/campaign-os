@@ -153,6 +153,25 @@ describe("backend service readiness report", () => {
         migrationGateStatus: "ready",
         valid: true,
       }),
+      productionDbRuntime: expect.objectContaining({
+        connection: expect.objectContaining({
+          safeLabel: "deterministic_fixture",
+          state: "ready",
+        }),
+        diagnosticCodes: [],
+        id: "campaign-os-production-db-runtime-v1",
+        liveConnectionAttempted: false,
+        liveQueryExecutionEnabled: false,
+        migrationGate: expect.objectContaining({
+          liveExecutionEnabled: false,
+          status: "not_required_for_fixture",
+        }),
+        ownerStoreCount: 6,
+        profileId: "local-review",
+        schemaManifestId: "campaign-os-production-db-schema-v0.2",
+        status: "ready",
+        valid: true,
+      }),
       profileId: "local-review",
       providerId: "campaign-os-deterministic-test-db",
       queryAdapter: expect.objectContaining({
@@ -312,6 +331,26 @@ describe("backend service readiness report", () => {
         liveExecutionCount: 0,
         liveExecutionEnabled: false,
         migrationGateStatus: "blocked",
+        valid: false,
+      }),
+      productionDbRuntime: expect.objectContaining({
+        connection: expect.objectContaining({
+          safeLabel: "[redacted]",
+          state: "configured_redacted",
+        }),
+        diagnosticCodes: expect.arrayContaining([
+          "PRODUCTION_DB_DRIVER_DEFERRED",
+          "PRODUCTION_DB_SECRET_REDACTED",
+          "PRODUCTION_DB_MIGRATION_GATE_BLOCKED",
+        ]),
+        liveConnectionAttempted: false,
+        liveQueryExecutionEnabled: false,
+        migrationGate: expect.objectContaining({
+          liveExecutionEnabled: false,
+          status: "blocked",
+        }),
+        profileId: "production-required",
+        status: "blocked",
         valid: false,
       }),
       profileId: "production-required",

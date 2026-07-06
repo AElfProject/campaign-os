@@ -41,6 +41,14 @@ describe("database provider registry", () => {
       supportedStoreIds: productionDatabaseRequiredStoreIds,
       supportsTransactions: true,
     });
+    expect(report.activeDriver?.capability).toEqual({
+      adHocRawSql: false,
+      parameterizedQueries: true,
+      pooling: false,
+      requiresNetwork: false,
+      requiresSecretManager: false,
+      transactions: true,
+    });
   });
 
   it("blocks the default production driver in production-required profile", () => {
@@ -65,6 +73,14 @@ describe("database provider registry", () => {
         }),
       ]),
     );
+    expect(report.activeDriver?.capability).toEqual({
+      adHocRawSql: false,
+      parameterizedQueries: true,
+      pooling: true,
+      requiresNetwork: true,
+      requiresSecretManager: true,
+      transactions: true,
+    });
   });
 
   it("fails closed for unknown provider and driver ids without leaking raw secret-like values", () => {

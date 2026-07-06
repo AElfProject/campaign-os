@@ -7,6 +7,7 @@ import {
 
 export type DatabaseStoreAdapterStatus = "mapped" | "deferred" | "blocked";
 export type DatabaseQueryCapability = "read" | "write" | "transaction" | "migration_plan";
+export type RepositoryOperation = "read" | "write" | "upsert" | "list" | "audit";
 export type DatabaseQueryOperation = "select" | "count" | "lookup";
 export type DatabaseCommandOperation = "insert" | "update" | "delete" | "upsert";
 export type DatabaseDriverEventType =
@@ -26,6 +27,9 @@ export type DatabaseQueryAdapterDiagnosticCode =
   | "DATABASE_QUERY_STORE_MISSING_SCHEMA"
   | "DATABASE_QUERY_STORE_MISSING_ENTITIES"
   | "DATABASE_QUERY_STORE_MISSING_PRIMARY_KEY"
+  | "DATABASE_QUERY_REPOSITORY_ENTITY_DUPLICATE"
+  | "DATABASE_QUERY_REPOSITORY_STORE_UNSUPPORTED"
+  | "DATABASE_QUERY_REPOSITORY_OPERATION_UNSUPPORTED"
   | "DATABASE_QUERY_TRANSACTION_ALREADY_ACTIVE"
   | "DATABASE_QUERY_TRANSACTION_NOT_ACTIVE"
   | "DATABASE_QUERY_TRANSACTION_ALREADY_CLOSED";
@@ -49,7 +53,16 @@ export interface DatabaseStoreMapping {
   tableNamespace: string;
 }
 
+export interface RepositoryOperationContract {
+  entity: string;
+  operations: RepositoryOperation[];
+  ownerServiceId: string;
+  rawSqlAllowed: false;
+  storeId: BackendStoreId;
+}
+
 export interface DatabaseQueryAdapterSummary {
+  adHocRawSqlEnabled: false;
   capabilities: DatabaseQueryCapability[];
   deterministicTestMode: boolean;
   diagnosticCodes: DatabaseQueryAdapterDiagnosticCode[];
@@ -57,7 +70,10 @@ export interface DatabaseQueryAdapterSummary {
   id: string;
   liveQueryExecutionEnabled: false;
   mappedStoreCount: number;
+  parameterizedQueries: boolean;
+  repositoryContractCount: number;
   supportedStoreIds: BackendStoreId[];
+  transactionMode: DatabaseTransactionMode;
 }
 
 export interface DatabasePlanScope {
@@ -138,6 +154,132 @@ export const databaseStoreMappings: DatabaseStoreMapping[] = productionDatabaseS
   schemaVersion: store.schemaVersion,
   tableNamespace: store.id.replace(/-/g, "_"),
 }));
+
+const repositoryContract = (
+  contract: RepositoryOperationContract,
+): RepositoryOperationContract => contract;
+
+export const repositoryOperationContracts: RepositoryOperationContract[] = [
+  repositoryContract({
+    entity: "Campaign",
+    operations: ["read", "write", "upsert", "list"],
+    ownerServiceId: "campaign-service",
+    rawSqlAllowed: false,
+    storeId: "campaign-db",
+  }),
+  repositoryContract({
+    entity: "CampaignStatus",
+    operations: ["read", "write", "upsert", "audit"],
+    ownerServiceId: "campaign-service",
+    rawSqlAllowed: false,
+    storeId: "campaign-db",
+  }),
+  repositoryContract({
+    entity: "NormalizedWalletSession",
+    operations: ["read", "write", "upsert", "audit"],
+    ownerServiceId: "wallet-session-service",
+    rawSqlAllowed: false,
+    storeId: "wallet-session-db",
+  }),
+  repositoryContract({
+    entity: "AccountTypeProof",
+    operations: ["read", "write", "upsert"],
+    ownerServiceId: "wallet-session-service",
+    rawSqlAllowed: false,
+    storeId: "wallet-session-db",
+  }),
+  repositoryContract({
+    entity: "WalletSourceProof",
+    operations: ["read", "write", "upsert"],
+    ownerServiceId: "wallet-session-service",
+    rawSqlAllowed: false,
+    storeId: "wallet-session-db",
+  }),
+  repositoryContract({
+    entity: "CampaignTask",
+    operations: ["read", "write", "upsert", "list"],
+    ownerServiceId: "verification-service",
+    rawSqlAllowed: false,
+    storeId: "task-evidence-db",
+  }),
+  repositoryContract({
+    entity: "TaskCompletion",
+    operations: ["read", "write", "upsert", "audit"],
+    ownerServiceId: "verification-service",
+    rawSqlAllowed: false,
+    storeId: "task-evidence-db",
+  }),
+  repositoryContract({
+    entity: "EvidenceHash",
+    operations: ["read", "write", "audit"],
+    ownerServiceId: "verification-service",
+    rawSqlAllowed: false,
+    storeId: "task-evidence-db",
+  }),
+  repositoryContract({
+    entity: "ManualReviewState",
+    operations: ["read", "write", "upsert", "audit"],
+    ownerServiceId: "verification-service",
+    rawSqlAllowed: false,
+    storeId: "task-evidence-db",
+  }),
+  repositoryContract({
+    entity: "I18nContentRevision",
+    operations: ["read", "write", "upsert", "audit"],
+    ownerServiceId: "i18n-content-service",
+    rawSqlAllowed: false,
+    storeId: "i18n-content-db",
+  }),
+  repositoryContract({
+    entity: "LocaleDraft",
+    operations: ["read", "write", "upsert"],
+    ownerServiceId: "i18n-content-service",
+    rawSqlAllowed: false,
+    storeId: "i18n-content-db",
+  }),
+  repositoryContract({
+    entity: "RiskEvent",
+    operations: ["read", "write", "upsert", "audit"],
+    ownerServiceId: "risk-intelligence-service",
+    rawSqlAllowed: false,
+    storeId: "risk-event-db",
+  }),
+  repositoryContract({
+    entity: "ParticipantRiskFlag",
+    operations: ["read", "write", "upsert", "audit"],
+    ownerServiceId: "risk-intelligence-service",
+    rawSqlAllowed: false,
+    storeId: "risk-event-db",
+  }),
+  repositoryContract({
+    entity: "ReferralRiskReview",
+    operations: ["read", "write", "upsert", "audit"],
+    ownerServiceId: "risk-intelligence-service",
+    rawSqlAllowed: false,
+    storeId: "risk-event-db",
+  }),
+  repositoryContract({
+    entity: "PointsLedgerEntry",
+    operations: ["read", "write", "upsert", "audit"],
+    ownerServiceId: "points-ranking-service",
+    rawSqlAllowed: false,
+    storeId: "points-ledger",
+  }),
+  repositoryContract({
+    entity: "ParticipantScore",
+    operations: ["read", "write", "upsert", "list"],
+    ownerServiceId: "points-ranking-service",
+    rawSqlAllowed: false,
+    storeId: "points-ledger",
+  }),
+  repositoryContract({
+    entity: "LeaderboardProjection",
+    operations: ["read", "write", "upsert", "list"],
+    ownerServiceId: "points-ranking-service",
+    rawSqlAllowed: false,
+    storeId: "points-ledger",
+  }),
+];
 
 const diagnostic = (
   code: DatabaseQueryAdapterDiagnosticCode,
@@ -233,15 +375,68 @@ export const validateDatabaseStoreMappings = (
   return issues;
 };
 
+export const validateRepositoryOperationContracts = (
+  contracts: readonly RepositoryOperationContract[] = repositoryOperationContracts,
+  mappings: readonly DatabaseStoreMapping[] = databaseStoreMappings,
+): DatabaseQueryAdapterDiagnostic[] => {
+  const issues: DatabaseQueryAdapterDiagnostic[] = [];
+  const knownStores = new Set(mappings.map((mapping) => mapping.id));
+  const seenEntities = new Set<string>();
+
+  for (const contract of contracts) {
+    if (seenEntities.has(contract.entity)) {
+      issues.push(
+        diagnostic(
+          "DATABASE_QUERY_REPOSITORY_ENTITY_DUPLICATE",
+          contract.entity,
+          `Repository operation contract for entity '${contract.entity}' is duplicated.`,
+        ),
+      );
+    }
+
+    seenEntities.add(contract.entity);
+
+    if (!knownStores.has(contract.storeId)) {
+      issues.push(
+        diagnostic(
+          "DATABASE_QUERY_REPOSITORY_STORE_UNSUPPORTED",
+          contract.storeId,
+          `Repository operation contract for entity '${contract.entity}' references unsupported store '${contract.storeId}'.`,
+        ),
+      );
+    }
+
+    if (contract.operations.length === 0) {
+      issues.push(
+        diagnostic(
+          "DATABASE_QUERY_REPOSITORY_OPERATION_UNSUPPORTED",
+          contract.entity,
+          `Repository operation contract for entity '${contract.entity}' does not declare supported operations.`,
+        ),
+      );
+    }
+  }
+
+  return issues;
+};
+
 export const createDatabaseQueryAdapterSummary = ({
-  diagnostics = validateDatabaseStoreMappings(),
+  diagnostics = [
+    ...validateDatabaseStoreMappings(),
+    ...validateRepositoryOperationContracts(),
+  ],
   driverId = "campaign-os-deterministic-test-driver",
   mappings = databaseStoreMappings,
+  repositoryContracts = repositoryOperationContracts,
+  transactionMode = "deterministic_test",
 }: {
   diagnostics?: readonly DatabaseQueryAdapterDiagnostic[];
   driverId?: string;
   mappings?: readonly DatabaseStoreMapping[];
+  repositoryContracts?: readonly RepositoryOperationContract[];
+  transactionMode?: DatabaseTransactionMode;
 } = {}): DatabaseQueryAdapterSummary => ({
+  adHocRawSqlEnabled: false,
   capabilities: ["read", "write", "transaction", "migration_plan"],
   deterministicTestMode: true,
   diagnosticCodes: diagnostics.map((item) => item.code),
@@ -249,7 +444,10 @@ export const createDatabaseQueryAdapterSummary = ({
   id: "campaign-os-database-query-adapter-port",
   liveQueryExecutionEnabled: false,
   mappedStoreCount: mappings.length,
+  parameterizedQueries: true,
+  repositoryContractCount: repositoryContracts.length,
   supportedStoreIds: mappings.map((mapping) => mapping.id),
+  transactionMode,
 });
 
 export interface CreateDeterministicDatabaseDriverOptions {
