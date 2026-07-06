@@ -19404,7 +19404,7 @@ export const createResidualGapMissionQueue = (
 ): ResidualGapMissionQueue => {
   const sourceRows = deliveryAcceptance.solutionSets
     .flatMap((solutionSet) => solutionSet.rows)
-    .filter((row) => row.status !== "proven");
+    .filter((row) => row.status !== "proven" && row.status !== "deferred");
 
   const items = sourceRows
     .map((row): ResidualGapMissionQueueItem => {
