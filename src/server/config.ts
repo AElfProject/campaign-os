@@ -22,6 +22,21 @@ const DEFAULT_VERSION = "0.2.0-local";
 const isPersistenceMode = (value: string | undefined): value is CampaignOsPersistenceMode =>
   value === "memory" || value === "local_json";
 
+const resolvePersistenceMode = (
+  requestedMode: string | undefined,
+  explicitMode: string | undefined,
+): CampaignOsPersistenceMode => {
+  if (isPersistenceMode(requestedMode)) {
+    return requestedMode;
+  }
+
+  if (explicitMode !== undefined) {
+    throw new Error(`Unsupported Campaign OS persistence mode: ${explicitMode}`);
+  }
+
+  return "memory";
+};
+
 const sanitizeAdapterLabel = (mode: CampaignOsPersistenceMode, localDataDir?: string) => {
   if (mode === "memory") {
     return "memory";
@@ -42,8 +57,8 @@ export const resolveCampaignOsRuntimeConfig = ({
   persistence = {},
   version,
 }: CampaignOsRuntimeConfigOptions = {}): CampaignOsRuntimeConfig => {
-  const requestedMode = persistence.mode ?? env.CAMPAIGN_OS_PERSISTENCE_MODE;
-  const mode = isPersistenceMode(requestedMode) ? requestedMode : "memory";
+  const explicitMode = persistence.mode ?? env.CAMPAIGN_OS_PERSISTENCE_MODE;
+  const mode = resolvePersistenceMode(explicitMode, explicitMode);
   const localDataDir = persistence.localDataDir ?? env.CAMPAIGN_OS_PERSISTENCE_DIR;
   const adapterLabel = persistence.adapterLabel ?? sanitizeAdapterLabel(mode, localDataDir);
 
