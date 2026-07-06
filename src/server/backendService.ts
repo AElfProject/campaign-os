@@ -22,6 +22,22 @@ import {
   type ProductionDatabaseDiagnostic,
   type ProductionDatabaseStoreRegistryEntry,
 } from "./productionDatabase";
+import {
+  createProductionDatabaseAdapterRuntimeContract,
+  type ConnectionPoolState,
+  type DatabaseAdapterDeferredDependency,
+  type DatabaseAdapterRuntimeDiagnostic,
+  type DatabaseAdapterRuntimeStatus,
+  type DatabaseAdapterRuntimeStore,
+  type DatabaseQueryAdapterSummary,
+  type DatabaseTransactionSummary,
+  type MigrationExecutorHandoffSummary,
+  type ProductionDatabaseAdapterRuntimeContract,
+} from "./databaseAdapterRuntime";
+import {
+  createDatabaseMigrationExecutorHandoff,
+  type DatabaseMigrationExecutorHandoffSummary,
+} from "./databaseMigrationHandoff";
 import type { MigrationRunnerPlan } from "./migrationRunner";
 import {
   createProductionPersistenceRuntimeContract,
@@ -100,6 +116,7 @@ export interface BackendServiceReadinessReport {
   attachMap: BackendAttachPoint[];
   authSession: AuthSessionReadinessReport;
   config: BackendConfigContract;
+  databaseAdapterRuntime: BackendDatabaseAdapterRuntimeReadinessReport;
   databaseReadiness: BackendDatabaseReadinessReport;
   entrypoint: BackendServiceEntrypoint;
   migration: MigrationManifest;
@@ -119,6 +136,48 @@ export interface BackendServiceReadinessReport {
 
 export interface BackendPersistenceRuntimeReadinessReport extends ProductionPersistenceRuntimeContract {
   migrationGate: MigrationExecutionGate;
+}
+
+export interface BackendDatabaseAdapterRuntimeReadinessReport extends ProductionDatabaseAdapterRuntimeContract {
+  migrationHandoff: DatabaseMigrationExecutorHandoffSummary;
+}
+
+export interface BackendDatabaseAdapterRuntimeSummary {
+  connectionPool: {
+    configuredKeyCount: number;
+    diagnosticCodes: string[];
+    liveConnectionAttempted: false;
+    missingKeys: string[];
+    redactedFields: string[];
+    requiredKeys: string[];
+    safeLabel: string;
+    state: ConnectionPoolState;
+  };
+  connectionPoolState: ConnectionPoolState;
+  deferredDependencies: DatabaseAdapterDeferredDependency[];
+  deferredDependencyIds: string[];
+  diagnosticCodes: string[];
+  diagnostics: DatabaseAdapterRuntimeDiagnostic[];
+  driverId: string;
+  liveConnectionAttempted: false;
+  liveQueryExecutionEnabled: false;
+  migrationExecutor: MigrationExecutorHandoffSummary & {
+    handoffDiagnosticCodes: string[];
+    handoffDiagnostics: DatabaseMigrationExecutorHandoffSummary["diagnostics"];
+    handoffId: DatabaseMigrationExecutorHandoffSummary["id"];
+    handoffPreconditions: DatabaseMigrationExecutorHandoffSummary["preconditions"];
+    handoffStatus: DatabaseMigrationExecutorHandoffSummary["executorStatus"];
+    handoffValid: boolean;
+    migrationGateStatus: DatabaseMigrationExecutorHandoffSummary["migrationGateStatus"];
+  };
+  profileId: BackendConfigContract["profileId"];
+  providerId: string;
+  queryAdapter: DatabaseQueryAdapterSummary;
+  requiredStoreCount: number;
+  status: DatabaseAdapterRuntimeStatus;
+  stores: DatabaseAdapterRuntimeStore[];
+  transaction: DatabaseTransactionSummary;
+  valid: boolean;
 }
 
 export interface BackendPersistenceRuntimeSummary {
@@ -297,6 +356,7 @@ const createValidationIssues = ({
   attachMap,
   authSession,
   config,
+  databaseAdapterRuntime,
   databaseReadiness,
   entrypoint,
   migration,
@@ -309,6 +369,7 @@ const createValidationIssues = ({
   attachMap: readonly BackendAttachPoint[];
   authSession: AuthSessionReadinessReport;
   config: BackendConfigContract;
+  databaseAdapterRuntime: BackendDatabaseAdapterRuntimeReadinessReport;
   databaseReadiness: BackendDatabaseReadinessReport;
   entrypoint: BackendServiceEntrypoint;
   migration: MigrationManifest;
@@ -336,6 +397,14 @@ const createValidationIssues = ({
       "DATABASE_READINESS_BLOCKED",
       "databaseReadiness",
       "Production database or migration readiness validation failed.",
+    ));
+  }
+
+  if (!databaseAdapterRuntime.valid || !databaseAdapterRuntime.migrationHandoff.valid) {
+    issues.push(errorDiagnostic(
+      "DATABASE_READINESS_BLOCKED",
+      "databaseAdapterRuntime",
+      "Production database adapter runtime validation failed.",
     ));
   }
 
@@ -459,6 +528,47 @@ export const createBackendPersistenceRuntimeSummary = (
   valid: runtime.valid,
 });
 
+export const createBackendDatabaseAdapterRuntimeSummary = (
+  runtime: BackendDatabaseAdapterRuntimeReadinessReport,
+): BackendDatabaseAdapterRuntimeSummary => ({
+  connectionPool: {
+    configuredKeyCount: runtime.connectionPool.configuredKeyCount,
+    diagnosticCodes: runtime.connectionPool.diagnosticCodes,
+    liveConnectionAttempted: runtime.connectionPool.liveConnectionAttempted,
+    missingKeys: runtime.connectionPool.missingKeys,
+    redactedFields: runtime.connectionPool.redactedFields,
+    requiredKeys: runtime.connectionPool.requiredKeys,
+    safeLabel: runtime.connectionPool.safeLabel,
+    state: runtime.connectionPool.state,
+  },
+  connectionPoolState: runtime.connectionPool.state,
+  deferredDependencies: runtime.deferredDependencies,
+  deferredDependencyIds: runtime.deferredDependencies.map((dependency) => dependency.id),
+  diagnosticCodes: runtime.diagnostics.map((diagnostic) => diagnostic.code),
+  diagnostics: runtime.diagnostics,
+  driverId: runtime.driverId,
+  liveConnectionAttempted: runtime.liveConnectionAttempted,
+  liveQueryExecutionEnabled: runtime.liveQueryExecutionEnabled,
+  migrationExecutor: {
+    ...runtime.migrationExecutor,
+    handoffDiagnosticCodes: runtime.migrationHandoff.diagnosticCodes,
+    handoffDiagnostics: runtime.migrationHandoff.diagnostics,
+    handoffId: runtime.migrationHandoff.id,
+    handoffPreconditions: runtime.migrationHandoff.preconditions,
+    handoffStatus: runtime.migrationHandoff.executorStatus,
+    handoffValid: runtime.migrationHandoff.valid,
+    migrationGateStatus: runtime.migrationHandoff.migrationGateStatus,
+  },
+  profileId: runtime.profileId,
+  providerId: runtime.providerId,
+  queryAdapter: runtime.queryAdapter,
+  requiredStoreCount: runtime.stores.filter((store) => store.required).length,
+  status: runtime.status,
+  stores: runtime.stores,
+  transaction: runtime.transaction,
+  valid: runtime.valid && runtime.migrationHandoff.valid,
+});
+
 export const createBackendServiceReadinessReport = ({
   configOptions,
   generatedAt = new Date(0).toISOString(),
@@ -489,6 +599,18 @@ export const createBackendServiceReadinessReport = ({
     }),
     migrationGate: migration.executionGate,
   };
+  const databaseAdapterRuntimeContract = createProductionDatabaseAdapterRuntimeContract({
+    ...configOptions,
+    env,
+  });
+  const databaseAdapterRuntime: BackendDatabaseAdapterRuntimeReadinessReport = {
+    ...databaseAdapterRuntimeContract,
+    migrationHandoff: createDatabaseMigrationExecutorHandoff({
+      adapterRuntime: databaseAdapterRuntimeContract,
+      migrationGate: migration.executionGate,
+      profileId: config.profileId,
+    }),
+  };
   const databaseReadiness = createDatabaseReadinessReport({
     migration,
     profileId: config.profileId,
@@ -515,6 +637,7 @@ export const createBackendServiceReadinessReport = ({
     attachMap: backendAttachMap,
     authSession,
     config,
+    databaseAdapterRuntime,
     databaseReadiness,
     entrypoint,
     migration,
@@ -533,6 +656,7 @@ export const createBackendServiceReadinessReport = ({
     attachMap: backendAttachMap,
     authSession,
     config,
+    databaseAdapterRuntime,
     databaseReadiness,
     entrypoint,
     migration,
