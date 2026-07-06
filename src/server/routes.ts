@@ -1,0 +1,192 @@
+import { requiredApiSkillIds } from "../domain/apiSkillContracts";
+import type { ApiSkillId, LocalizedText } from "../domain/types";
+import type { ApiRuntimeContractCoverage, ApiRuntimeRouteContract } from "./contracts";
+import { runtimeBoundary } from "./envelope";
+
+const text = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": zhTW,
+});
+
+const route = (contract: ApiRuntimeRouteContract): ApiRuntimeRouteContract => contract;
+
+const boundary = runtimeBoundary;
+
+export const apiRuntimeRoutes = [
+  route({
+    apiGroup: "runtime",
+    boundary,
+    id: "runtime.health",
+    method: "GET",
+    path: "/api/health",
+    readiness: "ready",
+    riskLevel: "low",
+    summary: text("Local runtime health and safety flags.", "本地 runtime 健康状态与安全边界。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "runtime",
+    boundary,
+    id: "runtime.contracts",
+    method: "GET",
+    path: "/api/contracts",
+    readiness: "ready",
+    riskLevel: "low",
+    summary: text("Local route catalog and API skill coverage.", "本地 route catalog 与 API Skill 覆盖。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "service_registry",
+    boundary,
+    id: "runtime.services",
+    method: "GET",
+    path: "/api/services",
+    readiness: "local_only",
+    riskLevel: "medium",
+    summary: text("External service registry readiness.", "外部服务 registry readiness。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "wallet_session",
+    apiSkillId: "create_wallet_session",
+    boundary,
+    id: "wallet.session.create",
+    method: "POST",
+    path: "/api/wallet/session",
+    readiness: "local_only",
+    riskLevel: "medium",
+    summary: text("Create a normalized local wallet session.", "创建本地归一化钱包会话。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "campaign_discovery",
+    apiSkillId: "list_campaigns",
+    boundary,
+    id: "campaigns.list",
+    method: "GET",
+    path: "/api/campaigns",
+    readiness: "local_only",
+    riskLevel: "medium",
+    summary: text("List seeded Campaign OS campaigns.", "列出 seeded Campaign OS 活动。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "campaign_creation",
+    apiSkillId: "create_campaign",
+    boundary,
+    id: "campaigns.create",
+    method: "POST",
+    path: "/api/campaigns",
+    readiness: "local_only",
+    riskLevel: "medium",
+    summary: text("Create a local campaign draft.", "创建本地活动草稿。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "campaign_discovery",
+    apiSkillId: "get_campaign_detail",
+    boundary,
+    id: "campaigns.detail",
+    method: "GET",
+    path: "/api/campaigns/:campaignId",
+    readiness: "local_only",
+    riskLevel: "medium",
+    summary: text("Get seeded campaign detail.", "获取 seeded 活动详情。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "task_generation",
+    apiSkillId: "add_campaign_task",
+    boundary,
+    id: "campaigns.tasks.add",
+    method: "POST",
+    path: "/api/campaigns/:campaignId/tasks",
+    readiness: "local_only",
+    riskLevel: "medium",
+    summary: text("Add a local campaign task draft.", "添加本地活动任务草稿。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "task_verification",
+    apiSkillId: "verify_task",
+    boundary,
+    id: "tasks.verify",
+    method: "POST",
+    path: "/api/tasks/:taskId/verify",
+    readiness: "review_required",
+    riskLevel: "high",
+    summary: text("Verify seeded task evidence locally.", "本地验证 seeded 任务 evidence。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "eligibility",
+    apiSkillId: "check_eligibility",
+    boundary,
+    id: "campaigns.eligibility",
+    method: "GET",
+    path: "/api/campaigns/:campaignId/eligibility",
+    readiness: "local_only",
+    riskLevel: "medium",
+    summary: text("Check local campaign eligibility.", "检查本地活动资格。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "analytics",
+    apiSkillId: "get_campaign_analytics",
+    boundary,
+    id: "campaigns.analytics",
+    method: "GET",
+    path: "/api/campaigns/:campaignId/analytics",
+    readiness: "ready",
+    riskLevel: "low",
+    summary: text("Get local campaign analytics summary.", "获取本地活动 analytics 汇总。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "content_generation",
+    apiSkillId: "generate_i18n_draft",
+    boundary,
+    id: "campaigns.i18n.generate",
+    method: "POST",
+    path: "/api/campaigns/:campaignId/i18n/generate",
+    readiness: "local_only",
+    riskLevel: "medium",
+    summary: text("Generate local i18n draft for human review.", "生成人工审核用本地 i18n 草稿。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "export",
+    apiSkillId: "export_winners",
+    boundary,
+    id: "campaigns.export.preview",
+    method: "POST",
+    path: "/api/campaigns/:campaignId/export",
+    readiness: "review_required",
+    riskLevel: "high",
+    summary: text("Preview local winners export.", "预览本地 winners 导出。"),
+    supportMode: "local_seeded",
+  }),
+] as const satisfies readonly ApiRuntimeRouteContract[];
+
+export type ApiRuntimeRouteId = (typeof apiRuntimeRoutes)[number]["id"];
+
+export const apiRuntimeRouteById = Object.fromEntries(
+  apiRuntimeRoutes.map((runtimeRoute) => [runtimeRoute.id, runtimeRoute]),
+) as Record<ApiRuntimeRouteId, ApiRuntimeRouteContract>;
+
+export const createApiRuntimeContractCoverage = (): ApiRuntimeContractCoverage => {
+  const coveredSkillIdSet = new Set(
+    apiRuntimeRoutes
+      .map((runtimeRoute) => runtimeRoute.apiSkillId)
+      .filter((skillId): skillId is ApiSkillId => Boolean(skillId)),
+  );
+  const coveredSkillIds = requiredApiSkillIds.filter((skillId) => coveredSkillIdSet.has(skillId));
+
+  return {
+    coveredSkillIds,
+    deferredSkillIds: requiredApiSkillIds.filter((skillId) => !coveredSkillIdSet.has(skillId)),
+    routeCount: apiRuntimeRoutes.length,
+    routeIds: apiRuntimeRoutes.map((runtimeRoute) => runtimeRoute.id),
+  };
+};
