@@ -395,13 +395,18 @@ describe("Admin/Ops shell", () => {
       exact: true,
     })).not.toBeInTheDocument();
     expect(
-      within(residualGapMissionQueue).getByText("Contract claim Reward Custody Approval Readiness mission"),
-    ).toBeInTheDocument();
+      within(residualGapMissionQueue).queryByText("Contract claim Reward Custody Approval Readiness mission"),
+    ).not.toBeInTheDocument();
     expect(
-      within(residualGapMissionQueue).getByText("mission/158-contract-claim-reward-custody-approval-readiness"),
-    ).toBeInTheDocument();
-    expect(within(residualGapMissionQueue).getByText(/Reward Custody Approval Readiness is present but blocked/)).toBeInTheDocument();
-    expect(within(residualGapMissionQueue).getByText(/top item custody-model/)).toBeInTheDocument();
+      within(residualGapMissionQueue).queryByText("mission/158-contract-claim-reward-custody-approval-readiness"),
+    ).not.toBeInTheDocument();
+    expect(within(residualGapMissionQueue).queryByText(/Reward Custody Approval Readiness is present but blocked/)).not.toBeInTheDocument();
+    expect(within(residualGapMissionQueue).queryByText(/top item custody-model/)).not.toBeInTheDocument();
+    expect(
+      within(residualGapMissionQueue).getAllByText("No residual mission is currently prioritized.").length,
+    ).toBeGreaterThan(0);
+    expect(within(residualGapMissionQueue).getByText("0 Total items")).toBeInTheDocument();
+    expect(within(residualGapMissionQueue).getByText("0 Launch-blocking items")).toBeInTheDocument();
     expect(within(residualGapMissionQueue).queryByText("mission/p1-locale-expansion")).not.toBeInTheDocument();
     expect(within(residualGapMissionQueue).getAllByText("Backlog items").length).toBeGreaterThan(0);
     expect(within(residualGapMissionQueue).getAllByText("Launch-blocking items").length).toBeGreaterThan(0);
@@ -2123,12 +2128,15 @@ describe("Admin/Ops shell", () => {
     expect(within(zhResidualGapMissionQueue).queryByText("mission/contract-claim-reward-custody", {
       exact: true,
     })).not.toBeInTheDocument();
-    expect(within(zhResidualGapMissionQueue).getByText("合约领取奖励托管批准 Readiness mission")).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).queryByText("合约领取奖励托管批准 Readiness mission")).not.toBeInTheDocument();
     expect(
-      within(zhResidualGapMissionQueue).getByText("mission/158-contract-claim-reward-custody-approval-readiness"),
-    ).toBeInTheDocument();
-    expect(within(zhResidualGapMissionQueue).getByText(/奖励托管批准 Readiness 已存在但仍阻断/)).toBeInTheDocument();
-    expect(within(zhResidualGapMissionQueue).getByText(/top item custody-model/)).toBeInTheDocument();
+      within(zhResidualGapMissionQueue).queryByText("mission/158-contract-claim-reward-custody-approval-readiness"),
+    ).not.toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).queryByText(/奖励托管批准 Readiness 已存在但仍阻断/)).not.toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).queryByText(/top item custody-model/)).not.toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getAllByText("当前没有优先 residual mission。").length).toBeGreaterThan(0);
+    expect(within(zhResidualGapMissionQueue).getByText("0 总条目")).toBeInTheDocument();
+    expect(within(zhResidualGapMissionQueue).getByText("0 上线阻断条目")).toBeInTheDocument();
     expect(within(zhResidualGapMissionQueue).queryByText("mission/p1-locale-expansion")).not.toBeInTheDocument();
     expect(within(zhResidualGapMissionQueue).getAllByText("Backlog 条目").length).toBeGreaterThan(0);
     expect(within(zhResidualGapMissionQueue).getAllByText("上线阻断条目").length).toBeGreaterThan(0);
