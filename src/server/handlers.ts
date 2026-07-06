@@ -22,6 +22,7 @@ import {
 } from "../domain/serviceRegistry";
 import type { ApiRuntimeRouteId } from "./routes";
 import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
+import { createBackendTopologyReport } from "./topology";
 import { createRuntimeSafety } from "./envelope";
 import {
   invalidCampaign,
@@ -231,6 +232,9 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     const coverage = context.service.getCoverageSummary();
     const services = createServiceDegradationGovernance();
     const persistence = await context.repository.health();
+    const topology = createBackendTopologyReport({
+      knownRouteIds: apiRuntimeRoutes.map((route) => route.id),
+    });
 
     return {
       boundary: coverage.boundary,
@@ -251,11 +255,19 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         : undefined,
       serviceRegistry: services.summary,
       status: "ok",
+      topology: {
+        coverage: topology.coverage,
+        profileReadiness: topology.profileReadiness,
+        validation: topology.validation,
+      },
       version: context.version,
     };
   },
   "runtime.contracts": async (context) => {
     const persistence = await context.repository.health();
+    const topology = createBackendTopologyReport({
+      knownRouteIds: apiRuntimeRoutes.map((route) => route.id),
+    });
 
     return {
       apiSkillContracts: apiSkillContractRegistry,
@@ -268,6 +280,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       },
       routes: apiRuntimeRoutes,
       serviceGroups: apiRuntimeServiceGroups,
+      topology,
     };
   },
   "runtime.services": () => {

@@ -218,6 +218,22 @@ describe("Campaign OS API runtime", () => {
         totalServices: expect.any(Number),
       }),
       status: "ok",
+      topology: expect.objectContaining({
+        coverage: expect.objectContaining({
+          invalidReferenceCount: 0,
+          serviceCount: 13,
+          unassignedRouteIds: [],
+        }),
+        profileReadiness: expect.objectContaining({
+          "local-review": expect.objectContaining({
+            externalNetworkAllowed: false,
+            secretRequired: false,
+          }),
+        }),
+        validation: expect.objectContaining({
+          valid: true,
+        }),
+      }),
     });
     expect(contractData).toMatchObject({
       capabilities: expect.objectContaining({
@@ -243,6 +259,17 @@ describe("Campaign OS API runtime", () => {
       serviceGroups: expect.arrayContaining([
         expect.objectContaining({ id: "export", deferredDependencies: expect.arrayContaining(["contract_writer"]) }),
       ]),
+      topology: expect.objectContaining({
+        deploymentUnits: expect.arrayContaining([
+          expect.objectContaining({ id: "api-runtime", productionTarget: "api_service" }),
+        ]),
+        services: expect.arrayContaining([
+          expect.objectContaining({
+            id: "campaign-service",
+            routeIds: expect.arrayContaining(["campaigns.list", "campaigns.create", "campaigns.detail"]),
+          }),
+        ]),
+      }),
     });
     expect(serviceData).toMatchObject({
       summary: expect.objectContaining({
