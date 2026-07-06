@@ -53,6 +53,13 @@ describe("production persistence runtime", () => {
       mode: "none",
       supported: false,
     });
+    expect(contract.queryCapability).toMatchObject({
+      adHocRawSqlEnabled: false,
+      liveQueryExecutionEnabled: false,
+      parameterizedQueries: true,
+      repositoryContractCount: expect.any(Number),
+      transactionMode: "none",
+    });
     expect(contract.deferredDependencies.map((dependency) => dependency.id)).toEqual(
       productionPersistenceDeferredDependencies.map((dependency) => dependency.id),
     );
@@ -70,6 +77,11 @@ describe("production persistence runtime", () => {
     expect(contract.activeDriverId).toBe("campaign-os-production-db-adapter");
     expect(contract.adapterKind).toBe("production_deferred");
     expect(contract.connection.missingKeys).toContain("CAMPAIGN_OS_DATABASE_URL");
+    expect(contract.queryCapability).toMatchObject({
+      adHocRawSqlEnabled: false,
+      liveQueryExecutionEnabled: false,
+      transactionMode: "deferred_live",
+    });
     expect(contract.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

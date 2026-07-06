@@ -24,9 +24,16 @@ describe("persistence adapter port", () => {
     expect(report.adapters).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          queryCapability: {
+            adHocRawSqlEnabled: false,
+            liveQueryExecutionEnabled: false,
+            parameterizedQueries: true,
+            transactionMode: "deterministic_test",
+          },
           id: "campaign-os-production-db-adapter",
           kind: "production_deferred",
           ownerStores: productionDatabaseRequiredStoreIds,
+          repositoryContractCount: expect.any(Number),
           requiresConnectionString: true,
           requiresMigrationRunner: true,
           schemaVersion: "v0.2.0",
@@ -45,6 +52,12 @@ describe("persistence adapter port", () => {
       id: "campaign-os-deterministic-test-adapter",
       kind: "deterministic_test",
       localOnly: true,
+      queryCapability: {
+        adHocRawSqlEnabled: false,
+        liveQueryExecutionEnabled: false,
+        parameterizedQueries: true,
+        transactionMode: "deterministic_test",
+      },
       status: "active",
     });
     expect(report.validation.valid).toBe(true);

@@ -3,7 +3,9 @@ import {
   DeterministicDatabaseDriver,
   createDatabaseQueryAdapterSummary,
   databaseStoreMappings,
+  repositoryOperationContracts,
   validateDatabaseStoreMappings,
+  validateRepositoryOperationContracts,
   type DatabaseStoreMapping,
 } from "./databaseQueryAdapterPort";
 import { productionDatabaseRequiredStoreIds } from "./productionDatabase";
@@ -26,6 +28,47 @@ describe("database query adapter port", () => {
       expect(mapping.required).toBe(true);
       expect(mapping.schemaVersion).toMatch(/^v\d+\.\d+\.\d+$/);
       expect(mapping.tableNamespace).toBe(mapping.id.replace(/-/g, "_"));
+    }
+  });
+
+  it("maps required v0.2 entities to repository operation contracts", () => {
+    const contractByEntity = new Map(
+      repositoryOperationContracts.map((contract) => [contract.entity, contract]),
+    );
+
+    expect(validateRepositoryOperationContracts()).toEqual([]);
+    expect(contractByEntity.get("Campaign")).toMatchObject({
+      ownerServiceId: "campaign-service",
+      storeId: "campaign-db",
+    });
+    expect(contractByEntity.get("NormalizedWalletSession")).toMatchObject({
+      ownerServiceId: "wallet-session-service",
+      storeId: "wallet-session-db",
+    });
+    expect(contractByEntity.get("TaskCompletion")).toMatchObject({
+      ownerServiceId: "verification-service",
+      storeId: "task-evidence-db",
+    });
+    expect(contractByEntity.get("I18nContentRevision")).toMatchObject({
+      ownerServiceId: "i18n-content-service",
+      storeId: "i18n-content-db",
+    });
+    expect(contractByEntity.get("RiskEvent")).toMatchObject({
+      ownerServiceId: "risk-intelligence-service",
+      storeId: "risk-event-db",
+    });
+    expect(contractByEntity.get("PointsLedgerEntry")).toMatchObject({
+      ownerServiceId: "points-ranking-service",
+      storeId: "points-ledger",
+    });
+
+    for (const contract of repositoryOperationContracts) {
+      expect(contract.operations).toEqual(
+        expect.arrayContaining(["read", "write"]),
+      );
+      expect(contract.operations.length).toBeGreaterThan(0);
+      expect(contract.rawSqlAllowed).toBe(false);
+      expect(productionDatabaseRequiredStoreIds).toContain(contract.storeId);
     }
   });
 
@@ -77,12 +120,16 @@ describe("database query adapter port", () => {
     const summary = createDatabaseQueryAdapterSummary();
 
     expect(summary).toMatchObject({
+      adHocRawSqlEnabled: false,
       deterministicTestMode: true,
       driverId: "campaign-os-deterministic-test-driver",
       id: "campaign-os-database-query-adapter-port",
       liveQueryExecutionEnabled: false,
       mappedStoreCount: productionDatabaseRequiredStoreIds.length,
+      parameterizedQueries: true,
+      repositoryContractCount: repositoryOperationContracts.length,
       supportedStoreIds: productionDatabaseRequiredStoreIds,
+      transactionMode: "deterministic_test",
     });
     expect(summary.capabilities).toEqual(["read", "write", "transaction", "migration_plan"]);
   });

@@ -9,6 +9,10 @@ import {
   type PersistenceDriverSideEffectPolicy,
 } from "./persistenceDriverRegistry";
 import {
+  createDatabaseQueryAdapterSummary,
+  type DatabaseQueryAdapterSummary,
+} from "./databaseQueryAdapterPort";
+import {
   createProductionDatabaseAdapterContract,
   productionDatabaseStoreRegistry,
 } from "./productionDatabase";
@@ -64,6 +68,14 @@ export interface PersistenceAdapterPort {
   label: string;
   localOnly: boolean;
   ownerStores: BackendStoreId[];
+  queryCapability?: Pick<
+    DatabaseQueryAdapterSummary,
+    | "adHocRawSqlEnabled"
+    | "liveQueryExecutionEnabled"
+    | "parameterizedQueries"
+    | "transactionMode"
+  >;
+  repositoryContractCount?: number;
   requiresConnectionString: boolean;
   requiresMigrationGate?: boolean;
   requiresMigrationRunner: boolean;
@@ -218,6 +230,20 @@ const productionDeferredDiagnostic: PersistenceAdapterDiagnostic = {
   severity: "warning",
 };
 
+const queryCapabilitySummary = (transactionMode: DatabaseQueryAdapterSummary["transactionMode"]) => {
+  const summary = createDatabaseQueryAdapterSummary({ transactionMode });
+
+  return {
+    queryCapability: {
+      adHocRawSqlEnabled: summary.adHocRawSqlEnabled,
+      liveQueryExecutionEnabled: summary.liveQueryExecutionEnabled,
+      parameterizedQueries: summary.parameterizedQueries,
+      transactionMode: summary.transactionMode,
+    },
+    repositoryContractCount: summary.repositoryContractCount,
+  };
+};
+
 export const createPersistenceAdapterPortReport = ({
   activeDriverId,
   persistenceMode = "memory",
@@ -298,6 +324,7 @@ export const createPersistenceAdapterPortReport = ({
     label: "Campaign OS deterministic test adapter",
     localOnly: true,
     ownerStores: storesForAdapter("campaign-os-production-db-adapter"),
+    ...queryCapabilitySummary("deterministic_test"),
     requiresConnectionString: false,
     requiresMigrationRunner: false,
     status: driverStatus("campaign-os-deterministic-test-adapter", "local_only"),
@@ -319,6 +346,7 @@ export const createPersistenceAdapterPortReport = ({
     label: productionDatabaseContract.label,
     localOnly: productionDatabaseContract.localReviewOnly,
     ownerStores: [...productionDatabaseContract.ownerStores],
+    ...queryCapabilitySummary("deterministic_test"),
     requiresConnectionString: productionDatabaseContract.requiresConnectionString,
     requiresMigrationGate: driverById[productionDatabaseContract.id]?.requiresMigrationGate,
     requiresMigrationRunner: productionDatabaseContract.requiresMigrationRunner,

@@ -1,5 +1,9 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import {
+  createDatabaseQueryAdapterSummary,
+  type DatabaseQueryAdapterSummary,
+} from "./databaseQueryAdapterPort";
+import {
   resolveBackendConfigContract,
   sanitizeBackendConfigDiagnosticValue,
   type BackendConfigContractOptions,
@@ -78,6 +82,15 @@ export interface ProductionPersistenceRuntimeContract {
   id: "campaign-os-production-persistence-runtime";
   liveConnectionAttempted: false;
   profileId: BackendRuntimeProfileId;
+  queryCapability: Pick<
+    DatabaseQueryAdapterSummary,
+    | "adHocRawSqlEnabled"
+    | "liveQueryExecutionEnabled"
+    | "parameterizedQueries"
+    | "repositoryContractCount"
+  > & {
+    transactionMode: TransactionCapabilityMode;
+  };
   requestedDriverId?: string;
   schemaVersion: "v0.2.0";
   status: ProductionPersistenceRuntimeStatus;
@@ -412,6 +425,25 @@ const createTransactionSummary = (
   };
 };
 
+const createQueryCapabilitySummary = (
+  transactionMode: TransactionCapabilityMode,
+): ProductionPersistenceRuntimeContract["queryCapability"] => {
+  const summary = createDatabaseQueryAdapterSummary({
+    transactionMode:
+      transactionMode === "deterministic_test" || transactionMode === "deferred_live"
+        ? transactionMode
+        : "deterministic_test",
+  });
+
+  return {
+    adHocRawSqlEnabled: summary.adHocRawSqlEnabled,
+    liveQueryExecutionEnabled: summary.liveQueryExecutionEnabled,
+    parameterizedQueries: summary.parameterizedQueries,
+    repositoryContractCount: summary.repositoryContractCount,
+    transactionMode,
+  };
+};
+
 export const createProductionPersistenceRuntimeContract = ({
   env = typeof process === "undefined" ? {} : process.env,
   requestedDriverId,
@@ -439,6 +471,7 @@ export const createProductionPersistenceRuntimeContract = ({
     adapterKind: driver.adapterKind,
     diagnostics,
   });
+  const transaction = createTransactionSummary(driver.adapterKind);
 
   return {
     activeDriverId: driver.activeDriverId,
@@ -449,12 +482,13 @@ export const createProductionPersistenceRuntimeContract = ({
     id: "campaign-os-production-persistence-runtime",
     liveConnectionAttempted: false,
     profileId: backendConfig.profileId,
+    queryCapability: createQueryCapabilitySummary(transaction.mode),
     requestedDriverId: safeRequestedDriverId,
     schemaVersion: "v0.2.0",
     status,
     stores: requiredStoreCoverages,
     supportMode: backendConfig.profile.supportMode,
-    transaction: createTransactionSummary(driver.adapterKind),
+    transaction,
     valid: !diagnostics.some((diagnostic) => diagnostic.severity === "error"),
   };
 };
