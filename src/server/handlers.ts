@@ -312,12 +312,33 @@ const backendMigrationManifestSummary = (report: BackendServiceReadinessReport) 
   valid: report.migration.validation.valid,
 });
 
+const createBackendRuntimeBootstrapMetadata = (
+  report: BackendServiceReadinessReport,
+) => ({
+  deferredDependencyIds: report.backendRuntimeBootstrap.deferredDependencyIds,
+  diagnosticCodes: report.backendRuntimeBootstrap.diagnosticCodes,
+  diagnostics: report.backendRuntimeBootstrap.diagnostics,
+  id: report.backendRuntimeBootstrap.id,
+  profileId: report.backendRuntimeBootstrap.profileId,
+  readiness: report.backendRuntimeBootstrap.readiness,
+  requestGuard: report.backendRuntimeBootstrap.requestGuard,
+  runtimeVersion: report.backendRuntimeBootstrap.runtimeVersion,
+  shutdown: report.backendRuntimeBootstrap.shutdown,
+  startup: report.backendRuntimeBootstrap.startup,
+  status: report.backendRuntimeBootstrap.status,
+  supportMode: report.backendRuntimeBootstrap.supportMode,
+  tracePolicy: report.backendRuntimeBootstrap.tracePolicy,
+  uptimeMs: report.backendRuntimeBootstrap.uptimeMs,
+  valid: report.backendRuntimeBootstrap.valid,
+});
+
 const createBackendServiceHealthMetadata = (
   report: BackendServiceReadinessReport,
   traceId: string,
 ) => ({
   adapterStatus: report.persistenceAdapters.activeAdapter.status,
   apiFoundationValidationIssueCount: report.apiFoundation.validation.issues.length,
+  backendRuntimeBootstrap: createBackendRuntimeBootstrapMetadata(report),
   entrypoint: backendServiceEntrypointMetadata(report),
   entrypointId: report.entrypoint.id,
   databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime),
@@ -343,6 +364,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
     currentStatus: attachPoint.currentStatus,
     requiredBeforeProduction: attachPoint.requiredBeforeProduction,
   })),
+  backendRuntimeBootstrap: createBackendRuntimeBootstrapMetadata(report),
   configContract: backendConfigContractSummary(report),
   databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime),
   deferredProductionCapabilities: report.profile.deferredCapabilities,
@@ -363,6 +385,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
       "entrypoint",
       "profile",
       "config",
+      "backendRuntimeBootstrap",
       "databaseAdapterRuntime",
       "persistenceAdapters",
       "persistenceRuntime",
