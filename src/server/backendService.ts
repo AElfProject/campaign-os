@@ -11,6 +11,7 @@ import {
   createMigrationManifest,
   type MigrationManifest,
 } from "./migrationManifest";
+import type { MigrationExecutionGate } from "./migrationExecutionGate";
 import {
   createPersistenceAdapterPortReport,
   type PersistenceAdapterPortReport,
@@ -22,6 +23,17 @@ import {
   type ProductionDatabaseStoreRegistryEntry,
 } from "./productionDatabase";
 import type { MigrationRunnerPlan } from "./migrationRunner";
+import {
+  createProductionPersistenceRuntimeContract,
+  type ConnectionConfigState,
+  type DeferredPersistenceDependency,
+  type ProductionPersistenceAdapterKind,
+  type ProductionPersistenceRuntimeDiagnostic,
+  type ProductionPersistenceRuntimeContract,
+  type ProductionPersistenceRuntimeStatus,
+  type ProductionPersistenceStoreCoverage,
+  type TransactionCapabilitySummary,
+} from "./persistenceRuntime";
 import {
   createAuthSessionReadinessReport,
   type AuthSessionReadinessReport,
@@ -91,6 +103,7 @@ export interface BackendServiceReadinessReport {
   databaseReadiness: BackendDatabaseReadinessReport;
   entrypoint: BackendServiceEntrypoint;
   migration: MigrationManifest;
+  persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   persistenceAdapters: PersistenceAdapterPortReport;
   profile: BackendConfigContract["profile"];
   topology: {
@@ -102,6 +115,52 @@ export interface BackendServiceReadinessReport {
     issues: BackendReadinessDiagnostic[];
     valid: boolean;
   };
+}
+
+export interface BackendPersistenceRuntimeReadinessReport extends ProductionPersistenceRuntimeContract {
+  migrationGate: MigrationExecutionGate;
+}
+
+export interface BackendPersistenceRuntimeSummary {
+  activeDriverId: string;
+  adapterKind: ProductionPersistenceAdapterKind;
+  connection: {
+    configuredKeyCount: number;
+    missingKeys: string[];
+    redactedFields: string[];
+    requiredKeys: string[];
+    safeLabel: string;
+    state: ConnectionConfigState;
+  };
+  connectionState: ConnectionConfigState;
+  deferredDependencies: DeferredPersistenceDependency[];
+  deferredDependencyIds: string[];
+  diagnosticCodes: string[];
+  diagnostics: ProductionPersistenceRuntimeDiagnostic[];
+  liveConnectionAttempted: false;
+  liveExecutionEnabled: false;
+  migrationGate: {
+    approval: MigrationExecutionGate["approval"];
+    blockedMigrationIds: string[];
+    diagnosticCodes: string[];
+    diagnostics: MigrationExecutionGate["diagnostics"];
+    liveExecutionCount: 0;
+    liveExecutionEnabled: false;
+    mode: MigrationExecutionGate["mode"];
+    pendingMigrationIds: string[];
+    preconditions: MigrationExecutionGate["preconditions"];
+    status: MigrationExecutionGate["status"];
+  };
+  migrationGateMode: MigrationExecutionGate["mode"];
+  migrationGateStatus: MigrationExecutionGate["status"];
+  profileId: BackendConfigContract["profileId"];
+  requestedDriverId?: string;
+  requiredStoreCount: number;
+  status: ProductionPersistenceRuntimeStatus;
+  stores: ProductionPersistenceStoreCoverage[];
+  supportMode: string;
+  transaction: TransactionCapabilitySummary;
+  valid: boolean;
 }
 
 export interface BackendDatabaseReadinessReport {
@@ -242,6 +301,7 @@ const createValidationIssues = ({
   entrypoint,
   migration,
   persistenceAdapters,
+  persistenceRuntime,
   servicePorts,
   topology,
 }: {
@@ -253,6 +313,7 @@ const createValidationIssues = ({
   entrypoint: BackendServiceEntrypoint;
   migration: MigrationManifest;
   persistenceAdapters: PersistenceAdapterPortReport;
+  persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   servicePorts: ApiServicePortReport;
   topology: BackendTopologyReport;
 }): BackendReadinessDiagnostic[] => {
@@ -281,6 +342,16 @@ const createValidationIssues = ({
   if (!persistenceAdapters.validation.valid) {
     issues.push(
       errorDiagnostic("PERSISTENCE_ADAPTER_INVALID", "persistenceAdapters", "Persistence adapter port validation failed."),
+    );
+  }
+
+  if (!persistenceRuntime.valid || persistenceRuntime.migrationGate.status === "blocked") {
+    issues.push(
+      errorDiagnostic(
+        "PERSISTENCE_ADAPTER_INVALID",
+        "persistenceRuntime",
+        "Production persistence runtime validation failed.",
+      ),
     );
   }
 
@@ -344,6 +415,50 @@ const createDatabaseReadinessReport = ({
   };
 };
 
+export const createBackendPersistenceRuntimeSummary = (
+  runtime: BackendPersistenceRuntimeReadinessReport,
+): BackendPersistenceRuntimeSummary => ({
+  activeDriverId: runtime.activeDriverId,
+  adapterKind: runtime.adapterKind,
+  connection: {
+    configuredKeyCount: runtime.connection.configuredKeys.length,
+    missingKeys: runtime.connection.missingKeys,
+    redactedFields: runtime.connection.redactedFields,
+    requiredKeys: runtime.connection.requiredKeys,
+    safeLabel: runtime.connection.safeLabel,
+    state: runtime.connection.state,
+  },
+  connectionState: runtime.connection.state,
+  deferredDependencies: runtime.deferredDependencies,
+  deferredDependencyIds: runtime.deferredDependencies.map((dependency) => dependency.id),
+  diagnosticCodes: runtime.diagnostics.map((diagnostic) => diagnostic.code),
+  diagnostics: runtime.diagnostics,
+  liveConnectionAttempted: runtime.liveConnectionAttempted,
+  liveExecutionEnabled: runtime.migrationGate.liveExecutionEnabled,
+  migrationGate: {
+    approval: runtime.migrationGate.approval,
+    blockedMigrationIds: runtime.migrationGate.blockedMigrationIds,
+    diagnosticCodes: runtime.migrationGate.diagnostics.map((diagnostic) => diagnostic.code),
+    diagnostics: runtime.migrationGate.diagnostics,
+    liveExecutionCount: runtime.migrationGate.liveExecutionCount,
+    liveExecutionEnabled: runtime.migrationGate.liveExecutionEnabled,
+    mode: runtime.migrationGate.mode,
+    pendingMigrationIds: runtime.migrationGate.pendingMigrationIds,
+    preconditions: runtime.migrationGate.preconditions,
+    status: runtime.migrationGate.status,
+  },
+  migrationGateMode: runtime.migrationGate.mode,
+  migrationGateStatus: runtime.migrationGate.status,
+  profileId: runtime.profileId,
+  requestedDriverId: runtime.requestedDriverId,
+  requiredStoreCount: runtime.stores.filter((store) => store.required).length,
+  status: runtime.status,
+  stores: runtime.stores,
+  supportMode: runtime.supportMode,
+  transaction: runtime.transaction,
+  valid: runtime.valid,
+});
+
 export const createBackendServiceReadinessReport = ({
   configOptions,
   generatedAt = new Date(0).toISOString(),
@@ -357,10 +472,23 @@ export const createBackendServiceReadinessReport = ({
     knownRouteIds: apiRuntimeRoutes.map((route) => route.id),
   });
   const persistenceAdapters = createPersistenceAdapterPortReport({
+    activeDriverId: config.productionPersistence.requestedDriverId,
     persistenceMode: config.persistenceMode,
     profileId: config.profileId,
   });
-  const migration = createMigrationManifest({ profileId: config.profileId });
+  const migration = createMigrationManifest({
+    env,
+    liveMigrationApproved: config.productionPersistence.liveMigrationApproval,
+    profileId: config.profileId,
+  });
+  const persistenceRuntime: BackendPersistenceRuntimeReadinessReport = {
+    ...createProductionPersistenceRuntimeContract({
+      ...configOptions,
+      env,
+      requestedDriverId: config.productionPersistence.requestedDriverId,
+    }),
+    migrationGate: migration.executionGate,
+  };
   const databaseReadiness = createDatabaseReadinessReport({
     migration,
     profileId: config.profileId,
@@ -391,6 +519,7 @@ export const createBackendServiceReadinessReport = ({
     entrypoint,
     migration,
     persistenceAdapters,
+    persistenceRuntime,
     servicePorts,
     topology,
   });
@@ -407,6 +536,7 @@ export const createBackendServiceReadinessReport = ({
     databaseReadiness,
     entrypoint,
     migration,
+    persistenceRuntime,
     persistenceAdapters,
     profile: config.profile,
     topology: {

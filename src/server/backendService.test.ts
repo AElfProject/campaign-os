@@ -114,6 +114,54 @@ describe("backend service readiness report", () => {
         valid: true,
       }),
     });
+    expect(report.persistenceRuntime).toMatchObject({
+      activeDriverId: "campaign-os-memory-adapter",
+      connection: expect.objectContaining({
+        state: "not_configured",
+      }),
+      deferredDependencies: expect.arrayContaining([
+        expect.objectContaining({
+          id: "db-provider-selection",
+          requiredBeforeProduction: true,
+          status: "deferred",
+        }),
+        expect.objectContaining({
+          id: "secret-manager",
+          requiredBeforeProduction: true,
+          status: "deferred",
+        }),
+        expect.objectContaining({
+          id: "object-storage-export",
+          requiredBeforeProduction: true,
+          status: "deferred",
+        }),
+        expect.objectContaining({
+          id: "analytics-warehouse",
+          requiredBeforeProduction: true,
+          status: "deferred",
+        }),
+      ]),
+      diagnostics: [],
+      liveConnectionAttempted: false,
+      migrationGate: expect.objectContaining({
+        diagnostics: [],
+        liveExecutionCount: 0,
+        liveExecutionEnabled: false,
+        mode: "dry_run_only",
+        status: "ready",
+      }),
+      profileId: "local-review",
+      status: "active_local",
+      stores: expect.arrayContaining([
+        expect.objectContaining({
+          id: "campaign-db",
+          required: true,
+          runtimeState: "covered",
+          schemaVersion: "v0.2.0",
+        }),
+      ]),
+      valid: true,
+    });
     expect(report.databaseReadiness.stores.map((store) => store.id)).toEqual([
       "campaign-db",
       "wallet-session-db",
@@ -179,6 +227,54 @@ describe("backend service readiness report", () => {
         valid: false,
       }),
     });
+    expect(report.persistenceRuntime).toMatchObject({
+      activeDriverId: "campaign-os-production-db-adapter",
+      adapterKind: "production_deferred",
+      connection: expect.objectContaining({
+        safeLabel: "[redacted]",
+        state: "configured_redacted",
+      }),
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: "PRODUCTION_PERSISTENCE_SECRET_REDACTED",
+          field: "CAMPAIGN_OS_DATABASE_URL",
+          severity: "info",
+        }),
+        expect.objectContaining({
+          code: "PRODUCTION_PERSISTENCE_LIVE_CONNECTION_DEFERRED",
+          field: "activeDriverId",
+          severity: "warning",
+        }),
+      ]),
+      liveConnectionAttempted: false,
+      migrationGate: expect.objectContaining({
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            code: "MIGRATION_EXECUTION_APPROVAL_MISSING",
+            field: "approval",
+            severity: "error",
+          }),
+          expect.objectContaining({
+            code: "MIGRATION_EXECUTION_DRIVER_DEFERRED",
+            field: "driver-package",
+            severity: "warning",
+          }),
+        ]),
+        liveExecutionCount: 0,
+        liveExecutionEnabled: false,
+        mode: "live_blocked",
+        status: "blocked",
+      }),
+      profileId: "production-required",
+      status: "boundary_ready",
+      stores: expect.arrayContaining([
+        expect.objectContaining({
+          id: "points-ledger",
+          required: true,
+          runtimeState: "covered",
+        }),
+      ]),
+    });
     expect(report.authSession).toMatchObject({
       profileId: "production-required",
       status: "blocked",
@@ -216,6 +312,14 @@ describe("backend service readiness report", () => {
         expect.objectContaining({
           code: "DATABASE_READINESS_BLOCKED",
           field: "databaseReadiness",
+        }),
+        expect.objectContaining({
+          code: "PERSISTENCE_ADAPTER_INVALID",
+          field: "persistenceRuntime",
+        }),
+        expect.objectContaining({
+          code: "MIGRATION_MANIFEST_INVALID",
+          field: "migration",
         }),
       ]),
     });

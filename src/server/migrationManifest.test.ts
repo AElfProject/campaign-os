@@ -23,6 +23,12 @@ describe("migration manifest", () => {
       liveExecutionEnabled: false,
       status: "dry_run_ready",
     });
+    expect(manifest.executionGate).toMatchObject({
+      liveExecutionCount: 0,
+      liveExecutionEnabled: false,
+      mode: "dry_run_only",
+      status: "ready",
+    });
     expect(manifest.migrations.map((migration) => migration.id)).toEqual(
       defaultSchemaMigrations.map((migration) => migration.id),
     );
@@ -55,6 +61,13 @@ describe("migration manifest", () => {
     expect(manifest.runnerStatus).toBe("deferred");
     expect(manifest.noMigrationRunner).toBe(false);
     expect(manifest.runnerPlan.status).toBe("blocked");
+    expect(manifest.executionGate).toMatchObject({
+      approval: "missing",
+      liveExecutionCount: 0,
+      liveExecutionEnabled: false,
+      mode: "live_blocked",
+      status: "blocked",
+    });
     expect(manifest.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

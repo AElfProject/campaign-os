@@ -1,4 +1,8 @@
-import type { BackendServiceReadinessReport } from "./backendService";
+import {
+  createBackendPersistenceRuntimeSummary,
+  type BackendPersistenceRuntimeSummary,
+  type BackendServiceReadinessReport,
+} from "./backendService";
 import type { ApiRuntimeEnvelope } from "./envelope";
 import type {
   ApiServerRuntimeContract,
@@ -49,6 +53,7 @@ export interface ServerRuntimeReadiness {
       migrationPlanStatus: string;
       valid: boolean;
     };
+    persistenceRuntime: BackendPersistenceRuntimeSummary;
   };
   requestGuard: {
     guardedFailureEnvelope: true;
@@ -142,6 +147,7 @@ export const createServerRuntimeReadiness = ({
         migrationPlanStatus: backendReadiness.databaseReadiness.migrationPlan.status,
         valid: backendReadiness.databaseReadiness.validation.valid,
       },
+      persistenceRuntime: createBackendPersistenceRuntimeSummary(backendReadiness.persistenceRuntime),
     },
     requestGuard: {
       guardedFailureEnvelope: true,
@@ -178,4 +184,3 @@ export const withServerRuntimeReadiness = <TPayload>(
     },
   };
 };
-
