@@ -79,6 +79,29 @@ describe("backend scaffold HTTP smoke", () => {
               requiredStoreCount: 6,
               valid: true,
             }),
+            databaseAdapterRuntime: expect.objectContaining({
+              connectionPool: expect.objectContaining({
+                configuredKeyCount: 0,
+                safeLabel: "not_configured",
+                state: "not_configured",
+              }),
+              driverId: "campaign-os-deterministic-test-driver",
+              liveConnectionAttempted: false,
+              liveQueryExecutionEnabled: false,
+              migrationExecutor: expect.objectContaining({
+                executorStatus: "not_configured",
+                handoffStatus: "not_configured",
+                handoffValid: true,
+                liveExecutionCount: 0,
+                liveExecutionEnabled: false,
+                migrationGateStatus: "ready",
+              }),
+              profileId: "local-review",
+              providerId: "campaign-os-deterministic-test-db",
+              requiredStoreCount: 6,
+              status: "active_local",
+              valid: true,
+            }),
             entrypointId: "campaign-os-backend-service",
             migrationRunnerStatus: "disabled_local_review",
             persistenceRuntime: expect.objectContaining({
@@ -126,6 +149,18 @@ describe("backend scaffold HTTP smoke", () => {
               database: expect.objectContaining({
                 adapterStatus: "contract_ready",
                 migrationPlanStatus: "dry_run_ready",
+                valid: true,
+              }),
+              databaseAdapterRuntime: expect.objectContaining({
+                liveConnectionAttempted: false,
+                liveQueryExecutionEnabled: false,
+                migrationExecutor: expect.objectContaining({
+                  liveExecutionCount: 0,
+                  liveExecutionEnabled: false,
+                  migrationGateStatus: "ready",
+                }),
+                profileId: "local-review",
+                status: "active_local",
                 valid: true,
               }),
               persistenceRuntime: expect.objectContaining({
@@ -211,6 +246,38 @@ describe("backend scaffold HTTP smoke", () => {
                 valid: true,
               }),
             }),
+            databaseAdapterRuntime: expect.objectContaining({
+              connectionPoolState: "not_configured",
+              deferredDependencies: expect.arrayContaining([
+                expect.objectContaining({
+                  id: "driver-package-selection",
+                  requiredBeforeProduction: true,
+                  status: "deferred",
+                }),
+                expect.objectContaining({
+                  id: "secret-manager",
+                  requiredBeforeProduction: true,
+                  status: "deferred",
+                }),
+              ]),
+              liveConnectionAttempted: false,
+              liveQueryExecutionEnabled: false,
+              migrationExecutor: expect.objectContaining({
+                liveExecutionCount: 0,
+                liveExecutionEnabled: false,
+                migrationGateStatus: "ready",
+              }),
+              profileId: "local-review",
+              status: "active_local",
+              stores: expect.arrayContaining([
+                expect.objectContaining({
+                  id: "campaign-db",
+                  adapterStatus: "mapped",
+                  required: true,
+                }),
+              ]),
+              valid: true,
+            }),
             persistenceRuntime: expect.objectContaining({
               activeDriverId: "campaign-os-memory-adapter",
               adapterKind: "memory",
@@ -255,7 +322,12 @@ describe("backend scaffold HTTP smoke", () => {
               "reward_distribution",
             ]),
             reportShape: expect.objectContaining({
-              sections: expect.arrayContaining(["authSession", "databaseReadiness", "persistenceRuntime"]),
+              sections: expect.arrayContaining([
+                "authSession",
+                "databaseAdapterRuntime",
+                "databaseReadiness",
+                "persistenceRuntime",
+              ]),
               valid: true,
             }),
           }),
@@ -360,6 +432,31 @@ describe("backend scaffold HTTP smoke", () => {
               migrationPlanStatus: "blocked",
               valid: false,
             }),
+            databaseAdapterRuntime: expect.objectContaining({
+              connectionPool: expect.objectContaining({
+                configuredKeyCount: 1,
+                safeLabel: "[redacted]",
+                state: "configured_redacted",
+              }),
+              diagnosticCodes: expect.arrayContaining([
+                "DATABASE_DRIVER_PRODUCTION_DEFERRED",
+                "DATABASE_ADAPTER_SECRET_REDACTED",
+                "DATABASE_ADAPTER_PRECONDITION_DEFERRED",
+              ]),
+              liveConnectionAttempted: false,
+              liveQueryExecutionEnabled: false,
+              migrationExecutor: expect.objectContaining({
+                executorStatus: "blocked",
+                handoffStatus: "blocked",
+                handoffValid: false,
+                liveExecutionCount: 0,
+                liveExecutionEnabled: false,
+                migrationGateStatus: "blocked",
+              }),
+              profileId: "production-required",
+              status: "blocked",
+              valid: false,
+            }),
             persistenceRuntime: expect.objectContaining({
               activeDriverId: "campaign-os-production-db-adapter",
               adapterKind: "production_deferred",
@@ -404,6 +501,18 @@ describe("backend scaffold HTTP smoke", () => {
                 migrationPlanStatus: "blocked",
                 valid: false,
               }),
+              databaseAdapterRuntime: expect.objectContaining({
+                liveConnectionAttempted: false,
+                liveQueryExecutionEnabled: false,
+                migrationExecutor: expect.objectContaining({
+                  liveExecutionCount: 0,
+                  liveExecutionEnabled: false,
+                  migrationGateStatus: "blocked",
+                }),
+                profileId: "production-required",
+                status: "blocked",
+                valid: false,
+              }),
               persistenceRuntime: expect.objectContaining({
                 activeDriverId: "campaign-os-production-db-adapter",
                 liveConnectionAttempted: false,
@@ -441,6 +550,27 @@ describe("backend scaffold HTTP smoke", () => {
               validation: expect.objectContaining({
                 valid: false,
               }),
+            }),
+            databaseAdapterRuntime: expect.objectContaining({
+              connectionPoolState: "configured_redacted",
+              liveConnectionAttempted: false,
+              liveQueryExecutionEnabled: false,
+              migrationExecutor: expect.objectContaining({
+                handoffStatus: "blocked",
+                liveExecutionCount: 0,
+                liveExecutionEnabled: false,
+                migrationGateStatus: "blocked",
+              }),
+              profileId: "production-required",
+              status: "blocked",
+              stores: expect.arrayContaining([
+                expect.objectContaining({
+                  id: "points-ledger",
+                  adapterStatus: "blocked",
+                  required: true,
+                }),
+              ]),
+              valid: false,
             }),
             persistenceRuntime: expect.objectContaining({
               activeDriverId: "campaign-os-production-db-adapter",

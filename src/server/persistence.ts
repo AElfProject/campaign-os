@@ -43,10 +43,19 @@ export interface RepositoryAdapterFactoryDecision {
   blocked: boolean;
   diagnostics: RepositoryAdapterFactoryDiagnostic[];
   fallbackUsed: boolean;
+  handoff?: RepositoryAdapterFactoryHandoff;
   repositoryKind: RepositoryAdapterKind;
   requestedDriverId?: string;
   selectedDriverId: string;
   selectedMode: RepositoryAdapterFactoryMode;
+}
+
+export interface RepositoryAdapterFactoryHandoff {
+  adapterRuntimeId: string;
+  attachPoint: string;
+  migrationExecutorHandoffId: string;
+  queryAdapterPortId: string;
+  repositoryAttachPoint: string;
 }
 
 export interface CampaignOsPersistenceRecordInput {
@@ -309,7 +318,7 @@ export const createCampaignOsDeterministicTestRepository = (
 const createProductionDeferredRepository = (
   config: Partial<CampaignOsPersistenceConfig> = {},
 ): CampaignOsRepository => {
-  const error = () => new Error("Production persistence adapter is deferred in Mission 172.");
+  const error = () => new Error("Production persistence adapter is deferred in Mission 173.");
 
   return {
     initialize: async () => {
@@ -494,7 +503,7 @@ export const createCampaignOsRepository = (
 const productionDeferredDiagnostic: RepositoryAdapterFactoryDiagnostic = {
   code: "PRODUCTION_REPOSITORY_DEFERRED",
   field: "productionDriverId",
-  message: "Production persistence adapter is deferred and cannot fallback to local repositories.",
+  message: "Production database repository is deferred and cannot fallback to local repositories.",
   severity: "error",
 };
 
@@ -509,9 +518,19 @@ const unsupportedDriverDiagnostic = (
 
 const driverModeById: Partial<Record<string, ProductionPersistenceAdapterKind>> = {
   "campaign-os-deterministic-test-adapter": "deterministic_test",
+  "campaign-os-deterministic-test-driver": "deterministic_test",
   "campaign-os-local-json-adapter": "local_json",
   "campaign-os-memory-adapter": "memory",
+  "campaign-os-production-driver-deferred": "production_deferred",
   "campaign-os-production-db-adapter": "production_deferred",
+};
+
+const productionDatabaseRepositoryHandoff: RepositoryAdapterFactoryHandoff = {
+  adapterRuntimeId: "campaign-os-production-database-adapter-runtime",
+  attachPoint: "src/server/persistence.ts:resolveRepositoryAdapterFactoryDecision",
+  migrationExecutorHandoffId: "campaign-os-database-migration-executor-handoff",
+  queryAdapterPortId: "campaign-os-database-query-adapter-port",
+  repositoryAttachPoint: "src/server/persistence.ts:createCampaignOsRepository",
 };
 
 export const resolveRepositoryAdapterFactoryDecision = (
@@ -551,6 +570,7 @@ export const resolveRepositoryAdapterFactoryDecision = (
       blocked: true,
       diagnostics: [productionDeferredDiagnostic],
       fallbackUsed: false,
+      handoff: productionDatabaseRepositoryHandoff,
       repositoryKind: "production_deferred_repository",
       requestedDriverId,
       selectedDriverId: "campaign-os-production-db-adapter",

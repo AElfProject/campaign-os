@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { campaignDetail } from "../domain/fixtures";
 import { createCampaignOsApiRuntime, type ApiRuntimeResponse } from "./apiRuntime";
+import { createBackendServiceReadinessReport } from "./backendService";
 import {
   createCampaignOsJsonRepository,
   createCampaignOsMemoryRepository,
@@ -274,6 +275,33 @@ describe("Campaign OS API runtime", () => {
           supportMode: "local_seeded",
         }),
         entrypointId: "campaign-os-backend-service",
+        databaseAdapterRuntime: expect.objectContaining({
+          connectionPool: expect.objectContaining({
+            configuredKeyCount: 0,
+            safeLabel: "not_configured",
+            state: "not_configured",
+          }),
+          driverId: "campaign-os-deterministic-test-driver",
+          liveConnectionAttempted: false,
+          liveQueryExecutionEnabled: false,
+          migrationExecutor: expect.objectContaining({
+            executorStatus: "not_configured",
+            handoffStatus: "not_configured",
+            handoffValid: true,
+            liveExecutionCount: 0,
+            liveExecutionEnabled: false,
+            migrationGateStatus: "ready",
+          }),
+          profileId: "local-review",
+          providerId: "campaign-os-deterministic-test-db",
+          queryAdapter: expect.objectContaining({
+            deterministicTestMode: true,
+            liveQueryExecutionEnabled: false,
+          }),
+          requiredStoreCount: 6,
+          status: "active_local",
+          valid: true,
+        }),
         databaseReadiness: expect.objectContaining({
           adapterStatus: "contract_ready",
           migrationPlanStatus: "dry_run_ready",
@@ -494,6 +522,38 @@ describe("Campaign OS API runtime", () => {
           noMigrationRunner: false,
           runnerStatus: "disabled_local_review",
         }),
+        databaseAdapterRuntime: expect.objectContaining({
+          connectionPoolState: "not_configured",
+          deferredDependencies: expect.arrayContaining([
+            expect.objectContaining({
+              id: "driver-package-selection",
+              requiredBeforeProduction: true,
+              status: "deferred",
+            }),
+            expect.objectContaining({
+              id: "secret-manager",
+              requiredBeforeProduction: true,
+              status: "deferred",
+            }),
+          ]),
+          liveConnectionAttempted: false,
+          liveQueryExecutionEnabled: false,
+          migrationExecutor: expect.objectContaining({
+            liveExecutionCount: 0,
+            liveExecutionEnabled: false,
+            migrationGateStatus: "ready",
+          }),
+          profileId: "local-review",
+          status: "active_local",
+          stores: expect.arrayContaining([
+            expect.objectContaining({
+              id: "campaign-db",
+              adapterStatus: "mapped",
+              required: true,
+            }),
+          ]),
+          valid: true,
+        }),
         databaseReadiness: expect.objectContaining({
           adapter: expect.objectContaining({
             id: "campaign-os-production-db-adapter",
@@ -633,6 +693,37 @@ describe("Campaign OS API runtime", () => {
     expect(readinessCallCount).toBe(0);
   });
 
+  it("uses one backend readiness report per runtime metadata response", async () => {
+    let readinessCallCount = 0;
+    const readiness = createBackendServiceReadinessReport();
+    const runtimeWithReadinessSpy = createCampaignOsApiRuntime({
+      backendServiceReadiness: () => {
+        readinessCallCount += 1;
+
+        return readiness;
+      },
+    });
+
+    await runtimeWithReadinessSpy.handle({
+      method: "GET",
+      path: "/api/health",
+    });
+    await runtimeWithReadinessSpy.handle({
+      method: "GET",
+      path: "/api/contracts",
+    });
+    await runtimeWithReadinessSpy.handle({
+      method: "GET",
+      path: "/api/health",
+    });
+    await runtimeWithReadinessSpy.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}`,
+    });
+
+    expect(readinessCallCount).toBe(3);
+  });
+
   it("does not mark unsupported backend config as production ready in health metadata", async () => {
     const invalidBackendRuntime = createCampaignOsApiRuntime({
       runtimeConfigOptions: {
@@ -699,6 +790,31 @@ describe("Campaign OS API runtime", () => {
           migrationPlanStatus: "blocked",
           valid: false,
         }),
+        databaseAdapterRuntime: expect.objectContaining({
+          connectionPool: expect.objectContaining({
+            configuredKeyCount: 1,
+            safeLabel: "[redacted]",
+            state: "configured_redacted",
+          }),
+          diagnosticCodes: expect.arrayContaining([
+            "DATABASE_DRIVER_PRODUCTION_DEFERRED",
+            "DATABASE_ADAPTER_SECRET_REDACTED",
+            "DATABASE_ADAPTER_PRECONDITION_DEFERRED",
+          ]),
+          liveConnectionAttempted: false,
+          liveQueryExecutionEnabled: false,
+          migrationExecutor: expect.objectContaining({
+            executorStatus: "blocked",
+            handoffStatus: "blocked",
+            handoffValid: false,
+            liveExecutionCount: 0,
+            liveExecutionEnabled: false,
+            migrationGateStatus: "blocked",
+          }),
+          profileId: "production-required",
+          status: "blocked",
+          valid: false,
+        }),
         persistenceRuntime: expect.objectContaining({
           activeDriverId: "campaign-os-production-db-adapter",
           adapterKind: "production_deferred",
@@ -750,6 +866,27 @@ describe("Campaign OS API runtime", () => {
           validation: expect.objectContaining({
             valid: false,
           }),
+        }),
+        databaseAdapterRuntime: expect.objectContaining({
+          connectionPoolState: "configured_redacted",
+          liveConnectionAttempted: false,
+          liveQueryExecutionEnabled: false,
+          migrationExecutor: expect.objectContaining({
+            handoffStatus: "blocked",
+            liveExecutionCount: 0,
+            liveExecutionEnabled: false,
+            migrationGateStatus: "blocked",
+          }),
+          profileId: "production-required",
+          status: "blocked",
+          stores: expect.arrayContaining([
+            expect.objectContaining({
+              id: "points-ledger",
+              adapterStatus: "blocked",
+              required: true,
+            }),
+          ]),
+          valid: false,
         }),
         persistenceRuntime: expect.objectContaining({
           activeDriverId: "campaign-os-production-db-adapter",

@@ -18,6 +18,7 @@ import type { ApiRuntimeRouteContract } from "./contracts";
 import { apiRuntimeRoutes } from "./routes";
 import { createApiRuntimeHandlers } from "./handlers";
 import {
+  createBackendDatabaseAdapterRuntimeSummary,
   createBackendPersistenceRuntimeSummary,
   createBackendServiceReadinessReport,
   type BackendServiceReadinessReport,
@@ -265,6 +266,10 @@ const createPersistenceRuntimeMetadata = (
   report: BackendServiceReadinessReport,
 ) => createBackendPersistenceRuntimeSummary(report.persistenceRuntime);
 
+const createDatabaseAdapterRuntimeMetadata = (
+  report: BackendServiceReadinessReport,
+) => createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime);
+
 const createHealthAuthSessionMetadata = (
   report: BackendServiceReadinessReport,
 ) => ({
@@ -334,6 +339,7 @@ const withBackendServiceReadinessMetadata = ({
       backendService: {
         ...data.backendService,
         authSession: createHealthAuthSessionMetadata(readiness),
+        databaseAdapterRuntime: createDatabaseAdapterRuntimeMetadata(readiness),
         databaseReadiness: createHealthDatabaseReadinessMetadata(readiness),
         persistenceRuntime: createPersistenceRuntimeMetadata(readiness),
       },
@@ -346,6 +352,7 @@ const withBackendServiceReadinessMetadata = ({
       backendService: {
         ...data.backendService,
         authSession: createContractAuthSessionMetadata(readiness),
+        databaseAdapterRuntime: createDatabaseAdapterRuntimeMetadata(readiness),
         databaseReadiness: createContractDatabaseReadinessMetadata(readiness),
         persistenceRuntime: createPersistenceRuntimeMetadata(readiness),
         reportShape: isRecord(data.backendService.reportShape)
@@ -353,6 +360,7 @@ const withBackendServiceReadinessMetadata = ({
             ...data.backendService.reportShape,
             sections: appendReportShapeSections(data.backendService.reportShape.sections, [
               "authSession",
+              "databaseAdapterRuntime",
               "databaseReadiness",
               "persistenceRuntime",
             ]),

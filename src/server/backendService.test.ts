@@ -114,6 +114,44 @@ describe("backend service readiness report", () => {
         valid: true,
       }),
     });
+    expect(report.databaseAdapterRuntime).toMatchObject({
+      driverId: "campaign-os-deterministic-test-driver",
+      liveConnectionAttempted: false,
+      liveQueryExecutionEnabled: false,
+      migrationExecutor: expect.objectContaining({
+        executorStatus: "not_configured",
+        liveExecutionCount: 0,
+        liveExecutionEnabled: false,
+      }),
+      migrationHandoff: expect.objectContaining({
+        executorStatus: "not_configured",
+        liveExecutionCount: 0,
+        liveExecutionEnabled: false,
+        migrationGateStatus: "ready",
+        valid: true,
+      }),
+      profileId: "local-review",
+      providerId: "campaign-os-deterministic-test-db",
+      queryAdapter: expect.objectContaining({
+        deterministicTestMode: true,
+        liveQueryExecutionEnabled: false,
+      }),
+      status: "active_local",
+      transaction: expect.objectContaining({
+        liveCommitEnabled: false,
+        mode: "deterministic_test",
+        supported: true,
+      }),
+      valid: true,
+    });
+    expect(report.databaseAdapterRuntime.stores.map((store) => store.id)).toEqual([
+      "campaign-db",
+      "wallet-session-db",
+      "task-evidence-db",
+      "i18n-content-db",
+      "risk-event-db",
+      "points-ledger",
+    ]);
     expect(report.persistenceRuntime).toMatchObject({
       activeDriverId: "campaign-os-memory-adapter",
       connection: expect.objectContaining({
@@ -227,6 +265,46 @@ describe("backend service readiness report", () => {
         valid: false,
       }),
     });
+    expect(report.databaseAdapterRuntime).toMatchObject({
+      connectionPool: expect.objectContaining({
+        configuredKeyCount: 1,
+        safeLabel: "[redacted]",
+        state: "configured_redacted",
+      }),
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ code: "DATABASE_DRIVER_PRODUCTION_DEFERRED" }),
+        expect.objectContaining({ code: "DATABASE_ADAPTER_SECRET_REDACTED" }),
+        expect.objectContaining({ code: "DATABASE_ADAPTER_PRECONDITION_DEFERRED" }),
+      ]),
+      driverId: "campaign-os-production-driver-deferred",
+      liveConnectionAttempted: false,
+      liveQueryExecutionEnabled: false,
+      migrationExecutor: expect.objectContaining({
+        executorStatus: "blocked",
+        liveExecutionCount: 0,
+        liveExecutionEnabled: false,
+      }),
+      migrationHandoff: expect.objectContaining({
+        executorStatus: "blocked",
+        liveExecutionCount: 0,
+        liveExecutionEnabled: false,
+        migrationGateStatus: "blocked",
+        valid: false,
+      }),
+      profileId: "production-required",
+      providerId: "campaign-os-provider-deferred",
+      queryAdapter: expect.objectContaining({
+        driverId: "campaign-os-production-driver-deferred",
+        liveQueryExecutionEnabled: false,
+      }),
+      status: "blocked",
+      transaction: expect.objectContaining({
+        liveCommitEnabled: false,
+        mode: "deferred_live",
+        supported: true,
+      }),
+      valid: false,
+    });
     expect(report.persistenceRuntime).toMatchObject({
       activeDriverId: "campaign-os-production-db-adapter",
       adapterKind: "production_deferred",
@@ -312,6 +390,10 @@ describe("backend service readiness report", () => {
         expect.objectContaining({
           code: "DATABASE_READINESS_BLOCKED",
           field: "databaseReadiness",
+        }),
+        expect.objectContaining({
+          code: "DATABASE_READINESS_BLOCKED",
+          field: "databaseAdapterRuntime",
         }),
         expect.objectContaining({
           code: "PERSISTENCE_ADAPTER_INVALID",

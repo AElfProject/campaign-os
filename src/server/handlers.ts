@@ -23,6 +23,7 @@ import {
 import type { ApiRuntimeRouteId } from "./routes";
 import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
 import {
+  createBackendDatabaseAdapterRuntimeSummary,
   createBackendPersistenceRuntimeSummary,
   type BackendServiceReadinessReport,
 } from "./backendService";
@@ -319,6 +320,7 @@ const createBackendServiceHealthMetadata = (
   apiFoundationValidationIssueCount: report.apiFoundation.validation.issues.length,
   entrypoint: backendServiceEntrypointMetadata(report),
   entrypointId: report.entrypoint.id,
+  databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime),
   migrationRunnerStatus: report.migration.runnerStatus,
   persistenceRuntime: createBackendPersistenceRuntimeSummary(report.persistenceRuntime),
   profile: {
@@ -342,6 +344,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
     requiredBeforeProduction: attachPoint.requiredBeforeProduction,
   })),
   configContract: backendConfigContractSummary(report),
+  databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime),
   deferredProductionCapabilities: report.profile.deferredCapabilities,
   entrypoint: backendServiceEntrypointMetadata(report),
   migrationManifest: backendMigrationManifestSummary(report),
@@ -360,6 +363,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
       "entrypoint",
       "profile",
       "config",
+      "databaseAdapterRuntime",
       "persistenceAdapters",
       "persistenceRuntime",
       "migration",

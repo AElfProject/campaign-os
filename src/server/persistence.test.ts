@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { resolveCampaignOsRuntimeConfig } from "./config";
+import { createProductionDatabaseAdapterRuntimeContract } from "./databaseAdapterRuntime";
 import {
   createCampaignOsDeterministicTestRepository,
   createCampaignOsJsonRepository,
@@ -279,6 +280,54 @@ describe("Campaign OS persistence boundary", () => {
       localOnly: true,
       noProductionDatabase: true,
       status: "unavailable",
+    });
+  });
+
+  it("reports production database repository handoff without local fallback", () => {
+    expect(
+      resolveRepositoryAdapterFactoryDecision({
+        mode: "memory",
+        productionDriverId: "campaign-os-production-driver-deferred",
+      }),
+    ).toMatchObject({
+      blocked: true,
+      diagnostics: [
+        expect.objectContaining({
+          code: "PRODUCTION_REPOSITORY_DEFERRED",
+          severity: "error",
+        }),
+      ],
+      fallbackUsed: false,
+      handoff: {
+        adapterRuntimeId: "campaign-os-production-database-adapter-runtime",
+        migrationExecutorHandoffId: "campaign-os-database-migration-executor-handoff",
+        queryAdapterPortId: "campaign-os-database-query-adapter-port",
+        repositoryAttachPoint: "src/server/persistence.ts:createCampaignOsRepository",
+      },
+      repositoryKind: "production_deferred_repository",
+      selectedDriverId: "campaign-os-production-db-adapter",
+      selectedMode: "production_deferred",
+    });
+  });
+
+  it("keeps production-required database repository blocked instead of marking fallback ready", () => {
+    const runtime = createProductionDatabaseAdapterRuntimeContract({
+      env: {
+        CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+      },
+    });
+    const decision = resolveRepositoryAdapterFactoryDecision({
+      mode: "memory",
+      productionDriverId: runtime.driverId,
+    });
+
+    expect(runtime.valid).toBe(false);
+    expect(runtime.status).toBe("blocked");
+    expect(decision).toMatchObject({
+      blocked: true,
+      fallbackUsed: false,
+      repositoryKind: "production_deferred_repository",
+      selectedMode: "production_deferred",
     });
   });
 

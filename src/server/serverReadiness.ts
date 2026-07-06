@@ -1,5 +1,7 @@
 import {
+  createBackendDatabaseAdapterRuntimeSummary,
   createBackendPersistenceRuntimeSummary,
+  type BackendDatabaseAdapterRuntimeSummary,
   type BackendPersistenceRuntimeSummary,
   type BackendServiceReadinessReport,
 } from "./backendService";
@@ -53,6 +55,7 @@ export interface ServerRuntimeReadiness {
       migrationPlanStatus: string;
       valid: boolean;
     };
+    databaseAdapterRuntime: BackendDatabaseAdapterRuntimeSummary;
     persistenceRuntime: BackendPersistenceRuntimeSummary;
   };
   requestGuard: {
@@ -147,6 +150,7 @@ export const createServerRuntimeReadiness = ({
         migrationPlanStatus: backendReadiness.databaseReadiness.migrationPlan.status,
         valid: backendReadiness.databaseReadiness.validation.valid,
       },
+      databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(backendReadiness.databaseAdapterRuntime),
       persistenceRuntime: createBackendPersistenceRuntimeSummary(backendReadiness.persistenceRuntime),
     },
     requestGuard: {
