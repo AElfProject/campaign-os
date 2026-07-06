@@ -64,6 +64,38 @@ describe("backend scaffold public guardrails", () => {
         valid: true,
       }),
     });
+    expect(report.authSession).toMatchObject({
+      agentCredentialBoundary: {
+        agentSkillCanSubstituteUserWallet: false,
+        separatedFromUserWalletSession: true,
+      },
+      profileId: "local-review",
+      status: "local_seeded",
+      validation: {
+        issues: [],
+        valid: true,
+      },
+    });
+    expect(report.authSession.deferredDependencyIds).toEqual(
+      expect.arrayContaining([
+        "live_wallet_proof_verifier",
+        "jwt_or_session_cookie",
+        "rbac_enforcement",
+        "project_ownership_source",
+      ]),
+    );
+    expect(report.authSession.protectedRoutes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          enforcementStatus: "enforcement_deferred",
+          routeId: "campaigns.create",
+        }),
+        expect.objectContaining({
+          enforcementStatus: "metadata_only",
+          routeId: "wallet.session.create",
+        }),
+      ]),
+    );
 
     for (const attachPoint of report.attachMap) {
       expect(attachPoint.requiredBeforeProduction).toBe(true);
@@ -83,6 +115,40 @@ describe("backend scaffold public guardrails", () => {
     for (const fragment of secretLikeFragments) {
       expect(serialized).not.toContain(fragment);
     }
+  });
+
+  it("does not treat production-required auth/session as anonymous local mode", () => {
+    const report = createBackendServiceReadinessReport({
+      configOptions: {
+        env: {
+          CAMPAIGN_OS_AUTH_SECRET: "auth-secret",
+          CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT: "https://writer.invalid",
+          CAMPAIGN_OS_DATABASE_URL: "postgres://db.invalid/campaign-os",
+          CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid",
+          CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue.invalid",
+        },
+        profileId: "production-required",
+      },
+    });
+
+    expect(report.authSession.status).toBe("blocked");
+    expect(report.authSession.proofBoundary.verificationMode).toBe("production_required");
+    expect(report.authSession.validation.issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining([
+        "AUTH_PROOF_VERIFIER_MISSING",
+        "AUTH_POLICY_MISSING",
+        "AUTH_OWNERSHIP_SOURCE_MISSING",
+      ]),
+    );
+    expect(report.validation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "AUTH_SESSION_READINESS_BLOCKED",
+          field: "authSession",
+        }),
+      ]),
+    );
+    expect(JSON.stringify(report)).not.toContain("auth-secret");
   });
 
   it("keeps public route metadata local, offline, and non-mutating for production systems", () => {

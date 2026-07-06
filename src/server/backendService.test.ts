@@ -34,6 +34,20 @@ describe("backend service readiness report", () => {
       version: "0.2.0-local",
     });
     expect(report.entrypoint.routeCount).toBe(report.apiFoundation.coverage.routeCount);
+    expect(report.authSession).toMatchObject({
+      profileId: "local-review",
+      status: "local_seeded",
+      protectedRouteCount: expect.any(Number),
+      validation: {
+        issues: [],
+        valid: true,
+      },
+    });
+    expect(report.authSession.protectedRouteCount).toBeGreaterThanOrEqual(7);
+    expect(report.authSession.rolePolicy).toMatchObject({
+      leastPrivilegeDefault: true,
+      roleCount: 5,
+    });
     expect(report.apiFoundation.servicePorts.validation.valid).toBe(true);
     expect(report.apiFoundation.validation.valid).toBe(true);
     expect(report.topology.validation.valid).toBe(true);
@@ -50,6 +64,18 @@ describe("backend service readiness report", () => {
       expect(attachPoint.currentStatus).not.toBe("local-only");
       expect(attachPoint.requiredBeforeProduction).toBe(true);
     }
+    expect(report.attachMap.find((item) => item.area === "auth-session")).toMatchObject({
+      attachPoint: "src/server/authSession.ts:createAuthSessionReadinessReport",
+      blockedBy: expect.arrayContaining([
+        "live wallet signature verifier",
+        "JWT or session cookie issuer",
+        "RBAC enforcement",
+        "project ownership source",
+        "admin organization model",
+        "agent credential provider",
+      ]),
+      currentStatus: "scaffold",
+    });
   });
 
   it("keeps production persistence and migration runner inactive in local review", () => {
@@ -153,9 +179,40 @@ describe("backend service readiness report", () => {
         valid: false,
       }),
     });
+    expect(report.authSession).toMatchObject({
+      profileId: "production-required",
+      status: "blocked",
+      proofBoundary: expect.objectContaining({
+        status: "blocked",
+        verificationMode: "production_required",
+      }),
+      validation: expect.objectContaining({
+        valid: false,
+      }),
+    });
+    expect(report.authSession.validation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "AUTH_PROOF_VERIFIER_MISSING",
+          field: "authSession.proofVerifier",
+        }),
+        expect.objectContaining({
+          code: "AUTH_POLICY_MISSING",
+          field: "authSession.rolePolicy",
+        }),
+        expect.objectContaining({
+          code: "AUTH_OWNERSHIP_SOURCE_MISSING",
+          field: "authSession.ownership",
+        }),
+      ]),
+    );
     expect(report.validation).toMatchObject({
       valid: false,
       issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "AUTH_SESSION_READINESS_BLOCKED",
+          field: "authSession",
+        }),
         expect.objectContaining({
           code: "DATABASE_READINESS_BLOCKED",
           field: "databaseReadiness",

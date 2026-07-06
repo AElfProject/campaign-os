@@ -22,6 +22,10 @@ import {
   type ProductionDatabaseStoreRegistryEntry,
 } from "./productionDatabase";
 import type { MigrationRunnerPlan } from "./migrationRunner";
+import {
+  createAuthSessionReadinessReport,
+  type AuthSessionReadinessReport,
+} from "./authSession";
 
 export type BackendAttachPointArea =
   | "production-persistence"
@@ -36,6 +40,7 @@ export type BackendAttachPointArea =
   | "analytics-warehouse";
 export type BackendAttachPointStatus = "local-only" | "scaffold" | "deferred" | "blocked";
 export type BackendReadinessDiagnosticCode =
+  | "AUTH_SESSION_READINESS_BLOCKED"
   | "BACKEND_CONFIG_BLOCKED"
   | "DATABASE_READINESS_BLOCKED"
   | "PERSISTENCE_ADAPTER_INVALID"
@@ -81,6 +86,7 @@ export interface BackendServiceReadinessReport {
     validation: ApiFoundationReport["validation"];
   };
   attachMap: BackendAttachPoint[];
+  authSession: AuthSessionReadinessReport;
   config: BackendConfigContract;
   databaseReadiness: BackendDatabaseReadinessReport;
   entrypoint: BackendServiceEntrypoint;
@@ -137,10 +143,17 @@ export const backendAttachMap: BackendAttachPoint[] = [
   },
   {
     area: "auth-session",
-    attachPoint: "src/server/apiRuntime.ts:ApiRuntimeHandlerContext",
-    blockedBy: ["auth/session mission", "wallet signature verification mission"],
-    currentStatus: "deferred",
-    note: "No bearer token, RBAC, OAuth, session cookie, or wallet signature verification is active.",
+    attachPoint: "src/server/authSession.ts:createAuthSessionReadinessReport",
+    blockedBy: [
+      "live wallet signature verifier",
+      "JWT or session cookie issuer",
+      "RBAC enforcement",
+      "project ownership source",
+      "admin organization model",
+      "agent credential provider",
+    ],
+    currentStatus: "scaffold",
+    note: "Mission 170 exposes auth/session contract readiness only; live enforcement is still deferred.",
     requiredBeforeProduction: true,
   },
   {
@@ -223,6 +236,7 @@ const errorDiagnostic = (
 const createValidationIssues = ({
   apiFoundation,
   attachMap,
+  authSession,
   config,
   databaseReadiness,
   entrypoint,
@@ -233,6 +247,7 @@ const createValidationIssues = ({
 }: {
   apiFoundation: ApiFoundationReport;
   attachMap: readonly BackendAttachPoint[];
+  authSession: AuthSessionReadinessReport;
   config: BackendConfigContract;
   databaseReadiness: BackendDatabaseReadinessReport;
   entrypoint: BackendServiceEntrypoint;
@@ -245,6 +260,14 @@ const createValidationIssues = ({
 
   if (!config.valid) {
     issues.push(errorDiagnostic("BACKEND_CONFIG_BLOCKED", "config", "Backend config contract is blocked."));
+  }
+
+  if (!authSession.validation.valid) {
+    issues.push(errorDiagnostic(
+      "AUTH_SESSION_READINESS_BLOCKED",
+      "authSession",
+      "Auth/session readiness validation failed.",
+    ));
   }
 
   if (!databaseReadiness.validation.valid) {
@@ -326,6 +349,7 @@ export const createBackendServiceReadinessReport = ({
   generatedAt = new Date(0).toISOString(),
 }: CreateBackendServiceReadinessReportOptions = {}): BackendServiceReadinessReport => {
   const config = resolveBackendConfigContract(configOptions);
+  const env = configOptions?.env ?? (typeof process === "undefined" ? {} : process.env);
   const apiFoundation = createApiFoundationReport({ generatedAt });
   const servicePorts = createApiServicePortReport({ foundation: apiFoundation });
   const topology = createBackendTopologyReport({
@@ -341,6 +365,12 @@ export const createBackendServiceReadinessReport = ({
     migration,
     profileId: config.profileId,
   });
+  const authSession = createAuthSessionReadinessReport({
+    generatedAt,
+    profileId: config.profileId,
+    productionRequired: config.profileId === "production-required",
+    sessionConfigReady: Boolean(env.CAMPAIGN_OS_AUTH_SECRET),
+  });
   const entrypoint: BackendServiceEntrypoint = {
     foundationValidationValid: apiFoundation.validation.valid,
     id: "campaign-os-backend-service",
@@ -355,6 +385,7 @@ export const createBackendServiceReadinessReport = ({
   const validationIssues = createValidationIssues({
     apiFoundation,
     attachMap: backendAttachMap,
+    authSession,
     config,
     databaseReadiness,
     entrypoint,
@@ -371,6 +402,7 @@ export const createBackendServiceReadinessReport = ({
       validation: apiFoundation.validation,
     },
     attachMap: backendAttachMap,
+    authSession,
     config,
     databaseReadiness,
     entrypoint,
