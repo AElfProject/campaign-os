@@ -36,6 +36,8 @@ import {
   apiRuntimeServiceGroups,
   createApiRuntimeCapabilityCatalog,
 } from "./capabilities";
+import { createApiFoundationReport } from "./apiFoundation";
+import { createApiServicePortReport } from "./servicePorts";
 import {
   persistenceBoundary,
   type CampaignOsPersistenceRecordInput,
@@ -227,8 +229,28 @@ const i18nDraftRequest = (context: ApiRuntimeHandlerContext): GenerateI18nDraftR
   };
 };
 
+const createApiFoundationRuntimeMetadata = () => {
+  const foundation = createApiFoundationReport();
+  const servicePorts = createApiServicePortReport({ foundation });
+
+  return {
+    coverage: foundation.coverage,
+    envelopes: {
+      error: foundation.errorEnvelopes,
+      success: foundation.responseEnvelopes,
+    },
+    requestContracts: foundation.requestContracts,
+    requestFields: foundation.requestFields,
+    routes: foundation.routes,
+    servicePorts,
+    surfaces: foundation.surfaces,
+    validation: foundation.validation,
+  };
+};
+
 export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntimeHandler> => ({
   "runtime.health": async (context) => {
+    const apiFoundation = createApiFoundationRuntimeMetadata();
     const coverage = context.service.getCoverageSummary();
     const services = createServiceDegradationGovernance();
     const persistence = await context.repository.health();
@@ -237,6 +259,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     });
 
     return {
+      apiFoundation,
       boundary: coverage.boundary,
       mode: "local_seeded",
       capabilities: createApiRuntimeCapabilityCatalog(),
@@ -264,12 +287,14 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     };
   },
   "runtime.contracts": async (context) => {
+    const apiFoundation = createApiFoundationRuntimeMetadata();
     const persistence = await context.repository.health();
     const topology = createBackendTopologyReport({
       knownRouteIds: apiRuntimeRoutes.map((route) => route.id),
     });
 
     return {
+      apiFoundation,
       apiSkillContracts: apiSkillContractRegistry,
       apiSkillSurface: createApiSkillContractSurface(),
       coverage: createApiRuntimeContractCoverage(),
