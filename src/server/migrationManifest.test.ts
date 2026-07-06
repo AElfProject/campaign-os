@@ -4,18 +4,28 @@ import {
   validateMigrationManifestStores,
   type MigrationStoreManifest,
 } from "./migrationManifest";
+import { defaultSchemaMigrations } from "./migrationRunner";
 
 describe("migration manifest", () => {
   it("creates a manifest-only local review readiness surface", () => {
     const manifest = createMigrationManifest();
 
     expect(manifest).toMatchObject({
-      manifestVersion: "0.1.0",
+      manifestVersion: "0.2.0",
       noDestructiveOperations: true,
       noLiveMigrationCommand: true,
-      noMigrationRunner: true,
+      noMigrationRunner: false,
       runnerStatus: "disabled_local_review",
     });
+    expect(manifest.manifestVersion).toBe("0.2.0");
+    expect(manifest.runnerPlan).toMatchObject({
+      dryRun: true,
+      liveExecutionEnabled: false,
+      status: "dry_run_ready",
+    });
+    expect(manifest.migrations.map((migration) => migration.id)).toEqual(
+      defaultSchemaMigrations.map((migration) => migration.id),
+    );
     expect(manifest.stores.map((store) => store.id)).toEqual([
       "campaign-db",
       "wallet-session-db",
@@ -43,11 +53,12 @@ describe("migration manifest", () => {
     const manifest = createMigrationManifest({ profileId: "production-required" });
 
     expect(manifest.runnerStatus).toBe("deferred");
-    expect(manifest.noMigrationRunner).toBe(true);
+    expect(manifest.noMigrationRunner).toBe(false);
+    expect(manifest.runnerPlan.status).toBe("blocked");
     expect(manifest.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "MIGRATION_RUNNER_DISABLED_LOCAL_REVIEW",
+          code: "MIGRATION_RUNNER_DEFERRED",
           severity: "warning",
         }),
       ]),
@@ -62,7 +73,7 @@ describe("migration manifest", () => {
       ownerServiceId: "",
       productionMode: "" as MigrationStoreManifest["productionMode"],
       readiness: "blocked",
-      targetSchemaVersion: "v0.1.0-target",
+      targetSchemaVersion: "v0.2.0",
     };
 
     expect(validateMigrationManifestStores([malformedStore])).toEqual(
