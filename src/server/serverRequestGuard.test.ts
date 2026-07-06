@@ -55,6 +55,10 @@ describe("server request guard", () => {
       status: 400,
       traceId: "trace-non-json",
     });
+    expect(decision.kind).toBe("rejected");
+    if (decision.kind !== "rejected") {
+      throw new Error("Expected rejected decision.");
+    }
     expect(decision.body.ok).toBe(false);
     if (!decision.body.ok) {
       expect(decision.body.error.details).toMatchObject({
@@ -79,7 +83,11 @@ describe("server request guard", () => {
       status: 400,
       traceId: "trace-oversize",
     });
-    if (decision.body && !decision.body.ok) {
+    expect(decision.kind).toBe("rejected");
+    if (decision.kind !== "rejected") {
+      throw new Error("Expected rejected decision.");
+    }
+    if (!decision.body.ok) {
       expect(decision.body.error.details).toMatchObject({
         field: "body",
       });
@@ -102,7 +110,11 @@ describe("server request guard", () => {
       status: 400,
       traceId: "trace-malformed",
     });
-    if (decision.body && !decision.body.ok) {
+    expect(decision.kind).toBe("rejected");
+    if (decision.kind !== "rejected") {
+      throw new Error("Expected rejected decision.");
+    }
+    if (!decision.body.ok) {
       expect(decision.body.error.code).toBe("MALFORMED_JSON");
     }
   });
