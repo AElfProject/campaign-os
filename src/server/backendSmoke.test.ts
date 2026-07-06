@@ -143,6 +143,59 @@ describe("backend scaffold HTTP smoke", () => {
           serverRuntime: expect.objectContaining({
             profileId: "local-review",
             readiness: expect.objectContaining({
+              backendRuntimeBootstrap: expect.objectContaining({
+                deferredDependencyIds: expect.arrayContaining([
+                  "deployment-config",
+                  "production-database-driver",
+                  "database-migration-executor",
+                  "auth-middleware",
+                  "provider-adapters",
+                  "worker-ingress",
+                  "scheduler",
+                  "contract-writer",
+                  "object-storage-export",
+                  "observability-exporter",
+                  "analytics-warehouse",
+                  "reward-custody",
+                  "reward-distribution",
+                ]),
+                diagnosticCodes: [],
+                readiness: expect.objectContaining({
+                  databaseAdapterRuntime: expect.objectContaining({
+                    liveConnectionAttempted: false,
+                    liveQueryExecutionEnabled: false,
+                    status: "active_local",
+                    valid: true,
+                  }),
+                  persistenceRuntime: expect.objectContaining({
+                    liveConnectionAttempted: false,
+                    liveExecutionEnabled: false,
+                    status: "active_local",
+                    valid: true,
+                  }),
+                }),
+                requestGuard: expect.objectContaining({
+                  guardedFailureEnvelope: true,
+                  traceHeaderName: "x-campaign-os-trace-id",
+                }),
+                shutdown: expect.objectContaining({
+                  shutdownTimeoutMs: 5_000,
+                  state: "running",
+                }),
+                startup: expect.objectContaining({
+                  host: "127.0.0.1",
+                  profileId: "local-review",
+                  valid: true,
+                }),
+                status: "ready",
+                tracePolicy: {
+                  failureEnvelopeTraceId: true,
+                  startupLogIncludesTracePolicy: true,
+                  successEnvelopeTraceId: true,
+                  traceHeaderName: "x-campaign-os-trace-id",
+                },
+                valid: true,
+              }),
               backend: expect.objectContaining({
                 valid: true,
               }),
@@ -331,6 +384,56 @@ describe("backend scaffold HTTP smoke", () => {
               valid: true,
             }),
           }),
+          serverRuntime: expect.objectContaining({
+            readiness: expect.objectContaining({
+              backendRuntimeBootstrap: expect.objectContaining({
+                deferredDependencies: expect.arrayContaining([
+                  expect.objectContaining({
+                    id: "production-database-driver",
+                    requiredBeforeProduction: true,
+                    status: "blocked",
+                  }),
+                  expect.objectContaining({
+                    id: "auth-middleware",
+                    requiredBeforeProduction: true,
+                    status: "blocked",
+                  }),
+                  expect.objectContaining({
+                    id: "worker-ingress",
+                    requiredBeforeProduction: true,
+                    status: "deferred",
+                  }),
+                  expect.objectContaining({
+                    id: "analytics-warehouse",
+                    requiredBeforeProduction: true,
+                    status: "deferred",
+                  }),
+                ]),
+                diagnosticCodes: [],
+                readiness: expect.objectContaining({
+                  databaseAdapterRuntime: expect.objectContaining({
+                    liveConnectionAttempted: false,
+                    liveQueryExecutionEnabled: false,
+                    status: "active_local",
+                    valid: true,
+                  }),
+                  persistenceRuntime: expect.objectContaining({
+                    liveConnectionAttempted: false,
+                    liveExecutionEnabled: false,
+                    status: "active_local",
+                    valid: true,
+                  }),
+                }),
+                status: "ready",
+                tracePolicy: expect.objectContaining({
+                  failureEnvelopeTraceId: true,
+                  successEnvelopeTraceId: true,
+                  traceHeaderName: "x-campaign-os-trace-id",
+                }),
+                valid: true,
+              }),
+            }),
+          }),
         },
       });
       expectSanitizedReadinessPayload(healthPayload.data.backendService);
@@ -493,6 +596,27 @@ describe("backend scaffold HTTP smoke", () => {
           serverRuntime: expect.objectContaining({
             profileId: "production-required",
             readiness: expect.objectContaining({
+              backendRuntimeBootstrap: expect.objectContaining({
+                diagnosticCodes: expect.arrayContaining([
+                  "BACKEND_RUNTIME_BOOTSTRAP_PRODUCTION_BLOCKED",
+                  "BACKEND_RUNTIME_BOOTSTRAP_SERVER_RUNTIME_INVALID",
+                  "BACKEND_RUNTIME_BOOTSTRAP_BACKEND_READINESS_INVALID",
+                ]),
+                readiness: expect.objectContaining({
+                  databaseAdapterRuntime: expect.objectContaining({
+                    liveConnectionAttempted: false,
+                    liveQueryExecutionEnabled: false,
+                    status: "blocked",
+                    valid: false,
+                  }),
+                  persistenceRuntime: expect.objectContaining({
+                    liveConnectionAttempted: false,
+                    liveExecutionEnabled: false,
+                  }),
+                }),
+                status: "blocked",
+                valid: false,
+              }),
               backend: expect.objectContaining({
                 valid: false,
               }),
@@ -586,6 +710,43 @@ describe("backend scaffold HTTP smoke", () => {
               profileId: "production-required",
               status: "boundary_ready",
               valid: true,
+            }),
+          }),
+          serverRuntime: expect.objectContaining({
+            readiness: expect.objectContaining({
+              backendRuntimeBootstrap: expect.objectContaining({
+                deferredDependencyIds: expect.arrayContaining([
+                  "production-database-driver",
+                  "auth-middleware",
+                  "contract-writer",
+                  "reward-custody",
+                  "reward-distribution",
+                ]),
+                diagnosticCodes: expect.arrayContaining([
+                  "BACKEND_RUNTIME_BOOTSTRAP_PRODUCTION_BLOCKED",
+                  "BACKEND_RUNTIME_BOOTSTRAP_SERVER_RUNTIME_INVALID",
+                  "BACKEND_RUNTIME_BOOTSTRAP_BACKEND_READINESS_INVALID",
+                ]),
+                requestGuard: expect.objectContaining({
+                  guardedFailureEnvelope: true,
+                  traceHeaderName: "x-campaign-os-trace-id",
+                }),
+                shutdown: expect.objectContaining({
+                  state: "running",
+                }),
+                startup: expect.objectContaining({
+                  blockedAttachPointCount: expect.any(Number),
+                  profileId: "production-required",
+                  valid: false,
+                }),
+                status: "blocked",
+                tracePolicy: expect.objectContaining({
+                  failureEnvelopeTraceId: true,
+                  successEnvelopeTraceId: true,
+                  traceHeaderName: "x-campaign-os-trace-id",
+                }),
+                valid: false,
+              }),
             }),
           }),
         },

@@ -7,6 +7,7 @@ import { evaluateServerRequestGuard } from "./serverRequestGuard";
 import {
   createServerRuntimeReadiness,
   withServerRuntimeReadiness,
+  type ServerRuntimeReadiness,
   type ServerShutdownState,
 } from "./serverReadiness";
 import {
@@ -16,6 +17,7 @@ import {
 } from "./serverRuntime";
 
 export interface CampaignOsApiServerHandle {
+  getReadiness(): ServerRuntimeReadiness;
   runtimeContract: ApiServerRuntimeContract;
   server: Server;
   stop(): Promise<void>;
@@ -137,6 +139,11 @@ export const startCampaignOsApiServer = async ({
     state: "running",
   };
   let stopPromise: Promise<void> | undefined;
+  const getReadiness = () => createServerRuntimeReadiness({
+    backendReadiness: backendServiceReadiness,
+    contract: runtimeContract,
+    shutdownState,
+  });
 
   const server = createServer(async (request, response) => {
     shutdownState.activeRequestCount += 1;
@@ -170,11 +177,7 @@ export const startCampaignOsApiServer = async ({
       const responseBody = isRuntimeMetadataPath(request.url)
         ? withServerRuntimeReadiness(
           runtimeResponse.body,
-          createServerRuntimeReadiness({
-            backendReadiness: backendServiceReadiness,
-            contract: runtimeContract,
-            shutdownState,
-          }),
+          getReadiness(),
         )
         : runtimeResponse.body;
 
@@ -257,6 +260,7 @@ export const startCampaignOsApiServer = async ({
   };
 
   return {
+    getReadiness,
     runtimeContract,
     server,
     stop,

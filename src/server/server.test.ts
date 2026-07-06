@@ -39,6 +39,25 @@ describe("Campaign OS API server entrypoint", () => {
         }),
         valid: true,
       });
+      expect(server.getReadiness()).toMatchObject({
+        readiness: {
+          backendRuntimeBootstrap: {
+            shutdown: {
+              activeRequestCount: 0,
+              shutdownTimeoutMs: 5_000,
+              state: "running",
+            },
+            status: "ready",
+            valid: true,
+          },
+        },
+        shutdownState: {
+          activeRequestCount: 0,
+          shutdownTimeoutMs: 5_000,
+          state: "running",
+        },
+        status: "ready",
+      });
 
       const response = await fetch(`${server.url}/api/health`, {
         headers: { "x-campaign-os-trace-id": "trace-server-entrypoint" },
@@ -70,6 +89,17 @@ describe("Campaign OS API server entrypoint", () => {
               guardedFailureEnvelope: true,
               traceHeaderName: "x-campaign-os-trace-id",
             }),
+            readiness: expect.objectContaining({
+              backendRuntimeBootstrap: expect.objectContaining({
+                shutdown: expect.objectContaining({
+                  activeRequestCount: 1,
+                  shutdownTimeoutMs: 5_000,
+                  state: "running",
+                }),
+                status: "ready",
+                valid: true,
+              }),
+            }),
             status: "ready",
           }),
           status: "ok",
@@ -91,6 +121,84 @@ describe("Campaign OS API server entrypoint", () => {
       await server.stop();
       await server.stop();
     }
+
+    expect(server.getReadiness()).toMatchObject({
+      liveness: {
+        live: false,
+      },
+      readiness: {
+        backendRuntimeBootstrap: {
+          diagnosticCodes: expect.arrayContaining(["BACKEND_RUNTIME_BOOTSTRAP_STOPPED"]),
+          shutdown: {
+            activeRequestCount: 0,
+            shutdownTimeoutMs: 5_000,
+            state: "stopped",
+          },
+          status: "blocked",
+          valid: false,
+        },
+      },
+      shutdownState: {
+        activeRequestCount: 0,
+        shutdownTimeoutMs: 5_000,
+        state: "stopped",
+      },
+      status: "stopped",
+    });
+  });
+
+  it("exposes stopping lifecycle readiness while shutdown waits for active requests", async () => {
+    const server = await startCampaignOsApiServer({
+      logger: false,
+      port: 0,
+      shutdownTimeoutMs: 25,
+    });
+    const stopPromise = server.stop();
+    const stoppingReadiness = server.getReadiness();
+
+    expect(stoppingReadiness).toMatchObject({
+      readiness: {
+        backendRuntimeBootstrap: {
+          diagnosticCodes: expect.arrayContaining([
+            "BACKEND_RUNTIME_BOOTSTRAP_SHUTDOWN_IN_PROGRESS",
+          ]),
+          shutdown: {
+            shutdownTimeoutMs: 25,
+            state: "stopping",
+          },
+          status: "deferred",
+          valid: true,
+        },
+      },
+      shutdownState: {
+        shutdownTimeoutMs: 25,
+        state: "stopping",
+      },
+      status: "shutting_down",
+    });
+    expect(stoppingReadiness.shutdownState.activeRequestCount).toBeGreaterThanOrEqual(0);
+    expect(stoppingReadiness.readiness.backendRuntimeBootstrap.shutdown.activeRequestCount)
+      .toBeGreaterThanOrEqual(0);
+
+    await stopPromise;
+    await server.stop();
+
+    expect(server.getReadiness()).toMatchObject({
+      readiness: {
+        backendRuntimeBootstrap: {
+          shutdown: {
+            activeRequestCount: 0,
+            shutdownTimeoutMs: 25,
+            state: "stopped",
+          },
+        },
+      },
+      shutdownState: {
+        activeRequestCount: 0,
+        shutdownTimeoutMs: 25,
+        state: "stopped",
+      },
+    });
   });
 
   it("handles CORS preflight without entering the business runtime", async () => {
@@ -139,6 +247,16 @@ describe("Campaign OS API server entrypoint", () => {
       expect(nonJson.headers.get("x-campaign-os-trace-id")).toBe("trace-non-json-http");
       expect(nonJsonPayload).toMatchObject({
         ok: false,
+        runtime: expect.objectContaining({
+          name: "campaign-os-api-runtime",
+          routeCount: expect.any(Number),
+        }),
+        safety: expect.objectContaining({
+          noContractWrite: true,
+          noLiveApi: true,
+          noProductionDatabase: true,
+          noSecretHandling: true,
+        }),
         traceId: "trace-non-json-http",
         error: {
           code: "INVALID_REQUEST",
@@ -162,8 +280,17 @@ describe("Campaign OS API server entrypoint", () => {
       expect(oversize.headers.get("x-campaign-os-trace-id")).toBe("trace-oversize-http");
       expect(oversizePayload).toMatchObject({
         ok: false,
+        runtime: expect.objectContaining({
+          name: "campaign-os-api-runtime",
+          routeCount: expect.any(Number),
+        }),
+        safety: expect.objectContaining({
+          noLiveApi: true,
+          noSecretHandling: true,
+        }),
         traceId: "trace-oversize-http",
         error: {
+          code: "INVALID_REQUEST",
           details: {
             field: "body",
           },
@@ -184,11 +311,84 @@ describe("Campaign OS API server entrypoint", () => {
       expect(malformed.headers.get("x-campaign-os-trace-id")).toBe("trace-malformed-http");
       expect(malformedPayload).toMatchObject({
         ok: false,
+        runtime: expect.objectContaining({
+          name: "campaign-os-api-runtime",
+          routeCount: expect.any(Number),
+        }),
+        safety: expect.objectContaining({
+          noLiveApi: true,
+          noSecretHandling: true,
+        }),
         traceId: "trace-malformed-http",
         error: {
           code: "MALFORMED_JSON",
         },
       });
+
+      const unsupportedMethod = await fetch(`${server.url}/api/health?token=raw-secret-query`, {
+        headers: {
+          authorization: "Bearer raw-secret-header",
+          "x-campaign-os-trace-id": "trace-unsupported-method-http",
+        },
+        method: "DELETE",
+      });
+      const unsupportedMethodPayload = await unsupportedMethod.json();
+
+      expect(unsupportedMethod.status).toBe(405);
+      expect(unsupportedMethod.headers.get("x-campaign-os-trace-id")).toBe("trace-unsupported-method-http");
+      expect(unsupportedMethodPayload).toMatchObject({
+        ok: false,
+        runtime: expect.objectContaining({
+          name: "campaign-os-api-runtime",
+        }),
+        safety: expect.objectContaining({
+          noSecretHandling: true,
+        }),
+        traceId: "trace-unsupported-method-http",
+        error: {
+          code: "METHOD_NOT_ALLOWED",
+          details: {
+            path: "/api/health",
+          },
+        },
+      });
+
+      const unknownRoute = await fetch(`${server.url}/api/missing?token=raw-secret-query`, {
+        headers: {
+          authorization: "Bearer raw-secret-header",
+          "x-campaign-os-trace-id": "trace-unknown-route-http",
+        },
+      });
+      const unknownRoutePayload = await unknownRoute.json();
+
+      expect(unknownRoute.status).toBe(404);
+      expect(unknownRoute.headers.get("x-campaign-os-trace-id")).toBe("trace-unknown-route-http");
+      expect(unknownRoutePayload).toMatchObject({
+        ok: false,
+        runtime: expect.objectContaining({
+          name: "campaign-os-api-runtime",
+        }),
+        safety: expect.objectContaining({
+          noSecretHandling: true,
+        }),
+        traceId: "trace-unknown-route-http",
+        error: {
+          code: "ROUTE_NOT_FOUND",
+          details: {
+            path: "/api/missing",
+          },
+        },
+      });
+
+      const serializedFailures = JSON.stringify([
+        nonJsonPayload,
+        oversizePayload,
+        malformedPayload,
+        unsupportedMethodPayload,
+        unknownRoutePayload,
+      ]).toLowerCase();
+      expect(serializedFailures).not.toContain("raw-secret-header");
+      expect(serializedFailures).not.toContain("raw-secret-query");
     } finally {
       await server.stop();
     }
