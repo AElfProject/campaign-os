@@ -194,7 +194,7 @@ describe("backend service topology", () => {
           serviceIds: ["missing-service"],
         },
       ],
-    } as typeof backendTopology;
+    } as unknown as typeof backendTopology;
 
     const validation = validateBackendTopology(invalidTopology, { knownRouteIds });
     const issueCodes = validation.issues.map((issue) => issue.code);
