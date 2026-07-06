@@ -1,16 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { startCampaignOsApiServer } from "./server";
 
 const secretLeakFragments = [
   "authorization: bearer",
+  "bearer sample-bearer-token",
   "campaign_os_database_url=",
   "connectionstring=",
   "mnemonic",
+  "sample-mnemonic-phrase",
   "objectkey=",
+  "object-key-sample",
+  "password=",
   "privatekey=",
+  "private-key-sample",
+  "real-db-password",
   "rawsignature=",
+  "raw-signature-sample",
   "seedphrase=",
+  "seed-phrase-sample",
   "signedurl=",
+  "https://storage.invalid/signed-url",
+  "postgres://real-user:real-db-password@db.invalid/campaign-os",
 ];
 
 const expectSanitizedReadinessPayload = (payload: unknown) => {
@@ -22,6 +32,10 @@ const expectSanitizedReadinessPayload = (payload: unknown) => {
 };
 
 describe("backend scaffold HTTP smoke", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("serves health and contracts envelopes with trace IDs over the local server", async () => {
     const server = await startCampaignOsApiServer({ logger: false, port: 0 });
 
@@ -52,6 +66,12 @@ describe("backend scaffold HTTP smoke", () => {
         }),
         data: {
           backendService: expect.objectContaining({
+            databaseReadiness: expect.objectContaining({
+              adapterStatus: "contract_ready",
+              migrationPlanStatus: "dry_run_ready",
+              requiredStoreCount: 6,
+              valid: true,
+            }),
             entrypointId: "campaign-os-backend-service",
             migrationRunnerStatus: "disabled_local_review",
             profileId: "local-review",
@@ -69,6 +89,26 @@ describe("backend scaffold HTTP smoke", () => {
         }),
         data: {
           backendService: expect.objectContaining({
+            databaseReadiness: expect.objectContaining({
+              adapter: expect.objectContaining({
+                id: "campaign-os-production-db-adapter",
+                status: "contract_ready",
+              }),
+              migrationPlan: expect.objectContaining({
+                dryRun: true,
+                liveExecutionEnabled: false,
+                status: "dry_run_ready",
+              }),
+              requiredStores: expect.arrayContaining([
+                expect.objectContaining({
+                  id: "campaign-db",
+                  schemaVersion: "v0.2.0",
+                }),
+              ]),
+              validation: expect.objectContaining({
+                valid: true,
+              }),
+            }),
             deferredProductionCapabilities: expect.arrayContaining([
               "auth_session",
               "production_database",
@@ -80,6 +120,75 @@ describe("backend scaffold HTTP smoke", () => {
             ]),
             reportShape: expect.objectContaining({
               valid: true,
+            }),
+          }),
+        },
+      });
+      expectSanitizedReadinessPayload(healthPayload.data.backendService);
+      expectSanitizedReadinessPayload(contractsPayload.data.backendService);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("keeps production-required readiness smoke payloads blocked and sanitized", async () => {
+    vi.stubEnv("CAMPAIGN_OS_AUTH_SECRET", "bearer sample-bearer-token");
+    vi.stubEnv("CAMPAIGN_OS_BACKEND_PROFILE", "production-required");
+    vi.stubEnv("CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT", "https://writer.invalid/private-key-sample");
+    vi.stubEnv("CAMPAIGN_OS_DATABASE_URL", "postgres://real-user:real-db-password@db.invalid/campaign-os");
+    vi.stubEnv("CAMPAIGN_OS_PROVIDER_REGISTRY_URL", "https://providers.invalid/object-key-sample");
+    vi.stubEnv("CAMPAIGN_OS_WORKER_QUEUE_URL", "https://queue.invalid/raw-signature-sample");
+
+    const server = await startCampaignOsApiServer({ logger: false, port: 0 });
+
+    try {
+      const health = await fetch(`${server.url}/api/health`, {
+        headers: {
+          authorization: "Bearer sample-bearer-token",
+          "x-campaign-os-trace-id": "trace-production-readiness-smoke",
+        },
+      });
+      const contracts = await fetch(`${server.url}/api/contracts`, {
+        headers: {
+          authorization: "Bearer sample-bearer-token",
+          "x-campaign-os-trace-id": "trace-production-contracts-smoke",
+        },
+      });
+      const healthPayload = await health.json();
+      const contractsPayload = await contracts.json();
+
+      expect(health.status).toBe(200);
+      expect(contracts.status).toBe(200);
+      expect(healthPayload).toMatchObject({
+        ok: true,
+        data: {
+          backendService: expect.objectContaining({
+            databaseReadiness: expect.objectContaining({
+              adapterStatus: "blocked",
+              migrationPlanStatus: "blocked",
+              valid: false,
+            }),
+            profileId: "production-required",
+            validation: expect.objectContaining({
+              valid: false,
+            }),
+          }),
+        },
+      });
+      expect(contractsPayload).toMatchObject({
+        ok: true,
+        data: {
+          backendService: expect.objectContaining({
+            databaseReadiness: expect.objectContaining({
+              adapter: expect.objectContaining({
+                status: "blocked",
+              }),
+              migrationPlan: expect.objectContaining({
+                status: "blocked",
+              }),
+              validation: expect.objectContaining({
+                valid: false,
+              }),
             }),
           }),
         },

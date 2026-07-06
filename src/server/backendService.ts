@@ -15,6 +15,13 @@ import {
   createPersistenceAdapterPortReport,
   type PersistenceAdapterPortReport,
 } from "./persistenceAdapterPort";
+import {
+  createProductionDatabaseAdapterContract,
+  type ProductionDatabaseAdapterContract,
+  type ProductionDatabaseDiagnostic,
+  type ProductionDatabaseStoreRegistryEntry,
+} from "./productionDatabase";
+import type { MigrationRunnerPlan } from "./migrationRunner";
 
 export type BackendAttachPointArea =
   | "production-persistence"
@@ -30,6 +37,7 @@ export type BackendAttachPointArea =
 export type BackendAttachPointStatus = "local-only" | "scaffold" | "deferred" | "blocked";
 export type BackendReadinessDiagnosticCode =
   | "BACKEND_CONFIG_BLOCKED"
+  | "DATABASE_READINESS_BLOCKED"
   | "PERSISTENCE_ADAPTER_INVALID"
   | "MIGRATION_MANIFEST_INVALID"
   | "API_FOUNDATION_INVALID"
@@ -74,6 +82,7 @@ export interface BackendServiceReadinessReport {
   };
   attachMap: BackendAttachPoint[];
   config: BackendConfigContract;
+  databaseReadiness: BackendDatabaseReadinessReport;
   entrypoint: BackendServiceEntrypoint;
   migration: MigrationManifest;
   persistenceAdapters: PersistenceAdapterPortReport;
@@ -85,6 +94,16 @@ export interface BackendServiceReadinessReport {
   };
   validation: {
     issues: BackendReadinessDiagnostic[];
+    valid: boolean;
+  };
+}
+
+export interface BackendDatabaseReadinessReport {
+  adapter: ProductionDatabaseAdapterContract;
+  migrationPlan: MigrationRunnerPlan;
+  stores: ProductionDatabaseStoreRegistryEntry[];
+  validation: {
+    issues: Array<ProductionDatabaseDiagnostic | MigrationRunnerPlan["diagnostics"][number]>;
     valid: boolean;
   };
 }
@@ -205,6 +224,7 @@ const createValidationIssues = ({
   apiFoundation,
   attachMap,
   config,
+  databaseReadiness,
   entrypoint,
   migration,
   persistenceAdapters,
@@ -214,6 +234,7 @@ const createValidationIssues = ({
   apiFoundation: ApiFoundationReport;
   attachMap: readonly BackendAttachPoint[];
   config: BackendConfigContract;
+  databaseReadiness: BackendDatabaseReadinessReport;
   entrypoint: BackendServiceEntrypoint;
   migration: MigrationManifest;
   persistenceAdapters: PersistenceAdapterPortReport;
@@ -224,6 +245,14 @@ const createValidationIssues = ({
 
   if (!config.valid) {
     issues.push(errorDiagnostic("BACKEND_CONFIG_BLOCKED", "config", "Backend config contract is blocked."));
+  }
+
+  if (!databaseReadiness.validation.valid) {
+    issues.push(errorDiagnostic(
+      "DATABASE_READINESS_BLOCKED",
+      "databaseReadiness",
+      "Production database or migration readiness validation failed.",
+    ));
   }
 
   if (!persistenceAdapters.validation.valid) {
@@ -268,6 +297,30 @@ const createValidationIssues = ({
   return issues;
 };
 
+const createDatabaseReadinessReport = ({
+  migration,
+  profileId,
+}: {
+  migration: MigrationManifest;
+  profileId: BackendConfigContract["profileId"];
+}): BackendDatabaseReadinessReport => {
+  const adapter = createProductionDatabaseAdapterContract({ profileId });
+  const issues = [
+    ...adapter.diagnostics.filter((diagnostic) => diagnostic.severity === "error"),
+    ...migration.runnerPlan.validation.issues,
+  ];
+
+  return {
+    adapter,
+    migrationPlan: migration.runnerPlan,
+    stores: adapter.stores,
+    validation: {
+      issues,
+      valid: issues.every((issue) => issue.severity !== "error"),
+    },
+  };
+};
+
 export const createBackendServiceReadinessReport = ({
   configOptions,
   generatedAt = new Date(0).toISOString(),
@@ -284,6 +337,10 @@ export const createBackendServiceReadinessReport = ({
     profileId: config.profileId,
   });
   const migration = createMigrationManifest({ profileId: config.profileId });
+  const databaseReadiness = createDatabaseReadinessReport({
+    migration,
+    profileId: config.profileId,
+  });
   const entrypoint: BackendServiceEntrypoint = {
     foundationValidationValid: apiFoundation.validation.valid,
     id: "campaign-os-backend-service",
@@ -299,6 +356,7 @@ export const createBackendServiceReadinessReport = ({
     apiFoundation,
     attachMap: backendAttachMap,
     config,
+    databaseReadiness,
     entrypoint,
     migration,
     persistenceAdapters,
@@ -314,6 +372,7 @@ export const createBackendServiceReadinessReport = ({
     },
     attachMap: backendAttachMap,
     config,
+    databaseReadiness,
     entrypoint,
     migration,
     persistenceAdapters,

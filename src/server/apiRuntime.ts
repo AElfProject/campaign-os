@@ -215,6 +215,95 @@ const createBackendServiceReadinessFactory = ({
   };
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const createHealthDatabaseReadinessMetadata = (
+  report: BackendServiceReadinessReport,
+) => ({
+  adapterStatus: report.databaseReadiness.adapter.status,
+  migrationPlanStatus: report.databaseReadiness.migrationPlan.status,
+  requiredStoreCount: report.databaseReadiness.stores.length,
+  validationIssueCount: report.databaseReadiness.validation.issues.length,
+  valid: report.databaseReadiness.validation.valid,
+});
+
+const createContractDatabaseReadinessMetadata = (
+  report: BackendServiceReadinessReport,
+) => ({
+  adapter: {
+    id: report.databaseReadiness.adapter.id,
+    localReviewOnly: report.databaseReadiness.adapter.localReviewOnly,
+    readinessLabel: report.databaseReadiness.adapter.readinessLabel,
+    requiresConnectionString: report.databaseReadiness.adapter.requiresConnectionString,
+    requiresMigrationRunner: report.databaseReadiness.adapter.requiresMigrationRunner,
+    status: report.databaseReadiness.adapter.status,
+  },
+  migrationPlan: {
+    blockedMigrationIds: report.databaseReadiness.migrationPlan.blockedMigrationIds,
+    dryRun: report.databaseReadiness.migrationPlan.dryRun,
+    liveExecutionEnabled: report.databaseReadiness.migrationPlan.liveExecutionEnabled,
+    pendingMigrationIds: report.databaseReadiness.migrationPlan.pendingMigrationIds,
+    planId: report.databaseReadiness.migrationPlan.planId,
+    profileId: report.databaseReadiness.migrationPlan.profileId,
+    status: report.databaseReadiness.migrationPlan.status,
+    validation: report.databaseReadiness.migrationPlan.validation,
+  },
+  requiredStores: report.databaseReadiness.stores.map((store) => ({
+    id: store.id,
+    migrationRequired: store.migrationRequired,
+    ownerServiceId: store.ownerServiceId,
+    productionMode: store.productionMode,
+    readiness: store.readiness,
+    schemaVersion: store.schemaVersion,
+  })),
+  validation: report.databaseReadiness.validation,
+});
+
+const withBackendServiceDatabaseReadiness = ({
+  data,
+  readiness,
+  routeId,
+}: {
+  data: unknown;
+  readiness: BackendServiceReadinessReport;
+  routeId: ApiRuntimeRouteContract["id"];
+}) => {
+  if (!isRecord(data) || !isRecord(data.backendService)) {
+    return data;
+  }
+
+  if (routeId === "runtime.health") {
+    return {
+      ...data,
+      backendService: {
+        ...data.backendService,
+        databaseReadiness: createHealthDatabaseReadinessMetadata(readiness),
+      },
+    };
+  }
+
+  if (routeId === "runtime.contracts") {
+    return {
+      ...data,
+      backendService: {
+        ...data.backendService,
+        databaseReadiness: createContractDatabaseReadinessMetadata(readiness),
+        reportShape: isRecord(data.backendService.reportShape)
+          ? {
+            ...data.backendService.reportShape,
+            sections: Array.isArray(data.backendService.reportShape.sections)
+              ? [...data.backendService.reportShape.sections, "databaseReadiness"]
+              : ["databaseReadiness"],
+          }
+          : data.backendService.reportShape,
+      },
+    };
+  }
+
+  return data;
+};
+
 const findMatchingRoute = (
   matchers: readonly ApiRuntimeRouteMatcher[],
   method: string,
@@ -318,6 +407,8 @@ export const createCampaignOsApiRuntime = ({
       runtimeConfigOptions,
       version: runtimeVersion,
     });
+  const shouldAttachDatabaseReadiness = (routeId: ApiRuntimeRouteContract["id"]) =>
+    routeId === "runtime.health" || routeId === "runtime.contracts";
 
   return {
     handle: async (request) => {
@@ -333,8 +424,14 @@ export const createCampaignOsApiRuntime = ({
         const { matcher, params } = findMatchingRoute(matchers, method, pathname);
         const body = parseBody(request, method);
         const handler = handlers[matcher.route.id];
+        let requestReadiness: BackendServiceReadinessReport | undefined;
+        const requestBackendServiceReadiness = () => {
+          requestReadiness ??= getBackendServiceReadiness();
+
+          return requestReadiness;
+        };
         const data = await handler({
-          backendServiceReadiness: getBackendServiceReadiness,
+          backendServiceReadiness: requestBackendServiceReadiness,
           body,
           params,
           repository: safeRepository,
@@ -344,10 +441,17 @@ export const createCampaignOsApiRuntime = ({
           traceId,
           version: runtimeVersion,
         });
+        const responseData = shouldAttachDatabaseReadiness(matcher.route.id)
+          ? withBackendServiceDatabaseReadiness({
+            data,
+            readiness: requestBackendServiceReadiness(),
+            routeId: matcher.route.id,
+          })
+          : data;
 
         return {
           body: createSuccessEnvelope({
-            data,
+            data: responseData,
             routeCount: apiRuntimeRoutes.length,
             traceId,
             version: runtimeVersion,

@@ -71,9 +71,31 @@ describe("backend service readiness report", () => {
     );
     expect(report.migration).toMatchObject({
       noLiveMigrationCommand: true,
-      noMigrationRunner: true,
+      noMigrationRunner: false,
       runnerStatus: "disabled_local_review",
     });
+    expect(report.databaseReadiness).toMatchObject({
+      adapter: expect.objectContaining({
+        id: "campaign-os-production-db-adapter",
+        status: "contract_ready",
+      }),
+      migrationPlan: expect.objectContaining({
+        dryRun: true,
+        liveExecutionEnabled: false,
+        status: "dry_run_ready",
+      }),
+      validation: expect.objectContaining({
+        valid: true,
+      }),
+    });
+    expect(report.databaseReadiness.stores.map((store) => store.id)).toEqual([
+      "campaign-db",
+      "wallet-session-db",
+      "task-evidence-db",
+      "i18n-content-db",
+      "risk-event-db",
+      "points-ledger",
+    ]);
   });
 
   it("surfaces fail-closed diagnostics for invalid backend config", () => {
@@ -103,6 +125,45 @@ describe("backend service readiness report", () => {
         expect.objectContaining({ code: "UNSUPPORTED_PERSISTENCE_MODE" }),
       ]),
     );
+  });
+
+  it("fails closed for production-required until database and migration readiness are live", () => {
+    const report = createBackendServiceReadinessReport({
+      configOptions: {
+        env: {
+          CAMPAIGN_OS_AUTH_SECRET: "auth-secret",
+          CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT: "https://writer.invalid",
+          CAMPAIGN_OS_DATABASE_URL: "postgres://db.invalid/campaign-os",
+          CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid",
+          CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue.invalid",
+        },
+        profileId: "production-required",
+      },
+    });
+
+    expect(report.config.diagnostics).toEqual([]);
+    expect(report.databaseReadiness).toMatchObject({
+      adapter: expect.objectContaining({
+        status: "blocked",
+      }),
+      migrationPlan: expect.objectContaining({
+        status: "blocked",
+      }),
+      validation: expect.objectContaining({
+        valid: false,
+      }),
+    });
+    expect(report.validation).toMatchObject({
+      valid: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "DATABASE_READINESS_BLOCKED",
+          field: "databaseReadiness",
+        }),
+      ]),
+    });
+    expect(JSON.stringify(report)).not.toContain("auth-secret");
+    expect(JSON.stringify(report)).not.toContain("postgres://db.invalid/campaign-os");
   });
 
   it("uses readable labels and does not expose private artifact paths", () => {

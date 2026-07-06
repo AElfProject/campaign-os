@@ -5,6 +5,7 @@ import {
   validatePersistenceAdapterPorts,
   type PersistenceAdapterPort,
 } from "./persistenceAdapterPort";
+import { productionDatabaseRequiredStoreIds } from "./productionDatabase";
 
 describe("persistence adapter port", () => {
   it("reports memory as the default active local adapter", () => {
@@ -25,8 +26,10 @@ describe("persistence adapter port", () => {
         expect.objectContaining({
           id: "campaign-os-production-db-adapter",
           kind: "production_deferred",
+          ownerStores: productionDatabaseRequiredStoreIds,
           requiresConnectionString: true,
           requiresMigrationRunner: true,
+          schemaVersion: "v0.2.0",
           status: "deferred",
         }),
       ]),
@@ -67,6 +70,19 @@ describe("persistence adapter port", () => {
       expect(store.futureProductionMode).toMatch(
         /relational_database|object_storage|analytics_warehouse|contract_index/,
       );
+    }
+
+    const relationalStores = backendStorePorts.filter(
+      (store) => store.adapterOwnerId === "campaign-os-production-db-adapter",
+    );
+
+    expect(relationalStores.map((store) => store.id)).toEqual(
+      productionDatabaseRequiredStoreIds,
+    );
+
+    for (const store of relationalStores) {
+      expect(store.entities?.length).toBeGreaterThan(0);
+      expect(store.schemaVersion).toBe("v0.2.0");
     }
   });
 

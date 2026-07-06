@@ -4,11 +4,20 @@ import {
   type BackendStoreId,
   type BackendStorePort,
 } from "./persistenceAdapterPort";
+import {
+  createMigrationRunnerPlan,
+  defaultSchemaMigrations,
+  type MigrationRunnerDiagnostic,
+  type MigrationRunnerPlan,
+  type SchemaMigrationDefinition,
+} from "./migrationRunner";
 
 export type MigrationRunnerStatus = "disabled_local_review" | "deferred" | "ready";
 export type MigrationStoreReadiness = "manifested" | "deferred" | "blocked";
 export type MigrationDiagnosticCode =
   | "MIGRATION_RUNNER_DISABLED_LOCAL_REVIEW"
+  | "MIGRATION_RUNNER_DEFERRED"
+  | MigrationRunnerDiagnostic["code"]
   | "MIGRATION_STORE_MISSING_OWNER"
   | "MIGRATION_STORE_MISSING_PRODUCTION_MODE";
 
@@ -31,10 +40,12 @@ export interface MigrationStoreManifest {
 
 export interface MigrationManifest {
   diagnostics: MigrationDiagnostic[];
+  migrations: SchemaMigrationDefinition[];
   manifestVersion: string;
   noDestructiveOperations: true;
   noLiveMigrationCommand: true;
   noMigrationRunner: boolean;
+  runnerPlan: MigrationRunnerPlan;
   runnerStatus: MigrationRunnerStatus;
   stores: MigrationStoreManifest[];
   validation: {
@@ -44,6 +55,7 @@ export interface MigrationManifest {
 }
 
 export interface CreateMigrationManifestOptions {
+  migrations?: readonly SchemaMigrationDefinition[];
   profileId?: BackendRuntimeProfileId;
   stores?: readonly BackendStorePort[];
 }
@@ -63,46 +75,59 @@ const toMigrationStoreManifest = (store: BackendStorePort): MigrationStoreManife
   ownerServiceId: store.ownerServiceId,
   productionMode: store.futureProductionMode,
   readiness: migrationStoreReadiness(store),
-  targetSchemaVersion: "v0.1.0-target",
+  targetSchemaVersion: store.schemaVersion ?? "v0.2.0",
 });
 
 export const createMigrationManifest = ({
+  migrations = defaultSchemaMigrations,
   profileId = "local-review",
   stores = backendStorePorts,
 }: CreateMigrationManifestOptions = {}): MigrationManifest => {
   const runnerStatus: MigrationRunnerStatus =
     profileId === "local-review" ? "disabled_local_review" : "deferred";
   const migrationStores = stores.map(toMigrationStoreManifest);
+  const runnerPlan = createMigrationRunnerPlan({
+    migrations,
+    profileId,
+  });
   const runnerDiagnostic: MigrationDiagnostic =
     runnerStatus === "disabled_local_review"
       ? {
         code: "MIGRATION_RUNNER_DISABLED_LOCAL_REVIEW",
         field: "runnerStatus",
         message:
-            "Migration runner is disabled for local review; Mission 168 exposes manifest metadata only.",
+            "Migration runner is dry-run only for local review; Mission 169 does not execute live migrations.",
         severity: "info",
       }
       : {
-        code: "MIGRATION_RUNNER_DISABLED_LOCAL_REVIEW",
+        code: "MIGRATION_RUNNER_DEFERRED",
         field: "runnerStatus",
         message:
-            "Migration runner remains deferred until a production persistence mission provides an executable runner.",
+            "Live migration runner remains deferred until a protected production execution mission.",
         severity: "warning",
       };
   const issues = validateMigrationManifestStores(migrationStores);
-  const diagnostics = [runnerDiagnostic, ...issues];
+  const runnerIssues = runnerPlan.validation.issues.map<MigrationDiagnostic>((issue) => ({
+    code: issue.code,
+    field: issue.field,
+    message: issue.message,
+    severity: issue.severity,
+  }));
+  const diagnostics = [runnerDiagnostic, ...runnerIssues, ...issues];
 
   return {
     diagnostics,
-    manifestVersion: "0.1.0",
+    manifestVersion: "0.2.0",
+    migrations: [...migrations],
     noDestructiveOperations: true,
     noLiveMigrationCommand: true,
-    noMigrationRunner: true,
+    noMigrationRunner: false,
+    runnerPlan,
     runnerStatus,
     stores: migrationStores,
     validation: {
-      issues,
-      valid: issues.every((issue) => issue.severity !== "error"),
+      issues: [...runnerIssues, ...issues],
+      valid: [...runnerIssues, ...issues].every((issue) => issue.severity !== "error"),
     },
   };
 };
