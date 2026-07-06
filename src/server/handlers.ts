@@ -12,6 +12,7 @@ import {
   type GetCampaignAnalyticsRequest,
   type GetCampaignDetailRequest,
   type ListCampaignsRequest,
+  type LocalCampaignDraft,
   type LocalServiceError,
   type LocalServiceResult,
   type VerifyTaskRequest,
@@ -20,6 +21,13 @@ import {
   createServiceDegradationGovernance,
   createServiceRegistry,
 } from "../domain/serviceRegistry";
+import type {
+  CampaignDiscoveryDetail,
+  CampaignDiscoveryItem,
+  CampaignDiscoveryReadModel,
+  CampaignDiscoverySummary,
+  LocalizedText,
+} from "../domain/types";
 import type { ApiRuntimeRouteId } from "./routes";
 import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
 import {
@@ -27,6 +35,12 @@ import {
   createBackendPersistenceRuntimeSummary,
   type BackendServiceReadinessReport,
 } from "./backendService";
+import type {
+  CampaignDbCreateDraftInput,
+  CampaignDbDraft,
+  CampaignDbListFilter,
+  CampaignDbReadProjection,
+} from "./campaignDbRepository";
 import { createBackendTopologyReport } from "./topology";
 import { createRuntimeSafety } from "./envelope";
 import {
@@ -191,6 +205,151 @@ const listCampaignRequest = (context: ApiRuntimeHandlerContext): ListCampaignsRe
 const campaignDetailRequest = (context: ApiRuntimeHandlerContext): GetCampaignDetailRequest => ({
   ...listCampaignRequest(context),
   campaignId: requiredRouteParam(context.params, "campaignId"),
+});
+
+const campaignDbListFilter = (context: ApiRuntimeHandlerContext): CampaignDbListFilter => ({
+  ownerAddress: context.query.ownerAddress,
+  projectId: context.query.projectId,
+  status: context.query.status,
+});
+
+const localized = (enUS: string, zhCN = enUS, zhTW = enUS): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": zhTW,
+});
+
+const campaignDbBoundary = localized(
+  "Campaign draft is routed through the Campaign DB repository boundary in deterministic local-review mode.",
+  "活动草稿通过 Campaign DB repository 边界在 deterministic local-review 模式下路由。",
+);
+
+const campaignDbCta = {
+  kind: "start" as const,
+  label: localized("Start campaign", "开始活动"),
+  reason: localized(
+    "Draft is available through the repository-backed Campaign API read model.",
+    "草稿已通过 repository-backed Campaign API read model 可读。",
+  ),
+};
+
+const createCampaignDbSummary = (
+  drafts: readonly CampaignDbReadProjection[],
+) => ({
+  createdViaRepository: true,
+  draftCount: drafts.length,
+  repositoryId: "campaign-db-repository-runtime",
+  storeId: "campaign-db",
+});
+
+const createCampaignDiscoverySummary = (
+  items: readonly CampaignDiscoveryItem[],
+): CampaignDiscoverySummary => ({
+  appHubReadyCount: items.filter((item) => item.consumerSurfaces.includes("app_hub")).length,
+  endedCount: items.filter((item) =>
+    item.status === "ended" || item.status === "exported" || item.status === "archived"
+  ).length,
+  forecastReadyCount: items.filter((item) => item.consumerSurfaces.includes("forecast")).length,
+  liveCount: items.filter((item) => item.status === "live").length,
+  portfolioReadyCount: items.filter((item) => item.consumerSurfaces.includes("portfolio")).length,
+  scheduledCount: items.filter(
+    (item) =>
+      item.status === "scheduled" ||
+      item.status === "draft" ||
+      item.status === "ai_draft" ||
+      item.status === "human_review",
+  ).length,
+  topCampaignId: items[0]?.id ?? "",
+  totalCampaigns: items.length,
+});
+
+const createCampaignDbTaskSummary = (draft: CampaignDbDraft) => ({
+  points: 0,
+  required: false,
+  taskId: `${draft.id}-repository-draft`,
+  title: localized("Repository draft", "Repository 草稿"),
+  verificationType: "MANUAL" as const,
+});
+
+const campaignDbDraftToDiscoveryItem = (draft: CampaignDbDraft): CampaignDiscoveryItem => ({
+  boundary: campaignDbBoundary,
+  campaignType: localized("Repository Draft", "Repository 草稿"),
+  consumerSurfaces: ["user_app", "app_hub", "portfolio", "forecast"],
+  coreTasks: [createCampaignDbTaskSummary(draft)],
+  cta: campaignDbCta,
+  endTime: draft.endTime,
+  id: draft.id,
+  points: 0,
+  slug: draft.id,
+  startTime: draft.startTime,
+  status: draft.status,
+  subtitle: localized(draft.rewardDescription, draft.rewardDescription),
+  supportedLocales: [...draft.supportedLocales],
+  tags: [
+    localized(draft.projectId, draft.projectId),
+    localized("Repository-backed", "Repository-backed"),
+  ],
+  timeWindow: localized(draft.duration, draft.duration),
+  title: localized(draft.goal, draft.goal),
+  walletPolicy: draft.walletPolicy,
+});
+
+const campaignDbDraftToDiscoveryDetail = (
+  draft: CampaignDbDraft,
+): CampaignDiscoveryDetail => {
+  const item = campaignDbDraftToDiscoveryItem(draft);
+
+  return {
+    appHubContext: campaignDbBoundary,
+    boundary: campaignDbBoundary,
+    eligibilityEntry: localized(
+      "Eligibility remains deferred for repository-created campaign drafts.",
+      "Repository 创建的活动草稿暂不执行资格校验。",
+    ),
+    forecastContext: campaignDbBoundary,
+    item,
+    portfolioContext: campaignDbBoundary,
+    rewardBoundary: localized(draft.rewardDescription, draft.rewardDescription),
+    tasks: item.coreTasks,
+  };
+};
+
+const mergeCampaignDbDraftsIntoDiscovery = (
+  discovery: CampaignDiscoveryReadModel,
+  drafts: readonly CampaignDbReadProjection[],
+) => {
+  const draftDetails = drafts.map(campaignDbDraftToDiscoveryDetail);
+  const items = [...draftDetails.map((detail) => detail.item), ...discovery.items];
+  const details = [...draftDetails, ...discovery.details];
+
+  return {
+    ...discovery,
+    campaignDb: createCampaignDbSummary(drafts),
+    details,
+    items,
+    summary: createCampaignDiscoverySummary(items),
+  };
+};
+
+const campaignDbCreateDraftInput = (
+  payload: LocalCampaignDraft,
+): CampaignDbCreateDraftInput => ({
+  contractMode: payload.contractMode,
+  defaultLocale: payload.defaultLocale,
+  duration: payload.duration,
+  endTime: payload.endTime,
+  goal: payload.goal,
+  metadataHash: payload.metadataHash,
+  metadataUri: payload.metadataUri,
+  ownerAddress: payload.ownerAddress,
+  projectId: payload.projectId,
+  publishReadiness: payload.publishReadiness,
+  rewardDescription: payload.rewardDescription,
+  rewardDisclaimerHash: payload.rewardDisclaimerHash,
+  startTime: payload.startTime,
+  status: payload.status,
+  supportedLocales: payload.supportedLocales,
+  walletPolicy: payload.walletPolicy,
 });
 
 const eligibilityRequest = (context: ApiRuntimeHandlerContext): CheckEligibilityRequest => {
@@ -492,26 +651,81 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         walletSource: payload.walletSource,
       }),
     ),
-  "campaigns.list": (context) =>
-    unwrapLocalResult(context.service.listCampaigns(listCampaignRequest(context)), context),
-  "campaigns.create": (context) =>
-    persistLocalResult(
+  "campaigns.list": async (context) => {
+    const response = unwrapLocalResult(
+      context.service.listCampaigns(listCampaignRequest(context)),
+      context,
+    );
+    const drafts = await context.campaignDbRepository.list(campaignDbListFilter(context), {
+      traceId: context.traceId,
+    });
+
+    return {
+      ...response,
+      payload: mergeCampaignDbDraftsIntoDiscovery(response.payload, drafts),
+    };
+  },
+  "campaigns.create": async (context) => {
+    const response = unwrapLocalResult(
       context.service.createCampaign(createCampaignRequest(context)),
       context,
-      (payload) => ({
-        campaignId: payload.id,
-        kind: "campaign_draft",
-        summary: {
-          contractMode: payload.contractMode,
-          projectId: payload.projectId,
-          status: payload.status,
-          walletPolicy: payload.walletPolicy,
+    );
+    const campaignDbDraft = await context.campaignDbRepository.createDraft(
+      campaignDbCreateDraftInput(response.payload),
+      { traceId: context.traceId },
+    );
+    const record = await context.repository.record({
+      campaignId: campaignDbDraft.id,
+      kind: "campaign_draft",
+      routeId: context.route.id,
+      summary: {
+        contractMode: response.payload.contractMode,
+        projectId: response.payload.projectId,
+        status: response.payload.status,
+        walletPolicy: response.payload.walletPolicy,
+      },
+      traceId: context.traceId,
+      walletAddress: response.payload.ownerAddress,
+    });
+
+    return {
+      ...response,
+      campaignDb: {
+        createdViaRepository: true,
+        draftId: campaignDbDraft.id,
+        storeId: "campaign-db",
+      },
+      payload: {
+        ...response.payload,
+        id: campaignDbDraft.id,
+      },
+      persistence: {
+        kind: record.kind,
+        recordId: record.id,
+      },
+    };
+  },
+  "campaigns.detail": async (context) => {
+    const request = campaignDetailRequest(context);
+    const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
+      traceId: context.traceId,
+    });
+
+    if (campaignDbDraft) {
+      return {
+        boundary: campaignDbBoundary,
+        campaignDb: {
+          adapterId: campaignDbDraft.repository.adapterId,
+          createdViaRepository: true,
+          repositoryId: campaignDbDraft.repository.repositoryId,
+          storeId: campaignDbDraft.repository.storeId,
         },
-        walletAddress: payload.ownerAddress,
-      }),
-    ),
-  "campaigns.detail": (context) =>
-    unwrapLocalResult(context.service.getCampaignDetail(campaignDetailRequest(context)), context),
+        payload: campaignDbDraftToDiscoveryDetail(campaignDbDraft),
+      };
+    }
+
+    return unwrapLocalResult(context.service.getCampaignDetail(request), context);
+  },
   "campaigns.tasks.add": (context) =>
     persistLocalResult(
       context.service.addTask(addTaskRequest(context)),

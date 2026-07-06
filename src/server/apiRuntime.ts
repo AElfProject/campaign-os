@@ -24,6 +24,10 @@ import {
   type BackendServiceReadinessReport,
 } from "./backendService";
 import {
+  createCampaignDbRepository,
+  type CampaignDbRepository,
+} from "./campaignDbRepository";
+import {
   createCampaignOsRepository,
   type CampaignOsRepository,
 } from "./persistence";
@@ -46,6 +50,7 @@ export interface ApiRuntimeResponse<TPayload = unknown> {
 export interface ApiRuntimeHandlerContext {
   backendServiceReadiness: BackendServiceReadinessFactory;
   body: unknown;
+  campaignDbRepository: CampaignDbRepository;
   params: Record<string, string>;
   repository: CampaignOsRepository;
   query: Record<string, string>;
@@ -69,6 +74,7 @@ interface ApiRuntimeRouteMatcher {
 
 export interface CreateCampaignOsApiRuntimeOptions {
   backendServiceReadiness?: BackendServiceReadinessFactory;
+  campaignDbRepository?: CampaignDbRepository;
   repository?: CampaignOsRepository;
   runtimeConfig?: CampaignOsRuntimeConfig;
   runtimeConfigOptions?: CampaignOsRuntimeConfigOptions;
@@ -441,8 +447,33 @@ const createSafeRepository = (repository: CampaignOsRepository): CampaignOsRepos
   };
 };
 
+const createSafeCampaignDbRepository = (
+  repository: CampaignDbRepository,
+): CampaignDbRepository => {
+  const wrap = async <TResult>(operation: string, run: () => Promise<TResult>) => {
+    try {
+      return await run();
+    } catch {
+      throw persistenceUnavailable(operation);
+    }
+  };
+
+  return {
+    createDraft: (input, context) =>
+      wrap("campaignDb.createDraft", () => repository.createDraft(input, context)),
+    getById: (campaignId, context) =>
+      wrap("campaignDb.getById", () => repository.getById(campaignId, context)),
+    getEvents: () => repository.getEvents(),
+    health: () => wrap("campaignDb.health", () => repository.health()),
+    list: (filter, context) =>
+      wrap("campaignDb.list", () => repository.list(filter, context)),
+    reset: () => wrap("campaignDb.reset", () => repository.reset()),
+  };
+};
+
 export const createCampaignOsApiRuntime = ({
   backendServiceReadiness,
+  campaignDbRepository,
   repository,
   runtimeConfig,
   runtimeConfigOptions,
@@ -473,6 +504,9 @@ export const createCampaignOsApiRuntime = ({
   })();
   const safeRepository = createSafeRepository(
     repository ?? createCampaignOsRepository(resolvedConfig.persistence),
+  );
+  const safeCampaignDbRepository = createSafeCampaignDbRepository(
+    campaignDbRepository ?? createCampaignDbRepository(),
   );
   const handlers = createApiRuntimeHandlers();
   const matchers = apiRuntimeRoutes.map(compileRouteMatcher);
@@ -510,6 +544,7 @@ export const createCampaignOsApiRuntime = ({
         const data = await handler({
           backendServiceReadiness: requestBackendServiceReadiness,
           body,
+          campaignDbRepository: safeCampaignDbRepository,
           params,
           repository: safeRepository,
           query,

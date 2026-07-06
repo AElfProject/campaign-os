@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { campaignDetail } from "../domain/fixtures";
 import { createCampaignOsApiRuntime, type ApiRuntimeResponse } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
+import type { CampaignDbRepository } from "./campaignDbRepository";
 import {
   createCampaignOsJsonRepository,
   createCampaignOsMemoryRepository,
@@ -19,6 +20,10 @@ interface LocalServiceEnvelope<TPayload> {
 }
 
 interface CampaignListPayload {
+  items?: Array<{
+    id: string;
+    status: string;
+  }>;
   summary: {
     totalCampaigns: number;
   };
@@ -27,6 +32,7 @@ interface CampaignListPayload {
 interface CampaignDetailPayload {
   item: {
     id: string;
+    status?: string;
   };
 }
 
@@ -48,9 +54,11 @@ interface WalletSessionPayload {
 
 interface CampaignDraftPayload {
   id: string;
+  projectId?: string;
   publishReadiness: {
     ready: boolean;
   };
+  status?: string;
 }
 
 interface TaskDraftPayload {
@@ -156,6 +164,25 @@ const createFailingRepository = (): CampaignOsRepository => ({
   },
   snapshot: async () => {
     throw new Error("repository unavailable");
+  },
+});
+
+const createFailingCampaignDbRepository = (): CampaignDbRepository => ({
+  createDraft: async () => {
+    throw new Error("campaign DB repository unavailable");
+  },
+  getById: async () => {
+    throw new Error("campaign DB repository unavailable");
+  },
+  getEvents: () => [],
+  health: async () => {
+    throw new Error("campaign DB repository unavailable");
+  },
+  list: async () => {
+    throw new Error("campaign DB repository unavailable");
+  },
+  reset: async () => {
+    throw new Error("campaign DB repository unavailable");
   },
 });
 
@@ -1111,6 +1138,106 @@ describe("Campaign OS API runtime", () => {
     });
   });
 
+  it("routes campaign create, detail, and list through the Campaign DB repository in one runtime", async () => {
+    let readinessCallCount = 0;
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({
+      backendServiceReadiness: () => {
+        readinessCallCount += 1;
+        throw new Error("backend readiness should not run on campaign create/read/list");
+      },
+    });
+    const create = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/campaigns",
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-create" },
+      body: JSON.stringify({
+        duration: "2026-08-01/2026-08-14",
+        endTime: "2026-08-14T23:59:59Z",
+        goal: "Route repository draft",
+        ownerAddress: "repo-owner-001",
+        projectId: "repo-project",
+        rewardDescription: "Repository-backed rewards remain local-review only.",
+        startTime: "2026-08-01T00:00:00Z",
+      }),
+    });
+    const created = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload> & {
+      campaignDb: {
+        draftId: string;
+        storeId: string;
+      };
+      persistence: {
+        kind: string;
+        recordId: string;
+      };
+    }>(create);
+    const detail = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-detail" },
+    });
+    const list = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: "/api/campaigns?projectId=repo-project&ownerAddress=repo-owner-001&status=draft",
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-list" },
+    });
+
+    expect(create.body.traceId).toBe("trace-campaign-db-create");
+    expect(created).toMatchObject({
+      campaignDb: {
+        draftId: "campaign-db-draft-0001",
+        storeId: "campaign-db",
+      },
+      payload: {
+        id: "campaign-db-draft-0001",
+        projectId: "repo-project",
+        publishReadiness: { ready: true },
+        status: "draft",
+      },
+      persistence: {
+        kind: "campaign_draft",
+        recordId: expect.any(String),
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload> & {
+      campaignDb: {
+        createdViaRepository: boolean;
+        storeId: string;
+      };
+    }>(detail)).toMatchObject({
+      campaignDb: {
+        createdViaRepository: true,
+        storeId: "campaign-db",
+      },
+      payload: {
+        item: {
+          id: "campaign-db-draft-0001",
+          status: "draft",
+        },
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignListPayload> & {
+      payload: CampaignListPayload & {
+        campaignDb: {
+          draftCount: number;
+        };
+      };
+    }>(list).payload).toMatchObject({
+      campaignDb: {
+        draftCount: 1,
+      },
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          id: "campaign-db-draft-0001",
+          status: "draft",
+        }),
+      ]),
+      summary: {
+        totalCampaigns: 1,
+      },
+    });
+    expect(readinessCallCount).toBe(0);
+  });
+
   it("calls seeded POST endpoints with sanitized local persistence records", async () => {
     const repository = createCampaignOsMemoryRepository();
     const runtimeWithPersistence = createCampaignOsApiRuntime({ repository });
@@ -1210,7 +1337,7 @@ describe("Campaign OS API runtime", () => {
       },
     });
     expect(expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload>>(campaignDraft).payload).toMatchObject({
-      id: "local-awaken-campaign",
+      id: "campaign-db-draft-0001",
       publishReadiness: { ready: true },
     });
     expect(expectSuccessData<LocalServiceEnvelope<TaskDraftPayload>>(taskDraft).payload).toMatchObject({
@@ -1371,6 +1498,82 @@ describe("Campaign OS API runtime", () => {
     });
     expectNoForbiddenResponseKeys(health.body);
     expectNoForbiddenResponseKeys(walletSession.body);
+  });
+
+  it("fails closed with trace IDs when the Campaign DB repository is unavailable", async () => {
+    const failingRuntime = createCampaignOsApiRuntime({
+      campaignDbRepository: createFailingCampaignDbRepository(),
+    });
+    const create = await failingRuntime.handle({
+      method: "POST",
+      path: "/api/campaigns",
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-create-failure" },
+      body: JSON.stringify({
+        duration: "2026-08-01/2026-08-14",
+        endTime: "2026-08-14T23:59:59Z",
+        goal: "Fail repository draft",
+        ownerAddress: "repo-owner-002",
+        projectId: "repo-project",
+        rewardDescription: "Repository-backed rewards remain local-review only.",
+        startTime: "2026-08-01T00:00:00Z",
+      }),
+    });
+    const detail = await failingRuntime.handle({
+      method: "GET",
+      path: "/api/campaigns/campaign-db-draft-404",
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-detail-failure" },
+    });
+    const list = await failingRuntime.handle({
+      method: "GET",
+      path: "/api/campaigns?projectId=repo-project",
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-list-failure" },
+    });
+
+    expect(create).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        traceId: "trace-campaign-db-create-failure",
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: {
+            operation: "campaignDb.createDraft",
+          },
+        },
+      },
+    });
+    expect(detail).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        traceId: "trace-campaign-db-detail-failure",
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: {
+            operation: "campaignDb.getById",
+          },
+        },
+      },
+    });
+    expect(list).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        traceId: "trace-campaign-db-list-failure",
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: {
+            operation: "campaignDb.list",
+          },
+        },
+      },
+    });
+
+    for (const response of [create, detail, list]) {
+      expectNoForbiddenResponseKeys(response.body);
+      expect(response.headers["content-type"]).toBe("application/json; charset=utf-8");
+      expect(response.headers["x-campaign-os-trace-id"]).toBe(response.body.traceId);
+    }
   });
 
   it("fails closed for invalid runtime configuration", async () => {
