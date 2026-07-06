@@ -3,6 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../../../app/App";
 import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
+import { projectConsoleCopy } from "./copy";
 import { ProjectConsole } from "./ProjectConsole";
 
 const getProjectWorkspaceNav = () =>
@@ -468,6 +469,82 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText("Task Builder Preview").length).toBeGreaterThan(0);
     expect(screen.getByText("i18n Translation Review")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Task template library" })).not.toBeInTheDocument();
+  });
+
+  it("edits the Create workspace draft locally and routes it into builder readiness", () => {
+    render(<App />);
+
+    clickWorkspace("Create");
+
+    const composer = screen.getByLabelText("Local campaign draft composer");
+    fireEvent.click(within(composer).getByRole("button", { name: "Form mode" }));
+    fireEvent.change(within(composer).getByLabelText("Campaign name"), {
+      target: { value: "DAO Builder Sprint" },
+    });
+    fireEvent.change(within(composer).getByLabelText("Project name"), {
+      target: { value: "TMRWDAO" },
+    });
+    fireEvent.change(within(composer).getByLabelText("Objective"), {
+      target: { value: "dao" },
+    });
+
+    const builder = screen.getByLabelText("Campaign Builder");
+    expect(within(builder).getByText("DAO Builder Sprint")).toBeInTheDocument();
+    expect(within(builder).getByText("TMRWDAO")).toBeInTheDocument();
+    expect(within(builder).getByText("dao")).toBeInTheDocument();
+
+    fireEvent.click(within(composer).getByLabelText("Bridge with eBridge"));
+    fireEvent.click(within(composer).getByLabelText("Swap on Awaken"));
+    expect(
+      screen.getAllByText("Task mix needs at least one on-chain or dApp API verification anchor.")
+        .length,
+    ).toBeGreaterThan(0);
+
+    fireEvent.change(within(composer).getByLabelText("Wallet policy"), {
+      target: { value: "AA_ONLY" },
+    });
+    expect(screen.getAllByText("Campaign is restricted to AA wallets.").length).toBeGreaterThan(0);
+
+    fireEvent.click(within(composer).getByLabelText("zh-CN"));
+    const activeLocales = within(composer).getByLabelText("Active draft locales");
+    expect(within(activeLocales).getByText("en-US")).toBeInTheDocument();
+    expect(within(activeLocales).queryByText("zh-CN")).not.toBeInTheDocument();
+
+    fireEvent.change(within(composer).getByLabelText("AI prompt"), {
+      target: {
+        value: "Create a two week DAO governance campaign for voters with proposal tasks",
+      },
+    });
+    fireEvent.click(within(composer).getByRole("button", { name: "Generate local outline" }));
+
+    expect(within(composer).getByText("Campaign title: DAO Governance Sprint.")).toBeInTheDocument();
+    expect(within(composer).getByText("Human review required")).toBeInTheDocument();
+    expect(screen.getAllByText("Vote in DAO proposal").length).toBeGreaterThan(0);
+
+    fireEvent.click(within(composer).getByLabelText("Human review acknowledged"));
+    expect(within(composer).getByText("Human reviewed")).toBeInTheDocument();
+
+    fireEvent.click(within(composer).getByRole("button", { name: "Reset to Awaken baseline" }));
+    expect(within(composer).getByLabelText("Campaign name")).toHaveValue("Awaken Summer Sprint");
+    expect(screen.getAllByText("Awaken Summer Sprint").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Any wallet" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("keeps Create workspace composer copy complete across supported business locales", () => {
+    expect(projectConsoleCopy["en-US"].createDraftComposer).toBe(
+      "Local campaign draft composer",
+    );
+    expect(projectConsoleCopy["zh-CN"].createDraftComposer).toBe("本地活动草稿编辑器");
+    expect(projectConsoleCopy["zh-TW"].createDraftComposer).toBe("本地活動草稿編輯器");
+
+    for (const locale of ["en-US", "zh-CN", "zh-TW"] as const) {
+      expect(projectConsoleCopy[locale].createDraftLocalBoundary).toBeTruthy();
+      expect(projectConsoleCopy[locale].createDraftGenerateOutline).toBeTruthy();
+      expect(projectConsoleCopy[locale].createDraftReset).toBeTruthy();
+    }
   });
 
   it("switches to Verification Rules workspace and renders rule review boundaries", () => {

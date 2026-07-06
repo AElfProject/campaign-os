@@ -136,7 +136,7 @@ const ghostButtonStyle: CSSProperties = {
 const selectedButtonStyle: CSSProperties = {
   ...ghostButtonStyle,
   background: "#071426",
-  borderColor: "#071426",
+  border: "1px solid #071426",
   color: "#ffffff",
 };
 

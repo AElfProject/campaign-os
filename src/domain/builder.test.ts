@@ -6,11 +6,13 @@ import {
   createAiCampaignPlannerDecisionConsole,
   createCampaignCreationWorkflowReadiness,
   createCampaignTemplatePack,
+  createLocalCampaignDraft,
   createRewardEligibilityReview,
   createTaskTemplateFilterSummary,
   createPublishGateDecisionCenter,
   defaultTaskTemplateFilters,
   filterTaskTemplates,
+  generateLocalAiDraftOutline,
   seededCampaignDraft,
   taskTemplateLanguageFilterOptions,
   taskTemplateLibrary,
@@ -135,6 +137,93 @@ describe("Campaign Builder domain foundation", () => {
       defaultSelected: true,
     });
     expect(walletPolicyOptions.map((option) => option.policy)).toEqual(["ANY", "AA_ONLY", "EOA_ONLY"]);
+  });
+
+  it("creates a local form draft without mutating the seeded baseline", () => {
+    const seededSnapshot = JSON.stringify(seededCampaignDraft);
+    const draft = createLocalCampaignDraft({
+      campaignName: "TMRWDAO Governance Sprint",
+      creationMode: "FORM_BASED",
+      endTime: "2026-08-15T00:00:00Z",
+      objective: "dao",
+      projectName: "TMRWDAO",
+      selectedTaskTemplateIds: ["tpl-wallet-connect", "tpl-dao-vote"],
+      startTime: "2026-08-01T00:00:00Z",
+      supportedLocales: ["zh-CN"],
+      targetUsers: "dao voters, token holders",
+      walletPolicy: "AA_ONLY",
+    });
+
+    expect(draft).not.toBe(seededCampaignDraft);
+    expect(draft.id).toBe("draft-local-tmrwdao-governance-sprint");
+    expect(draft.creationMode).toBe("FORM_BASED");
+    expect(draft.campaignName["en-US"]).toBe("TMRWDAO Governance Sprint");
+    expect(draft.projectName).toBe("TMRWDAO");
+    expect(draft.objective).toBe("dao");
+    expect(draft.targetUsers).toEqual(["dao voters", "token holders"]);
+    expect(draft.supportedLocales).toEqual(["en-US", "zh-CN"]);
+    expect(draft.walletPolicy).toBe("AA_ONLY");
+    expect(draft.eligibilityRule.walletPolicy).toBe("AA_ONLY");
+    expect(draft.selectedTaskTemplateIds).toEqual(["tpl-wallet-connect", "tpl-dao-vote"]);
+    expect(draft.eligibilityRule.requiredTaskTemplateIds).toEqual(["tpl-wallet-connect", "tpl-dao-vote"]);
+    expect(computeBuilderPublishReadiness(draft).blockers.map((check) => check.id)).not.toContain(
+      "basics-complete",
+    );
+    expect(JSON.stringify(seededCampaignDraft)).toBe(seededSnapshot);
+  });
+
+  it("keeps local draft defaults isolated from the seeded baseline", () => {
+    const resetDraft = createLocalCampaignDraft();
+
+    resetDraft.targetUsers.push("mutated locally");
+    resetDraft.aiPrompt.generatedOutline.push("mutated outline");
+
+    expect(seededCampaignDraft.targetUsers).not.toContain("mutated locally");
+    expect(seededCampaignDraft.aiPrompt.generatedOutline).not.toContain("mutated outline");
+    expect(createLocalCampaignDraft()).toEqual(seededCampaignDraft);
+  });
+
+  it("surfaces local basics blockers for invalid date ranges", () => {
+    const draft = createLocalCampaignDraft({
+      campaignName: "Invalid Range Campaign",
+      endTime: "2026-08-01T00:00:00Z",
+      projectName: "Range Lab",
+      startTime: "2026-08-15T00:00:00Z",
+      targetUsers: ["testers"],
+    });
+
+    expect(computeBuilderPublishReadiness(draft).blockers.map((check) => check.id)).toContain(
+      "basics-complete",
+    );
+  });
+
+  it("generates deterministic local AI draft outlines and keeps them review-first", () => {
+    const prompt = "Awaken should run a two week liquidity and swap sprint for active traders";
+    const firstOutline = generateLocalAiDraftOutline(prompt);
+    const secondOutline = generateLocalAiDraftOutline(prompt);
+    const draft = createLocalCampaignDraft({
+      aiPrompt: prompt,
+      creationMode: "AI_ASSISTED",
+      supportedLocales: ["zh-CN"],
+    });
+
+    expect(firstOutline).toEqual(secondOutline);
+    expect(firstOutline.title).toBe("Awaken Liquidity Challenge");
+    expect(firstOutline.selectedTaskTemplateIds).toEqual(
+      expect.arrayContaining(["tpl-wallet-connect", "tpl-swap-awaken", "tpl-liquidity-awaken"]),
+    );
+    expect(firstOutline.generatedOutline.join(" ")).toContain("Task structure");
+    expect(firstOutline.pointsGuidance).toContain("points");
+    expect(draft.creationMode).toBe("AI_ASSISTED");
+    expect(draft.aiPrompt.prompt).toBe(prompt);
+    expect(draft.aiPrompt.reviewedByHuman).toBe(false);
+    expect(draft.aiPrompt.generatedOutline).toEqual(firstOutline.generatedOutline);
+    expect(draft.selectedTaskTemplateIds).toEqual(firstOutline.selectedTaskTemplateIds);
+    expect(
+      createAiCampaignPlannerDecisionConsole(draft).groups
+        .flatMap((group) => group.items)
+        .find((item) => item.id === "structure-human-reviewed-outline"),
+    ).toMatchObject({ status: "review_required" });
   });
 
   it("filters task templates by wallet compatibility semantics", () => {

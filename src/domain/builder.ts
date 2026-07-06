@@ -555,6 +555,32 @@ export interface CampaignDraft {
   contractImpact: ContractImpactSelection;
 }
 
+export interface LocalAiDraftOutline {
+  prompt: string;
+  title: string;
+  durationGuidance: string;
+  targetUsers: string[];
+  taskStructure: string;
+  pointsGuidance: string;
+  generatedOutline: string[];
+  selectedTaskTemplateIds: string[];
+}
+
+export interface LocalCampaignDraftInput {
+  aiPrompt?: string;
+  aiReviewedByHuman?: boolean;
+  campaignName?: string;
+  creationMode?: BuilderCreationMode;
+  endTime?: string;
+  objective?: CampaignObjective;
+  projectName?: string;
+  selectedTaskTemplateIds?: string[];
+  startTime?: string;
+  supportedLocales?: SupportedLocale[];
+  targetUsers?: string | string[];
+  walletPolicy?: WalletPolicy;
+}
+
 const text = (enUS: string, zhCN: string, zhTW = zhCN): LocalizedText => ({
   "en-US": enUS,
   "zh-CN": zhCN,
@@ -1670,6 +1696,326 @@ export const seededCampaignDraft: CampaignDraft = {
   contractImpact: contractClaimBlockedSample,
 };
 
+const cloneLocalizedText = (value: LocalizedText): LocalizedText => ({ ...value });
+
+const cloneCampaignDraft = (draft: CampaignDraft): CampaignDraft => ({
+  ...draft,
+  aiPrompt: {
+    generatedOutline: [...draft.aiPrompt.generatedOutline],
+    prompt: draft.aiPrompt.prompt,
+    reviewedByHuman: draft.aiPrompt.reviewedByHuman,
+  },
+  builderSteps: draft.builderSteps.map((step) => ({
+    ...step,
+    summary: cloneLocalizedText(step.summary),
+    title: cloneLocalizedText(step.title),
+  })),
+  campaignName: cloneLocalizedText(draft.campaignName),
+  contentRevisions: draft.contentRevisions.map((revision) => ({ ...revision })),
+  defaultContractImpact: { ...draft.defaultContractImpact },
+  contractImpact: { ...draft.contractImpact },
+  eligibilityRule: {
+    ...draft.eligibilityRule,
+    requiredTaskTemplateIds: [...draft.eligibilityRule.requiredTaskTemplateIds],
+    targetUsers: [...draft.eligibilityRule.targetUsers],
+  },
+  formState: { ...draft.formState },
+  rewardPlan: {
+    ...draft.rewardPlan,
+    description: cloneLocalizedText(draft.rewardPlan.description),
+    disclaimer: cloneLocalizedText(draft.rewardPlan.disclaimer),
+    exportDisclaimer: cloneLocalizedText(draft.rewardPlan.exportDisclaimer),
+    exportFormats: [...draft.rewardPlan.exportFormats],
+    rewardTypes: [...draft.rewardPlan.rewardTypes],
+  },
+  selectedTaskTemplateIds: [...draft.selectedTaskTemplateIds],
+  supportedLocales: [...draft.supportedLocales],
+  targetUsers: [...draft.targetUsers],
+  timePeriod: { ...draft.timePeriod },
+});
+
+const slugifyDraftId = (value: string) => {
+  const slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return slug || "campaign-draft";
+};
+
+const parseTargetUsers = (targetUsers?: string | string[]) => {
+  if (Array.isArray(targetUsers)) {
+    return targetUsers.map((targetUser) => targetUser.trim()).filter(Boolean);
+  }
+
+  if (typeof targetUsers === "string") {
+    return targetUsers.split(",").map((targetUser) => targetUser.trim()).filter(Boolean);
+  }
+
+  return null;
+};
+
+const normalizeSupportedLocales = (locales?: SupportedLocale[]) => {
+  if (!locales) {
+    return null;
+  }
+
+  const selectedLocales = locales.filter((locale) => builderSupportedLocales.includes(locale));
+
+  return Array.from(new Set<SupportedLocale>(["en-US", ...selectedLocales]));
+};
+
+const normalizeSelectedTaskTemplateIds = (templateIds?: string[]) => {
+  if (!templateIds) {
+    return null;
+  }
+
+  const knownIds = new Set(taskTemplateLibrary.map((template) => template.id));
+
+  return Array.from(new Set(templateIds.filter((templateId) => knownIds.has(templateId))));
+};
+
+const createLocalContentRevisions = (
+  draft: CampaignDraft,
+  supportedLocales: readonly SupportedLocale[],
+  aiDraft: boolean,
+  reviewedByHuman: boolean,
+): BuilderContentRevision[] =>
+  supportedLocales.map((locale) => {
+    const existingRevision = draft.contentRevisions.find((revision) => revision.locale === locale);
+    const isEnglish = locale === "en-US";
+    const fallbackTitle = draft.campaignName["en-US"];
+
+    return {
+      aiDraft: isEnglish ? false : aiDraft,
+      description: existingRevision?.description ?? draft.aiPrompt.generatedOutline[0] ?? "",
+      fallbackToEnglish: !isEnglish && !reviewedByHuman,
+      faq: existingRevision?.faq ?? "Rewards are project-provided after winner export and project review.",
+      humanReviewed: isEnglish || reviewedByHuman,
+      id: existingRevision?.id ?? `local-content-${locale.toLowerCase()}`,
+      locale,
+      published: false,
+      rewardDisclaimer: existingRevision?.rewardDisclaimer ?? draft.rewardPlan.disclaimer["en-US"],
+      socialPost: existingRevision?.socialPost ?? `Join ${fallbackTitle}.`,
+      sourceLocale: "en-US",
+      title: fallbackTitle,
+    };
+  });
+
+const localAiTemplateRules: Array<{
+  keywords: readonly string[];
+  templateIds: readonly string[];
+  title: string;
+}> = [
+  {
+    keywords: ["liquidity", "lp", "pool"],
+    templateIds: ["tpl-wallet-connect", "tpl-swap-awaken", "tpl-liquidity-awaken"],
+    title: "Awaken Liquidity Challenge",
+  },
+  {
+    keywords: ["swap", "trading", "trade", "trader"],
+    templateIds: ["tpl-wallet-connect", "tpl-bridge-ebridge", "tpl-swap-awaken"],
+    title: "Awaken Swap Sprint",
+  },
+  {
+    keywords: ["dao", "governance", "vote", "proposal"],
+    templateIds: ["tpl-wallet-connect", "tpl-dao-vote", "tpl-invite-friend"],
+    title: "DAO Governance Sprint",
+  },
+  {
+    keywords: ["nft", "forest", "schrodinger", "holder"],
+    templateIds: ["tpl-wallet-connect", "tpl-nft-hold", "tpl-schrodinger-hold"],
+    title: "NFT Holder Quest",
+  },
+  {
+    keywords: ["agent", "coin", "daipp"],
+    templateIds: ["tpl-wallet-connect", "tpl-daipp-submit", "tpl-social-share"],
+    title: "AI Agent Coin Launch",
+  },
+] as const;
+
+const selectLocalAiRule = (prompt: string) => {
+  const normalizedPrompt = prompt.toLowerCase();
+
+  return localAiTemplateRules.find((rule) =>
+    rule.keywords.some((keyword) => normalizedPrompt.includes(keyword)),
+  ) ?? {
+    keywords: [],
+    templateIds: ["tpl-wallet-connect", "tpl-bridge-ebridge", "tpl-swap-awaken"],
+    title: "aelf Activation Sprint",
+  };
+};
+
+const inferDurationGuidance = (prompt: string) => {
+  const normalizedPrompt = prompt.toLowerCase();
+
+  if (normalizedPrompt.includes("two week") || normalizedPrompt.includes("2 week") || normalizedPrompt.includes("14 day")) {
+    return "14 days";
+  }
+
+  if (normalizedPrompt.includes("month") || normalizedPrompt.includes("30 day")) {
+    return "30 days";
+  }
+
+  return "21 days";
+};
+
+const inferTargetUsers = (prompt: string) => {
+  const normalizedPrompt = prompt.toLowerCase();
+  const users = new Set<string>();
+
+  if (normalizedPrompt.includes("trader") || normalizedPrompt.includes("swap") || normalizedPrompt.includes("liquidity")) {
+    users.add("active traders");
+  }
+  if (normalizedPrompt.includes("new user") || normalizedPrompt.includes("onboard")) {
+    users.add("new aelf users");
+  }
+  if (normalizedPrompt.includes("holder") || normalizedPrompt.includes("nft")) {
+    users.add("existing holders");
+  }
+  if (normalizedPrompt.includes("dao") || normalizedPrompt.includes("governance") || normalizedPrompt.includes("vote")) {
+    users.add("governance participants");
+  }
+
+  if (users.size === 0) {
+    users.add("ecosystem explorers");
+  }
+
+  return [...users];
+};
+
+const pointsGuidanceFor = (templateIds: readonly string[]) => {
+  const totalPoints = taskTemplateLibrary
+    .filter((template) => templateIds.includes(template.id))
+    .reduce((sum, template) => sum + template.defaultPoints, 0);
+
+  return `${totalPoints} suggested task points before reward review`;
+};
+
+export const generateLocalAiDraftOutline = (prompt: string): LocalAiDraftOutline => {
+  const normalizedPrompt = prompt.trim();
+
+  if (!normalizedPrompt) {
+    return {
+      durationGuidance: "Add a campaign duration before generation.",
+      generatedOutline: [
+        "Prompt required: describe the campaign goal, audience, and desired task path.",
+        "Task structure: choose wallet, ecosystem, and optional referral tasks after entering a prompt.",
+        "Points guidance: no points suggested until a prompt is provided.",
+      ],
+      pointsGuidance: "No points suggested until prompt is provided",
+      prompt: "",
+      selectedTaskTemplateIds: ["tpl-wallet-connect"],
+      targetUsers: ["ecosystem explorers"],
+      taskStructure: "wallet connect",
+      title: "Local Campaign Draft",
+    };
+  }
+
+  const rule = selectLocalAiRule(normalizedPrompt);
+  const selectedTaskTemplateIds = rule.templateIds.filter((templateId) =>
+    taskTemplateLibrary.some((template) => template.id === templateId),
+  );
+  const selectedTemplateTitles = taskTemplateLibrary
+    .filter((template) => selectedTaskTemplateIds.includes(template.id))
+    .map((template) => template.title["en-US"]);
+  const durationGuidance = inferDurationGuidance(normalizedPrompt);
+  const targetUsers = inferTargetUsers(normalizedPrompt);
+  const taskStructure = selectedTemplateTitles.join(" -> ");
+  const pointsGuidance = pointsGuidanceFor(selectedTaskTemplateIds);
+
+  return {
+    durationGuidance,
+    generatedOutline: [
+      `Campaign title: ${rule.title}.`,
+      `Duration: ${durationGuidance}.`,
+      `Target users: ${targetUsers.join(" + ")}.`,
+      `Task structure: ${taskStructure}.`,
+      `Point rules: ${pointsGuidance}.`,
+    ],
+    pointsGuidance,
+    prompt: normalizedPrompt,
+    selectedTaskTemplateIds,
+    targetUsers,
+    taskStructure,
+    title: rule.title,
+  };
+};
+
+export const createLocalCampaignDraft = (
+  input: LocalCampaignDraftInput = {},
+  baseDraft: CampaignDraft = seededCampaignDraft,
+): CampaignDraft => {
+  const hasLocalInput = Object.values(input).some((value) => value !== undefined);
+
+  if (!hasLocalInput) {
+    return cloneCampaignDraft(baseDraft);
+  }
+
+  const draft = cloneCampaignDraft(baseDraft);
+  const aiOutline = input.aiPrompt !== undefined ? generateLocalAiDraftOutline(input.aiPrompt) : null;
+  const campaignName = input.campaignName?.trim() || aiOutline?.title || draft.campaignName["en-US"];
+  const targetUsers = parseTargetUsers(input.targetUsers) ?? aiOutline?.targetUsers ?? draft.targetUsers;
+  const supportedLocales = normalizeSupportedLocales(input.supportedLocales) ?? draft.supportedLocales;
+  const selectedTaskTemplateIds =
+    normalizeSelectedTaskTemplateIds(input.selectedTaskTemplateIds) ??
+    aiOutline?.selectedTaskTemplateIds ??
+    draft.selectedTaskTemplateIds;
+  const walletPolicy = input.walletPolicy ?? draft.walletPolicy;
+  const creationMode = input.creationMode ?? (aiOutline ? "AI_ASSISTED" : "FORM_BASED");
+  const reviewedByHuman = input.aiReviewedByHuman ?? false;
+  const generatedOutline = aiOutline?.generatedOutline ?? [];
+  const prompt = input.aiPrompt ?? "";
+
+  draft.id = `draft-local-${slugifyDraftId(campaignName)}`;
+  draft.campaignName = {
+    "en-US": campaignName,
+    "zh-CN": campaignName,
+    "zh-TW": campaignName,
+  };
+  draft.creationMode = creationMode;
+  draft.projectName = input.projectName?.trim() ?? draft.projectName;
+  draft.objective = input.objective ?? draft.objective;
+  draft.timePeriod = {
+    endTime: input.endTime ?? draft.timePeriod.endTime,
+    startTime: input.startTime ?? draft.timePeriod.startTime,
+  };
+  draft.targetUsers = [...targetUsers];
+  draft.supportedLocales = [...supportedLocales];
+  draft.walletPolicy = walletPolicy;
+  draft.selectedTaskTemplateIds = [...selectedTaskTemplateIds];
+  draft.aiPrompt = {
+    generatedOutline: [...generatedOutline],
+    prompt,
+    reviewedByHuman,
+  };
+  draft.formState = {
+    objectiveConfirmed: Boolean(draft.objective),
+    rewardPlanConfirmed: draft.rewardPlan.exportDisclaimerAccepted,
+    timelineConfirmed: Boolean(
+      draft.timePeriod.startTime &&
+      draft.timePeriod.endTime &&
+      Date.parse(draft.timePeriod.endTime) > Date.parse(draft.timePeriod.startTime),
+    ),
+    walletPolicyConfirmed: walletPolicy === "ANY" || Boolean(input.walletPolicy),
+  };
+  draft.eligibilityRule = {
+    ...draft.eligibilityRule,
+    manualReviewRequired: draft.eligibilityRule.manualReviewRequired || creationMode === "AI_ASSISTED",
+    requiredTaskTemplateIds: [...selectedTaskTemplateIds],
+    targetUsers: [...targetUsers],
+    walletPolicy,
+  };
+  draft.contentRevisions = createLocalContentRevisions(
+    draft,
+    supportedLocales,
+    creationMode === "AI_ASSISTED",
+    reviewedByHuman,
+  );
+
+  return draft;
+};
+
 const aiPlannerBoundary = text(
   "Seeded/local planner only. No live AI provider, no automatic publish, no backend mutation, no wallet signature, and no contract transaction is executed.",
   "仅 seeded/本地 planner。不会执行实时 AI provider、自动发布、后端变更、钱包签名或合约交易。",
@@ -2040,6 +2386,7 @@ const hasRequiredBasics = (draft: CampaignDraft) =>
       draft.objective &&
       draft.timePeriod.startTime &&
       draft.timePeriod.endTime &&
+      Date.parse(draft.timePeriod.endTime) > Date.parse(draft.timePeriod.startTime) &&
       draft.targetUsers.length > 0,
   );
 

@@ -15,6 +15,7 @@ import {
   createPayCampaignTaskReadiness,
   createTmrwdaoGovernanceTaskReadiness,
   createLocaleAnalyticsReadiness,
+  createLocalCampaignDraft,
   createParticipantOperationsReadModel,
   createPostCampaignCloseout,
   createProjectCampaignCommandCenter,
@@ -22,8 +23,10 @@ import {
   createStateComponentsDeliveryGallery,
   createVerificationCoverageSummary,
   createVerificationRulesWorkspace,
+  generateLocalAiDraftOutline,
   getLocalizedText,
   seededCampaignDraft,
+  taskTemplateLibrary,
   type AiContentArtifactLifecycle,
   type AiContentQualityGateStatus,
   type AiContentReleaseActionState,
@@ -34,6 +37,8 @@ import {
   type ApiUsagePrerequisiteState,
   type ApiUsageReadinessState,
   type ApiSkillContractReadiness,
+  type BuilderCreationMode,
+  type CampaignObjective,
   type CampaignTemplatePreset,
   type CampaignLifecycleOperation,
   type CampaignLifecycleOperationState,
@@ -89,6 +94,8 @@ import {
   type VerificationProviderReadiness,
   type VerificationReleaseImpact,
   type VerificationSeededCoverageStatus,
+  type WalletPolicy,
+  walletPolicyOptions,
 } from "../../../domain";
 import {
   Badge,
@@ -107,6 +114,22 @@ import { TaskTemplateLibrary } from "./builder/TaskTemplateLibrary";
 import { projectConsoleCopy } from "./copy";
 
 type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
+type EditableCampaignLocale = Extract<SupportedLocale, "en-US" | "zh-CN" | "zh-TW">;
+
+interface DraftComposerState {
+  aiPrompt: string;
+  aiReviewedByHuman: boolean;
+  campaignName: string;
+  creationMode: BuilderCreationMode;
+  endDate: string;
+  objective: CampaignObjective;
+  projectName: string;
+  selectedTaskTemplateIds: string[];
+  startDate: string;
+  supportedLocales: EditableCampaignLocale[];
+  targetUsers: string;
+  walletPolicy: WalletPolicy;
+}
 
 interface ProjectConsoleProps {
   locale: BusinessContentLocale;
@@ -266,9 +289,100 @@ const boundaryStyle: CSSProperties = {
   padding: 12,
 };
 
+const formControlStyle: CSSProperties = {
+  background: "#ffffff",
+  border: "1px solid #b8c7da",
+  borderRadius: 8,
+  boxSizing: "border-box",
+  color: "#071426",
+  fontSize: 14,
+  fontWeight: 700,
+  minHeight: 40,
+  padding: "8px 10px",
+  width: "100%",
+};
+
+const textareaStyle: CSSProperties = {
+  ...formControlStyle,
+  fontFamily: "inherit",
+  lineHeight: 1.45,
+  minHeight: 116,
+  resize: "vertical",
+};
+
+const fieldStyle: CSSProperties = {
+  display: "grid",
+  gap: 6,
+  minWidth: 0,
+};
+
+const controlLabelStyle: CSSProperties = {
+  color: "#334155",
+  fontSize: 13,
+  fontWeight: 900,
+  lineHeight: 1.2,
+};
+
+const ghostButtonStyle: CSSProperties = {
+  background: "#ffffff",
+  border: "1px solid #cbd5e1",
+  borderRadius: 8,
+  color: "#071426",
+  cursor: "pointer",
+  fontWeight: 800,
+  minHeight: 38,
+  padding: "0 12px",
+};
+
+const selectedButtonStyle: CSSProperties = {
+  ...ghostButtonStyle,
+  background: "#071426",
+  border: "1px solid #071426",
+  color: "#ffffff",
+};
+
+const checkboxRowStyle: CSSProperties = {
+  alignItems: "center",
+  display: "flex",
+  gap: 8,
+  minWidth: 0,
+};
+
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
 
 const formatNumber = (value: number) => new Intl.NumberFormat("en-US").format(value);
+
+const editableCampaignLocales = ["en-US", "zh-CN", "zh-TW"] as const satisfies readonly EditableCampaignLocale[];
+
+const toDateInputValue = (value: string) => value.slice(0, 10);
+
+const toUtcDateTime = (value: string) => (value ? `${value}T00:00:00Z` : "");
+
+const createSeededDraftComposerState = (): DraftComposerState => ({
+  aiPrompt: seededCampaignDraft.aiPrompt.prompt,
+  aiReviewedByHuman: seededCampaignDraft.aiPrompt.reviewedByHuman,
+  campaignName: seededCampaignDraft.campaignName["en-US"],
+  creationMode: seededCampaignDraft.creationMode,
+  endDate: toDateInputValue(seededCampaignDraft.timePeriod.endTime),
+  objective: seededCampaignDraft.objective,
+  projectName: seededCampaignDraft.projectName,
+  selectedTaskTemplateIds: [...seededCampaignDraft.selectedTaskTemplateIds],
+  startDate: toDateInputValue(seededCampaignDraft.timePeriod.startTime),
+  supportedLocales: editableCampaignLocales.filter((supportedLocale) =>
+    seededCampaignDraft.supportedLocales.includes(supportedLocale),
+  ),
+  targetUsers: seededCampaignDraft.targetUsers.join(", "),
+  walletPolicy: seededCampaignDraft.walletPolicy,
+});
+
+const campaignObjectiveOptions = [
+  "acquisition",
+  "activation",
+  "trading",
+  "nft",
+  "dao",
+  "launch",
+] as const satisfies readonly CampaignObjective[];
 
 const commandStatusLabel = (
   status: CampaignShellDetail["status"],
@@ -1585,6 +1699,9 @@ export const ProjectConsole = ({
 }: ProjectConsoleProps) => {
   const copy = projectConsoleCopy[locale];
   const [internalActiveWorkspace, setInternalActiveWorkspace] = useState<ProjectWorkspaceKey>("campaigns");
+  const [draftComposer, setDraftComposer] = useState<DraftComposerState>(
+    createSeededDraftComposerState,
+  );
   const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
   const title = getLocalizedText(campaign.title, locale);
   const subtitle = getLocalizedText(campaign.subtitle, locale);
@@ -1593,7 +1710,39 @@ export const ProjectConsole = ({
   const contractReview = campaign.reviewItems.find((item) => item.type === "CONTRACT_IMPACT");
   const warningCount = campaign.publishReadiness.warnings.length;
   const blockerCount = campaign.publishReadiness.blockers.length;
-  const builderDraft = seededCampaignDraft;
+  const hasCustomDraftInput =
+    draftComposer.aiPrompt !== seededCampaignDraft.aiPrompt.prompt ||
+    draftComposer.aiReviewedByHuman !== seededCampaignDraft.aiPrompt.reviewedByHuman ||
+    draftComposer.campaignName !== seededCampaignDraft.campaignName["en-US"] ||
+    draftComposer.creationMode !== seededCampaignDraft.creationMode ||
+    draftComposer.endDate !== toDateInputValue(seededCampaignDraft.timePeriod.endTime) ||
+    draftComposer.objective !== seededCampaignDraft.objective ||
+    draftComposer.projectName !== seededCampaignDraft.projectName ||
+    draftComposer.startDate !== toDateInputValue(seededCampaignDraft.timePeriod.startTime) ||
+    draftComposer.targetUsers !== seededCampaignDraft.targetUsers.join(", ") ||
+    draftComposer.walletPolicy !== seededCampaignDraft.walletPolicy ||
+    draftComposer.selectedTaskTemplateIds.join("|") !== seededCampaignDraft.selectedTaskTemplateIds.join("|") ||
+    draftComposer.supportedLocales.join("|") !==
+      editableCampaignLocales
+        .filter((supportedLocale) => seededCampaignDraft.supportedLocales.includes(supportedLocale))
+        .join("|");
+  const builderDraft = hasCustomDraftInput
+    ? createLocalCampaignDraft({
+        aiPrompt: draftComposer.creationMode === "AI_ASSISTED" ? draftComposer.aiPrompt : undefined,
+        aiReviewedByHuman: draftComposer.aiReviewedByHuman,
+        campaignName: draftComposer.campaignName,
+        creationMode: draftComposer.creationMode,
+        endTime: toUtcDateTime(draftComposer.endDate),
+        objective: draftComposer.objective,
+        projectName: draftComposer.projectName,
+        selectedTaskTemplateIds: draftComposer.selectedTaskTemplateIds,
+        startTime: toUtcDateTime(draftComposer.startDate),
+        supportedLocales: draftComposer.supportedLocales,
+        targetUsers: draftComposer.targetUsers,
+        walletPolicy: draftComposer.walletPolicy,
+      })
+    : createLocalCampaignDraft();
+  const localAiOutline = generateLocalAiDraftOutline(draftComposer.aiPrompt);
   const apiSkillSurface = createApiSkillContractSurface();
   const localService = createCampaignOsLocalService();
   const serviceCoverageResult = localService.getCoverageSummary();
@@ -3566,6 +3715,353 @@ export const ProjectConsole = ({
               </p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section aria-label={copy.createDraftComposer} style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div>
+            <p style={statLabelStyle}>{copy.createDraftComposer}</p>
+            <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {copy.createDraftComposerTitle}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {copy.createDraftLocalBoundary}
+            </p>
+          </div>
+          <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <button
+              aria-pressed={draftComposer.creationMode === "FORM_BASED"}
+              onClick={() =>
+                setDraftComposer((current) => ({
+                  ...current,
+                  creationMode: "FORM_BASED",
+                }))
+              }
+              style={
+                draftComposer.creationMode === "FORM_BASED"
+                  ? selectedButtonStyle
+                  : ghostButtonStyle
+              }
+              type="button"
+            >
+              {copy.createDraftFormMode}
+            </button>
+            <button
+              aria-pressed={draftComposer.creationMode === "AI_ASSISTED"}
+              onClick={() =>
+                setDraftComposer((current) => ({
+                  ...current,
+                  creationMode: "AI_ASSISTED",
+                }))
+              }
+              style={
+                draftComposer.creationMode === "AI_ASSISTED"
+                  ? selectedButtonStyle
+                  : ghostButtonStyle
+              }
+              type="button"
+            >
+              {copy.createDraftAiAssistedMode}
+            </button>
+          </span>
+        </div>
+
+        <div style={compactSectionGridStyle}>
+          <label style={fieldStyle}>
+            <span style={controlLabelStyle}>{copy.createDraftCampaignName}</span>
+            <input
+              aria-label={copy.createDraftCampaignName}
+              onChange={(event) =>
+                setDraftComposer((current) => ({
+                  ...current,
+                  campaignName: event.target.value,
+                }))
+              }
+              style={formControlStyle}
+              value={draftComposer.campaignName}
+            />
+          </label>
+          <label style={fieldStyle}>
+            <span style={controlLabelStyle}>{copy.createDraftProjectName}</span>
+            <input
+              aria-label={copy.createDraftProjectName}
+              onChange={(event) =>
+                setDraftComposer((current) => ({
+                  ...current,
+                  projectName: event.target.value,
+                }))
+              }
+              style={formControlStyle}
+              value={draftComposer.projectName}
+            />
+          </label>
+          <label style={fieldStyle}>
+            <span style={controlLabelStyle}>{copy.builderObjective}</span>
+            <select
+              aria-label={copy.builderObjective}
+              onChange={(event) =>
+                setDraftComposer((current) => ({
+                  ...current,
+                  objective: event.target.value as CampaignObjective,
+                }))
+              }
+              style={formControlStyle}
+              value={draftComposer.objective}
+            >
+              {campaignObjectiveOptions.map((objective) => (
+                <option key={objective} value={objective}>
+                  {readableCode(objective)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={fieldStyle}>
+            <span style={controlLabelStyle}>{copy.createDraftStartDate}</span>
+            <input
+              aria-label={copy.createDraftStartDate}
+              onChange={(event) =>
+                setDraftComposer((current) => ({
+                  ...current,
+                  startDate: event.target.value,
+                }))
+              }
+              style={formControlStyle}
+              type="date"
+              value={draftComposer.startDate}
+            />
+          </label>
+          <label style={fieldStyle}>
+            <span style={controlLabelStyle}>{copy.createDraftEndDate}</span>
+            <input
+              aria-label={copy.createDraftEndDate}
+              onChange={(event) =>
+                setDraftComposer((current) => ({
+                  ...current,
+                  endDate: event.target.value,
+                }))
+              }
+              style={formControlStyle}
+              type="date"
+              value={draftComposer.endDate}
+            />
+          </label>
+          <label style={fieldStyle}>
+            <span style={controlLabelStyle}>{copy.createDraftTargetUsers}</span>
+            <input
+              aria-label={copy.createDraftTargetUsers}
+              onChange={(event) =>
+                setDraftComposer((current) => ({
+                  ...current,
+                  targetUsers: event.target.value,
+                }))
+              }
+              style={formControlStyle}
+              value={draftComposer.targetUsers}
+            />
+          </label>
+        </div>
+
+        <div style={compactSectionGridStyle}>
+          <article style={{ ...cardStyle, minHeight: 0 }}>
+            <label style={fieldStyle}>
+              <span style={controlLabelStyle}>{copy.builderAiPrompt}</span>
+              <textarea
+                aria-label={copy.builderAiPrompt}
+                onChange={(event) =>
+                  setDraftComposer((current) => ({
+                    ...current,
+                    aiPrompt: event.target.value,
+                    aiReviewedByHuman: false,
+                    creationMode: "AI_ASSISTED",
+                  }))
+                }
+                style={textareaStyle}
+                value={draftComposer.aiPrompt}
+              />
+            </label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <button
+                onClick={() =>
+                  setDraftComposer((current) => {
+                    const generatedOutline = generateLocalAiDraftOutline(current.aiPrompt);
+
+                    return {
+                      ...current,
+                      aiPrompt: generatedOutline.prompt,
+                      aiReviewedByHuman: false,
+                      campaignName: generatedOutline.title,
+                      creationMode: "AI_ASSISTED",
+                      selectedTaskTemplateIds: generatedOutline.selectedTaskTemplateIds,
+                      targetUsers: generatedOutline.targetUsers.join(", "),
+                    };
+                  })
+                }
+                style={actionButtonStyle}
+                type="button"
+              >
+                {copy.createDraftGenerateOutline}
+              </button>
+              <label style={{ ...checkboxRowStyle, color: "#334155", fontWeight: 800 }}>
+                <input
+                  checked={draftComposer.aiReviewedByHuman}
+                  onChange={(event) =>
+                    setDraftComposer((current) => ({
+                      ...current,
+                      aiReviewedByHuman: event.target.checked,
+                    }))
+                  }
+                  type="checkbox"
+                />
+                {copy.createDraftReviewAcknowledgement}
+              </label>
+              <PublishStateBadge
+                label={
+                  draftComposer.aiReviewedByHuman
+                    ? copy.createDraftHumanReviewAcknowledged
+                    : copy.createDraftHumanReviewRequired
+                }
+                state={draftComposer.aiReviewedByHuman ? "ready" : "warning"}
+              />
+            </div>
+            <div aria-label={copy.createDraftOutlinePreview} style={{ display: "grid", gap: 8 }}>
+              <p style={statLabelStyle}>{copy.createDraftOutlinePreview}</p>
+              <ul style={listStyle}>
+                {localAiOutline.generatedOutline.map((outlineItem) => (
+                  <li
+                    key={outlineItem}
+                    style={{ ...listItemStyle, alignItems: "start", justifyContent: "start" }}
+                  >
+                    <span aria-hidden="true">-</span>
+                    <span style={{ color: "#475569", fontSize: 13, lineHeight: 1.45 }}>
+                      {outlineItem}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </article>
+
+          <article style={{ ...cardStyle, minHeight: 0 }}>
+            <div style={headingRowStyle}>
+              <div>
+                <p style={statLabelStyle}>{copy.createDraftTaskTemplates}</p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.createDraftTaskTemplatesSummary}
+                </p>
+              </div>
+              <PublishStateBadge
+                label={`${draftComposer.selectedTaskTemplateIds.length} ${copy.aiPlannerLaunchSelectedTaskCount}`}
+                state={draftComposer.selectedTaskTemplateIds.length > 0 ? "ready" : "blocker"}
+              />
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {taskTemplateLibrary.map((template) => (
+                <label key={template.id} style={checkboxRowStyle}>
+                  <input
+                    aria-label={getLocalizedText(template.title, locale)}
+                    checked={draftComposer.selectedTaskTemplateIds.includes(template.id)}
+                    onChange={(event) =>
+                      setDraftComposer((current) => {
+                        const selectedTaskTemplateIds = event.target.checked
+                          ? [...current.selectedTaskTemplateIds, template.id]
+                          : current.selectedTaskTemplateIds.filter(
+                              (templateId) => templateId !== template.id,
+                            );
+
+                        return {
+                          ...current,
+                          selectedTaskTemplateIds,
+                        };
+                      })
+                    }
+                    type="checkbox"
+                  />
+                  <span style={{ color: "#334155", fontSize: 13, fontWeight: 800 }}>
+                    {getLocalizedText(template.title, locale)}
+                  </span>
+                  <WalletCompatibilityBadge compatibility={template.walletCompatibility} />
+                </label>
+              ))}
+            </div>
+          </article>
+        </div>
+
+        <div style={compactSectionGridStyle}>
+          <label style={fieldStyle}>
+            <span style={controlLabelStyle}>{copy.createDraftWalletPolicy}</span>
+            <select
+              aria-label={copy.createDraftWalletPolicy}
+              onChange={(event) =>
+                setDraftComposer((current) => ({
+                  ...current,
+                  walletPolicy: event.target.value as WalletPolicy,
+                }))
+              }
+              style={formControlStyle}
+              value={draftComposer.walletPolicy}
+            >
+              {walletPolicyOptions.map((option) => (
+                <option key={option.policy} value={option.policy}>
+                  {getLocalizedText(option.label, locale)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <article style={{ ...cardStyle, minHeight: 0 }}>
+            <p style={statLabelStyle}>{copy.createDraftSupportedLocales}</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              {editableCampaignLocales.map((supportedLocale) => (
+                <label key={supportedLocale} style={checkboxRowStyle}>
+                  <input
+                    aria-label={supportedLocale}
+                    checked={draftComposer.supportedLocales.includes(supportedLocale)}
+                    disabled={supportedLocale === "en-US"}
+                    onChange={(event) =>
+                      setDraftComposer((current) => {
+                        const supportedLocales = event.target.checked
+                          ? [...current.supportedLocales, supportedLocale]
+                          : current.supportedLocales.filter(
+                              (currentLocale) => currentLocale !== supportedLocale,
+                            );
+
+                        return {
+                          ...current,
+                          supportedLocales: Array.from(
+                            new Set<EditableCampaignLocale>(["en-US", ...supportedLocales]),
+                          ),
+                        };
+                      })
+                    }
+                    type="checkbox"
+                  />
+                  <span style={{ color: "#334155", fontSize: 13, fontWeight: 800 }}>
+                    {supportedLocale}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div aria-label={copy.createDraftActiveLocales} style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {builderDraft.supportedLocales.map((supportedLocale) => (
+                <PublishStateBadge key={supportedLocale} label={supportedLocale} state="ready" />
+              ))}
+            </div>
+          </article>
+
+          <article style={{ ...cardStyle, minHeight: 0 }}>
+            <p style={statLabelStyle}>{copy.createDraftMode}</p>
+            <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+              {copy.createDraftLocalBoundary}
+            </p>
+            <button
+              onClick={() => setDraftComposer(createSeededDraftComposerState())}
+              style={ghostButtonStyle}
+              type="button"
+            >
+              {copy.createDraftReset}
+            </button>
+          </article>
         </div>
       </section>
 
