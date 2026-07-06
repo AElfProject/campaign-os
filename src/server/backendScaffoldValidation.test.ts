@@ -48,8 +48,21 @@ describe("backend scaffold public guardrails", () => {
     });
     expect(report.migration).toMatchObject({
       noLiveMigrationCommand: true,
-      noMigrationRunner: true,
+      noMigrationRunner: false,
       runnerStatus: "disabled_local_review",
+    });
+    expect(report.databaseReadiness).toMatchObject({
+      adapter: expect.objectContaining({
+        status: "contract_ready",
+      }),
+      migrationPlan: expect.objectContaining({
+        dryRun: true,
+        liveExecutionEnabled: false,
+        status: "dry_run_ready",
+      }),
+      validation: expect.objectContaining({
+        valid: true,
+      }),
     });
 
     for (const attachPoint of report.attachMap) {

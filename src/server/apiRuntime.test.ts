@@ -265,6 +265,11 @@ describe("Campaign OS API runtime", () => {
           supportMode: "local_seeded",
         }),
         entrypointId: "campaign-os-backend-service",
+        databaseReadiness: expect.objectContaining({
+          adapterStatus: "contract_ready",
+          migrationPlanStatus: "dry_run_ready",
+          requiredStoreCount: 6,
+        }),
         migrationRunnerStatus: "disabled_local_review",
         profile: expect.objectContaining({
           id: "local-review",
@@ -395,8 +400,25 @@ describe("Campaign OS API runtime", () => {
         }),
         migrationManifest: expect.objectContaining({
           noLiveMigrationCommand: true,
-          noMigrationRunner: true,
+          noMigrationRunner: false,
           runnerStatus: "disabled_local_review",
+        }),
+        databaseReadiness: expect.objectContaining({
+          adapter: expect.objectContaining({
+            id: "campaign-os-production-db-adapter",
+            status: "contract_ready",
+          }),
+          migrationPlan: expect.objectContaining({
+            dryRun: true,
+            liveExecutionEnabled: false,
+            status: "dry_run_ready",
+          }),
+          requiredStores: expect.arrayContaining([
+            expect.objectContaining({
+              id: "campaign-db",
+              schemaVersion: "v0.2.0",
+            }),
+          ]),
         }),
         persistenceAdapterPort: expect.objectContaining({
           activeAdapter: expect.objectContaining({
@@ -515,6 +537,61 @@ describe("Campaign OS API runtime", () => {
       }),
     });
     expectNoForbiddenResponseKeys(health.body);
+  });
+
+  it("surfaces production-required database readiness as blocked without exposing secrets", async () => {
+    const productionRuntime = createCampaignOsApiRuntime({
+      runtimeConfigOptions: {
+        env: {
+          CAMPAIGN_OS_AUTH_SECRET: "runtime-auth-secret",
+          CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+          CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT: "https://writer.invalid",
+          CAMPAIGN_OS_DATABASE_URL: "postgres://db.invalid/campaign-os",
+          CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid",
+          CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue.invalid",
+        },
+      },
+    });
+    const health = await productionRuntime.handle({
+      method: "GET",
+      path: "/api/health",
+    });
+    const contracts = await productionRuntime.handle({
+      method: "GET",
+      path: "/api/contracts",
+    });
+
+    expect(expectSuccessData(health)).toMatchObject({
+      backendService: expect.objectContaining({
+        databaseReadiness: expect.objectContaining({
+          adapterStatus: "blocked",
+          migrationPlanStatus: "blocked",
+          valid: false,
+        }),
+        validation: expect.objectContaining({
+          valid: false,
+        }),
+      }),
+    });
+    expect(expectSuccessData(contracts)).toMatchObject({
+      backendService: expect.objectContaining({
+        databaseReadiness: expect.objectContaining({
+          adapter: expect.objectContaining({
+            status: "blocked",
+          }),
+          migrationPlan: expect.objectContaining({
+            status: "blocked",
+          }),
+          validation: expect.objectContaining({
+            valid: false,
+          }),
+        }),
+      }),
+    });
+    expect(JSON.stringify(health.body)).not.toContain("runtime-auth-secret");
+    expect(JSON.stringify(contracts.body)).not.toContain("postgres://db.invalid/campaign-os");
+    expectNoForbiddenResponseKeys(health.body);
+    expectNoForbiddenResponseKeys(contracts.body);
   });
 
   it("calls seeded campaign read endpoints through the local service facade", async () => {
