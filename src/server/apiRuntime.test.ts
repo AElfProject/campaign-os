@@ -255,6 +255,28 @@ describe("Campaign OS API runtime", () => {
           valid: true,
         }),
       }),
+      backendService: expect.objectContaining({
+        adapterStatus: "active",
+        apiFoundationValidationIssueCount: 0,
+        entrypoint: expect.objectContaining({
+          id: "campaign-os-backend-service",
+          profileId: "local-review",
+          runtimeName: "campaign-os-api-runtime",
+          supportMode: "local_seeded",
+        }),
+        entrypointId: "campaign-os-backend-service",
+        migrationRunnerStatus: "disabled_local_review",
+        profile: expect.objectContaining({
+          id: "local-review",
+          supportMode: "local_seeded",
+        }),
+        profileId: "local-review",
+        traceId: "trace-health",
+        validation: expect.objectContaining({
+          issueCount: 0,
+          valid: true,
+        }),
+      }),
       capabilities: expect.objectContaining({
         summary: expect.objectContaining({
           deferredCount: expect.any(Number),
@@ -337,6 +359,58 @@ describe("Campaign OS API runtime", () => {
           valid: true,
         }),
       }),
+      backendService: expect.objectContaining({
+        attachMapAreas: expect.arrayContaining([
+          expect.objectContaining({
+            area: "production-persistence",
+            currentStatus: "blocked",
+            requiredBeforeProduction: true,
+          }),
+          expect.objectContaining({
+            area: "auth-session",
+            currentStatus: "deferred",
+            requiredBeforeProduction: true,
+          }),
+          expect.objectContaining({
+            area: "contract-writer",
+            currentStatus: "blocked",
+            requiredBeforeProduction: true,
+          }),
+        ]),
+        configContract: expect.objectContaining({
+          persistenceMode: "memory",
+          profileId: "local-review",
+          valid: true,
+        }),
+        deferredProductionCapabilities: expect.arrayContaining([
+          "auth_session",
+          "production_database",
+          "worker_queue",
+          "contract_writer",
+          "reward_distribution",
+        ]),
+        entrypoint: expect.objectContaining({
+          id: "campaign-os-backend-service",
+          supportMode: "local_seeded",
+        }),
+        migrationManifest: expect.objectContaining({
+          noLiveMigrationCommand: true,
+          noMigrationRunner: true,
+          runnerStatus: "disabled_local_review",
+        }),
+        persistenceAdapterPort: expect.objectContaining({
+          activeAdapter: expect.objectContaining({
+            id: "campaign-os-memory-adapter",
+            kind: "memory",
+            status: "active",
+          }),
+          valid: true,
+        }),
+        reportShape: expect.objectContaining({
+          sections: expect.arrayContaining(["entrypoint", "config", "attachMap", "validation"]),
+          valid: true,
+        }),
+      }),
       capabilities: expect.objectContaining({
         summary: expect.objectContaining({
           deferredCount: expect.any(Number),
@@ -377,6 +451,70 @@ describe("Campaign OS API runtime", () => {
         totalServices: expect.any(Number),
       }),
     });
+  });
+
+  it("keeps backend readiness validation off representative business routes", async () => {
+    let readinessCallCount = 0;
+    const runtimeWithoutHotPathReadiness = createCampaignOsApiRuntime({
+      backendServiceReadiness: () => {
+        readinessCallCount += 1;
+        throw new Error("backend readiness should only run on runtime metadata routes");
+      },
+    });
+
+    const detail = await runtimeWithoutHotPathReadiness.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}`,
+    });
+    const walletSession = await runtimeWithoutHotPathReadiness.handle({
+      method: "POST",
+      path: "/api/wallet/session",
+      body: JSON.stringify({
+        adapterName: "PortkeyDiscoverWallet",
+        fixtureId: "sess-eoa-app-001",
+      }),
+    });
+
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload>>(detail).payload.item.id).toBe(
+      campaignDetail.id,
+    );
+    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload>>(walletSession).payload).toMatchObject({
+      sessionId: "sess-eoa-app-001",
+      walletSource: "PORTKEY_EOA_APP",
+    });
+    expect(readinessCallCount).toBe(0);
+  });
+
+  it("does not mark unsupported backend config as production ready in health metadata", async () => {
+    const invalidBackendRuntime = createCampaignOsApiRuntime({
+      runtimeConfigOptions: {
+        env: {
+          CAMPAIGN_OS_BACKEND_PROFILE: "production-live",
+          CAMPAIGN_OS_ENABLE_CONTRACT_WRITER: "true",
+          CAMPAIGN_OS_PERSISTENCE_MODE: "memory",
+        },
+      },
+    });
+    const health = await invalidBackendRuntime.handle({
+      method: "GET",
+      path: "/api/health",
+      headers: { "x-campaign-os-trace-id": "trace-invalid-backend-profile" },
+    });
+    const healthData = expectSuccessData(health);
+
+    expect(healthData).toMatchObject({
+      backendService: expect.objectContaining({
+        profile: expect.objectContaining({
+          id: "production-required",
+          status: "blocked",
+        }),
+        profileId: "production-required",
+        validation: expect.objectContaining({
+          valid: false,
+        }),
+      }),
+    });
+    expectNoForbiddenResponseKeys(health.body);
   });
 
   it("calls seeded campaign read endpoints through the local service facade", async () => {

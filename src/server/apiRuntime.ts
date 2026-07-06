@@ -18,6 +18,10 @@ import type { ApiRuntimeRouteContract } from "./contracts";
 import { apiRuntimeRoutes } from "./routes";
 import { createApiRuntimeHandlers } from "./handlers";
 import {
+  createBackendServiceReadinessReport,
+  type BackendServiceReadinessReport,
+} from "./backendService";
+import {
   createCampaignOsRepository,
   type CampaignOsRepository,
 } from "./persistence";
@@ -38,6 +42,7 @@ export interface ApiRuntimeResponse<TPayload = unknown> {
 }
 
 export interface ApiRuntimeHandlerContext {
+  backendServiceReadiness: BackendServiceReadinessFactory;
   body: unknown;
   params: Record<string, string>;
   repository: CampaignOsRepository;
@@ -49,6 +54,7 @@ export interface ApiRuntimeHandlerContext {
 }
 
 export type ApiRuntimeHandler = (context: ApiRuntimeHandlerContext) => unknown | Promise<unknown>;
+export type BackendServiceReadinessFactory = () => BackendServiceReadinessReport;
 
 export interface CampaignOsApiRuntime {
   handle(request: ApiRuntimeRequest): Promise<ApiRuntimeResponse>;
@@ -60,6 +66,7 @@ interface ApiRuntimeRouteMatcher {
 }
 
 export interface CreateCampaignOsApiRuntimeOptions {
+  backendServiceReadiness?: BackendServiceReadinessFactory;
   repository?: CampaignOsRepository;
   runtimeConfig?: CampaignOsRuntimeConfig;
   runtimeConfigOptions?: CampaignOsRuntimeConfigOptions;
@@ -181,6 +188,33 @@ const parseBody = (request: ApiRuntimeRequest, method: string) => {
   }
 };
 
+const createBackendServiceReadinessFactory = ({
+  resolvedConfig,
+  runtimeConfigOptions,
+  version,
+}: {
+  resolvedConfig: CampaignOsRuntimeConfig;
+  runtimeConfigOptions?: CampaignOsRuntimeConfigOptions;
+  version: string;
+}): BackendServiceReadinessFactory => {
+  let report: BackendServiceReadinessReport | undefined;
+
+  return () => {
+    report ??= createBackendServiceReadinessReport({
+      configOptions: {
+        ...runtimeConfigOptions,
+        persistence: {
+          ...runtimeConfigOptions?.persistence,
+          ...resolvedConfig.persistence,
+        },
+        version,
+      },
+    });
+
+    return report;
+  };
+};
+
 const findMatchingRoute = (
   matchers: readonly ApiRuntimeRouteMatcher[],
   method: string,
@@ -242,6 +276,7 @@ const createSafeRepository = (repository: CampaignOsRepository): CampaignOsRepos
 };
 
 export const createCampaignOsApiRuntime = ({
+  backendServiceReadiness,
   repository,
   runtimeConfig,
   runtimeConfigOptions,
@@ -276,6 +311,13 @@ export const createCampaignOsApiRuntime = ({
   const handlers = createApiRuntimeHandlers();
   const matchers = apiRuntimeRoutes.map(compileRouteMatcher);
   const runtimeVersion = version ?? resolvedConfig.version;
+  const getBackendServiceReadiness =
+    backendServiceReadiness
+    ?? createBackendServiceReadinessFactory({
+      resolvedConfig,
+      runtimeConfigOptions,
+      version: runtimeVersion,
+    });
 
   return {
     handle: async (request) => {
@@ -292,6 +334,7 @@ export const createCampaignOsApiRuntime = ({
         const body = parseBody(request, method);
         const handler = handlers[matcher.route.id];
         const data = await handler({
+          backendServiceReadiness: getBackendServiceReadiness,
           body,
           params,
           repository: safeRepository,

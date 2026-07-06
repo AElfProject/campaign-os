@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createCampaignOsApiRuntime, type ApiRuntimeHeaders } from "./apiRuntime";
+import { createBackendServiceReadinessReport } from "./backendService";
 
 export interface CampaignOsApiServerHandle {
   server: Server;
@@ -68,7 +69,10 @@ export const startCampaignOsApiServer = async ({
   logger = console,
   port,
 }: StartCampaignOsApiServerOptions = {}): Promise<CampaignOsApiServerHandle> => {
-  const runtime = createCampaignOsApiRuntime();
+  const backendServiceReadiness = createBackendServiceReadinessReport();
+  const runtime = createCampaignOsApiRuntime({
+    backendServiceReadiness: () => backendServiceReadiness,
+  });
   const resolvedPort = resolvePort(port);
   const server = createServer(async (request, response) => {
     const body = await readRequestBody(request);
@@ -99,7 +103,15 @@ export const startCampaignOsApiServer = async ({
   const url = `http://${host}:${address.port}`;
 
   if (logger) {
-    logger.log(`[campaign-os-api-runtime] listening on ${url} (local_seeded, no live operations)`);
+    logger.log(
+      [
+        `[campaign-os-api-runtime] listening on ${url}`,
+        `entrypoint=${backendServiceReadiness.entrypoint.id}`,
+        `profile=${backendServiceReadiness.profile.id}`,
+        `support=${backendServiceReadiness.entrypoint.supportMode}`,
+        "no live operations",
+      ].join(" "),
+    );
   }
 
   return {
