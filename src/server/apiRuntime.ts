@@ -24,6 +24,7 @@ import {
   type BackendServiceReadinessReport,
 } from "./backendService";
 import {
+  CampaignDbRepositoryError,
   createCampaignDbRepository,
   type CampaignDbRepository,
 } from "./campaignDbRepository";
@@ -453,7 +454,18 @@ const createSafeCampaignDbRepository = (
   const wrap = async <TResult>(operation: string, run: () => Promise<TResult>) => {
     try {
       return await run();
-    } catch {
+    } catch (error) {
+      if (error instanceof CampaignDbRepositoryError) {
+        const firstDiagnostic = error.diagnostics[0];
+
+        if (firstDiagnostic?.code !== "CAMPAIGN_DB_PRODUCTION_DEFERRED") {
+          throw invalidRequest(
+            firstDiagnostic?.field ?? "campaignDb",
+            firstDiagnostic?.message ?? "Campaign DB repository rejected the request.",
+          );
+        }
+      }
+
       throw persistenceUnavailable(operation);
     }
   };

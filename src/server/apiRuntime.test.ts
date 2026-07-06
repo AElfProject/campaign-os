@@ -1655,6 +1655,20 @@ describe("Campaign OS API runtime", () => {
         projectId: "awaken",
       }),
     });
+    const invalidRepositoryCreate = await runtime.handle({
+      method: "POST",
+      path: "/api/campaigns",
+      body: JSON.stringify({
+        contractMode: "LIVE_CONTRACT",
+        duration: "2026-07-01/2026-07-14",
+        endTime: "2026-07-14T23:59:59Z",
+        goal: "Reject unsupported repository contract mode",
+        ownerAddress: "2F4...9aB",
+        projectId: "awaken",
+        rewardDescription: "Rewards remain project owned.",
+        startTime: "2026-07-01T00:00:00Z",
+      }),
+    });
     const validationRepository = createCampaignOsMemoryRepository();
     const validationRuntime = createCampaignOsApiRuntime({ repository: validationRepository });
     const invalidWalletSource = await runtime.handle({
@@ -1734,6 +1748,18 @@ describe("Campaign OS API runtime", () => {
         error: { code: "INVALID_REQUEST" },
       },
     });
+    expect(invalidRepositoryCreate).toMatchObject({
+      status: 400,
+      body: {
+        ok: false,
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            field: "contractMode",
+          },
+        },
+      },
+    });
     expect(invalidWalletSource).toMatchObject({
       status: 400,
       body: {
@@ -1771,6 +1797,7 @@ describe("Campaign OS API runtime", () => {
       missingCampaign,
       missingTask,
       invalidCreate,
+      invalidRepositoryCreate,
       invalidWalletSource,
       invalidPersistedWalletSource,
     ]) {
