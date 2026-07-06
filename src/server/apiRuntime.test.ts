@@ -1,6 +1,15 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { campaignDetail } from "../domain/fixtures";
 import { createCampaignOsApiRuntime, type ApiRuntimeResponse } from "./apiRuntime";
+import {
+  createCampaignOsJsonRepository,
+  createCampaignOsMemoryRepository,
+  persistenceBoundary,
+  type CampaignOsRepository,
+} from "./persistence";
 import { startCampaignOsApiServer } from "./server";
 
 interface LocalServiceEnvelope<TPayload> {
@@ -125,6 +134,8 @@ const expectSuccessData = <TPayload = unknown>(response: ApiRuntimeResponse<unkn
   expect(response.body.safety).toMatchObject({
     localOnly: true,
     noLiveApi: true,
+    noMigrationRunner: true,
+    noProductionDatabase: true,
     noWalletSignature: true,
     noContractWrite: true,
     noRewardDistribution: true,
@@ -132,6 +143,35 @@ const expectSuccessData = <TPayload = unknown>(response: ApiRuntimeResponse<unkn
   expectNoForbiddenResponseKeys(response.body);
 
   return response.body.data as TPayload;
+};
+
+const createFailingRepository = (): CampaignOsRepository => ({
+  health: async () => {
+    throw new Error("repository unavailable");
+  },
+  initialize: async () => undefined,
+  record: async () => {
+    throw new Error("repository unavailable");
+  },
+  snapshot: async () => {
+    throw new Error("repository unavailable");
+  },
+});
+
+const createInitializationTrackingRepository = () => {
+  const repository = createCampaignOsMemoryRepository();
+  let initializeCount = 0;
+
+  return {
+    repository: {
+      ...repository,
+      initialize: async () => {
+        initializeCount += 1;
+        await repository.initialize();
+      },
+    } satisfies CampaignOsRepository,
+    getInitializeCount: () => initializeCount,
+  };
 };
 
 describe("Campaign OS API runtime", () => {
@@ -154,6 +194,12 @@ describe("Campaign OS API runtime", () => {
     expect(health.headers["x-campaign-os-trace-id"]).toBe("trace-health");
     expect(healthData).toMatchObject({
       mode: "local_seeded",
+      persistence: expect.objectContaining({
+        mode: "memory",
+        noProductionDatabase: true,
+        recordCount: expect.any(Number),
+        status: "ok",
+      }),
       routeCount: expect.any(Number),
       serviceReadiness: expect.objectContaining({
         totalServices: expect.any(Number),
@@ -163,6 +209,14 @@ describe("Campaign OS API runtime", () => {
     expect(contractData).toMatchObject({
       coverage: expect.objectContaining({
         coveredSkillIds: expect.arrayContaining(["create_wallet_session", "export_winners"]),
+      }),
+      persistence: expect.objectContaining({
+        boundary: persistenceBoundary,
+        health: expect.objectContaining({
+          localOnly: true,
+          noMigrationRunner: true,
+          noProductionDatabase: true,
+        }),
       }),
       routes: expect.arrayContaining([
         expect.objectContaining({ id: "runtime.health", path: "/api/health" }),
@@ -206,7 +260,9 @@ describe("Campaign OS API runtime", () => {
     });
   });
 
-  it("calls seeded POST endpoints without persistence, providers, storage, or rewards", async () => {
+  it("calls seeded POST endpoints with sanitized local persistence records", async () => {
+    const repository = createCampaignOsMemoryRepository();
+    const runtimeWithPersistence = createCampaignOsApiRuntime({ repository });
     const walletSession = await runtime.handle({
       method: "POST",
       path: "/api/wallet/session",
@@ -215,7 +271,16 @@ describe("Campaign OS API runtime", () => {
         fixtureId: "sess-eoa-app-001",
       }),
     });
-    const campaignDraft = await runtime.handle({
+    const persistedWalletSession = await runtimeWithPersistence.handle({
+      method: "POST",
+      path: "/api/wallet/session",
+      body: JSON.stringify({
+        adapterName: "PortkeyDiscoverWallet",
+        fixtureId: "sess-eoa-app-001",
+        signature: "should-not-persist",
+      }),
+    });
+    const campaignDraft = await runtimeWithPersistence.handle({
       method: "POST",
       path: "/api/campaigns",
       body: JSON.stringify({
@@ -225,10 +290,11 @@ describe("Campaign OS API runtime", () => {
         ownerAddress: "2F4...9aB",
         projectId: "awaken",
         rewardDescription: "Rewards remain project owned.",
+        signaturePayload: "should-not-persist",
         startTime: "2026-07-01T00:00:00Z",
       }),
     });
-    const taskDraft = await runtime.handle({
+    const taskDraft = await runtimeWithPersistence.handle({
       method: "POST",
       path: `/api/campaigns/${campaignDetail.id}/tasks`,
       body: JSON.stringify({
@@ -240,7 +306,7 @@ describe("Campaign OS API runtime", () => {
         walletCompatibility: "ANY",
       }),
     });
-    const verification = await runtime.handle({
+    const verification = await runtimeWithPersistence.handle({
       method: "POST",
       path: "/api/tasks/task-bridge/verify",
       body: JSON.stringify({
@@ -250,7 +316,7 @@ describe("Campaign OS API runtime", () => {
         walletSource: "PORTKEY_AA",
       }),
     });
-    const i18nDraft = await runtime.handle({
+    const i18nDraft = await runtimeWithPersistence.handle({
       method: "POST",
       path: `/api/campaigns/${campaignDetail.id}/i18n/generate`,
       body: JSON.stringify({
@@ -259,7 +325,7 @@ describe("Campaign OS API runtime", () => {
         targetLocale: "zh-CN",
       }),
     });
-    const exportPreview = await runtime.handle({
+    const exportPreview = await runtimeWithPersistence.handle({
       method: "POST",
       path: `/api/campaigns/${campaignDetail.id}/export`,
       body: JSON.stringify({
@@ -270,10 +336,27 @@ describe("Campaign OS API runtime", () => {
         includeWalletType: true,
       }),
     });
+    const health = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: "/api/health",
+    });
+    const snapshot = await repository.snapshot();
 
     expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload>>(walletSession).payload).toMatchObject({
       sessionId: "sess-eoa-app-001",
       walletSource: "PORTKEY_EOA_APP",
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & { persistence: unknown }>(
+      persistedWalletSession,
+    )).toMatchObject({
+      payload: {
+        sessionId: "sess-eoa-app-001",
+        walletSource: "PORTKEY_EOA_APP",
+      },
+      persistence: {
+        kind: "wallet_session",
+        recordId: expect.any(String),
+      },
     });
     expect(expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload>>(campaignDraft).payload).toMatchObject({
       id: "local-awaken-campaign",
@@ -299,6 +382,144 @@ describe("Campaign OS API runtime", () => {
       format: "json",
       readyRows: expect.any(Number),
     });
+    expect(expectSuccessData(health)).toMatchObject({
+      persistence: expect.objectContaining({
+        recordCount: 6,
+        countsByKind: expect.objectContaining({
+          campaign_draft: 1,
+          export_preview: 1,
+          i18n_draft: 1,
+          task_draft: 1,
+          verification_attempt: 1,
+          wallet_session: 1,
+        }),
+      }),
+    });
+    expect(snapshot.recordCount).toBe(6);
+    expect(snapshot.latestRecords.map((record) => record.kind)).toEqual(
+      expect.arrayContaining([
+        "wallet_session",
+        "campaign_draft",
+        "task_draft",
+        "verification_attempt",
+        "i18n_draft",
+        "export_preview",
+      ]),
+    );
+    expectNoForbiddenResponseKeys(snapshot);
+  });
+
+  it("persists write route records across local JSON runtime recreation", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-runtime-json-"));
+
+    try {
+      const config = {
+        adapterLabel: "local_json:runtime-test",
+        localDataDir: tempDir,
+        mode: "local_json" as const,
+      };
+      const firstRepository = createCampaignOsJsonRepository(config);
+      const firstRuntime = createCampaignOsApiRuntime({ repository: firstRepository });
+
+      await firstRuntime.handle({
+        method: "POST",
+        path: "/api/wallet/session",
+        body: JSON.stringify({
+          adapterName: "PortkeyDiscoverWallet",
+          fixtureId: "sess-eoa-app-001",
+        }),
+      });
+
+      const secondRepository = createCampaignOsJsonRepository(config);
+      await secondRepository.initialize();
+      const snapshot = await secondRepository.snapshot();
+
+      expect(snapshot).toMatchObject({
+        mode: "local_json",
+        recordCount: 1,
+        countsByKind: {
+          wallet_session: 1,
+        },
+      });
+      expect(snapshot.latestRecords[0]).toMatchObject({
+        kind: "wallet_session",
+        walletAddress: "8A2...1eF",
+        walletSource: "PORTKEY_EOA_APP",
+      });
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("initializes the repository once before runtime health and write operations", async () => {
+    const tracked = createInitializationTrackingRepository();
+    const runtimeWithTrackedRepository = createCampaignOsApiRuntime({
+      repository: tracked.repository,
+    });
+
+    await runtimeWithTrackedRepository.handle({
+      method: "GET",
+      path: "/api/health",
+    });
+    await runtimeWithTrackedRepository.handle({
+      method: "POST",
+      path: "/api/wallet/session",
+      body: JSON.stringify({
+        adapterName: "PortkeyDiscoverWallet",
+        fixtureId: "sess-eoa-app-001",
+      }),
+    });
+
+    expect(tracked.getInitializeCount()).toBe(1);
+  });
+
+  it("fails closed when persistence is unavailable for health or write routes", async () => {
+    const failingRuntime = createCampaignOsApiRuntime({
+      repository: createFailingRepository(),
+    });
+    const health = await failingRuntime.handle({
+      method: "GET",
+      path: "/api/health",
+      headers: { "x-campaign-os-trace-id": "trace-persistence-health" },
+    });
+    const walletSession = await failingRuntime.handle({
+      method: "POST",
+      path: "/api/wallet/session",
+      headers: { "x-campaign-os-trace-id": "trace-persistence-write" },
+      body: JSON.stringify({
+        adapterName: "PortkeyDiscoverWallet",
+        fixtureId: "sess-eoa-app-001",
+      }),
+    });
+
+    expect(health).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        traceId: "trace-persistence-health",
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: {
+            operation: "health",
+          },
+        },
+      },
+    });
+    expect(walletSession).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        traceId: "trace-persistence-write",
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: {
+            operation: "record",
+          },
+        },
+      },
+    });
+    expectNoForbiddenResponseKeys(health.body);
+    expectNoForbiddenResponseKeys(walletSession.body);
   });
 
   it("fails closed for invalid routes, methods, JSON, locales, and export modes", async () => {

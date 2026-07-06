@@ -1,10 +1,25 @@
 import { createCampaignOsLocalService, type CampaignOsLocalService } from "../domain/campaignService";
+import {
+  resolveCampaignOsRuntimeConfig,
+  type CampaignOsRuntimeConfig,
+  type CampaignOsRuntimeConfigOptions,
+} from "./config";
 import type { ApiRuntimeEnvelope } from "./envelope";
 import { createFailureEnvelope, createSuccessEnvelope } from "./envelope";
-import { malformedJson, methodNotAllowed, routeNotFound, toApiRuntimeErrorBody } from "./errors";
+import {
+  malformedJson,
+  methodNotAllowed,
+  persistenceUnavailable,
+  routeNotFound,
+  toApiRuntimeErrorBody,
+} from "./errors";
 import type { ApiRuntimeRouteContract } from "./contracts";
 import { apiRuntimeRoutes } from "./routes";
 import { createApiRuntimeHandlers } from "./handlers";
+import {
+  createCampaignOsRepository,
+  type CampaignOsRepository,
+} from "./persistence";
 
 export type ApiRuntimeHeaders = Record<string, string | readonly string[] | undefined>;
 
@@ -24,9 +39,11 @@ export interface ApiRuntimeResponse<TPayload = unknown> {
 export interface ApiRuntimeHandlerContext {
   body: unknown;
   params: Record<string, string>;
+  repository: CampaignOsRepository;
   query: Record<string, string>;
   route: ApiRuntimeRouteContract;
   service: CampaignOsLocalService;
+  traceId: string;
   version: string;
 }
 
@@ -42,6 +59,9 @@ interface ApiRuntimeRouteMatcher {
 }
 
 export interface CreateCampaignOsApiRuntimeOptions {
+  repository?: CampaignOsRepository;
+  runtimeConfig?: CampaignOsRuntimeConfig;
+  runtimeConfigOptions?: CampaignOsRuntimeConfigOptions;
   service?: CampaignOsLocalService;
   version?: string;
 }
@@ -188,12 +208,56 @@ const findMatchingRoute = (
   throw routeNotFound(method, pathname);
 };
 
+const createSafeRepository = (repository: CampaignOsRepository): CampaignOsRepository => {
+  let initializePromise: Promise<void> | undefined;
+
+  const wrap = async <TResult>(operation: string, run: () => Promise<TResult>) => {
+    try {
+      return await run();
+    } catch {
+      throw persistenceUnavailable(operation);
+    }
+  };
+
+  const initialize = () => {
+    initializePromise ??= wrap("initialize", () => repository.initialize());
+
+    return initializePromise;
+  };
+
+  const afterInitialize = async <TResult>(operation: string, run: () => Promise<TResult>) => {
+    await initialize();
+
+    return wrap(operation, run);
+  };
+
+  return {
+    initialize,
+    record: (input) => afterInitialize("record", () => repository.record(input)),
+    reset: repository.reset ? () => afterInitialize("reset", () => repository.reset?.() ?? Promise.resolve()) : undefined,
+    snapshot: () => afterInitialize("snapshot", () => repository.snapshot()),
+    health: () => afterInitialize("health", () => repository.health()),
+  };
+};
+
 export const createCampaignOsApiRuntime = ({
+  repository,
+  runtimeConfig,
+  runtimeConfigOptions,
   service = createCampaignOsLocalService(),
-  version = "0.1.0-local",
+  version,
 }: CreateCampaignOsApiRuntimeOptions = {}): CampaignOsApiRuntime => {
+  const resolvedConfig = runtimeConfig
+    ?? resolveCampaignOsRuntimeConfig({
+      ...runtimeConfigOptions,
+      version,
+    });
+  const safeRepository = createSafeRepository(
+    repository ?? createCampaignOsRepository(resolvedConfig.persistence),
+  );
   const handlers = createApiRuntimeHandlers();
   const matchers = apiRuntimeRoutes.map(compileRouteMatcher);
+  const runtimeVersion = version ?? resolvedConfig.version;
 
   return {
     handle: async (request) => {
@@ -208,10 +272,12 @@ export const createCampaignOsApiRuntime = ({
         const data = await handler({
           body,
           params,
+          repository: safeRepository,
           query,
           route: matcher.route,
           service,
-          version,
+          traceId,
+          version: runtimeVersion,
         });
 
         return {
@@ -219,7 +285,7 @@ export const createCampaignOsApiRuntime = ({
             data,
             routeCount: apiRuntimeRoutes.length,
             traceId,
-            version,
+            version: runtimeVersion,
           }),
           headers: responseHeaders(traceId),
           status: 200,
@@ -232,7 +298,7 @@ export const createCampaignOsApiRuntime = ({
             error: runtimeError,
             routeCount: apiRuntimeRoutes.length,
             traceId,
-            version,
+            version: runtimeVersion,
           }),
           headers: responseHeaders(traceId),
           status: runtimeError.status,
