@@ -19,6 +19,34 @@ describe("production database adapter runtime", () => {
       status: "active_local",
       valid: true,
     });
+    expect(contract.productionDbRuntime).toMatchObject({
+      connection: expect.objectContaining({
+        liveConnectionAttempted: false,
+        safeLabel: "deterministic_fixture",
+        state: "ready",
+      }),
+      driver: expect.objectContaining({
+        deterministicFixture: true,
+        productionReady: false,
+      }),
+      id: "campaign-os-production-db-runtime-v1",
+      liveConnectionAttempted: false,
+      liveQueryExecutionEnabled: false,
+      migrationGate: expect.objectContaining({
+        liveExecutionEnabled: false,
+        status: "not_required_for_fixture",
+      }),
+      ownerStores: productionDatabaseRequiredStoreIds,
+      queryCapability: expect.objectContaining({
+        adHocRawSqlEnabled: false,
+        liveQueryExecutionEnabled: false,
+        parameterizedQueries: true,
+        transactions: true,
+      }),
+      schemaManifestId: "campaign-os-production-db-schema-v0.2",
+      status: "ready",
+      valid: true,
+    });
     expect(contract.connectionPool).toMatchObject({
       liveConnectionAttempted: false,
       missingKeys: [],
@@ -61,6 +89,27 @@ describe("production database adapter runtime", () => {
       executorStatus: "blocked",
       liveExecutionCount: 0,
       liveExecutionEnabled: false,
+    });
+    expect(contract.productionDbRuntime).toMatchObject({
+      connection: expect.objectContaining({
+        liveConnectionAttempted: false,
+        missingConfigKeys: ["CAMPAIGN_OS_DATABASE_URL"],
+        state: "blocked",
+      }),
+      driver: expect.objectContaining({
+        deterministicFixture: false,
+        productionReady: false,
+      }),
+      liveConnectionAttempted: false,
+      liveQueryExecutionEnabled: false,
+      migrationGate: expect.objectContaining({
+        approvalRequired: true,
+        liveExecutionEnabled: false,
+        status: "blocked",
+      }),
+      profileId: "production-required",
+      status: "blocked",
+      valid: false,
     });
     expect(contract.diagnostics).toEqual(
       expect.arrayContaining([

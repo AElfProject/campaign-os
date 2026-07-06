@@ -98,6 +98,20 @@ describe("backend scaffold HTTP smoke", () => {
               }),
               profileId: "local-review",
               providerId: "campaign-os-deterministic-test-db",
+              productionDbRuntime: expect.objectContaining({
+                connectionState: "ready",
+                driverId: "campaign-os-deterministic-test-driver",
+                id: "campaign-os-production-db-runtime-v1",
+                liveConnectionAttempted: false,
+                liveQueryExecutionEnabled: false,
+                migrationGateStatus: "not_required_for_fixture",
+                ownerStoreCount: 6,
+                profileId: "local-review",
+                providerId: "campaign-os-deterministic-test-db",
+                schemaManifestId: "campaign-os-production-db-schema-v0.2",
+                status: "ready",
+                valid: true,
+              }),
               requiredStoreCount: 6,
               status: "active_local",
               valid: true,
@@ -212,6 +226,13 @@ describe("backend scaffold HTTP smoke", () => {
                   liveExecutionEnabled: false,
                   migrationGateStatus: "ready",
                 }),
+                productionDbRuntime: expect.objectContaining({
+                  liveConnectionAttempted: false,
+                  liveQueryExecutionEnabled: false,
+                  migrationGateStatus: "not_required_for_fixture",
+                  status: "ready",
+                  valid: true,
+                }),
                 profileId: "local-review",
                 status: "active_local",
                 valid: true,
@@ -321,6 +342,33 @@ describe("backend scaffold HTTP smoke", () => {
                 migrationGateStatus: "ready",
               }),
               profileId: "local-review",
+              productionDbRuntime: expect.objectContaining({
+                connection: expect.objectContaining({
+                  safeLabel: "deterministic_fixture",
+                  state: "ready",
+                }),
+                driver: expect.objectContaining({
+                  deterministicFixture: true,
+                  productionReady: false,
+                }),
+                id: "campaign-os-production-db-runtime-v1",
+                liveConnectionAttempted: false,
+                liveQueryExecutionEnabled: false,
+                migrationGate: expect.objectContaining({
+                  liveExecutionEnabled: false,
+                  status: "not_required_for_fixture",
+                }),
+                ownerStores: expect.arrayContaining(["campaign-db", "points-ledger"]),
+                queryCapability: expect.objectContaining({
+                  adHocRawSqlEnabled: false,
+                  liveQueryExecutionEnabled: false,
+                  parameterizedQueries: true,
+                  transactions: true,
+                }),
+                schemaManifestId: "campaign-os-production-db-schema-v0.2",
+                status: "ready",
+                valid: true,
+              }),
               status: "active_local",
               stores: expect.arrayContaining([
                 expect.objectContaining({
@@ -557,6 +605,19 @@ describe("backend scaffold HTTP smoke", () => {
                 migrationGateStatus: "blocked",
               }),
               profileId: "production-required",
+              productionDbRuntime: expect.objectContaining({
+                connectionState: "configured_redacted",
+                diagnosticCodes: expect.arrayContaining([
+                  "PRODUCTION_DB_DRIVER_DEFERRED",
+                  "PRODUCTION_DB_SECRET_REDACTED",
+                  "PRODUCTION_DB_MIGRATION_GATE_BLOCKED",
+                ]),
+                liveConnectionAttempted: false,
+                liveQueryExecutionEnabled: false,
+                migrationGateStatus: "blocked",
+                status: "blocked",
+                valid: false,
+              }),
               status: "blocked",
               valid: false,
             }),
@@ -633,6 +694,13 @@ describe("backend scaffold HTTP smoke", () => {
                   liveExecutionEnabled: false,
                   migrationGateStatus: "blocked",
                 }),
+                productionDbRuntime: expect.objectContaining({
+                  liveConnectionAttempted: false,
+                  liveQueryExecutionEnabled: false,
+                  migrationGateStatus: "blocked",
+                  status: "blocked",
+                  valid: false,
+                }),
                 profileId: "production-required",
                 status: "blocked",
                 valid: false,
@@ -686,6 +754,38 @@ describe("backend scaffold HTTP smoke", () => {
                 migrationGateStatus: "blocked",
               }),
               profileId: "production-required",
+              productionDbRuntime: expect.objectContaining({
+                connection: expect.objectContaining({
+                  safeLabel: "[redacted]",
+                  state: "configured_redacted",
+                }),
+                diagnostics: expect.arrayContaining([
+                  expect.objectContaining({
+                    code: "PRODUCTION_DB_SECRET_REDACTED",
+                    field: "CAMPAIGN_OS_DATABASE_URL",
+                  }),
+                  expect.objectContaining({
+                    code: "PRODUCTION_DB_MIGRATION_GATE_BLOCKED",
+                  }),
+                ]),
+                driver: expect.objectContaining({
+                  productionReady: false,
+                }),
+                liveConnectionAttempted: false,
+                liveQueryExecutionEnabled: false,
+                migrationGate: expect.objectContaining({
+                  liveExecutionEnabled: false,
+                  status: "blocked",
+                }),
+                ownerStores: expect.arrayContaining(["campaign-db", "points-ledger"]),
+                queryCapability: expect.objectContaining({
+                  adHocRawSqlEnabled: false,
+                  liveQueryExecutionEnabled: false,
+                }),
+                schemaManifestId: "campaign-os-production-db-schema-v0.2",
+                status: "blocked",
+                valid: false,
+              }),
               status: "blocked",
               stores: expect.arrayContaining([
                 expect.objectContaining({

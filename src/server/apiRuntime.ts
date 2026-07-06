@@ -270,6 +270,13 @@ const createDatabaseAdapterRuntimeMetadata = (
   report: BackendServiceReadinessReport,
 ) => createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime);
 
+const createDatabaseAdapterRuntimeContractMetadata = (
+  report: BackendServiceReadinessReport,
+) => ({
+  ...createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime),
+  productionDbRuntime: report.databaseAdapterRuntime.productionDbRuntime,
+});
+
 const createHealthAuthSessionMetadata = (
   report: BackendServiceReadinessReport,
 ) => ({
@@ -352,7 +359,7 @@ const withBackendServiceReadinessMetadata = ({
       backendService: {
         ...data.backendService,
         authSession: createContractAuthSessionMetadata(readiness),
-        databaseAdapterRuntime: createDatabaseAdapterRuntimeMetadata(readiness),
+        databaseAdapterRuntime: createDatabaseAdapterRuntimeContractMetadata(readiness),
         databaseReadiness: createContractDatabaseReadinessMetadata(readiness),
         persistenceRuntime: createPersistenceRuntimeMetadata(readiness),
         reportShape: isRecord(data.backendService.reportShape)
@@ -363,6 +370,7 @@ const withBackendServiceReadinessMetadata = ({
               "databaseAdapterRuntime",
               "databaseReadiness",
               "persistenceRuntime",
+              "productionDbRuntime",
             ]),
           }
           : data.backendService.reportShape,
