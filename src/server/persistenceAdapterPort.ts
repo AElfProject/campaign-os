@@ -1,11 +1,19 @@
 import type { CampaignOsPersistenceMode } from "./config";
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import {
+  createPersistenceDriverRegistryReport,
+  persistenceDriverDescriptors,
+  type PersistenceDriverDescriptor,
+  type PersistenceDriverStatus,
+  type PersistenceDriverDiagnostic,
+  type PersistenceDriverSideEffectPolicy,
+} from "./persistenceDriverRegistry";
+import {
   createProductionDatabaseAdapterContract,
   productionDatabaseStoreRegistry,
 } from "./productionDatabase";
 
-export type PersistenceAdapterKind = "memory" | "local_json" | "production_deferred";
+export type PersistenceAdapterKind = "memory" | "local_json" | "deterministic_test" | "production_deferred";
 export type PersistenceAdapterStatus = "active" | "local_only" | "deferred" | "blocked";
 export type BackendStoreCurrentMode = "seeded" | "memory" | "local_json" | "deferred";
 export type BackendStoreProductionMode =
@@ -57,9 +65,13 @@ export interface PersistenceAdapterPort {
   localOnly: boolean;
   ownerStores: BackendStoreId[];
   requiresConnectionString: boolean;
+  requiresMigrationGate?: boolean;
   requiresMigrationRunner: boolean;
+  sideEffectPolicy?: PersistenceDriverSideEffectPolicy;
   schemaVersion?: string;
   status: PersistenceAdapterStatus;
+  supportsReset?: boolean;
+  supportsTransactions?: boolean;
 }
 
 export interface PersistenceAdapterPortReport {
@@ -75,6 +87,7 @@ export interface PersistenceAdapterPortReport {
 export interface CreatePersistenceAdapterPortReportOptions {
   persistenceMode?: CampaignOsPersistenceMode;
   profileId?: BackendRuntimeProfileId;
+  activeDriverId?: string;
 }
 
 const productionDatabaseBlockers = [
@@ -206,12 +219,48 @@ const productionDeferredDiagnostic: PersistenceAdapterDiagnostic = {
 };
 
 export const createPersistenceAdapterPortReport = ({
+  activeDriverId,
   persistenceMode = "memory",
   profileId = "local-review",
 }: CreatePersistenceAdapterPortReportOptions = {}): PersistenceAdapterPortReport => {
   const productionDatabaseContract = createProductionDatabaseAdapterContract({
     profileId,
   });
+  const resolvedActiveDriverId =
+    activeDriverId
+    ?? (persistenceMode === "local_json" ? "campaign-os-local-json-adapter" : "campaign-os-memory-adapter");
+  const driverReport = createPersistenceDriverRegistryReport({
+    activeDriverId: resolvedActiveDriverId,
+    profileId,
+  });
+  const driverById = Object.fromEntries(
+    driverReport.drivers.map((driver) => [driver.id, driver]),
+  ) as Partial<Record<string, PersistenceDriverDescriptor>>;
+  const driverStatus = (id: string, fallback: PersistenceAdapterStatus): PersistenceAdapterStatus => {
+    const status = driverById[id]?.status;
+
+    if (status === "available") {
+      return "local_only";
+    }
+
+    if (status === "active" || status === "blocked" || status === "deferred") {
+      return status;
+    }
+
+    return fallback;
+  };
+  const driverDetails = (id: string) => {
+    const driver = driverById[id];
+
+    return driver
+      ? {
+        requiresMigrationGate: driver.requiresMigrationGate,
+        sideEffectPolicy: driver.sideEffectPolicy,
+        supportsReset: driver.supportsReset,
+        supportsTransactions: driver.supportsTransactions,
+      }
+      : {};
+  };
   const memoryAdapter: PersistenceAdapterPort = {
     attachPoints: ["src/server/persistence.ts:createCampaignOsMemoryRepository"],
     diagnostics: [],
@@ -223,7 +272,8 @@ export const createPersistenceAdapterPortReport = ({
     ownerStores: ["wallet-session-db", "task-evidence-db"],
     requiresConnectionString: false,
     requiresMigrationRunner: false,
-    status: persistenceMode === "memory" ? "active" : "local_only",
+    status: driverStatus("campaign-os-memory-adapter", persistenceMode === "memory" ? "active" : "local_only"),
+    ...driverDetails("campaign-os-memory-adapter"),
   };
   const localJsonAdapter: PersistenceAdapterPort = {
     attachPoints: ["src/server/persistence.ts:createCampaignOsJsonRepository"],
@@ -236,7 +286,22 @@ export const createPersistenceAdapterPortReport = ({
     ownerStores: ["wallet-session-db", "task-evidence-db", "export-store"],
     requiresConnectionString: false,
     requiresMigrationRunner: false,
-    status: persistenceMode === "local_json" ? "active" : "local_only",
+    status: driverStatus("campaign-os-local-json-adapter", persistenceMode === "local_json" ? "active" : "local_only"),
+    ...driverDetails("campaign-os-local-json-adapter"),
+  };
+  const deterministicTestAdapter: PersistenceAdapterPort = {
+    attachPoints: ["src/server/persistence.ts:createCampaignOsDeterministicTestRepository"],
+    diagnostics: [],
+    durable: false,
+    id: "campaign-os-deterministic-test-adapter",
+    kind: "deterministic_test",
+    label: "Campaign OS deterministic test adapter",
+    localOnly: true,
+    ownerStores: storesForAdapter("campaign-os-production-db-adapter"),
+    requiresConnectionString: false,
+    requiresMigrationRunner: false,
+    status: driverStatus("campaign-os-deterministic-test-adapter", "local_only"),
+    ...driverDetails("campaign-os-deterministic-test-adapter"),
   };
   const productionDatabaseAdapter: PersistenceAdapterPort = {
     attachPoints: ["src/server/persistence.ts:createCampaignOsRepository"],
@@ -255,9 +320,13 @@ export const createPersistenceAdapterPortReport = ({
     localOnly: productionDatabaseContract.localReviewOnly,
     ownerStores: [...productionDatabaseContract.ownerStores],
     requiresConnectionString: productionDatabaseContract.requiresConnectionString,
+    requiresMigrationGate: driverById[productionDatabaseContract.id]?.requiresMigrationGate,
     requiresMigrationRunner: productionDatabaseContract.requiresMigrationRunner,
+    sideEffectPolicy: driverById[productionDatabaseContract.id]?.sideEffectPolicy,
     schemaVersion: productionDatabaseContract.schemaVersion,
-    status: profileId === "production-required" ? "blocked" : "deferred",
+    status: driverStatus(productionDatabaseContract.id, profileId === "production-required" ? "blocked" : "deferred"),
+    supportsReset: driverById[productionDatabaseContract.id]?.supportsReset,
+    supportsTransactions: driverById[productionDatabaseContract.id]?.supportsTransactions,
   };
   const objectStorageAdapter: PersistenceAdapterPort = {
     attachPoints: ["src/server/persistence.ts"],
@@ -301,6 +370,7 @@ export const createPersistenceAdapterPortReport = ({
   const adapters = [
     memoryAdapter,
     localJsonAdapter,
+    deterministicTestAdapter,
     productionDatabaseAdapter,
     objectStorageAdapter,
     analyticsWarehouseAdapter,
@@ -313,14 +383,22 @@ export const createPersistenceAdapterPortReport = ({
     profileId,
     stores: backendStorePorts,
   });
+  const driverIssues = driverReport.validation.issues.map<PersistenceAdapterDiagnostic>((issue: PersistenceDriverDiagnostic) => ({
+    code: issue.code === "PERSISTENCE_DRIVER_NOT_FOUND"
+      ? "UNSUPPORTED_PERSISTENCE_ADAPTER"
+      : "PRODUCTION_ADAPTER_DEFERRED",
+    field: issue.field,
+    message: issue.message,
+    severity: issue.severity,
+  }));
 
   return {
     activeAdapter,
     adapters,
     stores: backendStorePorts,
     validation: {
-      issues,
-      valid: issues.every((issue) => issue.severity !== "error"),
+      issues: [...issues, ...driverIssues],
+      valid: [...issues, ...driverIssues].every((issue) => issue.severity !== "error"),
     },
   };
 };

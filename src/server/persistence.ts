@@ -8,6 +8,7 @@ import type {
 } from "../domain/types";
 import type { ApiRuntimeRouteId } from "./routes";
 import type { CampaignOsPersistenceConfig, CampaignOsPersistenceMode } from "./config";
+import type { ProductionPersistenceAdapterKind } from "./persistenceRuntime";
 
 export type PersistenceRecordKind =
   | "wallet_session"
@@ -19,6 +20,34 @@ export type PersistenceRecordKind =
 
 export type PersistenceSummaryValue = boolean | number | string | string[];
 export type PersistenceSummary = Record<string, PersistenceSummaryValue>;
+export type RepositoryAdapterFactoryMode =
+  | CampaignOsPersistenceMode
+  | "deterministic_test"
+  | "production_deferred";
+export type RepositoryAdapterKind =
+  | "memory_repository"
+  | "json_repository"
+  | "deterministic_test_repository"
+  | "production_deferred_repository";
+
+export interface RepositoryAdapterFactoryDiagnostic {
+  code:
+    | "PRODUCTION_REPOSITORY_DEFERRED"
+    | "UNSUPPORTED_REPOSITORY_DRIVER";
+  field: string;
+  message: string;
+  severity: "error" | "warning" | "info";
+}
+
+export interface RepositoryAdapterFactoryDecision {
+  blocked: boolean;
+  diagnostics: RepositoryAdapterFactoryDiagnostic[];
+  fallbackUsed: boolean;
+  repositoryKind: RepositoryAdapterKind;
+  requestedDriverId?: string;
+  selectedDriverId: string;
+  selectedMode: RepositoryAdapterFactoryMode;
+}
 
 export interface CampaignOsPersistenceRecordInput {
   accountType?: AccountType;
@@ -66,6 +95,14 @@ export interface CampaignOsRepository {
   record(input: CampaignOsPersistenceRecordInput): Promise<CampaignOsPersistenceRecord>;
   reset?(): Promise<void>;
   snapshot(): Promise<PersistenceSnapshot>;
+  withTransaction?<T>(
+    operation: (unitOfWork: RepositoryUnitOfWork) => Promise<T> | T,
+  ): Promise<T>;
+}
+
+export interface RepositoryUnitOfWork {
+  id: string;
+  mode: "deterministic_test" | "deferred_live";
 }
 
 interface JsonStoreDocument {
@@ -197,6 +234,26 @@ const createHealth = ({
   status,
 });
 
+const createUnavailableHealth = ({
+  adapterLabel,
+  adapterPortId,
+  mode,
+  records = [],
+}: {
+  adapterLabel: string;
+  adapterPortId: string;
+  mode: CampaignOsPersistenceMode;
+  records?: readonly CampaignOsPersistenceRecord[];
+}): PersistenceHealth =>
+  createHealth({
+    adapterLabel,
+    adapterPortId,
+    durable: true,
+    mode,
+    records,
+    status: "unavailable",
+  });
+
 export const createCampaignOsMemoryRepository = (
   config: Partial<CampaignOsPersistenceConfig> = {},
 ): CampaignOsRepository => {
@@ -222,6 +279,57 @@ export const createCampaignOsMemoryRepository = (
         mode: "memory",
         records,
       }),
+  };
+};
+
+export const createCampaignOsDeterministicTestRepository = (
+  config: Partial<CampaignOsPersistenceConfig> = {},
+): CampaignOsRepository => {
+  const repository = createCampaignOsMemoryRepository({
+    ...config,
+    adapterLabel: config.adapterLabel ?? "deterministic_test",
+    mode: "memory",
+  });
+
+  return {
+    ...repository,
+    health: async () => ({
+      ...(await repository.health()),
+      adapterLabel: config.adapterLabel ?? "deterministic_test",
+      adapterPortId: "campaign-os-deterministic-test-adapter",
+    }),
+    withTransaction: async (operation) =>
+      operation({
+        id: "deterministic-test-unit-of-work",
+        mode: "deterministic_test",
+      }),
+  };
+};
+
+const createProductionDeferredRepository = (
+  config: Partial<CampaignOsPersistenceConfig> = {},
+): CampaignOsRepository => {
+  const error = () => new Error("Production persistence adapter is deferred in Mission 172.");
+
+  return {
+    initialize: async () => {
+      throw error();
+    },
+    record: async () => {
+      throw error();
+    },
+    snapshot: async () => {
+      throw error();
+    },
+    health: async () =>
+      createUnavailableHealth({
+        adapterLabel: config.adapterLabel ?? "production_deferred",
+        adapterPortId: "campaign-os-production-db-adapter",
+        mode: "memory",
+      }),
+    withTransaction: async () => {
+      throw error();
+    },
   };
 };
 
@@ -366,9 +474,109 @@ export const createCampaignOsJsonRepository = ({
 export const createCampaignOsRepository = (
   config: CampaignOsPersistenceConfig,
 ): CampaignOsRepository => {
-  if (config.mode === "local_json") {
+  const decision = resolveRepositoryAdapterFactoryDecision(config);
+
+  if (decision.repositoryKind === "deterministic_test_repository") {
+    return createCampaignOsDeterministicTestRepository(config);
+  }
+
+  if (decision.repositoryKind === "production_deferred_repository") {
+    return createProductionDeferredRepository(config);
+  }
+
+  if (decision.repositoryKind === "json_repository") {
     return createCampaignOsJsonRepository(config);
   }
 
   return createCampaignOsMemoryRepository(config);
+};
+
+const productionDeferredDiagnostic: RepositoryAdapterFactoryDiagnostic = {
+  code: "PRODUCTION_REPOSITORY_DEFERRED",
+  field: "productionDriverId",
+  message: "Production persistence adapter is deferred and cannot fallback to local repositories.",
+  severity: "error",
+};
+
+const unsupportedDriverDiagnostic = (
+  requestedDriverId: string,
+): RepositoryAdapterFactoryDiagnostic => ({
+  code: "UNSUPPORTED_REPOSITORY_DRIVER",
+  field: "productionDriverId",
+  message: `Unsupported repository driver '${requestedDriverId}'.`,
+  severity: "error",
+});
+
+const driverModeById: Partial<Record<string, ProductionPersistenceAdapterKind>> = {
+  "campaign-os-deterministic-test-adapter": "deterministic_test",
+  "campaign-os-local-json-adapter": "local_json",
+  "campaign-os-memory-adapter": "memory",
+  "campaign-os-production-db-adapter": "production_deferred",
+};
+
+export const resolveRepositoryAdapterFactoryDecision = (
+  config: Partial<CampaignOsPersistenceConfig> & {
+    mode: CampaignOsPersistenceMode;
+  },
+): RepositoryAdapterFactoryDecision => {
+  const requestedDriverId = config.productionDriverId;
+  const requestedDriverMode = requestedDriverId ? driverModeById[requestedDriverId] : undefined;
+
+  if (requestedDriverId && !requestedDriverMode) {
+    return {
+      blocked: true,
+      diagnostics: [unsupportedDriverDiagnostic(requestedDriverId)],
+      fallbackUsed: false,
+      repositoryKind: "memory_repository",
+      requestedDriverId,
+      selectedDriverId: "campaign-os-memory-adapter",
+      selectedMode: "memory",
+    };
+  }
+
+  if (requestedDriverMode === "deterministic_test") {
+    return {
+      blocked: false,
+      diagnostics: [],
+      fallbackUsed: false,
+      repositoryKind: "deterministic_test_repository",
+      requestedDriverId,
+      selectedDriverId: "campaign-os-deterministic-test-adapter",
+      selectedMode: "deterministic_test",
+    };
+  }
+
+  if (requestedDriverMode === "production_deferred") {
+    return {
+      blocked: true,
+      diagnostics: [productionDeferredDiagnostic],
+      fallbackUsed: false,
+      repositoryKind: "production_deferred_repository",
+      requestedDriverId,
+      selectedDriverId: "campaign-os-production-db-adapter",
+      selectedMode: "production_deferred",
+    };
+  }
+
+  if (config.mode === "local_json" || requestedDriverMode === "local_json") {
+    return {
+      blocked: false,
+      diagnostics: [],
+      fallbackUsed: false,
+      repositoryKind: "json_repository",
+      requestedDriverId,
+      selectedDriverId: "campaign-os-local-json-adapter",
+      selectedMode: "local_json",
+    };
+  }
+
+  return {
+    blocked: false,
+    diagnostics: [],
+    fallbackUsed: false,
+    repositoryKind: "memory_repository",
+    requestedDriverId,
+    selectedDriverId: "campaign-os-memory-adapter",
+    selectedMode: "memory",
+  };
 };
