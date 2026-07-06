@@ -190,6 +190,17 @@ describe("backend config contract", () => {
     expect(collectStringValues(contract)).not.toContain("super-secret");
   });
 
+  it("redacts connection-like production persistence driver values", () => {
+    const contract = resolveBackendConfigContract({
+      env: {
+        CAMPAIGN_OS_PERSISTENCE_DRIVER: "postgres://user:secret@db.internal/campaign",
+      },
+    });
+
+    expect(contract.productionPersistence.requestedDriverId).toBe("[redacted]");
+    expect(collectStringValues(contract)).not.toContain("postgres://user:secret@db.internal/campaign");
+  });
+
   it("preserves the existing runtime config defaults and local JSON behavior", () => {
     expect(resolveCampaignOsRuntimeConfig({ env: {} })).toEqual({
       persistence: {
