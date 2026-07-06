@@ -1162,22 +1162,18 @@ describe("Campaign OS domain foundation", () => {
     );
     expect(adminOps.residualGapMissionQueue.items.find(
       (item) => item.sourceRowId === "v02-contract-claim-reward-custody",
-    )).toMatchObject({
-      status: "backlog",
-      launchBlocking: false,
-      suggestedMissionTitle: {
-        "en-US": "Contract claim Reward Custody Approval Readiness mission",
-      },
+    )).toBeUndefined();
+    expect(adminOps.residualGapMissionQueue.summary).toMatchObject({
+      launchBlockingItems: 0,
+      topItemId: null,
+      totalItems: 0,
     });
-    const contractClaimResidual = adminOps.residualGapMissionQueue.items.find(
-      (item) => item.sourceRowId === "v02-contract-claim-reward-custody",
+    expect(adminOps.residualGapMissionQueue.summary.nextAction["en-US"]).toContain(
+      "No residual mission is currently prioritized.",
     );
-    expect(contractClaimResidual?.dependency["en-US"]).toContain("Reward Custody Approval Readiness");
-    expect(contractClaimResidual?.dependency["en-US"]).toContain("custody-model");
-    expect(contractClaimResidual?.evidenceNeeded["en-US"]).toContain("Reward Custody Approval Readiness evidence");
-    expect(contractClaimResidual?.boundary["en-US"]).toContain("Reward Custody Approval Readiness boundary");
-    expect(contractClaimResidual?.evidenceNeeded["en-US"]).toContain("Reward custody approval is not granted");
-    expect(contractClaimResidual?.evidenceNeeded["en-US"]).not.toContain("claimExecutionEnabled=true");
+    expect(JSON.stringify(adminOps.residualGapMissionQueue)).not.toContain(
+      "mission/158-contract-claim-reward-custody-approval-readiness",
+    );
 
     for (const gate of preapproval.gates) {
       expectCoreLocalizedText(gate.label);
@@ -2344,18 +2340,15 @@ describe("Campaign OS domain foundation", () => {
     expect(preapproval.claimExecutionEnabled).toBe(false);
     expect(preapproval.suggestedFutureBranch).toBe("mission/158-contract-claim-reward-custody-approval-readiness");
 
-    expect(contractClaimResidual).toMatchObject({
-      status: "backlog",
-      launchBlocking: false,
-      suggestedBranch: "mission/158-contract-claim-reward-custody-approval-readiness",
+    expect(contractClaimResidual).toBeUndefined();
+    expect(adminOps.residualGapMissionQueue.summary).toMatchObject({
+      launchBlockingItems: 0,
+      topItemId: null,
+      totalItems: 0,
     });
-    expect(contractClaimResidual?.dependency["en-US"]).toContain("Reward Custody Approval Readiness");
-    expect(contractClaimResidual?.dependency["en-US"]).toContain("custody-model");
-    expect(contractClaimResidual?.nextAction).toEqual(
-      preapproval.rewardCustodyApprovalReadiness.summary.topNextAction,
+    expect(JSON.stringify(adminOps.residualGapMissionQueue)).not.toContain(
+      "mission/158-contract-claim-reward-custody-approval-readiness",
     );
-    expect(contractClaimResidual?.evidenceNeeded["en-US"]).toContain("Reward Custody Approval Readiness evidence");
-    expect(contractClaimResidual?.evidenceNeeded["en-US"]).toContain("Reward custody approval is not granted");
 
     for (const item of readiness.items) {
       expectCoreLocalizedText(item.label);
@@ -3273,66 +3266,35 @@ describe("Campaign OS domain foundation", () => {
       totalItems: queue.items.length,
       launchBlockingItems: queue.items.filter((item) => item.launchBlocking).length,
       backlogItems: queue.items.filter((item) => item.status === "backlog").length,
-      topItemId: "mission-v02-contract-claim-reward-custody",
+      topItemId: null,
       topSeverity: "low",
     });
-    expect(queue.summary.nextAction).toEqual(
-      adminOps.contractClaimPreapprovalPackage.rewardCustodyApprovalReadiness.summary.topNextAction,
+    expect(queue.summary.nextAction["en-US"]).toBe(
+      "No residual mission is currently prioritized.",
     );
+    expect(fallbackQueue.summary).toEqual(queue.summary);
     expect(queue.boundary["en-US"]).toContain("does not create missions");
     expect(queue.boundary["en-US"]).toContain("No live wallet SDK");
-
-    expect(queue.items[0]).toMatchObject({
-      id: "mission-v02-contract-claim-reward-custody",
-      sourceRowId: "v02-contract-claim-reward-custody",
-      sourceSolutionSetId: "v0_2_wallet_i18n_contract",
-      priority: 1,
-      status: "backlog",
-      severity: "low",
-      ownerRole: "contract_reviewer",
-      launchBlocking: false,
-      suggestedBranch: "mission/158-contract-claim-reward-custody-approval-readiness",
-    });
-    expect(queue.items[0]?.suggestedMissionTitle["en-US"]).toBe(
-      "Contract claim Reward Custody Approval Readiness mission",
-    );
-    expect(queue.items[0]?.sourceGap["en-US"]).toBe(
-      "Contract claim preapproval package covers future custody approval",
-    );
-    expect(queue.items[0]?.dependency["en-US"]).toContain(
-      "Reward Custody Approval Readiness is present but blocked",
-    );
-    expect(queue.items[0]?.dependency["en-US"]).toContain(
-      adminOps.contractClaimPreapprovalPackage.rewardCustodyApprovalReadiness.summary.topItemId,
-    );
-    expect(queue.items[0]?.evidenceNeeded["en-US"]).toContain("Mission 141 created");
-    expect(queue.items[0]?.evidenceNeeded["en-US"]).toContain("Reward Custody Approval Readiness evidence");
-    expect(queue.items[0]?.nextAction).toEqual(
-      adminOps.contractClaimPreapprovalPackage.rewardCustodyApprovalReadiness.summary.topNextAction,
-    );
-    expect(queue.items[0]?.boundary["en-US"]).toContain("Reward Custody Approval Readiness boundary");
-    expect(queue.items[0]?.boundary["en-US"]).toContain("reward custody");
-    expect(queue.items[0]?.boundary["en-US"]).toContain("reward distribution");
-    expect(queue.items[0]?.launchImpact["en-US"]).toContain("non-blocking backlog follow-up");
 
     expect(adminOps.deliveryAcceptance.topResidualGaps).toHaveLength(0);
     expect(itemsById["mission-v01-user-participation-loop"]).toBeUndefined();
     expect(itemsById["mission-v02-live-wallet-provider-evidence"]).toBeUndefined();
-
-    expect(itemsById["mission-v02-contract-claim-reward-custody"]).toMatchObject({
-      sourceRowId: "v02-contract-claim-reward-custody",
-      status: "backlog",
-      launchBlocking: false,
-      suggestedBranch: "mission/158-contract-claim-reward-custody-approval-readiness",
-    });
-    expect(itemsById["mission-v02-contract-claim-reward-custody"]?.suggestedBranch).not.toBe(
-      "mission/contract-claim-reward-custody",
-    );
-    expect(fallbackItemsById["mission-v02-contract-claim-reward-custody"]).toMatchObject({
-      sourceRowId: "v02-contract-claim-reward-custody",
-      status: "backlog",
-      launchBlocking: false,
-      suggestedBranch: "mission/contract-claim-reward-custody",
+    expect(itemsById["mission-v02-contract-claim-reward-custody"]).toBeUndefined();
+    expect(fallbackItemsById["mission-v02-contract-claim-reward-custody"]).toBeUndefined();
+    expect(JSON.stringify(queue)).not.toContain("mission/158-contract-claim-reward-custody-approval-readiness");
+    expect(JSON.stringify(fallbackQueue)).not.toContain("mission/contract-claim-reward-custody");
+    expect(adminOps.deliveryAcceptance.solutionSets
+      .flatMap((solutionSet) => solutionSet.rows)
+      .find((row) => row.id === "v02-contract-claim-reward-custody"))
+      .toMatchObject({
+        status: "deferred",
+        launchBlocking: false,
+      });
+    expect(adminOps.contractClaimPreapprovalPackage.rewardCustodyApprovalReadiness.summary).toMatchObject({
+      claimExecutionEnabled: false,
+      rewardCustodyApprovalBlocked: true,
+      rewardCustodyEnabled: false,
+      topItemId: "custody-model",
     });
     expect(itemsById["mission-v02-p1-locale-expansion"]).toBeUndefined();
 

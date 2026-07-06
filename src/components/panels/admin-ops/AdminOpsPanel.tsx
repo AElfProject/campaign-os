@@ -4,6 +4,7 @@ import {
   campaignDetail,
   computePublishReadiness,
   createAdminOpsReadModel,
+  createDeliveryAcceptanceConsole,
   createExportArtifact,
   createExportConfirmationReadinessGate,
   createLiveWalletConnectorBoundary,
@@ -1786,7 +1787,11 @@ export const AdminOpsPanel = ({
       storageState: walletProviderEvidenceRecoveryUi.storageState,
     },
   );
-  const deliveryAcceptance = walletProviderEvidenceRecovery.deliveryAcceptance;
+  const deliveryAcceptance = createDeliveryAcceptanceConsole(
+    walletProviderEvidenceRecovery.releaseReadiness,
+    exportFulfillmentReadiness,
+    adminOps.companionContractReadiness,
+  );
   const contractClaimPreapprovalPackage = adminOps.contractClaimPreapprovalPackage;
   const residualGapMissionQueue = createResidualGapMissionQueue(deliveryAcceptance, {
     contractClaimPreapprovalPackage,
@@ -5692,6 +5697,11 @@ export const AdminOpsPanel = ({
           ))}
         </div>
         <div style={gridStyle}>
+          {residualGapMissionQueue.items.length === 0 ? (
+            <p style={wrapTextStyle}>
+              {getLocalizedText(residualGapMissionQueue.summary.nextAction, locale)}
+            </p>
+          ) : null}
           {residualGapMissionQueue.items.map((item) => (
             <article key={item.id} style={cardStyle}>
               <div style={rowStyle}>
