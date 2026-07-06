@@ -1160,6 +1160,30 @@ describe("Project Console shell", () => {
     expect(within(localArtifact).queryByText(/Contract root generated/i)).not.toBeInTheDocument();
     expect(within(localArtifact).queryByText(/Rewards distributed/i)).not.toBeInTheDocument();
 
+    const storageProviderSummary = screen.getByLabelText("Storage provider approval summary");
+    expect(
+      within(storageProviderSummary).getByRole("heading", {
+        name: "Storage provider approval summary",
+      }),
+    ).toBeInTheDocument();
+    expect(within(storageProviderSummary).getByText("Production storage approval blocked")).toBeInTheDocument();
+    expect(within(storageProviderSummary).getByText("Top storage blocker")).toBeInTheDocument();
+    expect(within(storageProviderSummary).getByText("Provider ownership")).toBeInTheDocument();
+    expect(within(storageProviderSummary).getByText(/Safe next action:/)).toBeInTheDocument();
+    expect(within(storageProviderSummary).getByText("Storage write enabled = false")).toBeInTheDocument();
+    expect(within(storageProviderSummary).getByText("Download URL enabled = false")).toBeInTheDocument();
+    expect(within(storageProviderSummary).getByText("Contract root/write enabled = false")).toBeInTheDocument();
+    expect(within(storageProviderSummary).getByText("Reward custody enabled = false")).toBeInTheDocument();
+    expect(within(storageProviderSummary).getByText("Reward distribution enabled = false")).toBeInTheDocument();
+    expect(within(storageProviderSummary).getByText(/Local CSV\/JSON handoff remains available/)).toBeInTheDocument();
+    expect(within(storageProviderSummary).getByText(/Production storage boundary:/)).toBeInTheDocument();
+    expect(within(storageProviderSummary).getByText(/Production storage export stays fail-closed/)).toBeInTheDocument();
+    expect(
+      within(storageProviderSummary).queryByRole("button", {
+        name: /upload|download|signed URL|storage write|write storage|contract root|contract|custody|distribute|reward/i,
+      }),
+    ).not.toBeInTheDocument();
+
     const fulfillmentReadiness = screen.getByLabelText("Export fulfillment readiness");
     expect(
       within(fulfillmentReadiness).getByRole("heading", { name: "Export fulfillment readiness" }),

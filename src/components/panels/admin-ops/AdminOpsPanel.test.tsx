@@ -1011,6 +1011,48 @@ describe("Admin/Ops shell", () => {
         name: /upload|download|generate|create signed URL|write storage|approve payout|custody|distribute|sign wallet|write contract|branch|issue|PR|mission/i,
       }),
     ).not.toBeInTheDocument();
+    const storageProviderApprovalPacket = screen.getByLabelText("Export Storage Provider Approval Packet");
+    expect(
+      within(storageProviderApprovalPacket).getByRole("heading", {
+        name: "Export Storage Provider Approval Packet",
+      }),
+    ).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Total checks")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Ready approvals")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Review required")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Blocked approvals")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Top storage blocker")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getAllByText("Provider ownership").length).toBeGreaterThan(1);
+    expect(within(storageProviderApprovalPacket).getAllByText("Service registry gate").length).toBeGreaterThan(1);
+    expect(within(storageProviderApprovalPacket).getAllByText("Maintenance / off-switch").length).toBeGreaterThan(0);
+    expect(within(storageProviderApprovalPacket).getByText("Service key")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getAllByText("export-storage").length).toBeGreaterThan(0);
+    expect(within(storageProviderApprovalPacket).getByText("Provider configured = false")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Provider approved = false")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Service enabled = false")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Service approved = false")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Fallback mode")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Access control")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Retention and privacy")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Audit logging")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Rollback plan")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Owner signoff")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Operator approval")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getAllByText(/Required evidence:/).length).toBeGreaterThan(0);
+    expect(within(storageProviderApprovalPacket).getAllByText(/Residual risk:/).length).toBeGreaterThan(0);
+    expect(within(storageProviderApprovalPacket).getAllByText(/Source surface:/).length).toBeGreaterThan(0);
+    expect(within(storageProviderApprovalPacket).getByText("Storage write enabled = false")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Download URL enabled = false")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Provider call enabled = false")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Contract root write enabled = false")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Reward custody enabled = false")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getByText("Reward distribution enabled = false")).toBeInTheDocument();
+    expect(within(storageProviderApprovalPacket).getAllByText(/Production storage export stays fail-closed/).length).toBeGreaterThan(0);
+    expect(
+      within(storageProviderApprovalPacket).queryByRole("button", {
+        name: /upload|download|signed URL|storage write|write storage|contract|custody|distribute|reward/i,
+      }),
+    ).not.toBeInTheDocument();
     const localArtifact = screen.getByLabelText("Local export artifact");
     expect(within(localArtifact).getByText("camp-awaken-sprint-export-awaken-sprint-preview-local-review.csv")).toBeInTheDocument();
     expect(within(localArtifact).getByText("CSV")).toBeInTheDocument();

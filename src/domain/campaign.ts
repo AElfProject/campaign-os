@@ -189,6 +189,9 @@ import type {
   ExportStorageApprovalCheckId,
   ExportStorageColumnCoverage,
   ExportStorageFulfillmentApprovalReadiness,
+  ExportStorageProviderApprovalCheck,
+  ExportStorageProviderApprovalCheckId,
+  ExportStorageProviderApprovalPacket,
   ExportStorageSafetyBoundary,
   DaippAgentCoinTaskEvidenceSource,
   DaippAgentCoinTaskIntentId,
@@ -6422,6 +6425,330 @@ export const createExportStorageFulfillmentApprovalReadiness = (
   };
 };
 
+const exportStorageProviderApprovalBoundary = localized(
+  "Provider approval packet only. Production storage export stays fail-closed: no storage write, provider call, object key, signed URL, download URL, contract root write, wallet signing, reward custody, or reward distribution.",
+  "仅 provider approval packet。生产 storage export 保持 fail-closed：不会 storage write、provider call、object key、signed URL、download URL、合约 root 写入、钱包签名、奖励托管或发奖。",
+  "僅 provider approval packet。生產 storage export 保持 fail-closed：不會 storage write、provider call、object key、signed URL、download URL、合約 root 寫入、錢包簽名、獎勵託管或發獎。",
+);
+
+const exportStorageProviderApprovalSafetyBoundary = localized(
+  "Storage provider approval is review-only evidence. Local CSV/JSON handoff remains the only available export path until provider, service registry, access, retention, audit, rollback, owner, and operator approvals are complete.",
+  "Storage provider approval 只是 review-only 证据。在 provider、service registry、访问、保留、审计、回滚、owner 与 operator 批准完成前，本地 CSV/JSON 交接仍是唯一可用导出路径。",
+  "Storage provider approval 只是 review-only 證據。在 provider、service registry、存取、保留、審計、回滾、owner 與 operator 批准完成前，本地 CSV/JSON 交接仍是唯一可用匯出路徑。",
+);
+
+const exportStorageProviderGateNextAction = localized(
+  "Approve provider ownership, environment configuration, secret handling, maintenance copy, and off-switch evidence before any storage adapter work.",
+  "任何 storage adapter 工作前，先批准 provider 归属、环境配置、secret 处理、维护文案与关闭开关证据。",
+  "任何 storage adapter 工作前，先批准 provider 歸屬、環境設定、secret 處理、維護文案與關閉開關證據。",
+);
+
+const exportStorageServiceRegistryGateNextAction = localized(
+  "Keep Config.isServiceEnabled('export-storage') false until service registry approval, maintenance mode, and fallback evidence are reviewed.",
+  "service registry 批准、维护模式与 fallback 证据完成审核前，保持 Config.isServiceEnabled('export-storage') 为 false。",
+  "service registry 批准、維護模式與 fallback 證據完成審核前，保持 Config.isServiceEnabled('export-storage') 為 false。",
+);
+
+const exportStorageProviderForbiddenFields = [
+  "downloadUrl",
+  "fileUrl",
+  "storageKey",
+  "objectKey",
+  "signedUrl",
+  "contractRoot",
+  "transactionId",
+  "privateKey",
+  "signedPayload",
+] as const;
+
+const exportStorageProviderRiskPriority: Record<RiskLevel, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+};
+
+const exportStorageProviderStatePriority: Record<ExportReadinessState, number> = {
+  blocked: 0,
+  review_required: 1,
+  ready: 2,
+};
+
+const exportStorageProviderCheck = (
+  check: ExportStorageProviderApprovalCheck,
+): ExportStorageProviderApprovalCheck => check;
+
+const createExportStorageProviderApprovalSummary = (
+  checks: readonly ExportStorageProviderApprovalCheck[],
+): ExportStorageProviderApprovalPacket["summary"] => {
+  const topCheck = [...checks].sort((left, right) => {
+    const stateDelta = exportStorageProviderStatePriority[left.state] - exportStorageProviderStatePriority[right.state];
+
+    if (stateDelta !== 0) {
+      return stateDelta;
+    }
+
+    const riskDelta = exportStorageProviderRiskPriority[left.riskLevel] - exportStorageProviderRiskPriority[right.riskLevel];
+
+    if (riskDelta !== 0) {
+      return riskDelta;
+    }
+
+    return checks.findIndex((check) => check.id === left.id) -
+      checks.findIndex((check) => check.id === right.id);
+  })[0] ?? checks[0];
+  const highestRiskLevel = checks.some((check) => check.riskLevel === "high" && check.state !== "ready")
+    ? "high"
+    : checks.some((check) => check.riskLevel === "medium" && check.state !== "ready")
+      ? "medium"
+      : "low";
+
+  return {
+    approvalBlocked: checks.some((check) => check.requiredForApproval && check.state !== "ready"),
+    blockedChecks: checks.filter((check) => check.state === "blocked").length,
+    downloadUrlEnabled: false,
+    highestRiskLevel,
+    objectKeyEnabled: false,
+    providerCallEnabled: false,
+    readyChecks: checks.filter((check) => check.state === "ready").length,
+    reviewRequiredChecks: checks.filter((check) => check.state === "review_required").length,
+    signedUrlEnabled: false,
+    storageWriteEnabled: false,
+    topCheckId: topCheck.id,
+    topNextAction: topCheck.nextAction,
+    totalChecks: checks.length,
+  };
+};
+
+const mapStorageApprovalCheckToProviderPacket = (
+  check: ExportStorageApprovalCheck,
+  id: ExportStorageProviderApprovalCheckId,
+  boundary: LocalizedText,
+): ExportStorageProviderApprovalCheck => exportStorageProviderCheck({
+  ...check,
+  boundary,
+  id,
+  requiredForApproval: true,
+});
+
+export const createExportStorageProviderApprovalPacket = (
+  campaign: CampaignShellDetail,
+  exportFulfillmentReadiness = createExportFulfillmentReadiness(campaign),
+  exportStorageFulfillmentApprovalReadiness = createExportStorageFulfillmentApprovalReadiness(
+    campaign,
+    exportFulfillmentReadiness,
+  ),
+): ExportStorageProviderApprovalPacket => {
+  const storageChecksById = new Map(exportStorageFulfillmentApprovalReadiness.checks.map((check) => [check.id, check]));
+  const columnCoverage = exportStorageFulfillmentApprovalReadiness.columnCoverage;
+  const providerGate = {
+    configurationSource: "review_packet",
+    maintenanceModeSupported: true,
+    nextAction: exportStorageProviderGateNextAction,
+    offSwitchSupported: true,
+    providerApproved: false,
+    providerConfigured: false,
+    secretHandlingApproved: false,
+  } satisfies ExportStorageProviderApprovalPacket["providerGate"];
+  const serviceRegistryGate = {
+    approved: false,
+    enabled: false,
+    fallbackMode: "local_review_only",
+    maintenanceCopyReady: true,
+    nextAction: exportStorageServiceRegistryGateNextAction,
+    offSwitchReady: true,
+    serviceKey: "export-storage",
+  } satisfies ExportStorageProviderApprovalPacket["serviceRegistryGate"];
+  const providerOwnershipCheck = exportStorageProviderCheck({
+    boundary: exportStorageProviderApprovalBoundary,
+    dependency: localized(
+      "Production storage-backed export needs an approved owner, provider selection, environment configuration, and secret-handling evidence.",
+      "生产 storage-backed 导出需要批准 owner、provider 选择、环境配置与 secret-handling 证据。",
+      "生產 storage-backed 匯出需要批准 owner、provider 選擇、環境設定與 secret-handling 證據。",
+    ),
+    evidenceRequired: localized(
+      "Attach provider ownership, provider approval record, configuration source, failure mode, and secret-handling review.",
+      "附上 provider 归属、provider 批准记录、配置来源、失败模式与 secret-handling 审核。",
+      "附上 provider 歸屬、provider 批准記錄、設定來源、失敗模式與 secret-handling 審核。",
+    ),
+    id: "provider-ownership",
+    label: localized("Provider ownership", "Provider 归属", "Provider 歸屬"),
+    nextAction: providerGate.nextAction,
+    ownerRole: "internal_operator",
+    requiredForApproval: true,
+    residualRisk: localized(
+      "No production storage provider is approved, so storage write and download URL must remain disabled.",
+      "尚未批准生产 storage provider，因此 storage write 与 download URL 必须保持禁用。",
+      "尚未批准生產 storage provider，因此 storage write 與 download URL 必須保持停用。",
+    ),
+    riskLevel: "high",
+    sourceSurface: localized("Provider approval packet", "Provider approval packet", "Provider approval packet"),
+    state: "blocked",
+  });
+  const serviceRegistryCheck = exportStorageProviderCheck({
+    boundary: exportStorageProviderApprovalBoundary,
+    dependency: localized(
+      "The export-storage service registry gate must remain disabled until approval evidence exists.",
+      "export-storage service registry gate 必须在批准证据存在前保持禁用。",
+      "export-storage service registry gate 必須在批准證據存在前保持停用。",
+    ),
+    evidenceRequired: localized(
+      "Provide service registry approval, feature flag owner, fail-closed default, fallback path, and release gate evidence.",
+      "提供 service registry 批准、feature flag owner、fail-closed 默认值、fallback 路径与 release gate 证据。",
+      "提供 service registry 批准、feature flag owner、fail-closed 預設值、fallback 路徑與 release gate 證據。",
+    ),
+    id: "service-registry-gate",
+    label: localized("Service registry gate", "Service registry gate", "Service registry gate"),
+    nextAction: serviceRegistryGate.nextAction,
+    ownerRole: "internal_operator",
+    requiredForApproval: true,
+    residualRisk: localized(
+      "Without registry approval, a future adapter could bypass maintenance or off-switch controls.",
+      "没有 registry 批准时，未来 adapter 可能绕过维护或关闭开关控制。",
+      "沒有 registry 批准時，未來 adapter 可能繞過維護或關閉開關控制。",
+    ),
+    riskLevel: "high",
+    sourceSurface: localized("Service Registry", "Service Registry", "Service Registry"),
+    state: "blocked",
+  });
+  const maintenanceOffSwitchCheck = exportStorageProviderCheck({
+    boundary: exportStorageProviderApprovalBoundary,
+    dependency: localized(
+      "Maintenance mode and off-switch behavior must be approved before a provider can be enabled.",
+      "provider 启用前必须批准维护模式与关闭开关行为。",
+      "provider 啟用前必須批准維護模式與關閉開關行為。",
+    ),
+    evidenceRequired: localized(
+      "Attach maintenance copy, disabled-state UI copy, operator runbook, fallback mode, and off-switch owner.",
+      "附上维护文案、禁用状态 UI 文案、operator runbook、fallback mode 与关闭开关 owner。",
+      "附上維護文案、停用狀態 UI 文案、operator runbook、fallback mode 與關閉開關 owner。",
+    ),
+    id: "maintenance-off-switch",
+    label: localized("Maintenance and off-switch", "维护与关闭开关", "維護與關閉開關"),
+    nextAction: localized(
+      "Approve maintenance copy and off-switch runbook before enabling export-storage.",
+      "启用 export-storage 前先批准维护文案与关闭开关 runbook。",
+      "啟用 export-storage 前先批准維護文案與關閉開關 runbook。",
+    ),
+    ownerRole: "internal_operator",
+    requiredForApproval: true,
+    residualRisk: localized(
+      "An outage or provider failure could leave project owners without a clear local fallback.",
+      "故障或 provider failure 可能让项目方没有清晰的本地 fallback。",
+      "故障或 provider failure 可能讓專案方沒有清晰的本地 fallback。",
+    ),
+    riskLevel: "high",
+    sourceSurface: localized("Maintenance/off-switch readiness", "维护/关闭开关 readiness", "維護/關閉開關 readiness"),
+    state: "blocked",
+  });
+  const requireStorageCheck = (
+    id: ExportStorageApprovalCheckId,
+  ): ExportStorageApprovalCheck => {
+    const check = storageChecksById.get(id);
+
+    if (!check) {
+      throw new Error(`Missing export storage approval check: ${id}`);
+    }
+
+    return check;
+  };
+  const checks: ExportStorageProviderApprovalCheck[] = [
+    providerOwnershipCheck,
+    serviceRegistryCheck,
+    maintenanceOffSwitchCheck,
+    mapStorageApprovalCheckToProviderPacket(
+      requireStorageCheck("csv-column-contract"),
+      "csv-column-contract",
+      columnCoverage.boundary,
+    ),
+    mapStorageApprovalCheckToProviderPacket(
+      requireStorageCheck("wallet-locale-coverage"),
+      "wallet-locale-coverage",
+      exportStorageProviderApprovalBoundary,
+    ),
+    mapStorageApprovalCheckToProviderPacket(
+      requireStorageCheck("access-control"),
+      "access-control",
+      exportStorageProviderApprovalBoundary,
+    ),
+    mapStorageApprovalCheckToProviderPacket(
+      requireStorageCheck("retention-privacy"),
+      "retention-privacy",
+      exportStorageProviderApprovalBoundary,
+    ),
+    mapStorageApprovalCheckToProviderPacket(
+      requireStorageCheck("audit-logging"),
+      "audit-logging",
+      exportStorageProviderApprovalBoundary,
+    ),
+    mapStorageApprovalCheckToProviderPacket(
+      requireStorageCheck("rollback-plan"),
+      "rollback-plan",
+      exportStorageProviderApprovalBoundary,
+    ),
+    mapStorageApprovalCheckToProviderPacket(
+      requireStorageCheck("owner-signoff"),
+      "owner-signoff",
+      exportStorageProviderApprovalBoundary,
+    ),
+    mapStorageApprovalCheckToProviderPacket(
+      requireStorageCheck("operator-approval"),
+      "operator-approval",
+      exportStorageProviderApprovalBoundary,
+    ),
+  ];
+  const approvalEvidence = {
+    blockedRows: exportFulfillmentReadiness.summary.blockedRows,
+    checksumSamples: exportFulfillmentReadiness.packages.map((pack) => pack.checksum),
+    csvColumnsExact: columnCoverage.exactOrder,
+    includedColumns: columnCoverage.columns,
+    localePreferenceIncluded: columnCoverage.localePreferenceIncluded,
+    packageCount: exportFulfillmentReadiness.summary.packageCount,
+    readyRows: exportFulfillmentReadiness.summary.readyRows,
+    reviewRequiredRows: exportFulfillmentReadiness.summary.reviewRequiredRows,
+    riskFlagsIncluded: columnCoverage.riskFlagsIncluded,
+    sourceFulfillmentStatus: exportFulfillmentReadiness.summary.status,
+    sourceStorageApprovalBlocked: exportStorageFulfillmentApprovalReadiness.summary.approvalBlocked,
+    taskEvidenceIncluded: columnCoverage.taskEvidenceIncluded,
+    walletSourceIncluded: columnCoverage.walletSourceIncluded,
+    walletTypeIncluded: columnCoverage.walletTypeIncluded,
+  } satisfies ExportStorageProviderApprovalPacket["approvalEvidence"];
+  const safetyCandidate = {
+    approvalEvidence,
+    checks,
+    providerGate,
+    serviceRegistryGate,
+  };
+  const safety = {
+    boundary: exportStorageProviderApprovalSafetyBoundary,
+    contractRootWriteEnabled: false,
+    downloadUrlEnabled: false,
+    forbiddenFieldsAbsent: exportStorageProviderForbiddenFields.every(
+      (field) => !hasOwnKeyDeep(safetyCandidate, field),
+    ),
+    objectKeyEnabled: false,
+    providerCallEnabled: false,
+    rewardCustodyEnabled: false,
+    rewardDistributionEnabled: false,
+    signedUrlEnabled: false,
+    storageWriteEnabled: false,
+    walletSigningEnabled: false,
+  } satisfies ExportStorageProviderApprovalPacket["safety"];
+  const summary = createExportStorageProviderApprovalSummary(checks);
+
+  return {
+    approvalEvidence,
+    batchId: exportFulfillmentReadiness.batchId,
+    boundary: exportStorageProviderApprovalBoundary,
+    campaignId: campaign.id,
+    checks,
+    nextAction: summary.topNextAction,
+    providerGate,
+    safety,
+    serviceRegistryGate,
+    summary,
+  };
+};
+
 const findMissingColumnValues = (
   row: Record<ExportCsvColumn, string | number | boolean | string[] | undefined>,
 ): ExportCsvColumn[] =>
@@ -11595,6 +11922,10 @@ export const createProjectCampaignCommandCenter = (
   const campaigns = createSeededCampaignCommandItems(campaign, exportBatch);
   const analyticsExport = createAnalyticsExportDecision(campaign, exportBatch);
   const exportFulfillmentReadiness = createExportFulfillmentReadiness(campaign);
+  const exportStorageProviderApprovalPacket = createExportStorageProviderApprovalPacket(
+    campaign,
+    exportFulfillmentReadiness,
+  );
   const advancedAnalytics = createAdvancedAnalyticsReadiness(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const aiOpsKpiAdoption = createAiOpsKpiAdoptionConsole(campaign, aiOptimization);
@@ -11616,6 +11947,7 @@ export const createProjectCampaignCommandCenter = (
     campaigns,
     analyticsExport,
     exportFulfillmentReadiness,
+    exportStorageProviderApprovalPacket,
     advancedAnalytics,
     aiOptimization,
     aiOpsKpiAdoption,
@@ -24918,6 +25250,11 @@ export const createAdminOpsReadModel = (
     campaign,
     exportFulfillmentReadiness,
   );
+  const exportStorageProviderApprovalPacket = createExportStorageProviderApprovalPacket(
+    campaign,
+    exportFulfillmentReadiness,
+    exportStorageFulfillmentApprovalReadiness,
+  );
   const advancedAnalytics = createAdvancedAnalyticsReadiness(campaign, exportBatch);
   const aiOptimization = createAiOptimizationWorkflow(campaign);
   const aiReportHandoff = createAiReportHandoffSurface(aiOptimization);
@@ -25010,6 +25347,7 @@ export const createAdminOpsReadModel = (
     exportBatch,
     exportFulfillmentReadiness,
     exportStorageFulfillmentApprovalReadiness,
+    exportStorageProviderApprovalPacket,
     lifecycleOperations,
   };
 };

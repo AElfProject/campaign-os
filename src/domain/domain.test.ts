@@ -31,6 +31,7 @@ import {
   createAdminOpsReadModel,
   createDeliveryAcceptanceConsole,
   createExportConfirmationReadinessGate,
+  createExportStorageProviderApprovalPacket,
   createExportStorageFulfillmentApprovalReadiness,
   createExportFulfillmentReadiness,
   createExportArtifact,
@@ -5261,6 +5262,121 @@ describe("Campaign OS domain foundation", () => {
       "signedPayload",
     ]) {
       expect(hasOwnKeyDeep(readiness, unsafe)).toBe(false);
+    }
+  });
+
+  it("derives an export storage provider approval packet that stays fail-closed", () => {
+    const localFulfillment = createExportFulfillmentReadiness(campaignDetail);
+    const storageApproval = createExportStorageFulfillmentApprovalReadiness(campaignDetail, localFulfillment);
+    const packet = createExportStorageProviderApprovalPacket(campaignDetail, localFulfillment, storageApproval);
+    const repeated = createExportStorageProviderApprovalPacket(campaignDetail, localFulfillment, storageApproval);
+    const adminOps = createAdminOpsReadModel(campaignDetail);
+    const commandCenter = createProjectCampaignCommandCenter(campaignDetail);
+
+    expect(packet).toEqual(repeated);
+    expect(packet.campaignId).toBe(campaignDetail.id);
+    expect(packet.batchId).toBe(localFulfillment.batchId);
+    expect(packet.checks.map((check) => check.id)).toEqual([
+      "provider-ownership",
+      "service-registry-gate",
+      "maintenance-off-switch",
+      "csv-column-contract",
+      "wallet-locale-coverage",
+      "access-control",
+      "retention-privacy",
+      "audit-logging",
+      "rollback-plan",
+      "owner-signoff",
+      "operator-approval",
+    ]);
+    expect(packet.summary).toMatchObject({
+      approvalBlocked: true,
+      blockedChecks: 6,
+      downloadUrlEnabled: false,
+      highestRiskLevel: "high",
+      objectKeyEnabled: false,
+      providerCallEnabled: false,
+      readyChecks: 2,
+      reviewRequiredChecks: 3,
+      signedUrlEnabled: false,
+      storageWriteEnabled: false,
+      topCheckId: "provider-ownership",
+      totalChecks: 11,
+    });
+    expect(packet.providerGate).toMatchObject({
+      configurationSource: "review_packet",
+      maintenanceModeSupported: true,
+      offSwitchSupported: true,
+      providerApproved: false,
+      providerConfigured: false,
+      secretHandlingApproved: false,
+    });
+    expect(packet.serviceRegistryGate).toMatchObject({
+      approved: false,
+      enabled: false,
+      fallbackMode: "local_review_only",
+      maintenanceCopyReady: true,
+      offSwitchReady: true,
+      serviceKey: "export-storage",
+    });
+    expect(packet.approvalEvidence).toMatchObject({
+      csvColumnsExact: true,
+      localePreferenceIncluded: true,
+      packageCount: localFulfillment.summary.packageCount,
+      readyRows: localFulfillment.summary.readyRows,
+      reviewRequiredRows: localFulfillment.summary.reviewRequiredRows,
+      riskFlagsIncluded: true,
+      sourceFulfillmentStatus: localFulfillment.summary.status,
+      sourceStorageApprovalBlocked: true,
+      taskEvidenceIncluded: true,
+      walletSourceIncluded: true,
+      walletTypeIncluded: true,
+    });
+    expect(packet.approvalEvidence.checksumSamples).toEqual(
+      localFulfillment.packages.map((pack) => pack.checksum),
+    );
+    expect(packet.approvalEvidence.includedColumns).toEqual(EXPORT_CSV_COLUMNS);
+    expect(packet.safety).toMatchObject({
+      contractRootWriteEnabled: false,
+      downloadUrlEnabled: false,
+      forbiddenFieldsAbsent: true,
+      objectKeyEnabled: false,
+      providerCallEnabled: false,
+      rewardCustodyEnabled: false,
+      rewardDistributionEnabled: false,
+      signedUrlEnabled: false,
+      storageWriteEnabled: false,
+      walletSigningEnabled: false,
+    });
+    expect(packet.boundary["en-US"]).toContain("Provider approval packet only");
+    expect(packet.nextAction).toEqual(packet.summary.topNextAction);
+    expect(adminOps.exportStorageProviderApprovalPacket).toEqual(packet);
+    expect(commandCenter.exportStorageProviderApprovalPacket).toEqual(packet);
+
+    for (const locale of supportedLocales) {
+      expectLocalizedText(packet.boundary);
+      expectLocalizedText(packet.nextAction);
+      for (const check of packet.checks) {
+        expect(getLocalizedText(check.label, locale).trim()).not.toBe("");
+        expect(getLocalizedText(check.evidenceRequired, locale).trim()).not.toBe("");
+        expect(getLocalizedText(check.residualRisk, locale).trim()).not.toBe("");
+        expect(getLocalizedText(check.nextAction, locale).trim()).not.toBe("");
+        expect(getLocalizedText(check.boundary, locale).trim()).not.toBe("");
+      }
+    }
+
+    for (const unsafe of [
+      "downloadUrl",
+      "fileUrl",
+      "storageKey",
+      "objectKey",
+      "signedUrl",
+      "contractRoot",
+      "transactionId",
+      "privateKey",
+      "signedPayload",
+    ]) {
+      expect(hasOwnKeyDeep(packet, unsafe)).toBe(false);
     }
   });
 

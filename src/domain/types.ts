@@ -3709,6 +3709,7 @@ export interface ProjectCampaignCommandCenter {
   campaigns: CampaignCommandItem[];
   analyticsExport: AnalyticsExportDecision;
   exportFulfillmentReadiness: ExportFulfillmentReadiness;
+  exportStorageProviderApprovalPacket: ExportStorageProviderApprovalPacket;
   advancedAnalytics: AdvancedAnalyticsReadinessSurface;
   aiOptimization: AiOptimizationWorkflow;
   aiOpsKpiAdoption: AiOpsKpiAdoptionConsole;
@@ -4941,6 +4942,115 @@ export interface ExportStorageFulfillmentApprovalReadiness {
   nextAction: LocalizedText;
 }
 
+export type ExportStorageProviderApprovalState = ExportReadinessState;
+export type ExportStorageProviderApprovalCheckId =
+  | "provider-ownership"
+  | "service-registry-gate"
+  | "maintenance-off-switch"
+  | "csv-column-contract"
+  | "wallet-locale-coverage"
+  | "access-control"
+  | "retention-privacy"
+  | "audit-logging"
+  | "rollback-plan"
+  | "owner-signoff"
+  | "operator-approval";
+
+export interface ExportStorageProviderApprovalCheck {
+  id: ExportStorageProviderApprovalCheckId;
+  label: LocalizedText;
+  state: ExportStorageProviderApprovalState;
+  riskLevel: RiskLevel;
+  ownerRole: OwnerRole;
+  dependency: LocalizedText;
+  evidenceRequired: LocalizedText;
+  residualRisk: LocalizedText;
+  nextAction: LocalizedText;
+  sourceSurface: LocalizedText;
+  boundary: LocalizedText;
+  requiredForApproval: boolean;
+}
+
+export interface ExportStorageProviderGate {
+  providerConfigured: false;
+  providerApproved: false;
+  configurationSource: "review_packet";
+  maintenanceModeSupported: boolean;
+  offSwitchSupported: boolean;
+  secretHandlingApproved: false;
+  nextAction: LocalizedText;
+}
+
+export interface ExportStorageServiceRegistryGate {
+  serviceKey: "export-storage";
+  enabled: false;
+  approved: false;
+  maintenanceCopyReady: boolean;
+  offSwitchReady: boolean;
+  fallbackMode: "local_review_only";
+  nextAction: LocalizedText;
+}
+
+export interface ExportStorageProviderApprovalEvidence {
+  sourceFulfillmentStatus: ExportReadinessState;
+  sourceStorageApprovalBlocked: boolean;
+  csvColumnsExact: boolean;
+  includedColumns: readonly ExportCsvColumn[];
+  walletTypeIncluded: boolean;
+  walletSourceIncluded: boolean;
+  localePreferenceIncluded: boolean;
+  riskFlagsIncluded: boolean;
+  taskEvidenceIncluded: boolean;
+  packageCount: number;
+  readyRows: number;
+  reviewRequiredRows: number;
+  blockedRows: number;
+  checksumSamples: string[];
+}
+
+export interface ExportStorageProviderSafetyBoundary {
+  storageWriteEnabled: false;
+  downloadUrlEnabled: false;
+  signedUrlEnabled: false;
+  objectKeyEnabled: false;
+  providerCallEnabled: false;
+  contractRootWriteEnabled: false;
+  walletSigningEnabled: false;
+  rewardCustodyEnabled: false;
+  rewardDistributionEnabled: false;
+  forbiddenFieldsAbsent: boolean;
+  boundary: LocalizedText;
+}
+
+export interface ExportStorageProviderApprovalSummary {
+  totalChecks: number;
+  readyChecks: number;
+  reviewRequiredChecks: number;
+  blockedChecks: number;
+  approvalBlocked: boolean;
+  topCheckId: ExportStorageProviderApprovalCheckId;
+  highestRiskLevel: RiskLevel;
+  storageWriteEnabled: false;
+  downloadUrlEnabled: false;
+  signedUrlEnabled: false;
+  objectKeyEnabled: false;
+  providerCallEnabled: false;
+  topNextAction: LocalizedText;
+}
+
+export interface ExportStorageProviderApprovalPacket {
+  campaignId: string;
+  batchId: string;
+  summary: ExportStorageProviderApprovalSummary;
+  providerGate: ExportStorageProviderGate;
+  serviceRegistryGate: ExportStorageServiceRegistryGate;
+  checks: ExportStorageProviderApprovalCheck[];
+  approvalEvidence: ExportStorageProviderApprovalEvidence;
+  safety: ExportStorageProviderSafetyBoundary;
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
 export interface ExportPreviewModeReadiness {
   mode: ExportPreviewMode;
   label: LocalizedText;
@@ -5513,6 +5623,7 @@ export interface AdminOpsReadModel {
   exportBatch: ExportBatchSummary;
   exportFulfillmentReadiness: ExportFulfillmentReadiness;
   exportStorageFulfillmentApprovalReadiness: ExportStorageFulfillmentApprovalReadiness;
+  exportStorageProviderApprovalPacket: ExportStorageProviderApprovalPacket;
   lifecycleOperations: CampaignLifecycleOperations;
 }
 

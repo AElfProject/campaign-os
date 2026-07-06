@@ -1756,6 +1756,10 @@ export const AdminOpsPanel = ({
   const exportStorageApprovalTopCheck = exportStorageFulfillmentApprovalReadiness.checks.find(
     (check) => check.id === exportStorageFulfillmentApprovalReadiness.summary.topCheckId,
   ) ?? exportStorageFulfillmentApprovalReadiness.checks[0];
+  const exportStorageProviderApprovalPacket = adminOps.exportStorageProviderApprovalPacket;
+  const exportStorageProviderApprovalTopCheck = exportStorageProviderApprovalPacket.checks.find(
+    (check) => check.id === exportStorageProviderApprovalPacket.summary.topCheckId,
+  ) ?? exportStorageProviderApprovalPacket.checks[0];
   const aiOptimization = adminOps.aiOptimization;
   const aiReportHandoff = adminOps.aiReportHandoff;
   const competitorWatch = adminOps.competitorWatch;
@@ -9605,6 +9609,225 @@ export const AdminOpsPanel = ({
           </div>
           <p style={boundaryStyle}>
             {copy.nonLiveBoundary}: {getLocalizedText(exportStorageFulfillmentApprovalReadiness.boundary, locale)}
+          </p>
+        </div>
+        <div aria-label={copy.exportStorageProviderApprovalPacket} style={cardStyle}>
+          <div style={rowStyle}>
+            <div>
+              <p style={labelStyle}>{copy.exportStorageApprovalStatus}</p>
+              <h4 style={{ fontSize: 18, margin: "2px 0 0" }}>{copy.exportStorageProviderApprovalPacket}</h4>
+              <p style={mutedTextStyle}>{copy.exportStorageProviderApprovalSubtitle}</p>
+            </div>
+            <PublishStateBadge
+              label={exportStorageProviderApprovalPacket.summary.approvalBlocked ? copy.approvalBlocked : copy.readyActions}
+              state={exportStorageProviderApprovalPacket.summary.approvalBlocked ? "blocker" : "ready"}
+            />
+          </div>
+          <div style={compactGridStyle}>
+            {[
+              {
+                label: copy.totalChecks,
+                state: "warning" as const,
+                value: exportStorageProviderApprovalPacket.summary.totalChecks,
+              },
+              {
+                label: copy.readyApprovals,
+                state: "ready" as const,
+                value: exportStorageProviderApprovalPacket.summary.readyChecks,
+              },
+              {
+                label: copy.reviewRequired,
+                state: "warning" as const,
+                value: exportStorageProviderApprovalPacket.summary.reviewRequiredChecks,
+              },
+              {
+                label: copy.blockedApprovals,
+                state: "blocker" as const,
+                value: exportStorageProviderApprovalPacket.summary.blockedChecks,
+              },
+            ].map(({ label, state, value }) => (
+              <article key={label} style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={labelStyle}>{label}</p>
+                <p style={{ ...valueStyle, fontSize: 20 }}>{value}</p>
+                <PublishStateBadge label={`${value} ${copy.exportStorageApprovalCounts}`} state={state} />
+              </article>
+            ))}
+          </div>
+          {exportStorageProviderApprovalTopCheck ? (
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <div style={rowStyle}>
+                <div style={stackStyle}>
+                  <p style={labelStyle}>{copy.exportStorageApprovalTopBlocker}</p>
+                  <strong>{getLocalizedText(exportStorageProviderApprovalTopCheck.label, locale)}</strong>
+                </div>
+                <PublishStateBadge
+                  label={readableCode(exportStorageProviderApprovalTopCheck.state)}
+                  state={exportReadinessState(exportStorageProviderApprovalTopCheck.state)}
+                />
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.ownerRole}: {readableCode(exportStorageProviderApprovalTopCheck.ownerRole)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.riskLevel}: {exportStorageProviderApprovalTopCheck.riskLevel}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.exportStorageApprovalRequiredEvidence}: {getLocalizedText(exportStorageProviderApprovalTopCheck.evidenceRequired, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.residualRisk}: {getLocalizedText(exportStorageProviderApprovalTopCheck.residualRisk, locale)}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.exportStorageApprovalNextAction}: {getLocalizedText(exportStorageProviderApprovalTopCheck.nextAction, locale)}
+              </p>
+            </article>
+          ) : null}
+          <div style={gridStyle}>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportStorageProviderApprovalProviderGate}</p>
+              <div style={sourceMetricListStyle}>
+                {[
+                  copy.exportStorageProviderConfiguredDisabled,
+                  copy.exportStorageProviderApprovedDisabled,
+                ].map((boundary) => (
+                  <div key={boundary} style={rowStyle}>
+                    <span style={mutedTextStyle}>{boundary}</span>
+                    <PublishStateBadge label={copy.blocked} state="blocker" />
+                  </div>
+                ))}
+                <div style={rowStyle}>
+                  <span style={mutedTextStyle}>{copy.exportStorageProviderApprovalMaintenanceOffSwitch}</span>
+                  <PublishStateBadge
+                    label={exportStorageProviderApprovalPacket.providerGate.offSwitchSupported ? copy.covered : copy.blocked}
+                    state={exportStorageProviderApprovalPacket.providerGate.offSwitchSupported ? "ready" : "blocker"}
+                  />
+                </div>
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(exportStorageProviderApprovalPacket.providerGate.nextAction, locale)}
+              </p>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportStorageProviderApprovalServiceRegistryGate}</p>
+              <div style={sourceMetricListStyle}>
+                <div style={rowStyle}>
+                  <span style={mutedTextStyle}>{copy.serviceKey}</span>
+                  <PublishStateBadge
+                    label={exportStorageProviderApprovalPacket.serviceRegistryGate.serviceKey}
+                    state="ready"
+                  />
+                </div>
+                {[
+                  copy.exportStorageProviderServiceEnabledDisabled,
+                  copy.exportStorageProviderServiceApprovedDisabled,
+                ].map((boundary) => (
+                  <div key={boundary} style={rowStyle}>
+                    <span style={mutedTextStyle}>{boundary}</span>
+                    <PublishStateBadge label={copy.blocked} state="blocker" />
+                  </div>
+                ))}
+                <div style={rowStyle}>
+                  <span style={mutedTextStyle}>{copy.exportStorageProviderApprovalFallbackMode}</span>
+                  <PublishStateBadge
+                    label={readableCode(exportStorageProviderApprovalPacket.serviceRegistryGate.fallbackMode)}
+                    state="ready"
+                  />
+                </div>
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.nextAction}: {getLocalizedText(exportStorageProviderApprovalPacket.serviceRegistryGate.nextAction, locale)}
+              </p>
+            </article>
+          </div>
+          <div style={gridStyle}>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportStorageProviderApprovalEvidence}</p>
+              <div style={sourceMetricListStyle}>
+                {[
+                  { label: copy.exactColumnOrder, value: exportStorageProviderApprovalPacket.approvalEvidence.csvColumnsExact },
+                  { label: copy.accountType, value: exportStorageProviderApprovalPacket.approvalEvidence.walletTypeIncluded },
+                  { label: copy.walletSource, value: exportStorageProviderApprovalPacket.approvalEvidence.walletSourceIncluded },
+                  { label: copy.localePreference, value: exportStorageProviderApprovalPacket.approvalEvidence.localePreferenceIncluded },
+                  { label: copy.riskFlags, value: exportStorageProviderApprovalPacket.approvalEvidence.riskFlagsIncluded },
+                  { label: copy.taskRecords, value: exportStorageProviderApprovalPacket.approvalEvidence.taskEvidenceIncluded },
+                ].map((coverage) => (
+                  <div key={coverage.label} style={rowStyle}>
+                    <span style={mutedTextStyle}>{coverage.label}</span>
+                    <PublishStateBadge
+                      label={coverage.value ? copy.covered : copy.blocked}
+                      state={coverage.value ? "ready" : "blocker"}
+                    />
+                  </div>
+                ))}
+              </div>
+              <p style={wrapTextStyle}>
+                {copy.exportFulfillmentRows}: {exportStorageProviderApprovalPacket.approvalEvidence.readyRows} / {exportStorageProviderApprovalPacket.approvalEvidence.reviewRequiredRows} / {exportStorageProviderApprovalPacket.approvalEvidence.blockedRows}
+              </p>
+              <p style={wrapTextStyle}>
+                {copy.exportFulfillmentChecksum}: {exportStorageProviderApprovalPacket.approvalEvidence.checksumSamples.join(", ")}
+              </p>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.exportStorageProviderApprovalSafetyBoundary}</p>
+              <div style={sourceMetricListStyle}>
+                {[
+                  copy.exportStorageApprovalStorageWriteDisabled,
+                  copy.exportStorageApprovalDownloadUrlDisabled,
+                  copy.exportStorageApprovalNoSignedUrl,
+                  copy.exportStorageApprovalNoObjectKey,
+                  copy.exportStorageProviderCallDisabled,
+                  copy.exportStorageProviderContractRootWriteDisabled,
+                  copy.exportStorageApprovalNoWalletSigning,
+                  copy.exportStorageProviderRewardCustodyDisabled,
+                  copy.exportStorageProviderRewardDistributionDisabled,
+                ].map((boundary) => (
+                  <div key={boundary} style={rowStyle}>
+                    <span style={mutedTextStyle}>{boundary}</span>
+                    <PublishStateBadge label={copy.covered} state="ready" />
+                  </div>
+                ))}
+              </div>
+              <p style={boundaryStyle}>
+                {getLocalizedText(exportStorageProviderApprovalPacket.safety.boundary, locale)}
+              </p>
+            </article>
+          </div>
+          <div style={gridStyle}>
+            {exportStorageProviderApprovalPacket.checks.map((check) => (
+              <article key={check.id} style={{ ...cardStyle, minHeight: 0 }}>
+                <div style={rowStyle}>
+                  <div style={stackStyle}>
+                    <p style={labelStyle}>{check.id}</p>
+                    <strong>{getLocalizedText(check.label, locale)}</strong>
+                  </div>
+                  <PublishStateBadge
+                    label={readableCode(check.state)}
+                    state={exportReadinessState(check.state)}
+                  />
+                </div>
+                <p style={wrapTextStyle}>{copy.ownerRole}: {readableCode(check.ownerRole)}</p>
+                <p style={wrapTextStyle}>{copy.riskLevel}: {check.riskLevel}</p>
+                <p style={wrapTextStyle}>
+                  {copy.dependency}: {getLocalizedText(check.dependency, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.exportStorageApprovalRequiredEvidence}: {getLocalizedText(check.evidenceRequired, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.residualRisk}: {getLocalizedText(check.residualRisk, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.exportStorageApprovalSourceSurface}: {getLocalizedText(check.sourceSurface, locale)}
+                </p>
+                <p style={wrapTextStyle}>
+                  {copy.nextAction}: {getLocalizedText(check.nextAction, locale)}
+                </p>
+                <p style={boundaryStyle}>{getLocalizedText(check.boundary, locale)}</p>
+              </article>
+            ))}
+          </div>
+          <p style={boundaryStyle}>
+            {copy.nonLiveBoundary}: {getLocalizedText(exportStorageProviderApprovalPacket.boundary, locale)}
           </p>
         </div>
         <article aria-label={copy.exportArtifact} style={cardStyle}>
