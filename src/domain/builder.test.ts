@@ -180,11 +180,7 @@ describe("Campaign Builder domain foundation", () => {
 
     expect(seededCampaignDraft.targetUsers).not.toContain("mutated locally");
     expect(seededCampaignDraft.aiPrompt.generatedOutline).not.toContain("mutated outline");
-    expect(createLocalCampaignDraft()).toMatchObject({
-      id: seededCampaignDraft.id,
-      projectName: seededCampaignDraft.projectName,
-      walletPolicy: seededCampaignDraft.walletPolicy,
-    });
+    expect(createLocalCampaignDraft()).toEqual(seededCampaignDraft);
   });
 
   it("surfaces local basics blockers for invalid date ranges", () => {

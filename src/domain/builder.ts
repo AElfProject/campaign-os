@@ -1798,7 +1798,7 @@ const createLocalContentRevisions = (
       rewardDisclaimer: existingRevision?.rewardDisclaimer ?? draft.rewardPlan.disclaimer["en-US"],
       socialPost: existingRevision?.socialPost ?? `Join ${fallbackTitle}.`,
       sourceLocale: "en-US",
-      title: locale === "zh-CN" && existingRevision?.title ? existingRevision.title : fallbackTitle,
+      title: fallbackTitle,
     };
   });
 
@@ -1946,6 +1946,12 @@ export const createLocalCampaignDraft = (
   input: LocalCampaignDraftInput = {},
   baseDraft: CampaignDraft = seededCampaignDraft,
 ): CampaignDraft => {
+  const hasLocalInput = Object.values(input).some((value) => value !== undefined);
+
+  if (!hasLocalInput) {
+    return cloneCampaignDraft(baseDraft);
+  }
+
   const draft = cloneCampaignDraft(baseDraft);
   const aiOutline = input.aiPrompt !== undefined ? generateLocalAiDraftOutline(input.aiPrompt) : null;
   const campaignName = input.campaignName?.trim() || aiOutline?.title || draft.campaignName["en-US"];
@@ -1956,14 +1962,12 @@ export const createLocalCampaignDraft = (
     aiOutline?.selectedTaskTemplateIds ??
     draft.selectedTaskTemplateIds;
   const walletPolicy = input.walletPolicy ?? draft.walletPolicy;
-  const creationMode = input.creationMode ?? (aiOutline ? "AI_ASSISTED" : draft.creationMode);
-  const reviewedByHuman = input.aiReviewedByHuman ?? (aiOutline ? false : draft.aiPrompt.reviewedByHuman);
-  const generatedOutline = aiOutline?.generatedOutline ?? draft.aiPrompt.generatedOutline;
-  const prompt = input.aiPrompt ?? draft.aiPrompt.prompt;
+  const creationMode = input.creationMode ?? (aiOutline ? "AI_ASSISTED" : "FORM_BASED");
+  const reviewedByHuman = input.aiReviewedByHuman ?? false;
+  const generatedOutline = aiOutline?.generatedOutline ?? [];
+  const prompt = input.aiPrompt ?? "";
 
-  draft.id = campaignName === baseDraft.campaignName["en-US"]
-    ? baseDraft.id
-    : `draft-local-${slugifyDraftId(campaignName)}`;
+  draft.id = `draft-local-${slugifyDraftId(campaignName)}`;
   draft.campaignName = {
     "en-US": campaignName,
     "zh-CN": campaignName,
