@@ -17,6 +17,8 @@ import {
   runtimeBoundary,
   toApiRuntimeErrorBody,
 } from "./index";
+import { createApiFoundationReport } from "./apiFoundation";
+import { createApiServicePortReport } from "./servicePorts";
 
 const unsafeKeys = [
   "apikey",
@@ -234,5 +236,44 @@ describe("API runtime route catalog", () => {
         traceId: "trace-safe-scan",
       }),
     );
+  });
+
+  it("aligns runtime routes with API foundation readiness and service-port ownership", () => {
+    const foundation = createApiFoundationReport();
+    const servicePorts = createApiServicePortReport({ foundation });
+    const foundationRouteIds = foundation.routes.map((route) => route.routeId);
+    const servicePortRouteIds = servicePorts.ports.flatMap((port) => port.routeIds);
+
+    expect(foundation.validation).toEqual({
+      issues: [],
+      valid: true,
+    });
+    expect(servicePorts.validation).toEqual({
+      issues: [],
+      valid: true,
+    });
+    expect(foundation.coverage).toMatchObject({
+      implementedLocalCount: 10,
+      notYetImplementedCount: 0,
+      productionShapedDeferredCount: 4,
+      routeCount: apiRuntimeRoutes.length,
+      validationIssueCount: 0,
+    });
+    expect(foundationRouteIds).toEqual(apiRuntimeRoutes.map((route) => route.id));
+    expect(new Set(servicePortRouteIds).size).toBe(apiRuntimeRoutes.length);
+    expect(servicePortRouteIds.sort()).toEqual(foundationRouteIds.sort());
+
+    for (const route of foundation.routes) {
+      expect(route.responseEnvelopeId).toBe("api.response.success.v1");
+      expect(route.errorEnvelopeId).toBe("api.response.error.v1");
+      expect(route.serviceId).not.toHaveLength(0);
+      expect(route.supportMode).toBe("local_seeded");
+    }
+
+    for (const port of servicePorts.ports) {
+      expect(port.requiresExternalNetwork).toBe(false);
+      expect(port.requiresSecret).toBe(false);
+      expect(port.productionAdapterStatus).not.toBe("enabled");
+    }
   });
 });

@@ -193,6 +193,68 @@ describe("Campaign OS API runtime", () => {
     expect(health.body.traceId).toBe("trace-health");
     expect(health.headers["x-campaign-os-trace-id"]).toBe("trace-health");
     expect(healthData).toMatchObject({
+      apiFoundation: expect.objectContaining({
+        coverage: expect.objectContaining({
+          implementedLocalCount: 10,
+          notYetImplementedCount: 0,
+          productionShapedDeferredCount: 4,
+          routeCount: expect.any(Number),
+          surfaceCount: 14,
+          validationIssueCount: 0,
+        }),
+        envelopes: expect.objectContaining({
+          error: expect.arrayContaining([
+            expect.objectContaining({
+              id: "api.response.error.v1",
+              traceIdField: "traceId",
+            }),
+          ]),
+          success: expect.arrayContaining([
+            expect.objectContaining({
+              id: "api.response.success.v1",
+              routeIdField: "routeId",
+              serviceIdField: "serviceId",
+              supportModeField: "supportMode",
+              traceIdField: "traceId",
+            }),
+          ]),
+        }),
+        routes: expect.arrayContaining([
+          expect.objectContaining({
+            errorEnvelopeId: "api.response.error.v1",
+            responseEnvelopeId: "api.response.success.v1",
+            routeId: "runtime.health",
+            serviceId: "runtime-observability",
+            supportMode: "local_seeded",
+          }),
+        ]),
+        servicePorts: expect.objectContaining({
+          coverage: expect.objectContaining({
+            routeOwnershipCount: expect.any(Number),
+            validationIssueCount: 0,
+          }),
+          validation: expect.objectContaining({
+            valid: true,
+          }),
+        }),
+        surfaces: expect.arrayContaining([
+          expect.objectContaining({
+            serviceId: "points-ranking-service",
+            state: "production_shaped_deferred",
+            surfaceId: "points-ranking",
+          }),
+          expect.objectContaining({
+            routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
+            serviceId: "runtime-observability",
+            state: "implemented_local",
+            surfaceId: "runtime-observability",
+          }),
+        ]),
+        validation: expect.objectContaining({
+          issues: [],
+          valid: true,
+        }),
+      }),
       capabilities: expect.objectContaining({
         summary: expect.objectContaining({
           deferredCount: expect.any(Number),
@@ -236,6 +298,45 @@ describe("Campaign OS API runtime", () => {
       }),
     });
     expect(contractData).toMatchObject({
+      apiFoundation: expect.objectContaining({
+        coverage: expect.objectContaining({
+          routeCount: expect.any(Number),
+          surfaceCount: 14,
+          validationIssueCount: 0,
+        }),
+        requestContracts: expect.arrayContaining([
+          expect.objectContaining({
+            id: "wallet.session.create.request",
+            routeId: "wallet.session.create",
+          }),
+        ]),
+        routes: expect.arrayContaining([
+          expect.objectContaining({
+            operationId: "createWalletSession",
+            routeId: "wallet.session.create",
+            serviceId: "wallet-session-service",
+            supportMode: "local_seeded",
+          }),
+        ]),
+        servicePorts: expect.objectContaining({
+          ports: expect.arrayContaining([
+            expect.objectContaining({
+              id: "wallet-session-port",
+              productionAdapterStatus: "local_seeded",
+              requiresExternalNetwork: false,
+              requiresSecret: false,
+              serviceId: "wallet-session-service",
+            }),
+          ]),
+          validation: expect.objectContaining({
+            valid: true,
+          }),
+        }),
+        validation: expect.objectContaining({
+          issues: [],
+          valid: true,
+        }),
+      }),
       capabilities: expect.objectContaining({
         summary: expect.objectContaining({
           deferredCount: expect.any(Number),
@@ -772,6 +873,12 @@ describe("Campaign OS API runtime", () => {
       expectNoForbiddenResponseKeys(response.body);
       expect(response.body.traceId).not.toHaveLength(0);
       expect(response.headers["content-type"]).toBe("application/json; charset=utf-8");
+      expect(response.body.runtime.mode).toBe("local_seeded");
+      expect(response.body.safety).toMatchObject({
+        noLiveApi: true,
+        noProductionDatabase: true,
+        noWalletSignature: true,
+      });
     }
   });
 
