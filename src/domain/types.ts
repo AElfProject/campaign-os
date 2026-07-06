@@ -2696,6 +2696,77 @@ export interface ContractClaimCustodyLegalReadiness {
   noBranchAutomation: true;
 }
 
+export type ContractClaimRewardCustodyApprovalItemId =
+  | "custody-model"
+  | "escrow-exclusion"
+  | "project-owner-funding"
+  | "payout-responsibility"
+  | "legal-terms"
+  | "jurisdiction-compliance"
+  | "external-audit"
+  | "dispute-rollback-runbook"
+  | "no-custody-no-distribution-boundary";
+
+export interface ContractClaimRewardCustodyApprovalItem {
+  id: ContractClaimRewardCustodyApprovalItemId;
+  label: LocalizedText;
+  state: ContractClaimPreapprovalGateState;
+  ownerRole: OwnerRole;
+  sourceGateId: ContractClaimPreapprovalGateId;
+  dependency: LocalizedText;
+  evidenceRequired: LocalizedText;
+  fundingImpact: LocalizedText;
+  approvalImpact: LocalizedText;
+  nextAction: LocalizedText;
+  sourceSurface: LocalizedText;
+  boundary: LocalizedText;
+  blocksRewardCustodyApproval: boolean;
+}
+
+export interface ContractClaimRewardCustodyApprovalSummary {
+  totalItems: number;
+  readyItems: number;
+  reviewRequiredItems: number;
+  blockedItems: number;
+  launchBlockingItems: number;
+  rewardCustodyApprovalBlocked: boolean;
+  rewardCustodyEnabled: false;
+  claimExecutionEnabled: false;
+  topItemId: ContractClaimRewardCustodyApprovalItemId;
+  topNextAction: LocalizedText;
+}
+
+export interface ContractClaimRewardCustodyApprovalReadiness {
+  campaignId: string;
+  summary: ContractClaimRewardCustodyApprovalSummary;
+  items: ContractClaimRewardCustodyApprovalItem[];
+  sourceContext: {
+    preapproval: LocalizedText;
+    custodyLegal: LocalizedText;
+    adminApproval: LocalizedText;
+    executionApproval: LocalizedText;
+    deliveryAcceptance: LocalizedText;
+    contractTransparency: LocalizedText;
+  };
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+  rewardCustodyApproved: false;
+  rewardCustodyEnabled: false;
+  claimExecutionEnabled: false;
+  noContractWrite: true;
+  noClaimExecution: true;
+  noWalletSigning: true;
+  noProviderCall: true;
+  noStorageWrite: true;
+  noExportGeneration: true;
+  noRewardCustody: true;
+  noRewardDistribution: true;
+  noBranchAutomation: true;
+  noIssueAutomation: true;
+  noPrAutomation: true;
+  noMissionAutomation: true;
+}
+
 export type ContractClaimExecutionApprovalItemId =
   | "security-approval"
   | "admin-approval"
@@ -2852,6 +2923,7 @@ export interface ContractClaimPreapprovalPackage {
   actorApprovalReadiness: ContractClaimActorApprovalReadiness;
   adminApprovalReadiness: ContractClaimAdminApprovalReadiness;
   custodyLegalReadiness: ContractClaimCustodyLegalReadiness;
+  rewardCustodyApprovalReadiness: ContractClaimRewardCustodyApprovalReadiness;
   executionApprovalReadiness: ContractClaimExecutionApprovalReadiness;
   sourceContext: {
     contractReview: LocalizedText;
