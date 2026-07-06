@@ -230,7 +230,7 @@ const createConnectionLifecycle = ({
       diagnostic(
         "PRODUCTION_DB_CONNECTION_FAILED",
         "connection",
-        `Production DB runtime connection failed: ${failureReason}`,
+        `Production DB runtime connection failed: ${REDACTED_VALUE}`,
       ),
     );
   }

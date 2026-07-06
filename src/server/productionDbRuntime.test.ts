@@ -124,6 +124,7 @@ describe("production DB runtime v1", () => {
   });
 
   it("represents configured, failed, and secret-safe states without leaking raw values", () => {
+    const failureReason = `failed to connect to ${secretEnv.CAMPAIGN_OS_DATABASE_URL} with ${secretEnv.CAMPAIGN_OS_DATABASE_PASSWORD}`;
     const configured = createProductionDbRuntimeContract({
       env: {
         ...secretEnv,
@@ -132,7 +133,7 @@ describe("production DB runtime v1", () => {
     });
     const failed = createProductionDbRuntimeContract({
       env: secretEnv,
-      failureReason: "network timeout while opening fixture",
+      failureReason,
       profileId: "local-review",
     });
     const serialized = JSON.stringify({ configured, failed });
@@ -153,5 +154,6 @@ describe("production DB runtime v1", () => {
     expect(serialized).not.toContain(secretEnv.CAMPAIGN_OS_DATABASE_PRIVATE_KEY);
     expect(serialized).not.toContain(secretEnv.CAMPAIGN_OS_DATABASE_MNEMONIC);
     expect(serialized).not.toContain(secretEnv.CAMPAIGN_OS_DATABASE_SIGNATURE);
+    expect(serialized).not.toContain(failureReason);
   });
 });
