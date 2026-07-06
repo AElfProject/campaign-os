@@ -62,6 +62,49 @@ describe("server runtime readiness metadata", () => {
           migrationPlanStatus: "dry_run_ready",
           valid: true,
         },
+        persistenceRuntime: {
+          activeDriverId: "campaign-os-memory-adapter",
+          adapterKind: "memory",
+          connection: expect.objectContaining({
+            configuredKeyCount: 0,
+            safeLabel: "not_configured",
+            state: "not_configured",
+          }),
+          connectionState: "not_configured",
+          deferredDependencyIds: expect.arrayContaining([
+            "db-provider-selection",
+            "driver-package",
+            "connection-pool",
+            "migration-executor",
+            "migration-lock",
+            "backup-restore-plan",
+            "secret-manager",
+            "object-storage-export",
+            "analytics-warehouse",
+          ]),
+          diagnosticCodes: [],
+          diagnostics: [],
+          liveConnectionAttempted: false,
+          liveExecutionEnabled: false,
+          migrationGate: expect.objectContaining({
+            diagnosticCodes: [],
+            liveExecutionCount: 0,
+            liveExecutionEnabled: false,
+            mode: "dry_run_only",
+            status: "ready",
+          }),
+          profileId: "local-review",
+          requiredStoreCount: 6,
+          status: "active_local",
+          stores: expect.arrayContaining([
+            expect.objectContaining({
+              id: "campaign-db",
+              required: true,
+              runtimeState: "covered",
+            }),
+          ]),
+          valid: true,
+        },
       },
       requestGuard: {
         guardedFailureEnvelope: true,
@@ -112,11 +155,44 @@ describe("server runtime readiness metadata", () => {
           migrationPlanStatus: "blocked",
           valid: false,
         },
+        persistenceRuntime: {
+          activeDriverId: "campaign-os-production-db-adapter",
+          adapterKind: "production_deferred",
+          connection: expect.objectContaining({
+            configuredKeyCount: 1,
+            safeLabel: "[redacted]",
+            state: "configured_redacted",
+          }),
+          diagnosticCodes: expect.arrayContaining([
+            "PRODUCTION_PERSISTENCE_SECRET_REDACTED",
+            "PRODUCTION_PERSISTENCE_LIVE_CONNECTION_DEFERRED",
+          ]),
+          liveConnectionAttempted: false,
+          liveExecutionEnabled: false,
+          migrationGate: expect.objectContaining({
+            approval: "missing",
+            diagnosticCodes: expect.arrayContaining([
+              "MIGRATION_EXECUTION_APPROVAL_MISSING",
+              "MIGRATION_EXECUTION_DRIVER_DEFERRED",
+            ]),
+            liveExecutionCount: 0,
+            liveExecutionEnabled: false,
+            mode: "live_blocked",
+            status: "blocked",
+          }),
+          profileId: "production-required",
+          requiredStoreCount: 6,
+        },
       },
       status: "blocked",
     });
     expect(metadata.readiness.backend.diagnosticCodes).toEqual(
-      expect.arrayContaining(["AUTH_SESSION_READINESS_BLOCKED", "DATABASE_READINESS_BLOCKED"]),
+      expect.arrayContaining([
+        "AUTH_SESSION_READINESS_BLOCKED",
+        "DATABASE_READINESS_BLOCKED",
+        "PERSISTENCE_ADAPTER_INVALID",
+        "MIGRATION_MANIFEST_INVALID",
+      ]),
     );
     expectNoSecretLeak(metadata);
   });
@@ -260,4 +336,3 @@ describe("server runtime readiness metadata", () => {
     expect(metadata.deferredAttachPoints.every((item) => item.status !== "deferred" || item.requiredBeforeProduction !== undefined)).toBe(true);
   });
 });
-

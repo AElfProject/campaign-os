@@ -36,6 +36,20 @@ describe("persistence adapter port", () => {
     );
   });
 
+  it("reports the deterministic test adapter as available for repository contract tests", () => {
+    const report = createPersistenceAdapterPortReport({
+      activeDriverId: "campaign-os-deterministic-test-adapter",
+    });
+
+    expect(report.activeAdapter).toMatchObject({
+      id: "campaign-os-deterministic-test-adapter",
+      kind: "deterministic_test",
+      localOnly: true,
+      status: "active",
+    });
+    expect(report.validation.valid).toBe(true);
+  });
+
   it("reports local JSON as active and durable when selected", () => {
     const report = createPersistenceAdapterPortReport({
       persistenceMode: "local_json",

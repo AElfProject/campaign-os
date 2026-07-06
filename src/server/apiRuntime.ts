@@ -18,6 +18,7 @@ import type { ApiRuntimeRouteContract } from "./contracts";
 import { apiRuntimeRoutes } from "./routes";
 import { createApiRuntimeHandlers } from "./handlers";
 import {
+  createBackendPersistenceRuntimeSummary,
   createBackendServiceReadinessReport,
   type BackendServiceReadinessReport,
 } from "./backendService";
@@ -260,6 +261,10 @@ const createContractDatabaseReadinessMetadata = (
   validation: report.databaseReadiness.validation,
 });
 
+const createPersistenceRuntimeMetadata = (
+  report: BackendServiceReadinessReport,
+) => createBackendPersistenceRuntimeSummary(report.persistenceRuntime);
+
 const createHealthAuthSessionMetadata = (
   report: BackendServiceReadinessReport,
 ) => ({
@@ -330,6 +335,7 @@ const withBackendServiceReadinessMetadata = ({
         ...data.backendService,
         authSession: createHealthAuthSessionMetadata(readiness),
         databaseReadiness: createHealthDatabaseReadinessMetadata(readiness),
+        persistenceRuntime: createPersistenceRuntimeMetadata(readiness),
       },
     };
   }
@@ -341,12 +347,14 @@ const withBackendServiceReadinessMetadata = ({
         ...data.backendService,
         authSession: createContractAuthSessionMetadata(readiness),
         databaseReadiness: createContractDatabaseReadinessMetadata(readiness),
+        persistenceRuntime: createPersistenceRuntimeMetadata(readiness),
         reportShape: isRecord(data.backendService.reportShape)
           ? {
             ...data.backendService.reportShape,
             sections: appendReportShapeSections(data.backendService.reportShape.sections, [
               "authSession",
               "databaseReadiness",
+              "persistenceRuntime",
             ]),
           }
           : data.backendService.reportShape,

@@ -1,9 +1,11 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import { createMigrationExecutionGate, type MigrationExecutionGate, type MigrationExecutionGateDiagnostic } from "./migrationExecutionGate";
 import {
   backendStorePorts,
   type BackendStoreId,
   type BackendStorePort,
 } from "./persistenceAdapterPort";
+import { createConnectionConfigSummary } from "./persistenceRuntime";
 import {
   createMigrationRunnerPlan,
   defaultSchemaMigrations,
@@ -17,6 +19,7 @@ export type MigrationStoreReadiness = "manifested" | "deferred" | "blocked";
 export type MigrationDiagnosticCode =
   | "MIGRATION_RUNNER_DISABLED_LOCAL_REVIEW"
   | "MIGRATION_RUNNER_DEFERRED"
+  | MigrationExecutionGateDiagnostic["code"]
   | MigrationRunnerDiagnostic["code"]
   | "MIGRATION_STORE_MISSING_OWNER"
   | "MIGRATION_STORE_MISSING_PRODUCTION_MODE";
@@ -40,6 +43,7 @@ export interface MigrationStoreManifest {
 
 export interface MigrationManifest {
   diagnostics: MigrationDiagnostic[];
+  executionGate: MigrationExecutionGate;
   migrations: SchemaMigrationDefinition[];
   manifestVersion: string;
   noDestructiveOperations: true;
@@ -55,6 +59,8 @@ export interface MigrationManifest {
 }
 
 export interface CreateMigrationManifestOptions {
+  env?: Record<string, string | undefined>;
+  liveMigrationApproved?: boolean;
   migrations?: readonly SchemaMigrationDefinition[];
   profileId?: BackendRuntimeProfileId;
   stores?: readonly BackendStorePort[];
@@ -79,6 +85,8 @@ const toMigrationStoreManifest = (store: BackendStorePort): MigrationStoreManife
 });
 
 export const createMigrationManifest = ({
+  env = typeof process === "undefined" ? {} : process.env,
+  liveMigrationApproved,
   migrations = defaultSchemaMigrations,
   profileId = "local-review",
   stores = backendStorePorts,
@@ -88,6 +96,12 @@ export const createMigrationManifest = ({
   const migrationStores = stores.map(toMigrationStoreManifest);
   const runnerPlan = createMigrationRunnerPlan({
     migrations,
+    profileId,
+  });
+  const executionGate = createMigrationExecutionGate({
+    connection: createConnectionConfigSummary({ env, profileId }),
+    liveMigrationApproved,
+    migrationPlan: runnerPlan,
     profileId,
   });
   const runnerDiagnostic: MigrationDiagnostic =
@@ -113,10 +127,18 @@ export const createMigrationManifest = ({
     message: issue.message,
     severity: issue.severity,
   }));
-  const diagnostics = [runnerDiagnostic, ...runnerIssues, ...issues];
+  const gateIssues = executionGate.diagnostics.map<MigrationDiagnostic>((issue) => ({
+    code: issue.code,
+    field: issue.field,
+    message: issue.message,
+    severity: issue.severity,
+  }));
+  const diagnostics = [runnerDiagnostic, ...runnerIssues, ...gateIssues, ...issues];
+  const validationIssues = [...runnerIssues, ...gateIssues.filter((issue) => issue.severity === "error"), ...issues];
 
   return {
     diagnostics,
+    executionGate,
     manifestVersion: "0.2.0",
     migrations: [...migrations],
     noDestructiveOperations: true,
@@ -126,8 +148,8 @@ export const createMigrationManifest = ({
     runnerStatus,
     stores: migrationStores,
     validation: {
-      issues: [...runnerIssues, ...issues],
-      valid: [...runnerIssues, ...issues].every((issue) => issue.severity !== "error"),
+      issues: validationIssues,
+      valid: validationIssues.every((issue) => issue.severity !== "error"),
     },
   };
 };

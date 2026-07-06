@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { resolveCampaignOsRuntimeConfig } from "./config";
 import {
+  createCampaignOsDeterministicTestRepository,
   createCampaignOsJsonRepository,
   createCampaignOsMemoryRepository,
   createCampaignOsRepository,
+  resolveRepositoryAdapterFactoryDecision,
   sanitizePersistenceSummary,
   type CampaignOsPersistenceRecord,
   type PersistenceSummary,
@@ -238,6 +240,70 @@ describe("Campaign OS persistence boundary", () => {
       adapterPortId: "campaign-os-memory-adapter",
       mode: "memory",
       status: "ok",
+    });
+  });
+
+  it("resolves explicit adapter factory decisions", () => {
+    expect(resolveRepositoryAdapterFactoryDecision({ mode: "memory" })).toMatchObject({
+      blocked: false,
+      fallbackUsed: false,
+      repositoryKind: "memory_repository",
+      selectedDriverId: "campaign-os-memory-adapter",
+      selectedMode: "memory",
+    });
+
+    expect(
+      resolveRepositoryAdapterFactoryDecision({
+        mode: "local_json",
+        productionDriverId: "campaign-os-deterministic-test-adapter",
+      }),
+    ).toMatchObject({
+      repositoryKind: "deterministic_test_repository",
+      selectedDriverId: "campaign-os-deterministic-test-adapter",
+      selectedMode: "deterministic_test",
+    });
+  });
+
+  it("does not fallback to local adapters for production-required production driver", async () => {
+    const repository = createCampaignOsRepository({
+      adapterLabel: "production",
+      mode: "memory",
+      productionDriverId: "campaign-os-production-db-adapter",
+    });
+
+    await expect(repository.initialize()).rejects.toThrow("Production persistence adapter is deferred");
+    await expect(repository.record(sampleRecord())).rejects.toThrow("Production persistence adapter is deferred");
+    await expect(repository.snapshot()).rejects.toThrow("Production persistence adapter is deferred");
+    await expect(repository.health()).resolves.toMatchObject({
+      adapterPortId: "campaign-os-production-db-adapter",
+      localOnly: true,
+      noProductionDatabase: true,
+      status: "unavailable",
+    });
+  });
+
+  it("supports deterministic test adapter reset and transaction seam", async () => {
+    const repository = createCampaignOsDeterministicTestRepository();
+
+    await repository.initialize();
+    if (!repository.withTransaction) {
+      throw new Error("Expected deterministic repository to expose withTransaction.");
+    }
+    await repository.withTransaction(async (unitOfWork) => {
+      expect(unitOfWork.id).toBe("deterministic-test-unit-of-work");
+      await repository.record(sampleRecord({ ready: true }));
+    });
+
+    expect(await repository.snapshot()).toMatchObject({
+      mode: "memory",
+      recordCount: 1,
+    });
+    if (!repository.reset) {
+      throw new Error("Expected deterministic repository to expose reset.");
+    }
+    await repository.reset();
+    expect(await repository.snapshot()).toMatchObject({
+      recordCount: 0,
     });
   });
 

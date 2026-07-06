@@ -22,7 +22,10 @@ import {
 } from "../domain/serviceRegistry";
 import type { ApiRuntimeRouteId } from "./routes";
 import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
-import type { BackendServiceReadinessReport } from "./backendService";
+import {
+  createBackendPersistenceRuntimeSummary,
+  type BackendServiceReadinessReport,
+} from "./backendService";
 import { createBackendTopologyReport } from "./topology";
 import { createRuntimeSafety } from "./envelope";
 import {
@@ -317,6 +320,7 @@ const createBackendServiceHealthMetadata = (
   entrypoint: backendServiceEntrypointMetadata(report),
   entrypointId: report.entrypoint.id,
   migrationRunnerStatus: report.migration.runnerStatus,
+  persistenceRuntime: createBackendPersistenceRuntimeSummary(report.persistenceRuntime),
   profile: {
     id: report.profile.id,
     status: report.profile.status,
@@ -342,6 +346,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
   entrypoint: backendServiceEntrypointMetadata(report),
   migrationManifest: backendMigrationManifestSummary(report),
   persistenceAdapterPort: backendPersistenceAdapterSummary(report),
+  persistenceRuntime: createBackendPersistenceRuntimeSummary(report.persistenceRuntime),
   profile: {
     allowedCapabilities: report.profile.allowedCapabilities,
     deferredCapabilities: report.profile.deferredCapabilities,
@@ -356,6 +361,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
       "profile",
       "config",
       "persistenceAdapters",
+      "persistenceRuntime",
       "migration",
       "apiFoundation",
       "topology",

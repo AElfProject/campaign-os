@@ -23,6 +23,7 @@ export interface CampaignOsPersistenceConfig {
   adapterLabel: string;
   localDataDir?: string;
   mode: CampaignOsPersistenceMode;
+  productionDriverId?: string;
 }
 
 export interface CampaignOsRuntimeConfig {
@@ -59,6 +60,10 @@ export interface BackendConfigContract {
   host: string;
   persistenceDirectory?: string;
   persistenceMode: CampaignOsPersistenceMode;
+  productionPersistence: {
+    liveMigrationApproval: boolean;
+    requestedDriverId?: string;
+  };
   port: number;
   productionReadiness: {
     deferredCapabilities: string[];
@@ -89,6 +94,7 @@ const forbiddenConfigKeyFragments = [
   "signature",
   "signedurl",
   "token",
+  "url",
 ];
 
 const isPersistenceMode = (value: string | undefined): value is CampaignOsPersistenceMode =>
@@ -220,6 +226,14 @@ const productionCapabilityEnablementEnvKeys = {
 
 const isEnabledFlag = (value: string | undefined) => value?.toLowerCase() === "true" || value === "1";
 
+const sanitizeProductionPersistenceDriverId = (value: string | undefined): string | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return /^[a-z0-9-]+$/i.test(value) ? value : REDACTED_VALUE;
+};
+
 const blockedProductionCapabilityEnablementDiagnostics = (
   env: Record<string, string | undefined>,
 ): BackendConfigDiagnostic[] =>
@@ -291,6 +305,12 @@ export const resolveBackendConfigContract = ({
         ? persistence.localDataDir ?? env.CAMPAIGN_OS_PERSISTENCE_DIR
         : undefined,
     persistenceMode: persistenceModeResolution.mode,
+    productionPersistence: {
+      liveMigrationApproval: isEnabledFlag(env.CAMPAIGN_OS_APPROVE_LIVE_MIGRATIONS),
+      requestedDriverId: sanitizeProductionPersistenceDriverId(
+        persistence.productionDriverId ?? env.CAMPAIGN_OS_PERSISTENCE_DRIVER,
+      ),
+    },
     port: resolvePort(port, env.CAMPAIGN_OS_API_PORT),
     productionReadiness: {
       deferredCapabilities: [...profile.deferredCapabilities],
