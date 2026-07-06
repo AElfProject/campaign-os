@@ -6,6 +6,7 @@ import {
   apiRuntimeRoutes,
   apiRuntimeServiceGroupById,
   apiRuntimeServiceGroups,
+  createBackendTopologyReport,
   createApiRuntimeContractCoverage,
   createFailureEnvelope,
   createRuntimeMetadata,
@@ -107,6 +108,20 @@ describe("API runtime route catalog", () => {
 
     for (const serviceGroup of apiRuntimeServiceGroups) {
       expect(routeServiceGroups.has(serviceGroup.id)).toBe(true);
+    }
+  });
+
+  it("accounts for every runtime route in backend topology metadata", () => {
+    const report = createBackendTopologyReport({
+      knownRouteIds: apiRuntimeRoutes.map((runtimeRoute) => runtimeRoute.id),
+    });
+
+    expect(report.coverage.unassignedRouteIds).toEqual([]);
+    expect(report.validation.valid).toBe(true);
+
+    for (const runtimeRoute of apiRuntimeRoutes) {
+      const owners = report.services.filter((service) => service.routeIds.includes(runtimeRoute.id));
+      expect(owners).toHaveLength(1);
     }
   });
 
