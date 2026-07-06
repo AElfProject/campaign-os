@@ -50,6 +50,7 @@ export interface PersistenceSnapshot {
 
 export interface PersistenceHealth extends PersistenceSnapshot {
   adapterLabel: string;
+  adapterPortId: string;
   boundary: LocalizedText;
   durable: boolean;
   localOnly: true;
@@ -171,12 +172,14 @@ const createSnapshot = (
 
 const createHealth = ({
   adapterLabel,
+  adapterPortId,
   durable,
   mode,
   records,
   status = "ok",
 }: {
   adapterLabel: string;
+  adapterPortId: string;
   durable: boolean;
   mode: CampaignOsPersistenceMode;
   records: readonly CampaignOsPersistenceRecord[];
@@ -184,6 +187,7 @@ const createHealth = ({
 }): PersistenceHealth => ({
   ...createSnapshot(mode, records),
   adapterLabel,
+  adapterPortId,
   boundary: persistenceBoundary,
   durable,
   localOnly: true,
@@ -213,6 +217,7 @@ export const createCampaignOsMemoryRepository = (
     health: async () =>
       createHealth({
         adapterLabel,
+        adapterPortId: "campaign-os-memory-adapter",
         durable: false,
         mode: "memory",
         records,
@@ -347,6 +352,7 @@ export const createCampaignOsJsonRepository = ({
 
       return createHealth({
         adapterLabel,
+        adapterPortId: "campaign-os-local-json-adapter",
         durable: true,
         mode: "local_json",
         records: document.records,

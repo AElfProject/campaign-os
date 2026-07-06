@@ -22,6 +22,7 @@ import {
 } from "../domain/serviceRegistry";
 import type { ApiRuntimeRouteId } from "./routes";
 import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
+import type { BackendServiceReadinessReport } from "./backendService";
 import { createBackendTopologyReport } from "./topology";
 import { createRuntimeSafety } from "./envelope";
 import {
@@ -248,9 +249,128 @@ const createApiFoundationRuntimeMetadata = () => {
   };
 };
 
+const backendServiceEntrypointMetadata = (report: BackendServiceReadinessReport) => ({
+  foundationValidationValid: report.entrypoint.foundationValidationValid,
+  id: report.entrypoint.id,
+  label: report.entrypoint.label,
+  profileId: report.entrypoint.profileId,
+  routeCount: report.entrypoint.routeCount,
+  runtimeName: report.entrypoint.runtimeName,
+  supportMode: report.entrypoint.supportMode,
+  version: report.entrypoint.version,
+});
+
+const backendConfigContractSummary = (report: BackendServiceReadinessReport) => ({
+  diagnosticCodes: report.config.diagnostics.map((diagnostic) => diagnostic.code),
+  diagnosticsCount: report.config.diagnostics.length,
+  hostConfigured: Boolean(report.config.host),
+  persistenceMode: report.config.persistenceMode,
+  portConfigured: Number.isFinite(report.config.port),
+  productionReadiness: {
+    deferredCapabilities: report.config.productionReadiness.deferredCapabilities,
+    missingConfigKeyCount: report.config.productionReadiness.missingConfigKeys.length,
+    requiredConfigKeyCount: report.config.productionReadiness.requiredConfigKeys.length,
+    status: report.config.productionReadiness.status,
+  },
+  profileId: report.config.profileId,
+  requestedProfileId: report.config.requestedProfileId,
+  valid: report.config.valid,
+});
+
+const backendPersistenceAdapterSummary = (report: BackendServiceReadinessReport) => ({
+  activeAdapter: {
+    durable: report.persistenceAdapters.activeAdapter.durable,
+    id: report.persistenceAdapters.activeAdapter.id,
+    kind: report.persistenceAdapters.activeAdapter.kind,
+    localOnly: report.persistenceAdapters.activeAdapter.localOnly,
+    status: report.persistenceAdapters.activeAdapter.status,
+  },
+  adapterCount: report.persistenceAdapters.adapters.length,
+  productionAdapterStatuses: report.persistenceAdapters.adapters
+    .filter((adapter) => adapter.kind === "production_deferred")
+    .map((adapter) => ({
+      id: adapter.id,
+      status: adapter.status,
+    })),
+  storeCount: report.persistenceAdapters.stores.length,
+  validationIssueCount: report.persistenceAdapters.validation.issues.length,
+  valid: report.persistenceAdapters.validation.valid,
+});
+
+const backendMigrationManifestSummary = (report: BackendServiceReadinessReport) => ({
+  manifestVersion: report.migration.manifestVersion,
+  noDestructiveOperations: report.migration.noDestructiveOperations,
+  noLiveMigrationCommand: report.migration.noLiveMigrationCommand,
+  noMigrationRunner: report.migration.noMigrationRunner,
+  runnerStatus: report.migration.runnerStatus,
+  storeCount: report.migration.stores.length,
+  validationIssueCount: report.migration.validation.issues.length,
+  valid: report.migration.validation.valid,
+});
+
+const createBackendServiceHealthMetadata = (
+  report: BackendServiceReadinessReport,
+  traceId: string,
+) => ({
+  adapterStatus: report.persistenceAdapters.activeAdapter.status,
+  apiFoundationValidationIssueCount: report.apiFoundation.validation.issues.length,
+  entrypoint: backendServiceEntrypointMetadata(report),
+  entrypointId: report.entrypoint.id,
+  migrationRunnerStatus: report.migration.runnerStatus,
+  profile: {
+    id: report.profile.id,
+    status: report.profile.status,
+    supportMode: report.profile.supportMode,
+  },
+  profileId: report.profile.id,
+  traceId,
+  validation: {
+    issueCount: report.validation.issues.length,
+    issues: report.validation.issues,
+    valid: report.validation.valid,
+  },
+});
+
+const createBackendServiceContractMetadata = (report: BackendServiceReadinessReport) => ({
+  attachMapAreas: report.attachMap.map((attachPoint) => ({
+    area: attachPoint.area,
+    currentStatus: attachPoint.currentStatus,
+    requiredBeforeProduction: attachPoint.requiredBeforeProduction,
+  })),
+  configContract: backendConfigContractSummary(report),
+  deferredProductionCapabilities: report.profile.deferredCapabilities,
+  entrypoint: backendServiceEntrypointMetadata(report),
+  migrationManifest: backendMigrationManifestSummary(report),
+  persistenceAdapterPort: backendPersistenceAdapterSummary(report),
+  profile: {
+    allowedCapabilities: report.profile.allowedCapabilities,
+    deferredCapabilities: report.profile.deferredCapabilities,
+    externalNetworkAllowed: report.profile.externalNetworkAllowed,
+    id: report.profile.id,
+    status: report.profile.status,
+    supportMode: report.profile.supportMode,
+  },
+  reportShape: {
+    sections: [
+      "entrypoint",
+      "profile",
+      "config",
+      "persistenceAdapters",
+      "migration",
+      "apiFoundation",
+      "topology",
+      "attachMap",
+      "validation",
+    ],
+    validationIssueCount: report.validation.issues.length,
+    valid: report.validation.valid,
+  },
+});
+
 export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntimeHandler> => ({
   "runtime.health": async (context) => {
     const apiFoundation = createApiFoundationRuntimeMetadata();
+    const backendService = context.backendServiceReadiness();
     const coverage = context.service.getCoverageSummary();
     const services = createServiceDegradationGovernance();
     const persistence = await context.repository.health();
@@ -260,6 +380,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
 
     return {
       apiFoundation,
+      backendService: createBackendServiceHealthMetadata(backendService, context.traceId),
       boundary: coverage.boundary,
       mode: "local_seeded",
       capabilities: createApiRuntimeCapabilityCatalog(),
@@ -288,6 +409,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
   },
   "runtime.contracts": async (context) => {
     const apiFoundation = createApiFoundationRuntimeMetadata();
+    const backendService = context.backendServiceReadiness();
     const persistence = await context.repository.health();
     const topology = createBackendTopologyReport({
       knownRouteIds: apiRuntimeRoutes.map((route) => route.id),
@@ -297,6 +419,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       apiFoundation,
       apiSkillContracts: apiSkillContractRegistry,
       apiSkillSurface: createApiSkillContractSurface(),
+      backendService: createBackendServiceContractMetadata(backendService),
       coverage: createApiRuntimeContractCoverage(),
       capabilities: createApiRuntimeCapabilityCatalog(),
       persistence: {

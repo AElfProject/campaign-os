@@ -1,0 +1,83 @@
+import { describe, expect, it } from "vitest";
+import {
+  createMigrationManifest,
+  validateMigrationManifestStores,
+  type MigrationStoreManifest,
+} from "./migrationManifest";
+
+describe("migration manifest", () => {
+  it("creates a manifest-only local review readiness surface", () => {
+    const manifest = createMigrationManifest();
+
+    expect(manifest).toMatchObject({
+      manifestVersion: "0.1.0",
+      noDestructiveOperations: true,
+      noLiveMigrationCommand: true,
+      noMigrationRunner: true,
+      runnerStatus: "disabled_local_review",
+    });
+    expect(manifest.stores.map((store) => store.id)).toEqual([
+      "campaign-db",
+      "wallet-session-db",
+      "task-evidence-db",
+      "i18n-content-db",
+      "risk-event-db",
+      "points-ledger",
+      "export-store",
+      "analytics-warehouse",
+      "contract-index",
+    ]);
+    expect(manifest.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "MIGRATION_RUNNER_DISABLED_LOCAL_REVIEW",
+          field: "runnerStatus",
+          severity: "info",
+        }),
+      ]),
+    );
+    expect(manifest.validation.valid).toBe(true);
+  });
+
+  it("keeps migration runner deferred for production-required until a later mission", () => {
+    const manifest = createMigrationManifest({ profileId: "production-required" });
+
+    expect(manifest.runnerStatus).toBe("deferred");
+    expect(manifest.noMigrationRunner).toBe(true);
+    expect(manifest.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "MIGRATION_RUNNER_DISABLED_LOCAL_REVIEW",
+          severity: "warning",
+        }),
+      ]),
+    );
+  });
+
+  it("requires migration stores to declare owners and production modes", () => {
+    const malformedStore: MigrationStoreManifest = {
+      currentMode: "deferred",
+      id: "campaign-db",
+      migrationRequired: true,
+      ownerServiceId: "",
+      productionMode: "" as MigrationStoreManifest["productionMode"],
+      readiness: "blocked",
+      targetSchemaVersion: "v0.1.0-target",
+    };
+
+    expect(validateMigrationManifestStores([malformedStore])).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "MIGRATION_STORE_MISSING_OWNER",
+          field: "campaign-db",
+          severity: "error",
+        }),
+        expect.objectContaining({
+          code: "MIGRATION_STORE_MISSING_PRODUCTION_MODE",
+          field: "campaign-db",
+          severity: "error",
+        }),
+      ]),
+    );
+  });
+});

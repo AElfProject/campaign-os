@@ -6,5 +6,8 @@ export * from "./errors";
 export * from "./apiRuntime";
 export * from "./handlers";
 export * from "./persistence";
+export * from "./persistenceAdapterPort";
+export * from "./migrationManifest";
+export * from "./backendService";
 export * from "./routes";
 export * from "./topology";
