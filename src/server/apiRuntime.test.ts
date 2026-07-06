@@ -258,6 +258,15 @@ describe("Campaign OS API runtime", () => {
       backendService: expect.objectContaining({
         adapterStatus: "active",
         apiFoundationValidationIssueCount: 0,
+        authSession: expect.objectContaining({
+          profileId: "local-review",
+          proofStatus: "local_seeded",
+          protectedRouteCount: expect.any(Number),
+          roleCount: 5,
+          status: "local_seeded",
+          valid: true,
+          verificationMode: "local_only",
+        }),
         entrypoint: expect.objectContaining({
           id: "campaign-os-backend-service",
           profileId: "local-review",
@@ -373,7 +382,7 @@ describe("Campaign OS API runtime", () => {
           }),
           expect.objectContaining({
             area: "auth-session",
-            currentStatus: "deferred",
+            currentStatus: "scaffold",
             requiredBeforeProduction: true,
           }),
           expect.objectContaining({
@@ -386,6 +395,47 @@ describe("Campaign OS API runtime", () => {
           persistenceMode: "memory",
           profileId: "local-review",
           valid: true,
+        }),
+        authSession: expect.objectContaining({
+          agentCredentialBoundary: {
+            agentSkillCanSubstituteUserWallet: false,
+            separatedFromUserWalletSession: true,
+          },
+          profileId: "local-review",
+          protectedRoutes: expect.arrayContaining([
+            expect.objectContaining({
+              enforcementStatus: "metadata_only",
+              routeId: "wallet.session.create",
+            }),
+            expect.objectContaining({
+              enforcementStatus: "enforcement_deferred",
+              requiredRoles: ["project_owner"],
+              routeId: "campaigns.create",
+            }),
+            expect.objectContaining({
+              enforcementStatus: "enforcement_deferred",
+              requiredRoles: ["project_owner", "internal_operator"],
+              routeId: "campaigns.export.preview",
+            }),
+            expect.objectContaining({
+              enforcementStatus: "enforcement_deferred",
+              requiredRoles: ["participant"],
+              routeId: "tasks.verify",
+            }),
+          ]),
+          rolePolicy: expect.objectContaining({
+            leastPrivilegeDefault: true,
+            roleCount: 5,
+          }),
+          sessionContract: expect.objectContaining({
+            agentCredentialSeparated: true,
+            walletSources: expect.arrayContaining(["PORTKEY_AA", "NIGHTELF", "AGENT_SKILL", "OTHER"]),
+          }),
+          status: "local_seeded",
+          validation: expect.objectContaining({
+            issueCount: 0,
+            valid: true,
+          }),
         }),
         deferredProductionCapabilities: expect.arrayContaining([
           "auth_session",
@@ -429,7 +479,7 @@ describe("Campaign OS API runtime", () => {
           valid: true,
         }),
         reportShape: expect.objectContaining({
-          sections: expect.arrayContaining(["entrypoint", "config", "attachMap", "validation"]),
+          sections: expect.arrayContaining(["entrypoint", "config", "attachMap", "authSession", "databaseReadiness", "validation"]),
           valid: true,
         }),
       }),
@@ -563,6 +613,11 @@ describe("Campaign OS API runtime", () => {
 
     expect(expectSuccessData(health)).toMatchObject({
       backendService: expect.objectContaining({
+        authSession: expect.objectContaining({
+          status: "blocked",
+          valid: false,
+          verificationMode: "production_required",
+        }),
         databaseReadiness: expect.objectContaining({
           adapterStatus: "blocked",
           migrationPlanStatus: "blocked",
@@ -575,6 +630,12 @@ describe("Campaign OS API runtime", () => {
     });
     expect(expectSuccessData(contracts)).toMatchObject({
       backendService: expect.objectContaining({
+        authSession: expect.objectContaining({
+          status: "blocked",
+          validation: expect.objectContaining({
+            valid: false,
+          }),
+        }),
         databaseReadiness: expect.objectContaining({
           adapter: expect.objectContaining({
             status: "blocked",

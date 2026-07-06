@@ -260,7 +260,57 @@ const createContractDatabaseReadinessMetadata = (
   validation: report.databaseReadiness.validation,
 });
 
-const withBackendServiceDatabaseReadiness = ({
+const createHealthAuthSessionMetadata = (
+  report: BackendServiceReadinessReport,
+) => ({
+  agentCredentialBoundary: report.authSession.agentCredentialBoundary,
+  diagnosticCodes: report.authSession.validation.issues.map((issue) => issue.code),
+  profileId: report.authSession.profileId,
+  proofStatus: report.authSession.proofBoundary.status,
+  protectedRouteCount: report.authSession.protectedRouteCount,
+  roleCount: report.authSession.rolePolicy.roleCount,
+  status: report.authSession.status,
+  validationIssueCount: report.authSession.validation.issues.length,
+  valid: report.authSession.validation.valid,
+  verificationMode: report.authSession.proofBoundary.verificationMode,
+});
+
+const createContractAuthSessionMetadata = (
+  report: BackendServiceReadinessReport,
+) => ({
+  agentCredentialBoundary: report.authSession.agentCredentialBoundary,
+  deferredDependencyIds: report.authSession.deferredDependencyIds,
+  profileId: report.authSession.profileId,
+  proofBoundary: report.authSession.proofBoundary,
+  protectedRoutes: report.authSession.protectedRoutes.map((route) => ({
+    enforcementStatus: route.enforcementStatus,
+    productionDependencyIds: route.productionDependencyIds,
+    proofRequired: route.proofRequired,
+    requiredRoles: route.requiredRoles,
+    routeGroup: route.routeGroup,
+    routeId: route.routeId,
+    routeSource: route.routeSource,
+    sessionRequired: route.sessionRequired,
+  })),
+  rolePolicy: report.authSession.rolePolicy,
+  sessionContract: report.authSession.sessionContract,
+  status: report.authSession.status,
+  validation: {
+    diagnosticCodes: report.authSession.validation.issues.map((issue) => issue.code),
+    issueCount: report.authSession.validation.issues.length,
+    valid: report.authSession.validation.valid,
+  },
+});
+
+const appendReportShapeSections = (sections: unknown, sectionIds: string[]) => {
+  const currentSections = Array.isArray(sections)
+    ? sections.filter((section): section is string => typeof section === "string")
+    : [];
+
+  return Array.from(new Set([...currentSections, ...sectionIds]));
+};
+
+const withBackendServiceReadinessMetadata = ({
   data,
   readiness,
   routeId,
@@ -278,6 +328,7 @@ const withBackendServiceDatabaseReadiness = ({
       ...data,
       backendService: {
         ...data.backendService,
+        authSession: createHealthAuthSessionMetadata(readiness),
         databaseReadiness: createHealthDatabaseReadinessMetadata(readiness),
       },
     };
@@ -288,13 +339,15 @@ const withBackendServiceDatabaseReadiness = ({
       ...data,
       backendService: {
         ...data.backendService,
+        authSession: createContractAuthSessionMetadata(readiness),
         databaseReadiness: createContractDatabaseReadinessMetadata(readiness),
         reportShape: isRecord(data.backendService.reportShape)
           ? {
             ...data.backendService.reportShape,
-            sections: Array.isArray(data.backendService.reportShape.sections)
-              ? [...data.backendService.reportShape.sections, "databaseReadiness"]
-              : ["databaseReadiness"],
+            sections: appendReportShapeSections(data.backendService.reportShape.sections, [
+              "authSession",
+              "databaseReadiness",
+            ]),
           }
           : data.backendService.reportShape,
       },
@@ -442,7 +495,7 @@ export const createCampaignOsApiRuntime = ({
           version: runtimeVersion,
         });
         const responseData = shouldAttachDatabaseReadiness(matcher.route.id)
-          ? withBackendServiceDatabaseReadiness({
+          ? withBackendServiceReadinessMetadata({
             data,
             readiness: requestBackendServiceReadiness(),
             routeId: matcher.route.id,
