@@ -1775,6 +1775,10 @@ export const ProjectConsole = ({
   const commandCenter = createProjectCampaignCommandCenter(campaign);
   const exportDecision = commandCenter.analyticsExport;
   const exportFulfillmentReadiness = commandCenter.exportFulfillmentReadiness;
+  const exportStorageProviderApprovalPacket = commandCenter.exportStorageProviderApprovalPacket;
+  const exportStorageProviderApprovalTopCheck = exportStorageProviderApprovalPacket.checks.find(
+    (check) => check.id === exportStorageProviderApprovalPacket.summary.topCheckId,
+  ) ?? exportStorageProviderApprovalPacket.checks[0];
   const advancedAnalytics = commandCenter.advancedAnalytics;
   const aiOptimizationSummary = commandCenter.aiOptimization.projectOwnerSummary;
   const aiOpsKpiAdoption = commandCenter.aiOpsKpiAdoption;
@@ -5215,6 +5219,65 @@ export const ProjectConsole = ({
             <p style={boundaryStyle}>{copy.exportArtifactBoundary}</p>
           </article>
         )}
+
+        <article aria-label={copy.exportStorageProviderSummary} style={{ ...workflowStyle, minHeight: 0 }}>
+          <div style={headingRowStyle}>
+            <div>
+              <p style={statLabelStyle}>{copy.exportStorageProviderApprovalBlocked}</p>
+              <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                {copy.exportStorageProviderSummary}
+              </h4>
+              <p style={{ color: "#475569", lineHeight: 1.45, margin: 0 }}>
+                {copy.exportStorageProviderSummarySubtitle}
+              </p>
+            </div>
+            <PublishStateBadge
+              label={readableCode(
+                exportStorageProviderApprovalPacket.summary.approvalBlocked
+                  ? "blocked"
+                  : exportStorageProviderApprovalPacket.summary.reviewRequiredChecks > 0
+                    ? "review_required"
+                    : "ready",
+              )}
+              state={
+                exportStorageProviderApprovalPacket.summary.approvalBlocked
+                  ? "blocker"
+                  : exportStorageProviderApprovalPacket.summary.reviewRequiredChecks > 0
+                    ? "warning"
+                    : "ready"
+              }
+            />
+          </div>
+          <div style={sectionGridStyle}>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={statLabelStyle}>{copy.exportStorageProviderTopBlocker}</p>
+              <strong>{getLocalizedText(exportStorageProviderApprovalTopCheck.label, locale)}</strong>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {copy.exportStorageProviderNextAction}: {getLocalizedText(exportStorageProviderApprovalPacket.nextAction, locale)}
+              </p>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={statLabelStyle}>{copy.exportStorageProviderLocalHandoff}</p>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {copy.exportBatch}: {exportStorageProviderApprovalPacket.batchId}
+              </p>
+              <PublishStateBadge label={copy.exportLocalPreviewOnly} state="ready" />
+            </article>
+          </div>
+          <ul style={compactListStyle}>
+            <li style={chipStyle}>{copy.exportStorageProviderStorageWriteDisabled}</li>
+            <li style={chipStyle}>{copy.exportStorageProviderDownloadUrlDisabled}</li>
+            <li style={chipStyle}>{copy.exportStorageProviderNoContractRootWrite}</li>
+            <li style={chipStyle}>{copy.exportStorageProviderRewardCustodyDisabled}</li>
+            <li style={chipStyle}>{copy.exportStorageProviderRewardDistributionDisabled}</li>
+          </ul>
+          <p style={boundaryStyle}>
+            {copy.exportStorageProviderBoundary}: {getLocalizedText(exportStorageProviderApprovalPacket.boundary, locale)}
+          </p>
+          <p style={boundaryStyle}>
+            {getLocalizedText(exportStorageProviderApprovalPacket.safety.boundary, locale)}
+          </p>
+        </article>
 
         <p style={boundaryStyle}>{getLocalizedText(exportDecision.boundary, locale)}</p>
         <p style={boundaryStyle}>{getLocalizedText(commandCenter.boundary, locale)}</p>
