@@ -1,5 +1,9 @@
 import type { CampaignOsPersistenceMode } from "./config";
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import {
+  createProductionDatabaseAdapterContract,
+  productionDatabaseStoreRegistry,
+} from "./productionDatabase";
 
 export type PersistenceAdapterKind = "memory" | "local_json" | "production_deferred";
 export type PersistenceAdapterStatus = "active" | "local_only" | "deferred" | "blocked";
@@ -34,11 +38,13 @@ export interface BackendStorePort {
   adapterOwnerId: string;
   attachPoint: string;
   blockedBy: string[];
+  entities?: string[];
   currentMode: BackendStoreCurrentMode;
   futureProductionMode: BackendStoreProductionMode;
   id: BackendStoreId;
   label: string;
   ownerServiceId: string;
+  schemaVersion?: string;
 }
 
 export interface PersistenceAdapterPort {
@@ -52,6 +58,7 @@ export interface PersistenceAdapterPort {
   ownerStores: BackendStoreId[];
   requiresConnectionString: boolean;
   requiresMigrationRunner: boolean;
+  schemaVersion?: string;
   status: PersistenceAdapterStatus;
 }
 
@@ -71,10 +78,14 @@ export interface CreatePersistenceAdapterPortReportOptions {
 }
 
 const productionDatabaseBlockers = [
-  "production database adapter mission",
-  "schema migration runner mission",
+  "live production database provider selection mission",
+  "protected live migration execution mission",
   "connection secret boundary",
 ];
+
+const productionStoreById = Object.fromEntries(
+  productionDatabaseStoreRegistry.map((store) => [store.id, store]),
+) as Partial<Record<BackendStoreId, (typeof productionDatabaseStoreRegistry)[number]>>;
 
 export const backendStorePorts: BackendStorePort[] = [
   {
@@ -82,60 +93,72 @@ export const backendStorePorts: BackendStorePort[] = [
     attachPoint: "src/server/persistence.ts",
     blockedBy: productionDatabaseBlockers,
     currentMode: "seeded",
+    entities: productionStoreById["campaign-db"]?.entities,
     futureProductionMode: "relational_database",
     id: "campaign-db",
     label: "Campaign DB",
     ownerServiceId: "campaign-service",
+    schemaVersion: productionStoreById["campaign-db"]?.schemaVersion,
   },
   {
     adapterOwnerId: "campaign-os-production-db-adapter",
     attachPoint: "src/server/persistence.ts",
     blockedBy: productionDatabaseBlockers,
     currentMode: "memory",
+    entities: productionStoreById["wallet-session-db"]?.entities,
     futureProductionMode: "relational_database",
     id: "wallet-session-db",
     label: "Wallet Session DB",
     ownerServiceId: "wallet-session-service",
+    schemaVersion: productionStoreById["wallet-session-db"]?.schemaVersion,
   },
   {
     adapterOwnerId: "campaign-os-production-db-adapter",
     attachPoint: "src/server/persistence.ts",
     blockedBy: productionDatabaseBlockers,
     currentMode: "memory",
+    entities: productionStoreById["task-evidence-db"]?.entities,
     futureProductionMode: "relational_database",
     id: "task-evidence-db",
     label: "Task Evidence DB",
     ownerServiceId: "verification-service",
+    schemaVersion: productionStoreById["task-evidence-db"]?.schemaVersion,
   },
   {
     adapterOwnerId: "campaign-os-production-db-adapter",
     attachPoint: "src/server/persistence.ts",
     blockedBy: productionDatabaseBlockers,
     currentMode: "seeded",
+    entities: productionStoreById["i18n-content-db"]?.entities,
     futureProductionMode: "relational_database",
     id: "i18n-content-db",
     label: "i18n Content DB",
     ownerServiceId: "i18n-content-service",
+    schemaVersion: productionStoreById["i18n-content-db"]?.schemaVersion,
   },
   {
     adapterOwnerId: "campaign-os-production-db-adapter",
     attachPoint: "src/server/persistence.ts",
     blockedBy: productionDatabaseBlockers,
     currentMode: "seeded",
+    entities: productionStoreById["risk-event-db"]?.entities,
     futureProductionMode: "relational_database",
     id: "risk-event-db",
     label: "Risk Event DB",
     ownerServiceId: "risk-intelligence-service",
+    schemaVersion: productionStoreById["risk-event-db"]?.schemaVersion,
   },
   {
     adapterOwnerId: "campaign-os-production-db-adapter",
     attachPoint: "src/server/persistence.ts",
     blockedBy: productionDatabaseBlockers,
     currentMode: "deferred",
+    entities: productionStoreById["points-ledger"]?.entities,
     futureProductionMode: "relational_database",
     id: "points-ledger",
     label: "Points Ledger",
     ownerServiceId: "points-ranking-service",
+    schemaVersion: productionStoreById["points-ledger"]?.schemaVersion,
   },
   {
     adapterOwnerId: "campaign-os-object-storage-adapter",
@@ -186,6 +209,9 @@ export const createPersistenceAdapterPortReport = ({
   persistenceMode = "memory",
   profileId = "local-review",
 }: CreatePersistenceAdapterPortReportOptions = {}): PersistenceAdapterPortReport => {
+  const productionDatabaseContract = createProductionDatabaseAdapterContract({
+    profileId,
+  });
   const memoryAdapter: PersistenceAdapterPort = {
     attachPoints: ["src/server/persistence.ts:createCampaignOsMemoryRepository"],
     diagnostics: [],
@@ -214,15 +240,23 @@ export const createPersistenceAdapterPortReport = ({
   };
   const productionDatabaseAdapter: PersistenceAdapterPort = {
     attachPoints: ["src/server/persistence.ts:createCampaignOsRepository"],
-    diagnostics: [productionDeferredDiagnostic],
+    diagnostics: [
+      ...productionDatabaseContract.diagnostics.map<PersistenceAdapterDiagnostic>((diagnostic) => ({
+        code: "PRODUCTION_ADAPTER_DEFERRED",
+        field: diagnostic.field,
+        message: diagnostic.message,
+        severity: diagnostic.severity,
+      })),
+    ],
     durable: true,
-    id: "campaign-os-production-db-adapter",
+    id: productionDatabaseContract.id,
     kind: "production_deferred",
-    label: "Future production database adapter",
-    localOnly: false,
-    ownerStores: storesForAdapter("campaign-os-production-db-adapter"),
-    requiresConnectionString: true,
-    requiresMigrationRunner: true,
+    label: productionDatabaseContract.label,
+    localOnly: productionDatabaseContract.localReviewOnly,
+    ownerStores: [...productionDatabaseContract.ownerStores],
+    requiresConnectionString: productionDatabaseContract.requiresConnectionString,
+    requiresMigrationRunner: productionDatabaseContract.requiresMigrationRunner,
+    schemaVersion: productionDatabaseContract.schemaVersion,
     status: profileId === "production-required" ? "blocked" : "deferred",
   };
   const objectStorageAdapter: PersistenceAdapterPort = {
