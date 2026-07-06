@@ -121,6 +121,7 @@ describe("Campaign OS persistence boundary", () => {
     });
     expect(health).toMatchObject({
       adapterLabel: "memory",
+      adapterPortId: "campaign-os-memory-adapter",
       durable: false,
       localOnly: true,
       noProductionDatabase: true,
@@ -234,6 +235,7 @@ describe("Campaign OS persistence boundary", () => {
     await memory.initialize();
 
     expect(await memory.health()).toMatchObject({
+      adapterPortId: "campaign-os-memory-adapter",
       mode: "memory",
       status: "ok",
     });
