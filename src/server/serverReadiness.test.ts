@@ -1,0 +1,263 @@
+import { describe, expect, it } from "vitest";
+import { createBackendServiceReadinessReport } from "./backendService";
+import { createSuccessEnvelope } from "./envelope";
+import {
+  createServerRuntimeReadiness,
+  withServerRuntimeReadiness,
+} from "./serverReadiness";
+import { resolveApiServerRuntimeContract } from "./serverRuntime";
+
+const secretFragments = [
+  "auth-secret",
+  "bearer sample",
+  "object-key-sample",
+  "postgres://db.invalid/campaign-os",
+  "private-key-sample",
+  "raw-signature-sample",
+  "signed-url",
+];
+
+const expectNoSecretLeak = (value: unknown) => {
+  const serialized = JSON.stringify(value).toLowerCase();
+
+  for (const fragment of secretFragments) {
+    expect(serialized).not.toContain(fragment);
+  }
+};
+
+describe("server runtime readiness metadata", () => {
+  it("builds local-review liveness and readiness metadata", () => {
+    const contract = resolveApiServerRuntimeContract({
+      env: {},
+      startedAt: "2026-07-06T18:00:00.000Z",
+    });
+    const backendReadiness = createBackendServiceReadinessReport({
+      generatedAt: "2026-07-06T18:00:00.000Z",
+    });
+    const metadata = createServerRuntimeReadiness({
+      backendReadiness,
+      contract,
+      now: new Date("2026-07-06T18:00:02.500Z"),
+    });
+
+    expect(metadata).toMatchObject({
+      liveness: {
+        live: true,
+        startedAt: "2026-07-06T18:00:00.000Z",
+        uptimeMs: 2500,
+      },
+      profileId: "local-review",
+      readiness: {
+        authSession: {
+          status: "local_seeded",
+          valid: true,
+          verificationMode: "local_only",
+        },
+        backend: {
+          entrypointId: "campaign-os-backend-service",
+          valid: true,
+        },
+        database: {
+          adapterStatus: "contract_ready",
+          migrationPlanStatus: "dry_run_ready",
+          valid: true,
+        },
+      },
+      requestGuard: {
+        guardedFailureEnvelope: true,
+        maxBodyBytes: 1_048_576,
+        traceHeaderName: "x-campaign-os-trace-id",
+      },
+      status: "ready",
+      uptimeMs: 2500,
+    });
+    expect(metadata.corsPolicy).toMatchObject({
+      enabled: true,
+      preflightHandledBeforeRuntime: true,
+    });
+  });
+
+  it("surfaces production-required blocked readiness without live side effects", () => {
+    const env = {
+      CAMPAIGN_OS_AUTH_SECRET: "auth-secret",
+      CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+      CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT: "https://writer.invalid/private-key-sample",
+      CAMPAIGN_OS_DATABASE_URL: "postgres://db.invalid/campaign-os",
+      CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid/object-key-sample",
+      CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue.invalid/raw-signature-sample",
+    };
+    const contract = resolveApiServerRuntimeContract({ env });
+    const backendReadiness = createBackendServiceReadinessReport({
+      configOptions: { env },
+    });
+    const metadata = createServerRuntimeReadiness({
+      backendReadiness,
+      contract,
+      now: new Date(contract.startedAt),
+    });
+
+    expect(metadata).toMatchObject({
+      profileId: "production-required",
+      readiness: {
+        authSession: {
+          status: "blocked",
+          valid: false,
+          verificationMode: "production_required",
+        },
+        backend: {
+          valid: false,
+        },
+        database: {
+          adapterStatus: "blocked",
+          migrationPlanStatus: "blocked",
+          valid: false,
+        },
+      },
+      status: "blocked",
+    });
+    expect(metadata.readiness.backend.diagnosticCodes).toEqual(
+      expect.arrayContaining(["AUTH_SESSION_READINESS_BLOCKED", "DATABASE_READINESS_BLOCKED"]),
+    );
+    expectNoSecretLeak(metadata);
+  });
+
+  it("represents shutdown states", () => {
+    const contract = resolveApiServerRuntimeContract({
+      env: {},
+      shutdownTimeoutMs: 1234,
+      startedAt: "2026-07-06T18:00:00.000Z",
+    });
+    const backendReadiness = createBackendServiceReadinessReport();
+    const stopping = createServerRuntimeReadiness({
+      backendReadiness,
+      contract,
+      shutdownState: {
+        activeRequestCount: 2,
+        state: "stopping",
+        stopStartedAt: "2026-07-06T18:00:03.000Z",
+      },
+    });
+    const stopped = createServerRuntimeReadiness({
+      backendReadiness,
+      contract,
+      shutdownState: {
+        activeRequestCount: 0,
+        closedAt: "2026-07-06T18:00:04.000Z",
+        state: "stopped",
+      },
+    });
+
+    expect(stopping).toMatchObject({
+      shutdownState: {
+        activeRequestCount: 2,
+        shutdownTimeoutMs: 1234,
+        state: "stopping",
+      },
+      status: "shutting_down",
+    });
+    expect(stopped).toMatchObject({
+      liveness: {
+        live: false,
+      },
+      shutdownState: {
+        state: "stopped",
+      },
+      status: "stopped",
+    });
+  });
+
+  it("adds metadata to success envelopes without replacing existing health data", () => {
+    const contract = resolveApiServerRuntimeContract({ env: {} });
+    const backendReadiness = createBackendServiceReadinessReport();
+    const metadata = createServerRuntimeReadiness({ backendReadiness, contract });
+    const envelope = createSuccessEnvelope({
+      data: {
+        backendService: { entrypointId: "campaign-os-backend-service" },
+        status: "ok",
+      },
+      routeCount: 10,
+      traceId: "trace-health",
+      version: "0.2.0-local",
+    });
+    const withMetadata = withServerRuntimeReadiness(envelope, metadata);
+
+    expect(withMetadata.ok).toBe(true);
+    if (withMetadata.ok) {
+      expect(withMetadata.data).toMatchObject({
+        backendService: { entrypointId: "campaign-os-backend-service" },
+        serverRuntime: expect.objectContaining({
+          profileId: "local-review",
+          status: "ready",
+        }),
+        status: "ok",
+      });
+    }
+  });
+
+  it("keeps failure envelopes unchanged", () => {
+    const contract = resolveApiServerRuntimeContract({ env: {} });
+    const backendReadiness = createBackendServiceReadinessReport();
+    const metadata = createServerRuntimeReadiness({ backendReadiness, contract });
+    const failure = {
+      ok: false as const,
+      error: {
+        code: "INVALID_REQUEST" as const,
+        message: {
+          "en-US": "Bad request",
+          "zh-CN": "Bad request",
+          "zh-TW": "Bad request",
+        },
+        status: 400,
+      },
+      runtime: {
+        mode: "local_seeded" as const,
+        name: "campaign-os-api-runtime" as const,
+        routeCount: 10,
+        version: "0.2.0-local",
+      },
+      safety: {
+        localOnly: true as const,
+        noContractWrite: true as const,
+        noExportFile: true as const,
+        noLiveApi: true as const,
+        noMigrationRunner: true as const,
+        noProductionDatabase: true as const,
+        noRewardCustody: true as const,
+        noRewardDistribution: true as const,
+        noSecretHandling: true as const,
+        noStorageWrite: true as const,
+        noWalletSignature: true as const,
+        seededDataOnly: true as const,
+      },
+      timestamp: "2026-07-06T18:00:00.000Z",
+      traceId: "trace-failure",
+    };
+
+    expect(withServerRuntimeReadiness(failure, metadata)).toBe(failure);
+  });
+
+  it("lists all deferred server runtime attach points", () => {
+    const contract = resolveApiServerRuntimeContract({ env: {} });
+    const metadata = createServerRuntimeReadiness({
+      backendReadiness: createBackendServiceReadinessReport(),
+      contract,
+    });
+
+    expect(metadata.deferredAttachPoints.map((item) => item.id)).toEqual(
+      expect.arrayContaining([
+        "framework-decision",
+        "deployment-config",
+        "production-database-driver",
+        "auth-middleware",
+        "provider-adapters",
+        "worker-ingress",
+        "scheduler",
+        "contract-writer",
+        "observability-exporter",
+        "object-storage-export",
+      ]),
+    );
+    expect(metadata.deferredAttachPoints.every((item) => item.status !== "deferred" || item.requiredBeforeProduction !== undefined)).toBe(true);
+  });
+});
+

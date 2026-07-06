@@ -84,6 +84,24 @@ describe("backend scaffold HTTP smoke", () => {
             profileId: "local-review",
             traceId: "trace-backend-smoke-health",
           }),
+          serverRuntime: expect.objectContaining({
+            profileId: "local-review",
+            readiness: expect.objectContaining({
+              backend: expect.objectContaining({
+                valid: true,
+              }),
+              database: expect.objectContaining({
+                adapterStatus: "contract_ready",
+                migrationPlanStatus: "dry_run_ready",
+                valid: true,
+              }),
+            }),
+            requestGuard: expect.objectContaining({
+              guardedFailureEnvelope: true,
+              traceHeaderName: "x-campaign-os-trace-id",
+            }),
+            status: "ready",
+          }),
           status: "ok",
         },
       });
@@ -165,6 +183,56 @@ describe("backend scaffold HTTP smoke", () => {
       });
       expectSanitizedReadinessPayload(healthPayload.data.backendService);
       expectSanitizedReadinessPayload(contractsPayload.data.backendService);
+      expectSanitizedReadinessPayload(healthPayload.data.serverRuntime);
+      expectSanitizedReadinessPayload(contractsPayload.data.serverRuntime);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("guards HTTP preflight and bad POST requests before local handlers", async () => {
+    const server = await startCampaignOsApiServer({
+      logger: false,
+      maxBodyBytes: 16,
+      port: 0,
+    });
+
+    try {
+      const preflight = await fetch(`${server.url}/api/campaigns`, {
+        headers: {
+          "access-control-request-method": "POST",
+          origin: "http://localhost:5173",
+          "x-campaign-os-trace-id": "trace-smoke-preflight",
+        },
+        method: "OPTIONS",
+      });
+      const badPost = await fetch(`${server.url}/api/campaigns`, {
+        body: "not-json",
+        headers: {
+          "content-type": "text/plain",
+          "x-campaign-os-trace-id": "trace-smoke-bad-post",
+        },
+        method: "POST",
+      });
+      const badPostPayload = await badPost.json();
+
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get("x-campaign-os-trace-id")).toBe("trace-smoke-preflight");
+      expect(preflight.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
+      expect(await preflight.text()).toBe("");
+
+      expect(badPost.status).toBe(400);
+      expect(badPost.headers.get("x-campaign-os-trace-id")).toBe("trace-smoke-bad-post");
+      expect(badPostPayload).toMatchObject({
+        ok: false,
+        traceId: "trace-smoke-bad-post",
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            field: "content-type",
+          },
+        },
+      });
     } finally {
       await server.stop();
     }
@@ -217,6 +285,20 @@ describe("backend scaffold HTTP smoke", () => {
               valid: false,
             }),
           }),
+          serverRuntime: expect.objectContaining({
+            profileId: "production-required",
+            readiness: expect.objectContaining({
+              backend: expect.objectContaining({
+                valid: false,
+              }),
+              database: expect.objectContaining({
+                adapterStatus: "blocked",
+                migrationPlanStatus: "blocked",
+                valid: false,
+              }),
+            }),
+            status: "blocked",
+          }),
         },
       });
       expect(contractsPayload).toMatchObject({
@@ -245,6 +327,8 @@ describe("backend scaffold HTTP smoke", () => {
       });
       expectSanitizedReadinessPayload(healthPayload.data.backendService);
       expectSanitizedReadinessPayload(contractsPayload.data.backendService);
+      expectSanitizedReadinessPayload(healthPayload.data.serverRuntime);
+      expectSanitizedReadinessPayload(contractsPayload.data.serverRuntime);
     } finally {
       await server.stop();
     }
