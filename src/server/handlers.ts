@@ -31,6 +31,12 @@ import {
   unsupportedLocale,
 } from "./errors";
 import type { ApiRuntimeHandler, ApiRuntimeHandlerContext } from "./apiRuntime";
+import {
+  persistenceBoundary,
+  type CampaignOsPersistenceRecordInput,
+  type PersistenceRecordKind,
+  type PersistenceSummary,
+} from "./persistence";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -135,6 +141,33 @@ const unwrapLocalResult = <TPayload>(
   };
 };
 
+const persistLocalResult = async <TPayload>(
+  result: LocalServiceResult<TPayload>,
+  context: ApiRuntimeHandlerContext,
+  createRecordInput: (payload: TPayload) => Omit<
+    CampaignOsPersistenceRecordInput,
+    "kind" | "routeId" | "traceId"
+  > & {
+    kind: PersistenceRecordKind;
+    summary?: PersistenceSummary;
+  },
+) => {
+  const response = unwrapLocalResult(result, context);
+  const record = await context.repository.record({
+    ...createRecordInput(response.payload),
+    routeId: context.route.id,
+    traceId: context.traceId,
+  });
+
+  return {
+    ...response,
+    persistence: {
+      kind: record.kind,
+      recordId: record.id,
+    },
+  };
+};
+
 const createCampaignRequest = (context: ApiRuntimeHandlerContext): CreateCampaignRequest => {
   const body = bodyRecord(context);
 
@@ -230,13 +263,15 @@ const i18nDraftRequest = (context: ApiRuntimeHandlerContext): GenerateI18nDraftR
 };
 
 export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntimeHandler> => ({
-  "runtime.health": (context) => {
+  "runtime.health": async (context) => {
     const coverage = context.service.getCoverageSummary();
     const services = createServiceDegradationGovernance();
+    const persistence = await context.repository.health();
 
     return {
       boundary: coverage.boundary,
       mode: "local_seeded",
+      persistence,
       routeCount: apiRuntimeRoutes.length,
       safety: createRuntimeSafety(),
       serviceReadiness: coverage.ok
@@ -253,12 +288,20 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       version: context.version,
     };
   },
-  "runtime.contracts": () => ({
-    apiSkillContracts: apiSkillContractRegistry,
-    apiSkillSurface: createApiSkillContractSurface(),
-    coverage: createApiRuntimeContractCoverage(),
-    routes: apiRuntimeRoutes,
-  }),
+  "runtime.contracts": async (context) => {
+    const persistence = await context.repository.health();
+
+    return {
+      apiSkillContracts: apiSkillContractRegistry,
+      apiSkillSurface: createApiSkillContractSurface(),
+      coverage: createApiRuntimeContractCoverage(),
+      persistence: {
+        boundary: persistenceBoundary,
+        health: persistence,
+      },
+      routes: apiRuntimeRoutes,
+    };
+  },
   "runtime.services": () => {
     const registry = createServiceRegistry();
     const governance = createServiceDegradationGovernance();
@@ -271,28 +314,77 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     };
   },
   "wallet.session.create": (context) =>
-    unwrapLocalResult(
+    persistLocalResult(
       context.service.createWalletSession(bodyRecord(context) as CreateWalletSessionRequest),
       context,
+      (payload) => ({
+        accountType: payload.accountType,
+        kind: "wallet_session",
+        summary: {
+          accountType: payload.accountType,
+          chainId: payload.chainId,
+          network: payload.network,
+          walletSource: payload.walletSource,
+        },
+        walletAddress: payload.address,
+        walletSource: payload.walletSource,
+      }),
     ),
   "campaigns.list": (context) =>
     unwrapLocalResult(context.service.listCampaigns(listCampaignRequest(context)), context),
   "campaigns.create": (context) =>
-    unwrapLocalResult(
+    persistLocalResult(
       context.service.createCampaign(createCampaignRequest(context)),
       context,
+      (payload) => ({
+        campaignId: payload.id,
+        kind: "campaign_draft",
+        summary: {
+          contractMode: payload.contractMode,
+          projectId: payload.projectId,
+          status: payload.status,
+          walletPolicy: payload.walletPolicy,
+        },
+        walletAddress: payload.ownerAddress,
+      }),
     ),
   "campaigns.detail": (context) =>
     unwrapLocalResult(context.service.getCampaignDetail(campaignDetailRequest(context)), context),
   "campaigns.tasks.add": (context) =>
-    unwrapLocalResult(
+    persistLocalResult(
       context.service.addTask(addTaskRequest(context)),
       context,
+      (payload) => ({
+        campaignId: payload.campaignId,
+        kind: "task_draft",
+        summary: {
+          points: payload.points,
+          required: payload.required,
+          templateCode: payload.templateCode,
+          verificationType: payload.verificationType,
+          walletCompatibility: payload.walletCompatibility,
+        },
+        taskId: payload.id,
+      }),
     ),
   "tasks.verify": (context) =>
-    unwrapLocalResult(
+    persistLocalResult(
       context.service.verifyTask(verifyTaskRequest(context)),
       context,
+      (payload) => ({
+        accountType: payload.accountType,
+        campaignId: payload.campaignId,
+        kind: "verification_attempt",
+        summary: {
+          evidenceSource: payload.evidenceSource,
+          pointsAwarded: payload.pointsAwarded,
+          riskFlags: payload.riskFlags,
+          status: payload.status,
+        },
+        taskId: payload.taskId,
+        walletAddress: payload.walletAddress,
+        walletSource: payload.walletSource,
+      }),
     ),
   "campaigns.eligibility": (context) =>
     unwrapLocalResult(context.service.checkEligibility(eligibilityRequest(context)), context),
@@ -304,7 +396,35 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       context,
     ),
   "campaigns.i18n.generate": (context) =>
-    unwrapLocalResult(context.service.generateI18nDraft(i18nDraftRequest(context)), context),
+    persistLocalResult(
+      context.service.generateI18nDraft(i18nDraftRequest(context)),
+      context,
+      (payload) => ({
+        campaignId: context.params.campaignId,
+        kind: "i18n_draft",
+        locale: payload.targetLocale,
+        summary: {
+          contentKeys: payload.contentKeys,
+          humanReviewRequired: payload.humanReviewRequired,
+          sourceLocale: payload.sourceLocale,
+          targetLocale: payload.targetLocale,
+        },
+      }),
+    ),
   "campaigns.export.preview": (context) =>
-    unwrapLocalResult(context.service.exportWinners(exportRequest(context)), context),
+    persistLocalResult(
+      context.service.exportWinners(exportRequest(context)),
+      context,
+      (payload) => ({
+        campaignId: payload.campaignId,
+        kind: "export_preview",
+        summary: {
+          blockedRows: payload.blockedRows,
+          contractRootMode: payload.contractRootMode,
+          format: payload.format,
+          readyRows: payload.readyRows,
+          reviewRequiredRows: payload.reviewRequiredRows,
+        },
+      }),
+    ),
 });

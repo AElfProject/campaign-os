@@ -7,6 +7,8 @@ export interface ApiRuntimeSafety {
   localOnly: true;
   seededDataOnly: true;
   noLiveApi: true;
+  noMigrationRunner: true;
+  noProductionDatabase: true;
   noWalletSignature: true;
   noSecretHandling: true;
   noContractWrite: true;
@@ -49,11 +51,11 @@ export type ApiRuntimeEnvelope<TPayload = unknown> =
 
 export const runtimeBoundary: LocalizedText = {
   "en-US":
-    "Local seeded API runtime only. No live API, database persistence, provider call, wallet signature, contract write, storage write, export file, reward custody, or reward distribution is executed.",
+    "Local seeded API runtime only. No live API, production database, migration runner, provider call, wallet signature, contract write, storage-backed export file, reward custody, or reward distribution is executed.",
   "zh-CN":
-    "仅本地 seeded API runtime。不会执行实时 API、数据库持久化、provider 调用、钱包签名、合约写入、存储写入、导出文件、奖励托管或发奖。",
+    "仅本地 seeded API runtime。不会执行实时 API、生产数据库、migration runner、provider 调用、钱包签名、合约写入、storage-backed 导出文件、奖励托管或发奖。",
   "zh-TW":
-    "僅本地 seeded API runtime。不會執行即時 API、資料庫持久化、provider 呼叫、錢包簽名、合約寫入、儲存寫入、匯出檔案、獎勵託管或發獎。",
+    "僅本地 seeded API runtime。不會執行即時 API、生產資料庫、migration runner、provider 呼叫、錢包簽名、合約寫入、storage-backed 匯出檔案、獎勵託管或發獎。",
 };
 
 export const createRuntimeSafety = (): ApiRuntimeSafety => ({
@@ -61,6 +63,8 @@ export const createRuntimeSafety = (): ApiRuntimeSafety => ({
   noContractWrite: true,
   noExportFile: true,
   noLiveApi: true,
+  noMigrationRunner: true,
+  noProductionDatabase: true,
   noRewardCustody: true,
   noRewardDistribution: true,
   noSecretHandling: true,

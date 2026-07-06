@@ -157,6 +157,8 @@ describe("API runtime route catalog", () => {
       noContractWrite: true,
       noExportFile: true,
       noLiveApi: true,
+      noMigrationRunner: true,
+      noProductionDatabase: true,
       noRewardCustody: true,
       noRewardDistribution: true,
       noSecretHandling: true,

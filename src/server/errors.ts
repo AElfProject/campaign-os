@@ -9,6 +9,7 @@ export type ApiRuntimeErrorCode =
   | "INVALID_TASK"
   | "UNSUPPORTED_LOCALE"
   | "UNSUPPORTED_EXPORT_MODE"
+  | "PERSISTENCE_UNAVAILABLE"
   | "INTERNAL_RUNTIME_ERROR";
 
 export interface ApiRuntimeErrorBody {
@@ -116,6 +117,15 @@ export const unsupportedExportMode = (mode: string) =>
     "The requested export mode is not supported by the local preview runtime.",
     "本地预览 runtime 不支持请求的导出模式。",
     { mode },
+  );
+
+export const persistenceUnavailable = (operation: string) =>
+  runtimeError(
+    "PERSISTENCE_UNAVAILABLE",
+    503,
+    "The local Campaign OS persistence boundary is unavailable.",
+    "本地 Campaign OS 持久化边界当前不可用。",
+    { operation },
   );
 
 export const internalRuntimeError = () =>
