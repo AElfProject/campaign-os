@@ -48,6 +48,29 @@ describe("backend service readiness report", () => {
       leastPrivilegeDefault: true,
       roleCount: 5,
     });
+    expect(report.backendRuntimeBootstrap).toMatchObject({
+      id: "campaign-os-backend-runtime-bootstrap",
+      profileId: "local-review",
+      status: "ready",
+      tracePolicy: {
+        traceHeaderName: "x-campaign-os-trace-id",
+      },
+      valid: true,
+    });
+    expect(report.backendRuntimeBootstrap.deferredDependencyIds).toEqual(
+      expect.arrayContaining([
+        "production-database-driver",
+        "auth-middleware",
+        "worker-ingress",
+        "scheduler",
+        "contract-writer",
+        "object-storage-export",
+        "observability-exporter",
+        "analytics-warehouse",
+        "reward-custody",
+        "reward-distribution",
+      ]),
+    );
     expect(report.apiFoundation.servicePorts.validation.valid).toBe(true);
     expect(report.apiFoundation.validation.valid).toBe(true);
     expect(report.topology.validation.valid).toBe(true);
@@ -404,6 +427,28 @@ describe("backend service readiness report", () => {
           field: "migration",
         }),
       ]),
+    });
+    expect(report.backendRuntimeBootstrap).toMatchObject({
+      diagnosticCodes: expect.arrayContaining([
+        "BACKEND_RUNTIME_BOOTSTRAP_PRODUCTION_BLOCKED",
+        "BACKEND_RUNTIME_BOOTSTRAP_SERVER_RUNTIME_INVALID",
+        "BACKEND_RUNTIME_BOOTSTRAP_BACKEND_READINESS_INVALID",
+      ]),
+      profileId: "production-required",
+      readiness: {
+        databaseAdapterRuntime: {
+          liveConnectionAttempted: false,
+          liveQueryExecutionEnabled: false,
+          status: "blocked",
+          valid: false,
+        },
+        persistenceRuntime: {
+          liveConnectionAttempted: false,
+          liveExecutionEnabled: false,
+        },
+      },
+      status: "blocked",
+      valid: false,
     });
     expect(JSON.stringify(report)).not.toContain("auth-secret");
     expect(JSON.stringify(report)).not.toContain("postgres://db.invalid/campaign-os");

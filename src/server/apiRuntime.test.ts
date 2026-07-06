@@ -268,6 +268,29 @@ describe("Campaign OS API runtime", () => {
           valid: true,
           verificationMode: "local_only",
         }),
+        backendRuntimeBootstrap: expect.objectContaining({
+          deferredDependencyIds: expect.arrayContaining([
+            "production-database-driver",
+            "auth-middleware",
+            "worker-ingress",
+            "scheduler",
+            "contract-writer",
+            "object-storage-export",
+            "observability-exporter",
+            "analytics-warehouse",
+            "reward-custody",
+            "reward-distribution",
+          ]),
+          diagnosticCodes: [],
+          profileId: "local-review",
+          status: "ready",
+          tracePolicy: expect.objectContaining({
+            failureEnvelopeTraceId: true,
+            successEnvelopeTraceId: true,
+            traceHeaderName: "x-campaign-os-trace-id",
+          }),
+          valid: true,
+        }),
         entrypoint: expect.objectContaining({
           id: "campaign-os-backend-service",
           profileId: "local-review",
@@ -506,6 +529,29 @@ describe("Campaign OS API runtime", () => {
             valid: true,
           }),
         }),
+        backendRuntimeBootstrap: expect.objectContaining({
+          deferredDependencyIds: expect.arrayContaining([
+            "production-database-driver",
+            "auth-middleware",
+            "worker-ingress",
+            "scheduler",
+            "contract-writer",
+            "object-storage-export",
+            "observability-exporter",
+            "analytics-warehouse",
+            "reward-custody",
+            "reward-distribution",
+          ]),
+          diagnosticCodes: [],
+          profileId: "local-review",
+          status: "ready",
+          tracePolicy: expect.objectContaining({
+            failureEnvelopeTraceId: true,
+            successEnvelopeTraceId: true,
+            traceHeaderName: "x-campaign-os-trace-id",
+          }),
+          valid: true,
+        }),
         deferredProductionCapabilities: expect.arrayContaining([
           "auth_session",
           "production_database",
@@ -612,6 +658,7 @@ describe("Campaign OS API runtime", () => {
             "config",
             "attachMap",
             "authSession",
+            "backendRuntimeBootstrap",
             "databaseReadiness",
             "persistenceRuntime",
             "validation",
@@ -674,21 +721,30 @@ describe("Campaign OS API runtime", () => {
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}`,
     });
-    const walletSession = await runtimeWithoutHotPathReadiness.handle({
+    const eligibility = await runtimeWithoutHotPathReadiness.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/eligibility?address=${encodeURIComponent("2F4...9aB")}`,
+    });
+    const exportPreview = await runtimeWithoutHotPathReadiness.handle({
       method: "POST",
-      path: "/api/wallet/session",
+      path: `/api/campaigns/${campaignDetail.id}/export`,
       body: JSON.stringify({
-        adapterName: "PortkeyDiscoverWallet",
-        fixtureId: "sess-eoa-app-001",
+        contractRootMode: "none",
+        format: "json",
       }),
     });
 
     expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload>>(detail).payload.item.id).toBe(
       campaignDetail.id,
     );
-    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload>>(walletSession).payload).toMatchObject({
-      sessionId: "sess-eoa-app-001",
-      walletSource: "PORTKEY_EOA_APP",
+    expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(eligibility).payload).toMatchObject({
+      eligible: true,
+      walletAddress: "2F4...9aB",
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload>>(exportPreview).payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      contractRootMode: "none",
+      format: "json",
     });
     expect(readinessCallCount).toBe(0);
   });
@@ -722,6 +778,34 @@ describe("Campaign OS API runtime", () => {
     });
 
     expect(readinessCallCount).toBe(3);
+  });
+
+  it("propagates caller trace ids and generates success trace ids", async () => {
+    const traced = await runtime.handle({
+      method: "GET",
+      path: "/api/health",
+      headers: { "x-campaign-os-trace-id": "trace-success-caller" },
+    });
+    const generated = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}`,
+    });
+
+    expect(traced.status).toBe(200);
+    expect(traced.headers["x-campaign-os-trace-id"]).toBe("trace-success-caller");
+    expect(traced.body.traceId).toBe("trace-success-caller");
+    expect(expectSuccessData(traced)).toMatchObject({
+      backendService: expect.objectContaining({
+        backendRuntimeBootstrap: expect.objectContaining({
+          tracePolicy: expect.objectContaining({
+            traceHeaderName: "x-campaign-os-trace-id",
+          }),
+        }),
+      }),
+    });
+    expect(generated.status).toBe(200);
+    expect(generated.body.traceId).toMatch(/^campaign-os-trace-/);
+    expect(generated.headers["x-campaign-os-trace-id"]).toBe(generated.body.traceId);
   });
 
   it("does not mark unsupported backend config as production ready in health metadata", async () => {
@@ -784,6 +868,16 @@ describe("Campaign OS API runtime", () => {
           status: "blocked",
           valid: false,
           verificationMode: "production_required",
+        }),
+        backendRuntimeBootstrap: expect.objectContaining({
+          diagnosticCodes: expect.arrayContaining([
+            "BACKEND_RUNTIME_BOOTSTRAP_PRODUCTION_BLOCKED",
+            "BACKEND_RUNTIME_BOOTSTRAP_SERVER_RUNTIME_INVALID",
+            "BACKEND_RUNTIME_BOOTSTRAP_BACKEND_READINESS_INVALID",
+          ]),
+          profileId: "production-required",
+          status: "blocked",
+          valid: false,
         }),
         databaseReadiness: expect.objectContaining({
           adapterStatus: "blocked",
@@ -855,6 +949,16 @@ describe("Campaign OS API runtime", () => {
           validation: expect.objectContaining({
             valid: false,
           }),
+        }),
+        backendRuntimeBootstrap: expect.objectContaining({
+          diagnosticCodes: expect.arrayContaining([
+            "BACKEND_RUNTIME_BOOTSTRAP_PRODUCTION_BLOCKED",
+            "BACKEND_RUNTIME_BOOTSTRAP_SERVER_RUNTIME_INVALID",
+            "BACKEND_RUNTIME_BOOTSTRAP_BACKEND_READINESS_INVALID",
+          ]),
+          profileId: "production-required",
+          status: "blocked",
+          valid: false,
         }),
         databaseReadiness: expect.objectContaining({
           adapter: expect.objectContaining({

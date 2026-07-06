@@ -3,7 +3,6 @@ import {
   invalidRequest,
   malformedJson,
   methodNotAllowed,
-  routeNotFound,
   toApiRuntimeErrorBody,
 } from "./errors";
 import type {
@@ -85,6 +84,8 @@ const normalizeMethod = (method: string) => method.trim().toUpperCase();
 
 const normalizeContentType = (contentType: string | undefined) =>
   contentType?.split(";")[0]?.trim().toLowerCase();
+
+const sanitizeRequestPath = (path: string) => new URL(path || "/", "http://127.0.0.1").pathname;
 
 const createBaseHeaders = (traceId: string): Record<string, string> => ({
   "content-type": "application/json; charset=utf-8",
@@ -195,6 +196,7 @@ export const evaluateServerRequestGuard = (
   const traceId = createServerTraceId(input.headers, contract.requestGuard.traceHeaderName);
   const origin = getHeader(input.headers, "origin");
   const method = normalizeMethod(input.method);
+  const safePath = sanitizeRequestPath(input.path);
 
   if (method === "OPTIONS") {
     const requestedMethod = normalizeMethod(
@@ -237,7 +239,7 @@ export const evaluateServerRequestGuard = (
 
   if (!contract.requestGuard.allowedMethods.includes(method)) {
     return createFailureDecision({
-      error: routeNotFound(method, input.path),
+      error: methodNotAllowed(method, safePath, contract.requestGuard.allowedMethods),
       routeCount,
       runtimeVersion: contract.runtimeVersion,
       traceId,
@@ -288,4 +290,3 @@ export const evaluateServerRequestGuard = (
     traceId,
   };
 };
-

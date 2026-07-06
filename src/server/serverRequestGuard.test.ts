@@ -119,6 +119,53 @@ describe("server request guard", () => {
     }
   });
 
+  it("rejects unsupported methods with sanitized runtime envelopes", () => {
+    const unsupportedMethod = evaluateServerRequestGuard({
+      headers: {
+        authorization: "Bearer raw-secret-header",
+        "x-campaign-os-trace-id": "trace-unsupported-method",
+      },
+      method: "DELETE",
+      path: "/api/health?token=raw-secret-query",
+    }, contract, 10);
+
+    expect(unsupportedMethod).toMatchObject({
+      kind: "rejected",
+      status: 405,
+      traceId: "trace-unsupported-method",
+    });
+    expect(unsupportedMethod.headers["x-campaign-os-trace-id"]).toBe("trace-unsupported-method");
+
+    if (unsupportedMethod.kind !== "rejected") {
+      throw new Error("Expected rejected guard decision.");
+    }
+
+    expect(unsupportedMethod.body).toMatchObject({
+      ok: false,
+      runtime: expect.objectContaining({
+        name: "campaign-os-api-runtime",
+        routeCount: 10,
+      }),
+      safety: expect.objectContaining({
+        noLiveApi: true,
+        noSecretHandling: true,
+      }),
+      traceId: "trace-unsupported-method",
+      error: {
+        code: "METHOD_NOT_ALLOWED",
+        details: {
+          allowedMethods: ["GET", "POST", "OPTIONS"],
+          method: "DELETE",
+          path: "/api/health",
+        },
+      },
+    });
+
+    const serialized = JSON.stringify(unsupportedMethod.body).toLowerCase();
+    expect(serialized).not.toContain("raw-secret-header");
+    expect(serialized).not.toContain("raw-secret-query");
+  });
+
   it("accepts valid JSON POST bodies and empty POST bodies", () => {
     const validPost = evaluateServerRequestGuard({
       body: JSON.stringify({ defaultLocale: "en-US" }),
