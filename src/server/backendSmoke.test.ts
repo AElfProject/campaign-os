@@ -66,6 +66,13 @@ describe("backend scaffold HTTP smoke", () => {
         }),
         data: {
           backendService: expect.objectContaining({
+            authSession: expect.objectContaining({
+              profileId: "local-review",
+              protectedRouteCount: expect.any(Number),
+              roleCount: 5,
+              status: "local_seeded",
+              valid: true,
+            }),
             databaseReadiness: expect.objectContaining({
               adapterStatus: "contract_ready",
               migrationPlanStatus: "dry_run_ready",
@@ -89,6 +96,37 @@ describe("backend scaffold HTTP smoke", () => {
         }),
         data: {
           backendService: expect.objectContaining({
+            authSession: expect.objectContaining({
+              agentCredentialBoundary: {
+                agentSkillCanSubstituteUserWallet: false,
+                separatedFromUserWalletSession: true,
+              },
+              protectedRoutes: expect.arrayContaining([
+                expect.objectContaining({
+                  enforcementStatus: "metadata_only",
+                  routeId: "wallet.session.create",
+                }),
+                expect.objectContaining({
+                  enforcementStatus: "enforcement_deferred",
+                  requiredRoles: ["project_owner"],
+                  routeId: "campaigns.create",
+                }),
+                expect.objectContaining({
+                  enforcementStatus: "enforcement_deferred",
+                  requiredRoles: ["project_owner", "internal_operator"],
+                  routeId: "campaigns.export.preview",
+                }),
+                expect.objectContaining({
+                  enforcementStatus: "enforcement_deferred",
+                  requiredRoles: ["participant"],
+                  routeId: "tasks.verify",
+                }),
+              ]),
+              status: "local_seeded",
+              validation: expect.objectContaining({
+                valid: true,
+              }),
+            }),
             databaseReadiness: expect.objectContaining({
               adapter: expect.objectContaining({
                 id: "campaign-os-production-db-adapter",
@@ -119,6 +157,7 @@ describe("backend scaffold HTTP smoke", () => {
               "reward_distribution",
             ]),
             reportShape: expect.objectContaining({
+              sections: expect.arrayContaining(["authSession", "databaseReadiness"]),
               valid: true,
             }),
           }),
@@ -163,6 +202,11 @@ describe("backend scaffold HTTP smoke", () => {
         ok: true,
         data: {
           backendService: expect.objectContaining({
+            authSession: expect.objectContaining({
+              status: "blocked",
+              valid: false,
+              verificationMode: "production_required",
+            }),
             databaseReadiness: expect.objectContaining({
               adapterStatus: "blocked",
               migrationPlanStatus: "blocked",
@@ -179,6 +223,12 @@ describe("backend scaffold HTTP smoke", () => {
         ok: true,
         data: {
           backendService: expect.objectContaining({
+            authSession: expect.objectContaining({
+              status: "blocked",
+              validation: expect.objectContaining({
+                valid: false,
+              }),
+            }),
             databaseReadiness: expect.objectContaining({
               adapter: expect.objectContaining({
                 status: "blocked",

@@ -39,6 +39,11 @@ describe("Campaign OS API server entrypoint", () => {
         traceId: "trace-server-entrypoint",
         data: {
           backendService: expect.objectContaining({
+            authSession: expect.objectContaining({
+              profileId: "local-review",
+              status: "local_seeded",
+              valid: true,
+            }),
             entrypointId: "campaign-os-backend-service",
             profileId: "local-review",
             traceId: "trace-server-entrypoint",
