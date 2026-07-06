@@ -29,6 +29,8 @@ export interface DatabaseMigrationHandoffPrecondition {
 
 export interface DatabaseMigrationExecutorHandoffSummary {
   adapterRuntimeId: ProductionDatabaseAdapterRuntimeContract["id"];
+  approvalStatus: MigrationExecutionGate["approval"];
+  blockedMigrationIds: string[];
   diagnosticCodes: DatabaseMigrationHandoffDiagnosticCode[];
   diagnostics: DatabaseMigrationHandoffDiagnostic[];
   executorStatus: DatabaseMigrationExecutorStatus;
@@ -36,8 +38,11 @@ export interface DatabaseMigrationExecutorHandoffSummary {
   liveExecutionCount: 0;
   liveExecutionEnabled: false;
   migrationGateStatus: MigrationExecutionGate["status"];
+  pendingMigrationIds: string[];
   preconditions: DatabaseMigrationHandoffPrecondition[];
   profileId: BackendRuntimeProfileId;
+  rollbackPlanStatus: MigrationExecutionGate["rollbackPlan"]["status"];
+  schemaManifestId: MigrationExecutionGate["schemaManifestId"];
   valid: boolean;
 }
 
@@ -155,6 +160,8 @@ export const createDatabaseMigrationExecutorHandoff = ({
 
   return {
     adapterRuntimeId: runtime.id,
+    approvalStatus: migrationGate.approval,
+    blockedMigrationIds: [...migrationGate.blockedMigrationIds],
     diagnosticCodes: diagnostics.map((item) => item.code),
     diagnostics,
     executorStatus,
@@ -162,8 +169,11 @@ export const createDatabaseMigrationExecutorHandoff = ({
     liveExecutionCount: 0,
     liveExecutionEnabled: false,
     migrationGateStatus: migrationGate.status,
+    pendingMigrationIds: [...migrationGate.pendingMigrationIds],
     preconditions,
     profileId,
+    rollbackPlanStatus: migrationGate.rollbackPlan.status,
+    schemaManifestId: migrationGate.schemaManifestId,
     valid: !diagnostics.some((item) => item.severity === "error"),
   };
 };

@@ -40,14 +40,20 @@ describe("database migration executor handoff", () => {
     const handoff = createDatabaseMigrationExecutorHandoff({ migrationGate });
 
     expect(handoff).toMatchObject({
+      approvalStatus: "not_required_for_dry_run",
       executorStatus: "not_configured",
       id: "campaign-os-database-migration-executor-handoff",
       liveExecutionCount: 0,
       liveExecutionEnabled: false,
       migrationGateStatus: "ready",
       profileId: "local-review",
+      rollbackPlanStatus: "not_required_for_dry_run",
+      schemaManifestId: "campaign-os-production-db-schema-v0.2",
       valid: true,
     });
+    expect(handoff.pendingMigrationIds).toEqual(
+      createMigrationRunnerPlan({ profileId: "local-review" }).pendingMigrationIds,
+    );
     expect(handoff.diagnosticCodes).toContain("DATABASE_MIGRATION_LIVE_EXECUTION_DISABLED");
   });
 
@@ -68,11 +74,14 @@ describe("database migration executor handoff", () => {
     });
 
     expect(handoff).toMatchObject({
+      approvalStatus: "missing",
       executorStatus: "blocked",
       liveExecutionCount: 0,
       liveExecutionEnabled: false,
       migrationGateStatus: "blocked",
       profileId: "production-required",
+      rollbackPlanStatus: "missing",
+      schemaManifestId: "campaign-os-production-db-schema-v0.2",
       valid: false,
     });
     expect(handoff.preconditions).toEqual(
@@ -92,7 +101,15 @@ describe("database migration executor handoff", () => {
           source: "migration-execution-gate",
           status: "missing",
         }),
+        expect.objectContaining({
+          id: "migration-gate:rollback-plan",
+          source: "migration-execution-gate",
+          status: "missing",
+        }),
       ]),
+    );
+    expect(handoff.blockedMigrationIds).toEqual(
+      expect.arrayContaining(["connection-config", "migration-approval", "rollback-plan"]),
     );
     expect(handoff.diagnosticCodes).toEqual(
       expect.arrayContaining([

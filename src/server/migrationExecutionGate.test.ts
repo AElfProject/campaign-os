@@ -42,6 +42,11 @@ describe("migration execution gate", () => {
       liveExecutionEnabled: false,
       mode: "dry_run_only",
       profileId: "local-review",
+      rollbackPlan: {
+        required: false,
+        status: "not_required_for_dry_run",
+      },
+      schemaManifestId: "campaign-os-production-db-schema-v0.2",
       status: "ready",
     });
     expect(gate.pendingMigrationIds).toEqual(defaultSchemaMigrations.map((migration) => migration.id));
@@ -63,6 +68,11 @@ describe("migration execution gate", () => {
       liveExecutionEnabled: false,
       mode: "live_blocked",
       profileId: "production-required",
+      rollbackPlan: {
+        required: true,
+        status: "missing",
+      },
+      schemaManifestId: "campaign-os-production-db-schema-v0.2",
       status: "blocked",
     });
     expect(gate.preconditions).toEqual(
@@ -71,6 +81,24 @@ describe("migration execution gate", () => {
         expect.objectContaining({ id: "driver-package", status: "deferred" }),
         expect.objectContaining({ id: "migration-lock", status: "deferred" }),
         expect.objectContaining({ id: "backup-restore-plan", status: "deferred" }),
+        expect.objectContaining({ id: "rollback-plan", status: "missing" }),
+        expect.objectContaining({ id: "schema-manifest-compatible", status: "satisfied" }),
+      ]),
+    );
+    expect(gate.blockedMigrationIds).toEqual(
+      expect.arrayContaining([
+        "connection-config",
+        "migration-approval",
+        "rollback-plan",
+      ]),
+    );
+    expect(gate.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "MIGRATION_EXECUTION_PRECONDITION_MISSING",
+          field: "rollback-plan",
+          severity: "error",
+        }),
       ]),
     );
   });
