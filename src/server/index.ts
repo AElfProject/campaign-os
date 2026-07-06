@@ -7,3 +7,4 @@ export * from "./apiRuntime";
 export * from "./handlers";
 export * from "./persistence";
 export * from "./routes";
+export * from "./topology";
