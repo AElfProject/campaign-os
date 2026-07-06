@@ -5,6 +5,10 @@ import {
   type BackendPersistenceRuntimeSummary,
   type BackendServiceReadinessReport,
 } from "./backendService";
+import {
+  createBackendRuntimeBootstrapContract,
+  type BackendRuntimeBootstrapContract,
+} from "./backendRuntimeBootstrap";
 import type { ApiRuntimeEnvelope } from "./envelope";
 import type {
   ApiServerRuntimeContract,
@@ -50,6 +54,7 @@ export interface ServerRuntimeReadiness {
       supportMode: string;
       valid: boolean;
     };
+    backendRuntimeBootstrap: BackendRuntimeBootstrapContract;
     database: {
       adapterStatus: string;
       migrationPlanStatus: string;
@@ -115,6 +120,12 @@ export const createServerRuntimeReadiness = ({
   shutdownState = defaultShutdownState(),
 }: CreateServerRuntimeReadinessOptions): ServerRuntimeReadiness => {
   const uptimeMs = Math.max(0, now.getTime() - Date.parse(contract.startedAt));
+  const backendRuntimeBootstrap = createBackendRuntimeBootstrapContract({
+    backendReadiness,
+    contract,
+    now,
+    shutdownState,
+  });
 
   return {
     corsPolicy: {
@@ -145,6 +156,7 @@ export const createServerRuntimeReadiness = ({
         supportMode: backendReadiness.entrypoint.supportMode,
         valid: backendReadiness.validation.valid,
       },
+      backendRuntimeBootstrap,
       database: {
         adapterStatus: backendReadiness.databaseReadiness.adapter.status,
         migrationPlanStatus: backendReadiness.databaseReadiness.migrationPlan.status,

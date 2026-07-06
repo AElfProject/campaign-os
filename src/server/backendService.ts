@@ -3,6 +3,10 @@ import {
   type BackendConfigContract,
   type BackendConfigContractOptions,
 } from "./config";
+import {
+  createBackendRuntimeBootstrapContract,
+  type BackendRuntimeBootstrapContract,
+} from "./backendRuntimeBootstrap";
 import { createApiFoundationReport, type ApiFoundationReport } from "./apiFoundation";
 import { createApiServicePortReport, type ApiServicePortReport } from "./servicePorts";
 import { apiRuntimeRoutes } from "./routes";
@@ -54,6 +58,10 @@ import {
   createAuthSessionReadinessReport,
   type AuthSessionReadinessReport,
 } from "./authSession";
+import {
+  resolveApiServerRuntimeContract,
+  type ResolveApiServerRuntimeContractOptions,
+} from "./serverRuntime";
 
 export type BackendAttachPointArea =
   | "production-persistence"
@@ -115,6 +123,7 @@ export interface BackendServiceReadinessReport {
   };
   attachMap: BackendAttachPoint[];
   authSession: AuthSessionReadinessReport;
+  backendRuntimeBootstrap: BackendRuntimeBootstrapContract;
   config: BackendConfigContract;
   databaseAdapterRuntime: BackendDatabaseAdapterRuntimeReadinessReport;
   databaseReadiness: BackendDatabaseReadinessReport;
@@ -235,6 +244,7 @@ export interface BackendDatabaseReadinessReport {
 export interface CreateBackendServiceReadinessReportOptions {
   configOptions?: BackendConfigContractOptions;
   generatedAt?: string;
+  serverRuntimeOptions?: Partial<ResolveApiServerRuntimeContractOptions>;
 }
 
 const requiredAttachPointAreas: BackendAttachPointArea[] = [
@@ -572,6 +582,7 @@ export const createBackendDatabaseAdapterRuntimeSummary = (
 export const createBackendServiceReadinessReport = ({
   configOptions,
   generatedAt = new Date(0).toISOString(),
+  serverRuntimeOptions,
 }: CreateBackendServiceReadinessReportOptions = {}): BackendServiceReadinessReport => {
   const config = resolveBackendConfigContract(configOptions);
   const env = configOptions?.env ?? (typeof process === "undefined" ? {} : process.env);
@@ -646,8 +657,7 @@ export const createBackendServiceReadinessReport = ({
     servicePorts,
     topology,
   });
-
-  return {
+  const readinessWithoutBootstrap = {
     apiFoundation: {
       coverage: apiFoundation.coverage,
       servicePorts,
@@ -672,5 +682,21 @@ export const createBackendServiceReadinessReport = ({
       issues: validationIssues,
       valid: validationIssues.length === 0,
     },
+  };
+  const backendRuntimeBootstrap = createBackendRuntimeBootstrapContract({
+    backendReadiness: readinessWithoutBootstrap as BackendServiceReadinessReport,
+    contract: resolveApiServerRuntimeContract({
+      env,
+      profileId: config.profileId,
+      startedAt: generatedAt,
+      version: config.version,
+      ...serverRuntimeOptions,
+    }),
+    now: new Date(generatedAt),
+  });
+
+  return {
+    ...readinessWithoutBootstrap,
+    backendRuntimeBootstrap,
   };
 };

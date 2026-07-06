@@ -53,6 +53,27 @@ describe("server runtime readiness metadata", () => {
           valid: true,
           verificationMode: "local_only",
         },
+        backendRuntimeBootstrap: {
+          deferredDependencyIds: expect.arrayContaining([
+            "production-database-driver",
+            "auth-middleware",
+            "worker-ingress",
+            "scheduler",
+            "contract-writer",
+            "object-storage-export",
+            "observability-exporter",
+            "analytics-warehouse",
+            "reward-custody",
+            "reward-distribution",
+          ]),
+          diagnosticCodes: [],
+          profileId: "local-review",
+          status: "ready",
+          tracePolicy: {
+            traceHeaderName: "x-campaign-os-trace-id",
+          },
+          valid: true,
+        },
         backend: {
           entrypointId: "campaign-os-backend-service",
           valid: true,
@@ -190,6 +211,16 @@ describe("server runtime readiness metadata", () => {
           valid: false,
           verificationMode: "production_required",
         },
+        backendRuntimeBootstrap: {
+          diagnosticCodes: expect.arrayContaining([
+            "BACKEND_RUNTIME_BOOTSTRAP_PRODUCTION_BLOCKED",
+            "BACKEND_RUNTIME_BOOTSTRAP_SERVER_RUNTIME_INVALID",
+            "BACKEND_RUNTIME_BOOTSTRAP_BACKEND_READINESS_INVALID",
+          ]),
+          profileId: "production-required",
+          status: "blocked",
+          valid: false,
+        },
         backend: {
           valid: false,
         },
@@ -295,6 +326,20 @@ describe("server runtime readiness metadata", () => {
     });
 
     expect(stopping).toMatchObject({
+      readiness: {
+        backendRuntimeBootstrap: {
+          diagnosticCodes: expect.arrayContaining([
+            "BACKEND_RUNTIME_BOOTSTRAP_SHUTDOWN_IN_PROGRESS",
+          ]),
+          shutdown: {
+            activeRequestCount: 2,
+            shutdownTimeoutMs: 1234,
+            state: "stopping",
+          },
+          status: "deferred",
+          valid: true,
+        },
+      },
       shutdownState: {
         activeRequestCount: 2,
         shutdownTimeoutMs: 1234,
@@ -305,6 +350,19 @@ describe("server runtime readiness metadata", () => {
     expect(stopped).toMatchObject({
       liveness: {
         live: false,
+      },
+      readiness: {
+        backendRuntimeBootstrap: {
+          diagnosticCodes: expect.arrayContaining([
+            "BACKEND_RUNTIME_BOOTSTRAP_STOPPED",
+          ]),
+          shutdown: {
+            activeRequestCount: 0,
+            state: "stopped",
+          },
+          status: "blocked",
+          valid: false,
+        },
       },
       shutdownState: {
         state: "stopped",
