@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  observabilityExporterOperationCapabilities,
+  observabilityExporterProductionPreconditions,
+} from "./observabilityExporter";
+import {
   SUPPORTED_SCHEDULER_RUNTIME_PROFILES,
   createSchedulerRuntimeFoundation,
   dryRunSchedulerTrigger,
@@ -75,8 +79,29 @@ describe("scheduler runtime foundation", () => {
       liveCronExecutionEnabled: false,
       liveQueuePublishingEnabled: false,
       liveSchedulerExecutionEnabled: false,
+      observabilityExporterBlockerCount: 0,
+      observabilityExporterDiagnosticCodes: [],
+      observabilityExporterId: "local-dry-run",
+      observabilityExporterLiveTelemetryExportEnabled: false,
+      observabilityExporterMetricNamespace: "campaign-os-runtime",
+      observabilityExporterMode: "dry_run",
+      observabilityExporterSinkId: "local-metrics-sink",
+      observabilityExporterStatus: "local_ready",
       productionReady: false,
       registrationCount: 9,
+    });
+    expect(foundation.observabilityExporter).toMatchObject({
+      disabledLiveOperationCount: observabilityExporterOperationCapabilities.length,
+      exporterId: "local-dry-run",
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      metricNamespace: "campaign-os-runtime",
+      operationCount: observabilityExporterOperationCapabilities.length,
+      productionReady: false,
+      sinkId: "local-metrics-sink",
+      status: "local_ready",
+      valid: true,
     });
   });
 
@@ -120,6 +145,55 @@ describe("scheduler runtime foundation", () => {
       "SCHEDULER_OPERATOR_AUTHORIZATION_MISSING",
       "SCHEDULER_DEAD_LETTER_MISSING",
     ]);
+  });
+
+  it("surfaces observability exporter readiness without enabling scheduler execution", () => {
+    const foundation = createSchedulerRuntimeFoundation({ profileId: "staging-scaffold" });
+    const result = dryRunSchedulerTrigger({
+      idempotencyKey: "idempotency:task-verification-on-request:campaign-1",
+      jobId: "task-verification-worker",
+      queueHandoffReference: "queue-handoff:task-verification-worker-queue-plan",
+      scheduleId: "task-verification-on-request",
+      scheduledFor: "2026-07-07T13:30:00Z",
+      traceId: "trace-scheduler-observability-readiness",
+      triggerSource: "api_request",
+      windowEnd: "2026-07-07T13:35:00Z",
+      windowStart: "2026-07-07T13:25:00Z",
+    });
+
+    expect(foundation.observabilityExporter).toMatchObject({
+      blockerCount: 0,
+      diagnosticCodes: [],
+      exporterId: "local-dry-run",
+      liveAlertRoutingEnabled: false,
+      liveLogExportEnabled: false,
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      mode: "metadata_only",
+      productionReady: false,
+      sinkId: "local-metrics-sink",
+      status: "scaffolded",
+      valid: true,
+    });
+    expect(foundation.observabilityExporter.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(
+      true,
+    );
+    expect(foundation.observabilityExporter.requiredConfigKeys).toEqual(
+      expect.arrayContaining(observabilityExporterProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
+    );
+    expect(foundation.readiness.observabilityExporterRequiredConfigKeys).toEqual(
+      foundation.observabilityExporter.requiredConfigKeys,
+    );
+    expect(foundation.readiness.observabilityExporterLiveTelemetryExportEnabled).toBe(false);
+    expect(result).toMatchObject({
+      accepted: true,
+      liveCronExecutionEnabled: false,
+      liveExecutionAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+      status: "accepted_dry_run",
+    });
   });
 
   it("covers every Campaign OS backend schedule family", () => {

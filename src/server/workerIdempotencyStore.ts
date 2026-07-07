@@ -1,4 +1,11 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import {
+  createObservabilityExporterFoundation,
+  type ObservabilityExporterDiagnosticCode,
+  type ObservabilityExporterFoundationStatus,
+  type ObservabilityExporterMode,
+  type ObservabilityExporterOperationCapability,
+} from "./observabilityExporter";
 import type { QueueDegradedOutcome } from "./queueRuntime";
 import { workerIdempotencyPolicies, workerJobCatalog, workerSchedulerPolicies } from "./workerSchedulerRuntime";
 
@@ -108,6 +115,28 @@ export interface WorkerIdempotencyOperationCapability {
   supported: boolean;
 }
 
+export interface WorkerIdempotencyObservabilityExporterSummary {
+  adapterId: string;
+  blockerCount: number;
+  diagnosticCodes: ObservabilityExporterDiagnosticCode[];
+  disabledLiveOperationCount: number;
+  exporterId: string;
+  liveAlertRoutingEnabled: false;
+  liveLogExportEnabled: false;
+  liveMetricsExportEnabled: false;
+  liveTelemetryExportEnabled: false;
+  liveTraceExportEnabled: false;
+  metricNamespace: string;
+  mode: ObservabilityExporterMode;
+  operationCapabilities: ObservabilityExporterOperationCapability[];
+  operationCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  sinkId: string;
+  status: ObservabilityExporterFoundationStatus;
+  valid: boolean;
+}
+
 export interface WorkerIdempotencyReadinessProjection {
   adapterId: string;
   blockerCount: number;
@@ -119,6 +148,14 @@ export interface WorkerIdempotencyReadinessProjection {
   liveWorkerExecutionEnabled: false;
   mode: WorkerIdempotencyStoreMode;
   namespace: string;
+  observabilityExporterBlockerCount: number;
+  observabilityExporterDiagnosticCodes: ObservabilityExporterDiagnosticCode[];
+  observabilityExporterId: string;
+  observabilityExporterLiveTelemetryExportEnabled: false;
+  observabilityExporterMode: ObservabilityExporterMode;
+  observabilityExporterRequiredConfigKeys: string[];
+  observabilityExporterSinkId: string;
+  observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   operationCount: number;
   productionReady: false;
   requiredConfigKeys: string[];
@@ -136,6 +173,7 @@ export interface WorkerIdempotencyStoreFoundationSummary {
   mode: WorkerIdempotencyStoreMode;
   namespace: string;
   noLiveFlags: WorkerIdempotencyStoreNoLiveFlags;
+  observabilityExporter: WorkerIdempotencyObservabilityExporterSummary;
   operationCapabilities: WorkerIdempotencyOperationCapability[];
   preconditions: WorkerIdempotencyProductionPrecondition[];
   productionReady: false;
@@ -355,6 +393,12 @@ export const createWorkerIdempotencyStoreFoundation = (
   const storeResolution = resolveStoreId(options.storeId, env, profileResolution.profileId);
   const namespaceResolution = resolveNamespace(env.CAMPAIGN_OS_IDEMPOTENCY_NAMESPACE);
   const keySchemaResolution = resolveKeySchemaVersion(env.CAMPAIGN_OS_IDEMPOTENCY_KEY_SCHEMA_VERSION);
+  const observabilityExporter = createObservabilityExporterSummary(
+    createObservabilityExporterFoundation({
+      env,
+      profileId: profileResolution.profileId,
+    }),
+  );
   const productionDiagnostics =
     profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
   const diagnostics = [
@@ -375,6 +419,7 @@ export const createWorkerIdempotencyStoreFoundation = (
     keySchemaVersion: keySchemaResolution.keySchemaVersion,
     mode,
     namespace: namespaceResolution.namespace,
+    observabilityExporter,
     status,
     storeId,
   });
@@ -389,6 +434,7 @@ export const createWorkerIdempotencyStoreFoundation = (
     mode,
     namespace: namespaceResolution.namespace,
     noLiveFlags: workerIdempotencyStoreNoLiveFlags,
+    observabilityExporter,
     operationCapabilities: workerIdempotencyOperationCapabilities.map((item) => ({ ...item })),
     preconditions: workerIdempotencyStoreProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
@@ -617,6 +663,7 @@ const createReadinessProjection = ({
   keySchemaVersion,
   mode,
   namespace,
+  observabilityExporter,
   status,
   storeId,
 }: {
@@ -626,6 +673,7 @@ const createReadinessProjection = ({
   keySchemaVersion: string;
   mode: WorkerIdempotencyStoreMode;
   namespace: string;
+  observabilityExporter: WorkerIdempotencyObservabilityExporterSummary;
   status: WorkerIdempotencyStoreFoundationStatus;
   storeId: string;
 }): WorkerIdempotencyReadinessProjection => ({
@@ -639,6 +687,14 @@ const createReadinessProjection = ({
   liveWorkerExecutionEnabled: false,
   mode,
   namespace,
+  observabilityExporterBlockerCount: observabilityExporter.blockerCount,
+  observabilityExporterDiagnosticCodes: observabilityExporter.diagnosticCodes,
+  observabilityExporterId: observabilityExporter.exporterId,
+  observabilityExporterLiveTelemetryExportEnabled: false,
+  observabilityExporterMode: observabilityExporter.mode,
+  observabilityExporterRequiredConfigKeys: observabilityExporter.requiredConfigKeys,
+  observabilityExporterSinkId: observabilityExporter.sinkId,
+  observabilityExporterStatus: observabilityExporter.status,
   operationCount: workerIdempotencyOperationCapabilities.length,
   productionReady: false,
   requiredConfigKeys: [
@@ -646,6 +702,30 @@ const createReadinessProjection = ({
   ],
   status,
   storeId,
+});
+
+const createObservabilityExporterSummary = (
+  observabilityExporter: ReturnType<typeof createObservabilityExporterFoundation>,
+): WorkerIdempotencyObservabilityExporterSummary => ({
+  adapterId: observabilityExporter.adapterId,
+  blockerCount: observabilityExporter.blockerCount,
+  diagnosticCodes: observabilityExporter.diagnosticCodes,
+  disabledLiveOperationCount: observabilityExporter.readiness.disabledLiveOperationCount,
+  exporterId: observabilityExporter.exporterId,
+  liveAlertRoutingEnabled: false,
+  liveLogExportEnabled: false,
+  liveMetricsExportEnabled: false,
+  liveTelemetryExportEnabled: false,
+  liveTraceExportEnabled: false,
+  metricNamespace: observabilityExporter.metricNamespace,
+  mode: observabilityExporter.mode,
+  operationCapabilities: observabilityExporter.operationCapabilities.map((item) => ({ ...item })),
+  operationCount: observabilityExporter.readiness.operationCount,
+  productionReady: false,
+  requiredConfigKeys: observabilityExporter.readiness.requiredConfigKeys,
+  sinkId: observabilityExporter.sinkId,
+  status: observabilityExporter.status,
+  valid: observabilityExporter.valid,
 });
 
 const validateDryRunRequest = (

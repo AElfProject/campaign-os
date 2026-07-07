@@ -1,5 +1,12 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import {
+  createObservabilityExporterFoundation,
+  type ObservabilityExporterDiagnosticCode,
+  type ObservabilityExporterFoundationStatus,
+  type ObservabilityExporterMode,
+  type ObservabilityExporterOperationCapability,
+} from "./observabilityExporter";
+import {
   queueRuntimePlans,
   type QueueDegradedOutcome,
   type QueuePlan,
@@ -84,6 +91,28 @@ export interface SchedulerRuntimeDiagnostic {
   severity: SchedulerRuntimeDiagnosticSeverity;
 }
 
+export interface SchedulerObservabilityExporterSummary {
+  adapterId: string;
+  blockerCount: number;
+  diagnosticCodes: ObservabilityExporterDiagnosticCode[];
+  disabledLiveOperationCount: number;
+  exporterId: string;
+  liveAlertRoutingEnabled: false;
+  liveLogExportEnabled: false;
+  liveMetricsExportEnabled: false;
+  liveTelemetryExportEnabled: false;
+  liveTraceExportEnabled: false;
+  metricNamespace: string;
+  mode: ObservabilityExporterMode;
+  operationCapabilities: ObservabilityExporterOperationCapability[];
+  operationCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  sinkId: string;
+  status: ObservabilityExporterFoundationStatus;
+  valid: boolean;
+}
+
 export interface SchedulerQueueHandoffSummary {
   degradedOutcome: QueueDegradedOutcome;
   liveQueuePublishingEnabled: false;
@@ -164,6 +193,15 @@ export interface SchedulerRuntimeReadinessProjection {
   liveCronExecutionEnabled: false;
   liveQueuePublishingEnabled: false;
   liveSchedulerExecutionEnabled: false;
+  observabilityExporterBlockerCount: number;
+  observabilityExporterDiagnosticCodes: ObservabilityExporterDiagnosticCode[];
+  observabilityExporterId: string;
+  observabilityExporterLiveTelemetryExportEnabled: false;
+  observabilityExporterMetricNamespace: string;
+  observabilityExporterMode: ObservabilityExporterMode;
+  observabilityExporterRequiredConfigKeys: string[];
+  observabilityExporterSinkId: string;
+  observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   productionReady: false;
   registrationCount: number;
   requiredConfigKeys: string[];
@@ -177,6 +215,7 @@ export interface SchedulerRuntimeFoundationSummary {
   diagnostics: SchedulerRuntimeDiagnostic[];
   id: "campaign-os-scheduler-runtime-foundation";
   noLiveFlags: SchedulerRuntimeNoLiveFlags;
+  observabilityExporter: SchedulerObservabilityExporterSummary;
   preconditions: SchedulerRuntimeProductionPrecondition[];
   productionReady: false;
   profileId: SchedulerRuntimeProfileId;
@@ -374,9 +413,15 @@ export const createSchedulerRuntimeFoundation = (
     ...registryDiagnostics,
     ...productionDiagnostics,
   ];
+  const observabilityExporter = createObservabilityExporterSummary(
+    createObservabilityExporterFoundation({
+      env,
+      profileId: profileResolution.profileId,
+    }),
+  );
   const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
   const status = resolveStatus(profileResolution.profileId, blockerCount);
-  const readiness = createReadinessProjection(diagnostics, blockerCount);
+  const readiness = createReadinessProjection(diagnostics, blockerCount, observabilityExporter);
 
   return {
     blockerCount,
@@ -384,6 +429,7 @@ export const createSchedulerRuntimeFoundation = (
     diagnostics,
     id: SCHEDULER_RUNTIME_ID,
     noLiveFlags: schedulerRuntimeNoLiveFlags,
+    observabilityExporter,
     preconditions: schedulerRuntimeProductionPreconditions.map((item) => ({
       ...item,
       requiredConfigKeys: [...item.requiredConfigKeys],
@@ -693,6 +739,7 @@ const validateTriggerRequest = (
 const createReadinessProjection = (
   diagnostics: readonly SchedulerRuntimeDiagnostic[],
   blockerCount: number,
+  observabilityExporter: SchedulerObservabilityExporterSummary,
 ): SchedulerRuntimeReadinessProjection => ({
   blockerCount,
   diagnosticCodes: diagnostics.map((item) => item.code),
@@ -700,6 +747,15 @@ const createReadinessProjection = (
   liveCronExecutionEnabled: false,
   liveQueuePublishingEnabled: false,
   liveSchedulerExecutionEnabled: false,
+  observabilityExporterBlockerCount: observabilityExporter.blockerCount,
+  observabilityExporterDiagnosticCodes: observabilityExporter.diagnosticCodes,
+  observabilityExporterId: observabilityExporter.exporterId,
+  observabilityExporterLiveTelemetryExportEnabled: false,
+  observabilityExporterMetricNamespace: observabilityExporter.metricNamespace,
+  observabilityExporterMode: observabilityExporter.mode,
+  observabilityExporterRequiredConfigKeys: observabilityExporter.requiredConfigKeys,
+  observabilityExporterSinkId: observabilityExporter.sinkId,
+  observabilityExporterStatus: observabilityExporter.status,
   productionReady: false,
   registrationCount: schedulerRuntimeRegistrations.length,
   requiredConfigKeys: [
@@ -707,6 +763,30 @@ const createReadinessProjection = (
   ],
   scheduleIds: schedulerRuntimeRegistrations.map((item) => item.scheduleId),
   triggerSourceCount: new Set(schedulerRuntimeRegistrations.map((item) => item.triggerSource)).size,
+});
+
+const createObservabilityExporterSummary = (
+  observabilityExporter: ReturnType<typeof createObservabilityExporterFoundation>,
+): SchedulerObservabilityExporterSummary => ({
+  adapterId: observabilityExporter.adapterId,
+  blockerCount: observabilityExporter.blockerCount,
+  diagnosticCodes: observabilityExporter.diagnosticCodes,
+  disabledLiveOperationCount: observabilityExporter.readiness.disabledLiveOperationCount,
+  exporterId: observabilityExporter.exporterId,
+  liveAlertRoutingEnabled: false,
+  liveLogExportEnabled: false,
+  liveMetricsExportEnabled: false,
+  liveTelemetryExportEnabled: false,
+  liveTraceExportEnabled: false,
+  metricNamespace: observabilityExporter.metricNamespace,
+  mode: observabilityExporter.mode,
+  operationCapabilities: observabilityExporter.operationCapabilities.map((item) => ({ ...item })),
+  operationCount: observabilityExporter.readiness.operationCount,
+  productionReady: false,
+  requiredConfigKeys: observabilityExporter.readiness.requiredConfigKeys,
+  sinkId: observabilityExporter.sinkId,
+  status: observabilityExporter.status,
+  valid: observabilityExporter.valid,
 });
 
 const resolveStatus = (
