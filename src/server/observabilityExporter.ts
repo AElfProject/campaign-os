@@ -116,6 +116,26 @@ export interface ObservabilityExporterOperationCapability {
   supported: boolean;
 }
 
+export type QueueProviderDriverMetricsMetadataStatus =
+  | "activation_gate_disabled"
+  | "configured_metadata_only"
+  | "missing_required_config";
+
+export interface QueueProviderDriverMetricsMetadata {
+  activationGateSatisfied: boolean;
+  configuredConfigKeys: string[];
+  handoffMode: "metadata_only";
+  liveAlertRoutingEnabled: false;
+  liveLogExportEnabled: false;
+  liveMetricsExportEnabled: false;
+  liveTelemetryExportEnabled: false;
+  liveTraceExportEnabled: false;
+  requiredConfigKeys: string[];
+  source: "queue-provider-driver-readiness";
+  status: QueueProviderDriverMetricsMetadataStatus;
+  vendorSdkCallsEnabled: false;
+}
+
 export interface ObservabilityExporterReadinessProjection {
   adapterId: string;
   blockerCount: number;
@@ -131,6 +151,7 @@ export interface ObservabilityExporterReadinessProjection {
   mode: ObservabilityExporterMode;
   operationCount: number;
   productionReady: false;
+  queueProviderDriverMetricsMetadata: QueueProviderDriverMetricsMetadata;
   requiredConfigKeys: string[];
   sinkId: string;
   status: ObservabilityExporterFoundationStatus;
@@ -201,6 +222,12 @@ const FOUNDATION_ID = "campaign-os-observability-exporter-foundation" as const;
 const REDACTED_VALUE = "[redacted]";
 const RAW_OBSERVABILITY_PAYLOAD_VALUE = "[redacted-observability-payload]";
 const DEFAULT_METRIC_NAMESPACE = "campaign-os-runtime";
+const QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+  "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
+] as const;
 
 export const SUPPORTED_OBSERVABILITY_EXPORTER_PROFILES: ObservabilityExporterProfileId[] = [
   "local-review",
@@ -408,6 +435,7 @@ export const createObservabilityExporterFoundation = (
     adapterId,
     blockerCount,
     diagnostics,
+    env,
     exporterId: exporterResolution.exporterId,
     metricNamespace: namespaceResolution.metricNamespace,
     mode,
@@ -564,6 +592,12 @@ const hasConfiguredValue = (env: Record<string, unknown>, keys: readonly string[
 
     return typeof value === "string" ? value.trim().length > 0 : value !== undefined && value !== null;
   });
+
+const isQueueProviderDriverActivationGateSatisfied = (env: Record<string, unknown>): boolean => {
+  const value = env.CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT;
+
+  return typeof value === "string" && /^(enabled|explicitly-enabled|true)$/i.test(value.trim());
+};
 
 const createProductionDiagnostics = (
   env: Record<string, unknown>,
@@ -729,6 +763,7 @@ const createReadinessProjection = ({
   adapterId,
   blockerCount,
   diagnostics,
+  env,
   exporterId,
   metricNamespace,
   mode,
@@ -738,6 +773,7 @@ const createReadinessProjection = ({
   adapterId: string;
   blockerCount: number;
   diagnostics: readonly ObservabilityExporterDiagnostic[];
+  env: Record<string, unknown>;
   exporterId: string;
   metricNamespace: string;
   mode: ObservabilityExporterMode;
@@ -759,12 +795,42 @@ const createReadinessProjection = ({
   mode,
   operationCount: observabilityExporterOperationCapabilities.length,
   productionReady: false,
+  queueProviderDriverMetricsMetadata: createQueueProviderDriverMetricsMetadata(env),
   requiredConfigKeys: [
     ...new Set(observabilityExporterProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
   ],
   sinkId,
   status,
 });
+
+const createQueueProviderDriverMetricsMetadata = (
+  env: Record<string, unknown>,
+): QueueProviderDriverMetricsMetadata => {
+  const configuredConfigKeys = QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.filter((key) =>
+    hasConfiguredValue(env, [key]),
+  );
+  const activationGateSatisfied = isQueueProviderDriverActivationGateSatisfied(env);
+  const hasRequiredConfig = configuredConfigKeys.length === QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.length;
+
+  return {
+    activationGateSatisfied,
+    configuredConfigKeys: [...configuredConfigKeys],
+    handoffMode: "metadata_only",
+    liveAlertRoutingEnabled: false,
+    liveLogExportEnabled: false,
+    liveMetricsExportEnabled: false,
+    liveTelemetryExportEnabled: false,
+    liveTraceExportEnabled: false,
+    requiredConfigKeys: [...QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS],
+    source: "queue-provider-driver-readiness",
+    status: !hasRequiredConfig
+      ? "missing_required_config"
+      : activationGateSatisfied
+        ? "configured_metadata_only"
+        : "activation_gate_disabled",
+    vendorSdkCallsEnabled: false,
+  };
+};
 
 const validateDryRunRequest = (
   request: ObservabilityDryRunRequest,

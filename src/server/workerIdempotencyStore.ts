@@ -70,6 +70,22 @@ export type IdempotencyDegradedOutcome =
   | "return_existing"
   | "drop_duplicate"
   | "recover_stale";
+export type QueueProviderDriverReadinessHandoffStatus =
+  | "activation_gate_disabled"
+  | "configured_metadata_only"
+  | "missing_required_config";
+
+export interface WorkerIdempotencyQueueProviderDriverReadinessHandoff {
+  activationGateSatisfied: boolean;
+  configuredConfigKeys: string[];
+  handoffMode: "metadata_only";
+  liveIdempotencyExecutionEnabled: false;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  requiredConfigKeys: string[];
+  source: "queue-provider-driver-readiness";
+  status: QueueProviderDriverReadinessHandoffStatus;
+}
 
 export interface WorkerIdempotencyStoreNoLiveFlags {
   liveAiCallsEnabled: false;
@@ -158,6 +174,7 @@ export interface WorkerIdempotencyReadinessProjection {
   observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   operationCount: number;
   productionReady: false;
+  queueProviderDriverHandoff: WorkerIdempotencyQueueProviderDriverReadinessHandoff;
   requiredConfigKeys: string[];
   status: WorkerIdempotencyStoreFoundationStatus;
   storeId: string;
@@ -229,6 +246,12 @@ const FOUNDATION_ID = "campaign-os-worker-idempotency-store-foundation" as const
 const DEFAULT_NAMESPACE = "campaign-os-workers";
 const DEFAULT_KEY_SCHEMA_VERSION = "v1";
 const MAX_DRY_RUN_ATTEMPT = 10;
+const QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+  "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
+] as const;
 
 export const SUPPORTED_WORKER_IDEMPOTENCY_STORE_PROFILES: WorkerIdempotencyStoreProfileId[] = [
   "local-review",
@@ -416,6 +439,7 @@ export const createWorkerIdempotencyStoreFoundation = (
     adapterId,
     blockerCount,
     diagnostics,
+    env,
     keySchemaVersion: keySchemaResolution.keySchemaVersion,
     mode,
     namespace: namespaceResolution.namespace,
@@ -660,6 +684,7 @@ const createReadinessProjection = ({
   adapterId,
   blockerCount,
   diagnostics,
+  env,
   keySchemaVersion,
   mode,
   namespace,
@@ -670,6 +695,7 @@ const createReadinessProjection = ({
   adapterId: string;
   blockerCount: number;
   diagnostics: readonly WorkerIdempotencyDiagnostic[];
+  env: Record<string, unknown>;
   keySchemaVersion: string;
   mode: WorkerIdempotencyStoreMode;
   namespace: string;
@@ -697,12 +723,39 @@ const createReadinessProjection = ({
   observabilityExporterStatus: observabilityExporter.status,
   operationCount: workerIdempotencyOperationCapabilities.length,
   productionReady: false,
+  queueProviderDriverHandoff: createQueueProviderDriverReadinessHandoff(env),
   requiredConfigKeys: [
     ...new Set(workerIdempotencyStoreProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
   ],
   status,
   storeId,
 });
+
+const createQueueProviderDriverReadinessHandoff = (
+  env: Record<string, unknown>,
+): WorkerIdempotencyQueueProviderDriverReadinessHandoff => {
+  const configuredConfigKeys = QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.filter((key) =>
+    hasConfiguredValue(env, [key]),
+  );
+  const activationGateSatisfied = isQueueProviderDriverActivationGateSatisfied(env);
+  const hasRequiredConfig = configuredConfigKeys.length === QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.length;
+
+  return {
+    activationGateSatisfied,
+    configuredConfigKeys: [...configuredConfigKeys],
+    handoffMode: "metadata_only",
+    liveIdempotencyExecutionEnabled: false,
+    liveQueuePublishingEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    requiredConfigKeys: [...QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS],
+    source: "queue-provider-driver-readiness",
+    status: !hasRequiredConfig
+      ? "missing_required_config"
+      : activationGateSatisfied
+        ? "configured_metadata_only"
+        : "activation_gate_disabled",
+  };
+};
 
 const createObservabilityExporterSummary = (
   observabilityExporter: ReturnType<typeof createObservabilityExporterFoundation>,
@@ -904,6 +957,12 @@ const sanitizeIdempotencyString = (value: string): string => {
   const redacted = redactWorkerIdempotencyStoreValue(value);
 
   return typeof redacted === "string" ? redacted : REDACTED_VALUE;
+};
+
+const isQueueProviderDriverActivationGateSatisfied = (env: Record<string, unknown>): boolean => {
+  const value = env.CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT;
+
+  return typeof value === "string" && /^(enabled|explicitly-enabled|true)$/i.test(value.trim());
 };
 
 const isSupportedStoreId = (value: string): boolean =>

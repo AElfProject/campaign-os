@@ -17,6 +17,20 @@ import {
   workerLeaseStoreProductionPreconditions,
 } from "./workerLeaseStore";
 
+const queueProviderDriverConfigKeys = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+  "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
+];
+
+const queueProviderDriverReadyEnv = {
+  CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "Bearer queue-secret-token",
+  CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
+  CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
+} satisfies Record<string, unknown>;
+
 describe("worker lease store foundation", () => {
   it("declares a stable foundation id and supported profiles", () => {
     const foundation = createWorkerLeaseStoreFoundation();
@@ -130,6 +144,47 @@ describe("worker lease store foundation", () => {
     );
     expect(foundation.readiness.idempotencyStoreLiveIdempotencyExecutionEnabled).toBe(false);
     expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
+  });
+
+  it("treats queue provider driver readiness as lease handoff metadata only", () => {
+    const foundation = createWorkerLeaseStoreFoundation({
+      env: queueProviderDriverReadyEnv,
+      profileId: "local-review",
+    });
+    const evaluation = evaluateWorkerLeaseDryRun({
+      fencingTokenReference: "fence-ref:task-verification-worker",
+      heartbeatIntervalSeconds: 30,
+      jobId: "task-verification-worker",
+      leaseKeyReference: "lease-key-ref:task-verification-worker",
+      operation: "claim",
+      traceId: "trace-worker-lease-driver-metadata",
+      ttlSeconds: 120,
+      workerReference: "worker-ref:local-review",
+    });
+    const serialized = JSON.stringify(foundation);
+
+    expect(foundation.readiness.queueProviderDriverHandoff).toEqual({
+      activationGateSatisfied: true,
+      configuredConfigKeys: queueProviderDriverConfigKeys,
+      handoffMode: "metadata_only",
+      liveLeaseClaimingEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      requiredConfigKeys: queueProviderDriverConfigKeys,
+      source: "queue-provider-driver-readiness",
+      status: "configured_metadata_only",
+    });
+    expect(foundation.noLiveFlags).toEqual(workerLeaseStoreNoLiveFlags);
+    expect(foundation.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(true);
+    expect(evaluation).toMatchObject({
+      liveLeaseOperationAttempted: false,
+      liveWorkerExecutionEnabled: false,
+      status: "accepted_dry_run",
+    });
+    expect(serialized).not.toContain("queue-user");
+    expect(serialized).not.toContain("queue-pass");
+    expect(serialized).not.toContain("queue-secret");
+    expect(serialized).not.toContain("queue-secret-token");
   });
 
   it("keeps every lease operation metadata-only or disabled for staging", () => {

@@ -9,6 +9,20 @@ import {
   redactObservabilityExporterValue,
 } from "./observabilityExporter";
 
+const queueProviderDriverConfigKeys = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+  "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
+];
+
+const queueProviderDriverReadyEnv = {
+  CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "Bearer queue-secret-token",
+  CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
+  CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
+} satisfies Record<string, unknown>;
+
 describe("observability exporter foundation", () => {
   it("declares a stable foundation id and supported profiles", () => {
     const foundation = createObservabilityExporterFoundation();
@@ -106,6 +120,55 @@ describe("observability exporter foundation", () => {
       liveTraceExportEnabled: false,
       liveWorkerExecutionEnabled: false,
     });
+  });
+
+  it("treats queue provider driver metrics readiness as observability metadata only", () => {
+    const foundation = createObservabilityExporterFoundation({
+      env: queueProviderDriverReadyEnv,
+      profileId: "local-review",
+    });
+    const capture = captureObservabilityDryRun({
+      eventCategory: "queue",
+      labels: {
+        runtime: "queue-provider-adapter",
+      },
+      metricName: "queue.driver.metadata_ready",
+      operation: "metrics",
+      payloadReference: "payload-ref:queue:driver-readiness",
+      sourceRuntime: "queue-provider-adapter",
+      traceId: "trace-observability-driver-metadata",
+    });
+    const serialized = JSON.stringify(foundation);
+
+    expect(foundation.readiness.queueProviderDriverMetricsMetadata).toEqual({
+      activationGateSatisfied: true,
+      configuredConfigKeys: queueProviderDriverConfigKeys,
+      handoffMode: "metadata_only",
+      liveAlertRoutingEnabled: false,
+      liveLogExportEnabled: false,
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      requiredConfigKeys: queueProviderDriverConfigKeys,
+      source: "queue-provider-driver-readiness",
+      status: "configured_metadata_only",
+      vendorSdkCallsEnabled: false,
+    });
+    expect(foundation.noLiveFlags).toEqual(observabilityExporterNoLiveFlags);
+    expect(foundation.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(true);
+    expect(capture).toMatchObject({
+      liveAlertRoutingEnabled: false,
+      liveLogExportEnabled: false,
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportAttempted: false,
+      liveTraceExportEnabled: false,
+      productionWriteAttempted: false,
+      status: "accepted_dry_run",
+    });
+    expect(serialized).not.toContain("queue-user");
+    expect(serialized).not.toContain("queue-pass");
+    expect(serialized).not.toContain("queue-secret");
+    expect(serialized).not.toContain("queue-secret-token");
   });
 
   it("fails closed for production-required when observability preconditions are missing", () => {

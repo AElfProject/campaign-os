@@ -123,6 +123,23 @@ export interface SchedulerQueueHandoffSummary {
   queueRuntimeId: "campaign-os-queue-runtime-foundation";
 }
 
+export type QueueProviderDriverReadinessHandoffStatus =
+  | "activation_gate_disabled"
+  | "configured_metadata_only"
+  | "missing_required_config";
+
+export interface SchedulerQueueProviderDriverReadinessHandoff {
+  activationGateSatisfied: boolean;
+  configuredConfigKeys: string[];
+  handoffMode: "metadata_only";
+  liveQueuePublishingEnabled: false;
+  liveSchedulerExecutionEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  requiredConfigKeys: string[];
+  source: "queue-provider-driver-readiness";
+  status: QueueProviderDriverReadinessHandoffStatus;
+}
+
 export interface SchedulerOperatorOverridePosture {
   allowed: boolean;
   authorizationDependencyId: "operator-authorization";
@@ -203,6 +220,7 @@ export interface SchedulerRuntimeReadinessProjection {
   observabilityExporterSinkId: string;
   observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   productionReady: false;
+  queueProviderDriverHandoff: SchedulerQueueProviderDriverReadinessHandoff;
   registrationCount: number;
   requiredConfigKeys: string[];
   scheduleIds: string[];
@@ -234,6 +252,12 @@ const REDACTED_VALUE = "[redacted]";
 const RAW_TRIGGER_PAYLOAD_VALUE = "[redacted-trigger-payload]";
 const SCHEDULER_RUNTIME_ID = "campaign-os-scheduler-runtime-foundation" as const;
 const QUEUE_RUNTIME_ID = "campaign-os-queue-runtime-foundation" as const;
+const QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+  "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
+] as const;
 
 const manualReviewJobFamilies = new Set<WorkerJobFamily>([
   "campaign_lifecycle",
@@ -421,7 +445,7 @@ export const createSchedulerRuntimeFoundation = (
   );
   const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
   const status = resolveStatus(profileResolution.profileId, blockerCount);
-  const readiness = createReadinessProjection(diagnostics, blockerCount, observabilityExporter);
+  const readiness = createReadinessProjection(env, diagnostics, blockerCount, observabilityExporter);
 
   return {
     blockerCount,
@@ -737,6 +761,7 @@ const validateTriggerRequest = (
 };
 
 const createReadinessProjection = (
+  env: Record<string, unknown>,
   diagnostics: readonly SchedulerRuntimeDiagnostic[],
   blockerCount: number,
   observabilityExporter: SchedulerObservabilityExporterSummary,
@@ -757,6 +782,7 @@ const createReadinessProjection = (
   observabilityExporterSinkId: observabilityExporter.sinkId,
   observabilityExporterStatus: observabilityExporter.status,
   productionReady: false,
+  queueProviderDriverHandoff: createQueueProviderDriverReadinessHandoff(env),
   registrationCount: schedulerRuntimeRegistrations.length,
   requiredConfigKeys: [
     ...new Set(schedulerRuntimeProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
@@ -764,6 +790,32 @@ const createReadinessProjection = (
   scheduleIds: schedulerRuntimeRegistrations.map((item) => item.scheduleId),
   triggerSourceCount: new Set(schedulerRuntimeRegistrations.map((item) => item.triggerSource)).size,
 });
+
+const createQueueProviderDriverReadinessHandoff = (
+  env: Record<string, unknown>,
+): SchedulerQueueProviderDriverReadinessHandoff => {
+  const configuredConfigKeys = QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.filter((key) =>
+    hasConfiguredValue(env, [key]),
+  );
+  const activationGateSatisfied = isQueueProviderDriverActivationGateSatisfied(env);
+  const hasRequiredConfig = configuredConfigKeys.length === QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.length;
+
+  return {
+    activationGateSatisfied,
+    configuredConfigKeys: [...configuredConfigKeys],
+    handoffMode: "metadata_only",
+    liveQueuePublishingEnabled: false,
+    liveSchedulerExecutionEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    requiredConfigKeys: [...QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS],
+    source: "queue-provider-driver-readiness",
+    status: !hasRequiredConfig
+      ? "missing_required_config"
+      : activationGateSatisfied
+        ? "configured_metadata_only"
+        : "activation_gate_disabled",
+  };
+};
 
 const createObservabilityExporterSummary = (
   observabilityExporter: ReturnType<typeof createObservabilityExporterFoundation>,
@@ -806,6 +858,12 @@ const hasConfiguredValue = (env: Record<string, unknown>, keys: readonly string[
 
     return typeof value === "string" ? value.trim().length > 0 : value !== undefined && value !== null;
   });
+
+const isQueueProviderDriverActivationGateSatisfied = (env: Record<string, unknown>): boolean => {
+  const value = env.CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT;
+
+  return typeof value === "string" && /^(enabled|explicitly-enabled|true)$/i.test(value.trim());
+};
 
 const sanitizeSchedulerRuntimeString = (value: string): string => {
   const redacted = redactSchedulerRuntimeValue(value);
