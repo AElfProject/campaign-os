@@ -87,8 +87,87 @@ describe("scheduler runtime separation boundaries", () => {
     enqueueSpy.mockRestore();
   });
 
+  it("does not infer scheduler or live queue execution from provider adapter metadata", () => {
+    const scheduler = createSchedulerRuntimeFoundation();
+    const queue = queueRuntime.createQueueRuntimeFoundation({
+      profileId: "staging-scaffold",
+      providerId: "metadata-only",
+    });
+    const triggerResult = dryRunSchedulerTrigger({
+      idempotencyKey: "idempotency:task-verification-on-request:campaign-1",
+      jobId: "task-verification-worker",
+      queueHandoffReference: "queue-handoff:task-verification-worker-queue-plan",
+      scheduleId: "task-verification-on-request",
+      scheduledFor: "2026-07-07T13:30:00Z",
+      traceId: "trace-provider-separation",
+      triggerSource: "api_request",
+      windowEnd: "2026-07-07T13:35:00Z",
+      windowStart: "2026-07-07T13:25:00Z",
+    });
+
+    expect(queue.providerAdapter).toMatchObject({
+      liveQueuePublishingEnabled: false,
+      mode: "metadata_only",
+      productionReady: false,
+      providerId: "metadata-only",
+      status: "scaffolded",
+    });
+    expect(queue.providerAdapter.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(
+      true,
+    );
+    expect(queue.readiness.liveQueuePublishingEnabled).toBe(false);
+    expect(scheduler.readiness.liveCronExecutionEnabled).toBe(false);
+    expect(scheduler.readiness.liveQueuePublishingEnabled).toBe(false);
+    expect(scheduler.readiness.liveSchedulerExecutionEnabled).toBe(false);
+    expect(triggerResult.accepted).toBe(true);
+    expect(triggerResult.liveCronExecutionEnabled).toBe(false);
+    expect(triggerResult.liveExecutionAttempted).toBe(false);
+    expect(triggerResult.liveQueuePublishingEnabled).toBe(false);
+    expect(triggerResult.liveSchedulerExecutionEnabled).toBe(false);
+  });
+
+  it("keeps provider adapter readiness from satisfying queue execution readiness", () => {
+    const localQueue = queueRuntime.createQueueRuntimeFoundation();
+    const configuredProviderQueue = queueRuntime.createQueueRuntimeFoundation({
+      env: {
+        CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:review",
+        CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
+        CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:review",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:review",
+        CAMPAIGN_OS_QUEUE_PROVIDER: "production-queue-provider",
+        CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-provider",
+        CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "queue-endpoint-ref:provider",
+        CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:review",
+        CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:worker",
+        CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
+      },
+      profileId: "production-required",
+    });
+
+    expect(localQueue.valid).toBe(true);
+    expect(localQueue.productionReady).toBe(false);
+    expect(localQueue.providerAdapter.valid).toBe(true);
+    expect(localQueue.providerAdapter.productionReady).toBe(false);
+    expect(configuredProviderQueue.providerAdapter.valid).toBe(true);
+    expect(configuredProviderQueue.providerAdapter.productionReady).toBe(false);
+    expect(configuredProviderQueue.productionReady).toBe(false);
+    expect(configuredProviderQueue.readiness.liveQueuePublishingEnabled).toBe(false);
+    expect(configuredProviderQueue.providerAdapter.operationCapabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ liveEnabled: false, operation: "publish" }),
+        expect.objectContaining({ liveEnabled: false, operation: "ack" }),
+        expect.objectContaining({ liveEnabled: false, operation: "nack" }),
+        expect.objectContaining({ liveEnabled: false, operation: "dead_letter" }),
+      ]),
+    );
+  });
+
   it("does not satisfy wallet auth, provider readiness, verification completion, or manual review", () => {
     const serialized = serializedSchedulerOutput();
+    const queue = queueRuntime.createQueueRuntimeFoundation({
+      profileId: "staging-scaffold",
+      providerId: "metadata-only",
+    });
     const auth = createAuthSessionReadinessReport();
     const provider = createProviderIndexerFoundation();
     const verification = createVerificationSourceHandoff();
@@ -97,6 +176,9 @@ describe("scheduler runtime separation boundaries", () => {
     expect(auth.agentCredentialBoundary.agentSkillCanSubstituteUserWallet).toBe(false);
     expect(provider.productionReady).toBe(false);
     expect(provider.noLiveFlags.liveProviderCallsEnabled).toBe(false);
+    expect(queue.providerAdapter.status).toBe("scaffolded");
+    expect(queue.providerAdapter.liveQueuePublishingEnabled).toBe(false);
+    expect(queue.providerAdapter.productionReady).toBe(false);
     expect(verification.liveExecutionEnabled).toBe(false);
     expect(verification.entries.find((entry) => entry.verificationType === "WALLET")).toMatchObject({
       authSessionRequired: true,
@@ -112,6 +194,8 @@ describe("scheduler runtime separation boundaries", () => {
       "verificationCompleted",
       "walletAuthenticated",
       "providerReady",
+      "providerAdapterReady",
+      "queuePublished",
       "manualReviewApproved",
       "pointsAwarded",
       "contractSynced",
