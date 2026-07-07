@@ -48,6 +48,25 @@ describe("server runtime readiness metadata", () => {
       },
       profileId: "local-review",
       readiness: {
+        authEnforcement: {
+          agentCredentialSubstitutionDisabled: true,
+          campaignMutationRouteCount: 1,
+          locallyEnforcedRouteIds: ["campaigns.create"],
+          mode: "local_enforced",
+          productionProofVerifierReady: false,
+          productionProjectOwnershipSourceReady: false,
+          productionSessionIssuerReady: false,
+          readOnlyRouteCompatibility: {
+            campaignReadRouteIds: expect.arrayContaining(["campaigns.list", "campaigns.detail"]),
+            runtimeMetadataRouteIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
+            runtimeMetadataUnauthenticated: true,
+          },
+          remainingDeferredProductionDependencyIds: expect.arrayContaining([
+            "live_wallet_proof_verifier",
+            "jwt_or_session_cookie",
+            "project_ownership_source",
+          ]),
+        },
         authSession: {
           status: "local_seeded",
           valid: true,
@@ -264,6 +283,18 @@ describe("server runtime readiness metadata", () => {
     expect(metadata).toMatchObject({
       profileId: "production-required",
       readiness: {
+        authEnforcement: {
+          locallyEnforcedRouteIds: ["campaigns.create"],
+          mode: "blocked",
+          productionProofVerifierReady: false,
+          productionProjectOwnershipSourceReady: false,
+          productionSessionIssuerReady: false,
+          remainingDeferredProductionDependencyIds: expect.arrayContaining([
+            "live_wallet_proof_verifier",
+            "jwt_or_session_cookie",
+            "project_ownership_source",
+          ]),
+        },
         authSession: {
           status: "blocked",
           valid: false,

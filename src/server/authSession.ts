@@ -80,6 +80,7 @@ export type AuthRoleCapabilityId =
 export type ProtectedRouteEnforcementStatus =
   | "not_required"
   | "metadata_only"
+  | "local_enforced"
   | "enforcement_deferred"
   | "blocked";
 export type ProtectedRouteSource = "runtime_route" | "future_route";
@@ -229,6 +230,8 @@ export const authSessionDeferredDependencyIds = [
   "admin_organization_model",
   "agent_credential_provider",
 ] as const;
+
+export const locallyEnforcedAuthRouteIds = ["campaigns.create"] as const;
 
 const normalizeSensitiveKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -465,8 +468,8 @@ export const protectedRouteAuthMap = [
     sessionRequired: false,
   }),
   routeAuth({
-    enforcementStatus: "enforcement_deferred",
-    note: "Campaign creation requires a project owner session and ownership source before production.",
+    enforcementStatus: "local_enforced",
+    note: "Campaign creation requires a local project owner session and matching owner address; live wallet proof remains deferred.",
     productionDependencyIds: [...authSessionDeferredDependencyIds],
     proofRequired: true,
     requiredRoles: ["project_owner"],

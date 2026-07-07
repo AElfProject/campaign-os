@@ -2,6 +2,7 @@ import {
   createBackendDatabaseAdapterRuntimeSummary,
   createBackendPersistenceRuntimeSummary,
   type BackendDatabaseAdapterRuntimeSummary,
+  type BackendAuthEnforcementReadinessSummary,
   type CampaignDbVerticalSliceReadinessSummary,
   type BackendPersistenceRuntimeSummary,
   type BackendServiceReadinessReport,
@@ -44,6 +45,7 @@ export interface ServerRuntimeReadiness {
   };
   profileId: string;
   readiness: {
+    authEnforcement: BackendAuthEnforcementReadinessSummary;
     authSession: {
       status: BackendServiceReadinessReport["authSession"]["status"];
       valid: boolean;
@@ -147,6 +149,7 @@ export const createServerRuntimeReadiness = ({
     },
     profileId: contract.profileId,
     readiness: {
+      authEnforcement: backendReadiness.authEnforcement,
       authSession: {
         status: backendReadiness.authSession.status,
         valid: backendReadiness.authSession.validation.valid,

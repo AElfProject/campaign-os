@@ -157,7 +157,7 @@ describe("auth session boundary", () => {
     expect(isAuthRoleCapabilityForbidden("ai_worker", "wallet:live_sign")).toBe(true);
   });
 
-  it("publishes representative protected route auth metadata without claiming enforcement", () => {
+  it("publishes representative protected route auth metadata with local campaign mutation enforcement", () => {
     expect(protectedRouteAuthMap.map((entry) => entry.routeId)).toEqual(
       expect.arrayContaining([
         "runtime.health",
@@ -184,7 +184,7 @@ describe("auth session boundary", () => {
       sessionRequired: false,
     });
     expect(getProtectedRouteAuth("campaigns.create")).toMatchObject({
-      enforcementStatus: "enforcement_deferred",
+      enforcementStatus: "local_enforced",
       requiredRoles: ["project_owner"],
       sessionRequired: true,
     });

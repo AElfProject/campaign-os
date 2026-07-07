@@ -7,6 +7,9 @@ import {
 import type { ApiRuntimeEnvelope } from "./envelope";
 import { createFailureEnvelope, createSuccessEnvelope } from "./envelope";
 import {
+  authForbidden,
+  authSessionInvalid,
+  authSessionRequired,
   invalidRequest,
   malformedJson,
   methodNotAllowed,
@@ -33,6 +36,11 @@ import {
   createCampaignOsRepository,
   type CampaignOsRepository,
 } from "./persistence";
+import {
+  evaluateAuthEnforcement,
+  type AuthEnforcementDecision,
+} from "./authEnforcement";
+import { getProtectedRouteAuth } from "./authSession";
 
 export type ApiRuntimeHeaders = Record<string, string | readonly string[] | undefined>;
 
@@ -228,6 +236,29 @@ const createBackendServiceReadinessFactory = ({
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const ownerAddressFromBody = (body: unknown) =>
+  isRecord(body) && typeof body.ownerAddress === "string" ? body.ownerAddress : undefined;
+
+const shouldEvaluateLocalAuth = (routeId: string) =>
+  getProtectedRouteAuth(routeId)?.enforcementStatus === "local_enforced";
+
+const authErrorFromDecision = (decision: AuthEnforcementDecision) => {
+  const details = {
+    ...decision.safeDetails,
+    diagnosticCode: decision.diagnostic?.code,
+    field: decision.diagnostic?.field,
+    message: decision.diagnostic?.message,
+  };
+
+  if (decision.httpStatus === 401) {
+    return decision.diagnostic?.code === "AUTH_SESSION_REQUIRED"
+      ? authSessionRequired(details)
+      : authSessionInvalid(details);
+  }
+
+  return authForbidden(details);
+};
 
 const createHealthDatabaseReadinessMetadata = (
   report: BackendServiceReadinessReport,
@@ -549,6 +580,18 @@ export const createCampaignOsApiRuntime = ({
         const { pathname, query } = parseRequestTarget(request.path);
         const { matcher, params } = findMatchingRoute(matchers, method, pathname);
         const body = parseBody(request, method);
+        if (shouldEvaluateLocalAuth(matcher.route.id)) {
+          const authDecision = evaluateAuthEnforcement({
+            headers: request.headers,
+            ownerAddress: ownerAddressFromBody(body),
+            routeId: matcher.route.id,
+          });
+
+          if (!authDecision.allowed) {
+            throw authErrorFromDecision(authDecision);
+          }
+        }
+
         const handler = handlers[matcher.route.id];
         let requestReadiness: BackendServiceReadinessReport | undefined;
         const requestBackendServiceReadiness = () => {
