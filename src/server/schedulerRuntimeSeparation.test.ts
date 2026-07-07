@@ -368,7 +368,7 @@ describe("scheduler runtime separation boundaries", () => {
       expect.arrayContaining(["not_applicable", "review_required"]),
     );
     expect(lifecycle.operations.every((operation) => operation.localOnly)).toBe(true);
-    expect(JSON.stringify({
+    const serializedIdempotencyBoundary = JSON.stringify({
       analytics,
       contractTransparency,
       exportFulfillment,
@@ -376,8 +376,20 @@ describe("scheduler runtime separation boundaries", () => {
       lifecycle,
       provider,
       verification,
-    })).not.toContain("verificationCompleted");
-    expect(JSON.stringify({ idempotencyResult })).not.toContain("rewardReleased");
+    });
+
+    for (const forbiddenField of [
+      "verificationCompleted",
+      "walletAuthenticated",
+      "providerReady",
+      "queuePublished",
+      "contractSynced",
+      "analyticsWritten",
+      "exportPrepared",
+      "rewardReleased",
+    ]) {
+      expect(serializedIdempotencyBoundary).not.toContain(forbiddenField);
+    }
   });
 
   it("does not satisfy wallet auth, provider readiness, verification completion, or manual review", () => {

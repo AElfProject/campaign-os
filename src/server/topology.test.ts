@@ -130,7 +130,13 @@ describe("backend service topology", () => {
       ]),
     );
     expect(workerRuntime).toMatchObject({
-      attachPointPath: "src/server/workerIdempotencyStore.ts",
+      attachPointPath: "src/server/queueProviderAdapter.ts",
+      attachPointPaths: expect.arrayContaining([
+        "src/server/queueProviderAdapter.ts",
+        "src/server/queueRuntime.ts",
+        "src/server/workerIdempotencyStore.ts",
+        "src/server/workerLeaseStore.ts",
+      ]),
       currentImplementation: "source-topology-only",
       currentStatus: "local",
       entrypoint: "src/server/queueRuntime.ts",
@@ -305,7 +311,13 @@ describe("backend service topology", () => {
     const workerRuntime = backendDeploymentUnits.find((unit) => unit.id === "worker-runtime");
 
     expect(workerRuntime).toMatchObject({
-      attachPointPath: "src/server/workerIdempotencyStore.ts",
+      attachPointPath: "src/server/queueProviderAdapter.ts",
+      attachPointPaths: expect.arrayContaining([
+        "src/server/queueProviderAdapter.ts",
+        "src/server/queueRuntime.ts",
+        "src/server/workerIdempotencyStore.ts",
+        "src/server/workerLeaseStore.ts",
+      ]),
       currentImplementation: "source-topology-only",
       currentStatus: "local",
       entrypoint: "src/server/queueRuntime.ts",
