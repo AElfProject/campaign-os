@@ -6,6 +6,13 @@ import {
   type ObservabilityExporterMode,
   type ObservabilityExporterOperationCapability,
 } from "./observabilityExporter";
+import {
+  createQueueProviderDriverFoundation,
+  type QueueProviderDriverDiagnosticCode,
+  type QueueProviderDriverFoundationStatus,
+  type QueueProviderDriverMode,
+  type QueueProviderDriverOperationCapability,
+} from "./queueProviderDriver";
 import type { QueueDegradedOutcome } from "./queueRuntime";
 
 export type QueueProviderAdapterProfileId = BackendRuntimeProfileId;
@@ -32,7 +39,8 @@ export type QueueProviderDiagnosticCode =
   | "QUEUE_PROVIDER_IDEMPOTENCY_STORE_MISSING"
   | "QUEUE_PROVIDER_WORKER_LEASE_MISSING"
   | "QUEUE_PROVIDER_OBSERVABILITY_MISSING"
-  | "UNSAFE_QUEUE_PROVIDER_CONFIG";
+  | "UNSAFE_QUEUE_PROVIDER_CONFIG"
+  | QueueProviderDriverDiagnosticCode;
 export type QueueProviderPreconditionArea =
   | "auth"
   | "dead_letter"
@@ -107,11 +115,47 @@ export interface QueueProviderObservabilityExporterSummary {
   valid: boolean;
 }
 
+export interface QueueProviderDriverSummary {
+  activationGateSatisfied: boolean;
+  blockerCount: number;
+  deadLetterRouteCount: number;
+  diagnosticCodes: QueueProviderDriverDiagnosticCode[];
+  disabledLiveOperationCount: number;
+  driverId: string;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: QueueProviderDriverMode;
+  operationCapabilities: QueueProviderDriverOperationCapability[];
+  operationCount: number;
+  productionReady: false;
+  providerId: string;
+  queueRouteCount: number;
+  requiredConfigKeys: string[];
+  status: QueueProviderDriverFoundationStatus;
+  valid: boolean;
+}
+
 export interface QueueProviderAdapterReadinessProjection {
   adapterId: string;
   blockerCount: number;
   diagnosticCodes: QueueProviderDiagnosticCode[];
   disabledLiveOperationCount: number;
+  driverActivationGateSatisfied: boolean;
+  driverBlockerCount: number;
+  driverDeadLetterRouteCount: number;
+  driverDiagnosticCodes: QueueProviderDriverDiagnosticCode[];
+  driverDisabledLiveOperationCount: number;
+  driverId: string;
+  driverLiveQueuePublishingEnabled: false;
+  driverLiveWorkerExecutionEnabled: false;
+  driverMode: QueueProviderDriverMode;
+  driverOperationCount: number;
+  driverProductionReady: false;
+  driverProviderId: string;
+  driverQueueRouteCount: number;
+  driverRequiredConfigKeys: string[];
+  driverStatus: QueueProviderDriverFoundationStatus;
+  driverValid: boolean;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode: QueueProviderAdapterMode;
@@ -134,6 +178,7 @@ export interface QueueProviderAdapterFoundationSummary {
   blockerCount: number;
   diagnosticCodes: QueueProviderDiagnosticCode[];
   diagnostics: QueueProviderDiagnostic[];
+  driver: QueueProviderDriverSummary;
   id: "campaign-os-queue-provider-adapter-foundation";
   mode: QueueProviderAdapterMode;
   noLiveFlags: QueueProviderAdapterNoLiveFlags;
@@ -297,10 +342,24 @@ export const createQueueProviderAdapterFoundation = (
       profileId: profileResolution.profileId,
     }),
   );
+  const driver = createDriverSummary(
+    createQueueProviderDriverFoundation({
+      env,
+      profileId: profileResolution.profileId,
+      providerId: mapAdapterProviderToDriverProvider(providerResolution.providerId),
+    }),
+  );
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...providerResolution.diagnostics,
     ...productionDiagnostics,
+    ...driver.diagnosticCodes.map((code) =>
+      diagnostic(
+        code,
+        "queueProviderDriver",
+        `Queue provider driver readiness reports ${code}.`,
+      ),
+    ),
   ];
   const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
   const providerId = providerResolution.providerId;
@@ -309,6 +368,7 @@ export const createQueueProviderAdapterFoundation = (
     adapterId,
     blockerCount,
     diagnostics,
+    driver,
     mode,
     observabilityExporter,
     providerId,
@@ -319,6 +379,7 @@ export const createQueueProviderAdapterFoundation = (
     blockerCount,
     diagnosticCodes: diagnostics.map((item) => item.code),
     diagnostics,
+    driver,
     id: FOUNDATION_ID,
     mode,
     noLiveFlags: queueProviderAdapterNoLiveFlags,
@@ -517,6 +578,7 @@ const createReadinessProjection = ({
   adapterId,
   blockerCount,
   diagnostics,
+  driver,
   mode,
   observabilityExporter,
   providerId,
@@ -524,6 +586,7 @@ const createReadinessProjection = ({
   adapterId: string;
   blockerCount: number;
   diagnostics: readonly QueueProviderDiagnostic[];
+  driver: QueueProviderDriverSummary;
   mode: QueueProviderAdapterMode;
   observabilityExporter: QueueProviderObservabilityExporterSummary;
   providerId: string;
@@ -532,6 +595,22 @@ const createReadinessProjection = ({
   blockerCount,
   diagnosticCodes: diagnostics.map((item) => item.code),
   disabledLiveOperationCount: queueProviderOperationCapabilities.filter((item) => item.liveEnabled === false).length,
+  driverActivationGateSatisfied: driver.activationGateSatisfied,
+  driverBlockerCount: driver.blockerCount,
+  driverDeadLetterRouteCount: driver.deadLetterRouteCount,
+  driverDiagnosticCodes: driver.diagnosticCodes,
+  driverDisabledLiveOperationCount: driver.disabledLiveOperationCount,
+  driverId: driver.driverId,
+  driverLiveQueuePublishingEnabled: false,
+  driverLiveWorkerExecutionEnabled: false,
+  driverMode: driver.mode,
+  driverOperationCount: driver.operationCount,
+  driverProductionReady: false,
+  driverProviderId: driver.providerId,
+  driverQueueRouteCount: driver.queueRouteCount,
+  driverRequiredConfigKeys: driver.requiredConfigKeys,
+  driverStatus: driver.status,
+  driverValid: driver.valid,
   liveQueuePublishingEnabled: false,
   liveWorkerExecutionEnabled: false,
   mode,
@@ -547,8 +626,33 @@ const createReadinessProjection = ({
   productionReady: false,
   providerId,
   requiredConfigKeys: [
-    ...new Set(queueProviderAdapterProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
+    ...new Set([
+      ...queueProviderAdapterProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
+      ...driver.requiredConfigKeys,
+    ]),
   ],
+});
+
+const createDriverSummary = (
+  driver: ReturnType<typeof createQueueProviderDriverFoundation>,
+): QueueProviderDriverSummary => ({
+  activationGateSatisfied: driver.readiness.activationGateSatisfied,
+  blockerCount: driver.blockerCount,
+  deadLetterRouteCount: driver.readiness.deadLetterRouteCount,
+  diagnosticCodes: driver.diagnosticCodes,
+  disabledLiveOperationCount: driver.readiness.disabledLiveOperationCount,
+  driverId: driver.driverId,
+  liveQueuePublishingEnabled: false,
+  liveWorkerExecutionEnabled: false,
+  mode: driver.mode,
+  operationCapabilities: driver.operationCapabilities.map((item) => ({ ...item })),
+  operationCount: driver.readiness.operationCount,
+  productionReady: false,
+  providerId: driver.providerId,
+  queueRouteCount: driver.readiness.queueRouteCount,
+  requiredConfigKeys: driver.readiness.requiredConfigKeys,
+  status: driver.status,
+  valid: driver.valid,
 });
 
 const createObservabilityExporterSummary = (
@@ -579,6 +683,16 @@ const sanitizeProviderString = (value: string): string => {
   const redacted = redactQueueProviderAdapterValue(value);
 
   return typeof redacted === "string" ? redacted : REDACTED_VALUE;
+};
+
+const mapAdapterProviderToDriverProvider = (providerId: string): string => {
+  const mapping: Record<string, string> = {
+    "local-dry-run": "local-fake",
+    "metadata-only": "metadata-only",
+    "production-queue-provider": "production-queue-provider",
+  };
+
+  return mapping[providerId] ?? providerId;
 };
 
 const isSupportedProviderId = (value: string): boolean =>

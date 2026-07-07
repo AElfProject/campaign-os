@@ -5,6 +5,7 @@ import {
   sanitizeBackendConfigDiagnosticValue,
 } from "./config";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
+import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
@@ -67,6 +68,7 @@ describe("backend config contract", () => {
     expect(contract.productionReadiness.requiredConfigKeys).toEqual(
       expect.arrayContaining([
         "CAMPAIGN_OS_QUEUE_PROVIDER",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
         "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
         "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
         "CAMPAIGN_OS_SCHEDULER_PROVIDER",
@@ -269,10 +271,14 @@ describe("backend config contract", () => {
     const queueProviderAdapterConfigKeys = [
       ...new Set(queueProviderAdapterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
+    const queueProviderDriverConfigKeys = [
+      ...new Set(queueProviderDriverProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
     const secretQueueProviderValues = {
       CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
       CAMPAIGN_OS_QUEUE_PROVIDER: "production-queue-provider",
       CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "provider-credential-secret",
+      CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
       CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "https://queue-provider.invalid/hook?queue-provider-token=secret",
     };
     const contract = resolveBackendConfigContract({ env: secretQueueProviderValues });
@@ -280,10 +286,14 @@ describe("backend config contract", () => {
     expect(contract.productionReadiness.requiredConfigKeys).toEqual(
       expect.arrayContaining(queueProviderAdapterConfigKeys),
     );
+    expect(contract.productionReadiness.requiredConfigKeys).toEqual(
+      expect.arrayContaining(queueProviderDriverConfigKeys),
+    );
     expect(contract.productionReadiness.missingConfigKeys).not.toEqual(
       expect.arrayContaining([
         "CAMPAIGN_OS_QUEUE_PROVIDER",
         "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
         "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
       ]),
     );

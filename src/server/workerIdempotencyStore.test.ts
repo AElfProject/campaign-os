@@ -13,6 +13,20 @@ import {
   workerIdempotencyStoreProductionPreconditions,
 } from "./workerIdempotencyStore";
 
+const queueProviderDriverConfigKeys = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+  "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
+];
+
+const queueProviderDriverReadyEnv = {
+  CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "Bearer queue-secret-token",
+  CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
+  CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
+} satisfies Record<string, unknown>;
+
 describe("worker idempotency store foundation", () => {
   it("declares a stable foundation id and supported profiles", () => {
     const foundation = createWorkerIdempotencyStoreFoundation();
@@ -121,6 +135,47 @@ describe("worker idempotency store foundation", () => {
       liveSocialCallsEnabled: false,
       liveWorkerExecutionEnabled: false,
     });
+  });
+
+  it("treats queue provider driver readiness as idempotency handoff metadata only", () => {
+    const foundation = createWorkerIdempotencyStoreFoundation({
+      env: queueProviderDriverReadyEnv,
+      profileId: "local-review",
+    });
+    const evaluation = evaluateWorkerIdempotencyDryRun({
+      attempt: 1,
+      idempotencyKeyReference: "idempotency-key-ref:task-verification-worker",
+      jobId: "task-verification-worker",
+      operation: "claim",
+      sideEffectBoundary: "points-ledger-and-task-completion",
+      traceId: "trace-worker-idempotency-driver-metadata",
+      workerReference: "worker-ref:local-review",
+    });
+    const serialized = JSON.stringify(foundation);
+
+    expect(foundation.readiness.queueProviderDriverHandoff).toEqual({
+      activationGateSatisfied: true,
+      configuredConfigKeys: queueProviderDriverConfigKeys,
+      handoffMode: "metadata_only",
+      liveIdempotencyExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      requiredConfigKeys: queueProviderDriverConfigKeys,
+      source: "queue-provider-driver-readiness",
+      status: "configured_metadata_only",
+    });
+    expect(foundation.noLiveFlags).toEqual(workerIdempotencyStoreNoLiveFlags);
+    expect(foundation.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(true);
+    expect(evaluation).toMatchObject({
+      liveIdempotencyOperationAttempted: false,
+      liveWorkerExecutionEnabled: false,
+      productionWriteAttempted: false,
+      status: "accepted_dry_run",
+    });
+    expect(serialized).not.toContain("queue-user");
+    expect(serialized).not.toContain("queue-pass");
+    expect(serialized).not.toContain("queue-secret");
+    expect(serialized).not.toContain("queue-secret-token");
   });
 
   it("fails closed for production-required when idempotency preconditions are missing", () => {

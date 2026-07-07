@@ -62,6 +62,22 @@ export type WorkerLeasePreconditionArea =
 export type WorkerLeaseDegradedOutcome =
   | QueueDegradedOutcome
   | "disable_worker_templates";
+export type QueueProviderDriverReadinessHandoffStatus =
+  | "activation_gate_disabled"
+  | "configured_metadata_only"
+  | "missing_required_config";
+
+export interface WorkerLeaseQueueProviderDriverReadinessHandoff {
+  activationGateSatisfied: boolean;
+  configuredConfigKeys: string[];
+  handoffMode: "metadata_only";
+  liveLeaseClaimingEnabled: false;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  requiredConfigKeys: string[];
+  source: "queue-provider-driver-readiness";
+  status: QueueProviderDriverReadinessHandoffStatus;
+}
 
 export interface WorkerLeaseStoreNoLiveFlags {
   liveAiCallsEnabled: false;
@@ -154,6 +170,7 @@ export interface WorkerLeaseStoreReadinessProjection {
   observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   operationCount: number;
   productionReady: false;
+  queueProviderDriverHandoff: WorkerLeaseQueueProviderDriverReadinessHandoff;
   requiredConfigKeys: string[];
   storeId: string;
   ttlSeconds: number;
@@ -238,6 +255,12 @@ const RAW_LEASE_PAYLOAD_VALUE = "[redacted-lease-payload]";
 const FOUNDATION_ID = "campaign-os-worker-lease-store-foundation" as const;
 const DEFAULT_TTL_SECONDS = 120;
 const DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30;
+const QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+  "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
+] as const;
 
 export const SUPPORTED_WORKER_LEASE_STORE_PROFILES: WorkerLeaseStoreProfileId[] = [
   "local-review",
@@ -727,12 +750,39 @@ const createReadinessProjection = ({
   observabilityExporterStatus: observabilityExporter.status,
   operationCount: workerLeaseOperationCapabilities.length,
   productionReady: false,
+  queueProviderDriverHandoff: createQueueProviderDriverReadinessHandoff(env),
   requiredConfigKeys: [
     ...new Set(workerLeaseStoreProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
   ],
   storeId,
   ttlSeconds: readPositiveInteger(env.CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS) ?? DEFAULT_TTL_SECONDS,
 });
+
+const createQueueProviderDriverReadinessHandoff = (
+  env: Record<string, unknown>,
+): WorkerLeaseQueueProviderDriverReadinessHandoff => {
+  const configuredConfigKeys = QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.filter((key) =>
+    hasConfiguredValue(env, [key]),
+  );
+  const activationGateSatisfied = isQueueProviderDriverActivationGateSatisfied(env);
+  const hasRequiredConfig = configuredConfigKeys.length === QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.length;
+
+  return {
+    activationGateSatisfied,
+    configuredConfigKeys: [...configuredConfigKeys],
+    handoffMode: "metadata_only",
+    liveLeaseClaimingEnabled: false,
+    liveQueuePublishingEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    requiredConfigKeys: [...QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS],
+    source: "queue-provider-driver-readiness",
+    status: !hasRequiredConfig
+      ? "missing_required_config"
+      : activationGateSatisfied
+        ? "configured_metadata_only"
+        : "activation_gate_disabled",
+  };
+};
 
 const createIdempotencyStoreSummary = (
   idempotencyStore: ReturnType<typeof createWorkerIdempotencyStoreFoundation>,
@@ -800,6 +850,12 @@ const readPositiveInteger = (value: unknown): number | undefined => {
   const numberValue = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
 
   return Number.isInteger(numberValue) && numberValue > 0 ? numberValue : undefined;
+};
+
+const isQueueProviderDriverActivationGateSatisfied = (env: Record<string, unknown>): boolean => {
+  const value = env.CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT;
+
+  return typeof value === "string" && /^(enabled|explicitly-enabled|true)$/i.test(value.trim());
 };
 
 const sanitizeLeaseString = (value: string): string => {

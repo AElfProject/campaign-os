@@ -21,6 +21,14 @@ import {
   type QueueProviderOperationCapability,
 } from "./queueProviderAdapter";
 import {
+  executeLocalFakeQueueProviderOperation,
+  type QueueProviderDriverDiagnosticCode,
+  type QueueProviderDriverFoundationStatus,
+  type QueueProviderDriverMode,
+  type QueueProviderDriverOperationCapability,
+  type QueueProviderOperationResult,
+} from "./queueProviderDriver";
+import {
   workerIdempotencyPolicies,
   workerJobCatalog,
   workerRetryBackoffPolicies,
@@ -122,6 +130,20 @@ export interface QueueRuntimeProviderAdapterSummary {
   blockerCount: number;
   diagnosticCodes: QueueProviderDiagnosticCode[];
   disabledLiveOperationCount: number;
+  driverActivationGateSatisfied: boolean;
+  driverBlockerCount: number;
+  driverDiagnosticCodes: QueueProviderDriverDiagnosticCode[];
+  driverId: string;
+  driverLiveQueuePublishingEnabled: false;
+  driverLiveWorkerExecutionEnabled: false;
+  driverMode: QueueProviderDriverMode;
+  driverOperationCapabilities: QueueProviderDriverOperationCapability[];
+  driverOperationCount: number;
+  driverProductionReady: false;
+  driverProviderId: string;
+  driverRequiredConfigKeys: string[];
+  driverStatus: QueueProviderDriverFoundationStatus;
+  driverValid: boolean;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode: QueueProviderAdapterMode;
@@ -243,6 +265,18 @@ export interface QueueRuntimeReadinessProjection {
   observabilityExporterRequiredConfigKeys: string[];
   observabilityExporterSinkId: string;
   observabilityExporterStatus: ObservabilityExporterFoundationStatus;
+  providerAdapterDriverBlockerCount: number;
+  providerAdapterDriverDiagnosticCodes: QueueProviderDriverDiagnosticCode[];
+  providerAdapterDriverId: string;
+  providerAdapterDriverLiveQueuePublishingEnabled: false;
+  providerAdapterDriverLiveWorkerExecutionEnabled: false;
+  providerAdapterDriverMode: QueueProviderDriverMode;
+  providerAdapterDriverOperationCount: number;
+  providerAdapterDriverProductionReady: false;
+  providerAdapterDriverProviderId: string;
+  providerAdapterDriverRequiredConfigKeys: string[];
+  providerAdapterDriverStatus: QueueProviderDriverFoundationStatus;
+  providerAdapterDriverValid: boolean;
   providerAdapterBlockerCount: number;
   providerAdapterDiagnosticCodes: QueueProviderDiagnosticCode[];
   providerAdapterId: string;
@@ -302,6 +336,7 @@ export interface QueueEnqueueResult {
   livePublishAttempted: false;
   liveQueuePublishingEnabled: false;
   payloadReference?: string;
+  providerDriverOperation?: QueueProviderOperationResult;
   queueId?: string;
   requestedAt?: string;
   status: "accepted_dry_run" | "rejected";
@@ -679,6 +714,16 @@ export const dryRunQueueEnqueue = (
   const retryPolicy = queuePlan ? retryPolicyById.get(queuePlan.retryPolicyId) : undefined;
   const diagnostics = validateEnqueueRequest(request, queuePlan, retryPolicy?.maxAttempts);
   const accepted = diagnostics.length === 0;
+  const providerDriverOperation = executeLocalFakeQueueProviderOperation({
+    attempt: request.attempt,
+    idempotencyKey: request.idempotencyKey,
+    jobId: request.jobId,
+    operation: "publish",
+    payloadReference: request.payloadReference,
+    queueId: request.queueId,
+    requestedAt: request.requestedAt,
+    traceId: request.traceId,
+  });
 
   return {
     accepted,
@@ -691,6 +736,7 @@ export const dryRunQueueEnqueue = (
     livePublishAttempted: false,
     liveQueuePublishingEnabled: false,
     payloadReference: sanitizeQueueRuntimeString(request.payloadReference),
+    providerDriverOperation,
     queueId: sanitizeQueueRuntimeString(request.queueId),
     requestedAt: request.requestedAt ? sanitizeQueueRuntimeString(request.requestedAt) : undefined,
     status: accepted ? "accepted_dry_run" : "rejected",
@@ -837,6 +883,18 @@ const createReadinessProjection = (
   observabilityExporterRequiredConfigKeys: observabilityExporter.requiredConfigKeys,
   observabilityExporterSinkId: observabilityExporter.sinkId,
   observabilityExporterStatus: observabilityExporter.status,
+  providerAdapterDriverBlockerCount: providerAdapter.driverBlockerCount,
+  providerAdapterDriverDiagnosticCodes: providerAdapter.driverDiagnosticCodes,
+  providerAdapterDriverId: providerAdapter.driverId,
+  providerAdapterDriverLiveQueuePublishingEnabled: false,
+  providerAdapterDriverLiveWorkerExecutionEnabled: false,
+  providerAdapterDriverMode: providerAdapter.driverMode,
+  providerAdapterDriverOperationCount: providerAdapter.driverOperationCount,
+  providerAdapterDriverProductionReady: false,
+  providerAdapterDriverProviderId: providerAdapter.driverProviderId,
+  providerAdapterDriverRequiredConfigKeys: providerAdapter.driverRequiredConfigKeys,
+  providerAdapterDriverStatus: providerAdapter.driverStatus,
+  providerAdapterDriverValid: providerAdapter.driverValid,
   providerAdapterBlockerCount: providerAdapter.blockerCount,
   providerAdapterDiagnosticCodes: providerAdapter.diagnosticCodes,
   providerAdapterId: providerAdapter.adapterId,
@@ -900,6 +958,20 @@ const createProviderAdapterSummary = (
   blockerCount: providerAdapter.blockerCount,
   diagnosticCodes: providerAdapter.diagnosticCodes,
   disabledLiveOperationCount: providerAdapter.readiness.disabledLiveOperationCount,
+  driverActivationGateSatisfied: providerAdapter.driver.activationGateSatisfied,
+  driverBlockerCount: providerAdapter.driver.blockerCount,
+  driverDiagnosticCodes: providerAdapter.driver.diagnosticCodes,
+  driverId: providerAdapter.driver.driverId,
+  driverLiveQueuePublishingEnabled: false,
+  driverLiveWorkerExecutionEnabled: false,
+  driverMode: providerAdapter.driver.mode,
+  driverOperationCapabilities: providerAdapter.driver.operationCapabilities.map((item) => ({ ...item })),
+  driverOperationCount: providerAdapter.driver.operationCount,
+  driverProductionReady: false,
+  driverProviderId: providerAdapter.driver.providerId,
+  driverRequiredConfigKeys: providerAdapter.driver.requiredConfigKeys,
+  driverStatus: providerAdapter.driver.status,
+  driverValid: providerAdapter.driver.valid,
   liveQueuePublishingEnabled: false,
   liveWorkerExecutionEnabled: false,
   mode: providerAdapter.mode,

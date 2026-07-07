@@ -61,6 +61,33 @@ const expectedQueueProviderAdapter = {
   blockerCount: 0,
   diagnosticCodes: [],
   disabledLiveOperationCount: 8,
+  driverActivationGateSatisfied: false,
+  driverBlockerCount: 0,
+  driverDiagnosticCodes: [],
+  driverDisabledLiveOperationCount: 8,
+  driverId: "local-fake-queue-provider-driver",
+  driverLiveQueuePublishingEnabled: false,
+  driverLiveWorkerExecutionEnabled: false,
+  driverMode: "dry_run",
+  driverOperationCount: 8,
+  driverProductionReady: false,
+  driverProviderId: "local-fake",
+  driverRequiredConfigKeys: expect.arrayContaining([
+    "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
+    "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+    "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+    "CAMPAIGN_OS_WORKER_QUEUE_URL",
+    "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
+    "CAMPAIGN_OS_WORKER_RETRY_POLICY",
+    "CAMPAIGN_OS_DEGRADATION_POLICY",
+    "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+    "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+    "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+    "CAMPAIGN_OS_OPERATOR_RUNBOOK_URL",
+    "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
+  ]),
+  driverStatus: "local_ready",
+  driverValid: true,
   liveQueuePublishingEnabled: false,
   liveWorkerExecutionEnabled: false,
   mode: "dry_run",
@@ -532,6 +559,68 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveQueueProviderFlag })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when queue provider driver metadata is missing from smoke payloads", async () => {
+    const fetchWithoutQueueProviderDriver: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              queueRuntimeFoundation?: {
+                providerAdapter?: Record<string, unknown>;
+              };
+            };
+          };
+        };
+      };
+
+      if (payload.data?.serverRuntime?.readiness?.queueRuntimeFoundation?.providerAdapter) {
+        delete payload.data.serverRuntime.readiness.queueRuntimeFoundation.providerAdapter.driverId;
+        delete payload.data.serverRuntime.readiness.queueRuntimeFoundation.providerAdapter.driverProviderId;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutQueueProviderDriver })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when queue provider driver smoke payload enables live effects", async () => {
+    const fetchWithLiveQueueProviderDriver: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              queueRuntimeFoundation?: {
+                providerAdapter?: Record<string, unknown>;
+              };
+            };
+          };
+        };
+      };
+
+      if (payload.data?.serverRuntime?.readiness?.queueRuntimeFoundation?.providerAdapter) {
+        payload.data.serverRuntime.readiness.queueRuntimeFoundation.providerAdapter.driverLiveQueuePublishingEnabled = true;
+        payload.data.serverRuntime.readiness.queueRuntimeFoundation.providerAdapter.driverLiveWorkerExecutionEnabled = true;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveQueueProviderDriver })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });

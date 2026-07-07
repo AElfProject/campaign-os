@@ -12,6 +12,7 @@ import {
 } from "./index";
 import { providerIndexerAdapterGroups } from "./providerIndexerAdapters";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
+import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
@@ -135,6 +136,7 @@ describe("backend service topology", () => {
     expect(workerRuntime).toMatchObject({
       attachPointPath: "src/server/queueProviderAdapter.ts",
       attachPointPaths: expect.arrayContaining([
+        "src/server/queueProviderDriver.ts",
         "src/server/queueProviderAdapter.ts",
         "src/server/queueRuntime.ts",
         "src/server/workerIdempotencyStore.ts",
@@ -331,6 +333,7 @@ describe("backend service topology", () => {
     expect(workerRuntime).toMatchObject({
       attachPointPath: "src/server/queueProviderAdapter.ts",
       attachPointPaths: expect.arrayContaining([
+        "src/server/queueProviderDriver.ts",
         "src/server/queueProviderAdapter.ts",
         "src/server/queueRuntime.ts",
         "src/server/workerIdempotencyStore.ts",
@@ -349,6 +352,13 @@ describe("backend service topology", () => {
         "queue-provider-idempotency-store",
         "queue-provider-worker-lease",
         "queue-provider-observability",
+        "queue-provider-driver-queue-provider-driver-selection",
+        "queue-provider-driver-queue-provider-driver-endpoint",
+        "queue-provider-driver-queue-provider-driver-credentials",
+        "queue-provider-driver-queue-provider-driver-worker-queue",
+        "queue-provider-driver-queue-provider-driver-dead-letter",
+        "queue-provider-driver-queue-provider-driver-retry-policy",
+        "queue-provider-driver-queue-provider-driver-live-enable-gate",
         "worker-lease-store-worker-lease-store-selection",
         "worker-lease-store-worker-lease-store-endpoint",
         "worker-lease-store-worker-lease-store-credentials",
@@ -375,6 +385,7 @@ describe("backend service topology", () => {
     });
     expect(workerRuntime?.productionRequiredBlockerIds).toHaveLength(
       queueProviderAdapterProductionPreconditions.length
+        + queueProviderDriverProductionPreconditions.length
         + workerLeaseStoreProductionPreconditions.length
         + workerIdempotencyStoreProductionPreconditions.length,
     );

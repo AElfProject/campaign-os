@@ -1,5 +1,6 @@
 import type { ApiRuntimeCapabilityId } from "./contracts";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
+import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 import { workerIdempotencyStoreProductionPreconditions } from "./workerIdempotencyStore";
@@ -234,6 +235,8 @@ const runtimeProfile = (item: BackendRuntimeProfile): BackendRuntimeProfile => i
 const deploymentUnit = (item: BackendDeploymentUnit): BackendDeploymentUnit => item;
 const topologySafeQueueProviderBlockerId = (id: string): string =>
   id === "queue-provider-credentials" ? "queue-provider-auth" : id;
+const topologySafeQueueProviderDriverBlockerId = (id: string): string =>
+  `queue-provider-driver-${id}`;
 const observabilityExporterBlockerIds = observabilityExporterProductionPreconditions.map(
   (precondition) => precondition.id,
 );
@@ -793,6 +796,7 @@ export const backendDeploymentUnits = [
   deploymentUnit({
     attachPointPath: "src/server/queueProviderAdapter.ts",
     attachPointPaths: [
+      "src/server/queueProviderDriver.ts",
       "src/server/queueProviderAdapter.ts",
       "src/server/queueRuntime.ts",
       "src/server/workerIdempotencyStore.ts",
@@ -806,6 +810,9 @@ export const backendDeploymentUnits = [
     productionRequiredBlockerIds: [
       ...queueProviderAdapterProductionPreconditions.map((precondition) =>
         topologySafeQueueProviderBlockerId(precondition.id)
+      ),
+      ...queueProviderDriverProductionPreconditions.map((precondition) =>
+        topologySafeQueueProviderDriverBlockerId(precondition.id)
       ),
       ...workerLeaseStoreProductionPreconditions.map((precondition) => `worker-lease-store-${precondition.id}`),
       ...workerIdempotencyStoreProductionPreconditions.map(

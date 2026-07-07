@@ -47,6 +47,16 @@ describe("queue provider adapter foundation", () => {
     expect(foundation.diagnosticCodes).toEqual([]);
     expect(foundation.readiness).toMatchObject({
       disabledLiveOperationCount: queueProviderOperationCapabilities.length,
+      driverActivationGateSatisfied: false,
+      driverBlockerCount: 0,
+      driverDiagnosticCodes: [],
+      driverId: "local-fake-queue-provider-driver",
+      driverLiveQueuePublishingEnabled: false,
+      driverLiveWorkerExecutionEnabled: false,
+      driverMode: "dry_run",
+      driverProviderId: "local-fake",
+      driverStatus: "local_ready",
+      driverValid: true,
       liveQueuePublishingEnabled: false,
       liveWorkerExecutionEnabled: false,
       observabilityExporterBlockerCount: 0,
@@ -58,6 +68,18 @@ describe("queue provider adapter foundation", () => {
       observabilityExporterStatus: "local_ready",
       operationCount: queueProviderOperationCapabilities.length,
       productionReady: false,
+    });
+    expect(foundation.driver).toMatchObject({
+      activationGateSatisfied: false,
+      blockerCount: 0,
+      driverId: "local-fake-queue-provider-driver",
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      mode: "dry_run",
+      productionReady: false,
+      providerId: "local-fake",
+      status: "local_ready",
+      valid: true,
     });
     expect(foundation.observabilityExporter).toMatchObject({
       disabledLiveOperationCount: observabilityExporterOperationCapabilities.length,
@@ -83,6 +105,13 @@ describe("queue provider adapter foundation", () => {
     expect(foundation.status).toBe("scaffolded");
     expect(foundation.mode).toBe("metadata_only");
     expect(foundation.valid).toBe(true);
+    expect(foundation.driver).toMatchObject({
+      driverId: "metadata-only-queue-provider-driver",
+      mode: "metadata_only",
+      providerId: "metadata-only",
+      status: "scaffolded",
+      valid: true,
+    });
     expect(foundation.operationCapabilities.map((item) => item.operation)).toEqual([
       "publish",
       "delayed_publish",
@@ -118,7 +147,9 @@ describe("queue provider adapter foundation", () => {
     expect(foundation.status).toBe("blocked");
     expect(foundation.valid).toBe(false);
     expect(foundation.productionReady).toBe(false);
-    expect(foundation.blockerCount).toBe(queueProviderAdapterProductionPreconditions.length);
+    expect(foundation.blockerCount).toBe(
+      queueProviderAdapterProductionPreconditions.length + foundation.driver.blockerCount,
+    );
     expect(foundation.diagnosticCodes).toEqual([
       "QUEUE_PROVIDER_MISSING",
       "QUEUE_PROVIDER_ENDPOINT_MISSING",
@@ -129,7 +160,21 @@ describe("queue provider adapter foundation", () => {
       "QUEUE_PROVIDER_IDEMPOTENCY_STORE_MISSING",
       "QUEUE_PROVIDER_WORKER_LEASE_MISSING",
       "QUEUE_PROVIDER_OBSERVABILITY_MISSING",
+      "QUEUE_PROVIDER_DRIVER_MISSING",
+      "QUEUE_PROVIDER_DRIVER_ENDPOINT_MISSING",
+      "QUEUE_PROVIDER_DRIVER_CREDENTIALS_MISSING",
+      "QUEUE_PROVIDER_DRIVER_QUEUE_ROUTE_MISSING",
+      "QUEUE_PROVIDER_DRIVER_DEAD_LETTER_ROUTE_MISSING",
+      "QUEUE_PROVIDER_DRIVER_RETRY_POLICY_MISSING",
+      "QUEUE_PROVIDER_DRIVER_IDEMPOTENCY_STORE_MISSING",
+      "QUEUE_PROVIDER_DRIVER_WORKER_LEASE_MISSING",
+      "QUEUE_PROVIDER_DRIVER_OBSERVABILITY_MISSING",
+      "QUEUE_PROVIDER_DRIVER_RUNBOOK_MISSING",
+      "QUEUE_PROVIDER_DRIVER_LIVE_ENABLEMENT_MISSING",
     ]);
+    expect(foundation.driver.status).toBe("blocked");
+    expect(foundation.driver.activationGateSatisfied).toBe(false);
+    expect(foundation.driver.liveQueuePublishingEnabled).toBe(false);
   });
 
   it("can report production-required config shape without becoming production ready", () => {
@@ -139,6 +184,9 @@ describe("queue provider adapter foundation", () => {
         CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
         CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:review",
         CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:review",
+        CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "enabled",
+        CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "runbook-ref:queue-provider",
+        CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
         CAMPAIGN_OS_QUEUE_PROVIDER: "production-queue-provider",
         CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-provider",
         CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "queue-endpoint-ref:provider",
@@ -154,6 +202,17 @@ describe("queue provider adapter foundation", () => {
     expect(foundation.profileId).toBe("production-required");
     expect(foundation.mode).toBe("production_required");
     expect(foundation.providerId).toBe("production-queue-provider");
+    expect(foundation.driver).toMatchObject({
+      activationGateSatisfied: true,
+      blockerCount: 0,
+      driverId: "production-provider-driver",
+      liveQueuePublishingEnabled: false,
+      mode: "production_required",
+      productionReady: false,
+      providerId: "production-queue-provider",
+      status: "scaffolded",
+      valid: true,
+    });
     expect(foundation.productionReady).toBe(false);
     expect(foundation.noLiveFlags.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.operationCapabilities.every((item) => item.liveEnabled === false)).toBe(true);
@@ -169,9 +228,12 @@ describe("queue provider adapter foundation", () => {
       CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:review",
       CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
       CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:review",
+      CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "enabled",
       CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:review",
+      CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "runbook-ref:queue-provider",
       CAMPAIGN_OS_QUEUE_PROVIDER: "production-queue-provider",
       CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-provider",
+      CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
       CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "queue-endpoint-ref:provider",
       CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:review",
       CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:worker",
@@ -252,10 +314,20 @@ describe("queue provider adapter foundation", () => {
     expect(unknownProfile.valid).toBe(false);
     expect(unknownProfile.diagnosticCodes[0]).toBe("UNKNOWN_QUEUE_PROVIDER_PROFILE");
     expect(unsupportedProvider.status).toBe("blocked");
-    expect(unsupportedProvider.diagnosticCodes).toEqual(["QUEUE_PROVIDER_UNSUPPORTED"]);
+    expect(unsupportedProvider.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "QUEUE_PROVIDER_UNSUPPORTED",
+        "QUEUE_PROVIDER_DRIVER_UNSUPPORTED",
+      ]),
+    );
     expect(unsafeProvider.status).toBe("blocked");
     expect(unsafeProvider.providerId).toBe("blocked-provider");
-    expect(unsafeProvider.diagnosticCodes).toEqual(["UNSAFE_QUEUE_PROVIDER_CONFIG"]);
+    expect(unsafeProvider.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "UNSAFE_QUEUE_PROVIDER_CONFIG",
+        "QUEUE_PROVIDER_DRIVER_UNSUPPORTED",
+      ]),
+    );
     expect(serialized).not.toContain("queue-user");
     expect(serialized).not.toContain("queue-pass");
     expect(serialized).not.toContain("queue-secret");
