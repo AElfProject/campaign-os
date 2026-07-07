@@ -158,6 +158,7 @@ export interface BackendServiceReadinessReport {
   databaseReadiness: BackendDatabaseReadinessReport;
   entrypoint: BackendServiceEntrypoint;
   migration: MigrationManifest;
+  persistenceFoundation: BackendPersistenceFoundationSummary;
   persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   persistenceAdapters: PersistenceAdapterPortReport;
   profile: BackendConfigContract["profile"];
@@ -370,6 +371,36 @@ export interface BackendPersistenceRuntimeSummary {
   stores: ProductionPersistenceStoreCoverage[];
   supportMode: string;
   transaction: TransactionCapabilitySummary;
+  valid: boolean;
+}
+
+export type BackendPersistenceFoundationStatus = "metadata_ready" | "blocked";
+
+export interface BackendPersistenceFoundationSummary {
+  blockerCount: number;
+  diagnosticCodes: string[];
+  foundationId: ProductionPersistenceRuntimeContract["foundationId"];
+  liveConnectionAttempted: false;
+  liveMigrationExecutionEnabled: false;
+  liveQueryExecutionEnabled: false;
+  migrationDryRun: {
+    liveMigrationExecutionEnabled: false;
+    migrationGateStatus: MigrationExecutionGate["status"];
+    noLiveMigrationCommand: true;
+    runnerStatus: MigrationManifest["runnerStatus"];
+    status: MigrationRunnerPlan["status"];
+  };
+  productionBlockerIds: string[];
+  productionReady: false;
+  requiredStoreCount: number;
+  status: BackendPersistenceFoundationStatus;
+  storeCoverage: {
+    coverageComplete: boolean;
+    coveredStoreCount: number;
+    requiredStoreCount: number;
+    storeIds: string[];
+  };
+  storeCoverageCount: number;
   valid: boolean;
 }
 
@@ -963,6 +994,71 @@ export const createBackendPersistenceRuntimeSummary = (
   valid: runtime.valid,
 });
 
+const uniqueDiagnosticCodes = (
+  codes: readonly string[],
+): string[] => Array.from(new Set(codes));
+
+export const createBackendPersistenceFoundationSummary = ({
+  databaseAdapterRuntime,
+  migration,
+  persistenceRuntime,
+}: {
+  databaseAdapterRuntime: BackendDatabaseAdapterRuntimeReadinessReport;
+  migration: MigrationManifest;
+  persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
+}): BackendPersistenceFoundationSummary => {
+  const requiredStores = persistenceRuntime.stores.filter((store) => store.required);
+  const coveredStores = requiredStores.filter((store) => store.runtimeState === "covered");
+  const coverageComplete = coveredStores.length === requiredStores.length;
+  const diagnosticCodes = uniqueDiagnosticCodes([
+    ...persistenceRuntime.diagnostics.map((diagnostic) => diagnostic.code),
+    ...persistenceRuntime.migrationGate.diagnostics.map((diagnostic) => diagnostic.code),
+    ...databaseAdapterRuntime.diagnostics.map((diagnostic) => diagnostic.code),
+    ...databaseAdapterRuntime.connectionPool.diagnosticCodes,
+    ...databaseAdapterRuntime.migrationExecutor.diagnosticCodes,
+    ...databaseAdapterRuntime.migrationHandoff.diagnosticCodes,
+    ...databaseAdapterRuntime.productionDbRuntime.diagnosticCodes,
+    ...migration.runnerPlan.diagnostics.map((diagnostic) => diagnostic.code),
+    ...migration.executionGate.diagnostics.map((diagnostic) => diagnostic.code),
+    ...migration.validation.issues.map((issue) => issue.code),
+  ]);
+  const valid =
+    coverageComplete
+    && persistenceRuntime.valid
+    && databaseAdapterRuntime.valid
+    && databaseAdapterRuntime.migrationHandoff.valid
+    && migration.validation.valid
+    && migration.executionGate.status !== "blocked";
+
+  return {
+    blockerCount: persistenceRuntime.productionBlockers.length,
+    diagnosticCodes,
+    foundationId: persistenceRuntime.foundationId,
+    liveConnectionAttempted: false,
+    liveMigrationExecutionEnabled: false,
+    liveQueryExecutionEnabled: false,
+    migrationDryRun: {
+      liveMigrationExecutionEnabled: false,
+      migrationGateStatus: migration.executionGate.status,
+      noLiveMigrationCommand: migration.noLiveMigrationCommand,
+      runnerStatus: migration.runnerStatus,
+      status: migration.runnerPlan.status,
+    },
+    productionBlockerIds: persistenceRuntime.productionBlockers.map((dependency) => dependency.id),
+    productionReady: persistenceRuntime.productionReady,
+    requiredStoreCount: requiredStores.length,
+    status: valid ? "metadata_ready" : "blocked",
+    storeCoverage: {
+      coverageComplete,
+      coveredStoreCount: coveredStores.length,
+      requiredStoreCount: requiredStores.length,
+      storeIds: coveredStores.map((store) => store.id),
+    },
+    storeCoverageCount: coveredStores.length,
+    valid,
+  };
+};
+
 export const createBackendDatabaseAdapterRuntimeSummary = (
   runtime: BackendDatabaseAdapterRuntimeReadinessReport,
 ): BackendDatabaseAdapterRuntimeSummary => ({
@@ -1082,6 +1178,11 @@ export const createBackendServiceReadinessReport = ({
     migration,
     persistenceRuntime,
   });
+  const persistenceFoundation = createBackendPersistenceFoundationSummary({
+    databaseAdapterRuntime,
+    migration,
+    persistenceRuntime,
+  });
   const entrypoint: BackendServiceEntrypoint = {
     foundationValidationValid: apiFoundation.validation.valid,
     id: "campaign-os-backend-service",
@@ -1123,6 +1224,7 @@ export const createBackendServiceReadinessReport = ({
     databaseReadiness,
     entrypoint,
     migration,
+    persistenceFoundation,
     persistenceRuntime,
     persistenceAdapters,
     profile: config.profile,

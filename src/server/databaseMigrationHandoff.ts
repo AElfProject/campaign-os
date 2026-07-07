@@ -41,6 +41,13 @@ export interface DatabaseMigrationExecutorHandoffSummary {
   pendingMigrationIds: string[];
   preconditions: DatabaseMigrationHandoffPrecondition[];
   profileId: BackendRuntimeProfileId;
+  requiredPreconditionIds: string[];
+  rollbackReadiness: {
+    blockers: string[];
+    planId: "campaign-os-production-db-rollback-v0.2";
+    ready: boolean;
+    status: "ready_for_dry_run" | "missing_for_live";
+  };
   rollbackPlanStatus: MigrationExecutionGate["rollbackPlan"]["status"];
   schemaManifestId: MigrationExecutionGate["schemaManifestId"];
   valid: boolean;
@@ -119,6 +126,38 @@ const preconditionDiagnostics = (
       );
     });
 
+const createRollbackReadiness = (
+  preconditions: readonly DatabaseMigrationHandoffPrecondition[],
+  profileId: BackendRuntimeProfileId,
+): DatabaseMigrationExecutorHandoffSummary["rollbackReadiness"] => {
+  if (profileId !== "production-required") {
+    return {
+      blockers: [],
+      planId: "campaign-os-production-db-rollback-v0.2",
+      ready: true,
+      status: "ready_for_dry_run",
+    };
+  }
+
+  const rollbackBlockers = preconditions
+    .filter((precondition) =>
+      precondition.required
+      && precondition.status !== "satisfied"
+      && (
+        precondition.id === "backup-restore-plan-ready"
+        || precondition.id === "migration-gate:rollback-plan"
+      ),
+    )
+    .map((precondition) => precondition.id);
+
+  return {
+    blockers: rollbackBlockers,
+    planId: "campaign-os-production-db-rollback-v0.2",
+    ready: rollbackBlockers.length === 0,
+    status: rollbackBlockers.length === 0 ? "ready_for_dry_run" : "missing_for_live",
+  };
+};
+
 export const createDatabaseMigrationExecutorHandoff = ({
   adapterRuntime,
   migrationGate,
@@ -130,6 +169,10 @@ export const createDatabaseMigrationExecutorHandoff = ({
     ...mapAdapterRuntimePreconditions(runtime),
     ...mapGatePreconditions(migrationGate),
   ];
+  const requiredPreconditionIds = preconditions
+    .filter((precondition) => precondition.required)
+    .map((precondition) => precondition.id);
+  const rollbackReadiness = createRollbackReadiness(preconditions, profileId);
   const diagnostics: DatabaseMigrationHandoffDiagnostic[] = [
     ...(migrationGate.status === "blocked"
       ? [
@@ -172,6 +215,8 @@ export const createDatabaseMigrationExecutorHandoff = ({
     pendingMigrationIds: [...migrationGate.pendingMigrationIds],
     preconditions,
     profileId,
+    requiredPreconditionIds,
+    rollbackReadiness,
     rollbackPlanStatus: migrationGate.rollbackPlan.status,
     schemaManifestId: migrationGate.schemaManifestId,
     valid: !diagnostics.some((item) => item.severity === "error"),

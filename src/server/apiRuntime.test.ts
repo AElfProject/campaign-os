@@ -426,6 +426,20 @@ describe("Campaign OS API runtime", () => {
           requiredStoreCount: 6,
         }),
         migrationRunnerStatus: "disabled_local_review",
+        persistenceFoundation: expect.objectContaining({
+          diagnosticCodes: ["DATABASE_MIGRATION_LIVE_EXECUTION_DISABLED"],
+          liveConnectionAttempted: false,
+          liveMigrationExecutionEnabled: false,
+          liveQueryExecutionEnabled: false,
+          migrationDryRun: expect.objectContaining({
+            noLiveMigrationCommand: true,
+            status: "dry_run_ready",
+          }),
+          productionReady: false,
+          status: "metadata_ready",
+          storeCoverageCount: 6,
+          valid: true,
+        }),
         persistenceRuntime: expect.objectContaining({
           activeDriverId: "campaign-os-memory-adapter",
           adapterKind: "memory",
@@ -771,6 +785,14 @@ describe("Campaign OS API runtime", () => {
           }),
           valid: true,
         }),
+        persistenceFoundation: expect.objectContaining({
+          liveConnectionAttempted: false,
+          liveMigrationExecutionEnabled: false,
+          productionReady: false,
+          status: "metadata_ready",
+          storeCoverageCount: 6,
+          valid: true,
+        }),
         persistenceRuntime: expect.objectContaining({
           activeDriverId: "campaign-os-memory-adapter",
           adapterKind: "memory",
@@ -806,6 +828,7 @@ describe("Campaign OS API runtime", () => {
             "authSession",
             "backendRuntimeBootstrap",
             "databaseReadiness",
+            "persistenceFoundation",
             "persistenceRuntime",
             "validation",
           ]),

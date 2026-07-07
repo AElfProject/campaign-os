@@ -8,6 +8,23 @@ import {
   sanitizeBackendConfigDiagnosticValue,
   type BackendConfigContractOptions,
 } from "./config";
+import {
+  createDatabaseProviderRegistryReport,
+  type DatabaseDriverCapabilityDescriptor,
+} from "./databaseProviderRegistry";
+import {
+  createPersistenceDriverRegistryReport,
+  type PersistenceDriverSideEffectPolicy,
+  type PersistenceDriverStatus,
+} from "./persistenceDriverRegistry";
+import {
+  createProductionDatabaseSchemaManifest,
+  productionDatabaseStoreRegistry,
+  type ProductionDatabaseSchemaManifest,
+  type ProductionDatabaseStoreOperationCapability,
+  type ProductionDatabaseStoreRegistryEntry,
+  type ProductionDatabaseStoreReadiness,
+} from "./productionDatabase";
 
 export type ProductionPersistenceRuntimeStatus =
   | "active_local"
@@ -53,7 +70,10 @@ export interface ProductionPersistenceStoreCoverage {
   entities: string[];
   id: string;
   label: string;
+  migrationRequired: boolean;
+  operationCapability: ProductionDatabaseStoreOperationCapability;
   ownerServiceId: string;
+  readiness: ProductionDatabaseStoreReadiness;
   required: boolean;
   runtimeState: "covered" | "deferred" | "blocked";
   schemaVersion: string;
@@ -73,15 +93,70 @@ export interface DeferredPersistenceDependency {
   status: "planned" | "deferred" | "blocked";
 }
 
+export interface ProductionPersistenceProviderSummary {
+  driverIds: string[];
+  id: string;
+  label: string;
+  requiresNetwork: boolean;
+  requiresSecretManager: boolean;
+  status: "available" | "deferred" | "blocked";
+}
+
+export interface ProductionPersistenceDriverSummary {
+  capabilities: {
+    pooling?: boolean;
+    requiresNetwork?: boolean;
+    requiresSecretManager?: boolean;
+    sideEffectPolicy?: PersistenceDriverSideEffectPolicy;
+    supportsConnectionPool?: boolean;
+    supportsMigrations?: boolean;
+    supportsReset?: boolean;
+    supportsTransactions: boolean;
+    transactions?: boolean;
+  };
+  deferredBlockers: string[];
+  id: string;
+  kind?: ProductionPersistenceAdapterKind;
+  label: string;
+  providerId?: string;
+  requiredConfigKeys: string[];
+  status: PersistenceDriverStatus | "available" | "deferred" | "blocked";
+  supportedStoreIds: string[];
+}
+
+export interface ProductionPersistenceProviderDecision {
+  diagnostics: ProductionPersistenceRuntimeDiagnostic[];
+  drivers: ProductionPersistenceDriverSummary[];
+  providers: ProductionPersistenceProviderSummary[];
+  selectedDriverId: string;
+  selectedProviderId: string;
+  status: "local-review" | "blocked";
+  valid: boolean;
+}
+
+export interface ProductionPersistenceDriverDecision {
+  activeDriverId: string;
+  adapterKind: ProductionPersistenceAdapterKind;
+  diagnostics: ProductionPersistenceRuntimeDiagnostic[];
+  drivers: ProductionPersistenceDriverSummary[];
+  status: PersistenceDriverStatus | "unknown";
+  valid: boolean;
+}
+
 export interface ProductionPersistenceRuntimeContract {
   activeDriverId: string;
   adapterKind: ProductionPersistenceAdapterKind;
   connection: ConnectionConfigSummary;
   deferredDependencies: DeferredPersistenceDependency[];
   diagnostics: ProductionPersistenceRuntimeDiagnostic[];
+  driverDecision: ProductionPersistenceDriverDecision;
+  foundationId: typeof productionPersistenceFoundationId;
   id: "campaign-os-production-persistence-runtime";
   liveConnectionAttempted: false;
   profileId: BackendRuntimeProfileId;
+  productionBlockers: DeferredPersistenceDependency[];
+  productionReady: false;
+  providerDecision: ProductionPersistenceProviderDecision;
   queryCapability: Pick<
     DatabaseQueryAdapterSummary,
     | "adHocRawSqlEnabled"
@@ -92,6 +167,7 @@ export interface ProductionPersistenceRuntimeContract {
     transactionMode: TransactionCapabilityMode;
   };
   requestedDriverId?: string;
+  schemaManifest: ProductionDatabaseSchemaManifest;
   schemaVersion: "v0.2.0";
   status: ProductionPersistenceRuntimeStatus;
   stores: ProductionPersistenceStoreCoverage[];
@@ -113,6 +189,8 @@ export interface CreateProductionPersistenceRuntimeContractOptions
 
 const REDACTED_VALUE = "[redacted]";
 const notConfiguredLabel = "not_configured";
+export const productionPersistenceFoundationId =
+  "campaign-os-production-persistence-foundation-v0.2" as const;
 const productionConnectionConfigKeys = [
   "CAMPAIGN_OS_DATABASE_URL",
   "CAMPAIGN_OS_DATABASE_PASSWORD",
@@ -132,62 +210,32 @@ const supportedDriverIds = [
   "campaign-os-production-db-adapter",
 ] as const;
 
-const requiredStoreCoverages: ProductionPersistenceStoreCoverage[] = [
-  {
-    entities: ["Campaign", "CampaignStatus", "PublishChecklist", "ContractModeMetadata"],
-    id: "campaign-db",
-    label: "Campaign DB",
-    ownerServiceId: "campaign-service",
+const createStoreCoverage = (
+  store: ProductionDatabaseStoreRegistryEntry,
+): ProductionPersistenceStoreCoverage => {
+  if (!store.operationCapability) {
+    throw new Error(`Production persistence store '${store.id}' is missing operation capability.`);
+  }
+
+  return {
+    entities: [...store.entities],
+    id: store.id,
+    label: store.label,
+    migrationRequired: store.migrationRequired,
+    operationCapability: {
+      ...store.operationCapability,
+      operations: [...store.operationCapability.operations],
+    },
+    ownerServiceId: store.ownerServiceId,
+    readiness: store.readiness,
     required: true,
     runtimeState: "covered",
-    schemaVersion: "v0.2.0",
-  },
-  {
-    entities: ["NormalizedWalletSession", "AccountTypeProof", "WalletSourceProof"],
-    id: "wallet-session-db",
-    label: "Wallet Session DB",
-    ownerServiceId: "wallet-session-service",
-    required: true,
-    runtimeState: "covered",
-    schemaVersion: "v0.2.0",
-  },
-  {
-    entities: ["CampaignTask", "TaskCompletion", "EvidenceHash", "ManualReviewState"],
-    id: "task-evidence-db",
-    label: "Task Evidence DB",
-    ownerServiceId: "verification-service",
-    required: true,
-    runtimeState: "covered",
-    schemaVersion: "v0.2.0",
-  },
-  {
-    entities: ["I18nContentRevision", "LocaleDraft", "HumanReviewState"],
-    id: "i18n-content-db",
-    label: "i18n Content DB",
-    ownerServiceId: "i18n-content-service",
-    required: true,
-    runtimeState: "covered",
-    schemaVersion: "v0.2.0",
-  },
-  {
-    entities: ["RiskEvent", "ParticipantRiskFlag", "ReferralRiskReview"],
-    id: "risk-event-db",
-    label: "Risk Event DB",
-    ownerServiceId: "risk-intelligence-service",
-    required: true,
-    runtimeState: "covered",
-    schemaVersion: "v0.2.0",
-  },
-  {
-    entities: ["PointsLedgerEntry", "ParticipantScore", "LeaderboardProjection"],
-    id: "points-ledger",
-    label: "Points Ledger",
-    ownerServiceId: "points-ranking-service",
-    required: true,
-    runtimeState: "covered",
-    schemaVersion: "v0.2.0",
-  },
-];
+    schemaVersion: store.schemaVersion,
+  };
+};
+
+const requiredStoreCoverages: ProductionPersistenceStoreCoverage[] =
+  productionDatabaseStoreRegistry.map(createStoreCoverage);
 
 export const productionPersistenceDeferredDependencies: DeferredPersistenceDependency[] = [
   {
@@ -201,6 +249,13 @@ export const productionPersistenceDeferredDependencies: DeferredPersistenceDepen
     blockedBy: ["driver package approval mission"],
     id: "driver-package",
     label: "Driver package",
+    requiredBeforeProduction: true,
+    status: "deferred",
+  },
+  {
+    blockedBy: ["connection config mission"],
+    id: "connection-config",
+    label: "Connection config",
     requiredBeforeProduction: true,
     status: "deferred",
   },
@@ -444,6 +499,128 @@ const createQueryCapabilitySummary = (
   };
 };
 
+const runtimeDiagnosticFromProviderIssue = (
+  issue: ReturnType<typeof createDatabaseProviderRegistryReport>["validation"]["issues"][number],
+): ProductionPersistenceRuntimeDiagnostic => ({
+  code:
+    issue.code === "DATABASE_DRIVER_PRODUCTION_DEFERRED"
+      ? "PRODUCTION_PERSISTENCE_LIVE_CONNECTION_DEFERRED"
+      : issue.code === "DATABASE_DRIVER_NOT_FOUND"
+        || issue.code === "DATABASE_PROVIDER_NOT_FOUND"
+        || issue.code === "DATABASE_PROVIDER_DRIVER_MISMATCH"
+        || issue.code === "DATABASE_PROVIDER_DRIVER_UNKNOWN"
+        || issue.code === "DATABASE_DRIVER_STORE_UNSUPPORTED"
+        || issue.code === "DATABASE_PROVIDER_PRODUCTION_UNSUPPORTED"
+          ? "PRODUCTION_PERSISTENCE_DRIVER_UNSUPPORTED"
+          : "PRODUCTION_PERSISTENCE_CONFIG_REQUIRED",
+  field: issue.field,
+  message: issue.message,
+  severity: issue.severity,
+});
+
+const driverCapabilitySummary = (
+  capability?: DatabaseDriverCapabilityDescriptor,
+) => ({
+  pooling: capability?.pooling,
+  requiresNetwork: capability?.requiresNetwork,
+  requiresSecretManager: capability?.requiresSecretManager,
+  supportsTransactions: capability?.transactions ?? false,
+  transactions: capability?.transactions,
+});
+
+const createProviderDecision = (
+  profileId: BackendRuntimeProfileId,
+): ProductionPersistenceProviderDecision => {
+  const providerReport = createDatabaseProviderRegistryReport({ profileId });
+  const diagnostics = providerReport.validation.issues.map(runtimeDiagnosticFromProviderIssue);
+  const status: ProductionPersistenceProviderDecision["status"] =
+    providerReport.validation.valid ? "local-review" : "blocked";
+
+  return {
+    diagnostics,
+    drivers: providerReport.drivers.map((driver) => ({
+      capabilities: driverCapabilitySummary(driver.capability),
+      deferredBlockers: [...driver.deferredBy],
+      id: driver.id,
+      label: driver.label,
+      providerId: driver.providerId,
+      requiredConfigKeys: [...driver.requiredConfigKeys],
+      status: driver.status,
+      supportedStoreIds: [...driver.supportedStoreIds],
+    })),
+    providers: providerReport.providers.map((provider) => ({
+      driverIds: [...provider.driverIds],
+      id: provider.id,
+      label: provider.label,
+      requiresNetwork: provider.requiresNetwork,
+      requiresSecretManager: provider.requiresSecretManager,
+      status: provider.status,
+    })),
+    selectedDriverId: providerReport.selectedDriverId,
+    selectedProviderId: providerReport.selectedProviderId,
+    status,
+    valid: providerReport.validation.valid,
+  };
+};
+
+const runtimeDiagnosticFromDriverIssue = (
+  issue: ReturnType<typeof createPersistenceDriverRegistryReport>["validation"]["issues"][number],
+): ProductionPersistenceRuntimeDiagnostic => ({
+  code:
+    issue.code === "PERSISTENCE_DRIVER_NOT_FOUND"
+      ? "PRODUCTION_PERSISTENCE_DRIVER_UNSUPPORTED"
+      : "PRODUCTION_PERSISTENCE_LIVE_CONNECTION_DEFERRED",
+  field: issue.field,
+  message: issue.message,
+  severity: issue.severity,
+});
+
+const createDriverDecision = ({
+  activeDriverId,
+  adapterKind,
+  connectionRequiredKeys,
+  deferredDependencies,
+  profileId,
+}: {
+  activeDriverId: string;
+  adapterKind: ProductionPersistenceAdapterKind;
+  connectionRequiredKeys: readonly string[];
+  deferredDependencies: readonly DeferredPersistenceDependency[];
+  profileId: BackendRuntimeProfileId;
+}): ProductionPersistenceDriverDecision => {
+  const registryReport = createPersistenceDriverRegistryReport({
+    activeDriverId,
+    profileId,
+  });
+  const activeDriver = registryReport.drivers.find((driver) => driver.id === activeDriverId);
+  const diagnostics = registryReport.validation.issues.map(runtimeDiagnosticFromDriverIssue);
+  const productionBlockerIds = deferredDependencies.map((dependency) => dependency.id);
+
+  return {
+    activeDriverId,
+    adapterKind,
+    diagnostics,
+    drivers: registryReport.drivers.map((driver) => ({
+      capabilities: {
+        sideEffectPolicy: driver.sideEffectPolicy,
+        supportsReset: driver.supportsReset,
+        supportsTransactions: driver.supportsTransactions,
+      },
+      deferredBlockers:
+        driver.kind === "production_deferred" ? productionBlockerIds : [],
+      id: driver.id,
+      kind: driver.kind,
+      label: driver.label,
+      requiredConfigKeys:
+        driver.kind === "production_deferred" ? [...connectionRequiredKeys] : [],
+      status: driver.status,
+      supportedStoreIds: [...driver.ownerStores],
+    })),
+    status: activeDriver?.status ?? "unknown",
+    valid: registryReport.validation.valid,
+  };
+};
+
 export const createProductionPersistenceRuntimeContract = ({
   env = typeof process === "undefined" ? {} : process.env,
   requestedDriverId,
@@ -460,11 +637,23 @@ export const createProductionPersistenceRuntimeContract = ({
   const connection = createConnectionConfigSummary({
     env,
     profileId: backendConfig.profileId,
+    requiredKeys:
+      backendConfig.profileId === "production-required"
+        ? ["CAMPAIGN_OS_DATABASE_URL"]
+        : [],
   });
   const driver = resolveDriver({
     persistenceMode: backendConfig.persistenceMode,
     profileId: backendConfig.profileId,
     requestedDriverId: rawRequestedDriverId,
+  });
+  const providerDecision = createProviderDecision(backendConfig.profileId);
+  const driverDecision = createDriverDecision({
+    activeDriverId: driver.activeDriverId,
+    adapterKind: driver.adapterKind,
+    connectionRequiredKeys: connection.requiredKeys,
+    deferredDependencies: productionPersistenceDeferredDependencies,
+    profileId: backendConfig.profileId,
   });
   const diagnostics = [...connection.diagnostics, ...driver.diagnostics];
   const status = resolveRuntimeStatus({
@@ -472,6 +661,7 @@ export const createProductionPersistenceRuntimeContract = ({
     diagnostics,
   });
   const transaction = createTransactionSummary(driver.adapterKind);
+  const schemaManifest = createProductionDatabaseSchemaManifest();
 
   return {
     activeDriverId: driver.activeDriverId,
@@ -479,11 +669,19 @@ export const createProductionPersistenceRuntimeContract = ({
     connection,
     deferredDependencies: productionPersistenceDeferredDependencies,
     diagnostics,
+    driverDecision,
+    foundationId: productionPersistenceFoundationId,
     id: "campaign-os-production-persistence-runtime",
     liveConnectionAttempted: false,
     profileId: backendConfig.profileId,
+    productionBlockers: productionPersistenceDeferredDependencies.filter(
+      (dependency) => dependency.requiredBeforeProduction,
+    ),
+    productionReady: false,
+    providerDecision,
     queryCapability: createQueryCapabilitySummary(transaction.mode),
     requestedDriverId: safeRequestedDriverId,
+    schemaManifest,
     schemaVersion: "v0.2.0",
     status,
     stores: requiredStoreCoverages,

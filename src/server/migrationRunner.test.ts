@@ -21,13 +21,48 @@ describe("migration runner dry-run validation", () => {
 
     expect(plan).toMatchObject({
       adapterId: "campaign-os-production-db-adapter",
+      approvalRequirement: {
+        approvalRequired: false,
+        liveExecutionEnabled: false,
+        status: "not_required_for_dry_run",
+      },
+      blockedMigrationIds: [],
       dryRun: true,
       liveExecutionEnabled: false,
+      planId: "migration-dry-run:local-review:v0.2.0",
       profileId: "local-review",
+      rollbackMetadata: {
+        ready: true,
+        requiredForLiveExecution: false,
+        rollbackPlanId: "campaign-os-production-db-rollback-v0.2",
+        status: "ready_for_dry_run",
+      },
       status: "dry_run_ready",
     });
     expect(plan.pendingMigrationIds).toEqual(defaultSchemaMigrations.map((migration) => migration.id));
+    expect(plan.rollbackMetadata.reviewedMigrationIds).toEqual(plan.pendingMigrationIds);
     expect(plan.validation.valid).toBe(true);
+  });
+
+  it("keeps production-required migration plans approval-gated and rollback-incomplete", () => {
+    const plan = createMigrationRunnerPlan({ profileId: "production-required" });
+
+    expect(plan).toMatchObject({
+      approvalRequirement: {
+        approvalRequired: true,
+        liveExecutionEnabled: false,
+        status: "required_for_live",
+      },
+      dryRun: true,
+      liveExecutionEnabled: false,
+      rollbackMetadata: {
+        ready: false,
+        requiredForLiveExecution: true,
+        rollbackPlanId: "campaign-os-production-db-rollback-v0.2",
+        status: "missing_for_live",
+      },
+      status: "blocked",
+    });
   });
 
   it("rejects duplicate migration ids", () => {
@@ -94,6 +129,15 @@ describe("migration runner dry-run validation", () => {
         expect.objectContaining({ code: "MIGRATION_UNKNOWN_STORE" }),
         expect.objectContaining({ code: "MIGRATION_MISSING_CHECKSUM" }),
         expect.objectContaining({ code: "MIGRATION_DESTRUCTIVE_BLOCKED" }),
+      ]),
+    );
+    expect(createMigrationRunnerPlan({ migrations: invalidMigrations }).blockedMigrationIds).toEqual(
+      expect.arrayContaining([
+        "001-invalid-foundation",
+        "002-cycle-a",
+        "003-cycle-b",
+        "004-destructive",
+        "unknown-store",
       ]),
     );
   });

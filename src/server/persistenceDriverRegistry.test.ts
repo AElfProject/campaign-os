@@ -19,6 +19,16 @@ describe("persistence driver registry", () => {
       "deterministic_test",
       "production_deferred",
     ]);
+    for (const driver of persistenceDriverDescriptors) {
+      expect(driver.label).not.toHaveLength(0);
+      expect(driver.ownerStores.length).toBeGreaterThan(0);
+      expect(driver).toMatchObject({
+        requiresConnectionString: expect.any(Boolean),
+        requiresMigrationGate: expect.any(Boolean),
+        supportsReset: expect.any(Boolean),
+        supportsTransactions: expect.any(Boolean),
+      });
+    }
   });
 
   it("marks local drivers as local-only and production driver as gate-required", () => {
@@ -72,5 +82,30 @@ describe("persistence driver registry", () => {
     );
 
     expect(productionDriver?.ownerStores).toEqual(productionDatabaseRequiredStoreIds);
+  });
+
+  it("serializes provider decision metadata without config values", () => {
+    const report = createPersistenceDriverRegistryReport({
+      activeDriverId: "campaign-os-production-db-adapter",
+      profileId: "production-required",
+    });
+
+    expect(report.drivers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "campaign-os-production-db-adapter",
+          kind: "production_deferred",
+          label: "Campaign OS production database adapter",
+          ownerStores: productionDatabaseRequiredStoreIds,
+          requiresConnectionString: true,
+          requiresMigrationGate: true,
+          sideEffectPolicy: "live_external_deferred",
+          status: "blocked",
+          supportsTransactions: true,
+        }),
+      ]),
+    );
+    expect(JSON.stringify(report)).not.toContain("postgres://");
+    expect(JSON.stringify(report)).not.toContain("plain-password");
   });
 });
