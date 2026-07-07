@@ -12,6 +12,7 @@ import {
   createBackendRuntimeBootstrapContract,
   type BackendRuntimeBootstrapContract,
 } from "./backendRuntimeBootstrap";
+import type { BackendRuntimeActivationContract } from "./backendRuntimeActivation";
 import type { ApiRuntimeEnvelope } from "./envelope";
 import type {
   ApiServerRuntimeContract,
@@ -27,6 +28,10 @@ export interface ServerShutdownState {
   state: ServerShutdownStateId;
   stopStartedAt?: string;
 }
+
+export type ServerRuntimeApiServiceReadiness = BackendApiServiceBootstrapSummary & {
+  activation: BackendRuntimeActivationContract;
+};
 
 export interface ServerRuntimeReadiness {
   corsPolicy: {
@@ -47,7 +52,7 @@ export interface ServerRuntimeReadiness {
   profileId: string;
   readiness: {
     authEnforcement: BackendAuthEnforcementReadinessSummary;
-    apiService: BackendApiServiceBootstrapSummary;
+    apiService: ServerRuntimeApiServiceReadiness;
     authSession: {
       contracts: BackendServiceReadinessReport["authSession"]["authContracts"];
       status: BackendServiceReadinessReport["authSession"]["status"];
@@ -153,7 +158,10 @@ export const createServerRuntimeReadiness = ({
     profileId: contract.profileId,
     readiness: {
       authEnforcement: backendReadiness.authEnforcement,
-      apiService: backendReadiness.apiService,
+      apiService: {
+        ...backendReadiness.apiService,
+        activation: backendRuntimeBootstrap.activation,
+      },
       authSession: {
         contracts: backendReadiness.authSession.authContracts,
         status: backendReadiness.authSession.status,

@@ -4,6 +4,7 @@ import {
   type BackendServiceReadinessReport,
 } from "./backendService";
 import type { BackendRuntimeBootstrapContract } from "./backendRuntimeBootstrap";
+import type { BackendRuntimeActivationContract } from "./backendRuntimeActivation";
 import { apiRuntimeRoutes } from "./routes";
 import {
   resolveApiServerRuntimeContract,
@@ -69,6 +70,7 @@ export interface CampaignOsApiServiceAttachPoint {
 }
 
 export interface CampaignOsApiServiceComposition {
+  activation: BackendRuntimeActivationContract;
   apiRuntime: {
     handlerSource: "createCampaignOsApiRuntime";
     metadataRouteIds: string[];
@@ -316,6 +318,7 @@ const createComposition = (
   runtimeContract: ApiServerRuntimeContract,
   backendReadiness: BackendServiceReadinessReport,
 ): CampaignOsApiServiceComposition => ({
+  activation: backendReadiness.backendRuntimeBootstrap.activation,
   apiRuntime: {
     handlerSource: "createCampaignOsApiRuntime",
     metadataRouteIds: apiRuntimeRoutes

@@ -1,4 +1,8 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import {
+  createBackendRuntimeActivationContract,
+  type BackendRuntimeActivationContract,
+} from "./backendRuntimeActivation";
 import type { BackendServiceReadinessReport } from "./backendService";
 import type { ApiServerRuntimeContract } from "./serverRuntime";
 
@@ -110,6 +114,7 @@ export interface BackendRuntimeReadinessProjection {
 }
 
 export interface BackendRuntimeBootstrapContract {
+  activation: BackendRuntimeActivationContract;
   deferredDependencies: BackendRuntimeDeferredDependency[];
   deferredDependencyIds: string[];
   diagnosticCodes: BackendRuntimeBootstrapDiagnosticCode[];
@@ -399,8 +404,10 @@ export const createBackendRuntimeBootstrapContract = ({
   const status = resolveStatus({ diagnostics, shutdownState });
   const uptimeMs = Math.max(0, now.getTime() - Date.parse(contract.startedAt));
   const valid = diagnostics.every((item) => item.severity !== "error");
+  const activation = createBackendRuntimeActivationContract({ runtime: contract });
 
   return {
+    activation,
     deferredDependencies: backendRuntimeBootstrapDeferredDependencies,
     deferredDependencyIds: backendRuntimeBootstrapDeferredDependencies.map((dependency) => dependency.id),
     diagnosticCodes: diagnostics.map((item) => item.code),

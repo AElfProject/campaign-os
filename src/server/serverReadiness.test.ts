@@ -49,6 +49,26 @@ describe("server runtime readiness metadata", () => {
       profileId: "local-review",
       readiness: {
         apiService: {
+          activation: expect.objectContaining({
+            deploymentHandoff: expect.objectContaining({
+              contractsEndpoint: "/api/contracts",
+              healthEndpoint: "/api/health",
+              runtimeTarget: "api_service",
+              shutdown: expect.objectContaining({
+                idempotentStop: true,
+                shutdownTimeoutMs: 5_000,
+              }),
+              smokeCommand: "npm run server:smoke",
+              startCommand: "npm run server:start",
+              tracePolicy: expect.objectContaining({
+                traceHeaderName: "x-campaign-os-trace-id",
+              }),
+            }),
+            id: "campaign-os-backend-runtime-activation",
+            liveSideEffectsEnabled: false,
+            productionReady: false,
+            runtimeTarget: "node-http-api-service",
+          }),
           blockedDependencyIds: expect.arrayContaining([
             "live-database-driver",
             "contract-writer",
@@ -105,6 +125,32 @@ describe("server runtime readiness metadata", () => {
           verificationMode: "local_only",
         },
         backendRuntimeBootstrap: {
+          activation: expect.objectContaining({
+            deploymentHandoff: expect.objectContaining({
+              environmentKeys: expect.arrayContaining([
+                expect.objectContaining({
+                  key: "CAMPAIGN_OS_DATABASE_URL",
+                  redacted: true,
+                  status: "blocked",
+                }),
+                expect.objectContaining({
+                  key: "CAMPAIGN_OS_AUTH_SECRET",
+                  redacted: true,
+                  status: "blocked",
+                }),
+              ]),
+              requiredBeforeProduction: expect.arrayContaining([
+                "live-database-driver",
+                "migration-executor",
+                "session-issuer",
+                "contract-writer",
+                "reward-custody",
+                "reward-distribution",
+              ]),
+              startCommand: "npm run server:start",
+            }),
+            id: "campaign-os-backend-runtime-activation",
+          }),
           deferredDependencyIds: expect.arrayContaining([
             "production-database-driver",
             "auth-middleware",
