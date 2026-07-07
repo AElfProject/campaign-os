@@ -62,7 +62,9 @@ export interface CampaignOsApiServiceAttachPoint {
   attachPoint: string;
   blockedBy: string[];
   id: CampaignOsApiServiceAttachPointId;
+  localContractReady?: boolean;
   requiredBeforeProduction: boolean;
+  productionReady?: false;
   status: CampaignOsApiServiceAttachPointStatus;
 }
 
@@ -74,6 +76,10 @@ export interface CampaignOsApiServiceComposition {
     routeIds: string[];
   };
   authEnforcement: {
+    liveSigningExecuted: false;
+    liveVerificationExecuted: false;
+    localProofVerifierContractReady: true;
+    localSessionIssuerContractReady: true;
     localEnforcedRouteCount: number;
     mode: BackendServiceReadinessReport["authEnforcement"]["mode"];
     productionProofVerifierReady: false;
@@ -113,6 +119,7 @@ export interface CampaignOsApiServiceComposition {
 }
 
 export interface CampaignOsApiServiceReadiness {
+  authProductionBlockerIds: string[];
   blockedDependencyIds: CampaignOsApiServiceAttachPointId[];
   contractWriteEnabled: false;
   deferredDependencyIds: CampaignOsApiServiceAttachPointId[];
@@ -175,18 +182,22 @@ export const campaignOsApiServiceAttachMap: CampaignOsApiServiceAttachPoint[] = 
   {
     area: "auth",
     attachPoint: "src/server/authSession.ts",
-    blockedBy: ["wallet signature verifier", "nonce policy", "proof freshness window"],
+    blockedBy: ["live wallet verifier", "auth nonce store"],
     id: "wallet-proof-verifier",
+    localContractReady: true,
+    productionReady: false,
     requiredBeforeProduction: true,
-    status: "blocked",
+    status: "ready",
   },
   {
     area: "auth",
     attachPoint: "src/server/authSession.ts",
-    blockedBy: ["JWT or session cookie issuer", "secret rotation policy"],
+    blockedBy: ["session signing key", "secret manager", "production session store", "live wallet verifier"],
     id: "session-issuer",
+    localContractReady: true,
+    productionReady: false,
     requiredBeforeProduction: true,
-    status: "blocked",
+    status: "ready",
   },
   {
     area: "auth",
@@ -314,6 +325,10 @@ const createComposition = (
     routeIds: apiRuntimeRoutes.map((route) => route.id),
   },
   authEnforcement: {
+    liveSigningExecuted: backendReadiness.authEnforcement.liveSigningExecuted,
+    liveVerificationExecuted: backendReadiness.authEnforcement.liveVerificationExecuted,
+    localProofVerifierContractReady: backendReadiness.authEnforcement.localProofVerifierContractReady,
+    localSessionIssuerContractReady: backendReadiness.authEnforcement.localSessionIssuerContractReady,
     localEnforcedRouteCount: backendReadiness.authEnforcement.localEnforcedRouteCount,
     mode: backendReadiness.authEnforcement.mode,
     productionProofVerifierReady: backendReadiness.authEnforcement.productionProofVerifierReady,
@@ -408,6 +423,7 @@ const createDiagnostics = ({
 };
 
 const createReadiness = (
+  backendReadiness: BackendServiceReadinessReport,
   diagnostics: readonly CampaignOsApiServiceDiagnostic[],
 ): CampaignOsApiServiceReadiness => {
   const blockedDependencyIds = campaignOsApiServiceAttachMap
@@ -419,6 +435,7 @@ const createReadiness = (
   const blocked = diagnostics.some((item) => item.severity === "error");
 
   return {
+    authProductionBlockerIds: backendReadiness.authSession.authContracts.blockedDependencyIds,
     blockedDependencyIds,
     contractWriteEnabled: false,
     deferredDependencyIds,
@@ -500,7 +517,7 @@ export const createCampaignOsApiServiceContract = ({
     shutdown,
   });
   const status = resolveStatus({ diagnostics, shutdown });
-  const readiness = createReadiness(diagnostics);
+  const readiness = createReadiness(backendReadiness, diagnostics);
   const generatedAt = now?.toISOString();
 
   return {

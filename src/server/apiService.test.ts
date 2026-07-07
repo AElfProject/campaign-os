@@ -80,6 +80,14 @@ describe("Campaign OS API service bootstrap contract", () => {
         metadataRouteIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
         routeCount: expect.any(Number),
       },
+      authEnforcement: {
+        liveSigningExecuted: false,
+        liveVerificationExecuted: false,
+        localProofVerifierContractReady: true,
+        localSessionIssuerContractReady: true,
+        productionProofVerifierReady: false,
+        productionSessionIssuerReady: false,
+      },
       backendRuntimeBootstrap: {
         id: "campaign-os-backend-runtime-bootstrap",
         status: "ready",
@@ -218,14 +226,35 @@ describe("Campaign OS API service bootstrap contract", () => {
       expect.arrayContaining([
         "live-database-driver",
         "migration-executor",
-        "wallet-proof-verifier",
-        "session-issuer",
         "project-membership-store",
         "contract-writer",
         "reward-custody",
         "reward-distribution",
       ]),
     );
+    expect(service.readiness.blockedDependencyIds).not.toEqual(
+      expect.arrayContaining(["wallet-proof-verifier", "session-issuer"]),
+    );
+    expect(service.readiness.authProductionBlockerIds).toEqual(
+      expect.arrayContaining([
+        "live_wallet_proof_verifier",
+        "auth_nonce_store",
+        "session_signing_key",
+        "secret_manager",
+        "production_session_store",
+        "project_membership_source",
+      ]),
+    );
+    expect(service.attachMap.find((attachPoint) => attachPoint.id === "wallet-proof-verifier")).toMatchObject({
+      localContractReady: true,
+      productionReady: false,
+      status: "ready",
+    });
+    expect(service.attachMap.find((attachPoint) => attachPoint.id === "session-issuer")).toMatchObject({
+      localContractReady: true,
+      productionReady: false,
+      status: "ready",
+    });
     expect(service.readiness.deferredDependencyIds).toEqual(
       expect.arrayContaining([
         "verification-worker",

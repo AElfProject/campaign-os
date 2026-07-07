@@ -227,12 +227,41 @@ describe("auth session boundary", () => {
         agentSkillCanSubstituteUserWallet: false,
         separatedFromUserWalletSession: true,
       },
+      authContracts: {
+        liveSideEffectsEnabled: false,
+        productionReady: false,
+        proofVerifier: {
+          localContractReady: true,
+          liveVerificationExecuted: false,
+          productionReady: false,
+          status: "local_contract_ready",
+        },
+        sessionIssuer: {
+          cookieIssued: false,
+          jwtIssued: false,
+          liveSigningExecuted: false,
+          localContractReady: true,
+          productionReady: false,
+          status: "local_contract_ready",
+        },
+      },
       profileId: "production-required",
       status: "blocked",
       validation: {
         valid: false,
       },
     });
+    expect(report.authContracts.blockedDependencyIds).toEqual(
+      expect.arrayContaining([
+        "live_wallet_proof_verifier",
+        "auth_nonce_store",
+        "session_signing_key",
+        "secret_manager",
+        "production_session_store",
+        "project_membership_source",
+        "project_ownership_source",
+      ]),
+    );
     expect(report.validation.issues.map((issue) => issue.code)).toEqual(
       expect.arrayContaining([
         "AUTH_SESSION_CONFIG_MISSING",

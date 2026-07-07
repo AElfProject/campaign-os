@@ -51,7 +51,6 @@ describe("server runtime readiness metadata", () => {
         apiService: {
           blockedDependencyIds: expect.arrayContaining([
             "live-database-driver",
-            "wallet-proof-verifier",
             "contract-writer",
           ]),
           deferredDependencyIds: expect.arrayContaining([
@@ -87,6 +86,20 @@ describe("server runtime readiness metadata", () => {
           ]),
         },
         authSession: {
+          contracts: {
+            liveSideEffectsEnabled: false,
+            productionReady: false,
+            proofVerifier: {
+              localContractReady: true,
+              liveVerificationExecuted: false,
+              productionReady: false,
+            },
+            sessionIssuer: {
+              liveSigningExecuted: false,
+              localContractReady: true,
+              productionReady: false,
+            },
+          },
           status: "local_seeded",
           valid: true,
           verificationMode: "local_only",
@@ -326,6 +339,27 @@ describe("server runtime readiness metadata", () => {
           ]),
         },
         authSession: {
+          contracts: {
+            blockedDependencyIds: expect.arrayContaining([
+              "live_wallet_proof_verifier",
+              "auth_nonce_store",
+              "session_signing_key",
+              "secret_manager",
+              "production_session_store",
+              "project_membership_source",
+            ]),
+            productionReady: false,
+            proofVerifier: {
+              localContractReady: true,
+              liveVerificationExecuted: false,
+              productionReady: false,
+            },
+            sessionIssuer: {
+              liveSigningExecuted: false,
+              localContractReady: true,
+              productionReady: false,
+            },
+          },
           status: "blocked",
           valid: false,
           verificationMode: "production_required",

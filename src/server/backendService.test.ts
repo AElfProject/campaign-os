@@ -47,7 +47,11 @@ describe("backend service readiness report", () => {
     expect(report.authEnforcement).toMatchObject({
       agentCredentialSubstitutionDisabled: true,
       campaignMutationRouteCount: 1,
+      liveSigningExecuted: false,
+      liveVerificationExecuted: false,
       localEnforcedRouteCount: 1,
+      localProofVerifierContractReady: true,
+      localSessionIssuerContractReady: true,
       locallyEnforcedRouteIds: ["campaigns.create"],
       mode: "local_enforced",
       productionProofVerifierReady: false,
@@ -78,9 +82,21 @@ describe("backend service readiness report", () => {
       valid: true,
     });
     expect(report.apiService).toMatchObject({
+      authContracts: {
+        productionReady: false,
+        proofVerifier: {
+          localContractReady: true,
+          liveVerificationExecuted: false,
+          productionReady: false,
+        },
+        sessionIssuer: {
+          liveSigningExecuted: false,
+          localContractReady: true,
+          productionReady: false,
+        },
+      },
       blockedDependencyIds: expect.arrayContaining([
         "live-database-driver",
-        "wallet-proof-verifier",
         "contract-writer",
       ]),
       deferredDependencyIds: expect.arrayContaining([
@@ -100,6 +116,9 @@ describe("backend service readiness report", () => {
       status: "ready",
       workerExecutionEnabled: false,
     });
+    expect(report.apiService.blockedDependencyIds).not.toEqual(
+      expect.arrayContaining(["wallet-proof-verifier", "session-issuer"]),
+    );
     expect(report.backendRuntimeBootstrap.deferredDependencyIds).toEqual(
       expect.arrayContaining([
         "production-database-driver",
@@ -266,20 +285,23 @@ describe("backend service readiness report", () => {
     for (const attachPoint of report.attachMap) {
       expect(attachPoint.attachPoint).not.toHaveLength(0);
       expect(attachPoint.blockedBy.length).toBeGreaterThan(0);
-      expect(attachPoint.currentStatus).not.toBe("local-only");
       expect(attachPoint.requiredBeforeProduction).toBe(true);
     }
     expect(report.attachMap.find((item) => item.area === "auth-session")).toMatchObject({
       attachPoint: "src/server/authSession.ts:createAuthSessionReadinessReport",
       blockedBy: expect.arrayContaining([
         "live wallet signature verifier",
+        "auth nonce store",
         "JWT or session cookie issuer",
+        "session signing key",
+        "secret manager",
+        "production session store",
         "RBAC enforcement",
         "project ownership source",
         "admin organization model",
         "agent credential provider",
       ]),
-      currentStatus: "scaffold",
+      currentStatus: "local-only",
     });
   });
 
