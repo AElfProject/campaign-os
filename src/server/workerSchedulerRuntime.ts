@@ -1,5 +1,13 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import {
+  createWorkerIdempotencyStoreFoundation,
+  type WorkerIdempotencyDiagnosticCode,
+  type WorkerIdempotencyOperationCapability,
+  type WorkerIdempotencyStoreFoundationStatus,
+  type WorkerIdempotencyStoreMode,
+  type WorkerIdempotencyStoreNoLiveFlags,
+} from "./workerIdempotencyStore";
+import {
   createWorkerLeaseStoreFoundation,
   type WorkerLeaseDiagnosticCode,
   type WorkerLeaseOperationCapability,
@@ -69,6 +77,7 @@ export interface WorkerSchedulerNoLiveFlags {
   liveAnalyticsIngestionEnabled: false;
   liveContractCallsEnabled: false;
   liveCronExecutionEnabled: false;
+  liveIdempotencyExecutionEnabled: false;
   liveObjectStorageEnabled: false;
   liveProviderCallsEnabled: false;
   liveQueuePublishingEnabled: false;
@@ -159,9 +168,38 @@ export interface WorkerSchedulerLeaseStoreSummary {
   valid: boolean;
 }
 
+export interface WorkerSchedulerIdempotencyStoreSummary {
+  adapterId: string;
+  blockerCount: number;
+  diagnosticCodes: WorkerIdempotencyDiagnosticCode[];
+  disabledLiveOperationCount: number;
+  keySchemaVersion: string;
+  liveIdempotencyExecutionEnabled: false;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: WorkerIdempotencyStoreMode;
+  namespace: string;
+  noLiveFlags: WorkerIdempotencyStoreNoLiveFlags;
+  operationCapabilities: WorkerIdempotencyOperationCapability[];
+  operationCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  status: WorkerIdempotencyStoreFoundationStatus;
+  storeId: string;
+  valid: boolean;
+}
+
 export interface WorkerSchedulerReadinessProjection {
   blockerCount: number;
   diagnosticCodes: WorkerSchedulerDiagnosticCode[];
+  idempotencyStoreBlockerCount: number;
+  idempotencyStoreDiagnosticCodes: WorkerIdempotencyDiagnosticCode[];
+  idempotencyStoreId: string;
+  idempotencyStoreLiveIdempotencyExecutionEnabled: false;
+  idempotencyStoreMode: WorkerIdempotencyStoreMode;
+  idempotencyStoreNamespace: string;
+  idempotencyStoreRequiredConfigKeys: string[];
+  idempotencyStoreStatus: WorkerIdempotencyStoreFoundationStatus;
   jobCatalogCount: number;
   jobFamilyCount: number;
   leaseStoreBlockerCount: number;
@@ -186,6 +224,7 @@ export interface WorkerSchedulerFoundationSummary {
   diagnostics: WorkerSchedulerDiagnostic[];
   id: "campaign-os-worker-scheduler-foundation";
   idempotencyPolicies: IdempotencyPolicy[];
+  idempotencyStore: WorkerSchedulerIdempotencyStoreSummary;
   jobCatalog: WorkerJobDefinition[];
   leaseStore: WorkerSchedulerLeaseStoreSummary;
   noLiveFlags: WorkerSchedulerNoLiveFlags;
@@ -232,6 +271,7 @@ export const workerSchedulerNoLiveFlags: WorkerSchedulerNoLiveFlags = {
   liveAnalyticsIngestionEnabled: false,
   liveContractCallsEnabled: false,
   liveCronExecutionEnabled: false,
+  liveIdempotencyExecutionEnabled: false,
   liveObjectStorageEnabled: false,
   liveProviderCallsEnabled: false,
   liveQueuePublishingEnabled: false,
@@ -856,6 +896,12 @@ export const createWorkerSchedulerFoundation = (
       profileId: profileResolution.profileId,
     }),
   );
+  const idempotencyStore = createIdempotencyStoreSummary(
+    createWorkerIdempotencyStoreFoundation({
+      env,
+      profileId: profileResolution.profileId,
+    }),
+  );
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...registryDiagnostics,
@@ -863,7 +909,7 @@ export const createWorkerSchedulerFoundation = (
   ];
   const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
   const status = resolveStatus(profileResolution.profileId, blockerCount);
-  const readiness = createReadinessProjection(diagnostics, blockerCount, leaseStore);
+  const readiness = createReadinessProjection(diagnostics, blockerCount, leaseStore, idempotencyStore);
 
   return {
     blockerCount,
@@ -871,6 +917,7 @@ export const createWorkerSchedulerFoundation = (
     diagnostics,
     id: "campaign-os-worker-scheduler-foundation",
     idempotencyPolicies: workerIdempotencyPolicies,
+    idempotencyStore,
     jobCatalog: workerJobCatalog,
     leaseStore,
     noLiveFlags: workerSchedulerNoLiveFlags,
@@ -889,9 +936,18 @@ const createReadinessProjection = (
   diagnostics: readonly WorkerSchedulerDiagnostic[],
   blockerCount: number,
   leaseStore: WorkerSchedulerLeaseStoreSummary,
+  idempotencyStore: WorkerSchedulerIdempotencyStoreSummary,
 ): WorkerSchedulerReadinessProjection => ({
   blockerCount,
   diagnosticCodes: diagnostics.map((item) => item.code),
+  idempotencyStoreBlockerCount: idempotencyStore.blockerCount,
+  idempotencyStoreDiagnosticCodes: idempotencyStore.diagnosticCodes,
+  idempotencyStoreId: idempotencyStore.storeId,
+  idempotencyStoreLiveIdempotencyExecutionEnabled: false,
+  idempotencyStoreMode: idempotencyStore.mode,
+  idempotencyStoreNamespace: idempotencyStore.namespace,
+  idempotencyStoreRequiredConfigKeys: idempotencyStore.requiredConfigKeys,
+  idempotencyStoreStatus: idempotencyStore.status,
   jobCatalogCount: workerJobCatalog.length,
   jobFamilyCount: new Set(workerJobCatalog.map((jobItem) => jobItem.family)).size,
   leaseStoreBlockerCount: leaseStore.blockerCount,
@@ -908,6 +964,29 @@ const createReadinessProjection = (
   productionReady: false,
   schedulePolicyCount: workerSchedulerPolicies.length,
   triggerSourceCount: workerSchedulerTriggerSources.length,
+});
+
+const createIdempotencyStoreSummary = (
+  idempotencyStore: ReturnType<typeof createWorkerIdempotencyStoreFoundation>,
+): WorkerSchedulerIdempotencyStoreSummary => ({
+  adapterId: idempotencyStore.adapterId,
+  blockerCount: idempotencyStore.blockerCount,
+  diagnosticCodes: idempotencyStore.diagnosticCodes,
+  disabledLiveOperationCount: idempotencyStore.readiness.disabledLiveOperationCount,
+  keySchemaVersion: idempotencyStore.keySchemaVersion,
+  liveIdempotencyExecutionEnabled: false,
+  liveQueuePublishingEnabled: false,
+  liveWorkerExecutionEnabled: false,
+  mode: idempotencyStore.mode,
+  namespace: idempotencyStore.namespace,
+  noLiveFlags: idempotencyStore.noLiveFlags,
+  operationCapabilities: idempotencyStore.operationCapabilities.map((item) => ({ ...item })),
+  operationCount: idempotencyStore.readiness.operationCount,
+  productionReady: false,
+  requiredConfigKeys: idempotencyStore.readiness.requiredConfigKeys,
+  status: idempotencyStore.status,
+  storeId: idempotencyStore.storeId,
+  valid: idempotencyStore.valid,
 });
 
 const createLeaseStoreSummary = (

@@ -9,6 +9,10 @@ import {
   redactQueueRuntimeValue,
 } from "./queueRuntime";
 import {
+  workerIdempotencyOperationCapabilities,
+  workerIdempotencyStoreProductionPreconditions,
+} from "./workerIdempotencyStore";
+import {
   workerLeaseOperationCapabilities,
   workerLeaseStoreProductionPreconditions,
 } from "./workerLeaseStore";
@@ -67,6 +71,13 @@ describe("queue runtime foundation", () => {
       leaseStoreLiveWorkerExecutionEnabled: false,
       leaseStoreMode: "dry_run",
       leaseStoreStatus: "local_ready",
+      idempotencyStoreBlockerCount: 0,
+      idempotencyStoreDiagnosticCodes: [],
+      idempotencyStoreId: "local-dry-run",
+      idempotencyStoreLiveIdempotencyExecutionEnabled: false,
+      idempotencyStoreMode: "dry_run",
+      idempotencyStoreNamespace: "campaign-os-workers",
+      idempotencyStoreStatus: "local_ready",
       liveQueuePublishingEnabled: false,
       productionReady: false,
       queuePlanCount: 9,
@@ -92,12 +103,56 @@ describe("queue runtime foundation", () => {
     });
   });
 
+  it("surfaces idempotency readiness without changing dry-run enqueue behavior", () => {
+    const foundation = createQueueRuntimeFoundation({
+      profileId: "staging-scaffold",
+      providerId: "metadata-only",
+    });
+
+    expect(foundation.idempotencyStore).toMatchObject({
+      adapterId: "local-dry-run-worker-idempotency-store-adapter",
+      blockerCount: 0,
+      diagnosticCodes: [],
+      disabledLiveOperationCount: workerIdempotencyOperationCapabilities.length,
+      liveIdempotencyExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      mode: "metadata_only",
+      namespace: "campaign-os-workers",
+      operationCount: workerIdempotencyOperationCapabilities.length,
+      productionReady: false,
+      requiredConfigKeys: expect.arrayContaining([
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE",
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE_CREDENTIALS",
+        "CAMPAIGN_OS_IDEMPOTENCY_COMPLETION_POLICY",
+      ]),
+      status: "scaffolded",
+      storeId: "local-dry-run",
+      valid: true,
+    });
+    expect(foundation.idempotencyStore.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(
+      true,
+    );
+    expect(foundation.idempotencyStore.requiredConfigKeys).toHaveLength(
+      new Set(workerIdempotencyStoreProductionPreconditions.flatMap((item) => item.requiredConfigKeys)).size,
+    );
+    expect(foundation.readiness.idempotencyStoreRequiredConfigKeys).toEqual(
+      foundation.idempotencyStore.requiredConfigKeys,
+    );
+    expect(foundation.readiness.idempotencyStoreLiveIdempotencyExecutionEnabled).toBe(false);
+    expect(foundation.queuePlans.map((plan) => plan.idempotencyPolicyId)).toEqual(
+      workerSchedulerPolicies.map((policy) => policy.idempotencyPolicyId),
+    );
+  });
+
   it("keeps every queue, worker, scheduler, cron, and live integration flag disabled", () => {
     expect(queueRuntimeNoLiveFlags).toEqual({
       liveAiCallsEnabled: false,
       liveAnalyticsIngestionEnabled: false,
       liveContractCallsEnabled: false,
       liveCronExecutionEnabled: false,
+      liveIdempotencyExecutionEnabled: false,
       liveObjectStorageEnabled: false,
       liveProviderCallsEnabled: false,
       liveQueuePublishingEnabled: false,
