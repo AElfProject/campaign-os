@@ -125,6 +125,21 @@ export interface BackendRuntimeReadinessProjection {
     status: BackendServiceReadinessReport["queueRuntimeFoundation"]["status"];
     valid: boolean;
   };
+  schedulerRuntimeFoundation: {
+    blockerCount: number;
+    diagnosticCodes: string[];
+    dryRunTriggerEnabled: boolean;
+    id: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["id"];
+    liveCronExecutionEnabled: false;
+    liveQueuePublishingEnabled: false;
+    liveSchedulerExecutionEnabled: false;
+    liveWorkerExecutionEnabled: false;
+    productionReady: false;
+    registrationCount: number;
+    scheduleIds: string[];
+    status: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["status"];
+    valid: boolean;
+  };
   workerSchedulerFoundation: {
     blockerCount: number;
     diagnosticCodes: string[];
@@ -361,6 +376,21 @@ const createReadinessProjection = (
     queuePlanCount: backendReadiness.queueRuntimeFoundation.queuePlanCoverage.queuePlanCount,
     status: backendReadiness.queueRuntimeFoundation.status,
     valid: backendReadiness.queueRuntimeFoundation.valid,
+  },
+  schedulerRuntimeFoundation: {
+    blockerCount: backendReadiness.schedulerRuntimeFoundation.blockerCount,
+    diagnosticCodes: backendReadiness.schedulerRuntimeFoundation.diagnosticCodes,
+    dryRunTriggerEnabled: backendReadiness.schedulerRuntimeFoundation.dryRunTrigger.enabled,
+    id: backendReadiness.schedulerRuntimeFoundation.id,
+    liveCronExecutionEnabled: backendReadiness.schedulerRuntimeFoundation.noLiveFlags.liveCronExecutionEnabled,
+    liveQueuePublishingEnabled: backendReadiness.schedulerRuntimeFoundation.noLiveFlags.liveQueuePublishingEnabled,
+    liveSchedulerExecutionEnabled: backendReadiness.schedulerRuntimeFoundation.noLiveFlags.liveSchedulerExecutionEnabled,
+    liveWorkerExecutionEnabled: backendReadiness.schedulerRuntimeFoundation.noLiveFlags.liveWorkerExecutionEnabled,
+    productionReady: backendReadiness.schedulerRuntimeFoundation.productionReady,
+    registrationCount: backendReadiness.schedulerRuntimeFoundation.registrationCoverage.registrationCount,
+    scheduleIds: backendReadiness.schedulerRuntimeFoundation.registrationCoverage.scheduleIds,
+    status: backendReadiness.schedulerRuntimeFoundation.status,
+    valid: backendReadiness.schedulerRuntimeFoundation.valid,
   },
   workerSchedulerFoundation: {
     blockerCount: backendReadiness.workerSchedulerFoundation.blockerCount,
