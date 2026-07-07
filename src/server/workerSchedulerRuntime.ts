@@ -1,4 +1,12 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import {
+  createWorkerLeaseStoreFoundation,
+  type WorkerLeaseDiagnosticCode,
+  type WorkerLeaseOperationCapability,
+  type WorkerLeaseStoreFoundationStatus,
+  type WorkerLeaseStoreMode,
+  type WorkerLeaseStoreNoLiveFlags,
+} from "./workerLeaseStore";
 
 export type WorkerSchedulerProfileId = BackendRuntimeProfileId;
 export type WorkerSchedulerFoundationStatus = "local_ready" | "scaffolded" | "blocked";
@@ -131,11 +139,39 @@ export interface WorkerSchedulerDiagnostic {
   severity: WorkerSchedulerDiagnosticSeverity;
 }
 
+export interface WorkerSchedulerLeaseStoreSummary {
+  adapterId: string;
+  blockerCount: number;
+  diagnosticCodes: WorkerLeaseDiagnosticCode[];
+  disabledLiveOperationCount: number;
+  heartbeatIntervalSeconds: number;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: WorkerLeaseStoreMode;
+  noLiveFlags: WorkerLeaseStoreNoLiveFlags;
+  operationCapabilities: WorkerLeaseOperationCapability[];
+  operationCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  status: WorkerLeaseStoreFoundationStatus;
+  storeId: string;
+  ttlSeconds: number;
+  valid: boolean;
+}
+
 export interface WorkerSchedulerReadinessProjection {
   blockerCount: number;
   diagnosticCodes: WorkerSchedulerDiagnosticCode[];
   jobCatalogCount: number;
   jobFamilyCount: number;
+  leaseStoreBlockerCount: number;
+  leaseStoreDiagnosticCodes: WorkerLeaseDiagnosticCode[];
+  leaseStoreId: string;
+  leaseStoreLiveQueuePublishingEnabled: false;
+  leaseStoreLiveWorkerExecutionEnabled: false;
+  leaseStoreMode: WorkerLeaseStoreMode;
+  leaseStoreRequiredConfigKeys: string[];
+  leaseStoreStatus: WorkerLeaseStoreFoundationStatus;
   liveSchedulerExecutionEnabled: false;
   liveWorkerExecutionEnabled: false;
   localReviewReady: boolean;
@@ -151,6 +187,7 @@ export interface WorkerSchedulerFoundationSummary {
   id: "campaign-os-worker-scheduler-foundation";
   idempotencyPolicies: IdempotencyPolicy[];
   jobCatalog: WorkerJobDefinition[];
+  leaseStore: WorkerSchedulerLeaseStoreSummary;
   noLiveFlags: WorkerSchedulerNoLiveFlags;
   preconditions: WorkerRuntimePrecondition[];
   productionReady: false;
@@ -813,6 +850,12 @@ export const createWorkerSchedulerFoundation = (
   const registryDiagnostics = createRegistryDiagnostics();
   const productionDiagnostics =
     profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
+  const leaseStore = createLeaseStoreSummary(
+    createWorkerLeaseStoreFoundation({
+      env,
+      profileId: profileResolution.profileId,
+    }),
+  );
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...registryDiagnostics,
@@ -820,7 +863,7 @@ export const createWorkerSchedulerFoundation = (
   ];
   const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
   const status = resolveStatus(profileResolution.profileId, blockerCount);
-  const readiness = createReadinessProjection(diagnostics, blockerCount);
+  const readiness = createReadinessProjection(diagnostics, blockerCount, leaseStore);
 
   return {
     blockerCount,
@@ -829,6 +872,7 @@ export const createWorkerSchedulerFoundation = (
     id: "campaign-os-worker-scheduler-foundation",
     idempotencyPolicies: workerIdempotencyPolicies,
     jobCatalog: workerJobCatalog,
+    leaseStore,
     noLiveFlags: workerSchedulerNoLiveFlags,
     preconditions: workerSchedulerProductionPreconditions.map(({ field, message, ...item }) => item),
     productionReady: false,
@@ -844,17 +888,48 @@ export const createWorkerSchedulerFoundation = (
 const createReadinessProjection = (
   diagnostics: readonly WorkerSchedulerDiagnostic[],
   blockerCount: number,
+  leaseStore: WorkerSchedulerLeaseStoreSummary,
 ): WorkerSchedulerReadinessProjection => ({
   blockerCount,
   diagnosticCodes: diagnostics.map((item) => item.code),
   jobCatalogCount: workerJobCatalog.length,
   jobFamilyCount: new Set(workerJobCatalog.map((jobItem) => jobItem.family)).size,
+  leaseStoreBlockerCount: leaseStore.blockerCount,
+  leaseStoreDiagnosticCodes: leaseStore.diagnosticCodes,
+  leaseStoreId: leaseStore.storeId,
+  leaseStoreLiveQueuePublishingEnabled: false,
+  leaseStoreLiveWorkerExecutionEnabled: false,
+  leaseStoreMode: leaseStore.mode,
+  leaseStoreRequiredConfigKeys: leaseStore.requiredConfigKeys,
+  leaseStoreStatus: leaseStore.status,
   liveSchedulerExecutionEnabled: false,
   liveWorkerExecutionEnabled: false,
   localReviewReady: blockerCount === 0,
   productionReady: false,
   schedulePolicyCount: workerSchedulerPolicies.length,
   triggerSourceCount: workerSchedulerTriggerSources.length,
+});
+
+const createLeaseStoreSummary = (
+  leaseStore: ReturnType<typeof createWorkerLeaseStoreFoundation>,
+): WorkerSchedulerLeaseStoreSummary => ({
+  adapterId: leaseStore.adapterId,
+  blockerCount: leaseStore.blockerCount,
+  diagnosticCodes: leaseStore.diagnosticCodes,
+  disabledLiveOperationCount: leaseStore.readiness.disabledLiveOperationCount,
+  heartbeatIntervalSeconds: leaseStore.readiness.heartbeatIntervalSeconds,
+  liveQueuePublishingEnabled: false,
+  liveWorkerExecutionEnabled: false,
+  mode: leaseStore.mode,
+  noLiveFlags: leaseStore.noLiveFlags,
+  operationCapabilities: leaseStore.operationCapabilities.map((item) => ({ ...item })),
+  operationCount: leaseStore.readiness.operationCount,
+  productionReady: false,
+  requiredConfigKeys: leaseStore.readiness.requiredConfigKeys,
+  status: leaseStore.status,
+  storeId: leaseStore.storeId,
+  ttlSeconds: leaseStore.readiness.ttlSeconds,
+  valid: leaseStore.valid,
 });
 
 const resolveStatus = (
