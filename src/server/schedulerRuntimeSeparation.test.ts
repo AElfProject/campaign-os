@@ -1,4 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  createAdvancedAnalyticsReadiness,
+  createCampaignLifecycleOperations,
+  createContractTransparencyMonitor,
+  createExportFulfillmentReadiness,
+} from "../domain/campaign";
+import { campaignDetail } from "../domain/fixtures";
 import { createAuthSessionReadinessReport } from "./authSession";
 import { createProviderIndexerFoundation } from "./providerIndexerAdapters";
 import * as queueRuntime from "./queueRuntime";
@@ -9,6 +16,11 @@ import {
   schedulerRuntimeRegistrations,
 } from "./schedulerRuntime";
 import { createVerificationSourceHandoff } from "./verificationSourceHandoff";
+import {
+  createWorkerLeaseStoreFoundation,
+  evaluateWorkerLeaseDryRun,
+  workerLeaseStoreNoLiveFlags,
+} from "./workerLeaseStore";
 
 const serializedSchedulerOutput = () => {
   const foundation = createSchedulerRuntimeFoundation();
@@ -124,6 +136,72 @@ describe("scheduler runtime separation boundaries", () => {
     expect(triggerResult.liveExecutionAttempted).toBe(false);
     expect(triggerResult.liveQueuePublishingEnabled).toBe(false);
     expect(triggerResult.liveSchedulerExecutionEnabled).toBe(false);
+  });
+
+  it("keeps scheduler readiness from satisfying worker lease store readiness", () => {
+    const schedulerEnv = {
+      CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:scheduler",
+      CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
+      CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:scheduler",
+      CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:scheduler",
+      CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY: "operator-policy:review",
+      CAMPAIGN_OS_SCHEDULER_ENDPOINT: "scheduler-endpoint-ref:review",
+      CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL: "scheduler-lease-ref:review",
+      CAMPAIGN_OS_SCHEDULER_PROVIDER: "metadata-only-scheduler",
+      CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:worker",
+    };
+    const scheduler = createSchedulerRuntimeFoundation({
+      env: schedulerEnv,
+      profileId: "production-required",
+    });
+    const queue = queueRuntime.createQueueRuntimeFoundation({ profileId: "local-review" });
+    const leaseStore = createWorkerLeaseStoreFoundation({
+      env: schedulerEnv,
+      profileId: "production-required",
+    });
+    const triggerResult = dryRunSchedulerTrigger({
+      idempotencyKey: "idempotency:task-verification-on-request:campaign-1",
+      jobId: "task-verification-worker",
+      queueHandoffReference: "queue-handoff:task-verification-worker-queue-plan",
+      scheduleId: "task-verification-on-request",
+      scheduledFor: "2026-07-07T13:30:00Z",
+      traceId: "trace-scheduler-lease-separation",
+      triggerSource: "api_request",
+      windowEnd: "2026-07-07T13:35:00Z",
+      windowStart: "2026-07-07T13:25:00Z",
+    });
+
+    expect(scheduler.status).toBe("local_ready");
+    expect(scheduler.valid).toBe(true);
+    expect(scheduler.productionReady).toBe(false);
+    expect(scheduler.readiness.dryRunTriggerEnabled).toBe(true);
+    expect(scheduler.readiness.requiredConfigKeys).toContain("CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL");
+    expect(scheduler.readiness.requiredConfigKeys).not.toContain("CAMPAIGN_OS_WORKER_LEASE_STORE");
+    expect(leaseStore.status).toBe("blocked");
+    expect(leaseStore.valid).toBe(false);
+    expect(leaseStore.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "WORKER_LEASE_STORE_MISSING",
+        "WORKER_LEASE_STORE_UNSUPPORTED",
+        "WORKER_LEASE_ENDPOINT_MISSING",
+        "WORKER_LEASE_CREDENTIALS_MISSING",
+        "WORKER_LEASE_CLOCK_MISSING",
+        "WORKER_LEASE_HEARTBEAT_POLICY_MISSING",
+        "WORKER_LEASE_TTL_POLICY_MISSING",
+        "WORKER_LEASE_RELEASE_POLICY_MISSING",
+        "WORKER_LEASE_STALE_RECOVERY_MISSING",
+        "WORKER_LEASE_FENCING_POLICY_MISSING",
+      ]),
+    );
+    expect(queue.leaseStore.status).toBe("local_ready");
+    expect(queue.leaseStore.productionReady).toBe(false);
+    expect(triggerResult.accepted).toBe(true);
+    expect(triggerResult.liveExecutionAttempted).toBe(false);
+    expect(triggerResult.liveQueuePublishingEnabled).toBe(false);
+    expect(triggerResult.liveSchedulerExecutionEnabled).toBe(false);
+    expect(leaseStore.readiness.liveQueuePublishingEnabled).toBe(false);
+    expect(leaseStore.readiness.liveWorkerExecutionEnabled).toBe(false);
+    expect(leaseStore.noLiveFlags).toEqual(workerLeaseStoreNoLiveFlags);
   });
 
   it("keeps provider adapter readiness from satisfying queue execution readiness", () => {
@@ -257,6 +335,82 @@ describe("scheduler runtime separation boundaries", () => {
       expect(registration?.liveQueuePublishingEnabled).toBe(false);
       expect(registration?.liveSchedulerExecutionEnabled).toBe(false);
     }
+  });
+
+  it("keeps lease dry-run metadata from mutating domain side-effect state", () => {
+    const beforeSnapshot = {
+      campaignStatus: campaignDetail.status,
+      completedTaskIds: campaignDetail.participants.map((participant) => [...participant.completedTaskIds]),
+      exportRows: campaignDetail.exportPreview.rows.length,
+      publishBlockers: [...campaignDetail.publishReadiness.blockers],
+      reviewItemStates: campaignDetail.reviewItems.map((item) => item.status),
+    };
+    const leaseResult = evaluateWorkerLeaseDryRun({
+      heartbeatIntervalSeconds: 30,
+      jobId: "campaign-lifecycle-worker",
+      leaseKeyReference: "lease:campaign:lifecycle",
+      operation: "claim",
+      requestedAt: "2026-07-07T13:30:00Z",
+      traceId: "trace-domain-lease-separation",
+      ttlSeconds: 120,
+      workerReference: "worker:campaign:lifecycle",
+    });
+    const lifecycle = createCampaignLifecycleOperations(campaignDetail);
+    const analytics = createAdvancedAnalyticsReadiness(campaignDetail);
+    const exportFulfillment = createExportFulfillmentReadiness(campaignDetail);
+    const contractTransparency = createContractTransparencyMonitor(campaignDetail);
+    const verification = createVerificationSourceHandoff();
+    const afterSnapshot = {
+      campaignStatus: campaignDetail.status,
+      completedTaskIds: campaignDetail.participants.map((participant) => [...participant.completedTaskIds]),
+      exportRows: campaignDetail.exportPreview.rows.length,
+      publishBlockers: [...campaignDetail.publishReadiness.blockers],
+      reviewItemStates: campaignDetail.reviewItems.map((item) => item.status),
+    };
+
+    expect(leaseResult).toMatchObject({
+      accepted: true,
+      liveLeaseOperationAttempted: false,
+      liveWorkerExecutionEnabled: false,
+      operation: "claim",
+      status: "accepted_dry_run",
+    });
+    expect(beforeSnapshot).toEqual(afterSnapshot);
+    expect(verification.entries.every((entry) => entry.liveExecutionEnabled === false)).toBe(true);
+    expect(verification.entries.map((entry) => entry.queuePosture.liveWorkerExecutionEnabled)).toEqual(
+      verification.entries.map(() => false),
+    );
+    expect(lifecycle.currentStatus).toBe(beforeSnapshot.campaignStatus);
+    expect(lifecycle.operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          affectedOutcome: "launch",
+          id: "publish-campaign",
+          operationState: expect.not.stringMatching(/^executed$/),
+        }),
+        expect.objectContaining({
+          affectedOutcome: "export",
+          id: "export-campaign",
+          operationState: expect.not.stringMatching(/^executed$/),
+        }),
+      ]),
+    );
+    expect(analytics.boundary["en-US"]).toContain("No live analytics SDK");
+    expect(exportFulfillment.safety).toMatchObject({
+      localOnly: true,
+      noContractTransaction: true,
+      noDownloadUrl: true,
+      noRewardCustody: true,
+      noRewardDistribution: true,
+      noStorageWrite: true,
+    });
+    expect(contractTransparency.summary.blockedLanes + contractTransparency.summary.reviewRequiredLanes).toBeGreaterThan(0);
+    expect(contractTransparency.lanes.every((lane) => lane.blocksExecution || lane.readiness !== "ready")).toBe(false);
+    expect(contractTransparency.boundary["en-US"]).toContain("No live contract transaction");
+    expect(contractTransparency.boundary["en-US"]).toContain("reward custody");
+    expect(JSON.stringify({ analytics, contractTransparency, exportFulfillment, lifecycle })).not.toContain(
+      "liveLeaseOperationAttempted\":true",
+    );
   });
 
   it("redacts unsafe scheduler serialization without leaking raw queue, wallet, or provider material", () => {
