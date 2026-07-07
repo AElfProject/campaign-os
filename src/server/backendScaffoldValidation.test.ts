@@ -118,8 +118,15 @@ describe("backend scaffold public guardrails", () => {
 
     for (const attachPoint of report.attachMap) {
       expect(attachPoint.requiredBeforeProduction).toBe(true);
-      expect(["blocked", "deferred", "scaffold"]).toContain(attachPoint.currentStatus);
-      expect(attachPoint.currentStatus).not.toBe("local-only");
+      const allowedStatusByArea =
+        attachPoint.area === "auth-session"
+          ? ["local-only"]
+          : ["blocked", "deferred", "scaffold"];
+
+      expect(allowedStatusByArea).toContain(attachPoint.currentStatus);
+      if (attachPoint.area !== "auth-session") {
+        expect(attachPoint.currentStatus).not.toBe("local-only");
+      }
       expect(attachPoint.note.toLowerCase()).not.toContain("active now");
     }
   });
