@@ -21,6 +21,11 @@ import {
   evaluateWorkerLeaseDryRun,
   workerLeaseStoreNoLiveFlags,
 } from "./workerLeaseStore";
+import {
+  createWorkerIdempotencyStoreFoundation,
+  evaluateWorkerIdempotencyDryRun,
+  workerIdempotencyStoreNoLiveFlags,
+} from "./workerIdempotencyStore";
 
 const serializedSchedulerOutput = () => {
   const foundation = createSchedulerRuntimeFoundation();
@@ -238,6 +243,153 @@ describe("scheduler runtime separation boundaries", () => {
         expect.objectContaining({ liveEnabled: false, operation: "dead_letter" }),
       ]),
     );
+  });
+
+  it("keeps queue provider and scheduler readiness from satisfying idempotency readiness", () => {
+    const sharedEnv = {
+      CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:review",
+      CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
+      CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:review",
+      CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:review",
+      CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY: "operator-policy:review",
+      CAMPAIGN_OS_QUEUE_PROVIDER: "production-queue-provider",
+      CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-provider",
+      CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "queue-endpoint-ref:provider",
+      CAMPAIGN_OS_SCHEDULER_ENDPOINT: "scheduler-endpoint-ref:review",
+      CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL: "scheduler-lease-ref:review",
+      CAMPAIGN_OS_SCHEDULER_PROVIDER: "metadata-only-scheduler",
+      CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:review",
+      CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:worker",
+      CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
+    };
+    const queue = queueRuntime.createQueueRuntimeFoundation({
+      env: sharedEnv,
+      profileId: "production-required",
+    });
+    const scheduler = createSchedulerRuntimeFoundation({
+      env: sharedEnv,
+      profileId: "production-required",
+    });
+    const idempotencyStore = createWorkerIdempotencyStoreFoundation({
+      env: sharedEnv,
+      profileId: "production-required",
+    });
+
+    expect(queue.providerAdapter.valid).toBe(true);
+    expect(scheduler.valid).toBe(true);
+    expect(queue.providerAdapter.requiredConfigKeys).toContain("CAMPAIGN_OS_IDEMPOTENCY_STORE_URL");
+    expect(scheduler.readiness.requiredConfigKeys).toContain("CAMPAIGN_OS_IDEMPOTENCY_STORE_URL");
+    expect(idempotencyStore.valid).toBe(false);
+    expect(idempotencyStore.status).toBe("blocked");
+    expect(idempotencyStore.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "IDEMPOTENCY_STORE_MISSING",
+        "IDEMPOTENCY_STORE_CREDENTIALS_MISSING",
+        "IDEMPOTENCY_NAMESPACE_MISSING",
+        "IDEMPOTENCY_KEY_SCHEMA_VERSION_MISSING",
+        "IDEMPOTENCY_RETENTION_POLICY_MISSING",
+        "IDEMPOTENCY_CONFLICT_POLICY_MISSING",
+        "IDEMPOTENCY_COMPLETION_POLICY_MISSING",
+      ]),
+    );
+    expect(idempotencyStore.readiness.requiredConfigKeys).not.toEqual(
+      queue.providerAdapter.requiredConfigKeys,
+    );
+    expect(idempotencyStore.readiness.requiredConfigKeys).not.toEqual(scheduler.readiness.requiredConfigKeys);
+    expect(idempotencyStore.readiness.liveIdempotencyExecutionEnabled).toBe(false);
+    expect(queue.readiness.liveQueuePublishingEnabled).toBe(false);
+    expect(scheduler.readiness.liveSchedulerExecutionEnabled).toBe(false);
+  });
+
+  it("keeps idempotency dry-run metadata from satisfying verification or domain side effects", () => {
+    const beforeSnapshot = {
+      campaignStatus: campaignDetail.status,
+      completedTaskIds: campaignDetail.participants.map((participant) => [...participant.completedTaskIds]),
+      exportRows: campaignDetail.exportPreview.rows.length,
+      reviewItemStates: campaignDetail.reviewItems.map((item) => item.status),
+    };
+    const idempotency = createWorkerIdempotencyStoreFoundation();
+    const idempotencyResult = evaluateWorkerIdempotencyDryRun({
+      attempt: 1,
+      completionEvidenceReference: "evidence:task-verification:local",
+      idempotencyKeyReference: "idempotency:task-verification-worker:campaign-1",
+      jobId: "task-verification-worker",
+      leaseKeyReference: "lease:task-verification-worker:campaign-1",
+      operation: "complete",
+      requestedAt: "2026-07-07T13:30:00Z",
+      sideEffectBoundary: "points-ledger-and-task-completion",
+      traceId: "trace-idempotency-separation",
+      workerReference: "worker:task-verification",
+    });
+    const auth = createAuthSessionReadinessReport();
+    const provider = createProviderIndexerFoundation();
+    const verification = createVerificationSourceHandoff();
+    const lifecycle = createCampaignLifecycleOperations(campaignDetail);
+    const analytics = createAdvancedAnalyticsReadiness(campaignDetail);
+    const exportFulfillment = createExportFulfillmentReadiness(campaignDetail);
+    const contractTransparency = createContractTransparencyMonitor(campaignDetail);
+    const afterSnapshot = {
+      campaignStatus: campaignDetail.status,
+      completedTaskIds: campaignDetail.participants.map((participant) => [...participant.completedTaskIds]),
+      exportRows: campaignDetail.exportPreview.rows.length,
+      reviewItemStates: campaignDetail.reviewItems.map((item) => item.status),
+    };
+
+    expect(idempotency).toMatchObject({
+      productionReady: false,
+      status: "local_ready",
+      valid: true,
+    });
+    expect(idempotency.noLiveFlags).toEqual(workerIdempotencyStoreNoLiveFlags);
+    expect(idempotencyResult).toMatchObject({
+      accepted: true,
+      liveIdempotencyOperationAttempted: false,
+      liveWorkerExecutionEnabled: false,
+      operation: "complete",
+      productionWriteAttempted: false,
+      status: "accepted_dry_run",
+    });
+    expect(beforeSnapshot).toEqual(afterSnapshot);
+    expect(auth.proofBoundary.liveVerificationExecuted).toBe(false);
+    expect(auth.authContracts.proofVerifier.productionReady).toBe(false);
+    expect(provider.productionReady).toBe(false);
+    expect(provider.noLiveFlags.liveProviderCallsEnabled).toBe(false);
+    expect(verification.liveExecutionEnabled).toBe(false);
+    expect(verification.entries.every((entry) => entry.queuePosture.liveWorkerExecutionEnabled === false)).toBe(true);
+    expect(analytics.boundary["en-US"]).toContain("No live analytics SDK");
+    expect(exportFulfillment.safety).toMatchObject({
+      noContractTransaction: true,
+      noRewardCustody: true,
+      noRewardDistribution: true,
+      noStorageWrite: true,
+    });
+    expect(contractTransparency.boundary["en-US"]).toContain("No live contract transaction");
+    expect(lifecycle.operations.map((operation) => operation.operationState)).toEqual(
+      expect.arrayContaining(["not_applicable", "review_required"]),
+    );
+    expect(lifecycle.operations.every((operation) => operation.localOnly)).toBe(true);
+    const serializedIdempotencyBoundary = JSON.stringify({
+      analytics,
+      contractTransparency,
+      exportFulfillment,
+      idempotencyResult,
+      lifecycle,
+      provider,
+      verification,
+    });
+
+    for (const forbiddenField of [
+      "verificationCompleted",
+      "walletAuthenticated",
+      "providerReady",
+      "queuePublished",
+      "contractSynced",
+      "analyticsWritten",
+      "exportPrepared",
+      "rewardReleased",
+    ]) {
+      expect(serializedIdempotencyBoundary).not.toContain(forbiddenField);
+    }
   });
 
   it("does not satisfy wallet auth, provider readiness, verification completion, or manual review", () => {

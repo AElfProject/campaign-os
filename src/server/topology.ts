@@ -2,6 +2,7 @@ import type { ApiRuntimeCapabilityId } from "./contracts";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
+import { workerIdempotencyStoreProductionPreconditions } from "./workerIdempotencyStore";
 
 export type BackendTopologyReadiness = "ready" | "local_only" | "review_required" | "deferred" | "disabled";
 export type BackendDomainArea =
@@ -141,6 +142,7 @@ export interface BackendRuntimeProfile {
 
 export interface BackendDeploymentUnit {
   attachPointPath?: string;
+  attachPointPaths?: string[];
   currentImplementation: BackendDeploymentImplementation;
   currentStatus?: BackendDeploymentRuntimeStatus;
   entrypoint: string;
@@ -773,6 +775,12 @@ export const backendDeploymentUnits = [
   }),
   deploymentUnit({
     attachPointPath: "src/server/queueProviderAdapter.ts",
+    attachPointPaths: [
+      "src/server/queueProviderAdapter.ts",
+      "src/server/queueRuntime.ts",
+      "src/server/workerIdempotencyStore.ts",
+      "src/server/workerLeaseStore.ts",
+    ],
     currentImplementation: "source-topology-only",
     currentStatus: "local",
     entrypoint: "src/server/queueRuntime.ts",
@@ -783,6 +791,9 @@ export const backendDeploymentUnits = [
         topologySafeQueueProviderBlockerId(precondition.id)
       ),
       ...workerLeaseStoreProductionPreconditions.map((precondition) => `worker-lease-store-${precondition.id}`),
+      ...workerIdempotencyStoreProductionPreconditions.map(
+        (precondition) => `worker-idempotency-store-${precondition.id}`,
+      ),
     ],
     productionTarget: "worker_service",
     runtimeProfileIds: ["staging-ready", "production-required"],

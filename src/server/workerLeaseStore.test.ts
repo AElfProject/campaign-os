@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  workerIdempotencyOperationCapabilities,
+  workerIdempotencyStoreProductionPreconditions,
+} from "./workerIdempotencyStore";
+import {
   SUPPORTED_WORKER_LEASE_STORE_PROFILES,
   createWorkerLeaseStoreFoundation,
   evaluateWorkerLeaseDryRun,
@@ -51,6 +55,12 @@ describe("worker lease store foundation", () => {
     expect(foundation.readiness).toMatchObject({
       disabledLiveOperationCount: workerLeaseOperationCapabilities.length,
       heartbeatIntervalSeconds: 30,
+      idempotencyStoreBlockerCount: 0,
+      idempotencyStoreDiagnosticCodes: [],
+      idempotencyStoreId: "local-dry-run",
+      idempotencyStoreLiveIdempotencyExecutionEnabled: false,
+      idempotencyStoreMode: "dry_run",
+      idempotencyStoreStatus: "local_ready",
       liveQueuePublishingEnabled: false,
       liveWorkerExecutionEnabled: false,
       operationCount: workerLeaseOperationCapabilities.length,
@@ -60,6 +70,42 @@ describe("worker lease store foundation", () => {
     expect(evaluation.status).toBe("accepted_dry_run");
     expect(evaluation.liveLeaseOperationAttempted).toBe(false);
     expect(evaluation.liveWorkerExecutionEnabled).toBe(false);
+  });
+
+  it("references idempotency coordination without implying durable live idempotency", () => {
+    const foundation = createWorkerLeaseStoreFoundation({ profileId: "local-review" });
+
+    expect(foundation.idempotencyStore).toMatchObject({
+      adapterId: "local-dry-run-worker-idempotency-store-adapter",
+      blockerCount: 0,
+      diagnosticCodes: [],
+      disabledLiveOperationCount: workerIdempotencyOperationCapabilities.length,
+      liveIdempotencyExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      mode: "dry_run",
+      operationCount: workerIdempotencyOperationCapabilities.length,
+      productionReady: false,
+      requiredConfigKeys: expect.arrayContaining([
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE",
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE_CREDENTIALS",
+      ]),
+      status: "local_ready",
+      storeId: "local-dry-run",
+      valid: true,
+    });
+    expect(foundation.idempotencyStore.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(
+      true,
+    );
+    expect(foundation.idempotencyStore.requiredConfigKeys).toHaveLength(
+      new Set(workerIdempotencyStoreProductionPreconditions.flatMap((item) => item.requiredConfigKeys)).size,
+    );
+    expect(foundation.readiness.idempotencyStoreRequiredConfigKeys).toEqual(
+      foundation.idempotencyStore.requiredConfigKeys,
+    );
+    expect(foundation.readiness.idempotencyStoreLiveIdempotencyExecutionEnabled).toBe(false);
+    expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
   });
 
   it("keeps every lease operation metadata-only or disabled for staging", () => {
@@ -87,6 +133,7 @@ describe("worker lease store foundation", () => {
       liveAnalyticsIngestionEnabled: false,
       liveContractCallsEnabled: false,
       liveCronExecutionEnabled: false,
+      liveIdempotencyExecutionEnabled: false,
       liveObjectStorageEnabled: false,
       liveProviderCallsEnabled: false,
       liveQueuePublishingEnabled: false,

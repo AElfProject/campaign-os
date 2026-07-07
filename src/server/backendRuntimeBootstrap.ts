@@ -171,6 +171,25 @@ export interface BackendRuntimeReadinessProjection {
     storeId: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["storeId"];
     valid: boolean;
   };
+  workerIdempotencyStoreFoundation: {
+    adapterId: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["adapterId"];
+    blockerCount: number;
+    diagnosticCodes: string[];
+    disabledLiveOperationCount: number;
+    id: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["id"];
+    keySchemaVersion: string;
+    liveIdempotencyExecutionEnabled: false;
+    liveQueuePublishingEnabled: false;
+    liveWorkerExecutionEnabled: false;
+    mode: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["mode"];
+    namespace: string;
+    operationCount: number;
+    productionReady: false;
+    requiredConfigKeys: string[];
+    status: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["status"];
+    storeId: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["storeId"];
+    valid: boolean;
+  };
   workerSchedulerFoundation: {
     blockerCount: number;
     diagnosticCodes: string[];
@@ -265,7 +284,7 @@ export const backendRuntimeBootstrapDeferredDependencies: BackendRuntimeDeferred
   },
   {
     area: "worker",
-    blockedBy: ["queue provider selection", "worker runtime mission"],
+    blockedBy: ["queue provider selection", "worker runtime mission", "worker idempotency store"],
     id: "worker-ingress",
     label: "Worker ingress",
     requiredBeforeProduction: true,
@@ -453,6 +472,25 @@ const createReadinessProjection = (
     status: backendReadiness.workerLeaseStoreFoundation.status,
     storeId: backendReadiness.workerLeaseStoreFoundation.storeId,
     valid: backendReadiness.workerLeaseStoreFoundation.valid,
+  },
+  workerIdempotencyStoreFoundation: {
+    adapterId: backendReadiness.workerIdempotencyStoreFoundation.adapterId,
+    blockerCount: backendReadiness.workerIdempotencyStoreFoundation.blockerCount,
+    diagnosticCodes: backendReadiness.workerIdempotencyStoreFoundation.diagnosticCodes,
+    disabledLiveOperationCount: backendReadiness.workerIdempotencyStoreFoundation.disabledLiveOperationCount,
+    id: backendReadiness.workerIdempotencyStoreFoundation.id,
+    keySchemaVersion: backendReadiness.workerIdempotencyStoreFoundation.keySchemaVersion,
+    liveIdempotencyExecutionEnabled: backendReadiness.workerIdempotencyStoreFoundation.liveIdempotencyExecutionEnabled,
+    liveQueuePublishingEnabled: backendReadiness.workerIdempotencyStoreFoundation.liveQueuePublishingEnabled,
+    liveWorkerExecutionEnabled: backendReadiness.workerIdempotencyStoreFoundation.liveWorkerExecutionEnabled,
+    mode: backendReadiness.workerIdempotencyStoreFoundation.mode,
+    namespace: backendReadiness.workerIdempotencyStoreFoundation.namespace,
+    operationCount: backendReadiness.workerIdempotencyStoreFoundation.operationCount,
+    productionReady: backendReadiness.workerIdempotencyStoreFoundation.productionReady,
+    requiredConfigKeys: backendReadiness.workerIdempotencyStoreFoundation.requiredConfigKeys,
+    status: backendReadiness.workerIdempotencyStoreFoundation.status,
+    storeId: backendReadiness.workerIdempotencyStoreFoundation.storeId,
+    valid: backendReadiness.workerIdempotencyStoreFoundation.valid,
   },
   workerSchedulerFoundation: {
     blockerCount: backendReadiness.workerSchedulerFoundation.blockerCount,

@@ -1,5 +1,12 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import {
+  createWorkerIdempotencyStoreFoundation,
+  type WorkerIdempotencyDiagnosticCode,
+  type WorkerIdempotencyOperationCapability,
+  type WorkerIdempotencyStoreFoundationStatus,
+  type WorkerIdempotencyStoreMode,
+} from "./workerIdempotencyStore";
+import {
   createQueueProviderAdapterFoundation,
   type QueueProviderAdapterFoundationStatus,
   type QueueProviderAdapterMode,
@@ -75,6 +82,7 @@ export interface QueueRuntimeNoLiveFlags {
   liveAnalyticsIngestionEnabled: false;
   liveContractCallsEnabled: false;
   liveCronExecutionEnabled: false;
+  liveIdempotencyExecutionEnabled: false;
   liveObjectStorageEnabled: false;
   liveProviderCallsEnabled: false;
   liveQueuePublishingEnabled: false;
@@ -138,6 +146,26 @@ export interface QueueRuntimeLeaseStoreSummary {
   valid: boolean;
 }
 
+export interface QueueRuntimeIdempotencyStoreSummary {
+  adapterId: string;
+  blockerCount: number;
+  diagnosticCodes: WorkerIdempotencyDiagnosticCode[];
+  disabledLiveOperationCount: number;
+  keySchemaVersion: string;
+  liveIdempotencyExecutionEnabled: false;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: WorkerIdempotencyStoreMode;
+  namespace: string;
+  operationCapabilities: WorkerIdempotencyOperationCapability[];
+  operationCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  status: WorkerIdempotencyStoreFoundationStatus;
+  storeId: string;
+  valid: boolean;
+}
+
 export interface QueuePlan {
   deadLetterPolicy: string;
   degradedOutcome: QueueDegradedOutcome;
@@ -160,6 +188,14 @@ export interface QueueRuntimeReadinessProjection {
   blockerCount: number;
   diagnosticCodes: QueueRuntimeDiagnosticCode[];
   dryRunEnqueueEnabled: boolean;
+  idempotencyStoreBlockerCount: number;
+  idempotencyStoreDiagnosticCodes: WorkerIdempotencyDiagnosticCode[];
+  idempotencyStoreId: string;
+  idempotencyStoreLiveIdempotencyExecutionEnabled: false;
+  idempotencyStoreMode: WorkerIdempotencyStoreMode;
+  idempotencyStoreNamespace: string;
+  idempotencyStoreRequiredConfigKeys: string[];
+  idempotencyStoreStatus: WorkerIdempotencyStoreFoundationStatus;
   leaseStoreBlockerCount: number;
   leaseStoreDiagnosticCodes: WorkerLeaseDiagnosticCode[];
   leaseStoreId: string;
@@ -187,6 +223,7 @@ export interface QueueRuntimeFoundationSummary {
   diagnosticCodes: QueueRuntimeDiagnosticCode[];
   diagnostics: QueueRuntimeDiagnostic[];
   id: "campaign-os-queue-runtime-foundation";
+  idempotencyStore: QueueRuntimeIdempotencyStoreSummary;
   leaseStore: QueueRuntimeLeaseStoreSummary;
   noLiveFlags: QueueRuntimeNoLiveFlags;
   preconditions: QueueRuntimeProductionPrecondition[];
@@ -251,6 +288,7 @@ export const queueRuntimeNoLiveFlags: QueueRuntimeNoLiveFlags = {
   liveAnalyticsIngestionEnabled: false,
   liveContractCallsEnabled: false,
   liveCronExecutionEnabled: false,
+  liveIdempotencyExecutionEnabled: false,
   liveObjectStorageEnabled: false,
   liveProviderCallsEnabled: false,
   liveQueuePublishingEnabled: false,
@@ -547,6 +585,12 @@ export const createQueueRuntimeFoundation = (
       profileId: profileResolution.profileId,
     }),
   );
+  const idempotencyStore = createIdempotencyStoreSummary(
+    createWorkerIdempotencyStoreFoundation({
+      env,
+      profileId: profileResolution.profileId,
+    }),
+  );
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...registryDiagnostics,
@@ -554,13 +598,20 @@ export const createQueueRuntimeFoundation = (
   ];
   const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
   const status = resolveStatus(profileResolution.profileId, blockerCount);
-  const readiness = createReadinessProjection(diagnostics, blockerCount, providerAdapter, leaseStore);
+  const readiness = createReadinessProjection(
+    diagnostics,
+    blockerCount,
+    providerAdapter,
+    leaseStore,
+    idempotencyStore,
+  );
 
   return {
     blockerCount,
     diagnosticCodes: diagnostics.map((item) => item.code),
     diagnostics,
     id: "campaign-os-queue-runtime-foundation",
+    idempotencyStore,
     leaseStore,
     noLiveFlags: queueRuntimeNoLiveFlags,
     preconditions: queueRuntimeProductionPreconditions.map((item) => ({ ...item })),
@@ -707,10 +758,19 @@ const createReadinessProjection = (
   blockerCount: number,
   providerAdapter: QueueRuntimeProviderAdapterSummary,
   leaseStore: QueueRuntimeLeaseStoreSummary,
+  idempotencyStore: QueueRuntimeIdempotencyStoreSummary,
 ): QueueRuntimeReadinessProjection => ({
   blockerCount,
   diagnosticCodes: diagnostics.map((item) => item.code),
   dryRunEnqueueEnabled: blockerCount === 0,
+  idempotencyStoreBlockerCount: idempotencyStore.blockerCount,
+  idempotencyStoreDiagnosticCodes: idempotencyStore.diagnosticCodes,
+  idempotencyStoreId: idempotencyStore.storeId,
+  idempotencyStoreLiveIdempotencyExecutionEnabled: false,
+  idempotencyStoreMode: idempotencyStore.mode,
+  idempotencyStoreNamespace: idempotencyStore.namespace,
+  idempotencyStoreRequiredConfigKeys: idempotencyStore.requiredConfigKeys,
+  idempotencyStoreStatus: idempotencyStore.status,
   leaseStoreBlockerCount: leaseStore.blockerCount,
   leaseStoreDiagnosticCodes: leaseStore.diagnosticCodes,
   leaseStoreId: leaseStore.storeId,
@@ -731,6 +791,28 @@ const createReadinessProjection = (
   queueCategoryCount: new Set(queueRuntimePlans.map((item) => item.queueCategory)).size,
   queueIds: [...new Set(queueRuntimePlans.map((item) => item.queueId))],
   queuePlanCount: queueRuntimePlans.length,
+});
+
+const createIdempotencyStoreSummary = (
+  idempotencyStore: ReturnType<typeof createWorkerIdempotencyStoreFoundation>,
+): QueueRuntimeIdempotencyStoreSummary => ({
+  adapterId: idempotencyStore.adapterId,
+  blockerCount: idempotencyStore.blockerCount,
+  diagnosticCodes: idempotencyStore.diagnosticCodes,
+  disabledLiveOperationCount: idempotencyStore.readiness.disabledLiveOperationCount,
+  keySchemaVersion: idempotencyStore.keySchemaVersion,
+  liveIdempotencyExecutionEnabled: false,
+  liveQueuePublishingEnabled: false,
+  liveWorkerExecutionEnabled: false,
+  mode: idempotencyStore.mode,
+  namespace: idempotencyStore.namespace,
+  operationCapabilities: idempotencyStore.operationCapabilities.map((item) => ({ ...item })),
+  operationCount: idempotencyStore.readiness.operationCount,
+  productionReady: false,
+  requiredConfigKeys: idempotencyStore.readiness.requiredConfigKeys,
+  status: idempotencyStore.status,
+  storeId: idempotencyStore.storeId,
+  valid: idempotencyStore.valid,
 });
 
 const createLeaseStoreSummary = (

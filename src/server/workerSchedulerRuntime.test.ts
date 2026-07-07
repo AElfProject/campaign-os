@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  workerIdempotencyOperationCapabilities,
+  workerIdempotencyStoreNoLiveFlags,
+  workerIdempotencyStoreProductionPreconditions,
+} from "./workerIdempotencyStore";
+import {
   workerLeaseOperationCapabilities,
   workerLeaseStoreNoLiveFlags,
   workerLeaseStoreProductionPreconditions,
@@ -97,6 +102,13 @@ describe("worker scheduler runtime foundation", () => {
       leaseStoreLiveWorkerExecutionEnabled: false,
       leaseStoreMode: "dry_run",
       leaseStoreStatus: "local_ready",
+      idempotencyStoreBlockerCount: 0,
+      idempotencyStoreDiagnosticCodes: [],
+      idempotencyStoreId: "local-dry-run",
+      idempotencyStoreLiveIdempotencyExecutionEnabled: false,
+      idempotencyStoreMode: "dry_run",
+      idempotencyStoreNamespace: "campaign-os-workers",
+      idempotencyStoreStatus: "local_ready",
       jobCatalogCount: 9,
       jobFamilyCount: 9,
       localReviewReady: true,
@@ -104,6 +116,47 @@ describe("worker scheduler runtime foundation", () => {
       schedulePolicyCount: 9,
     });
     expect(foundation.diagnosticCodes).toEqual([]);
+  });
+
+  it("projects idempotency store readiness without enabling live scheduler or worker execution", () => {
+    const foundation = createWorkerSchedulerFoundation({ profileId: "local-review" });
+
+    expect(foundation.idempotencyStore).toMatchObject({
+      adapterId: "local-dry-run-worker-idempotency-store-adapter",
+      blockerCount: 0,
+      diagnosticCodes: [],
+      disabledLiveOperationCount: workerIdempotencyOperationCapabilities.length,
+      keySchemaVersion: "v1",
+      liveIdempotencyExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      mode: "dry_run",
+      namespace: "campaign-os-workers",
+      operationCount: workerIdempotencyOperationCapabilities.length,
+      productionReady: false,
+      requiredConfigKeys: expect.arrayContaining([
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE",
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE_CREDENTIALS",
+        "CAMPAIGN_OS_IDEMPOTENCY_NAMESPACE",
+      ]),
+      status: "local_ready",
+      storeId: "local-dry-run",
+      valid: true,
+    });
+    expect(foundation.idempotencyStore.noLiveFlags).toEqual(workerIdempotencyStoreNoLiveFlags);
+    expect(foundation.idempotencyStore.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(
+      true,
+    );
+    expect(foundation.idempotencyStore.requiredConfigKeys).toHaveLength(
+      new Set(workerIdempotencyStoreProductionPreconditions.flatMap((item) => item.requiredConfigKeys)).size,
+    );
+    expect(foundation.readiness.idempotencyStoreRequiredConfigKeys).toEqual(
+      foundation.idempotencyStore.requiredConfigKeys,
+    );
+    expect(foundation.readiness.idempotencyStoreLiveIdempotencyExecutionEnabled).toBe(false);
+    expect(foundation.readiness.liveSchedulerExecutionEnabled).toBe(false);
+    expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
   });
 
   it("projects worker lease store readiness without enabling live scheduler or worker execution", () => {
@@ -153,6 +206,7 @@ describe("worker scheduler runtime foundation", () => {
       liveAnalyticsIngestionEnabled: false,
       liveContractCallsEnabled: false,
       liveCronExecutionEnabled: false,
+      liveIdempotencyExecutionEnabled: false,
       liveObjectStorageEnabled: false,
       liveProviderCallsEnabled: false,
       liveQueuePublishingEnabled: false,

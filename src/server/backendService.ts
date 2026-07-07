@@ -74,6 +74,10 @@ import {
   type WorkerLeaseStoreFoundationSummary,
 } from "./workerLeaseStore";
 import {
+  createWorkerIdempotencyStoreFoundation,
+  type WorkerIdempotencyStoreFoundationSummary,
+} from "./workerIdempotencyStore";
+import {
   createQueueRuntimeFoundation,
   type QueueCategory,
   type QueueRuntimeFoundationSummary,
@@ -107,6 +111,7 @@ export type BackendAttachPointArea =
   | "provider-adapters"
   | "worker-queue"
   | "worker-lease"
+  | "worker-idempotency"
   | "scheduler"
   | "contract-writer"
   | "object-storage-export"
@@ -127,6 +132,7 @@ export type BackendReadinessDiagnosticCode =
   | "SERVICE_PORTS_INVALID"
   | "QUEUE_RUNTIME_READINESS_BLOCKED"
   | "SCHEDULER_RUNTIME_READINESS_BLOCKED"
+  | "WORKER_IDEMPOTENCY_STORE_READINESS_BLOCKED"
   | "WORKER_LEASE_STORE_READINESS_BLOCKED"
   | "WORKER_SCHEDULER_READINESS_BLOCKED"
   | "ROUTE_COUNT_MISMATCH"
@@ -201,6 +207,7 @@ export interface BackendServiceReadinessReport {
   persistenceFoundation: BackendPersistenceFoundationSummary;
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
   queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
+  workerIdempotencyStoreFoundation: BackendWorkerIdempotencyStoreReadinessSummary;
   workerLeaseStoreFoundation: BackendWorkerLeaseStoreReadinessSummary;
   persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   persistenceAdapters: PersistenceAdapterPortReport;
@@ -353,6 +360,30 @@ export interface BackendWorkerLeaseStoreReadinessSummary {
   status: WorkerLeaseStoreFoundationSummary["status"];
   storeId: WorkerLeaseStoreFoundationSummary["storeId"];
   ttlSeconds: WorkerLeaseStoreFoundationSummary["readiness"]["ttlSeconds"];
+  valid: boolean;
+}
+
+export interface BackendWorkerIdempotencyStoreReadinessSummary {
+  adapterId: WorkerIdempotencyStoreFoundationSummary["adapterId"];
+  blockerCount: WorkerIdempotencyStoreFoundationSummary["blockerCount"];
+  diagnosticCodes: WorkerIdempotencyStoreFoundationSummary["diagnosticCodes"];
+  diagnostics: WorkerIdempotencyStoreFoundationSummary["diagnostics"];
+  disabledLiveOperationCount: WorkerIdempotencyStoreFoundationSummary["readiness"]["disabledLiveOperationCount"];
+  id: WorkerIdempotencyStoreFoundationSummary["id"];
+  keySchemaVersion: WorkerIdempotencyStoreFoundationSummary["keySchemaVersion"];
+  liveIdempotencyExecutionEnabled: false;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: WorkerIdempotencyStoreFoundationSummary["mode"];
+  namespace: WorkerIdempotencyStoreFoundationSummary["namespace"];
+  noLiveFlags: WorkerIdempotencyStoreFoundationSummary["noLiveFlags"];
+  operationCount: WorkerIdempotencyStoreFoundationSummary["readiness"]["operationCount"];
+  preconditions: WorkerIdempotencyStoreFoundationSummary["preconditions"];
+  productionReady: false;
+  profileId: WorkerIdempotencyStoreFoundationSummary["profileId"];
+  requiredConfigKeys: string[];
+  status: WorkerIdempotencyStoreFoundationSummary["status"];
+  storeId: WorkerIdempotencyStoreFoundationSummary["storeId"];
   valid: boolean;
 }
 
@@ -618,6 +649,7 @@ const requiredAttachPointAreas: BackendAttachPointArea[] = [
   "provider-adapters",
   "worker-queue",
   "worker-lease",
+  "worker-idempotency",
   "scheduler",
   "contract-writer",
   "object-storage-export",
@@ -708,6 +740,26 @@ export const backendAttachMap: BackendAttachPoint[] = [
     ],
     currentStatus: "deferred",
     note: "Worker lease readiness is metadata-only; no live lease claim, heartbeat, release, fencing, or recovery runs.",
+    requiredBeforeProduction: true,
+  },
+  {
+    area: "worker-idempotency",
+    attachPoint: "src/server/workerIdempotencyStore.ts",
+    blockedBy: [
+      "idempotency store selection",
+      "idempotency store endpoint",
+      "idempotency store credentials",
+      "namespace",
+      "key schema version",
+      "retention policy",
+      "conflict policy",
+      "completion policy",
+      "clock source",
+      "worker lease coordination",
+      "observability exporter",
+    ],
+    currentStatus: "deferred",
+    note: "Worker idempotency readiness is metadata-only; no live idempotency claim, completion, replay, or stale recovery runs.",
     requiredBeforeProduction: true,
   },
   {
@@ -832,6 +884,7 @@ const createValidationIssues = ({
   providerIndexerFoundation,
   queueRuntimeFoundation,
   schedulerRuntimeFoundation,
+  workerIdempotencyStoreFoundation,
   workerLeaseStoreFoundation,
   workerSchedulerFoundation,
   persistenceRuntime,
@@ -851,6 +904,7 @@ const createValidationIssues = ({
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
   queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
   schedulerRuntimeFoundation: BackendSchedulerRuntimeReadinessSummary;
+  workerIdempotencyStoreFoundation: BackendWorkerIdempotencyStoreReadinessSummary;
   workerLeaseStoreFoundation: BackendWorkerLeaseStoreReadinessSummary;
   persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   servicePorts: ApiServicePortReport;
@@ -916,6 +970,14 @@ const createValidationIssues = ({
       "SCHEDULER_RUNTIME_READINESS_BLOCKED",
       "schedulerRuntimeFoundation",
       "Scheduler runtime foundation readiness validation failed.",
+    ));
+  }
+
+  if (!workerIdempotencyStoreFoundation.valid) {
+    issues.push(errorDiagnostic(
+      "WORKER_IDEMPOTENCY_STORE_READINESS_BLOCKED",
+      "workerIdempotencyStoreFoundation",
+      "Worker idempotency store readiness validation failed.",
     ));
   }
 
@@ -1548,6 +1610,43 @@ const createBackendWorkerLeaseStoreReadinessSummary = ({
   };
 };
 
+const createBackendWorkerIdempotencyStoreReadinessSummary = ({
+  env,
+  profileId,
+}: {
+  env: Record<string, string | undefined>;
+  profileId: BackendConfigContract["profileId"];
+}): BackendWorkerIdempotencyStoreReadinessSummary => {
+  const foundation = createWorkerIdempotencyStoreFoundation({
+    env,
+    profileId,
+  });
+
+  return {
+    adapterId: foundation.adapterId,
+    blockerCount: foundation.blockerCount,
+    diagnosticCodes: foundation.diagnosticCodes,
+    diagnostics: foundation.diagnostics,
+    disabledLiveOperationCount: foundation.readiness.disabledLiveOperationCount,
+    id: foundation.id,
+    keySchemaVersion: foundation.keySchemaVersion,
+    liveIdempotencyExecutionEnabled: foundation.readiness.liveIdempotencyExecutionEnabled,
+    liveQueuePublishingEnabled: foundation.readiness.liveQueuePublishingEnabled,
+    liveWorkerExecutionEnabled: foundation.readiness.liveWorkerExecutionEnabled,
+    mode: foundation.mode,
+    namespace: foundation.namespace,
+    noLiveFlags: foundation.noLiveFlags,
+    operationCount: foundation.readiness.operationCount,
+    preconditions: foundation.preconditions,
+    productionReady: foundation.productionReady,
+    profileId: foundation.profileId,
+    requiredConfigKeys: foundation.readiness.requiredConfigKeys,
+    status: foundation.status,
+    storeId: foundation.storeId,
+    valid: foundation.valid,
+  };
+};
+
 export const createBackendDatabaseAdapterRuntimeSummary = (
   runtime: BackendDatabaseAdapterRuntimeReadinessReport,
 ): BackendDatabaseAdapterRuntimeSummary => ({
@@ -1698,6 +1797,10 @@ export const createBackendServiceReadinessReport = ({
     env,
     profileId: config.profileId,
   });
+  const workerIdempotencyStoreFoundation = createBackendWorkerIdempotencyStoreReadinessSummary({
+    env,
+    profileId: config.profileId,
+  });
   const entrypoint: BackendServiceEntrypoint = {
     foundationValidationValid: apiFoundation.validation.valid,
     id: "campaign-os-backend-service",
@@ -1726,6 +1829,7 @@ export const createBackendServiceReadinessReport = ({
     schedulerRuntimeFoundation,
     servicePorts,
     topology,
+    workerIdempotencyStoreFoundation,
     workerLeaseStoreFoundation,
     workerSchedulerFoundation,
   });
@@ -1748,6 +1852,7 @@ export const createBackendServiceReadinessReport = ({
     persistenceFoundation,
     providerIndexerFoundation,
     queueRuntimeFoundation,
+    workerIdempotencyStoreFoundation,
     workerLeaseStoreFoundation,
     persistenceRuntime,
     persistenceAdapters,

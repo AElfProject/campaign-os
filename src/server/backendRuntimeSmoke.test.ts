@@ -105,6 +105,38 @@ const expectedWorkerLeaseStoreFoundation = {
   valid: true,
 };
 
+const expectedWorkerIdempotencyStoreFoundation = {
+  adapterId: "local-dry-run-worker-idempotency-store-adapter",
+  blockerCount: 0,
+  diagnosticCodes: [],
+  disabledLiveOperationCount: 8,
+  id: "campaign-os-worker-idempotency-store-foundation",
+  keySchemaVersion: "v1",
+  liveIdempotencyExecutionEnabled: false,
+  liveQueuePublishingEnabled: false,
+  liveWorkerExecutionEnabled: false,
+  mode: "dry_run",
+  namespace: "campaign-os-workers",
+  operationCount: 8,
+  productionReady: false,
+  requiredConfigKeys: expect.arrayContaining([
+    "CAMPAIGN_OS_IDEMPOTENCY_STORE",
+    "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+    "CAMPAIGN_OS_IDEMPOTENCY_STORE_CREDENTIALS",
+    "CAMPAIGN_OS_IDEMPOTENCY_NAMESPACE",
+    "CAMPAIGN_OS_IDEMPOTENCY_KEY_SCHEMA_VERSION",
+    "CAMPAIGN_OS_IDEMPOTENCY_RETENTION_DAYS",
+    "CAMPAIGN_OS_IDEMPOTENCY_CONFLICT_POLICY",
+    "CAMPAIGN_OS_IDEMPOTENCY_COMPLETION_POLICY",
+    "CAMPAIGN_OS_CLOCK_SOURCE",
+    "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+    "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+  ]),
+  status: "local_ready",
+  storeId: "local-dry-run",
+  valid: true,
+};
+
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
     const summary = await runBackendRuntimeSmoke({
@@ -171,6 +203,7 @@ describe("backend runtime smoke command", () => {
             valid: true,
           },
           schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
+          workerIdempotencyStoreFoundation: expectedWorkerIdempotencyStoreFoundation,
           workerLeaseStoreFoundation: expectedWorkerLeaseStoreFoundation,
           workerSchedulerFoundation: {
             blockerCount: 0,
@@ -223,6 +256,7 @@ describe("backend runtime smoke command", () => {
             valid: true,
           },
           schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
+          workerIdempotencyStoreFoundation: expectedWorkerIdempotencyStoreFoundation,
           workerLeaseStoreFoundation: expectedWorkerLeaseStoreFoundation,
           workerSchedulerFoundation: {
             blockerCount: 0,
@@ -290,6 +324,7 @@ describe("backend runtime smoke command", () => {
         valid: true,
       },
       schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
+      workerIdempotencyStoreFoundation: expectedWorkerIdempotencyStoreFoundation,
       workerLeaseStoreFoundation: expectedWorkerLeaseStoreFoundation,
       workerSchedulerFoundation: {
         blockerCount: 0,
@@ -383,6 +418,30 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutWorkerLeaseStore })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when worker idempotency store metadata is missing from smoke payloads", async () => {
+    const fetchWithoutWorkerIdempotencyStore: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: Record<string, unknown>;
+          };
+        };
+      };
+
+      delete payload.data?.serverRuntime?.readiness?.workerIdempotencyStoreFoundation;
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutWorkerIdempotencyStore })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });
@@ -500,6 +559,35 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveWorkerLeaseFlag })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when worker idempotency smoke payload enables live idempotency execution", async () => {
+    const fetchWithLiveIdempotencyFlag: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              workerIdempotencyStoreFoundation?: Record<string, unknown>;
+            };
+          };
+        };
+      };
+      const workerIdempotencyStoreFoundation = payload.data?.serverRuntime?.readiness?.workerIdempotencyStoreFoundation;
+
+      if (workerIdempotencyStoreFoundation) {
+        workerIdempotencyStoreFoundation.liveIdempotencyExecutionEnabled = true;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveIdempotencyFlag })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });
