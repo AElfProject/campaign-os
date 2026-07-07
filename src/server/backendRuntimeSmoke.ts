@@ -27,6 +27,7 @@ export interface BackendRuntimeSmokeCheck {
   schedulerRuntimeFoundation?: BackendRuntimeSmokeSchedulerRuntimeFoundationSummary;
   status: number;
   traceId: string;
+  workerIdempotencyStoreFoundation?: BackendRuntimeSmokeWorkerIdempotencyStoreFoundationSummary;
   workerLeaseStoreFoundation?: BackendRuntimeSmokeWorkerLeaseStoreFoundationSummary;
   workerSchedulerFoundation?: BackendRuntimeSmokeWorkerSchedulerFoundationSummary;
 }
@@ -152,6 +153,26 @@ export interface BackendRuntimeSmokeWorkerLeaseStoreFoundationSummary {
   valid: boolean;
 }
 
+export interface BackendRuntimeSmokeWorkerIdempotencyStoreFoundationSummary {
+  adapterId?: string;
+  blockerCount: number;
+  diagnosticCodes: string[];
+  disabledLiveOperationCount: number;
+  id?: string;
+  keySchemaVersion?: string;
+  liveIdempotencyExecutionEnabled: false;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode?: string;
+  namespace?: string;
+  operationCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  status?: string;
+  storeId?: string;
+  valid: boolean;
+}
+
 export interface BackendRuntimeSmokeSummary {
   activationId?: string;
   authSessionFoundation: BackendRuntimeSmokeAuthSessionFoundationSummary;
@@ -175,6 +196,7 @@ export interface BackendRuntimeSmokeSummary {
     health: string;
   };
   url: string;
+  workerIdempotencyStoreFoundation: BackendRuntimeSmokeWorkerIdempotencyStoreFoundationSummary;
   workerLeaseStoreFoundation: BackendRuntimeSmokeWorkerLeaseStoreFoundationSummary;
   workerSchedulerFoundation: BackendRuntimeSmokeWorkerSchedulerFoundationSummary;
 }
@@ -240,6 +262,11 @@ const readWorkerLeaseStoreFoundation = (
   value: unknown,
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["serverRuntime", "readiness", "workerLeaseStoreFoundation"]);
+
+const readWorkerIdempotencyStoreFoundation = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["serverRuntime", "readiness", "workerIdempotencyStoreFoundation"]);
 
 const getNumber = (
   record: Record<string, unknown> | undefined,
@@ -542,6 +569,44 @@ const summarizeWorkerLeaseStoreFoundation = (
   };
 };
 
+const summarizeWorkerIdempotencyStoreFoundation = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeWorkerIdempotencyStoreFoundationSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "liveIdempotencyExecutionEnabled")
+    && isExplicitFalse(record, "liveQueuePublishingEnabled")
+    && isExplicitFalse(record, "liveWorkerExecutionEnabled");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    adapterId: getString(record, "adapterId"),
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    disabledLiveOperationCount: getNumber(record, "disabledLiveOperationCount"),
+    id: getString(record, "id"),
+    keySchemaVersion: getString(record, "keySchemaVersion"),
+    liveIdempotencyExecutionEnabled: false,
+    liveQueuePublishingEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    mode: getString(record, "mode"),
+    namespace: getString(record, "namespace"),
+    operationCount: getNumber(record, "operationCount"),
+    productionReady: false,
+    requiredConfigKeys: getStringArray(record, "requiredConfigKeys"),
+    status: getString(record, "status"),
+    storeId: getString(record, "storeId"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
 const createSmokeCheck = async ({
   baseUrl,
   endpoint,
@@ -585,6 +650,9 @@ const createSmokeCheck = async ({
   const workerLeaseStoreFoundation = summarizeWorkerLeaseStoreFoundation(
     readWorkerLeaseStoreFoundation(payload.data),
   );
+  const workerIdempotencyStoreFoundation = summarizeWorkerIdempotencyStoreFoundation(
+    readWorkerIdempotencyStoreFoundation(payload.data),
+  );
 
   return {
     activation,
@@ -600,6 +668,7 @@ const createSmokeCheck = async ({
       schedulerRuntimeFoundation,
       status: response.status,
       traceId: payload.traceId ?? "",
+      workerIdempotencyStoreFoundation,
       workerLeaseStoreFoundation,
       workerSchedulerFoundation,
     },
@@ -715,6 +784,31 @@ const isWorkerLeaseStoreFoundationSmokeReady = (
     && summary.valid === true;
 };
 
+const isWorkerIdempotencyStoreFoundationSmokeReady = (
+  summary: BackendRuntimeSmokeWorkerIdempotencyStoreFoundationSummary | undefined,
+): summary is BackendRuntimeSmokeWorkerIdempotencyStoreFoundationSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveIdempotencyExecutionEnabled === false
+    && summary.liveQueuePublishingEnabled === false
+    && summary.liveWorkerExecutionEnabled === false
+    && summary.storeId === "local-dry-run"
+    && summary.adapterId === "local-dry-run-worker-idempotency-store-adapter"
+    && summary.mode === "dry_run"
+    && summary.namespace === "campaign-os-workers"
+    && summary.keySchemaVersion === "v1"
+    && summary.operationCount >= 8
+    && summary.disabledLiveOperationCount === summary.operationCount
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_IDEMPOTENCY_STORE")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_IDEMPOTENCY_STORE_URL")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_IDEMPOTENCY_STORE_CREDENTIALS")
+    && summary.status === "local_ready"
+    && summary.valid === true;
+};
+
 const isQueueRuntimeFoundationSmokeReady = (
   summary: BackendRuntimeSmokeQueueRuntimeFoundationSummary | undefined,
 ): summary is BackendRuntimeSmokeQueueRuntimeFoundationSummary => {
@@ -812,6 +906,7 @@ export const runBackendRuntimeSmoke = async ({
     const providerIndexerFoundation = contracts.check.providerIndexerFoundation;
     const queueRuntimeFoundation = contracts.check.queueRuntimeFoundation;
     const schedulerRuntimeFoundation = contracts.check.schedulerRuntimeFoundation;
+    const workerIdempotencyStoreFoundation = contracts.check.workerIdempotencyStoreFoundation;
     const workerLeaseStoreFoundation = contracts.check.workerLeaseStoreFoundation;
     const workerSchedulerFoundation = contracts.check.workerSchedulerFoundation;
 
@@ -834,6 +929,8 @@ export const runBackendRuntimeSmoke = async ({
       || !isQueueRuntimeFoundationSmokeReady(queueRuntimeFoundation)
       || !isSchedulerRuntimeFoundationSmokeReady(health.check.schedulerRuntimeFoundation)
       || !isSchedulerRuntimeFoundationSmokeReady(schedulerRuntimeFoundation)
+      || !isWorkerIdempotencyStoreFoundationSmokeReady(health.check.workerIdempotencyStoreFoundation)
+      || !isWorkerIdempotencyStoreFoundationSmokeReady(workerIdempotencyStoreFoundation)
       || !isWorkerLeaseStoreFoundationSmokeReady(health.check.workerLeaseStoreFoundation)
       || !isWorkerLeaseStoreFoundationSmokeReady(workerLeaseStoreFoundation)
       || !isWorkerSchedulerFoundationSmokeReady(health.check.workerSchedulerFoundation)
@@ -864,6 +961,7 @@ export const runBackendRuntimeSmoke = async ({
         health: health.check.traceId,
       },
       url: server.url,
+      workerIdempotencyStoreFoundation,
       workerLeaseStoreFoundation,
       workerSchedulerFoundation,
     };

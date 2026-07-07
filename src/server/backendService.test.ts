@@ -10,6 +10,7 @@ const productionAreas = [
   "provider-adapters",
   "worker-queue",
   "worker-lease",
+  "worker-idempotency",
   "scheduler",
   "contract-writer",
   "object-storage-export",
@@ -52,6 +53,20 @@ const workerLeaseRequiredConfigKeys = [
   "CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY",
   "CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY",
   "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+  "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+];
+
+const workerIdempotencyRequiredConfigKeys = [
+  "CAMPAIGN_OS_IDEMPOTENCY_STORE",
+  "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+  "CAMPAIGN_OS_IDEMPOTENCY_STORE_CREDENTIALS",
+  "CAMPAIGN_OS_IDEMPOTENCY_NAMESPACE",
+  "CAMPAIGN_OS_IDEMPOTENCY_KEY_SCHEMA_VERSION",
+  "CAMPAIGN_OS_IDEMPOTENCY_RETENTION_DAYS",
+  "CAMPAIGN_OS_IDEMPOTENCY_CONFLICT_POLICY",
+  "CAMPAIGN_OS_IDEMPOTENCY_COMPLETION_POLICY",
+  "CAMPAIGN_OS_CLOCK_SOURCE",
+  "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
   "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
 ];
 
@@ -398,6 +413,43 @@ describe("backend service readiness report", () => {
     expect(report.workerLeaseStoreFoundation.disabledLiveOperationCount).toBe(
       report.workerLeaseStoreFoundation.operationCount,
     );
+    expect(report.workerIdempotencyStoreFoundation).toMatchObject({
+      adapterId: "local-dry-run-worker-idempotency-store-adapter",
+      blockerCount: 0,
+      diagnosticCodes: [],
+      disabledLiveOperationCount: 8,
+      id: "campaign-os-worker-idempotency-store-foundation",
+      keySchemaVersion: "v1",
+      liveIdempotencyExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      mode: "dry_run",
+      namespace: "campaign-os-workers",
+      noLiveFlags: {
+        liveAiCallsEnabled: false,
+        liveAnalyticsIngestionEnabled: false,
+        liveContractCallsEnabled: false,
+        liveCronExecutionEnabled: false,
+        liveIdempotencyExecutionEnabled: false,
+        liveObjectStorageEnabled: false,
+        liveProviderCallsEnabled: false,
+        liveQueuePublishingEnabled: false,
+        liveRewardDistributionEnabled: false,
+        liveSchedulerExecutionEnabled: false,
+        liveSocialCallsEnabled: false,
+        liveWorkerExecutionEnabled: false,
+      },
+      operationCount: 8,
+      productionReady: false,
+      profileId: "local-review",
+      requiredConfigKeys: expect.arrayContaining(workerIdempotencyRequiredConfigKeys),
+      status: "local_ready",
+      storeId: "local-dry-run",
+      valid: true,
+    });
+    expect(report.workerIdempotencyStoreFoundation.disabledLiveOperationCount).toBe(
+      report.workerIdempotencyStoreFoundation.operationCount,
+    );
     expect(report.schedulerRuntimeFoundation).toMatchObject({
       blockerCount: 0,
       diagnosticCodes: [],
@@ -662,6 +714,25 @@ describe("backend service readiness report", () => {
       note: expect.stringContaining("no live lease claim"),
       requiredBeforeProduction: true,
     });
+    expect(report.attachMap.find((item) => item.area === "worker-idempotency")).toMatchObject({
+      attachPoint: "src/server/workerIdempotencyStore.ts",
+      blockedBy: expect.arrayContaining([
+        "idempotency store selection",
+        "idempotency store endpoint",
+        "idempotency store credentials",
+        "namespace",
+        "key schema version",
+        "retention policy",
+        "conflict policy",
+        "completion policy",
+        "clock source",
+        "worker lease coordination",
+        "observability exporter",
+      ]),
+      currentStatus: "deferred",
+      note: expect.stringContaining("no live idempotency claim"),
+      requiredBeforeProduction: true,
+    });
   });
 
   it("keeps production persistence and migration runner inactive in local review", () => {
@@ -888,6 +959,13 @@ describe("backend service readiness report", () => {
           CAMPAIGN_OS_DEAD_LETTER_QUEUE: "https://queue.invalid/dead-letter?token=queue-secret",
           CAMPAIGN_OS_DEGRADATION_POLICY: "fail-closed",
           CAMPAIGN_OS_CLOCK_SOURCE: "system-monotonic",
+          CAMPAIGN_OS_IDEMPOTENCY_COMPLETION_POLICY: "return-completion-evidence",
+          CAMPAIGN_OS_IDEMPOTENCY_CONFLICT_POLICY: "manual-review",
+          CAMPAIGN_OS_IDEMPOTENCY_KEY_SCHEMA_VERSION: "v1",
+          CAMPAIGN_OS_IDEMPOTENCY_NAMESPACE: "campaign-os-workers",
+          CAMPAIGN_OS_IDEMPOTENCY_RETENTION_DAYS: "30",
+          CAMPAIGN_OS_IDEMPOTENCY_STORE: "production-idempotency-store",
+          CAMPAIGN_OS_IDEMPOTENCY_STORE_CREDENTIALS: "idempotency-credentials-ready",
           CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "https://idempotency.invalid/store",
           CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "https://observability.invalid/hook",
           CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY: "operator-review-required",

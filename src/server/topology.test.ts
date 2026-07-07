@@ -14,6 +14,7 @@ import { providerIndexerAdapterGroups } from "./providerIndexerAdapters";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
+import { workerIdempotencyStoreProductionPreconditions } from "./workerIdempotencyStore";
 
 const expectedServiceIds = [
   "campaign-service",
@@ -129,7 +130,7 @@ describe("backend service topology", () => {
       ]),
     );
     expect(workerRuntime).toMatchObject({
-      attachPointPath: "src/server/queueProviderAdapter.ts",
+      attachPointPath: "src/server/workerIdempotencyStore.ts",
       currentImplementation: "source-topology-only",
       currentStatus: "local",
       entrypoint: "src/server/queueRuntime.ts",
@@ -150,6 +151,17 @@ describe("backend service topology", () => {
         "worker-lease-store-worker-lease-fencing-policy",
         "worker-lease-store-worker-lease-idempotency-coordination",
         "worker-lease-store-worker-lease-observability",
+        "worker-idempotency-store-idempotency-store-selection",
+        "worker-idempotency-store-idempotency-store-endpoint",
+        "worker-idempotency-store-idempotency-store-credentials",
+        "worker-idempotency-store-idempotency-namespace",
+        "worker-idempotency-store-idempotency-key-schema-version",
+        "worker-idempotency-store-idempotency-retention-policy",
+        "worker-idempotency-store-idempotency-conflict-policy",
+        "worker-idempotency-store-idempotency-completion-policy",
+        "worker-idempotency-store-idempotency-clock-source",
+        "worker-idempotency-store-idempotency-worker-lease-coordination",
+        "worker-idempotency-store-idempotency-observability",
       ]),
       productionTarget: "worker_service",
       serviceIds: expect.arrayContaining([
@@ -293,7 +305,7 @@ describe("backend service topology", () => {
     const workerRuntime = backendDeploymentUnits.find((unit) => unit.id === "worker-runtime");
 
     expect(workerRuntime).toMatchObject({
-      attachPointPath: "src/server/queueProviderAdapter.ts",
+      attachPointPath: "src/server/workerIdempotencyStore.ts",
       currentImplementation: "source-topology-only",
       currentStatus: "local",
       entrypoint: "src/server/queueRuntime.ts",
@@ -318,13 +330,29 @@ describe("backend service topology", () => {
         "worker-lease-store-worker-lease-fencing-policy",
         "worker-lease-store-worker-lease-idempotency-coordination",
         "worker-lease-store-worker-lease-observability",
+        "worker-idempotency-store-idempotency-store-selection",
+        "worker-idempotency-store-idempotency-store-endpoint",
+        "worker-idempotency-store-idempotency-store-credentials",
+        "worker-idempotency-store-idempotency-namespace",
+        "worker-idempotency-store-idempotency-key-schema-version",
+        "worker-idempotency-store-idempotency-retention-policy",
+        "worker-idempotency-store-idempotency-conflict-policy",
+        "worker-idempotency-store-idempotency-completion-policy",
+        "worker-idempotency-store-idempotency-clock-source",
+        "worker-idempotency-store-idempotency-worker-lease-coordination",
+        "worker-idempotency-store-idempotency-observability",
       ]),
     });
     expect(workerRuntime?.productionRequiredBlockerIds).toHaveLength(
-      queueProviderAdapterProductionPreconditions.length + workerLeaseStoreProductionPreconditions.length,
+      queueProviderAdapterProductionPreconditions.length
+        + workerLeaseStoreProductionPreconditions.length
+        + workerIdempotencyStoreProductionPreconditions.length,
     );
     expect(workerRuntime?.productionRequiredBlockerIds).not.toContain("queue-provider-credentials");
     expect(workerRuntime?.productionRequiredBlockerIds).not.toContain("worker-lease-store-CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS");
+    expect(workerRuntime?.productionRequiredBlockerIds).not.toContain(
+      "worker-idempotency-store-CAMPAIGN_OS_IDEMPOTENCY_STORE_CREDENTIALS",
+    );
   });
 
   it("produces a valid topology report with route and ownership coverage", () => {

@@ -85,6 +85,26 @@ export interface ServerRuntimeWorkerLeaseStoreReadiness {
   valid: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["valid"];
 }
 
+export interface ServerRuntimeWorkerIdempotencyStoreReadiness {
+  adapterId: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["adapterId"];
+  blockerCount: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["blockerCount"];
+  diagnosticCodes: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["diagnosticCodes"];
+  disabledLiveOperationCount: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["disabledLiveOperationCount"];
+  id: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["id"];
+  keySchemaVersion: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["keySchemaVersion"];
+  liveIdempotencyExecutionEnabled: false;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["mode"];
+  namespace: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["namespace"];
+  operationCount: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["operationCount"];
+  productionReady: false;
+  requiredConfigKeys: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["requiredConfigKeys"];
+  status: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["status"];
+  storeId: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["storeId"];
+  valid: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["valid"];
+}
+
 export interface ServerRuntimeReadiness {
   corsPolicy: {
     allowedOriginCount: number;
@@ -131,6 +151,7 @@ export interface ServerRuntimeReadiness {
     queueRuntimeFoundation: ServerRuntimeQueueRuntimeReadiness;
     persistenceRuntime: BackendPersistenceRuntimeSummary;
     schedulerRuntimeFoundation: ServerRuntimeSchedulerRuntimeReadiness;
+    workerIdempotencyStoreFoundation: ServerRuntimeWorkerIdempotencyStoreReadiness;
     workerLeaseStoreFoundation: ServerRuntimeWorkerLeaseStoreReadiness;
     workerSchedulerFoundation: BackendServiceReadinessReport["workerSchedulerFoundation"];
   };
@@ -214,6 +235,28 @@ const createServerWorkerLeaseStoreReadiness = (
   status: workerLeaseStoreFoundation.status,
   storeId: workerLeaseStoreFoundation.storeId,
   valid: workerLeaseStoreFoundation.valid,
+});
+
+const createServerWorkerIdempotencyStoreReadiness = (
+  workerIdempotencyStoreFoundation: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"],
+): ServerRuntimeWorkerIdempotencyStoreReadiness => ({
+  adapterId: workerIdempotencyStoreFoundation.adapterId,
+  blockerCount: workerIdempotencyStoreFoundation.blockerCount,
+  diagnosticCodes: workerIdempotencyStoreFoundation.diagnosticCodes,
+  disabledLiveOperationCount: workerIdempotencyStoreFoundation.disabledLiveOperationCount,
+  id: workerIdempotencyStoreFoundation.id,
+  keySchemaVersion: workerIdempotencyStoreFoundation.keySchemaVersion,
+  liveIdempotencyExecutionEnabled: workerIdempotencyStoreFoundation.liveIdempotencyExecutionEnabled,
+  liveQueuePublishingEnabled: workerIdempotencyStoreFoundation.liveQueuePublishingEnabled,
+  liveWorkerExecutionEnabled: workerIdempotencyStoreFoundation.liveWorkerExecutionEnabled,
+  mode: workerIdempotencyStoreFoundation.mode,
+  namespace: workerIdempotencyStoreFoundation.namespace,
+  operationCount: workerIdempotencyStoreFoundation.operationCount,
+  productionReady: workerIdempotencyStoreFoundation.productionReady,
+  requiredConfigKeys: workerIdempotencyStoreFoundation.requiredConfigKeys,
+  status: workerIdempotencyStoreFoundation.status,
+  storeId: workerIdempotencyStoreFoundation.storeId,
+  valid: workerIdempotencyStoreFoundation.valid,
 });
 
 const resolveStatus = ({
@@ -303,6 +346,9 @@ export const createServerRuntimeReadiness = ({
       queueRuntimeFoundation: createServerQueueRuntimeReadiness(backendReadiness.queueRuntimeFoundation),
       persistenceRuntime: createBackendPersistenceRuntimeSummary(backendReadiness.persistenceRuntime),
       schedulerRuntimeFoundation: createServerSchedulerRuntimeReadiness(backendReadiness.schedulerRuntimeFoundation),
+      workerIdempotencyStoreFoundation: createServerWorkerIdempotencyStoreReadiness(
+        backendReadiness.workerIdempotencyStoreFoundation,
+      ),
       workerLeaseStoreFoundation: createServerWorkerLeaseStoreReadiness(backendReadiness.workerLeaseStoreFoundation),
       workerSchedulerFoundation: backendReadiness.workerSchedulerFoundation,
     },
