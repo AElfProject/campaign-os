@@ -850,7 +850,19 @@ describe("Campaign OS API runtime", () => {
     expect(traced.headers["x-campaign-os-trace-id"]).toBe("trace-success-caller");
     expect(traced.body.traceId).toBe("trace-success-caller");
     expect(expectSuccessData(traced)).toMatchObject({
+      apiService: expect.objectContaining({
+        id: "campaign-os-api-service",
+        productionReady: false,
+        status: "ready",
+      }),
       backendService: expect.objectContaining({
+        apiService: expect.objectContaining({
+          deployableBoundaryReady: true,
+          liveConnectionAttempted: false,
+          liveSideEffectsEnabled: false,
+          productionReady: false,
+          status: "ready",
+        }),
         backendRuntimeBootstrap: expect.objectContaining({
           tracePolicy: expect.objectContaining({
             traceHeaderName: "x-campaign-os-trace-id",
@@ -918,7 +930,20 @@ describe("Campaign OS API runtime", () => {
     });
 
     expect(expectSuccessData(health)).toMatchObject({
+      apiService: expect.objectContaining({
+        diagnosticCodes: expect.arrayContaining(["API_SERVICE_PRODUCTION_BLOCKED"]),
+        deployableBoundaryReady: false,
+        productionReady: false,
+        status: "blocked",
+      }),
       backendService: expect.objectContaining({
+        apiService: expect.objectContaining({
+          diagnosticCodes: expect.arrayContaining(["API_SERVICE_PRODUCTION_BLOCKED"]),
+          liveConnectionAttempted: false,
+          liveSideEffectsEnabled: false,
+          productionReady: false,
+          status: "blocked",
+        }),
         authSession: expect.objectContaining({
           status: "blocked",
           valid: false,
@@ -1013,7 +1038,20 @@ describe("Campaign OS API runtime", () => {
       }),
     });
     expect(expectSuccessData(contracts)).toMatchObject({
+      apiService: expect.objectContaining({
+        attachMap: expect.arrayContaining([
+          expect.objectContaining({ id: "live-database-driver", status: "blocked" }),
+          expect.objectContaining({ id: "provider-adapters", status: "deferred" }),
+        ]),
+        productionReady: false,
+        status: "blocked",
+      }),
       backendService: expect.objectContaining({
+        apiService: expect.objectContaining({
+          deployableBoundaryReady: false,
+          productionReady: false,
+          status: "blocked",
+        }),
         authSession: expect.objectContaining({
           status: "blocked",
           validation: expect.objectContaining({

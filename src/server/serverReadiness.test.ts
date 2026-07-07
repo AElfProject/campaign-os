@@ -48,6 +48,25 @@ describe("server runtime readiness metadata", () => {
       },
       profileId: "local-review",
       readiness: {
+        apiService: {
+          blockedDependencyIds: expect.arrayContaining([
+            "live-database-driver",
+            "wallet-proof-verifier",
+            "contract-writer",
+          ]),
+          deferredDependencyIds: expect.arrayContaining([
+            "verification-worker",
+            "provider-adapters",
+            "deployment-config",
+          ]),
+          deployableBoundaryReady: true,
+          id: "campaign-os-api-service",
+          liveConnectionAttempted: false,
+          liveSideEffectsEnabled: false,
+          productionReady: false,
+          status: "ready",
+          workerExecutionEnabled: false,
+        },
         authEnforcement: {
           agentCredentialSubstitutionDisabled: true,
           campaignMutationRouteCount: 1,
@@ -283,6 +302,17 @@ describe("server runtime readiness metadata", () => {
     expect(metadata).toMatchObject({
       profileId: "production-required",
       readiness: {
+        apiService: {
+          diagnosticCodes: expect.arrayContaining([
+            "API_SERVICE_PRODUCTION_BLOCKED",
+            "BACKEND_RUNTIME_BOOTSTRAP_PRODUCTION_BLOCKED",
+          ]),
+          deployableBoundaryReady: false,
+          liveConnectionAttempted: false,
+          liveSideEffectsEnabled: false,
+          productionReady: false,
+          status: "blocked",
+        },
         authEnforcement: {
           locallyEnforcedRouteIds: ["campaigns.create"],
           mode: "blocked",

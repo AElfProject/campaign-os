@@ -332,6 +332,25 @@ const createHealthAuthSessionMetadata = (
   verificationMode: report.authSession.proofBoundary.verificationMode,
 });
 
+const createApiServiceMetadata = (
+  report: BackendServiceReadinessReport,
+) => ({
+  attachPointCount: report.apiService.attachPointCount,
+  blockedDependencyIds: report.apiService.blockedDependencyIds,
+  contractWriteEnabled: report.apiService.contractWriteEnabled,
+  deferredDependencyIds: report.apiService.deferredDependencyIds,
+  deployableBoundaryReady: report.apiService.deployableBoundaryReady,
+  diagnosticCodes: report.apiService.diagnosticCodes,
+  id: report.apiService.id,
+  liveConnectionAttempted: report.apiService.liveConnectionAttempted,
+  liveSideEffectsEnabled: report.apiService.liveSideEffectsEnabled,
+  productionReady: report.apiService.productionReady,
+  profileId: report.apiService.profileId,
+  runtimeVersion: report.apiService.runtimeVersion,
+  status: report.apiService.status,
+  workerExecutionEnabled: report.apiService.workerExecutionEnabled,
+});
+
 const createContractAuthSessionMetadata = (
   report: BackendServiceReadinessReport,
 ) => ({
@@ -383,8 +402,10 @@ const withBackendServiceReadinessMetadata = ({
   if (routeId === "runtime.health") {
     return {
       ...data,
+      apiService: createApiServiceMetadata(readiness),
       backendService: {
         ...data.backendService,
+        apiService: createApiServiceMetadata(readiness),
         authSession: createHealthAuthSessionMetadata(readiness),
         databaseAdapterRuntime: createDatabaseAdapterRuntimeMetadata(readiness),
         databaseReadiness: createHealthDatabaseReadinessMetadata(readiness),
@@ -396,8 +417,15 @@ const withBackendServiceReadinessMetadata = ({
   if (routeId === "runtime.contracts") {
     return {
       ...data,
+      apiService: {
+        ...createApiServiceMetadata(readiness),
+        attachMap: readiness.apiService.blockedDependencyIds
+          .map((id) => ({ id, status: "blocked" }))
+          .concat(readiness.apiService.deferredDependencyIds.map((id) => ({ id, status: "deferred" }))),
+      },
       backendService: {
         ...data.backendService,
+        apiService: createApiServiceMetadata(readiness),
         authSession: createContractAuthSessionMetadata(readiness),
         databaseAdapterRuntime: createDatabaseAdapterRuntimeContractMetadata(readiness),
         databaseReadiness: createContractDatabaseReadinessMetadata(readiness),
@@ -406,6 +434,7 @@ const withBackendServiceReadinessMetadata = ({
           ? {
             ...data.backendService.reportShape,
             sections: appendReportShapeSections(data.backendService.reportShape.sections, [
+              "apiService",
               "authSession",
               "databaseAdapterRuntime",
               "databaseReadiness",

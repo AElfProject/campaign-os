@@ -189,7 +189,29 @@ describe("backend scaffold HTTP smoke", () => {
           mode: "local_seeded",
         }),
         data: {
+          apiService: expect.objectContaining({
+            deployableBoundaryReady: true,
+            id: "campaign-os-api-service",
+            liveConnectionAttempted: false,
+            liveSideEffectsEnabled: false,
+            productionReady: false,
+            status: "ready",
+          }),
           backendService: expect.objectContaining({
+            apiService: expect.objectContaining({
+              blockedDependencyIds: expect.arrayContaining([
+                "live-database-driver",
+                "wallet-proof-verifier",
+                "contract-writer",
+              ]),
+              deferredDependencyIds: expect.arrayContaining([
+                "verification-worker",
+                "provider-adapters",
+                "deployment-config",
+              ]),
+              productionReady: false,
+              status: "ready",
+            }),
             authSession: expect.objectContaining({
               profileId: "local-review",
               protectedRouteCount: expect.any(Number),
@@ -407,6 +429,12 @@ describe("backend scaffold HTTP smoke", () => {
         }),
         data: {
           backendService: expect.objectContaining({
+            apiService: expect.objectContaining({
+              deployableBoundaryReady: true,
+              liveConnectionAttempted: false,
+              productionReady: false,
+              status: "ready",
+            }),
             authSession: expect.objectContaining({
               agentCredentialBoundary: {
                 agentSkillCanSubstituteUserWallet: false,
@@ -562,6 +590,7 @@ describe("backend scaffold HTTP smoke", () => {
             ]),
             reportShape: expect.objectContaining({
               sections: expect.arrayContaining([
+                "apiService",
                 "authSession",
                 "databaseAdapterRuntime",
                 "databaseReadiness",
@@ -572,6 +601,11 @@ describe("backend scaffold HTTP smoke", () => {
           }),
           serverRuntime: expect.objectContaining({
             readiness: expect.objectContaining({
+              apiService: expect.objectContaining({
+                deployableBoundaryReady: true,
+                productionReady: false,
+                status: "ready",
+              }),
               authEnforcement: expect.objectContaining({
                 agentCredentialSubstitutionDisabled: true,
                 locallyEnforcedRouteIds: ["campaigns.create"],
@@ -1072,7 +1106,23 @@ describe("backend scaffold HTTP smoke", () => {
       expect(healthPayload).toMatchObject({
         ok: true,
         data: {
+          apiService: expect.objectContaining({
+            diagnosticCodes: expect.arrayContaining(["API_SERVICE_PRODUCTION_BLOCKED"]),
+            deployableBoundaryReady: false,
+            liveConnectionAttempted: false,
+            liveSideEffectsEnabled: false,
+            productionReady: false,
+            status: "blocked",
+          }),
           backendService: expect.objectContaining({
+            apiService: expect.objectContaining({
+              diagnosticCodes: expect.arrayContaining(["API_SERVICE_PRODUCTION_BLOCKED"]),
+              deployableBoundaryReady: false,
+              liveConnectionAttempted: false,
+              liveSideEffectsEnabled: false,
+              productionReady: false,
+              status: "blocked",
+            }),
             authSession: expect.objectContaining({
               status: "blocked",
               valid: false,
@@ -1225,7 +1275,20 @@ describe("backend scaffold HTTP smoke", () => {
       expect(contractsPayload).toMatchObject({
         ok: true,
         data: {
+          apiService: expect.objectContaining({
+            attachMap: expect.arrayContaining([
+              expect.objectContaining({ id: "live-database-driver", status: "blocked" }),
+              expect.objectContaining({ id: "provider-adapters", status: "deferred" }),
+            ]),
+            productionReady: false,
+            status: "blocked",
+          }),
           backendService: expect.objectContaining({
+            apiService: expect.objectContaining({
+              deployableBoundaryReady: false,
+              productionReady: false,
+              status: "blocked",
+            }),
             authSession: expect.objectContaining({
               status: "blocked",
               validation: expect.objectContaining({
