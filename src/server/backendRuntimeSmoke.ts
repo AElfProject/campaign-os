@@ -23,6 +23,7 @@ export interface BackendRuntimeSmokeCheck {
   ok: boolean;
   persistenceFoundation?: BackendRuntimeSmokePersistenceFoundationSummary;
   providerIndexerFoundation?: BackendRuntimeSmokeProviderIndexerFoundationSummary;
+  queueRuntimeFoundation?: BackendRuntimeSmokeQueueRuntimeFoundationSummary;
   status: number;
   traceId: string;
   workerSchedulerFoundation?: BackendRuntimeSmokeWorkerSchedulerFoundationSummary;
@@ -84,6 +85,21 @@ export interface BackendRuntimeSmokeWorkerSchedulerFoundationSummary {
   valid: boolean;
 }
 
+export interface BackendRuntimeSmokeQueueRuntimeFoundationSummary {
+  blockerCount: number;
+  diagnosticCodes: string[];
+  dryRunEnqueueEnabled: boolean;
+  id?: string;
+  liveCronExecutionEnabled: false;
+  liveQueuePublishingEnabled: false;
+  liveSchedulerExecutionEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  productionReady: false;
+  queuePlanCount: number;
+  status?: string;
+  valid: boolean;
+}
+
 export interface BackendRuntimeSmokeSummary {
   activationId?: string;
   authSessionFoundation: BackendRuntimeSmokeAuthSessionFoundationSummary;
@@ -97,6 +113,7 @@ export interface BackendRuntimeSmokeSummary {
   port: number;
   productionReady: boolean;
   providerIndexerFoundation: BackendRuntimeSmokeProviderIndexerFoundationSummary;
+  queueRuntimeFoundation: BackendRuntimeSmokeQueueRuntimeFoundationSummary;
   requiredBeforeProduction: string[];
   shutdownState: "running" | "stopping" | "stopped";
   status: "passed";
@@ -154,6 +171,11 @@ const readWorkerSchedulerFoundation = (
   value: unknown,
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["serverRuntime", "readiness", "workerSchedulerFoundation"]);
+
+const readQueueRuntimeFoundation = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["serverRuntime", "readiness", "queueRuntimeFoundation"]);
 
 const getNumber = (
   record: Record<string, unknown> | undefined,
@@ -305,6 +327,42 @@ const summarizeWorkerSchedulerFoundation = (
   };
 };
 
+const summarizeQueueRuntimeFoundation = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeQueueRuntimeFoundationSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const noLiveFlags = readNestedRecord(record, ["noLiveFlags"]);
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "liveQueuePublishingEnabled")
+    && isExplicitFalse(noLiveFlags, "liveCronExecutionEnabled")
+    && isExplicitFalse(noLiveFlags, "liveQueuePublishingEnabled")
+    && isExplicitFalse(noLiveFlags, "liveSchedulerExecutionEnabled")
+    && isExplicitFalse(noLiveFlags, "liveWorkerExecutionEnabled");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    dryRunEnqueueEnabled: getBoolean(record, "dryRunEnqueueEnabled"),
+    id: getString(record, "id"),
+    liveCronExecutionEnabled: false,
+    liveQueuePublishingEnabled: false,
+    liveSchedulerExecutionEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    productionReady: false,
+    queuePlanCount: getNumber(record, "queuePlanCount"),
+    status: getString(record, "status"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
 const createSmokeCheck = async ({
   baseUrl,
   endpoint,
@@ -339,6 +397,9 @@ const createSmokeCheck = async ({
   const workerSchedulerFoundation = summarizeWorkerSchedulerFoundation(
     readWorkerSchedulerFoundation(payload.data),
   );
+  const queueRuntimeFoundation = summarizeQueueRuntimeFoundation(
+    readQueueRuntimeFoundation(payload.data),
+  );
 
   return {
     activation,
@@ -350,6 +411,7 @@ const createSmokeCheck = async ({
       ok: payload.ok === true && payload.traceId === traceId,
       persistenceFoundation,
       providerIndexerFoundation,
+      queueRuntimeFoundation,
       status: response.status,
       traceId: payload.traceId ?? "",
       workerSchedulerFoundation,
@@ -445,6 +507,24 @@ const isWorkerSchedulerFoundationSmokeReady = (
     && summary.valid === true;
 };
 
+const isQueueRuntimeFoundationSmokeReady = (
+  summary: BackendRuntimeSmokeQueueRuntimeFoundationSummary | undefined,
+): summary is BackendRuntimeSmokeQueueRuntimeFoundationSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveQueuePublishingEnabled === false
+    && summary.liveWorkerExecutionEnabled === false
+    && summary.liveSchedulerExecutionEnabled === false
+    && summary.liveCronExecutionEnabled === false
+    && summary.queuePlanCount >= 9
+    && summary.dryRunEnqueueEnabled === true
+    && summary.status === "local_ready"
+    && summary.valid === true;
+};
+
 export const runBackendRuntimeSmoke = async ({
   env,
   fetchImpl = fetch,
@@ -481,6 +561,7 @@ export const runBackendRuntimeSmoke = async ({
     const authSessionFoundation = contracts.check.authSessionFoundation;
     const persistenceFoundation = contracts.check.persistenceFoundation;
     const providerIndexerFoundation = contracts.check.providerIndexerFoundation;
+    const queueRuntimeFoundation = contracts.check.queueRuntimeFoundation;
     const workerSchedulerFoundation = contracts.check.workerSchedulerFoundation;
 
     if (
@@ -498,6 +579,8 @@ export const runBackendRuntimeSmoke = async ({
       || !isPersistenceFoundationSmokeReady(persistenceFoundation)
       || !isProviderIndexerFoundationSmokeReady(health.check.providerIndexerFoundation)
       || !isProviderIndexerFoundationSmokeReady(providerIndexerFoundation)
+      || !isQueueRuntimeFoundationSmokeReady(health.check.queueRuntimeFoundation)
+      || !isQueueRuntimeFoundationSmokeReady(queueRuntimeFoundation)
       || !isWorkerSchedulerFoundationSmokeReady(health.check.workerSchedulerFoundation)
       || !isWorkerSchedulerFoundationSmokeReady(workerSchedulerFoundation)
     ) {
@@ -517,6 +600,7 @@ export const runBackendRuntimeSmoke = async ({
       port: new URL(server.url).port ? Number(new URL(server.url).port) : 0,
       productionReady: getBoolean(activation, "productionReady"),
       providerIndexerFoundation,
+      queueRuntimeFoundation,
       requiredBeforeProduction: getStringArray(deploymentHandoff, "requiredBeforeProduction"),
       status: "passed",
       traceIds: {

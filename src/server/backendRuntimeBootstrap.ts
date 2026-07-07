@@ -111,6 +111,20 @@ export interface BackendRuntimeReadinessProjection {
     status: BackendServiceReadinessReport["persistenceRuntime"]["status"];
     valid: boolean;
   };
+  queueRuntimeFoundation: {
+    blockerCount: number;
+    diagnosticCodes: string[];
+    dryRunEnqueueEnabled: boolean;
+    id: BackendServiceReadinessReport["queueRuntimeFoundation"]["id"];
+    liveCronExecutionEnabled: false;
+    liveQueuePublishingEnabled: false;
+    liveSchedulerExecutionEnabled: false;
+    liveWorkerExecutionEnabled: false;
+    productionReady: false;
+    queuePlanCount: number;
+    status: BackendServiceReadinessReport["queueRuntimeFoundation"]["status"];
+    valid: boolean;
+  };
   workerSchedulerFoundation: {
     blockerCount: number;
     diagnosticCodes: string[];
@@ -333,6 +347,20 @@ const createReadinessProjection = (
     status: backendReadiness.persistenceRuntime.status,
     valid: backendReadiness.persistenceRuntime.valid
       && backendReadiness.persistenceRuntime.migrationGate.status !== "blocked",
+  },
+  queueRuntimeFoundation: {
+    blockerCount: backendReadiness.queueRuntimeFoundation.blockerCount,
+    diagnosticCodes: backendReadiness.queueRuntimeFoundation.diagnosticCodes,
+    dryRunEnqueueEnabled: backendReadiness.queueRuntimeFoundation.dryRunEnqueue.enabled,
+    id: backendReadiness.queueRuntimeFoundation.id,
+    liveCronExecutionEnabled: backendReadiness.queueRuntimeFoundation.noLiveFlags.liveCronExecutionEnabled,
+    liveQueuePublishingEnabled: backendReadiness.queueRuntimeFoundation.noLiveFlags.liveQueuePublishingEnabled,
+    liveSchedulerExecutionEnabled: backendReadiness.queueRuntimeFoundation.noLiveFlags.liveSchedulerExecutionEnabled,
+    liveWorkerExecutionEnabled: backendReadiness.queueRuntimeFoundation.noLiveFlags.liveWorkerExecutionEnabled,
+    productionReady: backendReadiness.queueRuntimeFoundation.productionReady,
+    queuePlanCount: backendReadiness.queueRuntimeFoundation.queuePlanCoverage.queuePlanCount,
+    status: backendReadiness.queueRuntimeFoundation.status,
+    valid: backendReadiness.queueRuntimeFoundation.valid,
   },
   workerSchedulerFoundation: {
     blockerCount: backendReadiness.workerSchedulerFoundation.blockerCount,
