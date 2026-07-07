@@ -75,6 +75,10 @@ import {
   type QueueRuntimeFoundationSummary,
 } from "./queueRuntime";
 import {
+  createSchedulerRuntimeFoundation,
+  type SchedulerRuntimeFoundationSummary,
+} from "./schedulerRuntime";
+import {
   allowedVerificationDegradationOutcomes,
   createVerificationSourceHandoff,
   type VerificationSourceHandoffSummary,
@@ -112,6 +116,7 @@ export type BackendReadinessDiagnosticCode =
   | "TOPOLOGY_INVALID"
   | "SERVICE_PORTS_INVALID"
   | "QUEUE_RUNTIME_READINESS_BLOCKED"
+  | "SCHEDULER_RUNTIME_READINESS_BLOCKED"
   | "WORKER_SCHEDULER_READINESS_BLOCKED"
   | "ROUTE_COUNT_MISMATCH"
   | "ATTACH_POINT_MISSING";
@@ -197,6 +202,7 @@ export interface BackendServiceReadinessReport {
     issues: BackendReadinessDiagnostic[];
     valid: boolean;
   };
+  schedulerRuntimeFoundation: BackendSchedulerRuntimeReadinessSummary;
   workerSchedulerFoundation: BackendWorkerSchedulerReadinessSummary;
 }
 
@@ -223,6 +229,33 @@ export interface BackendQueueRuntimeReadinessSummary {
     requiredConfigKeys: string[];
   };
   status: QueueRuntimeFoundationSummary["status"];
+  valid: boolean;
+}
+
+export interface BackendSchedulerRuntimeReadinessSummary {
+  blockerCount: SchedulerRuntimeFoundationSummary["blockerCount"];
+  diagnosticCodes: SchedulerRuntimeFoundationSummary["diagnosticCodes"];
+  diagnostics: SchedulerRuntimeFoundationSummary["diagnostics"];
+  dryRunTrigger: {
+    enabled: SchedulerRuntimeFoundationSummary["readiness"]["dryRunTriggerEnabled"];
+    liveCronExecutionEnabled: false;
+    liveQueuePublishingEnabled: false;
+    liveSchedulerExecutionEnabled: false;
+  };
+  id: SchedulerRuntimeFoundationSummary["id"];
+  noLiveFlags: SchedulerRuntimeFoundationSummary["noLiveFlags"];
+  preconditions: SchedulerRuntimeFoundationSummary["preconditions"];
+  productionReady: false;
+  profileId: SchedulerRuntimeFoundationSummary["profileId"];
+  registrationCoverage: {
+    jobFamilies: string[];
+    jobIds: string[];
+    registrationCount: SchedulerRuntimeFoundationSummary["readiness"]["registrationCount"];
+    requiredConfigKeys: string[];
+    scheduleIds: string[];
+    triggerSourceCount: SchedulerRuntimeFoundationSummary["readiness"]["triggerSourceCount"];
+  };
+  status: SchedulerRuntimeFoundationSummary["status"];
   valid: boolean;
 }
 
@@ -723,6 +756,7 @@ const createValidationIssues = ({
   persistenceAdapters,
   providerIndexerFoundation,
   queueRuntimeFoundation,
+  schedulerRuntimeFoundation,
   workerSchedulerFoundation,
   persistenceRuntime,
   servicePorts,
@@ -740,6 +774,7 @@ const createValidationIssues = ({
   persistenceAdapters: PersistenceAdapterPortReport;
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
   queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
+  schedulerRuntimeFoundation: BackendSchedulerRuntimeReadinessSummary;
   persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   servicePorts: ApiServicePortReport;
   topology: BackendTopologyReport;
@@ -796,6 +831,14 @@ const createValidationIssues = ({
       "QUEUE_RUNTIME_READINESS_BLOCKED",
       "queueRuntimeFoundation",
       "Queue runtime foundation readiness validation failed.",
+    ));
+  }
+
+  if (!schedulerRuntimeFoundation.valid) {
+    issues.push(errorDiagnostic(
+      "SCHEDULER_RUNTIME_READINESS_BLOCKED",
+      "schedulerRuntimeFoundation",
+      "Scheduler runtime foundation readiness validation failed.",
     ));
   }
 
@@ -1275,6 +1318,46 @@ const createBackendQueueRuntimeReadinessSummary = ({
   };
 };
 
+const createBackendSchedulerRuntimeReadinessSummary = ({
+  env,
+  profileId,
+}: {
+  env: Record<string, string | undefined>;
+  profileId: BackendConfigContract["profileId"];
+}): BackendSchedulerRuntimeReadinessSummary => {
+  const foundation = createSchedulerRuntimeFoundation({
+    env,
+    profileId,
+  });
+
+  return {
+    blockerCount: foundation.blockerCount,
+    diagnosticCodes: foundation.diagnosticCodes,
+    diagnostics: foundation.diagnostics,
+    dryRunTrigger: {
+      enabled: foundation.readiness.dryRunTriggerEnabled,
+      liveCronExecutionEnabled: foundation.readiness.liveCronExecutionEnabled,
+      liveQueuePublishingEnabled: foundation.readiness.liveQueuePublishingEnabled,
+      liveSchedulerExecutionEnabled: foundation.readiness.liveSchedulerExecutionEnabled,
+    },
+    id: foundation.id,
+    noLiveFlags: foundation.noLiveFlags,
+    preconditions: foundation.preconditions,
+    productionReady: foundation.productionReady,
+    profileId: foundation.profileId,
+    registrationCoverage: {
+      jobFamilies: uniqueStrings(foundation.registrations.map((registration) => registration.jobFamily)),
+      jobIds: uniqueStrings(foundation.registrations.map((registration) => registration.jobId)),
+      registrationCount: foundation.readiness.registrationCount,
+      requiredConfigKeys: foundation.readiness.requiredConfigKeys,
+      scheduleIds: foundation.readiness.scheduleIds,
+      triggerSourceCount: foundation.readiness.triggerSourceCount,
+    },
+    status: foundation.status,
+    valid: foundation.valid,
+  };
+};
+
 const createBackendWorkerSchedulerReadinessSummary = ({
   env,
   profileId,
@@ -1470,6 +1553,10 @@ export const createBackendServiceReadinessReport = ({
     env,
     profileId: config.profileId,
   });
+  const schedulerRuntimeFoundation = createBackendSchedulerRuntimeReadinessSummary({
+    env,
+    profileId: config.profileId,
+  });
   const entrypoint: BackendServiceEntrypoint = {
     foundationValidationValid: apiFoundation.validation.valid,
     id: "campaign-os-backend-service",
@@ -1495,6 +1582,7 @@ export const createBackendServiceReadinessReport = ({
     providerIndexerFoundation,
     queueRuntimeFoundation,
     persistenceRuntime,
+    schedulerRuntimeFoundation,
     servicePorts,
     topology,
     workerSchedulerFoundation,
@@ -1521,6 +1609,7 @@ export const createBackendServiceReadinessReport = ({
     persistenceRuntime,
     persistenceAdapters,
     profile: config.profile,
+    schedulerRuntimeFoundation,
     topology: {
       coverage: topology.coverage,
       profileReadiness: topology.profileReadiness,
