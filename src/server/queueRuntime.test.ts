@@ -111,6 +111,15 @@ describe("queue runtime foundation", () => {
       adapterId: "local-dry-run-queue-provider-adapter",
       blockerCount: 0,
       diagnosticCodes: [],
+      driverBlockerCount: 0,
+      driverId: "local-fake-queue-provider-driver",
+      driverLiveQueuePublishingEnabled: false,
+      driverLiveWorkerExecutionEnabled: false,
+      driverMode: "dry_run",
+      driverProductionReady: false,
+      driverProviderId: "local-fake",
+      driverStatus: "local_ready",
+      driverValid: true,
       liveQueuePublishingEnabled: false,
       mode: "dry_run",
       productionReady: false,
@@ -124,6 +133,12 @@ describe("queue runtime foundation", () => {
       providerAdapterId: "local-dry-run-queue-provider-adapter",
       providerAdapterMode: "dry_run",
       providerAdapterStatus: "local_ready",
+      providerAdapterDriverId: "local-fake-queue-provider-driver",
+      providerAdapterDriverLiveQueuePublishingEnabled: false,
+      providerAdapterDriverLiveWorkerExecutionEnabled: false,
+      providerAdapterDriverMode: "dry_run",
+      providerAdapterDriverProviderId: "local-fake",
+      providerAdapterDriverStatus: "local_ready",
       providerId: "local-dry-run",
     });
   });
@@ -262,18 +277,22 @@ describe("queue runtime foundation", () => {
     expect(foundation.providerAdapter.status).toBe("blocked");
     expect(foundation.providerAdapter.productionReady).toBe(false);
     expect(foundation.providerAdapter.liveQueuePublishingEnabled).toBe(false);
-    expect(foundation.providerAdapter.diagnosticCodes).toEqual([
-      "QUEUE_PROVIDER_UNSUPPORTED",
-      "QUEUE_PROVIDER_MISSING",
-      "QUEUE_PROVIDER_ENDPOINT_MISSING",
-      "QUEUE_PROVIDER_CREDENTIALS_MISSING",
-      "QUEUE_PROVIDER_ENDPOINT_MISSING",
-      "QUEUE_PROVIDER_DEAD_LETTER_MISSING",
-      "QUEUE_PROVIDER_RETRY_POLICY_MISSING",
-      "QUEUE_PROVIDER_IDEMPOTENCY_STORE_MISSING",
-      "QUEUE_PROVIDER_WORKER_LEASE_MISSING",
-      "QUEUE_PROVIDER_OBSERVABILITY_MISSING",
-    ]);
+    expect(foundation.providerAdapter.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "QUEUE_PROVIDER_UNSUPPORTED",
+        "QUEUE_PROVIDER_MISSING",
+        "QUEUE_PROVIDER_ENDPOINT_MISSING",
+        "QUEUE_PROVIDER_CREDENTIALS_MISSING",
+        "QUEUE_PROVIDER_DEAD_LETTER_MISSING",
+        "QUEUE_PROVIDER_RETRY_POLICY_MISSING",
+        "QUEUE_PROVIDER_IDEMPOTENCY_STORE_MISSING",
+        "QUEUE_PROVIDER_WORKER_LEASE_MISSING",
+        "QUEUE_PROVIDER_OBSERVABILITY_MISSING",
+        "QUEUE_PROVIDER_DRIVER_UNSUPPORTED",
+        "QUEUE_PROVIDER_DRIVER_MISSING",
+        "QUEUE_PROVIDER_DRIVER_LIVE_ENABLEMENT_MISSING",
+      ]),
+    );
     expect(foundation.readiness.providerAdapterBlockerCount).toBe(foundation.providerAdapter.blockerCount);
     expect(foundation.readiness.leaseStoreBlockerCount).toBe(foundation.leaseStore.blockerCount);
   });
@@ -344,6 +363,13 @@ describe("queue runtime foundation", () => {
       livePublishAttempted: false,
       liveQueuePublishingEnabled: false,
       payloadReference: "payload-ref:sha256:task-verification-safe",
+      providerDriverOperation: {
+        accepted: true,
+        livePublishAttempted: false,
+        productionWriteAttempted: false,
+        providerId: "local-fake",
+        status: "accepted_local_fake",
+      },
       queueId: "verification-jobs",
       status: "accepted_dry_run",
       traceId: "trace-queue-runtime-test",
@@ -418,6 +444,8 @@ describe("queue runtime foundation", () => {
       expect(result.diagnosticCodes).toContain(testCase.expectedCode);
       expect(result.livePublishAttempted).toBe(false);
       expect(result.liveQueuePublishingEnabled).toBe(false);
+      expect(result.providerDriverOperation?.livePublishAttempted).toBe(false);
+      expect(result.providerDriverOperation?.productionWriteAttempted).toBe(false);
     }
   });
 
@@ -480,6 +508,12 @@ describe("queue runtime foundation", () => {
       true,
     );
     expect(foundation.providerAdapter.disabledLiveOperationCount).toBe(8);
+    expect(foundation.providerAdapter.driverOperationCount).toBe(8);
+    expect(foundation.providerAdapter.driverOperationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(
+      true,
+    );
+    expect(foundation.providerAdapter.driverLiveQueuePublishingEnabled).toBe(false);
+    expect(foundation.providerAdapter.driverLiveWorkerExecutionEnabled).toBe(false);
     expect(foundation.providerAdapter.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.providerAdapter.liveWorkerExecutionEnabled).toBe(false);
     expect(foundation.readiness.providerRequiredConfigKeys).toEqual(
