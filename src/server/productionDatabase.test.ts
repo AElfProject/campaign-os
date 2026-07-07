@@ -45,6 +45,29 @@ describe("production database contract", () => {
     }
   });
 
+  it("keeps every v0.2 store serializable with migration and operation metadata", () => {
+    const serializedStores = JSON.parse(JSON.stringify(productionDatabaseSchemaManifest.stores));
+
+    expect(serializedStores).toHaveLength(6);
+    for (const store of serializedStores) {
+      expect(store).toMatchObject({
+        migrationRequired: true,
+        operationCapability: {
+          adHocRawSqlEnabled: false,
+          migrationPlanRequired: true,
+          parameterizedQueries: true,
+          transactions: true,
+        },
+        productionMode: "relational_database",
+        readiness: "contract_ready",
+        schemaVersion: "v0.2.0",
+      });
+      expect(store.operationCapability.operations).toEqual(
+        expect.arrayContaining(["select", "count", "lookup", "insert", "update", "delete", "upsert"]),
+      );
+    }
+  });
+
   it("exposes a schema manifest for the six required relational stores", () => {
     expect(productionDatabaseSchemaManifest).toMatchObject({
       id: "campaign-os-production-db-schema-v0.2",

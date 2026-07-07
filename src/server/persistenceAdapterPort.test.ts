@@ -110,7 +110,44 @@ describe("persistence adapter port", () => {
     for (const store of relationalStores) {
       expect(store.entities?.length).toBeGreaterThan(0);
       expect(store.schemaVersion).toBe("v0.2.0");
+      expect(store.blockedBy).toEqual(
+        expect.arrayContaining([
+          "live production database provider selection mission",
+          "protected live migration execution mission",
+          "connection secret boundary",
+        ]),
+      );
     }
+  });
+
+  it("keeps production adapter metadata aligned with registry decisions", () => {
+    const report = createPersistenceAdapterPortReport({
+      activeDriverId: "campaign-os-production-db-adapter",
+      profileId: "production-required",
+    });
+    const productionAdapter = report.adapters.find(
+      (adapter) => adapter.id === "campaign-os-production-db-adapter",
+    );
+
+    expect(productionAdapter).toMatchObject({
+      durable: true,
+      kind: "production_deferred",
+      ownerStores: productionDatabaseRequiredStoreIds,
+      queryCapability: {
+        adHocRawSqlEnabled: false,
+        liveQueryExecutionEnabled: false,
+        parameterizedQueries: true,
+      },
+      repositoryContractCount: expect.any(Number),
+      requiresConnectionString: true,
+      requiresMigrationGate: true,
+      requiresMigrationRunner: true,
+      sideEffectPolicy: "live_external_deferred",
+      status: "blocked",
+      supportsReset: false,
+      supportsTransactions: true,
+    });
+    expect(report.validation.valid).toBe(false);
   });
 
   it("rejects production adapter activation in local review", () => {
