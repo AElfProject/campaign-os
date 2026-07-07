@@ -2,6 +2,7 @@ import {
   createBackendDatabaseAdapterRuntimeSummary,
   createBackendPersistenceRuntimeSummary,
   type BackendDatabaseAdapterRuntimeSummary,
+  type CampaignDbVerticalSliceReadinessSummary,
   type BackendPersistenceRuntimeSummary,
   type BackendServiceReadinessReport,
 } from "./backendService";
@@ -55,6 +56,7 @@ export interface ServerRuntimeReadiness {
       valid: boolean;
     };
     backendRuntimeBootstrap: BackendRuntimeBootstrapContract;
+    campaignDbVerticalSlice: CampaignDbVerticalSliceReadinessSummary;
     database: {
       adapterStatus: string;
       migrationPlanStatus: string;
@@ -157,6 +159,7 @@ export const createServerRuntimeReadiness = ({
         valid: backendReadiness.validation.valid,
       },
       backendRuntimeBootstrap,
+      campaignDbVerticalSlice: backendReadiness.campaignDbVerticalSlice,
       database: {
         adapterStatus: backendReadiness.databaseReadiness.adapter.status,
         migrationPlanStatus: backendReadiness.databaseReadiness.migrationPlan.status,

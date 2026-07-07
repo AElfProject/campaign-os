@@ -78,6 +78,31 @@ describe("server runtime readiness metadata", () => {
           entrypointId: "campaign-os-backend-service",
           valid: true,
         },
+        campaignDbVerticalSlice: {
+          adapter: {
+            deterministic: true,
+            id: "campaign-os-deterministic-test-driver",
+            productionReady: false,
+            status: "active_local",
+          },
+          diagnosticCodes: [],
+          lifecycle: {
+            readinessDoesNotMutateRecords: true,
+            repositoryContractStatus: "available",
+            repositoryMode: "deterministic_test",
+          },
+          noLive: {
+            connectionAttempted: false,
+            migrationExecutionEnabled: false,
+            queryExecutionEnabled: false,
+            writeExecutionEnabled: false,
+          },
+          status: "ready",
+          storeId: "campaign-db",
+          validation: {
+            valid: true,
+          },
+        },
         database: {
           adapterStatus: "contract_ready",
           migrationPlanStatus: "dry_run_ready",
@@ -239,6 +264,37 @@ describe("server runtime readiness metadata", () => {
         backend: {
           valid: false,
         },
+        campaignDbVerticalSlice: {
+          adapter: {
+            deterministic: false,
+            id: "campaign-os-production-driver-deferred",
+            productionReady: false,
+            status: "blocked",
+          },
+          diagnosticCodes: expect.arrayContaining([
+            "CAMPAIGN_DB_LIVE_DRIVER_MISSING",
+            "CAMPAIGN_DB_MIGRATION_EXECUTOR_UNAPPROVED",
+            "CAMPAIGN_DB_SECRET_MANAGER_MISSING",
+            "CAMPAIGN_DB_PRODUCTION_WRITE_DISABLED",
+            "CAMPAIGN_DB_DETERMINISTIC_ADAPTER_NOT_PRODUCTION_READY",
+          ]),
+          lifecycle: {
+            readinessDoesNotMutateRecords: true,
+            repositoryContractStatus: "available",
+            repositoryMode: "production_deferred",
+          },
+          noLive: {
+            connectionAttempted: false,
+            migrationExecutionEnabled: false,
+            queryExecutionEnabled: false,
+            writeExecutionEnabled: false,
+          },
+          status: "blocked",
+          storeId: "campaign-db",
+          validation: {
+            valid: false,
+          },
+        },
         database: {
           adapterStatus: "blocked",
           migrationPlanStatus: "blocked",
@@ -322,6 +378,7 @@ describe("server runtime readiness metadata", () => {
     expect(metadata.readiness.backend.diagnosticCodes).toEqual(
       expect.arrayContaining([
         "AUTH_SESSION_READINESS_BLOCKED",
+        "CAMPAIGN_DB_VERTICAL_SLICE_BLOCKED",
         "DATABASE_READINESS_BLOCKED",
         "PERSISTENCE_ADAPTER_INVALID",
         "MIGRATION_MANIFEST_INVALID",

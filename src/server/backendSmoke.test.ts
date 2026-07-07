@@ -213,6 +213,20 @@ describe("backend scaffold HTTP smoke", () => {
               backend: expect.objectContaining({
                 valid: true,
               }),
+              campaignDbVerticalSlice: expect.objectContaining({
+                diagnosticCodes: [],
+                noLive: {
+                  connectionAttempted: false,
+                  migrationExecutionEnabled: false,
+                  queryExecutionEnabled: false,
+                  writeExecutionEnabled: false,
+                },
+                status: "ready",
+                storeId: "campaign-db",
+                validation: expect.objectContaining({
+                  valid: true,
+                }),
+              }),
               database: expect.objectContaining({
                 adapterStatus: "contract_ready",
                 migrationPlanStatus: "dry_run_ready",
@@ -488,6 +502,110 @@ describe("backend scaffold HTTP smoke", () => {
       expectSanitizedReadinessPayload(contractsPayload.data.backendService);
       expectSanitizedReadinessPayload(healthPayload.data.serverRuntime);
       expectSanitizedReadinessPayload(contractsPayload.data.serverRuntime);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("creates and reads Campaign DB drafts through HTTP without external services", async () => {
+    const server = await startCampaignOsApiServer({ logger: false, port: 0 });
+
+    try {
+      const create = await fetch(`${server.url}/api/campaigns`, {
+        body: JSON.stringify({
+          duration: "2026-09-01/2026-09-14",
+          endTime: "2026-09-14T23:59:59Z",
+          goal: "Smoke Campaign DB draft",
+          ownerAddress: "smoke-owner-001",
+          projectId: "smoke-project",
+          rewardDescription: "Smoke rewards stay local-review only.",
+          startTime: "2026-09-01T00:00:00Z",
+        }),
+        headers: {
+          "content-type": "application/json",
+          "x-campaign-os-trace-id": "trace-campaign-db-http-create",
+        },
+        method: "POST",
+      });
+      const createPayload = await create.json();
+      const draftId = createPayload.data?.payload?.id;
+      const detail = await fetch(`${server.url}/api/campaigns/${draftId}`, {
+        headers: { "x-campaign-os-trace-id": "trace-campaign-db-http-detail" },
+      });
+      const list = await fetch(
+        `${server.url}/api/campaigns?projectId=smoke-project&ownerAddress=smoke-owner-001&status=draft`,
+        {
+          headers: { "x-campaign-os-trace-id": "trace-campaign-db-http-list" },
+        },
+      );
+      const detailPayload = await detail.json();
+      const listPayload = await list.json();
+
+      expect(create.status).toBe(200);
+      expect(detail.status).toBe(200);
+      expect(list.status).toBe(200);
+      expect(create.headers.get("x-campaign-os-trace-id")).toBe("trace-campaign-db-http-create");
+      expect(detail.headers.get("x-campaign-os-trace-id")).toBe("trace-campaign-db-http-detail");
+      expect(list.headers.get("x-campaign-os-trace-id")).toBe("trace-campaign-db-http-list");
+      expect(createPayload).toMatchObject({
+        ok: true,
+        data: {
+          campaignDb: {
+            createdViaRepository: true,
+            draftId: "campaign-db-draft-0001",
+            storeId: "campaign-db",
+          },
+          payload: {
+            id: "campaign-db-draft-0001",
+            projectId: "smoke-project",
+            status: "draft",
+          },
+          persistence: {
+            kind: "campaign_draft",
+            recordId: expect.any(String),
+          },
+        },
+        traceId: "trace-campaign-db-http-create",
+      });
+      expect(draftId).toBe("campaign-db-draft-0001");
+      expect(detailPayload).toMatchObject({
+        ok: true,
+        data: {
+          campaignDb: {
+            createdViaRepository: true,
+            storeId: "campaign-db",
+          },
+          payload: {
+            item: {
+              id: "campaign-db-draft-0001",
+              status: "draft",
+            },
+          },
+        },
+      });
+      expect(listPayload).toMatchObject({
+        ok: true,
+        data: {
+          payload: {
+            campaignDb: {
+              draftCount: 1,
+              storeId: "campaign-db",
+            },
+            items: expect.arrayContaining([
+              expect.objectContaining({
+                id: "campaign-db-draft-0001",
+                status: "draft",
+              }),
+            ]),
+            summary: {
+              totalCampaigns: 1,
+            },
+          },
+        },
+      });
+      expectSanitizedReadinessPayload(createPayload);
+      expectSanitizedReadinessPayload(detailPayload);
+      expectSanitizedReadinessPayload(listPayload);
     } finally {
       await server.stop();
     }
