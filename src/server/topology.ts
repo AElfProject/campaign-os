@@ -1,4 +1,5 @@
 import type { ApiRuntimeCapabilityId } from "./contracts";
+import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 
 export type BackendTopologyReadiness = "ready" | "local_only" | "review_required" | "deferred" | "disabled";
 export type BackendDomainArea =
@@ -33,6 +34,7 @@ export type BackendAdapterCategory =
 export type BackendAdapterStatus = "local_stub" | "deferred" | "disabled" | "required_for_production";
 export type BackendAdapterConfigurationMode = "none" | "env" | "secret_manager" | "service_registry";
 export type BackendDeploymentImplementation = "vite-node-local" | "source-topology-only" | "deferred";
+export type BackendDeploymentRuntimeStatus = "local" | "deferred" | "blocked";
 export type BackendProductionTarget =
   | "api_service"
   | "contract_ops_service"
@@ -136,10 +138,19 @@ export interface BackendRuntimeProfile {
 }
 
 export interface BackendDeploymentUnit {
+  attachPointPath?: string;
   currentImplementation: BackendDeploymentImplementation;
+  currentStatus?: BackendDeploymentRuntimeStatus;
   entrypoint: string;
   id: BackendDeploymentUnitId;
+  localReviewRuntimePolicy?: {
+    cloudSchedulerPackageInstalled: false;
+    cronPackageInstalled: false;
+    liveCronExecutionEnabled: false;
+    liveSchedulerExecutionEnabled: false;
+  };
   name: string;
+  productionRequiredBlockerIds?: string[];
   productionTarget: BackendProductionTarget;
   runtimeProfileIds: BackendRuntimeProfileId[];
   serviceIds: BackendServiceBoundaryId[];
@@ -766,18 +777,29 @@ export const backendDeploymentUnits = [
     serviceIds: ["verification-service", "risk-scoring-service", "ai-ops-service"],
   }),
   deploymentUnit({
-    currentImplementation: "deferred",
-    entrypoint: "src/server/queueRuntime.ts",
+    attachPointPath: "src/server/schedulerRuntime.ts",
+    currentImplementation: "source-topology-only",
+    currentStatus: "local",
+    entrypoint: "src/server/schedulerRuntime.ts",
     id: "scheduler-runtime",
+    localReviewRuntimePolicy: {
+      cloudSchedulerPackageInstalled: false,
+      cronPackageInstalled: false,
+      liveCronExecutionEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    },
     name: "Scheduler Runtime",
+    productionRequiredBlockerIds: schedulerRuntimeProductionPreconditions.map((precondition) => precondition.id),
     productionTarget: "scheduled_runner",
     runtimeProfileIds: ["staging-ready", "production-required"],
     serviceIds: [
       "campaign-service",
       "eligibility-service",
+      "export-service",
       "risk-scoring-service",
       "ai-ops-service",
       "runtime-observability",
+      "points-ranking-service",
     ],
   }),
   deploymentUnit({

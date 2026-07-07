@@ -4,6 +4,7 @@ import {
   resolveCampaignOsRuntimeConfig,
   sanitizeBackendConfigDiagnosticValue,
 } from "./config";
+import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 
 const collectStringValues = (value: unknown, values: string[] = []): string[] => {
   if (typeof value === "string") {
@@ -63,6 +64,10 @@ describe("backend config contract", () => {
     expect(contract.productionReadiness.requiredConfigKeys).toEqual(
       expect.arrayContaining([
         "CAMPAIGN_OS_QUEUE_PROVIDER",
+        "CAMPAIGN_OS_SCHEDULER_PROVIDER",
+        "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
+        "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
+        "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
         "CAMPAIGN_OS_WORKER_QUEUE_URL",
         "CAMPAIGN_OS_WORKER_RETRY_POLICY",
         "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
@@ -144,6 +149,10 @@ describe("backend config contract", () => {
       expect.arrayContaining([
         "CAMPAIGN_OS_AUTH_SECRET",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+        "CAMPAIGN_OS_SCHEDULER_PROVIDER",
+        "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
+        "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
+        "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
         "CAMPAIGN_OS_WORKER_QUEUE_URL",
         "CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT",
       ]),
@@ -155,8 +164,66 @@ describe("backend config contract", () => {
           field: "CAMPAIGN_OS_AUTH_SECRET",
           severity: "error",
         }),
+        expect.objectContaining({
+          code: "MISSING_PRODUCTION_CONFIG",
+          field: "CAMPAIGN_OS_SCHEDULER_PROVIDER",
+          severity: "error",
+        }),
+        expect.objectContaining({
+          code: "MISSING_PRODUCTION_CONFIG",
+          field: "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
+          severity: "error",
+        }),
       ]),
     );
+  });
+
+  it("reports scheduler runtime production precondition keys without exposing env values", () => {
+    const schedulerRuntimeConfigKeys = [
+      ...new Set(schedulerRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
+    const secretSchedulerValues = {
+      CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+      CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY: "operator-policy-secret",
+      CAMPAIGN_OS_SCHEDULER_ENDPOINT: "https://scheduler.invalid/hook?scheduler-pass=secret",
+      CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL: "https://lease.invalid/store?lease-token=secret",
+      CAMPAIGN_OS_SCHEDULER_PROVIDER: "provider-secret",
+    };
+    const contract = resolveBackendConfigContract({ env: secretSchedulerValues });
+
+    expect(contract.productionReadiness.requiredConfigKeys).toEqual(
+      expect.arrayContaining(schedulerRuntimeConfigKeys),
+    );
+    expect(contract.productionReadiness.missingConfigKeys).toEqual(
+      expect.arrayContaining([
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+        "CAMPAIGN_OS_WORKER_QUEUE_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+        "CAMPAIGN_OS_DEGRADATION_POLICY",
+        "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
+      ]),
+    );
+    expect(contract.productionReadiness.missingConfigKeys).not.toEqual(
+      expect.arrayContaining([
+        "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
+        "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
+        "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
+        "CAMPAIGN_OS_SCHEDULER_PROVIDER",
+      ]),
+    );
+    expect(sanitizeBackendConfigDiagnosticValue("CAMPAIGN_OS_SCHEDULER_PROVIDER", "provider-secret")).toBe(
+      "[redacted]",
+    );
+    expect(
+      sanitizeBackendConfigDiagnosticValue(
+        "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
+        "operator-policy-secret",
+      ),
+    ).toBe("[redacted]");
+    expect(collectStringValues(contract)).not.toContain("provider-secret");
+    expect(collectStringValues(contract)).not.toContain("operator-policy-secret");
+    expect(collectStringValues(contract)).not.toContain("scheduler-pass");
+    expect(collectStringValues(contract)).not.toContain("lease-token");
   });
 
   it("blocks accidental production capability enablement in local review", () => {

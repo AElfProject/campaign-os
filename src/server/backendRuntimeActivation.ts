@@ -7,6 +7,10 @@ import {
   queueRuntimeProductionPreconditions,
   type QueueRuntimePreconditionArea,
 } from "./queueRuntime";
+import {
+  schedulerRuntimeProductionPreconditions,
+  type SchedulerRuntimePreconditionArea,
+} from "./schedulerRuntime";
 import type { ApiServerRuntimeContract } from "./serverRuntime";
 import { workerSchedulerProductionPreconditions } from "./workerSchedulerRuntime";
 
@@ -141,6 +145,42 @@ const queueRuntimeConfigCategory = (
   return area;
 };
 
+const schedulerRuntimeConfigCategory = (
+  area: SchedulerRuntimePreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (area === "auth") {
+    return "auth";
+  }
+
+  if (area === "queue" || area === "dead_letter") {
+    return "queue";
+  }
+
+  if (area === "observability") {
+    return "observability";
+  }
+
+  return "scheduler";
+};
+
+const schedulerRuntimeDependencyArea = (
+  area: SchedulerRuntimePreconditionArea,
+): ProductionRuntimeDependencyArea => {
+  if (area === "auth") {
+    return "auth";
+  }
+
+  if (area === "queue" || area === "dead_letter") {
+    return "queue";
+  }
+
+  if (area === "observability") {
+    return "observability";
+  }
+
+  return "scheduler";
+};
+
 export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
   configKey("CAMPAIGN_OS_API_HOST", "server", "supported", "local-review"),
   configKey("CAMPAIGN_OS_API_PORT", "server", "supported", "local-review"),
@@ -153,6 +193,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
   configKey("CAMPAIGN_OS_DATABASE_URL", "database", "blocked", "production-required"),
   configKey("CAMPAIGN_OS_AUTH_SECRET", "auth", "blocked", "production-required"),
   configKey("CAMPAIGN_OS_PROVIDER_REGISTRY_URL", "provider", "deferred", "production-required"),
+  ...schedulerRuntimeProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        schedulerRuntimeConfigCategory(precondition.area),
+        precondition.status,
+        "production-required",
+      ),
+    ),
+  ),
   ...workerSchedulerProductionPreconditions.flatMap((precondition) =>
     precondition.requiredConfigKeys.map((key) =>
       configKey(
@@ -261,6 +311,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: "deferred",
   },
+  ...schedulerRuntimeProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: schedulerRuntimeDependencyArea(precondition.area),
+    attachPoint: "src/server/schedulerRuntime.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: `scheduler-runtime-${precondition.id}`,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
   ...workerSchedulerProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
     area:
       precondition.area === "idempotency" || precondition.area === "lease"
