@@ -101,6 +101,25 @@ export interface MigrationExecutorHandoffSummary {
   preconditions: MigrationExecutorPrecondition[];
 }
 
+export interface RepositoryAdapterHandoffAttachPoint {
+  attachPoint: "src/server/persistence.ts:createCampaignOsRepository";
+  liveQueriesEnabled: false;
+  liveWritesEnabled: false;
+  ownerServiceId: string;
+  serviceLabel: string;
+  storeId: BackendStoreId;
+}
+
+export interface RepositoryAdapterHandoffSummary {
+  attachPoints: RepositoryAdapterHandoffAttachPoint[];
+  blockers: string[];
+  id: "campaign-os-production-repository-handoff";
+  liveQueriesEnabled: false;
+  liveWritesEnabled: false;
+  profileId: BackendRuntimeProfileId;
+  status: "metadata_ready" | "blocked";
+}
+
 export interface DatabaseAdapterDeferredDependency {
   blockedBy: string[];
   id: string;
@@ -123,6 +142,7 @@ export interface ProductionDatabaseAdapterRuntimeContract {
   providerId: string;
   queryAdapter: DatabaseQueryAdapterSummary;
   registry: DatabaseProviderRegistryReport;
+  repositoryHandoff: RepositoryAdapterHandoffSummary;
   status: DatabaseAdapterRuntimeStatus;
   stores: DatabaseAdapterRuntimeStore[];
   transaction: DatabaseTransactionSummary;
@@ -472,6 +492,51 @@ const createProductionDbRuntimeReadinessProjection = (
   ownerStoreCount: contract.ownerStores.length,
 });
 
+const serviceLabelByOwnerServiceId: Record<string, string> = {
+  "campaign-service": "Campaign Service",
+  "i18n-content-service": "i18n Content Service",
+  "points-ranking-service": "Points/Ranking Service",
+  "risk-intelligence-service": "Risk Intelligence Service",
+  "verification-service": "Verification Service",
+  "wallet-session-service": "Wallet Session Service",
+};
+
+const createRepositoryAdapterHandoff = ({
+  profileId,
+}: {
+  profileId: BackendRuntimeProfileId;
+}): RepositoryAdapterHandoffSummary => {
+  const productionRequired = profileId === "production-required";
+  const blockers = productionRequired
+    ? databaseAdapterDeferredDependencies
+      .filter((dependency) =>
+        dependency.id === "driver-package-selection"
+        || dependency.id === "connection-pool-implementation"
+        || dependency.id === "migration-lock"
+        || dependency.id === "backup-restore-plan"
+        || dependency.id === "secret-manager",
+      )
+      .map((dependency) => dependency.id)
+    : [];
+
+  return {
+    attachPoints: productionDatabaseStoreRegistry.map((store) => ({
+      attachPoint: "src/server/persistence.ts:createCampaignOsRepository",
+      liveQueriesEnabled: false,
+      liveWritesEnabled: false,
+      ownerServiceId: store.ownerServiceId,
+      serviceLabel: serviceLabelByOwnerServiceId[store.ownerServiceId] ?? store.ownerServiceId,
+      storeId: store.id,
+    })),
+    blockers,
+    id: "campaign-os-production-repository-handoff",
+    liveQueriesEnabled: false,
+    liveWritesEnabled: false,
+    profileId,
+    status: blockers.length > 0 ? "blocked" : "metadata_ready",
+  };
+};
+
 const resolveRuntimeStatus = ({
   deterministicTestMode,
   diagnostics,
@@ -554,6 +619,9 @@ export const createProductionDatabaseAdapterRuntimeContract = ({
     providerId: registry.selectedProviderId,
     queryAdapter,
     registry,
+    repositoryHandoff: createRepositoryAdapterHandoff({
+      profileId: profileResolution.profile.id,
+    }),
     status: resolveRuntimeStatus({ deterministicTestMode, diagnostics }),
     stores: createStoreMappings({ blocked, deterministicTestMode }),
     transaction: createTransactionSummary({

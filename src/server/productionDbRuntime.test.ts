@@ -77,7 +77,16 @@ describe("production DB runtime v1", () => {
     expect(contract.migrationGate).toMatchObject({
       approvalRequired: true,
       liveExecutionEnabled: false,
+      pendingMigrationIds: [
+        "001-campaign-db-v0-2-0",
+        "002-wallet-session-db-v0-2-0",
+        "003-task-evidence-db-v0-2-0",
+        "004-i18n-content-db-v0-2-0",
+        "005-risk-event-db-v0-2-0",
+        "006-points-ledger-v0-2-0",
+      ],
       rollbackMetadataReady: false,
+      rollbackPlanId: "campaign-os-production-db-rollback-v0.2",
       status: "blocked",
     });
     expect(contract.diagnostics).toEqual(

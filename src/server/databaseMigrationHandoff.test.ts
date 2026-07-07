@@ -47,7 +47,13 @@ describe("database migration executor handoff", () => {
       liveExecutionEnabled: false,
       migrationGateStatus: "ready",
       profileId: "local-review",
+      requiredPreconditionIds: ["migration-gate:schema-manifest-compatible"],
       rollbackPlanStatus: "not_required_for_dry_run",
+      rollbackReadiness: {
+        planId: "campaign-os-production-db-rollback-v0.2",
+        ready: true,
+        status: "ready_for_dry_run",
+      },
       schemaManifestId: "campaign-os-production-db-schema-v0.2",
       valid: true,
     });
@@ -80,7 +86,29 @@ describe("database migration executor handoff", () => {
       liveExecutionEnabled: false,
       migrationGateStatus: "blocked",
       profileId: "production-required",
+      requiredPreconditionIds: expect.arrayContaining([
+        "driver-package-selected",
+        "connection-pool-ready",
+        "migration-lock-ready",
+        "backup-restore-plan-ready",
+        "secret-manager-ready",
+        "explicit-live-migration-approval",
+        "migration-gate:migration-approval",
+        "migration-gate:rollback-plan",
+        "migration-gate:driver-package",
+        "migration-gate:migration-lock",
+        "migration-gate:backup-restore-plan",
+      ]),
       rollbackPlanStatus: "missing",
+      rollbackReadiness: {
+        blockers: expect.arrayContaining([
+          "migration-gate:rollback-plan",
+          "backup-restore-plan-ready",
+        ]),
+        planId: "campaign-os-production-db-rollback-v0.2",
+        ready: false,
+        status: "missing_for_live",
+      },
       schemaManifestId: "campaign-os-production-db-schema-v0.2",
       valid: false,
     });
@@ -142,6 +170,14 @@ describe("database migration executor handoff", () => {
       liveExecutionCount: 0,
       liveExecutionEnabled: false,
       migrationGateStatus: "blocked",
+    });
+    expect(handoff.rollbackReadiness).toMatchObject({
+      blockers: expect.arrayContaining([
+        "migration-gate:rollback-plan",
+        "backup-restore-plan-ready",
+      ]),
+      ready: false,
+      status: "missing_for_live",
     });
     expect(handoff.preconditions).toEqual(
       expect.arrayContaining([

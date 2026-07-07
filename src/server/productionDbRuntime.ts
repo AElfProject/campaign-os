@@ -7,6 +7,9 @@ import {
   type DatabaseProviderDiagnostic,
 } from "./databaseProviderRegistry";
 import {
+  defaultSchemaMigrations,
+} from "./migrationRunner";
+import {
   productionDatabaseRequiredStoreIds,
   productionDatabaseStoreRegistry,
 } from "./productionDatabase";
@@ -84,7 +87,9 @@ export interface ProductionDbMigrationGateSummary {
   approvalRequired: boolean;
   diagnosticCodes: ProductionDbDiagnosticCode[];
   liveExecutionEnabled: false;
+  pendingMigrationIds: string[];
   rollbackMetadataReady: boolean;
+  rollbackPlanId: "campaign-os-production-db-rollback-v0.2";
   status: ProductionDbMigrationGateStatus;
 }
 
@@ -289,7 +294,9 @@ const createMigrationGate = ({
       approvalRequired: false,
       diagnosticCodes: diagnostics.map((item) => item.code),
       liveExecutionEnabled: false,
+      pendingMigrationIds: defaultSchemaMigrations.map((migration) => migration.id),
       rollbackMetadataReady: false,
+      rollbackPlanId: "campaign-os-production-db-rollback-v0.2",
       status: "not_required_for_fixture",
     };
   }
@@ -298,7 +305,9 @@ const createMigrationGate = ({
     approvalRequired: true,
     diagnosticCodes: diagnostics.map((item) => item.code),
     liveExecutionEnabled: false,
+    pendingMigrationIds: defaultSchemaMigrations.map((migration) => migration.id),
     rollbackMetadataReady: false,
+    rollbackPlanId: "campaign-os-production-db-rollback-v0.2",
     status: "blocked",
   };
 };

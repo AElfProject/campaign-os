@@ -222,4 +222,77 @@ describe("production database adapter runtime", () => {
       ]),
     );
   });
+
+  it("maps repository handoff attach points for each v0.2 service store without live access", () => {
+    const contract = createProductionDatabaseAdapterRuntimeContract({ env: {} });
+
+    expect(contract.repositoryHandoff).toMatchObject({
+      id: "campaign-os-production-repository-handoff",
+      liveQueriesEnabled: false,
+      liveWritesEnabled: false,
+      profileId: "local-review",
+      status: "metadata_ready",
+    });
+    expect(contract.repositoryHandoff.attachPoints).toEqual([
+      expect.objectContaining({
+        attachPoint: "src/server/persistence.ts:createCampaignOsRepository",
+        liveQueriesEnabled: false,
+        liveWritesEnabled: false,
+        ownerServiceId: "campaign-service",
+        serviceLabel: "Campaign Service",
+        storeId: "campaign-db",
+      }),
+      expect.objectContaining({
+        ownerServiceId: "wallet-session-service",
+        serviceLabel: "Wallet Session Service",
+        storeId: "wallet-session-db",
+      }),
+      expect.objectContaining({
+        ownerServiceId: "verification-service",
+        serviceLabel: "Verification Service",
+        storeId: "task-evidence-db",
+      }),
+      expect.objectContaining({
+        ownerServiceId: "i18n-content-service",
+        serviceLabel: "i18n Content Service",
+        storeId: "i18n-content-db",
+      }),
+      expect.objectContaining({
+        ownerServiceId: "risk-intelligence-service",
+        serviceLabel: "Risk Intelligence Service",
+        storeId: "risk-event-db",
+      }),
+      expect.objectContaining({
+        ownerServiceId: "points-ranking-service",
+        serviceLabel: "Points/Ranking Service",
+        storeId: "points-ledger",
+      }),
+    ]);
+    expect(contract.repositoryHandoff.attachPoints.every((point) => !point.liveQueriesEnabled)).toBe(true);
+    expect(contract.repositoryHandoff.attachPoints.every((point) => !point.liveWritesEnabled)).toBe(true);
+  });
+
+  it("keeps production-required repository handoff blocked without enabling live access", () => {
+    const contract = createProductionDatabaseAdapterRuntimeContract({
+      env: {
+        CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+      },
+    });
+
+    expect(contract.repositoryHandoff).toMatchObject({
+      liveQueriesEnabled: false,
+      liveWritesEnabled: false,
+      profileId: "production-required",
+      status: "blocked",
+    });
+    expect(contract.repositoryHandoff.blockers).toEqual(
+      expect.arrayContaining([
+        "driver-package-selection",
+        "connection-pool-implementation",
+        "migration-lock",
+        "backup-restore-plan",
+        "secret-manager",
+      ]),
+    );
+  });
 });

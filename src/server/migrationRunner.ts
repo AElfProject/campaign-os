@@ -35,6 +35,11 @@ export interface SchemaMigrationDefinition {
 
 export interface MigrationRunnerPlan {
   adapterId: ProductionDatabaseAdapterContract["id"];
+  approvalRequirement: {
+    approvalRequired: boolean;
+    liveExecutionEnabled: false;
+    status: "not_required_for_dry_run" | "required_for_live";
+  };
   blockedMigrationIds: string[];
   diagnostics: MigrationRunnerDiagnostic[];
   dryRun: true;
@@ -42,6 +47,13 @@ export interface MigrationRunnerPlan {
   pendingMigrationIds: string[];
   planId: string;
   profileId: BackendRuntimeProfileId;
+  rollbackMetadata: {
+    ready: boolean;
+    requiredForLiveExecution: boolean;
+    reviewedMigrationIds: string[];
+    rollbackPlanId: "campaign-os-production-db-rollback-v0.2";
+    status: "ready_for_dry_run" | "missing_for_live";
+  };
   status: MigrationRunnerPlanStatus;
   validation: {
     issues: MigrationRunnerDiagnostic[];
@@ -157,11 +169,19 @@ const detectDependencyCycles = (
     }
 
     if (visiting.has(id)) {
-      issues.push(errorDiagnostic(
-        "MIGRATION_DEPENDENCY_CYCLE",
-        id,
-        `Migration dependency cycle detected: ${[...path, id].join(" -> ")}.`,
-      ));
+      const cyclePath = [...path, id];
+      const cycleStart = cyclePath.indexOf(id);
+      const cycleIds = new Set(cyclePath.slice(cycleStart, -1));
+      const message = `Migration dependency cycle detected: ${cyclePath.join(" -> ")}.`;
+
+      for (const cycleId of cycleIds) {
+        issues.push(errorDiagnostic(
+          "MIGRATION_DEPENDENCY_CYCLE",
+          cycleId,
+          message,
+        ));
+      }
+
       return;
     }
 
@@ -274,16 +294,30 @@ export const createMigrationRunnerPlan = ({
     validationValid && profileId !== "production-required" ? "dry_run_ready" : "blocked";
   const blockedMigrationIds =
     status === "blocked" ? [...new Set(diagnostics.map((diagnostic) => diagnostic.field))] : [];
+  const pendingMigrationIds = migrations.map((migrationDefinition) => migrationDefinition.id);
+  const approvalRequired = profileId === "production-required";
 
   return {
     adapterId,
+    approvalRequirement: {
+      approvalRequired,
+      liveExecutionEnabled: false,
+      status: approvalRequired ? "required_for_live" : "not_required_for_dry_run",
+    },
     blockedMigrationIds,
     diagnostics,
     dryRun: true,
     liveExecutionEnabled: false,
-    pendingMigrationIds: migrations.map((migrationDefinition) => migrationDefinition.id),
+    pendingMigrationIds,
     planId: `migration-dry-run:${profileId}:v0.2.0`,
     profileId,
+    rollbackMetadata: {
+      ready: !approvalRequired,
+      requiredForLiveExecution: approvalRequired,
+      reviewedMigrationIds: pendingMigrationIds,
+      rollbackPlanId: "campaign-os-production-db-rollback-v0.2",
+      status: approvalRequired ? "missing_for_live" : "ready_for_dry_run",
+    },
     status,
     validation: {
       issues: diagnostics,
