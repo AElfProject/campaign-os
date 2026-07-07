@@ -121,6 +121,21 @@ export interface BackendRuntimeReadinessProjection {
     liveSchedulerExecutionEnabled: false;
     liveWorkerExecutionEnabled: false;
     productionReady: false;
+    providerAdapter: {
+      adapterId: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["adapterId"];
+      blockerCount: number;
+      diagnosticCodes: string[];
+      disabledLiveOperationCount: number;
+      liveQueuePublishingEnabled: false;
+      liveWorkerExecutionEnabled: false;
+      mode: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["mode"];
+      operationCount: number;
+      productionReady: false;
+      providerId: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["providerId"];
+      requiredConfigKeys: string[];
+      status: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["status"];
+      valid: boolean;
+    };
     queuePlanCount: number;
     status: BackendServiceReadinessReport["queueRuntimeFoundation"]["status"];
     valid: boolean;
@@ -373,6 +388,21 @@ const createReadinessProjection = (
     liveSchedulerExecutionEnabled: backendReadiness.queueRuntimeFoundation.noLiveFlags.liveSchedulerExecutionEnabled,
     liveWorkerExecutionEnabled: backendReadiness.queueRuntimeFoundation.noLiveFlags.liveWorkerExecutionEnabled,
     productionReady: backendReadiness.queueRuntimeFoundation.productionReady,
+    providerAdapter: {
+      adapterId: backendReadiness.queueRuntimeFoundation.providerAdapter.adapterId,
+      blockerCount: backendReadiness.queueRuntimeFoundation.providerAdapter.blockerCount,
+      diagnosticCodes: backendReadiness.queueRuntimeFoundation.providerAdapter.diagnosticCodes,
+      disabledLiveOperationCount: backendReadiness.queueRuntimeFoundation.providerAdapter.disabledLiveOperationCount,
+      liveQueuePublishingEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.liveQueuePublishingEnabled,
+      liveWorkerExecutionEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.liveWorkerExecutionEnabled,
+      mode: backendReadiness.queueRuntimeFoundation.providerAdapter.mode,
+      operationCount: backendReadiness.queueRuntimeFoundation.providerAdapter.operationCount,
+      productionReady: backendReadiness.queueRuntimeFoundation.providerAdapter.productionReady,
+      providerId: backendReadiness.queueRuntimeFoundation.providerAdapter.providerId,
+      requiredConfigKeys: backendReadiness.queueRuntimeFoundation.providerAdapter.requiredConfigKeys,
+      status: backendReadiness.queueRuntimeFoundation.providerAdapter.status,
+      valid: backendReadiness.queueRuntimeFoundation.providerAdapter.valid,
+    },
     queuePlanCount: backendReadiness.queueRuntimeFoundation.queuePlanCoverage.queuePlanCount,
     status: backendReadiness.queueRuntimeFoundation.status,
     valid: backendReadiness.queueRuntimeFoundation.valid,

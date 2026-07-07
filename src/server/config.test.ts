@@ -4,6 +4,7 @@ import {
   resolveCampaignOsRuntimeConfig,
   sanitizeBackendConfigDiagnosticValue,
 } from "./config";
+import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 
 const collectStringValues = (value: unknown, values: string[] = []): string[] => {
@@ -64,6 +65,8 @@ describe("backend config contract", () => {
     expect(contract.productionReadiness.requiredConfigKeys).toEqual(
       expect.arrayContaining([
         "CAMPAIGN_OS_QUEUE_PROVIDER",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
         "CAMPAIGN_OS_SCHEDULER_PROVIDER",
         "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
         "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
@@ -149,6 +152,8 @@ describe("backend config contract", () => {
       expect.arrayContaining([
         "CAMPAIGN_OS_AUTH_SECRET",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
         "CAMPAIGN_OS_SCHEDULER_PROVIDER",
         "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
         "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
@@ -224,6 +229,44 @@ describe("backend config contract", () => {
     expect(collectStringValues(contract)).not.toContain("operator-policy-secret");
     expect(collectStringValues(contract)).not.toContain("scheduler-pass");
     expect(collectStringValues(contract)).not.toContain("lease-token");
+  });
+
+  it("reports queue provider adapter production precondition keys without exposing env values", () => {
+    const queueProviderAdapterConfigKeys = [
+      ...new Set(queueProviderAdapterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
+    const secretQueueProviderValues = {
+      CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+      CAMPAIGN_OS_QUEUE_PROVIDER: "production-queue-provider",
+      CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "provider-credential-secret",
+      CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "https://queue-provider.invalid/hook?queue-provider-token=secret",
+    };
+    const contract = resolveBackendConfigContract({ env: secretQueueProviderValues });
+
+    expect(contract.productionReadiness.requiredConfigKeys).toEqual(
+      expect.arrayContaining(queueProviderAdapterConfigKeys),
+    );
+    expect(contract.productionReadiness.missingConfigKeys).not.toEqual(
+      expect.arrayContaining([
+        "CAMPAIGN_OS_QUEUE_PROVIDER",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+      ]),
+    );
+    expect(
+      sanitizeBackendConfigDiagnosticValue(
+        "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+        "provider-credential-secret",
+      ),
+    ).toBe("[redacted]");
+    expect(
+      sanitizeBackendConfigDiagnosticValue(
+        "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+        "https://queue-provider.invalid/hook?queue-provider-token=secret",
+      ),
+    ).toBe("[redacted]");
+    expect(collectStringValues(contract)).not.toContain("provider-credential-secret");
+    expect(collectStringValues(contract)).not.toContain("queue-provider-token");
   });
 
   it("blocks accidental production capability enablement in local review", () => {

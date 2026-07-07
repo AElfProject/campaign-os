@@ -44,6 +44,7 @@ export interface ServerRuntimeQueueRuntimeReadiness {
   noLiveFlags: BackendServiceReadinessReport["queueRuntimeFoundation"]["noLiveFlags"];
   productionReady: false;
   profileId: BackendServiceReadinessReport["queueRuntimeFoundation"]["profileId"];
+  providerAdapter: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"];
   queueIds: BackendServiceReadinessReport["queueRuntimeFoundation"]["queuePlanCoverage"]["queueIds"];
   queuePlanCount: BackendServiceReadinessReport["queueRuntimeFoundation"]["queuePlanCoverage"]["queuePlanCount"];
   status: BackendServiceReadinessReport["queueRuntimeFoundation"]["status"];
@@ -152,6 +153,7 @@ const createServerQueueRuntimeReadiness = (
   noLiveFlags: queueRuntimeFoundation.noLiveFlags,
   productionReady: queueRuntimeFoundation.productionReady,
   profileId: queueRuntimeFoundation.profileId,
+  providerAdapter: queueRuntimeFoundation.providerAdapter,
   queueIds: queueRuntimeFoundation.queuePlanCoverage.queueIds,
   queuePlanCount: queueRuntimeFoundation.queuePlanCoverage.queuePlanCount,
   status: queueRuntimeFoundation.status,

@@ -11,6 +11,7 @@ import {
   validateBackendTopology,
 } from "./index";
 import { providerIndexerAdapterGroups } from "./providerIndexerAdapters";
+import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 
 const expectedServiceIds = [
@@ -127,8 +128,17 @@ describe("backend service topology", () => {
       ]),
     );
     expect(workerRuntime).toMatchObject({
+      attachPointPath: "src/server/queueProviderAdapter.ts",
       currentImplementation: "source-topology-only",
+      currentStatus: "local",
       entrypoint: "src/server/queueRuntime.ts",
+      productionRequiredBlockerIds: expect.arrayContaining([
+        "queue-provider-selection",
+        "queue-provider-endpoint",
+        "queue-provider-auth",
+        "queue-provider-worker-queue-url",
+        "queue-provider-dead-letter",
+      ]),
       productionTarget: "worker_service",
       serviceIds: expect.arrayContaining([
         "verification-service",
@@ -265,6 +275,32 @@ describe("backend service topology", () => {
     expect(schedulerRuntime?.productionRequiredBlockerIds).toHaveLength(
       schedulerRuntimeProductionPreconditions.length,
     );
+  });
+
+  it("exposes queue provider adapter as worker runtime attach metadata without secret-shaped blocker ids", () => {
+    const workerRuntime = backendDeploymentUnits.find((unit) => unit.id === "worker-runtime");
+
+    expect(workerRuntime).toMatchObject({
+      attachPointPath: "src/server/queueProviderAdapter.ts",
+      currentImplementation: "source-topology-only",
+      currentStatus: "local",
+      entrypoint: "src/server/queueRuntime.ts",
+      productionRequiredBlockerIds: expect.arrayContaining([
+        "queue-provider-selection",
+        "queue-provider-endpoint",
+        "queue-provider-auth",
+        "queue-provider-worker-queue-url",
+        "queue-provider-dead-letter",
+        "queue-provider-retry-policy",
+        "queue-provider-idempotency-store",
+        "queue-provider-worker-lease",
+        "queue-provider-observability",
+      ]),
+    });
+    expect(workerRuntime?.productionRequiredBlockerIds).toHaveLength(
+      queueProviderAdapterProductionPreconditions.length,
+    );
+    expect(workerRuntime?.productionRequiredBlockerIds).not.toContain("queue-provider-credentials");
   });
 
   it("produces a valid topology report with route and ownership coverage", () => {

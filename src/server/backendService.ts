@@ -73,7 +73,12 @@ import {
   createQueueRuntimeFoundation,
   type QueueCategory,
   type QueueRuntimeFoundationSummary,
+  type QueueRuntimeProviderAdapterSummary,
 } from "./queueRuntime";
+import {
+  queueProviderAdapterNoLiveFlags,
+  type QueueProviderAdapterNoLiveFlags,
+} from "./queueProviderAdapter";
 import {
   createSchedulerRuntimeFoundation,
   type SchedulerRuntimeFoundationSummary,
@@ -220,6 +225,7 @@ export interface BackendQueueRuntimeReadinessSummary {
   preconditions: QueueRuntimeFoundationSummary["preconditions"];
   productionReady: false;
   profileId: QueueRuntimeFoundationSummary["profileId"];
+  providerAdapter: BackendQueueProviderAdapterReadinessSummary;
   queuePlanCoverage: {
     jobIds: string[];
     queueCategories: QueueCategory[];
@@ -229,6 +235,23 @@ export interface BackendQueueRuntimeReadinessSummary {
     requiredConfigKeys: string[];
   };
   status: QueueRuntimeFoundationSummary["status"];
+  valid: boolean;
+}
+
+export interface BackendQueueProviderAdapterReadinessSummary {
+  adapterId: QueueRuntimeProviderAdapterSummary["adapterId"];
+  blockerCount: QueueRuntimeProviderAdapterSummary["blockerCount"];
+  diagnosticCodes: QueueRuntimeProviderAdapterSummary["diagnosticCodes"];
+  disabledLiveOperationCount: QueueRuntimeProviderAdapterSummary["disabledLiveOperationCount"];
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: QueueRuntimeProviderAdapterSummary["mode"];
+  noLiveFlags: QueueProviderAdapterNoLiveFlags;
+  operationCount: QueueRuntimeProviderAdapterSummary["operationCount"];
+  productionReady: false;
+  providerId: QueueRuntimeProviderAdapterSummary["providerId"];
+  requiredConfigKeys: QueueRuntimeProviderAdapterSummary["requiredConfigKeys"];
+  status: QueueRuntimeProviderAdapterSummary["status"];
   valid: boolean;
 }
 
@@ -1303,6 +1326,22 @@ const createBackendQueueRuntimeReadinessSummary = ({
     preconditions: foundation.preconditions,
     productionReady: foundation.productionReady,
     profileId: foundation.profileId,
+    providerAdapter: {
+      adapterId: foundation.providerAdapter.adapterId,
+      blockerCount: foundation.providerAdapter.blockerCount,
+      diagnosticCodes: foundation.providerAdapter.diagnosticCodes,
+      disabledLiveOperationCount: foundation.providerAdapter.disabledLiveOperationCount,
+      liveQueuePublishingEnabled: foundation.providerAdapter.liveQueuePublishingEnabled,
+      liveWorkerExecutionEnabled: foundation.providerAdapter.liveWorkerExecutionEnabled,
+      mode: foundation.providerAdapter.mode,
+      noLiveFlags: queueProviderAdapterNoLiveFlags,
+      operationCount: foundation.providerAdapter.operationCount,
+      productionReady: foundation.providerAdapter.productionReady,
+      providerId: foundation.providerAdapter.providerId,
+      requiredConfigKeys: foundation.providerAdapter.requiredConfigKeys,
+      status: foundation.providerAdapter.status,
+      valid: foundation.providerAdapter.valid,
+    },
     queuePlanCoverage: {
       jobIds: uniqueStrings(foundation.queuePlans.map((queuePlan) => queuePlan.jobId)),
       queueCategories: uniqueStrings(foundation.queuePlans.map((queuePlan) => queuePlan.queueCategory)) as QueueCategory[],

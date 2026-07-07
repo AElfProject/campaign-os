@@ -4,6 +4,10 @@ import {
   type BackendRuntimeProfileId,
 } from "./backendProfiles";
 import {
+  queueProviderAdapterProductionPreconditions,
+  type QueueProviderPreconditionArea,
+} from "./queueProviderAdapter";
+import {
   queueRuntimeProductionPreconditions,
   type QueueRuntimePreconditionArea,
 } from "./queueRuntime";
@@ -145,6 +149,28 @@ const queueRuntimeConfigCategory = (
   return area;
 };
 
+const queueProviderAdapterConfigCategory = (
+  area: QueueProviderPreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (area === "auth") {
+    return "provider";
+  }
+
+  if (area === "dead_letter" || area === "queue") {
+    return "queue";
+  }
+
+  if (area === "idempotency" || area === "lease") {
+    return "worker";
+  }
+
+  if (area === "retry") {
+    return "scheduler";
+  }
+
+  return area;
+};
+
 const schedulerRuntimeConfigCategory = (
   area: SchedulerRuntimePreconditionArea,
 ): RuntimeActivationConfigCategory => {
@@ -220,6 +246,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
       configKey(
         key,
         queueRuntimeConfigCategory(precondition.area),
+        precondition.status,
+        key === "CAMPAIGN_OS_DEGRADATION_POLICY" ? "future-production" : "production-required",
+      ),
+    ),
+  ),
+  ...queueProviderAdapterProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        queueProviderAdapterConfigCategory(precondition.area),
         precondition.status,
         key === "CAMPAIGN_OS_DEGRADATION_POLICY" ? "future-production" : "production-required",
       ),
@@ -335,6 +371,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     attachPoint: "src/server/queueRuntime.ts",
     blockedBy: [...precondition.requiredConfigKeys],
     id: precondition.id,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
+  ...queueProviderAdapterProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: queueProviderAdapterConfigCategory(precondition.area) as ProductionRuntimeDependencyArea,
+    attachPoint: "src/server/queueProviderAdapter.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: `queue-provider-adapter-${precondition.id}`,
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
