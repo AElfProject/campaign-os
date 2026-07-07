@@ -10,6 +10,7 @@ import {
   createBackendTopologyReport,
   validateBackendTopology,
 } from "./index";
+import { providerIndexerAdapterGroups } from "./providerIndexerAdapters";
 
 const expectedServiceIds = [
   "campaign-service",
@@ -40,15 +41,16 @@ const expectedDataStoreIds = [
 ];
 
 const expectedAdapterGroupIds = [
-  "wallet-adapters",
+  "wallet-auth-session",
   "aefinder-aelfscan-indexers",
   "dapp-api-adapters",
   "social-api-adapters",
+  "manual-review",
   "ai-provider-adapters",
+  "analytics-warehouse-adapter",
   "object-storage-adapter",
   "contract-reader-adapter",
   "contract-writer-adapter",
-  "analytics-warehouse-adapter",
 ];
 
 const expectedProfileIds = ["local-review", "staging-ready", "production-required"];
@@ -125,6 +127,60 @@ describe("backend service topology", () => {
     for (const adapter of backendAdapterGroups.filter((group) => group.forbiddenInLocalReview)) {
       expect(["deferred", "disabled"]).toContain(adapter.status);
     }
+  });
+
+  it("aligns provider adapter topology with provider/indexer foundation groups", () => {
+    const topologyProviderGroups = backendAdapterGroups.map((group) => ({
+      category: group.category,
+      forbiddenInLocalReview: group.forbiddenInLocalReview,
+      id: group.id,
+      status: group.status,
+    }));
+    const foundationProviderGroups = providerIndexerAdapterGroups.map((group) => ({
+      category: group.category,
+      forbiddenInLocalReview: group.forbiddenInLocalReview,
+      id: group.id,
+      status: group.forbiddenInLocalReview ? group.status : expect.any(String),
+    }));
+
+    expect(topologyProviderGroups.map((group) => group.id)).toEqual(
+      providerIndexerAdapterGroups.map((group) => group.id),
+    );
+    expect(topologyProviderGroups.map((group) => group.category)).toEqual(
+      providerIndexerAdapterGroups.map((group) => group.category),
+    );
+    expect(topologyProviderGroups).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          forbiddenInLocalReview: false,
+          id: "wallet-auth-session",
+          status: "local_stub",
+        }),
+        expect.objectContaining({
+          forbiddenInLocalReview: false,
+          id: "manual-review",
+          status: "local_stub",
+        }),
+        expect.objectContaining({
+          forbiddenInLocalReview: true,
+          id: "contract-writer-adapter",
+          status: "disabled",
+        }),
+      ]),
+    );
+    expect(foundationProviderGroups).toHaveLength(topologyProviderGroups.length);
+    expect(backendServiceBoundaries.find((service) => service.id === "verification-service")).toMatchObject({
+      adapterGroups: [
+        "wallet-auth-session",
+        "aefinder-aelfscan-indexers",
+        "dapp-api-adapters",
+        "social-api-adapters",
+        "manual-review",
+      ],
+      risks: expect.arrayContaining([
+        "Provider/indexer handoff degrades to pending or manual review while live calls are deferred.",
+      ]),
+    });
   });
 
   it("produces a valid topology report with route and ownership coverage", () => {

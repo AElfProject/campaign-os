@@ -159,6 +159,55 @@ describe("backend service readiness report", () => {
     expect(report.apiService.blockedDependencyIds).not.toEqual(
       expect.arrayContaining(["wallet-proof-verifier", "session-issuer"]),
     );
+    expect(report.providerIndexerFoundation).toMatchObject({
+      blockerCount: 0,
+      diagnosticCodes: [],
+      noLiveFlags: {
+        liveAiCallsEnabled: false,
+        liveAnalyticsIngestionEnabled: false,
+        liveContractCallsEnabled: false,
+        liveIndexerCallsEnabled: false,
+        liveObjectStorageEnabled: false,
+        liveProviderCallsEnabled: false,
+        liveSocialCallsEnabled: false,
+        workerExecutionEnabled: false,
+      },
+      productionReady: false,
+      profileId: "local-review",
+      providerGroupCount: 10,
+      status: "local_ready",
+      valid: true,
+      verificationSourceCoverage: {
+        summaryCount: 5,
+      },
+      verificationSourceHandoff: {
+        liveExecutionEnabled: false,
+        supportedVerificationTypes: ["WALLET", "ON_CHAIN", "DAPP_API", "SOCIAL", "MANUAL"],
+        valid: true,
+      },
+    });
+    expect(report.providerIndexerFoundation.degradationPolicy).toMatchObject({
+      allowedOutcomes: [
+        "pending",
+        "manual_review",
+        "disable_provider_task_templates",
+        "local_only",
+        "blocked",
+      ],
+      providerBackedUnavailableOutcomes: [
+        "pending",
+        "disable_provider_task_templates",
+        "manual_review",
+      ],
+    });
+    expect(report.providerIndexerFoundation.requiredConfigKeys).toEqual(
+      expect.arrayContaining([
+        "CAMPAIGN_OS_PROVIDER_CREDENTIALS",
+        "CAMPAIGN_OS_INDEXER_ENDPOINT",
+        "CAMPAIGN_OS_DEGRADATION_POLICY",
+        "CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT",
+      ]),
+    );
     expect(report.backendRuntimeBootstrap.deferredDependencyIds).toEqual(
       expect.arrayContaining([
         "production-database-driver",
@@ -905,6 +954,37 @@ describe("backend service readiness report", () => {
         liveVerifierReady: false,
         nonceStoreReady: false,
         status: "blocked",
+      },
+    });
+    expect(report.providerIndexerFoundation).toMatchObject({
+      blockerCount: 3,
+      diagnosticCodes: [
+        "INDEXER_ENDPOINT_MISSING",
+        "PROVIDER_CREDENTIALS_MISSING",
+        "DEGRADATION_POLICY_MISSING",
+      ],
+      noLiveFlags: {
+        liveProviderCallsEnabled: false,
+        liveIndexerCallsEnabled: false,
+        liveSocialCallsEnabled: false,
+        liveAiCallsEnabled: false,
+        liveAnalyticsIngestionEnabled: false,
+        liveObjectStorageEnabled: false,
+        liveContractCallsEnabled: false,
+        workerExecutionEnabled: false,
+      },
+      productionReady: false,
+      profileId: "production-required",
+      providerGroupCount: 10,
+      status: "blocked",
+      valid: false,
+      verificationSourceCoverage: {
+        summaryCount: 5,
+      },
+      verificationSourceHandoff: {
+        liveExecutionEnabled: false,
+        supportedVerificationTypes: ["WALLET", "ON_CHAIN", "DAPP_API", "SOCIAL", "MANUAL"],
+        valid: true,
       },
     });
     expect(report.authSession.validation.issues).toEqual(

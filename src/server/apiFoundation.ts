@@ -693,7 +693,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["production_database", "provider_adapters"],
     label: "Task Template",
-    notes: "Local task draft creation exists; provider-backed template catalogs are deferred.",
+    notes: "Local task draft creation exists; provider-backed template catalogs are deferred and disable_provider_task_templates is the fail-closed degradation.",
     routeIds: ["campaigns.tasks.add"],
     serviceId: "task-template-service",
     state: "implemented_local",
@@ -702,7 +702,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["provider_adapters", "worker_queue"],
     label: "Verification",
-    notes: "Local seeded verification exists; provider evidence and worker execution are deferred.",
+    notes: "Local seeded verification exists; provider/indexer handoff, provider evidence, and worker execution are deferred with pending/manual_review degradation.",
     routeIds: ["tasks.verify"],
     serviceId: "verification-service",
     state: "implemented_local",
@@ -711,7 +711,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["production_database", "provider_adapters"],
     label: "Eligibility",
-    notes: "Local eligibility checks exist; live evidence and risk stores are deferred.",
+    notes: "Local eligibility checks exist; live indexer/provider evidence stays pending or manual review while risk stores are deferred.",
     routeIds: ["campaigns.eligibility"],
     serviceId: "eligibility-service",
     state: "implemented_local",
@@ -738,7 +738,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["object_storage_export", "contract_writer"],
     label: "Export",
-    notes: "Local export preview exists; storage-backed exports and contract root writes are deferred.",
+    notes: "Local export preview exists; object storage adapter fulfillment and contract root writes are deferred.",
     routeIds: ["campaigns.export.preview"],
     serviceId: "export-service",
     state: "implemented_local",
@@ -765,7 +765,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["production_database", "provider_adapters", "worker_queue"],
     label: "Risk Scoring",
-    notes: "Topology exists; risk event ingestion and scoring workers are deferred.",
+    notes: "Topology exists; analytics warehouse adapter ingestion and scoring workers are deferred.",
     routeIds: [],
     serviceId: "risk-scoring-service",
     state: "production_shaped_deferred",
@@ -774,7 +774,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["provider_adapters", "worker_queue"],
     label: "AI Ops",
-    notes: "Topology exists; AI provider calls, approval flow, and worker execution are deferred.",
+    notes: "Topology exists; AI provider adapter calls, approval flow, and worker execution are deferred.",
     routeIds: [],
     serviceId: "ai-ops-service",
     state: "production_shaped_deferred",
@@ -783,7 +783,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["provider_adapters"],
     label: "Service Registry",
-    notes: "Local service readiness metadata exists; production registry resolution is deferred.",
+    notes: "Local service readiness metadata exists; provider registry resolution and live adapter activation are deferred.",
     routeIds: ["runtime.services"],
     serviceId: "service-registry",
     state: "implemented_local",

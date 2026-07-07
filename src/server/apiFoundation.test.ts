@@ -126,6 +126,22 @@ describe("API foundation registry", () => {
     });
   });
 
+  it("documents provider/indexer handoff and graceful degradation on runtime-facing surfaces", () => {
+    const report = createApiFoundationReport();
+    const surfaceById = new Map(report.surfaces.map((surface) => [surface.surfaceId, surface]));
+
+    expect(surfaceById.get("verification")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["provider_adapters", "worker_queue"]),
+      notes: expect.stringContaining("provider/indexer handoff"),
+    });
+    expect(surfaceById.get("task-template")?.notes).toContain("disable_provider_task_templates");
+    expect(surfaceById.get("eligibility")?.notes).toContain("pending or manual review");
+    expect(surfaceById.get("export")?.notes).toContain("object storage adapter");
+    expect(surfaceById.get("risk-scoring")?.notes).toContain("analytics warehouse adapter");
+    expect(surfaceById.get("ai-ops")?.notes).toContain("AI provider adapter");
+    expect(surfaceById.get("service-registry")?.notes).toContain("provider registry");
+  });
+
   it("validates capability references and path placeholders", () => {
     const validation = validateApiFoundationRegistry();
     const capabilityIds = new Set(apiRuntimeCapabilities.map((capability) => capability.id));

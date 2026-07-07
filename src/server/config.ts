@@ -85,9 +85,11 @@ const REDACTED_VALUE = "[redacted]";
 const forbiddenConfigKeyFragments = [
   "apikey",
   "bearer",
+  "credentials",
   "mnemonic",
   "objectkey",
   "password",
+  "providercredentials",
   "private",
   "secret",
   "seed",

@@ -18,13 +18,16 @@ export type BackendDomainArea =
 export type BackendDataStoreMode = "seeded" | "local_json" | "memory" | "deferred" | "external";
 export type BackendProductionStoreMode = "relational_db" | "object_storage" | "indexer" | "warehouse";
 export type BackendAdapterCategory =
-  | "wallet"
+  | "wallet_auth"
   | "indexer"
   | "dapp_api"
-  | "social"
+  | "social_api"
+  | "manual_review"
   | "ai_provider"
+  | "analytics"
   | "storage"
-  | "contract"
+  | "contract_reader"
+  | "contract_writer"
   | "analytics"
   | "internal";
 export type BackendAdapterStatus = "local_stub" | "deferred" | "disabled" | "required_for_production";
@@ -62,15 +65,16 @@ export type BackendDataStoreId =
   | "analytics-warehouse"
   | "contract-index";
 export type BackendAdapterGroupId =
-  | "wallet-adapters"
+  | "wallet-auth-session"
   | "aefinder-aelfscan-indexers"
   | "dapp-api-adapters"
   | "social-api-adapters"
+  | "manual-review"
   | "ai-provider-adapters"
+  | "analytics-warehouse-adapter"
   | "object-storage-adapter"
   | "contract-reader-adapter"
-  | "contract-writer-adapter"
-  | "analytics-warehouse-adapter";
+  | "contract-writer-adapter";
 export type BackendRuntimeProfileId = "local-review" | "staging-ready" | "production-required";
 export type BackendDeploymentUnitId =
   | "web-app"
@@ -243,7 +247,7 @@ export const backendServiceBoundaries = [
     runtimeProfiles: productionProfiles,
   }),
   service({
-    adapterGroups: ["wallet-adapters"],
+    adapterGroups: ["wallet-auth-session"],
     dataStores: ["wallet-session-db"],
     deploymentUnit: "api-runtime",
     description: "Normalized AA/EOA wallet session boundary.",
@@ -253,12 +257,18 @@ export const backendServiceBoundaries = [
     name: "Wallet Session Service",
     productionRequired: true,
     readiness: "local_only",
-    risks: ["Wallet signature verification and RBAC are deferred."],
+    risks: ["Auth/session wallet proof is local-only; live wallet verification and RBAC are deferred."],
     routeIds: ["wallet.session.create"],
     runtimeProfiles: productionProfiles,
   }),
   service({
-    adapterGroups: ["aefinder-aelfscan-indexers", "dapp-api-adapters", "social-api-adapters"],
+    adapterGroups: [
+      "wallet-auth-session",
+      "aefinder-aelfscan-indexers",
+      "dapp-api-adapters",
+      "social-api-adapters",
+      "manual-review",
+    ],
     dataStores: ["task-evidence-db"],
     deploymentUnit: "worker-runtime",
     description: "Task evidence verification boundary across chain, dApp, social, and manual sources.",
@@ -268,7 +278,10 @@ export const backendServiceBoundaries = [
     name: "Verification Service",
     productionRequired: true,
     readiness: "review_required",
-    risks: ["Live providers and worker queue are deferred."],
+    risks: [
+      "Live providers and worker queue are deferred.",
+      "Provider/indexer handoff degrades to pending or manual review while live calls are deferred.",
+    ],
     routeIds: ["tasks.verify"],
     runtimeProfiles: productionProfiles,
   }),
@@ -303,7 +316,7 @@ export const backendServiceBoundaries = [
     runtimeProfiles: productionRequiredProfiles,
   }),
   service({
-    adapterGroups: ["aefinder-aelfscan-indexers"],
+    adapterGroups: ["aefinder-aelfscan-indexers", "manual-review"],
     dataStores: ["campaign-db", "task-evidence-db", "risk-event-db"],
     deploymentUnit: "api-runtime",
     description: "Wallet-aware eligibility decision boundary.",
@@ -313,7 +326,7 @@ export const backendServiceBoundaries = [
     name: "Eligibility Service",
     productionRequired: true,
     readiness: "local_only",
-    risks: ["Live evidence and risk stores are deferred."],
+    risks: ["Live evidence and risk stores are deferred; unavailable provider evidence stays pending or manual review."],
     routeIds: ["campaigns.eligibility"],
     runtimeProfiles: productionProfiles,
   }),
@@ -388,7 +401,7 @@ export const backendServiceBoundaries = [
     name: "Service Registry",
     productionRequired: true,
     readiness: "local_only",
-    risks: ["Production service registry is metadata-only in local review."],
+    risks: ["Production service registry is metadata-only in local review; provider registry activation remains blocked."],
     routeIds: ["runtime.services"],
     runtimeProfiles: productionProfiles,
   }),
@@ -513,12 +526,12 @@ export const backendDataStores = [
 
 export const backendAdapterGroups = [
   adapterGroup({
-    category: "wallet",
+    category: "wallet_auth",
     configurationMode: "service_registry",
-    failureMode: "show_wallet_maintenance_state",
+    failureMode: "local_only",
     forbiddenInLocalReview: false,
-    id: "wallet-adapters",
-    name: "Wallet Adapters",
+    id: "wallet-auth-session",
+    name: "Wallet/Auth Session Handoff",
     serviceIds: ["wallet-session-service"],
     status: "local_stub",
   }),
@@ -543,7 +556,7 @@ export const backendAdapterGroups = [
     status: "deferred",
   }),
   adapterGroup({
-    category: "social",
+    category: "social_api",
     configurationMode: "service_registry",
     failureMode: "route_to_manual_review",
     forbiddenInLocalReview: true,
@@ -553,6 +566,16 @@ export const backendAdapterGroups = [
     status: "deferred",
   }),
   adapterGroup({
+    category: "manual_review",
+    configurationMode: "none",
+    failureMode: "manual_review",
+    forbiddenInLocalReview: false,
+    id: "manual-review",
+    name: "Manual Review Fallback",
+    serviceIds: ["verification-service", "eligibility-service"],
+    status: "local_stub",
+  }),
+  adapterGroup({
     category: "ai_provider",
     configurationMode: "service_registry",
     failureMode: "require_human_draft_or_disable_ai_generation",
@@ -560,6 +583,16 @@ export const backendAdapterGroups = [
     id: "ai-provider-adapters",
     name: "AI Provider Adapters",
     serviceIds: ["i18n-content-service", "ai-ops-service"],
+    status: "deferred",
+  }),
+  adapterGroup({
+    category: "analytics",
+    configurationMode: "service_registry",
+    failureMode: "show_local_metrics_only",
+    forbiddenInLocalReview: true,
+    id: "analytics-warehouse-adapter",
+    name: "Analytics Warehouse Adapter",
+    serviceIds: ["risk-scoring-service"],
     status: "deferred",
   }),
   adapterGroup({
@@ -573,7 +606,7 @@ export const backendAdapterGroups = [
     status: "deferred",
   }),
   adapterGroup({
-    category: "contract",
+    category: "contract_reader",
     configurationMode: "service_registry",
     failureMode: "return_contract_read_unavailable",
     forbiddenInLocalReview: true,
@@ -583,7 +616,7 @@ export const backendAdapterGroups = [
     status: "deferred",
   }),
   adapterGroup({
-    category: "contract",
+    category: "contract_writer",
     configurationMode: "service_registry",
     failureMode: "manual_review_required",
     forbiddenInLocalReview: true,
@@ -591,16 +624,6 @@ export const backendAdapterGroups = [
     name: "Contract Writer Adapter",
     serviceIds: ["export-service"],
     status: "disabled",
-  }),
-  adapterGroup({
-    category: "analytics",
-    configurationMode: "service_registry",
-    failureMode: "show_local_metrics_only",
-    forbiddenInLocalReview: true,
-    id: "analytics-warehouse-adapter",
-    name: "Analytics Warehouse Adapter",
-    serviceIds: ["risk-scoring-service"],
-    status: "deferred",
   }),
 ] as const satisfies readonly BackendAdapterGroup[];
 
