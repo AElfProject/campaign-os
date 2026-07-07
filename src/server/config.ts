@@ -10,6 +10,7 @@ import {
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueRuntimeProductionPreconditions } from "./queueRuntime";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
+import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 
 export type CampaignOsPersistenceMode = "memory" | "local_json";
 
@@ -227,9 +228,14 @@ const schedulerRuntimeRequiredConfigKeys = uniqueStrings(
   schedulerRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
 );
 
+const workerLeaseStoreRequiredConfigKeys = uniqueStrings(
+  workerLeaseStoreProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
+);
+
 const backendProductionReadinessRequiredConfigKeys = uniqueStrings([
   ...productionBackendRequiredConfigKeys,
   ...schedulerRuntimeRequiredConfigKeys,
+  ...workerLeaseStoreRequiredConfigKeys,
   ...queueRuntimeRequiredConfigKeys,
   ...queueProviderAdapterRequiredConfigKeys,
 ]);

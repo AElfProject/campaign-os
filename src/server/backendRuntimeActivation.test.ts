@@ -9,6 +9,7 @@ import {
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { resolveApiServerRuntimeContract } from "./serverRuntime";
+import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 
 const secretFragments = [
   "bearer sample-token",
@@ -100,6 +101,9 @@ describe("backend runtime activation contract", () => {
     const schedulerRuntimeConfigKeys = [
       ...new Set(schedulerRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
+    const workerLeaseStoreConfigKeys = [
+      ...new Set(workerLeaseStoreProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
     const queueProviderAdapterConfigKeys = [
       ...new Set(queueProviderAdapterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
@@ -122,7 +126,15 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
         "CAMPAIGN_OS_WORKER_RETRY_POLICY",
         "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_STORE",
         "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS",
+        "CAMPAIGN_OS_CLOCK_SOURCE",
+        "CAMPAIGN_OS_WORKER_LEASE_HEARTBEAT_SECONDS",
+        "CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS",
+        "CAMPAIGN_OS_WORKER_LEASE_RELEASE_POLICY",
+        "CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY",
+        "CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY",
         "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
         "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
         "CAMPAIGN_OS_DEGRADATION_POLICY",
@@ -141,7 +153,15 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
         "CAMPAIGN_OS_WORKER_RETRY_POLICY",
         "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_STORE",
         "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS",
+        "CAMPAIGN_OS_CLOCK_SOURCE",
+        "CAMPAIGN_OS_WORKER_LEASE_HEARTBEAT_SECONDS",
+        "CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS",
+        "CAMPAIGN_OS_WORKER_LEASE_RELEASE_POLICY",
+        "CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY",
+        "CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY",
         "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
         "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
         "CAMPAIGN_OS_DEGRADATION_POLICY",
@@ -153,6 +173,18 @@ describe("backend runtime activation contract", () => {
         expect.arrayContaining([
           expect.objectContaining({
             key: schedulerRuntimeConfigKey,
+            redacted: true,
+            required: true,
+            requiredFor: "production-required",
+          }),
+        ]),
+      );
+    }
+    for (const workerLeaseStoreConfigKey of workerLeaseStoreConfigKeys) {
+      expect(activation.deploymentHandoff.environmentKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: workerLeaseStoreConfigKey,
             redacted: true,
             required: true,
             requiredFor: "production-required",
@@ -285,6 +317,17 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "worker", id: "idempotency-store", status: "blocked" }),
         expect.objectContaining({ area: "worker", id: "queue-idempotency-store", status: "blocked" }),
         expect.objectContaining({ area: "worker", id: "worker-lease", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "worker-lease-store-worker-lease-store-selection", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "worker-lease-store-worker-lease-store-endpoint", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "worker-lease-store-worker-lease-store-credentials", status: "blocked" }),
+        expect.objectContaining({ area: "scheduler", id: "worker-lease-store-worker-lease-clock-source", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "worker-lease-store-worker-lease-heartbeat-policy", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "worker-lease-store-worker-lease-ttl-policy", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "worker-lease-store-worker-lease-release-policy", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "worker-lease-store-worker-lease-stale-recovery", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "worker-lease-store-worker-lease-fencing-policy", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "worker-lease-store-worker-lease-idempotency-coordination", status: "blocked" }),
+        expect.objectContaining({ area: "observability", id: "worker-lease-store-worker-lease-observability", status: "deferred" }),
         expect.objectContaining({ area: "worker", id: "queue-worker-lease", status: "blocked" }),
         expect.objectContaining({ area: "observability", id: "observability", status: "deferred" }),
         expect.objectContaining({ area: "observability", id: "queue-observability", status: "deferred" }),
@@ -309,6 +352,18 @@ describe("backend runtime activation contract", () => {
           expect.objectContaining({
             attachPoint: "src/server/schedulerRuntime.ts",
             id: `scheduler-runtime-${precondition.id}`,
+            requiredBeforeProduction: true,
+            status: precondition.status,
+          }),
+        ),
+      ),
+    );
+    expect(activation.productionDependencyBlockers).toEqual(
+      expect.arrayContaining(
+        workerLeaseStoreProductionPreconditions.map((precondition) =>
+          expect.objectContaining({
+            attachPoint: "src/server/workerLeaseStore.ts",
+            id: `worker-lease-store-${precondition.id}`,
             requiredBeforeProduction: true,
             status: precondition.status,
           }),

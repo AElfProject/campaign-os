@@ -27,6 +27,7 @@ export interface BackendRuntimeSmokeCheck {
   schedulerRuntimeFoundation?: BackendRuntimeSmokeSchedulerRuntimeFoundationSummary;
   status: number;
   traceId: string;
+  workerLeaseStoreFoundation?: BackendRuntimeSmokeWorkerLeaseStoreFoundationSummary;
   workerSchedulerFoundation?: BackendRuntimeSmokeWorkerSchedulerFoundationSummary;
 }
 
@@ -134,6 +135,23 @@ export interface BackendRuntimeSmokeSchedulerRuntimeFoundationSummary {
   valid: boolean;
 }
 
+export interface BackendRuntimeSmokeWorkerLeaseStoreFoundationSummary {
+  adapterId?: string;
+  blockerCount: number;
+  diagnosticCodes: string[];
+  disabledLiveOperationCount: number;
+  id?: string;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode?: string;
+  operationCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  status?: string;
+  storeId?: string;
+  valid: boolean;
+}
+
 export interface BackendRuntimeSmokeSummary {
   activationId?: string;
   authSessionFoundation: BackendRuntimeSmokeAuthSessionFoundationSummary;
@@ -157,6 +175,7 @@ export interface BackendRuntimeSmokeSummary {
     health: string;
   };
   url: string;
+  workerLeaseStoreFoundation: BackendRuntimeSmokeWorkerLeaseStoreFoundationSummary;
   workerSchedulerFoundation: BackendRuntimeSmokeWorkerSchedulerFoundationSummary;
 }
 
@@ -216,6 +235,11 @@ const readSchedulerRuntimeFoundation = (
   value: unknown,
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["serverRuntime", "readiness", "schedulerRuntimeFoundation"]);
+
+const readWorkerLeaseStoreFoundation = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["serverRuntime", "readiness", "workerLeaseStoreFoundation"]);
 
 const getNumber = (
   record: Record<string, unknown> | undefined,
@@ -484,6 +508,40 @@ const summarizeSchedulerRuntimeFoundation = (
   };
 };
 
+const summarizeWorkerLeaseStoreFoundation = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeWorkerLeaseStoreFoundationSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "liveQueuePublishingEnabled")
+    && isExplicitFalse(record, "liveWorkerExecutionEnabled");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    adapterId: getString(record, "adapterId"),
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    disabledLiveOperationCount: getNumber(record, "disabledLiveOperationCount"),
+    id: getString(record, "id"),
+    liveQueuePublishingEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    mode: getString(record, "mode"),
+    operationCount: getNumber(record, "operationCount"),
+    productionReady: false,
+    requiredConfigKeys: getStringArray(record, "requiredConfigKeys"),
+    status: getString(record, "status"),
+    storeId: getString(record, "storeId"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
 const createSmokeCheck = async ({
   baseUrl,
   endpoint,
@@ -524,6 +582,9 @@ const createSmokeCheck = async ({
   const schedulerRuntimeFoundation = summarizeSchedulerRuntimeFoundation(
     readSchedulerRuntimeFoundation(payload.data),
   );
+  const workerLeaseStoreFoundation = summarizeWorkerLeaseStoreFoundation(
+    readWorkerLeaseStoreFoundation(payload.data),
+  );
 
   return {
     activation,
@@ -539,6 +600,7 @@ const createSmokeCheck = async ({
       schedulerRuntimeFoundation,
       status: response.status,
       traceId: payload.traceId ?? "",
+      workerLeaseStoreFoundation,
       workerSchedulerFoundation,
     },
   };
@@ -628,6 +690,27 @@ const isWorkerSchedulerFoundationSmokeReady = (
     && summary.liveCronExecutionEnabled === false
     && summary.jobCatalogCount > 0
     && summary.schedulePolicyCount > 0
+    && summary.status === "local_ready"
+    && summary.valid === true;
+};
+
+const isWorkerLeaseStoreFoundationSmokeReady = (
+  summary: BackendRuntimeSmokeWorkerLeaseStoreFoundationSummary | undefined,
+): summary is BackendRuntimeSmokeWorkerLeaseStoreFoundationSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveQueuePublishingEnabled === false
+    && summary.liveWorkerExecutionEnabled === false
+    && summary.storeId === "local-dry-run"
+    && summary.adapterId === "local-dry-run-worker-lease-store-adapter"
+    && summary.mode === "dry_run"
+    && summary.operationCount >= 8
+    && summary.disabledLiveOperationCount === summary.operationCount
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_WORKER_LEASE_STORE")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_WORKER_LEASE_STORE_URL")
     && summary.status === "local_ready"
     && summary.valid === true;
 };
@@ -729,6 +812,7 @@ export const runBackendRuntimeSmoke = async ({
     const providerIndexerFoundation = contracts.check.providerIndexerFoundation;
     const queueRuntimeFoundation = contracts.check.queueRuntimeFoundation;
     const schedulerRuntimeFoundation = contracts.check.schedulerRuntimeFoundation;
+    const workerLeaseStoreFoundation = contracts.check.workerLeaseStoreFoundation;
     const workerSchedulerFoundation = contracts.check.workerSchedulerFoundation;
 
     if (
@@ -750,6 +834,8 @@ export const runBackendRuntimeSmoke = async ({
       || !isQueueRuntimeFoundationSmokeReady(queueRuntimeFoundation)
       || !isSchedulerRuntimeFoundationSmokeReady(health.check.schedulerRuntimeFoundation)
       || !isSchedulerRuntimeFoundationSmokeReady(schedulerRuntimeFoundation)
+      || !isWorkerLeaseStoreFoundationSmokeReady(health.check.workerLeaseStoreFoundation)
+      || !isWorkerLeaseStoreFoundationSmokeReady(workerLeaseStoreFoundation)
       || !isWorkerSchedulerFoundationSmokeReady(health.check.workerSchedulerFoundation)
       || !isWorkerSchedulerFoundationSmokeReady(workerSchedulerFoundation)
     ) {
@@ -778,6 +864,7 @@ export const runBackendRuntimeSmoke = async ({
         health: health.check.traceId,
       },
       url: server.url,
+      workerLeaseStoreFoundation,
       workerSchedulerFoundation,
     };
   } finally {

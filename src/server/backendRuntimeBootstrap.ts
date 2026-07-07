@@ -155,6 +155,22 @@ export interface BackendRuntimeReadinessProjection {
     status: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["status"];
     valid: boolean;
   };
+  workerLeaseStoreFoundation: {
+    adapterId: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["adapterId"];
+    blockerCount: number;
+    diagnosticCodes: string[];
+    disabledLiveOperationCount: number;
+    id: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["id"];
+    liveQueuePublishingEnabled: false;
+    liveWorkerExecutionEnabled: false;
+    mode: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["mode"];
+    operationCount: number;
+    productionReady: false;
+    requiredConfigKeys: string[];
+    status: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["status"];
+    storeId: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["storeId"];
+    valid: boolean;
+  };
   workerSchedulerFoundation: {
     blockerCount: number;
     diagnosticCodes: string[];
@@ -421,6 +437,22 @@ const createReadinessProjection = (
     scheduleIds: backendReadiness.schedulerRuntimeFoundation.registrationCoverage.scheduleIds,
     status: backendReadiness.schedulerRuntimeFoundation.status,
     valid: backendReadiness.schedulerRuntimeFoundation.valid,
+  },
+  workerLeaseStoreFoundation: {
+    adapterId: backendReadiness.workerLeaseStoreFoundation.adapterId,
+    blockerCount: backendReadiness.workerLeaseStoreFoundation.blockerCount,
+    diagnosticCodes: backendReadiness.workerLeaseStoreFoundation.diagnosticCodes,
+    disabledLiveOperationCount: backendReadiness.workerLeaseStoreFoundation.disabledLiveOperationCount,
+    id: backendReadiness.workerLeaseStoreFoundation.id,
+    liveQueuePublishingEnabled: backendReadiness.workerLeaseStoreFoundation.liveQueuePublishingEnabled,
+    liveWorkerExecutionEnabled: backendReadiness.workerLeaseStoreFoundation.liveWorkerExecutionEnabled,
+    mode: backendReadiness.workerLeaseStoreFoundation.mode,
+    operationCount: backendReadiness.workerLeaseStoreFoundation.operationCount,
+    productionReady: backendReadiness.workerLeaseStoreFoundation.productionReady,
+    requiredConfigKeys: backendReadiness.workerLeaseStoreFoundation.requiredConfigKeys,
+    status: backendReadiness.workerLeaseStoreFoundation.status,
+    storeId: backendReadiness.workerLeaseStoreFoundation.storeId,
+    valid: backendReadiness.workerLeaseStoreFoundation.valid,
   },
   workerSchedulerFoundation: {
     blockerCount: backendReadiness.workerSchedulerFoundation.blockerCount,

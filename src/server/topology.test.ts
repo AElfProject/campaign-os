@@ -13,6 +13,7 @@ import {
 import { providerIndexerAdapterGroups } from "./providerIndexerAdapters";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
+import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 
 const expectedServiceIds = [
   "campaign-service",
@@ -138,6 +139,17 @@ describe("backend service topology", () => {
         "queue-provider-auth",
         "queue-provider-worker-queue-url",
         "queue-provider-dead-letter",
+        "worker-lease-store-worker-lease-store-selection",
+        "worker-lease-store-worker-lease-store-endpoint",
+        "worker-lease-store-worker-lease-store-credentials",
+        "worker-lease-store-worker-lease-clock-source",
+        "worker-lease-store-worker-lease-heartbeat-policy",
+        "worker-lease-store-worker-lease-ttl-policy",
+        "worker-lease-store-worker-lease-release-policy",
+        "worker-lease-store-worker-lease-stale-recovery",
+        "worker-lease-store-worker-lease-fencing-policy",
+        "worker-lease-store-worker-lease-idempotency-coordination",
+        "worker-lease-store-worker-lease-observability",
       ]),
       productionTarget: "worker_service",
       serviceIds: expect.arrayContaining([
@@ -295,12 +307,24 @@ describe("backend service topology", () => {
         "queue-provider-idempotency-store",
         "queue-provider-worker-lease",
         "queue-provider-observability",
+        "worker-lease-store-worker-lease-store-selection",
+        "worker-lease-store-worker-lease-store-endpoint",
+        "worker-lease-store-worker-lease-store-credentials",
+        "worker-lease-store-worker-lease-clock-source",
+        "worker-lease-store-worker-lease-heartbeat-policy",
+        "worker-lease-store-worker-lease-ttl-policy",
+        "worker-lease-store-worker-lease-release-policy",
+        "worker-lease-store-worker-lease-stale-recovery",
+        "worker-lease-store-worker-lease-fencing-policy",
+        "worker-lease-store-worker-lease-idempotency-coordination",
+        "worker-lease-store-worker-lease-observability",
       ]),
     });
     expect(workerRuntime?.productionRequiredBlockerIds).toHaveLength(
-      queueProviderAdapterProductionPreconditions.length,
+      queueProviderAdapterProductionPreconditions.length + workerLeaseStoreProductionPreconditions.length,
     );
     expect(workerRuntime?.productionRequiredBlockerIds).not.toContain("queue-provider-credentials");
+    expect(workerRuntime?.productionRequiredBlockerIds).not.toContain("worker-lease-store-CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS");
   });
 
   it("produces a valid topology report with route and ownership coverage", () => {

@@ -6,6 +6,7 @@ import {
 } from "./config";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
+import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 
 const collectStringValues = (value: unknown, values: string[] = []): string[] => {
   if (typeof value === "string") {
@@ -74,7 +75,15 @@ describe("backend config contract", () => {
         "CAMPAIGN_OS_WORKER_QUEUE_URL",
         "CAMPAIGN_OS_WORKER_RETRY_POLICY",
         "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_STORE",
         "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS",
+        "CAMPAIGN_OS_CLOCK_SOURCE",
+        "CAMPAIGN_OS_WORKER_LEASE_HEARTBEAT_SECONDS",
+        "CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS",
+        "CAMPAIGN_OS_WORKER_LEASE_RELEASE_POLICY",
+        "CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY",
+        "CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY",
         "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
         "CAMPAIGN_OS_DEGRADATION_POLICY",
@@ -159,6 +168,14 @@ describe("backend config contract", () => {
         "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
         "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
         "CAMPAIGN_OS_WORKER_QUEUE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_STORE",
+        "CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS",
+        "CAMPAIGN_OS_CLOCK_SOURCE",
+        "CAMPAIGN_OS_WORKER_LEASE_HEARTBEAT_SECONDS",
+        "CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS",
+        "CAMPAIGN_OS_WORKER_LEASE_RELEASE_POLICY",
+        "CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY",
+        "CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY",
         "CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT",
       ]),
     );
@@ -267,6 +284,50 @@ describe("backend config contract", () => {
     ).toBe("[redacted]");
     expect(collectStringValues(contract)).not.toContain("provider-credential-secret");
     expect(collectStringValues(contract)).not.toContain("queue-provider-token");
+  });
+
+  it("reports worker lease store production precondition keys without exposing env values", () => {
+    const workerLeaseStoreConfigKeys = [
+      ...new Set(workerLeaseStoreProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
+    const secretWorkerLeaseValues = {
+      CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+      CAMPAIGN_OS_CLOCK_SOURCE: "clock-secret-source",
+      CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "https://store.invalid/idempotency?token=lease-idempotency-secret",
+      CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "https://observability.invalid/hook?token=lease-observability-secret",
+      CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS: "worker-lease-credential-secret",
+      CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY: "fencing-token-secret",
+      CAMPAIGN_OS_WORKER_LEASE_HEARTBEAT_SECONDS: "30",
+      CAMPAIGN_OS_WORKER_LEASE_RELEASE_POLICY: "release-secret-policy",
+      CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY: "stale-recovery-secret",
+      CAMPAIGN_OS_WORKER_LEASE_STORE: "production-lease-store",
+      CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "https://lease.invalid/store?token=worker-lease-secret",
+      CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS: "120",
+    };
+    const contract = resolveBackendConfigContract({ env: secretWorkerLeaseValues });
+
+    expect(contract.productionReadiness.requiredConfigKeys).toEqual(
+      expect.arrayContaining(workerLeaseStoreConfigKeys),
+    );
+    expect(contract.productionReadiness.missingConfigKeys).not.toEqual(
+      expect.arrayContaining(workerLeaseStoreConfigKeys),
+    );
+    expect(
+      sanitizeBackendConfigDiagnosticValue(
+        "CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS",
+        "worker-lease-credential-secret",
+      ),
+    ).toBe("[redacted]");
+    expect(
+      sanitizeBackendConfigDiagnosticValue(
+        "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+        "https://lease.invalid/store?token=worker-lease-secret",
+      ),
+    ).toBe("[redacted]");
+    expect(collectStringValues(contract)).not.toContain("worker-lease-credential-secret");
+    expect(collectStringValues(contract)).not.toContain("worker-lease-secret");
+    expect(collectStringValues(contract)).not.toContain("lease-idempotency-secret");
+    expect(collectStringValues(contract)).not.toContain("lease-observability-secret");
   });
 
   it("blocks accidental production capability enablement in local review", () => {

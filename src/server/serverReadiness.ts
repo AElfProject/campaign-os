@@ -68,6 +68,23 @@ export interface ServerRuntimeSchedulerRuntimeReadiness {
   valid: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["valid"];
 }
 
+export interface ServerRuntimeWorkerLeaseStoreReadiness {
+  adapterId: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["adapterId"];
+  blockerCount: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["blockerCount"];
+  diagnosticCodes: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["diagnosticCodes"];
+  disabledLiveOperationCount: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["disabledLiveOperationCount"];
+  id: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["id"];
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["mode"];
+  operationCount: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["operationCount"];
+  productionReady: false;
+  requiredConfigKeys: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["requiredConfigKeys"];
+  status: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["status"];
+  storeId: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["storeId"];
+  valid: BackendServiceReadinessReport["workerLeaseStoreFoundation"]["valid"];
+}
+
 export interface ServerRuntimeReadiness {
   corsPolicy: {
     allowedOriginCount: number;
@@ -114,6 +131,7 @@ export interface ServerRuntimeReadiness {
     queueRuntimeFoundation: ServerRuntimeQueueRuntimeReadiness;
     persistenceRuntime: BackendPersistenceRuntimeSummary;
     schedulerRuntimeFoundation: ServerRuntimeSchedulerRuntimeReadiness;
+    workerLeaseStoreFoundation: ServerRuntimeWorkerLeaseStoreReadiness;
     workerSchedulerFoundation: BackendServiceReadinessReport["workerSchedulerFoundation"];
   };
   requestGuard: {
@@ -177,6 +195,25 @@ const createServerSchedulerRuntimeReadiness = (
   scheduleIds: schedulerRuntimeFoundation.registrationCoverage.scheduleIds,
   status: schedulerRuntimeFoundation.status,
   valid: schedulerRuntimeFoundation.valid,
+});
+
+const createServerWorkerLeaseStoreReadiness = (
+  workerLeaseStoreFoundation: BackendServiceReadinessReport["workerLeaseStoreFoundation"],
+): ServerRuntimeWorkerLeaseStoreReadiness => ({
+  adapterId: workerLeaseStoreFoundation.adapterId,
+  blockerCount: workerLeaseStoreFoundation.blockerCount,
+  diagnosticCodes: workerLeaseStoreFoundation.diagnosticCodes,
+  disabledLiveOperationCount: workerLeaseStoreFoundation.disabledLiveOperationCount,
+  id: workerLeaseStoreFoundation.id,
+  liveQueuePublishingEnabled: workerLeaseStoreFoundation.liveQueuePublishingEnabled,
+  liveWorkerExecutionEnabled: workerLeaseStoreFoundation.liveWorkerExecutionEnabled,
+  mode: workerLeaseStoreFoundation.mode,
+  operationCount: workerLeaseStoreFoundation.operationCount,
+  productionReady: workerLeaseStoreFoundation.productionReady,
+  requiredConfigKeys: workerLeaseStoreFoundation.requiredConfigKeys,
+  status: workerLeaseStoreFoundation.status,
+  storeId: workerLeaseStoreFoundation.storeId,
+  valid: workerLeaseStoreFoundation.valid,
 });
 
 const resolveStatus = ({
@@ -266,6 +303,7 @@ export const createServerRuntimeReadiness = ({
       queueRuntimeFoundation: createServerQueueRuntimeReadiness(backendReadiness.queueRuntimeFoundation),
       persistenceRuntime: createBackendPersistenceRuntimeSummary(backendReadiness.persistenceRuntime),
       schedulerRuntimeFoundation: createServerSchedulerRuntimeReadiness(backendReadiness.schedulerRuntimeFoundation),
+      workerLeaseStoreFoundation: createServerWorkerLeaseStoreReadiness(backendReadiness.workerLeaseStoreFoundation),
       workerSchedulerFoundation: backendReadiness.workerSchedulerFoundation,
     },
     requestGuard: {
