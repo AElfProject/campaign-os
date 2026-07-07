@@ -84,12 +84,32 @@ describe("backend service readiness report", () => {
         readDraft: true,
         writeDraft: true,
       },
+      campaignStore: {
+        boundedListLimit: 100,
+        durable: false,
+        fallbackUsed: false,
+        mode: "local_seeded",
+        recordCount: 0,
+        status: "ready",
+        storeId: "campaign-db",
+      },
       diagnosticCodes: [],
       id: "campaign-db-vertical-slice",
       lifecycle: {
         readinessDoesNotMutateRecords: true,
         repositoryContractStatus: "available",
         repositoryMode: "deterministic_test",
+      },
+      migrationState: {
+        appliedMigrationIds: ["001-campaign-db-v0-2-0"],
+        blockedMigrationIds: [],
+        diagnosticCodes: [],
+        liveExecutionEnabled: false,
+        pendingMigrationIds: [],
+        requiredMigrationIds: ["001-campaign-db-v0-2-0"],
+        schemaVersion: "v0.2.0",
+        status: "applied",
+        storeId: "campaign-db",
       },
       noLive: {
         connectionAttempted: false,
@@ -115,6 +135,84 @@ describe("backend service readiness report", () => {
     expect(report.apiFoundation.servicePorts.validation.valid).toBe(true);
     expect(report.apiFoundation.validation.valid).toBe(true);
     expect(report.topology.validation.valid).toBe(true);
+  });
+
+  it("distinguishes an explicit durable Campaign DB store with applied migration evidence", () => {
+    const report = createBackendServiceReadinessReport({
+      campaignStore: {
+        durable: true,
+        mode: "durable_test",
+        recordCount: 2,
+      },
+    });
+
+    expect(report.campaignDbVerticalSlice).toMatchObject({
+      campaignStore: {
+        durable: true,
+        fallbackUsed: false,
+        mode: "durable_test",
+        recordCount: 2,
+        status: "ready",
+        storeId: "campaign-db",
+      },
+      lifecycle: {
+        repositoryContractStatus: "available",
+        repositoryMode: "durable_test",
+      },
+      migrationState: {
+        appliedMigrationIds: ["001-campaign-db-v0-2-0"],
+        blockedMigrationIds: [],
+        liveExecutionEnabled: false,
+        status: "applied",
+        storeId: "campaign-db",
+      },
+      status: "ready",
+      validation: {
+        issues: [],
+        valid: true,
+      },
+    });
+  });
+
+  it("surfaces blocked durable Campaign DB store diagnostics", () => {
+    const report = createBackendServiceReadinessReport({
+      campaignStore: {
+        durable: true,
+        mode: "durable_test",
+        status: "blocked",
+      },
+    });
+
+    expect(report.campaignDbVerticalSlice).toMatchObject({
+      campaignStore: {
+        durable: true,
+        mode: "durable_test",
+        status: "blocked",
+      },
+      diagnosticCodes: ["CAMPAIGN_DB_DURABLE_STORE_BLOCKED"],
+      lifecycle: {
+        repositoryContractStatus: "blocked",
+        repositoryMode: "durable_test",
+      },
+      status: "blocked",
+      validation: {
+        issues: [
+          expect.objectContaining({
+            code: "CAMPAIGN_DB_DURABLE_STORE_BLOCKED",
+            field: "campaignStore.status",
+          }),
+        ],
+        valid: false,
+      },
+    });
+    expect(report.validation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_VERTICAL_SLICE_BLOCKED",
+          field: "campaignDbVerticalSlice",
+        }),
+      ]),
+    );
   });
 
   it("publishes attach points for all deferred production backend areas", () => {
@@ -469,8 +567,18 @@ describe("backend service readiness report", () => {
         readDraft: false,
         writeDraft: false,
       },
+      campaignStore: {
+        durable: false,
+        fallbackUsed: false,
+        mode: "production_required",
+        recordCount: 0,
+        status: "blocked",
+        storeId: "campaign-db",
+      },
       diagnosticCodes: expect.arrayContaining([
+        "CAMPAIGN_DB_DURABLE_STORE_BLOCKED",
         "CAMPAIGN_DB_LIVE_DRIVER_MISSING",
+        "CAMPAIGN_DB_MIGRATION_STATE_BLOCKED",
         "CAMPAIGN_DB_MIGRATION_EXECUTOR_UNAPPROVED",
         "CAMPAIGN_DB_SECRET_MANAGER_MISSING",
         "CAMPAIGN_DB_PRODUCTION_WRITE_DISABLED",
@@ -478,8 +586,19 @@ describe("backend service readiness report", () => {
       ]),
       lifecycle: {
         readinessDoesNotMutateRecords: true,
-        repositoryContractStatus: "available",
+        repositoryContractStatus: "blocked",
         repositoryMode: "production_deferred",
+      },
+      migrationState: {
+        appliedMigrationIds: [],
+        blockedMigrationIds: ["001-campaign-db-v0-2-0"],
+        diagnosticCodes: ["CAMPAIGN_MIGRATION_BLOCKED"],
+        liveExecutionEnabled: false,
+        pendingMigrationIds: [],
+        requiredMigrationIds: ["001-campaign-db-v0-2-0"],
+        schemaVersion: "v0.2.0",
+        status: "blocked",
+        storeId: "campaign-db",
       },
       noLive: {
         connectionAttempted: false,
@@ -505,6 +624,16 @@ describe("backend service readiness report", () => {
         expect.objectContaining({
           code: "CAMPAIGN_DB_LIVE_DRIVER_MISSING",
           field: "databaseAdapterRuntime.driverId",
+          severity: "error",
+        }),
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_DURABLE_STORE_BLOCKED",
+          field: "campaignStore.status",
+          severity: "error",
+        }),
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_MIGRATION_STATE_BLOCKED",
+          field: "migrationState.status",
           severity: "error",
         }),
         expect.objectContaining({

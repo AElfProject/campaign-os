@@ -60,6 +60,10 @@ import {
   type AuthSessionReadinessReport,
 } from "./authSession";
 import {
+  createCampaignMigrationState,
+  type CampaignMigrationState,
+} from "./campaignMigrationState";
+import {
   resolveApiServerRuntimeContract,
   type ResolveApiServerRuntimeContractOptions,
 } from "./serverRuntime";
@@ -148,7 +152,9 @@ export interface BackendServiceReadinessReport {
 
 export type CampaignDbVerticalSliceStatus = "ready" | "blocked";
 export type CampaignDbVerticalSliceDiagnosticCode =
+  | "CAMPAIGN_DB_DURABLE_STORE_BLOCKED"
   | "CAMPAIGN_DB_LIVE_DRIVER_MISSING"
+  | "CAMPAIGN_DB_MIGRATION_STATE_BLOCKED"
   | "CAMPAIGN_DB_MIGRATION_EXECUTOR_UNAPPROVED"
   | "CAMPAIGN_DB_SECRET_MANAGER_MISSING"
   | "CAMPAIGN_DB_PRODUCTION_WRITE_DISABLED"
@@ -174,14 +180,24 @@ export interface CampaignDbVerticalSliceReadinessSummary {
     readDraft: boolean;
     writeDraft: boolean;
   };
+  campaignStore: {
+    boundedListLimit: number;
+    durable: boolean;
+    fallbackUsed: false;
+    mode: "local_seeded" | "durable_test" | "production_required";
+    recordCount: number;
+    status: CampaignDbVerticalSliceStatus;
+    storeId: "campaign-db";
+  };
   diagnosticCodes: CampaignDbVerticalSliceDiagnosticCode[];
   diagnostics: CampaignDbVerticalSliceDiagnostic[];
   id: "campaign-db-vertical-slice";
   lifecycle: {
     readinessDoesNotMutateRecords: true;
-    repositoryContractStatus: "available";
-    repositoryMode: "deterministic_test" | "production_deferred";
+    repositoryContractStatus: "available" | "blocked";
+    repositoryMode: "deterministic_test" | "durable_test" | "production_deferred";
   };
+  migrationState: CampaignMigrationState;
   noLive: {
     connectionAttempted: false;
     migrationExecutionEnabled: false;
@@ -321,7 +337,16 @@ export interface BackendDatabaseReadinessReport {
   };
 }
 
+export interface CampaignDbVerticalSliceStoreReadinessInput {
+  boundedListLimit?: number;
+  durable?: boolean;
+  mode?: "local_seeded" | "durable_test" | "production_required";
+  recordCount?: number;
+  status?: CampaignDbVerticalSliceStatus;
+}
+
 export interface CreateBackendServiceReadinessReportOptions {
+  campaignStore?: CampaignDbVerticalSliceStoreReadinessInput;
   configOptions?: BackendConfigContractOptions;
   generatedAt?: string;
   serverRuntimeOptions?: Partial<ResolveApiServerRuntimeContractOptions>;
@@ -596,11 +621,13 @@ const campaignDbVerticalSliceDiagnostic = (
 });
 
 const createCampaignDbVerticalSliceReadinessSummary = ({
+  campaignStore,
   config,
   databaseAdapterRuntime,
   migration,
   persistenceRuntime,
 }: {
+  campaignStore?: CampaignDbVerticalSliceStoreReadinessInput;
   config: BackendConfigContract;
   databaseAdapterRuntime: BackendDatabaseAdapterRuntimeReadinessReport;
   migration: MigrationManifest;
@@ -608,7 +635,13 @@ const createCampaignDbVerticalSliceReadinessSummary = ({
 }): CampaignDbVerticalSliceReadinessSummary => {
   const productionRequired = config.profileId === "production-required";
   const deterministicAdapter = databaseAdapterRuntime.transaction.mode === "deterministic_test";
-  const diagnostics = productionRequired
+  const requestedStoreMode = productionRequired ? "production_required" : campaignStore?.mode ?? "local_seeded";
+  const storeDurable = campaignStore?.durable ?? requestedStoreMode === "durable_test";
+  const migrationState = createCampaignMigrationState({
+    migration,
+    productionRequired,
+  });
+  const productionDiagnostics = productionRequired
     ? [
         campaignDbVerticalSliceDiagnostic(
           "CAMPAIGN_DB_LIVE_DRIVER_MISSING",
@@ -637,6 +670,33 @@ const createCampaignDbVerticalSliceReadinessSummary = ({
         ),
       ]
     : [];
+  const storeStatus = campaignStore?.status ?? (productionRequired ? "blocked" : "ready");
+  const storeDiagnostics =
+    storeStatus === "blocked"
+      ? [
+        campaignDbVerticalSliceDiagnostic(
+          "CAMPAIGN_DB_DURABLE_STORE_BLOCKED",
+          "campaignStore.status",
+          "Campaign DB durable store readiness is blocked.",
+        ),
+      ]
+      : [];
+  const migrationStateDiagnostics = migrationState.validation.valid
+    ? []
+    : [
+      campaignDbVerticalSliceDiagnostic(
+        "CAMPAIGN_DB_MIGRATION_STATE_BLOCKED",
+        "migrationState.status",
+        "Campaign DB migration state is blocked.",
+      ),
+    ];
+  const diagnostics = [
+    ...productionDiagnostics,
+    ...storeDiagnostics,
+    ...migrationStateDiagnostics,
+  ];
+  const status =
+    diagnostics.length === 0 && migrationState.validation.valid && storeStatus === "ready" ? "ready" : "blocked";
 
   return {
     adapter: {
@@ -651,14 +711,28 @@ const createCampaignDbVerticalSliceReadinessSummary = ({
       readDraft: !productionRequired,
       writeDraft: !productionRequired,
     },
+    campaignStore: {
+      boundedListLimit: campaignStore?.boundedListLimit ?? 100,
+      durable: storeDurable,
+      fallbackUsed: false,
+      mode: requestedStoreMode,
+      recordCount: campaignStore?.recordCount ?? 0,
+      status,
+      storeId: "campaign-db",
+    },
     diagnosticCodes: diagnostics.map((diagnostic) => diagnostic.code),
     diagnostics,
     id: "campaign-db-vertical-slice",
     lifecycle: {
       readinessDoesNotMutateRecords: true,
-      repositoryContractStatus: "available",
-      repositoryMode: productionRequired ? "production_deferred" : "deterministic_test",
+      repositoryContractStatus: status === "ready" ? "available" : "blocked",
+      repositoryMode: productionRequired
+        ? "production_deferred"
+        : requestedStoreMode === "durable_test"
+          ? "durable_test"
+          : "deterministic_test",
     },
+    migrationState,
     noLive: {
       connectionAttempted: databaseAdapterRuntime.liveConnectionAttempted,
       migrationExecutionEnabled: migration.executionGate.liveExecutionEnabled,
@@ -674,11 +748,11 @@ const createCampaignDbVerticalSliceReadinessSummary = ({
       list: true,
       reset: true,
     },
-    status: diagnostics.length === 0 ? "ready" : "blocked",
+    status,
     storeId: "campaign-db",
     validation: {
       issues: diagnostics,
-      valid: diagnostics.length === 0,
+      valid: status === "ready",
     },
   };
 };
@@ -785,6 +859,7 @@ export const createBackendDatabaseAdapterRuntimeSummary = (
 });
 
 export const createBackendServiceReadinessReport = ({
+  campaignStore,
   configOptions,
   generatedAt = new Date(0).toISOString(),
   serverRuntimeOptions,
@@ -838,6 +913,7 @@ export const createBackendServiceReadinessReport = ({
     sessionConfigReady: Boolean(env.CAMPAIGN_OS_AUTH_SECRET),
   });
   const campaignDbVerticalSlice = createCampaignDbVerticalSliceReadinessSummary({
+    campaignStore,
     config,
     databaseAdapterRuntime,
     migration,
