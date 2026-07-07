@@ -7,6 +7,7 @@ import {
   type BackendRuntimeProfile,
   type BackendRuntimeProfileId,
 } from "./backendProfiles";
+import { queueRuntimeProductionPreconditions } from "./queueRuntime";
 
 export type CampaignOsPersistenceMode = "memory" | "local_json";
 
@@ -92,6 +93,7 @@ const forbiddenConfigKeyFragments = [
   "password",
   "providercredentials",
   "private",
+  "queue",
   "secret",
   "seed",
   "signature",
@@ -206,11 +208,25 @@ const missingRequiredConfigKeys = (
   requiredConfigKeys: readonly string[],
 ): string[] => requiredConfigKeys.filter((key) => !env[key]);
 
+const uniqueStrings = (values: readonly string[]): string[] => Array.from(new Set(values));
+
+const queueRuntimeRequiredConfigKeys = uniqueStrings(
+  queueRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
+);
+
+const backendProductionReadinessRequiredConfigKeys = uniqueStrings([
+  ...productionBackendRequiredConfigKeys,
+  ...queueRuntimeRequiredConfigKeys,
+]);
+
 const productionCapabilityDiagnostics = (): BackendConfigDiagnostic[] =>
   deferredProductionBackendCapabilities.map((capabilityId) => ({
     code: "PRODUCTION_CAPABILITY_DEFERRED",
     field: capabilityId,
-    message: `Production capability '${capabilityId}' is deferred in Mission 168 backend scaffold.`,
+    message:
+      capabilityId === "worker_queue" || capabilityId === "scheduler"
+        ? `Production capability '${capabilityId}' is deferred until queue runtime preconditions are configured.`
+        : `Production capability '${capabilityId}' is deferred in Mission 168 backend scaffold.`,
     severity: "warning",
   }));
 
@@ -320,8 +336,8 @@ export const resolveBackendConfigContract = ({
       missingConfigKeys,
       requiredConfigKeys:
         profile.id === "production-required"
-          ? [...profile.requiredConfigKeys]
-          : [...productionBackendRequiredConfigKeys],
+          ? backendProductionReadinessRequiredConfigKeys
+          : backendProductionReadinessRequiredConfigKeys,
       status,
     },
     profile,

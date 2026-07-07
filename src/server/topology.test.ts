@@ -127,7 +127,7 @@ describe("backend service topology", () => {
     );
     expect(workerRuntime).toMatchObject({
       currentImplementation: "source-topology-only",
-      entrypoint: "src/server/topology.ts",
+      entrypoint: "src/server/queueRuntime.ts",
       productionTarget: "worker_service",
       serviceIds: expect.arrayContaining([
         "verification-service",
@@ -137,7 +137,7 @@ describe("backend service topology", () => {
     });
     expect(schedulerRuntime).toMatchObject({
       currentImplementation: "deferred",
-      entrypoint: "src/server/topology.ts",
+      entrypoint: "src/server/queueRuntime.ts",
       productionTarget: "scheduled_runner",
       serviceIds: expect.arrayContaining([
         "campaign-service",
@@ -212,10 +212,15 @@ describe("backend service topology", () => {
 
     expect(serviceById.get("campaign-service")?.risks.join(" ")).toContain("scheduler runtime");
     expect(serviceById.get("verification-service")?.risks.join(" ")).toContain("idempotency store");
+    expect(serviceById.get("verification-service")?.risks.join(" ")).toContain("Queue runtime activation");
+    expect(serviceById.get("verification-service")?.risks.join(" ")).toContain("dead-letter");
     expect(serviceById.get("eligibility-service")?.risks.join(" ")).toContain("provider handoff");
+    expect(serviceById.get("eligibility-service")?.risks.join(" ")).toContain("queue runtime");
     expect(serviceById.get("export-service")?.risks.join(" ")).toContain("observability exporter");
     expect(serviceById.get("risk-scoring-service")?.risks.join(" ")).toContain("worker lease");
+    expect(serviceById.get("risk-scoring-service")?.risks.join(" ")).toContain("dead-letter");
     expect(serviceById.get("ai-ops-service")?.risks.join(" ")).toContain("scheduler runtime");
+    expect(serviceById.get("ai-ops-service")?.risks.join(" ")).toContain("queue runtime");
     expect(serviceById.get("runtime-observability")?.risks.join(" ")).toContain("contract sync handoffs");
     expect(serviceById.get("points-ranking-service")?.risks.join(" ")).toContain("Reward distribution handoff");
   });

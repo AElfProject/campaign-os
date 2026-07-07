@@ -60,6 +60,19 @@ describe("backend config contract", () => {
         "contract_writer",
       ]),
     );
+    expect(contract.productionReadiness.requiredConfigKeys).toEqual(
+      expect.arrayContaining([
+        "CAMPAIGN_OS_QUEUE_PROVIDER",
+        "CAMPAIGN_OS_WORKER_QUEUE_URL",
+        "CAMPAIGN_OS_WORKER_RETRY_POLICY",
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+        "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+        "CAMPAIGN_OS_DEGRADATION_POLICY",
+        "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
+      ]),
+    );
   });
 
   it("resolves staging scaffold without enabling live dependencies", () => {
@@ -258,8 +271,12 @@ describe("backend config contract", () => {
     const queueUrl = "https://user:queue-secret@queue.invalid/jobs?token=worker-token";
     const schedulerEndpoint = "https://scheduler.invalid/run?scheduler-pass=secret";
     const idempotencyStoreUrl = "https://store.invalid/idempotency?token=idempotency-secret";
+    const deadLetterQueueUrl = "https://queue.invalid/dead-letter?token=dead-letter-secret";
 
     expect(sanitizeBackendConfigDiagnosticValue("CAMPAIGN_OS_WORKER_QUEUE_URL", queueUrl)).toBe(
+      "[redacted]",
+    );
+    expect(sanitizeBackendConfigDiagnosticValue("CAMPAIGN_OS_DEAD_LETTER_QUEUE", deadLetterQueueUrl)).toBe(
       "[redacted]",
     );
     expect(
@@ -272,6 +289,7 @@ describe("backend config contract", () => {
     const contract = resolveBackendConfigContract({
       env: {
         CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+        CAMPAIGN_OS_DEAD_LETTER_QUEUE: deadLetterQueueUrl,
         CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: idempotencyStoreUrl,
         CAMPAIGN_OS_SCHEDULER_ENDPOINT: schedulerEndpoint,
         CAMPAIGN_OS_WORKER_QUEUE_URL: queueUrl,
@@ -279,6 +297,7 @@ describe("backend config contract", () => {
     });
 
     expect(collectStringValues(contract)).not.toContain(queueUrl);
+    expect(collectStringValues(contract)).not.toContain(deadLetterQueueUrl);
     expect(collectStringValues(contract)).not.toContain(schedulerEndpoint);
     expect(collectStringValues(contract)).not.toContain(idempotencyStoreUrl);
   });

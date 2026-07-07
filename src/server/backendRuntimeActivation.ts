@@ -3,6 +3,10 @@ import {
   type BackendRuntimeProfile,
   type BackendRuntimeProfileId,
 } from "./backendProfiles";
+import {
+  queueRuntimeProductionPreconditions,
+  type QueueRuntimePreconditionArea,
+} from "./queueRuntime";
 import type { ApiServerRuntimeContract } from "./serverRuntime";
 import { workerSchedulerProductionPreconditions } from "./workerSchedulerRuntime";
 
@@ -12,6 +16,7 @@ export type RuntimeActivationConfigCategory =
   | "profile"
   | "database"
   | "auth"
+  | "queue"
   | "provider"
   | "worker"
   | "scheduler"
@@ -25,6 +30,7 @@ export type ProductionRuntimeDependencyStatus = "blocked" | "deferred";
 export type ProductionRuntimeDependencyArea =
   | "database"
   | "auth"
+  | "queue"
   | "provider"
   | "worker"
   | "scheduler"
@@ -117,6 +123,24 @@ const configKey = (
   status,
 });
 
+const queueRuntimeConfigCategory = (
+  area: QueueRuntimePreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (area === "queue" || area === "dead_letter") {
+    return "queue";
+  }
+
+  if (area === "retry") {
+    return "scheduler";
+  }
+
+  if (area === "idempotency" || area === "lease") {
+    return "worker";
+  }
+
+  return area;
+};
+
 export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
   configKey("CAMPAIGN_OS_API_HOST", "server", "supported", "local-review"),
   configKey("CAMPAIGN_OS_API_PORT", "server", "supported", "local-review"),
@@ -136,6 +160,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
         precondition.area === "idempotency" || precondition.area === "lease"
           ? "worker"
           : precondition.area,
+        precondition.status,
+        key === "CAMPAIGN_OS_DEGRADATION_POLICY" ? "future-production" : "production-required",
+      ),
+    ),
+  ),
+  ...queueRuntimeProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        queueRuntimeConfigCategory(precondition.area),
         precondition.status,
         key === "CAMPAIGN_OS_DEGRADATION_POLICY" ? "future-production" : "production-required",
       ),
@@ -233,6 +267,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
         ? "worker"
         : precondition.area,
     attachPoint: "src/server/workerSchedulerRuntime.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: precondition.id,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
+  ...queueRuntimeProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: queueRuntimeConfigCategory(precondition.area) as ProductionRuntimeDependencyArea,
+    attachPoint: "src/server/queueRuntime.ts",
     blockedBy: [...precondition.requiredConfigKeys],
     id: precondition.id,
     requiredBeforeProduction: true,
