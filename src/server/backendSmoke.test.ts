@@ -201,7 +201,7 @@ describe("backend scaffold HTTP smoke", () => {
             apiService: expect.objectContaining({
               blockedDependencyIds: expect.arrayContaining([
                 "live-database-driver",
-                "wallet-proof-verifier",
+                "project-membership-store",
                 "contract-writer",
               ]),
               deferredDependencyIds: expect.arrayContaining([
@@ -218,6 +218,7 @@ describe("backend scaffold HTTP smoke", () => {
               roleCount: 5,
               status: "local_seeded",
               valid: true,
+              verificationMode: "local_only",
             }),
             databaseReadiness: expect.objectContaining({
               adapterStatus: "contract_ready",
@@ -440,6 +441,20 @@ describe("backend scaffold HTTP smoke", () => {
                 agentSkillCanSubstituteUserWallet: false,
                 separatedFromUserWalletSession: true,
               },
+              authContracts: expect.objectContaining({
+                liveSideEffectsEnabled: false,
+                productionReady: false,
+                proofVerifier: expect.objectContaining({
+                  localContractReady: true,
+                  liveVerificationExecuted: false,
+                  productionReady: false,
+                }),
+                sessionIssuer: expect.objectContaining({
+                  liveSigningExecuted: false,
+                  localContractReady: true,
+                  productionReady: false,
+                }),
+              }),
               protectedRoutes: expect.arrayContaining([
                 expect.objectContaining({
                   enforcementStatus: "metadata_only",

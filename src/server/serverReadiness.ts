@@ -49,6 +49,7 @@ export interface ServerRuntimeReadiness {
     authEnforcement: BackendAuthEnforcementReadinessSummary;
     apiService: BackendApiServiceBootstrapSummary;
     authSession: {
+      contracts: BackendServiceReadinessReport["authSession"]["authContracts"];
       status: BackendServiceReadinessReport["authSession"]["status"];
       valid: boolean;
       verificationMode: BackendServiceReadinessReport["authSession"]["proofBoundary"]["verificationMode"];
@@ -154,6 +155,7 @@ export const createServerRuntimeReadiness = ({
       authEnforcement: backendReadiness.authEnforcement,
       apiService: backendReadiness.apiService,
       authSession: {
+        contracts: backendReadiness.authSession.authContracts,
         status: backendReadiness.authSession.status,
         valid: backendReadiness.authSession.validation.valid,
         verificationMode: backendReadiness.authSession.proofBoundary.verificationMode,

@@ -147,13 +147,20 @@ export type LocalServiceResult<T> =
     };
 
 export interface CreateWalletSessionRequest {
+  accountTypeHint?: AccountType;
   address?: string;
   adapterName?: string;
   chainId?: string;
   fixtureId?: string;
   network?: WalletNetwork | string;
+  nonce?: string;
+  proofEvaluatedAt?: string;
+  proofIssuedAt?: string;
+  productionRequired?: boolean;
   signature?: string;
+  signaturePresent?: boolean;
   walletPolicy?: WalletPolicy;
+  walletSourceHint?: WalletSource;
 }
 
 export interface CreateCampaignRequest {

@@ -124,6 +124,7 @@ export interface BackendServiceEntrypoint {
 export type BackendApiServiceBootstrapStatus = "ready" | "blocked" | "deferred";
 
 export interface BackendApiServiceBootstrapSummary {
+  authContracts: AuthSessionReadinessReport["authContracts"];
   attachPointCount: number;
   blockedDependencyIds: string[];
   contractWriteEnabled: false;
@@ -176,7 +177,11 @@ export type BackendAuthEnforcementMode = "blocked" | "local_enforced" | "metadat
 export interface BackendAuthEnforcementReadinessSummary {
   agentCredentialSubstitutionDisabled: boolean;
   campaignMutationRouteCount: number;
+  liveSigningExecuted: false;
+  liveVerificationExecuted: false;
   localEnforcedRouteCount: number;
+  localProofVerifierContractReady: true;
+  localSessionIssuerContractReady: true;
   locallyEnforcedRouteIds: string[];
   mode: BackendAuthEnforcementMode;
   productionProofVerifierReady: false;
@@ -409,8 +414,6 @@ const requiredAttachPointAreas: BackendAttachPointArea[] = [
 const apiServiceBlockedDependencyIds = [
   "live-database-driver",
   "migration-executor",
-  "wallet-proof-verifier",
-  "session-issuer",
   "project-membership-store",
   "contract-writer",
   "reward-custody",
@@ -441,14 +444,18 @@ export const backendAttachMap: BackendAttachPoint[] = [
     attachPoint: "src/server/authSession.ts:createAuthSessionReadinessReport",
     blockedBy: [
       "live wallet signature verifier",
+      "auth nonce store",
       "JWT or session cookie issuer",
+      "session signing key",
+      "secret manager",
+      "production session store",
       "RBAC enforcement",
       "project ownership source",
       "admin organization model",
       "agent credential provider",
     ],
-    currentStatus: "scaffold",
-    note: "Mission 170 exposes auth/session contract readiness only; live enforcement is still deferred.",
+    currentStatus: "local-only",
+    note: "Local wallet proof verifier and local opaque session issuer contracts are ready; live verification, signing, secret manager, session store, and ownership source remain production blockers.",
     requiredBeforeProduction: true,
   },
   {
@@ -549,7 +556,11 @@ const createBackendAuthEnforcementReadinessSummary = (
       authSession.agentCredentialBoundary.agentSkillCanSubstituteUserWallet === false
       && authSession.agentCredentialBoundary.separatedFromUserWalletSession,
     campaignMutationRouteCount: campaignMutationRoutes.length,
+    liveSigningExecuted: authSession.authContracts.sessionIssuer.liveSigningExecuted,
+    liveVerificationExecuted: authSession.authContracts.proofVerifier.liveVerificationExecuted,
     localEnforcedRouteCount: locallyEnforcedRoutes.length,
+    localProofVerifierContractReady: authSession.authContracts.proofVerifier.localContractReady,
+    localSessionIssuerContractReady: authSession.authContracts.sessionIssuer.localContractReady,
     locallyEnforcedRouteIds: locallyEnforcedRoutes.map((route) => route.routeId),
     mode: authSession.validation.valid && locallyEnforcedRoutes.length > 0
       ? "local_enforced"
@@ -715,10 +726,12 @@ const createDatabaseReadinessReport = ({
 };
 
 const createApiServiceBootstrapSummary = ({
+  authSession,
   backendRuntimeBootstrap,
   config,
   validationIssues,
 }: {
+  authSession: AuthSessionReadinessReport;
   backendRuntimeBootstrap: BackendRuntimeBootstrapContract;
   config: BackendConfigContract;
   validationIssues: readonly BackendReadinessDiagnostic[];
@@ -740,6 +753,7 @@ const createApiServiceBootstrapSummary = ({
   ]));
 
   return {
+    authContracts: authSession.authContracts,
     attachPointCount: apiServiceBlockedDependencyIds.length + apiServiceDeferredDependencyIds.length,
     blockedDependencyIds: [...apiServiceBlockedDependencyIds],
     contractWriteEnabled: false,
@@ -1137,6 +1151,7 @@ export const createBackendServiceReadinessReport = ({
   return {
     ...readinessWithoutBootstrap,
     apiService: createApiServiceBootstrapSummary({
+      authSession,
       backendRuntimeBootstrap,
       config,
       validationIssues,

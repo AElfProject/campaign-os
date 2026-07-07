@@ -27,6 +27,7 @@ import type {
   CampaignDiscoveryReadModel,
   CampaignDiscoverySummary,
   LocalizedText,
+  NormalizedWalletSession,
 } from "../domain/types";
 import type { ApiRuntimeRouteId } from "./routes";
 import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
@@ -82,6 +83,14 @@ import {
   requiredWalletCompatibility,
   requiredWalletSource,
 } from "./validation";
+import {
+  issueLocalSessionArtifact,
+  type SessionIssuerResult,
+} from "./sessionIssuer";
+import {
+  verifyWalletProofLocally,
+  type WalletProofVerificationResult,
+} from "./walletProofVerifier";
 
 const localErrorToRuntimeError = (
   error: LocalServiceError,
@@ -263,6 +272,106 @@ const createCampaignDiscoverySummary = (
   topCampaignId: items[0]?.id ?? "",
   totalCampaigns: items.length,
 });
+
+const localWalletProofEvaluationTime = "2026-07-07T00:00:00.000Z";
+const localWalletProofTtlSeconds = 3600;
+
+const proofBlockingWalletStatuses: ReadonlySet<NormalizedWalletSession["verificationStatus"]> =
+  new Set([
+    "account_restricted",
+    "extension_not_installed",
+    "unsupported_wallet",
+    "wrong_chain",
+  ]);
+
+const createWalletProofResult = (
+  request: CreateWalletSessionRequest,
+  payload: NormalizedWalletSession,
+): WalletProofVerificationResult => {
+  const proofType = payload.verificationStatus === "address_only" ? "address_only" : undefined;
+  const shouldBlockProof = proofBlockingWalletStatuses.has(payload.verificationStatus);
+
+  return verifyWalletProofLocally({
+    accountTypeHint: request.accountTypeHint ?? payload.accountType,
+    address: payload.address,
+    adapterName: request.adapterName ?? payload.walletName,
+    chainId: shouldBlockProof ? "unsupported_session_state" : payload.chainId,
+    maxAgeSeconds: 300,
+    network: payload.network,
+    nonce: request.nonce ?? `local-nonce:${payload.sessionId}`,
+    now: request.proofEvaluatedAt ?? localWalletProofEvaluationTime,
+    observedInput: request,
+    proofIssuedAt: request.proofIssuedAt ?? payload.connectedAt ?? localWalletProofEvaluationTime,
+    proofType,
+    productionRequired: request.productionRequired ?? false,
+    signature: request.signature,
+    signaturePresent: request.signaturePresent ?? payload.signatureStatus === "signed",
+    walletSourceHint: request.walletSourceHint ?? payload.walletSource,
+  });
+};
+
+const createWalletSessionProofSummary = (
+  proofResult: WalletProofVerificationResult,
+): NonNullable<NormalizedWalletSession["proof"]> => ({
+  diagnosticCodes: proofResult.diagnostics.map((item) => item.code),
+  liveVerificationExecuted: proofResult.liveVerificationExecuted,
+  proofType: proofResult.proofType,
+  status: proofResult.status,
+  trustLevel: proofResult.trustLevel,
+});
+
+const createWalletSessionIssuerSummary = (
+  issuerResult: SessionIssuerResult,
+): NonNullable<NormalizedWalletSession["issuer"]> => ({
+  artifactType: issuerResult.artifactType,
+  cookieIssued: issuerResult.cookieIssued,
+  diagnosticCodes: issuerResult.diagnosticCodes,
+  issuerMode: issuerResult.issuerMode,
+  jwtIssued: issuerResult.jwtIssued,
+  liveSigningExecuted: issuerResult.liveSigningExecuted,
+  referenceId: issuerResult.referenceId,
+  ttlSeconds: issuerResult.ttlSeconds,
+  valid: issuerResult.valid,
+});
+
+const createWalletSessionProductionReadinessSummary = (
+  proofResult: WalletProofVerificationResult,
+  issuerResult: SessionIssuerResult,
+): NonNullable<NormalizedWalletSession["productionReadiness"]> => ({
+  blockedDependencyIds: Array.from(new Set([
+    ...proofResult.productionReadiness.blockedDependencyIds,
+    ...issuerResult.productionReadiness.blockedDependencyIds,
+  ])),
+  liveSigningReady: false,
+  liveVerifierReady: proofResult.productionReadiness.liveVerifierReady,
+  productionReady: false,
+  productionRequired: proofResult.productionReadiness.required,
+  productionSessionStoreReady: issuerResult.productionReadiness.productionSessionStoreReady,
+  secretManagerReady: issuerResult.productionReadiness.secretManagerReady,
+  signingKeyReady: issuerResult.productionReadiness.signingKeyReady,
+});
+
+const enrichWalletSessionWithProofMetadata = (
+  request: CreateWalletSessionRequest,
+  payload: NormalizedWalletSession,
+): NormalizedWalletSession => {
+  const proofResult = createWalletProofResult(request, payload);
+  const issuerResult = issueLocalSessionArtifact({
+    issuedAt: request.proofEvaluatedAt ?? localWalletProofEvaluationTime,
+    observedInput: request,
+    productionRequired: request.productionRequired ?? false,
+    proofResult,
+    sessionId: payload.sessionId,
+    ttlSeconds: localWalletProofTtlSeconds,
+  });
+
+  return {
+    ...payload,
+    proof: createWalletSessionProofSummary(proofResult),
+    issuer: createWalletSessionIssuerSummary(issuerResult),
+    productionReadiness: createWalletSessionProductionReadinessSummary(proofResult, issuerResult),
+  };
+};
 
 const createCampaignDbTaskSummary = (draft: CampaignDbDraft) => ({
   points: 0,
@@ -681,9 +790,17 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       summary: governance.summary,
     };
   },
-  "wallet.session.create": (context) =>
-    persistLocalResult(
-      context.service.createWalletSession(bodyRecord(context.body) as CreateWalletSessionRequest),
+  "wallet.session.create": (context) => {
+    const request = bodyRecord(context.body) as CreateWalletSessionRequest;
+    const result = context.service.createWalletSession(request);
+
+    return persistLocalResult(
+      result.ok
+        ? {
+          ...result,
+          payload: enrichWalletSessionWithProofMetadata(request, result.payload),
+        }
+        : result,
       context,
       (payload) => ({
         accountType: payload.accountType,
@@ -691,13 +808,20 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         summary: {
           accountType: payload.accountType,
           chainId: payload.chainId,
+          issuerMode: payload.issuer?.issuerMode ?? "not_evaluated",
+          liveSigningExecuted: payload.issuer?.liveSigningExecuted ?? false,
+          liveVerificationExecuted: payload.proof?.liveVerificationExecuted ?? false,
           network: payload.network,
+          productionReady: payload.productionReadiness?.productionReady ?? false,
+          proofStatus: payload.proof?.status ?? "not_evaluated",
+          proofTrustLevel: payload.proof?.trustLevel ?? "untrusted",
           walletSource: payload.walletSource,
         },
         walletAddress: payload.address,
         walletSource: payload.walletSource,
       }),
-    ),
+    );
+  },
   "campaigns.list": async (context) => {
     const response = unwrapLocalResult(
       context.service.listCampaigns(listCampaignRequest(context)),

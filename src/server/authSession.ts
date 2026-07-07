@@ -4,6 +4,8 @@ import type {
   WalletNetwork,
   WalletSource,
 } from "../domain/types";
+import { sessionIssuerProductionDependencyIds } from "./sessionIssuer";
+import { walletProofProductionDependencyIds } from "./walletProofVerifier";
 
 export type AuthSessionAccountType = AccountType;
 export type AuthSessionWalletSource = WalletSource;
@@ -35,7 +37,11 @@ export type AuthSessionCredentialBoundary =
 export type AuthSessionDiagnosticSeverity = "error" | "warning" | "info";
 export type AuthSessionDiagnosticCode =
   | "AUTH_SESSION_CONFIG_MISSING"
+  | "AUTH_NONCE_STORE_MISSING"
   | "AUTH_PROOF_VERIFIER_MISSING"
+  | "AUTH_SECRET_MANAGER_MISSING"
+  | "AUTH_SESSION_ISSUER_MISSING"
+  | "AUTH_SESSION_STORE_MISSING"
   | "AUTH_POLICY_MISSING"
   | "AUTH_OWNERSHIP_SOURCE_MISSING"
   | "AUTH_SENSITIVE_INPUT_REDACTED"
@@ -163,6 +169,7 @@ export interface AuthSessionReadinessReport {
     agentSkillCanSubstituteUserWallet: false;
     separatedFromUserWalletSession: true;
   };
+  authContracts: AuthSessionContractReadiness;
   deferredDependencyIds: string[];
   generatedAt: string;
   profileId: string;
@@ -196,13 +203,51 @@ export interface AuthSessionReadinessReport {
 
 export interface CreateAuthSessionReadinessReportOptions {
   generatedAt?: string;
+  liveVerifierReady?: boolean;
+  nonceStoreReady?: boolean;
   observedInput?: unknown;
   ownershipSourceReady?: boolean;
   productionRequired?: boolean;
   profileId?: string;
   proofVerifierReady?: boolean;
   rbacPolicyReady?: boolean;
+  productionSessionStoreReady?: boolean;
+  secretManagerReady?: boolean;
   sessionConfigReady?: boolean;
+  signingKeyReady?: boolean;
+}
+
+export interface AuthSessionProofVerifierContractReadiness {
+  blockedDependencyIds: string[];
+  localContractReady: true;
+  liveVerificationExecuted: false;
+  productionReady: false;
+  status: "local_contract_ready";
+}
+
+export interface AuthSessionIssuerContractReadiness {
+  blockedDependencyIds: string[];
+  cookieIssued: false;
+  jwtIssued: false;
+  liveSigningExecuted: false;
+  localContractReady: true;
+  productionReady: false;
+  status: "local_contract_ready";
+}
+
+export interface AuthSessionProjectMembershipReadiness {
+  blockedDependencyIds: string[];
+  productionReady: false;
+  sourceReady: boolean;
+}
+
+export interface AuthSessionContractReadiness {
+  blockedDependencyIds: string[];
+  liveSideEffectsEnabled: false;
+  productionReady: false;
+  proofVerifier: AuthSessionProofVerifierContractReadiness;
+  projectMembership: AuthSessionProjectMembershipReadiness;
+  sessionIssuer: AuthSessionIssuerContractReadiness;
 }
 
 const seededAt = "2026-07-06T00:00:00.000Z";
@@ -224,12 +269,89 @@ const sensitiveKeyFragments = [
 
 export const authSessionDeferredDependencyIds = [
   "live_wallet_proof_verifier",
+  "auth_nonce_store",
+  "session_signing_key",
+  "secret_manager",
+  "production_session_store",
+  "project_membership_source",
   "jwt_or_session_cookie",
   "rbac_enforcement",
   "project_ownership_source",
   "admin_organization_model",
   "agent_credential_provider",
 ] as const;
+
+const projectMembershipProductionDependencyIds = [
+  "project_membership_source",
+  "project_ownership_source",
+] as const;
+
+const uniqueDependencyIds = (ids: readonly string[]) => Array.from(new Set(ids));
+
+const createAuthSessionContractReadiness = ({
+  liveVerifierReady = false,
+  nonceStoreReady = false,
+  ownershipSourceReady = false,
+  productionSessionStoreReady = false,
+  secretManagerReady = false,
+  signingKeyReady = false,
+}: {
+  liveVerifierReady?: boolean;
+  nonceStoreReady?: boolean;
+  ownershipSourceReady?: boolean;
+  productionSessionStoreReady?: boolean;
+  secretManagerReady?: boolean;
+  signingKeyReady?: boolean;
+} = {}): AuthSessionContractReadiness => {
+  const proofVerifierBlockedDependencyIds = [
+    ...(!liveVerifierReady ? ["live_wallet_proof_verifier"] : []),
+    ...(!nonceStoreReady ? ["auth_nonce_store"] : []),
+  ];
+  const sessionIssuerBlockedDependencyIds = [
+    ...(!liveVerifierReady ? ["live_wallet_proof_verifier"] : []),
+    ...(!signingKeyReady ? ["session_signing_key"] : []),
+    ...(!secretManagerReady ? ["secret_manager"] : []),
+    ...(!productionSessionStoreReady ? ["production_session_store"] : []),
+  ];
+  const projectMembershipBlockedDependencyIds = ownershipSourceReady
+    ? []
+    : [...projectMembershipProductionDependencyIds];
+
+  return {
+    blockedDependencyIds: uniqueDependencyIds([
+      ...proofVerifierBlockedDependencyIds,
+      ...sessionIssuerBlockedDependencyIds,
+      ...projectMembershipBlockedDependencyIds,
+    ]),
+    liveSideEffectsEnabled: false,
+    productionReady: false,
+    proofVerifier: {
+      blockedDependencyIds: proofVerifierBlockedDependencyIds.length > 0
+        ? proofVerifierBlockedDependencyIds
+        : [...walletProofProductionDependencyIds],
+      localContractReady: true,
+      liveVerificationExecuted: false,
+      productionReady: false,
+      status: "local_contract_ready",
+    },
+    projectMembership: {
+      blockedDependencyIds: projectMembershipBlockedDependencyIds,
+      productionReady: false,
+      sourceReady: ownershipSourceReady,
+    },
+    sessionIssuer: {
+      blockedDependencyIds: sessionIssuerBlockedDependencyIds.length > 0
+        ? sessionIssuerBlockedDependencyIds
+        : [...sessionIssuerProductionDependencyIds],
+      cookieIssued: false,
+      jwtIssued: false,
+      liveSigningExecuted: false,
+      localContractReady: true,
+      productionReady: false,
+      status: "local_contract_ready",
+    },
+  };
+};
 
 export const locallyEnforcedAuthRouteIds = ["campaigns.create"] as const;
 
@@ -651,15 +773,28 @@ export const createSessionProofBoundary = ({
 
 export const createAuthSessionReadinessReport = ({
   generatedAt = new Date(0).toISOString(),
+  liveVerifierReady,
+  nonceStoreReady,
   observedInput,
   ownershipSourceReady,
   productionRequired,
+  productionSessionStoreReady,
   profileId = "local-review",
   proofVerifierReady,
   rbacPolicyReady,
+  secretManagerReady,
   sessionConfigReady,
+  signingKeyReady,
 }: CreateAuthSessionReadinessReportOptions = {}): AuthSessionReadinessReport => {
   const requiresProductionAuth = productionRequired ?? profileId === "production-required";
+  const authContracts = createAuthSessionContractReadiness({
+    liveVerifierReady: liveVerifierReady ?? proofVerifierReady,
+    nonceStoreReady,
+    ownershipSourceReady,
+    productionSessionStoreReady,
+    secretManagerReady,
+    signingKeyReady,
+  });
   const proofBoundary = createSessionProofBoundary({
     observedInput,
     ownershipSourceReady,
@@ -678,7 +813,11 @@ export const createAuthSessionReadinessReport = ({
       agentSkillCanSubstituteUserWallet: false,
       separatedFromUserWalletSession: true,
     },
-    deferredDependencyIds: [...authSessionDeferredDependencyIds],
+    authContracts,
+    deferredDependencyIds: uniqueDependencyIds([
+      ...authSessionDeferredDependencyIds,
+      ...authContracts.blockedDependencyIds,
+    ]),
     generatedAt,
     profileId,
     proofBoundary: {

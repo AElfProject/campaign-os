@@ -48,8 +48,28 @@ interface AnalyticsPayload {
 }
 
 interface WalletSessionPayload {
+  issuer?: {
+    cookieIssued: false;
+    issuerMode: string;
+    jwtIssued: false;
+    liveSigningExecuted: false;
+    valid?: boolean;
+  };
+  productionReadiness?: {
+    blockedDependencyIds: string[];
+    productionReady: false;
+  };
+  proof?: {
+    diagnosticCodes: string[];
+    liveVerificationExecuted: false;
+    status: string;
+    trustLevel: string;
+  };
+  signatureStatus?: string;
   sessionId: string;
+  verificationStatus?: string;
   walletSource: string;
+  walletTypeVerified?: boolean;
 }
 
 interface CampaignDraftPayload {
@@ -124,6 +144,14 @@ const expectNoForbiddenResponseKeys = (value: unknown) => {
 
   for (const forbiddenKey of forbiddenResponseKeys) {
     expect(keys).not.toContain(forbiddenKey);
+  }
+};
+
+const expectNoForbiddenFragments = (value: unknown, fragments: readonly string[]) => {
+  const serialized = JSON.stringify(value).toLowerCase();
+
+  for (const fragment of fragments) {
+    expect(serialized).not.toContain(fragment.toLowerCase());
   }
 };
 
@@ -529,7 +557,7 @@ describe("Campaign OS API runtime", () => {
           }),
           expect.objectContaining({
             area: "auth-session",
-            currentStatus: "scaffold",
+            currentStatus: "local-only",
             requiredBeforeProduction: true,
           }),
           expect.objectContaining({
@@ -573,6 +601,20 @@ describe("Campaign OS API runtime", () => {
           rolePolicy: expect.objectContaining({
             leastPrivilegeDefault: true,
             roleCount: 5,
+          }),
+          authContracts: expect.objectContaining({
+            liveSideEffectsEnabled: false,
+            productionReady: false,
+            proofVerifier: expect.objectContaining({
+              localContractReady: true,
+              liveVerificationExecuted: false,
+              productionReady: false,
+            }),
+            sessionIssuer: expect.objectContaining({
+              liveSigningExecuted: false,
+              localContractReady: true,
+              productionReady: false,
+            }),
           }),
           sessionContract: expect.objectContaining({
             agentCredentialSeparated: true,
@@ -1674,6 +1716,10 @@ describe("Campaign OS API runtime", () => {
       body: JSON.stringify({
         adapterName: "PortkeyDiscoverWallet",
         fixtureId: "sess-eoa-app-001",
+        nonce: "nonce-route-proof",
+        proofEvaluatedAt: "2026-07-07T04:00:00.000Z",
+        proofIssuedAt: "2026-07-07T03:59:00.000Z",
+        signature: "raw-route-signature",
       }),
     });
     const persistedWalletSession = await runtimeWithPersistence.handle({
@@ -1682,6 +1728,9 @@ describe("Campaign OS API runtime", () => {
       body: JSON.stringify({
         adapterName: "PortkeyDiscoverWallet",
         fixtureId: "sess-eoa-app-001",
+        nonce: "nonce-persisted-proof",
+        proofEvaluatedAt: "2026-07-07T04:00:00.000Z",
+        proofIssuedAt: "2026-07-07T03:59:00.000Z",
         signature: "should-not-persist",
       }),
     });
@@ -1749,6 +1798,27 @@ describe("Campaign OS API runtime", () => {
     const snapshot = await repository.snapshot();
 
     expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload>>(walletSession).payload).toMatchObject({
+      issuer: {
+        cookieIssued: false,
+        issuerMode: "local_opaque",
+        jwtIssued: false,
+        liveSigningExecuted: false,
+      },
+      productionReadiness: {
+        blockedDependencyIds: expect.arrayContaining([
+          "live_wallet_proof_verifier",
+          "session_signing_key",
+          "secret_manager",
+          "production_session_store",
+        ]),
+        productionReady: false,
+      },
+      proof: {
+        diagnosticCodes: expect.arrayContaining(["AUTH_PROOF_SENSITIVE_INPUT_REDACTED"]),
+        liveVerificationExecuted: false,
+        status: "verified",
+        trustLevel: "verified_local",
+      },
       sessionId: "sess-eoa-app-001",
       walletSource: "PORTKEY_EOA_APP",
     });
@@ -1756,6 +1826,15 @@ describe("Campaign OS API runtime", () => {
       persistedWalletSession,
     )).toMatchObject({
       payload: {
+        issuer: expect.objectContaining({
+          issuerMode: "local_opaque",
+          liveSigningExecuted: false,
+        }),
+        proof: expect.objectContaining({
+          liveVerificationExecuted: false,
+          status: "verified",
+          trustLevel: "verified_local",
+        }),
         sessionId: "sess-eoa-app-001",
         walletSource: "PORTKEY_EOA_APP",
       },
@@ -1813,6 +1892,18 @@ describe("Campaign OS API runtime", () => {
       ]),
     );
     expectNoForbiddenResponseKeys(snapshot);
+    expectNoForbiddenFragments(walletSession.body, ["nonce-route-proof", "raw-route-signature"]);
+    expectNoForbiddenFragments(snapshot, ["nonce-persisted-proof", "should-not-persist"]);
+    expect(snapshot.latestRecords.find((record) => record.kind === "wallet_session")).toMatchObject({
+      summary: {
+        issuerMode: "local_opaque",
+        liveSigningExecuted: false,
+        liveVerificationExecuted: false,
+        productionReady: false,
+        proofStatus: "verified",
+        proofTrustLevel: "verified_local",
+      },
+    });
   });
 
   it("persists write route records across local JSON runtime recreation", async () => {
@@ -1855,6 +1946,111 @@ describe("Campaign OS API runtime", () => {
     } finally {
       await rm(tempDir, { force: true, recursive: true });
     }
+  });
+
+  it("fails closed for missing or stale wallet proof route metadata", async () => {
+    const missingSignature = await runtime.handle({
+      method: "POST",
+      path: "/api/wallet/session",
+      body: JSON.stringify({
+        address: "2F4...9aB",
+        adapterName: "PortkeyDiscoverWallet",
+        chainId: "AELF",
+        network: "mainnet",
+        nonce: "nonce-missing-signature",
+        proofEvaluatedAt: "2026-07-07T04:00:00.000Z",
+        proofIssuedAt: "2026-07-07T03:59:00.000Z",
+      }),
+    });
+    const staleProof = await runtime.handle({
+      method: "POST",
+      path: "/api/wallet/session",
+      body: JSON.stringify({
+        address: "2F4...9aB",
+        adapterName: "PortkeyDiscoverWallet",
+        chainId: "AELF",
+        network: "mainnet",
+        nonce: "nonce-stale-proof",
+        proofEvaluatedAt: "2026-07-07T04:00:00.000Z",
+        proofIssuedAt: "2026-07-07T03:50:00.000Z",
+        signature: "raw-stale-signature",
+      }),
+    });
+
+    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload>>(missingSignature).payload).toMatchObject({
+      issuer: expect.objectContaining({
+        issuerMode: "local_opaque",
+        valid: true,
+      }),
+      proof: {
+        diagnosticCodes: expect.arrayContaining(["AUTH_PROOF_SIGNATURE_MISSING"]),
+        liveVerificationExecuted: false,
+        status: "signature_unverified",
+        trustLevel: "untrusted",
+      },
+      signatureStatus: "missing",
+      verificationStatus: "missing_signature",
+      walletTypeVerified: false,
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload>>(staleProof).payload).toMatchObject({
+      issuer: expect.objectContaining({
+        issuerMode: "local_opaque",
+      }),
+      proof: {
+        diagnosticCodes: expect.arrayContaining(["AUTH_PROOF_STALE"]),
+        liveVerificationExecuted: false,
+        status: "stale",
+        trustLevel: "untrusted",
+      },
+    });
+    expectNoForbiddenFragments(missingSignature.body, ["nonce-missing-signature"]);
+    expectNoForbiddenFragments(staleProof.body, ["nonce-stale-proof", "raw-stale-signature"]);
+  });
+
+  it("keeps address-only and unsupported wallet proof metadata fail-closed", async () => {
+    const addressOnly = await runtime.handle({
+      method: "POST",
+      path: "/api/wallet/session",
+      body: JSON.stringify({
+        fixtureId: "sess-unknown-001",
+      }),
+    });
+    const unsupported = await runtime.handle({
+      method: "POST",
+      path: "/api/wallet/session",
+      body: JSON.stringify({
+        address: "2F4...9aB",
+        adapterName: "UnsupportedWallet",
+        chainId: "AELF",
+        network: "mainnet",
+        nonce: "nonce-unsupported-wallet",
+        proofEvaluatedAt: "2026-07-07T04:00:00.000Z",
+        proofIssuedAt: "2026-07-07T03:59:00.000Z",
+        signature: "raw-unsupported-signature",
+      }),
+    });
+
+    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload>>(addressOnly).payload).toMatchObject({
+      proof: {
+        diagnosticCodes: expect.arrayContaining(["AUTH_PROOF_ADDRESS_ONLY"]),
+        liveVerificationExecuted: false,
+        status: "proof_required",
+        trustLevel: "untrusted",
+      },
+      verificationStatus: "address_only",
+      walletTypeVerified: false,
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload>>(unsupported).payload).toMatchObject({
+      proof: {
+        diagnosticCodes: expect.arrayContaining(["AUTH_PROOF_CHAIN_UNSUPPORTED"]),
+        liveVerificationExecuted: false,
+        status: "blocked",
+        trustLevel: "blocked",
+      },
+      verificationStatus: "unsupported_wallet",
+      walletTypeVerified: false,
+    });
+    expectNoForbiddenFragments(unsupported.body, ["nonce-unsupported-wallet", "raw-unsupported-signature"]);
   });
 
   it("initializes the repository once before runtime health and write operations", async () => {
