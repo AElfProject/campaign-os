@@ -71,6 +71,47 @@ describe("backend service readiness report", () => {
         "reward-distribution",
       ]),
     );
+    expect(report.campaignDbVerticalSlice).toMatchObject({
+      adapter: {
+        deterministic: true,
+        id: "campaign-os-deterministic-test-driver",
+        productionReady: false,
+        status: "active_local",
+      },
+      capabilities: {
+        deterministicLifecycle: true,
+        recordDraft: true,
+        readDraft: true,
+        writeDraft: true,
+      },
+      diagnosticCodes: [],
+      id: "campaign-db-vertical-slice",
+      lifecycle: {
+        readinessDoesNotMutateRecords: true,
+        repositoryContractStatus: "available",
+        repositoryMode: "deterministic_test",
+      },
+      noLive: {
+        connectionAttempted: false,
+        migrationExecutionEnabled: false,
+        queryExecutionEnabled: false,
+        writeExecutionEnabled: false,
+      },
+      productionActivationBlockers: [],
+      repositoryContract: {
+        createDraft: true,
+        getById: true,
+        health: true,
+        list: true,
+        reset: true,
+      },
+      status: "ready",
+      storeId: "campaign-db",
+      validation: {
+        issues: [],
+        valid: true,
+      },
+    });
     expect(report.apiFoundation.servicePorts.validation.valid).toBe(true);
     expect(report.apiFoundation.validation.valid).toBe(true);
     expect(report.topology.validation.valid).toBe(true);
@@ -415,6 +456,79 @@ describe("backend service readiness report", () => {
         }),
       ]),
     });
+    expect(report.campaignDbVerticalSlice).toMatchObject({
+      adapter: {
+        deterministic: false,
+        id: "campaign-os-production-driver-deferred",
+        productionReady: false,
+        status: "blocked",
+      },
+      capabilities: {
+        deterministicLifecycle: true,
+        recordDraft: false,
+        readDraft: false,
+        writeDraft: false,
+      },
+      diagnosticCodes: expect.arrayContaining([
+        "CAMPAIGN_DB_LIVE_DRIVER_MISSING",
+        "CAMPAIGN_DB_MIGRATION_EXECUTOR_UNAPPROVED",
+        "CAMPAIGN_DB_SECRET_MANAGER_MISSING",
+        "CAMPAIGN_DB_PRODUCTION_WRITE_DISABLED",
+        "CAMPAIGN_DB_DETERMINISTIC_ADAPTER_NOT_PRODUCTION_READY",
+      ]),
+      lifecycle: {
+        readinessDoesNotMutateRecords: true,
+        repositoryContractStatus: "available",
+        repositoryMode: "production_deferred",
+      },
+      noLive: {
+        connectionAttempted: false,
+        migrationExecutionEnabled: false,
+        queryExecutionEnabled: false,
+        writeExecutionEnabled: false,
+      },
+      productionActivationBlockers: expect.arrayContaining([
+        "Production-required Campaign DB needs an approved live driver before activation.",
+        "Production-required Campaign DB needs an approved migration executor before activation.",
+        "Production-required Campaign DB needs secret manager and connection pool integration.",
+        "Production Campaign DB writes remain disabled until live write activation is explicitly approved.",
+        "Deterministic/local Campaign DB adapter is not production-ready.",
+      ]),
+      status: "blocked",
+      storeId: "campaign-db",
+      validation: {
+        valid: false,
+      },
+    });
+    expect(report.campaignDbVerticalSlice.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_LIVE_DRIVER_MISSING",
+          field: "databaseAdapterRuntime.driverId",
+          severity: "error",
+        }),
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_MIGRATION_EXECUTOR_UNAPPROVED",
+          field: "migration.executionGate.approval",
+          severity: "error",
+        }),
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_SECRET_MANAGER_MISSING",
+          field: "persistenceRuntime.connection",
+          severity: "error",
+        }),
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_PRODUCTION_WRITE_DISABLED",
+          field: "databaseAdapterRuntime.transaction.liveCommitEnabled",
+          severity: "error",
+        }),
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_DETERMINISTIC_ADAPTER_NOT_PRODUCTION_READY",
+          field: "databaseAdapterRuntime.adapter",
+          severity: "error",
+        }),
+      ]),
+    );
     expect(report.authSession).toMatchObject({
       profileId: "production-required",
       status: "blocked",
@@ -452,6 +566,10 @@ describe("backend service readiness report", () => {
         expect.objectContaining({
           code: "DATABASE_READINESS_BLOCKED",
           field: "databaseReadiness",
+        }),
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_VERTICAL_SLICE_BLOCKED",
+          field: "campaignDbVerticalSlice",
         }),
         expect.objectContaining({
           code: "DATABASE_READINESS_BLOCKED",

@@ -79,6 +79,7 @@ export type BackendAttachPointStatus = "local-only" | "scaffold" | "deferred" | 
 export type BackendReadinessDiagnosticCode =
   | "AUTH_SESSION_READINESS_BLOCKED"
   | "BACKEND_CONFIG_BLOCKED"
+  | "CAMPAIGN_DB_VERTICAL_SLICE_BLOCKED"
   | "DATABASE_READINESS_BLOCKED"
   | "PERSISTENCE_ADAPTER_INVALID"
   | "MIGRATION_MANIFEST_INVALID"
@@ -125,6 +126,7 @@ export interface BackendServiceReadinessReport {
   attachMap: BackendAttachPoint[];
   authSession: AuthSessionReadinessReport;
   backendRuntimeBootstrap: BackendRuntimeBootstrapContract;
+  campaignDbVerticalSlice: CampaignDbVerticalSliceReadinessSummary;
   config: BackendConfigContract;
   databaseAdapterRuntime: BackendDatabaseAdapterRuntimeReadinessReport;
   databaseReadiness: BackendDatabaseReadinessReport;
@@ -140,6 +142,65 @@ export interface BackendServiceReadinessReport {
   };
   validation: {
     issues: BackendReadinessDiagnostic[];
+    valid: boolean;
+  };
+}
+
+export type CampaignDbVerticalSliceStatus = "ready" | "blocked";
+export type CampaignDbVerticalSliceDiagnosticCode =
+  | "CAMPAIGN_DB_LIVE_DRIVER_MISSING"
+  | "CAMPAIGN_DB_MIGRATION_EXECUTOR_UNAPPROVED"
+  | "CAMPAIGN_DB_SECRET_MANAGER_MISSING"
+  | "CAMPAIGN_DB_PRODUCTION_WRITE_DISABLED"
+  | "CAMPAIGN_DB_DETERMINISTIC_ADAPTER_NOT_PRODUCTION_READY";
+
+export interface CampaignDbVerticalSliceDiagnostic {
+  code: CampaignDbVerticalSliceDiagnosticCode;
+  field: string;
+  message: string;
+  severity: "error" | "warning" | "info";
+}
+
+export interface CampaignDbVerticalSliceReadinessSummary {
+  adapter: {
+    deterministic: boolean;
+    id: string;
+    productionReady: boolean;
+    status: BackendDatabaseAdapterRuntimeReadinessReport["status"];
+  };
+  capabilities: {
+    deterministicLifecycle: true;
+    recordDraft: boolean;
+    readDraft: boolean;
+    writeDraft: boolean;
+  };
+  diagnosticCodes: CampaignDbVerticalSliceDiagnosticCode[];
+  diagnostics: CampaignDbVerticalSliceDiagnostic[];
+  id: "campaign-db-vertical-slice";
+  lifecycle: {
+    readinessDoesNotMutateRecords: true;
+    repositoryContractStatus: "available";
+    repositoryMode: "deterministic_test" | "production_deferred";
+  };
+  noLive: {
+    connectionAttempted: false;
+    migrationExecutionEnabled: false;
+    queryExecutionEnabled: false;
+    writeExecutionEnabled: false;
+  };
+  productionActivationBlockers: string[];
+  profileId: BackendConfigContract["profileId"];
+  repositoryContract: {
+    createDraft: true;
+    getById: true;
+    health: true;
+    list: true;
+    reset: true;
+  };
+  status: CampaignDbVerticalSliceStatus;
+  storeId: "campaign-db";
+  validation: {
+    issues: CampaignDbVerticalSliceDiagnostic[];
     valid: boolean;
   };
 }
@@ -384,6 +445,7 @@ const createValidationIssues = ({
   apiFoundation,
   attachMap,
   authSession,
+  campaignDbVerticalSlice,
   config,
   databaseAdapterRuntime,
   databaseReadiness,
@@ -397,6 +459,7 @@ const createValidationIssues = ({
   apiFoundation: ApiFoundationReport;
   attachMap: readonly BackendAttachPoint[];
   authSession: AuthSessionReadinessReport;
+  campaignDbVerticalSlice: CampaignDbVerticalSliceReadinessSummary;
   config: BackendConfigContract;
   databaseAdapterRuntime: BackendDatabaseAdapterRuntimeReadinessReport;
   databaseReadiness: BackendDatabaseReadinessReport;
@@ -418,6 +481,14 @@ const createValidationIssues = ({
       "AUTH_SESSION_READINESS_BLOCKED",
       "authSession",
       "Auth/session readiness validation failed.",
+    ));
+  }
+
+  if (!campaignDbVerticalSlice.validation.valid) {
+    issues.push(errorDiagnostic(
+      "CAMPAIGN_DB_VERTICAL_SLICE_BLOCKED",
+      "campaignDbVerticalSlice",
+      "Campaign DB vertical slice readiness validation failed.",
     ));
   }
 
@@ -509,6 +580,105 @@ const createDatabaseReadinessReport = ({
     validation: {
       issues,
       valid: issues.every((issue) => issue.severity !== "error"),
+    },
+  };
+};
+
+const campaignDbVerticalSliceDiagnostic = (
+  code: CampaignDbVerticalSliceDiagnosticCode,
+  field: string,
+  message: string,
+): CampaignDbVerticalSliceDiagnostic => ({
+  code,
+  field,
+  message,
+  severity: "error",
+});
+
+const createCampaignDbVerticalSliceReadinessSummary = ({
+  config,
+  databaseAdapterRuntime,
+  migration,
+  persistenceRuntime,
+}: {
+  config: BackendConfigContract;
+  databaseAdapterRuntime: BackendDatabaseAdapterRuntimeReadinessReport;
+  migration: MigrationManifest;
+  persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
+}): CampaignDbVerticalSliceReadinessSummary => {
+  const productionRequired = config.profileId === "production-required";
+  const deterministicAdapter = databaseAdapterRuntime.transaction.mode === "deterministic_test";
+  const diagnostics = productionRequired
+    ? [
+        campaignDbVerticalSliceDiagnostic(
+          "CAMPAIGN_DB_LIVE_DRIVER_MISSING",
+          "databaseAdapterRuntime.driverId",
+          "Production-required Campaign DB needs an approved live driver before activation.",
+        ),
+        campaignDbVerticalSliceDiagnostic(
+          "CAMPAIGN_DB_MIGRATION_EXECUTOR_UNAPPROVED",
+          "migration.executionGate.approval",
+          "Production-required Campaign DB needs an approved migration executor before activation.",
+        ),
+        campaignDbVerticalSliceDiagnostic(
+          "CAMPAIGN_DB_SECRET_MANAGER_MISSING",
+          "persistenceRuntime.connection",
+          "Production-required Campaign DB needs secret manager and connection pool integration.",
+        ),
+        campaignDbVerticalSliceDiagnostic(
+          "CAMPAIGN_DB_PRODUCTION_WRITE_DISABLED",
+          "databaseAdapterRuntime.transaction.liveCommitEnabled",
+          "Production Campaign DB writes remain disabled until live write activation is explicitly approved.",
+        ),
+        campaignDbVerticalSliceDiagnostic(
+          "CAMPAIGN_DB_DETERMINISTIC_ADAPTER_NOT_PRODUCTION_READY",
+          "databaseAdapterRuntime.adapter",
+          "Deterministic/local Campaign DB adapter is not production-ready.",
+        ),
+      ]
+    : [];
+
+  return {
+    adapter: {
+      deterministic: deterministicAdapter,
+      id: databaseAdapterRuntime.driverId,
+      productionReady: false,
+      status: databaseAdapterRuntime.status,
+    },
+    capabilities: {
+      deterministicLifecycle: true,
+      recordDraft: !productionRequired,
+      readDraft: !productionRequired,
+      writeDraft: !productionRequired,
+    },
+    diagnosticCodes: diagnostics.map((diagnostic) => diagnostic.code),
+    diagnostics,
+    id: "campaign-db-vertical-slice",
+    lifecycle: {
+      readinessDoesNotMutateRecords: true,
+      repositoryContractStatus: "available",
+      repositoryMode: productionRequired ? "production_deferred" : "deterministic_test",
+    },
+    noLive: {
+      connectionAttempted: databaseAdapterRuntime.liveConnectionAttempted,
+      migrationExecutionEnabled: migration.executionGate.liveExecutionEnabled,
+      queryExecutionEnabled: databaseAdapterRuntime.liveQueryExecutionEnabled,
+      writeExecutionEnabled: persistenceRuntime.migrationGate.liveExecutionEnabled,
+    },
+    productionActivationBlockers: diagnostics.map((diagnostic) => diagnostic.message),
+    profileId: config.profileId,
+    repositoryContract: {
+      createDraft: true,
+      getById: true,
+      health: true,
+      list: true,
+      reset: true,
+    },
+    status: diagnostics.length === 0 ? "ready" : "blocked",
+    storeId: "campaign-db",
+    validation: {
+      issues: diagnostics,
+      valid: diagnostics.length === 0,
     },
   };
 };
@@ -667,6 +837,12 @@ export const createBackendServiceReadinessReport = ({
     productionRequired: config.profileId === "production-required",
     sessionConfigReady: Boolean(env.CAMPAIGN_OS_AUTH_SECRET),
   });
+  const campaignDbVerticalSlice = createCampaignDbVerticalSliceReadinessSummary({
+    config,
+    databaseAdapterRuntime,
+    migration,
+    persistenceRuntime,
+  });
   const entrypoint: BackendServiceEntrypoint = {
     foundationValidationValid: apiFoundation.validation.valid,
     id: "campaign-os-backend-service",
@@ -682,6 +858,7 @@ export const createBackendServiceReadinessReport = ({
     apiFoundation,
     attachMap: backendAttachMap,
     authSession,
+    campaignDbVerticalSlice,
     config,
     databaseAdapterRuntime,
     databaseReadiness,
@@ -700,6 +877,7 @@ export const createBackendServiceReadinessReport = ({
     },
     attachMap: backendAttachMap,
     authSession,
+    campaignDbVerticalSlice,
     config,
     databaseAdapterRuntime,
     databaseReadiness,
