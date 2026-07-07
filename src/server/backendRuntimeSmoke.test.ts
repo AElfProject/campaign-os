@@ -11,6 +11,12 @@ const secretFragments = [
   "queue-secret",
   "queue-user",
   "raw-signature-sample",
+  "elf_scheduler_wallet",
+  "scheduler-pass",
+  "scheduler-secret",
+  "scheduler-token-sample",
+  "scheduler-user",
+  "scheduler_raw_task",
   "seed phrase sample",
   "signed-url",
   "super-secret",
@@ -24,6 +30,32 @@ const expectNoSecretLeak = (value: unknown) => {
   }
 };
 
+const expectedSchedulerRuntimeFoundation = {
+  blockerCount: 0,
+  diagnosticCodes: [],
+  dryRunTriggerEnabled: true,
+  id: "campaign-os-scheduler-runtime-foundation",
+  liveCronExecutionEnabled: false,
+  liveQueuePublishingEnabled: false,
+  liveSchedulerExecutionEnabled: false,
+  liveWorkerExecutionEnabled: false,
+  productionReady: false,
+  registrationCount: 9,
+  scheduleIds: expect.arrayContaining([
+    "task-verification-on-request",
+    "campaign-lifecycle-time-boundary",
+    "eligibility-refresh-recurring",
+    "export-preparation-operator",
+    "analytics-ingestion-recurring",
+    "ai-ops-report-recurring",
+    "stale-review-cleanup-operator",
+    "contract-sync-operator",
+    "reward-distribution-operator",
+  ]),
+  status: "local_ready",
+  valid: true,
+};
+
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
     const summary = await runBackendRuntimeSmoke({
@@ -33,6 +65,9 @@ describe("backend runtime smoke command", () => {
         CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT: "https://writer.invalid/private-key-sample",
         CAMPAIGN_OS_DATABASE_URL: "postgres://real-user:real-db-password@db.invalid/campaign-os",
         CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid/object-key-sample",
+        CAMPAIGN_OS_RAW_TRIGGER_PAYLOAD_SAMPLE: "{\"walletAddress\":\"ELF_scheduler_wallet\",\"taskId\":\"scheduler_raw_task\"}",
+        CAMPAIGN_OS_SCHEDULER_ENDPOINT: "https://scheduler-user:scheduler-pass@scheduler.invalid/hook?token=scheduler-secret",
+        CAMPAIGN_OS_SCHEDULER_TOKEN_SAMPLE: "Bearer scheduler-token-sample",
         CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
       },
     });
@@ -85,6 +120,7 @@ describe("backend runtime smoke command", () => {
             status: "local_ready",
             valid: true,
           },
+          schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
           workerSchedulerFoundation: {
             blockerCount: 0,
             jobCatalogCount: 9,
@@ -134,6 +170,7 @@ describe("backend runtime smoke command", () => {
             status: "local_ready",
             valid: true,
           },
+          schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
           workerSchedulerFoundation: {
             blockerCount: 0,
             jobCatalogCount: 9,
@@ -198,6 +235,7 @@ describe("backend runtime smoke command", () => {
         status: "local_ready",
         valid: true,
       },
+      schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
       workerSchedulerFoundation: {
         blockerCount: 0,
         diagnosticCodes: [],
@@ -244,5 +282,58 @@ describe("backend runtime smoke command", () => {
       ]),
     );
     expectNoSecretLeak(summary);
+  });
+
+  it("fails closed when scheduler runtime metadata is missing from smoke payloads", async () => {
+    const fetchWithoutScheduler: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: Record<string, unknown>;
+          };
+        };
+      };
+
+      delete payload.data?.serverRuntime?.readiness?.schedulerRuntimeFoundation;
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutScheduler })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when scheduler runtime smoke payload enables live scheduler execution", async () => {
+    const fetchWithLiveSchedulerFlag: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              schedulerRuntimeFoundation?: Record<string, unknown>;
+            };
+          };
+        };
+      };
+      const schedulerRuntimeFoundation = payload.data?.serverRuntime?.readiness?.schedulerRuntimeFoundation;
+
+      if (schedulerRuntimeFoundation) {
+        schedulerRuntimeFoundation.liveSchedulerExecutionEnabled = true;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveSchedulerFlag })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
   });
 });

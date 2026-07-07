@@ -6,11 +6,15 @@ import {
   runtimeActivationEnvironmentKeys,
   runtimeActivationConfigKeys,
 } from "./backendRuntimeActivation";
+import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { resolveApiServerRuntimeContract } from "./serverRuntime";
 
 const secretFragments = [
   "bearer sample-token",
   "https://scheduler.invalid/scheduler-pass",
+  "https://lease.invalid/lease-secret",
+  "metadata-provider-secret",
+  "operator-policy-secret",
   "https://queue.invalid/queue-secret",
   "https://queue.invalid/dead-letter?token=queue-secret",
   "https://store.invalid/token=idempotency-secret",
@@ -86,9 +90,15 @@ describe("backend runtime activation contract", () => {
         CAMPAIGN_OS_AUTH_SECRET: "super-secret",
         CAMPAIGN_OS_DATABASE_URL: "postgres://real-user:real-db-password@db.invalid/campaign-os",
         CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid/object-key-sample",
+        CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL: "https://lease.invalid/lease-secret",
+        CAMPAIGN_OS_SCHEDULER_PROVIDER: "metadata-provider-secret",
+        CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY: "operator-policy-secret",
       },
     });
     const activation = createBackendRuntimeActivationContract({ runtime });
+    const schedulerRuntimeConfigKeys = [
+      ...new Set(schedulerRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
 
     expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
       expect.arrayContaining([
@@ -100,12 +110,15 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_AUTH_SECRET",
         "CAMPAIGN_OS_QUEUE_PROVIDER",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+        "CAMPAIGN_OS_SCHEDULER_PROVIDER",
         "CAMPAIGN_OS_WORKER_QUEUE_URL",
         "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
+        "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
         "CAMPAIGN_OS_WORKER_RETRY_POLICY",
         "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
         "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
         "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+        "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
         "CAMPAIGN_OS_DEGRADATION_POLICY",
         "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
         "CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT",
@@ -114,16 +127,31 @@ describe("backend runtime activation contract", () => {
     expect(runtimeActivationEnvironmentKeys.map((item) => item.key)).toEqual(
       expect.arrayContaining([
         "CAMPAIGN_OS_WORKER_QUEUE_URL",
+        "CAMPAIGN_OS_SCHEDULER_PROVIDER",
         "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
+        "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
         "CAMPAIGN_OS_QUEUE_PROVIDER",
         "CAMPAIGN_OS_WORKER_RETRY_POLICY",
         "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
         "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
         "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+        "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
         "CAMPAIGN_OS_DEGRADATION_POLICY",
         "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
       ]),
     );
+    for (const schedulerRuntimeConfigKey of schedulerRuntimeConfigKeys) {
+      expect(activation.deploymentHandoff.environmentKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: schedulerRuntimeConfigKey,
+            redacted: true,
+            required: true,
+            requiredFor: "production-required",
+          }),
+        ]),
+      );
+    }
     expect(activation.deploymentHandoff.environmentKeys).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -157,7 +185,7 @@ describe("backend runtime activation contract", () => {
           key: "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
           redacted: true,
           required: true,
-          status: "deferred",
+          status: "blocked",
         }),
         expect.objectContaining({
           category: "worker",
@@ -206,6 +234,14 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "auth", id: "wallet-proof-verifier", status: "blocked" }),
         expect.objectContaining({ area: "auth", id: "session-issuer", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "provider-adapters", status: "deferred" }),
+        expect.objectContaining({ area: "scheduler", id: "scheduler-runtime-scheduler-provider", status: "blocked" }),
+        expect.objectContaining({ area: "scheduler", id: "scheduler-runtime-scheduler-endpoint", status: "blocked" }),
+        expect.objectContaining({ area: "scheduler", id: "scheduler-runtime-scheduler-clock-lease", status: "blocked" }),
+        expect.objectContaining({ area: "scheduler", id: "scheduler-runtime-scheduler-idempotency-store", status: "blocked" }),
+        expect.objectContaining({ area: "queue", id: "scheduler-runtime-scheduler-queue-handoff", status: "blocked" }),
+        expect.objectContaining({ area: "observability", id: "scheduler-runtime-scheduler-observability", status: "deferred" }),
+        expect.objectContaining({ area: "auth", id: "scheduler-runtime-scheduler-operator-authorization", status: "blocked" }),
+        expect.objectContaining({ area: "queue", id: "scheduler-runtime-scheduler-dead-letter", status: "blocked" }),
         expect.objectContaining({ area: "queue", id: "queue-provider", status: "blocked" }),
         expect.objectContaining({ area: "worker", id: "worker-queue", status: "deferred" }),
         expect.objectContaining({ area: "queue", id: "worker-queue-url", status: "blocked" }),
@@ -228,6 +264,18 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "reward", id: "reward-custody", status: "blocked" }),
         expect.objectContaining({ area: "reward", id: "reward-distribution", status: "blocked" }),
       ]),
+    );
+    expect(activation.productionDependencyBlockers).toEqual(
+      expect.arrayContaining(
+        schedulerRuntimeProductionPreconditions.map((precondition) =>
+          expect.objectContaining({
+            attachPoint: "src/server/schedulerRuntime.ts",
+            id: `scheduler-runtime-${precondition.id}`,
+            requiredBeforeProduction: true,
+            status: precondition.status,
+          }),
+        ),
+      ),
     );
     expectNoSecretLeak(activation);
   });

@@ -8,6 +8,7 @@ import {
   type BackendRuntimeProfileId,
 } from "./backendProfiles";
 import { queueRuntimeProductionPreconditions } from "./queueRuntime";
+import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 
 export type CampaignOsPersistenceMode = "memory" | "local_json";
 
@@ -91,9 +92,12 @@ const forbiddenConfigKeyFragments = [
   "mnemonic",
   "objectkey",
   "password",
+  "provider",
   "providercredentials",
   "private",
   "queue",
+  "authorization",
+  "lease",
   "secret",
   "seed",
   "signature",
@@ -214,8 +218,13 @@ const queueRuntimeRequiredConfigKeys = uniqueStrings(
   queueRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
 );
 
+const schedulerRuntimeRequiredConfigKeys = uniqueStrings(
+  schedulerRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
+);
+
 const backendProductionReadinessRequiredConfigKeys = uniqueStrings([
   ...productionBackendRequiredConfigKeys,
+  ...schedulerRuntimeRequiredConfigKeys,
   ...queueRuntimeRequiredConfigKeys,
 ]);
 
@@ -290,7 +299,7 @@ export const resolveBackendConfigContract = ({
   const profile = profileResolution.profile;
   const missingConfigKeys =
     profile.id === "production-required"
-      ? missingRequiredConfigKeys(env, profile.requiredConfigKeys)
+      ? missingRequiredConfigKeys(env, backendProductionReadinessRequiredConfigKeys)
       : [];
   const deferredDiagnostics =
     profile.id === "local-review" || profile.id === "staging-scaffold"

@@ -30,10 +30,28 @@ const queueSecretFragments = [
   "task_raw",
 ];
 
+const schedulerSecretFragments = [
+  "scheduler-user",
+  "scheduler-pass",
+  "scheduler-secret",
+  "scheduler-token-sample",
+  "scheduler-hook-secret",
+  "ELF_scheduler_wallet",
+  "scheduler_raw_task",
+];
+
 const expectNoQueueSecretLeak = (value: unknown) => {
   const serialized = JSON.stringify(value);
 
   for (const fragment of queueSecretFragments) {
+    expect(serialized).not.toContain(fragment);
+  }
+};
+
+const expectNoSchedulerSecretLeak = (value: unknown) => {
+  const serialized = JSON.stringify(value);
+
+  for (const fragment of schedulerSecretFragments) {
     expect(serialized).not.toContain(fragment);
   }
 };
@@ -325,6 +343,59 @@ describe("backend service readiness report", () => {
           "CAMPAIGN_OS_DEGRADATION_POLICY",
           "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
         ]),
+      },
+      status: "local_ready",
+      valid: true,
+    });
+    expect(report.schedulerRuntimeFoundation).toMatchObject({
+      blockerCount: 0,
+      diagnosticCodes: [],
+      dryRunTrigger: {
+        enabled: true,
+        liveCronExecutionEnabled: false,
+        liveQueuePublishingEnabled: false,
+        liveSchedulerExecutionEnabled: false,
+      },
+      id: "campaign-os-scheduler-runtime-foundation",
+      noLiveFlags: {
+        liveCronExecutionEnabled: false,
+        liveQueuePublishingEnabled: false,
+        liveSchedulerExecutionEnabled: false,
+        liveWorkerExecutionEnabled: false,
+      },
+      productionReady: false,
+      profileId: "local-review",
+      registrationCoverage: {
+        jobFamilies: expect.arrayContaining([
+          "campaign_lifecycle",
+          "eligibility_refresh",
+          "export_preparation",
+          "analytics_ingestion_handoff",
+          "ai_ops_report",
+          "stale_review_cleanup",
+          "contract_sync_handoff",
+          "reward_distribution_handoff",
+          "task_verification",
+        ]),
+        registrationCount: 9,
+        requiredConfigKeys: expect.arrayContaining([
+          "CAMPAIGN_OS_SCHEDULER_PROVIDER",
+          "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
+          "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
+          "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
+        ]),
+        scheduleIds: expect.arrayContaining([
+          "task-verification-on-request",
+          "campaign-lifecycle-time-boundary",
+          "eligibility-refresh-recurring",
+          "export-preparation-operator",
+          "analytics-ingestion-recurring",
+          "ai-ops-report-recurring",
+          "stale-review-cleanup-operator",
+          "contract-sync-operator",
+          "reward-distribution-operator",
+        ]),
+        triggerSourceCount: 4,
       },
       status: "local_ready",
       valid: true,
@@ -744,8 +815,19 @@ describe("backend service readiness report", () => {
           CAMPAIGN_OS_AUTH_SECRET: "auth-secret",
           CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT: "https://writer.invalid",
           CAMPAIGN_OS_DATABASE_URL: "postgres://db.invalid/campaign-os",
+          CAMPAIGN_OS_DEAD_LETTER_QUEUE: "https://queue.invalid/dead-letter?token=queue-secret",
+          CAMPAIGN_OS_DEGRADATION_POLICY: "fail-closed",
+          CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "https://idempotency.invalid/store",
+          CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "https://observability.invalid/hook",
+          CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY: "operator-review-required",
           CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid",
+          CAMPAIGN_OS_QUEUE_PROVIDER: "metadata-only",
+          CAMPAIGN_OS_SCHEDULER_ENDPOINT: "https://scheduler.invalid/hook",
+          CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL: "https://lease.invalid/store",
+          CAMPAIGN_OS_SCHEDULER_PROVIDER: "metadata-only",
+          CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "https://lease.invalid/worker",
           CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
+          CAMPAIGN_OS_WORKER_RETRY_POLICY: "deterministic-backoff",
         },
         profileId: "production-required",
       },
@@ -1086,11 +1168,10 @@ describe("backend service readiness report", () => {
       },
     });
     expect(report.providerIndexerFoundation).toMatchObject({
-      blockerCount: 3,
+      blockerCount: 2,
       diagnosticCodes: [
         "INDEXER_ENDPOINT_MISSING",
         "PROVIDER_CREDENTIALS_MISSING",
-        "DEGRADATION_POLICY_MISSING",
       ],
       noLiveFlags: {
         liveProviderCallsEnabled: false,
@@ -1117,14 +1198,8 @@ describe("backend service readiness report", () => {
       },
     });
     expect(report.workerSchedulerFoundation).toMatchObject({
-      blockerCount: 5,
-      diagnosticCodes: expect.arrayContaining([
-        "SCHEDULER_ENDPOINT_MISSING",
-        "RETRY_BACKOFF_POLICY_MISSING",
-        "IDEMPOTENCY_STORE_MISSING",
-        "WORKER_LEASE_MISSING",
-        "OBSERVABILITY_MISSING",
-      ]),
+      blockerCount: 0,
+      diagnosticCodes: [],
       noLiveFlags: {
         liveCronExecutionEnabled: false,
         liveQueuePublishingEnabled: false,
@@ -1133,22 +1208,14 @@ describe("backend service readiness report", () => {
       },
       productionReady: false,
       profileId: "production-required",
-      status: "blocked",
-      valid: false,
+      status: "local_ready",
+      valid: true,
     });
     expect(report.queueRuntimeFoundation).toMatchObject({
-      blockerCount: 7,
-      diagnosticCodes: expect.arrayContaining([
-        "QUEUE_PROVIDER_MISSING",
-        "QUEUE_RETRY_POLICY_MISSING",
-        "QUEUE_IDEMPOTENCY_STORE_MISSING",
-        "QUEUE_WORKER_LEASE_MISSING",
-        "QUEUE_OBSERVABILITY_MISSING",
-        "QUEUE_PROVIDER_HANDOFF_MISSING",
-        "QUEUE_DEAD_LETTER_MISSING",
-      ]),
+      blockerCount: 0,
+      diagnosticCodes: [],
       dryRunEnqueue: {
-        enabled: false,
+        enabled: true,
         livePublishAttempted: false,
         liveQueuePublishingEnabled: false,
       },
@@ -1163,8 +1230,26 @@ describe("backend service readiness report", () => {
       queuePlanCoverage: {
         queuePlanCount: 9,
       },
-      status: "blocked",
-      valid: false,
+      status: "scaffolded",
+      valid: true,
+    });
+    expect(report.schedulerRuntimeFoundation).toMatchObject({
+      blockerCount: 0,
+      diagnosticCodes: [],
+      dryRunTrigger: {
+        enabled: true,
+        liveCronExecutionEnabled: false,
+        liveQueuePublishingEnabled: false,
+        liveSchedulerExecutionEnabled: false,
+      },
+      id: "campaign-os-scheduler-runtime-foundation",
+      productionReady: false,
+      profileId: "production-required",
+      registrationCoverage: {
+        registrationCount: 9,
+      },
+      status: "local_ready",
+      valid: true,
     });
     expect(report.authSession.validation.issues).toEqual(
       expect.arrayContaining([
@@ -1209,16 +1294,15 @@ describe("backend service readiness report", () => {
           code: "MIGRATION_MANIFEST_INVALID",
           field: "migration",
         }),
-        expect.objectContaining({
-          code: "WORKER_SCHEDULER_READINESS_BLOCKED",
-          field: "workerSchedulerFoundation",
-        }),
-        expect.objectContaining({
-          code: "QUEUE_RUNTIME_READINESS_BLOCKED",
-          field: "queueRuntimeFoundation",
-        }),
       ]),
     });
+    expect(report.validation.issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: "workerSchedulerFoundation" }),
+        expect.objectContaining({ field: "queueRuntimeFoundation" }),
+        expect.objectContaining({ field: "schedulerRuntimeFoundation" }),
+      ]),
+    );
     expect(report.backendRuntimeBootstrap).toMatchObject({
       diagnosticCodes: expect.arrayContaining([
         "BACKEND_RUNTIME_BOOTSTRAP_PRODUCTION_BLOCKED",
@@ -1299,6 +1383,46 @@ describe("backend service readiness report", () => {
       valid: true,
     });
     expectNoQueueSecretLeak(report);
+  });
+
+  it("does not serialize scheduler runtime credentials or raw trigger payload samples", () => {
+    const report = createBackendServiceReadinessReport({
+      configOptions: {
+        env: {
+          CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+          CAMPAIGN_OS_DEAD_LETTER_QUEUE: "https://queue.invalid/dead-letter?token=queue-secret",
+          CAMPAIGN_OS_DEGRADATION_POLICY: "fail-closed",
+          CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "https://idempotency.invalid/store",
+          CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "https://observability.invalid/hook?scheduler-hook-secret=1",
+          CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY: "operator-review-required",
+          CAMPAIGN_OS_RAW_TRIGGER_PAYLOAD_SAMPLE: "{\"walletAddress\":\"ELF_scheduler_wallet\",\"taskId\":\"scheduler_raw_task\"}",
+          CAMPAIGN_OS_SCHEDULER_ENDPOINT: "https://scheduler-user:scheduler-pass@scheduler.invalid/hook?token=scheduler-secret",
+          CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL: "https://lease.invalid/store",
+          CAMPAIGN_OS_SCHEDULER_PROVIDER: "metadata-only",
+          CAMPAIGN_OS_SCHEDULER_TOKEN_SAMPLE: "Bearer scheduler-token-sample",
+          CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue.invalid/jobs",
+        },
+        profileId: "production-required",
+      },
+    });
+
+    expect(report.schedulerRuntimeFoundation).toMatchObject({
+      diagnosticCodes: [],
+      dryRunTrigger: {
+        enabled: true,
+        liveCronExecutionEnabled: false,
+        liveQueuePublishingEnabled: false,
+        liveSchedulerExecutionEnabled: false,
+      },
+      profileId: "production-required",
+      productionReady: false,
+      registrationCoverage: {
+        registrationCount: 9,
+      },
+      status: "local_ready",
+      valid: true,
+    });
+    expectNoSchedulerSecretLeak(report);
   });
 
   it("uses readable labels and does not expose private artifact paths", () => {

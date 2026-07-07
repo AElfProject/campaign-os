@@ -50,6 +50,23 @@ export interface ServerRuntimeQueueRuntimeReadiness {
   valid: BackendServiceReadinessReport["queueRuntimeFoundation"]["valid"];
 }
 
+export interface ServerRuntimeSchedulerRuntimeReadiness {
+  blockerCount: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["blockerCount"];
+  diagnosticCodes: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["diagnosticCodes"];
+  dryRunTriggerEnabled: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["dryRunTrigger"]["enabled"];
+  id: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["id"];
+  liveCronExecutionEnabled: false;
+  liveQueuePublishingEnabled: false;
+  liveSchedulerExecutionEnabled: false;
+  noLiveFlags: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["noLiveFlags"];
+  productionReady: false;
+  profileId: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["profileId"];
+  registrationCount: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["registrationCoverage"]["registrationCount"];
+  scheduleIds: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["registrationCoverage"]["scheduleIds"];
+  status: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["status"];
+  valid: BackendServiceReadinessReport["schedulerRuntimeFoundation"]["valid"];
+}
+
 export interface ServerRuntimeReadiness {
   corsPolicy: {
     allowedOriginCount: number;
@@ -95,6 +112,7 @@ export interface ServerRuntimeReadiness {
     providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
     queueRuntimeFoundation: ServerRuntimeQueueRuntimeReadiness;
     persistenceRuntime: BackendPersistenceRuntimeSummary;
+    schedulerRuntimeFoundation: ServerRuntimeSchedulerRuntimeReadiness;
     workerSchedulerFoundation: BackendServiceReadinessReport["workerSchedulerFoundation"];
   };
   requestGuard: {
@@ -138,6 +156,25 @@ const createServerQueueRuntimeReadiness = (
   queuePlanCount: queueRuntimeFoundation.queuePlanCoverage.queuePlanCount,
   status: queueRuntimeFoundation.status,
   valid: queueRuntimeFoundation.valid,
+});
+
+const createServerSchedulerRuntimeReadiness = (
+  schedulerRuntimeFoundation: BackendServiceReadinessReport["schedulerRuntimeFoundation"],
+): ServerRuntimeSchedulerRuntimeReadiness => ({
+  blockerCount: schedulerRuntimeFoundation.blockerCount,
+  diagnosticCodes: schedulerRuntimeFoundation.diagnosticCodes,
+  dryRunTriggerEnabled: schedulerRuntimeFoundation.dryRunTrigger.enabled,
+  id: schedulerRuntimeFoundation.id,
+  liveCronExecutionEnabled: schedulerRuntimeFoundation.dryRunTrigger.liveCronExecutionEnabled,
+  liveQueuePublishingEnabled: schedulerRuntimeFoundation.dryRunTrigger.liveQueuePublishingEnabled,
+  liveSchedulerExecutionEnabled: schedulerRuntimeFoundation.dryRunTrigger.liveSchedulerExecutionEnabled,
+  noLiveFlags: schedulerRuntimeFoundation.noLiveFlags,
+  productionReady: schedulerRuntimeFoundation.productionReady,
+  profileId: schedulerRuntimeFoundation.profileId,
+  registrationCount: schedulerRuntimeFoundation.registrationCoverage.registrationCount,
+  scheduleIds: schedulerRuntimeFoundation.registrationCoverage.scheduleIds,
+  status: schedulerRuntimeFoundation.status,
+  valid: schedulerRuntimeFoundation.valid,
 });
 
 const resolveStatus = ({
@@ -226,6 +263,7 @@ export const createServerRuntimeReadiness = ({
       providerIndexerFoundation: backendReadiness.providerIndexerFoundation,
       queueRuntimeFoundation: createServerQueueRuntimeReadiness(backendReadiness.queueRuntimeFoundation),
       persistenceRuntime: createBackendPersistenceRuntimeSummary(backendReadiness.persistenceRuntime),
+      schedulerRuntimeFoundation: createServerSchedulerRuntimeReadiness(backendReadiness.schedulerRuntimeFoundation),
       workerSchedulerFoundation: backendReadiness.workerSchedulerFoundation,
     },
     requestGuard: {

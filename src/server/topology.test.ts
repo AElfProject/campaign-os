@@ -11,6 +11,7 @@ import {
   validateBackendTopology,
 } from "./index";
 import { providerIndexerAdapterGroups } from "./providerIndexerAdapters";
+import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 
 const expectedServiceIds = [
   "campaign-service",
@@ -136,15 +137,26 @@ describe("backend service topology", () => {
       ]),
     });
     expect(schedulerRuntime).toMatchObject({
-      currentImplementation: "deferred",
-      entrypoint: "src/server/queueRuntime.ts",
+      attachPointPath: "src/server/schedulerRuntime.ts",
+      currentImplementation: "source-topology-only",
+      currentStatus: "local",
+      entrypoint: "src/server/schedulerRuntime.ts",
+      localReviewRuntimePolicy: {
+        cloudSchedulerPackageInstalled: false,
+        cronPackageInstalled: false,
+        liveCronExecutionEnabled: false,
+        liveSchedulerExecutionEnabled: false,
+      },
       productionTarget: "scheduled_runner",
+      productionRequiredBlockerIds: schedulerRuntimeProductionPreconditions.map((precondition) => precondition.id),
       serviceIds: expect.arrayContaining([
         "campaign-service",
         "eligibility-service",
+        "export-service",
         "risk-scoring-service",
         "ai-ops-service",
         "runtime-observability",
+        "points-ranking-service",
       ]),
     });
 
@@ -217,12 +229,42 @@ describe("backend service topology", () => {
     expect(serviceById.get("eligibility-service")?.risks.join(" ")).toContain("provider handoff");
     expect(serviceById.get("eligibility-service")?.risks.join(" ")).toContain("queue runtime");
     expect(serviceById.get("export-service")?.risks.join(" ")).toContain("observability exporter");
+    expect(serviceById.get("export-service")?.risks.join(" ")).toContain("Export preparation handoff");
     expect(serviceById.get("risk-scoring-service")?.risks.join(" ")).toContain("worker lease");
     expect(serviceById.get("risk-scoring-service")?.risks.join(" ")).toContain("dead-letter");
+    expect(serviceById.get("risk-scoring-service")?.risks.join(" ")).toContain("Risk cleanup");
     expect(serviceById.get("ai-ops-service")?.risks.join(" ")).toContain("scheduler runtime");
     expect(serviceById.get("ai-ops-service")?.risks.join(" ")).toContain("queue runtime");
     expect(serviceById.get("runtime-observability")?.risks.join(" ")).toContain("contract sync handoffs");
     expect(serviceById.get("points-ranking-service")?.risks.join(" ")).toContain("Reward distribution handoff");
+  });
+
+  it("exposes scheduler runtime as metadata-only topology attach point without live cron packages", () => {
+    const schedulerRuntime = backendDeploymentUnits.find((unit) => unit.id === "scheduler-runtime");
+
+    expect(schedulerRuntime).toMatchObject({
+      attachPointPath: "src/server/schedulerRuntime.ts",
+      currentStatus: "local",
+      localReviewRuntimePolicy: {
+        cloudSchedulerPackageInstalled: false,
+        cronPackageInstalled: false,
+        liveCronExecutionEnabled: false,
+        liveSchedulerExecutionEnabled: false,
+      },
+      productionRequiredBlockerIds: expect.arrayContaining([
+        "scheduler-provider",
+        "scheduler-endpoint",
+        "scheduler-clock-lease",
+        "scheduler-idempotency-store",
+        "scheduler-queue-handoff",
+        "scheduler-observability",
+        "scheduler-operator-authorization",
+        "scheduler-dead-letter",
+      ]),
+    });
+    expect(schedulerRuntime?.productionRequiredBlockerIds).toHaveLength(
+      schedulerRuntimeProductionPreconditions.length,
+    );
   });
 
   it("produces a valid topology report with route and ownership coverage", () => {

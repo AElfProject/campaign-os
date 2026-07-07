@@ -24,6 +24,7 @@ export interface BackendRuntimeSmokeCheck {
   persistenceFoundation?: BackendRuntimeSmokePersistenceFoundationSummary;
   providerIndexerFoundation?: BackendRuntimeSmokeProviderIndexerFoundationSummary;
   queueRuntimeFoundation?: BackendRuntimeSmokeQueueRuntimeFoundationSummary;
+  schedulerRuntimeFoundation?: BackendRuntimeSmokeSchedulerRuntimeFoundationSummary;
   status: number;
   traceId: string;
   workerSchedulerFoundation?: BackendRuntimeSmokeWorkerSchedulerFoundationSummary;
@@ -100,6 +101,22 @@ export interface BackendRuntimeSmokeQueueRuntimeFoundationSummary {
   valid: boolean;
 }
 
+export interface BackendRuntimeSmokeSchedulerRuntimeFoundationSummary {
+  blockerCount: number;
+  diagnosticCodes: string[];
+  dryRunTriggerEnabled: boolean;
+  id?: string;
+  liveCronExecutionEnabled: false;
+  liveQueuePublishingEnabled: false;
+  liveSchedulerExecutionEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  productionReady: false;
+  registrationCount: number;
+  scheduleIds: string[];
+  status?: string;
+  valid: boolean;
+}
+
 export interface BackendRuntimeSmokeSummary {
   activationId?: string;
   authSessionFoundation: BackendRuntimeSmokeAuthSessionFoundationSummary;
@@ -115,6 +132,7 @@ export interface BackendRuntimeSmokeSummary {
   providerIndexerFoundation: BackendRuntimeSmokeProviderIndexerFoundationSummary;
   queueRuntimeFoundation: BackendRuntimeSmokeQueueRuntimeFoundationSummary;
   requiredBeforeProduction: string[];
+  schedulerRuntimeFoundation: BackendRuntimeSmokeSchedulerRuntimeFoundationSummary;
   shutdownState: "running" | "stopping" | "stopped";
   status: "passed";
   traceIds: {
@@ -176,6 +194,11 @@ const readQueueRuntimeFoundation = (
   value: unknown,
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["serverRuntime", "readiness", "queueRuntimeFoundation"]);
+
+const readSchedulerRuntimeFoundation = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["serverRuntime", "readiness", "schedulerRuntimeFoundation"]);
 
 const getNumber = (
   record: Record<string, unknown> | undefined,
@@ -363,6 +386,45 @@ const summarizeQueueRuntimeFoundation = (
   };
 };
 
+const summarizeSchedulerRuntimeFoundation = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeSchedulerRuntimeFoundationSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const noLiveFlags = readNestedRecord(record, ["noLiveFlags"]);
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "liveCronExecutionEnabled")
+    && isExplicitFalse(record, "liveQueuePublishingEnabled")
+    && isExplicitFalse(record, "liveSchedulerExecutionEnabled")
+    && isExplicitFalse(noLiveFlags, "liveCronExecutionEnabled")
+    && isExplicitFalse(noLiveFlags, "liveQueuePublishingEnabled")
+    && isExplicitFalse(noLiveFlags, "liveSchedulerExecutionEnabled")
+    && isExplicitFalse(noLiveFlags, "liveWorkerExecutionEnabled");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    dryRunTriggerEnabled: getBoolean(record, "dryRunTriggerEnabled"),
+    id: getString(record, "id"),
+    liveCronExecutionEnabled: false,
+    liveQueuePublishingEnabled: false,
+    liveSchedulerExecutionEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    productionReady: false,
+    registrationCount: getNumber(record, "registrationCount"),
+    scheduleIds: getStringArray(record, "scheduleIds"),
+    status: getString(record, "status"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
 const createSmokeCheck = async ({
   baseUrl,
   endpoint,
@@ -400,6 +462,9 @@ const createSmokeCheck = async ({
   const queueRuntimeFoundation = summarizeQueueRuntimeFoundation(
     readQueueRuntimeFoundation(payload.data),
   );
+  const schedulerRuntimeFoundation = summarizeSchedulerRuntimeFoundation(
+    readSchedulerRuntimeFoundation(payload.data),
+  );
 
   return {
     activation,
@@ -412,6 +477,7 @@ const createSmokeCheck = async ({
       persistenceFoundation,
       providerIndexerFoundation,
       queueRuntimeFoundation,
+      schedulerRuntimeFoundation,
       status: response.status,
       traceId: payload.traceId ?? "",
       workerSchedulerFoundation,
@@ -525,6 +591,25 @@ const isQueueRuntimeFoundationSmokeReady = (
     && summary.valid === true;
 };
 
+const isSchedulerRuntimeFoundationSmokeReady = (
+  summary: BackendRuntimeSmokeSchedulerRuntimeFoundationSummary | undefined,
+): summary is BackendRuntimeSmokeSchedulerRuntimeFoundationSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveWorkerExecutionEnabled === false
+    && summary.liveSchedulerExecutionEnabled === false
+    && summary.liveQueuePublishingEnabled === false
+    && summary.liveCronExecutionEnabled === false
+    && summary.registrationCount >= 9
+    && summary.scheduleIds.length >= 9
+    && summary.dryRunTriggerEnabled === true
+    && summary.status === "local_ready"
+    && summary.valid === true;
+};
+
 export const runBackendRuntimeSmoke = async ({
   env,
   fetchImpl = fetch,
@@ -562,6 +647,7 @@ export const runBackendRuntimeSmoke = async ({
     const persistenceFoundation = contracts.check.persistenceFoundation;
     const providerIndexerFoundation = contracts.check.providerIndexerFoundation;
     const queueRuntimeFoundation = contracts.check.queueRuntimeFoundation;
+    const schedulerRuntimeFoundation = contracts.check.schedulerRuntimeFoundation;
     const workerSchedulerFoundation = contracts.check.workerSchedulerFoundation;
 
     if (
@@ -581,6 +667,8 @@ export const runBackendRuntimeSmoke = async ({
       || !isProviderIndexerFoundationSmokeReady(providerIndexerFoundation)
       || !isQueueRuntimeFoundationSmokeReady(health.check.queueRuntimeFoundation)
       || !isQueueRuntimeFoundationSmokeReady(queueRuntimeFoundation)
+      || !isSchedulerRuntimeFoundationSmokeReady(health.check.schedulerRuntimeFoundation)
+      || !isSchedulerRuntimeFoundationSmokeReady(schedulerRuntimeFoundation)
       || !isWorkerSchedulerFoundationSmokeReady(health.check.workerSchedulerFoundation)
       || !isWorkerSchedulerFoundationSmokeReady(workerSchedulerFoundation)
     ) {
@@ -602,6 +690,7 @@ export const runBackendRuntimeSmoke = async ({
       providerIndexerFoundation,
       queueRuntimeFoundation,
       requiredBeforeProduction: getStringArray(deploymentHandoff, "requiredBeforeProduction"),
+      schedulerRuntimeFoundation,
       status: "passed",
       traceIds: {
         contracts: contracts.check.traceId,

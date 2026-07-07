@@ -153,10 +153,16 @@ describe("API foundation registry", () => {
       notes: expect.stringContaining("dead-letter queue"),
     });
     expect(surfaceById.get("export")).toMatchObject({
-      deferredDependencies: expect.arrayContaining(["contract_writer", "object_storage_export", "worker_queue"]),
+      deferredDependencies: expect.arrayContaining(["contract_writer", "object_storage_export", "scheduler", "worker_queue"]),
       notes: expect.stringContaining("observability exporter"),
     });
+    expect(surfaceById.get("export")?.notes).toContain("scheduler runtime");
     expect(surfaceById.get("export")?.notes).toContain("queue runtime");
+    expect(surfaceById.get("points-ranking")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["contract_writer", "production_database", "scheduler", "worker_queue"]),
+      notes: expect.stringContaining("reward handoff scheduler runtime"),
+    });
+    expect(surfaceById.get("points-ranking")?.notes).toContain("dead-letter queue");
     expect(surfaceById.get("analytics")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
       notes: expect.stringContaining("analytics ingestion"),
