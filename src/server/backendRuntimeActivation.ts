@@ -25,6 +25,10 @@ import {
   type WorkerIdempotencyPreconditionArea,
 } from "./workerIdempotencyStore";
 import { workerSchedulerProductionPreconditions } from "./workerSchedulerRuntime";
+import {
+  observabilityExporterProductionPreconditions,
+  type ObservabilityPreconditionArea,
+} from "./observabilityExporter";
 
 export type RuntimeActivationConfigCategory =
   | "server"
@@ -267,6 +271,16 @@ const workerIdempotencyStoreConfigCategory = (
   return "worker";
 };
 
+const observabilityExporterConfigCategory = (
+  area: ObservabilityPreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (area === "auth") {
+    return "auth";
+  }
+
+  return "observability";
+};
+
 export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
   configKey("CAMPAIGN_OS_API_HOST", "server", "supported", "local-review"),
   configKey("CAMPAIGN_OS_API_PORT", "server", "supported", "local-review"),
@@ -338,6 +352,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
         queueProviderAdapterConfigCategory(precondition.area),
         precondition.status,
         key === "CAMPAIGN_OS_DEGRADATION_POLICY" ? "future-production" : "production-required",
+      ),
+    ),
+  ),
+  ...observabilityExporterProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        observabilityExporterConfigCategory(precondition.area),
+        precondition.status,
+        "production-required",
       ),
     ),
   ),
@@ -478,6 +502,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
+  ...observabilityExporterProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: "observability",
+    attachPoint: "src/server/observabilityExporter.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: precondition.id,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
   {
     area: "contract",
     attachPoint: "src/server/servicePorts.ts",
@@ -496,8 +528,21 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
   },
   {
     area: "observability",
-    attachPoint: "observability/exporter",
-    blockedBy: ["metrics exporter", "structured log sink", "trace collector"],
+    attachPoint: "src/server/observabilityExporter.ts",
+    blockedBy: [
+      "exporter selection",
+      "exporter endpoint",
+      "exporter credentials",
+      "metrics sink registration",
+      "metric namespace",
+      "retention policy",
+      "trace collector",
+      "structured log sink",
+      "alert routing",
+      "retry/dead-letter policy",
+      "redaction policy",
+      "operator runbook",
+    ],
     id: "observability-exporter",
     requiredBeforeProduction: true,
     status: "deferred",

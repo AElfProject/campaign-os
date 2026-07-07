@@ -21,6 +21,7 @@ export interface BackendRuntimeSmokeCheck {
   deploymentHandoff?: unknown;
   endpoint: "/api/health" | "/api/contracts";
   ok: boolean;
+  observabilityExporterFoundation?: BackendRuntimeSmokeObservabilityExporterFoundationSummary;
   persistenceFoundation?: BackendRuntimeSmokePersistenceFoundationSummary;
   providerIndexerFoundation?: BackendRuntimeSmokeProviderIndexerFoundationSummary;
   queueRuntimeFoundation?: BackendRuntimeSmokeQueueRuntimeFoundationSummary;
@@ -173,6 +174,28 @@ export interface BackendRuntimeSmokeWorkerIdempotencyStoreFoundationSummary {
   valid: boolean;
 }
 
+export interface BackendRuntimeSmokeObservabilityExporterFoundationSummary {
+  adapterId?: string;
+  blockerCount: number;
+  diagnosticCodes: string[];
+  disabledLiveOperationCount: number;
+  exporterId?: string;
+  id?: string;
+  liveAlertRoutingEnabled: false;
+  liveLogExportEnabled: false;
+  liveMetricsExportEnabled: false;
+  liveTelemetryExportEnabled: false;
+  liveTraceExportEnabled: false;
+  metricNamespace?: string;
+  mode?: string;
+  operationCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  sinkId?: string;
+  status?: string;
+  valid: boolean;
+}
+
 export interface BackendRuntimeSmokeSummary {
   activationId?: string;
   authSessionFoundation: BackendRuntimeSmokeAuthSessionFoundationSummary;
@@ -182,6 +205,7 @@ export interface BackendRuntimeSmokeSummary {
   };
   host: string;
   liveSideEffectsEnabled: boolean;
+  observabilityExporterFoundation: BackendRuntimeSmokeObservabilityExporterFoundationSummary;
   persistenceFoundation: BackendRuntimeSmokePersistenceFoundationSummary;
   port: number;
   productionReady: boolean;
@@ -267,6 +291,11 @@ const readWorkerIdempotencyStoreFoundation = (
   value: unknown,
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["serverRuntime", "readiness", "workerIdempotencyStoreFoundation"]);
+
+const readObservabilityExporterFoundation = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["serverRuntime", "readiness", "observabilityExporterFoundation"]);
 
 const getNumber = (
   record: Record<string, unknown> | undefined,
@@ -607,6 +636,54 @@ const summarizeWorkerIdempotencyStoreFoundation = (
   };
 };
 
+const summarizeObservabilityExporterFoundation = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeObservabilityExporterFoundationSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const noLiveFlags = readNestedRecord(record, ["noLiveFlags"]);
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "liveAlertRoutingEnabled")
+    && isExplicitFalse(record, "liveLogExportEnabled")
+    && isExplicitFalse(record, "liveMetricsExportEnabled")
+    && isExplicitFalse(record, "liveTelemetryExportEnabled")
+    && isExplicitFalse(record, "liveTraceExportEnabled")
+    && isExplicitFalse(noLiveFlags, "liveAlertRoutingEnabled")
+    && isExplicitFalse(noLiveFlags, "liveLogExportEnabled")
+    && isExplicitFalse(noLiveFlags, "liveMetricsExportEnabled")
+    && isExplicitFalse(noLiveFlags, "liveTelemetryExportEnabled")
+    && isExplicitFalse(noLiveFlags, "liveTraceExportEnabled");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    adapterId: getString(record, "adapterId"),
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    disabledLiveOperationCount: getNumber(record, "disabledLiveOperationCount"),
+    exporterId: getString(record, "exporterId"),
+    id: getString(record, "id"),
+    liveAlertRoutingEnabled: false,
+    liveLogExportEnabled: false,
+    liveMetricsExportEnabled: false,
+    liveTelemetryExportEnabled: false,
+    liveTraceExportEnabled: false,
+    metricNamespace: getString(record, "metricNamespace"),
+    mode: getString(record, "mode"),
+    operationCount: getNumber(record, "operationCount"),
+    productionReady: false,
+    requiredConfigKeys: getStringArray(record, "requiredConfigKeys"),
+    sinkId: getString(record, "sinkId"),
+    status: getString(record, "status"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
 const createSmokeCheck = async ({
   baseUrl,
   endpoint,
@@ -653,6 +730,9 @@ const createSmokeCheck = async ({
   const workerIdempotencyStoreFoundation = summarizeWorkerIdempotencyStoreFoundation(
     readWorkerIdempotencyStoreFoundation(payload.data),
   );
+  const observabilityExporterFoundation = summarizeObservabilityExporterFoundation(
+    readObservabilityExporterFoundation(payload.data),
+  );
 
   return {
     activation,
@@ -662,6 +742,7 @@ const createSmokeCheck = async ({
       deploymentHandoff,
       endpoint,
       ok: payload.ok === true && payload.traceId === traceId,
+      observabilityExporterFoundation,
       persistenceFoundation,
       providerIndexerFoundation,
       queueRuntimeFoundation,
@@ -868,6 +949,33 @@ const isSchedulerRuntimeFoundationSmokeReady = (
     && summary.valid === true;
 };
 
+const isObservabilityExporterFoundationSmokeReady = (
+  summary: BackendRuntimeSmokeObservabilityExporterFoundationSummary | undefined,
+): summary is BackendRuntimeSmokeObservabilityExporterFoundationSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveAlertRoutingEnabled === false
+    && summary.liveLogExportEnabled === false
+    && summary.liveMetricsExportEnabled === false
+    && summary.liveTelemetryExportEnabled === false
+    && summary.liveTraceExportEnabled === false
+    && summary.exporterId === "local-dry-run"
+    && summary.sinkId === "local-metrics-sink"
+    && summary.adapterId === "local-dry-run-observability-exporter-adapter"
+    && summary.mode === "dry_run"
+    && summary.metricNamespace === "campaign-os-runtime"
+    && summary.operationCount >= 8
+    && summary.disabledLiveOperationCount === summary.operationCount
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_OBSERVABILITY_EXPORTER")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_OBSERVABILITY_SINK")
+    && summary.status === "local_ready"
+    && summary.valid === true;
+};
+
 export const runBackendRuntimeSmoke = async ({
   env,
   fetchImpl = fetch,
@@ -909,6 +1017,7 @@ export const runBackendRuntimeSmoke = async ({
     const workerIdempotencyStoreFoundation = contracts.check.workerIdempotencyStoreFoundation;
     const workerLeaseStoreFoundation = contracts.check.workerLeaseStoreFoundation;
     const workerSchedulerFoundation = contracts.check.workerSchedulerFoundation;
+    const observabilityExporterFoundation = contracts.check.observabilityExporterFoundation;
 
     if (
       health.check.status !== 200
@@ -929,6 +1038,8 @@ export const runBackendRuntimeSmoke = async ({
       || !isQueueRuntimeFoundationSmokeReady(queueRuntimeFoundation)
       || !isSchedulerRuntimeFoundationSmokeReady(health.check.schedulerRuntimeFoundation)
       || !isSchedulerRuntimeFoundationSmokeReady(schedulerRuntimeFoundation)
+      || !isObservabilityExporterFoundationSmokeReady(health.check.observabilityExporterFoundation)
+      || !isObservabilityExporterFoundationSmokeReady(observabilityExporterFoundation)
       || !isWorkerIdempotencyStoreFoundationSmokeReady(health.check.workerIdempotencyStoreFoundation)
       || !isWorkerIdempotencyStoreFoundationSmokeReady(workerIdempotencyStoreFoundation)
       || !isWorkerLeaseStoreFoundationSmokeReady(health.check.workerLeaseStoreFoundation)
@@ -948,6 +1059,7 @@ export const runBackendRuntimeSmoke = async ({
       },
       host,
       liveSideEffectsEnabled: getBoolean(activation, "liveSideEffectsEnabled"),
+      observabilityExporterFoundation,
       persistenceFoundation,
       port: new URL(server.url).port ? Number(new URL(server.url).port) : 0,
       productionReady: getBoolean(activation, "productionReady"),

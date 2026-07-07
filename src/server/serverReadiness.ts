@@ -5,6 +5,7 @@ import {
   type BackendApiServiceBootstrapSummary,
   type BackendAuthEnforcementReadinessSummary,
   type CampaignDbVerticalSliceReadinessSummary,
+  type BackendObservabilityExporterReadinessSummary,
   type BackendPersistenceFoundationSummary,
   type BackendProviderIndexerReadinessSummary,
   type BackendPersistenceRuntimeSummary,
@@ -105,6 +106,30 @@ export interface ServerRuntimeWorkerIdempotencyStoreReadiness {
   valid: BackendServiceReadinessReport["workerIdempotencyStoreFoundation"]["valid"];
 }
 
+export interface ServerRuntimeObservabilityExporterReadiness {
+  adapterId: BackendObservabilityExporterReadinessSummary["adapterId"];
+  blockerCount: BackendObservabilityExporterReadinessSummary["blockerCount"];
+  diagnosticCodes: BackendObservabilityExporterReadinessSummary["diagnosticCodes"];
+  disabledLiveOperationCount: BackendObservabilityExporterReadinessSummary["disabledLiveOperationCount"];
+  exporterId: BackendObservabilityExporterReadinessSummary["exporterId"];
+  id: BackendObservabilityExporterReadinessSummary["id"];
+  liveAlertRoutingEnabled: false;
+  liveLogExportEnabled: false;
+  liveMetricsExportEnabled: false;
+  liveTelemetryExportEnabled: false;
+  liveTraceExportEnabled: false;
+  metricNamespace: BackendObservabilityExporterReadinessSummary["metricNamespace"];
+  mode: BackendObservabilityExporterReadinessSummary["mode"];
+  noLiveFlags: BackendObservabilityExporterReadinessSummary["noLiveFlags"];
+  operationCount: BackendObservabilityExporterReadinessSummary["operationCount"];
+  productionReady: false;
+  profileId: BackendObservabilityExporterReadinessSummary["profileId"];
+  requiredConfigKeys: BackendObservabilityExporterReadinessSummary["requiredConfigKeys"];
+  sinkId: BackendObservabilityExporterReadinessSummary["sinkId"];
+  status: BackendObservabilityExporterReadinessSummary["status"];
+  valid: boolean;
+}
+
 export interface ServerRuntimeReadiness {
   corsPolicy: {
     allowedOriginCount: number;
@@ -147,6 +172,7 @@ export interface ServerRuntimeReadiness {
     };
     databaseAdapterRuntime: BackendDatabaseAdapterRuntimeSummary;
     persistenceFoundation: BackendPersistenceFoundationSummary;
+    observabilityExporterFoundation: ServerRuntimeObservabilityExporterReadiness;
     providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
     queueRuntimeFoundation: ServerRuntimeQueueRuntimeReadiness;
     persistenceRuntime: BackendPersistenceRuntimeSummary;
@@ -259,6 +285,32 @@ const createServerWorkerIdempotencyStoreReadiness = (
   valid: workerIdempotencyStoreFoundation.valid,
 });
 
+const createServerObservabilityExporterReadiness = (
+  observabilityExporterFoundation: BackendServiceReadinessReport["observabilityExporterFoundation"],
+): ServerRuntimeObservabilityExporterReadiness => ({
+  adapterId: observabilityExporterFoundation.adapterId,
+  blockerCount: observabilityExporterFoundation.blockerCount,
+  diagnosticCodes: observabilityExporterFoundation.diagnosticCodes,
+  disabledLiveOperationCount: observabilityExporterFoundation.disabledLiveOperationCount,
+  exporterId: observabilityExporterFoundation.exporterId,
+  id: observabilityExporterFoundation.id,
+  liveAlertRoutingEnabled: observabilityExporterFoundation.liveAlertRoutingEnabled,
+  liveLogExportEnabled: observabilityExporterFoundation.liveLogExportEnabled,
+  liveMetricsExportEnabled: observabilityExporterFoundation.liveMetricsExportEnabled,
+  liveTelemetryExportEnabled: observabilityExporterFoundation.liveTelemetryExportEnabled,
+  liveTraceExportEnabled: observabilityExporterFoundation.liveTraceExportEnabled,
+  metricNamespace: observabilityExporterFoundation.metricNamespace,
+  mode: observabilityExporterFoundation.mode,
+  noLiveFlags: observabilityExporterFoundation.noLiveFlags,
+  operationCount: observabilityExporterFoundation.operationCount,
+  productionReady: observabilityExporterFoundation.productionReady,
+  profileId: observabilityExporterFoundation.profileId,
+  requiredConfigKeys: observabilityExporterFoundation.requiredConfigKeys,
+  sinkId: observabilityExporterFoundation.sinkId,
+  status: observabilityExporterFoundation.status,
+  valid: observabilityExporterFoundation.valid,
+});
+
 const resolveStatus = ({
   backendReadiness,
   contract,
@@ -342,6 +394,9 @@ export const createServerRuntimeReadiness = ({
       },
       databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(backendReadiness.databaseAdapterRuntime),
       persistenceFoundation: backendReadiness.persistenceFoundation,
+      observabilityExporterFoundation: createServerObservabilityExporterReadiness(
+        backendReadiness.observabilityExporterFoundation,
+      ),
       providerIndexerFoundation: backendReadiness.providerIndexerFoundation,
       queueRuntimeFoundation: createServerQueueRuntimeReadiness(backendReadiness.queueRuntimeFoundation),
       persistenceRuntime: createBackendPersistenceRuntimeSummary(backendReadiness.persistenceRuntime),

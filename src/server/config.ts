@@ -12,6 +12,7 @@ import { queueRuntimeProductionPreconditions } from "./queueRuntime";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 import { workerIdempotencyStoreProductionPreconditions } from "./workerIdempotencyStore";
+import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 
 export type CampaignOsPersistenceMode = "memory" | "local_json";
 
@@ -237,6 +238,10 @@ const workerIdempotencyStoreRequiredConfigKeys = uniqueStrings(
   workerIdempotencyStoreProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
 );
 
+const observabilityExporterRequiredConfigKeys = uniqueStrings(
+  observabilityExporterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
+);
+
 const backendProductionReadinessRequiredConfigKeys = uniqueStrings([
   ...productionBackendRequiredConfigKeys,
   ...schedulerRuntimeRequiredConfigKeys,
@@ -244,6 +249,7 @@ const backendProductionReadinessRequiredConfigKeys = uniqueStrings([
   ...workerIdempotencyStoreRequiredConfigKeys,
   ...queueRuntimeRequiredConfigKeys,
   ...queueProviderAdapterRequiredConfigKeys,
+  ...observabilityExporterRequiredConfigKeys,
 ]);
 
 const productionCapabilityDiagnostics = (): BackendConfigDiagnostic[] =>

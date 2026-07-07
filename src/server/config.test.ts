@@ -5,6 +5,7 @@ import {
   sanitizeBackendConfigDiagnosticValue,
 } from "./config";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
+import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 
@@ -85,6 +86,17 @@ describe("backend config contract", () => {
         "CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY",
         "CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY",
         "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS",
+        "CAMPAIGN_OS_OBSERVABILITY_SINK",
+        "CAMPAIGN_OS_OBSERVABILITY_METRIC_NAMESPACE",
+        "CAMPAIGN_OS_OBSERVABILITY_RETENTION_DAYS",
+        "CAMPAIGN_OS_OBSERVABILITY_TRACE_COLLECTOR_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_LOG_SINK_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_ALERT_ROUTING",
+        "CAMPAIGN_OS_OBSERVABILITY_RETRY_DEAD_LETTER_POLICY",
+        "CAMPAIGN_OS_OBSERVABILITY_REDACTION_POLICY",
+        "CAMPAIGN_OS_OBSERVABILITY_RUNBOOK_URL",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
         "CAMPAIGN_OS_DEGRADATION_POLICY",
         "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
@@ -177,6 +189,11 @@ describe("backend config contract", () => {
         "CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY",
         "CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY",
         "CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS",
+        "CAMPAIGN_OS_OBSERVABILITY_SINK",
+        "CAMPAIGN_OS_OBSERVABILITY_METRIC_NAMESPACE",
+        "CAMPAIGN_OS_OBSERVABILITY_TRACE_COLLECTOR_URL",
       ]),
     );
     expect(contract.diagnostics).toEqual(
@@ -328,6 +345,53 @@ describe("backend config contract", () => {
     expect(collectStringValues(contract)).not.toContain("worker-lease-secret");
     expect(collectStringValues(contract)).not.toContain("lease-idempotency-secret");
     expect(collectStringValues(contract)).not.toContain("lease-observability-secret");
+  });
+
+  it("reports observability exporter production precondition keys without exposing env values", () => {
+    const observabilityExporterConfigKeys = [
+      ...new Set(observabilityExporterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
+    const observabilityEndpoint = "https://observability.invalid/export?token=observability-secret";
+    const traceCollector = "https://trace.invalid/collect?token=trace-secret";
+    const logSink = "https://logs.invalid/write?token=log-secret";
+    const secretObservabilityValues = {
+      CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+      CAMPAIGN_OS_OBSERVABILITY_ALERT_ROUTING: "alert-routing-secret",
+      CAMPAIGN_OS_OBSERVABILITY_EXPORTER: "production-observability-exporter",
+      CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS: "observability-credential-secret",
+      CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: observabilityEndpoint,
+      CAMPAIGN_OS_OBSERVABILITY_LOG_SINK_URL: logSink,
+      CAMPAIGN_OS_OBSERVABILITY_METRIC_NAMESPACE: "campaign-os-runtime",
+      CAMPAIGN_OS_OBSERVABILITY_REDACTION_POLICY: "strict-redaction",
+      CAMPAIGN_OS_OBSERVABILITY_RETENTION_DAYS: "30",
+      CAMPAIGN_OS_OBSERVABILITY_RETRY_DEAD_LETTER_POLICY: "retry-dead-letter-secret",
+      CAMPAIGN_OS_OBSERVABILITY_RUNBOOK_URL: "https://runbooks.invalid/observability?token=runbook-secret",
+      CAMPAIGN_OS_OBSERVABILITY_SINK: "production-metrics-sink",
+      CAMPAIGN_OS_OBSERVABILITY_TRACE_COLLECTOR_URL: traceCollector,
+    };
+    const contract = resolveBackendConfigContract({ env: secretObservabilityValues });
+
+    expect(contract.productionReadiness.requiredConfigKeys).toEqual(
+      expect.arrayContaining(observabilityExporterConfigKeys),
+    );
+    expect(contract.productionReadiness.missingConfigKeys).not.toEqual(
+      expect.arrayContaining(observabilityExporterConfigKeys),
+    );
+    expect(sanitizeBackendConfigDiagnosticValue("CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL", observabilityEndpoint)).toBe(
+      "[redacted]",
+    );
+    expect(
+      sanitizeBackendConfigDiagnosticValue(
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS",
+        "observability-credential-secret",
+      ),
+    ).toBe("[redacted]");
+    expect(collectStringValues(contract)).not.toContain(observabilityEndpoint);
+    expect(collectStringValues(contract)).not.toContain(traceCollector);
+    expect(collectStringValues(contract)).not.toContain(logSink);
+    expect(collectStringValues(contract)).not.toContain("observability-credential-secret");
+    expect(collectStringValues(contract)).not.toContain("alert-routing-secret");
+    expect(collectStringValues(contract)).not.toContain("retry-dead-letter-secret");
   });
 
   it("blocks accidental production capability enablement in local review", () => {

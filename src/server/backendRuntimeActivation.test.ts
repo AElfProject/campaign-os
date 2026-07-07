@@ -8,6 +8,7 @@ import {
 } from "./backendRuntimeActivation";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
+import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { resolveApiServerRuntimeContract } from "./serverRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 
@@ -20,6 +21,7 @@ const secretFragments = [
   "https://queue.invalid/queue-secret",
   "https://queue.invalid/dead-letter?token=queue-secret",
   "https://store.invalid/token=idempotency-secret",
+  "https://observability.invalid/token=observability-secret",
   "mnemonic sample",
   "object-key-sample",
   "postgres://real-user:real-db-password@db.invalid/campaign-os",
@@ -107,6 +109,9 @@ describe("backend runtime activation contract", () => {
     const queueProviderAdapterConfigKeys = [
       ...new Set(queueProviderAdapterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
+    const observabilityExporterConfigKeys = [
+      ...new Set(observabilityExporterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
 
     expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
       expect.arrayContaining([
@@ -136,6 +141,17 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY",
         "CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY",
         "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS",
+        "CAMPAIGN_OS_OBSERVABILITY_SINK",
+        "CAMPAIGN_OS_OBSERVABILITY_METRIC_NAMESPACE",
+        "CAMPAIGN_OS_OBSERVABILITY_RETENTION_DAYS",
+        "CAMPAIGN_OS_OBSERVABILITY_TRACE_COLLECTOR_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_LOG_SINK_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_ALERT_ROUTING",
+        "CAMPAIGN_OS_OBSERVABILITY_RETRY_DEAD_LETTER_POLICY",
+        "CAMPAIGN_OS_OBSERVABILITY_REDACTION_POLICY",
+        "CAMPAIGN_OS_OBSERVABILITY_RUNBOOK_URL",
         "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
         "CAMPAIGN_OS_DEGRADATION_POLICY",
         "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
@@ -163,6 +179,17 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY",
         "CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY",
         "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS",
+        "CAMPAIGN_OS_OBSERVABILITY_SINK",
+        "CAMPAIGN_OS_OBSERVABILITY_METRIC_NAMESPACE",
+        "CAMPAIGN_OS_OBSERVABILITY_RETENTION_DAYS",
+        "CAMPAIGN_OS_OBSERVABILITY_TRACE_COLLECTOR_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_LOG_SINK_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_ALERT_ROUTING",
+        "CAMPAIGN_OS_OBSERVABILITY_RETRY_DEAD_LETTER_POLICY",
+        "CAMPAIGN_OS_OBSERVABILITY_REDACTION_POLICY",
+        "CAMPAIGN_OS_OBSERVABILITY_RUNBOOK_URL",
         "CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY",
         "CAMPAIGN_OS_DEGRADATION_POLICY",
         "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
@@ -197,6 +224,18 @@ describe("backend runtime activation contract", () => {
         expect.arrayContaining([
           expect.objectContaining({
             key: queueProviderAdapterConfigKey,
+            redacted: true,
+            required: true,
+            requiredFor: "production-required",
+          }),
+        ]),
+      );
+    }
+    for (const observabilityExporterConfigKey of observabilityExporterConfigKeys) {
+      expect(activation.deploymentHandoff.environmentKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: observabilityExporterConfigKey,
             redacted: true,
             required: true,
             requiredFor: "production-required",
@@ -262,7 +301,28 @@ describe("backend runtime activation contract", () => {
         }),
         expect.objectContaining({
           category: "observability",
+          key: "CAMPAIGN_OS_OBSERVABILITY_EXPORTER",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "observability",
           key: "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "auth",
+          key: "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "observability",
+          key: "CAMPAIGN_OS_OBSERVABILITY_RUNBOOK_URL",
           redacted: true,
           required: true,
           status: "deferred",
@@ -331,6 +391,12 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "worker", id: "queue-worker-lease", status: "blocked" }),
         expect.objectContaining({ area: "observability", id: "observability", status: "deferred" }),
         expect.objectContaining({ area: "observability", id: "queue-observability", status: "deferred" }),
+        expect.objectContaining({ area: "observability", id: "observability-exporter-selection", status: "blocked" }),
+        expect.objectContaining({ area: "observability", id: "observability-exporter-endpoint", status: "blocked" }),
+        expect.objectContaining({ area: "observability", id: "observability-exporter-credentials", status: "blocked" }),
+        expect.objectContaining({ area: "observability", id: "observability-sink-registration", status: "blocked" }),
+        expect.objectContaining({ area: "observability", id: "observability-metric-namespace", status: "blocked" }),
+        expect.objectContaining({ area: "observability", id: "observability-operator-runbook", status: "deferred" }),
         expect.objectContaining({ area: "provider", id: "provider-handoff", status: "deferred" }),
         expect.objectContaining({ area: "provider", id: "queue-provider-handoff", status: "deferred" }),
         expect.objectContaining({ area: "queue", id: "queue-dead-letter", status: "blocked" }),
@@ -376,6 +442,18 @@ describe("backend runtime activation contract", () => {
           expect.objectContaining({
             attachPoint: "src/server/queueProviderAdapter.ts",
             id: `queue-provider-adapter-${precondition.id}`,
+            requiredBeforeProduction: true,
+            status: precondition.status,
+          }),
+        ),
+      ),
+    );
+    expect(activation.productionDependencyBlockers).toEqual(
+      expect.arrayContaining(
+        observabilityExporterProductionPreconditions.map((precondition) =>
+          expect.objectContaining({
+            attachPoint: "src/server/observabilityExporter.ts",
+            id: precondition.id,
             requiredBeforeProduction: true,
             status: precondition.status,
           }),

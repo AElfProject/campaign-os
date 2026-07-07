@@ -111,6 +111,27 @@ export interface BackendRuntimeReadinessProjection {
     status: BackendServiceReadinessReport["persistenceRuntime"]["status"];
     valid: boolean;
   };
+  observabilityExporterFoundation: {
+    adapterId: BackendServiceReadinessReport["observabilityExporterFoundation"]["adapterId"];
+    blockerCount: number;
+    diagnosticCodes: string[];
+    disabledLiveOperationCount: number;
+    exporterId: BackendServiceReadinessReport["observabilityExporterFoundation"]["exporterId"];
+    id: BackendServiceReadinessReport["observabilityExporterFoundation"]["id"];
+    liveAlertRoutingEnabled: false;
+    liveLogExportEnabled: false;
+    liveMetricsExportEnabled: false;
+    liveTelemetryExportEnabled: false;
+    liveTraceExportEnabled: false;
+    metricNamespace: BackendServiceReadinessReport["observabilityExporterFoundation"]["metricNamespace"];
+    mode: BackendServiceReadinessReport["observabilityExporterFoundation"]["mode"];
+    operationCount: number;
+    productionReady: false;
+    requiredConfigKeys: string[];
+    sinkId: BackendServiceReadinessReport["observabilityExporterFoundation"]["sinkId"];
+    status: BackendServiceReadinessReport["observabilityExporterFoundation"]["status"];
+    valid: boolean;
+  };
   queueRuntimeFoundation: {
     blockerCount: number;
     diagnosticCodes: string[];
@@ -412,6 +433,27 @@ const createReadinessProjection = (
     status: backendReadiness.persistenceRuntime.status,
     valid: backendReadiness.persistenceRuntime.valid
       && backendReadiness.persistenceRuntime.migrationGate.status !== "blocked",
+  },
+  observabilityExporterFoundation: {
+    adapterId: backendReadiness.observabilityExporterFoundation.adapterId,
+    blockerCount: backendReadiness.observabilityExporterFoundation.blockerCount,
+    diagnosticCodes: backendReadiness.observabilityExporterFoundation.diagnosticCodes,
+    disabledLiveOperationCount: backendReadiness.observabilityExporterFoundation.disabledLiveOperationCount,
+    exporterId: backendReadiness.observabilityExporterFoundation.exporterId,
+    id: backendReadiness.observabilityExporterFoundation.id,
+    liveAlertRoutingEnabled: backendReadiness.observabilityExporterFoundation.liveAlertRoutingEnabled,
+    liveLogExportEnabled: backendReadiness.observabilityExporterFoundation.liveLogExportEnabled,
+    liveMetricsExportEnabled: backendReadiness.observabilityExporterFoundation.liveMetricsExportEnabled,
+    liveTelemetryExportEnabled: backendReadiness.observabilityExporterFoundation.liveTelemetryExportEnabled,
+    liveTraceExportEnabled: backendReadiness.observabilityExporterFoundation.liveTraceExportEnabled,
+    metricNamespace: backendReadiness.observabilityExporterFoundation.metricNamespace,
+    mode: backendReadiness.observabilityExporterFoundation.mode,
+    operationCount: backendReadiness.observabilityExporterFoundation.operationCount,
+    productionReady: backendReadiness.observabilityExporterFoundation.productionReady,
+    requiredConfigKeys: backendReadiness.observabilityExporterFoundation.requiredConfigKeys,
+    sinkId: backendReadiness.observabilityExporterFoundation.sinkId,
+    status: backendReadiness.observabilityExporterFoundation.status,
+    valid: backendReadiness.observabilityExporterFoundation.valid,
   },
   queueRuntimeFoundation: {
     blockerCount: backendReadiness.queueRuntimeFoundation.blockerCount,

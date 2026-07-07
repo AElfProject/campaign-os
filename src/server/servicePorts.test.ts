@@ -51,6 +51,18 @@ describe("API service ports", () => {
       deferredCapabilities: expect.arrayContaining(["provider_adapters", "worker_queue"]),
       serviceId: "verification-service",
     });
+    expect(apiServicePorts.find((port) => port.id === "runtime-observability-port")).toMatchObject({
+      futureAttachPoints: expect.arrayContaining([
+        "src/server/observabilityExporter.ts readiness foundation",
+        "metrics sink registration",
+        "structured log sink",
+        "trace collector",
+        "alert routing policy",
+      ]),
+      notes: expect.stringContaining("observability exporter readiness"),
+      productionAdapterStatus: "local_metadata_only",
+      serviceId: "runtime-observability",
+    });
     expect(apiServicePorts.find((port) => port.id === "export-port")?.futureAttachPoints).toEqual(
       expect.arrayContaining(["export artifact store", "contract writer approval gate"]),
     );

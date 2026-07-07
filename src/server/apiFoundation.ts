@@ -790,9 +790,9 @@ const backendSurfaceReadiness = [
     surfaceId: "service-registry",
   },
   {
-    deferredDependencies: ["scheduler", "worker_queue"],
+    deferredDependencies: ["scheduler", "worker_queue", "sensitive_material_boundary"],
     label: "Runtime Observability",
-    notes: "Local health, contracts, route coverage, topology reporting, worker idempotency store readiness metadata, and worker lease readiness metadata exist; contract sync handoff depends on deferred scheduler runtime, queue runtime, queue provider adapter readiness, worker idempotency store activation, worker lease store activation, dead-letter queue, and observability exporter.",
+    notes: "Local health, contracts, route coverage, topology reporting, worker idempotency store readiness metadata, worker lease readiness metadata, and observability exporter readiness metadata exist; live telemetry export, metrics sink writes, structured logs, traces, alerts, and retry/dead-letter delivery remain disabled while contract sync handoff depends on deferred scheduler runtime, queue runtime, queue provider adapter readiness, worker idempotency store activation, worker lease store activation, dead-letter queue, and observability exporter.",
     routeIds: ["runtime.health", "runtime.contracts"],
     serviceId: "runtime-observability",
     state: "implemented_local",

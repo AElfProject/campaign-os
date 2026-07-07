@@ -127,6 +127,7 @@ describe("API foundation registry", () => {
       serviceId: "points-ranking-service",
     });
     expect(report.surfaces.find((surface) => surface.surfaceId === "runtime-observability")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue", "sensitive_material_boundary"]),
       state: "implemented_local",
       routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
     });
@@ -183,10 +184,16 @@ describe("API foundation registry", () => {
     });
     expect(surfaceById.get("ai-ops")?.notes).toContain("queue runtime");
     expect(surfaceById.get("runtime-observability")).toMatchObject({
-      deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
+      deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue", "sensitive_material_boundary"]),
       notes: expect.stringContaining("contract sync handoff"),
       routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
     });
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("observability exporter readiness metadata");
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("live telemetry export");
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("metrics sink writes");
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("structured logs");
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("traces");
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("alerts");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("worker lease readiness metadata");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("worker lease store activation");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("queue provider adapter readiness");
