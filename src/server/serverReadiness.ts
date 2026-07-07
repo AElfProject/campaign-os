@@ -35,6 +35,21 @@ export type ServerRuntimeApiServiceReadiness = BackendApiServiceBootstrapSummary
   activation: BackendRuntimeActivationContract;
 };
 
+export interface ServerRuntimeQueueRuntimeReadiness {
+  blockerCount: BackendServiceReadinessReport["queueRuntimeFoundation"]["blockerCount"];
+  diagnosticCodes: BackendServiceReadinessReport["queueRuntimeFoundation"]["diagnosticCodes"];
+  dryRunEnqueueEnabled: BackendServiceReadinessReport["queueRuntimeFoundation"]["dryRunEnqueue"]["enabled"];
+  id: BackendServiceReadinessReport["queueRuntimeFoundation"]["id"];
+  liveQueuePublishingEnabled: false;
+  noLiveFlags: BackendServiceReadinessReport["queueRuntimeFoundation"]["noLiveFlags"];
+  productionReady: false;
+  profileId: BackendServiceReadinessReport["queueRuntimeFoundation"]["profileId"];
+  queueIds: BackendServiceReadinessReport["queueRuntimeFoundation"]["queuePlanCoverage"]["queueIds"];
+  queuePlanCount: BackendServiceReadinessReport["queueRuntimeFoundation"]["queuePlanCoverage"]["queuePlanCount"];
+  status: BackendServiceReadinessReport["queueRuntimeFoundation"]["status"];
+  valid: BackendServiceReadinessReport["queueRuntimeFoundation"]["valid"];
+}
+
 export interface ServerRuntimeReadiness {
   corsPolicy: {
     allowedOriginCount: number;
@@ -78,6 +93,7 @@ export interface ServerRuntimeReadiness {
     databaseAdapterRuntime: BackendDatabaseAdapterRuntimeSummary;
     persistenceFoundation: BackendPersistenceFoundationSummary;
     providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
+    queueRuntimeFoundation: ServerRuntimeQueueRuntimeReadiness;
     persistenceRuntime: BackendPersistenceRuntimeSummary;
     workerSchedulerFoundation: BackendServiceReadinessReport["workerSchedulerFoundation"];
   };
@@ -105,6 +121,23 @@ export interface CreateServerRuntimeReadinessOptions {
 const defaultShutdownState = (): ServerShutdownState => ({
   activeRequestCount: 0,
   state: "running",
+});
+
+const createServerQueueRuntimeReadiness = (
+  queueRuntimeFoundation: BackendServiceReadinessReport["queueRuntimeFoundation"],
+): ServerRuntimeQueueRuntimeReadiness => ({
+  blockerCount: queueRuntimeFoundation.blockerCount,
+  diagnosticCodes: queueRuntimeFoundation.diagnosticCodes,
+  dryRunEnqueueEnabled: queueRuntimeFoundation.dryRunEnqueue.enabled,
+  id: queueRuntimeFoundation.id,
+  liveQueuePublishingEnabled: queueRuntimeFoundation.dryRunEnqueue.liveQueuePublishingEnabled,
+  noLiveFlags: queueRuntimeFoundation.noLiveFlags,
+  productionReady: queueRuntimeFoundation.productionReady,
+  profileId: queueRuntimeFoundation.profileId,
+  queueIds: queueRuntimeFoundation.queuePlanCoverage.queueIds,
+  queuePlanCount: queueRuntimeFoundation.queuePlanCoverage.queuePlanCount,
+  status: queueRuntimeFoundation.status,
+  valid: queueRuntimeFoundation.valid,
 });
 
 const resolveStatus = ({
@@ -191,6 +224,7 @@ export const createServerRuntimeReadiness = ({
       databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(backendReadiness.databaseAdapterRuntime),
       persistenceFoundation: backendReadiness.persistenceFoundation,
       providerIndexerFoundation: backendReadiness.providerIndexerFoundation,
+      queueRuntimeFoundation: createServerQueueRuntimeReadiness(backendReadiness.queueRuntimeFoundation),
       persistenceRuntime: createBackendPersistenceRuntimeSummary(backendReadiness.persistenceRuntime),
       workerSchedulerFoundation: backendReadiness.workerSchedulerFoundation,
     },

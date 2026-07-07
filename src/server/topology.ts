@@ -283,6 +283,7 @@ export const backendServiceBoundaries = [
     readiness: "review_required",
     risks: [
       "Live providers, worker queue, scheduler runtime, retry/backoff, idempotency store, and worker lease are deferred.",
+      "Queue runtime activation requires provider selection, dead-letter handling, lease, idempotency, and observability before production verification workers.",
       "Provider/indexer handoff degrades to pending or manual review while live calls are deferred.",
     ],
     routeIds: ["tasks.verify"],
@@ -334,7 +335,7 @@ export const backendServiceBoundaries = [
     readiness: "local_only",
     risks: [
       "Live evidence and risk stores are deferred; unavailable provider evidence stays pending or manual review.",
-      "Eligibility refresh handoff requires the deferred worker queue, scheduler runtime, idempotency store, and provider handoff before production.",
+      "Eligibility refresh handoff requires the deferred queue runtime, scheduler runtime, idempotency store, dead-letter queue, and provider handoff before production.",
     ],
     routeIds: ["campaigns.eligibility"],
     runtimeProfiles: productionProfiles,
@@ -352,7 +353,7 @@ export const backendServiceBoundaries = [
     readiness: "review_required",
     risks: [
       "Storage-backed exports and contract writes are disabled/deferred.",
-      "Export preparation handoff requires the deferred worker queue, idempotency store, and observability exporter before production.",
+      "Export preparation handoff requires the deferred queue runtime, idempotency store, dead-letter queue, and observability exporter before production.",
     ],
     routeIds: ["campaigns.export.preview"],
     runtimeProfiles: productionProfiles,
@@ -370,7 +371,7 @@ export const backendServiceBoundaries = [
     readiness: "deferred",
     risks: [
       "Risk event ingestion and warehouse integrations are deferred.",
-      "Risk cleanup and scoring handoffs require the deferred scheduler runtime, worker queue, and worker lease before production.",
+      "Risk cleanup and scoring handoffs require the deferred scheduler runtime, queue runtime, worker lease, idempotency store, and dead-letter handling before production.",
     ],
     routeIds: [],
     runtimeProfiles: productionRequiredProfiles,
@@ -402,7 +403,7 @@ export const backendServiceBoundaries = [
     productionRequired: true,
     readiness: "deferred",
     risks: [
-      "AI provider, approval flow, scheduler runtime, observability, and worker execution are deferred.",
+      "AI provider, approval flow, scheduler runtime, queue runtime, observability, and worker execution are deferred.",
     ],
     routeIds: [],
     runtimeProfiles: productionRequiredProfiles,
@@ -435,7 +436,7 @@ export const backendServiceBoundaries = [
     readiness: "ready",
     risks: [
       "Production observability backend is not selected yet.",
-      "Analytics ingestion and contract sync handoffs require deferred worker queue, scheduler runtime, idempotency store, and observability exporter before production.",
+      "Analytics ingestion and contract sync handoffs require deferred queue runtime, scheduler runtime, idempotency store, dead-letter queue, and observability exporter before production.",
     ],
     routeIds: ["runtime.health", "runtime.contracts", "campaigns.analytics"],
     runtimeProfiles: productionProfiles,
@@ -757,7 +758,7 @@ export const backendDeploymentUnits = [
   }),
   deploymentUnit({
     currentImplementation: "source-topology-only",
-    entrypoint: "src/server/topology.ts",
+    entrypoint: "src/server/queueRuntime.ts",
     id: "worker-runtime",
     name: "Worker Runtime",
     productionTarget: "worker_service",
@@ -766,7 +767,7 @@ export const backendDeploymentUnits = [
   }),
   deploymentUnit({
     currentImplementation: "deferred",
-    entrypoint: "src/server/topology.ts",
+    entrypoint: "src/server/queueRuntime.ts",
     id: "scheduler-runtime",
     name: "Scheduler Runtime",
     productionTarget: "scheduled_runner",

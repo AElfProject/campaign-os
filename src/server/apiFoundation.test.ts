@@ -145,31 +145,38 @@ describe("API foundation registry", () => {
       notes: expect.stringContaining("lifecycle handoff"),
     });
     expect(surfaceById.get("verification")?.notes).toContain("provider/indexer handoff");
+    expect(surfaceById.get("verification")?.notes).toContain("queue runtime");
+    expect(surfaceById.get("verification")?.notes).toContain("dead-letter handling");
     expect(surfaceById.get("task-template")?.notes).toContain("disable_provider_task_templates");
     expect(surfaceById.get("eligibility")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
-      notes: expect.stringContaining("idempotency store"),
+      notes: expect.stringContaining("dead-letter queue"),
     });
     expect(surfaceById.get("export")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["contract_writer", "object_storage_export", "worker_queue"]),
       notes: expect.stringContaining("observability exporter"),
     });
+    expect(surfaceById.get("export")?.notes).toContain("queue runtime");
     expect(surfaceById.get("analytics")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
       notes: expect.stringContaining("analytics ingestion"),
     });
+    expect(surfaceById.get("analytics")?.notes).toContain("dead-letter queue");
     expect(surfaceById.get("risk-scoring")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
       notes: expect.stringContaining("worker lease"),
     });
+    expect(surfaceById.get("risk-scoring")?.notes).toContain("queue runtime");
     expect(surfaceById.get("ai-ops")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
       notes: expect.stringContaining("observability exporter"),
     });
+    expect(surfaceById.get("ai-ops")?.notes).toContain("queue runtime");
     expect(surfaceById.get("runtime-observability")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
       notes: expect.stringContaining("contract sync handoff"),
     });
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("dead-letter queue");
     expect(surfaceById.get("service-registry")?.notes).toContain("provider registry");
   });
 

@@ -70,6 +70,11 @@ import {
   type WorkerSchedulerFoundationSummary,
 } from "./workerSchedulerRuntime";
 import {
+  createQueueRuntimeFoundation,
+  type QueueCategory,
+  type QueueRuntimeFoundationSummary,
+} from "./queueRuntime";
+import {
   allowedVerificationDegradationOutcomes,
   createVerificationSourceHandoff,
   type VerificationSourceHandoffSummary,
@@ -106,6 +111,7 @@ export type BackendReadinessDiagnosticCode =
   | "API_FOUNDATION_INVALID"
   | "TOPOLOGY_INVALID"
   | "SERVICE_PORTS_INVALID"
+  | "QUEUE_RUNTIME_READINESS_BLOCKED"
   | "WORKER_SCHEDULER_READINESS_BLOCKED"
   | "ROUTE_COUNT_MISMATCH"
   | "ATTACH_POINT_MISSING";
@@ -178,6 +184,7 @@ export interface BackendServiceReadinessReport {
   migration: MigrationManifest;
   persistenceFoundation: BackendPersistenceFoundationSummary;
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
+  queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
   persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   persistenceAdapters: PersistenceAdapterPortReport;
   profile: BackendConfigContract["profile"];
@@ -191,6 +198,32 @@ export interface BackendServiceReadinessReport {
     valid: boolean;
   };
   workerSchedulerFoundation: BackendWorkerSchedulerReadinessSummary;
+}
+
+export interface BackendQueueRuntimeReadinessSummary {
+  blockerCount: QueueRuntimeFoundationSummary["blockerCount"];
+  diagnosticCodes: QueueRuntimeFoundationSummary["diagnosticCodes"];
+  diagnostics: QueueRuntimeFoundationSummary["diagnostics"];
+  dryRunEnqueue: {
+    enabled: QueueRuntimeFoundationSummary["readiness"]["dryRunEnqueueEnabled"];
+    livePublishAttempted: false;
+    liveQueuePublishingEnabled: false;
+  };
+  id: QueueRuntimeFoundationSummary["id"];
+  noLiveFlags: QueueRuntimeFoundationSummary["noLiveFlags"];
+  preconditions: QueueRuntimeFoundationSummary["preconditions"];
+  productionReady: false;
+  profileId: QueueRuntimeFoundationSummary["profileId"];
+  queuePlanCoverage: {
+    jobIds: string[];
+    queueCategories: QueueCategory[];
+    queueCategoryCount: QueueRuntimeFoundationSummary["readiness"]["queueCategoryCount"];
+    queueIds: string[];
+    queuePlanCount: QueueRuntimeFoundationSummary["readiness"]["queuePlanCount"];
+    requiredConfigKeys: string[];
+  };
+  status: QueueRuntimeFoundationSummary["status"];
+  valid: boolean;
 }
 
 export interface BackendProviderIndexerReadinessSummary extends ProviderIndexerFoundationSummary {
@@ -689,6 +722,7 @@ const createValidationIssues = ({
   migration,
   persistenceAdapters,
   providerIndexerFoundation,
+  queueRuntimeFoundation,
   workerSchedulerFoundation,
   persistenceRuntime,
   servicePorts,
@@ -705,6 +739,7 @@ const createValidationIssues = ({
   migration: MigrationManifest;
   persistenceAdapters: PersistenceAdapterPortReport;
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
+  queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
   persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   servicePorts: ApiServicePortReport;
   topology: BackendTopologyReport;
@@ -753,6 +788,14 @@ const createValidationIssues = ({
       "PROVIDER_INDEXER_READINESS_BLOCKED",
       "providerIndexerFoundation",
       "Provider/indexer readiness validation failed.",
+    ));
+  }
+
+  if (!queueRuntimeFoundation.valid) {
+    issues.push(errorDiagnostic(
+      "QUEUE_RUNTIME_READINESS_BLOCKED",
+      "queueRuntimeFoundation",
+      "Queue runtime foundation readiness validation failed.",
     ));
   }
 
@@ -1191,6 +1234,47 @@ const createBackendProviderIndexerReadinessSummary = ({
 
 const uniqueStrings = (values: readonly string[]): string[] => Array.from(new Set(values));
 
+const createBackendQueueRuntimeReadinessSummary = ({
+  env,
+  profileId,
+}: {
+  env: Record<string, string | undefined>;
+  profileId: BackendConfigContract["profileId"];
+}): BackendQueueRuntimeReadinessSummary => {
+  const foundation = createQueueRuntimeFoundation({
+    env,
+    profileId,
+  });
+
+  return {
+    blockerCount: foundation.blockerCount,
+    diagnosticCodes: foundation.diagnosticCodes,
+    diagnostics: foundation.diagnostics,
+    dryRunEnqueue: {
+      enabled: foundation.readiness.dryRunEnqueueEnabled,
+      livePublishAttempted: false,
+      liveQueuePublishingEnabled: foundation.readiness.liveQueuePublishingEnabled,
+    },
+    id: foundation.id,
+    noLiveFlags: foundation.noLiveFlags,
+    preconditions: foundation.preconditions,
+    productionReady: foundation.productionReady,
+    profileId: foundation.profileId,
+    queuePlanCoverage: {
+      jobIds: uniqueStrings(foundation.queuePlans.map((queuePlan) => queuePlan.jobId)),
+      queueCategories: uniqueStrings(foundation.queuePlans.map((queuePlan) => queuePlan.queueCategory)) as QueueCategory[],
+      queueCategoryCount: foundation.readiness.queueCategoryCount,
+      queueIds: foundation.readiness.queueIds,
+      queuePlanCount: foundation.readiness.queuePlanCount,
+      requiredConfigKeys: uniqueStrings(
+        foundation.preconditions.flatMap((precondition) => precondition.requiredConfigKeys),
+      ),
+    },
+    status: foundation.status,
+    valid: foundation.valid,
+  };
+};
+
 const createBackendWorkerSchedulerReadinessSummary = ({
   env,
   profileId,
@@ -1382,6 +1466,10 @@ export const createBackendServiceReadinessReport = ({
     profileId: config.profileId,
     verificationSourceHandoff: providerIndexerFoundation.verificationSourceHandoff,
   });
+  const queueRuntimeFoundation = createBackendQueueRuntimeReadinessSummary({
+    env,
+    profileId: config.profileId,
+  });
   const entrypoint: BackendServiceEntrypoint = {
     foundationValidationValid: apiFoundation.validation.valid,
     id: "campaign-os-backend-service",
@@ -1405,6 +1493,7 @@ export const createBackendServiceReadinessReport = ({
     migration,
     persistenceAdapters,
     providerIndexerFoundation,
+    queueRuntimeFoundation,
     persistenceRuntime,
     servicePorts,
     topology,
@@ -1428,6 +1517,7 @@ export const createBackendServiceReadinessReport = ({
     migration,
     persistenceFoundation,
     providerIndexerFoundation,
+    queueRuntimeFoundation,
     persistenceRuntime,
     persistenceAdapters,
     profile: config.profile,

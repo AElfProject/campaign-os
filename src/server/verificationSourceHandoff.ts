@@ -5,6 +5,11 @@ import {
   type ProviderIndexerAdapterGroup,
 } from "./providerIndexerAdapters";
 import {
+  queueRuntimePlans,
+  type QueueDegradedOutcome,
+  type QueuePlan,
+} from "./queueRuntime";
+import {
   redactWorkerSchedulerValue,
   workerJobCatalog,
 } from "./workerSchedulerRuntime";
@@ -22,9 +27,26 @@ export type VerificationSourceDiagnosticCode =
   | "UNKNOWN_VERIFICATION_TYPE"
   | "UNKNOWN_PROVIDER_GROUP"
   | "UNKNOWN_WORKER_JOB"
+  | "UNKNOWN_QUEUE_PLAN"
   | "UNSUPPORTED_EVIDENCE_SOURCE"
   | "PROVIDER_GROUP_UNAVAILABLE"
   | "WORKER_JOB_UNAVAILABLE";
+
+export interface VerificationQueuePosture {
+  dryRunEnqueueEnabled: boolean;
+  jobIds: string[];
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  queueRuntimeId: "campaign-os-queue-runtime-foundation";
+  queueUnavailableOutcome: VerificationDegradationOutcome;
+  queuePlans: Array<{
+    degradedOutcome: QueueDegradedOutcome;
+    jobId: string;
+    payloadReferencePolicy: string;
+    queueId: string;
+    sideEffectBoundary: string;
+  }>;
+}
 
 export interface VerificationSourcePolicy {
   authSessionRequired: boolean;
@@ -35,11 +57,14 @@ export interface VerificationSourcePolicy {
   liveExecutionEnabled: false;
   providerGroupIds: string[];
   providerReadinessSatisfiesAuthentication: boolean;
+  queuePosture: VerificationQueuePosture;
   unavailableDegradationOutcome: VerificationDegradationOutcome;
   unavailableWorkerOutcome: VerificationDegradationOutcome;
   verificationType: VerificationType;
   workerRequired: boolean;
 }
+
+type VerificationSourcePolicyDefinition = Omit<VerificationSourcePolicy, "queuePosture">;
 
 export interface VerificationSourceDiagnostic {
   code: VerificationSourceDiagnosticCode;
@@ -95,9 +120,9 @@ const supportedEvidenceSourceLabels = [
   "Manual review evidence",
 ] as const;
 
-const policy = (entry: VerificationSourcePolicy): VerificationSourcePolicy => entry;
+const policy = (entry: VerificationSourcePolicyDefinition): VerificationSourcePolicyDefinition => entry;
 
-export const verificationSourcePolicies: VerificationSourcePolicy[] = [
+export const verificationSourcePolicies: VerificationSourcePolicyDefinition[] = [
   policy({
     authSessionRequired: true,
     defaultDegradationOutcome: "local_only",
@@ -187,6 +212,7 @@ export const verificationSourcePolicies: VerificationSourcePolicy[] = [
 
 const registeredProviderGroupIds = new Set(providerIndexerAdapterGroups.map((group) => group.id));
 const registeredWorkerJobIds = new Set(workerJobCatalog.map((job) => job.id));
+const queuePlanByJobId = new Map(queueRuntimePlans.map((queuePlan) => [queuePlan.jobId, queuePlan]));
 const evidenceSourceLabelSet = new Set<string>(supportedEvidenceSourceLabels);
 
 export const createVerificationSourceHandoff = (
@@ -194,7 +220,8 @@ export const createVerificationSourceHandoff = (
 ): VerificationSourceHandoffSummary => {
   const entries = verificationSourcePolicies.map((sourcePolicy) => sanitizePolicy(sourcePolicy, options));
   const diagnostics = entries.flatMap((entry) =>
-    validateProviderGroups(entry.providerGroupIds).concat(
+    validateQueuePlans(entry.queuePosture.queuePlans).concat(
+      validateProviderGroups(entry.providerGroupIds),
       validateEvidenceSources(entry.evidenceSourceLabels),
     ),
   );
@@ -251,13 +278,14 @@ export const resolveVerificationSourceHandoff = (
       evidenceSourceLabels: sanitizeStrings(evidenceLabels),
       jobIds: sanitizeStrings(jobIds),
       providerGroupIds: providerIds,
+      queuePosture: createQueuePosture(entry.workerRequired, jobIds, entry.unavailableWorkerOutcome),
     },
     valid: diagnostics.length === 0,
   };
 };
 
 const sanitizePolicy = (
-  sourcePolicy: VerificationSourcePolicy,
+  sourcePolicy: VerificationSourcePolicyDefinition,
   options: VerificationSourceHandoffOptions = {},
 ): VerificationSourcePolicy => ({
   ...sourcePolicy,
@@ -268,6 +296,11 @@ const sanitizePolicy = (
   evidenceSourceLabels: sanitizeStrings(sourcePolicy.evidenceSourceLabels),
   jobIds: sanitizeStrings(sourcePolicy.jobIds),
   providerGroupIds: [...sourcePolicy.providerGroupIds],
+  queuePosture: createQueuePosture(
+    sourcePolicy.workerRequired,
+    sourcePolicy.jobIds,
+    sourcePolicy.unavailableWorkerOutcome,
+  ),
 });
 
 const sanitizeStrings = (values: readonly string[]): string[] =>
@@ -296,6 +329,19 @@ const validateWorkerJobs = (ids: readonly string[]): VerificationSourceDiagnosti
         "UNKNOWN_WORKER_JOB",
         "jobIds",
         `Unknown worker job id: ${redactWorkerSchedulerValue(id)}`,
+      ),
+    );
+
+const validateQueuePlans = (
+  queuePlans: readonly VerificationQueuePosture["queuePlans"][number][],
+): VerificationSourceDiagnostic[] =>
+  queuePlans
+    .filter((queuePlan) => !queuePlanByJobId.has(queuePlan.jobId))
+    .map((queuePlan) =>
+      diagnostic(
+        "UNKNOWN_QUEUE_PLAN",
+        "queuePosture.queuePlans",
+        `Unknown queue plan job id: ${redactWorkerSchedulerValue(queuePlan.jobId)}`,
       ),
     );
 
@@ -387,6 +433,40 @@ const diagnostic = (
 
 const diagnosticCodes = (diagnostics: readonly VerificationSourceDiagnostic[]) =>
   Array.from(new Set(diagnostics.map((item) => item.code)));
+
+const createQueuePosture = (
+  workerRequired: boolean,
+  jobIds: readonly string[],
+  queueUnavailableOutcome: VerificationDegradationOutcome,
+): VerificationQueuePosture => {
+  const queuePlans = workerRequired
+    ? jobIds.flatMap((jobId) => {
+      const queuePlan = queuePlanByJobId.get(jobId);
+
+      return queuePlan ? [queuePlan] : [];
+    })
+    : [];
+
+  return {
+    dryRunEnqueueEnabled: workerRequired && queuePlans.length > 0,
+    jobIds: sanitizeStrings(jobIds),
+    liveQueuePublishingEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    queueRuntimeId: "campaign-os-queue-runtime-foundation",
+    queueUnavailableOutcome,
+    queuePlans: queuePlans.map(toVerificationQueuePlan),
+  };
+};
+
+const toVerificationQueuePlan = (
+  queuePlan: QueuePlan,
+): VerificationQueuePosture["queuePlans"][number] => ({
+  degradedOutcome: queuePlan.degradedOutcome,
+  jobId: queuePlan.jobId,
+  payloadReferencePolicy: queuePlan.payloadReferencePolicy,
+  queueId: queuePlan.queueId,
+  sideEffectBoundary: queuePlan.sideEffectBoundary,
+});
 
 export const verificationSourceProviderGroups: ProviderIndexerAdapterGroup[] =
   providerIndexerAdapterGroups.filter((group) =>
