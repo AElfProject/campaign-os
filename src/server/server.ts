@@ -1,5 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import {
+  createCampaignOsApiServiceContract,
+  type CampaignOsApiServiceContract,
+} from "./apiService";
 import { createCampaignOsApiRuntime, type ApiRuntimeHeaders } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
 import { apiRuntimeRoutes } from "./routes";
@@ -18,8 +22,11 @@ import {
 
 export interface CampaignOsApiServerHandle {
   getReadiness(): ServerRuntimeReadiness;
+  getServiceContract(): CampaignOsApiServiceContract;
+  getServiceReadiness(): CampaignOsApiServiceContract["readiness"];
   runtimeContract: ApiServerRuntimeContract;
   server: Server;
+  serviceContract: CampaignOsApiServiceContract;
   stop(): Promise<void>;
   url: string;
 }
@@ -144,6 +151,19 @@ export const startCampaignOsApiServer = async ({
     contract: runtimeContract,
     shutdownState,
   });
+  const getServiceContract = () => createCampaignOsApiServiceContract({
+    allowedCorsOrigins,
+    env,
+    host: runtimeContract.host,
+    maxBodyBytes: runtimeContract.requestGuard.maxBodyBytes,
+    port: runtimeContract.port,
+    profileId: runtimeContract.profileId,
+    shutdownState,
+    shutdownTimeoutMs: runtimeContract.shutdown.shutdownTimeoutMs,
+    startedAt: runtimeContract.startedAt,
+    version: runtimeContract.runtimeVersion,
+  });
+  const getServiceReadiness = () => getServiceContract().readiness;
 
   const server = createServer(async (request, response) => {
     shutdownState.activeRequestCount += 1;
@@ -261,8 +281,13 @@ export const startCampaignOsApiServer = async ({
 
   return {
     getReadiness,
+    getServiceContract,
+    getServiceReadiness,
     runtimeContract,
     server,
+    get serviceContract() {
+      return getServiceContract();
+    },
     stop,
     url,
   };

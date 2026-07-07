@@ -49,6 +49,40 @@ describe("Campaign OS API server entrypoint", () => {
         }),
         valid: true,
       });
+      expect(server.serviceContract).toMatchObject({
+        id: "campaign-os-api-service",
+        profileId: "local-review",
+        readiness: {
+          deployableBoundaryReady: true,
+          liveConnectionAttempted: false,
+          liveSideEffectsEnabled: false,
+          productionReady: false,
+        },
+        shutdown: {
+          activeRequestCount: 0,
+          shutdownTimeoutMs: 5_000,
+          state: "running",
+        },
+        status: "ready",
+        valid: true,
+      });
+      expect(server.getServiceContract()).toMatchObject({
+        composition: {
+          apiRuntime: {
+            metadataRouteIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
+          },
+          backendService: {
+            entrypointId: "campaign-os-backend-service",
+          },
+        },
+      });
+      expect(server.getServiceReadiness()).toMatchObject({
+        contractWriteEnabled: false,
+        liveConnectionAttempted: false,
+        liveSideEffectsEnabled: false,
+        productionReady: false,
+        workerExecutionEnabled: false,
+      });
       expect(server.getReadiness()).toMatchObject({
         readiness: {
           backendRuntimeBootstrap: {
@@ -155,6 +189,16 @@ describe("Campaign OS API server entrypoint", () => {
       },
       status: "stopped",
     });
+    expect(server.serviceContract).toMatchObject({
+      diagnosticCodes: expect.arrayContaining(["API_SERVICE_STOPPED"]),
+      shutdown: {
+        activeRequestCount: 0,
+        shutdownTimeoutMs: 5_000,
+        state: "stopped",
+      },
+      status: "stopped",
+      valid: false,
+    });
   });
 
   it("exposes stopping lifecycle readiness while shutdown waits for active requests", async () => {
@@ -165,6 +209,7 @@ describe("Campaign OS API server entrypoint", () => {
     });
     const stopPromise = server.stop();
     const stoppingReadiness = server.getReadiness();
+    const stoppingServiceContract = server.getServiceContract();
 
     expect(stoppingReadiness).toMatchObject({
       readiness: {
@@ -189,6 +234,15 @@ describe("Campaign OS API server entrypoint", () => {
     expect(stoppingReadiness.shutdownState.activeRequestCount).toBeGreaterThanOrEqual(0);
     expect(stoppingReadiness.readiness.backendRuntimeBootstrap.shutdown.activeRequestCount)
       .toBeGreaterThanOrEqual(0);
+    expect(stoppingServiceContract).toMatchObject({
+      diagnosticCodes: ["API_SERVICE_SHUTDOWN_IN_PROGRESS"],
+      shutdown: {
+        shutdownTimeoutMs: 25,
+        state: "stopping",
+      },
+      status: "deferred",
+      valid: true,
+    });
 
     await stopPromise;
     await server.stop();
@@ -208,6 +262,16 @@ describe("Campaign OS API server entrypoint", () => {
         shutdownTimeoutMs: 25,
         state: "stopped",
       },
+    });
+    expect(server.getServiceContract()).toMatchObject({
+      diagnosticCodes: ["API_SERVICE_STOPPED"],
+      shutdown: {
+        activeRequestCount: 0,
+        shutdownTimeoutMs: 25,
+        state: "stopped",
+      },
+      status: "stopped",
+      valid: false,
     });
   });
 
@@ -507,6 +571,22 @@ describe("Campaign OS API server entrypoint", () => {
       const payload = await response.json();
 
       expect(response.status).toBe(200);
+      expect(server.serviceContract).toMatchObject({
+        diagnosticCodes: expect.arrayContaining([
+          "API_SERVICE_RUNTIME_INVALID",
+          "API_SERVICE_BACKEND_READINESS_INVALID",
+          "API_SERVICE_PRODUCTION_BLOCKED",
+        ]),
+        profileId: "production-required",
+        readiness: {
+          deployableBoundaryReady: false,
+          liveConnectionAttempted: false,
+          liveSideEffectsEnabled: false,
+          productionReady: false,
+        },
+        status: "blocked",
+        valid: false,
+      });
       expect(payload).toMatchObject({
         ok: true,
         data: {
@@ -533,6 +613,12 @@ describe("Campaign OS API server entrypoint", () => {
       expect(serialized).not.toContain("private-key-sample");
       expect(serialized).not.toContain("object-key-sample");
       expect(serialized).not.toContain("raw-signature-sample");
+      const serializedServiceContract = JSON.stringify(server.serviceContract).toLowerCase();
+      expect(serializedServiceContract).not.toContain("bearer sample-bearer-token");
+      expect(serializedServiceContract).not.toContain("real-db-password");
+      expect(serializedServiceContract).not.toContain("private-key-sample");
+      expect(serializedServiceContract).not.toContain("object-key-sample");
+      expect(serializedServiceContract).not.toContain("raw-signature-sample");
     } finally {
       await server.stop();
     }
