@@ -178,6 +178,32 @@ describe("backend config contract", () => {
     );
   });
 
+  it("fails closed when production worker scheduler flags are enabled before runtime support exists", () => {
+    const contract = resolveBackendConfigContract({
+      env: {
+        CAMPAIGN_OS_ENABLE_SCHEDULER: "true",
+        CAMPAIGN_OS_ENABLE_WORKER_QUEUE: "1",
+      },
+    });
+
+    expect(contract.valid).toBe(false);
+    expect(contract.productionReadiness.status).toBe("blocked");
+    expect(contract.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PRODUCTION_CAPABILITY_ENABLEMENT_BLOCKED",
+          field: "CAMPAIGN_OS_ENABLE_SCHEDULER",
+          severity: "error",
+        }),
+        expect.objectContaining({
+          code: "PRODUCTION_CAPABILITY_ENABLEMENT_BLOCKED",
+          field: "CAMPAIGN_OS_ENABLE_WORKER_QUEUE",
+          severity: "error",
+        }),
+      ]),
+    );
+  });
+
   it("redacts secret-like diagnostic values", () => {
     expect(sanitizeBackendConfigDiagnosticValue("CAMPAIGN_OS_AUTH_SECRET", "super-secret")).toBe(
       "[redacted]",
@@ -226,6 +252,35 @@ describe("backend config contract", () => {
     expect(collectStringValues(contract)).not.toContain(
       "https://user:password@providers.invalid?token=secret",
     );
+  });
+
+  it("redacts worker scheduler endpoint and store diagnostic values", () => {
+    const queueUrl = "https://user:queue-secret@queue.invalid/jobs?token=worker-token";
+    const schedulerEndpoint = "https://scheduler.invalid/run?scheduler-pass=secret";
+    const idempotencyStoreUrl = "https://store.invalid/idempotency?token=idempotency-secret";
+
+    expect(sanitizeBackendConfigDiagnosticValue("CAMPAIGN_OS_WORKER_QUEUE_URL", queueUrl)).toBe(
+      "[redacted]",
+    );
+    expect(
+      sanitizeBackendConfigDiagnosticValue("CAMPAIGN_OS_SCHEDULER_ENDPOINT", schedulerEndpoint),
+    ).toBe("[redacted]");
+    expect(
+      sanitizeBackendConfigDiagnosticValue("CAMPAIGN_OS_IDEMPOTENCY_STORE_URL", idempotencyStoreUrl),
+    ).toBe("[redacted]");
+
+    const contract = resolveBackendConfigContract({
+      env: {
+        CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+        CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: idempotencyStoreUrl,
+        CAMPAIGN_OS_SCHEDULER_ENDPOINT: schedulerEndpoint,
+        CAMPAIGN_OS_WORKER_QUEUE_URL: queueUrl,
+      },
+    });
+
+    expect(collectStringValues(contract)).not.toContain(queueUrl);
+    expect(collectStringValues(contract)).not.toContain(schedulerEndpoint);
+    expect(collectStringValues(contract)).not.toContain(idempotencyStoreUrl);
   });
 
   it("redacts connection-like production persistence driver values", () => {

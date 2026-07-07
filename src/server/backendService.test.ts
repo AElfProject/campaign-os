@@ -200,6 +200,49 @@ describe("backend service readiness report", () => {
         "manual_review",
       ],
     });
+    expect(report.workerSchedulerFoundation).toMatchObject({
+      blockerCount: 0,
+      diagnosticCodes: [],
+      id: "campaign-os-worker-scheduler-foundation",
+      jobCatalogCoverage: {
+        jobCatalogCount: 9,
+        jobFamilyCount: 9,
+        productionDependencyIds: expect.arrayContaining([
+          "worker-queue",
+          "scheduler-endpoint",
+          "idempotency-store",
+          "worker-lease",
+          "observability",
+          "provider-handoff",
+        ]),
+        requiredConfigKeys: expect.arrayContaining([
+          "CAMPAIGN_OS_WORKER_QUEUE_URL",
+          "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
+        ]),
+        triggerSourceCount: 6,
+      },
+      noLiveFlags: {
+        liveCronExecutionEnabled: false,
+        liveQueuePublishingEnabled: false,
+        liveSchedulerExecutionEnabled: false,
+        liveWorkerExecutionEnabled: false,
+      },
+      productionReady: false,
+      schedulePolicyCoverage: {
+        idempotencyPolicyCount: 9,
+        retryPolicyCount: 8,
+        schedulePolicyCount: 9,
+      },
+      status: "local_ready",
+      valid: true,
+      verificationSourceHandoff: {
+        id: "campaign-os-verification-source-handoff",
+        liveExecutionEnabled: false,
+        supportedVerificationTypes: ["WALLET", "ON_CHAIN", "DAPP_API", "SOCIAL", "MANUAL"],
+        valid: true,
+        workerRequiredPolicyCount: 3,
+      },
+    });
     expect(report.providerIndexerFoundation.requiredConfigKeys).toEqual(
       expect.arrayContaining([
         "CAMPAIGN_OS_PROVIDER_CREDENTIALS",
@@ -987,6 +1030,26 @@ describe("backend service readiness report", () => {
         valid: true,
       },
     });
+    expect(report.workerSchedulerFoundation).toMatchObject({
+      blockerCount: 5,
+      diagnosticCodes: expect.arrayContaining([
+        "SCHEDULER_ENDPOINT_MISSING",
+        "RETRY_BACKOFF_POLICY_MISSING",
+        "IDEMPOTENCY_STORE_MISSING",
+        "WORKER_LEASE_MISSING",
+        "OBSERVABILITY_MISSING",
+      ]),
+      noLiveFlags: {
+        liveCronExecutionEnabled: false,
+        liveQueuePublishingEnabled: false,
+        liveSchedulerExecutionEnabled: false,
+        liveWorkerExecutionEnabled: false,
+      },
+      productionReady: false,
+      profileId: "production-required",
+      status: "blocked",
+      valid: false,
+    });
     expect(report.authSession.validation.issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1029,6 +1092,10 @@ describe("backend service readiness report", () => {
         expect.objectContaining({
           code: "MIGRATION_MANIFEST_INVALID",
           field: "migration",
+        }),
+        expect.objectContaining({
+          code: "WORKER_SCHEDULER_READINESS_BLOCKED",
+          field: "workerSchedulerFoundation",
         }),
       ]),
     });

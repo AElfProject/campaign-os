@@ -86,6 +86,7 @@ const forbiddenConfigKeyFragments = [
   "apikey",
   "bearer",
   "credentials",
+  "endpoint",
   "mnemonic",
   "objectkey",
   "password",

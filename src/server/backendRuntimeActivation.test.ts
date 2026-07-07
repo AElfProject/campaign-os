@@ -3,12 +3,16 @@ import packageJson from "../../package.json";
 import {
   createBackendRuntimeActivationContract,
   productionRuntimeDependencyBlockerIds,
+  runtimeActivationEnvironmentKeys,
   runtimeActivationConfigKeys,
 } from "./backendRuntimeActivation";
 import { resolveApiServerRuntimeContract } from "./serverRuntime";
 
 const secretFragments = [
   "bearer sample-token",
+  "https://scheduler.invalid/scheduler-pass",
+  "https://queue.invalid/queue-secret",
+  "https://store.invalid/token=idempotency-secret",
   "mnemonic sample",
   "object-key-sample",
   "postgres://real-user:real-db-password@db.invalid/campaign-os",
@@ -95,7 +99,24 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_AUTH_SECRET",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
         "CAMPAIGN_OS_WORKER_QUEUE_URL",
+        "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
+        "CAMPAIGN_OS_WORKER_RETRY_POLICY",
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+        "CAMPAIGN_OS_DEGRADATION_POLICY",
         "CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT",
+      ]),
+    );
+    expect(runtimeActivationEnvironmentKeys.map((item) => item.key)).toEqual(
+      expect.arrayContaining([
+        "CAMPAIGN_OS_WORKER_QUEUE_URL",
+        "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
+        "CAMPAIGN_OS_WORKER_RETRY_POLICY",
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+        "CAMPAIGN_OS_DEGRADATION_POLICY",
       ]),
     );
     expect(activation.deploymentHandoff.environmentKeys).toEqual(
@@ -111,6 +132,34 @@ describe("backend runtime activation contract", () => {
           key: "CAMPAIGN_OS_AUTH_SECRET",
           redacted: true,
           status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "worker",
+          key: "CAMPAIGN_OS_WORKER_QUEUE_URL",
+          redacted: true,
+          required: true,
+          status: "deferred",
+        }),
+        expect.objectContaining({
+          category: "scheduler",
+          key: "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
+          redacted: true,
+          required: true,
+          status: "deferred",
+        }),
+        expect.objectContaining({
+          category: "worker",
+          key: "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "observability",
+          key: "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+          redacted: true,
+          required: true,
+          status: "deferred",
         }),
       ]),
     );
@@ -138,8 +187,13 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "auth", id: "wallet-proof-verifier", status: "blocked" }),
         expect.objectContaining({ area: "auth", id: "session-issuer", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "provider-adapters", status: "deferred" }),
-        expect.objectContaining({ area: "worker", id: "verification-worker", status: "deferred" }),
-        expect.objectContaining({ area: "scheduler", id: "scheduler", status: "deferred" }),
+        expect.objectContaining({ area: "worker", id: "worker-queue", status: "deferred" }),
+        expect.objectContaining({ area: "scheduler", id: "scheduler-endpoint", status: "deferred" }),
+        expect.objectContaining({ area: "scheduler", id: "retry-backoff-policy", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "idempotency-store", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "worker-lease", status: "blocked" }),
+        expect.objectContaining({ area: "observability", id: "observability", status: "deferred" }),
+        expect.objectContaining({ area: "provider", id: "provider-handoff", status: "deferred" }),
         expect.objectContaining({ area: "contract", id: "contract-writer", status: "blocked" }),
         expect.objectContaining({ area: "storage", id: "object-storage", status: "deferred" }),
         expect.objectContaining({ area: "observability", id: "observability-exporter", status: "deferred" }),

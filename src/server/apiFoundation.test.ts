@@ -35,6 +35,12 @@ describe("API foundation registry", () => {
 
     expect(routeIds).toEqual(apiRuntimeRoutes.map((route) => route.id));
     expect(new Set(routeIds).size).toBe(apiRuntimeRoutes.length);
+    expect(routeIds).not.toEqual(
+      expect.arrayContaining(["workers.list", "schedules.list", "worker.queue.publish"]),
+    );
+    expect(registry.routes.map((route) => route.path)).not.toEqual(
+      expect.arrayContaining(["/api/workers", "/api/schedules"]),
+    );
 
     for (const route of registry.routes) {
       expect(route.operationId).toMatch(/^[a-z][A-Za-z0-9]+$/);
@@ -132,13 +138,38 @@ describe("API foundation registry", () => {
 
     expect(surfaceById.get("verification")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["provider_adapters", "worker_queue"]),
-      notes: expect.stringContaining("provider/indexer handoff"),
+      notes: expect.stringContaining("retry/backoff"),
     });
+    expect(surfaceById.get("campaign")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
+      notes: expect.stringContaining("lifecycle handoff"),
+    });
+    expect(surfaceById.get("verification")?.notes).toContain("provider/indexer handoff");
     expect(surfaceById.get("task-template")?.notes).toContain("disable_provider_task_templates");
-    expect(surfaceById.get("eligibility")?.notes).toContain("pending or manual review");
-    expect(surfaceById.get("export")?.notes).toContain("object storage adapter");
-    expect(surfaceById.get("risk-scoring")?.notes).toContain("analytics warehouse adapter");
-    expect(surfaceById.get("ai-ops")?.notes).toContain("AI provider adapter");
+    expect(surfaceById.get("eligibility")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
+      notes: expect.stringContaining("idempotency store"),
+    });
+    expect(surfaceById.get("export")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["contract_writer", "object_storage_export", "worker_queue"]),
+      notes: expect.stringContaining("observability exporter"),
+    });
+    expect(surfaceById.get("analytics")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
+      notes: expect.stringContaining("analytics ingestion"),
+    });
+    expect(surfaceById.get("risk-scoring")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
+      notes: expect.stringContaining("worker lease"),
+    });
+    expect(surfaceById.get("ai-ops")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
+      notes: expect.stringContaining("observability exporter"),
+    });
+    expect(surfaceById.get("runtime-observability")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
+      notes: expect.stringContaining("contract sync handoff"),
+    });
     expect(surfaceById.get("service-registry")?.notes).toContain("provider registry");
   });
 

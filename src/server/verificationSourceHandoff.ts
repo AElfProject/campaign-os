@@ -4,6 +4,10 @@ import {
   redactProviderIndexerValue,
   type ProviderIndexerAdapterGroup,
 } from "./providerIndexerAdapters";
+import {
+  redactWorkerSchedulerValue,
+  workerJobCatalog,
+} from "./workerSchedulerRuntime";
 
 export type VerificationDegradationOutcome =
   | "pending"
@@ -12,22 +16,27 @@ export type VerificationDegradationOutcome =
   | "local_only"
   | "blocked";
 export type VerificationProviderGroupAvailability = "available" | "scaffolded" | "unavailable";
+export type VerificationWorkerAvailability = "available" | "scaffolded" | "unavailable";
 export type VerificationSourceDiagnosticSeverity = "error" | "warning" | "info";
 export type VerificationSourceDiagnosticCode =
   | "UNKNOWN_VERIFICATION_TYPE"
   | "UNKNOWN_PROVIDER_GROUP"
+  | "UNKNOWN_WORKER_JOB"
   | "UNSUPPORTED_EVIDENCE_SOURCE"
-  | "PROVIDER_GROUP_UNAVAILABLE";
+  | "PROVIDER_GROUP_UNAVAILABLE"
+  | "WORKER_JOB_UNAVAILABLE";
 
 export interface VerificationSourcePolicy {
   authSessionRequired: boolean;
   defaultDegradationOutcome: VerificationDegradationOutcome;
   diagnosticNotes: string[];
   evidenceSourceLabels: string[];
+  jobIds: string[];
   liveExecutionEnabled: false;
   providerGroupIds: string[];
   providerReadinessSatisfiesAuthentication: boolean;
   unavailableDegradationOutcome: VerificationDegradationOutcome;
+  unavailableWorkerOutcome: VerificationDegradationOutcome;
   verificationType: VerificationType;
   workerRequired: boolean;
 }
@@ -63,8 +72,10 @@ export interface VerificationSourceHandoffOptions {
 
 export interface ResolveVerificationSourceHandoffOptions {
   evidenceSourceLabels?: string[];
+  jobIds?: string[];
   providerGroupAvailability?: VerificationProviderGroupAvailability;
   providerGroupIds?: string[];
+  workerAvailability?: VerificationWorkerAvailability;
 }
 
 export const allowedVerificationDegradationOutcomes: VerificationDegradationOutcome[] = [
@@ -95,10 +106,12 @@ export const verificationSourcePolicies: VerificationSourcePolicy[] = [
       "Provider readiness metadata is never accepted as wallet authentication.",
     ],
     evidenceSourceLabels: ["Auth/session wallet proof"],
+    jobIds: [],
     liveExecutionEnabled: false,
     providerGroupIds: ["wallet-auth-session"],
     providerReadinessSatisfiesAuthentication: false,
     unavailableDegradationOutcome: "blocked",
+    unavailableWorkerOutcome: "blocked",
     verificationType: "WALLET",
     workerRequired: false,
   }),
@@ -110,10 +123,12 @@ export const verificationSourcePolicies: VerificationSourcePolicy[] = [
       "Unavailable indexer evidence remains pending or manual review; it never completes a task.",
     ],
     evidenceSourceLabels: ["AeFinder indexer evidence", "AelfScan explorer evidence"],
+    jobIds: ["task-verification-worker"],
     liveExecutionEnabled: false,
     providerGroupIds: ["aefinder-aelfscan-indexers"],
     providerReadinessSatisfiesAuthentication: false,
     unavailableDegradationOutcome: "pending",
+    unavailableWorkerOutcome: "pending",
     verificationType: "ON_CHAIN",
     workerRequired: true,
   }),
@@ -125,10 +140,12 @@ export const verificationSourcePolicies: VerificationSourcePolicy[] = [
       "Unavailable dApp providers disable provider-backed task templates instead of completing tasks.",
     ],
     evidenceSourceLabels: ["dApp API evidence"],
+    jobIds: ["task-verification-worker"],
     liveExecutionEnabled: false,
     providerGroupIds: ["dapp-api-adapters"],
     providerReadinessSatisfiesAuthentication: false,
     unavailableDegradationOutcome: "disable_provider_task_templates",
+    unavailableWorkerOutcome: "disable_provider_task_templates",
     verificationType: "DAPP_API",
     workerRequired: true,
   }),
@@ -140,10 +157,12 @@ export const verificationSourcePolicies: VerificationSourcePolicy[] = [
       "Unavailable social evidence falls back to manual review only.",
     ],
     evidenceSourceLabels: ["Social API evidence"],
+    jobIds: ["task-verification-worker"],
     liveExecutionEnabled: false,
     providerGroupIds: ["social-api-adapters"],
     providerReadinessSatisfiesAuthentication: false,
     unavailableDegradationOutcome: "manual_review",
+    unavailableWorkerOutcome: "manual_review",
     verificationType: "SOCIAL",
     workerRequired: true,
   }),
@@ -155,16 +174,19 @@ export const verificationSourcePolicies: VerificationSourcePolicy[] = [
       "No provider live call or worker execution is required for the handoff policy.",
     ],
     evidenceSourceLabels: ["Manual review evidence"],
+    jobIds: [],
     liveExecutionEnabled: false,
     providerGroupIds: ["manual-review"],
     providerReadinessSatisfiesAuthentication: false,
     unavailableDegradationOutcome: "manual_review",
+    unavailableWorkerOutcome: "manual_review",
     verificationType: "MANUAL",
     workerRequired: false,
   }),
 ];
 
 const registeredProviderGroupIds = new Set(providerIndexerAdapterGroups.map((group) => group.id));
+const registeredWorkerJobIds = new Set(workerJobCatalog.map((job) => job.id));
 const evidenceSourceLabelSet = new Set<string>(supportedEvidenceSourceLabels);
 
 export const createVerificationSourceHandoff = (
@@ -208,11 +230,14 @@ export const resolveVerificationSourceHandoff = (
 
   const entry = sanitizePolicy(sourcePolicy);
   const providerIds = options.providerGroupIds ?? entry.providerGroupIds;
+  const jobIds = options.jobIds ?? entry.jobIds;
   const evidenceLabels = options.evidenceSourceLabels ?? entry.evidenceSourceLabels;
   const diagnostics = [
+    ...validateWorkerJobs(jobIds),
     ...validateProviderGroups(providerIds),
     ...validateEvidenceSources(evidenceLabels),
     ...validateAvailability(entry, options.providerGroupAvailability),
+    ...validateWorkerAvailability(entry, options.workerAvailability),
   ];
   const degradationOutcome =
     diagnostics.length > 0 ? resolveFailedOutcome(entry, diagnostics) : entry.defaultDegradationOutcome;
@@ -224,6 +249,7 @@ export const resolveVerificationSourceHandoff = (
     entry: {
       ...entry,
       evidenceSourceLabels: sanitizeStrings(evidenceLabels),
+      jobIds: sanitizeStrings(jobIds),
       providerGroupIds: providerIds,
     },
     valid: diagnostics.length === 0,
@@ -240,6 +266,7 @@ const sanitizePolicy = (
     ...(options.diagnosticNotes ?? []),
   ]),
   evidenceSourceLabels: sanitizeStrings(sourcePolicy.evidenceSourceLabels),
+  jobIds: sanitizeStrings(sourcePolicy.jobIds),
   providerGroupIds: [...sourcePolicy.providerGroupIds],
 });
 
@@ -258,6 +285,17 @@ const validateProviderGroups = (ids: readonly string[]): VerificationSourceDiagn
         "UNKNOWN_PROVIDER_GROUP",
         "providerGroupIds",
         `Unknown provider group id: ${redactProviderIndexerValue(id)}`,
+      ),
+    );
+
+const validateWorkerJobs = (ids: readonly string[]): VerificationSourceDiagnostic[] =>
+  ids
+    .filter((id) => !registeredWorkerJobIds.has(id))
+    .map((id) =>
+      diagnostic(
+        "UNKNOWN_WORKER_JOB",
+        "jobIds",
+        `Unknown worker job id: ${redactWorkerSchedulerValue(id)}`,
       ),
     );
 
@@ -289,16 +327,39 @@ const validateAvailability = (
   ];
 };
 
+const validateWorkerAvailability = (
+  entry: VerificationSourcePolicy,
+  availability: VerificationWorkerAvailability | undefined,
+): VerificationSourceDiagnostic[] => {
+  if (!entry.workerRequired || availability !== "unavailable") {
+    return [];
+  }
+
+  return [
+    diagnostic(
+      "WORKER_JOB_UNAVAILABLE",
+      "workerAvailability",
+      `${entry.verificationType} worker job is unavailable; using ${entry.unavailableWorkerOutcome}.`,
+    ),
+  ];
+};
+
 const resolveFailedOutcome = (
   entry: VerificationSourcePolicy,
   diagnostics: readonly VerificationSourceDiagnostic[],
 ): VerificationDegradationOutcome => {
   if (
     diagnostics.some((item) =>
-      item.code === "UNKNOWN_PROVIDER_GROUP" || item.code === "UNSUPPORTED_EVIDENCE_SOURCE"
+      item.code === "UNKNOWN_PROVIDER_GROUP"
+      || item.code === "UNKNOWN_WORKER_JOB"
+      || item.code === "UNSUPPORTED_EVIDENCE_SOURCE"
     )
   ) {
     return "blocked";
+  }
+
+  if (diagnostics.some((item) => item.code === "WORKER_JOB_UNAVAILABLE")) {
+    return entry.unavailableWorkerOutcome;
   }
 
   return entry.unavailableDegradationOutcome;

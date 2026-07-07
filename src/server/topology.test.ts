@@ -100,6 +100,8 @@ describe("backend service topology", () => {
   it("keeps local review offline and production dependencies deferred or disabled", () => {
     const localReview = backendRuntimeProfiles.find((profile) => profile.id === "local-review");
     const productionRequired = backendRuntimeProfiles.find((profile) => profile.id === "production-required");
+    const workerRuntime = backendDeploymentUnits.find((unit) => unit.id === "worker-runtime");
+    const schedulerRuntime = backendDeploymentUnits.find((unit) => unit.id === "scheduler-runtime");
 
     expect(localReview).toMatchObject({
       externalNetworkAllowed: false,
@@ -123,6 +125,28 @@ describe("backend service topology", () => {
         "object_storage_export",
       ]),
     );
+    expect(workerRuntime).toMatchObject({
+      currentImplementation: "source-topology-only",
+      entrypoint: "src/server/topology.ts",
+      productionTarget: "worker_service",
+      serviceIds: expect.arrayContaining([
+        "verification-service",
+        "risk-scoring-service",
+        "ai-ops-service",
+      ]),
+    });
+    expect(schedulerRuntime).toMatchObject({
+      currentImplementation: "deferred",
+      entrypoint: "src/server/topology.ts",
+      productionTarget: "scheduled_runner",
+      serviceIds: expect.arrayContaining([
+        "campaign-service",
+        "eligibility-service",
+        "risk-scoring-service",
+        "ai-ops-service",
+        "runtime-observability",
+      ]),
+    });
 
     for (const adapter of backendAdapterGroups.filter((group) => group.forbiddenInLocalReview)) {
       expect(["deferred", "disabled"]).toContain(adapter.status);
@@ -181,6 +205,19 @@ describe("backend service topology", () => {
         "Provider/indexer handoff degrades to pending or manual review while live calls are deferred.",
       ]),
     });
+  });
+
+  it("documents deferred worker scheduler dependencies across production handoff surfaces", () => {
+    const serviceById = new Map(backendServiceBoundaries.map((service) => [service.id, service]));
+
+    expect(serviceById.get("campaign-service")?.risks.join(" ")).toContain("scheduler runtime");
+    expect(serviceById.get("verification-service")?.risks.join(" ")).toContain("idempotency store");
+    expect(serviceById.get("eligibility-service")?.risks.join(" ")).toContain("provider handoff");
+    expect(serviceById.get("export-service")?.risks.join(" ")).toContain("observability exporter");
+    expect(serviceById.get("risk-scoring-service")?.risks.join(" ")).toContain("worker lease");
+    expect(serviceById.get("ai-ops-service")?.risks.join(" ")).toContain("scheduler runtime");
+    expect(serviceById.get("runtime-observability")?.risks.join(" ")).toContain("contract sync handoffs");
+    expect(serviceById.get("points-ranking-service")?.risks.join(" ")).toContain("Reward distribution handoff");
   });
 
   it("produces a valid topology report with route and ownership coverage", () => {

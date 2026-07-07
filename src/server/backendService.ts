@@ -66,6 +66,10 @@ import {
   type ProviderIndexerFoundationSummary,
 } from "./providerIndexerAdapters";
 import {
+  createWorkerSchedulerFoundation,
+  type WorkerSchedulerFoundationSummary,
+} from "./workerSchedulerRuntime";
+import {
   allowedVerificationDegradationOutcomes,
   createVerificationSourceHandoff,
   type VerificationSourceHandoffSummary,
@@ -102,6 +106,7 @@ export type BackendReadinessDiagnosticCode =
   | "API_FOUNDATION_INVALID"
   | "TOPOLOGY_INVALID"
   | "SERVICE_PORTS_INVALID"
+  | "WORKER_SCHEDULER_READINESS_BLOCKED"
   | "ROUTE_COUNT_MISMATCH"
   | "ATTACH_POINT_MISSING";
 
@@ -185,6 +190,7 @@ export interface BackendServiceReadinessReport {
     issues: BackendReadinessDiagnostic[];
     valid: boolean;
   };
+  workerSchedulerFoundation: BackendWorkerSchedulerReadinessSummary;
 }
 
 export interface BackendProviderIndexerReadinessSummary extends ProviderIndexerFoundationSummary {
@@ -196,6 +202,39 @@ export interface BackendProviderIndexerReadinessSummary extends ProviderIndexerF
   verificationSourceDiagnosticCodes: VerificationSourceHandoffSummary["diagnosticCodes"];
   verificationSourceDiagnostics: VerificationSourceHandoffSummary["diagnostics"];
   verificationSourceHandoff: VerificationSourceHandoffSummary;
+}
+
+export interface BackendWorkerSchedulerReadinessSummary {
+  blockerCount: WorkerSchedulerFoundationSummary["blockerCount"];
+  diagnosticCodes: WorkerSchedulerFoundationSummary["diagnosticCodes"];
+  diagnostics: WorkerSchedulerFoundationSummary["diagnostics"];
+  id: WorkerSchedulerFoundationSummary["id"];
+  jobCatalogCoverage: {
+    jobCatalogCount: number;
+    jobFamilyCount: number;
+    ownerServiceIds: string[];
+    productionDependencyIds: string[];
+    requiredConfigKeys: string[];
+    triggerSourceCount: number;
+  };
+  noLiveFlags: WorkerSchedulerFoundationSummary["noLiveFlags"];
+  preconditions: WorkerSchedulerFoundationSummary["preconditions"];
+  productionReady: false;
+  profileId: WorkerSchedulerFoundationSummary["profileId"];
+  schedulePolicyCoverage: {
+    idempotencyPolicyCount: number;
+    retryPolicyCount: number;
+    schedulePolicyCount: number;
+  };
+  status: WorkerSchedulerFoundationSummary["status"];
+  valid: boolean;
+  verificationSourceHandoff: {
+    id: VerificationSourceHandoffSummary["id"];
+    liveExecutionEnabled: false;
+    supportedVerificationTypes: VerificationSourceHandoffSummary["supportedVerificationTypes"];
+    valid: boolean;
+    workerRequiredPolicyCount: number;
+  };
 }
 
 export type BackendAuthEnforcementMode = "blocked" | "local_enforced" | "metadata_only";
@@ -650,6 +689,7 @@ const createValidationIssues = ({
   migration,
   persistenceAdapters,
   providerIndexerFoundation,
+  workerSchedulerFoundation,
   persistenceRuntime,
   servicePorts,
   topology,
@@ -668,6 +708,7 @@ const createValidationIssues = ({
   persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   servicePorts: ApiServicePortReport;
   topology: BackendTopologyReport;
+  workerSchedulerFoundation: BackendWorkerSchedulerReadinessSummary;
 }): BackendReadinessDiagnostic[] => {
   const issues: BackendReadinessDiagnostic[] = [];
 
@@ -712,6 +753,14 @@ const createValidationIssues = ({
       "PROVIDER_INDEXER_READINESS_BLOCKED",
       "providerIndexerFoundation",
       "Provider/indexer readiness validation failed.",
+    ));
+  }
+
+  if (!workerSchedulerFoundation.valid) {
+    issues.push(errorDiagnostic(
+      "WORKER_SCHEDULER_READINESS_BLOCKED",
+      "workerSchedulerFoundation",
+      "Worker/scheduler readiness validation failed.",
     ));
   }
 
@@ -1140,6 +1189,61 @@ const createBackendProviderIndexerReadinessSummary = ({
   };
 };
 
+const uniqueStrings = (values: readonly string[]): string[] => Array.from(new Set(values));
+
+const createBackendWorkerSchedulerReadinessSummary = ({
+  env,
+  profileId,
+  verificationSourceHandoff,
+}: {
+  env: Record<string, string | undefined>;
+  profileId: BackendConfigContract["profileId"];
+  verificationSourceHandoff: VerificationSourceHandoffSummary;
+}): BackendWorkerSchedulerReadinessSummary => {
+  const foundation = createWorkerSchedulerFoundation({
+    env,
+    profileId,
+  });
+  const workerRequiredPolicies = verificationSourceHandoff.entries.filter((entry) => entry.workerRequired);
+
+  return {
+    blockerCount: foundation.blockerCount,
+    diagnosticCodes: foundation.diagnosticCodes,
+    diagnostics: foundation.diagnostics,
+    id: foundation.id,
+    jobCatalogCoverage: {
+      jobCatalogCount: foundation.readiness.jobCatalogCount,
+      jobFamilyCount: foundation.readiness.jobFamilyCount,
+      ownerServiceIds: uniqueStrings(foundation.jobCatalog.map((job) => job.ownerServiceId)),
+      productionDependencyIds: uniqueStrings(
+        foundation.jobCatalog.flatMap((job) => job.productionDependencyIds),
+      ),
+      requiredConfigKeys: uniqueStrings(
+        foundation.jobCatalog.flatMap((job) => job.requiredConfigKeys),
+      ),
+      triggerSourceCount: foundation.readiness.triggerSourceCount,
+    },
+    noLiveFlags: foundation.noLiveFlags,
+    preconditions: foundation.preconditions,
+    productionReady: foundation.productionReady,
+    profileId: foundation.profileId,
+    schedulePolicyCoverage: {
+      idempotencyPolicyCount: foundation.idempotencyPolicies.length,
+      retryPolicyCount: foundation.retryBackoffPolicies.length,
+      schedulePolicyCount: foundation.readiness.schedulePolicyCount,
+    },
+    status: foundation.status,
+    valid: foundation.valid && verificationSourceHandoff.valid,
+    verificationSourceHandoff: {
+      id: verificationSourceHandoff.id,
+      liveExecutionEnabled: verificationSourceHandoff.liveExecutionEnabled,
+      supportedVerificationTypes: verificationSourceHandoff.supportedVerificationTypes,
+      valid: verificationSourceHandoff.valid,
+      workerRequiredPolicyCount: workerRequiredPolicies.length,
+    },
+  };
+};
+
 export const createBackendDatabaseAdapterRuntimeSummary = (
   runtime: BackendDatabaseAdapterRuntimeReadinessReport,
 ): BackendDatabaseAdapterRuntimeSummary => ({
@@ -1273,6 +1377,11 @@ export const createBackendServiceReadinessReport = ({
     env,
     profileId: config.profileId,
   });
+  const workerSchedulerFoundation = createBackendWorkerSchedulerReadinessSummary({
+    env,
+    profileId: config.profileId,
+    verificationSourceHandoff: providerIndexerFoundation.verificationSourceHandoff,
+  });
   const entrypoint: BackendServiceEntrypoint = {
     foundationValidationValid: apiFoundation.validation.valid,
     id: "campaign-os-backend-service",
@@ -1299,6 +1408,7 @@ export const createBackendServiceReadinessReport = ({
     persistenceRuntime,
     servicePorts,
     topology,
+    workerSchedulerFoundation,
   });
   const readinessWithoutBootstrap = {
     apiFoundation: {
@@ -1330,6 +1440,7 @@ export const createBackendServiceReadinessReport = ({
       issues: validationIssues,
       valid: validationIssues.length === 0,
     },
+    workerSchedulerFoundation,
   };
   const backendRuntimeBootstrap = createBackendRuntimeBootstrapContract({
     backendReadiness: readinessWithoutBootstrap as BackendServiceReadinessReport,

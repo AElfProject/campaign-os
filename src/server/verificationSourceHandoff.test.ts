@@ -24,6 +24,13 @@ describe("verification source handoff", () => {
       ["social-api-adapters"],
       ["manual-review"],
     ]);
+    expect(handoff.entries.map((entry) => entry.jobIds)).toEqual([
+      [],
+      ["task-verification-worker"],
+      ["task-verification-worker"],
+      ["task-verification-worker"],
+      [],
+    ]);
     expect(handoff.entries.every((entry) => entry.liveExecutionEnabled === false)).toBe(true);
     expect(handoff.entries.every((entry) => entry.evidenceSourceLabels.length > 0)).toBe(true);
     expect(handoff.entries.every((entry) => entry.diagnosticNotes.length > 0)).toBe(true);
@@ -61,8 +68,10 @@ describe("verification source handoff", () => {
     expect(wallet.valid).toBe(true);
     expect(wallet.entry).toMatchObject({
       authSessionRequired: true,
+      jobIds: [],
       liveExecutionEnabled: false,
       providerReadinessSatisfiesAuthentication: false,
+      unavailableWorkerOutcome: "blocked",
       verificationType: "WALLET",
       workerRequired: false,
     });
@@ -70,6 +79,40 @@ describe("verification source handoff", () => {
     expect(wallet.entry?.providerGroupIds).toEqual(["wallet-auth-session"]);
     expect(wallet.entry?.diagnosticNotes.join(" ")).toContain("auth/session");
     expect(wallet.entry?.diagnosticNotes.join(" ")).not.toContain("provider readiness authenticates");
+  });
+
+  it("maps verification sources to worker posture without replacing provider readiness", () => {
+    const handoffByType = Object.fromEntries(
+      createVerificationSourceHandoff().entries.map((entry) => [entry.verificationType, entry]),
+    );
+
+    expect(handoffByType.ON_CHAIN).toMatchObject({
+      jobIds: ["task-verification-worker"],
+      providerGroupIds: ["aefinder-aelfscan-indexers"],
+      unavailableWorkerOutcome: "pending",
+      workerRequired: true,
+    });
+    expect(handoffByType.DAPP_API).toMatchObject({
+      jobIds: ["task-verification-worker"],
+      providerGroupIds: ["dapp-api-adapters"],
+      unavailableWorkerOutcome: "disable_provider_task_templates",
+      workerRequired: true,
+    });
+    expect(handoffByType.SOCIAL).toMatchObject({
+      jobIds: ["task-verification-worker"],
+      providerGroupIds: ["social-api-adapters"],
+      unavailableWorkerOutcome: "manual_review",
+      workerRequired: true,
+    });
+    expect(handoffByType.MANUAL).toMatchObject({
+      jobIds: [],
+      providerGroupIds: ["manual-review"],
+      unavailableWorkerOutcome: "manual_review",
+      workerRequired: false,
+    });
+    expect(
+      Object.values(handoffByType).every((entry) => entry.providerReadinessSatisfiesAuthentication === false),
+    ).toBe(true);
   });
 
   it("marks provider-backed unavailable states as blocked, pending, or review only", () => {
@@ -89,6 +132,28 @@ describe("verification source handoff", () => {
     }
   });
 
+  it("marks worker unavailable states as pending, disabled, or review only", () => {
+    const outcomes = Object.fromEntries(
+      (["ON_CHAIN", "DAPP_API", "SOCIAL"] as const).map((verificationType) => {
+        const handoff = resolveVerificationSourceHandoff(verificationType, {
+          workerAvailability: "unavailable",
+        });
+
+        expect(handoff.valid).toBe(false);
+        expect(handoff.degradationOutcome).not.toBe("completed");
+        expect(handoff.diagnosticCodes).toContain("WORKER_JOB_UNAVAILABLE");
+
+        return [verificationType, handoff.degradationOutcome];
+      }),
+    );
+
+    expect(outcomes).toEqual({
+      DAPP_API: "disable_provider_task_templates",
+      ON_CHAIN: "pending",
+      SOCIAL: "manual_review",
+    });
+  });
+
   it("fails closed for unknown verification types, provider groups, and evidence sources", () => {
     const unknownType = resolveVerificationSourceHandoff("TOKEN_DROP");
     const unknownGroup = resolveVerificationSourceHandoff("ON_CHAIN", {
@@ -96,6 +161,9 @@ describe("verification source handoff", () => {
     });
     const unsupportedEvidence = resolveVerificationSourceHandoff("SOCIAL", {
       evidenceSourceLabels: ["Raw bearer social payload"],
+    });
+    const unknownWorker = resolveVerificationSourceHandoff("ON_CHAIN", {
+      jobIds: ["unknown-worker-secret-token"],
     });
 
     expect(unknownType).toMatchObject({
@@ -114,6 +182,12 @@ describe("verification source handoff", () => {
       diagnosticCodes: ["UNSUPPORTED_EVIDENCE_SOURCE"],
       valid: false,
     });
+    expect(unknownWorker).toMatchObject({
+      degradationOutcome: "blocked",
+      diagnosticCodes: ["UNKNOWN_WORKER_JOB"],
+      valid: false,
+    });
+    expect(JSON.stringify(unknownWorker)).not.toContain("unknown-worker-secret-token");
   });
 
   it("serializes safe diagnostic notes without leaking secret-like fragments", () => {
@@ -131,6 +205,9 @@ describe("verification source handoff", () => {
     expect(serialized).not.toContain("social-token-456");
     expect(serialized).not.toContain("query-secret");
     expect(serialized).not.toContain("ELF_raw_wallet");
+    expect(serialized).not.toContain("queue-user:queue-pass");
+    expect(serialized).not.toContain("hook-secret-000");
+    expect(serialized).not.toContain("tenant/raw/object-key.csv");
     expect(serialized).toContain("[redacted]");
   });
 });

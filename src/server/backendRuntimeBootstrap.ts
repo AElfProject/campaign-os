@@ -111,6 +111,21 @@ export interface BackendRuntimeReadinessProjection {
     status: BackendServiceReadinessReport["persistenceRuntime"]["status"];
     valid: boolean;
   };
+  workerSchedulerFoundation: {
+    blockerCount: number;
+    diagnosticCodes: string[];
+    id: BackendServiceReadinessReport["workerSchedulerFoundation"]["id"];
+    jobCatalogCount: number;
+    liveCronExecutionEnabled: false;
+    liveQueuePublishingEnabled: false;
+    liveSchedulerExecutionEnabled: false;
+    liveWorkerExecutionEnabled: false;
+    productionReady: false;
+    schedulePolicyCount: number;
+    status: BackendServiceReadinessReport["workerSchedulerFoundation"]["status"];
+    valid: boolean;
+    verificationHandoffValid: boolean;
+  };
 }
 
 export interface BackendRuntimeBootstrapContract {
@@ -318,6 +333,21 @@ const createReadinessProjection = (
     status: backendReadiness.persistenceRuntime.status,
     valid: backendReadiness.persistenceRuntime.valid
       && backendReadiness.persistenceRuntime.migrationGate.status !== "blocked",
+  },
+  workerSchedulerFoundation: {
+    blockerCount: backendReadiness.workerSchedulerFoundation.blockerCount,
+    diagnosticCodes: backendReadiness.workerSchedulerFoundation.diagnosticCodes,
+    id: backendReadiness.workerSchedulerFoundation.id,
+    jobCatalogCount: backendReadiness.workerSchedulerFoundation.jobCatalogCoverage.jobCatalogCount,
+    liveCronExecutionEnabled: backendReadiness.workerSchedulerFoundation.noLiveFlags.liveCronExecutionEnabled,
+    liveQueuePublishingEnabled: backendReadiness.workerSchedulerFoundation.noLiveFlags.liveQueuePublishingEnabled,
+    liveSchedulerExecutionEnabled: backendReadiness.workerSchedulerFoundation.noLiveFlags.liveSchedulerExecutionEnabled,
+    liveWorkerExecutionEnabled: backendReadiness.workerSchedulerFoundation.noLiveFlags.liveWorkerExecutionEnabled,
+    productionReady: backendReadiness.workerSchedulerFoundation.productionReady,
+    schedulePolicyCount: backendReadiness.workerSchedulerFoundation.schedulePolicyCoverage.schedulePolicyCount,
+    status: backendReadiness.workerSchedulerFoundation.status,
+    valid: backendReadiness.workerSchedulerFoundation.valid,
+    verificationHandoffValid: backendReadiness.workerSchedulerFoundation.verificationSourceHandoff.valid,
   },
 });
 
