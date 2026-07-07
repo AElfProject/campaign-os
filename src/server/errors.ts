@@ -4,6 +4,9 @@ export type ApiRuntimeErrorCode =
   | "ROUTE_NOT_FOUND"
   | "METHOD_NOT_ALLOWED"
   | "MALFORMED_JSON"
+  | "AUTH_SESSION_REQUIRED"
+  | "AUTH_SESSION_INVALID"
+  | "AUTH_FORBIDDEN"
   | "INVALID_REQUEST"
   | "INVALID_CAMPAIGN"
   | "INVALID_TASK"
@@ -81,6 +84,33 @@ export const invalidRequest = (field: string, reason: string) =>
     "The request does not match the local Campaign OS API contract.",
     "请求不符合本地 Campaign OS API contract。",
     { field, reason },
+  );
+
+export const authSessionRequired = (details?: Record<string, unknown>) =>
+  runtimeError(
+    "AUTH_SESSION_REQUIRED",
+    401,
+    "A local Campaign OS auth session is required for this route.",
+    "该 Campaign OS route 需要本地 auth session。",
+    details,
+  );
+
+export const authSessionInvalid = (details?: Record<string, unknown>) =>
+  runtimeError(
+    "AUTH_SESSION_INVALID",
+    401,
+    "The local Campaign OS auth session is invalid.",
+    "本地 Campaign OS auth session 无效。",
+    details,
+  );
+
+export const authForbidden = (details?: Record<string, unknown>) =>
+  runtimeError(
+    "AUTH_FORBIDDEN",
+    403,
+    "The local Campaign OS auth session is not allowed to perform this action.",
+    "本地 Campaign OS auth session 无权执行该操作。",
+    details,
   );
 
 export const invalidCampaign = (campaignId: string) =>

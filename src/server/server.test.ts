@@ -16,6 +16,16 @@ const unsafeLogFragments = [
   "token",
 ];
 
+const projectOwnerAuthHeaders = (ownerAddress: string) => ({
+  "x-campaign-os-account-type": "AA",
+  "x-campaign-os-credential-boundary": "ordinary_user_wallet",
+  "x-campaign-os-proof-status": "verified",
+  "x-campaign-os-roles": "project_owner",
+  "x-campaign-os-session-id": `sess-${ownerAddress}`,
+  "x-campaign-os-wallet-address": ownerAddress,
+  "x-campaign-os-wallet-source": "PORTKEY_AA",
+});
+
 describe("Campaign OS API server entrypoint", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -389,6 +399,89 @@ describe("Campaign OS API server entrypoint", () => {
       ]).toLowerCase();
       expect(serializedFailures).not.toContain("raw-secret-header");
       expect(serializedFailures).not.toContain("raw-secret-query");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("enforces campaign mutation auth over HTTP", async () => {
+    const server = await startCampaignOsApiServer({
+      logger: false,
+      port: 0,
+    });
+
+    try {
+      const response = await fetch(`${server.url}/api/campaigns`, {
+        body: JSON.stringify({
+          contractMode: "OFF_CHAIN_MVP",
+          defaultLocale: "en-US",
+          duration: "2026-08-01/2026-08-14",
+          endTime: "2026-08-14T23:59:59Z",
+          goal: "Reject missing auth over HTTP",
+          ownerAddress: "http-auth-owner",
+          projectId: "http-auth-project",
+          rewardDescription: "Repository-backed rewards remain local-review only.",
+          startTime: "2026-08-01T00:00:00Z",
+          supportedLocales: ["en-US"],
+          walletPolicy: "ANY",
+        }),
+        headers: {
+          authorization: "Bearer raw-secret-header",
+          "content-type": "application/json",
+          "x-campaign-os-trace-id": "trace-auth-http-missing",
+        },
+        method: "POST",
+      });
+      const payload = await response.json();
+      const authorized = await fetch(`${server.url}/api/campaigns`, {
+        body: JSON.stringify({
+          contractMode: "OFF_CHAIN_MVP",
+          defaultLocale: "en-US",
+          duration: "2026-08-01/2026-08-14",
+          endTime: "2026-08-14T23:59:59Z",
+          goal: "Allow project owner auth over HTTP",
+          ownerAddress: "http-auth-owner",
+          projectId: "http-auth-project",
+          rewardDescription: "Repository-backed rewards remain local-review only.",
+          startTime: "2026-08-01T00:00:00Z",
+          supportedLocales: ["en-US"],
+          walletPolicy: "ANY",
+        }),
+        headers: {
+          "content-type": "application/json",
+          "x-campaign-os-trace-id": "trace-auth-http-authorized",
+          ...projectOwnerAuthHeaders("http-auth-owner"),
+        },
+        method: "POST",
+      });
+      const authorizedPayload = await authorized.json();
+
+      expect(response.status).toBe(401);
+      expect(response.headers.get("x-campaign-os-trace-id")).toBe("trace-auth-http-missing");
+      expect(payload).toMatchObject({
+        ok: false,
+        traceId: "trace-auth-http-missing",
+        error: {
+          code: "AUTH_SESSION_REQUIRED",
+          details: {
+            routeId: "campaigns.create",
+          },
+        },
+      });
+      expect(authorized.status).toBe(200);
+      expect(authorized.headers.get("x-campaign-os-trace-id")).toBe("trace-auth-http-authorized");
+      expect(authorizedPayload).toMatchObject({
+        ok: true,
+        traceId: "trace-auth-http-authorized",
+        data: {
+          payload: {
+            id: "campaign-db-draft-0001",
+            ownerAddress: "http-auth-owner",
+            projectId: "http-auth-project",
+          },
+        },
+      });
+      expect(JSON.stringify(payload).toLowerCase()).not.toContain("raw-secret-header");
     } finally {
       await server.stop();
     }
