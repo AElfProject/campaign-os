@@ -17,6 +17,16 @@ export interface CampaignDurableStoreDiagnostic {
   severity: "error" | "warning" | "info";
 }
 
+export class CampaignDurableStoreError extends Error {
+  readonly diagnostics: CampaignDurableStoreDiagnostic[];
+
+  constructor(message: string, diagnostics: CampaignDurableStoreDiagnostic[]) {
+    super(message);
+    this.name = "CampaignDurableStoreError";
+    this.diagnostics = diagnostics;
+  }
+}
+
 export interface CampaignDurableStoreManifest {
   boundedListLimit: number;
   diagnosticCodes: CampaignDurableStoreDiagnosticCode[];
@@ -185,11 +195,14 @@ export const createCampaignDurableStore = ({
       await writeFile(tempPath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
       await rename(tempPath, filePath);
     } catch {
-      startupDiagnostics.push(diagnostic(
+      const issue = diagnostic(
         "CAMPAIGN_DURABLE_STORE_WRITE_FAILED",
         "filePath",
         "Campaign durable store could not persist campaign drafts.",
-      ));
+      );
+
+      startupDiagnostics.push(issue);
+      throw new CampaignDurableStoreError("Campaign durable store write failed.", [issue]);
     }
   };
 

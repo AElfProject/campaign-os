@@ -24,6 +24,10 @@ export type CampaignDbRepositoryEventType =
   | "diagnostic";
 export type CampaignDbDiagnosticSeverity = "error" | "warning" | "info";
 export type CampaignDbDiagnosticCode =
+  | "CAMPAIGN_DURABLE_STORE_PATH_REQUIRED"
+  | "CAMPAIGN_DURABLE_STORE_READ_FAILED"
+  | "CAMPAIGN_DURABLE_STORE_WRITE_FAILED"
+  | "CAMPAIGN_DURABLE_STORE_PRODUCTION_REQUIRED"
   | "CAMPAIGN_DB_REQUIRED_FIELD_MISSING"
   | "CAMPAIGN_DB_UNSUPPORTED_DEFAULT_LOCALE"
   | "CAMPAIGN_DB_UNSUPPORTED_LOCALE"
@@ -301,11 +305,15 @@ const normalizeSupportedLocales = (
 ): SupportedLocale[] => {
   const locales = requestedLocales ?? supportedLocales;
 
-  if (locales.length === 0 || locales.some((locale) => !isSupportedLocale(locale))) {
+  if (
+    locales.length === 0 ||
+    locales.some((locale) => !isSupportedLocale(locale)) ||
+    !locales.includes("en-US")
+  ) {
     issues.push(diagnostic(
       "CAMPAIGN_DB_UNSUPPORTED_LOCALE",
       "supportedLocales",
-      "Campaign DB draft supportedLocales contains unsupported locale values.",
+      "Campaign DB draft supportedLocales must contain supported locale values and include en-US.",
     ));
 
     return [...supportedLocales];

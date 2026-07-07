@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import type { CampaignDbDraft } from "./campaignDbRepository";
-import { createCampaignDurableStore } from "./campaignDurableStore";
+import {
+  CampaignDurableStoreError,
+  createCampaignDurableStore,
+} from "./campaignDurableStore";
 
 const draft = (id: string, createdAt = "2026-07-07T00:00:00.000Z"): CampaignDbDraft => ({
   contractMode: "OFF_CHAIN_MVP",
@@ -112,5 +115,20 @@ describe("Campaign durable store", () => {
     await store.reset();
 
     await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("throws instead of silently accepting failed durable writes", async () => {
+    const store = createCampaignDurableStore({
+      filePath: "/dev/null/campaign-drafts.json",
+      mode: "durable_test",
+    });
+
+    await expect(store.create(draft("campaign-db-draft-write-fail"))).rejects.toBeInstanceOf(
+      CampaignDurableStoreError,
+    );
+    await expect(store.manifest()).resolves.toMatchObject({
+      diagnosticCodes: expect.arrayContaining(["CAMPAIGN_DURABLE_STORE_WRITE_FAILED"]),
+      status: "blocked",
+    });
   });
 });

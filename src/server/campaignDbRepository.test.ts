@@ -155,6 +155,7 @@ describe("Campaign DB repository", () => {
   it.each([
     ["defaultLocale", { defaultLocale: "zh-CN" }, "CAMPAIGN_DB_UNSUPPORTED_DEFAULT_LOCALE"],
     ["supportedLocales", { supportedLocales: ["en-US", "fr-FR"] }, "CAMPAIGN_DB_UNSUPPORTED_LOCALE"],
+    ["supportedLocales default", { supportedLocales: ["zh-CN"] }, "CAMPAIGN_DB_UNSUPPORTED_LOCALE"],
     ["walletPolicy", { walletPolicy: "PORTKEY_ONLY" }, "CAMPAIGN_DB_UNSUPPORTED_WALLET_POLICY"],
     ["contractMode", { contractMode: "LIVE_CONTRACT" }, "CAMPAIGN_DB_UNSUPPORTED_CONTRACT_MODE"],
     ["timeWindow", { endTime: "2026-07-06T00:00:00.000Z" }, "CAMPAIGN_DB_INVALID_TIME_WINDOW"],
