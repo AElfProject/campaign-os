@@ -79,6 +79,7 @@ export interface ServerRuntimeReadiness {
     persistenceFoundation: BackendPersistenceFoundationSummary;
     providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
     persistenceRuntime: BackendPersistenceRuntimeSummary;
+    workerSchedulerFoundation: BackendServiceReadinessReport["workerSchedulerFoundation"];
   };
   requestGuard: {
     guardedFailureEnvelope: true;
@@ -191,6 +192,7 @@ export const createServerRuntimeReadiness = ({
       persistenceFoundation: backendReadiness.persistenceFoundation,
       providerIndexerFoundation: backendReadiness.providerIndexerFoundation,
       persistenceRuntime: createBackendPersistenceRuntimeSummary(backendReadiness.persistenceRuntime),
+      workerSchedulerFoundation: backendReadiness.workerSchedulerFoundation,
     },
     requestGuard: {
       guardedFailureEnvelope: true,

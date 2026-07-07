@@ -391,6 +391,35 @@ describe("server runtime readiness metadata", () => {
             valid: true,
           },
         },
+        workerSchedulerFoundation: {
+          blockerCount: 0,
+          diagnosticCodes: [],
+          id: "campaign-os-worker-scheduler-foundation",
+          jobCatalogCoverage: {
+            jobCatalogCount: 9,
+            jobFamilyCount: 9,
+            triggerSourceCount: 6,
+          },
+          noLiveFlags: {
+            liveCronExecutionEnabled: false,
+            liveQueuePublishingEnabled: false,
+            liveSchedulerExecutionEnabled: false,
+            liveWorkerExecutionEnabled: false,
+          },
+          productionReady: false,
+          schedulePolicyCoverage: {
+            idempotencyPolicyCount: 9,
+            retryPolicyCount: 8,
+            schedulePolicyCount: 9,
+          },
+          status: "local_ready",
+          valid: true,
+          verificationSourceHandoff: {
+            liveExecutionEnabled: false,
+            valid: true,
+            workerRequiredPolicyCount: 3,
+          },
+        },
       },
       requestGuard: {
         guardedFailureEnvelope: true,
@@ -689,6 +718,26 @@ describe("server runtime readiness metadata", () => {
             summaryCount: 5,
           },
         },
+        workerSchedulerFoundation: {
+          blockerCount: 5,
+          diagnosticCodes: expect.arrayContaining([
+            "SCHEDULER_ENDPOINT_MISSING",
+            "RETRY_BACKOFF_POLICY_MISSING",
+            "IDEMPOTENCY_STORE_MISSING",
+            "WORKER_LEASE_MISSING",
+            "OBSERVABILITY_MISSING",
+          ]),
+          noLiveFlags: {
+            liveCronExecutionEnabled: false,
+            liveQueuePublishingEnabled: false,
+            liveSchedulerExecutionEnabled: false,
+            liveWorkerExecutionEnabled: false,
+          },
+          productionReady: false,
+          profileId: "production-required",
+          status: "blocked",
+          valid: false,
+        },
       },
       status: "blocked",
     });
@@ -699,6 +748,7 @@ describe("server runtime readiness metadata", () => {
         "DATABASE_READINESS_BLOCKED",
         "PERSISTENCE_ADAPTER_INVALID",
         "MIGRATION_MANIFEST_INVALID",
+        "WORKER_SCHEDULER_READINESS_BLOCKED",
       ]),
     );
     expectNoSecretLeak(metadata);

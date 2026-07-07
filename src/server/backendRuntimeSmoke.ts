@@ -25,6 +25,7 @@ export interface BackendRuntimeSmokeCheck {
   providerIndexerFoundation?: BackendRuntimeSmokeProviderIndexerFoundationSummary;
   status: number;
   traceId: string;
+  workerSchedulerFoundation?: BackendRuntimeSmokeWorkerSchedulerFoundationSummary;
 }
 
 export interface BackendRuntimeSmokePersistenceFoundationSummary {
@@ -69,6 +70,20 @@ export interface BackendRuntimeSmokeProviderIndexerFoundationSummary {
   workerExecutionEnabled: false;
 }
 
+export interface BackendRuntimeSmokeWorkerSchedulerFoundationSummary {
+  blockerCount: number;
+  diagnosticCodes: string[];
+  jobCatalogCount: number;
+  liveCronExecutionEnabled: false;
+  liveQueuePublishingEnabled: false;
+  liveSchedulerExecutionEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  productionReady: false;
+  schedulePolicyCount: number;
+  status?: string;
+  valid: boolean;
+}
+
 export interface BackendRuntimeSmokeSummary {
   activationId?: string;
   authSessionFoundation: BackendRuntimeSmokeAuthSessionFoundationSummary;
@@ -90,6 +105,7 @@ export interface BackendRuntimeSmokeSummary {
     health: string;
   };
   url: string;
+  workerSchedulerFoundation: BackendRuntimeSmokeWorkerSchedulerFoundationSummary;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -133,6 +149,11 @@ const readProviderIndexerFoundation = (
   value: unknown,
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["serverRuntime", "readiness", "providerIndexerFoundation"]);
+
+const readWorkerSchedulerFoundation = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["serverRuntime", "readiness", "workerSchedulerFoundation"]);
 
 const getNumber = (
   record: Record<string, unknown> | undefined,
@@ -248,6 +269,42 @@ const summarizeProviderIndexerFoundation = (
   };
 };
 
+const summarizeWorkerSchedulerFoundation = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeWorkerSchedulerFoundationSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const noLiveFlags = readNestedRecord(record, ["noLiveFlags"]);
+  const jobCatalogCoverage = readNestedRecord(record, ["jobCatalogCoverage"]);
+  const schedulePolicyCoverage = readNestedRecord(record, ["schedulePolicyCoverage"]);
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(noLiveFlags, "liveCronExecutionEnabled")
+    && isExplicitFalse(noLiveFlags, "liveQueuePublishingEnabled")
+    && isExplicitFalse(noLiveFlags, "liveSchedulerExecutionEnabled")
+    && isExplicitFalse(noLiveFlags, "liveWorkerExecutionEnabled");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    jobCatalogCount: getNumber(jobCatalogCoverage, "jobCatalogCount"),
+    liveCronExecutionEnabled: false,
+    liveQueuePublishingEnabled: false,
+    liveSchedulerExecutionEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    productionReady: false,
+    schedulePolicyCount: getNumber(schedulePolicyCoverage, "schedulePolicyCount"),
+    status: getString(record, "status"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
 const createSmokeCheck = async ({
   baseUrl,
   endpoint,
@@ -279,6 +336,9 @@ const createSmokeCheck = async ({
   const providerIndexerFoundation = summarizeProviderIndexerFoundation(
     readProviderIndexerFoundation(payload.data),
   );
+  const workerSchedulerFoundation = summarizeWorkerSchedulerFoundation(
+    readWorkerSchedulerFoundation(payload.data),
+  );
 
   return {
     activation,
@@ -292,6 +352,7 @@ const createSmokeCheck = async ({
       providerIndexerFoundation,
       status: response.status,
       traceId: payload.traceId ?? "",
+      workerSchedulerFoundation,
     },
   };
 };
@@ -366,6 +427,24 @@ const isProviderIndexerFoundationSmokeReady = (
     && summary.valid === true;
 };
 
+const isWorkerSchedulerFoundationSmokeReady = (
+  summary: BackendRuntimeSmokeWorkerSchedulerFoundationSummary | undefined,
+): summary is BackendRuntimeSmokeWorkerSchedulerFoundationSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveWorkerExecutionEnabled === false
+    && summary.liveSchedulerExecutionEnabled === false
+    && summary.liveQueuePublishingEnabled === false
+    && summary.liveCronExecutionEnabled === false
+    && summary.jobCatalogCount > 0
+    && summary.schedulePolicyCount > 0
+    && summary.status === "local_ready"
+    && summary.valid === true;
+};
+
 export const runBackendRuntimeSmoke = async ({
   env,
   fetchImpl = fetch,
@@ -402,6 +481,7 @@ export const runBackendRuntimeSmoke = async ({
     const authSessionFoundation = contracts.check.authSessionFoundation;
     const persistenceFoundation = contracts.check.persistenceFoundation;
     const providerIndexerFoundation = contracts.check.providerIndexerFoundation;
+    const workerSchedulerFoundation = contracts.check.workerSchedulerFoundation;
 
     if (
       health.check.status !== 200
@@ -418,6 +498,8 @@ export const runBackendRuntimeSmoke = async ({
       || !isPersistenceFoundationSmokeReady(persistenceFoundation)
       || !isProviderIndexerFoundationSmokeReady(health.check.providerIndexerFoundation)
       || !isProviderIndexerFoundationSmokeReady(providerIndexerFoundation)
+      || !isWorkerSchedulerFoundationSmokeReady(health.check.workerSchedulerFoundation)
+      || !isWorkerSchedulerFoundationSmokeReady(workerSchedulerFoundation)
     ) {
       throw new Error("Campaign OS backend runtime smoke check failed.");
     }
@@ -442,6 +524,7 @@ export const runBackendRuntimeSmoke = async ({
         health: health.check.traceId,
       },
       url: server.url,
+      workerSchedulerFoundation,
     };
   } finally {
     await server.stop();
