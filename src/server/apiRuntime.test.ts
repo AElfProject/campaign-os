@@ -1238,6 +1238,172 @@ describe("Campaign OS API runtime", () => {
     expect(readinessCallCount).toBe(0);
   });
 
+  it("persists campaign draft API records across durable Campaign DB runtime recreation", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-campaign-db-"));
+
+    try {
+      const durableStoreFilePath = join(tempDir, "campaign-drafts.json");
+      const firstRuntime = createCampaignOsApiRuntime({
+        campaignDbRepositoryOptions: {
+          durableStoreFilePath,
+          mode: "durable_test",
+        },
+      });
+      const create = await firstRuntime.handle({
+        method: "POST",
+        path: "/api/campaigns",
+        headers: { "x-campaign-os-trace-id": "trace-durable-campaign-create" },
+        body: JSON.stringify({
+          contractMode: "OFF_CHAIN_MVP",
+          defaultLocale: "en-US",
+          duration: "2026-08-01/2026-08-14",
+          endTime: "2026-08-14T23:59:59Z",
+          goal: "Persist durable repository draft",
+          ownerAddress: "repo-owner-durable",
+          projectId: "repo-project-durable",
+          rewardDescription: "Repository-backed rewards remain local-review only.",
+          startTime: "2026-08-01T00:00:00Z",
+          supportedLocales: ["en-US", "zh-CN", "zh-TW"],
+          walletPolicy: "ANY",
+        }),
+      });
+      const created = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload> & {
+        campaignDb: {
+          draftId: string;
+          storeId: string;
+        };
+      }>(create);
+      const secondRuntime = createCampaignOsApiRuntime({
+        campaignDbRepositoryOptions: {
+          durableStoreFilePath,
+          mode: "durable_test",
+        },
+      });
+      const detail = await secondRuntime.handle({
+        method: "GET",
+        path: `/api/campaigns/${created.payload.id}`,
+        headers: { "x-campaign-os-trace-id": "trace-durable-campaign-detail" },
+      });
+      const list = await secondRuntime.handle({
+        method: "GET",
+        path: "/api/campaigns?projectId=repo-project-durable&ownerAddress=repo-owner-durable&status=draft",
+        headers: { "x-campaign-os-trace-id": "trace-durable-campaign-list" },
+      });
+
+      expect(create.body.traceId).toBe("trace-durable-campaign-create");
+      expect(created.campaignDb).toMatchObject({
+        draftId: "campaign-db-draft-0001",
+        storeId: "campaign-db",
+      });
+      expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload> & {
+        campaignDb: {
+          adapterId: string;
+          createdViaRepository: boolean;
+        };
+      }>(detail)).toMatchObject({
+        campaignDb: {
+          adapterId: "campaign-db-durable-test-adapter",
+          createdViaRepository: true,
+        },
+        payload: {
+          item: {
+            id: "campaign-db-draft-0001",
+            status: "draft",
+          },
+        },
+      });
+      expect(expectSuccessData<LocalServiceEnvelope<CampaignListPayload> & {
+        payload: CampaignListPayload & {
+          campaignDb: {
+            draftCount: number;
+          };
+        };
+      }>(list).payload).toMatchObject({
+        campaignDb: {
+          draftCount: 1,
+        },
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: "campaign-db-draft-0001",
+            status: "draft",
+          }),
+        ]),
+        summary: {
+          totalCampaigns: 1,
+        },
+      });
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects invalid durable campaign drafts without partial persistence", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-campaign-db-invalid-"));
+
+    try {
+      const durableStoreFilePath = join(tempDir, "campaign-drafts.json");
+      const runtime = createCampaignOsApiRuntime({
+        campaignDbRepositoryOptions: {
+          durableStoreFilePath,
+          mode: "durable_test",
+        },
+      });
+      const invalid = await runtime.handle({
+        method: "POST",
+        path: "/api/campaigns",
+        headers: { "x-campaign-os-trace-id": "trace-durable-campaign-invalid" },
+        body: JSON.stringify({
+          contractMode: "OFF_CHAIN_MVP",
+          defaultLocale: "en-US",
+          duration: "2026-08-01/2026-08-14",
+          endTime: "2026-08-14T23:59:59Z",
+          goal: "Reject missing en-US supported locale",
+          ownerAddress: "repo-owner-invalid",
+          projectId: "repo-project-invalid",
+          rewardDescription: "Repository-backed rewards remain local-review only.",
+          startTime: "2026-08-01T00:00:00Z",
+          supportedLocales: ["zh-CN"],
+          walletPolicy: "ANY",
+        }),
+      });
+      const list = await runtime.handle({
+        method: "GET",
+        path: "/api/campaigns?projectId=repo-project-invalid",
+        headers: { "x-campaign-os-trace-id": "trace-durable-campaign-invalid-list" },
+      });
+
+      expect(invalid).toMatchObject({
+        status: 400,
+        body: {
+          ok: false,
+          traceId: "trace-durable-campaign-invalid",
+          error: {
+            code: "INVALID_REQUEST",
+            details: {
+              field: "supportedLocales",
+            },
+          },
+        },
+      });
+      expect(expectSuccessData<LocalServiceEnvelope<CampaignListPayload> & {
+        payload: CampaignListPayload & {
+          campaignDb: {
+            draftCount: number;
+          };
+        };
+      }>(list).payload).toMatchObject({
+        campaignDb: {
+          draftCount: 0,
+        },
+        summary: {
+          totalCampaigns: 3,
+        },
+      });
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("calls seeded POST endpoints with sanitized local persistence records", async () => {
     const repository = createCampaignOsMemoryRepository();
     const runtimeWithPersistence = createCampaignOsApiRuntime({ repository });
