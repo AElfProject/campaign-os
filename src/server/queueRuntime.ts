@@ -1,0 +1,698 @@
+import type { BackendRuntimeProfileId } from "./backendProfiles";
+import {
+  workerIdempotencyPolicies,
+  workerJobCatalog,
+  workerRetryBackoffPolicies,
+  workerSchedulerPolicies,
+  type WorkerJobDefinition,
+  type WorkerJobFamily,
+} from "./workerSchedulerRuntime";
+
+export type QueueRuntimeProfileId = BackendRuntimeProfileId;
+export type QueueRuntimeFoundationStatus = "local_ready" | "scaffolded" | "blocked";
+export type QueueCategory =
+  | "verification"
+  | "lifecycle"
+  | "operations"
+  | "analytics"
+  | "ai"
+  | "contract"
+  | "reward";
+export type QueuePriority = "critical" | "high" | "normal" | "low";
+export type QueueDegradedOutcome =
+  | "pending"
+  | "manual_review"
+  | "disable_provider_task_templates"
+  | "metadata_only"
+  | "blocked";
+export type QueueRuntimeDiagnosticSeverity = "error" | "warning" | "info";
+export type QueueRuntimeDiagnosticCode =
+  | "UNKNOWN_QUEUE_RUNTIME_PROFILE"
+  | "QUEUE_PROVIDER_MISSING"
+  | "QUEUE_URL_MISSING"
+  | "QUEUE_RETRY_POLICY_MISSING"
+  | "QUEUE_IDEMPOTENCY_STORE_MISSING"
+  | "QUEUE_WORKER_LEASE_MISSING"
+  | "QUEUE_OBSERVABILITY_MISSING"
+  | "QUEUE_PROVIDER_HANDOFF_MISSING"
+  | "QUEUE_DEAD_LETTER_MISSING"
+  | "UNKNOWN_QUEUE_JOB"
+  | "UNKNOWN_QUEUE_ID"
+  | "MISMATCHED_QUEUE_JOB"
+  | "MISSING_TRACE_ID"
+  | "INVALID_ATTEMPT"
+  | "MISSING_IDEMPOTENCY_KEY"
+  | "UNSAFE_IDEMPOTENCY_KEY"
+  | "MISSING_PAYLOAD_REFERENCE"
+  | "UNSAFE_PAYLOAD_REFERENCE"
+  | "UNKNOWN_RETRY_POLICY"
+  | "UNKNOWN_IDEMPOTENCY_POLICY";
+export type QueueRuntimePreconditionArea =
+  | "queue"
+  | "retry"
+  | "idempotency"
+  | "lease"
+  | "observability"
+  | "provider"
+  | "dead_letter";
+
+export interface QueueRuntimeNoLiveFlags {
+  liveAiCallsEnabled: false;
+  liveAnalyticsIngestionEnabled: false;
+  liveContractCallsEnabled: false;
+  liveCronExecutionEnabled: false;
+  liveObjectStorageEnabled: false;
+  liveProviderCallsEnabled: false;
+  liveQueuePublishingEnabled: false;
+  liveRewardDistributionEnabled: false;
+  liveSchedulerExecutionEnabled: false;
+  liveSocialCallsEnabled: false;
+  liveWorkerExecutionEnabled: false;
+}
+
+export interface QueueRuntimeProductionPrecondition {
+  area: QueueRuntimePreconditionArea;
+  diagnosticCode: QueueRuntimeDiagnosticCode;
+  field: string;
+  id: string;
+  message: string;
+  requiredBeforeProduction: true;
+  requiredConfigKeys: string[];
+  status: "blocked" | "deferred";
+}
+
+export interface QueueRuntimeDiagnostic {
+  code: QueueRuntimeDiagnosticCode;
+  field: string;
+  message: string;
+  severity: QueueRuntimeDiagnosticSeverity;
+}
+
+export interface QueuePlan {
+  deadLetterPolicy: string;
+  degradedOutcome: QueueDegradedOutcome;
+  id: string;
+  idempotencyPolicyId: string;
+  jobFamily: WorkerJobFamily;
+  jobId: string;
+  jobLabel: string;
+  livePublishingEnabled: false;
+  operatorNextAction: string;
+  payloadReferencePolicy: string;
+  priority: QueuePriority;
+  queueCategory: QueueCategory;
+  queueId: string;
+  retryPolicyId: string;
+  sideEffectBoundary: string;
+}
+
+export interface QueueRuntimeReadinessProjection {
+  blockerCount: number;
+  diagnosticCodes: QueueRuntimeDiagnosticCode[];
+  dryRunEnqueueEnabled: boolean;
+  liveQueuePublishingEnabled: false;
+  productionReady: false;
+  queueCategoryCount: number;
+  queueIds: string[];
+  queuePlanCount: number;
+}
+
+export interface QueueRuntimeFoundationSummary {
+  blockerCount: number;
+  diagnosticCodes: QueueRuntimeDiagnosticCode[];
+  diagnostics: QueueRuntimeDiagnostic[];
+  id: "campaign-os-queue-runtime-foundation";
+  noLiveFlags: QueueRuntimeNoLiveFlags;
+  preconditions: QueueRuntimeProductionPrecondition[];
+  productionReady: false;
+  profileId: QueueRuntimeProfileId;
+  queuePlans: QueuePlan[];
+  readiness: QueueRuntimeReadinessProjection;
+  status: QueueRuntimeFoundationStatus;
+  valid: boolean;
+}
+
+export interface CreateQueueRuntimeFoundationOptions {
+  env?: Record<string, unknown>;
+  profileId?: string;
+}
+
+export interface QueueEnqueueRequest {
+  attempt: number;
+  idempotencyKey: string;
+  jobId: string;
+  payloadReference: string;
+  queueId: string;
+  requestedAt?: string;
+  traceId: string;
+}
+
+export interface QueueEnqueueResult {
+  accepted: boolean;
+  attempt?: number;
+  degradedOutcome: QueueDegradedOutcome;
+  diagnosticCodes: QueueRuntimeDiagnosticCode[];
+  diagnostics: QueueRuntimeDiagnostic[];
+  idempotencyKey?: string;
+  jobId?: string;
+  livePublishAttempted: false;
+  liveQueuePublishingEnabled: false;
+  payloadReference?: string;
+  queueId?: string;
+  requestedAt?: string;
+  status: "accepted_dry_run" | "rejected";
+  traceId?: string;
+}
+
+type QueuePlanMetadata = Pick<
+  QueuePlan,
+  "degradedOutcome" | "operatorNextAction" | "priority" | "queueCategory" | "queueId"
+>;
+
+const REDACTED_VALUE = "[redacted]";
+const RAW_JOB_PAYLOAD_VALUE = "[redacted-job-payload]";
+
+export const SUPPORTED_QUEUE_RUNTIME_PROFILES: QueueRuntimeProfileId[] = [
+  "local-review",
+  "staging-scaffold",
+  "production-required",
+];
+
+export const queueRuntimeNoLiveFlags: QueueRuntimeNoLiveFlags = {
+  liveAiCallsEnabled: false,
+  liveAnalyticsIngestionEnabled: false,
+  liveContractCallsEnabled: false,
+  liveCronExecutionEnabled: false,
+  liveObjectStorageEnabled: false,
+  liveProviderCallsEnabled: false,
+  liveQueuePublishingEnabled: false,
+  liveRewardDistributionEnabled: false,
+  liveSchedulerExecutionEnabled: false,
+  liveSocialCallsEnabled: false,
+  liveWorkerExecutionEnabled: false,
+};
+
+export const queueRuntimeProductionPreconditions: QueueRuntimeProductionPrecondition[] = [
+  {
+    area: "queue",
+    diagnosticCode: "QUEUE_PROVIDER_MISSING",
+    field: "CAMPAIGN_OS_QUEUE_PROVIDER",
+    id: "queue-provider",
+    message: "Queue provider selection is required before live queue publishing.",
+    requiredBeforeProduction: true,
+    requiredConfigKeys: ["CAMPAIGN_OS_QUEUE_PROVIDER"],
+    status: "blocked",
+  },
+  {
+    area: "queue",
+    diagnosticCode: "QUEUE_URL_MISSING",
+    field: "CAMPAIGN_OS_WORKER_QUEUE_URL",
+    id: "worker-queue-url",
+    message: "Worker queue URL is required before live worker queue publishing.",
+    requiredBeforeProduction: true,
+    requiredConfigKeys: ["CAMPAIGN_OS_WORKER_QUEUE_URL"],
+    status: "blocked",
+  },
+  {
+    area: "retry",
+    diagnosticCode: "QUEUE_RETRY_POLICY_MISSING",
+    field: "CAMPAIGN_OS_WORKER_RETRY_POLICY",
+    id: "queue-retry-policy",
+    message: "Retry/backoff policy must be configured before live queue retries.",
+    requiredBeforeProduction: true,
+    requiredConfigKeys: ["CAMPAIGN_OS_WORKER_RETRY_POLICY"],
+    status: "blocked",
+  },
+  {
+    area: "idempotency",
+    diagnosticCode: "QUEUE_IDEMPOTENCY_STORE_MISSING",
+    field: "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+    id: "queue-idempotency-store",
+    message: "Idempotency store is required before side-effecting queue workers execute.",
+    requiredBeforeProduction: true,
+    requiredConfigKeys: ["CAMPAIGN_OS_IDEMPOTENCY_STORE_URL"],
+    status: "blocked",
+  },
+  {
+    area: "lease",
+    diagnosticCode: "QUEUE_WORKER_LEASE_MISSING",
+    field: "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+    id: "queue-worker-lease",
+    message: "Worker lease store is required before concurrent live worker execution.",
+    requiredBeforeProduction: true,
+    requiredConfigKeys: ["CAMPAIGN_OS_WORKER_LEASE_STORE_URL"],
+    status: "blocked",
+  },
+  {
+    area: "observability",
+    diagnosticCode: "QUEUE_OBSERVABILITY_MISSING",
+    field: "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+    id: "queue-observability",
+    message: "Observability exporter is required before production queue visibility.",
+    requiredBeforeProduction: true,
+    requiredConfigKeys: ["CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL"],
+    status: "deferred",
+  },
+  {
+    area: "provider",
+    diagnosticCode: "QUEUE_PROVIDER_HANDOFF_MISSING",
+    field: "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+    id: "queue-provider-handoff",
+    message: "Provider handoff must be configured before provider-backed queue jobs execute.",
+    requiredBeforeProduction: true,
+    requiredConfigKeys: [
+      "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+      "CAMPAIGN_OS_DEGRADATION_POLICY",
+    ],
+    status: "deferred",
+  },
+  {
+    area: "dead_letter",
+    diagnosticCode: "QUEUE_DEAD_LETTER_MISSING",
+    field: "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
+    id: "queue-dead-letter",
+    message: "Dead-letter queue handling is required before live queue retry failures.",
+    requiredBeforeProduction: true,
+    requiredConfigKeys: ["CAMPAIGN_OS_DEAD_LETTER_QUEUE"],
+    status: "blocked",
+  },
+];
+
+const queuePlanMetadata = {
+  task_verification: {
+    degradedOutcome: "pending",
+    operatorNextAction: "Keep verification pending or route to manual review until worker queue is live.",
+    priority: "high",
+    queueCategory: "verification",
+    queueId: "verification-jobs",
+  },
+  campaign_lifecycle: {
+    degradedOutcome: "blocked",
+    operatorNextAction: "Use operator review; do not mutate campaign lifecycle from a dry-run queue plan.",
+    priority: "critical",
+    queueCategory: "lifecycle",
+    queueId: "lifecycle-jobs",
+  },
+  eligibility_refresh: {
+    degradedOutcome: "metadata_only",
+    operatorNextAction: "Keep eligibility projection stale-safe until idempotent worker execution is live.",
+    priority: "normal",
+    queueCategory: "verification",
+    queueId: "verification-jobs",
+  },
+  export_preparation: {
+    degradedOutcome: "manual_review",
+    operatorNextAction: "Prepare export through operator review; do not write storage-backed artifacts.",
+    priority: "high",
+    queueCategory: "operations",
+    queueId: "operations-jobs",
+  },
+  analytics_ingestion_handoff: {
+    degradedOutcome: "metadata_only",
+    operatorNextAction: "Keep analytics as local projections until warehouse ingestion is approved.",
+    priority: "low",
+    queueCategory: "analytics",
+    queueId: "analytics-jobs",
+  },
+  ai_ops_report: {
+    degradedOutcome: "metadata_only",
+    operatorNextAction: "Keep AI Ops report handoff as metadata; do not call AI providers.",
+    priority: "low",
+    queueCategory: "ai",
+    queueId: "ai-ops-jobs",
+  },
+  stale_review_cleanup: {
+    degradedOutcome: "manual_review",
+    operatorNextAction: "Use operator review for stale review cleanup until live scheduler and lease exist.",
+    priority: "normal",
+    queueCategory: "operations",
+    queueId: "operations-jobs",
+  },
+  contract_sync_handoff: {
+    degradedOutcome: "blocked",
+    operatorNextAction: "Block live contract sync until contract reader/writer approval and queue controls exist.",
+    priority: "high",
+    queueCategory: "contract",
+    queueId: "contract-jobs",
+  },
+  reward_distribution_handoff: {
+    degradedOutcome: "manual_review",
+    operatorNextAction: "Require reward custody and distribution review before any reward handoff executes.",
+    priority: "critical",
+    queueCategory: "reward",
+    queueId: "reward-jobs",
+  },
+} as const satisfies Record<WorkerJobFamily, QueuePlanMetadata>;
+
+const retryPolicyById = new Map(workerRetryBackoffPolicies.map((policy) => [policy.id, policy]));
+const idempotencyPolicyById = new Map(workerIdempotencyPolicies.map((policy) => [policy.id, policy]));
+const schedulerPolicyByJobId = new Map(workerSchedulerPolicies.map((policy) => [policy.jobId, policy]));
+
+const diagnostic = (
+  code: QueueRuntimeDiagnosticCode,
+  field: string,
+  message: string,
+  severity: QueueRuntimeDiagnosticSeverity = "error",
+): QueueRuntimeDiagnostic => ({
+  code,
+  field,
+  message,
+  severity,
+});
+
+const plan = (job: WorkerJobDefinition): QueuePlan => {
+  const schedulerPolicy = schedulerPolicyByJobId.get(job.id);
+  const metadata = queuePlanMetadata[job.family];
+
+  return {
+    deadLetterPolicy: "deferred-dead-letter-review-required",
+    degradedOutcome: metadata.degradedOutcome,
+    id: `${job.id}-queue-plan`,
+    idempotencyPolicyId: schedulerPolicy?.idempotencyPolicyId ?? "missing-idempotency-policy",
+    jobFamily: job.family,
+    jobId: job.id,
+    jobLabel: job.label,
+    livePublishingEnabled: false,
+    operatorNextAction: metadata.operatorNextAction,
+    payloadReferencePolicy: "payload-reference-or-hash-only-no-raw-payload",
+    priority: metadata.priority,
+    queueCategory: metadata.queueCategory,
+    queueId: metadata.queueId,
+    retryPolicyId: schedulerPolicy?.retryPolicyId ?? "missing-retry-policy",
+    sideEffectBoundary: job.sideEffectBoundary,
+  };
+};
+
+export const queueRuntimePlans: QueuePlan[] = workerJobCatalog.map(plan);
+
+const knownQueueJobIds = new Set(queueRuntimePlans.map((item) => item.jobId));
+const knownQueueIds = new Set(queueRuntimePlans.map((item) => item.queueId));
+const queuePlanByJobId = new Map(queueRuntimePlans.map((item) => [item.jobId, item]));
+
+const hasConfiguredValue = (env: Record<string, unknown>, keys: readonly string[]): boolean =>
+  keys.every((key) => {
+    const value = env[key];
+
+    return typeof value === "string" ? value.trim().length > 0 : value !== undefined && value !== null;
+  });
+
+const isQueueRuntimeProfileId = (value: string): value is QueueRuntimeProfileId =>
+  SUPPORTED_QUEUE_RUNTIME_PROFILES.includes(value as QueueRuntimeProfileId);
+
+const resolveProfile = (
+  requestedProfileId: string | undefined,
+): { diagnostics: QueueRuntimeDiagnostic[]; profileId: QueueRuntimeProfileId; valid: boolean } => {
+  const profileId = requestedProfileId ?? "local-review";
+
+  if (isQueueRuntimeProfileId(profileId)) {
+    return {
+      diagnostics: [],
+      profileId,
+      valid: true,
+    };
+  }
+
+  return {
+    diagnostics: [
+      diagnostic(
+        "UNKNOWN_QUEUE_RUNTIME_PROFILE",
+        "profileId",
+        `Unsupported queue runtime profile: ${sanitizeQueueRuntimeString(profileId)}`,
+      ),
+    ],
+    profileId: "production-required",
+    valid: false,
+  };
+};
+
+const createProductionDiagnostics = (
+  env: Record<string, unknown>,
+): QueueRuntimeDiagnostic[] =>
+  queueRuntimeProductionPreconditions
+    .filter((item) => !hasConfiguredValue(env, item.requiredConfigKeys))
+    .map((item) => diagnostic(item.diagnosticCode, item.field, item.message));
+
+const createRegistryDiagnostics = (): QueueRuntimeDiagnostic[] =>
+  queueRuntimePlans.flatMap((queuePlan) => {
+    const diagnostics: QueueRuntimeDiagnostic[] = [];
+
+    if (!retryPolicyById.has(queuePlan.retryPolicyId)) {
+      diagnostics.push(
+        diagnostic(
+          "UNKNOWN_RETRY_POLICY",
+          "retryPolicyId",
+          `Unknown queue retry policy id: ${sanitizeQueueRuntimeString(queuePlan.retryPolicyId)}`,
+        ),
+      );
+    }
+
+    if (!idempotencyPolicyById.has(queuePlan.idempotencyPolicyId)) {
+      diagnostics.push(
+        diagnostic(
+          "UNKNOWN_IDEMPOTENCY_POLICY",
+          "idempotencyPolicyId",
+          `Unknown queue idempotency policy id: ${sanitizeQueueRuntimeString(queuePlan.idempotencyPolicyId)}`,
+        ),
+      );
+    }
+
+    return diagnostics;
+  });
+
+export const createQueueRuntimeFoundation = (
+  options: CreateQueueRuntimeFoundationOptions = {},
+): QueueRuntimeFoundationSummary => {
+  const env = options.env ?? {};
+  const profileResolution = resolveProfile(options.profileId);
+  const registryDiagnostics = createRegistryDiagnostics();
+  const productionDiagnostics =
+    profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
+  const diagnostics = [
+    ...profileResolution.diagnostics,
+    ...registryDiagnostics,
+    ...productionDiagnostics,
+  ];
+  const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
+  const status = resolveStatus(profileResolution.profileId, blockerCount);
+  const readiness = createReadinessProjection(diagnostics, blockerCount);
+
+  return {
+    blockerCount,
+    diagnosticCodes: diagnostics.map((item) => item.code),
+    diagnostics,
+    id: "campaign-os-queue-runtime-foundation",
+    noLiveFlags: queueRuntimeNoLiveFlags,
+    preconditions: queueRuntimeProductionPreconditions.map((item) => ({ ...item })),
+    productionReady: false,
+    profileId: profileResolution.profileId,
+    queuePlans: queueRuntimePlans.map((item) => ({ ...item })),
+    readiness,
+    status,
+    valid: profileResolution.valid && blockerCount === 0,
+  };
+};
+
+export const dryRunQueueEnqueue = (
+  request: QueueEnqueueRequest,
+): QueueEnqueueResult => {
+  const queuePlan = queuePlanByJobId.get(request.jobId);
+  const retryPolicy = queuePlan ? retryPolicyById.get(queuePlan.retryPolicyId) : undefined;
+  const diagnostics = validateEnqueueRequest(request, queuePlan, retryPolicy?.maxAttempts);
+  const accepted = diagnostics.length === 0;
+
+  return {
+    accepted,
+    attempt: Number.isInteger(request.attempt) ? request.attempt : undefined,
+    degradedOutcome: queuePlan?.degradedOutcome ?? "blocked",
+    diagnosticCodes: diagnostics.map((item) => item.code),
+    diagnostics,
+    idempotencyKey: sanitizeQueueRuntimeString(request.idempotencyKey),
+    jobId: sanitizeQueueRuntimeString(request.jobId),
+    livePublishAttempted: false,
+    liveQueuePublishingEnabled: false,
+    payloadReference: sanitizeQueueRuntimeString(request.payloadReference),
+    queueId: sanitizeQueueRuntimeString(request.queueId),
+    requestedAt: request.requestedAt ? sanitizeQueueRuntimeString(request.requestedAt) : undefined,
+    status: accepted ? "accepted_dry_run" : "rejected",
+    traceId: sanitizeQueueRuntimeString(request.traceId),
+  };
+};
+
+export const redactQueueRuntimeValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactQueueRuntimeValue(item));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => {
+        if (isSensitiveQueueRuntimeKey(key) && !isSafeSerializableQueueKey(key)) {
+          return [key, REDACTED_VALUE];
+        }
+
+        return [key, redactQueueRuntimeValue(nestedValue)];
+      }),
+    );
+  }
+
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  if (isRawJobPayload(value)) {
+    return RAW_JOB_PAYLOAD_VALUE;
+  }
+
+  if (isUnsafeQueueRuntimeString(value)) {
+    return REDACTED_VALUE;
+  }
+
+  return value;
+};
+
+const validateEnqueueRequest = (
+  request: QueueEnqueueRequest,
+  queuePlan: QueuePlan | undefined,
+  maxAttempts: number | undefined,
+): QueueRuntimeDiagnostic[] => {
+  const diagnostics: QueueRuntimeDiagnostic[] = [];
+
+  if (!knownQueueJobIds.has(request.jobId)) {
+    diagnostics.push(
+      diagnostic("UNKNOWN_QUEUE_JOB", "jobId", `Unknown queue job id: ${sanitizeQueueRuntimeString(request.jobId)}`),
+    );
+  }
+
+  if (!knownQueueIds.has(request.queueId)) {
+    diagnostics.push(
+      diagnostic("UNKNOWN_QUEUE_ID", "queueId", `Unknown queue id: ${sanitizeQueueRuntimeString(request.queueId)}`),
+    );
+  }
+
+  if (queuePlan && request.queueId !== queuePlan.queueId) {
+    diagnostics.push(
+      diagnostic(
+        "MISMATCHED_QUEUE_JOB",
+        "queueId",
+        `Queue id ${sanitizeQueueRuntimeString(request.queueId)} does not match job ${queuePlan.jobId}.`,
+      ),
+    );
+  }
+
+  if (!request.traceId.trim()) {
+    diagnostics.push(diagnostic("MISSING_TRACE_ID", "traceId", "Trace id is required for queue enqueue dry-run."));
+  }
+
+  if (
+    !Number.isInteger(request.attempt)
+    || request.attempt < 1
+    || (maxAttempts !== undefined && request.attempt > maxAttempts)
+  ) {
+    diagnostics.push(
+      diagnostic(
+        "INVALID_ATTEMPT",
+        "attempt",
+        `Queue enqueue attempt must be an integer from 1 to ${maxAttempts ?? "the retry policy limit"}.`,
+      ),
+    );
+  }
+
+  if (!request.idempotencyKey.trim()) {
+    diagnostics.push(
+      diagnostic("MISSING_IDEMPOTENCY_KEY", "idempotencyKey", "Idempotency key is required for queue enqueue dry-run."),
+    );
+  } else if (isUnsafeQueueRuntimeString(request.idempotencyKey)) {
+    diagnostics.push(
+      diagnostic("UNSAFE_IDEMPOTENCY_KEY", "idempotencyKey", "Idempotency key contains unsafe serialized material."),
+    );
+  }
+
+  if (!request.payloadReference.trim()) {
+    diagnostics.push(
+      diagnostic("MISSING_PAYLOAD_REFERENCE", "payloadReference", "Payload reference is required for queue enqueue dry-run."),
+    );
+  } else if (isUnsafeQueueRuntimeString(request.payloadReference) || isRawJobPayload(request.payloadReference)) {
+    diagnostics.push(
+      diagnostic("UNSAFE_PAYLOAD_REFERENCE", "payloadReference", "Payload reference must not contain raw payload material."),
+    );
+  }
+
+  return diagnostics;
+};
+
+const createReadinessProjection = (
+  diagnostics: readonly QueueRuntimeDiagnostic[],
+  blockerCount: number,
+): QueueRuntimeReadinessProjection => ({
+  blockerCount,
+  diagnosticCodes: diagnostics.map((item) => item.code),
+  dryRunEnqueueEnabled: blockerCount === 0,
+  liveQueuePublishingEnabled: false,
+  productionReady: false,
+  queueCategoryCount: new Set(queueRuntimePlans.map((item) => item.queueCategory)).size,
+  queueIds: [...new Set(queueRuntimePlans.map((item) => item.queueId))],
+  queuePlanCount: queueRuntimePlans.length,
+});
+
+const resolveStatus = (
+  profileId: QueueRuntimeProfileId,
+  blockerCount: number,
+): QueueRuntimeFoundationStatus => {
+  if (blockerCount > 0) {
+    return "blocked";
+  }
+
+  return profileId === "local-review" ? "local_ready" : "scaffolded";
+};
+
+const sanitizeQueueRuntimeString = (value: string): string => {
+  const redacted = redactQueueRuntimeValue(value);
+
+  return typeof redacted === "string" ? redacted : REDACTED_VALUE;
+};
+
+const isSafeSerializableQueueKey = (key: string): boolean =>
+  /^(attempt|idempotencyKey|jobId|payloadReference|queueId|requestedAt|traceId)$/i.test(key);
+
+const isSensitiveQueueRuntimeKey = (key: string): boolean =>
+  /bearer|credential|job[-_]?payload|lease[-_]?token|object[-_]?key|provider[-_]?payload|queue[-_]?url|secret|signed[-_]?url|token|webhook[-_]?secret|wallet[-_]?address/i.test(
+    key,
+  );
+
+const isUnsafeQueueRuntimeString = (value: string): boolean =>
+  isCredentialedUrl(value)
+  || isLikelyObjectKey(value)
+  || isSensitiveQueueRuntimeString(value)
+  || isWalletAddressString(value);
+
+const isSensitiveQueueRuntimeString = (value: string): boolean =>
+  /(bearer\s+|hook-secret|lease-token|object-key|queue-secret|secret|token=|worker-token|x-amz-signature=|signed-url)/i.test(
+    value,
+  );
+
+const isCredentialedUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+
+    return Boolean(url.username || url.password || url.searchParams.size > 0);
+  } catch {
+    return false;
+  }
+};
+
+const isLikelyObjectKey = (value: string): boolean =>
+  /^[a-z0-9][a-z0-9-_]*\/.+\.(csv|json|jsonl|parquet|zip)$/i.test(value)
+  || /(^|\/)(exports?|evidence|attachments?)\/.+\.(csv|json|jsonl|parquet|zip)$/i.test(value);
+
+const isWalletAddressString = (value: string): boolean =>
+  /ELF_[A-Za-z0-9_]+|wallet[-_]?address/i.test(value);
+
+const isRawJobPayload = (value: string): boolean => {
+  const trimmed = value.trim();
+
+  if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) {
+    return false;
+  }
+
+  return /address|job|payload|provider|task|wallet/i.test(trimmed);
+};
