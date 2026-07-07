@@ -1,5 +1,17 @@
+import { createServer, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createCampaignOsApiRuntime } from "./apiRuntime";
+import { createBackendServiceReadinessReport } from "./backendService";
 import { startCampaignOsApiServer } from "./server";
+import {
+  createServerRuntimeReadiness,
+  withServerRuntimeReadiness,
+} from "./serverReadiness";
+import { resolveApiServerRuntimeContract } from "./serverRuntime";
 
 const secretLeakFragments = [
   "authorization: bearer",
@@ -29,6 +41,104 @@ const expectSanitizedReadinessPayload = (payload: unknown) => {
   for (const fragment of secretLeakFragments) {
     expect(serialized).not.toContain(fragment);
   }
+};
+
+interface TestDurableCampaignServer {
+  stop(): Promise<void>;
+  url: string;
+}
+
+const writeJsonResponse = (
+  response: ServerResponse,
+  status: number,
+  headers: Record<string, string>,
+  body: unknown,
+) => {
+  response.writeHead(status, headers);
+  response.end(JSON.stringify(body));
+};
+
+const isRuntimeMetadataPath = (path: string | undefined) => {
+  const pathname = new URL(path || "/", "http://127.0.0.1").pathname;
+
+  return pathname === "/api/health" || pathname === "/api/contracts";
+};
+
+const startTestDurableCampaignServer = async (
+  durableStoreFilePath: string,
+): Promise<TestDurableCampaignServer> => {
+  await mkdir(join(durableStoreFilePath, ".."), { recursive: true });
+
+  const runtimeContract = resolveApiServerRuntimeContract({ port: 0 });
+  const backendServiceReadiness = createBackendServiceReadinessReport({
+    campaignStore: {
+      durable: true,
+      mode: "durable_test",
+    },
+    configOptions: {
+      host: runtimeContract.host,
+      port: runtimeContract.port,
+      profileId: runtimeContract.profileId,
+      version: runtimeContract.runtimeVersion,
+    },
+  });
+  const runtime = createCampaignOsApiRuntime({
+    backendServiceReadiness: () => backendServiceReadiness,
+    campaignDbRepositoryOptions: {
+      boundedListLimit: 2,
+      durableStoreFilePath,
+      mode: "durable_test",
+    },
+  });
+  const server: Server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+
+    const runtimeResponse = await runtime.handle({
+      body: chunks.length > 0 ? Buffer.concat(chunks).toString("utf8") : undefined,
+      headers: request.headers,
+      method: request.method ?? "GET",
+      path: request.url ?? "/",
+    });
+    const responseBody = isRuntimeMetadataPath(request.url)
+      ? withServerRuntimeReadiness(
+        runtimeResponse.body,
+        createServerRuntimeReadiness({
+          backendReadiness: backendServiceReadiness,
+          contract: runtimeContract,
+        }),
+      )
+      : runtimeResponse.body;
+
+    writeJsonResponse(response, runtimeResponse.status, runtimeResponse.headers, responseBody);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, runtimeContract.host, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  const address = server.address() as AddressInfo;
+
+  return {
+    stop: () => new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    }),
+    url: `http://${runtimeContract.host}:${address.port}`,
+  };
 };
 
 describe("backend scaffold HTTP smoke", () => {
@@ -608,6 +718,142 @@ describe("backend scaffold HTTP smoke", () => {
       expectSanitizedReadinessPayload(listPayload);
     } finally {
       await server.stop();
+    }
+  });
+
+  it("validates durable Campaign DB HTTP create/read/list/readiness smoke with bounded listing", async () => {
+    const tempDir = join(tmpdir(), `campaign-os-durable-smoke-${Date.now()}`);
+    const server = await startTestDurableCampaignServer(join(tempDir, "campaign-drafts.json"));
+
+    try {
+      const createDraft = async (index: number) => {
+        const response = await fetch(`${server.url}/api/campaigns`, {
+          body: JSON.stringify({
+            contractMode: "OFF_CHAIN_MVP",
+            defaultLocale: "en-US",
+            duration: `2026-10-0${index}/2026-10-1${index}`,
+            endTime: `2026-10-1${index}T23:59:59Z`,
+            goal: `Durable smoke draft ${index}`,
+            ownerAddress: "durable-smoke-owner",
+            projectId: "durable-smoke-project",
+            rewardDescription: "Durable smoke rewards stay local-review only.",
+            startTime: `2026-10-0${index}T00:00:00Z`,
+            supportedLocales: ["en-US", "zh-CN", "zh-TW"],
+            walletPolicy: "ANY",
+          }),
+          headers: {
+            "content-type": "application/json",
+            "x-campaign-os-trace-id": `trace-durable-smoke-create-${index}`,
+          },
+          method: "POST",
+        });
+        const payload = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get("x-campaign-os-trace-id")).toBe(`trace-durable-smoke-create-${index}`);
+        expect(payload).toMatchObject({
+          ok: true,
+          data: {
+            campaignDb: {
+              createdViaRepository: true,
+              draftId: `campaign-db-draft-000${index}`,
+              storeId: "campaign-db",
+            },
+            payload: {
+              id: `campaign-db-draft-000${index}`,
+              projectId: "durable-smoke-project",
+              status: "draft",
+            },
+          },
+        });
+
+        return payload.data.payload.id as string;
+      };
+
+      const firstDraftId = await createDraft(1);
+      await createDraft(2);
+      await createDraft(3);
+
+      const detail = await fetch(`${server.url}/api/campaigns/${firstDraftId}`, {
+        headers: { "x-campaign-os-trace-id": "trace-durable-smoke-detail" },
+      });
+      const list = await fetch(
+        `${server.url}/api/campaigns?projectId=durable-smoke-project&ownerAddress=durable-smoke-owner&status=draft&limit=2`,
+        {
+          headers: { "x-campaign-os-trace-id": "trace-durable-smoke-list" },
+        },
+      );
+      const health = await fetch(`${server.url}/api/health`, {
+        headers: { "x-campaign-os-trace-id": "trace-durable-smoke-health" },
+      });
+      const detailPayload = await detail.json();
+      const listPayload = await list.json();
+      const healthPayload = await health.json();
+      const repositoryDraftIds = listPayload.data.payload.items
+        .map((item: { id: string }) => item.id)
+        .filter((id: string) => id.startsWith("campaign-db-draft-"));
+
+      expect(detail.status).toBe(200);
+      expect(list.status).toBe(200);
+      expect(health.status).toBe(200);
+      expect(detailPayload).toMatchObject({
+        ok: true,
+        data: {
+          campaignDb: {
+            adapterId: "campaign-db-durable-test-adapter",
+            createdViaRepository: true,
+            storeId: "campaign-db",
+          },
+          payload: {
+            item: {
+              id: "campaign-db-draft-0001",
+              status: "draft",
+            },
+          },
+        },
+      });
+      expect(listPayload).toMatchObject({
+        ok: true,
+        data: {
+          payload: {
+            campaignDb: {
+              draftCount: 2,
+              storeId: "campaign-db",
+            },
+          },
+        },
+      });
+      expect(repositoryDraftIds).toEqual(["campaign-db-draft-0001", "campaign-db-draft-0002"]);
+      expect(healthPayload).toMatchObject({
+        ok: true,
+        data: {
+          serverRuntime: expect.objectContaining({
+            readiness: expect.objectContaining({
+              campaignDbVerticalSlice: expect.objectContaining({
+                campaignStore: expect.objectContaining({
+                  durable: true,
+                  fallbackUsed: false,
+                  mode: "durable_test",
+                  status: "ready",
+                  storeId: "campaign-db",
+                }),
+                migrationState: expect.objectContaining({
+                  appliedMigrationIds: ["001-campaign-db-v0-2-0"],
+                  liveExecutionEnabled: false,
+                  status: "applied",
+                  storeId: "campaign-db",
+                }),
+                status: "ready",
+              }),
+            }),
+            status: "ready",
+          }),
+        },
+      });
+      expectSanitizedReadinessPayload(healthPayload);
+    } finally {
+      await server.stop();
+      await rm(tempDir, { force: true, recursive: true });
     }
   });
 
