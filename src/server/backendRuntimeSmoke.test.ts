@@ -36,15 +36,39 @@ describe("backend runtime smoke command", () => {
 
     expect(summary).toMatchObject({
       activationId: "campaign-os-backend-runtime-activation",
+      authSessionFoundation: {
+        blockerCount: 0,
+        diagnosticCodes: expect.arrayContaining(["AUTH_AGENT_CREDENTIAL_SEPARATE"]),
+        liveSideEffectsEnabled: false,
+        liveSigningExecuted: false,
+        liveVerificationExecuted: false,
+        productionReady: false,
+        status: "local_ready",
+        valid: true,
+      },
       checks: {
         contracts: {
           activationPresent: true,
+          authSessionFoundation: {
+            blockerCount: 0,
+            liveSideEffectsEnabled: false,
+            productionReady: false,
+            status: "local_ready",
+            valid: true,
+          },
           endpoint: "/api/contracts",
           ok: true,
           status: 200,
         },
         health: {
           activationPresent: true,
+          authSessionFoundation: {
+            blockerCount: 0,
+            liveSideEffectsEnabled: false,
+            productionReady: false,
+            status: "local_ready",
+            valid: true,
+          },
           endpoint: "/api/health",
           ok: true,
           status: 200,

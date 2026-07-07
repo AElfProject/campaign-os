@@ -322,6 +322,17 @@ const createHealthAuthSessionMetadata = (
   report: BackendServiceReadinessReport,
 ) => ({
   agentCredentialBoundary: report.authSession.agentCredentialBoundary,
+  foundation: {
+    blockedDependencyIds: report.authSessionFoundation.blockedDependencyIds,
+    blockerCount: report.authSessionFoundation.blockerCount,
+    diagnosticCodes: report.authSessionFoundation.diagnosticCodes,
+    liveSideEffectsEnabled: report.authSessionFoundation.liveSideEffectsEnabled,
+    liveSigningExecuted: report.authSessionFoundation.liveSigningExecuted,
+    liveVerificationExecuted: report.authSessionFoundation.liveVerificationExecuted,
+    productionReady: report.authSessionFoundation.productionReady,
+    status: report.authSessionFoundation.status,
+    valid: report.authSessionFoundation.valid,
+  },
   diagnosticCodes: report.authSession.validation.issues.map((issue) => issue.code),
   profileId: report.authSession.profileId,
   proofStatus: report.authSession.proofBoundary.status,
@@ -377,6 +388,7 @@ const createContractAuthSessionMetadata = (
   agentCredentialBoundary: report.authSession.agentCredentialBoundary,
   authContracts: report.authSession.authContracts,
   deferredDependencyIds: report.authSession.deferredDependencyIds,
+  foundation: report.authSessionFoundation,
   profileId: report.authSession.profileId,
   proofBoundary: report.authSession.proofBoundary,
   protectedRoutes: report.authSession.protectedRoutes.map((route) => ({
@@ -460,6 +472,7 @@ const withBackendServiceReadinessMetadata = ({
             sections: appendReportShapeSections(data.backendService.reportShape.sections, [
               "apiService",
               "authSession",
+              "authSessionFoundation",
               "databaseAdapterRuntime",
               "databaseReadiness",
               "persistenceRuntime",

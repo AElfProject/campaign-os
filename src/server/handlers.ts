@@ -653,6 +653,7 @@ const createBackendServiceHealthMetadata = (
 ) => ({
   adapterStatus: report.persistenceAdapters.activeAdapter.status,
   apiFoundationValidationIssueCount: report.apiFoundation.validation.issues.length,
+  authSessionFoundation: report.authSessionFoundation,
   backendRuntimeBootstrap: createBackendRuntimeBootstrapMetadata(report),
   entrypoint: backendServiceEntrypointMetadata(report),
   entrypointId: report.entrypoint.id,
@@ -682,6 +683,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
   })),
   backendRuntimeBootstrap: createBackendRuntimeBootstrapMetadata(report),
   configContract: backendConfigContractSummary(report),
+  authSessionFoundation: report.authSessionFoundation,
   databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime),
   deferredProductionCapabilities: report.profile.deferredCapabilities,
   entrypoint: backendServiceEntrypointMetadata(report),

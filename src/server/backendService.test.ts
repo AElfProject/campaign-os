@@ -44,6 +44,46 @@ describe("backend service readiness report", () => {
       },
     });
     expect(report.authSession.protectedRouteCount).toBeGreaterThanOrEqual(7);
+    expect(report.authSessionFoundation).toMatchObject({
+      blockerCount: 0,
+      diagnosticCodes: ["AUTH_AGENT_CREDENTIAL_SEPARATE"],
+      id: "campaign-os-production-auth-session-foundation",
+      liveSideEffectsEnabled: false,
+      liveSigningExecuted: false,
+      liveVerificationExecuted: false,
+      ownership: {
+        blockedDependencyIds: [],
+        membershipSourceReady: false,
+        ownerMatchRequired: true,
+        ownerMutationBlocked: true,
+        ownershipSourceReady: false,
+      },
+      productionReady: false,
+      profileId: "local-review",
+      protectedRouteCoverage: {
+        locallyEnforcedRouteIds: ["campaigns.create"],
+        protectedRouteCount: expect.any(Number),
+        routeGroupCount: expect.any(Number),
+      },
+      rbac: {
+        agentCredentialSubstitutionDisabled: true,
+        roleCount: 5,
+      },
+      sessionIssuer: {
+        cookieIssued: false,
+        issuerMode: "local_opaque",
+        jwtIssued: false,
+        liveSigningExecuted: false,
+      },
+      status: "local_ready",
+      valid: true,
+      walletProof: {
+        liveVerificationExecuted: false,
+        liveVerifierReady: false,
+        nonceStoreReady: false,
+        status: "proof_required",
+      },
+    });
     expect(report.authEnforcement).toMatchObject({
       agentCredentialSubstitutionDisabled: true,
       campaignMutationRouteCount: 1,
@@ -810,6 +850,62 @@ describe("backend service readiness report", () => {
         "jwt_or_session_cookie",
         "project_ownership_source",
       ]),
+    });
+    expect(report.authSessionFoundation).toMatchObject({
+      blockedDependencyIds: [
+        "wallet_live_verifier",
+        "nonce_store",
+        "session_signing_key",
+        "secret_manager",
+        "production_session_store",
+        "project_membership_source",
+        "project_ownership_source",
+        "rbac_enforcement_policy",
+      ],
+      blockerCount: 8,
+      diagnosticCodes: expect.arrayContaining([
+        "AUTH_PROOF_VERIFIER_MISSING",
+        "AUTH_NONCE_STORE_MISSING",
+        "AUTH_SESSION_ISSUER_MISSING",
+        "AUTH_SECRET_MANAGER_MISSING",
+        "AUTH_SESSION_STORE_MISSING",
+        "AUTH_SESSION_CONFIG_MISSING",
+        "AUTH_OWNERSHIP_SOURCE_MISSING",
+        "AUTH_POLICY_MISSING",
+        "AUTH_AGENT_CREDENTIAL_SEPARATE",
+      ]),
+      liveSideEffectsEnabled: false,
+      liveSigningExecuted: false,
+      liveVerificationExecuted: false,
+      ownership: {
+        blockedDependencyIds: ["project_membership_source", "project_ownership_source"],
+        membershipSourceReady: false,
+        ownerMutationBlocked: true,
+        ownershipSourceReady: false,
+      },
+      productionReady: false,
+      profileId: "production-required",
+      rbac: {
+        agentCredentialSubstitutionDisabled: true,
+        roleCount: 5,
+      },
+      sessionIssuer: {
+        cookieIssued: false,
+        issuerMode: "production_blocked",
+        jwtIssued: false,
+        liveSigningExecuted: false,
+        productionSessionStoreReady: false,
+        secretManagerReady: false,
+        signingKeyReady: false,
+      },
+      status: "blocked",
+      valid: false,
+      walletProof: {
+        liveVerificationExecuted: false,
+        liveVerifierReady: false,
+        nonceStoreReady: false,
+        status: "blocked",
+      },
     });
     expect(report.authSession.validation.issues).toEqual(
       expect.arrayContaining([

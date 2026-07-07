@@ -1,11 +1,14 @@
 import {
   authSessionRolePolicyById,
   getProtectedRouteAuth,
+  type AuthRoleCapabilityId,
+  type AuthRouteGroupId,
   type AuthSessionAccountType,
   type AuthSessionCredentialBoundary,
   type AuthSessionRoleId,
   type AuthSessionWalletSource,
   type ProtectedRouteAuthMapEntry,
+  type ProductionAuthSessionDependencyId,
   type SessionProofStatus,
 } from "./authSession";
 
@@ -21,6 +24,7 @@ export type AuthEnforcementDiagnosticCode =
   | "AUTH_ROLE_FORBIDDEN"
   | "AUTH_OWNER_MISMATCH"
   | "AUTH_AGENT_CREDENTIAL_FORBIDDEN"
+  | "AUTH_OWNERSHIP_SOURCE_MISSING"
   | "AUTH_PROOF_FORBIDDEN";
 
 export interface LocalAuthSession {
@@ -40,6 +44,28 @@ export interface AuthEnforcementDiagnostic {
   message: string;
 }
 
+export interface ProjectOwnershipSources {
+  membershipSourceReady: boolean;
+  ownershipSourceReady: boolean;
+}
+
+export interface AuthEnforcementSanitizedDetails {
+  redactedFieldCount: number;
+  redactionApplied: boolean;
+  safeDetails: Record<string, unknown>;
+}
+
+export interface RbacOwnershipRoutePolicy {
+  forbiddenCapabilities: readonly AuthRoleCapabilityId[];
+  forbiddenCredentialBoundaries: readonly AuthSessionCredentialBoundary[];
+  locallyEnforced: boolean;
+  ownerMatchRequired: boolean;
+  productionDependencyIds: readonly ProductionAuthSessionDependencyId[];
+  requiredRoles: readonly AuthSessionRoleId[];
+  routeGroup: AuthRouteGroupId;
+  routeIds: readonly string[];
+}
+
 export type ParseLocalAuthSessionResult =
   | {
       ok: true;
@@ -54,6 +80,7 @@ export type ParseLocalAuthSessionResult =
 export interface EvaluateAuthEnforcementOptions {
   headers?: AuthRuntimeHeaders;
   ownerAddress?: string;
+  ownerSources?: ProjectOwnershipSources;
   routeId: string;
 }
 
@@ -101,6 +128,261 @@ const proofStatuses = [
   "blocked",
 ] as const satisfies readonly SessionProofStatus[];
 const locallyAcceptedProofStatuses = new Set<SessionProofStatus>(["local_seeded", "verified"]);
+
+const authEnforcementProductionDependencyIds = [
+  "rbac_enforcement_policy",
+  "project_membership_source",
+  "project_ownership_source",
+] as const satisfies readonly ProductionAuthSessionDependencyId[];
+
+export const projectOwnershipReadinessPolicy = {
+  ownerMatchRequired: true,
+  productionDependencyIds: [
+    "project_membership_source",
+    "project_ownership_source",
+  ],
+} as const satisfies {
+  ownerMatchRequired: true;
+  productionDependencyIds: readonly ProductionAuthSessionDependencyId[];
+};
+
+const routePolicy = (policy: RbacOwnershipRoutePolicy): RbacOwnershipRoutePolicy => policy;
+
+export const rbacOwnershipRoutePolicyMatrix = [
+  routePolicy({
+    forbiddenCapabilities: [],
+    forbiddenCredentialBoundaries: [],
+    locallyEnforced: false,
+    ownerMatchRequired: false,
+    productionDependencyIds: [...authEnforcementProductionDependencyIds],
+    requiredRoles: [],
+    routeGroup: "runtime_metadata",
+    routeIds: ["runtime.health", "runtime.contracts"],
+  }),
+  routePolicy({
+    forbiddenCapabilities: [],
+    forbiddenCredentialBoundaries: [],
+    locallyEnforced: false,
+    ownerMatchRequired: false,
+    productionDependencyIds: [...authEnforcementProductionDependencyIds],
+    requiredRoles: [],
+    routeGroup: "wallet_session",
+    routeIds: ["wallet.session.create"],
+  }),
+  routePolicy({
+    forbiddenCapabilities: [],
+    forbiddenCredentialBoundaries: [],
+    locallyEnforced: false,
+    ownerMatchRequired: false,
+    productionDependencyIds: [...authEnforcementProductionDependencyIds],
+    requiredRoles: [],
+    routeGroup: "campaign_read",
+    routeIds: ["campaigns.list", "campaigns.detail", "campaigns.analytics"],
+  }),
+  routePolicy({
+    forbiddenCapabilities: ["wallet:user_substitution"],
+    forbiddenCredentialBoundaries: ["internal_agent_credential"],
+    locallyEnforced: true,
+    ownerMatchRequired: true,
+    productionDependencyIds: [...authEnforcementProductionDependencyIds],
+    requiredRoles: ["project_owner"],
+    routeGroup: "campaign_write",
+    routeIds: ["campaigns.create"],
+  }),
+  routePolicy({
+    forbiddenCapabilities: ["wallet:user_substitution"],
+    forbiddenCredentialBoundaries: ["internal_agent_credential"],
+    locallyEnforced: false,
+    ownerMatchRequired: true,
+    productionDependencyIds: [...authEnforcementProductionDependencyIds],
+    requiredRoles: ["project_owner"],
+    routeGroup: "task_builder",
+    routeIds: ["campaigns.tasks.add"],
+  }),
+  routePolicy({
+    forbiddenCapabilities: ["wallet:user_substitution"],
+    forbiddenCredentialBoundaries: ["internal_agent_credential"],
+    locallyEnforced: false,
+    ownerMatchRequired: false,
+    productionDependencyIds: [...authEnforcementProductionDependencyIds],
+    requiredRoles: ["participant"],
+    routeGroup: "task_verify",
+    routeIds: ["tasks.verify"],
+  }),
+  routePolicy({
+    forbiddenCapabilities: ["wallet:user_substitution"],
+    forbiddenCredentialBoundaries: ["internal_agent_credential"],
+    locallyEnforced: false,
+    ownerMatchRequired: false,
+    productionDependencyIds: [...authEnforcementProductionDependencyIds],
+    requiredRoles: ["participant"],
+    routeGroup: "eligibility",
+    routeIds: ["campaigns.eligibility"],
+  }),
+  routePolicy({
+    forbiddenCapabilities: ["payout:execute", "reward:custody"],
+    forbiddenCredentialBoundaries: [],
+    locallyEnforced: false,
+    ownerMatchRequired: false,
+    productionDependencyIds: [...authEnforcementProductionDependencyIds],
+    requiredRoles: ["project_owner", "internal_operator"],
+    routeGroup: "export",
+    routeIds: ["campaigns.export.preview"],
+  }),
+  routePolicy({
+    forbiddenCapabilities: ["campaign:ownership_mutation", "payout:execute", "reward:custody"],
+    forbiddenCredentialBoundaries: ["ordinary_user_wallet"],
+    locallyEnforced: false,
+    ownerMatchRequired: false,
+    productionDependencyIds: [...authEnforcementProductionDependencyIds],
+    requiredRoles: ["internal_operator", "review_operator"],
+    routeGroup: "admin_review",
+    routeIds: ["admin.review.queue"],
+  }),
+  routePolicy({
+    forbiddenCapabilities: ["campaign:ownership_mutation", "payout:execute", "reward:custody"],
+    forbiddenCredentialBoundaries: ["ordinary_user_wallet"],
+    locallyEnforced: false,
+    ownerMatchRequired: false,
+    productionDependencyIds: [...authEnforcementProductionDependencyIds],
+    requiredRoles: ["internal_operator", "review_operator"],
+    routeGroup: "risk",
+    routeIds: ["risk.review.queue"],
+  }),
+  routePolicy({
+    forbiddenCapabilities: ["campaign:ownership_mutation", "payout:execute", "reward:custody"],
+    forbiddenCredentialBoundaries: [],
+    locallyEnforced: false,
+    ownerMatchRequired: false,
+    productionDependencyIds: [...authEnforcementProductionDependencyIds],
+    requiredRoles: ["internal_operator", "ai_worker"],
+    routeGroup: "service_readiness",
+    routeIds: ["runtime.services"],
+  }),
+  routePolicy({
+    forbiddenCapabilities: ["wallet:live_sign", "wallet:user_substitution"],
+    forbiddenCredentialBoundaries: ["ordinary_user_wallet"],
+    locallyEnforced: false,
+    ownerMatchRequired: false,
+    productionDependencyIds: [...authEnforcementProductionDependencyIds],
+    requiredRoles: ["ai_worker"],
+    routeGroup: "ai_ops",
+    routeIds: ["agent.skill.internal", "campaigns.i18n.generate"],
+  }),
+] as const satisfies readonly RbacOwnershipRoutePolicy[];
+
+const rbacOwnershipRoutePolicyByGroup = Object.fromEntries(
+  rbacOwnershipRoutePolicyMatrix.map((policy) => [policy.routeGroup, policy]),
+) as Record<AuthRouteGroupId, RbacOwnershipRoutePolicy>;
+
+const redactedPlaceholder = "[redacted-sensitive]";
+const sensitiveKeyFragments = [
+  "authorization",
+  "bearer",
+  "cookie",
+  "jwt",
+  "mnemonic",
+  "nonce",
+  "objectkey",
+  "password",
+  "privatekey",
+  "rawsignature",
+  "secret",
+  "seedphrase",
+  "signature",
+  "signedurl",
+  "token",
+];
+const sensitiveValueFragments = [
+  "bearer",
+  "cookiesecret",
+  "jwtsecret",
+  "mnemonic",
+  "noncesecret",
+  "privatekey",
+  "rawsignature",
+  "secretkey",
+  "secrettoken",
+  "seedphrase",
+  "signedurl",
+  "token",
+];
+
+const normalizeSensitiveToken = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const isSensitiveKey = (key: string) => {
+  const normalizedKey = normalizeSensitiveToken(key);
+
+  return sensitiveKeyFragments.some((fragment) => normalizedKey.includes(fragment));
+};
+
+const hasSignedUrlQuery = (value: string) =>
+  /^https?:\/\//i.test(value)
+  && /[?&](access_token|authorization|credential|signature|token|x-amz-signature)=/i.test(value);
+
+const isSensitiveStringValue = (value: string) => {
+  const normalizedValue = normalizeSensitiveToken(value);
+
+  return (
+    /\bbearer\s+\S+/i.test(value)
+    || /\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/.test(value)
+    || /-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----/i.test(value)
+    || hasSignedUrlQuery(value)
+    || sensitiveValueFragments.some((fragment) => normalizedValue.includes(fragment))
+  );
+};
+
+export const sanitizeAuthEnforcementDetails = (
+  details: Record<string, unknown>,
+): AuthEnforcementSanitizedDetails => {
+  let redactedFieldCount = 0;
+
+  const sanitize = (input: unknown): unknown => {
+    if (typeof input === "string") {
+      if (isSensitiveStringValue(input)) {
+        redactedFieldCount += 1;
+
+        return redactedPlaceholder;
+      }
+
+      return input;
+    }
+
+    if (input === null || typeof input !== "object") {
+      return input;
+    }
+
+    if (Array.isArray(input)) {
+      return input.map((item) => sanitize(item));
+    }
+
+    const entries = Object.entries(input).flatMap(([key, value]) => {
+      if (isSensitiveKey(key)) {
+        if (normalizeSensitiveToken(key) !== "jwt") {
+          redactedFieldCount += 1;
+        }
+
+        return [];
+      }
+
+      const safeValue = sanitize(value);
+
+      return [[key, safeValue] as const];
+    });
+
+    return Object.fromEntries(entries);
+  };
+
+  const safeDetails = sanitize(details);
+
+  return {
+    redactedFieldCount,
+    redactionApplied: redactedFieldCount > 0,
+    safeDetails: safeDetails !== null && typeof safeDetails === "object" && !Array.isArray(safeDetails)
+      ? safeDetails as Record<string, unknown>
+      : {},
+  };
+};
 
 const invalidSessionDiagnostic = (
   field: string,
@@ -271,16 +553,18 @@ const decision = (
   allowed: input.status === "allowed" || input.status === "not_required",
   matchedRoles: input.matchedRoles ?? [],
   requiredRoles: input.requiredRoles ?? [],
-  safeDetails: input.safeDetails ?? {},
   ...input,
+  safeDetails: sanitizeAuthEnforcementDetails(input.safeDetails ?? {}).safeDetails,
 });
 
 export const evaluateAuthEnforcement = ({
   headers,
   ownerAddress,
+  ownerSources,
   routeId,
 }: EvaluateAuthEnforcementOptions): AuthEnforcementDecision => {
   const routeAuth = getProtectedRouteAuth(routeId);
+  const routePolicy = routeAuth ? rbacOwnershipRoutePolicyByGroup[routeAuth.routeGroup] : undefined;
 
   if (!routeAuth?.sessionRequired) {
     return decision({
@@ -332,21 +616,28 @@ export const evaluateAuthEnforcement = ({
     status: "forbidden",
   });
 
+  if (routePolicy?.forbiddenCredentialBoundaries.includes(session.credentialBoundary)) {
+    return forbidden(
+      session.credentialBoundary === "internal_agent_credential"
+        ? "AUTH_AGENT_CREDENTIAL_FORBIDDEN"
+        : "AUTH_ROLE_FORBIDDEN",
+      "authSession.credentialBoundary",
+      session.credentialBoundary === "internal_agent_credential"
+        ? "Internal agent credentials cannot substitute for ordinary participant or project owner wallet sessions."
+        : "This credential boundary is not allowed for the protected route.",
+      {
+        credentialBoundary: session.credentialBoundary,
+        routeGroup: routeAuth.routeGroup,
+      },
+    );
+  }
+
   if (routeAuth.proofRequired && !locallyAcceptedProofStatuses.has(session.proofStatus)) {
     return forbidden(
       "AUTH_PROOF_FORBIDDEN",
       "authSession.proofStatus",
       "Local auth session proof status is not accepted for this route.",
       { proofStatus: session.proofStatus },
-    );
-  }
-
-  if (routeAuth.routeGroup === "campaign_write" && session.credentialBoundary === "internal_agent_credential") {
-    return forbidden(
-      "AUTH_AGENT_CREDENTIAL_FORBIDDEN",
-      "authSession.credentialBoundary",
-      "Internal agent credentials cannot substitute for a project owner wallet session.",
-      { credentialBoundary: session.credentialBoundary },
     );
   }
 
@@ -359,12 +650,45 @@ export const evaluateAuthEnforcement = ({
     );
   }
 
-  if (routeId === "campaigns.create" && ownerAddress && ownerAddress.trim() !== session.address) {
-    return forbidden(
-      "AUTH_OWNER_MISMATCH",
-      "ownerAddress",
-      "Campaign owner address must match the authenticated local session address.",
-    );
+  if (routePolicy?.ownerMatchRequired) {
+    const trimmedOwnerAddress = ownerAddress?.trim();
+
+    if (ownerSources && !trimmedOwnerAddress) {
+      return forbidden(
+        "AUTH_OWNER_MISMATCH",
+        "ownerAddress",
+        "Owner mutation requires an owner address matching the authenticated local session.",
+        { ownerMatchRequired: true },
+      );
+    }
+
+    if (trimmedOwnerAddress && trimmedOwnerAddress !== session.address) {
+      return forbidden(
+        "AUTH_OWNER_MISMATCH",
+        "ownerAddress",
+        "Campaign owner address must match the authenticated local session address.",
+        { ownerMatchRequired: true },
+      );
+    }
+
+    if (ownerSources) {
+      const blockedDependencyIds = [
+        ...(!ownerSources.membershipSourceReady ? ["project_membership_source" as const] : []),
+        ...(!ownerSources.ownershipSourceReady ? ["project_ownership_source" as const] : []),
+      ];
+
+      if (blockedDependencyIds.length > 0) {
+        return forbidden(
+          "AUTH_OWNERSHIP_SOURCE_MISSING",
+          "authSession.ownershipSource",
+          "Owner mutation requires project membership and ownership sources.",
+          {
+            blockedDependencyIds,
+            ownerMutationBlocked: true,
+          },
+        );
+      }
+    }
   }
 
   return decision({

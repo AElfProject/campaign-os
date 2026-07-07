@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   authSessionRolePolicies,
   createAuthSessionReadinessReport,
+  createProductionAuthSessionFoundation,
   createSeededWalletSessionContracts,
   createSessionProofBoundary,
   getProtectedRouteAuth,
@@ -13,6 +14,9 @@ import {
 
 const forbiddenRawFragments = [
   "bearer sample-bearer-token",
+  "cookie-secret-sample",
+  "jwt.secret.sample",
+  "nonce-secret-sample",
   "session-secret-sample",
   "raw-signature-sample",
   "private-key-sample",
@@ -285,23 +289,159 @@ describe("auth session boundary", () => {
     expectNoRawSensitiveFragments(report);
   });
 
+  it("creates the production auth session foundation with stable no-live invariants", () => {
+    const foundation = createProductionAuthSessionFoundation({
+      observedInput: {
+        authCookie: "cookie-secret-sample",
+        bearerToken: "Bearer sample-bearer-token",
+        jwt: "jwt.secret.sample",
+        nonce: "nonce-secret-sample",
+        privateKey: "private-key-sample",
+        rawSignature: "raw-signature-sample",
+        seedPhrase: "seed-phrase-sample",
+        sessionSecret: "session-secret-sample",
+        signedUrl: "https://storage.invalid/signed-url",
+      },
+      profileId: "production-required",
+    });
+
+    expect(foundation).toMatchObject({
+      id: "campaign-os-production-auth-session-foundation",
+      profileId: "production-required",
+      productionReady: false,
+      liveSideEffectsEnabled: false,
+      liveVerificationExecuted: false,
+      liveSigningExecuted: false,
+      cookieIssued: false,
+      jwtIssued: false,
+      status: "blocked",
+      valid: false,
+      blockerCount: 8,
+      walletProof: {
+        liveVerificationExecuted: false,
+        liveVerifierReady: false,
+        nonceStoreReady: false,
+        status: "blocked",
+      },
+      sessionIssuer: {
+        cookieIssued: false,
+        issuerMode: "production_blocked",
+        jwtIssued: false,
+        liveSigningExecuted: false,
+        productionSessionStoreReady: false,
+        secretManagerReady: false,
+        signingKeyReady: false,
+      },
+      ownership: {
+        membershipSourceReady: false,
+        ownerMatchRequired: true,
+        ownerMutationBlocked: true,
+        ownershipSourceReady: false,
+      },
+      rbac: {
+        agentCredentialSubstitutionDisabled: true,
+        roleCount: 5,
+      },
+      redaction: {
+        redactionApplied: true,
+      },
+    });
+    expect(foundation.blockedDependencyIds).toEqual([
+      "wallet_live_verifier",
+      "nonce_store",
+      "session_signing_key",
+      "secret_manager",
+      "production_session_store",
+      "project_membership_source",
+      "project_ownership_source",
+      "rbac_enforcement_policy",
+    ]);
+    expect(foundation.diagnosticCodes).toEqual([
+      "AUTH_PROOF_VERIFIER_MISSING",
+      "AUTH_NONCE_STORE_MISSING",
+      "AUTH_SESSION_ISSUER_MISSING",
+      "AUTH_SECRET_MANAGER_MISSING",
+      "AUTH_SESSION_STORE_MISSING",
+      "AUTH_SESSION_CONFIG_MISSING",
+      "AUTH_OWNERSHIP_SOURCE_MISSING",
+      "AUTH_POLICY_MISSING",
+      "AUTH_AGENT_CREDENTIAL_SEPARATE",
+      "AUTH_SENSITIVE_INPUT_REDACTED",
+    ]);
+    expect(foundation.walletSourceCoverage).toEqual([
+      "PORTKEY_AA",
+      "PORTKEY_EOA_APP",
+      "PORTKEY_EOA_EXTENSION",
+      "NIGHTELF",
+      "AGENT_SKILL",
+      "OTHER",
+    ]);
+    expect(foundation.accountTypeCoverage).toEqual(["AA", "EOA", "UNKNOWN"]);
+    expect(foundation.agentCredentialBoundary).toMatchObject({
+      agentSkillCanSubstituteProjectOwner: false,
+      agentSkillCanSubstituteUserWallet: false,
+      ordinaryUserWalletSources: ["PORTKEY_AA", "PORTKEY_EOA_APP", "PORTKEY_EOA_EXTENSION", "NIGHTELF", "OTHER"],
+    });
+    expect(foundation.protectedRouteCoverage.protectedRouteCount).toBe(protectedRouteAuthMap.length);
+    expectNoRawSensitiveFragments(foundation);
+  });
+
+  it("keeps the local-review foundation deterministic and fast", () => {
+    const first = createProductionAuthSessionFoundation({
+      generatedAt: "2026-07-07T00:00:00.000Z",
+      profileId: "local-review",
+    });
+    const second = createProductionAuthSessionFoundation({
+      generatedAt: "2026-07-07T00:00:00.000Z",
+      profileId: "local-review",
+    });
+
+    expect(first).toEqual(second);
+    expect(first).toMatchObject({
+      profileId: "local-review",
+      status: "local_ready",
+      valid: true,
+      blockerCount: 0,
+      productionReady: false,
+      liveSideEffectsEnabled: false,
+      liveVerificationExecuted: false,
+      liveSigningExecuted: false,
+      cookieIssued: false,
+      jwtIssued: false,
+    });
+
+    const startedAt = performance.now();
+
+    for (let index = 0; index < 1_000; index += 1) {
+      createProductionAuthSessionFoundation({
+        generatedAt: "2026-07-07T00:00:00.000Z",
+        profileId: "local-review",
+      });
+    }
+
+    expect(performance.now() - startedAt).toBeLessThan(100);
+  });
+
   it("summarizes sensitive input without returning secret-like fields or values", () => {
     const summary = summarizeSensitiveAuthSessionInput({
       address: "ELF_public",
+      memo: "Bearer sample-bearer-token",
       nested: {
         privateKey: "private-key-sample",
         safeNote: "review-only",
       },
+      nonce: "nonce-secret-sample",
       rawSignature: "raw-signature-sample",
       sessionSecret: "session-secret-sample",
       signedUrl: "https://storage.invalid/signed-url",
     });
 
     expect(summary).toEqual({
-      redactedFieldCount: 4,
+      redactedFieldCount: 6,
       redactionApplied: true,
       safePreview: {
         address: "ELF_public",
+        memo: "[redacted-sensitive]",
         nested: {
           safeNote: "review-only",
         },
