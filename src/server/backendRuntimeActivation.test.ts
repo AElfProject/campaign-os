@@ -6,6 +6,7 @@ import {
   runtimeActivationEnvironmentKeys,
   runtimeActivationConfigKeys,
 } from "./backendRuntimeActivation";
+import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { resolveApiServerRuntimeContract } from "./serverRuntime";
 
@@ -99,6 +100,9 @@ describe("backend runtime activation contract", () => {
     const schedulerRuntimeConfigKeys = [
       ...new Set(schedulerRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
+    const queueProviderAdapterConfigKeys = [
+      ...new Set(queueProviderAdapterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
 
     expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
       expect.arrayContaining([
@@ -109,6 +113,8 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_DATABASE_URL",
         "CAMPAIGN_OS_AUTH_SECRET",
         "CAMPAIGN_OS_QUEUE_PROVIDER",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
         "CAMPAIGN_OS_SCHEDULER_PROVIDER",
         "CAMPAIGN_OS_WORKER_QUEUE_URL",
@@ -131,6 +137,8 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
         "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
         "CAMPAIGN_OS_QUEUE_PROVIDER",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
         "CAMPAIGN_OS_WORKER_RETRY_POLICY",
         "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
         "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
@@ -145,6 +153,18 @@ describe("backend runtime activation contract", () => {
         expect.arrayContaining([
           expect.objectContaining({
             key: schedulerRuntimeConfigKey,
+            redacted: true,
+            required: true,
+            requiredFor: "production-required",
+          }),
+        ]),
+      );
+    }
+    for (const queueProviderAdapterConfigKey of queueProviderAdapterConfigKeys) {
+      expect(activation.deploymentHandoff.environmentKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: queueProviderAdapterConfigKey,
             redacted: true,
             required: true,
             requiredFor: "production-required",
@@ -167,8 +187,22 @@ describe("backend runtime activation contract", () => {
           status: "blocked",
         }),
         expect.objectContaining({
-          category: "queue",
+          category: "provider",
           key: "CAMPAIGN_OS_QUEUE_PROVIDER",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "provider",
+          key: "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "provider",
+          key: "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
           redacted: true,
           required: true,
           status: "blocked",
@@ -257,6 +291,10 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "provider", id: "provider-handoff", status: "deferred" }),
         expect.objectContaining({ area: "provider", id: "queue-provider-handoff", status: "deferred" }),
         expect.objectContaining({ area: "queue", id: "queue-dead-letter", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "queue-provider-adapter-queue-provider-selection", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "queue-provider-adapter-queue-provider-endpoint", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "queue-provider-adapter-queue-provider-credentials", status: "blocked" }),
+        expect.objectContaining({ area: "queue", id: "queue-provider-adapter-queue-provider-worker-queue-url", status: "blocked" }),
         expect.objectContaining({ area: "contract", id: "contract-writer", status: "blocked" }),
         expect.objectContaining({ area: "storage", id: "object-storage", status: "deferred" }),
         expect.objectContaining({ area: "observability", id: "observability-exporter", status: "deferred" }),
@@ -271,6 +309,18 @@ describe("backend runtime activation contract", () => {
           expect.objectContaining({
             attachPoint: "src/server/schedulerRuntime.ts",
             id: `scheduler-runtime-${precondition.id}`,
+            requiredBeforeProduction: true,
+            status: precondition.status,
+          }),
+        ),
+      ),
+    );
+    expect(activation.productionDependencyBlockers).toEqual(
+      expect.arrayContaining(
+        queueProviderAdapterProductionPreconditions.map((precondition) =>
+          expect.objectContaining({
+            attachPoint: "src/server/queueProviderAdapter.ts",
+            id: `queue-provider-adapter-${precondition.id}`,
             requiredBeforeProduction: true,
             status: precondition.status,
           }),

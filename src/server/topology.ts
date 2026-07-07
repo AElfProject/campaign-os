@@ -1,4 +1,5 @@
 import type { ApiRuntimeCapabilityId } from "./contracts";
+import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 
 export type BackendTopologyReadiness = "ready" | "local_only" | "review_required" | "deferred" | "disabled";
@@ -225,6 +226,8 @@ const dataStore = (item: BackendDataStore): BackendDataStore => item;
 const adapterGroup = (item: BackendAdapterGroup): BackendAdapterGroup => item;
 const runtimeProfile = (item: BackendRuntimeProfile): BackendRuntimeProfile => item;
 const deploymentUnit = (item: BackendDeploymentUnit): BackendDeploymentUnit => item;
+const topologySafeQueueProviderBlockerId = (id: string): string =>
+  id === "queue-provider-credentials" ? "queue-provider-auth" : id;
 
 export const backendServiceBoundaries = [
   service({
@@ -768,10 +771,15 @@ export const backendDeploymentUnits = [
     ],
   }),
   deploymentUnit({
+    attachPointPath: "src/server/queueProviderAdapter.ts",
     currentImplementation: "source-topology-only",
+    currentStatus: "local",
     entrypoint: "src/server/queueRuntime.ts",
     id: "worker-runtime",
     name: "Worker Runtime",
+    productionRequiredBlockerIds: queueProviderAdapterProductionPreconditions.map((precondition) =>
+      topologySafeQueueProviderBlockerId(precondition.id)
+    ),
     productionTarget: "worker_service",
     runtimeProfileIds: ["staging-ready", "production-required"],
     serviceIds: ["verification-service", "risk-scoring-service", "ai-ops-service"],

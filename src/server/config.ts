@@ -7,6 +7,7 @@ import {
   type BackendRuntimeProfile,
   type BackendRuntimeProfileId,
 } from "./backendProfiles";
+import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueRuntimeProductionPreconditions } from "./queueRuntime";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 
@@ -218,6 +219,10 @@ const queueRuntimeRequiredConfigKeys = uniqueStrings(
   queueRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
 );
 
+const queueProviderAdapterRequiredConfigKeys = uniqueStrings(
+  queueProviderAdapterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
+);
+
 const schedulerRuntimeRequiredConfigKeys = uniqueStrings(
   schedulerRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
 );
@@ -226,6 +231,7 @@ const backendProductionReadinessRequiredConfigKeys = uniqueStrings([
   ...productionBackendRequiredConfigKeys,
   ...schedulerRuntimeRequiredConfigKeys,
   ...queueRuntimeRequiredConfigKeys,
+  ...queueProviderAdapterRequiredConfigKeys,
 ]);
 
 const productionCapabilityDiagnostics = (): BackendConfigDiagnostic[] =>

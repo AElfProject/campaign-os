@@ -60,6 +60,25 @@ describe("queue runtime foundation", () => {
       productionReady: false,
       queuePlanCount: 9,
     });
+    expect(foundation.providerAdapter).toMatchObject({
+      adapterId: "local-dry-run-queue-provider-adapter",
+      blockerCount: 0,
+      diagnosticCodes: [],
+      liveQueuePublishingEnabled: false,
+      mode: "dry_run",
+      productionReady: false,
+      providerId: "local-dry-run",
+      status: "local_ready",
+      valid: true,
+    });
+    expect(foundation.readiness).toMatchObject({
+      providerAdapterBlockerCount: 0,
+      providerAdapterDiagnosticCodes: [],
+      providerAdapterId: "local-dry-run-queue-provider-adapter",
+      providerAdapterMode: "dry_run",
+      providerAdapterStatus: "local_ready",
+      providerId: "local-dry-run",
+    });
   });
 
   it("keeps every queue, worker, scheduler, cron, and live integration flag disabled", () => {
@@ -102,9 +121,26 @@ describe("queue runtime foundation", () => {
       "QUEUE_PROVIDER_HANDOFF_MISSING",
       "QUEUE_DEAD_LETTER_MISSING",
     ]);
+    expect(foundation.providerAdapter.status).toBe("blocked");
+    expect(foundation.providerAdapter.productionReady).toBe(false);
+    expect(foundation.providerAdapter.liveQueuePublishingEnabled).toBe(false);
+    expect(foundation.providerAdapter.diagnosticCodes).toEqual([
+      "QUEUE_PROVIDER_UNSUPPORTED",
+      "QUEUE_PROVIDER_MISSING",
+      "QUEUE_PROVIDER_ENDPOINT_MISSING",
+      "QUEUE_PROVIDER_CREDENTIALS_MISSING",
+      "QUEUE_PROVIDER_ENDPOINT_MISSING",
+      "QUEUE_PROVIDER_DEAD_LETTER_MISSING",
+      "QUEUE_PROVIDER_RETRY_POLICY_MISSING",
+      "QUEUE_PROVIDER_IDEMPOTENCY_STORE_MISSING",
+      "QUEUE_PROVIDER_WORKER_LEASE_MISSING",
+      "QUEUE_PROVIDER_OBSERVABILITY_MISSING",
+    ]);
+    expect(foundation.readiness.providerAdapterBlockerCount).toBe(foundation.providerAdapter.blockerCount);
   });
 
   it("accepts a safe known dry-run enqueue request without live publishing", () => {
+    const beforePlans = createQueueRuntimeFoundation().queuePlans.map((plan) => plan.jobId);
     const result = dryRunQueueEnqueue({
       attempt: 1,
       idempotencyKey: "idempotency:campaign-task-verification",
@@ -127,6 +163,7 @@ describe("queue runtime foundation", () => {
       status: "accepted_dry_run",
       traceId: "trace-queue-runtime-test",
     });
+    expect(createQueueRuntimeFoundation().queuePlans.map((plan) => plan.jobId)).toEqual(beforePlans);
   });
 
   it("rejects unknown jobs, mismatched queues, invalid attempts, missing trace ids, and unsafe payload references", () => {
@@ -241,6 +278,56 @@ describe("queue runtime foundation", () => {
     expect(rejected.diagnosticCodes).toEqual(
       expect.arrayContaining(["UNSAFE_IDEMPOTENCY_KEY", "UNSAFE_PAYLOAD_REFERENCE"]),
     );
+  });
+
+  it("surfaces provider adapter metadata without enabling live queue operations", () => {
+    const foundation = createQueueRuntimeFoundation({
+      profileId: "staging-scaffold",
+      providerId: "metadata-only",
+    });
+
+    expect(foundation.queuePlans.map((plan) => plan.jobId)).toEqual(workerJobCatalog.map((job) => job.id));
+    expect(foundation.queuePlans.every((plan) => plan.livePublishingEnabled === false)).toBe(true);
+    expect(foundation.providerAdapter.operationCapabilities).toHaveLength(8);
+    expect(foundation.providerAdapter.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(
+      true,
+    );
+    expect(foundation.providerAdapter.disabledLiveOperationCount).toBe(8);
+    expect(foundation.providerAdapter.liveQueuePublishingEnabled).toBe(false);
+    expect(foundation.providerAdapter.liveWorkerExecutionEnabled).toBe(false);
+    expect(foundation.readiness.providerRequiredConfigKeys).toEqual(
+      expect.arrayContaining([
+        "CAMPAIGN_OS_QUEUE_PROVIDER",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+        "CAMPAIGN_OS_WORKER_QUEUE_URL",
+        "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
+        "CAMPAIGN_OS_WORKER_RETRY_POLICY",
+        "CAMPAIGN_OS_DEGRADATION_POLICY",
+        "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+      ]),
+    );
+  });
+
+  it("redacts unsafe provider adapter ids and config surfaced through queue runtime", () => {
+    const foundation = createQueueRuntimeFoundation({
+      env: {
+        CAMPAIGN_OS_QUEUE_PROVIDER: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
+      },
+      profileId: "production-required",
+    });
+    const serialized = JSON.stringify(foundation);
+
+    expect(foundation.providerAdapter.status).toBe("blocked");
+    expect(foundation.providerAdapter.providerId).toBe("blocked-provider");
+    expect(foundation.providerAdapter.diagnosticCodes).toContain("UNSAFE_QUEUE_PROVIDER_CONFIG");
+    expect(serialized).not.toContain("queue-user");
+    expect(serialized).not.toContain("queue-pass");
+    expect(serialized).not.toContain("queue-secret");
+    expect(serialized).not.toContain("https://queue");
+    expect(foundation.providerAdapter.liveQueuePublishingEnabled).toBe(false);
   });
 
   it("fails closed for unsupported queue runtime profiles", () => {

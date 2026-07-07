@@ -56,6 +56,26 @@ const expectedSchedulerRuntimeFoundation = {
   valid: true,
 };
 
+const expectedQueueProviderAdapter = {
+  adapterId: "local-dry-run-queue-provider-adapter",
+  blockerCount: 0,
+  diagnosticCodes: [],
+  disabledLiveOperationCount: 8,
+  liveQueuePublishingEnabled: false,
+  liveWorkerExecutionEnabled: false,
+  mode: "dry_run",
+  operationCount: 8,
+  productionReady: false,
+  providerId: "local-dry-run",
+  requiredConfigKeys: expect.arrayContaining([
+    "CAMPAIGN_OS_QUEUE_PROVIDER",
+    "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+    "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+  ]),
+  status: "local_ready",
+  valid: true,
+};
+
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
     const summary = await runBackendRuntimeSmoke({
@@ -116,6 +136,7 @@ describe("backend runtime smoke command", () => {
             liveSchedulerExecutionEnabled: false,
             liveWorkerExecutionEnabled: false,
             productionReady: false,
+            providerAdapter: expectedQueueProviderAdapter,
             queuePlanCount: 9,
             status: "local_ready",
             valid: true,
@@ -166,6 +187,7 @@ describe("backend runtime smoke command", () => {
             liveSchedulerExecutionEnabled: false,
             liveWorkerExecutionEnabled: false,
             productionReady: false,
+            providerAdapter: expectedQueueProviderAdapter,
             queuePlanCount: 9,
             status: "local_ready",
             valid: true,
@@ -231,6 +253,7 @@ describe("backend runtime smoke command", () => {
         liveSchedulerExecutionEnabled: false,
         liveWorkerExecutionEnabled: false,
         productionReady: false,
+        providerAdapter: expectedQueueProviderAdapter,
         queuePlanCount: 9,
         status: "local_ready",
         valid: true,
@@ -304,6 +327,65 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutScheduler })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when queue provider adapter metadata is missing from smoke payloads", async () => {
+    const fetchWithoutQueueProviderAdapter: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              queueRuntimeFoundation?: Record<string, unknown>;
+            };
+          };
+        };
+      };
+
+      if (payload.data?.serverRuntime?.readiness?.queueRuntimeFoundation) {
+        delete payload.data.serverRuntime.readiness.queueRuntimeFoundation.providerAdapter;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutQueueProviderAdapter })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when queue provider adapter smoke payload enables live publishing", async () => {
+    const fetchWithLiveQueueProviderFlag: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              queueRuntimeFoundation?: {
+                providerAdapter?: Record<string, unknown>;
+              };
+            };
+          };
+        };
+      };
+      const providerAdapter = payload.data?.serverRuntime?.readiness?.queueRuntimeFoundation?.providerAdapter;
+
+      if (providerAdapter) {
+        providerAdapter.liveQueuePublishingEnabled = true;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveQueueProviderFlag })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });

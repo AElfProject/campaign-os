@@ -96,7 +96,24 @@ export interface BackendRuntimeSmokeQueueRuntimeFoundationSummary {
   liveSchedulerExecutionEnabled: false;
   liveWorkerExecutionEnabled: false;
   productionReady: false;
+  providerAdapter: BackendRuntimeSmokeQueueProviderAdapterSummary;
   queuePlanCount: number;
+  status?: string;
+  valid: boolean;
+}
+
+export interface BackendRuntimeSmokeQueueProviderAdapterSummary {
+  adapterId?: string;
+  blockerCount: number;
+  diagnosticCodes: string[];
+  disabledLiveOperationCount: number;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode?: string;
+  operationCount: number;
+  productionReady: false;
+  providerId?: string;
+  requiredConfigKeys: string[];
   status?: string;
   valid: boolean;
 }
@@ -370,6 +387,14 @@ const summarizeQueueRuntimeFoundation = (
     return undefined;
   }
 
+  const providerAdapter = summarizeQueueProviderAdapter(
+    readNestedRecord(record, ["providerAdapter"]),
+  );
+
+  if (!providerAdapter) {
+    return undefined;
+  }
+
   return {
     blockerCount: getNumber(record, "blockerCount"),
     diagnosticCodes: getStringArray(record, "diagnosticCodes"),
@@ -380,7 +405,41 @@ const summarizeQueueRuntimeFoundation = (
     liveSchedulerExecutionEnabled: false,
     liveWorkerExecutionEnabled: false,
     productionReady: false,
+    providerAdapter,
     queuePlanCount: getNumber(record, "queuePlanCount"),
+    status: getString(record, "status"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
+const summarizeQueueProviderAdapter = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeQueueProviderAdapterSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "liveQueuePublishingEnabled")
+    && isExplicitFalse(record, "liveWorkerExecutionEnabled");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    adapterId: getString(record, "adapterId"),
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    disabledLiveOperationCount: getNumber(record, "disabledLiveOperationCount"),
+    liveQueuePublishingEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    mode: getString(record, "mode"),
+    operationCount: getNumber(record, "operationCount"),
+    productionReady: false,
+    providerId: getString(record, "providerId"),
+    requiredConfigKeys: getStringArray(record, "requiredConfigKeys"),
     status: getString(record, "status"),
     valid: getBoolean(record, "valid"),
   };
@@ -587,6 +646,28 @@ const isQueueRuntimeFoundationSmokeReady = (
     && summary.liveCronExecutionEnabled === false
     && summary.queuePlanCount >= 9
     && summary.dryRunEnqueueEnabled === true
+    && isQueueProviderAdapterSmokeReady(summary.providerAdapter)
+    && summary.status === "local_ready"
+    && summary.valid === true;
+};
+
+const isQueueProviderAdapterSmokeReady = (
+  summary: BackendRuntimeSmokeQueueProviderAdapterSummary | undefined,
+): summary is BackendRuntimeSmokeQueueProviderAdapterSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveQueuePublishingEnabled === false
+    && summary.liveWorkerExecutionEnabled === false
+    && summary.providerId === "local-dry-run"
+    && summary.adapterId === "local-dry-run-queue-provider-adapter"
+    && summary.mode === "dry_run"
+    && summary.operationCount >= 8
+    && summary.disabledLiveOperationCount === summary.operationCount
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT")
     && summary.status === "local_ready"
     && summary.valid === true;
 };
