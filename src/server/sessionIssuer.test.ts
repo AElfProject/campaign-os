@@ -160,6 +160,34 @@ describe("local session issuer", () => {
     expectNoForbiddenFragments(result);
   });
 
+  it("redacts secret-like issuer values even when field names are benign", () => {
+    const result = issueLocalSessionArtifact({
+      issuedAt,
+      observedInput: {
+        callback: "https://storage.invalid/session?token=jwt-secret-value",
+        memo: "Bearer issuer-token",
+        nested: {
+          note: "raw-signature-value",
+        },
+      },
+      sessionId: "sess-value-redacted",
+    });
+
+    expect(result.redaction).toMatchObject({
+      redactedFieldCount: 3,
+      redactionApplied: true,
+    });
+    expect(result.redaction.safePreview).toMatchObject({
+      callback: "[redacted-sensitive]",
+      memo: "[redacted-sensitive]",
+      nested: {
+        note: "[redacted-sensitive]",
+      },
+    });
+    expect(result.diagnosticCodes).toContain("AUTH_ISSUER_SENSITIVE_INPUT_REDACTED");
+    expectNoForbiddenFragments(result);
+  });
+
   it("keeps issuer creation side-effect-free and quick", () => {
     const start = performance.now();
 

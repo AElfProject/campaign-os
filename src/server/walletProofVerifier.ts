@@ -127,20 +127,53 @@ const isSensitiveKey = (key: string) => {
   return sensitiveKeyFragments.some((fragment) => normalizedKey.includes(fragment));
 };
 
+const sensitiveValueFragments = [
+  "bearer",
+  "jwtsecret",
+  "mnemonic",
+  "privatekey",
+  "rawsignature",
+  "secretkey",
+  "secrettoken",
+  "seedphrase",
+  "signedcookie",
+  "signedurl",
+  "token",
+];
+
+const hasSignedUrlQuery = (value: string) =>
+  /^https?:\/\//i.test(value)
+  && /[?&](access_token|authorization|credential|signature|token|x-amz-signature)=/i.test(value);
+
+const isSensitiveStringValue = (value: string) => {
+  const normalizedValue = normalizeSensitiveKey(value);
+
+  return (
+    /\bbearer\s+\S+/i.test(value)
+    || /-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----/i.test(value)
+    || hasSignedUrlQuery(value)
+    || sensitiveValueFragments.some((fragment) => normalizedValue.includes(fragment))
+  );
+};
+
 export const summarizeSensitiveWalletProofInput = (
   input: unknown,
 ): WalletProofInputRedactionSummary => {
   let redactedFieldCount = 0;
 
   const sanitize = (value: unknown): unknown => {
+    if (typeof value === "string" && isSensitiveStringValue(value)) {
+      redactedFieldCount += 1;
+
+      return redactedPlaceholder;
+    }
+
     if (value === null || typeof value !== "object") {
       return value;
     }
 
     if (Array.isArray(value)) {
-      return value
-        .map((item) => sanitize(item))
-        .filter((item) => item !== redactedPlaceholder);
+      return value.map((item) => sanitize(item));
     }
 
     const entries = Object.entries(value).flatMap(([key, nested]) => {

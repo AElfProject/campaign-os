@@ -197,6 +197,38 @@ describe("local wallet proof verifier", () => {
     expectNoForbiddenFragments(result);
   });
 
+  it("redacts secret-like values even when field names are benign", () => {
+    const result = verifyWalletProofLocally({
+      address: "ELF_value_redacted",
+      chainId: "AELF",
+      network: "mainnet",
+      nonce: "nonce-value-redacted",
+      now,
+      observedInput: {
+        callback: "https://storage.invalid/proof?signature=raw-signature-value",
+        memo: "Bearer secret-token",
+        nested: {
+          note: "private-key-value",
+        },
+      },
+      proofIssuedAt: issuedAt,
+      signaturePresent: true,
+    });
+
+    expect(result.redaction).toMatchObject({
+      redactedFieldCount: 3,
+      redactionApplied: true,
+    });
+    expect(result.redaction.safePreview).toMatchObject({
+      callback: "[redacted-sensitive]",
+      memo: "[redacted-sensitive]",
+      nested: {
+        note: "[redacted-sensitive]",
+      },
+    });
+    expectNoForbiddenFragments(result);
+  });
+
   it("blocks unsupported chain and network without side effects", () => {
     const result = verifyWalletProofLocally({
       address: "ELF_wrong_chain",
