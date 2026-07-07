@@ -87,7 +87,7 @@ describe("backend scaffold public guardrails", () => {
     expect(report.authSession.protectedRoutes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          enforcementStatus: "enforcement_deferred",
+          enforcementStatus: "local_enforced",
           routeId: "campaigns.create",
         }),
         expect.objectContaining({
@@ -96,6 +96,25 @@ describe("backend scaffold public guardrails", () => {
         }),
       ]),
     );
+    expect(report.authEnforcement).toMatchObject({
+      agentCredentialSubstitutionDisabled: true,
+      campaignMutationRouteCount: 1,
+      locallyEnforcedRouteIds: ["campaigns.create"],
+      mode: "local_enforced",
+      productionProofVerifierReady: false,
+      productionProjectOwnershipSourceReady: false,
+      productionSessionIssuerReady: false,
+      readOnlyRouteCompatibility: {
+        campaignReadRouteIds: expect.arrayContaining(["campaigns.list", "campaigns.detail"]),
+        runtimeMetadataRouteIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
+        runtimeMetadataUnauthenticated: true,
+      },
+      remainingDeferredProductionDependencyIds: expect.arrayContaining([
+        "live_wallet_proof_verifier",
+        "jwt_or_session_cookie",
+        "project_ownership_source",
+      ]),
+    });
 
     for (const attachPoint of report.attachMap) {
       expect(attachPoint.requiredBeforeProduction).toBe(true);

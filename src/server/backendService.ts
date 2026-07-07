@@ -128,6 +128,7 @@ export interface BackendServiceReadinessReport {
     validation: ApiFoundationReport["validation"];
   };
   attachMap: BackendAttachPoint[];
+  authEnforcement: BackendAuthEnforcementReadinessSummary;
   authSession: AuthSessionReadinessReport;
   backendRuntimeBootstrap: BackendRuntimeBootstrapContract;
   campaignDbVerticalSlice: CampaignDbVerticalSliceReadinessSummary;
@@ -148,6 +149,26 @@ export interface BackendServiceReadinessReport {
     issues: BackendReadinessDiagnostic[];
     valid: boolean;
   };
+}
+
+export type BackendAuthEnforcementMode = "blocked" | "local_enforced" | "metadata_only";
+
+export interface BackendAuthEnforcementReadinessSummary {
+  agentCredentialSubstitutionDisabled: boolean;
+  campaignMutationRouteCount: number;
+  localEnforcedRouteCount: number;
+  locallyEnforcedRouteIds: string[];
+  mode: BackendAuthEnforcementMode;
+  productionProofVerifierReady: false;
+  productionProjectOwnershipSourceReady: false;
+  productionSessionIssuerReady: false;
+  protectedRouteCount: number;
+  readOnlyRouteCompatibility: {
+    campaignReadRouteIds: string[];
+    runtimeMetadataRouteIds: string[];
+    runtimeMetadataUnauthenticated: boolean;
+  };
+  remainingDeferredProductionDependencyIds: string[];
 }
 
 export type CampaignDbVerticalSliceStatus = "ready" | "blocked";
@@ -465,6 +486,49 @@ const errorDiagnostic = (
   message,
   severity: "error",
 });
+
+const createBackendAuthEnforcementReadinessSummary = (
+  authSession: AuthSessionReadinessReport,
+): BackendAuthEnforcementReadinessSummary => {
+  const locallyEnforcedRoutes = authSession.protectedRoutes.filter(
+    (route) => route.enforcementStatus === "local_enforced",
+  );
+  const campaignMutationRoutes = authSession.protectedRoutes.filter(
+    (route) => route.routeGroup === "campaign_write",
+  );
+  const runtimeMetadataRoutes = authSession.protectedRoutes.filter(
+    (route) => route.routeGroup === "runtime_metadata",
+  );
+  const readOnlyRouteIds = apiRuntimeRoutes
+    .filter((route) => route.method === "GET" && route.serviceGroup === "campaign")
+    .map((route) => route.id);
+
+  return {
+    agentCredentialSubstitutionDisabled:
+      authSession.agentCredentialBoundary.agentSkillCanSubstituteUserWallet === false
+      && authSession.agentCredentialBoundary.separatedFromUserWalletSession,
+    campaignMutationRouteCount: campaignMutationRoutes.length,
+    localEnforcedRouteCount: locallyEnforcedRoutes.length,
+    locallyEnforcedRouteIds: locallyEnforcedRoutes.map((route) => route.routeId),
+    mode: authSession.validation.valid && locallyEnforcedRoutes.length > 0
+      ? "local_enforced"
+      : authSession.validation.valid
+        ? "metadata_only"
+        : "blocked",
+    productionProofVerifierReady: false,
+    productionProjectOwnershipSourceReady: false,
+    productionSessionIssuerReady: false,
+    protectedRouteCount: authSession.protectedRouteCount,
+    readOnlyRouteCompatibility: {
+      campaignReadRouteIds: readOnlyRouteIds,
+      runtimeMetadataRouteIds: runtimeMetadataRoutes.map((route) => route.routeId),
+      runtimeMetadataUnauthenticated: runtimeMetadataRoutes.every(
+        (route) => route.enforcementStatus === "not_required" && !route.sessionRequired,
+      ),
+    },
+    remainingDeferredProductionDependencyIds: [...authSession.deferredDependencyIds],
+  };
+};
 
 const createValidationIssues = ({
   apiFoundation,
@@ -912,6 +976,7 @@ export const createBackendServiceReadinessReport = ({
     productionRequired: config.profileId === "production-required",
     sessionConfigReady: Boolean(env.CAMPAIGN_OS_AUTH_SECRET),
   });
+  const authEnforcement = createBackendAuthEnforcementReadinessSummary(authSession);
   const campaignDbVerticalSlice = createCampaignDbVerticalSliceReadinessSummary({
     campaignStore,
     config,
@@ -952,6 +1017,7 @@ export const createBackendServiceReadinessReport = ({
       validation: apiFoundation.validation,
     },
     attachMap: backendAttachMap,
+    authEnforcement,
     authSession,
     campaignDbVerticalSlice,
     config,

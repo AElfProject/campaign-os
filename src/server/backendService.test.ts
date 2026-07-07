@@ -44,6 +44,26 @@ describe("backend service readiness report", () => {
       },
     });
     expect(report.authSession.protectedRouteCount).toBeGreaterThanOrEqual(7);
+    expect(report.authEnforcement).toMatchObject({
+      agentCredentialSubstitutionDisabled: true,
+      campaignMutationRouteCount: 1,
+      localEnforcedRouteCount: 1,
+      locallyEnforcedRouteIds: ["campaigns.create"],
+      mode: "local_enforced",
+      productionProofVerifierReady: false,
+      productionProjectOwnershipSourceReady: false,
+      productionSessionIssuerReady: false,
+      readOnlyRouteCompatibility: {
+        campaignReadRouteIds: expect.arrayContaining(["campaigns.list", "campaigns.detail"]),
+        runtimeMetadataRouteIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
+        runtimeMetadataUnauthenticated: true,
+      },
+      remainingDeferredProductionDependencyIds: expect.arrayContaining([
+        "live_wallet_proof_verifier",
+        "jwt_or_session_cookie",
+        "project_ownership_source",
+      ]),
+    });
     expect(report.authSession.rolePolicy).toMatchObject({
       leastPrivilegeDefault: true,
       roleCount: 5,
@@ -668,6 +688,19 @@ describe("backend service readiness report", () => {
       validation: expect.objectContaining({
         valid: false,
       }),
+    });
+    expect(report.authEnforcement).toMatchObject({
+      agentCredentialSubstitutionDisabled: true,
+      locallyEnforcedRouteIds: ["campaigns.create"],
+      mode: "blocked",
+      productionProofVerifierReady: false,
+      productionProjectOwnershipSourceReady: false,
+      productionSessionIssuerReady: false,
+      remainingDeferredProductionDependencyIds: expect.arrayContaining([
+        "live_wallet_proof_verifier",
+        "jwt_or_session_cookie",
+        "project_ownership_source",
+      ]),
     });
     expect(report.authSession.validation.issues).toEqual(
       expect.arrayContaining([
