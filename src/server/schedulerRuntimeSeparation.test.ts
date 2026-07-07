@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createAuthSessionReadinessReport } from "./authSession";
 import { createProviderIndexerFoundation } from "./providerIndexerAdapters";
-import { createQueueRuntimeFoundation, dryRunQueueEnqueue } from "./queueRuntime";
+import * as queueRuntime from "./queueRuntime";
 import {
   createSchedulerRuntimeFoundation,
   dryRunSchedulerTrigger,
@@ -30,7 +30,7 @@ const serializedSchedulerOutput = () => {
 describe("scheduler runtime separation boundaries", () => {
   it("keeps scheduler registrations as queue handoff metadata without queue publishing", () => {
     const scheduler = createSchedulerRuntimeFoundation();
-    const queue = createQueueRuntimeFoundation();
+    const queue = queueRuntime.createQueueRuntimeFoundation();
 
     expect(scheduler.id).toBe("campaign-os-scheduler-runtime-foundation");
     expect(queue.id).toBe("campaign-os-queue-runtime-foundation");
@@ -59,7 +59,18 @@ describe("scheduler runtime separation boundaries", () => {
       windowEnd: "2026-07-07T13:35:00Z",
       windowStart: "2026-07-07T13:25:00Z",
     });
-    const queueResult = dryRunQueueEnqueue({
+
+    const enqueueSpy = vi.spyOn(queueRuntime, "dryRunQueueEnqueue");
+
+    expect(enqueueSpy).not.toHaveBeenCalled();
+    expect(triggerResult.accepted).toBe(true);
+    expect(triggerResult).toMatchObject({
+      liveExecutionAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
+
+    const queueResult = queueRuntime.dryRunQueueEnqueue({
       attempt: 1,
       idempotencyKey: "idempotency:task-verification-on-request:campaign-1",
       jobId: "task-verification-worker",
@@ -69,15 +80,11 @@ describe("scheduler runtime separation boundaries", () => {
       traceId: "trace-queue-separation",
     });
 
-    expect(triggerResult.accepted).toBe(true);
-    expect(triggerResult).toMatchObject({
-      liveExecutionAttempted: false,
-      liveQueuePublishingEnabled: false,
-      liveSchedulerExecutionEnabled: false,
-    });
+    expect(enqueueSpy).toHaveBeenCalledOnce();
     expect(queueResult.accepted).toBe(true);
     expect(queueResult.livePublishAttempted).toBe(false);
     expect(queueResult.liveQueuePublishingEnabled).toBe(false);
+    enqueueSpy.mockRestore();
   });
 
   it("does not satisfy wallet auth, provider readiness, verification completion, or manual review", () => {
@@ -185,11 +192,11 @@ describe("scheduler runtime separation boundaries", () => {
       windowStart: "2026-07-07T13:25:00Z",
     });
     const redactedUnsafeFixture = redactSchedulerRuntimeValue({
-        objectKey: "tenant/raw/export.csv",
-        providerPayload: "{\"address\":\"ELF_provider_payload\",\"score\":99}",
-        signedUrl: "https://storage.example/file.csv?X-Amz-Signature=abc123",
-        triggerPayload: "{\"walletAddress\":\"ELF_raw_wallet\",\"taskId\":\"task_raw\"}",
-        webhookSecret: "hook-secret-000",
+      objectKey: "tenant/raw/export.csv",
+      providerPayload: "{\"address\":\"ELF_provider_payload\",\"score\":99}",
+      signedUrl: "https://storage.example/file.csv?X-Amz-Signature=abc123",
+      triggerPayload: "{\"walletAddress\":\"ELF_raw_wallet\",\"taskId\":\"task_raw\"}",
+      webhookSecret: "hook-secret-000",
     });
     const serialized = JSON.stringify({
       foundation,
