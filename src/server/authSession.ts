@@ -250,12 +250,102 @@ export interface AuthSessionContractReadiness {
   sessionIssuer: AuthSessionIssuerContractReadiness;
 }
 
+export type ProductionAuthSessionProfileId = "local-review" | "production-required";
+export type ProductionAuthSessionStatus = "metadata_ready" | "local_ready" | "blocked";
+export type ProductionAuthSessionDependencyId =
+  | "wallet_live_verifier"
+  | "nonce_store"
+  | "session_signing_key"
+  | "secret_manager"
+  | "production_session_store"
+  | "project_membership_source"
+  | "project_ownership_source"
+  | "rbac_enforcement_policy";
+
+export interface CreateProductionAuthSessionFoundationOptions {
+  generatedAt?: string;
+  liveVerifierReady?: boolean;
+  membershipSourceReady?: boolean;
+  nonceStoreReady?: boolean;
+  observedInput?: unknown;
+  ownershipSourceReady?: boolean;
+  productionSessionStoreReady?: boolean;
+  profileId?: ProductionAuthSessionProfileId;
+  rbacPolicyReady?: boolean;
+  secretManagerReady?: boolean;
+  signingKeyReady?: boolean;
+}
+
+export interface ProductionAuthSessionFoundation {
+  accountTypeCoverage: AuthSessionAccountType[];
+  agentCredentialBoundary: {
+    agentSkillCanSubstituteProjectOwner: false;
+    agentSkillCanSubstituteUserWallet: false;
+    internalCredentialRoleIds: AuthSessionRoleId[];
+    ordinaryUserWalletSources: AuthSessionWalletSource[];
+  };
+  blockedDependencyIds: ProductionAuthSessionDependencyId[];
+  blockerCount: number;
+  cookieIssued: false;
+  diagnosticCodes: AuthSessionDiagnosticCode[];
+  diagnostics: AuthSessionDiagnostic[];
+  generatedAt: string;
+  id: "campaign-os-production-auth-session-foundation";
+  jwtIssued: false;
+  liveSideEffectsEnabled: false;
+  liveSigningExecuted: false;
+  liveVerificationExecuted: false;
+  ownership: {
+    blockedDependencyIds: ProductionAuthSessionDependencyId[];
+    membershipSourceReady: boolean;
+    ownerMatchRequired: true;
+    ownerMutationBlocked: boolean;
+    ownershipSourceReady: boolean;
+  };
+  productionReady: false;
+  profileId: ProductionAuthSessionProfileId;
+  protectedRouteCoverage: {
+    locallyEnforcedRouteIds: string[];
+    protectedRouteCount: number;
+    routeGroupCount: number;
+  };
+  rbac: {
+    agentCredentialSubstitutionDisabled: true;
+    protectedRouteCount: number;
+    roleCount: number;
+  };
+  redaction: SensitiveAuthSessionInputSummary;
+  sessionIssuer: {
+    diagnosticCodes: AuthSessionDiagnosticCode[];
+    issuerMode: "local_opaque" | "production_blocked";
+    cookieIssued: false;
+    jwtIssued: false;
+    liveSigningExecuted: false;
+    productionSessionStoreReady: boolean;
+    secretManagerReady: boolean;
+    signingKeyReady: boolean;
+  };
+  status: ProductionAuthSessionStatus;
+  valid: boolean;
+  walletProof: {
+    diagnosticCodes: AuthSessionDiagnosticCode[];
+    liveVerificationExecuted: false;
+    liveVerifierReady: boolean;
+    nonceStoreReady: boolean;
+    status: "proof_required" | "blocked";
+  };
+  walletSourceCoverage: AuthSessionWalletSource[];
+}
+
 const seededAt = "2026-07-06T00:00:00.000Z";
 const redactedPlaceholder = "[redacted-sensitive]";
 const sensitiveKeyFragments = [
   "authorization",
   "bearer",
+  "cookie",
+  "jwt",
   "mnemonic",
+  "nonce",
   "objectkey",
   "password",
   "privatekey",
@@ -361,6 +451,36 @@ const isSensitiveKey = (key: string) => {
   const normalizedKey = normalizeSensitiveKey(key);
 
   return sensitiveKeyFragments.some((fragment) => normalizedKey.includes(fragment));
+};
+
+const sensitiveValueFragments = [
+  "bearer",
+  "cookiesecret",
+  "jwtsecret",
+  "mnemonic",
+  "noncesecret",
+  "privatekey",
+  "rawsignature",
+  "secretkey",
+  "secrettoken",
+  "seedphrase",
+  "signedurl",
+  "token",
+];
+
+const hasSignedUrlQuery = (value: string) =>
+  /^https?:\/\//i.test(value)
+  && /[?&](access_token|authorization|credential|signature|token|x-amz-signature)=/i.test(value);
+
+const isSensitiveStringValue = (value: string) => {
+  const normalizedValue = normalizeSensitiveKey(value);
+
+  return (
+    /\bbearer\s+\S+/i.test(value)
+    || /-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----/i.test(value)
+    || hasSignedUrlQuery(value)
+    || sensitiveValueFragments.some((fragment) => normalizedValue.includes(fragment))
+  );
 };
 
 const diagnostic = (
@@ -669,16 +789,18 @@ const sanitizeSensitiveInput = (value: unknown): SensitiveAuthSessionInputSummar
   let redactedFieldCount = 0;
 
   const sanitize = (input: unknown): unknown => {
+    if (typeof input === "string" && isSensitiveStringValue(input)) {
+      redactedFieldCount += 1;
+
+      return redactedPlaceholder;
+    }
+
     if (input === null || typeof input !== "object") {
       return input;
     }
 
     if (Array.isArray(input)) {
-      const sanitizedItems = input
-        .map((item) => sanitize(item))
-        .filter((item) => item !== redactedPlaceholder);
-
-      return sanitizedItems;
+      return input.map((item) => sanitize(item));
     }
 
     const entries = Object.entries(input).flatMap(([key, nested]) => {
@@ -708,6 +830,220 @@ const sanitizeSensitiveInput = (value: unknown): SensitiveAuthSessionInputSummar
 export const summarizeSensitiveAuthSessionInput = (
   input: unknown,
 ): SensitiveAuthSessionInputSummary => sanitizeSensitiveInput(input);
+
+const productionAuthDependencyChecks = [
+  {
+    diagnosticCode: "AUTH_PROOF_VERIFIER_MISSING",
+    diagnosticField: "authSession.walletProof.liveVerifier",
+    diagnosticMessage: "Production auth requires a live wallet proof verifier.",
+    id: "wallet_live_verifier",
+    optionKey: "liveVerifierReady",
+  },
+  {
+    diagnosticCode: "AUTH_NONCE_STORE_MISSING",
+    diagnosticField: "authSession.walletProof.nonceStore",
+    diagnosticMessage: "Production auth requires a nonce store.",
+    id: "nonce_store",
+    optionKey: "nonceStoreReady",
+  },
+  {
+    diagnosticCode: "AUTH_SESSION_ISSUER_MISSING",
+    diagnosticField: "authSession.sessionIssuer.signingKey",
+    diagnosticMessage: "Production auth requires a session signing key.",
+    id: "session_signing_key",
+    optionKey: "signingKeyReady",
+  },
+  {
+    diagnosticCode: "AUTH_SECRET_MANAGER_MISSING",
+    diagnosticField: "authSession.sessionIssuer.secretManager",
+    diagnosticMessage: "Production auth requires a secret manager.",
+    id: "secret_manager",
+    optionKey: "secretManagerReady",
+  },
+  {
+    diagnosticCode: "AUTH_SESSION_STORE_MISSING",
+    diagnosticField: "authSession.sessionIssuer.sessionStore",
+    diagnosticMessage: "Production auth requires a production session store.",
+    id: "production_session_store",
+    optionKey: "productionSessionStoreReady",
+  },
+  {
+    diagnosticCode: "AUTH_SESSION_CONFIG_MISSING",
+    diagnosticField: "authSession.membership.source",
+    diagnosticMessage: "Production auth requires a project membership source.",
+    id: "project_membership_source",
+    optionKey: "membershipSourceReady",
+  },
+  {
+    diagnosticCode: "AUTH_OWNERSHIP_SOURCE_MISSING",
+    diagnosticField: "authSession.ownership.source",
+    diagnosticMessage: "Production auth requires a project ownership source.",
+    id: "project_ownership_source",
+    optionKey: "ownershipSourceReady",
+  },
+  {
+    diagnosticCode: "AUTH_POLICY_MISSING",
+    diagnosticField: "authSession.rbac.policy",
+    diagnosticMessage: "Production auth requires an RBAC enforcement policy.",
+    id: "rbac_enforcement_policy",
+    optionKey: "rbacPolicyReady",
+  },
+] as const satisfies readonly {
+  diagnosticCode: AuthSessionDiagnosticCode;
+  diagnosticField: string;
+  diagnosticMessage: string;
+  id: ProductionAuthSessionDependencyId;
+  optionKey: keyof CreateProductionAuthSessionFoundationOptions;
+}[];
+
+export const productionAuthSessionFoundationDependencyIds =
+  productionAuthDependencyChecks.map((item) => item.id);
+
+const foundationDiagnosticCodes = (diagnostics: readonly AuthSessionDiagnostic[]) =>
+  Array.from(new Set(diagnostics.map((item) => item.code)));
+
+export const createProductionAuthSessionFoundation = ({
+  generatedAt = new Date(0).toISOString(),
+  liveVerifierReady = false,
+  membershipSourceReady = false,
+  nonceStoreReady = false,
+  observedInput,
+  ownershipSourceReady = false,
+  productionSessionStoreReady = false,
+  profileId = "local-review",
+  rbacPolicyReady = false,
+  secretManagerReady = false,
+  signingKeyReady = false,
+}: CreateProductionAuthSessionFoundationOptions = {}): ProductionAuthSessionFoundation => {
+  const productionRequired = profileId === "production-required";
+  const redaction = summarizeSensitiveAuthSessionInput(observedInput);
+  const blockedDependencyIds: ProductionAuthSessionDependencyId[] = productionRequired
+    ? productionAuthDependencyChecks
+      .filter((check) => !({
+        liveVerifierReady,
+        membershipSourceReady,
+        nonceStoreReady,
+        ownershipSourceReady,
+        productionSessionStoreReady,
+        rbacPolicyReady,
+        secretManagerReady,
+        signingKeyReady,
+      })[check.optionKey])
+      .map((check) => check.id)
+    : [];
+  const diagnostics: AuthSessionDiagnostic[] = productionRequired
+    ? productionAuthDependencyChecks
+      .filter((check) => blockedDependencyIds.includes(check.id))
+      .map((check) => diagnostic(check.diagnosticCode, check.diagnosticField, check.diagnosticMessage))
+    : [];
+
+  diagnostics.push(
+    diagnostic(
+      "AUTH_AGENT_CREDENTIAL_SEPARATE",
+      "authSession.agentCredentialBoundary",
+      "Agent Skill credentials are internal automation credentials and cannot substitute user or project owner sessions.",
+      "info",
+    ),
+  );
+
+  if (redaction.redactionApplied) {
+    diagnostics.push(
+      diagnostic(
+        "AUTH_SENSITIVE_INPUT_REDACTED",
+        "authSession.input",
+        "Sensitive auth input was omitted from production auth/session foundation metadata.",
+        "warning",
+      ),
+    );
+  }
+
+  const sessions = createSeededWalletSessionContracts();
+  const walletSourceCoverage = sessions.map((sessionContract) => sessionContract.walletSource);
+  const accountTypeCoverage = Array.from(new Set(sessions.map((sessionContract) => sessionContract.accountType)));
+  const ordinaryUserWalletSources = sessions
+    .filter((sessionContract) => sessionContract.credentialBoundary === "ordinary_user_wallet")
+    .map((sessionContract) => sessionContract.walletSource);
+  const routeGroups = new Set(protectedRouteAuthMap.map((route) => route.routeGroup));
+  const ownerBlockedDependencyIds = [
+    ...(!membershipSourceReady && productionRequired ? ["project_membership_source" as const] : []),
+    ...(!ownershipSourceReady && productionRequired ? ["project_ownership_source" as const] : []),
+  ];
+  const diagnosticCodes = foundationDiagnosticCodes(diagnostics);
+  const valid = productionRequired ? blockedDependencyIds.length === 0 : true;
+
+  return {
+    accountTypeCoverage,
+    agentCredentialBoundary: {
+      agentSkillCanSubstituteProjectOwner: false,
+      agentSkillCanSubstituteUserWallet: false,
+      internalCredentialRoleIds: ["ai_worker"],
+      ordinaryUserWalletSources,
+    },
+    blockedDependencyIds,
+    blockerCount: blockedDependencyIds.length,
+    cookieIssued: false,
+    diagnosticCodes,
+    diagnostics,
+    generatedAt,
+    id: "campaign-os-production-auth-session-foundation",
+    jwtIssued: false,
+    liveSideEffectsEnabled: false,
+    liveSigningExecuted: false,
+    liveVerificationExecuted: false,
+    ownership: {
+      blockedDependencyIds: ownerBlockedDependencyIds,
+      membershipSourceReady,
+      ownerMatchRequired: true,
+      ownerMutationBlocked: !membershipSourceReady || !ownershipSourceReady,
+      ownershipSourceReady,
+    },
+    productionReady: false,
+    profileId,
+    protectedRouteCoverage: {
+      locallyEnforcedRouteIds: [...locallyEnforcedAuthRouteIds],
+      protectedRouteCount: protectedRouteAuthMap.length,
+      routeGroupCount: routeGroups.size,
+    },
+    rbac: {
+      agentCredentialSubstitutionDisabled: true,
+      protectedRouteCount: protectedRouteAuthMap.length,
+      roleCount: authSessionRolePolicies.length,
+    },
+    redaction,
+    sessionIssuer: {
+      diagnosticCodes: diagnosticCodes.filter((code) =>
+        code === "AUTH_SESSION_ISSUER_MISSING"
+        || code === "AUTH_SECRET_MANAGER_MISSING"
+        || code === "AUTH_SESSION_STORE_MISSING"
+      ),
+      issuerMode: productionRequired && blockedDependencyIds.some((dependencyId) =>
+        dependencyId === "session_signing_key"
+        || dependencyId === "secret_manager"
+        || dependencyId === "production_session_store"
+      )
+        ? "production_blocked"
+        : "local_opaque",
+      cookieIssued: false,
+      jwtIssued: false,
+      liveSigningExecuted: false,
+      productionSessionStoreReady,
+      secretManagerReady,
+      signingKeyReady,
+    },
+    status: valid ? (profileId === "local-review" ? "local_ready" : "metadata_ready") : "blocked",
+    valid,
+    walletProof: {
+      diagnosticCodes: diagnosticCodes.filter((code) =>
+        code === "AUTH_NONCE_STORE_MISSING" || code === "AUTH_PROOF_VERIFIER_MISSING"
+      ),
+      liveVerificationExecuted: false,
+      liveVerifierReady,
+      nonceStoreReady,
+      status: productionRequired && (!liveVerifierReady || !nonceStoreReady) ? "blocked" : "proof_required",
+    },
+    walletSourceCoverage,
+  };
+};
 
 export const createSessionProofBoundary = ({
   observedInput,
