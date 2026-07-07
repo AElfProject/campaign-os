@@ -658,6 +658,7 @@ const createBackendServiceHealthMetadata = (
   entrypointId: report.entrypoint.id,
   databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime),
   migrationRunnerStatus: report.migration.runnerStatus,
+  persistenceFoundation: report.persistenceFoundation,
   persistenceRuntime: createBackendPersistenceRuntimeSummary(report.persistenceRuntime),
   profile: {
     id: report.profile.id,
@@ -686,6 +687,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
   entrypoint: backendServiceEntrypointMetadata(report),
   migrationManifest: backendMigrationManifestSummary(report),
   persistenceAdapterPort: backendPersistenceAdapterSummary(report),
+  persistenceFoundation: report.persistenceFoundation,
   persistenceRuntime: createBackendPersistenceRuntimeSummary(report.persistenceRuntime),
   profile: {
     allowedCapabilities: report.profile.allowedCapabilities,
@@ -703,6 +705,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
       "backendRuntimeBootstrap",
       "databaseAdapterRuntime",
       "persistenceAdapters",
+      "persistenceFoundation",
       "persistenceRuntime",
       "migration",
       "apiFoundation",

@@ -20,8 +20,22 @@ export interface BackendRuntimeSmokeCheck {
   deploymentHandoff?: unknown;
   endpoint: "/api/health" | "/api/contracts";
   ok: boolean;
+  persistenceFoundation?: BackendRuntimeSmokePersistenceFoundationSummary;
   status: number;
   traceId: string;
+}
+
+export interface BackendRuntimeSmokePersistenceFoundationSummary {
+  blockerCount: number;
+  diagnosticCodes: string[];
+  liveConnectionAttempted: boolean;
+  liveMigrationExecutionEnabled: boolean;
+  liveQueryExecutionEnabled: boolean;
+  migrationDryRunStatus?: string;
+  productionReady: boolean;
+  status?: string;
+  storeCoverageCount: number;
+  valid: boolean;
 }
 
 export interface BackendRuntimeSmokeSummary {
@@ -32,6 +46,7 @@ export interface BackendRuntimeSmokeSummary {
   };
   host: string;
   liveSideEffectsEnabled: boolean;
+  persistenceFoundation: BackendRuntimeSmokePersistenceFoundationSummary;
   port: number;
   productionReady: boolean;
   requiredBeforeProduction: string[];
@@ -70,6 +85,53 @@ const readNestedRecord = (
   return isRecord(current) ? current : undefined;
 };
 
+const readPersistenceFoundation = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["backendService", "persistenceFoundation"]);
+
+const getNumber = (
+  record: Record<string, unknown> | undefined,
+  key: string,
+): number => typeof record?.[key] === "number" ? record[key] : 0;
+
+const getString = (
+  record: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined => typeof record?.[key] === "string" ? record[key] : undefined;
+
+const summarizePersistenceFoundation = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokePersistenceFoundationSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const migrationDryRun = readNestedRecord(record, ["migrationDryRun"]);
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "liveConnectionAttempted")
+    && isExplicitFalse(record, "liveMigrationExecutionEnabled")
+    && isExplicitFalse(record, "liveQueryExecutionEnabled");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    liveConnectionAttempted: false,
+    liveMigrationExecutionEnabled: false,
+    liveQueryExecutionEnabled: false,
+    migrationDryRunStatus: getString(migrationDryRun, "status"),
+    productionReady: false,
+    status: getString(record, "status"),
+    storeCoverageCount: getNumber(record, "storeCoverageCount"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
 const createSmokeCheck = async ({
   baseUrl,
   endpoint,
@@ -92,6 +154,9 @@ const createSmokeCheck = async ({
     ? readNestedRecord(payload.data, ["backendService", "activation"])
     : readNestedRecord(payload.data, ["activation"]);
   const deploymentHandoff = readNestedRecord(activation, ["deploymentHandoff"]);
+  const persistenceFoundation = summarizePersistenceFoundation(
+    readPersistenceFoundation(payload.data),
+  );
 
   return {
     activation,
@@ -100,6 +165,7 @@ const createSmokeCheck = async ({
       deploymentHandoff,
       endpoint,
       ok: payload.ok === true && payload.traceId === traceId,
+      persistenceFoundation,
       status: response.status,
       traceId: payload.traceId ?? "",
     },
@@ -122,6 +188,22 @@ const getStringArray = (
 ): string[] => Array.isArray(record?.[key])
   ? record[key].filter((item): item is string => typeof item === "string")
   : [];
+
+const isPersistenceFoundationSmokeReady = (
+  summary: BackendRuntimeSmokePersistenceFoundationSummary | undefined,
+): summary is BackendRuntimeSmokePersistenceFoundationSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveConnectionAttempted === false
+    && summary.liveMigrationExecutionEnabled === false
+    && summary.liveQueryExecutionEnabled === false
+    && summary.storeCoverageCount >= 6
+    && summary.blockerCount > 0
+    && summary.diagnosticCodes.length > 0;
+};
 
 export const runBackendRuntimeSmoke = async ({
   env,
@@ -156,6 +238,7 @@ export const runBackendRuntimeSmoke = async ({
     });
     const activation = contracts.activation ?? health.activation;
     const deploymentHandoff = readNestedRecord(activation, ["deploymentHandoff"]);
+    const persistenceFoundation = contracts.check.persistenceFoundation;
 
     if (
       health.check.status !== 200
@@ -166,6 +249,8 @@ export const runBackendRuntimeSmoke = async ({
       || !contracts.check.activationPresent
       || !isExplicitFalse(activation, "productionReady")
       || !isExplicitFalse(activation, "liveSideEffectsEnabled")
+      || !isPersistenceFoundationSmokeReady(health.check.persistenceFoundation)
+      || !isPersistenceFoundationSmokeReady(persistenceFoundation)
     ) {
       throw new Error("Campaign OS backend runtime smoke check failed.");
     }
@@ -178,6 +263,7 @@ export const runBackendRuntimeSmoke = async ({
       },
       host,
       liveSideEffectsEnabled: getBoolean(activation, "liveSideEffectsEnabled"),
+      persistenceFoundation,
       port: new URL(server.url).port ? Number(new URL(server.url).port) : 0,
       productionReady: getBoolean(activation, "productionReady"),
       requiredBeforeProduction: getStringArray(deploymentHandoff, "requiredBeforeProduction"),

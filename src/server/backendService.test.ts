@@ -446,6 +446,40 @@ describe("backend service readiness report", () => {
       ]),
       valid: true,
     });
+    expect(report.persistenceFoundation).toMatchObject({
+      blockerCount: 11,
+      diagnosticCodes: ["DATABASE_MIGRATION_LIVE_EXECUTION_DISABLED"],
+      foundationId: "campaign-os-production-persistence-foundation-v0.2",
+      liveConnectionAttempted: false,
+      liveMigrationExecutionEnabled: false,
+      liveQueryExecutionEnabled: false,
+      migrationDryRun: {
+        liveMigrationExecutionEnabled: false,
+        migrationGateStatus: "ready",
+        noLiveMigrationCommand: true,
+        runnerStatus: "disabled_local_review",
+        status: "dry_run_ready",
+      },
+      productionBlockerIds: expect.arrayContaining([
+        "db-provider-selection",
+        "driver-package",
+        "connection-config",
+        "migration-executor",
+        "secret-manager",
+        "object-storage-export",
+        "analytics-warehouse",
+      ]),
+      productionReady: false,
+      requiredStoreCount: 6,
+      status: "metadata_ready",
+      storeCoverage: {
+        coverageComplete: true,
+        coveredStoreCount: 6,
+        requiredStoreCount: 6,
+      },
+      storeCoverageCount: 6,
+      valid: true,
+    });
     expect(report.databaseReadiness.stores.map((store) => store.id)).toEqual([
       "campaign-db",
       "wallet-session-db",
@@ -618,6 +652,36 @@ describe("backend service readiness report", () => {
           runtimeState: "covered",
         }),
       ]),
+    });
+    expect(report.persistenceFoundation).toMatchObject({
+      blockerCount: 11,
+      diagnosticCodes: expect.arrayContaining([
+        "PRODUCTION_PERSISTENCE_SECRET_REDACTED",
+        "PRODUCTION_PERSISTENCE_LIVE_CONNECTION_DEFERRED",
+        "DATABASE_DRIVER_PRODUCTION_DEFERRED",
+        "DATABASE_ADAPTER_SECRET_REDACTED",
+        "MIGRATION_EXECUTION_APPROVAL_MISSING",
+      ]),
+      liveConnectionAttempted: false,
+      liveMigrationExecutionEnabled: false,
+      liveQueryExecutionEnabled: false,
+      migrationDryRun: {
+        liveMigrationExecutionEnabled: false,
+        migrationGateStatus: "blocked",
+        noLiveMigrationCommand: true,
+        runnerStatus: "deferred",
+        status: "blocked",
+      },
+      productionReady: false,
+      requiredStoreCount: 6,
+      status: "blocked",
+      storeCoverage: {
+        coverageComplete: true,
+        coveredStoreCount: 6,
+        requiredStoreCount: 6,
+      },
+      storeCoverageCount: 6,
+      valid: false,
     });
     expect(report.campaignDbVerticalSlice).toMatchObject({
       adapter: {
