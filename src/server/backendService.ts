@@ -92,6 +92,10 @@ import {
   type SchedulerRuntimeFoundationSummary,
 } from "./schedulerRuntime";
 import {
+  createObservabilityExporterFoundation,
+  type ObservabilityExporterFoundationSummary,
+} from "./observabilityExporter";
+import {
   allowedVerificationDegradationOutcomes,
   createVerificationSourceHandoff,
   type VerificationSourceHandoffSummary,
@@ -113,6 +117,7 @@ export type BackendAttachPointArea =
   | "worker-lease"
   | "worker-idempotency"
   | "scheduler"
+  | "observability"
   | "contract-writer"
   | "object-storage-export"
   | "reward-custody"
@@ -132,6 +137,7 @@ export type BackendReadinessDiagnosticCode =
   | "SERVICE_PORTS_INVALID"
   | "QUEUE_RUNTIME_READINESS_BLOCKED"
   | "SCHEDULER_RUNTIME_READINESS_BLOCKED"
+  | "OBSERVABILITY_EXPORTER_READINESS_BLOCKED"
   | "WORKER_IDEMPOTENCY_STORE_READINESS_BLOCKED"
   | "WORKER_LEASE_STORE_READINESS_BLOCKED"
   | "WORKER_SCHEDULER_READINESS_BLOCKED"
@@ -204,6 +210,7 @@ export interface BackendServiceReadinessReport {
   databaseReadiness: BackendDatabaseReadinessReport;
   entrypoint: BackendServiceEntrypoint;
   migration: MigrationManifest;
+  observabilityExporterFoundation: BackendObservabilityExporterReadinessSummary;
   persistenceFoundation: BackendPersistenceFoundationSummary;
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
   queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
@@ -384,6 +391,32 @@ export interface BackendWorkerIdempotencyStoreReadinessSummary {
   requiredConfigKeys: string[];
   status: WorkerIdempotencyStoreFoundationSummary["status"];
   storeId: WorkerIdempotencyStoreFoundationSummary["storeId"];
+  valid: boolean;
+}
+
+export interface BackendObservabilityExporterReadinessSummary {
+  adapterId: ObservabilityExporterFoundationSummary["adapterId"];
+  blockerCount: ObservabilityExporterFoundationSummary["blockerCount"];
+  diagnosticCodes: ObservabilityExporterFoundationSummary["diagnosticCodes"];
+  diagnostics: ObservabilityExporterFoundationSummary["diagnostics"];
+  disabledLiveOperationCount: ObservabilityExporterFoundationSummary["readiness"]["disabledLiveOperationCount"];
+  exporterId: ObservabilityExporterFoundationSummary["exporterId"];
+  id: ObservabilityExporterFoundationSummary["id"];
+  liveAlertRoutingEnabled: false;
+  liveLogExportEnabled: false;
+  liveMetricsExportEnabled: false;
+  liveTelemetryExportEnabled: false;
+  liveTraceExportEnabled: false;
+  metricNamespace: ObservabilityExporterFoundationSummary["metricNamespace"];
+  mode: ObservabilityExporterFoundationSummary["mode"];
+  noLiveFlags: ObservabilityExporterFoundationSummary["noLiveFlags"];
+  operationCount: ObservabilityExporterFoundationSummary["readiness"]["operationCount"];
+  preconditions: ObservabilityExporterFoundationSummary["preconditions"];
+  productionReady: false;
+  profileId: ObservabilityExporterFoundationSummary["profileId"];
+  requiredConfigKeys: string[];
+  sinkId: ObservabilityExporterFoundationSummary["sinkId"];
+  status: ObservabilityExporterFoundationSummary["status"];
   valid: boolean;
 }
 
@@ -651,6 +684,7 @@ const requiredAttachPointAreas: BackendAttachPointArea[] = [
   "worker-lease",
   "worker-idempotency",
   "scheduler",
+  "observability",
   "contract-writer",
   "object-storage-export",
   "reward-custody",
@@ -771,6 +805,27 @@ export const backendAttachMap: BackendAttachPoint[] = [
     requiredBeforeProduction: true,
   },
   {
+    area: "observability",
+    attachPoint: "src/server/observabilityExporter.ts",
+    blockedBy: [
+      "exporter selection",
+      "exporter endpoint",
+      "exporter credentials",
+      "metrics sink registration",
+      "metric namespace",
+      "retention policy",
+      "trace collector",
+      "structured log sink",
+      "alert routing",
+      "retry/dead-letter policy",
+      "redaction policy",
+      "operator runbook",
+    ],
+    currentStatus: "deferred",
+    note: "Observability exporter readiness is dry-run metadata only; no live telemetry, metrics, logs, traces, alerts, retry, or dead-letter export runs.",
+    requiredBeforeProduction: true,
+  },
+  {
     area: "contract-writer",
     attachPoint: "src/server/servicePorts.ts",
     blockedBy: ["contract writer mission", "wallet signer policy", "contract ops review"],
@@ -880,6 +935,7 @@ const createValidationIssues = ({
   databaseReadiness,
   entrypoint,
   migration,
+  observabilityExporterFoundation,
   persistenceAdapters,
   providerIndexerFoundation,
   queueRuntimeFoundation,
@@ -900,6 +956,7 @@ const createValidationIssues = ({
   databaseReadiness: BackendDatabaseReadinessReport;
   entrypoint: BackendServiceEntrypoint;
   migration: MigrationManifest;
+  observabilityExporterFoundation: BackendObservabilityExporterReadinessSummary;
   persistenceAdapters: PersistenceAdapterPortReport;
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
   queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
@@ -970,6 +1027,21 @@ const createValidationIssues = ({
       "SCHEDULER_RUNTIME_READINESS_BLOCKED",
       "schedulerRuntimeFoundation",
       "Scheduler runtime foundation readiness validation failed.",
+    ));
+  }
+
+  if (
+    !observabilityExporterFoundation.valid
+    || observabilityExporterFoundation.liveAlertRoutingEnabled
+    || observabilityExporterFoundation.liveLogExportEnabled
+    || observabilityExporterFoundation.liveMetricsExportEnabled
+    || observabilityExporterFoundation.liveTelemetryExportEnabled
+    || observabilityExporterFoundation.liveTraceExportEnabled
+  ) {
+    issues.push(errorDiagnostic(
+      "OBSERVABILITY_EXPORTER_READINESS_BLOCKED",
+      "observabilityExporterFoundation",
+      "Observability exporter readiness validation failed or live export flags are enabled.",
     ));
   }
 
@@ -1647,6 +1719,45 @@ const createBackendWorkerIdempotencyStoreReadinessSummary = ({
   };
 };
 
+const createBackendObservabilityExporterReadinessSummary = ({
+  env,
+  profileId,
+}: {
+  env: Record<string, string | undefined>;
+  profileId: BackendConfigContract["profileId"];
+}): BackendObservabilityExporterReadinessSummary => {
+  const foundation = createObservabilityExporterFoundation({
+    env,
+    profileId,
+  });
+
+  return {
+    adapterId: foundation.adapterId,
+    blockerCount: foundation.blockerCount,
+    diagnosticCodes: foundation.diagnosticCodes,
+    diagnostics: foundation.diagnostics,
+    disabledLiveOperationCount: foundation.readiness.disabledLiveOperationCount,
+    exporterId: foundation.exporterId,
+    id: foundation.id,
+    liveAlertRoutingEnabled: foundation.readiness.liveAlertRoutingEnabled,
+    liveLogExportEnabled: foundation.readiness.liveLogExportEnabled,
+    liveMetricsExportEnabled: foundation.readiness.liveMetricsExportEnabled,
+    liveTelemetryExportEnabled: foundation.readiness.liveTelemetryExportEnabled,
+    liveTraceExportEnabled: foundation.readiness.liveTraceExportEnabled,
+    metricNamespace: foundation.metricNamespace,
+    mode: foundation.mode,
+    noLiveFlags: foundation.noLiveFlags,
+    operationCount: foundation.readiness.operationCount,
+    preconditions: foundation.preconditions,
+    productionReady: foundation.productionReady,
+    profileId: foundation.profileId,
+    requiredConfigKeys: foundation.readiness.requiredConfigKeys,
+    sinkId: foundation.sinkId,
+    status: foundation.status,
+    valid: foundation.valid,
+  };
+};
+
 export const createBackendDatabaseAdapterRuntimeSummary = (
   runtime: BackendDatabaseAdapterRuntimeReadinessReport,
 ): BackendDatabaseAdapterRuntimeSummary => ({
@@ -1793,6 +1904,10 @@ export const createBackendServiceReadinessReport = ({
     env,
     profileId: config.profileId,
   });
+  const observabilityExporterFoundation = createBackendObservabilityExporterReadinessSummary({
+    env,
+    profileId: config.profileId,
+  });
   const workerLeaseStoreFoundation = createBackendWorkerLeaseStoreReadinessSummary({
     env,
     profileId: config.profileId,
@@ -1822,6 +1937,7 @@ export const createBackendServiceReadinessReport = ({
     databaseReadiness,
     entrypoint,
     migration,
+    observabilityExporterFoundation,
     persistenceAdapters,
     providerIndexerFoundation,
     queueRuntimeFoundation,
@@ -1849,6 +1965,7 @@ export const createBackendServiceReadinessReport = ({
     databaseReadiness,
     entrypoint,
     migration,
+    observabilityExporterFoundation,
     persistenceFoundation,
     providerIndexerFoundation,
     queueRuntimeFoundation,

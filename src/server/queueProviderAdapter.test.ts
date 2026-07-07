@@ -8,6 +8,10 @@ import {
   redactQueueProviderAdapterValue,
 } from "./queueProviderAdapter";
 import {
+  observabilityExporterOperationCapabilities,
+  observabilityExporterProductionPreconditions,
+} from "./observabilityExporter";
+import {
   createWorkerLeaseStoreFoundation,
   workerLeaseOperationCapabilities,
   workerLeaseStoreProductionPreconditions,
@@ -45,8 +49,28 @@ describe("queue provider adapter foundation", () => {
       disabledLiveOperationCount: queueProviderOperationCapabilities.length,
       liveQueuePublishingEnabled: false,
       liveWorkerExecutionEnabled: false,
+      observabilityExporterBlockerCount: 0,
+      observabilityExporterDiagnosticCodes: [],
+      observabilityExporterId: "local-dry-run",
+      observabilityExporterLiveTelemetryExportEnabled: false,
+      observabilityExporterMode: "dry_run",
+      observabilityExporterSinkId: "local-metrics-sink",
+      observabilityExporterStatus: "local_ready",
       operationCount: queueProviderOperationCapabilities.length,
       productionReady: false,
+    });
+    expect(foundation.observabilityExporter).toMatchObject({
+      disabledLiveOperationCount: observabilityExporterOperationCapabilities.length,
+      exporterId: "local-dry-run",
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      metricNamespace: "campaign-os-runtime",
+      operationCount: observabilityExporterOperationCapabilities.length,
+      productionReady: false,
+      sinkId: "local-metrics-sink",
+      status: "local_ready",
+      valid: true,
     });
   });
 
@@ -133,6 +157,11 @@ describe("queue provider adapter foundation", () => {
     expect(foundation.productionReady).toBe(false);
     expect(foundation.noLiveFlags.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.operationCapabilities.every((item) => item.liveEnabled === false)).toBe(true);
+    expect(foundation.observabilityExporter.requiredConfigKeys).toEqual(
+      expect.arrayContaining(observabilityExporterProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
+    );
+    expect(foundation.observabilityExporter.productionReady).toBe(false);
+    expect(foundation.observabilityExporter.liveTelemetryExportEnabled).toBe(false);
   });
 
   it("keeps queue provider readiness separate from worker lease store readiness", () => {

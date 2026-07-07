@@ -137,6 +137,34 @@ const expectedWorkerIdempotencyStoreFoundation = {
   valid: true,
 };
 
+const expectedObservabilityExporterFoundation = {
+  adapterId: "local-dry-run-observability-exporter-adapter",
+  blockerCount: 0,
+  diagnosticCodes: [],
+  disabledLiveOperationCount: 8,
+  exporterId: "local-dry-run",
+  id: "campaign-os-observability-exporter-foundation",
+  liveAlertRoutingEnabled: false,
+  liveLogExportEnabled: false,
+  liveMetricsExportEnabled: false,
+  liveTelemetryExportEnabled: false,
+  liveTraceExportEnabled: false,
+  metricNamespace: "campaign-os-runtime",
+  mode: "dry_run",
+  operationCount: 8,
+  productionReady: false,
+  requiredConfigKeys: expect.arrayContaining([
+    "CAMPAIGN_OS_OBSERVABILITY_EXPORTER",
+    "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+    "CAMPAIGN_OS_OBSERVABILITY_SINK",
+    "CAMPAIGN_OS_OBSERVABILITY_TRACE_COLLECTOR_URL",
+    "CAMPAIGN_OS_OBSERVABILITY_LOG_SINK_URL",
+  ]),
+  sinkId: "local-metrics-sink",
+  status: "local_ready",
+  valid: true,
+};
+
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
     const summary = await runBackendRuntimeSmoke({
@@ -202,6 +230,7 @@ describe("backend runtime smoke command", () => {
             status: "local_ready",
             valid: true,
           },
+          observabilityExporterFoundation: expectedObservabilityExporterFoundation,
           schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
           workerIdempotencyStoreFoundation: expectedWorkerIdempotencyStoreFoundation,
           workerLeaseStoreFoundation: expectedWorkerLeaseStoreFoundation,
@@ -255,6 +284,7 @@ describe("backend runtime smoke command", () => {
             status: "local_ready",
             valid: true,
           },
+          observabilityExporterFoundation: expectedObservabilityExporterFoundation,
           schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
           workerIdempotencyStoreFoundation: expectedWorkerIdempotencyStoreFoundation,
           workerLeaseStoreFoundation: expectedWorkerLeaseStoreFoundation,
@@ -323,6 +353,7 @@ describe("backend runtime smoke command", () => {
         status: "local_ready",
         valid: true,
       },
+      observabilityExporterFoundation: expectedObservabilityExporterFoundation,
       schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
       workerIdempotencyStoreFoundation: expectedWorkerIdempotencyStoreFoundation,
       workerLeaseStoreFoundation: expectedWorkerLeaseStoreFoundation,
@@ -588,6 +619,60 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveIdempotencyFlag })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when observability exporter metadata is missing from smoke payloads", async () => {
+    const fetchWithoutObservabilityExporter: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: Record<string, unknown>;
+          };
+        };
+      };
+
+      delete payload.data?.serverRuntime?.readiness?.observabilityExporterFoundation;
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutObservabilityExporter })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when observability smoke payload enables live telemetry export", async () => {
+    const fetchWithLiveObservabilityFlag: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              observabilityExporterFoundation?: Record<string, unknown>;
+            };
+          };
+        };
+      };
+      const observabilityExporterFoundation =
+        payload.data?.serverRuntime?.readiness?.observabilityExporterFoundation;
+
+      if (observabilityExporterFoundation) {
+        observabilityExporterFoundation.liveTelemetryExportEnabled = true;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveObservabilityFlag })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });

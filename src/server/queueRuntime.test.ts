@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  observabilityExporterOperationCapabilities,
+  observabilityExporterProductionPreconditions,
+} from "./observabilityExporter";
+import {
   SUPPORTED_QUEUE_RUNTIME_PROFILES,
   createQueueRuntimeFoundation,
   dryRunQueueEnqueue,
@@ -71,6 +75,14 @@ describe("queue runtime foundation", () => {
       leaseStoreLiveWorkerExecutionEnabled: false,
       leaseStoreMode: "dry_run",
       leaseStoreStatus: "local_ready",
+      observabilityExporterBlockerCount: 0,
+      observabilityExporterDiagnosticCodes: [],
+      observabilityExporterId: "local-dry-run",
+      observabilityExporterLiveTelemetryExportEnabled: false,
+      observabilityExporterMetricNamespace: "campaign-os-runtime",
+      observabilityExporterMode: "dry_run",
+      observabilityExporterSinkId: "local-metrics-sink",
+      observabilityExporterStatus: "local_ready",
       idempotencyStoreBlockerCount: 0,
       idempotencyStoreDiagnosticCodes: [],
       idempotencyStoreId: "local-dry-run",
@@ -81,6 +93,19 @@ describe("queue runtime foundation", () => {
       liveQueuePublishingEnabled: false,
       productionReady: false,
       queuePlanCount: 9,
+    });
+    expect(foundation.observabilityExporter).toMatchObject({
+      disabledLiveOperationCount: observabilityExporterOperationCapabilities.length,
+      exporterId: "local-dry-run",
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      metricNamespace: "campaign-os-runtime",
+      operationCount: observabilityExporterOperationCapabilities.length,
+      productionReady: false,
+      sinkId: "local-metrics-sink",
+      status: "local_ready",
+      valid: true,
     });
     expect(foundation.providerAdapter).toMatchObject({
       adapterId: "local-dry-run-queue-provider-adapter",
@@ -144,6 +169,53 @@ describe("queue runtime foundation", () => {
     expect(foundation.queuePlans.map((plan) => plan.idempotencyPolicyId)).toEqual(
       workerSchedulerPolicies.map((policy) => policy.idempotencyPolicyId),
     );
+  });
+
+  it("surfaces observability exporter readiness without changing dry-run enqueue behavior", () => {
+    const foundation = createQueueRuntimeFoundation({
+      profileId: "staging-scaffold",
+      providerId: "metadata-only",
+    });
+    const enqueue = dryRunQueueEnqueue({
+      attempt: 1,
+      idempotencyKey: "idempotency:task-verification-worker:queue",
+      jobId: "task-verification-worker",
+      payloadReference: "payload-ref:task-verification-worker:queue",
+      queueId: "verification-jobs",
+      traceId: "trace-queue-observability-readiness",
+    });
+
+    expect(foundation.observabilityExporter).toMatchObject({
+      blockerCount: 0,
+      diagnosticCodes: [],
+      exporterId: "local-dry-run",
+      liveAlertRoutingEnabled: false,
+      liveLogExportEnabled: false,
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      mode: "metadata_only",
+      productionReady: false,
+      sinkId: "local-metrics-sink",
+      status: "scaffolded",
+      valid: true,
+    });
+    expect(foundation.observabilityExporter.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(
+      true,
+    );
+    expect(foundation.observabilityExporter.requiredConfigKeys).toEqual(
+      expect.arrayContaining(observabilityExporterProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
+    );
+    expect(foundation.readiness.observabilityExporterRequiredConfigKeys).toEqual(
+      foundation.observabilityExporter.requiredConfigKeys,
+    );
+    expect(foundation.readiness.observabilityExporterLiveTelemetryExportEnabled).toBe(false);
+    expect(enqueue).toMatchObject({
+      accepted: true,
+      livePublishAttempted: false,
+      liveQueuePublishingEnabled: false,
+      status: "accepted_dry_run",
+    });
   });
 
   it("keeps every queue, worker, scheduler, cron, and live integration flag disabled", () => {

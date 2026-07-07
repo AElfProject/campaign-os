@@ -1,4 +1,11 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import {
+  createObservabilityExporterFoundation,
+  type ObservabilityExporterDiagnosticCode,
+  type ObservabilityExporterFoundationStatus,
+  type ObservabilityExporterMode,
+  type ObservabilityExporterOperationCapability,
+} from "./observabilityExporter";
 import type { QueueDegradedOutcome } from "./queueRuntime";
 import {
   createWorkerIdempotencyStoreFoundation,
@@ -99,6 +106,28 @@ export interface WorkerLeaseOperationCapability {
   supported: boolean;
 }
 
+export interface WorkerLeaseObservabilityExporterSummary {
+  adapterId: string;
+  blockerCount: number;
+  diagnosticCodes: ObservabilityExporterDiagnosticCode[];
+  disabledLiveOperationCount: number;
+  exporterId: string;
+  liveAlertRoutingEnabled: false;
+  liveLogExportEnabled: false;
+  liveMetricsExportEnabled: false;
+  liveTelemetryExportEnabled: false;
+  liveTraceExportEnabled: false;
+  metricNamespace: string;
+  mode: ObservabilityExporterMode;
+  operationCapabilities: ObservabilityExporterOperationCapability[];
+  operationCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  sinkId: string;
+  status: ObservabilityExporterFoundationStatus;
+  valid: boolean;
+}
+
 export interface WorkerLeaseStoreReadinessProjection {
   adapterId: string;
   blockerCount: number;
@@ -115,6 +144,14 @@ export interface WorkerLeaseStoreReadinessProjection {
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode: WorkerLeaseStoreMode;
+  observabilityExporterBlockerCount: number;
+  observabilityExporterDiagnosticCodes: ObservabilityExporterDiagnosticCode[];
+  observabilityExporterId: string;
+  observabilityExporterLiveTelemetryExportEnabled: false;
+  observabilityExporterMode: ObservabilityExporterMode;
+  observabilityExporterRequiredConfigKeys: string[];
+  observabilityExporterSinkId: string;
+  observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   operationCount: number;
   productionReady: false;
   requiredConfigKeys: string[];
@@ -131,6 +168,7 @@ export interface WorkerLeaseStoreFoundationSummary {
   idempotencyStore: WorkerLeaseIdempotencyStoreSummary;
   mode: WorkerLeaseStoreMode;
   noLiveFlags: WorkerLeaseStoreNoLiveFlags;
+  observabilityExporter: WorkerLeaseObservabilityExporterSummary;
   operationCapabilities: WorkerLeaseOperationCapability[];
   preconditions: WorkerLeaseProductionPrecondition[];
   productionReady: false;
@@ -361,6 +399,12 @@ export const createWorkerLeaseStoreFoundation = (
       profileId: profileResolution.profileId,
     }),
   );
+  const observabilityExporter = createObservabilityExporterSummary(
+    createObservabilityExporterFoundation({
+      env,
+      profileId: profileResolution.profileId,
+    }),
+  );
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...storeResolution.diagnostics,
@@ -376,6 +420,7 @@ export const createWorkerLeaseStoreFoundation = (
     env,
     idempotencyStore,
     mode,
+    observabilityExporter,
     storeId,
   });
 
@@ -388,6 +433,7 @@ export const createWorkerLeaseStoreFoundation = (
     idempotencyStore,
     mode,
     noLiveFlags: workerLeaseStoreNoLiveFlags,
+    observabilityExporter,
     operationCapabilities: workerLeaseOperationCapabilities.map((item) => ({ ...item })),
     preconditions: workerLeaseStoreProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
@@ -643,6 +689,7 @@ const createReadinessProjection = ({
   env,
   idempotencyStore,
   mode,
+  observabilityExporter,
   storeId,
 }: {
   adapterId: string;
@@ -651,6 +698,7 @@ const createReadinessProjection = ({
   env: Record<string, unknown>;
   idempotencyStore: WorkerLeaseIdempotencyStoreSummary;
   mode: WorkerLeaseStoreMode;
+  observabilityExporter: WorkerLeaseObservabilityExporterSummary;
   storeId: string;
 }): WorkerLeaseStoreReadinessProjection => ({
   adapterId,
@@ -669,6 +717,14 @@ const createReadinessProjection = ({
   liveQueuePublishingEnabled: false,
   liveWorkerExecutionEnabled: false,
   mode,
+  observabilityExporterBlockerCount: observabilityExporter.blockerCount,
+  observabilityExporterDiagnosticCodes: observabilityExporter.diagnosticCodes,
+  observabilityExporterId: observabilityExporter.exporterId,
+  observabilityExporterLiveTelemetryExportEnabled: false,
+  observabilityExporterMode: observabilityExporter.mode,
+  observabilityExporterRequiredConfigKeys: observabilityExporter.requiredConfigKeys,
+  observabilityExporterSinkId: observabilityExporter.sinkId,
+  observabilityExporterStatus: observabilityExporter.status,
   operationCount: workerLeaseOperationCapabilities.length,
   productionReady: false,
   requiredConfigKeys: [
@@ -696,6 +752,30 @@ const createIdempotencyStoreSummary = (
   status: idempotencyStore.status,
   storeId: idempotencyStore.storeId,
   valid: idempotencyStore.valid,
+});
+
+const createObservabilityExporterSummary = (
+  observabilityExporter: ReturnType<typeof createObservabilityExporterFoundation>,
+): WorkerLeaseObservabilityExporterSummary => ({
+  adapterId: observabilityExporter.adapterId,
+  blockerCount: observabilityExporter.blockerCount,
+  diagnosticCodes: observabilityExporter.diagnosticCodes,
+  disabledLiveOperationCount: observabilityExporter.readiness.disabledLiveOperationCount,
+  exporterId: observabilityExporter.exporterId,
+  liveAlertRoutingEnabled: false,
+  liveLogExportEnabled: false,
+  liveMetricsExportEnabled: false,
+  liveTelemetryExportEnabled: false,
+  liveTraceExportEnabled: false,
+  metricNamespace: observabilityExporter.metricNamespace,
+  mode: observabilityExporter.mode,
+  operationCapabilities: observabilityExporter.operationCapabilities.map((item) => ({ ...item })),
+  operationCount: observabilityExporter.readiness.operationCount,
+  productionReady: false,
+  requiredConfigKeys: observabilityExporter.readiness.requiredConfigKeys,
+  sinkId: observabilityExporter.sinkId,
+  status: observabilityExporter.status,
+  valid: observabilityExporter.valid,
 });
 
 const isValidLeaseTiming = (request: WorkerLeaseDryRunRequest): boolean => {

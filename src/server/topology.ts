@@ -3,6 +3,7 @@ import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdap
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 import { workerIdempotencyStoreProductionPreconditions } from "./workerIdempotencyStore";
+import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 
 export type BackendTopologyReadiness = "ready" | "local_only" | "review_required" | "deferred" | "disabled";
 export type BackendDomainArea =
@@ -32,7 +33,7 @@ export type BackendAdapterCategory =
   | "storage"
   | "contract_reader"
   | "contract_writer"
-  | "analytics"
+  | "observability"
   | "internal";
 export type BackendAdapterStatus = "local_stub" | "deferred" | "disabled" | "required_for_production";
 export type BackendAdapterConfigurationMode = "none" | "env" | "secret_manager" | "service_registry";
@@ -79,6 +80,7 @@ export type BackendAdapterGroupId =
   | "analytics-warehouse-adapter"
   | "object-storage-adapter"
   | "contract-reader-adapter"
+  | "observability-exporter-adapter"
   | "contract-writer-adapter";
 export type BackendRuntimeProfileId = "local-review" | "staging-ready" | "production-required";
 export type BackendDeploymentUnitId =
@@ -86,6 +88,7 @@ export type BackendDeploymentUnitId =
   | "api-runtime"
   | "worker-runtime"
   | "scheduler-runtime"
+  | "observability-runtime"
   | "contract-ops-runtime";
 
 export interface BackendServiceBoundary {
@@ -231,6 +234,9 @@ const runtimeProfile = (item: BackendRuntimeProfile): BackendRuntimeProfile => i
 const deploymentUnit = (item: BackendDeploymentUnit): BackendDeploymentUnit => item;
 const topologySafeQueueProviderBlockerId = (id: string): string =>
   id === "queue-provider-credentials" ? "queue-provider-auth" : id;
+const observabilityExporterBlockerIds = observabilityExporterProductionPreconditions.map(
+  (precondition) => precondition.id,
+);
 
 export const backendServiceBoundaries = [
   service({
@@ -443,7 +449,7 @@ export const backendServiceBoundaries = [
   service({
     adapterGroups: [],
     dataStores: [],
-    deploymentUnit: "api-runtime",
+    deploymentUnit: "observability-runtime",
     description: "Runtime health, route contracts, safety flags, and topology observability.",
     domainArea: "runtime",
     futureRouteGroups: ["runtime"],
@@ -452,7 +458,7 @@ export const backendServiceBoundaries = [
     productionRequired: true,
     readiness: "ready",
     risks: [
-      "Production observability backend is not selected yet.",
+      "Production observability exporter, metrics sink, trace collector, structured log sink, alert routing, redaction policy, and runbook are not selected yet.",
       "Analytics ingestion and contract sync handoffs require deferred queue runtime, scheduler runtime, idempotency store, dead-letter queue, and observability exporter before production.",
     ],
     routeIds: ["runtime.health", "runtime.contracts", "campaigns.analytics"],
@@ -654,6 +660,16 @@ export const backendAdapterGroups = [
     status: "deferred",
   }),
   adapterGroup({
+    category: "observability",
+    configurationMode: "service_registry",
+    failureMode: "keep_runtime_metadata_local_only",
+    forbiddenInLocalReview: true,
+    id: "observability-exporter-adapter",
+    name: "Observability Exporter / Metrics Sink",
+    serviceIds: ["runtime-observability"],
+    status: "deferred",
+  }),
+  adapterGroup({
     category: "contract_writer",
     configurationMode: "service_registry",
     failureMode: "manual_review_required",
@@ -695,7 +711,7 @@ export const backendRuntimeProfiles = [
   runtimeProfile({
     allowedSupportModes: ["configured_staging"],
     deferredCapabilities: ["contract_writer", "reward_custody", "reward_distribution"],
-    deploymentUnits: ["web-app", "api-runtime", "worker-runtime", "scheduler-runtime"],
+    deploymentUnits: ["web-app", "api-runtime", "worker-runtime", "scheduler-runtime", "observability-runtime"],
     description: "Future staging profile for non-production DB, auth, providers, workers, and storage validation.",
     disabledCapabilities: ["reward_custody", "reward_distribution"],
     externalNetworkAllowed: true,
@@ -721,6 +737,7 @@ export const backendRuntimeProfiles = [
       "api-runtime",
       "worker-runtime",
       "scheduler-runtime",
+      "observability-runtime",
       "contract-ops-runtime",
     ],
     description: "Future production profile requiring durable services and approved external integrations.",
@@ -824,6 +841,18 @@ export const backendDeploymentUnits = [
       "runtime-observability",
       "points-ranking-service",
     ],
+  }),
+  deploymentUnit({
+    attachPointPath: "src/server/observabilityExporter.ts",
+    currentImplementation: "source-topology-only",
+    currentStatus: "local",
+    entrypoint: "src/server/observabilityExporter.ts",
+    id: "observability-runtime",
+    name: "Observability Exporter Runtime",
+    productionRequiredBlockerIds: observabilityExporterBlockerIds,
+    productionTarget: "worker_service",
+    runtimeProfileIds: ["staging-ready", "production-required"],
+    serviceIds: ["runtime-observability"],
   }),
   deploymentUnit({
     currentImplementation: "deferred",

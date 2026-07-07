@@ -13,6 +13,7 @@ import {
 import { providerIndexerAdapterGroups } from "./providerIndexerAdapters";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
+import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 import { workerIdempotencyStoreProductionPreconditions } from "./workerIdempotencyStore";
 
@@ -54,6 +55,7 @@ const expectedAdapterGroupIds = [
   "analytics-warehouse-adapter",
   "object-storage-adapter",
   "contract-reader-adapter",
+  "observability-exporter-adapter",
   "contract-writer-adapter",
 ];
 
@@ -63,6 +65,7 @@ const expectedDeploymentUnitIds = [
   "api-runtime",
   "worker-runtime",
   "scheduler-runtime",
+  "observability-runtime",
   "contract-ops-runtime",
 ];
 
@@ -199,6 +202,15 @@ describe("backend service topology", () => {
         "points-ranking-service",
       ]),
     });
+    expect(backendDeploymentUnits.find((unit) => unit.id === "observability-runtime")).toMatchObject({
+      attachPointPath: "src/server/observabilityExporter.ts",
+      currentImplementation: "source-topology-only",
+      currentStatus: "local",
+      entrypoint: "src/server/observabilityExporter.ts",
+      productionRequiredBlockerIds: observabilityExporterProductionPreconditions.map((precondition) => precondition.id),
+      productionTarget: "worker_service",
+      serviceIds: ["runtime-observability"],
+    });
 
     for (const adapter of backendAdapterGroups.filter((group) => group.forbiddenInLocalReview)) {
       expect(["deferred", "disabled"]).toContain(adapter.status);
@@ -206,12 +218,15 @@ describe("backend service topology", () => {
   });
 
   it("aligns provider adapter topology with provider/indexer foundation groups", () => {
-    const topologyProviderGroups = backendAdapterGroups.map((group) => ({
-      category: group.category,
-      forbiddenInLocalReview: group.forbiddenInLocalReview,
-      id: group.id,
-      status: group.status,
-    }));
+    const providerGroupIds = new Set(providerIndexerAdapterGroups.map((group) => group.id));
+    const topologyProviderGroups = backendAdapterGroups
+      .filter((group) => providerGroupIds.has(group.id))
+      .map((group) => ({
+        category: group.category,
+        forbiddenInLocalReview: group.forbiddenInLocalReview,
+        id: group.id,
+        status: group.status,
+      }));
     const foundationProviderGroups = providerIndexerAdapterGroups.map((group) => ({
       category: group.category,
       forbiddenInLocalReview: group.forbiddenInLocalReview,
@@ -276,6 +291,9 @@ describe("backend service topology", () => {
     expect(serviceById.get("ai-ops-service")?.risks.join(" ")).toContain("scheduler runtime");
     expect(serviceById.get("ai-ops-service")?.risks.join(" ")).toContain("queue runtime");
     expect(serviceById.get("runtime-observability")?.risks.join(" ")).toContain("contract sync handoffs");
+    expect(serviceById.get("runtime-observability")?.risks.join(" ")).toContain("metrics sink");
+    expect(serviceById.get("runtime-observability")?.risks.join(" ")).toContain("trace collector");
+    expect(serviceById.get("runtime-observability")?.risks.join(" ")).toContain("structured log sink");
     expect(serviceById.get("points-ranking-service")?.risks.join(" ")).toContain("Reward distribution handoff");
   });
 
@@ -365,6 +383,43 @@ describe("backend service topology", () => {
     expect(workerRuntime?.productionRequiredBlockerIds).not.toContain(
       "worker-idempotency-store-CAMPAIGN_OS_IDEMPOTENCY_STORE_CREDENTIALS",
     );
+  });
+
+  it("exposes observability exporter as metadata-only topology attach point", () => {
+    const observabilityRuntime = backendDeploymentUnits.find((unit) => unit.id === "observability-runtime");
+    const observabilityAdapter = backendAdapterGroups.find((group) => group.id === "observability-exporter-adapter");
+
+    expect(observabilityRuntime).toMatchObject({
+      attachPointPath: "src/server/observabilityExporter.ts",
+      currentImplementation: "source-topology-only",
+      currentStatus: "local",
+      entrypoint: "src/server/observabilityExporter.ts",
+      productionRequiredBlockerIds: expect.arrayContaining([
+        "observability-exporter-selection",
+        "observability-exporter-endpoint",
+        "observability-exporter-credentials",
+        "observability-sink-registration",
+        "observability-metric-namespace",
+        "observability-retention-policy",
+        "observability-trace-collector",
+        "observability-log-sink",
+        "observability-alert-routing",
+        "observability-retry-dead-letter-policy",
+        "observability-redaction-policy",
+        "observability-operator-runbook",
+      ]),
+      serviceIds: ["runtime-observability"],
+    });
+    expect(observabilityRuntime?.productionRequiredBlockerIds).toHaveLength(
+      observabilityExporterProductionPreconditions.length,
+    );
+    expect(observabilityAdapter).toMatchObject({
+      category: "observability",
+      configurationMode: "service_registry",
+      failureMode: "keep_runtime_metadata_local_only",
+      forbiddenInLocalReview: true,
+      status: "deferred",
+    });
   });
 
   it("produces a valid topology report with route and ownership coverage", () => {

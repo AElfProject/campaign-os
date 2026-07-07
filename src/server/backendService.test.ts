@@ -12,6 +12,7 @@ const productionAreas = [
   "worker-lease",
   "worker-idempotency",
   "scheduler",
+  "observability",
   "contract-writer",
   "object-storage-export",
   "reward-custody",
@@ -503,6 +504,34 @@ describe("backend service readiness report", () => {
       status: "local_ready",
       valid: true,
     });
+    expect(report.observabilityExporterFoundation).toMatchObject({
+      adapterId: "local-dry-run-observability-exporter-adapter",
+      blockerCount: 0,
+      diagnosticCodes: [],
+      disabledLiveOperationCount: 8,
+      exporterId: "local-dry-run",
+      id: "campaign-os-observability-exporter-foundation",
+      liveAlertRoutingEnabled: false,
+      liveLogExportEnabled: false,
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      metricNamespace: "campaign-os-runtime",
+      mode: "dry_run",
+      operationCount: 8,
+      productionReady: false,
+      profileId: "local-review",
+      requiredConfigKeys: expect.arrayContaining([
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER",
+        "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_SINK",
+        "CAMPAIGN_OS_OBSERVABILITY_TRACE_COLLECTOR_URL",
+        "CAMPAIGN_OS_OBSERVABILITY_LOG_SINK_URL",
+      ]),
+      sinkId: "local-metrics-sink",
+      status: "local_ready",
+      valid: true,
+    });
     expect(report.providerIndexerFoundation.requiredConfigKeys).toEqual(
       expect.arrayContaining([
         "CAMPAIGN_OS_PROVIDER_CREDENTIALS",
@@ -731,6 +760,22 @@ describe("backend service readiness report", () => {
       ]),
       currentStatus: "deferred",
       note: expect.stringContaining("no live idempotency claim"),
+      requiredBeforeProduction: true,
+    });
+    expect(report.attachMap.find((item) => item.area === "observability")).toMatchObject({
+      attachPoint: "src/server/observabilityExporter.ts",
+      blockedBy: expect.arrayContaining([
+        "exporter selection",
+        "exporter endpoint",
+        "metrics sink registration",
+        "trace collector",
+        "structured log sink",
+        "alert routing",
+        "redaction policy",
+        "operator runbook",
+      ]),
+      currentStatus: "deferred",
+      note: expect.stringContaining("no live telemetry"),
       requiredBeforeProduction: true,
     });
   });
@@ -991,7 +1036,40 @@ describe("backend service readiness report", () => {
       },
     });
 
-    expect(report.config.diagnostics).toEqual([]);
+    expect(report.config.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "MISSING_PRODUCTION_CONFIG",
+          field: "CAMPAIGN_OS_OBSERVABILITY_EXPORTER",
+        }),
+        expect.objectContaining({
+          code: "MISSING_PRODUCTION_CONFIG",
+          field: "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS",
+        }),
+        expect.objectContaining({
+          code: "MISSING_PRODUCTION_CONFIG",
+          field: "CAMPAIGN_OS_OBSERVABILITY_SINK",
+        }),
+      ]),
+    );
+    expect(report.observabilityExporterFoundation).toMatchObject({
+      blockerCount: expect.any(Number),
+      diagnosticCodes: expect.arrayContaining([
+        "OBSERVABILITY_EXPORTER_MISSING",
+        "OBSERVABILITY_CREDENTIALS_MISSING",
+        "OBSERVABILITY_SINK_MISSING",
+        "OBSERVABILITY_METRIC_NAMESPACE_MISSING",
+      ]),
+      liveAlertRoutingEnabled: false,
+      liveLogExportEnabled: false,
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      mode: "production_required",
+      productionReady: false,
+      status: "blocked",
+      valid: false,
+    });
     expect(report.databaseReadiness).toMatchObject({
       adapter: expect.objectContaining({
         status: "blocked",

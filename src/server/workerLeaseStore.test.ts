@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  observabilityExporterOperationCapabilities,
+  observabilityExporterProductionPreconditions,
+} from "./observabilityExporter";
+import {
   workerIdempotencyOperationCapabilities,
   workerIdempotencyStoreProductionPreconditions,
 } from "./workerIdempotencyStore";
@@ -63,9 +67,29 @@ describe("worker lease store foundation", () => {
       idempotencyStoreStatus: "local_ready",
       liveQueuePublishingEnabled: false,
       liveWorkerExecutionEnabled: false,
+      observabilityExporterBlockerCount: 0,
+      observabilityExporterDiagnosticCodes: [],
+      observabilityExporterId: "local-dry-run",
+      observabilityExporterLiveTelemetryExportEnabled: false,
+      observabilityExporterMode: "dry_run",
+      observabilityExporterSinkId: "local-metrics-sink",
+      observabilityExporterStatus: "local_ready",
       operationCount: workerLeaseOperationCapabilities.length,
       productionReady: false,
       ttlSeconds: 120,
+    });
+    expect(foundation.observabilityExporter).toMatchObject({
+      disabledLiveOperationCount: observabilityExporterOperationCapabilities.length,
+      exporterId: "local-dry-run",
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      metricNamespace: "campaign-os-runtime",
+      operationCount: observabilityExporterOperationCapabilities.length,
+      productionReady: false,
+      sinkId: "local-metrics-sink",
+      status: "local_ready",
+      valid: true,
     });
     expect(evaluation.status).toBe("accepted_dry_run");
     expect(evaluation.liveLeaseOperationAttempted).toBe(false);
@@ -195,6 +219,11 @@ describe("worker lease store foundation", () => {
     expect(foundation.productionReady).toBe(false);
     expect(foundation.noLiveFlags.liveWorkerExecutionEnabled).toBe(false);
     expect(foundation.operationCapabilities.every((item) => item.liveEnabled === false)).toBe(true);
+    expect(foundation.observabilityExporter.requiredConfigKeys).toEqual(
+      expect.arrayContaining(observabilityExporterProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
+    );
+    expect(foundation.observabilityExporter.productionReady).toBe(false);
+    expect(foundation.observabilityExporter.liveTelemetryExportEnabled).toBe(false);
   });
 
   it("rejects unsafe dry-run lease requests without leaking raw material", () => {

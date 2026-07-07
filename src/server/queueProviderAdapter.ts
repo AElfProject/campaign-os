@@ -1,4 +1,11 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import {
+  createObservabilityExporterFoundation,
+  type ObservabilityExporterDiagnosticCode,
+  type ObservabilityExporterFoundationStatus,
+  type ObservabilityExporterMode,
+  type ObservabilityExporterOperationCapability,
+} from "./observabilityExporter";
 import type { QueueDegradedOutcome } from "./queueRuntime";
 
 export type QueueProviderAdapterProfileId = BackendRuntimeProfileId;
@@ -78,6 +85,28 @@ export interface QueueProviderOperationCapability {
   supported: boolean;
 }
 
+export interface QueueProviderObservabilityExporterSummary {
+  adapterId: string;
+  blockerCount: number;
+  diagnosticCodes: ObservabilityExporterDiagnosticCode[];
+  disabledLiveOperationCount: number;
+  exporterId: string;
+  liveAlertRoutingEnabled: false;
+  liveLogExportEnabled: false;
+  liveMetricsExportEnabled: false;
+  liveTelemetryExportEnabled: false;
+  liveTraceExportEnabled: false;
+  metricNamespace: string;
+  mode: ObservabilityExporterMode;
+  operationCapabilities: ObservabilityExporterOperationCapability[];
+  operationCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  sinkId: string;
+  status: ObservabilityExporterFoundationStatus;
+  valid: boolean;
+}
+
 export interface QueueProviderAdapterReadinessProjection {
   adapterId: string;
   blockerCount: number;
@@ -86,6 +115,14 @@ export interface QueueProviderAdapterReadinessProjection {
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode: QueueProviderAdapterMode;
+  observabilityExporterBlockerCount: number;
+  observabilityExporterDiagnosticCodes: ObservabilityExporterDiagnosticCode[];
+  observabilityExporterId: string;
+  observabilityExporterLiveTelemetryExportEnabled: false;
+  observabilityExporterMode: ObservabilityExporterMode;
+  observabilityExporterRequiredConfigKeys: string[];
+  observabilityExporterSinkId: string;
+  observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   operationCount: number;
   productionReady: false;
   providerId: string;
@@ -100,6 +137,7 @@ export interface QueueProviderAdapterFoundationSummary {
   id: "campaign-os-queue-provider-adapter-foundation";
   mode: QueueProviderAdapterMode;
   noLiveFlags: QueueProviderAdapterNoLiveFlags;
+  observabilityExporter: QueueProviderObservabilityExporterSummary;
   operationCapabilities: QueueProviderOperationCapability[];
   preconditions: QueueProviderProductionPrecondition[];
   productionReady: false;
@@ -253,6 +291,12 @@ export const createQueueProviderAdapterFoundation = (
   const providerResolution = resolveProviderId(options.providerId, env, profileResolution.profileId);
   const productionDiagnostics =
     profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
+  const observabilityExporter = createObservabilityExporterSummary(
+    createObservabilityExporterFoundation({
+      env,
+      profileId: profileResolution.profileId,
+    }),
+  );
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...providerResolution.diagnostics,
@@ -266,6 +310,7 @@ export const createQueueProviderAdapterFoundation = (
     blockerCount,
     diagnostics,
     mode,
+    observabilityExporter,
     providerId,
   });
 
@@ -277,6 +322,7 @@ export const createQueueProviderAdapterFoundation = (
     id: FOUNDATION_ID,
     mode,
     noLiveFlags: queueProviderAdapterNoLiveFlags,
+    observabilityExporter,
     operationCapabilities: queueProviderOperationCapabilities.map((item) => ({ ...item })),
     preconditions: queueProviderAdapterProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
@@ -472,12 +518,14 @@ const createReadinessProjection = ({
   blockerCount,
   diagnostics,
   mode,
+  observabilityExporter,
   providerId,
 }: {
   adapterId: string;
   blockerCount: number;
   diagnostics: readonly QueueProviderDiagnostic[];
   mode: QueueProviderAdapterMode;
+  observabilityExporter: QueueProviderObservabilityExporterSummary;
   providerId: string;
 }): QueueProviderAdapterReadinessProjection => ({
   adapterId,
@@ -487,12 +535,44 @@ const createReadinessProjection = ({
   liveQueuePublishingEnabled: false,
   liveWorkerExecutionEnabled: false,
   mode,
+  observabilityExporterBlockerCount: observabilityExporter.blockerCount,
+  observabilityExporterDiagnosticCodes: observabilityExporter.diagnosticCodes,
+  observabilityExporterId: observabilityExporter.exporterId,
+  observabilityExporterLiveTelemetryExportEnabled: false,
+  observabilityExporterMode: observabilityExporter.mode,
+  observabilityExporterRequiredConfigKeys: observabilityExporter.requiredConfigKeys,
+  observabilityExporterSinkId: observabilityExporter.sinkId,
+  observabilityExporterStatus: observabilityExporter.status,
   operationCount: queueProviderOperationCapabilities.length,
   productionReady: false,
   providerId,
   requiredConfigKeys: [
     ...new Set(queueProviderAdapterProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
   ],
+});
+
+const createObservabilityExporterSummary = (
+  observabilityExporter: ReturnType<typeof createObservabilityExporterFoundation>,
+): QueueProviderObservabilityExporterSummary => ({
+  adapterId: observabilityExporter.adapterId,
+  blockerCount: observabilityExporter.blockerCount,
+  diagnosticCodes: observabilityExporter.diagnosticCodes,
+  disabledLiveOperationCount: observabilityExporter.readiness.disabledLiveOperationCount,
+  exporterId: observabilityExporter.exporterId,
+  liveAlertRoutingEnabled: false,
+  liveLogExportEnabled: false,
+  liveMetricsExportEnabled: false,
+  liveTelemetryExportEnabled: false,
+  liveTraceExportEnabled: false,
+  metricNamespace: observabilityExporter.metricNamespace,
+  mode: observabilityExporter.mode,
+  operationCapabilities: observabilityExporter.operationCapabilities.map((item) => ({ ...item })),
+  operationCount: observabilityExporter.readiness.operationCount,
+  productionReady: false,
+  requiredConfigKeys: observabilityExporter.readiness.requiredConfigKeys,
+  sinkId: observabilityExporter.sinkId,
+  status: observabilityExporter.status,
+  valid: observabilityExporter.valid,
 });
 
 const sanitizeProviderString = (value: string): string => {

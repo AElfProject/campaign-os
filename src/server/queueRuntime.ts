@@ -1,5 +1,12 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import {
+  createObservabilityExporterFoundation,
+  type ObservabilityExporterDiagnosticCode,
+  type ObservabilityExporterFoundationStatus,
+  type ObservabilityExporterMode,
+  type ObservabilityExporterOperationCapability,
+} from "./observabilityExporter";
+import {
   createWorkerIdempotencyStoreFoundation,
   type WorkerIdempotencyDiagnosticCode,
   type WorkerIdempotencyOperationCapability,
@@ -166,6 +173,28 @@ export interface QueueRuntimeIdempotencyStoreSummary {
   valid: boolean;
 }
 
+export interface QueueRuntimeObservabilityExporterSummary {
+  adapterId: string;
+  blockerCount: number;
+  diagnosticCodes: ObservabilityExporterDiagnosticCode[];
+  disabledLiveOperationCount: number;
+  exporterId: string;
+  liveAlertRoutingEnabled: false;
+  liveLogExportEnabled: false;
+  liveMetricsExportEnabled: false;
+  liveTelemetryExportEnabled: false;
+  liveTraceExportEnabled: false;
+  metricNamespace: string;
+  mode: ObservabilityExporterMode;
+  operationCapabilities: ObservabilityExporterOperationCapability[];
+  operationCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  sinkId: string;
+  status: ObservabilityExporterFoundationStatus;
+  valid: boolean;
+}
+
 export interface QueuePlan {
   deadLetterPolicy: string;
   degradedOutcome: QueueDegradedOutcome;
@@ -205,6 +234,15 @@ export interface QueueRuntimeReadinessProjection {
   leaseStoreRequiredConfigKeys: string[];
   leaseStoreStatus: WorkerLeaseStoreFoundationStatus;
   liveQueuePublishingEnabled: false;
+  observabilityExporterBlockerCount: number;
+  observabilityExporterDiagnosticCodes: ObservabilityExporterDiagnosticCode[];
+  observabilityExporterId: string;
+  observabilityExporterLiveTelemetryExportEnabled: false;
+  observabilityExporterMetricNamespace: string;
+  observabilityExporterMode: ObservabilityExporterMode;
+  observabilityExporterRequiredConfigKeys: string[];
+  observabilityExporterSinkId: string;
+  observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   providerAdapterBlockerCount: number;
   providerAdapterDiagnosticCodes: QueueProviderDiagnosticCode[];
   providerAdapterId: string;
@@ -226,6 +264,7 @@ export interface QueueRuntimeFoundationSummary {
   idempotencyStore: QueueRuntimeIdempotencyStoreSummary;
   leaseStore: QueueRuntimeLeaseStoreSummary;
   noLiveFlags: QueueRuntimeNoLiveFlags;
+  observabilityExporter: QueueRuntimeObservabilityExporterSummary;
   preconditions: QueueRuntimeProductionPrecondition[];
   productionReady: false;
   profileId: QueueRuntimeProfileId;
@@ -591,6 +630,12 @@ export const createQueueRuntimeFoundation = (
       profileId: profileResolution.profileId,
     }),
   );
+  const observabilityExporter = createObservabilityExporterSummary(
+    createObservabilityExporterFoundation({
+      env,
+      profileId: profileResolution.profileId,
+    }),
+  );
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...registryDiagnostics,
@@ -604,6 +649,7 @@ export const createQueueRuntimeFoundation = (
     providerAdapter,
     leaseStore,
     idempotencyStore,
+    observabilityExporter,
   );
 
   return {
@@ -614,6 +660,7 @@ export const createQueueRuntimeFoundation = (
     idempotencyStore,
     leaseStore,
     noLiveFlags: queueRuntimeNoLiveFlags,
+    observabilityExporter,
     preconditions: queueRuntimeProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
     profileId: profileResolution.profileId,
@@ -759,6 +806,7 @@ const createReadinessProjection = (
   providerAdapter: QueueRuntimeProviderAdapterSummary,
   leaseStore: QueueRuntimeLeaseStoreSummary,
   idempotencyStore: QueueRuntimeIdempotencyStoreSummary,
+  observabilityExporter: QueueRuntimeObservabilityExporterSummary,
 ): QueueRuntimeReadinessProjection => ({
   blockerCount,
   diagnosticCodes: diagnostics.map((item) => item.code),
@@ -780,6 +828,15 @@ const createReadinessProjection = (
   leaseStoreRequiredConfigKeys: leaseStore.requiredConfigKeys,
   leaseStoreStatus: leaseStore.status,
   liveQueuePublishingEnabled: false,
+  observabilityExporterBlockerCount: observabilityExporter.blockerCount,
+  observabilityExporterDiagnosticCodes: observabilityExporter.diagnosticCodes,
+  observabilityExporterId: observabilityExporter.exporterId,
+  observabilityExporterLiveTelemetryExportEnabled: false,
+  observabilityExporterMetricNamespace: observabilityExporter.metricNamespace,
+  observabilityExporterMode: observabilityExporter.mode,
+  observabilityExporterRequiredConfigKeys: observabilityExporter.requiredConfigKeys,
+  observabilityExporterSinkId: observabilityExporter.sinkId,
+  observabilityExporterStatus: observabilityExporter.status,
   providerAdapterBlockerCount: providerAdapter.blockerCount,
   providerAdapterDiagnosticCodes: providerAdapter.diagnosticCodes,
   providerAdapterId: providerAdapter.adapterId,
@@ -853,6 +910,30 @@ const createProviderAdapterSummary = (
   requiredConfigKeys: providerAdapter.readiness.requiredConfigKeys,
   status: providerAdapter.status,
   valid: providerAdapter.valid,
+});
+
+const createObservabilityExporterSummary = (
+  observabilityExporter: ReturnType<typeof createObservabilityExporterFoundation>,
+): QueueRuntimeObservabilityExporterSummary => ({
+  adapterId: observabilityExporter.adapterId,
+  blockerCount: observabilityExporter.blockerCount,
+  diagnosticCodes: observabilityExporter.diagnosticCodes,
+  disabledLiveOperationCount: observabilityExporter.readiness.disabledLiveOperationCount,
+  exporterId: observabilityExporter.exporterId,
+  liveAlertRoutingEnabled: false,
+  liveLogExportEnabled: false,
+  liveMetricsExportEnabled: false,
+  liveTelemetryExportEnabled: false,
+  liveTraceExportEnabled: false,
+  metricNamespace: observabilityExporter.metricNamespace,
+  mode: observabilityExporter.mode,
+  operationCapabilities: observabilityExporter.operationCapabilities.map((item) => ({ ...item })),
+  operationCount: observabilityExporter.readiness.operationCount,
+  productionReady: false,
+  requiredConfigKeys: observabilityExporter.readiness.requiredConfigKeys,
+  sinkId: observabilityExporter.sinkId,
+  status: observabilityExporter.status,
+  valid: observabilityExporter.valid,
 });
 
 const resolveStatus = (
