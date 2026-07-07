@@ -144,7 +144,7 @@ const parseEnum = <TValue extends string>(
 };
 
 const isDiagnostic = (value: unknown): value is AuthEnforcementDiagnostic =>
-  Boolean(value) && typeof value === "object" && "code" in value && "field" in value;
+  value !== null && typeof value === "object" && "code" in value && "field" in value;
 
 const parseRoles = (rolesHeader: string | undefined): AuthSessionRoleId[] | AuthEnforcementDiagnostic => {
   if (!rolesHeader) {
