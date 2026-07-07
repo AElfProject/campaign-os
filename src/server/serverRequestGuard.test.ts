@@ -8,6 +8,24 @@ const contract = resolveApiServerRuntimeContract({
   startedAt: "2026-07-06T18:00:00.000Z",
 });
 
+const hostileSecretFragments = [
+  "Bearer sample-token",
+  "postgres://real-user:real-db-password@db.invalid/campaign-os",
+  "private-key-sample",
+  "raw-signature-sample",
+  "seed phrase sample",
+  "signed-url",
+  "wallet mnemonic sample",
+];
+
+const expectNoHostileSecretLeak = (value: unknown) => {
+  const serialized = JSON.stringify(value).toLowerCase();
+
+  for (const fragment of hostileSecretFragments) {
+    expect(serialized).not.toContain(fragment.toLowerCase());
+  }
+};
+
 describe("server request guard", () => {
   it("accepts valid GET requests with caller trace and CORS headers", () => {
     const decision = evaluateServerRequestGuard({
@@ -164,6 +182,48 @@ describe("server request guard", () => {
     const serialized = JSON.stringify(unsupportedMethod.body).toLowerCase();
     expect(serialized).not.toContain("raw-secret-header");
     expect(serialized).not.toContain("raw-secret-query");
+  });
+
+  it("keeps guarded failures traceable without serializing secret-like inputs", () => {
+    const rejected = evaluateServerRequestGuard({
+      body: JSON.stringify({
+        connectionString: "postgres://real-user:real-db-password@db.invalid/campaign-os",
+        mnemonic: "wallet mnemonic sample",
+        privateKey: "private-key-sample",
+        signature: "raw-signature-sample",
+        signedUrl: "https://storage.invalid/signed-url",
+      }),
+      bodyBytes: 512,
+      headers: {
+        authorization: "Bearer sample-token",
+        "content-type": "application/json",
+        "x-campaign-os-trace-id": "trace-secret-redaction",
+      },
+      method: "POST",
+      path: "/api/campaigns?token=sample-token&seed=seed phrase sample",
+    }, contract, 10);
+
+    expect(rejected).toMatchObject({
+      kind: "rejected",
+      status: 400,
+      traceId: "trace-secret-redaction",
+    });
+    expect(rejected.headers["x-campaign-os-trace-id"]).toBe("trace-secret-redaction");
+    expect(rejected.kind).toBe("rejected");
+    if (rejected.kind !== "rejected") {
+      throw new Error("Expected rejected guard decision.");
+    }
+    expect(rejected.body).toMatchObject({
+      ok: false,
+      traceId: "trace-secret-redaction",
+      error: {
+        code: "INVALID_REQUEST",
+        details: {
+          field: "body",
+        },
+      },
+    });
+    expectNoHostileSecretLeak(rejected);
   });
 
   it("accepts valid JSON POST bodies and empty POST bodies", () => {
