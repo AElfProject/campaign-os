@@ -26,6 +26,7 @@ import {
   createBackendServiceReadinessReport,
   type BackendServiceReadinessReport,
 } from "./backendService";
+import type { BackendRuntimeActivationContract } from "./backendRuntimeActivation";
 import {
   CampaignDbRepositoryError,
   createCampaignDbRepository,
@@ -335,6 +336,7 @@ const createHealthAuthSessionMetadata = (
 const createApiServiceMetadata = (
   report: BackendServiceReadinessReport,
 ) => ({
+  activation: createHealthActivationMetadata(report.backendRuntimeBootstrap.activation),
   attachPointCount: report.apiService.attachPointCount,
   blockedDependencyIds: report.apiService.blockedDependencyIds,
   contractWriteEnabled: report.apiService.contractWriteEnabled,
@@ -349,6 +351,24 @@ const createApiServiceMetadata = (
   runtimeVersion: report.apiService.runtimeVersion,
   status: report.apiService.status,
   workerExecutionEnabled: report.apiService.workerExecutionEnabled,
+});
+
+const createHealthActivationMetadata = (
+  activation: BackendRuntimeActivationContract,
+) => ({
+  deploymentHandoff: {
+    contractsEndpoint: activation.deploymentHandoff.contractsEndpoint,
+    healthEndpoint: activation.deploymentHandoff.healthEndpoint,
+    runtimeTarget: activation.deploymentHandoff.runtimeTarget,
+    shutdown: activation.deploymentHandoff.shutdown,
+    smokeCommand: activation.deploymentHandoff.smokeCommand,
+    startCommand: activation.deploymentHandoff.startCommand,
+    tracePolicy: activation.deploymentHandoff.tracePolicy,
+  },
+  id: activation.id,
+  liveSideEffectsEnabled: activation.liveSideEffectsEnabled,
+  productionReady: activation.productionReady,
+  runtimeTarget: activation.runtimeTarget,
 });
 
 const createContractAuthSessionMetadata = (
@@ -406,6 +426,7 @@ const withBackendServiceReadinessMetadata = ({
       apiService: createApiServiceMetadata(readiness),
       backendService: {
         ...data.backendService,
+        activation: createHealthActivationMetadata(readiness.backendRuntimeBootstrap.activation),
         apiService: createApiServiceMetadata(readiness),
         authSession: createHealthAuthSessionMetadata(readiness),
         databaseAdapterRuntime: createDatabaseAdapterRuntimeMetadata(readiness),
@@ -418,6 +439,7 @@ const withBackendServiceReadinessMetadata = ({
   if (routeId === "runtime.contracts") {
     return {
       ...data,
+      activation: readiness.backendRuntimeBootstrap.activation,
       apiService: {
         ...createApiServiceMetadata(readiness),
         attachMap: readiness.apiService.blockedDependencyIds
@@ -426,6 +448,7 @@ const withBackendServiceReadinessMetadata = ({
       },
       backendService: {
         ...data.backendService,
+        activation: readiness.backendRuntimeBootstrap.activation,
         apiService: createApiServiceMetadata(readiness),
         authSession: createContractAuthSessionMetadata(readiness),
         databaseAdapterRuntime: createDatabaseAdapterRuntimeContractMetadata(readiness),

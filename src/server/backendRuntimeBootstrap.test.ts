@@ -63,6 +63,23 @@ describe("backend runtime bootstrap contract", () => {
         runtimeVersion: "0.2.0-local",
         startedAt: "2026-07-06T18:00:00.000Z",
       },
+      activation: {
+        deploymentHandoff: {
+          contractsEndpoint: "/api/contracts",
+          healthEndpoint: "/api/health",
+          runtimeTarget: "api_service",
+          shutdown: {
+            idempotentStop: true,
+            shutdownTimeoutMs: 5_000,
+          },
+          smokeCommand: "npm run server:smoke",
+          startCommand: "npm run server:start",
+        },
+        id: "campaign-os-backend-runtime-activation",
+        liveSideEffectsEnabled: false,
+        productionReady: false,
+        runtimeTarget: "node-http-api-service",
+      },
       tracePolicy: {
         failureEnvelopeTraceId: true,
         startupLogIncludesTracePolicy: true,
@@ -107,6 +124,23 @@ describe("backend runtime bootstrap contract", () => {
     expect(bootstrap.diagnosticCodes).toEqual([]);
     expect(bootstrap.deferredDependencyIds).toEqual(
       backendRuntimeBootstrapDeferredDependencies.map((dependency) => dependency.id),
+    );
+    expect(bootstrap.activation.deploymentHandoff.environmentKeys).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "CAMPAIGN_OS_DATABASE_URL", redacted: true }),
+        expect.objectContaining({ key: "CAMPAIGN_OS_AUTH_SECRET", redacted: true }),
+      ]),
+    );
+    expect(bootstrap.activation.productionDependencyBlockers.map((blocker) => blocker.id)).toEqual(
+      expect.arrayContaining([
+        "live-database-driver",
+        "migration-executor",
+        "wallet-proof-verifier",
+        "session-issuer",
+        "contract-writer",
+        "reward-custody",
+        "reward-distribution",
+      ]),
     );
   });
 

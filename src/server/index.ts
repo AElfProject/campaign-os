@@ -9,5 +9,6 @@ export * from "./persistence";
 export * from "./persistenceAdapterPort";
 export * from "./migrationManifest";
 export * from "./backendService";
+export * from "./backendRuntimeActivation";
 export * from "./routes";
 export * from "./topology";

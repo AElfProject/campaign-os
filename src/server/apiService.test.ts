@@ -75,6 +75,19 @@ describe("Campaign OS API service bootstrap contract", () => {
     });
     expect(service.diagnosticCodes).toEqual([]);
     expect(service.composition).toMatchObject({
+      activation: {
+        deploymentHandoff: {
+          contractsEndpoint: "/api/contracts",
+          healthEndpoint: "/api/health",
+          runtimeTarget: "api_service",
+          smokeCommand: "npm run server:smoke",
+          startCommand: "npm run server:start",
+        },
+        id: "campaign-os-backend-runtime-activation",
+        liveSideEffectsEnabled: false,
+        productionReady: false,
+        runtimeTarget: "node-http-api-service",
+      },
       apiRuntime: {
         handlerSource: "createCampaignOsApiRuntime",
         metadataRouteIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),

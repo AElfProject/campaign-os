@@ -326,6 +326,18 @@ describe("Campaign OS API runtime", () => {
         }),
       }),
       backendService: expect.objectContaining({
+        activation: expect.objectContaining({
+          deploymentHandoff: expect.objectContaining({
+            contractsEndpoint: "/api/contracts",
+            healthEndpoint: "/api/health",
+            runtimeTarget: "api_service",
+            smokeCommand: "npm run server:smoke",
+            startCommand: "npm run server:start",
+          }),
+          id: "campaign-os-backend-runtime-activation",
+          liveSideEffectsEnabled: false,
+          productionReady: false,
+        }),
         adapterStatus: "active",
         apiFoundationValidationIssueCount: 0,
         authSession: expect.objectContaining({
@@ -509,6 +521,43 @@ describe("Campaign OS API runtime", () => {
       }),
     });
     expect(contractData).toMatchObject({
+      activation: expect.objectContaining({
+        deploymentHandoff: expect.objectContaining({
+          environmentKeys: expect.arrayContaining([
+            expect.objectContaining({
+              key: "CAMPAIGN_OS_DATABASE_URL",
+              redacted: true,
+              status: "blocked",
+            }),
+            expect.objectContaining({
+              key: "CAMPAIGN_OS_AUTH_SECRET",
+              redacted: true,
+              status: "blocked",
+            }),
+          ]),
+          requiredBeforeProduction: expect.arrayContaining([
+            "live-database-driver",
+            "migration-executor",
+            "wallet-proof-verifier",
+            "session-issuer",
+            "contract-writer",
+            "reward-custody",
+            "reward-distribution",
+          ]),
+          startCommand: "npm run server:start",
+        }),
+        productionDependencyBlockers: expect.arrayContaining([
+          expect.objectContaining({
+            id: "live-database-driver",
+            status: "blocked",
+          }),
+          expect.objectContaining({
+            id: "provider-adapters",
+            status: "deferred",
+          }),
+        ]),
+        runtimeTarget: "node-http-api-service",
+      }),
       apiFoundation: expect.objectContaining({
         coverage: expect.objectContaining({
           routeCount: expect.any(Number),
