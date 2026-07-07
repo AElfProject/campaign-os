@@ -62,6 +62,15 @@ import {
   type ProductionAuthSessionFoundation,
 } from "./authSession";
 import {
+  createProviderIndexerFoundation,
+  type ProviderIndexerFoundationSummary,
+} from "./providerIndexerAdapters";
+import {
+  allowedVerificationDegradationOutcomes,
+  createVerificationSourceHandoff,
+  type VerificationSourceHandoffSummary,
+} from "./verificationSourceHandoff";
+import {
   createCampaignMigrationState,
   type CampaignMigrationState,
 } from "./campaignMigrationState";
@@ -87,6 +96,7 @@ export type BackendReadinessDiagnosticCode =
   | "BACKEND_CONFIG_BLOCKED"
   | "CAMPAIGN_DB_VERTICAL_SLICE_BLOCKED"
   | "DATABASE_READINESS_BLOCKED"
+  | "PROVIDER_INDEXER_READINESS_BLOCKED"
   | "PERSISTENCE_ADAPTER_INVALID"
   | "MIGRATION_MANIFEST_INVALID"
   | "API_FOUNDATION_INVALID"
@@ -162,6 +172,7 @@ export interface BackendServiceReadinessReport {
   entrypoint: BackendServiceEntrypoint;
   migration: MigrationManifest;
   persistenceFoundation: BackendPersistenceFoundationSummary;
+  providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
   persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   persistenceAdapters: PersistenceAdapterPortReport;
   profile: BackendConfigContract["profile"];
@@ -174,6 +185,17 @@ export interface BackendServiceReadinessReport {
     issues: BackendReadinessDiagnostic[];
     valid: boolean;
   };
+}
+
+export interface BackendProviderIndexerReadinessSummary extends ProviderIndexerFoundationSummary {
+  degradationPolicy: {
+    allowedOutcomes: typeof allowedVerificationDegradationOutcomes;
+    providerBackedUnavailableOutcomes: string[];
+  };
+  requiredConfigKeys: string[];
+  verificationSourceDiagnosticCodes: VerificationSourceHandoffSummary["diagnosticCodes"];
+  verificationSourceDiagnostics: VerificationSourceHandoffSummary["diagnostics"];
+  verificationSourceHandoff: VerificationSourceHandoffSummary;
 }
 
 export type BackendAuthEnforcementMode = "blocked" | "local_enforced" | "metadata_only";
@@ -627,6 +649,7 @@ const createValidationIssues = ({
   entrypoint,
   migration,
   persistenceAdapters,
+  providerIndexerFoundation,
   persistenceRuntime,
   servicePorts,
   topology,
@@ -641,6 +664,7 @@ const createValidationIssues = ({
   entrypoint: BackendServiceEntrypoint;
   migration: MigrationManifest;
   persistenceAdapters: PersistenceAdapterPortReport;
+  providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
   persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   servicePorts: ApiServicePortReport;
   topology: BackendTopologyReport;
@@ -680,6 +704,14 @@ const createValidationIssues = ({
       "DATABASE_READINESS_BLOCKED",
       "databaseAdapterRuntime",
       "Production database adapter runtime validation failed.",
+    ));
+  }
+
+  if (!providerIndexerFoundation.valid || !providerIndexerFoundation.verificationSourceHandoff.valid) {
+    issues.push(errorDiagnostic(
+      "PROVIDER_INDEXER_READINESS_BLOCKED",
+      "providerIndexerFoundation",
+      "Provider/indexer readiness validation failed.",
     ));
   }
 
@@ -1071,6 +1103,43 @@ export const createBackendPersistenceFoundationSummary = ({
   };
 };
 
+const createBackendProviderIndexerReadinessSummary = ({
+  env,
+  profileId,
+}: {
+  env: Record<string, string | undefined>;
+  profileId: BackendConfigContract["profileId"];
+}): BackendProviderIndexerReadinessSummary => {
+  const foundation = createProviderIndexerFoundation({
+    env,
+    profileId,
+  });
+  const verificationSourceHandoff = createVerificationSourceHandoff();
+  const requiredConfigKeys = Array.from(
+    new Set(foundation.providerGroups.flatMap((group) => group.requiredConfigKeys)),
+  );
+  const providerBackedUnavailableOutcomes = Array.from(
+    new Set(
+      verificationSourceHandoff.entries
+        .filter((entry) => entry.workerRequired)
+        .map((entry) => entry.unavailableDegradationOutcome),
+    ),
+  );
+
+  return {
+    ...foundation,
+    degradationPolicy: {
+      allowedOutcomes: allowedVerificationDegradationOutcomes,
+      providerBackedUnavailableOutcomes,
+    },
+    requiredConfigKeys,
+    valid: foundation.valid && verificationSourceHandoff.valid,
+    verificationSourceDiagnosticCodes: verificationSourceHandoff.diagnosticCodes,
+    verificationSourceDiagnostics: verificationSourceHandoff.diagnostics,
+    verificationSourceHandoff,
+  };
+};
+
 export const createBackendDatabaseAdapterRuntimeSummary = (
   runtime: BackendDatabaseAdapterRuntimeReadinessReport,
 ): BackendDatabaseAdapterRuntimeSummary => ({
@@ -1200,6 +1269,10 @@ export const createBackendServiceReadinessReport = ({
     migration,
     persistenceRuntime,
   });
+  const providerIndexerFoundation = createBackendProviderIndexerReadinessSummary({
+    env,
+    profileId: config.profileId,
+  });
   const entrypoint: BackendServiceEntrypoint = {
     foundationValidationValid: apiFoundation.validation.valid,
     id: "campaign-os-backend-service",
@@ -1222,6 +1295,7 @@ export const createBackendServiceReadinessReport = ({
     entrypoint,
     migration,
     persistenceAdapters,
+    providerIndexerFoundation,
     persistenceRuntime,
     servicePorts,
     topology,
@@ -1243,6 +1317,7 @@ export const createBackendServiceReadinessReport = ({
     entrypoint,
     migration,
     persistenceFoundation,
+    providerIndexerFoundation,
     persistenceRuntime,
     persistenceAdapters,
     profile: config.profile,

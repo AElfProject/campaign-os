@@ -6,6 +6,7 @@ import {
   type BackendAuthEnforcementReadinessSummary,
   type CampaignDbVerticalSliceReadinessSummary,
   type BackendPersistenceFoundationSummary,
+  type BackendProviderIndexerReadinessSummary,
   type BackendPersistenceRuntimeSummary,
   type BackendServiceReadinessReport,
 } from "./backendService";
@@ -76,6 +77,7 @@ export interface ServerRuntimeReadiness {
     };
     databaseAdapterRuntime: BackendDatabaseAdapterRuntimeSummary;
     persistenceFoundation: BackendPersistenceFoundationSummary;
+    providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
     persistenceRuntime: BackendPersistenceRuntimeSummary;
   };
   requestGuard: {
@@ -187,6 +189,7 @@ export const createServerRuntimeReadiness = ({
       },
       databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(backendReadiness.databaseAdapterRuntime),
       persistenceFoundation: backendReadiness.persistenceFoundation,
+      providerIndexerFoundation: backendReadiness.providerIndexerFoundation,
       persistenceRuntime: createBackendPersistenceRuntimeSummary(backendReadiness.persistenceRuntime),
     },
     requestGuard: {

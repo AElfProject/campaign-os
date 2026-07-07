@@ -22,6 +22,7 @@ export interface BackendRuntimeSmokeCheck {
   endpoint: "/api/health" | "/api/contracts";
   ok: boolean;
   persistenceFoundation?: BackendRuntimeSmokePersistenceFoundationSummary;
+  providerIndexerFoundation?: BackendRuntimeSmokeProviderIndexerFoundationSummary;
   status: number;
   traceId: string;
 }
@@ -50,6 +51,24 @@ export interface BackendRuntimeSmokeAuthSessionFoundationSummary {
   valid: boolean;
 }
 
+export interface BackendRuntimeSmokeProviderIndexerFoundationSummary {
+  blockerCount: number;
+  diagnosticCodes: string[];
+  liveAiCallsEnabled: false;
+  liveAnalyticsIngestionEnabled: false;
+  liveContractCallsEnabled: false;
+  liveIndexerCallsEnabled: false;
+  liveObjectStorageEnabled: false;
+  liveProviderCallsEnabled: false;
+  liveSocialCallsEnabled: false;
+  productionReady: false;
+  providerGroupCount: number;
+  status?: string;
+  valid: boolean;
+  verificationSourceCoverageCount: number;
+  workerExecutionEnabled: false;
+}
+
 export interface BackendRuntimeSmokeSummary {
   activationId?: string;
   authSessionFoundation: BackendRuntimeSmokeAuthSessionFoundationSummary;
@@ -62,6 +81,7 @@ export interface BackendRuntimeSmokeSummary {
   persistenceFoundation: BackendRuntimeSmokePersistenceFoundationSummary;
   port: number;
   productionReady: boolean;
+  providerIndexerFoundation: BackendRuntimeSmokeProviderIndexerFoundationSummary;
   requiredBeforeProduction: string[];
   shutdownState: "running" | "stopping" | "stopped";
   status: "passed";
@@ -108,6 +128,11 @@ const readAuthSessionFoundation = (
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["backendService", "authSessionFoundation"])
   ?? readNestedRecord(value, ["backendService", "authSession", "foundation"]);
+
+const readProviderIndexerFoundation = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["serverRuntime", "readiness", "providerIndexerFoundation"]);
 
 const getNumber = (
   record: Record<string, unknown> | undefined,
@@ -180,6 +205,49 @@ const summarizeAuthSessionFoundation = (
   };
 };
 
+const summarizeProviderIndexerFoundation = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeProviderIndexerFoundationSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const noLiveFlags = readNestedRecord(record, ["noLiveFlags"]);
+  const coverage = readNestedRecord(record, ["verificationSourceCoverage"]);
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(noLiveFlags, "liveAiCallsEnabled")
+    && isExplicitFalse(noLiveFlags, "liveAnalyticsIngestionEnabled")
+    && isExplicitFalse(noLiveFlags, "liveContractCallsEnabled")
+    && isExplicitFalse(noLiveFlags, "liveIndexerCallsEnabled")
+    && isExplicitFalse(noLiveFlags, "liveObjectStorageEnabled")
+    && isExplicitFalse(noLiveFlags, "liveProviderCallsEnabled")
+    && isExplicitFalse(noLiveFlags, "liveSocialCallsEnabled")
+    && isExplicitFalse(noLiveFlags, "workerExecutionEnabled");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    liveAiCallsEnabled: false,
+    liveAnalyticsIngestionEnabled: false,
+    liveContractCallsEnabled: false,
+    liveIndexerCallsEnabled: false,
+    liveObjectStorageEnabled: false,
+    liveProviderCallsEnabled: false,
+    liveSocialCallsEnabled: false,
+    productionReady: false,
+    providerGroupCount: getNumber(record, "providerGroupCount"),
+    status: getString(record, "status"),
+    valid: getBoolean(record, "valid"),
+    verificationSourceCoverageCount: getNumber(coverage, "summaryCount"),
+    workerExecutionEnabled: false,
+  };
+};
+
 const createSmokeCheck = async ({
   baseUrl,
   endpoint,
@@ -208,6 +276,9 @@ const createSmokeCheck = async ({
   const persistenceFoundation = summarizePersistenceFoundation(
     readPersistenceFoundation(payload.data),
   );
+  const providerIndexerFoundation = summarizeProviderIndexerFoundation(
+    readProviderIndexerFoundation(payload.data),
+  );
 
   return {
     activation,
@@ -218,6 +289,7 @@ const createSmokeCheck = async ({
       endpoint,
       ok: payload.ok === true && payload.traceId === traceId,
       persistenceFoundation,
+      providerIndexerFoundation,
       status: response.status,
       traceId: payload.traceId ?? "",
     },
@@ -272,6 +344,28 @@ const isAuthSessionFoundationSmokeReady = (
     && summary.valid === true;
 };
 
+const isProviderIndexerFoundationSmokeReady = (
+  summary: BackendRuntimeSmokeProviderIndexerFoundationSummary | undefined,
+): summary is BackendRuntimeSmokeProviderIndexerFoundationSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveProviderCallsEnabled === false
+    && summary.liveIndexerCallsEnabled === false
+    && summary.liveSocialCallsEnabled === false
+    && summary.liveAiCallsEnabled === false
+    && summary.liveAnalyticsIngestionEnabled === false
+    && summary.liveObjectStorageEnabled === false
+    && summary.liveContractCallsEnabled === false
+    && summary.workerExecutionEnabled === false
+    && summary.providerGroupCount >= 10
+    && summary.verificationSourceCoverageCount >= 5
+    && summary.status === "local_ready"
+    && summary.valid === true;
+};
+
 export const runBackendRuntimeSmoke = async ({
   env,
   fetchImpl = fetch,
@@ -307,6 +401,7 @@ export const runBackendRuntimeSmoke = async ({
     const deploymentHandoff = readNestedRecord(activation, ["deploymentHandoff"]);
     const authSessionFoundation = contracts.check.authSessionFoundation;
     const persistenceFoundation = contracts.check.persistenceFoundation;
+    const providerIndexerFoundation = contracts.check.providerIndexerFoundation;
 
     if (
       health.check.status !== 200
@@ -321,6 +416,8 @@ export const runBackendRuntimeSmoke = async ({
       || !isAuthSessionFoundationSmokeReady(authSessionFoundation)
       || !isPersistenceFoundationSmokeReady(health.check.persistenceFoundation)
       || !isPersistenceFoundationSmokeReady(persistenceFoundation)
+      || !isProviderIndexerFoundationSmokeReady(health.check.providerIndexerFoundation)
+      || !isProviderIndexerFoundationSmokeReady(providerIndexerFoundation)
     ) {
       throw new Error("Campaign OS backend runtime smoke check failed.");
     }
@@ -337,6 +434,7 @@ export const runBackendRuntimeSmoke = async ({
       persistenceFoundation,
       port: new URL(server.url).port ? Number(new URL(server.url).port) : 0,
       productionReady: getBoolean(activation, "productionReady"),
+      providerIndexerFoundation,
       requiredBeforeProduction: getStringArray(deploymentHandoff, "requiredBeforeProduction"),
       status: "passed",
       traceIds: {
