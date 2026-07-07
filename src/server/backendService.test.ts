@@ -77,6 +77,29 @@ describe("backend service readiness report", () => {
       },
       valid: true,
     });
+    expect(report.apiService).toMatchObject({
+      blockedDependencyIds: expect.arrayContaining([
+        "live-database-driver",
+        "wallet-proof-verifier",
+        "contract-writer",
+      ]),
+      deferredDependencyIds: expect.arrayContaining([
+        "verification-worker",
+        "scheduler",
+        "provider-adapters",
+        "object-storage",
+        "analytics-ingestion",
+      ]),
+      deployableBoundaryReady: true,
+      diagnosticCodes: [],
+      id: "campaign-os-api-service",
+      liveConnectionAttempted: false,
+      liveSideEffectsEnabled: false,
+      productionReady: false,
+      profileId: "local-review",
+      status: "ready",
+      workerExecutionEnabled: false,
+    });
     expect(report.backendRuntimeBootstrap.deferredDependencyIds).toEqual(
       expect.arrayContaining([
         "production-database-driver",
@@ -768,6 +791,19 @@ describe("backend service readiness report", () => {
       },
       status: "blocked",
       valid: false,
+    });
+    expect(report.apiService).toMatchObject({
+      diagnosticCodes: expect.arrayContaining([
+        "API_SERVICE_PRODUCTION_BLOCKED",
+        "BACKEND_RUNTIME_BOOTSTRAP_PRODUCTION_BLOCKED",
+      ]),
+      deployableBoundaryReady: false,
+      liveConnectionAttempted: false,
+      liveSideEffectsEnabled: false,
+      productionReady: false,
+      profileId: "production-required",
+      status: "blocked",
+      workerExecutionEnabled: false,
     });
     expect(JSON.stringify(report)).not.toContain("auth-secret");
     expect(JSON.stringify(report)).not.toContain("postgres://db.invalid/campaign-os");

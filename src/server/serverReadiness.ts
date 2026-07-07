@@ -2,6 +2,7 @@ import {
   createBackendDatabaseAdapterRuntimeSummary,
   createBackendPersistenceRuntimeSummary,
   type BackendDatabaseAdapterRuntimeSummary,
+  type BackendApiServiceBootstrapSummary,
   type BackendAuthEnforcementReadinessSummary,
   type CampaignDbVerticalSliceReadinessSummary,
   type BackendPersistenceRuntimeSummary,
@@ -46,6 +47,7 @@ export interface ServerRuntimeReadiness {
   profileId: string;
   readiness: {
     authEnforcement: BackendAuthEnforcementReadinessSummary;
+    apiService: BackendApiServiceBootstrapSummary;
     authSession: {
       status: BackendServiceReadinessReport["authSession"]["status"];
       valid: boolean;
@@ -150,6 +152,7 @@ export const createServerRuntimeReadiness = ({
     profileId: contract.profileId,
     readiness: {
       authEnforcement: backendReadiness.authEnforcement,
+      apiService: backendReadiness.apiService,
       authSession: {
         status: backendReadiness.authSession.status,
         valid: backendReadiness.authSession.validation.valid,
@@ -190,6 +193,16 @@ export const createServerRuntimeReadiness = ({
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
+const mergeApiServiceMetadata = (
+  current: unknown,
+  next: ServerRuntimeReadiness["readiness"]["apiService"],
+) => isRecord(current)
+  ? {
+    ...next,
+    ...current,
+  }
+  : next;
+
 export const withServerRuntimeReadiness = <TPayload>(
   envelope: ApiRuntimeEnvelope<TPayload>,
   serverRuntime: ServerRuntimeReadiness,
@@ -202,6 +215,7 @@ export const withServerRuntimeReadiness = <TPayload>(
     ...envelope,
     data: {
       ...envelope.data,
+      apiService: mergeApiServiceMetadata(envelope.data.apiService, serverRuntime.readiness.apiService),
       serverRuntime,
     },
   };

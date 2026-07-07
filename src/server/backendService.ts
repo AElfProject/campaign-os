@@ -121,12 +121,32 @@ export interface BackendServiceEntrypoint {
   version: string;
 }
 
+export type BackendApiServiceBootstrapStatus = "ready" | "blocked" | "deferred";
+
+export interface BackendApiServiceBootstrapSummary {
+  attachPointCount: number;
+  blockedDependencyIds: string[];
+  contractWriteEnabled: false;
+  deferredDependencyIds: string[];
+  deployableBoundaryReady: boolean;
+  diagnosticCodes: string[];
+  id: "campaign-os-api-service";
+  liveConnectionAttempted: false;
+  liveSideEffectsEnabled: false;
+  productionReady: false;
+  profileId: BackendConfigContract["profileId"];
+  runtimeVersion: string;
+  status: BackendApiServiceBootstrapStatus;
+  workerExecutionEnabled: false;
+}
+
 export interface BackendServiceReadinessReport {
   apiFoundation: {
     coverage: ApiFoundationReport["coverage"];
     servicePorts: ApiServicePortReport;
     validation: ApiFoundationReport["validation"];
   };
+  apiService: BackendApiServiceBootstrapSummary;
   attachMap: BackendAttachPoint[];
   authEnforcement: BackendAuthEnforcementReadinessSummary;
   authSession: AuthSessionReadinessReport;
@@ -385,6 +405,27 @@ const requiredAttachPointAreas: BackendAttachPointArea[] = [
   "reward-distribution",
   "analytics-warehouse",
 ];
+
+const apiServiceBlockedDependencyIds = [
+  "live-database-driver",
+  "migration-executor",
+  "wallet-proof-verifier",
+  "session-issuer",
+  "project-membership-store",
+  "contract-writer",
+  "reward-custody",
+  "reward-distribution",
+] as const;
+
+const apiServiceDeferredDependencyIds = [
+  "verification-worker",
+  "scheduler",
+  "provider-adapters",
+  "object-storage",
+  "analytics-ingestion",
+  "deployment-config",
+  "observability-exporter",
+] as const;
 
 export const backendAttachMap: BackendAttachPoint[] = [
   {
@@ -670,6 +711,49 @@ const createDatabaseReadinessReport = ({
       issues,
       valid: issues.every((issue) => issue.severity !== "error"),
     },
+  };
+};
+
+const createApiServiceBootstrapSummary = ({
+  backendRuntimeBootstrap,
+  config,
+  validationIssues,
+}: {
+  backendRuntimeBootstrap: BackendRuntimeBootstrapContract;
+  config: BackendConfigContract;
+  validationIssues: readonly BackendReadinessDiagnostic[];
+}): BackendApiServiceBootstrapSummary => {
+  const blockingIssueCount = [
+    ...backendRuntimeBootstrap.diagnostics,
+    ...validationIssues,
+  ].filter((issue) => issue.severity === "error").length;
+  const status: BackendApiServiceBootstrapStatus =
+    blockingIssueCount > 0 || config.profileId === "production-required"
+      ? "blocked"
+      : backendRuntimeBootstrap.status === "deferred"
+        ? "deferred"
+        : "ready";
+  const diagnosticCodes = Array.from(new Set([
+    ...backendRuntimeBootstrap.diagnosticCodes,
+    ...validationIssues.map((issue) => issue.code),
+    ...(config.profileId === "production-required" ? ["API_SERVICE_PRODUCTION_BLOCKED"] : []),
+  ]));
+
+  return {
+    attachPointCount: apiServiceBlockedDependencyIds.length + apiServiceDeferredDependencyIds.length,
+    blockedDependencyIds: [...apiServiceBlockedDependencyIds],
+    contractWriteEnabled: false,
+    deferredDependencyIds: [...apiServiceDeferredDependencyIds],
+    deployableBoundaryReady: status === "ready",
+    diagnosticCodes,
+    id: "campaign-os-api-service",
+    liveConnectionAttempted: false,
+    liveSideEffectsEnabled: false,
+    productionReady: false,
+    profileId: config.profileId,
+    runtimeVersion: config.version,
+    status,
+    workerExecutionEnabled: false,
   };
 };
 
@@ -1052,6 +1136,11 @@ export const createBackendServiceReadinessReport = ({
 
   return {
     ...readinessWithoutBootstrap,
+    apiService: createApiServiceBootstrapSummary({
+      backendRuntimeBootstrap,
+      config,
+      validationIssues,
+    }),
     backendRuntimeBootstrap,
   };
 };
