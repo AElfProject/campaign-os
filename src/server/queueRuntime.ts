@@ -1,5 +1,12 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import {
+  createQueueProviderAdapterFoundation,
+  type QueueProviderAdapterFoundationStatus,
+  type QueueProviderAdapterMode,
+  type QueueProviderDiagnosticCode,
+  type QueueProviderOperationCapability,
+} from "./queueProviderAdapter";
+import {
   workerIdempotencyPolicies,
   workerJobCatalog,
   workerRetryBackoffPolicies,
@@ -88,6 +95,23 @@ export interface QueueRuntimeDiagnostic {
   severity: QueueRuntimeDiagnosticSeverity;
 }
 
+export interface QueueRuntimeProviderAdapterSummary {
+  adapterId: string;
+  blockerCount: number;
+  diagnosticCodes: QueueProviderDiagnosticCode[];
+  disabledLiveOperationCount: number;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: QueueProviderAdapterMode;
+  operationCapabilities: QueueProviderOperationCapability[];
+  operationCount: number;
+  productionReady: false;
+  providerId: string;
+  requiredConfigKeys: string[];
+  status: QueueProviderAdapterFoundationStatus;
+  valid: boolean;
+}
+
 export interface QueuePlan {
   deadLetterPolicy: string;
   degradedOutcome: QueueDegradedOutcome;
@@ -111,6 +135,13 @@ export interface QueueRuntimeReadinessProjection {
   diagnosticCodes: QueueRuntimeDiagnosticCode[];
   dryRunEnqueueEnabled: boolean;
   liveQueuePublishingEnabled: false;
+  providerAdapterBlockerCount: number;
+  providerAdapterDiagnosticCodes: QueueProviderDiagnosticCode[];
+  providerAdapterId: string;
+  providerAdapterMode: QueueProviderAdapterMode;
+  providerAdapterStatus: QueueProviderAdapterFoundationStatus;
+  providerId: string;
+  providerRequiredConfigKeys: string[];
   productionReady: false;
   queueCategoryCount: number;
   queueIds: string[];
@@ -126,6 +157,7 @@ export interface QueueRuntimeFoundationSummary {
   preconditions: QueueRuntimeProductionPrecondition[];
   productionReady: false;
   profileId: QueueRuntimeProfileId;
+  providerAdapter: QueueRuntimeProviderAdapterSummary;
   queuePlans: QueuePlan[];
   readiness: QueueRuntimeReadinessProjection;
   status: QueueRuntimeFoundationStatus;
@@ -135,6 +167,7 @@ export interface QueueRuntimeFoundationSummary {
 export interface CreateQueueRuntimeFoundationOptions {
   env?: Record<string, unknown>;
   profileId?: string;
+  providerId?: string;
 }
 
 export interface QueueEnqueueRequest {
@@ -467,6 +500,12 @@ export const createQueueRuntimeFoundation = (
   const registryDiagnostics = createRegistryDiagnostics();
   const productionDiagnostics =
     profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
+  const providerAdapterFoundation = createQueueProviderAdapterFoundation({
+    env,
+    profileId: profileResolution.profileId,
+    providerId: options.providerId,
+  });
+  const providerAdapter = createProviderAdapterSummary(providerAdapterFoundation);
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...registryDiagnostics,
@@ -474,7 +513,7 @@ export const createQueueRuntimeFoundation = (
   ];
   const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
   const status = resolveStatus(profileResolution.profileId, blockerCount);
-  const readiness = createReadinessProjection(diagnostics, blockerCount);
+  const readiness = createReadinessProjection(diagnostics, blockerCount, providerAdapter);
 
   return {
     blockerCount,
@@ -485,6 +524,7 @@ export const createQueueRuntimeFoundation = (
     preconditions: queueRuntimeProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
     profileId: profileResolution.profileId,
+    providerAdapter,
     queuePlans: queueRuntimePlans.map((item) => ({ ...item })),
     readiness,
     status,
@@ -623,15 +663,42 @@ const validateEnqueueRequest = (
 const createReadinessProjection = (
   diagnostics: readonly QueueRuntimeDiagnostic[],
   blockerCount: number,
+  providerAdapter: QueueRuntimeProviderAdapterSummary,
 ): QueueRuntimeReadinessProjection => ({
   blockerCount,
   diagnosticCodes: diagnostics.map((item) => item.code),
   dryRunEnqueueEnabled: blockerCount === 0,
   liveQueuePublishingEnabled: false,
+  providerAdapterBlockerCount: providerAdapter.blockerCount,
+  providerAdapterDiagnosticCodes: providerAdapter.diagnosticCodes,
+  providerAdapterId: providerAdapter.adapterId,
+  providerAdapterMode: providerAdapter.mode,
+  providerAdapterStatus: providerAdapter.status,
+  providerId: providerAdapter.providerId,
+  providerRequiredConfigKeys: providerAdapter.requiredConfigKeys,
   productionReady: false,
   queueCategoryCount: new Set(queueRuntimePlans.map((item) => item.queueCategory)).size,
   queueIds: [...new Set(queueRuntimePlans.map((item) => item.queueId))],
   queuePlanCount: queueRuntimePlans.length,
+});
+
+const createProviderAdapterSummary = (
+  providerAdapter: ReturnType<typeof createQueueProviderAdapterFoundation>,
+): QueueRuntimeProviderAdapterSummary => ({
+  adapterId: providerAdapter.adapterId,
+  blockerCount: providerAdapter.blockerCount,
+  diagnosticCodes: providerAdapter.diagnosticCodes,
+  disabledLiveOperationCount: providerAdapter.readiness.disabledLiveOperationCount,
+  liveQueuePublishingEnabled: false,
+  liveWorkerExecutionEnabled: false,
+  mode: providerAdapter.mode,
+  operationCapabilities: providerAdapter.operationCapabilities.map((item) => ({ ...item })),
+  operationCount: providerAdapter.readiness.operationCount,
+  productionReady: false,
+  providerId: providerAdapter.providerId,
+  requiredConfigKeys: providerAdapter.readiness.requiredConfigKeys,
+  status: providerAdapter.status,
+  valid: providerAdapter.valid,
 });
 
 const resolveStatus = (
