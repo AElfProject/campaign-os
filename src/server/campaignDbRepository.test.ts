@@ -1,4 +1,7 @@
 import { readFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { supportedLocales } from "../domain/types";
 import {
@@ -16,6 +19,16 @@ const validDraftInput = () => ({
   rewardDescription: "M176 smoke reward",
   startTime: "2026-07-07T00:00:00.000Z",
 });
+
+const withTempStorePath = async <T>(operation: (filePath: string) => Promise<T>) => {
+  const directory = await mkdtemp(join(tmpdir(), "campaign-os-repository-"));
+
+  try {
+    return await operation(join(directory, "campaign-drafts.json"));
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+};
 
 describe("Campaign DB repository", () => {
   it("creates a draft with v0.2 fields and deterministic defaults", async () => {
@@ -142,6 +155,7 @@ describe("Campaign DB repository", () => {
   it.each([
     ["defaultLocale", { defaultLocale: "zh-CN" }, "CAMPAIGN_DB_UNSUPPORTED_DEFAULT_LOCALE"],
     ["supportedLocales", { supportedLocales: ["en-US", "fr-FR"] }, "CAMPAIGN_DB_UNSUPPORTED_LOCALE"],
+    ["supportedLocales default", { supportedLocales: ["zh-CN"] }, "CAMPAIGN_DB_UNSUPPORTED_LOCALE"],
     ["walletPolicy", { walletPolicy: "PORTKEY_ONLY" }, "CAMPAIGN_DB_UNSUPPORTED_WALLET_POLICY"],
     ["contractMode", { contractMode: "LIVE_CONTRACT" }, "CAMPAIGN_DB_UNSUPPORTED_CONTRACT_MODE"],
     ["timeWindow", { endTime: "2026-07-06T00:00:00.000Z" }, "CAMPAIGN_DB_INVALID_TIME_WINDOW"],
@@ -183,6 +197,98 @@ describe("Campaign DB repository", () => {
     expect(sanitizeCampaignDbDiagnosticValue("databaseToken", "abc123")).toBe("[redacted]");
     expect(sanitizeCampaignDbDiagnosticValue("driverId", "campaign-os-driver")).toBe("campaign-os-driver");
     await expect(repository.createDraft(validDraftInput())).rejects.toBeInstanceOf(CampaignDbRepositoryError);
+  });
+
+  it("uses durable store mode to preserve drafts across repository instances", async () => {
+    await withTempStorePath(async (durableStoreFilePath) => {
+      const firstRepository = createCampaignDbRepository({
+        durableStoreFilePath,
+        mode: "durable_test",
+      });
+      const created = await firstRepository.createDraft({
+        ...validDraftInput(),
+        projectId: "project-m177",
+        supportedLocales: ["en-US", "zh-CN"],
+      });
+
+      const reopenedRepository = createCampaignDbRepository({
+        durableStoreFilePath,
+        mode: "durable_test",
+      });
+
+      await expect(reopenedRepository.getById(created.id)).resolves.toMatchObject({
+        id: created.id,
+        projectId: "project-m177",
+        repository: expect.objectContaining({
+          adapterId: "campaign-db-durable-test-adapter",
+          createdViaRepository: true,
+          storeId: "campaign-db",
+        }),
+      });
+      await expect(reopenedRepository.list({ projectId: "project-m177" })).resolves.toEqual([
+        expect.objectContaining({ id: created.id }),
+      ]);
+      await expect(reopenedRepository.health()).resolves.toMatchObject({
+        adapterId: "campaign-db-durable-test-adapter",
+        campaignStore: expect.objectContaining({
+          durable: true,
+          mode: "durable_test",
+          recordCount: 1,
+          status: "ready",
+        }),
+        recordCount: 1,
+        selectedMode: "durable_test",
+        status: "ready",
+      });
+    });
+  });
+
+  it("does not persist invalid drafts in durable mode", async () => {
+    await withTempStorePath(async (durableStoreFilePath) => {
+      const repository = createCampaignDbRepository({
+        durableStoreFilePath,
+        mode: "durable_test",
+      });
+
+      await expect(repository.createDraft({
+        ...validDraftInput(),
+        defaultLocale: "zh-CN",
+      })).rejects.toBeInstanceOf(CampaignDbRepositoryError);
+      await expect(repository.list()).resolves.toEqual([]);
+      await expect(repository.health()).resolves.toMatchObject({
+        campaignStore: expect.objectContaining({
+          recordCount: 0,
+        }),
+        recordCount: 0,
+      });
+    });
+  });
+
+  it("keeps durable listing bounded and ordered", async () => {
+    await withTempStorePath(async (durableStoreFilePath) => {
+      const repository = createCampaignDbRepository({
+        boundedListLimit: 2,
+        durableStoreFilePath,
+        mode: "durable_test",
+        now: () => "2026-07-07T00:00:00.000Z",
+      });
+
+      for (let index = 0; index < 5; index += 1) {
+        await repository.createDraft({
+          ...validDraftInput(),
+          projectId: "project-bounded",
+          startTime: `2026-08-0${index + 1}T00:00:00.000Z`,
+          endTime: `2026-08-1${index + 1}T00:00:00.000Z`,
+        });
+      }
+
+      const listed = await repository.list({ projectId: "project-bounded" });
+
+      expect(listed.map((item) => item.id)).toEqual([
+        "campaign-db-draft-0001",
+        "campaign-db-draft-0002",
+      ]);
+    });
   });
 
   it("keeps repository code provider-decoupled", async () => {

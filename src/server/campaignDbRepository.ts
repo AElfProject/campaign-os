@@ -6,8 +6,13 @@ import {
   type SupportedLocale,
   type WalletPolicy,
 } from "../domain/types";
+import {
+  createCampaignDurableStore,
+  type CampaignDurableStore,
+  type CampaignDurableStoreManifest,
+} from "./campaignDurableStore";
 
-export type CampaignDbRepositoryMode = "deterministic_test" | "production_deferred";
+export type CampaignDbRepositoryMode = "deterministic_test" | "durable_test" | "production_deferred";
 export type CampaignDbRepositoryStatus = "ready" | "blocked";
 export type CampaignDbRepositoryEventType =
   | "transaction.begin"
@@ -19,6 +24,10 @@ export type CampaignDbRepositoryEventType =
   | "diagnostic";
 export type CampaignDbDiagnosticSeverity = "error" | "warning" | "info";
 export type CampaignDbDiagnosticCode =
+  | "CAMPAIGN_DURABLE_STORE_PATH_REQUIRED"
+  | "CAMPAIGN_DURABLE_STORE_READ_FAILED"
+  | "CAMPAIGN_DURABLE_STORE_WRITE_FAILED"
+  | "CAMPAIGN_DURABLE_STORE_PRODUCTION_REQUIRED"
   | "CAMPAIGN_DB_REQUIRED_FIELD_MISSING"
   | "CAMPAIGN_DB_UNSUPPORTED_DEFAULT_LOCALE"
   | "CAMPAIGN_DB_UNSUPPORTED_LOCALE"
@@ -97,6 +106,7 @@ export interface CampaignDbReadProjection extends CampaignDbDraft {
 }
 
 export interface CampaignDbListFilter {
+  limit?: number;
   ownerAddress?: string;
   projectId?: string;
   status?: CampaignStatus | string;
@@ -116,6 +126,7 @@ export interface CampaignDbRepositoryEvent {
 
 export interface CampaignDbRepositoryHealth {
   adapterId: string;
+  campaignStore?: CampaignDurableStoreManifest;
   diagnosticCodes: CampaignDbDiagnosticCode[];
   diagnostics: CampaignDbDiagnostic[];
   eventCount: number;
@@ -154,6 +165,9 @@ export interface CampaignDbRepository {
 }
 
 export interface CreateCampaignDbRepositoryOptions {
+  boundedListLimit?: number;
+  durableStore?: CampaignDurableStore;
+  durableStoreFilePath?: string;
   mode?: CampaignDbRepositoryMode;
   now?: () => string;
   requestedDriverId?: string;
@@ -291,11 +305,15 @@ const normalizeSupportedLocales = (
 ): SupportedLocale[] => {
   const locales = requestedLocales ?? supportedLocales;
 
-  if (locales.length === 0 || locales.some((locale) => !isSupportedLocale(locale))) {
+  if (
+    locales.length === 0 ||
+    locales.some((locale) => !isSupportedLocale(locale)) ||
+    !locales.includes("en-US")
+  ) {
     issues.push(diagnostic(
       "CAMPAIGN_DB_UNSUPPORTED_LOCALE",
       "supportedLocales",
-      "Campaign DB draft supportedLocales contains unsupported locale values.",
+      "Campaign DB draft supportedLocales must contain supported locale values and include en-US.",
     ));
 
     return [...supportedLocales];
@@ -437,6 +455,9 @@ const createProductionDeferredDiagnostic = (
 );
 
 export const createCampaignDbRepository = ({
+  boundedListLimit,
+  durableStore,
+  durableStoreFilePath,
   mode = "deterministic_test",
   now = defaultNow,
   requestedDriverId,
@@ -446,7 +467,18 @@ export const createCampaignDbRepository = ({
   const adapterId =
     mode === "production_deferred"
       ? "campaign-db-production-adapter-deferred"
+      : mode === "durable_test"
+        ? "campaign-db-durable-test-adapter"
       : "campaign-db-deterministic-adapter";
+  const activeDurableStore =
+    mode === "durable_test"
+      ? durableStore ??
+        createCampaignDurableStore({
+          boundedListLimit,
+          filePath: durableStoreFilePath,
+          mode: "durable_test",
+        })
+      : undefined;
   let idSequence = 0;
   let eventSequence = 0;
   let transactionSequence = 0;
@@ -510,26 +542,48 @@ export const createCampaignDbRepository = ({
     },
   });
 
-  const health = async (): Promise<CampaignDbRepositoryHealth> => ({
-    adapterId,
-    diagnosticCodes: productionDiagnostics.map((issue) => issue.code),
-    diagnostics: productionDiagnostics,
-    eventCount: events.length,
-    fallbackUsed: false,
-    id: "campaign-db-repository-runtime",
-    liveConnectionAttempted: false,
-    liveMigrationExecutionEnabled: false,
-    liveQueryExecutionEnabled: false,
-    productionReady: false,
-    recordCount: recordsById.size,
-    selectedMode: mode,
-    status: mode === "production_deferred" ? "blocked" : "ready",
-    storeId: "campaign-db",
-    validation: {
-      issues: productionDiagnostics,
-      valid: productionDiagnostics.length === 0,
-    },
-  });
+  const resolveRecordCount = async () =>
+    activeDurableStore ? (await activeDurableStore.manifest()).recordCount : recordsById.size;
+
+  const durableDiagnostics = async () =>
+    activeDurableStore
+      ? (await activeDurableStore.manifest()).diagnostics.map((issue) => ({
+        code: issue.code as CampaignDbDiagnosticCode,
+        field: issue.field,
+        message: issue.message,
+        severity: issue.severity,
+      }))
+      : [];
+
+  const health = async (): Promise<CampaignDbRepositoryHealth> => {
+    const campaignStore = activeDurableStore ? await activeDurableStore.manifest() : undefined;
+    const storeDiagnostics = await durableDiagnostics();
+    const diagnostics = [...productionDiagnostics, ...storeDiagnostics];
+
+    return {
+      adapterId,
+      ...(campaignStore ? { campaignStore } : {}),
+      diagnosticCodes: diagnostics.map((issue) => issue.code),
+      diagnostics,
+      eventCount: events.length,
+      fallbackUsed: false,
+      id: "campaign-db-repository-runtime",
+      liveConnectionAttempted: false,
+      liveMigrationExecutionEnabled: false,
+      liveQueryExecutionEnabled: false,
+      productionReady: false,
+      recordCount: await resolveRecordCount(),
+      selectedMode: mode,
+      status: mode === "production_deferred" || diagnostics.some((issue) => issue.severity === "error")
+        ? "blocked"
+        : "ready",
+      storeId: "campaign-db",
+      validation: {
+        issues: diagnostics,
+        valid: diagnostics.length === 0,
+      },
+    };
+  };
 
   return {
     createDraft: async (input, context = {}) => {
@@ -558,7 +612,12 @@ export const createCampaignDbRepository = ({
         updatedAt: createdAt,
       };
 
-      recordsById.set(draft.id, draft);
+      if (activeDurableStore) {
+        await activeDurableStore.create(draft);
+      } else {
+        recordsById.set(draft.id, draft);
+      }
+
       appendEvent({
         operation: "insert_campaign_draft",
         traceId: context.traceId,
@@ -581,7 +640,9 @@ export const createCampaignDbRepository = ({
         type: "query.lookup",
       });
 
-      const draft = recordsById.get(campaignId);
+      const draft = activeDurableStore
+        ? await activeDurableStore.getById(campaignId)
+        : recordsById.get(campaignId);
 
       return draft ? toProjection(draft) : undefined;
     },
@@ -594,7 +655,9 @@ export const createCampaignDbRepository = ({
         type: "query.list",
       });
 
-      const records = Array.from(recordsById.values());
+      const records = activeDurableStore
+        ? await activeDurableStore.list(filter)
+        : Array.from(recordsById.values());
 
       return records
         .filter((draft) => {
@@ -617,6 +680,7 @@ export const createCampaignDbRepository = ({
     },
     reset: async () => {
       recordsById.clear();
+      await activeDurableStore?.reset();
       events.length = 0;
       idSequence = 0;
       eventSequence = 0;

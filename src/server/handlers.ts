@@ -208,6 +208,7 @@ const campaignDetailRequest = (context: ApiRuntimeHandlerContext): GetCampaignDe
 });
 
 const campaignDbListFilter = (context: ApiRuntimeHandlerContext): CampaignDbListFilter => ({
+  limit: optionalString(context.query.limit) ? Number(optionalString(context.query.limit)) : undefined,
   ownerAddress: context.query.ownerAddress,
   projectId: context.query.projectId,
   status: context.query.status,
@@ -351,6 +352,52 @@ const campaignDbCreateDraftInput = (
   supportedLocales: payload.supportedLocales,
   walletPolicy: payload.walletPolicy,
 });
+
+const campaignDbCreateDraftInputFromRequest = (
+  request: CreateCampaignRequest,
+): CampaignDbCreateDraftInput => ({
+  contractMode: request.contractMode,
+  defaultLocale: request.defaultLocale,
+  duration: request.duration,
+  endTime: request.endTime,
+  goal: request.goal,
+  metadataHash: request.metadataHash,
+  metadataUri: request.metadataUri,
+  ownerAddress: request.ownerAddress,
+  projectId: request.projectId,
+  rewardDescription: request.rewardDescription,
+  rewardDisclaimerHash: request.rewardDisclaimerHash,
+  startTime: request.startTime,
+  status: request.status,
+  supportedLocales: request.supportedLocales,
+  walletPolicy: request.walletPolicy,
+});
+
+const campaignDbDraftToLocalCampaignDraft = (
+  draft: CampaignDbDraft,
+): LocalCampaignDraft => ({
+  contractMode: draft.contractMode,
+  defaultLocale: draft.defaultLocale,
+  duration: draft.duration,
+  endTime: draft.endTime,
+  goal: draft.goal,
+  id: draft.id,
+  ...(draft.metadataHash ? { metadataHash: draft.metadataHash } : {}),
+  ...(draft.metadataUri ? { metadataUri: draft.metadataUri } : {}),
+  ownerAddress: draft.ownerAddress,
+  projectId: draft.projectId,
+  publishReadiness: draft.publishReadiness,
+  rewardBoundary: campaignDbBoundary,
+  rewardDescription: draft.rewardDescription,
+  ...(draft.rewardDisclaimerHash ? { rewardDisclaimerHash: draft.rewardDisclaimerHash } : {}),
+  startTime: draft.startTime,
+  status: draft.status,
+  supportedLocales: draft.supportedLocales,
+  walletPolicy: draft.walletPolicy,
+});
+
+const canUseCampaignDbCreateFallback = (error: LocalServiceError) =>
+  error.code === "UNSUPPORTED_LOCALE" && error.field === "supportedLocales";
 
 const eligibilityRequest = (context: ApiRuntimeHandlerContext): CheckEligibilityRequest => {
   const walletAddress = context.query.walletAddress ?? context.query.address;
@@ -666,14 +713,25 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     };
   },
   "campaigns.create": async (context) => {
-    const response = unwrapLocalResult(
-      context.service.createCampaign(createCampaignRequest(context)),
-      context,
-    );
+    const request = createCampaignRequest(context);
+    const localResult = context.service.createCampaign(request);
+
+    if (!localResult.ok && !canUseCampaignDbCreateFallback(localResult.error)) {
+      throw localErrorToRuntimeError(localResult.error, context);
+    }
+
     const campaignDbDraft = await context.campaignDbRepository.createDraft(
-      campaignDbCreateDraftInput(response.payload),
+      localResult.ok
+        ? campaignDbCreateDraftInput(localResult.payload)
+        : campaignDbCreateDraftInputFromRequest(request),
       { traceId: context.traceId },
     );
+    const response = localResult.ok
+      ? unwrapLocalResult(localResult, context)
+      : {
+        boundary: campaignDbBoundary,
+        payload: campaignDbDraftToLocalCampaignDraft(campaignDbDraft),
+      };
     const record = await context.repository.record({
       campaignId: campaignDbDraft.id,
       kind: "campaign_draft",

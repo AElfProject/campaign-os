@@ -27,6 +27,7 @@ import {
   CampaignDbRepositoryError,
   createCampaignDbRepository,
   type CampaignDbRepository,
+  type CreateCampaignDbRepositoryOptions,
 } from "./campaignDbRepository";
 import {
   createCampaignOsRepository,
@@ -76,6 +77,7 @@ interface ApiRuntimeRouteMatcher {
 export interface CreateCampaignOsApiRuntimeOptions {
   backendServiceReadiness?: BackendServiceReadinessFactory;
   campaignDbRepository?: CampaignDbRepository;
+  campaignDbRepositoryOptions?: CreateCampaignDbRepositoryOptions;
   repository?: CampaignOsRepository;
   runtimeConfig?: CampaignOsRuntimeConfig;
   runtimeConfigOptions?: CampaignOsRuntimeConfigOptions;
@@ -486,6 +488,7 @@ const createSafeCampaignDbRepository = (
 export const createCampaignOsApiRuntime = ({
   backendServiceReadiness,
   campaignDbRepository,
+  campaignDbRepositoryOptions,
   repository,
   runtimeConfig,
   runtimeConfigOptions,
@@ -518,7 +521,7 @@ export const createCampaignOsApiRuntime = ({
     repository ?? createCampaignOsRepository(resolvedConfig.persistence),
   );
   const safeCampaignDbRepository = createSafeCampaignDbRepository(
-    campaignDbRepository ?? createCampaignDbRepository(),
+    campaignDbRepository ?? createCampaignDbRepository(campaignDbRepositoryOptions),
   );
   const handlers = createApiRuntimeHandlers();
   const matchers = apiRuntimeRoutes.map(compileRouteMatcher);

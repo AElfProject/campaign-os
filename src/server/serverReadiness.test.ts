@@ -85,11 +85,29 @@ describe("server runtime readiness metadata", () => {
             productionReady: false,
             status: "active_local",
           },
+          campaignStore: {
+            durable: false,
+            fallbackUsed: false,
+            mode: "local_seeded",
+            recordCount: 0,
+            status: "ready",
+            storeId: "campaign-db",
+          },
           diagnosticCodes: [],
           lifecycle: {
             readinessDoesNotMutateRecords: true,
             repositoryContractStatus: "available",
             repositoryMode: "deterministic_test",
+          },
+          migrationState: {
+            appliedMigrationIds: ["001-campaign-db-v0-2-0"],
+            blockedMigrationIds: [],
+            liveExecutionEnabled: false,
+            pendingMigrationIds: [],
+            requiredMigrationIds: ["001-campaign-db-v0-2-0"],
+            schemaVersion: "v0.2.0",
+            status: "applied",
+            storeId: "campaign-db",
           },
           noLive: {
             connectionAttempted: false,
@@ -271,8 +289,17 @@ describe("server runtime readiness metadata", () => {
             productionReady: false,
             status: "blocked",
           },
+          campaignStore: {
+            durable: false,
+            fallbackUsed: false,
+            mode: "production_required",
+            status: "blocked",
+            storeId: "campaign-db",
+          },
           diagnosticCodes: expect.arrayContaining([
+            "CAMPAIGN_DB_DURABLE_STORE_BLOCKED",
             "CAMPAIGN_DB_LIVE_DRIVER_MISSING",
+            "CAMPAIGN_DB_MIGRATION_STATE_BLOCKED",
             "CAMPAIGN_DB_MIGRATION_EXECUTOR_UNAPPROVED",
             "CAMPAIGN_DB_SECRET_MANAGER_MISSING",
             "CAMPAIGN_DB_PRODUCTION_WRITE_DISABLED",
@@ -280,8 +307,19 @@ describe("server runtime readiness metadata", () => {
           ]),
           lifecycle: {
             readinessDoesNotMutateRecords: true,
-            repositoryContractStatus: "available",
+            repositoryContractStatus: "blocked",
             repositoryMode: "production_deferred",
+          },
+          migrationState: {
+            appliedMigrationIds: [],
+            blockedMigrationIds: ["001-campaign-db-v0-2-0"],
+            diagnosticCodes: ["CAMPAIGN_MIGRATION_BLOCKED"],
+            liveExecutionEnabled: false,
+            pendingMigrationIds: [],
+            requiredMigrationIds: ["001-campaign-db-v0-2-0"],
+            schemaVersion: "v0.2.0",
+            status: "blocked",
+            storeId: "campaign-db",
           },
           noLive: {
             connectionAttempted: false,
@@ -387,6 +425,40 @@ describe("server runtime readiness metadata", () => {
     expectNoSecretLeak(metadata);
   });
 
+  it("projects explicit durable campaign store metadata into server readiness", () => {
+    const contract = resolveApiServerRuntimeContract({ env: {} });
+    const backendReadiness = createBackendServiceReadinessReport({
+      campaignStore: {
+        durable: true,
+        mode: "durable_test",
+        recordCount: 3,
+      },
+    });
+    const metadata = createServerRuntimeReadiness({ backendReadiness, contract });
+
+    expect(metadata.readiness.campaignDbVerticalSlice).toMatchObject({
+      campaignStore: {
+        durable: true,
+        fallbackUsed: false,
+        mode: "durable_test",
+        recordCount: 3,
+        status: "ready",
+        storeId: "campaign-db",
+      },
+      lifecycle: {
+        repositoryContractStatus: "available",
+        repositoryMode: "durable_test",
+      },
+      migrationState: {
+        appliedMigrationIds: ["001-campaign-db-v0-2-0"],
+        blockedMigrationIds: [],
+        liveExecutionEnabled: false,
+        status: "applied",
+      },
+      status: "ready",
+    });
+  });
+
   it("represents shutdown states", () => {
     const contract = resolveApiServerRuntimeContract({
       env: {},
@@ -480,6 +552,20 @@ describe("server runtime readiness metadata", () => {
         backendService: { entrypointId: "campaign-os-backend-service" },
         serverRuntime: expect.objectContaining({
           profileId: "local-review",
+          readiness: expect.objectContaining({
+            campaignDbVerticalSlice: expect.objectContaining({
+              campaignStore: expect.objectContaining({
+                mode: "local_seeded",
+                status: "ready",
+                storeId: "campaign-db",
+              }),
+              migrationState: expect.objectContaining({
+                appliedMigrationIds: ["001-campaign-db-v0-2-0"],
+                liveExecutionEnabled: false,
+                status: "applied",
+              }),
+            }),
+          }),
           status: "ready",
         }),
         status: "ok",
