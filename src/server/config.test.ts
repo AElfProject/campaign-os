@@ -151,6 +151,7 @@ describe("backend config contract", () => {
       env: {
         CAMPAIGN_OS_ENABLE_CONTRACT_WRITER: "true",
         CAMPAIGN_OS_ENABLE_PRODUCTION_DATABASE: "1",
+        CAMPAIGN_OS_ENABLE_PROVIDER_ADAPTERS: "true",
       },
     });
 
@@ -166,6 +167,11 @@ describe("backend config contract", () => {
         expect.objectContaining({
           code: "PRODUCTION_CAPABILITY_ENABLEMENT_BLOCKED",
           field: "CAMPAIGN_OS_ENABLE_PRODUCTION_DATABASE",
+          severity: "error",
+        }),
+        expect.objectContaining({
+          code: "PRODUCTION_CAPABILITY_ENABLEMENT_BLOCKED",
+          field: "CAMPAIGN_OS_ENABLE_PROVIDER_ADAPTERS",
           severity: "error",
         }),
       ]),
@@ -188,6 +194,38 @@ describe("backend config contract", () => {
     });
 
     expect(collectStringValues(contract)).not.toContain("super-secret");
+  });
+
+  it("redacts provider-related config diagnostic values", () => {
+    expect(
+      sanitizeBackendConfigDiagnosticValue(
+        "CAMPAIGN_OS_PROVIDER_CREDENTIALS",
+        "provider-api-key-secret",
+      ),
+    ).toBe("[redacted]");
+    expect(
+      sanitizeBackendConfigDiagnosticValue(
+        "CAMPAIGN_OS_SOCIAL_API_TOKEN",
+        "social-token-secret",
+      ),
+    ).toBe("[redacted]");
+    expect(
+      sanitizeBackendConfigDiagnosticValue(
+        "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+        "https://user:password@providers.invalid?token=secret",
+      ),
+    ).toBe("[redacted]");
+
+    const contract = resolveBackendConfigContract({
+      env: {
+        CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+        CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://user:password@providers.invalid?token=secret",
+      },
+    });
+
+    expect(collectStringValues(contract)).not.toContain(
+      "https://user:password@providers.invalid?token=secret",
+    );
   });
 
   it("redacts connection-like production persistence driver values", () => {
