@@ -2,14 +2,19 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateAuthEnforcement,
   parseLocalAuthSessionHeaders,
+  projectOwnershipReadinessPolicy,
+  rbacOwnershipRoutePolicyMatrix,
+  sanitizeAuthEnforcementDetails,
   type AuthRuntimeHeaders,
 } from "./authEnforcement";
 
 const sensitiveFragments = [
   "bearer raw-secret-token",
+  "jwt.raw.secret",
   "raw-signature-sample",
   "private-key-sample",
   "session-secret-sample",
+  "https://storage.invalid/diagnostic?token=raw-secret-token",
 ];
 
 const projectOwnerHeaders = (overrides: AuthRuntimeHeaders = {}): AuthRuntimeHeaders => ({
@@ -32,6 +37,43 @@ const expectNoSensitiveFragments = (value: unknown) => {
 };
 
 describe("auth enforcement", () => {
+  it("publishes the complete RBAC ownership route policy matrix", () => {
+    expect(rbacOwnershipRoutePolicyMatrix.map((entry) => entry.routeGroup)).toEqual([
+      "runtime_metadata",
+      "wallet_session",
+      "campaign_read",
+      "campaign_write",
+      "task_builder",
+      "task_verify",
+      "eligibility",
+      "export",
+      "admin_review",
+      "risk",
+      "service_readiness",
+      "ai_ops",
+    ]);
+    expect(rbacOwnershipRoutePolicyMatrix.find((entry) => entry.routeGroup === "campaign_write")).toMatchObject({
+      locallyEnforced: true,
+      ownerMatchRequired: true,
+      requiredRoles: ["project_owner"],
+    });
+    expect(rbacOwnershipRoutePolicyMatrix.find((entry) => entry.routeGroup === "ai_ops")).toMatchObject({
+      forbiddenCredentialBoundaries: ["ordinary_user_wallet"],
+      requiredRoles: ["ai_worker"],
+    });
+    expect(rbacOwnershipRoutePolicyMatrix.find((entry) => entry.routeGroup === "export")?.requiredRoles).toEqual([
+      "project_owner",
+      "internal_operator",
+    ]);
+
+    for (const routePolicy of rbacOwnershipRoutePolicyMatrix) {
+      expect(routePolicy.productionDependencyIds).toEqual(
+        expect.arrayContaining(["rbac_enforcement_policy", "project_membership_source", "project_ownership_source"]),
+      );
+      expect(routePolicy.requiredRoles).toEqual([...new Set(routePolicy.requiredRoles)]);
+    }
+  });
+
   it("parses deterministic local project owner session headers", () => {
     const parsed = parseLocalAuthSessionHeaders(projectOwnerHeaders());
 
@@ -157,6 +199,21 @@ describe("auth enforcement", () => {
     expect(
       evaluateAuthEnforcement({
         headers: projectOwnerHeaders(),
+        ownerSources: {
+          membershipSourceReady: true,
+          ownershipSourceReady: true,
+        },
+        routeId: "campaigns.create",
+      }),
+    ).toMatchObject({
+      diagnostic: { code: "AUTH_OWNER_MISMATCH" },
+      httpStatus: 403,
+      status: "forbidden",
+    });
+
+    expect(
+      evaluateAuthEnforcement({
+        headers: projectOwnerHeaders(),
         ownerAddress: "ELF_other_owner",
         routeId: "campaigns.create",
       }),
@@ -177,5 +234,104 @@ describe("auth enforcement", () => {
       httpStatus: 403,
       status: "forbidden",
     });
+  });
+
+  it("fails closed when owner mutation lacks membership or ownership sources", () => {
+    expect(projectOwnershipReadinessPolicy).toMatchObject({
+      ownerMatchRequired: true,
+      productionDependencyIds: ["project_membership_source", "project_ownership_source"],
+    });
+
+    const missingSources = evaluateAuthEnforcement({
+      headers: projectOwnerHeaders(),
+      ownerAddress: "ELF_project_owner_local",
+      ownerSources: {
+        membershipSourceReady: false,
+        ownershipSourceReady: false,
+      },
+      routeId: "campaigns.create",
+    });
+
+    expect(missingSources).toMatchObject({
+      diagnostic: { code: "AUTH_OWNERSHIP_SOURCE_MISSING" },
+      httpStatus: 403,
+      safeDetails: {
+        ownerMutationBlocked: true,
+        blockedDependencyIds: ["project_membership_source", "project_ownership_source"],
+      },
+      status: "forbidden",
+    });
+
+    const readySources = evaluateAuthEnforcement({
+      headers: projectOwnerHeaders(),
+      ownerAddress: "ELF_project_owner_local",
+      ownerSources: {
+        membershipSourceReady: true,
+        ownershipSourceReady: true,
+      },
+      routeId: "campaigns.create",
+    });
+
+    expect(readySources.status).toBe("allowed");
+  });
+
+  it("prevents internal credentials from substituting participants or owners", () => {
+    const internalOperator = evaluateAuthEnforcement({
+      headers: projectOwnerHeaders({
+        "x-campaign-os-credential-boundary": "internal_agent_credential",
+        "x-campaign-os-proof-status": "verified",
+        "x-campaign-os-roles": "internal_operator",
+        "x-campaign-os-wallet-source": "AGENT_SKILL",
+      }),
+      routeId: "tasks.verify",
+    });
+    const agentOwner = evaluateAuthEnforcement({
+      headers: projectOwnerHeaders({
+        "x-campaign-os-credential-boundary": "internal_agent_credential",
+        "x-campaign-os-proof-status": "verified",
+        "x-campaign-os-roles": "project_owner",
+        "x-campaign-os-wallet-source": "AGENT_SKILL",
+      }),
+      ownerAddress: "ELF_project_owner_local",
+      routeId: "campaigns.create",
+    });
+
+    expect(internalOperator).toMatchObject({
+      diagnostic: { code: "AUTH_AGENT_CREDENTIAL_FORBIDDEN" },
+      httpStatus: 403,
+      status: "forbidden",
+    });
+    expect(agentOwner).toMatchObject({
+      diagnostic: { code: "AUTH_AGENT_CREDENTIAL_FORBIDDEN" },
+      httpStatus: 403,
+      status: "forbidden",
+    });
+  });
+
+  it("redacts secret-like denial diagnostic details", () => {
+    const sanitized = sanitizeAuthEnforcementDetails({
+      authorization: "Bearer raw-secret-token",
+      callback: "https://storage.invalid/diagnostic?token=raw-secret-token",
+      cookie: "signed-cookie-secret",
+      jwt: "jwt.raw.secret",
+      nested: {
+        privateKey: "private-key-sample",
+        rawSignature: "raw-signature-sample",
+        safe: "route-debug",
+      },
+      sessionSecret: "session-secret-sample",
+    });
+
+    expect(sanitized).toEqual({
+      redactedFieldCount: 6,
+      redactionApplied: true,
+      safeDetails: {
+        callback: "[redacted-sensitive]",
+        nested: {
+          safe: "route-debug",
+        },
+      },
+    });
+    expectNoSensitiveFragments(sanitized);
   });
 });
