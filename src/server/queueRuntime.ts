@@ -14,6 +14,13 @@ import {
   type WorkerJobDefinition,
   type WorkerJobFamily,
 } from "./workerSchedulerRuntime";
+import {
+  createWorkerLeaseStoreFoundation,
+  type WorkerLeaseDiagnosticCode,
+  type WorkerLeaseOperationCapability,
+  type WorkerLeaseStoreFoundationStatus,
+  type WorkerLeaseStoreMode,
+} from "./workerLeaseStore";
 
 export type QueueRuntimeProfileId = BackendRuntimeProfileId;
 export type QueueRuntimeFoundationStatus = "local_ready" | "scaffolded" | "blocked";
@@ -112,6 +119,25 @@ export interface QueueRuntimeProviderAdapterSummary {
   valid: boolean;
 }
 
+export interface QueueRuntimeLeaseStoreSummary {
+  adapterId: string;
+  blockerCount: number;
+  diagnosticCodes: WorkerLeaseDiagnosticCode[];
+  disabledLiveOperationCount: number;
+  heartbeatIntervalSeconds: number;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: WorkerLeaseStoreMode;
+  operationCapabilities: WorkerLeaseOperationCapability[];
+  operationCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  status: WorkerLeaseStoreFoundationStatus;
+  storeId: string;
+  ttlSeconds: number;
+  valid: boolean;
+}
+
 export interface QueuePlan {
   deadLetterPolicy: string;
   degradedOutcome: QueueDegradedOutcome;
@@ -134,6 +160,14 @@ export interface QueueRuntimeReadinessProjection {
   blockerCount: number;
   diagnosticCodes: QueueRuntimeDiagnosticCode[];
   dryRunEnqueueEnabled: boolean;
+  leaseStoreBlockerCount: number;
+  leaseStoreDiagnosticCodes: WorkerLeaseDiagnosticCode[];
+  leaseStoreId: string;
+  leaseStoreLiveQueuePublishingEnabled: false;
+  leaseStoreLiveWorkerExecutionEnabled: false;
+  leaseStoreMode: WorkerLeaseStoreMode;
+  leaseStoreRequiredConfigKeys: string[];
+  leaseStoreStatus: WorkerLeaseStoreFoundationStatus;
   liveQueuePublishingEnabled: false;
   providerAdapterBlockerCount: number;
   providerAdapterDiagnosticCodes: QueueProviderDiagnosticCode[];
@@ -153,6 +187,7 @@ export interface QueueRuntimeFoundationSummary {
   diagnosticCodes: QueueRuntimeDiagnosticCode[];
   diagnostics: QueueRuntimeDiagnostic[];
   id: "campaign-os-queue-runtime-foundation";
+  leaseStore: QueueRuntimeLeaseStoreSummary;
   noLiveFlags: QueueRuntimeNoLiveFlags;
   preconditions: QueueRuntimeProductionPrecondition[];
   productionReady: false;
@@ -506,6 +541,12 @@ export const createQueueRuntimeFoundation = (
     providerId: options.providerId,
   });
   const providerAdapter = createProviderAdapterSummary(providerAdapterFoundation);
+  const leaseStore = createLeaseStoreSummary(
+    createWorkerLeaseStoreFoundation({
+      env,
+      profileId: profileResolution.profileId,
+    }),
+  );
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...registryDiagnostics,
@@ -513,13 +554,14 @@ export const createQueueRuntimeFoundation = (
   ];
   const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
   const status = resolveStatus(profileResolution.profileId, blockerCount);
-  const readiness = createReadinessProjection(diagnostics, blockerCount, providerAdapter);
+  const readiness = createReadinessProjection(diagnostics, blockerCount, providerAdapter, leaseStore);
 
   return {
     blockerCount,
     diagnosticCodes: diagnostics.map((item) => item.code),
     diagnostics,
     id: "campaign-os-queue-runtime-foundation",
+    leaseStore,
     noLiveFlags: queueRuntimeNoLiveFlags,
     preconditions: queueRuntimeProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
@@ -664,10 +706,19 @@ const createReadinessProjection = (
   diagnostics: readonly QueueRuntimeDiagnostic[],
   blockerCount: number,
   providerAdapter: QueueRuntimeProviderAdapterSummary,
+  leaseStore: QueueRuntimeLeaseStoreSummary,
 ): QueueRuntimeReadinessProjection => ({
   blockerCount,
   diagnosticCodes: diagnostics.map((item) => item.code),
   dryRunEnqueueEnabled: blockerCount === 0,
+  leaseStoreBlockerCount: leaseStore.blockerCount,
+  leaseStoreDiagnosticCodes: leaseStore.diagnosticCodes,
+  leaseStoreId: leaseStore.storeId,
+  leaseStoreLiveQueuePublishingEnabled: false,
+  leaseStoreLiveWorkerExecutionEnabled: false,
+  leaseStoreMode: leaseStore.mode,
+  leaseStoreRequiredConfigKeys: leaseStore.requiredConfigKeys,
+  leaseStoreStatus: leaseStore.status,
   liveQueuePublishingEnabled: false,
   providerAdapterBlockerCount: providerAdapter.blockerCount,
   providerAdapterDiagnosticCodes: providerAdapter.diagnosticCodes,
@@ -680,6 +731,27 @@ const createReadinessProjection = (
   queueCategoryCount: new Set(queueRuntimePlans.map((item) => item.queueCategory)).size,
   queueIds: [...new Set(queueRuntimePlans.map((item) => item.queueId))],
   queuePlanCount: queueRuntimePlans.length,
+});
+
+const createLeaseStoreSummary = (
+  leaseStore: ReturnType<typeof createWorkerLeaseStoreFoundation>,
+): QueueRuntimeLeaseStoreSummary => ({
+  adapterId: leaseStore.adapterId,
+  blockerCount: leaseStore.blockerCount,
+  diagnosticCodes: leaseStore.diagnosticCodes,
+  disabledLiveOperationCount: leaseStore.readiness.disabledLiveOperationCount,
+  heartbeatIntervalSeconds: leaseStore.readiness.heartbeatIntervalSeconds,
+  liveQueuePublishingEnabled: false,
+  liveWorkerExecutionEnabled: false,
+  mode: leaseStore.mode,
+  operationCapabilities: leaseStore.operationCapabilities.map((item) => ({ ...item })),
+  operationCount: leaseStore.readiness.operationCount,
+  productionReady: false,
+  requiredConfigKeys: leaseStore.readiness.requiredConfigKeys,
+  status: leaseStore.status,
+  storeId: leaseStore.storeId,
+  ttlSeconds: leaseStore.readiness.ttlSeconds,
+  valid: leaseStore.valid,
 });
 
 const createProviderAdapterSummary = (

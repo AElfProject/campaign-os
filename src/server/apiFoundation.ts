@@ -702,7 +702,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["provider_adapters", "worker_queue"],
     label: "Verification",
-    notes: "Local seeded verification exists; provider/indexer handoff, provider evidence, queue runtime, queue provider adapter activation, scheduler runtime, retry/backoff, idempotency store, worker lease, and dead-letter handling are deferred with pending/manual_review degradation.",
+    notes: "Local seeded verification exists; provider/indexer handoff, provider evidence, queue runtime, queue provider adapter activation, scheduler runtime, retry/backoff, idempotency store, worker lease store metadata, and dead-letter handling are deferred with pending/manual_review degradation.",
     routeIds: ["tasks.verify"],
     serviceId: "verification-service",
     state: "implemented_local",
@@ -792,7 +792,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["scheduler", "worker_queue"],
     label: "Runtime Observability",
-    notes: "Local health, contracts, route coverage, and topology reporting exist; contract sync handoff depends on deferred scheduler runtime, queue runtime, queue provider adapter readiness, idempotency store, dead-letter queue, and observability exporter.",
+    notes: "Local health, contracts, route coverage, topology reporting, and worker lease readiness metadata exist; contract sync handoff depends on deferred scheduler runtime, queue runtime, queue provider adapter readiness, worker lease store activation, idempotency store, dead-letter queue, and observability exporter.",
     routeIds: ["runtime.health", "runtime.contracts"],
     serviceId: "runtime-observability",
     state: "implemented_local",

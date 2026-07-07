@@ -9,6 +9,10 @@ import {
   redactQueueRuntimeValue,
 } from "./queueRuntime";
 import {
+  workerLeaseOperationCapabilities,
+  workerLeaseStoreProductionPreconditions,
+} from "./workerLeaseStore";
+import {
   workerJobCatalog,
   workerSchedulerPolicies,
 } from "./workerSchedulerRuntime";
@@ -56,6 +60,13 @@ describe("queue runtime foundation", () => {
     expect(foundation.diagnosticCodes).toEqual([]);
     expect(foundation.readiness).toMatchObject({
       dryRunEnqueueEnabled: true,
+      leaseStoreBlockerCount: 0,
+      leaseStoreDiagnosticCodes: [],
+      leaseStoreId: "local-dry-run",
+      leaseStoreLiveQueuePublishingEnabled: false,
+      leaseStoreLiveWorkerExecutionEnabled: false,
+      leaseStoreMode: "dry_run",
+      leaseStoreStatus: "local_ready",
       liveQueuePublishingEnabled: false,
       productionReady: false,
       queuePlanCount: 9,
@@ -137,6 +148,53 @@ describe("queue runtime foundation", () => {
       "QUEUE_PROVIDER_OBSERVABILITY_MISSING",
     ]);
     expect(foundation.readiness.providerAdapterBlockerCount).toBe(foundation.providerAdapter.blockerCount);
+    expect(foundation.readiness.leaseStoreBlockerCount).toBe(foundation.leaseStore.blockerCount);
+  });
+
+  it("surfaces worker lease posture without enabling live queue, worker, or lease operations", () => {
+    const foundation = createQueueRuntimeFoundation({
+      profileId: "staging-scaffold",
+      providerId: "metadata-only",
+    });
+
+    expect(foundation.leaseStore).toMatchObject({
+      adapterId: "local-dry-run-worker-lease-store-adapter",
+      blockerCount: 0,
+      diagnosticCodes: [],
+      disabledLiveOperationCount: workerLeaseOperationCapabilities.length,
+      heartbeatIntervalSeconds: 30,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      mode: "metadata_only",
+      operationCount: workerLeaseOperationCapabilities.length,
+      productionReady: false,
+      requiredConfigKeys: expect.arrayContaining([
+        "CAMPAIGN_OS_WORKER_LEASE_STORE",
+        "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS",
+        "CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY",
+      ]),
+      status: "scaffolded",
+      storeId: "local-dry-run",
+      ttlSeconds: 120,
+      valid: true,
+    });
+    expect(foundation.leaseStore.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(
+      true,
+    );
+    expect(foundation.leaseStore.requiredConfigKeys).toHaveLength(
+      new Set(workerLeaseStoreProductionPreconditions.flatMap((item) => item.requiredConfigKeys)).size,
+    );
+    expect(foundation.queuePlans.every((plan) => plan.livePublishingEnabled === false)).toBe(true);
+    expect(foundation.providerAdapter.liveQueuePublishingEnabled).toBe(false);
+    expect(foundation.providerAdapter.liveWorkerExecutionEnabled).toBe(false);
+    expect(foundation.readiness.leaseStoreRequiredConfigKeys).toEqual(
+      foundation.leaseStore.requiredConfigKeys,
+    );
+    expect(foundation.readiness.leaseStoreLiveQueuePublishingEnabled).toBe(false);
+    expect(foundation.readiness.leaseStoreLiveWorkerExecutionEnabled).toBe(false);
+    expect(foundation.noLiveFlags.liveQueuePublishingEnabled).toBe(false);
+    expect(foundation.noLiveFlags.liveWorkerExecutionEnabled).toBe(false);
   });
 
   it("accepts a safe known dry-run enqueue request without live publishing", () => {
@@ -241,6 +299,7 @@ describe("queue runtime foundation", () => {
       bearerToken: "Bearer worker-token-456",
       idempotencyKey: "idempotency:ELF_raw_wallet",
       jobPayload: "{\"walletAddress\":\"ELF_raw_wallet\",\"taskId\":\"task_raw\"}",
+      leaseKeyReference: "lease-locks/raw/claim.json",
       leaseToken: "lease-token-000",
       nested: {
         objectKey: "tenant/raw/export.csv",
@@ -266,6 +325,7 @@ describe("queue runtime foundation", () => {
     expect(serialized).not.toContain("worker-token-456");
     expect(serialized).not.toContain("ELF_raw_wallet");
     expect(serialized).not.toContain("task_raw");
+    expect(serialized).not.toContain("lease-locks/raw/claim.json");
     expect(serialized).not.toContain("lease-token-000");
     expect(serialized).not.toContain("tenant/raw/export.csv");
     expect(serialized).not.toContain("ELF_provider_payload");

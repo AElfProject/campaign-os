@@ -7,6 +7,11 @@ import {
   queueProviderOperationCapabilities,
   redactQueueProviderAdapterValue,
 } from "./queueProviderAdapter";
+import {
+  createWorkerLeaseStoreFoundation,
+  workerLeaseOperationCapabilities,
+  workerLeaseStoreProductionPreconditions,
+} from "./workerLeaseStore";
 
 describe("queue provider adapter foundation", () => {
   it("declares a stable foundation id and supported profiles", () => {
@@ -128,6 +133,74 @@ describe("queue provider adapter foundation", () => {
     expect(foundation.productionReady).toBe(false);
     expect(foundation.noLiveFlags.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.operationCapabilities.every((item) => item.liveEnabled === false)).toBe(true);
+  });
+
+  it("keeps queue provider readiness separate from worker lease store readiness", () => {
+    const env = {
+      CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:review",
+      CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
+      CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:review",
+      CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:review",
+      CAMPAIGN_OS_QUEUE_PROVIDER: "production-queue-provider",
+      CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-provider",
+      CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "queue-endpoint-ref:provider",
+      CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:review",
+      CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:worker",
+      CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
+    };
+    const provider = createQueueProviderAdapterFoundation({
+      env,
+      profileId: "production-required",
+    });
+    const leaseStore = createWorkerLeaseStoreFoundation({
+      env,
+      profileId: "production-required",
+    });
+
+    expect(provider.valid).toBe(true);
+    expect(provider.status).toBe("scaffolded");
+    expect(provider.readiness.blockerCount).toBe(0);
+    expect(provider.readiness.requiredConfigKeys).toContain("CAMPAIGN_OS_WORKER_LEASE_STORE_URL");
+    expect(provider.readiness.requiredConfigKeys).not.toEqual(leaseStore.readiness.requiredConfigKeys);
+    expect(provider.operationCapabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ liveEnabled: false, operation: "publish" }),
+        expect.objectContaining({ liveEnabled: false, operation: "lease" }),
+      ]),
+    );
+
+    expect(leaseStore.valid).toBe(false);
+    expect(leaseStore.status).toBe("blocked");
+    expect(leaseStore.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "WORKER_LEASE_STORE_MISSING",
+        "WORKER_LEASE_CREDENTIALS_MISSING",
+        "WORKER_LEASE_CLOCK_MISSING",
+        "WORKER_LEASE_HEARTBEAT_POLICY_MISSING",
+        "WORKER_LEASE_TTL_POLICY_MISSING",
+        "WORKER_LEASE_RELEASE_POLICY_MISSING",
+        "WORKER_LEASE_STALE_RECOVERY_MISSING",
+        "WORKER_LEASE_FENCING_POLICY_MISSING",
+      ]),
+    );
+    expect(leaseStore.readiness.requiredConfigKeys).toEqual(
+      expect.arrayContaining(workerLeaseStoreProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
+    );
+    expect(leaseStore.operationCapabilities.map((item) => item.operation)).toEqual([
+      "claim",
+      "heartbeat",
+      "release",
+      "expire",
+      "recover_stale",
+      "reject_conflict",
+      "fence",
+      "metrics",
+    ]);
+    expect(workerLeaseOperationCapabilities.every((item) => item.liveEnabled === false)).toBe(true);
+    expect(provider.readiness.liveQueuePublishingEnabled).toBe(false);
+    expect(provider.readiness.liveWorkerExecutionEnabled).toBe(false);
+    expect(leaseStore.readiness.liveQueuePublishingEnabled).toBe(false);
+    expect(leaseStore.readiness.liveWorkerExecutionEnabled).toBe(false);
   });
 
   it("fails closed for unsupported or unsafe profiles and provider ids", () => {

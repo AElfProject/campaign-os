@@ -16,6 +16,10 @@ import {
   type SchedulerRuntimePreconditionArea,
 } from "./schedulerRuntime";
 import type { ApiServerRuntimeContract } from "./serverRuntime";
+import {
+  workerLeaseStoreProductionPreconditions,
+  type WorkerLeasePreconditionArea,
+} from "./workerLeaseStore";
 import { workerSchedulerProductionPreconditions } from "./workerSchedulerRuntime";
 
 export type RuntimeActivationConfigCategory =
@@ -207,6 +211,31 @@ const schedulerRuntimeDependencyArea = (
   return "scheduler";
 };
 
+const workerLeaseStoreConfigCategory = (
+  area: WorkerLeasePreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (
+    area === "auth"
+    || area === "idempotency"
+    || area === "lease"
+    || area === "heartbeat"
+    || area === "expiry"
+    || area === "fencing"
+  ) {
+    return "worker";
+  }
+
+  if (area === "clock") {
+    return "scheduler";
+  }
+
+  if (area === "observability") {
+    return "observability";
+  }
+
+  return "worker";
+};
+
 export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
   configKey("CAMPAIGN_OS_API_HOST", "server", "supported", "local-review"),
   configKey("CAMPAIGN_OS_API_PORT", "server", "supported", "local-review"),
@@ -238,6 +267,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
           : precondition.area,
         precondition.status,
         key === "CAMPAIGN_OS_DEGRADATION_POLICY" ? "future-production" : "production-required",
+      ),
+    ),
+  ),
+  ...workerLeaseStoreProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        workerLeaseStoreConfigCategory(precondition.area),
+        precondition.status,
+        "production-required",
       ),
     ),
   ),
@@ -363,6 +402,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     attachPoint: "src/server/workerSchedulerRuntime.ts",
     blockedBy: [...precondition.requiredConfigKeys],
     id: precondition.id,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
+  ...workerLeaseStoreProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: workerLeaseStoreConfigCategory(precondition.area) as ProductionRuntimeDependencyArea,
+    attachPoint: "src/server/workerLeaseStore.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: `worker-lease-store-${precondition.id}`,
     requiredBeforeProduction: true,
     status: precondition.status,
   })),

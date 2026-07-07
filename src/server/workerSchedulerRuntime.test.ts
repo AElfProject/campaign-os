@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  workerLeaseOperationCapabilities,
+  workerLeaseStoreNoLiveFlags,
+  workerLeaseStoreProductionPreconditions,
+} from "./workerLeaseStore";
+import {
   SUPPORTED_WORKER_SCHEDULER_PROFILES,
   createWorkerSchedulerFoundation,
   redactWorkerSchedulerValue,
@@ -85,6 +90,13 @@ describe("worker scheduler runtime foundation", () => {
     expect(foundation.noLiveFlags).toEqual(workerSchedulerNoLiveFlags);
     expect(foundation.readiness).toMatchObject({
       blockerCount: 0,
+      leaseStoreBlockerCount: 0,
+      leaseStoreDiagnosticCodes: [],
+      leaseStoreId: "local-dry-run",
+      leaseStoreLiveQueuePublishingEnabled: false,
+      leaseStoreLiveWorkerExecutionEnabled: false,
+      leaseStoreMode: "dry_run",
+      leaseStoreStatus: "local_ready",
       jobCatalogCount: 9,
       jobFamilyCount: 9,
       localReviewReady: true,
@@ -92,6 +104,47 @@ describe("worker scheduler runtime foundation", () => {
       schedulePolicyCount: 9,
     });
     expect(foundation.diagnosticCodes).toEqual([]);
+  });
+
+  it("projects worker lease store readiness without enabling live scheduler or worker execution", () => {
+    const foundation = createWorkerSchedulerFoundation({ profileId: "local-review" });
+
+    expect(foundation.leaseStore).toMatchObject({
+      adapterId: "local-dry-run-worker-lease-store-adapter",
+      blockerCount: 0,
+      diagnosticCodes: [],
+      disabledLiveOperationCount: workerLeaseOperationCapabilities.length,
+      heartbeatIntervalSeconds: 30,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      mode: "dry_run",
+      operationCount: workerLeaseOperationCapabilities.length,
+      productionReady: false,
+      requiredConfigKeys: expect.arrayContaining([
+        "CAMPAIGN_OS_WORKER_LEASE_STORE",
+        "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+        "CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS",
+        "CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS",
+      ]),
+      status: "local_ready",
+      storeId: "local-dry-run",
+      ttlSeconds: 120,
+      valid: true,
+    });
+    expect(foundation.leaseStore.noLiveFlags).toEqual(workerLeaseStoreNoLiveFlags);
+    expect(foundation.leaseStore.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(
+      true,
+    );
+    expect(foundation.leaseStore.requiredConfigKeys).toHaveLength(
+      new Set(workerLeaseStoreProductionPreconditions.flatMap((item) => item.requiredConfigKeys)).size,
+    );
+    expect(foundation.readiness.leaseStoreRequiredConfigKeys).toEqual(
+      foundation.leaseStore.requiredConfigKeys,
+    );
+    expect(foundation.readiness.leaseStoreLiveQueuePublishingEnabled).toBe(false);
+    expect(foundation.readiness.leaseStoreLiveWorkerExecutionEnabled).toBe(false);
+    expect(foundation.readiness.liveSchedulerExecutionEnabled).toBe(false);
+    expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
   });
 
   it("keeps every worker, scheduler, queue, cron, and live integration flag disabled", () => {

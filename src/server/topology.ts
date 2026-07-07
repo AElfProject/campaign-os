@@ -1,6 +1,7 @@
 import type { ApiRuntimeCapabilityId } from "./contracts";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
+import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 
 export type BackendTopologyReadiness = "ready" | "local_only" | "review_required" | "deferred" | "disabled";
 export type BackendDomainArea =
@@ -777,9 +778,12 @@ export const backendDeploymentUnits = [
     entrypoint: "src/server/queueRuntime.ts",
     id: "worker-runtime",
     name: "Worker Runtime",
-    productionRequiredBlockerIds: queueProviderAdapterProductionPreconditions.map((precondition) =>
-      topologySafeQueueProviderBlockerId(precondition.id)
-    ),
+    productionRequiredBlockerIds: [
+      ...queueProviderAdapterProductionPreconditions.map((precondition) =>
+        topologySafeQueueProviderBlockerId(precondition.id)
+      ),
+      ...workerLeaseStoreProductionPreconditions.map((precondition) => `worker-lease-store-${precondition.id}`),
+    ],
     productionTarget: "worker_service",
     runtimeProfileIds: ["staging-ready", "production-required"],
     serviceIds: ["verification-service", "risk-scoring-service", "ai-ops-service"],

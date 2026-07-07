@@ -9,6 +9,7 @@ const productionAreas = [
   "auth-session",
   "provider-adapters",
   "worker-queue",
+  "worker-lease",
   "scheduler",
   "contract-writer",
   "object-storage-export",
@@ -38,6 +39,20 @@ const schedulerSecretFragments = [
   "scheduler-hook-secret",
   "ELF_scheduler_wallet",
   "scheduler_raw_task",
+];
+
+const workerLeaseRequiredConfigKeys = [
+  "CAMPAIGN_OS_WORKER_LEASE_STORE",
+  "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+  "CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS",
+  "CAMPAIGN_OS_CLOCK_SOURCE",
+  "CAMPAIGN_OS_WORKER_LEASE_HEARTBEAT_SECONDS",
+  "CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS",
+  "CAMPAIGN_OS_WORKER_LEASE_RELEASE_POLICY",
+  "CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY",
+  "CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY",
+  "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+  "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
 ];
 
 const expectNoQueueSecretLeak = (value: unknown) => {
@@ -180,6 +195,7 @@ describe("backend service readiness report", () => {
       ]),
       deferredDependencyIds: expect.arrayContaining([
         "verification-worker",
+        "worker-lease-store",
         "scheduler",
         "provider-adapters",
         "object-storage",
@@ -347,6 +363,41 @@ describe("backend service readiness report", () => {
       status: "local_ready",
       valid: true,
     });
+    expect(report.workerLeaseStoreFoundation).toMatchObject({
+      adapterId: "local-dry-run-worker-lease-store-adapter",
+      blockerCount: 0,
+      diagnosticCodes: [],
+      disabledLiveOperationCount: 8,
+      heartbeatIntervalSeconds: 30,
+      id: "campaign-os-worker-lease-store-foundation",
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      mode: "dry_run",
+      noLiveFlags: {
+        liveAiCallsEnabled: false,
+        liveAnalyticsIngestionEnabled: false,
+        liveContractCallsEnabled: false,
+        liveCronExecutionEnabled: false,
+        liveObjectStorageEnabled: false,
+        liveProviderCallsEnabled: false,
+        liveQueuePublishingEnabled: false,
+        liveRewardDistributionEnabled: false,
+        liveSchedulerExecutionEnabled: false,
+        liveSocialCallsEnabled: false,
+        liveWorkerExecutionEnabled: false,
+      },
+      operationCount: 8,
+      productionReady: false,
+      profileId: "local-review",
+      requiredConfigKeys: expect.arrayContaining(workerLeaseRequiredConfigKeys),
+      status: "local_ready",
+      storeId: "local-dry-run",
+      ttlSeconds: 120,
+      valid: true,
+    });
+    expect(report.workerLeaseStoreFoundation.disabledLiveOperationCount).toBe(
+      report.workerLeaseStoreFoundation.operationCount,
+    );
     expect(report.schedulerRuntimeFoundation).toMatchObject({
       blockerCount: 0,
       diagnosticCodes: [],
@@ -592,6 +643,25 @@ describe("backend service readiness report", () => {
       ]),
       currentStatus: "local-only",
     });
+    expect(report.attachMap.find((item) => item.area === "worker-lease")).toMatchObject({
+      attachPoint: "src/server/workerLeaseStore.ts",
+      blockedBy: expect.arrayContaining([
+        "lease store selection",
+        "lease store endpoint",
+        "lease credentials",
+        "clock source",
+        "heartbeat policy",
+        "TTL policy",
+        "release policy",
+        "stale recovery policy",
+        "fencing policy",
+        "idempotency coordination",
+        "observability exporter",
+      ]),
+      currentStatus: "deferred",
+      note: expect.stringContaining("no live lease claim"),
+      requiredBeforeProduction: true,
+    });
   });
 
   it("keeps production persistence and migration runner inactive in local review", () => {
@@ -817,6 +887,7 @@ describe("backend service readiness report", () => {
           CAMPAIGN_OS_DATABASE_URL: "postgres://db.invalid/campaign-os",
           CAMPAIGN_OS_DEAD_LETTER_QUEUE: "https://queue.invalid/dead-letter?token=queue-secret",
           CAMPAIGN_OS_DEGRADATION_POLICY: "fail-closed",
+          CAMPAIGN_OS_CLOCK_SOURCE: "system-monotonic",
           CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "https://idempotency.invalid/store",
           CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "https://observability.invalid/hook",
           CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY: "operator-review-required",
@@ -827,7 +898,14 @@ describe("backend service readiness report", () => {
           CAMPAIGN_OS_SCHEDULER_ENDPOINT: "https://scheduler.invalid/hook",
           CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL: "https://lease.invalid/store",
           CAMPAIGN_OS_SCHEDULER_PROVIDER: "metadata-only",
+          CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS: "worker-lease-credentials-ready",
+          CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY: "token-per-job",
+          CAMPAIGN_OS_WORKER_LEASE_HEARTBEAT_SECONDS: "45",
+          CAMPAIGN_OS_WORKER_LEASE_RELEASE_POLICY: "release-on-terminal-state",
+          CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY: "manual-review",
+          CAMPAIGN_OS_WORKER_LEASE_STORE: "production-lease-store",
           CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "https://lease.invalid/worker",
+          CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS: "180",
           CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
           CAMPAIGN_OS_WORKER_RETRY_POLICY: "deterministic-backoff",
         },
@@ -1261,6 +1339,22 @@ describe("backend service readiness report", () => {
       status: "scaffolded",
       valid: true,
     });
+    expect(report.workerLeaseStoreFoundation).toMatchObject({
+      adapterId: "production-lease-store-worker-lease-store-adapter",
+      blockerCount: 0,
+      diagnosticCodes: [],
+      heartbeatIntervalSeconds: 45,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      mode: "production_required",
+      productionReady: false,
+      profileId: "production-required",
+      requiredConfigKeys: expect.arrayContaining(workerLeaseRequiredConfigKeys),
+      status: "scaffolded",
+      storeId: "production-lease-store",
+      ttlSeconds: 180,
+      valid: true,
+    });
     expect(report.schedulerRuntimeFoundation).toMatchObject({
       blockerCount: 0,
       diagnosticCodes: [],
@@ -1329,6 +1423,7 @@ describe("backend service readiness report", () => {
         expect.objectContaining({ field: "workerSchedulerFoundation" }),
         expect.objectContaining({ field: "queueRuntimeFoundation" }),
         expect.objectContaining({ field: "schedulerRuntimeFoundation" }),
+        expect.objectContaining({ field: "workerLeaseStoreFoundation" }),
       ]),
     );
     expect(report.backendRuntimeBootstrap).toMatchObject({

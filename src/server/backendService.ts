@@ -70,6 +70,10 @@ import {
   type WorkerSchedulerFoundationSummary,
 } from "./workerSchedulerRuntime";
 import {
+  createWorkerLeaseStoreFoundation,
+  type WorkerLeaseStoreFoundationSummary,
+} from "./workerLeaseStore";
+import {
   createQueueRuntimeFoundation,
   type QueueCategory,
   type QueueRuntimeFoundationSummary,
@@ -102,6 +106,7 @@ export type BackendAttachPointArea =
   | "auth-session"
   | "provider-adapters"
   | "worker-queue"
+  | "worker-lease"
   | "scheduler"
   | "contract-writer"
   | "object-storage-export"
@@ -122,6 +127,7 @@ export type BackendReadinessDiagnosticCode =
   | "SERVICE_PORTS_INVALID"
   | "QUEUE_RUNTIME_READINESS_BLOCKED"
   | "SCHEDULER_RUNTIME_READINESS_BLOCKED"
+  | "WORKER_LEASE_STORE_READINESS_BLOCKED"
   | "WORKER_SCHEDULER_READINESS_BLOCKED"
   | "ROUTE_COUNT_MISMATCH"
   | "ATTACH_POINT_MISSING";
@@ -195,6 +201,7 @@ export interface BackendServiceReadinessReport {
   persistenceFoundation: BackendPersistenceFoundationSummary;
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
   queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
+  workerLeaseStoreFoundation: BackendWorkerLeaseStoreReadinessSummary;
   persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   persistenceAdapters: PersistenceAdapterPortReport;
   profile: BackendConfigContract["profile"];
@@ -324,6 +331,29 @@ export interface BackendWorkerSchedulerReadinessSummary {
     valid: boolean;
     workerRequiredPolicyCount: number;
   };
+}
+
+export interface BackendWorkerLeaseStoreReadinessSummary {
+  adapterId: WorkerLeaseStoreFoundationSummary["adapterId"];
+  blockerCount: WorkerLeaseStoreFoundationSummary["blockerCount"];
+  diagnosticCodes: WorkerLeaseStoreFoundationSummary["diagnosticCodes"];
+  diagnostics: WorkerLeaseStoreFoundationSummary["diagnostics"];
+  disabledLiveOperationCount: WorkerLeaseStoreFoundationSummary["readiness"]["disabledLiveOperationCount"];
+  heartbeatIntervalSeconds: WorkerLeaseStoreFoundationSummary["readiness"]["heartbeatIntervalSeconds"];
+  id: WorkerLeaseStoreFoundationSummary["id"];
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: WorkerLeaseStoreFoundationSummary["mode"];
+  noLiveFlags: WorkerLeaseStoreFoundationSummary["noLiveFlags"];
+  operationCount: WorkerLeaseStoreFoundationSummary["readiness"]["operationCount"];
+  preconditions: WorkerLeaseStoreFoundationSummary["preconditions"];
+  productionReady: false;
+  profileId: WorkerLeaseStoreFoundationSummary["profileId"];
+  requiredConfigKeys: string[];
+  status: WorkerLeaseStoreFoundationSummary["status"];
+  storeId: WorkerLeaseStoreFoundationSummary["storeId"];
+  ttlSeconds: WorkerLeaseStoreFoundationSummary["readiness"]["ttlSeconds"];
+  valid: boolean;
 }
 
 export type BackendAuthEnforcementMode = "blocked" | "local_enforced" | "metadata_only";
@@ -587,6 +617,7 @@ const requiredAttachPointAreas: BackendAttachPointArea[] = [
   "auth-session",
   "provider-adapters",
   "worker-queue",
+  "worker-lease",
   "scheduler",
   "contract-writer",
   "object-storage-export",
@@ -606,6 +637,7 @@ const apiServiceBlockedDependencyIds = [
 
 const apiServiceDeferredDependencyIds = [
   "verification-worker",
+  "worker-lease-store",
   "scheduler",
   "provider-adapters",
   "object-storage",
@@ -656,6 +688,26 @@ export const backendAttachMap: BackendAttachPoint[] = [
     blockedBy: ["worker runtime mission", "queue provider selection"],
     currentStatus: "deferred",
     note: "No background processor or queue consumer runs in this scaffold.",
+    requiredBeforeProduction: true,
+  },
+  {
+    area: "worker-lease",
+    attachPoint: "src/server/workerLeaseStore.ts",
+    blockedBy: [
+      "lease store selection",
+      "lease store endpoint",
+      "lease credentials",
+      "clock source",
+      "heartbeat policy",
+      "TTL policy",
+      "release policy",
+      "stale recovery policy",
+      "fencing policy",
+      "idempotency coordination",
+      "observability exporter",
+    ],
+    currentStatus: "deferred",
+    note: "Worker lease readiness is metadata-only; no live lease claim, heartbeat, release, fencing, or recovery runs.",
     requiredBeforeProduction: true,
   },
   {
@@ -780,6 +832,7 @@ const createValidationIssues = ({
   providerIndexerFoundation,
   queueRuntimeFoundation,
   schedulerRuntimeFoundation,
+  workerLeaseStoreFoundation,
   workerSchedulerFoundation,
   persistenceRuntime,
   servicePorts,
@@ -798,6 +851,7 @@ const createValidationIssues = ({
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
   queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
   schedulerRuntimeFoundation: BackendSchedulerRuntimeReadinessSummary;
+  workerLeaseStoreFoundation: BackendWorkerLeaseStoreReadinessSummary;
   persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
   servicePorts: ApiServicePortReport;
   topology: BackendTopologyReport;
@@ -862,6 +916,14 @@ const createValidationIssues = ({
       "SCHEDULER_RUNTIME_READINESS_BLOCKED",
       "schedulerRuntimeFoundation",
       "Scheduler runtime foundation readiness validation failed.",
+    ));
+  }
+
+  if (!workerLeaseStoreFoundation.valid) {
+    issues.push(errorDiagnostic(
+      "WORKER_LEASE_STORE_READINESS_BLOCKED",
+      "workerLeaseStoreFoundation",
+      "Worker lease store readiness validation failed.",
     ));
   }
 
@@ -1450,6 +1512,42 @@ const createBackendWorkerSchedulerReadinessSummary = ({
   };
 };
 
+const createBackendWorkerLeaseStoreReadinessSummary = ({
+  env,
+  profileId,
+}: {
+  env: Record<string, string | undefined>;
+  profileId: BackendConfigContract["profileId"];
+}): BackendWorkerLeaseStoreReadinessSummary => {
+  const foundation = createWorkerLeaseStoreFoundation({
+    env,
+    profileId,
+  });
+
+  return {
+    adapterId: foundation.adapterId,
+    blockerCount: foundation.blockerCount,
+    diagnosticCodes: foundation.diagnosticCodes,
+    diagnostics: foundation.diagnostics,
+    disabledLiveOperationCount: foundation.readiness.disabledLiveOperationCount,
+    heartbeatIntervalSeconds: foundation.readiness.heartbeatIntervalSeconds,
+    id: foundation.id,
+    liveQueuePublishingEnabled: foundation.readiness.liveQueuePublishingEnabled,
+    liveWorkerExecutionEnabled: foundation.readiness.liveWorkerExecutionEnabled,
+    mode: foundation.mode,
+    noLiveFlags: foundation.noLiveFlags,
+    operationCount: foundation.readiness.operationCount,
+    preconditions: foundation.preconditions,
+    productionReady: foundation.productionReady,
+    profileId: foundation.profileId,
+    requiredConfigKeys: foundation.readiness.requiredConfigKeys,
+    status: foundation.status,
+    storeId: foundation.storeId,
+    ttlSeconds: foundation.readiness.ttlSeconds,
+    valid: foundation.valid,
+  };
+};
+
 export const createBackendDatabaseAdapterRuntimeSummary = (
   runtime: BackendDatabaseAdapterRuntimeReadinessReport,
 ): BackendDatabaseAdapterRuntimeSummary => ({
@@ -1596,6 +1694,10 @@ export const createBackendServiceReadinessReport = ({
     env,
     profileId: config.profileId,
   });
+  const workerLeaseStoreFoundation = createBackendWorkerLeaseStoreReadinessSummary({
+    env,
+    profileId: config.profileId,
+  });
   const entrypoint: BackendServiceEntrypoint = {
     foundationValidationValid: apiFoundation.validation.valid,
     id: "campaign-os-backend-service",
@@ -1624,6 +1726,7 @@ export const createBackendServiceReadinessReport = ({
     schedulerRuntimeFoundation,
     servicePorts,
     topology,
+    workerLeaseStoreFoundation,
     workerSchedulerFoundation,
   });
   const readinessWithoutBootstrap = {
@@ -1645,6 +1748,7 @@ export const createBackendServiceReadinessReport = ({
     persistenceFoundation,
     providerIndexerFoundation,
     queueRuntimeFoundation,
+    workerLeaseStoreFoundation,
     persistenceRuntime,
     persistenceAdapters,
     profile: config.profile,

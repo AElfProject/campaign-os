@@ -76,6 +76,35 @@ const expectedQueueProviderAdapter = {
   valid: true,
 };
 
+const expectedWorkerLeaseStoreFoundation = {
+  adapterId: "local-dry-run-worker-lease-store-adapter",
+  blockerCount: 0,
+  diagnosticCodes: [],
+  disabledLiveOperationCount: 8,
+  id: "campaign-os-worker-lease-store-foundation",
+  liveQueuePublishingEnabled: false,
+  liveWorkerExecutionEnabled: false,
+  mode: "dry_run",
+  operationCount: 8,
+  productionReady: false,
+  requiredConfigKeys: expect.arrayContaining([
+    "CAMPAIGN_OS_WORKER_LEASE_STORE",
+    "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+    "CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS",
+    "CAMPAIGN_OS_CLOCK_SOURCE",
+    "CAMPAIGN_OS_WORKER_LEASE_HEARTBEAT_SECONDS",
+    "CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS",
+    "CAMPAIGN_OS_WORKER_LEASE_RELEASE_POLICY",
+    "CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY",
+    "CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY",
+    "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+    "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+  ]),
+  status: "local_ready",
+  storeId: "local-dry-run",
+  valid: true,
+};
+
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
     const summary = await runBackendRuntimeSmoke({
@@ -142,6 +171,7 @@ describe("backend runtime smoke command", () => {
             valid: true,
           },
           schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
+          workerLeaseStoreFoundation: expectedWorkerLeaseStoreFoundation,
           workerSchedulerFoundation: {
             blockerCount: 0,
             jobCatalogCount: 9,
@@ -193,6 +223,7 @@ describe("backend runtime smoke command", () => {
             valid: true,
           },
           schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
+          workerLeaseStoreFoundation: expectedWorkerLeaseStoreFoundation,
           workerSchedulerFoundation: {
             blockerCount: 0,
             jobCatalogCount: 9,
@@ -259,6 +290,7 @@ describe("backend runtime smoke command", () => {
         valid: true,
       },
       schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
+      workerLeaseStoreFoundation: expectedWorkerLeaseStoreFoundation,
       workerSchedulerFoundation: {
         blockerCount: 0,
         diagnosticCodes: [],
@@ -327,6 +359,30 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutScheduler })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when worker lease store metadata is missing from smoke payloads", async () => {
+    const fetchWithoutWorkerLeaseStore: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: Record<string, unknown>;
+          };
+        };
+      };
+
+      delete payload.data?.serverRuntime?.readiness?.workerLeaseStoreFoundation;
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutWorkerLeaseStore })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });
@@ -415,6 +471,35 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveSchedulerFlag })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when worker lease smoke payload enables live worker execution", async () => {
+    const fetchWithLiveWorkerLeaseFlag: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              workerLeaseStoreFoundation?: Record<string, unknown>;
+            };
+          };
+        };
+      };
+      const workerLeaseStoreFoundation = payload.data?.serverRuntime?.readiness?.workerLeaseStoreFoundation;
+
+      if (workerLeaseStoreFoundation) {
+        workerLeaseStoreFoundation.liveWorkerExecutionEnabled = true;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveWorkerLeaseFlag })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });

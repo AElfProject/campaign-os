@@ -36,7 +36,7 @@ describe("API foundation registry", () => {
     expect(routeIds).toEqual(apiRuntimeRoutes.map((route) => route.id));
     expect(new Set(routeIds).size).toBe(apiRuntimeRoutes.length);
     expect(routeIds).not.toEqual(
-      expect.arrayContaining(["workers.list", "schedules.list", "worker.queue.publish"]),
+      expect.arrayContaining(["workers.list", "schedules.list", "worker.queue.publish", "worker.lease.claim"]),
     );
     expect(registry.routes.map((route) => route.path)).not.toEqual(
       expect.arrayContaining(["/api/workers", "/api/schedules"]),
@@ -147,6 +147,7 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("verification")?.notes).toContain("provider/indexer handoff");
     expect(surfaceById.get("verification")?.notes).toContain("queue runtime");
     expect(surfaceById.get("verification")?.notes).toContain("queue provider adapter activation");
+    expect(surfaceById.get("verification")?.notes).toContain("worker lease store metadata");
     expect(surfaceById.get("verification")?.notes).toContain("dead-letter handling");
     expect(surfaceById.get("task-template")?.notes).toContain("disable_provider_task_templates");
     expect(surfaceById.get("eligibility")).toMatchObject({
@@ -184,7 +185,10 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("runtime-observability")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
       notes: expect.stringContaining("contract sync handoff"),
+      routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
     });
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("worker lease readiness metadata");
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("worker lease store activation");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("queue provider adapter readiness");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("dead-letter queue");
     expect(surfaceById.get("service-registry")?.notes).toContain("provider registry");
@@ -205,6 +209,13 @@ describe("API foundation registry", () => {
         expect(capabilityIds.has(capabilityId)).toBe(true);
       }
     }
+    expect(capabilityIds.has("worker_lease" as never)).toBe(false);
+    expect(createApiFoundationRegistry().routes.map((route) => route.routeId)).toEqual(
+      expect.arrayContaining(["runtime.health", "runtime.contracts"]),
+    );
+    expect(createApiFoundationRegistry().routes.map((route) => route.routeId)).not.toEqual(
+      expect.arrayContaining(["worker.lease.claim"]),
+    );
   });
 
   it("fails closed for invalid foundation references", () => {
