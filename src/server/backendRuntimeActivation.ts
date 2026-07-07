@@ -4,6 +4,7 @@ import {
   type BackendRuntimeProfileId,
 } from "./backendProfiles";
 import type { ApiServerRuntimeContract } from "./serverRuntime";
+import { workerSchedulerProductionPreconditions } from "./workerSchedulerRuntime";
 
 export type RuntimeActivationConfigCategory =
   | "server"
@@ -128,15 +129,46 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
   configKey("CAMPAIGN_OS_DATABASE_URL", "database", "blocked", "production-required"),
   configKey("CAMPAIGN_OS_AUTH_SECRET", "auth", "blocked", "production-required"),
   configKey("CAMPAIGN_OS_PROVIDER_REGISTRY_URL", "provider", "deferred", "production-required"),
-  configKey("CAMPAIGN_OS_WORKER_QUEUE_URL", "worker", "deferred", "production-required"),
-  configKey("CAMPAIGN_OS_SCHEDULER_ENDPOINT", "scheduler", "deferred"),
+  ...workerSchedulerProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        precondition.area === "idempotency" || precondition.area === "lease"
+          ? "worker"
+          : precondition.area,
+        precondition.status,
+        key === "CAMPAIGN_OS_DEGRADATION_POLICY" ? "future-production" : "production-required",
+      ),
+    ),
+  ),
   configKey("CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT", "contract", "blocked", "production-required"),
   configKey("CAMPAIGN_OS_OBJECT_STORAGE_BUCKET", "storage", "deferred"),
-  configKey("CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL", "observability", "deferred"),
   configKey("CAMPAIGN_OS_ANALYTICS_WAREHOUSE_URL", "analytics", "deferred"),
   configKey("CAMPAIGN_OS_REWARD_CUSTODY_ACCOUNT", "reward", "blocked"),
   configKey("CAMPAIGN_OS_REWARD_DISTRIBUTION_QUEUE", "reward", "blocked"),
 ];
+
+const uniqueConfigKeys = new Map<string, RuntimeActivationConfigKey>();
+
+for (const activationConfigKey of runtimeActivationConfigKeys) {
+  const existingConfigKey = uniqueConfigKeys.get(activationConfigKey.key);
+
+  uniqueConfigKeys.set(activationConfigKey.key, {
+    ...activationConfigKey,
+    required: activationConfigKey.required || existingConfigKey?.required === true,
+    requiredFor:
+      activationConfigKey.requiredFor === "production-required" ||
+      existingConfigKey?.requiredFor === "production-required"
+        ? "production-required"
+        : activationConfigKey.requiredFor,
+    status:
+      activationConfigKey.status === "blocked" || existingConfigKey?.status === "blocked"
+        ? "blocked"
+        : activationConfigKey.status,
+  });
+}
+
+export const runtimeActivationEnvironmentKeys = [...uniqueConfigKeys.values()];
 
 export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlocker[] = [
   {
@@ -195,22 +227,17 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: "deferred",
   },
-  {
-    area: "worker",
-    attachPoint: "src/server/backendService.ts",
-    blockedBy: ["queue provider selection", "worker runtime mission"],
-    id: "verification-worker",
+  ...workerSchedulerProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area:
+      precondition.area === "idempotency" || precondition.area === "lease"
+        ? "worker"
+        : precondition.area,
+    attachPoint: "src/server/workerSchedulerRuntime.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: precondition.id,
     requiredBeforeProduction: true,
-    status: "deferred",
-  },
-  {
-    area: "scheduler",
-    attachPoint: "src/server/backendService.ts",
-    blockedBy: ["scheduler runtime", "retry and backoff policy"],
-    id: "scheduler",
-    requiredBeforeProduction: true,
-    status: "deferred",
-  },
+    status: precondition.status,
+  })),
   {
     area: "contract",
     attachPoint: "src/server/servicePorts.ts",
@@ -281,7 +308,7 @@ export const createBackendRuntimeActivationContract = ({
   } as const;
   const deploymentHandoff: BackendDeploymentHandoff = {
     contractsEndpoint: "/api/contracts",
-    environmentKeys: runtimeActivationConfigKeys.map((item) => ({ ...item })),
+    environmentKeys: runtimeActivationEnvironmentKeys.map((item) => ({ ...item })),
     healthEndpoint: "/api/health",
     requiredBeforeProduction: [...productionRuntimeDependencyBlockerIds],
     runtimeTarget: "api_service",
