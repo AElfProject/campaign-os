@@ -264,6 +264,20 @@ export interface BackendQueueProviderAdapterReadinessSummary {
   blockerCount: QueueRuntimeProviderAdapterSummary["blockerCount"];
   diagnosticCodes: QueueRuntimeProviderAdapterSummary["diagnosticCodes"];
   disabledLiveOperationCount: QueueRuntimeProviderAdapterSummary["disabledLiveOperationCount"];
+  driverActivationGateSatisfied: QueueRuntimeProviderAdapterSummary["driverActivationGateSatisfied"];
+  driverBlockerCount: QueueRuntimeProviderAdapterSummary["driverBlockerCount"];
+  driverDiagnosticCodes: QueueRuntimeProviderAdapterSummary["driverDiagnosticCodes"];
+  driverDisabledLiveOperationCount: number;
+  driverId: QueueRuntimeProviderAdapterSummary["driverId"];
+  driverLiveQueuePublishingEnabled: false;
+  driverLiveWorkerExecutionEnabled: false;
+  driverMode: QueueRuntimeProviderAdapterSummary["driverMode"];
+  driverOperationCount: QueueRuntimeProviderAdapterSummary["driverOperationCount"];
+  driverProductionReady: false;
+  driverProviderId: QueueRuntimeProviderAdapterSummary["driverProviderId"];
+  driverRequiredConfigKeys: QueueRuntimeProviderAdapterSummary["driverRequiredConfigKeys"];
+  driverStatus: QueueRuntimeProviderAdapterSummary["driverStatus"];
+  driverValid: QueueRuntimeProviderAdapterSummary["driverValid"];
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode: QueueRuntimeProviderAdapterSummary["mode"];
@@ -1527,6 +1541,22 @@ const createBackendQueueRuntimeReadinessSummary = ({
       blockerCount: foundation.providerAdapter.blockerCount,
       diagnosticCodes: foundation.providerAdapter.diagnosticCodes,
       disabledLiveOperationCount: foundation.providerAdapter.disabledLiveOperationCount,
+      driverActivationGateSatisfied: foundation.providerAdapter.driverActivationGateSatisfied,
+      driverBlockerCount: foundation.providerAdapter.driverBlockerCount,
+      driverDiagnosticCodes: foundation.providerAdapter.driverDiagnosticCodes,
+      driverDisabledLiveOperationCount: foundation.providerAdapter.driverOperationCapabilities.filter(
+        (operation) => operation.liveEnabled === false,
+      ).length,
+      driverId: foundation.providerAdapter.driverId,
+      driverLiveQueuePublishingEnabled: foundation.providerAdapter.driverLiveQueuePublishingEnabled,
+      driverLiveWorkerExecutionEnabled: foundation.providerAdapter.driverLiveWorkerExecutionEnabled,
+      driverMode: foundation.providerAdapter.driverMode,
+      driverOperationCount: foundation.providerAdapter.driverOperationCount,
+      driverProductionReady: foundation.providerAdapter.driverProductionReady,
+      driverProviderId: foundation.providerAdapter.driverProviderId,
+      driverRequiredConfigKeys: foundation.providerAdapter.driverRequiredConfigKeys,
+      driverStatus: foundation.providerAdapter.driverStatus,
+      driverValid: foundation.providerAdapter.driverValid,
       liveQueuePublishingEnabled: foundation.providerAdapter.liveQueuePublishingEnabled,
       liveWorkerExecutionEnabled: foundation.providerAdapter.liveWorkerExecutionEnabled,
       mode: foundation.providerAdapter.mode,

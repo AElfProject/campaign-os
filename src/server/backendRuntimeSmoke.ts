@@ -110,6 +110,20 @@ export interface BackendRuntimeSmokeQueueProviderAdapterSummary {
   blockerCount: number;
   diagnosticCodes: string[];
   disabledLiveOperationCount: number;
+  driverActivationGateSatisfied: boolean;
+  driverBlockerCount: number;
+  driverDiagnosticCodes: string[];
+  driverDisabledLiveOperationCount: number;
+  driverId?: string;
+  driverLiveQueuePublishingEnabled: false;
+  driverLiveWorkerExecutionEnabled: false;
+  driverMode?: string;
+  driverOperationCount: number;
+  driverProductionReady: false;
+  driverProviderId?: string;
+  driverRequiredConfigKeys: string[];
+  driverStatus?: string;
+  driverValid: boolean;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode?: string;
@@ -501,6 +515,9 @@ const summarizeQueueProviderAdapter = (
 
   const explicitNoLive =
     isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "driverProductionReady")
+    && isExplicitFalse(record, "driverLiveQueuePublishingEnabled")
+    && isExplicitFalse(record, "driverLiveWorkerExecutionEnabled")
     && isExplicitFalse(record, "liveQueuePublishingEnabled")
     && isExplicitFalse(record, "liveWorkerExecutionEnabled");
 
@@ -513,6 +530,20 @@ const summarizeQueueProviderAdapter = (
     blockerCount: getNumber(record, "blockerCount"),
     diagnosticCodes: getStringArray(record, "diagnosticCodes"),
     disabledLiveOperationCount: getNumber(record, "disabledLiveOperationCount"),
+    driverActivationGateSatisfied: getBoolean(record, "driverActivationGateSatisfied"),
+    driverBlockerCount: getNumber(record, "driverBlockerCount"),
+    driverDiagnosticCodes: getStringArray(record, "driverDiagnosticCodes"),
+    driverDisabledLiveOperationCount: getNumber(record, "driverDisabledLiveOperationCount"),
+    driverId: getString(record, "driverId"),
+    driverLiveQueuePublishingEnabled: false,
+    driverLiveWorkerExecutionEnabled: false,
+    driverMode: getString(record, "driverMode"),
+    driverOperationCount: getNumber(record, "driverOperationCount"),
+    driverProductionReady: false,
+    driverProviderId: getString(record, "driverProviderId"),
+    driverRequiredConfigKeys: getStringArray(record, "driverRequiredConfigKeys"),
+    driverStatus: getString(record, "driverStatus"),
+    driverValid: getBoolean(record, "driverValid"),
     liveQueuePublishingEnabled: false,
     liveWorkerExecutionEnabled: false,
     mode: getString(record, "mode"),
@@ -922,6 +953,22 @@ const isQueueProviderAdapterSmokeReady = (
     && summary.providerId === "local-dry-run"
     && summary.adapterId === "local-dry-run-queue-provider-adapter"
     && summary.mode === "dry_run"
+    && summary.driverProviderId === "local-fake"
+    && summary.driverId === "local-fake-queue-provider-driver"
+    && summary.driverMode === "dry_run"
+    && summary.driverStatus === "local_ready"
+    && summary.driverValid === true
+    && summary.driverActivationGateSatisfied === false
+    && summary.driverProductionReady === false
+    && summary.driverLiveQueuePublishingEnabled === false
+    && summary.driverLiveWorkerExecutionEnabled === false
+    && summary.driverOperationCount >= 8
+    && summary.driverDisabledLiveOperationCount === summary.driverOperationCount
+    && summary.driverBlockerCount === 0
+    && summary.driverDiagnosticCodes.length === 0
+    && summary.driverRequiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER")
+    && summary.driverRequiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT")
+    && summary.driverRequiredConfigKeys.includes("CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT")
     && summary.operationCount >= 8
     && summary.disabledLiveOperationCount === summary.operationCount
     && summary.requiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER")

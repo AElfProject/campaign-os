@@ -8,6 +8,7 @@ import {
   type BackendRuntimeProfileId,
 } from "./backendProfiles";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
+import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueRuntimeProductionPreconditions } from "./queueRuntime";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
@@ -226,6 +227,10 @@ const queueProviderAdapterRequiredConfigKeys = uniqueStrings(
   queueProviderAdapterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
 );
 
+const queueProviderDriverRequiredConfigKeys = uniqueStrings(
+  queueProviderDriverProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
+);
+
 const schedulerRuntimeRequiredConfigKeys = uniqueStrings(
   schedulerRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
 );
@@ -249,6 +254,7 @@ const backendProductionReadinessRequiredConfigKeys = uniqueStrings([
   ...workerIdempotencyStoreRequiredConfigKeys,
   ...queueRuntimeRequiredConfigKeys,
   ...queueProviderAdapterRequiredConfigKeys,
+  ...queueProviderDriverRequiredConfigKeys,
   ...observabilityExporterRequiredConfigKeys,
 ]);
 

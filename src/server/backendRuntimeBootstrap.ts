@@ -147,6 +147,20 @@ export interface BackendRuntimeReadinessProjection {
       blockerCount: number;
       diagnosticCodes: string[];
       disabledLiveOperationCount: number;
+      driverActivationGateSatisfied: boolean;
+      driverBlockerCount: number;
+      driverDiagnosticCodes: string[];
+      driverDisabledLiveOperationCount: number;
+      driverId: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverId"];
+      driverLiveQueuePublishingEnabled: false;
+      driverLiveWorkerExecutionEnabled: false;
+      driverMode: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverMode"];
+      driverOperationCount: number;
+      driverProductionReady: false;
+      driverProviderId: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverProviderId"];
+      driverRequiredConfigKeys: string[];
+      driverStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverStatus"];
+      driverValid: boolean;
       liveQueuePublishingEnabled: false;
       liveWorkerExecutionEnabled: false;
       mode: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["mode"];
@@ -470,6 +484,20 @@ const createReadinessProjection = (
       blockerCount: backendReadiness.queueRuntimeFoundation.providerAdapter.blockerCount,
       diagnosticCodes: backendReadiness.queueRuntimeFoundation.providerAdapter.diagnosticCodes,
       disabledLiveOperationCount: backendReadiness.queueRuntimeFoundation.providerAdapter.disabledLiveOperationCount,
+      driverActivationGateSatisfied: backendReadiness.queueRuntimeFoundation.providerAdapter.driverActivationGateSatisfied,
+      driverBlockerCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverBlockerCount,
+      driverDiagnosticCodes: backendReadiness.queueRuntimeFoundation.providerAdapter.driverDiagnosticCodes,
+      driverDisabledLiveOperationCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverDisabledLiveOperationCount,
+      driverId: backendReadiness.queueRuntimeFoundation.providerAdapter.driverId,
+      driverLiveQueuePublishingEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.driverLiveQueuePublishingEnabled,
+      driverLiveWorkerExecutionEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.driverLiveWorkerExecutionEnabled,
+      driverMode: backendReadiness.queueRuntimeFoundation.providerAdapter.driverMode,
+      driverOperationCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverOperationCount,
+      driverProductionReady: backendReadiness.queueRuntimeFoundation.providerAdapter.driverProductionReady,
+      driverProviderId: backendReadiness.queueRuntimeFoundation.providerAdapter.driverProviderId,
+      driverRequiredConfigKeys: backendReadiness.queueRuntimeFoundation.providerAdapter.driverRequiredConfigKeys,
+      driverStatus: backendReadiness.queueRuntimeFoundation.providerAdapter.driverStatus,
+      driverValid: backendReadiness.queueRuntimeFoundation.providerAdapter.driverValid,
       liveQueuePublishingEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.liveQueuePublishingEnabled,
       liveWorkerExecutionEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.liveWorkerExecutionEnabled,
       mode: backendReadiness.queueRuntimeFoundation.providerAdapter.mode,

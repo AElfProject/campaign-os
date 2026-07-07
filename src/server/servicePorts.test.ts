@@ -49,11 +49,14 @@ describe("API service ports", () => {
 
     expect(apiServicePorts.find((port) => port.id === "verification-port")).toMatchObject({
       deferredCapabilities: expect.arrayContaining(["provider_adapters", "worker_queue"]),
+      futureAttachPoints: expect.arrayContaining(["queue provider driver SDK binding"]),
+      notes: expect.stringContaining("queue provider driver SDK binding"),
       serviceId: "verification-service",
     });
     expect(apiServicePorts.find((port) => port.id === "runtime-observability-port")).toMatchObject({
       futureAttachPoints: expect.arrayContaining([
         "src/server/observabilityExporter.ts readiness foundation",
+        "src/server/queueProviderDriver.ts readiness projection",
         "metrics sink registration",
         "structured log sink",
         "trace collector",

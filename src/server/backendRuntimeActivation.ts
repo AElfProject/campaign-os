@@ -8,6 +8,10 @@ import {
   type QueueProviderPreconditionArea,
 } from "./queueProviderAdapter";
 import {
+  queueProviderDriverProductionPreconditions,
+  type QueueProviderDriverPreconditionArea,
+} from "./queueProviderDriver";
+import {
   queueRuntimeProductionPreconditions,
   type QueueRuntimePreconditionArea,
 } from "./queueRuntime";
@@ -165,6 +169,28 @@ const queueProviderAdapterConfigCategory = (
   area: QueueProviderPreconditionArea,
 ): RuntimeActivationConfigCategory => {
   if (area === "auth") {
+    return "provider";
+  }
+
+  if (area === "dead_letter" || area === "queue") {
+    return "queue";
+  }
+
+  if (area === "idempotency" || area === "lease") {
+    return "worker";
+  }
+
+  if (area === "retry") {
+    return "scheduler";
+  }
+
+  return area;
+};
+
+const queueProviderDriverConfigCategory = (
+  area: QueueProviderDriverPreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (area === "auth" || area === "driver" || area === "endpoint" || area === "runbook" || area === "activation") {
     return "provider";
   }
 
@@ -355,6 +381,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
       ),
     ),
   ),
+  ...queueProviderDriverProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        queueProviderDriverConfigCategory(precondition.area),
+        precondition.status,
+        key === "CAMPAIGN_OS_DEGRADATION_POLICY" ? "future-production" : "production-required",
+      ),
+    ),
+  ),
   ...observabilityExporterProductionPreconditions.flatMap((precondition) =>
     precondition.requiredConfigKeys.map((key) =>
       configKey(
@@ -499,6 +535,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     attachPoint: "src/server/queueProviderAdapter.ts",
     blockedBy: [...precondition.requiredConfigKeys],
     id: `queue-provider-adapter-${precondition.id}`,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
+  ...queueProviderDriverProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: queueProviderDriverConfigCategory(precondition.area) as ProductionRuntimeDependencyArea,
+    attachPoint: "src/server/queueProviderDriver.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: `queue-provider-driver-${precondition.id}`,
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
