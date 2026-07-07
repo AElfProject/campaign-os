@@ -79,9 +79,12 @@ export interface WalletProofVerificationResult {
   adapterName?: string;
   address: string;
   chainId: string;
+  diagnosticCodes: WalletProofDiagnosticCode[];
   diagnostics: WalletProofDiagnostic[];
   freshness: WalletProofFreshness;
+  liveVerifierReady: boolean;
   liveVerificationExecuted: false;
+  nonceStoreReady: boolean;
   productionReadiness: WalletProofProductionReadiness;
   proofType: WalletProofType;
   redaction: WalletProofInputRedactionSummary;
@@ -102,6 +105,7 @@ const sensitiveKeyFragments = [
   "cookie",
   "jwt",
   "mnemonic",
+  "nonce",
   "objectkey",
   "password",
   "privatekey",
@@ -208,6 +212,9 @@ const diagnostic = (
   message,
   severity,
 });
+
+const diagnosticCodes = (diagnostics: readonly WalletProofDiagnostic[]) =>
+  Array.from(new Set(diagnostics.map((item) => item.code)));
 
 const normalizeNow = (value: Date | string | undefined) =>
   value instanceof Date
@@ -481,9 +488,12 @@ export const verifyWalletProofLocally = ({
     ...(adapterName ? { adapterName } : {}),
     address: normalizedAddress,
     chainId: normalizedChainId,
+    diagnosticCodes: diagnosticCodes(diagnostics),
     diagnostics,
     freshness,
+    liveVerifierReady,
     liveVerificationExecuted: false,
+    nonceStoreReady,
     productionReadiness: {
       blockedDependencyIds,
       liveVerifierReady,

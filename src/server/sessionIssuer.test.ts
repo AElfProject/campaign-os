@@ -6,6 +6,7 @@ const issuedAt = "2026-07-07T04:00:00.000Z";
 const forbiddenFragments = [
   "bearer issuer-token",
   "jwt-secret-value",
+  "nonce-secret-value",
   "private-key-value",
   "raw-signature-value",
   "signed-cookie-value",
@@ -47,6 +48,7 @@ describe("local session issuer", () => {
       issuerMode: "local_opaque",
       issuedAt,
       jwtIssued: false,
+      liveVerifierReady: false,
       liveSigningExecuted: false,
       proofStatus: "verified",
       referenceId: "local-session-ref:sess-local-001:2026-07-07T04:00:00.000Z",
@@ -144,6 +146,7 @@ describe("local session issuer", () => {
         authorization: "Bearer issuer-token",
         jwt: "jwt-secret-value",
         nested: {
+          nonce: "nonce-secret-value",
           privateKey: "private-key-value",
           rawSignature: "raw-signature-value",
           signedCookie: "signed-cookie-value",
@@ -153,7 +156,7 @@ describe("local session issuer", () => {
     });
 
     expect(result.redaction).toMatchObject({
-      redactedFieldCount: 5,
+      redactedFieldCount: 6,
       redactionApplied: true,
     });
     expect(result.diagnosticCodes).toContain("AUTH_ISSUER_SENSITIVE_INPUT_REDACTED");

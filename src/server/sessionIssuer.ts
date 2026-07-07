@@ -48,6 +48,7 @@ export interface SessionIssuerResult {
   issuerMode: SessionIssuerMode;
   issuedAt: string;
   jwtIssued: false;
+  liveVerifierReady: boolean;
   liveSigningExecuted: false;
   productionReadiness: SessionIssuerProductionReadiness;
   proofStatus?: WalletProofVerificationResult["status"];
@@ -192,6 +193,7 @@ export const issueLocalSessionArtifact = ({
     issuerMode,
     issuedAt: issuedAtIso,
     jwtIssued: false,
+    liveVerifierReady,
     liveSigningExecuted: false,
     productionReadiness: {
       blockedDependencyIds,

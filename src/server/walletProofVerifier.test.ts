@@ -8,6 +8,7 @@ const now = "2026-07-07T04:00:00.000Z";
 const issuedAt = "2026-07-07T03:59:00.000Z";
 const forbiddenFragments = [
   "bearer secret-token",
+  "nonce-secret-value",
   "raw-signature-value",
   "private-key-value",
   "seed phrase words",
@@ -42,6 +43,7 @@ describe("local wallet proof verifier", () => {
       address: "ELF_2YVwLocalProof",
       chainId: "AELF",
       diagnostics: [],
+      diagnosticCodes: [],
       freshness: {
         ageSeconds: 60,
         expiresAt: "2026-07-07T04:04:00.000Z",
@@ -50,6 +52,8 @@ describe("local wallet proof verifier", () => {
         stale: false,
       },
       liveVerificationExecuted: false,
+      liveVerifierReady: false,
+      nonceStoreReady: false,
       proofType: "wallet_signature",
       status: "verified",
       trustLevel: "verified_local",
@@ -156,7 +160,10 @@ describe("local wallet proof verifier", () => {
     });
 
     expect(result).toMatchObject({
+      diagnosticCodes: ["AUTH_PROOF_PRODUCTION_BLOCKED"],
+      liveVerifierReady: false,
       liveVerificationExecuted: false,
+      nonceStoreReady: false,
       productionReadiness: {
         blockedDependencyIds: ["live_wallet_proof_verifier", "auth_nonce_store"],
         liveVerifierReady: false,
@@ -179,6 +186,7 @@ describe("local wallet proof verifier", () => {
       observedInput: {
         authorization: "Bearer secret-token",
         nested: {
+          nonce: "nonce-secret-value",
           privateKey: "private-key-value",
           rawSignature: "raw-signature-value",
           signedUrl: "https://storage.invalid/signed-url",
@@ -190,7 +198,7 @@ describe("local wallet proof verifier", () => {
     });
 
     expect(result.redaction).toMatchObject({
-      redactedFieldCount: 5,
+      redactedFieldCount: 6,
       redactionApplied: true,
     });
     expect(result.diagnostics.map((item) => item.code)).toContain("AUTH_PROOF_SENSITIVE_INPUT_REDACTED");
