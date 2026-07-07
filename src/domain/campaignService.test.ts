@@ -135,6 +135,9 @@ describe("Campaign OS local API service facade", () => {
       adapterName: "PortkeyDiscoverWallet",
       chainId: "AELF",
       network: "mainnet",
+      nonce: "nonce-domain-proof",
+      proofEvaluatedAt: "2026-07-07T04:00:00.000Z",
+      proofIssuedAt: "2026-07-07T03:59:00.000Z",
       signature: "local-signature-presence",
     });
     const missingSignature = service.createWalletSession({
@@ -173,6 +176,8 @@ describe("Campaign OS local API service facade", () => {
     });
     expect(verified.payload).not.toHaveProperty("accounts");
     expect(verified.payload).not.toHaveProperty("publicKey");
+    expect(JSON.stringify(verified).toLowerCase()).not.toContain("nonce-domain-proof");
+    expect(JSON.stringify(verified).toLowerCase()).not.toContain("local-signature-presence");
     expect(missingSignature).toMatchObject({
       ok: true,
       payload: {

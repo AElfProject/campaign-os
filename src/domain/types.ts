@@ -683,6 +683,40 @@ export interface NormalizedWalletSession {
   errorReason?: string;
   userAction?: LocalizedText;
   statusMessage: LocalizedText;
+  proof?: WalletSessionProofSummary;
+  issuer?: WalletSessionIssuerSummary;
+  productionReadiness?: WalletSessionProductionReadinessSummary;
+}
+
+export interface WalletSessionProofSummary {
+  diagnosticCodes: string[];
+  liveVerificationExecuted: false;
+  proofType: "wallet_signature" | "agent_context" | "address_only";
+  status: "verified" | "proof_required" | "signature_unverified" | "stale" | "blocked";
+  trustLevel: "verified_local" | "untrusted" | "internal_only" | "blocked";
+}
+
+export interface WalletSessionIssuerSummary {
+  artifactType: "local_session_reference";
+  cookieIssued: false;
+  diagnosticCodes: string[];
+  issuerMode: "local_opaque" | "production_blocked";
+  jwtIssued: false;
+  liveSigningExecuted: false;
+  referenceId: string;
+  ttlSeconds: number;
+  valid: boolean;
+}
+
+export interface WalletSessionProductionReadinessSummary {
+  blockedDependencyIds: string[];
+  liveSigningReady: boolean;
+  liveVerifierReady: boolean;
+  productionReady: false;
+  productionRequired: boolean;
+  productionSessionStoreReady: boolean;
+  secretManagerReady: boolean;
+  signingKeyReady: boolean;
 }
 
 export interface WalletOption {
