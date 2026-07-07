@@ -43,6 +43,20 @@ const expectSanitizedReadinessPayload = (payload: unknown) => {
   }
 };
 
+const projectOwnerAuthHeaders = (
+  ownerAddress: string,
+  extraHeaders: Record<string, string> = {},
+) => ({
+  "x-campaign-os-account-type": "AA",
+  "x-campaign-os-credential-boundary": "ordinary_user_wallet",
+  "x-campaign-os-proof-status": "verified",
+  "x-campaign-os-roles": "project_owner",
+  "x-campaign-os-session-id": `sess-${ownerAddress}`,
+  "x-campaign-os-wallet-address": ownerAddress,
+  "x-campaign-os-wallet-source": "PORTKEY_AA",
+  ...extraHeaders,
+});
+
 interface TestDurableCampaignServer {
   stop(): Promise<void>;
   url: string;
@@ -404,7 +418,7 @@ describe("backend scaffold HTTP smoke", () => {
                   routeId: "wallet.session.create",
                 }),
                 expect.objectContaining({
-                  enforcementStatus: "enforcement_deferred",
+                  enforcementStatus: "local_enforced",
                   requiredRoles: ["project_owner"],
                   routeId: "campaigns.create",
                 }),
@@ -558,6 +572,22 @@ describe("backend scaffold HTTP smoke", () => {
           }),
           serverRuntime: expect.objectContaining({
             readiness: expect.objectContaining({
+              authEnforcement: expect.objectContaining({
+                agentCredentialSubstitutionDisabled: true,
+                locallyEnforcedRouteIds: ["campaigns.create"],
+                mode: "local_enforced",
+                productionProofVerifierReady: false,
+                productionProjectOwnershipSourceReady: false,
+                productionSessionIssuerReady: false,
+                readOnlyRouteCompatibility: expect.objectContaining({
+                  runtimeMetadataUnauthenticated: true,
+                }),
+                remainingDeferredProductionDependencyIds: expect.arrayContaining([
+                  "live_wallet_proof_verifier",
+                  "jwt_or_session_cookie",
+                  "project_ownership_source",
+                ]),
+              }),
               backendRuntimeBootstrap: expect.objectContaining({
                 deferredDependencies: expect.arrayContaining([
                   expect.objectContaining({
@@ -633,7 +663,9 @@ describe("backend scaffold HTTP smoke", () => {
         }),
         headers: {
           "content-type": "application/json",
-          "x-campaign-os-trace-id": "trace-campaign-db-http-create",
+          ...projectOwnerAuthHeaders("smoke-owner-001", {
+            "x-campaign-os-trace-id": "trace-campaign-db-http-create",
+          }),
         },
         method: "POST",
       });
@@ -726,6 +758,108 @@ describe("backend scaffold HTTP smoke", () => {
     const server = await startTestDurableCampaignServer(join(tempDir, "campaign-drafts.json"));
 
     try {
+      const createBody = {
+        contractMode: "OFF_CHAIN_MVP",
+        defaultLocale: "en-US",
+        duration: "2026-10-01/2026-10-11",
+        endTime: "2026-10-11T23:59:59Z",
+        goal: "Durable smoke auth rejection",
+        ownerAddress: "durable-smoke-owner",
+        projectId: "durable-smoke-project",
+        rewardDescription: "Durable smoke rewards stay local-review only.",
+        startTime: "2026-10-01T00:00:00Z",
+        supportedLocales: ["en-US", "zh-CN", "zh-TW"],
+        walletPolicy: "ANY",
+      };
+      const missingAuth = await fetch(`${server.url}/api/campaigns`, {
+        body: JSON.stringify(createBody),
+        headers: {
+          "content-type": "application/json",
+          "x-campaign-os-trace-id": "trace-durable-smoke-auth-missing",
+        },
+        method: "POST",
+      });
+      const participantAuth = await fetch(`${server.url}/api/campaigns`, {
+        body: JSON.stringify(createBody),
+        headers: {
+          "content-type": "application/json",
+          ...projectOwnerAuthHeaders("durable-smoke-owner", {
+            "x-campaign-os-roles": "participant",
+            "x-campaign-os-trace-id": "trace-durable-smoke-auth-participant",
+          }),
+        },
+        method: "POST",
+      });
+      const ownerMismatch = await fetch(`${server.url}/api/campaigns`, {
+        body: JSON.stringify(createBody),
+        headers: {
+          "content-type": "application/json",
+          ...projectOwnerAuthHeaders("durable-smoke-other", {
+            "x-campaign-os-trace-id": "trace-durable-smoke-auth-owner-mismatch",
+          }),
+        },
+        method: "POST",
+      });
+      const listAfterRejectedAuth = await fetch(
+        `${server.url}/api/campaigns?projectId=durable-smoke-project&ownerAddress=durable-smoke-owner&status=draft`,
+        {
+          headers: { "x-campaign-os-trace-id": "trace-durable-smoke-list-after-auth-failures" },
+        },
+      );
+      const missingAuthPayload = await missingAuth.json();
+      const participantAuthPayload = await participantAuth.json();
+      const ownerMismatchPayload = await ownerMismatch.json();
+      const listAfterRejectedAuthPayload = await listAfterRejectedAuth.json();
+
+      expect(missingAuth.status).toBe(401);
+      expect(participantAuth.status).toBe(403);
+      expect(ownerMismatch.status).toBe(403);
+      expect(missingAuth.headers.get("x-campaign-os-trace-id")).toBe("trace-durable-smoke-auth-missing");
+      expect(participantAuth.headers.get("x-campaign-os-trace-id")).toBe("trace-durable-smoke-auth-participant");
+      expect(ownerMismatch.headers.get("x-campaign-os-trace-id")).toBe("trace-durable-smoke-auth-owner-mismatch");
+      expect(missingAuthPayload).toMatchObject({
+        ok: false,
+        traceId: "trace-durable-smoke-auth-missing",
+        error: {
+          code: "AUTH_SESSION_REQUIRED",
+          details: {
+            routeId: "campaigns.create",
+          },
+        },
+      });
+      expect(participantAuthPayload).toMatchObject({
+        ok: false,
+        traceId: "trace-durable-smoke-auth-participant",
+        error: {
+          code: "AUTH_FORBIDDEN",
+          details: {
+            diagnosticCode: "AUTH_ROLE_FORBIDDEN",
+            routeId: "campaigns.create",
+          },
+        },
+      });
+      expect(ownerMismatchPayload).toMatchObject({
+        ok: false,
+        traceId: "trace-durable-smoke-auth-owner-mismatch",
+        error: {
+          code: "AUTH_FORBIDDEN",
+          details: {
+            diagnosticCode: "AUTH_OWNER_MISMATCH",
+            routeId: "campaigns.create",
+          },
+        },
+      });
+      expect(listAfterRejectedAuthPayload).toMatchObject({
+        ok: true,
+        data: {
+          payload: {
+            campaignDb: {
+              draftCount: 0,
+            },
+          },
+        },
+      });
+
       const createDraft = async (index: number) => {
         const response = await fetch(`${server.url}/api/campaigns`, {
           body: JSON.stringify({
@@ -743,7 +877,9 @@ describe("backend scaffold HTTP smoke", () => {
           }),
           headers: {
             "content-type": "application/json",
-            "x-campaign-os-trace-id": `trace-durable-smoke-create-${index}`,
+            ...projectOwnerAuthHeaders("durable-smoke-owner", {
+              "x-campaign-os-trace-id": `trace-durable-smoke-create-${index}`,
+            }),
           },
           method: "POST",
         });
