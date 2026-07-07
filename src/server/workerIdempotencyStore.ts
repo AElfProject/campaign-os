@@ -1,6 +1,6 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import type { QueueDegradedOutcome } from "./queueRuntime";
-import { workerIdempotencyPolicies, workerJobCatalog } from "./workerSchedulerRuntime";
+import { workerIdempotencyPolicies, workerJobCatalog, workerSchedulerPolicies } from "./workerSchedulerRuntime";
 
 export type WorkerIdempotencyStoreProfileId = BackendRuntimeProfileId;
 export type WorkerIdempotencyStoreFoundationStatus = "local_ready" | "scaffolded" | "blocked";
@@ -338,14 +338,13 @@ export const workerIdempotencyOperationCapabilities: WorkerIdempotencyOperationC
 ];
 
 const workerJobById = new Map(workerJobCatalog.map((job) => [job.id, job]));
+const idempotencyPolicyById = new Map(workerIdempotencyPolicies.map((policy) => [policy.id, policy]));
 const idempotencyPolicyByJobId = new Map(
-  workerIdempotencyPolicies.map((policy) => [
-    workerJobCatalog.find((job) => job.sideEffectBoundary === policy.sideEffectBoundary)?.id ?? policy.id,
-    policy,
+  workerSchedulerPolicies.map((policy) => [
+    policy.jobId,
+    idempotencyPolicyById.get(policy.idempotencyPolicyId),
   ]),
 );
-const knownSchedulerSideEffectBoundaries = new Set(workerJobCatalog.map((job) => job.sideEffectBoundary));
-const knownIdempotencySideEffectBoundaries = new Set(workerIdempotencyPolicies.map((policy) => policy.sideEffectBoundary));
 
 export const createWorkerIdempotencyStoreFoundation = (
   options: CreateWorkerIdempotencyStoreFoundationOptions = {},
@@ -354,15 +353,15 @@ export const createWorkerIdempotencyStoreFoundation = (
   const profileResolution = resolveProfile(options.profileId);
   const mode = resolveMode(profileResolution.profileId);
   const storeResolution = resolveStoreId(options.storeId, env, profileResolution.profileId);
-  const namespace = resolveSafeLabel(env.CAMPAIGN_OS_IDEMPOTENCY_NAMESPACE, DEFAULT_NAMESPACE);
-  const keySchemaVersion = resolveSafeLabel(env.CAMPAIGN_OS_IDEMPOTENCY_KEY_SCHEMA_VERSION, DEFAULT_KEY_SCHEMA_VERSION);
-  const configDiagnostics = createConfigDiagnostics({ keySchemaVersion, namespace });
+  const namespaceResolution = resolveNamespace(env.CAMPAIGN_OS_IDEMPOTENCY_NAMESPACE);
+  const keySchemaResolution = resolveKeySchemaVersion(env.CAMPAIGN_OS_IDEMPOTENCY_KEY_SCHEMA_VERSION);
   const productionDiagnostics =
     profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...storeResolution.diagnostics,
-    ...configDiagnostics,
+    ...namespaceResolution.diagnostics,
+    ...keySchemaResolution.diagnostics,
     ...productionDiagnostics,
   ];
   const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
@@ -373,9 +372,9 @@ export const createWorkerIdempotencyStoreFoundation = (
     adapterId,
     blockerCount,
     diagnostics,
-    keySchemaVersion,
+    keySchemaVersion: keySchemaResolution.keySchemaVersion,
     mode,
-    namespace,
+    namespace: namespaceResolution.namespace,
     status,
     storeId,
   });
@@ -386,9 +385,9 @@ export const createWorkerIdempotencyStoreFoundation = (
     diagnosticCodes: diagnostics.map((item) => item.code),
     diagnostics,
     id: FOUNDATION_ID,
-    keySchemaVersion,
+    keySchemaVersion: keySchemaResolution.keySchemaVersion,
     mode,
-    namespace,
+    namespace: namespaceResolution.namespace,
     noLiveFlags: workerIdempotencyStoreNoLiveFlags,
     operationCapabilities: workerIdempotencyOperationCapabilities.map((item) => ({ ...item })),
     preconditions: workerIdempotencyStoreProductionPreconditions.map((item) => ({ ...item })),
@@ -522,34 +521,6 @@ const createProductionDiagnostics = (
   workerIdempotencyStoreProductionPreconditions
     .filter((item) => !hasConfiguredValue(env, item.requiredConfigKeys))
     .map((item) => diagnostic(item.diagnosticCode, item.field, item.message));
-
-const createConfigDiagnostics = ({
-  keySchemaVersion,
-  namespace,
-}: {
-  keySchemaVersion: string;
-  namespace: string;
-}): WorkerIdempotencyDiagnostic[] => {
-  const diagnostics: WorkerIdempotencyDiagnostic[] = [];
-
-  if (!isSafeLabel(namespace)) {
-    diagnostics.push(
-      diagnostic("UNSAFE_IDEMPOTENCY_CONFIG", "namespace", "Idempotency namespace contains unsafe material."),
-    );
-  }
-
-  if (!isSafeSchemaVersion(keySchemaVersion)) {
-    diagnostics.push(
-      diagnostic(
-        "UNSAFE_IDEMPOTENCY_CONFIG",
-        "keySchemaVersion",
-        "Idempotency key schema version contains unsafe material.",
-      ),
-    );
-  }
-
-  return diagnostics;
-};
 
 const isWorkerIdempotencyStoreProfileId = (value: string): value is WorkerIdempotencyStoreProfileId =>
   SUPPORTED_WORKER_IDEMPOTENCY_STORE_PROFILES.includes(value as WorkerIdempotencyStoreProfileId);
@@ -707,7 +678,7 @@ const validateDryRunRequest = (
     diagnostics.push(
       diagnostic("MISSING_SIDE_EFFECT_BOUNDARY", "sideEffectBoundary", "Side-effect boundary is required."),
     );
-  } else if (!isKnownSideEffectBoundary(request.sideEffectBoundary, job?.sideEffectBoundary)) {
+  } else if (!isKnownSideEffectBoundary(request.sideEffectBoundary, job?.sideEffectBoundary, request.jobId)) {
     diagnostics.push(
       diagnostic(
         "UNKNOWN_SIDE_EFFECT_BOUNDARY",
@@ -777,7 +748,7 @@ const resolveAcceptedStatus = (
     return "conflict";
   }
 
-  if (operation === "replay" || duplicateOutcome === "return_existing") {
+  if (operation === "replay" && duplicateOutcome === "return_existing") {
     return "duplicate_existing";
   }
 
@@ -791,13 +762,63 @@ const resolveAcceptedStatus = (
 const requiresCompletionEvidence = (operation: WorkerIdempotencyOperation): boolean =>
   operation === "complete";
 
-const isKnownSideEffectBoundary = (requestedBoundary: string, schedulerBoundary: string | undefined): boolean =>
-  requestedBoundary === schedulerBoundary
-  || knownSchedulerSideEffectBoundaries.has(requestedBoundary)
-  || knownIdempotencySideEffectBoundaries.has(requestedBoundary);
+const isKnownSideEffectBoundary = (
+  requestedBoundary: string,
+  schedulerBoundary: string | undefined,
+  jobId: string,
+): boolean => {
+  const idempotencyPolicy = idempotencyPolicyByJobId.get(jobId);
 
-const resolveSafeLabel = (value: unknown, fallback: string): string =>
-  typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+  return (
+  requestedBoundary === schedulerBoundary
+  || requestedBoundary === idempotencyPolicy?.sideEffectBoundary
+  );
+};
+
+const resolveNamespace = (
+  value: unknown,
+): { diagnostics: WorkerIdempotencyDiagnostic[]; namespace: string } => {
+  const namespace = typeof value === "string" && value.trim().length > 0 ? value.trim() : DEFAULT_NAMESPACE;
+
+  if (isSafeLabel(namespace) && !isUnsafeIdempotencyString(namespace)) {
+    return {
+      diagnostics: [],
+      namespace,
+    };
+  }
+
+  return {
+    diagnostics: [
+      diagnostic("UNSAFE_IDEMPOTENCY_CONFIG", "namespace", "Idempotency namespace contains unsafe material."),
+    ],
+    namespace: "blocked-idempotency-namespace",
+  };
+};
+
+const resolveKeySchemaVersion = (
+  value: unknown,
+): { diagnostics: WorkerIdempotencyDiagnostic[]; keySchemaVersion: string } => {
+  const keySchemaVersion =
+    typeof value === "string" && value.trim().length > 0 ? value.trim() : DEFAULT_KEY_SCHEMA_VERSION;
+
+  if (isSafeSchemaVersion(keySchemaVersion) && !isUnsafeIdempotencyString(keySchemaVersion)) {
+    return {
+      diagnostics: [],
+      keySchemaVersion,
+    };
+  }
+
+  return {
+    diagnostics: [
+      diagnostic(
+        "UNSAFE_IDEMPOTENCY_CONFIG",
+        "keySchemaVersion",
+        "Idempotency key schema version contains unsafe material.",
+      ),
+    ],
+    keySchemaVersion: "blocked-idempotency-schema-version",
+  };
+};
 
 const sanitizeIdempotencyString = (value: string): string => {
   const redacted = redactWorkerIdempotencyStoreValue(value);

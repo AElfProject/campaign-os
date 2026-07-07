@@ -235,6 +235,47 @@ describe("worker idempotency store foundation", () => {
     expect(JSON.stringify(result)).not.toContain("idempotency-key-ref:task-verification-worker");
   });
 
+  it("rejects a valid but job-mismatched idempotency side-effect boundary", () => {
+    const result = evaluateWorkerIdempotencyDryRun({
+      attempt: 1,
+      completionEvidenceReference: "evidence-ref:task-verification-worker",
+      idempotencyKeyReference: "idempotency-key-ref:task-verification-worker",
+      jobId: "task-verification-worker",
+      operation: "claim",
+      sideEffectBoundary: "reward-distribution",
+      traceId: "trace-worker-idempotency-boundary-mismatch",
+      workerReference: "worker-ref:local-review",
+    });
+
+    expect(result.accepted).toBe(false);
+    expect(result.diagnosticCodes).toEqual(["UNKNOWN_SIDE_EFFECT_BOUNDARY"]);
+  });
+
+  it("redacts unsafe namespace and schema env values from readiness output", () => {
+    const foundation = createWorkerIdempotencyStoreFoundation({
+      env: {
+        CAMPAIGN_OS_IDEMPOTENCY_KEY_SCHEMA_VERSION: "https://schema-user:schema-pass@schema.invalid?v=secret",
+        CAMPAIGN_OS_IDEMPOTENCY_NAMESPACE: "https://namespace-user:namespace-pass@namespace.invalid?token=secret",
+      },
+      profileId: "local-review",
+    });
+    const serialized = JSON.stringify(foundation);
+
+    expect(foundation.status).toBe("blocked");
+    expect(foundation.valid).toBe(false);
+    expect(foundation.namespace).toBe("blocked-idempotency-namespace");
+    expect(foundation.keySchemaVersion).toBe("blocked-idempotency-schema-version");
+    expect(foundation.diagnosticCodes).toEqual([
+      "UNSAFE_IDEMPOTENCY_CONFIG",
+      "UNSAFE_IDEMPOTENCY_CONFIG",
+    ]);
+    expect(serialized).not.toContain("namespace-user");
+    expect(serialized).not.toContain("namespace-pass");
+    expect(serialized).not.toContain("schema-user");
+    expect(serialized).not.toContain("schema-pass");
+    expect(serialized).not.toContain("secret");
+  });
+
   it("fails closed for unsupported or unsafe profiles and store ids", () => {
     const unknownProfile = createWorkerIdempotencyStoreFoundation({
       profileId: "live-idempotency-secret",
