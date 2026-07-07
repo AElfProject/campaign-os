@@ -5,6 +5,10 @@ import {
   type BackendRuntimeProfile,
   type BackendRuntimeProfileId,
 } from "./backendProfiles";
+import {
+  runtimeActivationConfigKeys,
+  type RuntimeActivationConfigKey,
+} from "./backendRuntimeActivation";
 
 export type ServerRuntimeDiagnosticSeverity = "error" | "warning" | "info";
 export type ServerRuntimeAttachPointStatus = "deferred" | "blocked";
@@ -66,6 +70,7 @@ export interface ApiServerRuntimeContract {
   attachMap: ServerRuntimeAttachPoint[];
   corsPolicy: ServerCorsPolicy;
   diagnostics: ServerRuntimeDiagnostic[];
+  environmentKeys: RuntimeActivationConfigKey[];
   host: string;
   port: number;
   profile: BackendRuntimeProfile;
@@ -361,6 +366,7 @@ export const resolveApiServerRuntimeContract = ({
       preflightHandledBeforeRuntime: true,
     },
     diagnostics,
+    environmentKeys: runtimeActivationConfigKeys.map((item) => ({ ...item })),
     host: host ?? env.CAMPAIGN_OS_API_HOST ?? DEFAULT_HOST,
     port: portResolution.value,
     profile: profileResolution.profile,

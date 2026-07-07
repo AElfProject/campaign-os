@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "server:dev": "vite-node src/server/server.ts --listen",
+    "server:smoke": "vite-node src/server/backendRuntimeSmoke.ts --run",
+    "server:start": "vite-node src/server/server.ts --listen",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests"

@@ -54,6 +54,12 @@ describe("API server runtime contract", () => {
       expect.arrayContaining(["http://localhost:5173", "http://127.0.0.1:5173"]),
     );
     expect(contract.shutdown.shutdownTimeoutMs).toBe(5_000);
+    expect(contract.environmentKeys).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "CAMPAIGN_OS_API_HOST", redacted: true }),
+        expect.objectContaining({ key: "CAMPAIGN_OS_DATABASE_URL", status: "blocked" }),
+      ]),
+    );
     expect(contract.attachMap.map((item) => item.id)).toEqual(
       expect.arrayContaining([
         "framework-decision",
