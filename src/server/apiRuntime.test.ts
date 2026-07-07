@@ -341,6 +341,15 @@ describe("Campaign OS API runtime", () => {
         adapterStatus: "active",
         apiFoundationValidationIssueCount: 0,
         authSession: expect.objectContaining({
+          foundation: expect.objectContaining({
+            blockerCount: 0,
+            liveSideEffectsEnabled: false,
+            liveSigningExecuted: false,
+            liveVerificationExecuted: false,
+            productionReady: false,
+            status: "local_ready",
+            valid: true,
+          }),
           profileId: "local-review",
           proofStatus: "local_seeded",
           protectedRouteCount: expect.any(Number),
@@ -639,6 +648,16 @@ describe("Campaign OS API runtime", () => {
             agentSkillCanSubstituteUserWallet: false,
             separatedFromUserWalletSession: true,
           },
+          foundation: expect.objectContaining({
+            id: "campaign-os-production-auth-session-foundation",
+            liveSideEffectsEnabled: false,
+            productionReady: false,
+            protectedRouteCoverage: expect.objectContaining({
+              locallyEnforcedRouteIds: ["campaigns.create"],
+            }),
+            status: "local_ready",
+            valid: true,
+          }),
           profileId: "local-review",
           protectedRoutes: expect.arrayContaining([
             expect.objectContaining({
@@ -1059,6 +1078,15 @@ describe("Campaign OS API runtime", () => {
           status: "blocked",
         }),
         authSession: expect.objectContaining({
+          foundation: expect.objectContaining({
+            blockerCount: 8,
+            liveSideEffectsEnabled: false,
+            liveSigningExecuted: false,
+            liveVerificationExecuted: false,
+            productionReady: false,
+            status: "blocked",
+            valid: false,
+          }),
           status: "blocked",
           valid: false,
           verificationMode: "production_required",
@@ -1167,6 +1195,12 @@ describe("Campaign OS API runtime", () => {
           status: "blocked",
         }),
         authSession: expect.objectContaining({
+          foundation: expect.objectContaining({
+            blockerCount: 8,
+            productionReady: false,
+            status: "blocked",
+            valid: false,
+          }),
           status: "blocked",
           validation: expect.objectContaining({
             valid: false,

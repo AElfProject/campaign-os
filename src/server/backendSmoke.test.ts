@@ -213,6 +213,15 @@ describe("backend scaffold HTTP smoke", () => {
               status: "ready",
             }),
             authSession: expect.objectContaining({
+              foundation: expect.objectContaining({
+                blockerCount: 0,
+                liveSideEffectsEnabled: false,
+                liveSigningExecuted: false,
+                liveVerificationExecuted: false,
+                productionReady: false,
+                status: "local_ready",
+                valid: true,
+              }),
               profileId: "local-review",
               protectedRouteCount: expect.any(Number),
               roleCount: 5,
@@ -261,6 +270,15 @@ describe("backend scaffold HTTP smoke", () => {
               }),
               requiredStoreCount: 6,
               status: "active_local",
+              valid: true,
+            }),
+            authSessionFoundation: expect.objectContaining({
+              blockerCount: 0,
+              liveSideEffectsEnabled: false,
+              liveSigningExecuted: false,
+              liveVerificationExecuted: false,
+              productionReady: false,
+              status: "local_ready",
               valid: true,
             }),
             entrypointId: "campaign-os-backend-service",
@@ -651,6 +669,14 @@ describe("backend scaffold HTTP smoke", () => {
                   "jwt_or_session_cookie",
                   "project_ownership_source",
                 ]),
+              }),
+              authSession: expect.objectContaining({
+                foundation: expect.objectContaining({
+                  blockerCount: 0,
+                  productionReady: false,
+                  status: "local_ready",
+                  valid: true,
+                }),
               }),
               backendRuntimeBootstrap: expect.objectContaining({
                 deferredDependencies: expect.arrayContaining([
@@ -1161,6 +1187,15 @@ describe("backend scaffold HTTP smoke", () => {
               status: "blocked",
             }),
             authSession: expect.objectContaining({
+              foundation: expect.objectContaining({
+                blockerCount: 8,
+                liveSideEffectsEnabled: false,
+                liveSigningExecuted: false,
+                liveVerificationExecuted: false,
+                productionReady: false,
+                status: "blocked",
+                valid: false,
+              }),
               status: "blocked",
               valid: false,
               verificationMode: "production_required",
@@ -1168,6 +1203,15 @@ describe("backend scaffold HTTP smoke", () => {
             databaseReadiness: expect.objectContaining({
               adapterStatus: "blocked",
               migrationPlanStatus: "blocked",
+              valid: false,
+            }),
+            authSessionFoundation: expect.objectContaining({
+              blockerCount: 8,
+              liveSideEffectsEnabled: false,
+              liveSigningExecuted: false,
+              liveVerificationExecuted: false,
+              productionReady: false,
+              status: "blocked",
               valid: false,
             }),
             databaseAdapterRuntime: expect.objectContaining({
@@ -1327,6 +1371,12 @@ describe("backend scaffold HTTP smoke", () => {
               status: "blocked",
             }),
             authSession: expect.objectContaining({
+              foundation: expect.objectContaining({
+                blockerCount: 8,
+                productionReady: false,
+                status: "blocked",
+                valid: false,
+              }),
               status: "blocked",
               validation: expect.objectContaining({
                 valid: false,

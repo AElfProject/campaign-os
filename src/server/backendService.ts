@@ -57,7 +57,9 @@ import {
 } from "./persistenceRuntime";
 import {
   createAuthSessionReadinessReport,
+  createProductionAuthSessionFoundation,
   type AuthSessionReadinessReport,
+  type ProductionAuthSessionFoundation,
 } from "./authSession";
 import {
   createCampaignMigrationState,
@@ -151,6 +153,7 @@ export interface BackendServiceReadinessReport {
   attachMap: BackendAttachPoint[];
   authEnforcement: BackendAuthEnforcementReadinessSummary;
   authSession: AuthSessionReadinessReport;
+  authSessionFoundation: ProductionAuthSessionFoundation;
   backendRuntimeBootstrap: BackendRuntimeBootstrapContract;
   campaignDbVerticalSlice: CampaignDbVerticalSliceReadinessSummary;
   config: BackendConfigContract;
@@ -998,6 +1001,15 @@ const uniqueDiagnosticCodes = (
   codes: readonly string[],
 ): string[] => Array.from(new Set(codes));
 
+const createAuthSessionObservedInput = (
+  env: Record<string, string | undefined>,
+) => Object.fromEntries(
+  Object.entries({
+    authorization: env.AUTHORIZATION,
+    authSecret: env.CAMPAIGN_OS_AUTH_SECRET,
+  }).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+);
+
 export const createBackendPersistenceFoundationSummary = ({
   databaseAdapterRuntime,
   migration,
@@ -1170,6 +1182,11 @@ export const createBackendServiceReadinessReport = ({
     productionRequired: config.profileId === "production-required",
     sessionConfigReady: Boolean(env.CAMPAIGN_OS_AUTH_SECRET),
   });
+  const authSessionFoundation = createProductionAuthSessionFoundation({
+    generatedAt,
+    observedInput: createAuthSessionObservedInput(env),
+    profileId: config.profileId === "production-required" ? "production-required" : "local-review",
+  });
   const authEnforcement = createBackendAuthEnforcementReadinessSummary(authSession);
   const campaignDbVerticalSlice = createCampaignDbVerticalSliceReadinessSummary({
     campaignStore,
@@ -1218,6 +1235,7 @@ export const createBackendServiceReadinessReport = ({
     attachMap: backendAttachMap,
     authEnforcement,
     authSession,
+    authSessionFoundation,
     campaignDbVerticalSlice,
     config,
     databaseAdapterRuntime,

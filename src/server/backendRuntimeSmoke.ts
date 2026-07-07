@@ -17,6 +17,7 @@ export interface BackendRuntimeSmokeOptions {
 
 export interface BackendRuntimeSmokeCheck {
   activationPresent: boolean;
+  authSessionFoundation?: BackendRuntimeSmokeAuthSessionFoundationSummary;
   deploymentHandoff?: unknown;
   endpoint: "/api/health" | "/api/contracts";
   ok: boolean;
@@ -38,8 +39,20 @@ export interface BackendRuntimeSmokePersistenceFoundationSummary {
   valid: boolean;
 }
 
+export interface BackendRuntimeSmokeAuthSessionFoundationSummary {
+  blockerCount: number;
+  diagnosticCodes: string[];
+  liveSideEffectsEnabled: boolean;
+  liveSigningExecuted: boolean;
+  liveVerificationExecuted: boolean;
+  productionReady: boolean;
+  status?: string;
+  valid: boolean;
+}
+
 export interface BackendRuntimeSmokeSummary {
   activationId?: string;
+  authSessionFoundation: BackendRuntimeSmokeAuthSessionFoundationSummary;
   checks: {
     contracts: BackendRuntimeSmokeCheck;
     health: BackendRuntimeSmokeCheck;
@@ -90,6 +103,12 @@ const readPersistenceFoundation = (
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["backendService", "persistenceFoundation"]);
 
+const readAuthSessionFoundation = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["backendService", "authSessionFoundation"])
+  ?? readNestedRecord(value, ["backendService", "authSession", "foundation"]);
+
 const getNumber = (
   record: Record<string, unknown> | undefined,
   key: string,
@@ -132,6 +151,35 @@ const summarizePersistenceFoundation = (
   };
 };
 
+const summarizeAuthSessionFoundation = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeAuthSessionFoundationSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "liveSideEffectsEnabled")
+    && isExplicitFalse(record, "liveSigningExecuted")
+    && isExplicitFalse(record, "liveVerificationExecuted");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    liveSideEffectsEnabled: false,
+    liveSigningExecuted: false,
+    liveVerificationExecuted: false,
+    productionReady: false,
+    status: getString(record, "status"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
 const createSmokeCheck = async ({
   baseUrl,
   endpoint,
@@ -154,6 +202,9 @@ const createSmokeCheck = async ({
     ? readNestedRecord(payload.data, ["backendService", "activation"])
     : readNestedRecord(payload.data, ["activation"]);
   const deploymentHandoff = readNestedRecord(activation, ["deploymentHandoff"]);
+  const authSessionFoundation = summarizeAuthSessionFoundation(
+    readAuthSessionFoundation(payload.data),
+  );
   const persistenceFoundation = summarizePersistenceFoundation(
     readPersistenceFoundation(payload.data),
   );
@@ -162,6 +213,7 @@ const createSmokeCheck = async ({
     activation,
     check: {
       activationPresent: Boolean(activation),
+      authSessionFoundation,
       deploymentHandoff,
       endpoint,
       ok: payload.ok === true && payload.traceId === traceId,
@@ -205,6 +257,21 @@ const isPersistenceFoundationSmokeReady = (
     && summary.diagnosticCodes.length > 0;
 };
 
+const isAuthSessionFoundationSmokeReady = (
+  summary: BackendRuntimeSmokeAuthSessionFoundationSummary | undefined,
+): summary is BackendRuntimeSmokeAuthSessionFoundationSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveSideEffectsEnabled === false
+    && summary.liveSigningExecuted === false
+    && summary.liveVerificationExecuted === false
+    && summary.status === "local_ready"
+    && summary.valid === true;
+};
+
 export const runBackendRuntimeSmoke = async ({
   env,
   fetchImpl = fetch,
@@ -238,6 +305,7 @@ export const runBackendRuntimeSmoke = async ({
     });
     const activation = contracts.activation ?? health.activation;
     const deploymentHandoff = readNestedRecord(activation, ["deploymentHandoff"]);
+    const authSessionFoundation = contracts.check.authSessionFoundation;
     const persistenceFoundation = contracts.check.persistenceFoundation;
 
     if (
@@ -249,6 +317,8 @@ export const runBackendRuntimeSmoke = async ({
       || !contracts.check.activationPresent
       || !isExplicitFalse(activation, "productionReady")
       || !isExplicitFalse(activation, "liveSideEffectsEnabled")
+      || !isAuthSessionFoundationSmokeReady(health.check.authSessionFoundation)
+      || !isAuthSessionFoundationSmokeReady(authSessionFoundation)
       || !isPersistenceFoundationSmokeReady(health.check.persistenceFoundation)
       || !isPersistenceFoundationSmokeReady(persistenceFoundation)
     ) {
@@ -257,6 +327,7 @@ export const runBackendRuntimeSmoke = async ({
 
     summaryDraft = {
       activationId: typeof activation?.id === "string" ? activation.id : undefined,
+      authSessionFoundation,
       checks: {
         contracts: contracts.check,
         health: health.check,

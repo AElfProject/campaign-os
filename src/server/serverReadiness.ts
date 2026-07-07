@@ -54,11 +54,12 @@ export interface ServerRuntimeReadiness {
   readiness: {
     authEnforcement: BackendAuthEnforcementReadinessSummary;
     apiService: ServerRuntimeApiServiceReadiness;
-    authSession: {
-      contracts: BackendServiceReadinessReport["authSession"]["authContracts"];
-      status: BackendServiceReadinessReport["authSession"]["status"];
-      valid: boolean;
-      verificationMode: BackendServiceReadinessReport["authSession"]["proofBoundary"]["verificationMode"];
+      authSession: {
+        contracts: BackendServiceReadinessReport["authSession"]["authContracts"];
+        foundation: BackendServiceReadinessReport["authSessionFoundation"];
+        status: BackendServiceReadinessReport["authSession"]["status"];
+        valid: boolean;
+        verificationMode: BackendServiceReadinessReport["authSession"]["proofBoundary"]["verificationMode"];
     };
     backend: {
       diagnosticCodes: string[];
@@ -166,6 +167,7 @@ export const createServerRuntimeReadiness = ({
       },
       authSession: {
         contracts: backendReadiness.authSession.authContracts,
+        foundation: backendReadiness.authSessionFoundation,
         status: backendReadiness.authSession.status,
         valid: backendReadiness.authSession.validation.valid,
         verificationMode: backendReadiness.authSession.proofBoundary.verificationMode,
