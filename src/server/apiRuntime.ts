@@ -355,6 +355,7 @@ const createContractAuthSessionMetadata = (
   report: BackendServiceReadinessReport,
 ) => ({
   agentCredentialBoundary: report.authSession.agentCredentialBoundary,
+  authContracts: report.authSession.authContracts,
   deferredDependencyIds: report.authSession.deferredDependencyIds,
   profileId: report.authSession.profileId,
   proofBoundary: report.authSession.proofBoundary,

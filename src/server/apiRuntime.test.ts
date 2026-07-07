@@ -557,7 +557,7 @@ describe("Campaign OS API runtime", () => {
           }),
           expect.objectContaining({
             area: "auth-session",
-            currentStatus: "scaffold",
+            currentStatus: "local-only",
             requiredBeforeProduction: true,
           }),
           expect.objectContaining({
@@ -601,6 +601,20 @@ describe("Campaign OS API runtime", () => {
           rolePolicy: expect.objectContaining({
             leastPrivilegeDefault: true,
             roleCount: 5,
+          }),
+          authContracts: expect.objectContaining({
+            liveSideEffectsEnabled: false,
+            productionReady: false,
+            proofVerifier: expect.objectContaining({
+              localContractReady: true,
+              liveVerificationExecuted: false,
+              productionReady: false,
+            }),
+            sessionIssuer: expect.objectContaining({
+              liveSigningExecuted: false,
+              localContractReady: true,
+              productionReady: false,
+            }),
           }),
           sessionContract: expect.objectContaining({
             agentCredentialSeparated: true,
