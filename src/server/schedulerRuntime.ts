@@ -677,6 +677,16 @@ const validateTriggerRequest = (
     );
   }
 
+  if (requestsLiveExecution(request)) {
+    diagnostics.push(
+      diagnostic(
+        "LIVE_SCHEDULER_EXECUTION_DISABLED",
+        "liveExecution",
+        "Live scheduler, cron, and queue execution are disabled for scheduler dry-run.",
+      ),
+    );
+  }
+
   return diagnostics;
 };
 
@@ -738,6 +748,16 @@ const isValidTimeWindow = (
     && windowEnd > windowStart
     && scheduledFor >= windowStart
     && scheduledFor <= windowEnd;
+};
+
+const requestsLiveExecution = (request: SchedulerTriggerRequest): boolean => {
+  const dynamicRequest = request as SchedulerTriggerRequest & Record<string, unknown>;
+
+  return dynamicRequest.liveSchedulerExecutionEnabled === true
+    || dynamicRequest.liveCronExecutionEnabled === true
+    || dynamicRequest.liveQueuePublishingEnabled === true
+    || dynamicRequest.liveWorkerExecutionEnabled === true
+    || dynamicRequest.liveExecutionAttempted === true;
 };
 
 const isSafeSerializableSchedulerKey = (key: string): boolean =>

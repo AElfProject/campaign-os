@@ -218,10 +218,14 @@ describe("scheduler runtime foundation", () => {
         expectedCode: "UNSAFE_OPERATOR_OVERRIDE_REASON",
         request: { ...validRequest, operatorOverrideReason: "Bearer scheduler-token-123" },
       },
+      {
+        expectedCode: "LIVE_SCHEDULER_EXECUTION_DISABLED",
+        request: { ...validRequest, liveSchedulerExecutionEnabled: true },
+      },
     ] as const;
 
     for (const testCase of cases) {
-      const result = dryRunSchedulerTrigger(testCase.request);
+      const result = dryRunSchedulerTrigger(testCase.request as Parameters<typeof dryRunSchedulerTrigger>[0]);
 
       expect(result.accepted).toBe(false);
       expect(result.status).toBe("rejected");
