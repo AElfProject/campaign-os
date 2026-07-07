@@ -10,9 +10,14 @@ import { resolveApiServerRuntimeContract } from "./serverRuntime";
 const secretFragments = [
   "auth-secret",
   "bearer sample",
+  "hook-secret-sample",
   "object-key-sample",
   "postgres://db.invalid/campaign-os",
   "private-key-sample",
+  "queue-secret",
+  "queue-user",
+  "raw-wallet",
+  "raw_task",
   "raw-signature-sample",
   "signed-url",
 ];
@@ -391,6 +396,32 @@ describe("server runtime readiness metadata", () => {
             valid: true,
           },
         },
+        queueRuntimeFoundation: {
+          blockerCount: 0,
+          diagnosticCodes: [],
+          dryRunEnqueueEnabled: true,
+          id: "campaign-os-queue-runtime-foundation",
+          liveQueuePublishingEnabled: false,
+          noLiveFlags: {
+            liveQueuePublishingEnabled: false,
+            liveSchedulerExecutionEnabled: false,
+            liveWorkerExecutionEnabled: false,
+          },
+          productionReady: false,
+          profileId: "local-review",
+          queueIds: expect.arrayContaining([
+            "verification-jobs",
+            "lifecycle-jobs",
+            "operations-jobs",
+            "analytics-jobs",
+            "ai-ops-jobs",
+            "contract-jobs",
+            "reward-jobs",
+          ]),
+          queuePlanCount: 9,
+          status: "local_ready",
+          valid: true,
+        },
         workerSchedulerFoundation: {
           blockerCount: 0,
           diagnosticCodes: [],
@@ -442,7 +473,8 @@ describe("server runtime readiness metadata", () => {
       CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT: "https://writer.invalid/private-key-sample",
       CAMPAIGN_OS_DATABASE_URL: "postgres://db.invalid/campaign-os",
       CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid/object-key-sample",
-      CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue.invalid/raw-signature-sample",
+      CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
+      CAMPAIGN_OS_RAW_JOB_PAYLOAD_SAMPLE: "{\"walletAddress\":\"ELF_raw_wallet\",\"taskId\":\"raw_task\"}",
     };
     const contract = resolveApiServerRuntimeContract({ env });
     const backendReadiness = createBackendServiceReadinessReport({
@@ -718,6 +750,31 @@ describe("server runtime readiness metadata", () => {
             summaryCount: 5,
           },
         },
+        queueRuntimeFoundation: {
+          blockerCount: 7,
+          diagnosticCodes: expect.arrayContaining([
+            "QUEUE_PROVIDER_MISSING",
+            "QUEUE_RETRY_POLICY_MISSING",
+            "QUEUE_IDEMPOTENCY_STORE_MISSING",
+            "QUEUE_WORKER_LEASE_MISSING",
+            "QUEUE_OBSERVABILITY_MISSING",
+            "QUEUE_PROVIDER_HANDOFF_MISSING",
+            "QUEUE_DEAD_LETTER_MISSING",
+          ]),
+          dryRunEnqueueEnabled: false,
+          id: "campaign-os-queue-runtime-foundation",
+          liveQueuePublishingEnabled: false,
+          noLiveFlags: {
+            liveQueuePublishingEnabled: false,
+            liveSchedulerExecutionEnabled: false,
+            liveWorkerExecutionEnabled: false,
+          },
+          productionReady: false,
+          profileId: "production-required",
+          queuePlanCount: 9,
+          status: "blocked",
+          valid: false,
+        },
         workerSchedulerFoundation: {
           blockerCount: 5,
           diagnosticCodes: expect.arrayContaining([
@@ -748,6 +805,7 @@ describe("server runtime readiness metadata", () => {
         "DATABASE_READINESS_BLOCKED",
         "PERSISTENCE_ADAPTER_INVALID",
         "MIGRATION_MANIFEST_INVALID",
+        "QUEUE_RUNTIME_READINESS_BLOCKED",
         "WORKER_SCHEDULER_READINESS_BLOCKED",
       ]),
     );

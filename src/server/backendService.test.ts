@@ -17,6 +17,25 @@ const productionAreas = [
   "analytics-warehouse",
 ];
 
+const queueSecretFragments = [
+  "queue-user",
+  "queue-pass",
+  "queue-secret",
+  "lease-token-sample",
+  "hook-secret-sample",
+  "tenant/raw/export.csv",
+  "ELF_raw_wallet",
+  "task_raw",
+];
+
+const expectNoQueueSecretLeak = (value: unknown) => {
+  const serialized = JSON.stringify(value);
+
+  for (const fragment of queueSecretFragments) {
+    expect(serialized).not.toContain(fragment);
+  }
+};
+
 describe("backend service readiness report", () => {
   it("aggregates local backend scaffold readiness without duplicating route ownership", () => {
     const report = createBackendServiceReadinessReport();
@@ -242,6 +261,71 @@ describe("backend service readiness report", () => {
         valid: true,
         workerRequiredPolicyCount: 3,
       },
+    });
+    expect(report.queueRuntimeFoundation).toMatchObject({
+      blockerCount: 0,
+      diagnosticCodes: [],
+      dryRunEnqueue: {
+        enabled: true,
+        livePublishAttempted: false,
+        liveQueuePublishingEnabled: false,
+      },
+      id: "campaign-os-queue-runtime-foundation",
+      noLiveFlags: {
+        liveAiCallsEnabled: false,
+        liveAnalyticsIngestionEnabled: false,
+        liveContractCallsEnabled: false,
+        liveCronExecutionEnabled: false,
+        liveObjectStorageEnabled: false,
+        liveProviderCallsEnabled: false,
+        liveQueuePublishingEnabled: false,
+        liveRewardDistributionEnabled: false,
+        liveSchedulerExecutionEnabled: false,
+        liveSocialCallsEnabled: false,
+        liveWorkerExecutionEnabled: false,
+      },
+      productionReady: false,
+      profileId: "local-review",
+      queuePlanCoverage: {
+        jobIds: expect.arrayContaining([
+          "task-verification-worker",
+          "campaign-lifecycle-worker",
+          "reward-distribution-handoff-worker",
+        ]),
+        queueCategories: expect.arrayContaining([
+          "verification",
+          "lifecycle",
+          "operations",
+          "analytics",
+          "ai",
+          "contract",
+          "reward",
+        ]),
+        queueCategoryCount: 7,
+        queueIds: expect.arrayContaining([
+          "verification-jobs",
+          "lifecycle-jobs",
+          "operations-jobs",
+          "analytics-jobs",
+          "ai-ops-jobs",
+          "contract-jobs",
+          "reward-jobs",
+        ]),
+        queuePlanCount: 9,
+        requiredConfigKeys: expect.arrayContaining([
+          "CAMPAIGN_OS_QUEUE_PROVIDER",
+          "CAMPAIGN_OS_WORKER_QUEUE_URL",
+          "CAMPAIGN_OS_WORKER_RETRY_POLICY",
+          "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+          "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+          "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+          "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+          "CAMPAIGN_OS_DEGRADATION_POLICY",
+          "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
+        ]),
+      },
+      status: "local_ready",
+      valid: true,
     });
     expect(report.providerIndexerFoundation.requiredConfigKeys).toEqual(
       expect.arrayContaining([
@@ -659,7 +743,7 @@ describe("backend service readiness report", () => {
           CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT: "https://writer.invalid",
           CAMPAIGN_OS_DATABASE_URL: "postgres://db.invalid/campaign-os",
           CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid",
-          CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue.invalid",
+          CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
         },
         profileId: "production-required",
       },
@@ -1050,6 +1134,36 @@ describe("backend service readiness report", () => {
       status: "blocked",
       valid: false,
     });
+    expect(report.queueRuntimeFoundation).toMatchObject({
+      blockerCount: 7,
+      diagnosticCodes: expect.arrayContaining([
+        "QUEUE_PROVIDER_MISSING",
+        "QUEUE_RETRY_POLICY_MISSING",
+        "QUEUE_IDEMPOTENCY_STORE_MISSING",
+        "QUEUE_WORKER_LEASE_MISSING",
+        "QUEUE_OBSERVABILITY_MISSING",
+        "QUEUE_PROVIDER_HANDOFF_MISSING",
+        "QUEUE_DEAD_LETTER_MISSING",
+      ]),
+      dryRunEnqueue: {
+        enabled: false,
+        livePublishAttempted: false,
+        liveQueuePublishingEnabled: false,
+      },
+      id: "campaign-os-queue-runtime-foundation",
+      noLiveFlags: {
+        liveQueuePublishingEnabled: false,
+        liveSchedulerExecutionEnabled: false,
+        liveWorkerExecutionEnabled: false,
+      },
+      productionReady: false,
+      profileId: "production-required",
+      queuePlanCoverage: {
+        queuePlanCount: 9,
+      },
+      status: "blocked",
+      valid: false,
+    });
     expect(report.authSession.validation.issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1097,6 +1211,10 @@ describe("backend service readiness report", () => {
           code: "WORKER_SCHEDULER_READINESS_BLOCKED",
           field: "workerSchedulerFoundation",
         }),
+        expect.objectContaining({
+          code: "QUEUE_RUNTIME_READINESS_BLOCKED",
+          field: "queueRuntimeFoundation",
+        }),
       ]),
     });
     expect(report.backendRuntimeBootstrap).toMatchObject({
@@ -1136,6 +1254,47 @@ describe("backend service readiness report", () => {
     });
     expect(JSON.stringify(report)).not.toContain("auth-secret");
     expect(JSON.stringify(report)).not.toContain("postgres://db.invalid/campaign-os");
+    expectNoQueueSecretLeak(report);
+  });
+
+  it("does not serialize queue runtime credentials or raw job payload samples", () => {
+    const report = createBackendServiceReadinessReport({
+      configOptions: {
+        env: {
+          CAMPAIGN_OS_AUTH_SECRET: "auth-secret",
+          CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+          CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT: "https://writer.invalid/hook-secret-sample",
+          CAMPAIGN_OS_DATABASE_URL: "postgres://db.invalid/campaign-os",
+          CAMPAIGN_OS_DEAD_LETTER_QUEUE: "https://queue.invalid/dead-letter?token=queue-secret",
+          CAMPAIGN_OS_DEGRADATION_POLICY: "fail-closed",
+          CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "https://idempotency.invalid/tenant/raw/export.csv",
+          CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "https://observability.invalid/hook?token=hook-secret-sample",
+          CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid/registry",
+          CAMPAIGN_OS_QUEUE_PROVIDER: "metadata-only",
+          CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "https://lease.invalid/store?token=lease-token-sample",
+          CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
+          CAMPAIGN_OS_WORKER_RETRY_POLICY: "deterministic-backoff",
+          CAMPAIGN_OS_RAW_JOB_PAYLOAD_SAMPLE: "{\"walletAddress\":\"ELF_raw_wallet\",\"taskId\":\"task_raw\"}",
+        },
+        profileId: "production-required",
+      },
+    });
+
+    expect(report.queueRuntimeFoundation).toMatchObject({
+      diagnosticCodes: [],
+      dryRunEnqueue: {
+        enabled: true,
+        liveQueuePublishingEnabled: false,
+      },
+      profileId: "production-required",
+      productionReady: false,
+      queuePlanCoverage: {
+        queuePlanCount: 9,
+      },
+      status: "scaffolded",
+      valid: true,
+    });
+    expectNoQueueSecretLeak(report);
   });
 
   it("uses readable labels and does not expose private artifact paths", () => {
