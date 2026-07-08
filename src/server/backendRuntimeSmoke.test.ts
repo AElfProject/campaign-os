@@ -391,6 +391,30 @@ const expectedObservabilityExporterFoundation = {
   valid: true,
 };
 
+const expectedProviderClientReadiness = {
+  activationStatus: "disabled",
+  blockerCount: 0,
+  diagnosticCodes: [],
+  liveProviderCallsAttempted: false,
+  productionReady: false,
+  providerClientsEnabled: false,
+  providerClientsProvided: false,
+  queueHandoffStatus: "disabled",
+  registryClientCount: 0,
+  registryProviderGroupCount: 5,
+  requiredConfigKeys: expect.arrayContaining([
+    "CAMPAIGN_OS_PROVIDER_CLIENT_ENABLEMENT",
+    "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+    "CAMPAIGN_OS_PROVIDER_ENDPOINT_REF",
+    "CAMPAIGN_OS_PROVIDER_CREDENTIAL_REF",
+    "CAMPAIGN_OS_PROVIDER_CLIENT_SEAM",
+    "CAMPAIGN_OS_PROVIDER_CONSUME_READINESS_HANDOFF",
+    "CAMPAIGN_OS_PROVIDER_REDACTION_POLICY",
+  ]),
+  status: "disabled",
+  valid: true,
+};
+
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
     const summary = await runBackendRuntimeSmoke({
@@ -441,6 +465,7 @@ describe("backend runtime smoke command", () => {
             verificationSourceCoverageCount: 5,
             workerExecutionEnabled: false,
           },
+          providerClientReadiness: expectedProviderClientReadiness,
           queueRuntimeFoundation: {
             blockerCount: 0,
             diagnosticCodes: [],
@@ -498,6 +523,7 @@ describe("backend runtime smoke command", () => {
             verificationSourceCoverageCount: 5,
             workerExecutionEnabled: false,
           },
+          providerClientReadiness: expectedProviderClientReadiness,
           queueRuntimeFoundation: {
             blockerCount: 0,
             diagnosticCodes: [],
@@ -553,6 +579,7 @@ describe("backend runtime smoke command", () => {
         valid: true,
       },
       productionReady: false,
+      providerClientReadiness: expectedProviderClientReadiness,
       providerIndexerFoundation: {
         blockerCount: 0,
         diagnosticCodes: [],
@@ -638,6 +665,38 @@ describe("backend runtime smoke command", () => {
       ]),
     );
     expectNoSecretLeak(summary);
+  });
+
+  it("fails closed when provider client readiness metadata is missing from smoke payloads", async () => {
+    const fetchWithoutProviderClientReadiness: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          backendService?: {
+            backendRuntimeBootstrap?: {
+              readiness?: Record<string, unknown>;
+            };
+            providerClientReadiness?: Record<string, unknown>;
+          };
+          serverRuntime?: {
+            readiness?: Record<string, unknown>;
+          };
+        };
+      };
+
+      delete payload.data?.serverRuntime?.readiness?.providerClientReadiness;
+      delete payload.data?.backendService?.backendRuntimeBootstrap?.readiness?.providerClientReadiness;
+      delete payload.data?.backendService?.providerClientReadiness;
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutProviderClientReadiness })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
   });
 
   it("fails closed when scheduler runtime metadata is missing from smoke payloads", async () => {

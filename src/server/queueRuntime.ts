@@ -277,10 +277,27 @@ export interface QueuePlan {
   operatorNextAction: string;
   payloadReferencePolicy: string;
   priority: QueuePriority;
+  providerClientReadinessDependency: "campaign-os-provider-indexer-client-readiness";
+  providerClientReadinessRequired: boolean;
+  providerDegradationLabel: QueueDegradedOutcome;
+  providerRetryLabel: string;
   queueCategory: QueueCategory;
   queueId: string;
   retryPolicyId: string;
   sideEffectBoundary: string;
+  workerJobId: string;
+}
+
+export interface ProviderClientQueueHandoff {
+  deadLetterPolicy: string;
+  liveQueuePublishingEnabled: false;
+  payloadReferencePolicy: string;
+  providerClientReadinessDependency: "campaign-os-provider-indexer-client-readiness";
+  providerClientReadinessRequired: true;
+  providerDegradationLabel: QueueDegradedOutcome;
+  providerRetryLabel: string;
+  queueId: string;
+  workerJobId: string;
 }
 
 export interface QueueRuntimeReadinessProjection {
@@ -314,6 +331,7 @@ export interface QueueRuntimeReadinessProjection {
   observabilityExporterRequiredConfigKeys: string[];
   observabilityExporterSinkId: string;
   observabilityExporterStatus: ObservabilityExporterFoundationStatus;
+  providerClientQueueHandoff: ProviderClientQueueHandoff;
   providerAdapterDriverBlockerCount: number;
   providerAdapterDriverDiagnosticCodes: QueueProviderDriverDiagnosticCode[];
   providerAdapterDriverId: string;
@@ -465,7 +483,11 @@ export interface QueueEnqueueResult {
   livePublishAttempted: false;
   liveQueuePublishingEnabled: false;
   payloadReference?: string;
+  providerClientReadinessDependency?: "campaign-os-provider-indexer-client-readiness";
+  providerClientReadinessRequired?: boolean;
+  providerDeadLetterPolicy?: string;
   providerDriverOperation?: QueueProviderOperationResult;
+  providerRetryPolicyId?: string;
   providerSdkBindingOperation?: QueueProviderSdkOperationResult;
   queueId?: string;
   requestedAt?: string;
@@ -686,10 +708,15 @@ const plan = (job: WorkerJobDefinition): QueuePlan => {
     operatorNextAction: metadata.operatorNextAction,
     payloadReferencePolicy: "payload-reference-or-hash-only-no-raw-payload",
     priority: metadata.priority,
+    providerClientReadinessDependency: "campaign-os-provider-indexer-client-readiness",
+    providerClientReadinessRequired: job.id === "task-verification-worker",
+    providerDegradationLabel: job.id === "task-verification-worker" ? "manual_review" : metadata.degradedOutcome,
+    providerRetryLabel: schedulerPolicy?.retryPolicyId ?? "missing-retry-policy",
     queueCategory: metadata.queueCategory,
     queueId: metadata.queueId,
     retryPolicyId: schedulerPolicy?.retryPolicyId ?? "missing-retry-policy",
     sideEffectBoundary: job.sideEffectBoundary,
+    workerJobId: job.id,
   };
 };
 
@@ -876,7 +903,11 @@ export const dryRunQueueEnqueue = (
     livePublishAttempted: false,
     liveQueuePublishingEnabled: false,
     payloadReference: sanitizeQueueRuntimeString(request.payloadReference),
+    providerClientReadinessDependency: queuePlan?.providerClientReadinessDependency,
+    providerClientReadinessRequired: queuePlan?.providerClientReadinessRequired,
+    providerDeadLetterPolicy: queuePlan?.deadLetterPolicy,
     providerDriverOperation,
+    providerRetryPolicyId: queuePlan?.retryPolicyId,
     providerSdkBindingOperation,
     queueId: sanitizeQueueRuntimeString(request.queueId),
     requestedAt: request.requestedAt ? sanitizeQueueRuntimeString(request.requestedAt) : undefined,
@@ -1025,6 +1056,7 @@ const createReadinessProjection = (
   observabilityExporterRequiredConfigKeys: observabilityExporter.requiredConfigKeys,
   observabilityExporterSinkId: observabilityExporter.sinkId,
   observabilityExporterStatus: observabilityExporter.status,
+  providerClientQueueHandoff: createProviderClientQueueHandoff(),
   providerAdapterDriverBlockerCount: providerAdapter.driverBlockerCount,
   providerAdapterDriverDiagnosticCodes: providerAdapter.driverDiagnosticCodes,
   providerAdapterDriverId: providerAdapter.driverId,
@@ -1129,6 +1161,22 @@ const createReadinessProjection = (
   queueIds: [...new Set(queueRuntimePlans.map((item) => item.queueId))],
   queuePlanCount: queueRuntimePlans.length,
 });
+
+const createProviderClientQueueHandoff = (): ProviderClientQueueHandoff => {
+  const providerPlan = queuePlanByJobId.get("task-verification-worker");
+
+  return {
+    deadLetterPolicy: providerPlan?.deadLetterPolicy ?? "deferred-dead-letter-review-required",
+    liveQueuePublishingEnabled: false,
+    payloadReferencePolicy: providerPlan?.payloadReferencePolicy ?? "payload-reference-or-hash-only-no-raw-payload",
+    providerClientReadinessDependency: "campaign-os-provider-indexer-client-readiness",
+    providerClientReadinessRequired: true,
+    providerDegradationLabel: providerPlan?.providerDegradationLabel ?? "manual_review",
+    providerRetryLabel: providerPlan?.providerRetryLabel ?? "verification-exponential-review",
+    queueId: providerPlan?.queueId ?? "verification-jobs",
+    workerJobId: providerPlan?.workerJobId ?? "task-verification-worker",
+  };
+};
 
 const createIdempotencyStoreSummary = (
   idempotencyStore: ReturnType<typeof createWorkerIdempotencyStoreFoundation>,

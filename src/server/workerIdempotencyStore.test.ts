@@ -545,6 +545,57 @@ describe("worker idempotency store foundation", () => {
     expect(serialized).not.toContain("ELF_secret_wallet");
   });
 
+  it("projects provider idempotency posture with duplicate decisions and no raw keys", () => {
+    const foundation = createWorkerIdempotencyStoreFoundation({ profileId: "local-review" });
+    const replayEvaluation = evaluateWorkerIdempotencyDryRun({
+      attempt: 1,
+      idempotencyKeyReference: "idempotency-key-ref:task-verification-worker",
+      jobId: "task-verification-worker",
+      operation: "replay",
+      sideEffectBoundary: "points-ledger-and-task-completion",
+      traceId: "trace-provider-idempotency-replay",
+      workerReference: "worker-ref:local-review",
+    });
+    const conflictEvaluation = evaluateWorkerIdempotencyDryRun({
+      attempt: 1,
+      idempotencyKeyReference: "idempotency-key-ref:task-verification-worker",
+      jobId: "task-verification-worker",
+      operation: "conflict",
+      sideEffectBoundary: "points-ledger-and-task-completion",
+      traceId: "trace-provider-idempotency-conflict",
+      workerReference: "worker-ref:local-review",
+    });
+    const serialized = JSON.stringify({ conflictEvaluation, foundation, replayEvaluation });
+
+    expect(foundation.providerIdempotencyPosture).toEqual({
+      duplicateDecisions: ["existing_completion", "duplicate_drop", "blocked", "manual_review"],
+      liveIdempotencyExecutionEnabled: false,
+      liveProviderExecutionAllowedOnDuplicate: false,
+      liveWorkerExecutionEnabled: false,
+      posture: "reference_or_hash_only",
+      rawIdempotencyKeySerialized: false,
+      requiredReferenceFields: ["idempotencyKeyReference", "completionEvidenceReference"],
+    });
+    expect(foundation.readiness.providerIdempotencyPosture).toEqual(foundation.providerIdempotencyPosture);
+    expect(replayEvaluation).toMatchObject({
+      accepted: true,
+      liveIdempotencyOperationAttempted: false,
+      liveProviderExecutionAllowed: false,
+      liveWorkerExecutionEnabled: false,
+      productionWriteAttempted: false,
+      providerIdempotencyDecision: "existing_completion",
+      providerIdempotencyPosture: "reference_or_hash_only",
+      status: "duplicate_existing",
+    });
+    expect(conflictEvaluation).toMatchObject({
+      liveProviderExecutionAllowed: false,
+      providerIdempotencyDecision: "manual_review",
+      status: "conflict",
+    });
+    expect(serialized).not.toContain("campaign/wallet");
+    expect(serialized).not.toContain("raw-idempotency-key");
+  });
+
   it("accepts safe dry-run requests and echoes only safe references", () => {
     const result = evaluateWorkerIdempotencyDryRun({
       attempt: 1,

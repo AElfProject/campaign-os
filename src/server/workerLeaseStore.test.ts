@@ -470,6 +470,41 @@ describe("worker lease store foundation", () => {
     expect(serialized).not.toContain("lease-token-secret-789");
   });
 
+  it("projects provider lease posture with reference-only conflict decisions and no raw lease tokens", () => {
+    const foundation = createWorkerLeaseStoreFoundation({ profileId: "local-review" });
+    const conflictEvaluation = evaluateWorkerLeaseDryRun({
+      fencingTokenReference: "fence-ref:task-verification-worker",
+      heartbeatIntervalSeconds: 30,
+      jobId: "task-verification-worker",
+      leaseKeyReference: "lease-key-ref:task-verification-worker",
+      operation: "reject_conflict",
+      traceId: "trace-provider-lease-conflict",
+      ttlSeconds: 120,
+      workerReference: "worker-ref:local-review",
+    });
+    const serialized = JSON.stringify({ foundation, conflictEvaluation });
+
+    expect(foundation.providerLeasePosture).toEqual({
+      conflictDecisions: ["retry", "manual_review", "blocked"],
+      liveLeaseClaimingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      posture: "reference_or_hash_only",
+      rawLeaseTokenSerialized: false,
+      requiredReferenceFields: ["leaseKeyReference", "fencingTokenReference"],
+    });
+    expect(foundation.readiness.providerLeasePosture).toEqual(foundation.providerLeasePosture);
+    expect(conflictEvaluation).toMatchObject({
+      accepted: true,
+      liveLeaseOperationAttempted: false,
+      liveWorkerExecutionEnabled: false,
+      providerLeaseDecision: "retry",
+      providerLeasePosture: "reference_or_hash_only",
+      status: "accepted_dry_run",
+    });
+    expect(conflictEvaluation.status).not.toBe("completed");
+    expect(serialized).not.toContain("lease-token");
+  });
+
   it("keeps ready live publishing metadata from enabling lease or worker execution", () => {
     const publishingReadiness = createLiveQueuePublishingReadiness({
       constructionFactory: constructedBullmqFactory,

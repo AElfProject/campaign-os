@@ -1,4 +1,11 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import {
+  createProviderIndexerClientReadiness,
+  providerClientProductionPreconditions,
+  type ProviderClientDiagnosticCode,
+  type ProviderClientReadinessStatus,
+  type ProviderVerificationType,
+} from "./providerIndexerClientReadiness";
 
 export type ProviderIndexerProfileId = BackendRuntimeProfileId;
 export type ProviderGroupCategory =
@@ -39,9 +46,24 @@ export interface ProviderIndexerNoLiveFlags {
   workerExecutionEnabled: false;
 }
 
+export interface ProviderClientReadinessMetadata {
+  capabilityLabels: string[];
+  circuitBreakerPolicyRef: string;
+  clientId: string;
+  credentialRef: string;
+  degradationPolicyRef: string;
+  endpointRef: string;
+  providerClientRequired: boolean;
+  readinessId: "campaign-os-provider-indexer-client-readiness";
+  retryPolicyRef: string;
+  supportedVerificationTypes: ProviderVerificationType[];
+  timeoutPolicyRef: string;
+}
+
 export interface ProviderIndexerAdapterGroup {
   capabilities: string[];
   category: ProviderGroupCategory;
+  clientReadiness: ProviderClientReadinessMetadata;
   failureMode: ProviderFailureMode;
   forbiddenInLocalReview: boolean;
   id: string;
@@ -51,6 +73,31 @@ export interface ProviderIndexerAdapterGroup {
   requiredConfigKeys: string[];
   serviceIds: string[];
   status: ProviderGroupStatus;
+}
+
+export interface ProviderClientRegistryProjectionEntry extends ProviderClientReadinessMetadata {
+  adapterGroupCategory: ProviderGroupCategory;
+  adapterGroupId: string;
+  adapterGroupStatus: ProviderGroupStatus;
+  liveProviderCallsAttempted: false;
+  productionReady: false;
+  readinessStatus: ProviderClientReadinessStatus;
+}
+
+export interface ProviderClientRegistryProjection {
+  adapterFoundationId: "campaign-os-provider-indexer-foundation";
+  blockerCount: number;
+  clientReadinessId: "campaign-os-provider-indexer-client-readiness";
+  diagnosticCodes: ProviderClientDiagnosticCode[];
+  entries: ProviderClientRegistryProjectionEntry[];
+  executionBoundary: "metadata_only_no_sdk_no_live_calls";
+  liveProviderCallsAttempted: false;
+  missingPreconditionRefs: string[];
+  productionReady: false;
+  providerClientsEnabled: boolean;
+  registryPresent: true;
+  source: "provider-indexer-client-readiness";
+  status: ProviderClientReadinessStatus;
 }
 
 export interface ProviderIndexerDiagnostic {
@@ -73,6 +120,7 @@ export interface ProviderIndexerFoundationSummary {
   noLiveFlags: ProviderIndexerNoLiveFlags;
   productionReady: false;
   profileId: ProviderIndexerProfileId;
+  providerClientRegistry: ProviderClientRegistryProjection;
   providerGroupCount: number;
   providerGroups: ProviderIndexerAdapterGroup[];
   status: ProviderIndexerFoundationStatus;
@@ -94,6 +142,15 @@ type ProductionPrecondition = {
 
 const REDACTED_VALUE = "[redacted]";
 const rawPayloadValue = "[redacted-provider-payload]";
+const providerClientReadinessId = "campaign-os-provider-indexer-client-readiness" as const;
+const providerClientReferencePolicy = {
+  circuitBreakerPolicyRef: "policy-ref:CAMPAIGN_OS_PROVIDER_CIRCUIT_BREAKER_POLICY",
+  credentialRef: "secret-ref:CAMPAIGN_OS_PROVIDER_CREDENTIAL_REF",
+  degradationPolicyRef: "policy-ref:CAMPAIGN_OS_PROVIDER_DEGRADATION_POLICY",
+  endpointRef: "config-ref:CAMPAIGN_OS_PROVIDER_ENDPOINT_REF",
+  retryPolicyRef: "policy-ref:CAMPAIGN_OS_PROVIDER_RETRY_POLICY",
+  timeoutPolicyRef: "policy-ref:CAMPAIGN_OS_PROVIDER_TIMEOUT_POLICY",
+} as const;
 
 export const SUPPORTED_PROVIDER_INDEXER_PROFILES: ProviderIndexerProfileId[] = [
   "local-review",
@@ -112,12 +169,41 @@ export const providerIndexerNoLiveFlags: ProviderIndexerNoLiveFlags = {
   workerExecutionEnabled: false,
 };
 
-const providerGroup = (group: ProviderIndexerAdapterGroup): ProviderIndexerAdapterGroup => group;
+type ProviderIndexerAdapterGroupInput = Omit<ProviderIndexerAdapterGroup, "clientReadiness"> & {
+  clientReadiness?: ProviderClientReadinessMetadata;
+};
+
+const providerClientReadinessMetadata = (
+  groupId: string,
+  supportedVerificationTypes: ProviderVerificationType[],
+  providerClientRequired: boolean,
+): ProviderClientReadinessMetadata => ({
+  capabilityLabels: [
+    "provider-client:verification_evaluation",
+    "provider-client:redacted_diagnostics",
+  ],
+  circuitBreakerPolicyRef: providerClientReferencePolicy.circuitBreakerPolicyRef,
+  clientId: `provider-client:${groupId}`,
+  credentialRef: providerClientReferencePolicy.credentialRef,
+  degradationPolicyRef: providerClientReferencePolicy.degradationPolicyRef,
+  endpointRef: providerClientReferencePolicy.endpointRef,
+  providerClientRequired,
+  readinessId: providerClientReadinessId,
+  retryPolicyRef: providerClientReferencePolicy.retryPolicyRef,
+  supportedVerificationTypes,
+  timeoutPolicyRef: providerClientReferencePolicy.timeoutPolicyRef,
+});
+
+const providerGroup = (group: ProviderIndexerAdapterGroupInput): ProviderIndexerAdapterGroup => ({
+  ...group,
+  clientReadiness: group.clientReadiness ?? providerClientReadinessMetadata(group.id, [], false),
+});
 
 export const providerIndexerAdapterGroups: ProviderIndexerAdapterGroup[] = [
   providerGroup({
     capabilities: ["session_identity", "wallet_proof_handoff", "auth_session_reference"],
     category: "wallet_auth",
+    clientReadiness: providerClientReadinessMetadata("wallet-auth-session", ["WALLET"], false),
     failureMode: "deterministic_local_stub",
     forbiddenInLocalReview: false,
     id: "wallet-auth-session",
@@ -131,6 +217,7 @@ export const providerIndexerAdapterGroups: ProviderIndexerAdapterGroup[] = [
   providerGroup({
     capabilities: ["campaign_event_lookup", "quest_completion_lookup", "chain_activity_lookup"],
     category: "indexer",
+    clientReadiness: providerClientReadinessMetadata("aefinder-aelfscan-indexers", ["ON_CHAIN"], true),
     failureMode: "live_adapter_deferred",
     forbiddenInLocalReview: true,
     id: "aefinder-aelfscan-indexers",
@@ -144,6 +231,7 @@ export const providerIndexerAdapterGroups: ProviderIndexerAdapterGroup[] = [
   providerGroup({
     capabilities: ["partner_campaign_status", "quest_validation_status"],
     category: "dapp_api",
+    clientReadiness: providerClientReadinessMetadata("dapp-api-adapters", ["DAPP_API"], true),
     failureMode: "live_adapter_deferred",
     forbiddenInLocalReview: true,
     id: "dapp-api-adapters",
@@ -157,6 +245,7 @@ export const providerIndexerAdapterGroups: ProviderIndexerAdapterGroup[] = [
   providerGroup({
     capabilities: ["social_follow_lookup", "social_share_lookup", "social_identity_match"],
     category: "social_api",
+    clientReadiness: providerClientReadinessMetadata("social-api-adapters", ["SOCIAL"], true),
     failureMode: "live_adapter_deferred",
     forbiddenInLocalReview: true,
     id: "social-api-adapters",
@@ -170,6 +259,7 @@ export const providerIndexerAdapterGroups: ProviderIndexerAdapterGroup[] = [
   providerGroup({
     capabilities: ["manual_decision_capture", "operator_review_queue"],
     category: "manual_review",
+    clientReadiness: providerClientReadinessMetadata("manual-review", ["MANUAL"], false),
     failureMode: "manual_handoff",
     forbiddenInLocalReview: false,
     id: "manual-review",
@@ -343,6 +433,40 @@ const createProductionDiagnostics = (env: Record<string, unknown>): ProviderInde
       createDiagnostic(precondition.code, precondition.field, precondition.message),
     );
 
+const createProviderClientRegistryProjection = (
+  env: Record<string, unknown>,
+  profileId: ProviderIndexerProfileId,
+): ProviderClientRegistryProjection => {
+  const readiness = createProviderIndexerClientReadiness({ env, profileId });
+  const missingPreconditionRefs = providerClientProductionPreconditions
+    .filter((precondition) => readiness.diagnosticCodes.includes(precondition.diagnosticCode))
+    .map((precondition) => precondition.id);
+
+  return {
+    adapterFoundationId: "campaign-os-provider-indexer-foundation",
+    blockerCount: readiness.blockerCount,
+    clientReadinessId: readiness.id,
+    diagnosticCodes: readiness.diagnosticCodes,
+    entries: providerIndexerAdapterGroups.map((group) => ({
+      ...group.clientReadiness,
+      adapterGroupCategory: group.category,
+      adapterGroupId: group.id,
+      adapterGroupStatus: group.status,
+      liveProviderCallsAttempted: false,
+      productionReady: false,
+      readinessStatus: readiness.status,
+    })),
+    executionBoundary: "metadata_only_no_sdk_no_live_calls",
+    liveProviderCallsAttempted: false,
+    missingPreconditionRefs,
+    productionReady: false,
+    providerClientsEnabled: readiness.providerClientsEnabled,
+    registryPresent: true,
+    source: "provider-indexer-client-readiness",
+    status: readiness.status,
+  };
+};
+
 export const redactProviderIndexerValue = (value: unknown): unknown => {
   if (Array.isArray(value)) {
     return value.map((item) => redactProviderIndexerValue(item));
@@ -394,6 +518,7 @@ export const createProviderIndexerFoundation = (
     noLiveFlags: providerIndexerNoLiveFlags,
     productionReady: false,
     profileId: profileResolution.profileId,
+    providerClientRegistry: createProviderClientRegistryProjection(env, profileResolution.profileId),
     providerGroupCount: providerIndexerAdapterGroups.length,
     providerGroups: providerIndexerAdapterGroups,
     status,

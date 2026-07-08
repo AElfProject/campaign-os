@@ -66,6 +66,10 @@ import {
   type ProviderIndexerFoundationSummary,
 } from "./providerIndexerAdapters";
 import {
+  createProviderIndexerClientReadiness,
+  type ProviderClientReadinessSummary,
+} from "./providerIndexerClientReadiness";
+import {
   createWorkerSchedulerFoundation,
   type WorkerSchedulerFoundationSummary,
 } from "./workerSchedulerRuntime";
@@ -130,6 +134,7 @@ export type BackendReadinessDiagnosticCode =
   | "CAMPAIGN_DB_VERTICAL_SLICE_BLOCKED"
   | "DATABASE_READINESS_BLOCKED"
   | "PROVIDER_INDEXER_READINESS_BLOCKED"
+  | "PROVIDER_CLIENT_READINESS_BLOCKED"
   | "PERSISTENCE_ADAPTER_INVALID"
   | "MIGRATION_MANIFEST_INVALID"
   | "API_FOUNDATION_INVALID"
@@ -213,6 +218,7 @@ export interface BackendServiceReadinessReport {
   observabilityExporterFoundation: BackendObservabilityExporterReadinessSummary;
   persistenceFoundation: BackendPersistenceFoundationSummary;
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
+  providerClientReadiness: BackendProviderClientReadinessSummary;
   queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
   workerIdempotencyStoreFoundation: BackendWorkerIdempotencyStoreReadinessSummary;
   workerLeaseStoreFoundation: BackendWorkerLeaseStoreReadinessSummary;
@@ -448,6 +454,16 @@ export interface BackendProviderIndexerReadinessSummary extends ProviderIndexerF
   verificationSourceDiagnosticCodes: VerificationSourceHandoffSummary["diagnosticCodes"];
   verificationSourceDiagnostics: VerificationSourceHandoffSummary["diagnostics"];
   verificationSourceHandoff: VerificationSourceHandoffSummary;
+}
+
+export interface BackendProviderClientReadinessSummary extends ProviderClientReadinessSummary {
+  activationInventory: {
+    activationStatus: ProviderClientReadinessSummary["activationStatus"];
+    blockedConfigKeys: string[];
+    blockerIds: string[];
+    redacted: true;
+    requiredConfigKeys: string[];
+  };
 }
 
 export interface BackendWorkerSchedulerReadinessSummary {
@@ -1074,6 +1090,7 @@ const createValidationIssues = ({
   observabilityExporterFoundation,
   persistenceAdapters,
   providerIndexerFoundation,
+  providerClientReadiness,
   queueRuntimeFoundation,
   schedulerRuntimeFoundation,
   workerIdempotencyStoreFoundation,
@@ -1095,6 +1112,7 @@ const createValidationIssues = ({
   observabilityExporterFoundation: BackendObservabilityExporterReadinessSummary;
   persistenceAdapters: PersistenceAdapterPortReport;
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
+  providerClientReadiness: BackendProviderClientReadinessSummary;
   queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
   schedulerRuntimeFoundation: BackendSchedulerRuntimeReadinessSummary;
   workerIdempotencyStoreFoundation: BackendWorkerIdempotencyStoreReadinessSummary;
@@ -1147,6 +1165,14 @@ const createValidationIssues = ({
       "PROVIDER_INDEXER_READINESS_BLOCKED",
       "providerIndexerFoundation",
       "Provider/indexer readiness validation failed.",
+    ));
+  }
+
+  if (!providerClientReadiness.valid) {
+    issues.push(errorDiagnostic(
+      "PROVIDER_CLIENT_READINESS_BLOCKED",
+      "providerClientReadiness",
+      "Provider/indexer client readiness validation failed.",
     ));
   }
 
@@ -1627,6 +1653,36 @@ const createBackendProviderIndexerReadinessSummary = ({
     verificationSourceDiagnosticCodes: verificationSourceHandoff.diagnosticCodes,
     verificationSourceDiagnostics: verificationSourceHandoff.diagnostics,
     verificationSourceHandoff,
+  };
+};
+
+const createBackendProviderClientReadinessSummary = ({
+  env,
+  profileId,
+}: {
+  env: Record<string, string | undefined>;
+  profileId: BackendConfigContract["profileId"];
+}): BackendProviderClientReadinessSummary => {
+  const readiness = createProviderIndexerClientReadiness({
+    env,
+    profileId,
+  });
+  const diagnosticCodeSet = new Set(readiness.diagnosticCodes);
+  const blockerPreconditions = readiness.preconditions.filter((precondition) =>
+    diagnosticCodeSet.has(precondition.diagnosticCode)
+  );
+
+  return {
+    ...readiness,
+    activationInventory: {
+      activationStatus: readiness.activationStatus,
+      blockedConfigKeys: uniqueStrings(
+        blockerPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
+      ),
+      blockerIds: blockerPreconditions.map((precondition) => precondition.id),
+      redacted: true,
+      requiredConfigKeys: readiness.requiredConfigKeys,
+    },
   };
 };
 
@@ -2161,6 +2217,10 @@ export const createBackendServiceReadinessReport = ({
     env,
     profileId: config.profileId,
   });
+  const providerClientReadiness = createBackendProviderClientReadinessSummary({
+    env,
+    profileId: config.profileId,
+  });
   const workerSchedulerFoundation = createBackendWorkerSchedulerReadinessSummary({
     env,
     profileId: config.profileId,
@@ -2210,6 +2270,7 @@ export const createBackendServiceReadinessReport = ({
     observabilityExporterFoundation,
     persistenceAdapters,
     providerIndexerFoundation,
+    providerClientReadiness,
     queueRuntimeFoundation,
     persistenceRuntime,
     schedulerRuntimeFoundation,
@@ -2238,6 +2299,7 @@ export const createBackendServiceReadinessReport = ({
     observabilityExporterFoundation,
     persistenceFoundation,
     providerIndexerFoundation,
+    providerClientReadiness,
     queueRuntimeFoundation,
     workerIdempotencyStoreFoundation,
     workerLeaseStoreFoundation,

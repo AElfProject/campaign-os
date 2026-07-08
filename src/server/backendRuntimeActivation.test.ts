@@ -51,6 +51,22 @@ const expectNoSecretLeak = (value: unknown) => {
   }
 };
 
+const providerClientConfigKeys = [
+  "CAMPAIGN_OS_PROVIDER_CLIENT_ENABLEMENT",
+  "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+  "CAMPAIGN_OS_PROVIDER_ENDPOINT_REF",
+  "CAMPAIGN_OS_PROVIDER_CREDENTIAL_REF",
+  "CAMPAIGN_OS_PROVIDER_CLIENT_SEAM",
+  "CAMPAIGN_OS_PROVIDER_TIMEOUT_POLICY",
+  "CAMPAIGN_OS_PROVIDER_RETRY_POLICY",
+  "CAMPAIGN_OS_PROVIDER_CIRCUIT_BREAKER_POLICY",
+  "CAMPAIGN_OS_PROVIDER_DEGRADATION_POLICY",
+  "CAMPAIGN_OS_PROVIDER_WORKER_QUEUE_HANDOFF",
+  "CAMPAIGN_OS_PROVIDER_CONSUME_READINESS_HANDOFF",
+  "CAMPAIGN_OS_PROVIDER_RUNBOOK_URL",
+  "CAMPAIGN_OS_PROVIDER_REDACTION_POLICY",
+];
+
 describe("backend runtime activation contract", () => {
   it("publishes stable runtime activation and package command metadata", () => {
     const runtime = resolveApiServerRuntimeContract({
@@ -160,6 +176,9 @@ describe("backend runtime activation contract", () => {
       ...new Set(liveQueueConsumeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
 
+    expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
+      expect.arrayContaining(providerClientConfigKeys),
+    );
     expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
       expect.arrayContaining([
         "CAMPAIGN_OS_API_HOST",
@@ -284,6 +303,24 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
       ]),
     );
+    for (const providerClientConfigKey of providerClientConfigKeys) {
+      expect(activation.deploymentHandoff.environmentKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            category: providerClientConfigKey === "CAMPAIGN_OS_PROVIDER_WORKER_QUEUE_HANDOFF"
+              ? "queue"
+              : providerClientConfigKey === "CAMPAIGN_OS_PROVIDER_CONSUME_READINESS_HANDOFF"
+                ? "worker"
+                : "provider",
+            key: providerClientConfigKey,
+            redacted: true,
+            required: true,
+            requiredFor: "production-required",
+            status: "blocked",
+          }),
+        ]),
+      );
+    }
     for (const schedulerRuntimeConfigKey of schedulerRuntimeConfigKeys) {
       expect(activation.deploymentHandoff.environmentKeys).toEqual(
         expect.arrayContaining([
@@ -606,6 +643,24 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "auth", id: "wallet-proof-verifier", status: "blocked" }),
         expect.objectContaining({ area: "auth", id: "session-issuer", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "provider-adapters", status: "deferred" }),
+        expect.objectContaining({
+          area: "provider",
+          blockedBy: ["CAMPAIGN_OS_PROVIDER_CLIENT_ENABLEMENT"],
+          id: "provider-client-provider-client-activation",
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          area: "queue",
+          blockedBy: ["CAMPAIGN_OS_PROVIDER_WORKER_QUEUE_HANDOFF"],
+          id: "provider-client-provider-client-worker-queue-handoff",
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          area: "worker",
+          blockedBy: ["CAMPAIGN_OS_PROVIDER_CONSUME_READINESS_HANDOFF"],
+          id: "provider-client-provider-client-consume-readiness-handoff",
+          status: "blocked",
+        }),
         expect.objectContaining({ area: "scheduler", id: "scheduler-runtime-scheduler-provider", status: "blocked" }),
         expect.objectContaining({ area: "scheduler", id: "scheduler-runtime-scheduler-endpoint", status: "blocked" }),
         expect.objectContaining({ area: "scheduler", id: "scheduler-runtime-scheduler-clock-lease", status: "blocked" }),

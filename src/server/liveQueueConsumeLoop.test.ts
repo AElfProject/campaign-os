@@ -231,6 +231,38 @@ describe("live queue consume loop boundary", () => {
     expect(Object.values(result.noLiveSideEffects).every((value) => value === false)).toBe(true);
   });
 
+  it("projects provider client consume handoff metadata without local reserve or settlement actions", () => {
+    const localReview = createLiveQueueConsumeLoopReadiness({ profileId: "local-review" });
+    const ready = createReadyReadiness();
+
+    expect(localReview.providerClientConsumeHandoff).toEqual({
+      consumeReadinessStatus: "disabled",
+      liveAckAttempted: false,
+      liveDeadLetterAttempted: false,
+      liveNackAttempted: false,
+      liveProviderCallsEnabled: false,
+      liveReserveAttempted: false,
+      liveRetryAttempted: false,
+      payloadReferenceRequirement: "payload-reference-or-hash-required",
+      providerClientActivationPrerequisite: "consume-readiness-handoff",
+      providerVerificationQueueId: "verification-jobs",
+      providerVerificationWorkerJobId: "task-verification-worker",
+    });
+    expect(localReview.readiness.providerClientConsumeHandoff).toEqual(localReview.providerClientConsumeHandoff);
+    expect(ready.providerClientConsumeHandoff).toMatchObject({
+      consumeReadinessStatus: "activated",
+      liveAckAttempted: false,
+      liveDeadLetterAttempted: false,
+      liveNackAttempted: false,
+      liveProviderCallsEnabled: false,
+      liveReserveAttempted: false,
+      liveRetryAttempted: false,
+      providerVerificationQueueId: "verification-jobs",
+      providerVerificationWorkerJobId: "task-verification-worker",
+    });
+    expect(Object.values(ready.noLiveSideEffects).every((value) => value === false)).toBe(true);
+  });
+
   it("rejects unsafe messages before consumer or handler execution", () => {
     let consumerCalled = false;
     let handlerCalled = false;

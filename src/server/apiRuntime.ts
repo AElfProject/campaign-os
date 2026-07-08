@@ -344,6 +344,31 @@ const createHealthAuthSessionMetadata = (
   verificationMode: report.authSession.proofBoundary.verificationMode,
 });
 
+const createProviderClientReadinessMetadata = (
+  report: BackendServiceReadinessReport,
+) => ({
+  activationInventory: report.providerClientReadiness.activationInventory,
+  activationStatus: report.providerClientReadiness.activationStatus,
+  blockerCount: report.providerClientReadiness.blockerCount,
+  diagnosticCodes: report.providerClientReadiness.diagnosticCodes,
+  downstreamLiveFlags: report.providerClientReadiness.downstreamLiveFlags,
+  id: report.providerClientReadiness.id,
+  liveProviderCallsAttempted: report.providerClientReadiness.liveProviderCallsAttempted,
+  policy: report.providerClientReadiness.policy,
+  productionReady: report.providerClientReadiness.productionReady,
+  providerClientsEnabled: report.providerClientReadiness.providerClientsEnabled,
+  providerClientsProvided: report.providerClientReadiness.providerClientsProvided,
+  queueHandoff: report.providerClientReadiness.queueHandoff,
+  redacted: true,
+  registry: {
+    clientCount: report.providerClientReadiness.registry.clients.length,
+    providerGroups: report.providerClientReadiness.registry.providerGroups,
+  },
+  requiredConfigKeys: report.providerClientReadiness.requiredConfigKeys,
+  status: report.providerClientReadiness.status,
+  valid: report.providerClientReadiness.valid,
+});
+
 const createApiServiceMetadata = (
   report: BackendServiceReadinessReport,
 ) => ({
@@ -444,6 +469,7 @@ const withBackendServiceReadinessMetadata = ({
         databaseAdapterRuntime: createDatabaseAdapterRuntimeMetadata(readiness),
         databaseReadiness: createHealthDatabaseReadinessMetadata(readiness),
         persistenceRuntime: createPersistenceRuntimeMetadata(readiness),
+        providerClientReadiness: createProviderClientReadinessMetadata(readiness),
       },
     };
   }
@@ -466,6 +492,7 @@ const withBackendServiceReadinessMetadata = ({
         databaseAdapterRuntime: createDatabaseAdapterRuntimeContractMetadata(readiness),
         databaseReadiness: createContractDatabaseReadinessMetadata(readiness),
         persistenceRuntime: createPersistenceRuntimeMetadata(readiness),
+        providerClientReadiness: createProviderClientReadinessMetadata(readiness),
         reportShape: isRecord(data.backendService.reportShape)
           ? {
             ...data.backendService.reportShape,
@@ -477,6 +504,7 @@ const withBackendServiceReadinessMetadata = ({
               "databaseReadiness",
               "persistenceRuntime",
               "productionDbRuntime",
+              "providerClientReadiness",
             ]),
           }
           : data.backendService.reportShape,

@@ -170,10 +170,20 @@ export interface WorkerLeaseStoreReadinessProjection {
   observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   operationCount: number;
   productionReady: false;
+  providerLeasePosture: ProviderLeasePosture;
   queueProviderSdkBindingHandoff: WorkerLeaseQueueProviderSdkBindingReadinessHandoff;
   requiredConfigKeys: string[];
   storeId: string;
   ttlSeconds: number;
+}
+
+export interface ProviderLeasePosture {
+  conflictDecisions: ["retry", "manual_review", "blocked"];
+  liveLeaseClaimingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  posture: "reference_or_hash_only";
+  rawLeaseTokenSerialized: false;
+  requiredReferenceFields: ["leaseKeyReference", "fencingTokenReference"];
 }
 
 export interface WorkerLeaseStoreFoundationSummary {
@@ -190,6 +200,7 @@ export interface WorkerLeaseStoreFoundationSummary {
   preconditions: WorkerLeaseProductionPrecondition[];
   productionReady: false;
   profileId: WorkerLeaseStoreProfileId;
+  providerLeasePosture: ProviderLeasePosture;
   readiness: WorkerLeaseStoreReadinessProjection;
   status: WorkerLeaseStoreFoundationStatus;
   storeId: string;
@@ -243,6 +254,8 @@ export interface WorkerLeaseDryRunResult {
   liveLeaseOperationAttempted: false;
   liveWorkerExecutionEnabled: false;
   operation?: WorkerLeaseOperation;
+  providerLeaseDecision?: "retry" | "manual_review" | "blocked";
+  providerLeasePosture?: "reference_or_hash_only";
   requestedAt?: string;
   status: "accepted_dry_run" | "rejected";
   traceId?: string;
@@ -463,6 +476,7 @@ export const createWorkerLeaseStoreFoundation = (
     preconditions: workerLeaseStoreProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
     profileId: profileResolution.profileId,
+    providerLeasePosture,
     readiness,
     status: resolveStatus(profileResolution.profileId, blockerCount),
     storeId,
@@ -520,6 +534,8 @@ export const evaluateWorkerLeaseDryRun = (
     liveLeaseOperationAttempted: false,
     liveWorkerExecutionEnabled: false,
     operation: accepted ? request.operation : undefined,
+    providerLeaseDecision: accepted ? resolveProviderLeaseDecision(request.operation) : undefined,
+    providerLeasePosture: accepted ? "reference_or_hash_only" : undefined,
     requestedAt: accepted ? request.requestedAt : undefined,
     status: accepted ? "accepted_dry_run" : "rejected",
     traceId: accepted ? request.traceId : undefined,
@@ -752,6 +768,7 @@ const createReadinessProjection = ({
   observabilityExporterStatus: observabilityExporter.status,
   operationCount: workerLeaseOperationCapabilities.length,
   productionReady: false,
+  providerLeasePosture,
   queueProviderSdkBindingHandoff: createQueueProviderSdkBindingReadinessHandoff(env),
   requiredConfigKeys: [
     ...new Set(workerLeaseStoreProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
@@ -759,6 +776,29 @@ const createReadinessProjection = ({
   storeId,
   ttlSeconds: readPositiveInteger(env.CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS) ?? DEFAULT_TTL_SECONDS,
 });
+
+const providerLeasePosture: ProviderLeasePosture = {
+  conflictDecisions: ["retry", "manual_review", "blocked"],
+  liveLeaseClaimingEnabled: false,
+  liveWorkerExecutionEnabled: false,
+  posture: "reference_or_hash_only",
+  rawLeaseTokenSerialized: false,
+  requiredReferenceFields: ["leaseKeyReference", "fencingTokenReference"],
+};
+
+const resolveProviderLeaseDecision = (
+  operation: WorkerLeaseOperation,
+): ProviderLeasePosture["conflictDecisions"][number] => {
+  if (operation === "reject_conflict" || operation === "recover_stale") {
+    return "retry";
+  }
+
+  if (operation === "expire") {
+    return "manual_review";
+  }
+
+  return operation === "fence" ? "blocked" : "retry";
+};
 
 const createQueueProviderSdkBindingReadinessHandoff = (
   env: Record<string, unknown>,

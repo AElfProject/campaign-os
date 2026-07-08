@@ -1,5 +1,30 @@
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import packageJson from "../../package.json";
 import { apiRuntimeRoutes, createBackendServiceReadinessReport } from "./index";
+
+const trackedFiles = () =>
+  execFileSync("git", ["ls-files"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  })
+    .split("\n")
+    .filter(Boolean);
+
+const missionBaseRef = () =>
+  execFileSync("git", ["merge-base", "HEAD", "main"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  })
+    .trim();
+
+const changedFilesSinceMissionBase = () =>
+  execFileSync("git", ["diff", "--name-only", `${missionBaseRef()}..HEAD`], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  })
+    .split("\n")
+    .filter(Boolean);
 
 const deferredCapabilityIds = [
   "production_database",
@@ -30,6 +55,25 @@ const secretLikeFragments = [
   "rawsignature=",
   "seedphrase=",
   "signedurl=",
+];
+
+const forbiddenRuntimeDependencyFragments = [
+  "@aelf",
+  "@aws-sdk",
+  "@google/generative-ai",
+  "@openai",
+  "@provider",
+  "aefinder",
+  "aelfscan",
+  "analytics",
+  "aws-sdk",
+  "ethers",
+  "mixpanel",
+  "openai",
+  "reward",
+  "segment",
+  "viem",
+  "web3",
 ];
 
 describe("backend scaffold public guardrails", () => {
@@ -141,6 +185,52 @@ describe("backend scaffold public guardrails", () => {
     for (const fragment of secretLikeFragments) {
       expect(serialized).not.toContain(fragment);
     }
+  });
+
+  it("keeps private Kitty artifacts out of the public tracked file set", () => {
+    const publicTrackedFiles = trackedFiles();
+
+    expect(publicTrackedFiles).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^(docs\/current|kitty-specs|evidence|sync|\.kittify|\.agents|AGENTS\.md)(\/|$)/),
+      ]),
+    );
+    expect(publicTrackedFiles).toEqual(
+      expect.arrayContaining([
+        "package.json",
+        "src/server/backendService.ts",
+        "src/server/providerIndexerClientReadiness.ts",
+      ]),
+    );
+  });
+
+  it("does not introduce live provider, indexer, social, AI, analytics, storage, contract, or reward SDK dependencies", () => {
+    const dependencyNames = Object.keys({
+      ...packageJson.dependencies,
+      ...packageJson.devDependencies,
+    });
+
+    expect(dependencyNames).toEqual(expect.arrayContaining(["bullmq", "vite", "vitest"]));
+    for (const dependencyName of dependencyNames) {
+      for (const forbiddenFragment of forbiddenRuntimeDependencyFragments) {
+        expect(dependencyName.toLowerCase()).not.toContain(forbiddenFragment);
+      }
+    }
+  });
+
+  it("keeps provider client readiness changes away from rendered UI files", () => {
+    const missionChangedFiles = changedFilesSinceMissionBase();
+
+    expect(missionChangedFiles).toEqual(expect.arrayContaining([
+      "src/server/providerIndexerClientReadiness.ts",
+      "src/server/backendService.ts",
+    ]));
+    expect(missionChangedFiles).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^src\/(app|components|styles|i18n)\//),
+        expect.stringMatching(/\.(tsx|css)$/),
+      ]),
+    );
   });
 
   it("does not treat production-required auth/session as anonymous local mode", () => {

@@ -71,6 +71,22 @@ const workerIdempotencyRequiredConfigKeys = [
   "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
 ];
 
+const providerClientRequiredConfigKeys = [
+  "CAMPAIGN_OS_PROVIDER_CLIENT_ENABLEMENT",
+  "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+  "CAMPAIGN_OS_PROVIDER_ENDPOINT_REF",
+  "CAMPAIGN_OS_PROVIDER_CREDENTIAL_REF",
+  "CAMPAIGN_OS_PROVIDER_CLIENT_SEAM",
+  "CAMPAIGN_OS_PROVIDER_TIMEOUT_POLICY",
+  "CAMPAIGN_OS_PROVIDER_RETRY_POLICY",
+  "CAMPAIGN_OS_PROVIDER_CIRCUIT_BREAKER_POLICY",
+  "CAMPAIGN_OS_PROVIDER_DEGRADATION_POLICY",
+  "CAMPAIGN_OS_PROVIDER_WORKER_QUEUE_HANDOFF",
+  "CAMPAIGN_OS_PROVIDER_CONSUME_READINESS_HANDOFF",
+  "CAMPAIGN_OS_PROVIDER_RUNBOOK_URL",
+  "CAMPAIGN_OS_PROVIDER_REDACTION_POLICY",
+];
+
 const expectNoQueueSecretLeak = (value: unknown) => {
   const serialized = JSON.stringify(value);
 
@@ -271,6 +287,54 @@ describe("backend service readiness report", () => {
         "manual_review",
       ],
     });
+    expect(report.providerClientReadiness).toMatchObject({
+      activationInventory: {
+        activationStatus: "disabled",
+        blockedConfigKeys: [],
+        blockerIds: [],
+        redacted: true,
+        requiredConfigKeys: expect.arrayContaining(providerClientRequiredConfigKeys),
+      },
+      activationStatus: "disabled",
+      blockerCount: 0,
+      diagnosticCodes: [],
+      downstreamLiveFlags: {
+        alternateQueuePublish: false,
+        analyticsIngestion: false,
+        contractCalls: false,
+        objectStorageWrites: false,
+        rewardDistribution: false,
+        schedulerExecution: false,
+        telemetryVendorExport: false,
+      },
+      id: "campaign-os-provider-indexer-client-readiness",
+      liveProviderCallsAttempted: false,
+      productionReady: false,
+      providerClientsEnabled: false,
+      providerClientsProvided: false,
+      queueHandoff: {
+        consumeReadinessStatus: "disabled",
+        queueId: "verification-jobs",
+        workerJobId: "task-verification-worker",
+      },
+      registry: {
+        clients: [],
+        providerGroups: expect.arrayContaining([
+          "aefinder-aelfscan-indexers",
+          "dapp-api-adapters",
+          "manual-review",
+          "social-api-adapters",
+          "wallet-auth-session",
+        ]),
+      },
+      requiredConfigKeys: expect.arrayContaining(providerClientRequiredConfigKeys),
+      status: "disabled",
+      valid: true,
+    });
+    expect(report.providerClientReadiness.status).not.toBe(report.providerIndexerFoundation.status);
+    expect(report.providerClientReadiness.queueHandoff.consumeReadinessStatus).toBe(
+      report.queueRuntimeFoundation.consumingReadiness.status,
+    );
     expect(report.workerSchedulerFoundation).toMatchObject({
       blockerCount: 0,
       diagnosticCodes: [],
@@ -1560,6 +1624,71 @@ describe("backend service readiness report", () => {
         valid: true,
       },
     });
+    expect(report.providerClientReadiness).toMatchObject({
+      activationInventory: {
+        activationStatus: "activation_required",
+        blockedConfigKeys: expect.arrayContaining([
+          "CAMPAIGN_OS_PROVIDER_CLIENT_ENABLEMENT",
+          "CAMPAIGN_OS_PROVIDER_ENDPOINT_REF",
+          "CAMPAIGN_OS_PROVIDER_CREDENTIAL_REF",
+          "CAMPAIGN_OS_PROVIDER_CLIENT_SEAM",
+          "CAMPAIGN_OS_PROVIDER_TIMEOUT_POLICY",
+          "CAMPAIGN_OS_PROVIDER_RETRY_POLICY",
+          "CAMPAIGN_OS_PROVIDER_CIRCUIT_BREAKER_POLICY",
+          "CAMPAIGN_OS_PROVIDER_DEGRADATION_POLICY",
+          "CAMPAIGN_OS_PROVIDER_WORKER_QUEUE_HANDOFF",
+          "CAMPAIGN_OS_PROVIDER_CONSUME_READINESS_HANDOFF",
+          "CAMPAIGN_OS_PROVIDER_RUNBOOK_URL",
+          "CAMPAIGN_OS_PROVIDER_REDACTION_POLICY",
+        ]),
+        blockerIds: expect.arrayContaining([
+          "provider-client-activation",
+          "provider-client-endpoint-reference",
+          "provider-client-credential-reference",
+          "provider-client-seam",
+          "provider-client-timeout-policy",
+          "provider-client-retry-policy",
+          "provider-client-circuit-breaker-policy",
+          "provider-client-degradation-policy",
+          "provider-client-worker-queue-handoff",
+          "provider-client-consume-readiness-handoff",
+          "provider-client-runbook",
+          "provider-client-redaction-policy",
+        ]),
+        redacted: true,
+        requiredConfigKeys: expect.arrayContaining(providerClientRequiredConfigKeys),
+      },
+      activationStatus: "activation_required",
+      blockerCount: 12,
+      diagnosticCodes: expect.arrayContaining([
+        "PROVIDER_CLIENT_ACTIVATION_MISSING",
+        "PROVIDER_CLIENT_ENDPOINT_REFERENCE_MISSING",
+        "PROVIDER_CLIENT_CREDENTIAL_REFERENCE_MISSING",
+        "PROVIDER_CLIENT_SEAM_MISSING",
+        "PROVIDER_CLIENT_TIMEOUT_POLICY_MISSING",
+        "PROVIDER_CLIENT_RETRY_POLICY_MISSING",
+        "PROVIDER_CLIENT_CIRCUIT_BREAKER_POLICY_MISSING",
+        "PROVIDER_CLIENT_DEGRADATION_POLICY_MISSING",
+        "PROVIDER_CLIENT_WORKER_QUEUE_HANDOFF_MISSING",
+        "PROVIDER_CLIENT_CONSUME_READINESS_HANDOFF_MISSING",
+        "PROVIDER_CLIENT_RUNBOOK_MISSING",
+        "PROVIDER_CLIENT_REDACTION_POLICY_MISSING",
+      ]),
+      liveProviderCallsAttempted: false,
+      productionReady: false,
+      providerClientsEnabled: false,
+      providerClientsProvided: false,
+      queueHandoff: {
+        consumeReadinessStatus: "disabled",
+        queueId: "verification-jobs",
+        workerJobId: "task-verification-worker",
+      },
+      registry: {
+        clients: [],
+      },
+      status: "blocked",
+      valid: false,
+    });
     expect(report.workerSchedulerFoundation).toMatchObject({
       blockerCount: 0,
       diagnosticCodes: [],
@@ -1835,6 +1964,10 @@ describe("backend service readiness report", () => {
           code: "MIGRATION_MANIFEST_INVALID",
           field: "migration",
         }),
+        expect.objectContaining({
+          code: "PROVIDER_CLIENT_READINESS_BLOCKED",
+          field: "providerClientReadiness",
+        }),
       ]),
     });
     expect(report.validation.issues).not.toEqual(
@@ -1862,6 +1995,16 @@ describe("backend service readiness report", () => {
         persistenceRuntime: {
           liveConnectionAttempted: false,
           liveExecutionEnabled: false,
+        },
+        providerClientReadiness: {
+          activationStatus: "activation_required",
+          blockerCount: 12,
+          liveProviderCallsAttempted: false,
+          productionReady: false,
+          providerClientsEnabled: false,
+          providerClientsProvided: false,
+          status: "blocked",
+          valid: false,
         },
       },
       status: "blocked",
