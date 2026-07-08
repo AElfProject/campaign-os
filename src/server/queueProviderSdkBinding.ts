@@ -2,6 +2,7 @@ import type { BackendRuntimeProfileId } from "./backendProfiles";
 import {
   createQueueProviderPackageBinding,
   type QueueProviderBrokerConnectionPosture,
+  type QueueProviderPackageBrokerConnectionSummary,
   type QueueProviderPackageBindingMode,
   type QueueProviderPackageBindingStatus,
   type QueueProviderPackageDiagnosticCode,
@@ -147,12 +148,20 @@ export interface QueueProviderSdkBindingHealthCheck {
 export interface QueueProviderSdkPackageBindingSummary {
   bindingId: string;
   blockerCount: number;
+  brokerConnection: QueueProviderPackageBrokerConnectionSummary;
+  brokerConnectionBlockerCount: number;
+  brokerConnectionDiagnosticCodes: QueueProviderPackageBrokerConnectionSummary["diagnosticCodes"];
+  brokerConnectionHealthCheckMode: QueueProviderPackageBrokerConnectionSummary["healthCheckMode"];
+  brokerConnectionId: string;
   brokerConnectionPosture: QueueProviderBrokerConnectionPosture;
+  brokerConnectionRequiredConfigKeys: string[];
+  brokerConnectionStatus: QueueProviderPackageBrokerConnectionSummary["status"];
   browserBundleAllowed: false;
   diagnosticCodes: QueueProviderPackageDiagnosticCode[];
   family: QueueProviderPackageFamily;
   importPosture: QueueProviderPackageImportPosture;
   liveBrokerConnectionAttempted: false;
+  liveBrokerHealthCheckAttempted: false;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode: QueueProviderPackageBindingMode;
@@ -160,10 +169,13 @@ export interface QueueProviderSdkPackageBindingSummary {
   packageRef: "npm:bullmq";
   productionReady: false;
   providerKind: QueueProviderPackageProviderKind;
+  queueClientConstructed: false;
+  queueEventsConstructed: false;
   requiredConfigKeys: string[];
   sdkClientConstructed: false;
   status: QueueProviderPackageBindingStatus;
   valid: boolean;
+  workerConstructed: false;
 }
 
 export interface QueueProviderSdkBindingReadinessProjection {
@@ -183,17 +195,27 @@ export interface QueueProviderSdkBindingReadinessProjection {
   operationCount: number;
   packageBinding: QueueProviderSdkPackageBindingSummary;
   packageBindingBlockerCount: number;
+  packageBindingBrokerConnectionBlockerCount: number;
+  packageBindingBrokerConnectionDiagnosticCodes: QueueProviderSdkPackageBindingSummary["brokerConnectionDiagnosticCodes"];
+  packageBindingBrokerConnectionHealthCheckMode: QueueProviderSdkPackageBindingSummary["brokerConnectionHealthCheckMode"];
+  packageBindingBrokerConnectionId: string;
+  packageBindingBrokerConnectionRequiredConfigKeys: string[];
+  packageBindingBrokerConnectionStatus: QueueProviderSdkPackageBindingSummary["brokerConnectionStatus"];
   packageBindingBrowserBundleAllowed: false;
   packageBindingDiagnosticCodes: QueueProviderPackageDiagnosticCode[];
   packageBindingFamily: QueueProviderPackageFamily;
   packageBindingId: string;
   packageBindingLiveBrokerConnectionAttempted: false;
+  packageBindingLiveBrokerHealthCheckAttempted: false;
   packageBindingLiveQueuePublishingEnabled: false;
   packageBindingLiveWorkerExecutionEnabled: false;
   packageBindingPackageName: "bullmq";
   packageBindingPackageRef: "npm:bullmq";
+  packageBindingQueueClientConstructed: false;
+  packageBindingQueueEventsConstructed: false;
   packageBindingSdkClientConstructed: false;
   packageBindingStatus: QueueProviderPackageBindingStatus;
+  packageBindingWorkerConstructed: false;
   productionReady: false;
   providerId: string;
   providerKind: QueueProviderSdkBindingProviderKind;
@@ -737,17 +759,27 @@ function createReadinessProjection(input: {
     operationCount: queueProviderSdkBindingOperationCapabilities.length,
     packageBinding: clonePackageBindingSummary(input.packageBinding),
     packageBindingBlockerCount: input.packageBinding.blockerCount,
+    packageBindingBrokerConnectionBlockerCount: input.packageBinding.brokerConnectionBlockerCount,
+    packageBindingBrokerConnectionDiagnosticCodes: [...input.packageBinding.brokerConnectionDiagnosticCodes],
+    packageBindingBrokerConnectionHealthCheckMode: input.packageBinding.brokerConnectionHealthCheckMode,
+    packageBindingBrokerConnectionId: input.packageBinding.brokerConnectionId,
+    packageBindingBrokerConnectionRequiredConfigKeys: [...input.packageBinding.brokerConnectionRequiredConfigKeys],
+    packageBindingBrokerConnectionStatus: input.packageBinding.brokerConnectionStatus,
     packageBindingBrowserBundleAllowed: false,
     packageBindingDiagnosticCodes: [...input.packageBinding.diagnosticCodes],
     packageBindingFamily: input.packageBinding.family,
     packageBindingId: input.packageBinding.bindingId,
     packageBindingLiveBrokerConnectionAttempted: false,
+    packageBindingLiveBrokerHealthCheckAttempted: false,
     packageBindingLiveQueuePublishingEnabled: false,
     packageBindingLiveWorkerExecutionEnabled: false,
     packageBindingPackageName: input.packageBinding.packageName,
     packageBindingPackageRef: input.packageBinding.packageRef,
+    packageBindingQueueClientConstructed: false,
+    packageBindingQueueEventsConstructed: false,
     packageBindingSdkClientConstructed: false,
     packageBindingStatus: input.packageBinding.status,
+    packageBindingWorkerConstructed: false,
     productionReady: false,
     providerId: input.providerId,
     providerKind: input.providerKind,
@@ -756,6 +788,7 @@ function createReadinessProjection(input: {
       ...new Set([
         ...queueProviderSdkBindingProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
         ...input.packageBinding.requiredConfigKeys,
+        ...input.packageBinding.brokerConnectionRequiredConfigKeys,
       ]),
     ],
     sdkClientConstructed: false,
@@ -772,12 +805,20 @@ function createPackageBindingSummary(
   return {
     bindingId: packageBinding.bindingId,
     blockerCount: packageBinding.blockerCount,
+    brokerConnection: cloneBrokerConnectionSummary(packageBinding.brokerConnection),
+    brokerConnectionBlockerCount: packageBinding.readiness.brokerConnectionBlockerCount,
+    brokerConnectionDiagnosticCodes: [...packageBinding.readiness.brokerConnectionDiagnosticCodes],
+    brokerConnectionHealthCheckMode: packageBinding.readiness.brokerConnectionHealthCheckMode,
+    brokerConnectionId: packageBinding.readiness.brokerConnectionId,
     brokerConnectionPosture: packageBinding.brokerConnectionPosture,
+    brokerConnectionRequiredConfigKeys: [...packageBinding.readiness.brokerConnectionRequiredConfigKeys],
+    brokerConnectionStatus: packageBinding.readiness.brokerConnectionStatus,
     browserBundleAllowed: false,
     diagnosticCodes: [...packageBinding.diagnosticCodes],
     family: packageBinding.definition.family,
     importPosture: packageBinding.definition.importPosture,
     liveBrokerConnectionAttempted: false,
+    liveBrokerHealthCheckAttempted: false,
     liveQueuePublishingEnabled: false,
     liveWorkerExecutionEnabled: false,
     mode: packageBinding.mode,
@@ -785,10 +826,13 @@ function createPackageBindingSummary(
     packageRef: packageBinding.definition.packageRef,
     productionReady: false,
     providerKind: packageBinding.definition.providerKind,
+    queueClientConstructed: false,
+    queueEventsConstructed: false,
     requiredConfigKeys: [...packageBinding.readiness.requiredConfigKeys],
     sdkClientConstructed: false,
     status: packageBinding.status,
     valid: packageBinding.valid,
+    workerConstructed: false,
   };
 }
 
@@ -797,8 +841,21 @@ function clonePackageBindingSummary(
 ): QueueProviderSdkPackageBindingSummary {
   return {
     ...packageBinding,
+    brokerConnection: cloneBrokerConnectionSummary(packageBinding.brokerConnection),
+    brokerConnectionDiagnosticCodes: [...packageBinding.brokerConnectionDiagnosticCodes],
+    brokerConnectionRequiredConfigKeys: [...packageBinding.brokerConnectionRequiredConfigKeys],
     diagnosticCodes: [...packageBinding.diagnosticCodes],
     requiredConfigKeys: [...packageBinding.requiredConfigKeys],
+  };
+}
+
+function cloneBrokerConnectionSummary(
+  brokerConnection: QueueProviderPackageBrokerConnectionSummary,
+): QueueProviderPackageBrokerConnectionSummary {
+  return {
+    ...brokerConnection,
+    diagnosticCodes: [...brokerConnection.diagnosticCodes],
+    requiredConfigKeys: [...brokerConnection.requiredConfigKeys],
   };
 }
 

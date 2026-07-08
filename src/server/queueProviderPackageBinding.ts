@@ -1,4 +1,18 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import {
+  createRedisBrokerConnectionReadiness,
+  type RedisBrokerConnectionDiagnosticCode,
+  type RedisBrokerConnectionMode,
+  type RedisBrokerConnectionStatus,
+  type RedisBrokerCredentialReferenceStatus,
+  type RedisBrokerDatabaseSelectionStatus,
+  type RedisBrokerEndpointReferenceStatus,
+  type RedisBrokerHealthCheckMode,
+  type RedisBrokerHandoffStatus,
+  type RedisBrokerPolicyStatus,
+  type RedisBrokerProviderKind,
+  type RedisBrokerTlsPolicyStatus,
+} from "./redisBrokerConnectionReadiness";
 
 export type QueueProviderPackageBindingProfileId = BackendRuntimeProfileId;
 export type QueueProviderPackageBindingStatus = "local_ready" | "scaffolded" | "blocked";
@@ -32,7 +46,8 @@ export type QueueProviderPackageDiagnosticCode =
   | "QUEUE_PROVIDER_PACKAGE_OBSERVABILITY_MISSING"
   | "QUEUE_PROVIDER_PACKAGE_RUNBOOK_MISSING"
   | "QUEUE_PROVIDER_PACKAGE_LIVE_ENABLEMENT_MISSING"
-  | "UNSAFE_QUEUE_PROVIDER_PACKAGE_BINDING_CONFIG";
+  | "UNSAFE_QUEUE_PROVIDER_PACKAGE_BINDING_CONFIG"
+  | RedisBrokerConnectionDiagnosticCode;
 export type QueueProviderPackagePreconditionArea =
   | "activation"
   | "binding"
@@ -52,9 +67,13 @@ export type QueueProviderPackageHealthStatus = "local_ok" | "metadata_only" | "b
 export interface QueueProviderPackageNoLiveFlags {
   browserBundleAllowed: false;
   liveBrokerConnectionAttempted: false;
+  liveBrokerHealthCheckAttempted: false;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
+  queueClientConstructed: false;
+  queueEventsConstructed: false;
   sdkClientConstructed: false;
+  workerConstructed: false;
 }
 
 export interface QueueProviderPackageDefinition {
@@ -94,15 +113,54 @@ export interface QueueProviderPackageHealthCheck {
   status: QueueProviderPackageHealthStatus;
 }
 
+export interface QueueProviderPackageBrokerConnectionSummary {
+  blockerCount: number;
+  browserBundleAllowed: false;
+  circuitBreakerPolicyStatus: RedisBrokerPolicyStatus;
+  connectionId: string;
+  credentialReferenceStatus: RedisBrokerCredentialReferenceStatus;
+  databaseSelectionStatus: RedisBrokerDatabaseSelectionStatus;
+  diagnosticCodes: RedisBrokerConnectionDiagnosticCode[];
+  endpointReferenceStatus: RedisBrokerEndpointReferenceStatus;
+  healthCheckMode: RedisBrokerHealthCheckMode;
+  liveBrokerConnectionAttempted: false;
+  liveBrokerHealthCheckAttempted: false;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: RedisBrokerConnectionMode;
+  observabilityHandoffStatus: RedisBrokerHandoffStatus;
+  operatorRunbookStatus: RedisBrokerHandoffStatus;
+  productionReady: false;
+  providerKind: RedisBrokerProviderKind;
+  queueClientConstructed: false;
+  queueEventsConstructed: false;
+  requiredConfigKeys: string[];
+  retryBackoffPolicyStatus: RedisBrokerPolicyStatus;
+  sdkClientConstructed: false;
+  status: RedisBrokerConnectionStatus;
+  timeoutPolicyStatus: RedisBrokerPolicyStatus;
+  tlsPolicyStatus: RedisBrokerTlsPolicyStatus;
+  valid: boolean;
+  workerConstructed: false;
+}
+
 export interface QueueProviderPackageReadinessProjection {
   bindingId: string;
   blockerCount: number;
+  brokerConnection: QueueProviderPackageBrokerConnectionSummary;
+  brokerConnectionBlockerCount: number;
+  brokerConnectionDiagnosticCodes: RedisBrokerConnectionDiagnosticCode[];
+  brokerConnectionHealthCheckMode: RedisBrokerHealthCheckMode;
+  brokerConnectionId: string;
   brokerConnectionPosture: QueueProviderBrokerConnectionPosture;
+  brokerConnectionRequiredConfigKeys: string[];
+  brokerConnectionStatus: RedisBrokerConnectionStatus;
   browserBundleAllowed: false;
   diagnosticCodes: QueueProviderPackageDiagnosticCode[];
   family: QueueProviderPackageFamily;
   importPosture: QueueProviderPackageImportPosture;
   liveBrokerConnectionAttempted: false;
+  liveBrokerHealthCheckAttempted: false;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode: QueueProviderPackageBindingMode;
@@ -110,14 +168,18 @@ export interface QueueProviderPackageReadinessProjection {
   packageRef: "npm:bullmq";
   productionReady: false;
   providerKind: QueueProviderPackageProviderKind;
+  queueClientConstructed: false;
+  queueEventsConstructed: false;
   requiredConfigKeys: string[];
   sdkClientConstructed: false;
   status: QueueProviderPackageBindingStatus;
   valid: boolean;
+  workerConstructed: false;
 }
 
 export interface QueueProviderPackageRegistration {
   bindingId: string;
+  brokerConnection: QueueProviderPackageBrokerConnectionSummary;
   brokerConnectionPosture: QueueProviderBrokerConnectionPosture;
   definition: QueueProviderPackageDefinition;
   healthCheck: QueueProviderPackageHealthCheck;
@@ -132,15 +194,19 @@ export interface QueueProviderPackageBindingSummary extends QueueProviderPackage
   diagnostics: QueueProviderPackageDiagnostic[];
   id: "campaign-os-queue-provider-package-binding-foundation";
   liveBrokerConnectionAttempted: false;
+  liveBrokerHealthCheckAttempted: false;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   noLiveFlags: QueueProviderPackageNoLiveFlags;
   preconditions: QueueProviderPackagePrecondition[];
   productionReady: false;
   profileId: QueueProviderPackageBindingProfileId;
+  queueClientConstructed: false;
+  queueEventsConstructed: false;
   readiness: QueueProviderPackageReadinessProjection;
   sdkClientConstructed: false;
   valid: boolean;
+  workerConstructed: false;
 }
 
 export interface CreateQueueProviderPackageBindingOptions {
@@ -174,9 +240,13 @@ export const SUPPORTED_QUEUE_PROVIDER_PACKAGE_BINDING_PROFILES: QueueProviderPac
 export const queueProviderPackageNoLiveFlags: QueueProviderPackageNoLiveFlags = {
   browserBundleAllowed: false,
   liveBrokerConnectionAttempted: false,
+  liveBrokerHealthCheckAttempted: false,
   liveQueuePublishingEnabled: false,
   liveWorkerExecutionEnabled: false,
+  queueClientConstructed: false,
+  queueEventsConstructed: false,
   sdkClientConstructed: false,
+  workerConstructed: false,
 };
 
 export const queueProviderPackageDefinitions: QueueProviderPackageDefinition[] = [
@@ -218,6 +288,12 @@ export const createQueueProviderPackageBinding = (
   const providerKindResolution = resolveProviderKind(options.providerKind, env);
   const packageResolution = resolvePackageName(options.packageName, env);
   const bindingResolution = resolveBindingId(options.bindingId, env, profileResolution.profileId);
+  const brokerConnectionFoundation = createRedisBrokerConnectionReadiness({
+    env,
+    packageBindingId: bindingResolution.bindingId,
+    profileId: profileResolution.profileId,
+  });
+  const brokerConnection = createBrokerConnectionSummary(brokerConnectionFoundation);
   const productionDiagnostics =
     profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
   const diagnostics = [
@@ -228,6 +304,13 @@ export const createQueueProviderPackageBinding = (
     ...packageResolution.diagnostics,
     ...bindingResolution.diagnostics,
     ...productionDiagnostics,
+    ...brokerConnectionFoundation.diagnosticCodes.map((code) =>
+      diagnostic(
+        code,
+        "redisBrokerConnectionReadiness",
+        `Redis broker connection readiness reports ${code}.`,
+      ),
+    ),
   ];
   const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
   const status = resolveStatus(profileResolution.profileId, blockerCount);
@@ -237,11 +320,13 @@ export const createQueueProviderPackageBinding = (
     && providerKindResolution.valid
     && packageResolution.valid
     && bindingResolution.valid
+    && brokerConnection.valid
     && blockerCount === 0;
   const definition = createDefinition();
   const brokerConnectionPosture = resolveBrokerConnectionPosture(profileResolution.profileId, env);
   const registration = createRegistration({
     bindingId: bindingResolution.bindingId,
+    brokerConnection,
     brokerConnectionPosture,
     definition,
     healthCheck: createHealthCheck(status),
@@ -251,6 +336,7 @@ export const createQueueProviderPackageBinding = (
   const readiness = createReadinessProjection({
     bindingId: bindingResolution.bindingId,
     blockerCount,
+    brokerConnection,
     brokerConnectionPosture,
     diagnostics,
     mode: modeResolution.mode,
@@ -265,15 +351,19 @@ export const createQueueProviderPackageBinding = (
     diagnostics,
     id: FOUNDATION_ID,
     liveBrokerConnectionAttempted: false,
+    liveBrokerHealthCheckAttempted: false,
     liveQueuePublishingEnabled: false,
     liveWorkerExecutionEnabled: false,
     noLiveFlags: queueProviderPackageNoLiveFlags,
     preconditions: queueProviderPackageProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
     profileId: profileResolution.profileId,
+    queueClientConstructed: false,
+    queueEventsConstructed: false,
     readiness,
     sdkClientConstructed: false,
     valid,
+    workerConstructed: false,
   };
 };
 
@@ -285,6 +375,12 @@ export const getQueueProviderPackageBindingRegistration = (
   if (binding === LOCAL_BINDING_ID) {
     return createRegistration({
       bindingId: LOCAL_BINDING_ID,
+      brokerConnection: createBrokerConnectionSummary(
+        createRedisBrokerConnectionReadiness({
+          packageBindingId: LOCAL_BINDING_ID,
+          profileId: "local-review",
+        }),
+      ),
       brokerConnectionPosture: "not_configured",
       definition: createDefinition(),
       healthCheck: createHealthCheck("local_ready"),
@@ -296,6 +392,12 @@ export const getQueueProviderPackageBindingRegistration = (
   if (binding === STAGING_BINDING_ID) {
     return createRegistration({
       bindingId: STAGING_BINDING_ID,
+      brokerConnection: createBrokerConnectionSummary(
+        createRedisBrokerConnectionReadiness({
+          packageBindingId: STAGING_BINDING_ID,
+          profileId: "staging-scaffold",
+        }),
+      ),
       brokerConnectionPosture: "reference_only",
       definition: createDefinition(),
       healthCheck: createHealthCheck("scaffolded"),
@@ -307,6 +409,12 @@ export const getQueueProviderPackageBindingRegistration = (
   if (binding === PRODUCTION_BINDING_ID) {
     return createRegistration({
       bindingId: PRODUCTION_BINDING_ID,
+      brokerConnection: createBrokerConnectionSummary(
+        createRedisBrokerConnectionReadiness({
+          packageBindingId: PRODUCTION_BINDING_ID,
+          profileId: "production-required",
+        }),
+      ),
       brokerConnectionPosture: "blocked_until_activation",
       definition: createDefinition(),
       healthCheck: createHealthCheck("blocked"),
@@ -379,6 +487,7 @@ function createDefinition(): QueueProviderPackageDefinition {
 
 function createRegistration(input: {
   bindingId: string;
+  brokerConnection: QueueProviderPackageBrokerConnectionSummary;
   brokerConnectionPosture: QueueProviderBrokerConnectionPosture;
   definition: QueueProviderPackageDefinition;
   healthCheck: QueueProviderPackageHealthCheck;
@@ -387,12 +496,16 @@ function createRegistration(input: {
 }): QueueProviderPackageRegistration {
   return {
     bindingId: input.bindingId,
+    brokerConnection: cloneBrokerConnectionSummary(input.brokerConnection),
     brokerConnectionPosture: input.brokerConnectionPosture,
     definition: { ...input.definition },
     healthCheck: input.healthCheck,
     mode: input.mode,
     requiredConfigKeys: [
-      ...new Set(queueProviderPackageProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
+      ...new Set([
+        ...queueProviderPackageProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
+        ...input.brokerConnection.requiredConfigKeys,
+      ]),
     ],
     status: input.status,
   };
@@ -401,6 +514,7 @@ function createRegistration(input: {
 function createReadinessProjection(input: {
   bindingId: string;
   blockerCount: number;
+  brokerConnection: QueueProviderPackageBrokerConnectionSummary;
   brokerConnectionPosture: QueueProviderBrokerConnectionPosture;
   diagnostics: readonly QueueProviderPackageDiagnostic[];
   mode: QueueProviderPackageBindingMode;
@@ -410,12 +524,20 @@ function createReadinessProjection(input: {
   return {
     bindingId: input.bindingId,
     blockerCount: input.blockerCount,
+    brokerConnection: cloneBrokerConnectionSummary(input.brokerConnection),
+    brokerConnectionBlockerCount: input.brokerConnection.blockerCount,
+    brokerConnectionDiagnosticCodes: [...input.brokerConnection.diagnosticCodes],
+    brokerConnectionHealthCheckMode: input.brokerConnection.healthCheckMode,
+    brokerConnectionId: input.brokerConnection.connectionId,
     brokerConnectionPosture: input.brokerConnectionPosture,
+    brokerConnectionRequiredConfigKeys: [...input.brokerConnection.requiredConfigKeys],
+    brokerConnectionStatus: input.brokerConnection.status,
     browserBundleAllowed: false,
     diagnosticCodes: input.diagnostics.map((item) => item.code),
     family: APPROVED_PACKAGE_FAMILY,
     importPosture: "declared_dependency_metadata",
     liveBrokerConnectionAttempted: false,
+    liveBrokerHealthCheckAttempted: false,
     liveQueuePublishingEnabled: false,
     liveWorkerExecutionEnabled: false,
     mode: input.mode,
@@ -423,12 +545,63 @@ function createReadinessProjection(input: {
     packageRef: APPROVED_PACKAGE_REF,
     productionReady: false,
     providerKind: APPROVED_PROVIDER_KIND,
+    queueClientConstructed: false,
+    queueEventsConstructed: false,
     requiredConfigKeys: [
-      ...new Set(queueProviderPackageProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
+      ...new Set([
+        ...queueProviderPackageProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
+        ...input.brokerConnection.requiredConfigKeys,
+      ]),
     ],
     sdkClientConstructed: false,
     status: input.status,
     valid: input.valid,
+    workerConstructed: false,
+  };
+}
+
+function createBrokerConnectionSummary(
+  brokerConnection: ReturnType<typeof createRedisBrokerConnectionReadiness>,
+): QueueProviderPackageBrokerConnectionSummary {
+  return {
+    blockerCount: brokerConnection.blockerCount,
+    browserBundleAllowed: false,
+    circuitBreakerPolicyStatus: brokerConnection.circuitBreakerPolicyStatus,
+    connectionId: brokerConnection.connectionId,
+    credentialReferenceStatus: brokerConnection.credentialReferenceStatus,
+    databaseSelectionStatus: brokerConnection.databaseSelectionStatus,
+    diagnosticCodes: [...brokerConnection.diagnosticCodes],
+    endpointReferenceStatus: brokerConnection.endpointReferenceStatus,
+    healthCheckMode: brokerConnection.healthCheckMode,
+    liveBrokerConnectionAttempted: false,
+    liveBrokerHealthCheckAttempted: false,
+    liveQueuePublishingEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    mode: brokerConnection.mode,
+    observabilityHandoffStatus: brokerConnection.observabilityHandoffStatus,
+    operatorRunbookStatus: brokerConnection.operatorRunbookStatus,
+    productionReady: false,
+    providerKind: brokerConnection.providerKind,
+    queueClientConstructed: false,
+    queueEventsConstructed: false,
+    requiredConfigKeys: [...brokerConnection.readiness.requiredConfigKeys],
+    retryBackoffPolicyStatus: brokerConnection.retryBackoffPolicyStatus,
+    sdkClientConstructed: false,
+    status: brokerConnection.status,
+    timeoutPolicyStatus: brokerConnection.timeoutPolicyStatus,
+    tlsPolicyStatus: brokerConnection.tlsPolicyStatus,
+    valid: brokerConnection.valid,
+    workerConstructed: false,
+  };
+}
+
+function cloneBrokerConnectionSummary(
+  brokerConnection: QueueProviderPackageBrokerConnectionSummary,
+): QueueProviderPackageBrokerConnectionSummary {
+  return {
+    ...brokerConnection,
+    diagnosticCodes: [...brokerConnection.diagnosticCodes],
+    requiredConfigKeys: [...brokerConnection.requiredConfigKeys],
   };
 }
 

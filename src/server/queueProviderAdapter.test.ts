@@ -21,6 +21,17 @@ import {
   queueProviderSdkBindingProductionPreconditions,
 } from "./queueProviderSdkBinding";
 import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
+import { redisBrokerConnectionProductionPreconditions } from "./redisBrokerConnectionReadiness";
+
+const productionReadyBrokerEnv = {
+  CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY: "circuit-breaker:fail-closed",
+  CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS: "2500",
+  CAMPAIGN_OS_REDIS_CREDENTIALS: "credential-ref:redis-broker",
+  CAMPAIGN_OS_REDIS_DATABASE: "database-ref:0",
+  CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY: "retry-backoff:exponential",
+  CAMPAIGN_OS_REDIS_TLS_POLICY: "tls-policy:required",
+} satisfies Record<string, unknown>;
 
 describe("queue provider adapter foundation", () => {
   it("declares a stable foundation id and supported profiles", () => {
@@ -263,6 +274,16 @@ describe("queue provider adapter foundation", () => {
       "QUEUE_PROVIDER_PACKAGE_OBSERVABILITY_MISSING",
       "QUEUE_PROVIDER_PACKAGE_RUNBOOK_MISSING",
       "QUEUE_PROVIDER_PACKAGE_LIVE_ENABLEMENT_MISSING",
+      "REDIS_BROKER_ENDPOINT_REFERENCE_MISSING",
+      "REDIS_BROKER_CREDENTIALS_REFERENCE_MISSING",
+      "REDIS_BROKER_TLS_POLICY_MISSING",
+      "REDIS_BROKER_DATABASE_SELECTION_MISSING",
+      "REDIS_BROKER_TIMEOUT_POLICY_MISSING",
+      "REDIS_BROKER_RETRY_BACKOFF_POLICY_MISSING",
+      "REDIS_BROKER_CIRCUIT_BREAKER_POLICY_MISSING",
+      "REDIS_BROKER_OBSERVABILITY_HANDOFF_MISSING",
+      "REDIS_BROKER_RUNBOOK_MISSING",
+      "REDIS_BROKER_HEALTH_CHECK_ENABLEMENT_MISSING",
     ]);
     expect(foundation.driver.status).toBe("blocked");
     expect(foundation.driver.activationGateSatisfied).toBe(false);
@@ -277,6 +298,7 @@ describe("queue provider adapter foundation", () => {
   it("can report production-required config shape without becoming production ready", () => {
     const foundation = createQueueProviderAdapterFoundation({
       env: {
+        ...productionReadyBrokerEnv,
         CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:review",
         CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
         CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:review",
@@ -316,17 +338,27 @@ describe("queue provider adapter foundation", () => {
       sdkBinding: expect.objectContaining({
         bindingId: "production-provider-sdk-binding",
         blockerCount: 0,
+        brokerConnectionBlockerCount: 0,
+        brokerConnectionHealthCheckMode: "metadata_only",
+        brokerConnectionStatus: "scaffolded",
         liveProviderCallAttempted: false,
         mode: "production_required",
         packageBinding: expect.objectContaining({
           bindingId: "bullmq-redis-package-binding-production",
           blockerCount: 0,
+          brokerConnectionBlockerCount: 0,
+          brokerConnectionHealthCheckMode: "metadata_only",
+          brokerConnectionStatus: "scaffolded",
           liveBrokerConnectionAttempted: false,
+          liveBrokerHealthCheckAttempted: false,
           packageName: "bullmq",
           productionReady: false,
+          queueClientConstructed: false,
+          queueEventsConstructed: false,
           sdkClientConstructed: false,
           status: "scaffolded",
           valid: true,
+          workerConstructed: false,
         }),
         productionReady: false,
         providerKind: "redis-compatible",
@@ -342,9 +374,16 @@ describe("queue provider adapter foundation", () => {
     expect(foundation.readiness.driverSdkBindingLiveProviderCallAttempted).toBe(false);
     expect(foundation.readiness.driverSdkBindingLiveQueuePublishingEnabled).toBe(false);
     expect(foundation.readiness.driverSdkBindingPackageBindingBlockerCount).toBe(0);
+    expect(foundation.readiness.driverSdkBindingPackageBindingBrokerConnectionBlockerCount).toBe(0);
+    expect(foundation.readiness.driverSdkBindingPackageBindingBrokerConnectionHealthCheckMode).toBe("metadata_only");
+    expect(foundation.readiness.driverSdkBindingPackageBindingBrokerConnectionStatus).toBe("scaffolded");
     expect(foundation.readiness.driverSdkBindingPackageBindingLiveBrokerConnectionAttempted).toBe(false);
+    expect(foundation.readiness.driverSdkBindingPackageBindingLiveBrokerHealthCheckAttempted).toBe(false);
     expect(foundation.readiness.driverSdkBindingPackageBindingPackageName).toBe("bullmq");
+    expect(foundation.readiness.driverSdkBindingPackageBindingQueueClientConstructed).toBe(false);
+    expect(foundation.readiness.driverSdkBindingPackageBindingQueueEventsConstructed).toBe(false);
     expect(foundation.readiness.driverSdkBindingPackageBindingStatus).toBe("scaffolded");
+    expect(foundation.readiness.driverSdkBindingPackageBindingWorkerConstructed).toBe(false);
     expect(foundation.productionReady).toBe(false);
     expect(foundation.noLiveFlags.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.operationCapabilities.every((item) => item.liveEnabled === false)).toBe(true);
@@ -357,6 +396,7 @@ describe("queue provider adapter foundation", () => {
 
   it("keeps queue provider readiness separate from worker lease store readiness", () => {
     const env = {
+      ...productionReadyBrokerEnv,
       CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:review",
       CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
       CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:review",
@@ -395,6 +435,9 @@ describe("queue provider adapter foundation", () => {
     );
     expect(provider.readiness.requiredConfigKeys).toEqual(
       expect.arrayContaining(queueProviderPackageProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
+    );
+    expect(provider.readiness.requiredConfigKeys).toEqual(
+      expect.arrayContaining(redisBrokerConnectionProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
     );
     expect(provider.readiness.requiredConfigKeys).not.toEqual(leaseStore.readiness.requiredConfigKeys);
     expect(provider.operationCapabilities).toEqual(

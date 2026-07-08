@@ -7,8 +7,36 @@ import {
   queueProviderPackageProductionPreconditions,
   redactQueueProviderPackageValue,
 } from "./queueProviderPackageBinding";
+import {
+  redisBrokerConnectionProductionPreconditions,
+  type RedisBrokerConnectionDiagnosticCode,
+} from "./redisBrokerConnectionReadiness";
+
+const productionReadyBrokerEnv = {
+  CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY: "circuit-breaker:fail-closed",
+  CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS: "2500",
+  CAMPAIGN_OS_REDIS_CREDENTIALS: "credential-ref:redis-broker",
+  CAMPAIGN_OS_REDIS_DATABASE: "database-ref:0",
+  CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY: "retry-backoff:exponential",
+  CAMPAIGN_OS_REDIS_TLS_POLICY: "tls-policy:required",
+} satisfies Record<string, unknown>;
+
+const redisBrokerMissingDiagnosticCodes: RedisBrokerConnectionDiagnosticCode[] = [
+  "REDIS_BROKER_ENDPOINT_REFERENCE_MISSING",
+  "REDIS_BROKER_CREDENTIALS_REFERENCE_MISSING",
+  "REDIS_BROKER_TLS_POLICY_MISSING",
+  "REDIS_BROKER_DATABASE_SELECTION_MISSING",
+  "REDIS_BROKER_TIMEOUT_POLICY_MISSING",
+  "REDIS_BROKER_RETRY_BACKOFF_POLICY_MISSING",
+  "REDIS_BROKER_CIRCUIT_BREAKER_POLICY_MISSING",
+  "REDIS_BROKER_OBSERVABILITY_HANDOFF_MISSING",
+  "REDIS_BROKER_RUNBOOK_MISSING",
+  "REDIS_BROKER_HEALTH_CHECK_ENABLEMENT_MISSING",
+];
 
 const productionReadyPackageEnv = {
+  ...productionReadyBrokerEnv,
   CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:review",
   CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
   CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:review",
@@ -117,7 +145,9 @@ describe("queue provider package binding foundation", () => {
     expect(foundation.status).toBe("blocked");
     expect(foundation.valid).toBe(false);
     expect(foundation.productionReady).toBe(false);
-    expect(foundation.blockerCount).toBe(queueProviderPackageProductionPreconditions.length);
+    expect(foundation.blockerCount).toBe(
+      queueProviderPackageProductionPreconditions.length + redisBrokerConnectionProductionPreconditions.length,
+    );
     expect(foundation.diagnosticCodes).toEqual([
       "QUEUE_PROVIDER_PACKAGE_MISSING",
       "QUEUE_PROVIDER_PACKAGE_BINDING_MISSING",
@@ -132,7 +162,11 @@ describe("queue provider package binding foundation", () => {
       "QUEUE_PROVIDER_PACKAGE_OBSERVABILITY_MISSING",
       "QUEUE_PROVIDER_PACKAGE_RUNBOOK_MISSING",
       "QUEUE_PROVIDER_PACKAGE_LIVE_ENABLEMENT_MISSING",
+      ...redisBrokerMissingDiagnosticCodes,
     ]);
+    expect(foundation.readiness.brokerConnectionBlockerCount).toBe(redisBrokerConnectionProductionPreconditions.length);
+    expect(foundation.readiness.brokerConnectionDiagnosticCodes).toEqual(redisBrokerMissingDiagnosticCodes);
+    expect(foundation.readiness.brokerConnectionHealthCheckMode).toBe("activation_required");
   });
 
   it("keeps production-required scaffolded but not production-ready after all references are present", () => {
@@ -149,9 +183,16 @@ describe("queue provider package binding foundation", () => {
     expect(foundation.productionReady).toBe(false);
     expect(foundation.readiness.productionReady).toBe(false);
     expect(foundation.readiness.liveBrokerConnectionAttempted).toBe(false);
+    expect(foundation.readiness.liveBrokerHealthCheckAttempted).toBe(false);
+    expect(foundation.readiness.brokerConnectionStatus).toBe("scaffolded");
+    expect(foundation.readiness.brokerConnectionHealthCheckMode).toBe("metadata_only");
+    expect(foundation.readiness.brokerConnectionBlockerCount).toBe(0);
     expect(foundation.readiness.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
+    expect(foundation.readiness.queueClientConstructed).toBe(false);
+    expect(foundation.readiness.queueEventsConstructed).toBe(false);
     expect(foundation.sdkClientConstructed).toBe(false);
+    expect(foundation.workerConstructed).toBe(false);
   });
 
   it("rejects unsupported or unsafe package and Redis material without leaking raw values", () => {

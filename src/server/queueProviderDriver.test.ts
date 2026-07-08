@@ -14,6 +14,17 @@ import {
   queueProviderSdkBindingProductionPreconditions,
 } from "./queueProviderSdkBinding";
 import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
+import { redisBrokerConnectionProductionPreconditions } from "./redisBrokerConnectionReadiness";
+
+const productionReadyBrokerEnv = {
+  CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY: "circuit-breaker:fail-closed",
+  CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS: "2500",
+  CAMPAIGN_OS_REDIS_CREDENTIALS: "credential-ref:redis-broker",
+  CAMPAIGN_OS_REDIS_DATABASE: "database-ref:0",
+  CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY: "retry-backoff:exponential",
+  CAMPAIGN_OS_REDIS_TLS_POLICY: "tls-policy:required",
+} satisfies Record<string, unknown>;
 
 describe("queue provider driver foundation", () => {
   it("declares a stable local fake registration and supported operations", () => {
@@ -160,7 +171,8 @@ describe("queue provider driver foundation", () => {
     expect(foundation.blockerCount).toBe(
       queueProviderDriverProductionPreconditions.length
       + queueProviderSdkBindingProductionPreconditions.length
-      + queueProviderPackageProductionPreconditions.length,
+      + queueProviderPackageProductionPreconditions.length
+      + redisBrokerConnectionProductionPreconditions.length,
     );
     expect(foundation.diagnosticCodes).toEqual([
       "QUEUE_PROVIDER_DRIVER_MISSING",
@@ -200,6 +212,16 @@ describe("queue provider driver foundation", () => {
       "QUEUE_PROVIDER_PACKAGE_OBSERVABILITY_MISSING",
       "QUEUE_PROVIDER_PACKAGE_RUNBOOK_MISSING",
       "QUEUE_PROVIDER_PACKAGE_LIVE_ENABLEMENT_MISSING",
+      "REDIS_BROKER_ENDPOINT_REFERENCE_MISSING",
+      "REDIS_BROKER_CREDENTIALS_REFERENCE_MISSING",
+      "REDIS_BROKER_TLS_POLICY_MISSING",
+      "REDIS_BROKER_DATABASE_SELECTION_MISSING",
+      "REDIS_BROKER_TIMEOUT_POLICY_MISSING",
+      "REDIS_BROKER_RETRY_BACKOFF_POLICY_MISSING",
+      "REDIS_BROKER_CIRCUIT_BREAKER_POLICY_MISSING",
+      "REDIS_BROKER_OBSERVABILITY_HANDOFF_MISSING",
+      "REDIS_BROKER_RUNBOOK_MISSING",
+      "REDIS_BROKER_HEALTH_CHECK_ENABLEMENT_MISSING",
     ]);
     expect(foundation.sdkBinding.status).toBe("blocked");
     expect(foundation.sdkBinding.sdkClientConstructed).toBe(false);
@@ -211,6 +233,7 @@ describe("queue provider driver foundation", () => {
   it("keeps production-required scaffolded but not production-ready after all gates are explicit", () => {
     const foundation = createQueueProviderDriverFoundation({
       env: {
+        ...productionReadyBrokerEnv,
         CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:review",
         CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
         CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:review",
@@ -243,20 +266,30 @@ describe("queue provider driver foundation", () => {
     expect(foundation.readiness.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
     expect(foundation.sdkBinding).toMatchObject({
-      bindingId: "production-provider-sdk-binding",
-      blockerCount: 0,
-      liveProviderCallAttempted: false,
-      mode: "production_required",
-      packageBinding: expect.objectContaining({
-        bindingId: "bullmq-redis-package-binding-production",
+        bindingId: "production-provider-sdk-binding",
+        brokerConnectionBlockerCount: 0,
+        brokerConnectionHealthCheckMode: "metadata_only",
+        brokerConnectionStatus: "scaffolded",
         blockerCount: 0,
-        liveBrokerConnectionAttempted: false,
-        packageName: "bullmq",
-        productionReady: false,
-        sdkClientConstructed: false,
-        status: "scaffolded",
-        valid: true,
-      }),
+        liveProviderCallAttempted: false,
+      mode: "production_required",
+        packageBinding: expect.objectContaining({
+          bindingId: "bullmq-redis-package-binding-production",
+          blockerCount: 0,
+          brokerConnectionBlockerCount: 0,
+          brokerConnectionHealthCheckMode: "metadata_only",
+          brokerConnectionStatus: "scaffolded",
+          liveBrokerConnectionAttempted: false,
+          liveBrokerHealthCheckAttempted: false,
+          packageName: "bullmq",
+          productionReady: false,
+          queueClientConstructed: false,
+          queueEventsConstructed: false,
+          sdkClientConstructed: false,
+          status: "scaffolded",
+          valid: true,
+          workerConstructed: false,
+        }),
       productionReady: false,
       providerKind: "redis-compatible",
       sdkClientConstructed: false,

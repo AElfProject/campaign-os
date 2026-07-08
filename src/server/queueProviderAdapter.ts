@@ -165,18 +165,28 @@ export interface QueueProviderAdapterReadinessProjection {
   driverSdkBindingLiveWorkerExecutionEnabled: false;
   driverSdkBindingMode: QueueProviderDriverSdkBindingSummary["mode"];
   driverSdkBindingOperationCount: number;
+  driverSdkBindingPackageBindingBrokerConnectionBlockerCount: number;
+  driverSdkBindingPackageBindingBrokerConnectionDiagnosticCodes: QueueProviderDriverSdkBindingSummary["packageBinding"]["brokerConnectionDiagnosticCodes"];
+  driverSdkBindingPackageBindingBrokerConnectionHealthCheckMode: QueueProviderDriverSdkBindingSummary["packageBinding"]["brokerConnectionHealthCheckMode"];
+  driverSdkBindingPackageBindingBrokerConnectionId: string;
+  driverSdkBindingPackageBindingBrokerConnectionRequiredConfigKeys: string[];
+  driverSdkBindingPackageBindingBrokerConnectionStatus: QueueProviderDriverSdkBindingSummary["packageBinding"]["brokerConnectionStatus"];
   driverSdkBindingPackageBindingBlockerCount: number;
   driverSdkBindingPackageBindingBrowserBundleAllowed: false;
   driverSdkBindingPackageBindingDiagnosticCodes: QueueProviderDriverSdkBindingSummary["packageBinding"]["diagnosticCodes"];
   driverSdkBindingPackageBindingFamily: QueueProviderDriverSdkBindingSummary["packageBinding"]["family"];
   driverSdkBindingPackageBindingId: string;
   driverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false;
+  driverSdkBindingPackageBindingLiveBrokerHealthCheckAttempted: false;
   driverSdkBindingPackageBindingLiveQueuePublishingEnabled: false;
   driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false;
   driverSdkBindingPackageBindingPackageName: "bullmq";
   driverSdkBindingPackageBindingPackageRef: "npm:bullmq";
+  driverSdkBindingPackageBindingQueueClientConstructed: false;
+  driverSdkBindingPackageBindingQueueEventsConstructed: false;
   driverSdkBindingPackageBindingSdkClientConstructed: false;
   driverSdkBindingPackageBindingStatus: QueueProviderDriverSdkBindingSummary["packageBinding"]["status"];
+  driverSdkBindingPackageBindingWorkerConstructed: false;
   driverSdkBindingProductionReady: false;
   driverSdkBindingProviderKind: QueueProviderDriverSdkBindingSummary["providerKind"];
   driverSdkBindingQueueRouteCount: number;
@@ -649,18 +659,28 @@ const createReadinessProjection = ({
   driverSdkBindingLiveWorkerExecutionEnabled: false,
   driverSdkBindingMode: driver.sdkBinding.mode,
   driverSdkBindingOperationCount: driver.sdkBinding.operationCount,
+  driverSdkBindingPackageBindingBrokerConnectionBlockerCount: driver.sdkBinding.packageBinding.brokerConnectionBlockerCount,
+  driverSdkBindingPackageBindingBrokerConnectionDiagnosticCodes: driver.sdkBinding.packageBinding.brokerConnectionDiagnosticCodes,
+  driverSdkBindingPackageBindingBrokerConnectionHealthCheckMode: driver.sdkBinding.packageBinding.brokerConnectionHealthCheckMode,
+  driverSdkBindingPackageBindingBrokerConnectionId: driver.sdkBinding.packageBinding.brokerConnectionId,
+  driverSdkBindingPackageBindingBrokerConnectionRequiredConfigKeys: driver.sdkBinding.packageBinding.brokerConnectionRequiredConfigKeys,
+  driverSdkBindingPackageBindingBrokerConnectionStatus: driver.sdkBinding.packageBinding.brokerConnectionStatus,
   driverSdkBindingPackageBindingBlockerCount: driver.sdkBinding.packageBinding.blockerCount,
   driverSdkBindingPackageBindingBrowserBundleAllowed: false,
   driverSdkBindingPackageBindingDiagnosticCodes: driver.sdkBinding.packageBinding.diagnosticCodes,
   driverSdkBindingPackageBindingFamily: driver.sdkBinding.packageBinding.family,
   driverSdkBindingPackageBindingId: driver.sdkBinding.packageBinding.bindingId,
   driverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false,
+  driverSdkBindingPackageBindingLiveBrokerHealthCheckAttempted: false,
   driverSdkBindingPackageBindingLiveQueuePublishingEnabled: false,
   driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false,
   driverSdkBindingPackageBindingPackageName: driver.sdkBinding.packageBinding.packageName,
   driverSdkBindingPackageBindingPackageRef: driver.sdkBinding.packageBinding.packageRef,
+  driverSdkBindingPackageBindingQueueClientConstructed: false,
+  driverSdkBindingPackageBindingQueueEventsConstructed: false,
   driverSdkBindingPackageBindingSdkClientConstructed: false,
   driverSdkBindingPackageBindingStatus: driver.sdkBinding.packageBinding.status,
+  driverSdkBindingPackageBindingWorkerConstructed: false,
   driverSdkBindingProductionReady: false,
   driverSdkBindingProviderKind: driver.sdkBinding.providerKind,
   driverSdkBindingQueueRouteCount: driver.sdkBinding.queueRouteCount,
@@ -690,6 +710,7 @@ const createReadinessProjection = ({
       ...queueProviderAdapterProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
       ...driver.requiredConfigKeys,
       ...driver.sdkBinding.requiredConfigKeys,
+      ...driver.sdkBinding.packageBinding.brokerConnectionRequiredConfigKeys,
     ]),
   ],
 });
@@ -714,8 +735,22 @@ const createDriverSummary = (
   requiredConfigKeys: driver.readiness.requiredConfigKeys,
   sdkBinding: {
     ...driver.sdkBinding,
+    brokerConnectionDiagnosticCodes: [...driver.sdkBinding.brokerConnectionDiagnosticCodes],
+    brokerConnectionRequiredConfigKeys: [...driver.sdkBinding.brokerConnectionRequiredConfigKeys],
     diagnosticCodes: [...driver.sdkBinding.diagnosticCodes],
     operationCapabilities: driver.sdkBinding.operationCapabilities.map((item) => ({ ...item })),
+    packageBinding: {
+      ...driver.sdkBinding.packageBinding,
+      brokerConnection: {
+        ...driver.sdkBinding.packageBinding.brokerConnection,
+        diagnosticCodes: [...driver.sdkBinding.packageBinding.brokerConnection.diagnosticCodes],
+        requiredConfigKeys: [...driver.sdkBinding.packageBinding.brokerConnection.requiredConfigKeys],
+      },
+      brokerConnectionDiagnosticCodes: [...driver.sdkBinding.packageBinding.brokerConnectionDiagnosticCodes],
+      brokerConnectionRequiredConfigKeys: [...driver.sdkBinding.packageBinding.brokerConnectionRequiredConfigKeys],
+      diagnosticCodes: [...driver.sdkBinding.packageBinding.diagnosticCodes],
+      requiredConfigKeys: [...driver.sdkBinding.packageBinding.requiredConfigKeys],
+    },
     requiredConfigKeys: [...driver.sdkBinding.requiredConfigKeys],
   },
   status: driver.status,
