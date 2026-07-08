@@ -235,6 +235,26 @@ describe("queue provider sdk binding foundation", () => {
     expect(result.productionWriteAttempted).toBe(false);
   });
 
+  it("rejects unknown local stub operations without constructing an sdk client", () => {
+    const result = executeLocalStubQueueProviderSdkOperation({
+      attempt: 1,
+      idempotencyReference: "idem-ref:task-verification:001",
+      jobId: "task-verification-worker",
+      operation: "purge" as never,
+      payloadReference: "payload-ref:task-verification:001",
+      queueId: "verification-jobs",
+      traceId: "trace:queue-provider-sdk-binding:unknown-operation",
+    });
+
+    expect(result.accepted).toBe(false);
+    expect(result.status).toBe("rejected");
+    expect(result.diagnosticCodes).toContain("UNKNOWN_QUEUE_PROVIDER_OPERATION");
+    expect(result.operation).toBeUndefined();
+    expect(result.sdkClientConstructed).toBe(false);
+    expect(result.liveProviderCallAttempted).toBe(false);
+    expect(result.productionWriteAttempted).toBe(false);
+  });
+
   it("blocks production-required operation attempts while gates are missing", () => {
     const foundation = createQueueProviderSdkBindingFoundation({ profileId: "production-required" });
     const result = executeLocalStubQueueProviderSdkOperation(
