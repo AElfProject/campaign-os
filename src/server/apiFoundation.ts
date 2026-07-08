@@ -177,6 +177,10 @@ const routeFoundationMetadata = {
     operationId: "checkEligibility",
     serviceId: "eligibility-service",
   },
+  "campaigns.export.readiness": {
+    operationId: "getCampaignExportReadiness",
+    serviceId: "export-service",
+  },
   "campaigns.export.preview": {
     operationId: "previewCampaignExport",
     serviceId: "export-service",
@@ -189,9 +193,21 @@ const routeFoundationMetadata = {
     operationId: "listCampaigns",
     serviceId: "campaign-service",
   },
+  "campaigns.lifecycle": {
+    operationId: "getCampaignLifecycle",
+    serviceId: "campaign-service",
+  },
+  "campaigns.launch.readiness": {
+    operationId: "getCampaignLaunchReadiness",
+    serviceId: "campaign-service",
+  },
   "campaigns.posts.generate": {
     operationId: "generateCampaignPosts",
     serviceId: "ai-ops-service",
+  },
+  "campaigns.provider.readiness": {
+    operationId: "getCampaignProviderReadiness",
+    serviceId: "verification-service",
   },
   "campaigns.summary": {
     operationId: "summarizeCampaign",
@@ -382,6 +398,24 @@ const requestFieldContracts = [
     name: "campaignId",
     required: true,
     routeId: "campaigns.detail",
+    valueType: "string",
+  }),
+  field({
+    description: "Campaign identifier path parameter.",
+    id: "campaigns.lifecycle.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.lifecycle",
+    valueType: "string",
+  }),
+  field({
+    description: "Campaign identifier path parameter.",
+    id: "campaigns.launch.readiness.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.launch.readiness",
     valueType: "string",
   }),
   field({
@@ -731,6 +765,24 @@ const requestFieldContracts = [
     valueType: "string",
   }),
   field({
+    description: "Campaign identifier path parameter.",
+    id: "campaigns.export.readiness.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.export.readiness",
+    valueType: "string",
+  }),
+  field({
+    description: "Campaign identifier path parameter.",
+    id: "campaigns.provider.readiness.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.provider.readiness",
+    valueType: "string",
+  }),
+  field({
     description: "Export format for preview output.",
     enumValues: ["csv", "json"],
     id: "campaigns.export.preview.body.format",
@@ -864,8 +916,14 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["auth_session", "production_database", "scheduler", "worker_queue"],
     label: "Campaign",
-    notes: "Local campaign discovery and draft creation exist; durable storage, owner auth, scheduler runtime, queue runtime lifecycle handoff, and queue provider adapter activation are deferred.",
-    routeIds: ["campaigns.list", "campaigns.create", "campaigns.detail"],
+    notes: "Local campaign discovery, draft creation, lifecycle operation inspection, and launch readiness inspection exist; durable storage, owner auth, scheduler runtime, queue runtime lifecycle handoff, and queue provider adapter activation are deferred.",
+    routeIds: [
+      "campaigns.list",
+      "campaigns.create",
+      "campaigns.detail",
+      "campaigns.lifecycle",
+      "campaigns.launch.readiness",
+    ],
     serviceId: "campaign-service",
     state: "implemented_local",
     surfaceId: "campaign",
@@ -882,8 +940,8 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["provider_adapters", "worker_queue"],
     label: "Verification",
-    notes: "Local seeded verification exists; provider/indexer handoff, provider evidence, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, Redis broker reference, queue provider SDK binding, scheduler runtime, retry/backoff, worker idempotency store readiness metadata, worker lease store metadata, and dead-letter handling are deferred with pending/manual_review degradation.",
-    routeIds: ["tasks.verify"],
+    notes: "Local seeded verification and provider readiness inspection exist; provider/indexer handoff, provider evidence, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, Redis broker reference, queue provider SDK binding, scheduler runtime, retry/backoff, worker idempotency store readiness metadata, worker lease store metadata, and dead-letter handling are deferred with pending/manual_review degradation.",
+    routeIds: ["tasks.verify", "campaigns.provider.readiness"],
     serviceId: "verification-service",
     state: "implemented_local",
     surfaceId: "verification",
@@ -918,8 +976,8 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["object_storage_export", "contract_writer", "scheduler", "worker_queue"],
     label: "Export",
-    notes: "Local export preview exists; object storage adapter fulfillment, export preparation scheduler runtime, queue runtime handoff, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, worker idempotency store readiness metadata, dead-letter queue, observability exporter, and contract root writes are deferred.",
-    routeIds: ["campaigns.export.preview"],
+    notes: "Local export preview and export readiness inspection exist; object storage adapter fulfillment, export preparation scheduler runtime, queue runtime handoff, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, worker idempotency store readiness metadata, dead-letter queue, observability exporter, and contract root writes are deferred.",
+    routeIds: ["campaigns.export.preview", "campaigns.export.readiness"],
     serviceId: "export-service",
     state: "implemented_local",
     surfaceId: "export",

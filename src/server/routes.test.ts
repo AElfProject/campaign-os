@@ -87,6 +87,30 @@ describe("API runtime route catalog", () => {
       productionDependencies: expect.arrayContaining(["auth_session", "production_database"]),
       serviceGroup: "wallet_session",
     });
+    expect(apiRuntimeRouteById["campaigns.lifecycle"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns/:campaignId/lifecycle",
+      readiness: "local_only",
+      serviceGroup: "campaign",
+    });
+    expect(apiRuntimeRouteById["campaigns.launch.readiness"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns/:campaignId/launch-readiness",
+      readiness: "review_required",
+      serviceGroup: "campaign",
+    });
+    expect(apiRuntimeRouteById["campaigns.provider.readiness"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns/:campaignId/provider-readiness",
+      readiness: "review_required",
+      serviceGroup: "verification",
+    });
+    expect(apiRuntimeRouteById["campaigns.export.readiness"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns/:campaignId/export-readiness",
+      readiness: "review_required",
+      serviceGroup: "export",
+    });
 
     for (const runtimeRoute of apiRuntimeRoutes) {
       expect(runtimeRoute.id.trim()).not.toHaveLength(0);
@@ -161,7 +185,11 @@ describe("API runtime route catalog", () => {
     expect(coverage.routeIds).toEqual(
       expect.arrayContaining([
         "agent.wallet.action.review",
+        "campaigns.export.readiness",
+        "campaigns.lifecycle",
+        "campaigns.launch.readiness",
         "campaigns.posts.generate",
+        "campaigns.provider.readiness",
         "campaigns.summary",
         "campaigns.tasks.generate",
       ]),

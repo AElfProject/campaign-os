@@ -72,6 +72,22 @@ describe("API foundation registry", () => {
       operationId: "previewCampaignExport",
       serviceId: "export-service",
     });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.lifecycle")).toMatchObject({
+      operationId: "getCampaignLifecycle",
+      serviceId: "campaign-service",
+    });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.launch.readiness")).toMatchObject({
+      operationId: "getCampaignLaunchReadiness",
+      serviceId: "campaign-service",
+    });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.provider.readiness")).toMatchObject({
+      operationId: "getCampaignProviderReadiness",
+      serviceId: "verification-service",
+    });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.export.readiness")).toMatchObject({
+      operationId: "getCampaignExportReadiness",
+      serviceId: "export-service",
+    });
     expect(registry.routes.find((route) => route.routeId === "campaigns.analytics")).toMatchObject({
       serviceId: "runtime-observability",
     });
@@ -133,6 +149,15 @@ describe("API foundation registry", () => {
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue", "sensitive_material_boundary"]),
       state: "implemented_local",
       routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts", "campaigns.summary"]),
+    });
+    expect(report.surfaces.find((surface) => surface.surfaceId === "campaign")).toMatchObject({
+      routeIds: expect.arrayContaining(["campaigns.lifecycle", "campaigns.launch.readiness"]),
+    });
+    expect(report.surfaces.find((surface) => surface.surfaceId === "verification")).toMatchObject({
+      routeIds: expect.arrayContaining(["campaigns.provider.readiness"]),
+    });
+    expect(report.surfaces.find((surface) => surface.surfaceId === "export")).toMatchObject({
+      routeIds: expect.arrayContaining(["campaigns.export.readiness"]),
     });
     expect(report.surfaces.find((surface) => surface.surfaceId === "ai-ops")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["provider_adapters", "scheduler", "worker_queue"]),
