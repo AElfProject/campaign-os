@@ -243,8 +243,8 @@ export const createLiveQueuePublishingReadiness = (
   const modeResolution = resolveMode(profileResolution.profileId, options.mode);
   const activationStatus = resolveActivationStatus(profileResolution.profileId, env);
   const bullmqConstruction = createBullmqConstructionReadiness({
-    constructionFactory: options.constructionFactory ?? createSyntheticConstructionFactory(options.publisher),
-    env: injectConstructionFactoryReference(env, options.publisher),
+    constructionFactory: options.constructionFactory,
+    env,
     profileId: profileResolution.profileId,
   });
   const brokerReadiness = bullmqConstruction.brokerReadiness;
@@ -458,47 +458,6 @@ function createReadinessProjection(input: {
     publisherId: input.publisherId,
     status: input.status,
     valid: input.valid,
-  };
-}
-
-function createSyntheticConstructionFactory(publisher?: LiveQueuePublisher): BullmqConstructionFactory | undefined {
-  if (!publisher) {
-    return undefined;
-  }
-
-  return {
-    factoryId: "live-queue-publishing-construction-probe",
-    construct: () => ({
-      queueClient: {
-        clientId: "live-queue-publishing-queue-client",
-        constructed: true,
-        optionReferenceId: "live-queue-publishing-queue-options",
-      },
-      queueEvents: {
-        clientId: "live-queue-publishing-queue-events",
-        constructed: true,
-        optionReferenceId: "live-queue-publishing-events-options",
-      },
-      worker: {
-        clientId: "live-queue-publishing-worker-client",
-        constructed: true,
-        optionReferenceId: "live-queue-publishing-worker-options",
-      },
-    }),
-  };
-}
-
-function injectConstructionFactoryReference(
-  env: Record<string, unknown>,
-  publisher?: LiveQueuePublisher,
-): Record<string, unknown> {
-  if (!publisher || typeof env.CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY === "string") {
-    return env;
-  }
-
-  return {
-    ...env,
-    CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY: "factory-ref:live-queue-publishing",
   };
 }
 

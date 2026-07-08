@@ -8,6 +8,7 @@ import {
   type LiveQueuePublisher,
   type LiveQueuePublishingDiagnosticCode,
 } from "./liveQueuePublishingReadiness";
+import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
 const productionReadyPublishingEnv = {
   CAMPAIGN_OS_BULLMQ_CONSTRUCTION_ENABLEMENT: "explicitly-enabled",
@@ -57,6 +58,27 @@ const missingProductionDiagnosticCodes: LiveQueuePublishingDiagnosticCode[] = [
   "REDIS_BROKER_RUNBOOK_MISSING",
   "REDIS_BROKER_HEALTH_CHECK_ENABLEMENT_MISSING",
 ];
+
+const constructionFactory: BullmqConstructionFactory = {
+  construct: () => ({
+    queueClient: {
+      clientId: "live-queue-publishing-queue-client",
+      constructed: true,
+      optionReferenceId: "queue-options-ref",
+    },
+    queueEvents: {
+      clientId: "live-queue-publishing-queue-events",
+      constructed: true,
+      optionReferenceId: "events-options-ref",
+    },
+    worker: {
+      clientId: "live-queue-publishing-worker-client",
+      constructed: true,
+      optionReferenceId: "worker-options-ref",
+    },
+  }),
+  factoryId: "test-bullmq-construction-factory",
+};
 
 describe("live queue publishing readiness foundation", () => {
   it("keeps local review deterministic, server-only, and no-live", () => {
@@ -119,6 +141,7 @@ describe("live queue publishing readiness foundation", () => {
     };
 
     const foundation = createLiveQueuePublishingReadiness({
+      constructionFactory,
       env: productionReadyPublishingEnv,
       profileId: "production-required",
       publisher,
@@ -155,6 +178,41 @@ describe("live queue publishing readiness foundation", () => {
     expect(Object.values(result.noLiveSideEffects).every((value) => value === false)).toBe(true);
   });
 
+  it("blocks publisher-only activation when BullMQ Queue construction readiness is missing", () => {
+    const publisher: LiveQueuePublisher = {
+      publish: () => ({ status: "accepted" }),
+      publisherId: "test-live-queue-publisher",
+    };
+
+    const foundation = createLiveQueuePublishingReadiness({
+      env: productionReadyPublishingEnv,
+      profileId: "production-required",
+      publisher,
+    });
+    const result = evaluateLiveQueuePublishRequest(
+      {
+        attempt: 1,
+        idempotencyReference: "idem-ref:campaign-task-1",
+        jobId: "task-verification-worker",
+        payloadReference: "payload-ref:task-1",
+        queueId: "verification-jobs",
+        traceId: "trace-publisher-only",
+      },
+      { readiness: foundation },
+    );
+
+    expect(foundation.status).toBe("blocked");
+    expect(foundation.valid).toBe(false);
+    expect(foundation.bullmqConstruction.queueClientConstructed).toBe(false);
+    expect(foundation.diagnosticCodes).toEqual(
+      expect.arrayContaining(["BULLMQ_CONSTRUCTION_FACTORY_MISSING"]),
+    );
+    expect(foundation.publishAttemptAllowed).toBe(false);
+    expect(result.status).toBe("blocked_by_gate");
+    expect(result.livePublishAttempted).toBe(false);
+    expect(result.published).toBe(false);
+  });
+
   it("rejects duplicate publish results without reporting a publish", () => {
     const publisher: LiveQueuePublisher = {
       publish: () => ({
@@ -165,6 +223,7 @@ describe("live queue publishing readiness foundation", () => {
       publisherId: "duplicate-live-queue-publisher",
     };
     const foundation = createLiveQueuePublishingReadiness({
+      constructionFactory,
       env: productionReadyPublishingEnv,
       profileId: "production-required",
       publisher,
@@ -197,6 +256,7 @@ describe("live queue publishing readiness foundation", () => {
       publisherId: "test-live-queue-publisher",
     };
     const foundation = createLiveQueuePublishingReadiness({
+      constructionFactory,
       env: productionReadyPublishingEnv,
       profileId: "production-required",
       publisher,
@@ -235,6 +295,7 @@ describe("live queue publishing readiness foundation", () => {
       publisherId: "throwing-live-queue-publisher",
     };
     const foundation = createLiveQueuePublishingReadiness({
+      constructionFactory,
       env: productionReadyPublishingEnv,
       profileId: "production-required",
       publisher,
