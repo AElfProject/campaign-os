@@ -12,6 +12,14 @@ import {
   type LiveQueuePublishingReadinessSummary,
   type LiveQueuePublishingStatus,
 } from "./liveQueuePublishingReadiness";
+import type {
+  LiveQueueConsumeActivationStatus,
+  LiveQueueConsumeDiagnosticCode,
+  LiveQueueConsumeMode,
+  LiveQueueConsumeNoLiveSideEffects,
+  LiveQueueConsumeReadinessSummary,
+  LiveQueueConsumeStatus,
+} from "./liveQueueConsumeLoop";
 import {
   createQueueProviderSdkBindingFoundation,
   type QueueProviderSdkBindingDiagnosticCode,
@@ -84,6 +92,11 @@ export type QueueProviderDriverPublishAttemptPolicy =
   | "request_required"
   | "request_evaluated";
 export type QueueProviderDriverPublishResultStatus = "not_requested" | LiveQueuePublishResult["status"];
+export type QueueProviderDriverConsumeAttemptPolicy =
+  | "disabled_no_live"
+  | "blocked_until_ready"
+  | "message_required";
+export type QueueProviderDriverConsumeResultStatus = "not_requested";
 
 export interface QueueProviderDriverNoLiveFlags {
   liveAiCallsEnabled: false;
@@ -165,6 +178,24 @@ export interface QueueProviderDriverPublishingReadinessSummary {
   valid: boolean;
 }
 
+export interface QueueProviderDriverConsumeReadinessSummary {
+  activationStatus: LiveQueueConsumeActivationStatus;
+  blockerCount: number;
+  consumeAttemptAllowed: boolean;
+  consumerId: string;
+  consumerProvided: boolean;
+  diagnosticCodes: LiveQueueConsumeDiagnosticCode[];
+  handlerRegistryProvided: boolean;
+  liveConsumeAttempted: false;
+  liveQueueConsumptionEnabled: boolean;
+  mode: LiveQueueConsumeMode;
+  noLiveSideEffects: LiveQueueConsumeNoLiveSideEffects;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  status: LiveQueueConsumeStatus;
+  valid: boolean;
+}
+
 export interface QueueProviderDriverPublishPosture {
   attemptPolicy: QueueProviderDriverPublishAttemptPolicy;
   diagnosticCodes: LiveQueuePublishingDiagnosticCode[];
@@ -180,13 +211,52 @@ export interface QueueProviderDriverPublishPosture {
   safePayloadReferenceRequired: true;
 }
 
+export interface QueueProviderDriverConsumePosture {
+  ackAttempted: false;
+  attemptPolicy: QueueProviderDriverConsumeAttemptPolicy;
+  deadLetterAttempted: false;
+  diagnosticCodes: LiveQueueConsumeDiagnosticCode[];
+  liveConsumeAttempted: false;
+  nackAttempted: false;
+  noLiveSideEffects: LiveQueueConsumeNoLiveSideEffects;
+  payloadReferenceOrHashRequired: true;
+  productionWriteAttempted: false;
+  consumeRequestEvaluated: false;
+  resultStatus: QueueProviderDriverConsumeResultStatus;
+  retryScheduled: false;
+  safeIdempotencyReferenceRequired: true;
+  safeLeaseReferenceRequired: true;
+  safePayloadReferenceRequired: true;
+  workerExecutionAttempted: false;
+}
+
 export interface QueueProviderDriverReadinessProjection {
   activationGateSatisfied: boolean;
   blockerCount: number;
+  consumeAckAttempted: false;
+  consumeAttemptPolicy: QueueProviderDriverConsumeAttemptPolicy;
+  consumeDeadLetterAttempted: false;
+  consumeDiagnosticCodes: LiveQueueConsumeDiagnosticCode[];
+  consumeNackAttempted: false;
+  consumeRequestEvaluated: false;
+  consumeResultStatus: QueueProviderDriverConsumeResultStatus;
+  consumeRetryScheduled: false;
+  consumingActivationStatus: LiveQueueConsumeActivationStatus;
+  consumingBlockerCount: number;
+  consumingConsumerId: string;
+  consumingConsumerProvided: boolean;
+  consumingHandlerRegistryProvided: boolean;
+  consumingLiveConsumeAttempted: false;
+  consumingLiveQueueConsumptionEnabled: boolean;
+  consumingNoLiveSideEffects: LiveQueueConsumeNoLiveSideEffects;
+  consumingProductionReady: false;
+  consumingRequiredConfigKeys: string[];
+  consumingStatus: LiveQueueConsumeStatus;
   deadLetterRouteCount: number;
   diagnosticCodes: QueueProviderDriverDiagnosticCode[];
   disabledLiveOperationCount: number;
   driverId: string;
+  liveQueueConsumptionEnabled: false;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode: QueueProviderDriverMode;
@@ -259,12 +329,14 @@ export interface QueueProviderDriverSdkBindingSummary {
 
 export interface QueueProviderDriverRegistration {
   activationGateSatisfied: boolean;
+  consumePosture: QueueProviderDriverConsumePosture;
   deadLetterRoutes: QueueProviderDriverDeadLetterRoute[];
   driverId: string;
   healthCheck: QueueProviderDriverHealthCheck;
   mode: QueueProviderDriverMode;
   operationCapabilities: QueueProviderDriverOperationCapability[];
   publishPosture: QueueProviderDriverPublishPosture;
+  consumingReadiness: QueueProviderDriverConsumeReadinessSummary;
   publishingReadiness: QueueProviderDriverPublishingReadinessSummary;
   providerId: string;
   queueRoutes: QueueProviderDriverQueueRoute[];
@@ -291,6 +363,7 @@ export interface QueueProviderDriverFoundationSummary extends QueueProviderDrive
 export interface CreateQueueProviderDriverFoundationOptions {
   driverId?: string;
   env?: Record<string, unknown>;
+  liveQueueConsumeReadiness?: LiveQueueConsumeReadinessSummary;
   liveQueuePublisher?: LiveQueuePublisher;
   liveQueuePublishRequest?: LiveQueuePublishRequest;
   liveQueuePublishingReadiness?: LiveQueuePublishingReadinessSummary;
@@ -339,6 +412,22 @@ export interface ExecuteLocalFakeQueueProviderOperationOptions {
 const FOUNDATION_ID = "campaign-os-queue-provider-driver-foundation" as const;
 const REDACTED_VALUE = "[redacted]";
 const RAW_QUEUE_PAYLOAD_VALUE = "[redacted-queue-payload]";
+const liveQueueConsumeNoLiveSideEffects: LiveQueueConsumeNoLiveSideEffects = {
+  ack: false,
+  analyticsWrites: false,
+  contractCalls: false,
+  deadLetter: false,
+  handlerSideEffects: false,
+  nack: false,
+  objectStorageWrites: false,
+  providerCalls: false,
+  publishFallback: false,
+  retry: false,
+  rewardDistribution: false,
+  schedulerExecution: false,
+  telemetryExport: false,
+  workerExecution: false,
+};
 const LOCAL_FAKE_PROVIDER_ID = "local-fake";
 const LOCAL_FAKE_DRIVER_ID = "local-fake-queue-provider-driver";
 const METADATA_PROVIDER_ID = "metadata-only";
@@ -434,11 +523,17 @@ export const createQueueProviderDriverFoundation = (
       publisher: options.liveQueuePublisher,
     });
   const publishingReadiness = createPublishingReadinessSummary(liveQueuePublishingReadiness);
+  const consumingReadiness = createConsumeReadinessSummary({
+    env,
+    mode: modeResolution.mode,
+    readiness: options.liveQueueConsumeReadiness,
+  });
   const publishPosture = createPublishPosture({
     liveQueuePublisher: options.liveQueuePublisher,
     liveQueuePublishRequest: options.liveQueuePublishRequest,
     readiness: liveQueuePublishingReadiness,
   });
+  const consumePosture = createConsumePosture(consumingReadiness);
   const activationGateSatisfied = isActivationGateSatisfied(env);
   const productionDiagnostics =
     profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
@@ -466,6 +561,8 @@ export const createQueueProviderDriverFoundation = (
   const healthCheck = createHealthCheck(status);
   const registration = createRegistration({
     activationGateSatisfied,
+    consumePosture,
+    consumingReadiness,
     driverId: driverResolution.driverId,
     healthCheck,
     mode: modeResolution.mode,
@@ -480,6 +577,8 @@ export const createQueueProviderDriverFoundation = (
     diagnostics,
     driverId: driverResolution.driverId,
     mode: modeResolution.mode,
+    consumePosture,
+    consumingReadiness,
     publishPosture,
     publishingReadiness,
     providerId: providerResolution.providerId,
@@ -498,6 +597,8 @@ export const createQueueProviderDriverFoundation = (
     preconditions: queueProviderDriverProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
     profileId: profileResolution.profileId,
+    consumePosture,
+    consumingReadiness,
     publishPosture,
     publishingReadiness,
     readiness,
@@ -517,6 +618,8 @@ export const getQueueProviderDriverRegistration = (
       driverId: LOCAL_FAKE_DRIVER_ID,
       healthCheck: createHealthCheck("local_ready"),
       mode: "dry_run",
+      consumePosture: createConsumePosture(createConsumeReadinessSummary({ mode: "dry_run" })),
+      consumingReadiness: createConsumeReadinessSummary({ mode: "dry_run" }),
       publishPosture: createPublishPosture({
         readiness: createLiveQueuePublishingReadiness({ profileId: "local-review" }),
       }),
@@ -532,6 +635,8 @@ export const getQueueProviderDriverRegistration = (
       driverId: METADATA_DRIVER_ID,
       healthCheck: createHealthCheck("scaffolded"),
       mode: "metadata_only",
+      consumePosture: createConsumePosture(createConsumeReadinessSummary({ mode: "metadata_only" })),
+      consumingReadiness: createConsumeReadinessSummary({ mode: "metadata_only" }),
       publishPosture: createPublishPosture({
         readiness: createLiveQueuePublishingReadiness({ profileId: "staging-scaffold" }),
       }),
@@ -547,6 +652,8 @@ export const getQueueProviderDriverRegistration = (
       driverId: PRODUCTION_DRIVER_ID,
       healthCheck: createHealthCheck("blocked"),
       mode: "production_required",
+      consumePosture: createConsumePosture(createConsumeReadinessSummary({ mode: "production_required" })),
+      consumingReadiness: createConsumeReadinessSummary({ mode: "production_required" }),
       publishPosture: createPublishPosture({
         readiness: createLiveQueuePublishingReadiness({ profileId: "production-required" }),
       }),
@@ -703,6 +810,8 @@ function operationNextAction(operation: QueueProviderDriverOperation): string {
 
 function createRegistration(input: {
   activationGateSatisfied: boolean;
+  consumePosture: QueueProviderDriverConsumePosture;
+  consumingReadiness: QueueProviderDriverConsumeReadinessSummary;
   driverId: string;
   healthCheck: QueueProviderDriverHealthCheck;
   mode: QueueProviderDriverMode;
@@ -713,12 +822,14 @@ function createRegistration(input: {
 }): QueueProviderDriverRegistration {
   return {
     activationGateSatisfied: input.activationGateSatisfied,
+    consumePosture: cloneConsumePosture(input.consumePosture),
     deadLetterRoutes: queueProviderDriverDeadLetterRoutes.map((item) => ({ ...item })),
     driverId: input.driverId,
     healthCheck: input.healthCheck,
     mode: input.mode,
     operationCapabilities: queueProviderDriverOperationCapabilities.map((item) => ({ ...item })),
     publishPosture: clonePublishPosture(input.publishPosture),
+    consumingReadiness: cloneConsumeReadiness(input.consumingReadiness),
     publishingReadiness: clonePublishingReadiness(input.publishingReadiness),
     providerId: input.providerId,
     queueRoutes: queueProviderDriverQueueRoutes.map((item) => ({ ...item, jobIds: [...item.jobIds] })),
@@ -732,6 +843,8 @@ function createRegistration(input: {
 function createReadinessProjection(input: {
   activationGateSatisfied: boolean;
   blockerCount: number;
+  consumePosture: QueueProviderDriverConsumePosture;
+  consumingReadiness: QueueProviderDriverConsumeReadinessSummary;
   diagnostics: readonly QueueProviderDriverDiagnostic[];
   driverId: string;
   mode: QueueProviderDriverMode;
@@ -745,10 +858,30 @@ function createReadinessProjection(input: {
   return {
     activationGateSatisfied: input.activationGateSatisfied,
     blockerCount: input.blockerCount,
+    consumeAckAttempted: false,
+    consumeAttemptPolicy: input.consumePosture.attemptPolicy,
+    consumeDeadLetterAttempted: false,
+    consumeDiagnosticCodes: [...input.consumePosture.diagnosticCodes],
+    consumeNackAttempted: false,
+    consumeRequestEvaluated: false,
+    consumeResultStatus: input.consumePosture.resultStatus,
+    consumeRetryScheduled: false,
+    consumingActivationStatus: input.consumingReadiness.activationStatus,
+    consumingBlockerCount: input.consumingReadiness.blockerCount,
+    consumingConsumerId: input.consumingReadiness.consumerId,
+    consumingConsumerProvided: input.consumingReadiness.consumerProvided,
+    consumingHandlerRegistryProvided: input.consumingReadiness.handlerRegistryProvided,
+    consumingLiveConsumeAttempted: false,
+    consumingLiveQueueConsumptionEnabled: input.consumingReadiness.liveQueueConsumptionEnabled,
+    consumingNoLiveSideEffects: { ...input.consumingReadiness.noLiveSideEffects },
+    consumingProductionReady: false,
+    consumingRequiredConfigKeys: [...input.consumingReadiness.requiredConfigKeys],
+    consumingStatus: input.consumingReadiness.status,
     deadLetterRouteCount: queueProviderDriverDeadLetterRoutes.length,
     diagnosticCodes: input.diagnostics.map((item) => item.code),
     disabledLiveOperationCount: queueProviderDriverOperationCapabilities.length,
     driverId: input.driverId,
+    liveQueueConsumptionEnabled: false,
     liveQueuePublishingEnabled: false,
     liveWorkerExecutionEnabled: false,
     mode: input.mode,
@@ -773,6 +906,7 @@ function createReadinessProjection(input: {
     requiredConfigKeys: [
       ...new Set([
         ...queueProviderDriverProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
+        ...input.consumingReadiness.requiredConfigKeys,
         ...input.publishingReadiness.requiredConfigKeys,
         ...input.sdkBinding.requiredConfigKeys,
       ]),
@@ -783,6 +917,123 @@ function createReadinessProjection(input: {
     workerIdempotencyStatus: "deferred",
     workerLeaseStatus: "deferred",
   };
+}
+
+function createConsumeReadinessSummary(input: {
+  env?: Record<string, unknown>;
+  mode: QueueProviderDriverMode;
+  readiness?: LiveQueueConsumeReadinessSummary;
+}): QueueProviderDriverConsumeReadinessSummary {
+  if (input.readiness) {
+    return {
+      activationStatus: input.readiness.activationStatus,
+      blockerCount: input.readiness.blockerCount,
+      consumeAttemptAllowed: input.readiness.consumeAttemptAllowed,
+      consumerId: input.readiness.consumerId,
+      consumerProvided: input.readiness.consumerProvided,
+      diagnosticCodes: [...input.readiness.diagnosticCodes],
+      handlerRegistryProvided: input.readiness.handlerRegistryProvided,
+      liveConsumeAttempted: false,
+      liveQueueConsumptionEnabled: input.readiness.liveQueueConsumptionEnabled,
+      mode: input.readiness.mode,
+      noLiveSideEffects: { ...input.readiness.noLiveSideEffects },
+      productionReady: false,
+      requiredConfigKeys: [...input.readiness.requiredConfigKeys],
+      status: input.readiness.status,
+      valid: input.readiness.valid,
+    };
+  }
+
+  const activationStatus = resolveConsumeActivationStatus(input.mode, input.env ?? {});
+  const status = input.mode === "dry_run"
+    ? "disabled"
+    : input.mode === "metadata_only"
+      ? "scaffolded"
+      : "blocked";
+
+  return {
+    activationStatus,
+    blockerCount: 0,
+    consumeAttemptAllowed: false,
+    consumerId: "not_configured",
+    consumerProvided: false,
+    diagnosticCodes: [],
+    handlerRegistryProvided: false,
+    liveConsumeAttempted: false,
+    liveQueueConsumptionEnabled: false,
+    mode: input.mode,
+    noLiveSideEffects: { ...liveQueueConsumeNoLiveSideEffects },
+    productionReady: false,
+    requiredConfigKeys: getConsumeRequiredConfigKeys(),
+    status,
+    valid: input.mode !== "production_required",
+  };
+}
+
+function createConsumePosture(
+  readiness: QueueProviderDriverConsumeReadinessSummary,
+): QueueProviderDriverConsumePosture {
+  return {
+    ackAttempted: false,
+    attemptPolicy: readiness.consumeAttemptAllowed ? "message_required" : resolveBlockedConsumePolicy(readiness.status),
+    deadLetterAttempted: false,
+    diagnosticCodes: [...readiness.diagnosticCodes],
+    liveConsumeAttempted: false,
+    nackAttempted: false,
+    noLiveSideEffects: { ...readiness.noLiveSideEffects },
+    payloadReferenceOrHashRequired: true,
+    productionWriteAttempted: false,
+    consumeRequestEvaluated: false,
+    resultStatus: "not_requested",
+    retryScheduled: false,
+    safeIdempotencyReferenceRequired: true,
+    safeLeaseReferenceRequired: true,
+    safePayloadReferenceRequired: true,
+    workerExecutionAttempted: false,
+  };
+}
+
+function resolveConsumeActivationStatus(
+  mode: QueueProviderDriverMode,
+  env: Record<string, unknown>,
+): LiveQueueConsumeActivationStatus {
+  if (mode === "dry_run") {
+    return "disabled";
+  }
+
+  if (mode === "metadata_only") {
+    return "metadata_only";
+  }
+
+  return env.CAMPAIGN_OS_LIVE_QUEUE_CONSUME_ENABLEMENT === "explicitly-enabled"
+    ? "explicitly_enabled"
+    : "activation_required";
+}
+
+function resolveBlockedConsumePolicy(
+  readinessStatus: LiveQueueConsumeStatus,
+): QueueProviderDriverConsumeAttemptPolicy {
+  return readinessStatus === "disabled" || readinessStatus === "scaffolded"
+    ? "disabled_no_live"
+    : "blocked_until_ready";
+}
+
+function getConsumeRequiredConfigKeys(): string[] {
+  return [
+    "CAMPAIGN_OS_LIVE_QUEUE_CONSUME_ENABLEMENT",
+    "CAMPAIGN_OS_LIVE_QUEUE_CONSUMER",
+    "CAMPAIGN_OS_CONSUME_HANDLER_REGISTRY",
+    "CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT",
+    "CAMPAIGN_OS_WORKER_QUEUE_URL",
+    "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
+    "CAMPAIGN_OS_PAYLOAD_REFERENCE_POLICY",
+    "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
+    "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
+    "CAMPAIGN_OS_RETRY_POLICY",
+    "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+    "CAMPAIGN_OS_OPERATOR_RUNBOOK_URL",
+    "CAMPAIGN_OS_PUBLISHER_REDACTION_POLICY",
+  ];
 }
 
 function createPublishingReadinessSummary(
@@ -860,6 +1111,17 @@ function resolveBlockedPublishPolicy(
     : "blocked_until_ready";
 }
 
+function cloneConsumeReadiness(
+  readiness: QueueProviderDriverConsumeReadinessSummary,
+): QueueProviderDriverConsumeReadinessSummary {
+  return {
+    ...readiness,
+    diagnosticCodes: [...readiness.diagnosticCodes],
+    noLiveSideEffects: { ...readiness.noLiveSideEffects },
+    requiredConfigKeys: [...readiness.requiredConfigKeys],
+  };
+}
+
 function clonePublishingReadiness(
   readiness: QueueProviderDriverPublishingReadinessSummary,
 ): QueueProviderDriverPublishingReadinessSummary {
@@ -868,6 +1130,16 @@ function clonePublishingReadiness(
     diagnosticCodes: [...readiness.diagnosticCodes],
     noLiveSideEffects: { ...readiness.noLiveSideEffects },
     requiredConfigKeys: [...readiness.requiredConfigKeys],
+  };
+}
+
+function cloneConsumePosture(
+  consumePosture: QueueProviderDriverConsumePosture,
+): QueueProviderDriverConsumePosture {
+  return {
+    ...consumePosture,
+    diagnosticCodes: [...consumePosture.diagnosticCodes],
+    noLiveSideEffects: { ...consumePosture.noLiveSideEffects },
   };
 }
 
