@@ -66,6 +66,60 @@ describe("provider indexer adapter foundation", () => {
     expect(foundation.diagnosticCodes).toEqual([]);
   });
 
+  it("projects provider client registry metadata as reference-only local readiness", () => {
+    const foundation = createProviderIndexerFoundation({ profileId: "local-review" });
+    const indexerGroup = providerIndexerAdapterGroups.find(
+      (group) => group.id === "aefinder-aelfscan-indexers",
+    );
+    const walletGroup = providerIndexerAdapterGroups.find(
+      (group) => group.id === "wallet-auth-session",
+    );
+
+    expect(indexerGroup?.clientReadiness).toMatchObject({
+      capabilityLabels: [
+        "provider-client:verification_evaluation",
+        "provider-client:redacted_diagnostics",
+      ],
+      circuitBreakerPolicyRef: "policy-ref:CAMPAIGN_OS_PROVIDER_CIRCUIT_BREAKER_POLICY",
+      clientId: "provider-client:aefinder-aelfscan-indexers",
+      credentialRef: "secret-ref:CAMPAIGN_OS_PROVIDER_CREDENTIAL_REF",
+      degradationPolicyRef: "policy-ref:CAMPAIGN_OS_PROVIDER_DEGRADATION_POLICY",
+      endpointRef: "config-ref:CAMPAIGN_OS_PROVIDER_ENDPOINT_REF",
+      providerClientRequired: true,
+      readinessId: "campaign-os-provider-indexer-client-readiness",
+      retryPolicyRef: "policy-ref:CAMPAIGN_OS_PROVIDER_RETRY_POLICY",
+      supportedVerificationTypes: ["ON_CHAIN"],
+      timeoutPolicyRef: "policy-ref:CAMPAIGN_OS_PROVIDER_TIMEOUT_POLICY",
+    });
+    expect(walletGroup?.clientReadiness).toMatchObject({
+      providerClientRequired: false,
+      supportedVerificationTypes: ["WALLET"],
+    });
+    expect(foundation.providerClientRegistry).toMatchObject({
+      adapterFoundationId: "campaign-os-provider-indexer-foundation",
+      clientReadinessId: "campaign-os-provider-indexer-client-readiness",
+      executionBoundary: "metadata_only_no_sdk_no_live_calls",
+      liveProviderCallsAttempted: false,
+      productionReady: false,
+      providerClientsEnabled: false,
+      registryPresent: true,
+      source: "provider-indexer-client-readiness",
+      status: "disabled",
+    });
+    expect(foundation.providerClientRegistry.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          adapterGroupId: "aefinder-aelfscan-indexers",
+          clientId: "provider-client:aefinder-aelfscan-indexers",
+          endpointRef: "config-ref:CAMPAIGN_OS_PROVIDER_ENDPOINT_REF",
+          providerClientRequired: true,
+          readinessStatus: "disabled",
+          supportedVerificationTypes: ["ON_CHAIN"],
+        }),
+      ]),
+    );
+  });
+
   it("keeps every live integration and worker execution disabled", () => {
     expect(providerIndexerNoLiveFlags).toEqual({
       liveAiCallsEnabled: false,
@@ -107,6 +161,67 @@ describe("provider indexer adapter foundation", () => {
       "error",
       "error",
     ]);
+    expect(foundation.providerClientRegistry).toMatchObject({
+      blockerCount: 13,
+      productionReady: false,
+      providerClientsEnabled: false,
+      registryPresent: true,
+      status: "blocked",
+    });
+    expect(foundation.providerClientRegistry.diagnosticCodes).toEqual([
+      "PROVIDER_CLIENT_ACTIVATION_MISSING",
+      "PROVIDER_CLIENT_REGISTRY_ENDPOINT_MISSING",
+      "PROVIDER_CLIENT_ENDPOINT_REFERENCE_MISSING",
+      "PROVIDER_CLIENT_CREDENTIAL_REFERENCE_MISSING",
+      "PROVIDER_CLIENT_SEAM_MISSING",
+      "PROVIDER_CLIENT_TIMEOUT_POLICY_MISSING",
+      "PROVIDER_CLIENT_RETRY_POLICY_MISSING",
+      "PROVIDER_CLIENT_CIRCUIT_BREAKER_POLICY_MISSING",
+      "PROVIDER_CLIENT_DEGRADATION_POLICY_MISSING",
+      "PROVIDER_CLIENT_WORKER_QUEUE_HANDOFF_MISSING",
+      "PROVIDER_CLIENT_CONSUME_READINESS_HANDOFF_MISSING",
+      "PROVIDER_CLIENT_RUNBOOK_MISSING",
+      "PROVIDER_CLIENT_REDACTION_POLICY_MISSING",
+    ]);
+    expect(foundation.providerClientRegistry.missingPreconditionRefs).toEqual([
+      "provider-client-activation",
+      "provider-client-registry-endpoint",
+      "provider-client-endpoint-reference",
+      "provider-client-credential-reference",
+      "provider-client-seam",
+      "provider-client-timeout-policy",
+      "provider-client-retry-policy",
+      "provider-client-circuit-breaker-policy",
+      "provider-client-degradation-policy",
+      "provider-client-worker-queue-handoff",
+      "provider-client-consume-readiness-handoff",
+      "provider-client-runbook",
+      "provider-client-redaction-policy",
+    ]);
+    expect(foundation.providerClientRegistry.entries.every((entry) => entry.productionReady === false)).toBe(
+      true,
+    );
+  });
+
+  it("keeps provider client projection free of SDK, package, live-call, and secret assumptions", () => {
+    const foundation = createProviderIndexerFoundation({
+      env: {
+        CAMPAIGN_OS_PROVIDER_CREDENTIAL_REF: "api-key-live-123",
+        CAMPAIGN_OS_PROVIDER_ENDPOINT_REF: "https://user:password@indexer.example/graphql?token=query-secret",
+        CAMPAIGN_OS_PROVIDER_TIMEOUT_POLICY: "timeout-policy:2500ms",
+      },
+      profileId: "local-review",
+    });
+    const serialized = JSON.stringify(foundation.providerClientRegistry);
+
+    expect(foundation.providerClientRegistry.executionBoundary).toBe(
+      "metadata_only_no_sdk_no_live_calls",
+    );
+    expect(foundation.providerClientRegistry.liveProviderCallsAttempted).toBe(false);
+    expect(serialized).not.toContain("api-key-live-123");
+    expect(serialized).not.toContain("user:password");
+    expect(serialized).not.toContain("query-secret");
+    expect(serialized).not.toMatch(/sdkPackage|packageName|liveCallUrl|executeProvider/i);
   });
 
   it("sanitizes provider secrets, credentialed URLs, signed URLs, and payload fragments", () => {

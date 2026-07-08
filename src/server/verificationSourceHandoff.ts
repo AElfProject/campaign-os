@@ -5,6 +5,12 @@ import {
   type ProviderIndexerAdapterGroup,
 } from "./providerIndexerAdapters";
 import {
+  createProviderIndexerClientReadiness,
+  type ProviderClientReadinessSummary,
+  type ProviderClientReadinessStatus,
+  type ProviderVerificationType,
+} from "./providerIndexerClientReadiness";
+import {
   queueRuntimePlans,
   type QueueDegradedOutcome,
   type QueuePlan,
@@ -29,8 +35,13 @@ export type VerificationSourceDiagnosticCode =
   | "UNKNOWN_WORKER_JOB"
   | "UNKNOWN_QUEUE_PLAN"
   | "UNSUPPORTED_EVIDENCE_SOURCE"
+  | "UNSUPPORTED_VERIFICATION_TYPE"
+  | "TASK_TEMPLATE_SOURCE_MISMATCH"
   | "PROVIDER_GROUP_UNAVAILABLE"
-  | "WORKER_JOB_UNAVAILABLE";
+  | "WORKER_JOB_UNAVAILABLE"
+  | "PROVIDER_CLIENT_REFERENCE_MISSING"
+  | "PROVIDER_CLIENT_READINESS_DISABLED"
+  | "PROVIDER_CLIENT_READINESS_BLOCKED";
 
 export interface VerificationQueuePosture {
   dryRunEnqueueEnabled: boolean;
@@ -48,6 +59,25 @@ export interface VerificationQueuePosture {
   }>;
 }
 
+export interface VerificationProviderClientPosture {
+  adapterGroupIds: string[];
+  blockerCount: number;
+  clientReadinessId: "campaign-os-provider-indexer-client-readiness";
+  credentialRefs: string[];
+  endpointRefs: string[];
+  liveProviderCallsAttempted: false;
+  policyRefs: {
+    circuitBreaker: string[];
+    degradation: string[];
+    retry: string[];
+    timeout: string[];
+  };
+  providerClientRequired: boolean;
+  providerClientsEnabled: boolean;
+  readinessStatus: ProviderClientReadinessStatus;
+  supportedVerificationTypes: ProviderVerificationType[];
+}
+
 export interface VerificationSourcePolicy {
   authSessionRequired: boolean;
   defaultDegradationOutcome: VerificationDegradationOutcome;
@@ -55,6 +85,7 @@ export interface VerificationSourcePolicy {
   evidenceSourceLabels: string[];
   jobIds: string[];
   liveExecutionEnabled: false;
+  providerClientPosture: VerificationProviderClientPosture;
   providerGroupIds: string[];
   providerReadinessSatisfiesAuthentication: boolean;
   queuePosture: VerificationQueuePosture;
@@ -64,7 +95,10 @@ export interface VerificationSourcePolicy {
   workerRequired: boolean;
 }
 
-type VerificationSourcePolicyDefinition = Omit<VerificationSourcePolicy, "queuePosture">;
+type VerificationSourcePolicyDefinition = Omit<
+  VerificationSourcePolicy,
+  "providerClientPosture" | "queuePosture"
+>;
 
 export interface VerificationSourceDiagnostic {
   code: VerificationSourceDiagnosticCode;
@@ -96,6 +130,7 @@ export interface VerificationSourceHandoffOptions {
 }
 
 export interface ResolveVerificationSourceHandoffOptions {
+  clientReadiness?: ProviderClientReadinessSummary;
   evidenceSourceLabels?: string[];
   jobIds?: string[];
   providerGroupAvailability?: VerificationProviderGroupAvailability;
@@ -211,6 +246,7 @@ export const verificationSourcePolicies: VerificationSourcePolicyDefinition[] = 
 ];
 
 const registeredProviderGroupIds = new Set(providerIndexerAdapterGroups.map((group) => group.id));
+const providerGroupById = new Map(providerIndexerAdapterGroups.map((group) => [group.id, group]));
 const registeredWorkerJobIds = new Set(workerJobCatalog.map((job) => job.id));
 const queuePlanByJobId = new Map(queueRuntimePlans.map((queuePlan) => [queuePlan.jobId, queuePlan]));
 const evidenceSourceLabelSet = new Set<string>(supportedEvidenceSourceLabels);
@@ -222,6 +258,7 @@ export const createVerificationSourceHandoff = (
   const diagnostics = entries.flatMap((entry) =>
     validateQueuePlans(entry.queuePosture.queuePlans).concat(
       validateProviderGroups(entry.providerGroupIds),
+      validateProviderClientSupport(entry.verificationType, entry.providerGroupIds),
       validateEvidenceSources(entry.evidenceSourceLabels),
     ),
   );
@@ -259,12 +296,16 @@ export const resolveVerificationSourceHandoff = (
   const providerIds = options.providerGroupIds ?? entry.providerGroupIds;
   const jobIds = options.jobIds ?? entry.jobIds;
   const evidenceLabels = options.evidenceSourceLabels ?? entry.evidenceSourceLabels;
+  const clientReadiness = options.clientReadiness ?? createProviderIndexerClientReadiness();
+  const providerClientPosture = createProviderClientPosture(entry, providerIds, clientReadiness);
   const diagnostics = [
     ...validateWorkerJobs(jobIds),
     ...validateProviderGroups(providerIds),
+    ...validateProviderClientSupport(entry.verificationType, providerIds),
     ...validateEvidenceSources(evidenceLabels),
     ...validateAvailability(entry, options.providerGroupAvailability),
     ...validateWorkerAvailability(entry, options.workerAvailability),
+    ...validateProviderClientReadiness(entry, providerClientPosture, clientReadiness),
   ];
   const degradationOutcome =
     diagnostics.length > 0 ? resolveFailedOutcome(entry, diagnostics) : entry.defaultDegradationOutcome;
@@ -277,6 +318,7 @@ export const resolveVerificationSourceHandoff = (
       ...entry,
       evidenceSourceLabels: sanitizeStrings(evidenceLabels),
       jobIds: sanitizeStrings(jobIds),
+      providerClientPosture,
       providerGroupIds: providerIds,
       queuePosture: createQueuePosture(entry.workerRequired, jobIds, entry.unavailableWorkerOutcome),
     },
@@ -295,6 +337,11 @@ const sanitizePolicy = (
   ]),
   evidenceSourceLabels: sanitizeStrings(sourcePolicy.evidenceSourceLabels),
   jobIds: sanitizeStrings(sourcePolicy.jobIds),
+  providerClientPosture: createProviderClientPosture(
+    sourcePolicy,
+    sourcePolicy.providerGroupIds,
+    createProviderIndexerClientReadiness(),
+  ),
   providerGroupIds: [...sourcePolicy.providerGroupIds],
   queuePosture: createQueuePosture(
     sourcePolicy.workerRequired,
@@ -320,6 +367,35 @@ const validateProviderGroups = (ids: readonly string[]): VerificationSourceDiagn
         `Unknown provider group id: ${redactProviderIndexerValue(id)}`,
       ),
     );
+
+const validateProviderClientSupport = (
+  verificationType: VerificationType,
+  ids: readonly string[],
+): VerificationSourceDiagnostic[] =>
+  ids.flatMap((id) => {
+    const group = providerGroupById.get(id);
+
+    if (!group) {
+      return [];
+    }
+
+    if (!group.clientReadiness.supportedVerificationTypes.includes(verificationType)) {
+      return [
+        diagnostic(
+          "TASK_TEMPLATE_SOURCE_MISMATCH",
+          "providerGroupIds",
+          "Task template verification source does not match the provider client registry entry.",
+        ),
+        diagnostic(
+          "UNSUPPORTED_VERIFICATION_TYPE",
+          "providerGroupIds",
+          `${verificationType} is not supported by provider group ${redactProviderIndexerValue(id)}.`,
+        ),
+      ];
+    }
+
+    return [];
+  });
 
 const validateWorkerJobs = (ids: readonly string[]): VerificationSourceDiagnostic[] =>
   ids
@@ -390,6 +466,48 @@ const validateWorkerAvailability = (
   ];
 };
 
+const validateProviderClientReadiness = (
+  entry: VerificationSourcePolicyDefinition,
+  posture: VerificationProviderClientPosture,
+  readiness: ProviderClientReadinessSummary,
+): VerificationSourceDiagnostic[] => {
+  if (!posture.providerClientRequired) {
+    return [];
+  }
+
+  const diagnostics: VerificationSourceDiagnostic[] = [];
+
+  if (readiness.status === "blocked") {
+    diagnostics.push(
+      diagnostic(
+        "PROVIDER_CLIENT_READINESS_BLOCKED",
+        "providerClientPosture.readinessStatus",
+        `${entry.verificationType} provider client readiness is blocked before execution.`,
+      ),
+    );
+  } else if (!readiness.providerClientsEnabled || readiness.status === "disabled") {
+    diagnostics.push(
+      diagnostic(
+        "PROVIDER_CLIENT_READINESS_DISABLED",
+        "providerClientPosture.readinessStatus",
+        `${entry.verificationType} provider client readiness is disabled before execution.`,
+      ),
+    );
+  }
+
+  if (readiness.blockerCount > 0) {
+    diagnostics.push(
+      diagnostic(
+        "PROVIDER_CLIENT_REFERENCE_MISSING",
+        "providerClientPosture.references",
+        `${entry.verificationType} provider client readiness is missing required reference configuration.`,
+      ),
+    );
+  }
+
+  return diagnostics;
+};
+
 const resolveFailedOutcome = (
   entry: VerificationSourcePolicy,
   diagnostics: readonly VerificationSourceDiagnostic[],
@@ -399,6 +517,8 @@ const resolveFailedOutcome = (
       item.code === "UNKNOWN_PROVIDER_GROUP"
       || item.code === "UNKNOWN_WORKER_JOB"
       || item.code === "UNSUPPORTED_EVIDENCE_SOURCE"
+      || item.code === "UNSUPPORTED_VERIFICATION_TYPE"
+      || item.code === "TASK_TEMPLATE_SOURCE_MISMATCH"
     )
   ) {
     return "blocked";
@@ -406,6 +526,10 @@ const resolveFailedOutcome = (
 
   if (diagnostics.some((item) => item.code === "WORKER_JOB_UNAVAILABLE")) {
     return entry.unavailableWorkerOutcome;
+  }
+
+  if (diagnostics.some((item) => item.code.startsWith("PROVIDER_CLIENT_"))) {
+    return entry.unavailableDegradationOutcome;
   }
 
   return entry.unavailableDegradationOutcome;
@@ -457,6 +581,42 @@ const createQueuePosture = (
     queuePlans: queuePlans.map(toVerificationQueuePlan),
   };
 };
+
+const createProviderClientPosture = (
+  entry: VerificationSourcePolicyDefinition,
+  providerGroupIds: readonly string[],
+  readiness: ProviderClientReadinessSummary,
+): VerificationProviderClientPosture => {
+  const groups = providerGroupIds.flatMap((id) => {
+    const group = providerGroupById.get(id);
+
+    return group ? [group] : [];
+  });
+  const providerClientRequired = groups.some((group) => group.clientReadiness.providerClientRequired);
+
+  return {
+    adapterGroupIds: sanitizeStrings(providerGroupIds),
+    blockerCount: readiness.blockerCount,
+    clientReadinessId: readiness.id,
+    credentialRefs: unique(groups.map((group) => group.clientReadiness.credentialRef)),
+    endpointRefs: unique(groups.map((group) => group.clientReadiness.endpointRef)),
+    liveProviderCallsAttempted: false,
+    policyRefs: {
+      circuitBreaker: unique(groups.map((group) => group.clientReadiness.circuitBreakerPolicyRef)),
+      degradation: unique(groups.map((group) => group.clientReadiness.degradationPolicyRef)),
+      retry: unique(groups.map((group) => group.clientReadiness.retryPolicyRef)),
+      timeout: unique(groups.map((group) => group.clientReadiness.timeoutPolicyRef)),
+    },
+    providerClientRequired,
+    providerClientsEnabled: providerClientRequired ? readiness.providerClientsEnabled : false,
+    readinessStatus: readiness.status,
+    supportedVerificationTypes: unique(
+      groups.flatMap((group) => group.clientReadiness.supportedVerificationTypes),
+    ),
+  };
+};
+
+const unique = <T>(values: readonly T[]): T[] => Array.from(new Set(values));
 
 const toVerificationQueuePlan = (
   queuePlan: QueuePlan,

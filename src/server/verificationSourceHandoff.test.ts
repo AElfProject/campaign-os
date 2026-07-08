@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { VerificationType } from "../domain/types";
+import { createProviderIndexerClientReadiness } from "./providerIndexerClientReadiness";
 import {
   allowedVerificationDegradationOutcomes,
   createVerificationSourceHandoff,
@@ -88,6 +89,13 @@ describe("verification source handoff", () => {
     });
     expect(wallet.entry?.evidenceSourceLabels).toEqual(["Auth/session wallet proof"]);
     expect(wallet.entry?.providerGroupIds).toEqual(["wallet-auth-session"]);
+    expect(wallet.entry?.providerClientPosture).toMatchObject({
+      clientReadinessId: "campaign-os-provider-indexer-client-readiness",
+      providerClientRequired: false,
+      providerClientsEnabled: false,
+      readinessStatus: "disabled",
+      supportedVerificationTypes: ["WALLET"],
+    });
     expect(wallet.entry?.diagnosticNotes.join(" ")).toContain("auth/session");
     expect(wallet.entry?.diagnosticNotes.join(" ")).not.toContain("provider readiness authenticates");
   });
@@ -99,6 +107,15 @@ describe("verification source handoff", () => {
 
     expect(handoffByType.ON_CHAIN).toMatchObject({
       jobIds: ["task-verification-worker"],
+      providerClientPosture: {
+        adapterGroupIds: ["aefinder-aelfscan-indexers"],
+        clientReadinessId: "campaign-os-provider-indexer-client-readiness",
+        endpointRefs: ["config-ref:CAMPAIGN_OS_PROVIDER_ENDPOINT_REF"],
+        providerClientRequired: true,
+        providerClientsEnabled: false,
+        readinessStatus: "disabled",
+        supportedVerificationTypes: ["ON_CHAIN"],
+      },
       providerGroupIds: ["aefinder-aelfscan-indexers"],
       queuePosture: {
         dryRunEnqueueEnabled: true,
@@ -155,6 +172,45 @@ describe("verification source handoff", () => {
     expect(
       Object.values(handoffByType).every((entry) => entry.providerReadinessSatisfiesAuthentication === false),
     ).toBe(true);
+    expect(
+      Object.values(handoffByType).every((entry) => entry.providerClientPosture.liveProviderCallsAttempted === false),
+    ).toBe(true);
+  });
+
+  it("exposes provider client readiness disabled and blocked diagnostics without completing tasks", () => {
+    const disabled = resolveVerificationSourceHandoff("ON_CHAIN");
+    const blocked = resolveVerificationSourceHandoff("DAPP_API", {
+      clientReadiness: createProviderIndexerClientReadiness({ profileId: "production-required" }),
+    });
+
+    expect(disabled).toMatchObject({
+      degradationOutcome: "pending",
+      diagnosticCodes: ["PROVIDER_CLIENT_READINESS_DISABLED"],
+      valid: false,
+    });
+    expect(disabled.entry?.providerClientPosture).toMatchObject({
+      blockerCount: 0,
+      providerClientRequired: true,
+      providerClientsEnabled: false,
+      readinessStatus: "disabled",
+    });
+    expect(blocked).toMatchObject({
+      degradationOutcome: "disable_provider_task_templates",
+      valid: false,
+    });
+    expect(blocked.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "PROVIDER_CLIENT_REFERENCE_MISSING",
+        "PROVIDER_CLIENT_READINESS_BLOCKED",
+      ]),
+    );
+    expect(blocked.entry?.providerClientPosture).toMatchObject({
+      blockerCount: 13,
+      providerClientRequired: true,
+      providerClientsEnabled: false,
+      readinessStatus: "blocked",
+    });
+    expect([disabled.degradationOutcome, blocked.degradationOutcome]).not.toContain("completed");
   });
 
   it("keeps provider-backed queue unavailable states pending, disabled, or review only", () => {
@@ -197,7 +253,12 @@ describe("verification source handoff", () => {
       expect(["pending", "manual_review", "disable_provider_task_templates", "blocked"]).toContain(
         handoff.degradationOutcome,
       );
-      expect(handoff.diagnosticCodes).toContain("PROVIDER_GROUP_UNAVAILABLE");
+      expect(handoff.diagnosticCodes).toEqual(
+        expect.arrayContaining([
+          "PROVIDER_GROUP_UNAVAILABLE",
+          "PROVIDER_CLIENT_READINESS_DISABLED",
+        ]),
+      );
     }
   });
 
@@ -248,15 +309,72 @@ describe("verification source handoff", () => {
     });
     expect(unsupportedEvidence).toMatchObject({
       degradationOutcome: "blocked",
-      diagnosticCodes: ["UNSUPPORTED_EVIDENCE_SOURCE"],
       valid: false,
     });
+    expect(unsupportedEvidence.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "UNSUPPORTED_EVIDENCE_SOURCE",
+        "PROVIDER_CLIENT_READINESS_DISABLED",
+      ]),
+    );
     expect(unknownWorker).toMatchObject({
       degradationOutcome: "blocked",
-      diagnosticCodes: ["UNKNOWN_WORKER_JOB"],
       valid: false,
     });
+    expect(unknownWorker.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "UNKNOWN_WORKER_JOB",
+        "PROVIDER_CLIENT_READINESS_DISABLED",
+      ]),
+    );
     expect(JSON.stringify(unknownWorker)).not.toContain("unknown-worker-secret-token");
+  });
+
+  it("blocks provider group and verification type mismatch before client execution", () => {
+    const readiness = createProviderIndexerClientReadiness({
+      clients: [
+        {
+          clientId: "dapp-client",
+          evaluate: () => ({
+            evidenceHash: "sha256:should-not-run",
+            evidenceRef: "evidence-ref:should-not-run",
+            status: "completed",
+          }),
+          providerGroupId: "dapp-api-adapters",
+        },
+      ],
+      env: {
+        CAMPAIGN_OS_PROVIDER_CIRCUIT_BREAKER_POLICY: "circuit-breaker:fail-closed",
+        CAMPAIGN_OS_PROVIDER_CLIENT_ENABLEMENT: "explicitly-enabled",
+        CAMPAIGN_OS_PROVIDER_CLIENT_SEAM: "client-seam-ref:provider-indexer",
+        CAMPAIGN_OS_PROVIDER_CONSUME_READINESS_HANDOFF: "consume-readiness:ready",
+        CAMPAIGN_OS_PROVIDER_CREDENTIAL_REF: "credential-ref:provider-clients",
+        CAMPAIGN_OS_PROVIDER_DEGRADATION_POLICY: "degradation:manual-review",
+        CAMPAIGN_OS_PROVIDER_ENDPOINT_REF: "endpoint-ref:dapp-api",
+        CAMPAIGN_OS_PROVIDER_REDACTION_POLICY: "redaction-policy:provider-client",
+        CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "provider-registry-ref:campaign-os",
+        CAMPAIGN_OS_PROVIDER_RETRY_POLICY: "retry-policy:provider-backoff",
+        CAMPAIGN_OS_PROVIDER_RUNBOOK_URL: "runbook-ref:provider-client",
+        CAMPAIGN_OS_PROVIDER_TIMEOUT_POLICY: "timeout-policy:2500ms",
+        CAMPAIGN_OS_PROVIDER_WORKER_QUEUE_HANDOFF: "queue-handoff:verification-jobs",
+      },
+      profileId: "production-required",
+    });
+    const mismatch = resolveVerificationSourceHandoff("ON_CHAIN", {
+      clientReadiness: readiness,
+      providerGroupIds: ["dapp-api-adapters"],
+    });
+
+    expect(mismatch).toMatchObject({
+      degradationOutcome: "blocked",
+      diagnosticCodes: ["TASK_TEMPLATE_SOURCE_MISMATCH", "UNSUPPORTED_VERIFICATION_TYPE"],
+      valid: false,
+    });
+    expect(mismatch.entry?.providerClientPosture).toMatchObject({
+      providerClientsEnabled: true,
+      readinessStatus: "activated",
+    });
+    expect(JSON.stringify(mismatch)).not.toContain("should-not-run");
   });
 
   it("serializes safe diagnostic notes without leaking secret-like fragments", () => {
