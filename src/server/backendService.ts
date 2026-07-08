@@ -286,18 +286,28 @@ export interface BackendQueueProviderAdapterReadinessSummary {
   driverSdkBindingLiveWorkerExecutionEnabled: false;
   driverSdkBindingMode: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["mode"];
   driverSdkBindingOperationCount: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["operationCount"];
+  driverSdkBindingPackageBindingBrokerConnectionBlockerCount: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["brokerConnectionBlockerCount"];
+  driverSdkBindingPackageBindingBrokerConnectionDiagnosticCodes: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["brokerConnectionDiagnosticCodes"];
+  driverSdkBindingPackageBindingBrokerConnectionHealthCheckMode: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["brokerConnectionHealthCheckMode"];
+  driverSdkBindingPackageBindingBrokerConnectionId: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["brokerConnectionId"];
+  driverSdkBindingPackageBindingBrokerConnectionRequiredConfigKeys: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["brokerConnectionRequiredConfigKeys"];
+  driverSdkBindingPackageBindingBrokerConnectionStatus: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["brokerConnectionStatus"];
   driverSdkBindingPackageBindingBlockerCount: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["blockerCount"];
   driverSdkBindingPackageBindingBrowserBundleAllowed: false;
   driverSdkBindingPackageBindingDiagnosticCodes: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["diagnosticCodes"];
   driverSdkBindingPackageBindingFamily: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["family"];
   driverSdkBindingPackageBindingId: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["bindingId"];
   driverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false;
+  driverSdkBindingPackageBindingLiveBrokerHealthCheckAttempted: false;
   driverSdkBindingPackageBindingLiveQueuePublishingEnabled: false;
   driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false;
   driverSdkBindingPackageBindingPackageName: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["packageName"];
   driverSdkBindingPackageBindingPackageRef: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["packageRef"];
+  driverSdkBindingPackageBindingQueueClientConstructed: false;
+  driverSdkBindingPackageBindingQueueEventsConstructed: false;
   driverSdkBindingPackageBindingSdkClientConstructed: false;
   driverSdkBindingPackageBindingStatus: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["packageBinding"]["status"];
+  driverSdkBindingPackageBindingWorkerConstructed: false;
   driverSdkBindingProductionReady: false;
   driverSdkBindingProviderKind: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["providerKind"];
   driverSdkBindingQueueRouteCount: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["queueRouteCount"];
@@ -1595,18 +1605,28 @@ const createBackendQueueRuntimeReadinessSummary = ({
       driverSdkBindingLiveWorkerExecutionEnabled: foundation.providerAdapter.driverSdkBinding.liveWorkerExecutionEnabled,
       driverSdkBindingMode: foundation.providerAdapter.driverSdkBinding.mode,
       driverSdkBindingOperationCount: foundation.providerAdapter.driverSdkBinding.operationCount,
+      driverSdkBindingPackageBindingBrokerConnectionBlockerCount: foundation.providerAdapter.driverSdkBinding.packageBinding.brokerConnectionBlockerCount,
+      driverSdkBindingPackageBindingBrokerConnectionDiagnosticCodes: foundation.providerAdapter.driverSdkBinding.packageBinding.brokerConnectionDiagnosticCodes,
+      driverSdkBindingPackageBindingBrokerConnectionHealthCheckMode: foundation.providerAdapter.driverSdkBinding.packageBinding.brokerConnectionHealthCheckMode,
+      driverSdkBindingPackageBindingBrokerConnectionId: foundation.providerAdapter.driverSdkBinding.packageBinding.brokerConnectionId,
+      driverSdkBindingPackageBindingBrokerConnectionRequiredConfigKeys: foundation.providerAdapter.driverSdkBinding.packageBinding.brokerConnectionRequiredConfigKeys,
+      driverSdkBindingPackageBindingBrokerConnectionStatus: foundation.providerAdapter.driverSdkBinding.packageBinding.brokerConnectionStatus,
       driverSdkBindingPackageBindingBlockerCount: foundation.providerAdapter.driverSdkBinding.packageBinding.blockerCount,
       driverSdkBindingPackageBindingBrowserBundleAllowed: false,
       driverSdkBindingPackageBindingDiagnosticCodes: foundation.providerAdapter.driverSdkBinding.packageBinding.diagnosticCodes,
       driverSdkBindingPackageBindingFamily: foundation.providerAdapter.driverSdkBinding.packageBinding.family,
       driverSdkBindingPackageBindingId: foundation.providerAdapter.driverSdkBinding.packageBinding.bindingId,
       driverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false,
+      driverSdkBindingPackageBindingLiveBrokerHealthCheckAttempted: false,
       driverSdkBindingPackageBindingLiveQueuePublishingEnabled: false,
       driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false,
       driverSdkBindingPackageBindingPackageName: foundation.providerAdapter.driverSdkBinding.packageBinding.packageName,
       driverSdkBindingPackageBindingPackageRef: foundation.providerAdapter.driverSdkBinding.packageBinding.packageRef,
+      driverSdkBindingPackageBindingQueueClientConstructed: false,
+      driverSdkBindingPackageBindingQueueEventsConstructed: false,
       driverSdkBindingPackageBindingSdkClientConstructed: false,
       driverSdkBindingPackageBindingStatus: foundation.providerAdapter.driverSdkBinding.packageBinding.status,
+      driverSdkBindingPackageBindingWorkerConstructed: false,
       driverSdkBindingProductionReady: foundation.providerAdapter.driverSdkBinding.productionReady,
       driverSdkBindingProviderKind: foundation.providerAdapter.driverSdkBinding.providerKind,
       driverSdkBindingQueueRouteCount: foundation.providerAdapter.driverSdkBinding.queueRouteCount,
