@@ -8,6 +8,7 @@ import {
 } from "./backendRuntimeActivation";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
+import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { resolveApiServerRuntimeContract } from "./serverRuntime";
@@ -21,6 +22,7 @@ const secretFragments = [
   "operator-policy-secret",
   "https://queue.invalid/queue-secret",
   "https://queue.invalid/dead-letter?token=queue-secret",
+  "@provider/queue-sdk",
   "https://store.invalid/token=idempotency-secret",
   "https://observability.invalid/token=observability-secret",
   "mnemonic sample",
@@ -113,6 +115,15 @@ describe("backend runtime activation contract", () => {
     const queueProviderDriverConfigKeys = [
       ...new Set(queueProviderDriverProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
+    const queueProviderSdkBindingConfigKeys = [
+      ...new Set(
+        queueProviderSdkBindingProductionPreconditions
+          .flatMap((precondition) => precondition.requiredConfigKeys)
+          .map((key) =>
+            key === "CAMPAIGN_OS_QUEUE_PROVIDER_BINDING" ? "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING" : key
+          ),
+      ),
+    ];
     const observabilityExporterConfigKeys = [
       ...new Set(observabilityExporterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
@@ -129,6 +140,8 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
         "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
         "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
         "CAMPAIGN_OS_SCHEDULER_PROVIDER",
         "CAMPAIGN_OS_WORKER_QUEUE_URL",
@@ -172,6 +185,8 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER",
         "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
         "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
         "CAMPAIGN_OS_WORKER_RETRY_POLICY",
         "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
         "CAMPAIGN_OS_WORKER_LEASE_STORE",
@@ -248,6 +263,18 @@ describe("backend runtime activation contract", () => {
         ]),
       );
     }
+    for (const queueProviderSdkBindingConfigKey of queueProviderSdkBindingConfigKeys) {
+      expect(activation.deploymentHandoff.environmentKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: queueProviderSdkBindingConfigKey,
+            redacted: true,
+            required: true,
+            requiredFor: "production-required",
+          }),
+        ]),
+      );
+    }
     for (const observabilityExporterConfigKey of observabilityExporterConfigKeys) {
       expect(activation.deploymentHandoff.environmentKeys).toEqual(
         expect.arrayContaining([
@@ -291,6 +318,20 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({
           category: "provider",
           key: "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "provider",
+          key: "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "provider",
+          key: "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
           redacted: true,
           required: true,
           status: "blocked",
@@ -425,6 +466,9 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "provider", id: "queue-provider-driver-queue-provider-driver-endpoint", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "queue-provider-driver-queue-provider-driver-credentials", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "queue-provider-driver-queue-provider-driver-live-enable-gate", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "queue-provider-sdk-binding-queue-provider-sdk-package-reference", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "queue-provider-sdk-binding-queue-provider-sdk-binding-registration", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "queue-provider-sdk-binding-queue-provider-sdk-live-enable-gate", status: "blocked" }),
         expect.objectContaining({ area: "contract", id: "contract-writer", status: "blocked" }),
         expect.objectContaining({ area: "storage", id: "object-storage", status: "deferred" }),
         expect.objectContaining({ area: "observability", id: "observability-exporter", status: "deferred" }),
@@ -475,6 +519,18 @@ describe("backend runtime activation contract", () => {
           expect.objectContaining({
             attachPoint: "src/server/queueProviderDriver.ts",
             id: `queue-provider-driver-${precondition.id}`,
+            requiredBeforeProduction: true,
+            status: precondition.status,
+          }),
+        ),
+      ),
+    );
+    expect(activation.productionDependencyBlockers).toEqual(
+      expect.arrayContaining(
+        queueProviderSdkBindingProductionPreconditions.map((precondition) =>
+          expect.objectContaining({
+            attachPoint: "src/server/queueProviderSdkBinding.ts",
+            id: `queue-provider-sdk-binding-${precondition.id}`,
             requiredBeforeProduction: true,
             status: precondition.status,
           }),

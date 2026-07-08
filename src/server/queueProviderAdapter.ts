@@ -12,6 +12,7 @@ import {
   type QueueProviderDriverFoundationStatus,
   type QueueProviderDriverMode,
   type QueueProviderDriverOperationCapability,
+  type QueueProviderDriverSdkBindingSummary,
 } from "./queueProviderDriver";
 import type { QueueDegradedOutcome } from "./queueRuntime";
 
@@ -131,6 +132,7 @@ export interface QueueProviderDriverSummary {
   providerId: string;
   queueRouteCount: number;
   requiredConfigKeys: string[];
+  sdkBinding: QueueProviderDriverSdkBindingSummary;
   status: QueueProviderDriverFoundationStatus;
   valid: boolean;
 }
@@ -154,6 +156,23 @@ export interface QueueProviderAdapterReadinessProjection {
   driverProviderId: string;
   driverQueueRouteCount: number;
   driverRequiredConfigKeys: string[];
+  driverSdkBindingBlockerCount: number;
+  driverSdkBindingDiagnosticCodes: QueueProviderDriverSdkBindingSummary["diagnosticCodes"];
+  driverSdkBindingDisabledLiveOperationCount: number;
+  driverSdkBindingId: string;
+  driverSdkBindingLiveProviderCallAttempted: false;
+  driverSdkBindingLiveQueuePublishingEnabled: false;
+  driverSdkBindingLiveWorkerExecutionEnabled: false;
+  driverSdkBindingMode: QueueProviderDriverSdkBindingSummary["mode"];
+  driverSdkBindingOperationCount: number;
+  driverSdkBindingProductionReady: false;
+  driverSdkBindingProviderKind: QueueProviderDriverSdkBindingSummary["providerKind"];
+  driverSdkBindingQueueRouteCount: number;
+  driverSdkBindingRequiredConfigKeys: string[];
+  driverSdkBindingSdkClientConstructed: false;
+  driverSdkBindingSdkPackageRef: string;
+  driverSdkBindingStatus: QueueProviderDriverSdkBindingSummary["status"];
+  driverSdkBindingValid: boolean;
   driverStatus: QueueProviderDriverFoundationStatus;
   driverValid: boolean;
   liveQueuePublishingEnabled: false;
@@ -609,6 +628,23 @@ const createReadinessProjection = ({
   driverProviderId: driver.providerId,
   driverQueueRouteCount: driver.queueRouteCount,
   driverRequiredConfigKeys: driver.requiredConfigKeys,
+  driverSdkBindingBlockerCount: driver.sdkBinding.blockerCount,
+  driverSdkBindingDiagnosticCodes: driver.sdkBinding.diagnosticCodes,
+  driverSdkBindingDisabledLiveOperationCount: driver.sdkBinding.disabledLiveOperationCount,
+  driverSdkBindingId: driver.sdkBinding.bindingId,
+  driverSdkBindingLiveProviderCallAttempted: false,
+  driverSdkBindingLiveQueuePublishingEnabled: false,
+  driverSdkBindingLiveWorkerExecutionEnabled: false,
+  driverSdkBindingMode: driver.sdkBinding.mode,
+  driverSdkBindingOperationCount: driver.sdkBinding.operationCount,
+  driverSdkBindingProductionReady: false,
+  driverSdkBindingProviderKind: driver.sdkBinding.providerKind,
+  driverSdkBindingQueueRouteCount: driver.sdkBinding.queueRouteCount,
+  driverSdkBindingRequiredConfigKeys: driver.sdkBinding.requiredConfigKeys,
+  driverSdkBindingSdkClientConstructed: false,
+  driverSdkBindingSdkPackageRef: driver.sdkBinding.sdkPackageRef,
+  driverSdkBindingStatus: driver.sdkBinding.status,
+  driverSdkBindingValid: driver.sdkBinding.valid,
   driverStatus: driver.status,
   driverValid: driver.valid,
   liveQueuePublishingEnabled: false,
@@ -629,6 +665,7 @@ const createReadinessProjection = ({
     ...new Set([
       ...queueProviderAdapterProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
       ...driver.requiredConfigKeys,
+      ...driver.sdkBinding.requiredConfigKeys,
     ]),
   ],
 });
@@ -651,6 +688,12 @@ const createDriverSummary = (
   providerId: driver.providerId,
   queueRouteCount: driver.readiness.queueRouteCount,
   requiredConfigKeys: driver.readiness.requiredConfigKeys,
+  sdkBinding: {
+    ...driver.sdkBinding,
+    diagnosticCodes: [...driver.sdkBinding.diagnosticCodes],
+    operationCapabilities: driver.sdkBinding.operationCapabilities.map((item) => ({ ...item })),
+    requiredConfigKeys: [...driver.sdkBinding.requiredConfigKeys],
+  },
   status: driver.status,
   valid: driver.valid,
 });

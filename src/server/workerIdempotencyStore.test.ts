@@ -13,18 +13,22 @@ import {
   workerIdempotencyStoreProductionPreconditions,
 } from "./workerIdempotencyStore";
 
-const queueProviderDriverConfigKeys = [
+const queueProviderSdkBindingConfigKeys = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
   "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
   "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
   "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
   "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
 ];
 
-const queueProviderDriverReadyEnv = {
+const queueProviderSdkBindingReadyEnv = {
   CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
   CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "Bearer queue-secret-token",
   CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
   CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
+  CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING: "production-provider-sdk-binding",
+  CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE: "package-ref:@provider/queue-sdk",
 } satisfies Record<string, unknown>;
 
 describe("worker idempotency store foundation", () => {
@@ -137,9 +141,9 @@ describe("worker idempotency store foundation", () => {
     });
   });
 
-  it("treats queue provider driver readiness as idempotency handoff metadata only", () => {
+  it("treats queue provider SDK binding readiness as idempotency handoff metadata only", () => {
     const foundation = createWorkerIdempotencyStoreFoundation({
-      env: queueProviderDriverReadyEnv,
+      env: queueProviderSdkBindingReadyEnv,
       profileId: "local-review",
     });
     const evaluation = evaluateWorkerIdempotencyDryRun({
@@ -148,20 +152,20 @@ describe("worker idempotency store foundation", () => {
       jobId: "task-verification-worker",
       operation: "claim",
       sideEffectBoundary: "points-ledger-and-task-completion",
-      traceId: "trace-worker-idempotency-driver-metadata",
+      traceId: "trace-worker-idempotency-sdk-binding-metadata",
       workerReference: "worker-ref:local-review",
     });
     const serialized = JSON.stringify(foundation);
 
-    expect(foundation.readiness.queueProviderDriverHandoff).toEqual({
+    expect(foundation.readiness.queueProviderSdkBindingHandoff).toEqual({
       activationGateSatisfied: true,
-      configuredConfigKeys: queueProviderDriverConfigKeys,
+      configuredConfigKeys: queueProviderSdkBindingConfigKeys,
       handoffMode: "metadata_only",
       liveIdempotencyExecutionEnabled: false,
       liveQueuePublishingEnabled: false,
       liveWorkerExecutionEnabled: false,
-      requiredConfigKeys: queueProviderDriverConfigKeys,
-      source: "queue-provider-driver-readiness",
+      requiredConfigKeys: queueProviderSdkBindingConfigKeys,
+      source: "queue-provider-sdk-binding-readiness",
       status: "configured_metadata_only",
     });
     expect(foundation.noLiveFlags).toEqual(workerIdempotencyStoreNoLiveFlags);
@@ -176,6 +180,7 @@ describe("worker idempotency store foundation", () => {
     expect(serialized).not.toContain("queue-pass");
     expect(serialized).not.toContain("queue-secret");
     expect(serialized).not.toContain("queue-secret-token");
+    expect(serialized).not.toContain("@provider/queue-sdk");
   });
 
   it("fails closed for production-required when idempotency preconditions are missing", () => {

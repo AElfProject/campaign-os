@@ -118,6 +118,27 @@ describe("queue runtime foundation", () => {
       driverMode: "dry_run",
       driverProductionReady: false,
       driverProviderId: "local-fake",
+      driverSdkBinding: expect.objectContaining({
+        bindingId: "local-stub-queue-provider-sdk-binding",
+        diagnosticCodes: [],
+        disabledLiveOperationCount: 8,
+        liveProviderCallAttempted: false,
+        liveQueuePublishingEnabled: false,
+        liveWorkerExecutionEnabled: false,
+        mode: "dry_run",
+        operationCount: 8,
+        productionReady: false,
+        providerKind: "local-stub",
+        requiredConfigKeys: expect.arrayContaining([
+          "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+          "CAMPAIGN_OS_QUEUE_PROVIDER_BINDING",
+          "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
+        ]),
+        sdkClientConstructed: false,
+        sdkPackageRef: "local-stub-sdk-package",
+        status: "local_ready",
+        valid: true,
+      }),
       driverStatus: "local_ready",
       driverValid: true,
       liveQueuePublishingEnabled: false,
@@ -139,6 +160,17 @@ describe("queue runtime foundation", () => {
       providerAdapterDriverMode: "dry_run",
       providerAdapterDriverProviderId: "local-fake",
       providerAdapterDriverStatus: "local_ready",
+      providerAdapterDriverSdkBindingId: "local-stub-queue-provider-sdk-binding",
+      providerAdapterDriverSdkBindingLiveProviderCallAttempted: false,
+      providerAdapterDriverSdkBindingLiveQueuePublishingEnabled: false,
+      providerAdapterDriverSdkBindingLiveWorkerExecutionEnabled: false,
+      providerAdapterDriverSdkBindingMode: "dry_run",
+      providerAdapterDriverSdkBindingOperationCount: 8,
+      providerAdapterDriverSdkBindingProviderKind: "local-stub",
+      providerAdapterDriverSdkBindingSdkClientConstructed: false,
+      providerAdapterDriverSdkBindingSdkPackageRef: "local-stub-sdk-package",
+      providerAdapterDriverSdkBindingStatus: "local_ready",
+      providerAdapterDriverSdkBindingValid: true,
       providerId: "local-dry-run",
     });
   });
@@ -370,6 +402,16 @@ describe("queue runtime foundation", () => {
         providerId: "local-fake",
         status: "accepted_local_fake",
       },
+      providerSdkBindingOperation: {
+        accepted: true,
+        bindingId: "local-stub-queue-provider-sdk-binding",
+        liveProviderCallAttempted: false,
+        livePublishAttempted: false,
+        productionWriteAttempted: false,
+        providerKind: "local-stub",
+        sdkClientConstructed: false,
+        status: "accepted_local_stub",
+      },
       queueId: "verification-jobs",
       status: "accepted_dry_run",
       traceId: "trace-queue-runtime-test",
@@ -446,6 +488,11 @@ describe("queue runtime foundation", () => {
       expect(result.liveQueuePublishingEnabled).toBe(false);
       expect(result.providerDriverOperation?.livePublishAttempted).toBe(false);
       expect(result.providerDriverOperation?.productionWriteAttempted).toBe(false);
+      expect(result.providerSdkBindingOperation?.accepted).toBe(false);
+      expect(result.providerSdkBindingOperation?.liveProviderCallAttempted).toBe(false);
+      expect(result.providerSdkBindingOperation?.livePublishAttempted).toBe(false);
+      expect(result.providerSdkBindingOperation?.productionWriteAttempted).toBe(false);
+      expect(result.providerSdkBindingOperation?.sdkClientConstructed).toBe(false);
     }
   });
 
@@ -512,6 +559,23 @@ describe("queue runtime foundation", () => {
     expect(foundation.providerAdapter.driverOperationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(
       true,
     );
+    expect(foundation.providerAdapter.driverSdkBinding).toMatchObject({
+      bindingId: "metadata-only-queue-provider-sdk-binding",
+      liveProviderCallAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      mode: "metadata_only",
+      operationCount: 8,
+      productionReady: false,
+      providerKind: "redis-compatible",
+      sdkClientConstructed: false,
+      sdkPackageRef: "metadata-only-sdk-package",
+      status: "scaffolded",
+      valid: true,
+    });
+    expect(foundation.providerAdapter.driverSdkBinding.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(
+      true,
+    );
     expect(foundation.providerAdapter.driverLiveQueuePublishingEnabled).toBe(false);
     expect(foundation.providerAdapter.driverLiveWorkerExecutionEnabled).toBe(false);
     expect(foundation.providerAdapter.liveQueuePublishingEnabled).toBe(false);
@@ -528,6 +592,16 @@ describe("queue runtime foundation", () => {
         "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
         "CAMPAIGN_OS_WORKER_LEASE_STORE_URL",
         "CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_BINDING",
+        "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
+      ]),
+    );
+    expect(foundation.readiness.providerAdapterDriverSdkBindingRequiredConfigKeys).toEqual(
+      expect.arrayContaining([
+        "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_BINDING",
+        "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
       ]),
     );
   });

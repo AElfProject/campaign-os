@@ -26,8 +26,13 @@ import {
   type QueueProviderDriverFoundationStatus,
   type QueueProviderDriverMode,
   type QueueProviderDriverOperationCapability,
+  type QueueProviderDriverSdkBindingSummary,
   type QueueProviderOperationResult,
 } from "./queueProviderDriver";
+import {
+  executeLocalStubQueueProviderSdkOperation,
+  type QueueProviderSdkOperationResult,
+} from "./queueProviderSdkBinding";
 import {
   workerIdempotencyPolicies,
   workerJobCatalog,
@@ -142,6 +147,7 @@ export interface QueueRuntimeProviderAdapterSummary {
   driverProductionReady: false;
   driverProviderId: string;
   driverRequiredConfigKeys: string[];
+  driverSdkBinding: QueueProviderDriverSdkBindingSummary;
   driverStatus: QueueProviderDriverFoundationStatus;
   driverValid: boolean;
   liveQueuePublishingEnabled: false;
@@ -277,6 +283,24 @@ export interface QueueRuntimeReadinessProjection {
   providerAdapterDriverRequiredConfigKeys: string[];
   providerAdapterDriverStatus: QueueProviderDriverFoundationStatus;
   providerAdapterDriverValid: boolean;
+  providerAdapterDriverSdkBindingActivationGateSatisfied: boolean;
+  providerAdapterDriverSdkBindingBlockerCount: number;
+  providerAdapterDriverSdkBindingDiagnosticCodes: QueueProviderDriverSdkBindingSummary["diagnosticCodes"];
+  providerAdapterDriverSdkBindingDisabledLiveOperationCount: number;
+  providerAdapterDriverSdkBindingId: string;
+  providerAdapterDriverSdkBindingLiveProviderCallAttempted: false;
+  providerAdapterDriverSdkBindingLiveQueuePublishingEnabled: false;
+  providerAdapterDriverSdkBindingLiveWorkerExecutionEnabled: false;
+  providerAdapterDriverSdkBindingMode: QueueProviderDriverSdkBindingSummary["mode"];
+  providerAdapterDriverSdkBindingOperationCount: number;
+  providerAdapterDriverSdkBindingProductionReady: false;
+  providerAdapterDriverSdkBindingProviderKind: QueueProviderDriverSdkBindingSummary["providerKind"];
+  providerAdapterDriverSdkBindingQueueRouteCount: number;
+  providerAdapterDriverSdkBindingRequiredConfigKeys: string[];
+  providerAdapterDriverSdkBindingSdkClientConstructed: false;
+  providerAdapterDriverSdkBindingSdkPackageRef: string;
+  providerAdapterDriverSdkBindingStatus: QueueProviderDriverSdkBindingSummary["status"];
+  providerAdapterDriverSdkBindingValid: boolean;
   providerAdapterBlockerCount: number;
   providerAdapterDiagnosticCodes: QueueProviderDiagnosticCode[];
   providerAdapterId: string;
@@ -337,6 +361,7 @@ export interface QueueEnqueueResult {
   liveQueuePublishingEnabled: false;
   payloadReference?: string;
   providerDriverOperation?: QueueProviderOperationResult;
+  providerSdkBindingOperation?: QueueProviderSdkOperationResult;
   queueId?: string;
   requestedAt?: string;
   status: "accepted_dry_run" | "rejected";
@@ -724,6 +749,16 @@ export const dryRunQueueEnqueue = (
     requestedAt: request.requestedAt,
     traceId: request.traceId,
   });
+  const providerSdkBindingOperation = executeLocalStubQueueProviderSdkOperation({
+    attempt: request.attempt,
+    idempotencyReference: request.idempotencyKey,
+    jobId: request.jobId,
+    operation: "publish",
+    payloadReference: request.payloadReference,
+    queueId: request.queueId,
+    requestedAt: request.requestedAt,
+    traceId: request.traceId,
+  });
 
   return {
     accepted,
@@ -737,6 +772,7 @@ export const dryRunQueueEnqueue = (
     liveQueuePublishingEnabled: false,
     payloadReference: sanitizeQueueRuntimeString(request.payloadReference),
     providerDriverOperation,
+    providerSdkBindingOperation,
     queueId: sanitizeQueueRuntimeString(request.queueId),
     requestedAt: request.requestedAt ? sanitizeQueueRuntimeString(request.requestedAt) : undefined,
     status: accepted ? "accepted_dry_run" : "rejected",
@@ -895,6 +931,24 @@ const createReadinessProjection = (
   providerAdapterDriverRequiredConfigKeys: providerAdapter.driverRequiredConfigKeys,
   providerAdapterDriverStatus: providerAdapter.driverStatus,
   providerAdapterDriverValid: providerAdapter.driverValid,
+  providerAdapterDriverSdkBindingActivationGateSatisfied: providerAdapter.driverSdkBinding.activationGateSatisfied,
+  providerAdapterDriverSdkBindingBlockerCount: providerAdapter.driverSdkBinding.blockerCount,
+  providerAdapterDriverSdkBindingDiagnosticCodes: providerAdapter.driverSdkBinding.diagnosticCodes,
+  providerAdapterDriverSdkBindingDisabledLiveOperationCount: providerAdapter.driverSdkBinding.disabledLiveOperationCount,
+  providerAdapterDriverSdkBindingId: providerAdapter.driverSdkBinding.bindingId,
+  providerAdapterDriverSdkBindingLiveProviderCallAttempted: false,
+  providerAdapterDriverSdkBindingLiveQueuePublishingEnabled: false,
+  providerAdapterDriverSdkBindingLiveWorkerExecutionEnabled: false,
+  providerAdapterDriverSdkBindingMode: providerAdapter.driverSdkBinding.mode,
+  providerAdapterDriverSdkBindingOperationCount: providerAdapter.driverSdkBinding.operationCount,
+  providerAdapterDriverSdkBindingProductionReady: false,
+  providerAdapterDriverSdkBindingProviderKind: providerAdapter.driverSdkBinding.providerKind,
+  providerAdapterDriverSdkBindingQueueRouteCount: providerAdapter.driverSdkBinding.queueRouteCount,
+  providerAdapterDriverSdkBindingRequiredConfigKeys: providerAdapter.driverSdkBinding.requiredConfigKeys,
+  providerAdapterDriverSdkBindingSdkClientConstructed: false,
+  providerAdapterDriverSdkBindingSdkPackageRef: providerAdapter.driverSdkBinding.sdkPackageRef,
+  providerAdapterDriverSdkBindingStatus: providerAdapter.driverSdkBinding.status,
+  providerAdapterDriverSdkBindingValid: providerAdapter.driverSdkBinding.valid,
   providerAdapterBlockerCount: providerAdapter.blockerCount,
   providerAdapterDiagnosticCodes: providerAdapter.diagnosticCodes,
   providerAdapterId: providerAdapter.adapterId,
@@ -970,6 +1024,12 @@ const createProviderAdapterSummary = (
   driverProductionReady: false,
   driverProviderId: providerAdapter.driver.providerId,
   driverRequiredConfigKeys: providerAdapter.driver.requiredConfigKeys,
+  driverSdkBinding: {
+    ...providerAdapter.driver.sdkBinding,
+    diagnosticCodes: [...providerAdapter.driver.sdkBinding.diagnosticCodes],
+    operationCapabilities: providerAdapter.driver.sdkBinding.operationCapabilities.map((item) => ({ ...item })),
+    requiredConfigKeys: [...providerAdapter.driver.sdkBinding.requiredConfigKeys],
+  },
   driverStatus: providerAdapter.driver.status,
   driverValid: providerAdapter.driver.valid,
   liveQueuePublishingEnabled: false,

@@ -151,7 +151,7 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("verification")?.notes).toContain("provider/indexer handoff");
     expect(surfaceById.get("verification")?.notes).toContain("queue runtime");
     expect(surfaceById.get("verification")?.notes).toContain("queue provider adapter activation");
-    expect(surfaceById.get("verification")?.notes).toContain("queue provider driver SDK binding");
+    expect(surfaceById.get("verification")?.notes).toContain("queue provider SDK binding");
     expect(surfaceById.get("verification")?.notes).toContain("worker lease store metadata");
     expect(surfaceById.get("verification")?.notes).toContain("dead-letter handling");
     expect(surfaceById.get("task-template")?.notes).toContain("disable_provider_task_templates");
@@ -166,7 +166,7 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("export")?.notes).toContain("scheduler runtime");
     expect(surfaceById.get("export")?.notes).toContain("queue runtime");
     expect(surfaceById.get("export")?.notes).toContain("queue provider adapter activation");
-    expect(surfaceById.get("export")?.notes).toContain("queue provider driver SDK binding");
+    expect(surfaceById.get("export")?.notes).toContain("queue provider SDK binding");
     expect(surfaceById.get("points-ranking")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["contract_writer", "production_database", "scheduler", "worker_queue"]),
       notes: expect.stringContaining("reward handoff scheduler runtime"),
@@ -183,7 +183,7 @@ describe("API foundation registry", () => {
     });
     expect(surfaceById.get("risk-scoring")?.notes).toContain("queue runtime");
     expect(surfaceById.get("risk-scoring")?.notes).toContain("queue provider adapter activation");
-    expect(surfaceById.get("risk-scoring")?.notes).toContain("queue provider driver SDK binding");
+    expect(surfaceById.get("risk-scoring")?.notes).toContain("queue provider SDK binding");
     expect(surfaceById.get("ai-ops")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
       notes: expect.stringContaining("observability exporter"),
@@ -203,12 +203,12 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("runtime-observability")?.notes).toContain("worker lease readiness metadata");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("worker lease store activation");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("queue provider adapter readiness");
-    expect(surfaceById.get("runtime-observability")?.notes).toContain("queue provider driver readiness metadata");
-    expect(surfaceById.get("runtime-observability")?.notes).toContain("queue provider driver SDK binding");
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("queue provider SDK binding readiness metadata");
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("queue provider SDK binding");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("dead-letter queue");
     expect(surfaceById.get("service-registry")?.notes).toContain("provider registry");
     expect(surfaceById.get("service-registry")?.notes).toContain("queue provider adapter readiness");
-    expect(surfaceById.get("service-registry")?.notes).toContain("queue provider driver readiness");
+    expect(surfaceById.get("service-registry")?.notes).toContain("queue provider SDK binding readiness");
   });
 
   it("validates capability references and path placeholders", () => {
