@@ -213,6 +213,56 @@ describe("live queue publishing readiness foundation", () => {
     expect(result.published).toBe(false);
   });
 
+  it("keeps the runtime publisher out of serialized readiness metadata", () => {
+    const safePublisher: LiveQueuePublisher = {
+      publish: () => ({ providerReference: "provider-ref:accepted", status: "accepted" }),
+      publisherId: "safe-live-queue-publisher",
+    };
+
+    const foundation = createLiveQueuePublishingReadiness({
+      constructionFactory,
+      env: productionReadyPublishingEnv,
+      profileId: "production-required",
+      publisher: safePublisher,
+    });
+    const result = evaluateLiveQueuePublishRequest(
+      {
+        attempt: 1,
+        idempotencyReference: "idem-ref:campaign-task-1",
+        jobId: "task-verification-worker",
+        payloadReference: "payload-ref:task-1",
+        queueId: "verification-jobs",
+        traceId: "trace-runtime-publisher",
+      },
+      { readiness: foundation },
+    );
+    const serialized = JSON.stringify(foundation);
+
+    expect(result.status).toBe("accepted");
+    expect(foundation.publisherId).toBe("safe-live-queue-publisher");
+    expect(serialized).not.toContain("\"publisher\":");
+  });
+
+  it("redacts unsafe publisher ids from serialized readiness metadata", () => {
+    const unsafePublisher: LiveQueuePublisher = {
+      publish: () => ({ status: "accepted" }),
+      publisherId: "redis://redis-user:redis-pass@redis.invalid/0?token=secret",
+    };
+
+    const foundation = createLiveQueuePublishingReadiness({
+      constructionFactory,
+      env: productionReadyPublishingEnv,
+      profileId: "production-required",
+      publisher: unsafePublisher,
+    });
+    const serialized = JSON.stringify(foundation);
+
+    expect(foundation.status).toBe("blocked");
+    expect(foundation.publisherId).toBe("[redacted]");
+    expect(serialized).not.toContain("redis-pass");
+    expect(serialized).not.toContain("token=secret");
+  });
+
   it("rejects duplicate publish results without reporting a publish", () => {
     const publisher: LiveQueuePublisher = {
       publish: () => ({

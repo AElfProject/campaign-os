@@ -187,7 +187,6 @@ export interface LiveQueuePublishingReadinessSummary {
   requiredConfigKeys: string[];
   status: LiveQueuePublishingStatus;
   valid: boolean;
-  publisher?: LiveQueuePublisher;
 }
 
 export interface CreateLiveQueuePublishingReadinessOptions {
@@ -199,12 +198,14 @@ export interface CreateLiveQueuePublishingReadinessOptions {
 }
 
 export interface EvaluateLiveQueuePublishRequestOptions {
+  publisher?: LiveQueuePublisher;
   readiness?: LiveQueuePublishingReadinessSummary;
 }
 
 const FOUNDATION_ID = "campaign-os-live-queue-publishing-readiness" as const;
 const REDACTED_VALUE = "[redacted]";
 const RAW_PUBLISHING_PAYLOAD_VALUE = "[redacted-live-queue-publishing-payload]";
+const runtimePublishers = new WeakMap<LiveQueuePublishingReadinessSummary, LiveQueuePublisher>();
 
 export const liveQueuePublishingNoLiveSideEffects: LiveQueuePublishingNoLiveSideEffects = {
   ack: false,
@@ -285,7 +286,7 @@ export const createLiveQueuePublishingReadiness = (
     valid,
   });
 
-  return {
+  const summary: LiveQueuePublishingReadinessSummary = {
     activationStatus,
     blockerCount,
     brokerReadiness,
@@ -301,7 +302,6 @@ export const createLiveQueuePublishingReadiness = (
     productionReady: false,
     profileId: profileResolution.profileId,
     publishAttemptAllowed,
-    publisher: options.publisher,
     publisherId,
     publisherProvided: Boolean(options.publisher),
     readiness,
@@ -309,6 +309,12 @@ export const createLiveQueuePublishingReadiness = (
     status,
     valid,
   };
+
+  if (options.publisher) {
+    runtimePublishers.set(summary, options.publisher);
+  }
+
+  return summary;
 };
 
 export const evaluateLiveQueuePublishRequest = (
@@ -316,9 +322,10 @@ export const evaluateLiveQueuePublishRequest = (
   options: EvaluateLiveQueuePublishRequestOptions = {},
 ): LiveQueuePublishResult => {
   const readiness = options.readiness ?? createLiveQueuePublishingReadiness({ profileId: "local-review" });
+  const publisher = options.publisher ?? runtimePublishers.get(readiness);
   const requestDiagnostics = validatePublishRequest(request, readiness);
 
-  if (!readiness.publishAttemptAllowed || !readiness.publisher) {
+  if (!readiness.publishAttemptAllowed || !publisher) {
     const diagnostics = readiness.publishAttemptAllowed
       ? requestDiagnostics
       : [
@@ -338,7 +345,7 @@ export const evaluateLiveQueuePublishRequest = (
   }
 
   try {
-    const publisherResult = readiness.publisher.publish({
+    const publisherResult = publisher.publish({
       ...request,
       activationStatus: readiness.activationStatus,
       mode: readiness.mode,
