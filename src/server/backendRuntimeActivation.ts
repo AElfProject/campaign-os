@@ -33,6 +33,10 @@ import {
 } from "./schedulerRuntime";
 import type { ApiServerRuntimeContract } from "./serverRuntime";
 import {
+  bullmqConstructionProductionPreconditions,
+  type BullmqConstructionPreconditionArea,
+} from "./bullmqConstructionReadiness";
+import {
   workerLeaseStoreProductionPreconditions,
   type WorkerLeasePreconditionArea,
 } from "./workerLeaseStore";
@@ -301,6 +305,26 @@ const redisBrokerConnectionDependencyArea = (
   return "provider";
 };
 
+const bullmqConstructionConfigCategory = (
+  area: BullmqConstructionPreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (area === "observability") {
+    return "observability";
+  }
+
+  return "provider";
+};
+
+const bullmqConstructionDependencyArea = (
+  area: BullmqConstructionPreconditionArea,
+): ProductionRuntimeDependencyArea => {
+  if (area === "observability") {
+    return "observability";
+  }
+
+  return "provider";
+};
+
 const normalizeQueueProviderSdkBindingConfigKey = (key: string): string =>
   key === "CAMPAIGN_OS_QUEUE_PROVIDER_BINDING" ? "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING" : key;
 
@@ -506,6 +530,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
       ),
     ),
   ),
+  ...bullmqConstructionProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        bullmqConstructionConfigCategory(precondition.area),
+        precondition.status,
+        "production-required",
+      ),
+    ),
+  ),
   ...redisBrokerConnectionProductionPreconditions.flatMap((precondition) =>
     precondition.requiredConfigKeys.map((key) =>
       configKey(
@@ -684,6 +718,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     attachPoint: "src/server/queueProviderPackageBinding.ts",
     blockedBy: [...precondition.requiredConfigKeys],
     id: `queue-provider-package-${precondition.id}`,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
+  ...bullmqConstructionProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: bullmqConstructionDependencyArea(precondition.area),
+    attachPoint: "src/server/bullmqConstructionReadiness.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: `bullmq-construction-${precondition.id}`,
     requiredBeforeProduction: true,
     status: precondition.status,
   })),

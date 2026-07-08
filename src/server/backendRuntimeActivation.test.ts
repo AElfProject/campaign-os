@@ -6,6 +6,7 @@ import {
   runtimeActivationEnvironmentKeys,
   runtimeActivationConfigKeys,
 } from "./backendRuntimeActivation";
+import { bullmqConstructionProductionPreconditions } from "./bullmqConstructionReadiness";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
@@ -141,6 +142,9 @@ describe("backend runtime activation contract", () => {
     const queueProviderPackageConfigKeys = [
       ...new Set(queueProviderPackageProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
+    const bullmqConstructionConfigKeys = [
+      ...new Set(bullmqConstructionProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
     const redisBrokerConnectionConfigKeys = [
       ...new Set(redisBrokerConnectionProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
@@ -165,6 +169,8 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+        "CAMPAIGN_OS_BULLMQ_CONSTRUCTION_ENABLEMENT",
+        "CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY",
         "CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT",
         "CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY",
         "CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS",
@@ -221,6 +227,8 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+        "CAMPAIGN_OS_BULLMQ_CONSTRUCTION_ENABLEMENT",
+        "CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY",
         "CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT",
         "CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY",
         "CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS",
@@ -327,6 +335,18 @@ describe("backend runtime activation contract", () => {
         ]),
       );
     }
+    for (const bullmqConstructionConfigKey of bullmqConstructionConfigKeys) {
+      expect(activation.deploymentHandoff.environmentKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: bullmqConstructionConfigKey,
+            redacted: true,
+            required: true,
+            requiredFor: "production-required",
+          }),
+        ]),
+      );
+    }
     for (const redisBrokerConnectionConfigKey of redisBrokerConnectionConfigKeys) {
       expect(activation.deploymentHandoff.environmentKeys).toEqual(
         expect.arrayContaining([
@@ -417,6 +437,20 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({
           category: "provider",
           key: "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "provider",
+          key: "CAMPAIGN_OS_BULLMQ_CONSTRUCTION_ENABLEMENT",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "provider",
+          key: "CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY",
           redacted: true,
           required: true,
           status: "blocked",
@@ -558,6 +592,10 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "provider", id: "queue-provider-package-queue-provider-package-binding-registration", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "queue-provider-package-queue-provider-package-redis-endpoint-reference", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "queue-provider-package-queue-provider-package-live-enable-gate", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "bullmq-construction-bullmq-construction-activation", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "bullmq-construction-bullmq-construction-factory", status: "blocked" }),
+        expect.objectContaining({ area: "observability", id: "bullmq-construction-bullmq-construction-observability-handoff", status: "deferred" }),
+        expect.objectContaining({ area: "provider", id: "bullmq-construction-bullmq-construction-runbook", status: "deferred" }),
         expect.objectContaining({ area: "provider", id: "redis-broker-redis-broker-credentials-reference", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "redis-broker-redis-broker-health-check-enable-gate", status: "blocked" }),
         expect.objectContaining({ area: "contract", id: "contract-writer", status: "blocked" }),
@@ -634,6 +672,18 @@ describe("backend runtime activation contract", () => {
           expect.objectContaining({
             attachPoint: "src/server/queueProviderPackageBinding.ts",
             id: `queue-provider-package-${precondition.id}`,
+            requiredBeforeProduction: true,
+            status: precondition.status,
+          }),
+        ),
+      ),
+    );
+    expect(activation.productionDependencyBlockers).toEqual(
+      expect.arrayContaining(
+        bullmqConstructionProductionPreconditions.map((precondition) =>
+          expect.objectContaining({
+            attachPoint: "src/server/bullmqConstructionReadiness.ts",
+            id: `bullmq-construction-${precondition.id}`,
             requiredBeforeProduction: true,
             status: precondition.status,
           }),

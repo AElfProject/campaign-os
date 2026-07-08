@@ -13,6 +13,7 @@ import {
   workerIdempotencyStoreProductionPreconditions,
 } from "./workerIdempotencyStore";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
+import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
 const queueProviderSdkBindingConfigKeys = [
   "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
@@ -55,6 +56,21 @@ const queueProviderPackageBindingReadyEnv = {
   CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:queue-package",
   CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
 } satisfies Record<string, unknown>;
+
+const bullmqConstructionReadyEnv = {
+  ...queueProviderPackageBindingReadyEnv,
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY: "factory-ref:bullmq-construction",
+} satisfies Record<string, unknown>;
+
+const constructedBullmqFactory: BullmqConstructionFactory = {
+  factoryId: "idempotency-store-bullmq-construction-factory",
+  construct: () => ({
+    queueClient: { clientId: "queue-client-ref", constructed: true },
+    queueEvents: { clientId: "queue-events-ref", constructed: true },
+    worker: { clientId: "worker-client-ref", constructed: true },
+  }),
+};
 
 describe("worker idempotency store foundation", () => {
   it("declares a stable foundation id and supported profiles", () => {
@@ -254,6 +270,62 @@ describe("worker idempotency store foundation", () => {
     expect(serialized).not.toContain("redis-pass");
     expect(serialized).not.toContain("redis-secret");
     expect(serialized).not.toContain("queue-package-secret-token");
+  });
+
+  it("keeps constructed BullMQ clients from satisfying idempotency readiness or production writes", () => {
+    const packageBinding = createQueueProviderPackageBinding({
+      constructionFactory: constructedBullmqFactory,
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+    });
+    const idempotencyStore = createWorkerIdempotencyStoreFoundation({
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+    });
+    const evaluation = evaluateWorkerIdempotencyDryRun({
+      attempt: 1,
+      completionEvidenceReference: "evidence-ref:task-verification-worker",
+      idempotencyKeyReference: "idempotency-key-ref:task-verification-worker",
+      jobId: "task-verification-worker",
+      operation: "complete",
+      sideEffectBoundary: "points-ledger-and-task-completion",
+      traceId: "trace-constructed-bullmq-idempotency-separation",
+      workerReference: "worker-ref:local-review",
+    });
+
+    expect(packageBinding).toMatchObject({
+      bullmqConstructionStatus: "constructed",
+      liveBrokerConnectionAttempted: false,
+      liveBrokerHealthCheckAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      productionReady: false,
+      queueClientConstructed: true,
+      queueEventsConstructed: true,
+      sdkClientConstructed: false,
+      workerConstructed: true,
+    });
+    expect(idempotencyStore.status).toBe("blocked");
+    expect(idempotencyStore.valid).toBe(false);
+    expect(idempotencyStore.productionReady).toBe(false);
+    expect(idempotencyStore.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "IDEMPOTENCY_STORE_MISSING",
+        "IDEMPOTENCY_STORE_CREDENTIALS_MISSING",
+        "IDEMPOTENCY_NAMESPACE_MISSING",
+        "IDEMPOTENCY_KEY_SCHEMA_VERSION_MISSING",
+      ]),
+    );
+    expect(idempotencyStore.readiness.liveIdempotencyExecutionEnabled).toBe(false);
+    expect(idempotencyStore.readiness.liveWorkerExecutionEnabled).toBe(false);
+    expect(idempotencyStore.noLiveFlags).toEqual(workerIdempotencyStoreNoLiveFlags);
+    expect(idempotencyStore.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(true);
+    expect(evaluation).toMatchObject({
+      liveIdempotencyOperationAttempted: false,
+      liveWorkerExecutionEnabled: false,
+      productionWriteAttempted: false,
+      status: "accepted_dry_run",
+    });
   });
 
   it("fails closed for production-required when idempotency preconditions are missing", () => {
