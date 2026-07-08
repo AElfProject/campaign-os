@@ -12,6 +12,10 @@ import {
   workerIdempotencyStoreNoLiveFlags,
   workerIdempotencyStoreProductionPreconditions,
 } from "./workerIdempotencyStore";
+import {
+  createLiveQueuePublishingReadiness,
+  type LiveQueuePublisher,
+} from "./liveQueuePublishingReadiness";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
 import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
@@ -38,8 +42,12 @@ const queueProviderPackageBindingReadyEnv = {
   CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
   CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:queue-package",
   CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_LIVE_QUEUE_PUBLISHER: "test-live-queue-publisher",
+  CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT: "explicitly-enabled",
   CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:queue-package",
   CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "runbook-ref:queue-package",
+  CAMPAIGN_OS_PAYLOAD_REFERENCE_POLICY: "payload-reference-policy:hash-or-reference",
+  CAMPAIGN_OS_PUBLISHER_REDACTION_POLICY: "publisher-redaction:strict",
   CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-package",
   CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
   CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
@@ -70,6 +78,15 @@ const constructedBullmqFactory: BullmqConstructionFactory = {
     queueEvents: { clientId: "queue-events-ref", constructed: true },
     worker: { clientId: "worker-client-ref", constructed: true },
   }),
+};
+
+const liveQueuePublisher: LiveQueuePublisher = {
+  publish: () => ({
+    operationId: "publish-verification-jobs-task-verification-worker",
+    providerReference: "provider-ref:accepted",
+    status: "accepted",
+  }),
+  publisherId: "test-live-queue-publisher",
 };
 
 describe("worker idempotency store foundation", () => {
@@ -386,6 +403,74 @@ describe("worker idempotency store foundation", () => {
     );
     expect(foundation.observabilityExporter.productionReady).toBe(false);
     expect(foundation.observabilityExporter.liveTelemetryExportEnabled).toBe(false);
+  });
+
+  it("keeps ready live publishing metadata from enabling idempotency writes or worker execution", () => {
+    const publishingReadiness = createLiveQueuePublishingReadiness({
+      constructionFactory: constructedBullmqFactory,
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+      publisher: liveQueuePublisher,
+    });
+    const idempotencyStore = createWorkerIdempotencyStoreFoundation({
+      env: {
+        ...bullmqConstructionReadyEnv,
+        CAMPAIGN_OS_CLOCK_SOURCE: "clock-ref:monotonic",
+        CAMPAIGN_OS_IDEMPOTENCY_COMPLETION_POLICY: "completion:return-existing",
+        CAMPAIGN_OS_IDEMPOTENCY_CONFLICT_POLICY: "conflict:manual-review",
+        CAMPAIGN_OS_IDEMPOTENCY_KEY_SCHEMA_VERSION: "v1",
+        CAMPAIGN_OS_IDEMPOTENCY_NAMESPACE: "campaign-os-workers",
+        CAMPAIGN_OS_IDEMPOTENCY_RETENTION_DAYS: "30",
+        CAMPAIGN_OS_IDEMPOTENCY_STORE: "production-idempotency-store",
+        CAMPAIGN_OS_IDEMPOTENCY_STORE_CREDENTIALS: "credential-ref:idempotency",
+      },
+      profileId: "production-required",
+    });
+    const evaluation = evaluateWorkerIdempotencyDryRun({
+      attempt: 1,
+      completionEvidenceReference: "evidence-ref:task-verification-worker",
+      idempotencyKeyReference: "idempotency-key-ref:task-verification-worker",
+      jobId: "task-verification-worker",
+      operation: "complete",
+      requestedAt: "2026-07-07T19:35:00Z",
+      sideEffectBoundary: "points-ledger-and-task-completion",
+      traceId: "trace-ready-publishing-idempotency-separation",
+      workerReference: "worker-ref:local-review",
+    });
+
+    expect(publishingReadiness).toMatchObject({
+      liveQueuePublishingEnabled: true,
+      publishAttemptAllowed: true,
+      status: "ready",
+      valid: true,
+    });
+    expect(idempotencyStore).toMatchObject({
+      productionReady: false,
+    });
+    expect(idempotencyStore.noLiveFlags).toEqual(workerIdempotencyStoreNoLiveFlags);
+    expect(idempotencyStore.noLiveFlags.liveIdempotencyExecutionEnabled).toBe(false);
+    expect(idempotencyStore.noLiveFlags.liveQueuePublishingEnabled).toBe(false);
+    expect(idempotencyStore.noLiveFlags.liveWorkerExecutionEnabled).toBe(false);
+    expect(idempotencyStore.readiness).toMatchObject({
+      liveIdempotencyExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      observabilityExporterLiveTelemetryExportEnabled: false,
+    });
+    expect(idempotencyStore.operationCapabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ liveEnabled: false, operation: "claim" }),
+        expect.objectContaining({ liveEnabled: false, operation: "complete" }),
+        expect.objectContaining({ liveEnabled: false, operation: "recover_stale" }),
+        expect.objectContaining({ liveEnabled: false, operation: "release" }),
+      ]),
+    );
+    expect(evaluation).toMatchObject({
+      liveIdempotencyOperationAttempted: false,
+      liveWorkerExecutionEnabled: false,
+      productionWriteAttempted: false,
+      status: "accepted_dry_run",
+    });
   });
 
   it("accepts safe dry-run requests and echoes only safe references", () => {

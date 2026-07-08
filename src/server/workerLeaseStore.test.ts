@@ -8,6 +8,10 @@ import {
   workerIdempotencyStoreProductionPreconditions,
 } from "./workerIdempotencyStore";
 import {
+  createLiveQueuePublishingReadiness,
+  type LiveQueuePublisher,
+} from "./liveQueuePublishingReadiness";
+import {
   SUPPORTED_WORKER_LEASE_STORE_PROFILES,
   createWorkerLeaseStoreFoundation,
   evaluateWorkerLeaseDryRun,
@@ -42,8 +46,12 @@ const queueProviderPackageBindingReadyEnv = {
   CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
   CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:queue-package",
   CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_LIVE_QUEUE_PUBLISHER: "test-live-queue-publisher",
+  CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT: "explicitly-enabled",
   CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:queue-package",
   CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "runbook-ref:queue-package",
+  CAMPAIGN_OS_PAYLOAD_REFERENCE_POLICY: "payload-reference-policy:hash-or-reference",
+  CAMPAIGN_OS_PUBLISHER_REDACTION_POLICY: "publisher-redaction:strict",
   CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-package",
   CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
   CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
@@ -74,6 +82,15 @@ const constructedBullmqFactory: BullmqConstructionFactory = {
     queueEvents: { clientId: "queue-events-ref", constructed: true },
     worker: { clientId: "worker-client-ref", constructed: true },
   }),
+};
+
+const liveQueuePublisher: LiveQueuePublisher = {
+  publish: () => ({
+    operationId: "publish-verification-jobs-task-verification-worker",
+    providerReference: "provider-ref:accepted",
+    status: "accepted",
+  }),
+  publisherId: "test-live-queue-publisher",
 };
 
 describe("worker lease store foundation", () => {
@@ -374,6 +391,71 @@ describe("worker lease store foundation", () => {
       liveSchedulerExecutionEnabled: false,
       liveSocialCallsEnabled: false,
       liveWorkerExecutionEnabled: false,
+    });
+  });
+
+  it("keeps ready live publishing metadata from enabling lease or worker execution", () => {
+    const publishingReadiness = createLiveQueuePublishingReadiness({
+      constructionFactory: constructedBullmqFactory,
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+      publisher: liveQueuePublisher,
+    });
+    const leaseStore = createWorkerLeaseStoreFoundation({
+      env: {
+        ...bullmqConstructionReadyEnv,
+        CAMPAIGN_OS_CLOCK_SOURCE: "clock-ref:monotonic",
+        CAMPAIGN_OS_WORKER_LEASE_CREDENTIALS: "credential-ref:lease",
+        CAMPAIGN_OS_WORKER_LEASE_FENCING_POLICY: "fencing:token-ref",
+        CAMPAIGN_OS_WORKER_LEASE_HEARTBEAT_SECONDS: "30",
+        CAMPAIGN_OS_WORKER_LEASE_RELEASE_POLICY: "release:explicit",
+        CAMPAIGN_OS_WORKER_LEASE_STALE_RECOVERY_POLICY: "recover:manual-review",
+        CAMPAIGN_OS_WORKER_LEASE_STORE: "production-lease-store",
+        CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS: "120",
+      },
+      profileId: "production-required",
+    });
+    const evaluation = evaluateWorkerLeaseDryRun({
+      fencingTokenReference: "fence-ref:task-verification-worker",
+      heartbeatIntervalSeconds: 30,
+      jobId: "task-verification-worker",
+      leaseKeyReference: "lease-key-ref:task-verification-worker",
+      operation: "claim",
+      requestedAt: "2026-07-07T17:45:00Z",
+      traceId: "trace-ready-publishing-lease-separation",
+      ttlSeconds: 120,
+      workerReference: "worker-ref:local-review",
+    });
+
+    expect(publishingReadiness).toMatchObject({
+      liveQueuePublishingEnabled: true,
+      publishAttemptAllowed: true,
+      status: "ready",
+      valid: true,
+    });
+    expect(leaseStore).toMatchObject({
+      productionReady: false,
+    });
+    expect(leaseStore.noLiveFlags).toEqual(workerLeaseStoreNoLiveFlags);
+    expect(leaseStore.noLiveFlags.liveQueuePublishingEnabled).toBe(false);
+    expect(leaseStore.noLiveFlags.liveWorkerExecutionEnabled).toBe(false);
+    expect(leaseStore.readiness).toMatchObject({
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      observabilityExporterLiveTelemetryExportEnabled: false,
+    });
+    expect(leaseStore.operationCapabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ liveEnabled: false, operation: "claim" }),
+        expect.objectContaining({ liveEnabled: false, operation: "heartbeat" }),
+        expect.objectContaining({ liveEnabled: false, operation: "recover_stale" }),
+        expect.objectContaining({ liveEnabled: false, operation: "release" }),
+      ]),
+    );
+    expect(evaluation).toMatchObject({
+      liveLeaseOperationAttempted: false,
+      liveWorkerExecutionEnabled: false,
+      status: "accepted_dry_run",
     });
   });
 

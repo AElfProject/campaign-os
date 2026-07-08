@@ -8,6 +8,10 @@ import {
   observabilityExporterProductionPreconditions,
   redactObservabilityExporterValue,
 } from "./observabilityExporter";
+import {
+  createLiveQueuePublishingReadiness,
+  type LiveQueuePublisher,
+} from "./liveQueuePublishingReadiness";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
 import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
@@ -34,8 +38,12 @@ const queueProviderPackageBindingReadyEnv = {
   CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
   CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:queue-package",
   CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_LIVE_QUEUE_PUBLISHER: "test-live-queue-publisher",
+  CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT: "explicitly-enabled",
   CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:queue-package",
   CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "runbook-ref:queue-package",
+  CAMPAIGN_OS_PAYLOAD_REFERENCE_POLICY: "payload-reference-policy:hash-or-reference",
+  CAMPAIGN_OS_PUBLISHER_REDACTION_POLICY: "publisher-redaction:strict",
   CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-package",
   CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
   CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
@@ -66,6 +74,15 @@ const constructedBullmqFactory: BullmqConstructionFactory = {
     queueEvents: { clientId: "queue-events-ref", constructed: true },
     worker: { clientId: "worker-client-ref", constructed: true },
   }),
+};
+
+const liveQueuePublisher: LiveQueuePublisher = {
+  publish: () => ({
+    operationId: "publish-verification-jobs-task-verification-worker",
+    providerReference: "provider-ref:accepted",
+    status: "accepted",
+  }),
+  publisherId: "test-live-queue-publisher",
 };
 
 describe("observability exporter foundation", () => {
@@ -380,6 +397,84 @@ describe("observability exporter foundation", () => {
     expect(foundation.productionReady).toBe(false);
     expect(foundation.noLiveFlags.liveTelemetryExportEnabled).toBe(false);
     expect(foundation.operationCapabilities.every((item) => item.liveEnabled === false)).toBe(true);
+  });
+
+  it("keeps ready live publishing metadata from enabling telemetry export or downstream writes", () => {
+    const publishingReadiness = createLiveQueuePublishingReadiness({
+      constructionFactory: constructedBullmqFactory,
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+      publisher: liveQueuePublisher,
+    });
+    const foundation = createObservabilityExporterFoundation({
+      env: {
+        ...bullmqConstructionReadyEnv,
+        CAMPAIGN_OS_OBSERVABILITY_ALERT_ROUTING: "alert-routing:manual-review",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER: "production-observability-exporter",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS: "credential-ref:observability",
+        CAMPAIGN_OS_OBSERVABILITY_LOG_SINK_URL: "log-sink-ref:structured",
+        CAMPAIGN_OS_OBSERVABILITY_METRIC_NAMESPACE: "campaign-os-runtime",
+        CAMPAIGN_OS_OBSERVABILITY_REDACTION_POLICY: "redaction:strict",
+        CAMPAIGN_OS_OBSERVABILITY_RETENTION_DAYS: "30",
+        CAMPAIGN_OS_OBSERVABILITY_RETRY_DEAD_LETTER_POLICY: "retry:manual-dead-letter",
+        CAMPAIGN_OS_OBSERVABILITY_RUNBOOK_URL: "runbook-ref:observability",
+        CAMPAIGN_OS_OBSERVABILITY_SINK: "production-metrics-sink",
+        CAMPAIGN_OS_OBSERVABILITY_TRACE_COLLECTOR_URL: "trace-collector-ref:structured",
+      },
+      profileId: "production-required",
+    });
+    const capture = captureObservabilityDryRun({
+      eventCategory: "queue",
+      metricName: "queue.live_publishing.ready",
+      operation: "metrics",
+      payloadReference: "payload-ref:queue:live-publishing-ready",
+      sourceRuntime: "queue-runtime",
+      traceId: "trace-ready-publishing-observability-separation",
+    });
+
+    expect(publishingReadiness).toMatchObject({
+      liveQueuePublishingEnabled: true,
+      publishAttemptAllowed: true,
+      status: "ready",
+      valid: true,
+    });
+    expect(foundation).toMatchObject({
+      productionReady: false,
+    });
+    expect(foundation.noLiveFlags).toEqual(observabilityExporterNoLiveFlags);
+    expect(foundation.noLiveFlags).toMatchObject({
+      liveAnalyticsIngestionEnabled: false,
+      liveContractCallsEnabled: false,
+      liveObjectStorageEnabled: false,
+      liveProviderCallsEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveRewardDistributionEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveWorkerExecutionEnabled: false,
+    });
+    expect(foundation.readiness).toMatchObject({
+      liveAlertRoutingEnabled: false,
+      liveLogExportEnabled: false,
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      productionReady: false,
+    });
+    expect(foundation.operationCapabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ liveEnabled: false, operation: "alerts" }),
+        expect.objectContaining({ liveEnabled: false, operation: "dead_letter" }),
+        expect.objectContaining({ liveEnabled: false, operation: "metrics" }),
+        expect.objectContaining({ liveEnabled: false, operation: "retry" }),
+        expect.objectContaining({ liveEnabled: false, operation: "traces" }),
+      ]),
+    );
+    expect(capture).toMatchObject({
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportAttempted: false,
+      productionWriteAttempted: false,
+      status: "accepted_dry_run",
+    });
   });
 
   it("returns accepted, rejected, and dropped dry-run outcomes without live export", () => {
