@@ -127,7 +127,7 @@ describe("provider indexer adapter foundation", () => {
 
     expect(projection).toMatchObject({
       activationStatus: "disabled",
-      endpointCount: 2,
+      endpointCount: 13,
       executionBoundary: "metadata_only_no_default_transport_no_live_calls",
       id: "campaign-os-provider-http-client-runtime",
       liveHttpCallsAttempted: false,
@@ -135,8 +135,10 @@ describe("provider indexer adapter foundation", () => {
       status: "disabled",
       transportProvided: false,
     });
-    expect(projection.configuredCategories).toEqual(["indexer", "dapp_api"]);
-    expect(projection.deferredCategories).toEqual(["social_api", "ai_provider"]);
+    expect(projection.configuredCategories).toEqual(
+      expect.arrayContaining(["indexer", "dapp_api", "social_api", "ai_provider"]),
+    );
+    expect(projection.deferredCategories).toEqual([]);
     expect(projection.entries).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

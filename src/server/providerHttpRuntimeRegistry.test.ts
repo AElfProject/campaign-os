@@ -115,6 +115,79 @@ describe("provider HTTP runtime registry", () => {
     expect(serialized).not.toContain("password");
   });
 
+  it("publishes rollout-ready endpoint catalog coverage without live refs", () => {
+    const summary = createProviderHttpRuntimeSummary({ profileId: "local-review" });
+    const endpointFamilies = summary.endpointRegistry.map((endpoint) => endpoint.providerFamily);
+    const enabledFamilies = summary.endpointRegistry
+      .filter((endpoint) => endpoint.rolloutStatus === "enabled")
+      .map((endpoint) => endpoint.providerFamily);
+    const serialized = JSON.stringify(summary);
+
+    expect(endpointFamilies).toEqual(
+      expect.arrayContaining([
+        "aefinder",
+        "aelfscan",
+        "ebridge",
+        "awaken",
+        "forest-schrodinger",
+        "tmrwdao",
+        "daipp",
+        "pay",
+        "forecast",
+        "portfolio",
+      ]),
+    );
+    expect(enabledFamilies).toEqual(
+      expect.arrayContaining([
+        "aefinder",
+        "aelfscan",
+        "ebridge",
+        "awaken",
+        "forest-schrodinger",
+        "tmrwdao",
+        "daipp",
+        "pay",
+        "forecast",
+        "portfolio",
+      ]),
+    );
+    expect(summary.endpointRollout).toMatchObject({
+      blockedCount: 0,
+      disabledCount: 0,
+      enabledCount: 11,
+      endpointCount: summary.endpointCount,
+      valid: true,
+    });
+    expect(summary.endpointRollout.configuredCategories).toEqual(
+      expect.arrayContaining(["indexer", "dapp_api"]),
+    );
+    expect(summary.endpointRollout.providerFamilies).toEqual(
+      expect.arrayContaining(["aefinder", "aelfscan", "awaken", "tmrwdao"]),
+    );
+    expect(summary.endpointRegistry.every((endpoint) => endpoint.requiredConfigKeys.length > 0))
+      .toBe(true);
+    expect(serialized).not.toContain("https://");
+    expect(serialized).not.toContain("Bearer ");
+    expect(serialized).not.toContain("api-key");
+    expect(serialized).not.toContain("secret=");
+    expect(serialized).not.toContain("password");
+  });
+
+  it("keeps social and AI endpoint placeholders deferred", () => {
+    const summary = createProviderHttpRuntimeSummary({ profileId: "local-review" });
+    const deferredEndpoints = summary.endpointRegistry.filter(
+      (endpoint) => endpoint.rolloutStatus === "deferred",
+    );
+
+    expect(summary.endpointRollout.deferredCount).toBeGreaterThanOrEqual(2);
+    expect(deferredEndpoints.map((endpoint) => endpoint.category)).toEqual(
+      expect.arrayContaining(["social_api", "ai_provider"]),
+    );
+    expect(
+      deferredEndpoints.every((endpoint) => endpoint.supportedVerificationTypes.length > 0),
+    ).toBe(true);
+  });
+
   it("looks up endpoints by id and blocks verification type mismatches", () => {
     const indexer = findProviderHttpEndpointById("aefinder-aelfscan-indexer-query");
     const matchingEndpoint = findProviderHttpEndpointForVerification({
