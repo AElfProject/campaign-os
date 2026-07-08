@@ -495,11 +495,12 @@ export const evaluateLiveQueueConsumeMessage = (
 
   const outcome = resolveHandlerOutcome(message, handlerResult);
   const settled = settleConsumerDecision(consumer, message, outcome.decision);
+  const status = settled.failed ? "failed" : outcome.status;
 
   return {
     ...createConsumeResult(
       message,
-      outcome.status,
+      status,
       outcome.decision,
       true,
       true,
@@ -508,6 +509,7 @@ export const evaluateLiveQueueConsumeMessage = (
         ...settled.diagnostics,
       ],
     ),
+    consumerErrorRedacted: settled.consumerErrorRedacted,
     operationId: sanitizeOptionalConsumeString(handlerResult.operationId ?? settled.operationId),
   };
 };
@@ -750,7 +752,12 @@ function settleConsumerDecision(
   consumer: LiveQueueConsumer,
   message: LiveQueueConsumeMessage,
   decision: LiveQueueConsumeDecision,
-): { diagnostics: LiveQueueConsumeDiagnostic[]; operationId?: string } {
+): {
+  consumerErrorRedacted?: unknown;
+  diagnostics: LiveQueueConsumeDiagnostic[];
+  failed: boolean;
+  operationId?: string;
+} {
   try {
     const operation = decision === "ack"
       ? consumer.ack?.(message)
@@ -764,14 +771,16 @@ function settleConsumerDecision(
 
     return {
       diagnostics: diagnosticsFromOperationResult(operation, "consumer"),
+      failed: operation?.status === "failed" || operation?.status === "rejected",
       operationId: sanitizeOptionalConsumeString(operation?.operationId),
     };
   } catch (error) {
     return {
+      consumerErrorRedacted: redactLiveQueueConsumeValue(error),
       diagnostics: [
         diagnostic("LIVE_QUEUE_CONSUMER_FAILED", "consumer", "Live queue consumer failed with redacted error detail."),
       ],
-      operationId: sanitizeOptionalConsumeString(JSON.stringify(redactLiveQueueConsumeValue(error))),
+      failed: true,
     };
   }
 }

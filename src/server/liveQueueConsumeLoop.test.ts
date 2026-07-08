@@ -371,6 +371,60 @@ describe("live queue consume loop boundary", () => {
     expect(JSON.stringify(handlerResult)).not.toContain("ELF_SECRET");
   });
 
+  it("fails closed when consumer settlement throws after handler completion", () => {
+    const throwingAckConsumer: LiveQueueConsumer = {
+      ...consumer,
+      ack: () => {
+        throw new Error("ack token=secret payload={\"walletAddress\":\"ELF_SECRET\"}");
+      },
+    };
+    const result = evaluateLiveQueueConsumeMessage(safeMessage, {
+      readiness: createReadyReadiness(completedHandler, throwingAckConsumer),
+    });
+
+    expect(result).toMatchObject({
+      ackAttempted: true,
+      decision: "ack",
+      diagnosticCodes: ["LIVE_QUEUE_CONSUMER_FAILED"],
+      handlerExecuted: true,
+      status: "failed",
+    });
+    expect(result.operationId).toBeUndefined();
+    expect(JSON.stringify(result.consumerErrorRedacted)).not.toContain("ELF_SECRET");
+  });
+
+  it("fails closed when consumer settlement rejects or fails after handler completion", () => {
+    const rejectedAckConsumer: LiveQueueConsumer = {
+      ...consumer,
+      ack: () => ({ operationId: "ack-rejected", status: "rejected" }),
+    };
+    const failedAckConsumer: LiveQueueConsumer = {
+      ...consumer,
+      ack: () => ({ operationId: "ack-failed", status: "failed" }),
+    };
+    const rejectedResult = evaluateLiveQueueConsumeMessage(safeMessage, {
+      readiness: createReadyReadiness(completedHandler, rejectedAckConsumer),
+    });
+    const failedResult = evaluateLiveQueueConsumeMessage(safeMessage, {
+      readiness: createReadyReadiness(completedHandler, failedAckConsumer),
+    });
+
+    expect(rejectedResult).toMatchObject({
+      ackAttempted: true,
+      decision: "ack",
+      diagnosticCodes: ["LIVE_QUEUE_CONSUMER_REJECTED"],
+      operationId: "ack-rejected",
+      status: "failed",
+    });
+    expect(failedResult).toMatchObject({
+      ackAttempted: true,
+      decision: "ack",
+      diagnosticCodes: ["LIVE_QUEUE_CONSUMER_FAILED"],
+      operationId: "ack-failed",
+      status: "failed",
+    });
+  });
+
   it("redacts nested consume payloads", () => {
     const redacted = redactLiveQueueConsumeValue({
       idempotencyKey: "campaign/wallet/ELF_raw_wallet/task.json",
