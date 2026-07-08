@@ -8,6 +8,7 @@ import {
 } from "./providerIndexerClientReadiness";
 import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
 import type {
+  ProviderEndpointRolloutSummary,
   ProviderHttpEndpointCategory,
   ProviderHttpEndpointEntry,
   ProviderHttpRuntimeSummary,
@@ -134,6 +135,7 @@ export interface ProviderHttpEndpointRegistryProjection {
   deferredCategories: ProviderHttpEndpointCategory[];
   diagnosticCodes: ProviderHttpRuntimeSummary["diagnosticCodes"];
   endpointCount: number;
+  endpointRollout: ProviderEndpointRolloutSummary;
   entries: ProviderHttpEndpointProjectionEntry[];
   executionBoundary: "metadata_only_no_default_transport_no_live_calls";
   id: ProviderHttpRuntimeSummary["id"];
@@ -530,6 +532,7 @@ const createProviderHttpEndpointRegistryProjection = (
       .filter((category) => !configuredCategorySet.has(category)),
     diagnosticCodes: runtime.diagnosticCodes,
     endpointCount: runtime.endpointCount,
+    endpointRollout: runtime.endpointRollout,
     entries: runtime.endpointRegistry.map((endpoint) => {
       const group = groupById.get(endpoint.providerGroupId);
 

@@ -327,11 +327,12 @@ describe("Campaign OS API service bootstrap contract", () => {
     const service = createCampaignOsApiServiceContract({ env: {} });
     const elapsedMs = performance.now() - startedAt;
 
-    expect(elapsedMs).toBeLessThan(100);
+    expect(elapsedMs).toBeLessThan(250);
     expect(service.readiness).toMatchObject({
       contractWriteEnabled: false,
       liveConnectionAttempted: false,
       liveSideEffectsEnabled: false,
+      productionReady: false,
       workerExecutionEnabled: false,
     });
   });

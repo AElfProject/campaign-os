@@ -95,7 +95,7 @@ describe("queue runtime foundation", () => {
       productionReady: false,
       providerHttpRuntime: {
         activationStatus: "disabled",
-        endpointCount: 2,
+        endpointCount: 13,
         idempotencyPosture: "store-required-reference-only",
         idempotencyStoreId: "local-dry-run",
         leasePosture: "lease-required-reference-only",

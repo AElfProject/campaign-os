@@ -467,6 +467,7 @@ export interface BackendProviderClientReadinessSummary extends ProviderClientRea
       activationStatus: ProviderHttpRuntimeSummary["activationStatus"];
       blockedConfigKeys: string[];
       blockerIds: string[];
+      endpointRollout: ProviderHttpRuntimeSummary["endpointRollout"];
       runtimeId: ProviderHttpRuntimeSummary["id"];
       status: ProviderHttpRuntimeSummary["status"];
     };
@@ -1711,6 +1712,7 @@ const createBackendProviderClientReadinessSummary = ({
           providerHttpBlockerPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
         ),
         blockerIds: providerHttpBlockerPreconditions.map((precondition) => precondition.id),
+        endpointRollout: readiness.providerHttpRuntime.endpointRollout,
         runtimeId: readiness.providerHttpRuntime.id,
         status: readiness.providerHttpRuntime.status,
       },

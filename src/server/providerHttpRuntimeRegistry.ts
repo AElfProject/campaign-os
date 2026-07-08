@@ -4,6 +4,9 @@ import {
 } from "./providerHttpRuntimeRedaction";
 import type {
   CreateProviderHttpRuntimeSummaryOptions,
+  ProviderEndpointRolloutDiagnostic,
+  ProviderEndpointRolloutSummary,
+  ProviderEndpointRolloutStatus,
   ProviderHttpActivationStatus,
   ProviderHttpDiagnostic,
   ProviderHttpDiagnosticCode,
@@ -11,6 +14,7 @@ import type {
   ProviderHttpDownstreamLiveFlags,
   ProviderHttpEndpointCategory,
   ProviderHttpEndpointEntry,
+  ProviderHttpProviderFamily,
   ProviderHttpPreconditionArea,
   ProviderHttpProductionPrecondition,
   ProviderHttpRuntimeProfileId,
@@ -127,13 +131,46 @@ export const providerHttpRuntimeProductionPreconditions: ProviderHttpProductionP
 ];
 
 export const providerHttpEndpointRegistry: ProviderHttpEndpointEntry[] = [
-  {
+  endpoint({
+    category: "indexer",
+    credentialRef: "credential-ref:provider-http-indexer",
+    endpointId: "aefinder-indexer-query",
+    headerRefs: ["header-ref:provider-http-indexer-auth", "header-ref:provider-http-trace"],
+    label: "AeFinder indexer query",
+    method: "POST",
+    providerFamily: "aefinder",
+    providerGroupId: "aefinder-indexers",
+    requestMappingId: "provider-http-request-map:on-chain-indexer-v1",
+    responseMappingId: "provider-http-response-map:on-chain-indexer-v1",
+    retryPolicyRef: "retry-policy:provider-http-indexer-backoff",
+    supportedVerificationTypes: ["ON_CHAIN"],
+    timeoutPolicyRef: "timeout-policy:provider-http-indexer-2500ms",
+    urlTemplateRef: "provider.endpoint.aefinder.indexer.url",
+  }),
+  endpoint({
+    category: "indexer",
+    credentialRef: "credential-ref:provider-http-indexer",
+    endpointId: "aelfscan-indexer-query",
+    headerRefs: ["header-ref:provider-http-indexer-auth", "header-ref:provider-http-trace"],
+    label: "AelfScan indexer query",
+    method: "GET",
+    providerFamily: "aelfscan",
+    providerGroupId: "aelfscan-indexers",
+    requestMappingId: "provider-http-request-map:on-chain-indexer-v1",
+    responseMappingId: "provider-http-response-map:on-chain-indexer-v1",
+    retryPolicyRef: "retry-policy:provider-http-indexer-backoff",
+    supportedVerificationTypes: ["ON_CHAIN"],
+    timeoutPolicyRef: "timeout-policy:provider-http-indexer-2500ms",
+    urlTemplateRef: "provider.endpoint.aelfscan.indexer.url",
+  }),
+  endpoint({
     category: "indexer",
     credentialRef: "credential-ref:provider-http-indexer",
     endpointId: "aefinder-aelfscan-indexer-query",
     headerRefs: ["header-ref:provider-http-indexer-auth", "header-ref:provider-http-trace"],
     label: "AeFinder/AelfScan indexer query",
     method: "POST",
+    providerFamily: "aefinder",
     providerGroupId: "aefinder-aelfscan-indexers",
     requestMappingId: "provider-http-request-map:on-chain-indexer-v1",
     responseMappingId: "provider-http-response-map:on-chain-indexer-v1",
@@ -141,14 +178,15 @@ export const providerHttpEndpointRegistry: ProviderHttpEndpointEntry[] = [
     supportedVerificationTypes: ["ON_CHAIN"],
     timeoutPolicyRef: "timeout-policy:provider-http-indexer-2500ms",
     urlTemplateRef: "provider.endpoint.aefinder_aelfscan.indexer.url",
-  },
-  {
+  }),
+  endpoint({
     category: "dapp_api",
     credentialRef: "credential-ref:provider-http-dapp-api",
     endpointId: "dapp-api-verification-status",
     headerRefs: ["header-ref:provider-http-dapp-auth", "header-ref:provider-http-trace"],
     label: "dApp API verification status",
     method: "GET",
+    providerFamily: "ebridge",
     providerGroupId: "dapp-api-adapters",
     requestMappingId: "provider-http-request-map:dapp-api-status-v1",
     responseMappingId: "provider-http-response-map:dapp-api-status-v1",
@@ -156,7 +194,67 @@ export const providerHttpEndpointRegistry: ProviderHttpEndpointEntry[] = [
     supportedVerificationTypes: ["DAPP_API"],
     timeoutPolicyRef: "timeout-policy:provider-http-dapp-2500ms",
     urlTemplateRef: "provider.endpoint.dapp_api.verification_status.url",
-  },
+  }),
+  ...[
+    ["awaken", "Awaken swap/liquidity verification"],
+    ["forest-schrodinger", "Forest/Schrodinger NFT verification"],
+    ["tmrwdao", "TMRWDAO governance verification"],
+    ["daipp", "daipp interaction verification"],
+    ["pay", "aelf Pay task verification"],
+    ["forecast", "aelf Forecast task verification"],
+    ["portfolio", "Portfolio activity verification"],
+  ].map(([providerFamily, label]) =>
+    endpoint({
+      category: "dapp_api",
+      credentialRef: `credential-ref:provider-http-${providerFamily}`,
+      endpointId: `${providerFamily}-dapp-api-verification-status`,
+      headerRefs: [`header-ref:provider-http-${providerFamily}-auth`, "header-ref:provider-http-trace"],
+      label,
+      method: "GET",
+      providerFamily: providerFamily as ProviderHttpProviderFamily,
+      providerGroupId: `${providerFamily}-dapp-api-adapters`,
+      requestMappingId: `provider-http-request-map:${providerFamily}-status-v1`,
+      responseMappingId: `provider-http-response-map:${providerFamily}-status-v1`,
+      retryPolicyRef: `retry-policy:provider-http-${providerFamily}-backoff`,
+      supportedVerificationTypes: ["DAPP_API"],
+      timeoutPolicyRef: "timeout-policy:provider-http-dapp-2500ms",
+      urlTemplateRef: `provider.endpoint.${providerFamily.replace(/-/g, "_")}.dapp_api.url`,
+    })
+  ),
+  endpoint({
+    category: "social_api",
+    credentialRef: "credential-ref:provider-http-social-api",
+    endpointId: "social-api-verification-status",
+    headerRefs: ["header-ref:provider-http-social-auth", "header-ref:provider-http-trace"],
+    label: "Social API verification status",
+    method: "GET",
+    providerFamily: "social-api",
+    providerGroupId: "social-api-adapters",
+    requestMappingId: "provider-http-request-map:social-api-status-v1",
+    responseMappingId: "provider-http-response-map:social-api-status-v1",
+    retryPolicyRef: "retry-policy:provider-http-social-backoff",
+    rolloutStatus: "deferred",
+    supportedVerificationTypes: ["SOCIAL"],
+    timeoutPolicyRef: "timeout-policy:provider-http-social-2500ms",
+    urlTemplateRef: "provider.endpoint.social_api.verification_status.url",
+  }),
+  endpoint({
+    category: "ai_provider",
+    credentialRef: "credential-ref:provider-http-ai-provider",
+    endpointId: "ai-provider-verification-status",
+    headerRefs: ["header-ref:provider-http-ai-auth", "header-ref:provider-http-trace"],
+    label: "AI provider verification status",
+    method: "POST",
+    providerFamily: "ai-provider",
+    providerGroupId: "ai-provider-adapters",
+    requestMappingId: "provider-http-request-map:ai-provider-status-v1",
+    responseMappingId: "provider-http-response-map:ai-provider-status-v1",
+    retryPolicyRef: "retry-policy:provider-http-ai-backoff",
+    rolloutStatus: "deferred",
+    supportedVerificationTypes: ["MANUAL"],
+    timeoutPolicyRef: "timeout-policy:provider-http-ai-2500ms",
+    urlTemplateRef: "provider.endpoint.ai_provider.verification_status.url",
+  }),
 ];
 
 export const listProviderHttpEndpointEntries = (): ProviderHttpEndpointEntry[] =>
@@ -186,6 +284,10 @@ export const findProviderHttpEndpointForVerification = (
     return undefined;
   }
 
+  if (endpoint.rolloutStatus !== "enabled") {
+    return undefined;
+  }
+
   return endpoint.supportedVerificationTypes.includes(input.verificationType)
     ? endpoint
     : undefined;
@@ -204,10 +306,12 @@ export const createProviderHttpRuntimeSummary = (
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...createUnsafeConfigDiagnostics(env),
+    ...createEndpointRolloutDiagnostics(endpointRegistry),
     ...(profileResolution.profileId === "production-required"
       ? createProductionDiagnostics(env, endpointRegistry, transportProvided)
       : []),
   ];
+  const endpointRollout = createProviderEndpointRolloutSummary(endpointRegistry);
   const blockerCount = diagnostics.filter((diagnostic) => diagnostic.severity === "blocker")
     .length;
   const status = resolveRuntimeStatus(
@@ -224,6 +328,7 @@ export const createProviderHttpRuntimeSummary = (
     diagnostics,
     downstreamLiveFlags: createProviderHttpDownstreamLiveFlags(),
     endpointCount: endpointRegistry.length,
+    endpointRollout,
     endpointRegistry,
     id: RUNTIME_ID,
     liveHttpCallsAttempted: false,
@@ -238,6 +343,19 @@ export const createProviderHttpRuntimeSummary = (
       && (profileResolution.profileId !== "production-required" || status === "activated"),
   };
 };
+
+function endpoint(
+  entry: Omit<ProviderHttpEndpointEntry, "requiredConfigKeys" | "rolloutStatus"> & {
+    requiredConfigKeys?: string[];
+    rolloutStatus?: ProviderEndpointRolloutStatus;
+  },
+): ProviderHttpEndpointEntry {
+  return {
+    ...entry,
+    requiredConfigKeys: entry.requiredConfigKeys ?? endpointRequiredConfigKeys(entry.providerFamily),
+    rolloutStatus: entry.rolloutStatus ?? "enabled",
+  };
+}
 
 function precondition(
   area: ProviderHttpPreconditionArea,
@@ -372,6 +490,131 @@ function createUnsafeConfigDiagnostics(env: Record<string, unknown>): ProviderHt
     ];
 }
 
+function createProviderEndpointRolloutSummary(
+  endpointRegistry: readonly ProviderHttpEndpointEntry[],
+): ProviderEndpointRolloutSummary {
+  const diagnostics = createEndpointRolloutDiagnostics(endpointRegistry);
+
+  return {
+    blockedCount: countByRolloutStatus(endpointRegistry, "blocked"),
+    configuredCategories: unique(endpointRegistry.map((endpoint) => endpoint.category)),
+    deferredCount: countByRolloutStatus(endpointRegistry, "deferred"),
+    diagnosticCodes: unique(diagnostics.map((diagnostic) => diagnostic.code)),
+    diagnostics,
+    disabledCount: countByRolloutStatus(endpointRegistry, "disabled"),
+    enabledCount: countByRolloutStatus(endpointRegistry, "enabled"),
+    endpointCount: endpointRegistry.length,
+    providerFamilies: unique(endpointRegistry.map((endpoint) => endpoint.providerFamily)),
+    requiredConfigKeys: unique(endpointRegistry.flatMap((endpoint) => endpoint.requiredConfigKeys)),
+    valid: diagnostics.every((diagnostic) => diagnostic.severity !== "blocker"),
+  };
+}
+
+function createEndpointRolloutDiagnostics(
+  endpointRegistry: readonly ProviderHttpEndpointEntry[],
+): ProviderEndpointRolloutDiagnostic[] {
+  return endpointRegistry.flatMap((endpointEntry) => {
+    const diagnostics: ProviderEndpointRolloutDiagnostic[] = [];
+    const unsafeFields = [
+      "credentialRef",
+      "requestMappingId",
+      "responseMappingId",
+      "retryPolicyRef",
+      "timeoutPolicyRef",
+      "urlTemplateRef",
+      ...endpointEntry.headerRefs.map((_, index) => `headerRefs.${index}`),
+      ...endpointEntry.requiredConfigKeys.map((_, index) => `requiredConfigKeys.${index}`),
+    ].filter((field) => containsUnsafeProviderHttpRuntimeMaterial(readEndpointField(endpointEntry, field)));
+
+    if (unsafeFields.length > 0) {
+      diagnostics.push(
+        endpointRolloutDiagnostic(
+          "PROVIDER_HTTP_ENDPOINT_UNSAFE_CONFIG",
+          endpointEntry.endpointId,
+          "endpointRegistry",
+          "Provider HTTP endpoint rollout metadata contains unsafe raw material and was redacted.",
+          "blocker",
+          unsafeFields.map((field) => `${endpointEntry.endpointId}.${field}`),
+        ),
+      );
+    }
+
+    if (endpointEntry.rolloutStatus === "blocked") {
+      diagnostics.push(
+        endpointRolloutDiagnostic(
+          "PROVIDER_HTTP_ENDPOINT_BLOCKED",
+          endpointEntry.endpointId,
+          "rolloutStatus",
+          "Provider HTTP endpoint rollout is blocked until required references are configured.",
+        ),
+      );
+    }
+
+    if (
+      endpointEntry.rolloutStatus === "enabled"
+      && endpointEntry.requiredConfigKeys.some((key) => key.trim().length === 0)
+    ) {
+      diagnostics.push(
+        endpointRolloutDiagnostic(
+          "PROVIDER_HTTP_ENDPOINT_REQUIRED_CONFIG_MISSING",
+          endpointEntry.endpointId,
+          "requiredConfigKeys",
+          "Provider HTTP endpoint rollout requires non-empty config references.",
+        ),
+      );
+    }
+
+    return diagnostics;
+  });
+}
+
+function endpointRolloutDiagnostic(
+  code: ProviderEndpointRolloutDiagnostic["code"],
+  endpointId: string,
+  field: string,
+  message: string,
+  severity: ProviderHttpDiagnosticSeverity = "blocker",
+  redactedFields: string[] = [],
+): ProviderEndpointRolloutDiagnostic {
+  return {
+    code,
+    endpointId,
+    field,
+    message: String(redactProviderHttpRuntimeValue(message)),
+    redactedFields,
+    severity,
+  };
+}
+
+function countByRolloutStatus(
+  endpointRegistry: readonly ProviderHttpEndpointEntry[],
+  status: ProviderEndpointRolloutStatus,
+): number {
+  return endpointRegistry.filter((endpointEntry) => endpointEntry.rolloutStatus === status).length;
+}
+
+function endpointRequiredConfigKeys(providerFamily: ProviderHttpProviderFamily): string[] {
+  const normalized = providerFamily.toUpperCase().replace(/-/g, "_");
+
+  return [
+    `CAMPAIGN_OS_PROVIDER_HTTP_${normalized}_ENDPOINT_REF`,
+    `CAMPAIGN_OS_PROVIDER_HTTP_${normalized}_CREDENTIAL_REF`,
+    `CAMPAIGN_OS_PROVIDER_HTTP_${normalized}_HEADER_REF`,
+  ];
+}
+
+function readEndpointField(endpointEntry: ProviderHttpEndpointEntry, field: string): unknown {
+  if (field.startsWith("headerRefs.")) {
+    return endpointEntry.headerRefs[Number(field.replace("headerRefs.", ""))];
+  }
+
+  if (field.startsWith("requiredConfigKeys.")) {
+    return endpointEntry.requiredConfigKeys[Number(field.replace("requiredConfigKeys.", ""))];
+  }
+
+  return endpointEntry[field as keyof ProviderHttpEndpointEntry];
+}
+
 function hasUsableConfigValue(value: unknown): boolean {
   return typeof value === "string"
     && value.trim().length > 0
@@ -396,7 +639,10 @@ function diagnostic(
 
 function getRequiredConfigKeys(): string[] {
   return Array.from(
-    new Set(providerHttpRuntimeProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
+    new Set([
+      ...providerHttpRuntimeProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
+      ...providerHttpEndpointRegistry.flatMap((item) => item.requiredConfigKeys),
+    ]),
   );
 }
 
@@ -404,6 +650,7 @@ function cloneEndpointEntry(entry: ProviderHttpEndpointEntry): ProviderHttpEndpo
   return {
     ...entry,
     headerRefs: [...entry.headerRefs],
+    requiredConfigKeys: [...entry.requiredConfigKeys],
     supportedVerificationTypes: [...entry.supportedVerificationTypes],
   };
 }

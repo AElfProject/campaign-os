@@ -133,7 +133,13 @@ describe("backend runtime bootstrap contract", () => {
           productionReady: false,
           providerHttpRuntime: {
             activationStatus: "disabled",
-            endpointCount: 2,
+            endpointCount: 13,
+            endpointRollout: {
+              deferredCount: 2,
+              enabledCount: 11,
+              providerFamilies: expect.arrayContaining(["aefinder", "aelfscan"]),
+              valid: true,
+            },
             liveHttpCallsAttempted: false,
             productionReady: false,
             runtimeId: "campaign-os-provider-http-client-runtime",

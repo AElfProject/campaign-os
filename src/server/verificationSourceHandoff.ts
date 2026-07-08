@@ -11,6 +11,7 @@ import {
   type ProviderVerificationType,
 } from "./providerIndexerClientReadiness";
 import type {
+  ProviderEndpointRolloutSummary,
   ProviderHttpEndpointCategory,
   ProviderHttpRuntimeSummary,
 } from "./providerHttpRuntimeTypes";
@@ -90,6 +91,7 @@ export interface VerificationProviderHttpRuntimePosture {
   diagnosticCodes: ProviderHttpRuntimeSummary["diagnosticCodes"];
   endpointCount: number;
   endpointIds: string[];
+  endpointRollout: ProviderEndpointRolloutSummary;
   endpointRefs: string[];
   headerRefs: string[];
   liveHttpCallsAttempted: false;
@@ -661,6 +663,7 @@ const createProviderHttpRuntimePosture = (
     diagnosticCodes: [...runtime.diagnosticCodes],
     endpointCount: endpoints.length,
     endpointIds: sanitizeStrings(endpoints.map((endpoint) => endpoint.endpointId)),
+    endpointRollout: runtime.endpointRollout,
     endpointRefs: sanitizeStrings(endpoints.map((endpoint) => endpoint.urlTemplateRef)),
     headerRefs: unique(endpoints.flatMap((endpoint) => endpoint.headerRefs)),
     liveHttpCallsAttempted: false,

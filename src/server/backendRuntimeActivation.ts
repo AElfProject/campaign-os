@@ -62,6 +62,7 @@ import {
   type ProviderClientPreconditionArea,
 } from "./providerIndexerClientReadiness";
 import {
+  providerHttpEndpointRegistry,
   providerHttpRuntimeProductionPreconditions,
 } from "./providerHttpRuntimeRegistry";
 import type { ProviderHttpPreconditionArea } from "./providerHttpRuntimeTypes";
@@ -548,6 +549,11 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
         precondition.status,
         "production-required",
       ),
+    ),
+  ),
+  ...providerHttpEndpointRegistry.flatMap((endpoint) =>
+    endpoint.requiredConfigKeys.map((key) =>
+      configKey(key, "provider", endpoint.rolloutStatus === "blocked" ? "blocked" : "deferred"),
     ),
   ),
   ...schedulerRuntimeProductionPreconditions.flatMap((precondition) =>

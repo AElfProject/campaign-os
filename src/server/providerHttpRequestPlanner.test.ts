@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
 import { planProviderHttpRequest, type ProviderHttpVerificationRequestInput } from "./providerHttpRequestPlanner";
+import type { ProviderEndpointRolloutStatus, ProviderHttpEndpointEntry } from "./providerHttpRuntimeTypes";
 import { executeProviderHttpTransport, type ProviderHttpTransport } from "./providerHttpTransport";
 
 const productionReadyProviderHttpEnv = {
@@ -47,6 +48,46 @@ const safeRequest: ProviderHttpVerificationRequestInput = {
   verificationType: "ON_CHAIN",
   walletAccountRef: "account-ref:wallet-1",
   walletSessionRef: "session-ref:wallet-1",
+};
+
+const endpointFixture = (
+  overrides: Partial<ProviderHttpEndpointEntry> = {},
+): ProviderHttpEndpointEntry => ({
+  ...activatedRuntime.endpointRegistry.find(
+    (endpoint) => endpoint.endpointId === "aefinder-aelfscan-indexer-query",
+  )!,
+  ...overrides,
+});
+
+const runtimeWithEndpoint = (endpoint: ProviderHttpEndpointEntry) =>
+  createProviderHttpRuntimeSummary({
+    endpointRegistry: [endpoint],
+    env: productionReadyProviderHttpEnv,
+    profileId: "production-required",
+    transportProvided: true,
+  });
+
+const planWithEndpoint = (endpoint: ProviderHttpEndpointEntry) =>
+  planProviderHttpRequest(
+    {
+      ...safeRequest,
+      endpointId: endpoint.endpointId,
+      providerGroupId: endpoint.providerGroupId,
+      verificationType: endpoint.supportedVerificationTypes[0],
+    },
+    runtimeWithEndpoint(endpoint),
+  );
+
+const expectRolloutStatusToBlock = (
+  rolloutStatus: Exclude<ProviderEndpointRolloutStatus, "enabled">,
+  code: "endpoint_blocked" | "endpoint_deferred" | "endpoint_disabled",
+) => {
+  const result = planWithEndpoint(endpointFixture({ rolloutStatus }));
+
+  expect(result.ok).toBe(false);
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+    expect.arrayContaining([code]),
+  );
 };
 
 describe("provider HTTP request planner", () => {
@@ -106,6 +147,71 @@ describe("provider HTTP request planner", () => {
     expect(mismatchedGroup.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
       expect.arrayContaining(["provider_group_mismatch", "verification_type_mismatch"]),
     );
+  });
+
+  it("keeps deferred social and AI placeholders out of request planning", () => {
+    const socialPlaceholder = planProviderHttpRequest(
+      {
+        ...safeRequest,
+        endpointId: "social-api-verification-status",
+        providerGroupId: "social-api-adapters",
+        verificationType: "SOCIAL",
+      },
+      activatedRuntime,
+    );
+    const aiPlaceholder = planProviderHttpRequest(
+      {
+        ...safeRequest,
+        endpointId: "ai-provider-verification-status",
+        providerGroupId: "ai-provider-adapters",
+        verificationType: "MANUAL",
+      },
+      activatedRuntime,
+    );
+
+    expect(socialPlaceholder.ok).toBe(false);
+    expect(aiPlaceholder.ok).toBe(false);
+    expect(socialPlaceholder.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+      expect.arrayContaining(["endpoint_deferred"]),
+    );
+    expect(aiPlaceholder.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+      expect.arrayContaining(["endpoint_deferred"]),
+    );
+  });
+
+  it("rejects disabled, deferred, and blocked endpoint rollout statuses", () => {
+    expectRolloutStatusToBlock("disabled", "endpoint_disabled");
+    expectRolloutStatusToBlock("deferred", "endpoint_deferred");
+    expectRolloutStatusToBlock("blocked", "endpoint_blocked");
+  });
+
+  it("rejects missing endpoint rollout config refs", () => {
+    const result = planWithEndpoint(endpointFixture({ requiredConfigKeys: [""] }));
+
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+      expect.arrayContaining(["endpoint_required_config_missing"]),
+    );
+  });
+
+  it("rejects unsafe endpoint rollout metadata with redacted diagnostics", () => {
+    const result = planWithEndpoint(
+      endpointFixture({
+        credentialRef: "credential=plain-secret",
+        headerRefs: ["Bearer live-token", "header-ref:provider-http-trace"],
+        urlTemplateRef: "https://user:password@indexer.example/raw.csv?token=query-secret",
+      }),
+    );
+    const serialized = JSON.stringify(result);
+
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+      expect.arrayContaining(["endpoint_unsafe_rollout_metadata"]),
+    );
+    expect(serialized).not.toContain("plain-secret");
+    expect(serialized).not.toContain("live-token");
+    expect(serialized).not.toContain("password");
+    expect(serialized).not.toContain("query-secret");
   });
 
   it("rejects disabled or blocked runtime before planning", () => {

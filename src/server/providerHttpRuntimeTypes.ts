@@ -8,6 +8,20 @@ export type ProviderHttpActivationStatus =
   | "activation_required"
   | "explicitly_enabled";
 export type ProviderHttpEndpointCategory = "indexer" | "dapp_api" | "social_api" | "ai_provider";
+export type ProviderHttpProviderFamily =
+  | "aefinder"
+  | "aelfscan"
+  | "ai-provider"
+  | "awaken"
+  | "daipp"
+  | "ebridge"
+  | "forecast"
+  | "forest-schrodinger"
+  | "pay"
+  | "portfolio"
+  | "social-api"
+  | "tmrwdao";
+export type ProviderEndpointRolloutStatus = "blocked" | "deferred" | "disabled" | "enabled";
 export type ProviderHttpMethod = "GET" | "POST";
 export type ProviderHttpVerificationType =
   | "WALLET"
@@ -38,7 +52,13 @@ export type ProviderHttpDiagnosticCode =
   | "PROVIDER_HTTP_IDEMPOTENCY_REFERENCE_MISSING"
   | "PROVIDER_HTTP_LEASE_REFERENCE_MISSING"
   | "PROVIDER_HTTP_RUNBOOK_MISSING"
-  | "PROVIDER_HTTP_UNSAFE_CONFIG";
+  | "PROVIDER_HTTP_UNSAFE_CONFIG"
+  | "PROVIDER_HTTP_ENDPOINT_BLOCKED"
+  | "PROVIDER_HTTP_ENDPOINT_DISABLED"
+  | "PROVIDER_HTTP_ENDPOINT_DEFERRED"
+  | "PROVIDER_HTTP_ENDPOINT_REQUIRED_CONFIG_MISSING"
+  | "PROVIDER_HTTP_ENDPOINT_UNSAFE_CONFIG"
+  | "PROVIDER_HTTP_ENDPOINT_UNSUPPORTED_CATEGORY";
 export type ProviderHttpPreconditionArea =
   | "activation"
   | "credential"
@@ -92,13 +112,45 @@ export interface ProviderHttpEndpointEntry {
   headerRefs: string[];
   label: string;
   method: ProviderHttpMethod;
+  providerFamily: ProviderHttpProviderFamily;
   providerGroupId: string;
+  requiredConfigKeys: string[];
   requestMappingId: string;
   responseMappingId: string;
   retryPolicyRef: string;
+  rolloutStatus: ProviderEndpointRolloutStatus;
   supportedVerificationTypes: ProviderHttpVerificationType[];
   timeoutPolicyRef: string;
   urlTemplateRef: string;
+}
+
+export interface ProviderEndpointRolloutDiagnostic {
+  code:
+    | "PROVIDER_HTTP_ENDPOINT_BLOCKED"
+    | "PROVIDER_HTTP_ENDPOINT_DISABLED"
+    | "PROVIDER_HTTP_ENDPOINT_DEFERRED"
+    | "PROVIDER_HTTP_ENDPOINT_REQUIRED_CONFIG_MISSING"
+    | "PROVIDER_HTTP_ENDPOINT_UNSAFE_CONFIG"
+    | "PROVIDER_HTTP_ENDPOINT_UNSUPPORTED_CATEGORY";
+  endpointId?: string;
+  field: string;
+  message: string;
+  redactedFields: string[];
+  severity: ProviderHttpDiagnosticSeverity;
+}
+
+export interface ProviderEndpointRolloutSummary {
+  blockedCount: number;
+  configuredCategories: ProviderHttpEndpointCategory[];
+  deferredCount: number;
+  diagnosticCodes: ProviderEndpointRolloutDiagnostic["code"][];
+  diagnostics: ProviderEndpointRolloutDiagnostic[];
+  disabledCount: number;
+  enabledCount: number;
+  endpointCount: number;
+  providerFamilies: ProviderHttpProviderFamily[];
+  requiredConfigKeys: string[];
+  valid: boolean;
 }
 
 export interface ProviderHttpRuntimeSummary {
@@ -109,6 +161,7 @@ export interface ProviderHttpRuntimeSummary {
   diagnostics: ProviderHttpDiagnostic[];
   downstreamLiveFlags: ProviderHttpDownstreamLiveFlags;
   endpointCount: number;
+  endpointRollout: ProviderEndpointRolloutSummary;
   endpointRegistry: ProviderHttpEndpointEntry[];
   id: "campaign-os-provider-http-client-runtime";
   liveHttpCallsAttempted: boolean;

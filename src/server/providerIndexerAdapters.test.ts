@@ -127,7 +127,7 @@ describe("provider indexer adapter foundation", () => {
 
     expect(projection).toMatchObject({
       activationStatus: "disabled",
-      endpointCount: 2,
+      endpointCount: 13,
       executionBoundary: "metadata_only_no_default_transport_no_live_calls",
       id: "campaign-os-provider-http-client-runtime",
       liveHttpCallsAttempted: false,
@@ -135,8 +135,23 @@ describe("provider indexer adapter foundation", () => {
       status: "disabled",
       transportProvided: false,
     });
-    expect(projection.configuredCategories).toEqual(["indexer", "dapp_api"]);
-    expect(projection.deferredCategories).toEqual(["social_api", "ai_provider"]);
+    expect(projection.configuredCategories).toEqual(
+      expect.arrayContaining(["indexer", "dapp_api", "social_api", "ai_provider"]),
+    );
+    expect(projection.endpointRollout).toMatchObject({
+      blockedCount: 0,
+      deferredCount: 2,
+      disabledCount: 0,
+      enabledCount: 11,
+      endpointCount: 13,
+      providerFamilies: expect.arrayContaining(["aefinder", "aelfscan", "awaken", "portfolio"]),
+      requiredConfigKeys: expect.arrayContaining([
+        "CAMPAIGN_OS_PROVIDER_HTTP_AEFINDER_ENDPOINT_REF",
+        "CAMPAIGN_OS_PROVIDER_HTTP_AELFSCAN_ENDPOINT_REF",
+      ]),
+      valid: true,
+    });
+    expect(projection.deferredCategories).toEqual([]);
     expect(projection.entries).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

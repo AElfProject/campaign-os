@@ -104,7 +104,7 @@ describe("provider indexer client readiness boundary", () => {
     expect(readiness.downstreamLiveFlags).toEqual(providerClientDownstreamLiveFlags);
     expect(readiness.providerHttpRuntime).toMatchObject({
       activationStatus: "disabled",
-      endpointCount: 2,
+      endpointCount: 13,
       id: "campaign-os-provider-http-client-runtime",
       liveHttpCallsAttempted: false,
       productionReady: false,
@@ -112,7 +112,11 @@ describe("provider indexer client readiness boundary", () => {
       transportProvided: false,
       valid: true,
     });
-    expect(readiness.providerHttpRuntime.configuredCategories).toEqual(["indexer", "dapp_api"]);
+    expect(readiness.providerHttpRuntime.configuredCategories).toEqual(
+      expect.arrayContaining(["indexer", "dapp_api", "social_api", "ai_provider"]),
+    );
+    expect(readiness.providerHttpRuntime.endpointRollout.enabledCount).toBe(11);
+    expect(readiness.providerHttpRuntime.endpointRollout.deferredCount).toBe(2);
     expect(Object.values(readiness.downstreamLiveFlags).every((value) => value === false)).toBe(
       true,
     );

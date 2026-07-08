@@ -99,6 +99,18 @@ export interface BackendRuntimeSmokeProviderHttpRuntimeSummary {
   configuredCategories: string[];
   diagnosticCodes: string[];
   endpointCount: number;
+  endpointRollout: {
+    blockedCount: number;
+    configuredCategories: string[];
+    deferredCount: number;
+    diagnosticCodes: string[];
+    disabledCount: number;
+    enabledCount: number;
+    endpointCount: number;
+    providerFamilies: string[];
+    requiredConfigKeys: string[];
+    valid: boolean;
+  };
   liveHttpCallsAttempted: false;
   productionReady: false;
   runtimeId?: string;
@@ -439,10 +451,18 @@ const readProviderIndexerFoundation = (
 
 const readProviderClientReadiness = (
   value: unknown,
-): Record<string, unknown> | undefined =>
-  readNestedRecord(value, ["serverRuntime", "readiness", "providerClientReadiness"])
-  ?? readNestedRecord(value, ["backendService", "backendRuntimeBootstrap", "readiness", "providerClientReadiness"])
-  ?? readNestedRecord(value, ["backendService", "providerClientReadiness"]);
+): Record<string, unknown> | undefined => {
+  const candidates = [
+    readNestedRecord(value, ["backendService", "providerClientReadiness"]),
+    readNestedRecord(value, ["backendService", "backendRuntimeBootstrap", "readiness", "providerClientReadiness"]),
+    readNestedRecord(value, ["serverRuntime", "readiness", "providerClientReadiness"]),
+  ];
+
+  return candidates.find(hasProviderHttpEndpointRollout) ?? candidates.find((candidate) => candidate);
+};
+
+const hasProviderHttpEndpointRollout = (record: Record<string, unknown> | undefined): boolean =>
+  readNestedRecord(record, ["providerHttpRuntime", "endpointRollout"]) !== undefined;
 
 const readWorkerSchedulerFoundation = (
   value: unknown,
@@ -658,6 +678,7 @@ const summarizeProviderHttpRuntime = (
     configuredCategories: getStringArray(record, "configuredCategories"),
     diagnosticCodes: getStringArray(record, "diagnosticCodes"),
     endpointCount: getNumber(record, "endpointCount"),
+    endpointRollout: summarizeEndpointRollout(readNestedRecord(record, ["endpointRollout"])),
     liveHttpCallsAttempted: false,
     productionReady: false,
     runtimeId: getString(record, "runtimeId") ?? getString(record, "id"),
@@ -666,6 +687,21 @@ const summarizeProviderHttpRuntime = (
     valid: getBoolean(record, "valid"),
   };
 };
+
+const summarizeEndpointRollout = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeProviderHttpRuntimeSummary["endpointRollout"] => ({
+  blockedCount: getNumber(record, "blockedCount"),
+  configuredCategories: getStringArray(record, "configuredCategories"),
+  deferredCount: getNumber(record, "deferredCount"),
+  diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+  disabledCount: getNumber(record, "disabledCount"),
+  enabledCount: getNumber(record, "enabledCount"),
+  endpointCount: getNumber(record, "endpointCount"),
+  providerFamilies: getStringArray(record, "providerFamilies"),
+  requiredConfigKeys: getStringArray(record, "requiredConfigKeys"),
+  valid: getBoolean(record, "valid"),
+});
 
 const summarizeWorkerSchedulerFoundation = (
   record: Record<string, unknown> | undefined,
@@ -1384,7 +1420,14 @@ const isProviderClientReadinessSmokeReady = (
     && summary.providerHttpRuntime.liveHttpCallsAttempted === false
     && summary.providerHttpRuntime.status === "disabled"
     && summary.providerHttpRuntime.activationStatus === "disabled"
-    && summary.providerHttpRuntime.endpointCount >= 2
+    && summary.providerHttpRuntime.endpointCount >= 13
+    && summary.providerHttpRuntime.endpointRollout.enabledCount >= 11
+    && summary.providerHttpRuntime.endpointRollout.deferredCount >= 2
+    && summary.providerHttpRuntime.endpointRollout.providerFamilies.includes("aefinder")
+    && summary.providerHttpRuntime.endpointRollout.providerFamilies.includes("aelfscan")
+    && summary.providerHttpRuntime.endpointRollout.requiredConfigKeys.some((key) =>
+      key.startsWith("CAMPAIGN_OS_PROVIDER_HTTP_AEFINDER")
+    )
     && summary.providerHttpRuntime.transportProvided === false
     && summary.providerHttpRuntime.valid === true
     && summary.queueHandoffStatus === "disabled"
