@@ -122,6 +122,24 @@ export interface BackendRuntimeSmokeQueueProviderAdapterSummary {
   driverProductionReady: false;
   driverProviderId?: string;
   driverRequiredConfigKeys: string[];
+  driverSdkBindingActivationGateSatisfied: boolean;
+  driverSdkBindingBlockerCount: number;
+  driverSdkBindingDiagnosticCodes: string[];
+  driverSdkBindingDisabledLiveOperationCount: number;
+  driverSdkBindingId?: string;
+  driverSdkBindingLiveProviderCallAttempted: false;
+  driverSdkBindingLiveQueuePublishingEnabled: false;
+  driverSdkBindingLiveWorkerExecutionEnabled: false;
+  driverSdkBindingMode?: string;
+  driverSdkBindingOperationCount: number;
+  driverSdkBindingProductionReady: false;
+  driverSdkBindingProviderKind?: string;
+  driverSdkBindingQueueRouteCount: number;
+  driverSdkBindingRequiredConfigKeys: string[];
+  driverSdkBindingSdkClientConstructed: false;
+  driverSdkBindingSdkPackageRef?: string;
+  driverSdkBindingStatus?: string;
+  driverSdkBindingValid: boolean;
   driverStatus?: string;
   driverValid: boolean;
   liveQueuePublishingEnabled: false;
@@ -518,6 +536,11 @@ const summarizeQueueProviderAdapter = (
     && isExplicitFalse(record, "driverProductionReady")
     && isExplicitFalse(record, "driverLiveQueuePublishingEnabled")
     && isExplicitFalse(record, "driverLiveWorkerExecutionEnabled")
+    && isExplicitFalse(record, "driverSdkBindingProductionReady")
+    && isExplicitFalse(record, "driverSdkBindingSdkClientConstructed")
+    && isExplicitFalse(record, "driverSdkBindingLiveProviderCallAttempted")
+    && isExplicitFalse(record, "driverSdkBindingLiveQueuePublishingEnabled")
+    && isExplicitFalse(record, "driverSdkBindingLiveWorkerExecutionEnabled")
     && isExplicitFalse(record, "liveQueuePublishingEnabled")
     && isExplicitFalse(record, "liveWorkerExecutionEnabled");
 
@@ -542,6 +565,24 @@ const summarizeQueueProviderAdapter = (
     driverProductionReady: false,
     driverProviderId: getString(record, "driverProviderId"),
     driverRequiredConfigKeys: getStringArray(record, "driverRequiredConfigKeys"),
+    driverSdkBindingActivationGateSatisfied: getBoolean(record, "driverSdkBindingActivationGateSatisfied"),
+    driverSdkBindingBlockerCount: getNumber(record, "driverSdkBindingBlockerCount"),
+    driverSdkBindingDiagnosticCodes: getStringArray(record, "driverSdkBindingDiagnosticCodes"),
+    driverSdkBindingDisabledLiveOperationCount: getNumber(record, "driverSdkBindingDisabledLiveOperationCount"),
+    driverSdkBindingId: getString(record, "driverSdkBindingId"),
+    driverSdkBindingLiveProviderCallAttempted: false,
+    driverSdkBindingLiveQueuePublishingEnabled: false,
+    driverSdkBindingLiveWorkerExecutionEnabled: false,
+    driverSdkBindingMode: getString(record, "driverSdkBindingMode"),
+    driverSdkBindingOperationCount: getNumber(record, "driverSdkBindingOperationCount"),
+    driverSdkBindingProductionReady: false,
+    driverSdkBindingProviderKind: getString(record, "driverSdkBindingProviderKind"),
+    driverSdkBindingQueueRouteCount: getNumber(record, "driverSdkBindingQueueRouteCount"),
+    driverSdkBindingRequiredConfigKeys: getStringArray(record, "driverSdkBindingRequiredConfigKeys"),
+    driverSdkBindingSdkClientConstructed: false,
+    driverSdkBindingSdkPackageRef: getString(record, "driverSdkBindingSdkPackageRef"),
+    driverSdkBindingStatus: getString(record, "driverSdkBindingStatus"),
+    driverSdkBindingValid: getBoolean(record, "driverSdkBindingValid"),
     driverStatus: getString(record, "driverStatus"),
     driverValid: getBoolean(record, "driverValid"),
     liveQueuePublishingEnabled: false,
@@ -969,6 +1010,25 @@ const isQueueProviderAdapterSmokeReady = (
     && summary.driverRequiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER")
     && summary.driverRequiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT")
     && summary.driverRequiredConfigKeys.includes("CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT")
+    && summary.driverSdkBindingId === "local-stub-queue-provider-sdk-binding"
+    && summary.driverSdkBindingProviderKind === "local-stub"
+    && summary.driverSdkBindingSdkPackageRef === "local-stub-sdk-package"
+    && summary.driverSdkBindingMode === "dry_run"
+    && summary.driverSdkBindingStatus === "local_ready"
+    && summary.driverSdkBindingValid === true
+    && summary.driverSdkBindingActivationGateSatisfied === false
+    && summary.driverSdkBindingProductionReady === false
+    && summary.driverSdkBindingSdkClientConstructed === false
+    && summary.driverSdkBindingLiveProviderCallAttempted === false
+    && summary.driverSdkBindingLiveQueuePublishingEnabled === false
+    && summary.driverSdkBindingLiveWorkerExecutionEnabled === false
+    && summary.driverSdkBindingOperationCount >= 8
+    && summary.driverSdkBindingDisabledLiveOperationCount === summary.driverSdkBindingOperationCount
+    && summary.driverSdkBindingBlockerCount === 0
+    && summary.driverSdkBindingDiagnosticCodes.length === 0
+    && summary.driverSdkBindingRequiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE")
+    && summary.driverSdkBindingRequiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER_BINDING")
+    && summary.driverSdkBindingRequiredConfigKeys.includes("CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT")
     && summary.operationCount >= 8
     && summary.disabledLiveOperationCount === summary.operationCount
     && summary.requiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER")

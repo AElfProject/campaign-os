@@ -86,6 +86,27 @@ const expectedQueueProviderAdapter = {
     "CAMPAIGN_OS_OPERATOR_RUNBOOK_URL",
     "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
   ]),
+  driverSdkBindingActivationGateSatisfied: false,
+  driverSdkBindingBlockerCount: 0,
+  driverSdkBindingDiagnosticCodes: [],
+  driverSdkBindingDisabledLiveOperationCount: 8,
+  driverSdkBindingId: "local-stub-queue-provider-sdk-binding",
+  driverSdkBindingLiveProviderCallAttempted: false,
+  driverSdkBindingLiveQueuePublishingEnabled: false,
+  driverSdkBindingLiveWorkerExecutionEnabled: false,
+  driverSdkBindingMode: "dry_run",
+  driverSdkBindingOperationCount: 8,
+  driverSdkBindingProductionReady: false,
+  driverSdkBindingProviderKind: "local-stub",
+  driverSdkBindingRequiredConfigKeys: expect.arrayContaining([
+    "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+    "CAMPAIGN_OS_QUEUE_PROVIDER_BINDING",
+    "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
+  ]),
+  driverSdkBindingSdkClientConstructed: false,
+  driverSdkBindingSdkPackageRef: "local-stub-sdk-package",
+  driverSdkBindingStatus: "local_ready",
+  driverSdkBindingValid: true,
   driverStatus: "local_ready",
   driverValid: true,
   liveQueuePublishingEnabled: false,
@@ -594,6 +615,39 @@ describe("backend runtime smoke command", () => {
     );
   });
 
+  it("fails closed when queue provider sdk binding metadata is missing from smoke payloads", async () => {
+    const fetchWithoutQueueProviderSdkBinding: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              queueRuntimeFoundation?: {
+                providerAdapter?: Record<string, unknown>;
+              };
+            };
+          };
+        };
+      };
+      const providerAdapter = payload.data?.serverRuntime?.readiness?.queueRuntimeFoundation?.providerAdapter;
+
+      if (providerAdapter) {
+        delete providerAdapter.driverSdkBindingId;
+        delete providerAdapter.driverSdkBindingProviderKind;
+        delete providerAdapter.driverSdkBindingSdkPackageRef;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutQueueProviderSdkBinding })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
   it("fails closed when queue provider driver smoke payload enables live effects", async () => {
     const fetchWithLiveQueueProviderDriver: typeof fetch = async (input, init) => {
       const response = await fetch(input, init);
@@ -621,6 +675,38 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveQueueProviderDriver })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when queue provider sdk binding smoke payload claims live provider or worker effects", async () => {
+    const fetchWithLiveQueueProviderSdkBinding: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              queueRuntimeFoundation?: {
+                providerAdapter?: Record<string, unknown>;
+              };
+            };
+          };
+        };
+      };
+      const providerAdapter = payload.data?.serverRuntime?.readiness?.queueRuntimeFoundation?.providerAdapter;
+
+      if (providerAdapter) {
+        providerAdapter.driverSdkBindingLiveProviderCallAttempted = true;
+        providerAdapter.driverSdkBindingLiveWorkerExecutionEnabled = true;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveQueueProviderSdkBinding })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });

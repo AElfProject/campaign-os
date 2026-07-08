@@ -276,6 +276,24 @@ export interface BackendQueueProviderAdapterReadinessSummary {
   driverProductionReady: false;
   driverProviderId: QueueRuntimeProviderAdapterSummary["driverProviderId"];
   driverRequiredConfigKeys: QueueRuntimeProviderAdapterSummary["driverRequiredConfigKeys"];
+  driverSdkBindingActivationGateSatisfied: boolean;
+  driverSdkBindingBlockerCount: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["blockerCount"];
+  driverSdkBindingDiagnosticCodes: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["diagnosticCodes"];
+  driverSdkBindingDisabledLiveOperationCount: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["disabledLiveOperationCount"];
+  driverSdkBindingId: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["bindingId"];
+  driverSdkBindingLiveProviderCallAttempted: false;
+  driverSdkBindingLiveQueuePublishingEnabled: false;
+  driverSdkBindingLiveWorkerExecutionEnabled: false;
+  driverSdkBindingMode: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["mode"];
+  driverSdkBindingOperationCount: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["operationCount"];
+  driverSdkBindingProductionReady: false;
+  driverSdkBindingProviderKind: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["providerKind"];
+  driverSdkBindingQueueRouteCount: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["queueRouteCount"];
+  driverSdkBindingRequiredConfigKeys: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["requiredConfigKeys"];
+  driverSdkBindingSdkClientConstructed: false;
+  driverSdkBindingSdkPackageRef: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["sdkPackageRef"];
+  driverSdkBindingStatus: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["status"];
+  driverSdkBindingValid: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["valid"];
   driverStatus: QueueRuntimeProviderAdapterSummary["driverStatus"];
   driverValid: QueueRuntimeProviderAdapterSummary["driverValid"];
   liveQueuePublishingEnabled: false;
@@ -1555,6 +1573,24 @@ const createBackendQueueRuntimeReadinessSummary = ({
       driverProductionReady: foundation.providerAdapter.driverProductionReady,
       driverProviderId: foundation.providerAdapter.driverProviderId,
       driverRequiredConfigKeys: foundation.providerAdapter.driverRequiredConfigKeys,
+      driverSdkBindingActivationGateSatisfied: foundation.providerAdapter.driverSdkBinding.activationGateSatisfied,
+      driverSdkBindingBlockerCount: foundation.providerAdapter.driverSdkBinding.blockerCount,
+      driverSdkBindingDiagnosticCodes: foundation.providerAdapter.driverSdkBinding.diagnosticCodes,
+      driverSdkBindingDisabledLiveOperationCount: foundation.providerAdapter.driverSdkBinding.disabledLiveOperationCount,
+      driverSdkBindingId: foundation.providerAdapter.driverSdkBinding.bindingId,
+      driverSdkBindingLiveProviderCallAttempted: foundation.providerAdapter.driverSdkBinding.liveProviderCallAttempted,
+      driverSdkBindingLiveQueuePublishingEnabled: foundation.providerAdapter.driverSdkBinding.liveQueuePublishingEnabled,
+      driverSdkBindingLiveWorkerExecutionEnabled: foundation.providerAdapter.driverSdkBinding.liveWorkerExecutionEnabled,
+      driverSdkBindingMode: foundation.providerAdapter.driverSdkBinding.mode,
+      driverSdkBindingOperationCount: foundation.providerAdapter.driverSdkBinding.operationCount,
+      driverSdkBindingProductionReady: foundation.providerAdapter.driverSdkBinding.productionReady,
+      driverSdkBindingProviderKind: foundation.providerAdapter.driverSdkBinding.providerKind,
+      driverSdkBindingQueueRouteCount: foundation.providerAdapter.driverSdkBinding.queueRouteCount,
+      driverSdkBindingRequiredConfigKeys: foundation.providerAdapter.driverSdkBinding.requiredConfigKeys,
+      driverSdkBindingSdkClientConstructed: foundation.providerAdapter.driverSdkBinding.sdkClientConstructed,
+      driverSdkBindingSdkPackageRef: foundation.providerAdapter.driverSdkBinding.sdkPackageRef,
+      driverSdkBindingStatus: foundation.providerAdapter.driverSdkBinding.status,
+      driverSdkBindingValid: foundation.providerAdapter.driverSdkBinding.valid,
       driverStatus: foundation.providerAdapter.driverStatus,
       driverValid: foundation.providerAdapter.driverValid,
       liveQueuePublishingEnabled: foundation.providerAdapter.liveQueuePublishingEnabled,
