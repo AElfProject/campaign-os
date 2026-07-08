@@ -1,4 +1,12 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import {
+  createQueueProviderSdkBindingFoundation,
+  type QueueProviderSdkBindingDiagnosticCode,
+  type QueueProviderSdkBindingFoundationStatus,
+  type QueueProviderSdkBindingMode,
+  type QueueProviderSdkBindingOperationCapability,
+  type QueueProviderSdkBindingProviderKind,
+} from "./queueProviderSdkBinding";
 
 export type QueueProviderDriverProfileId = BackendRuntimeProfileId;
 export type QueueProviderDriverFoundationStatus = "local_ready" | "scaffolded" | "blocked";
@@ -41,7 +49,8 @@ export type QueueProviderDriverDiagnosticCode =
   | "UNSAFE_IDEMPOTENCY_KEY"
   | "INVALID_PROVIDER_TIMESTAMP"
   | "UNSAFE_DEAD_LETTER_REASON"
-  | "UNSAFE_PROVIDER_RESPONSE_REFERENCE";
+  | "UNSAFE_PROVIDER_RESPONSE_REFERENCE"
+  | QueueProviderSdkBindingDiagnosticCode;
 export type QueueProviderDriverPreconditionArea =
   | "activation"
   | "auth"
@@ -135,10 +144,34 @@ export interface QueueProviderDriverReadinessProjection {
   providerId: string;
   queueRouteCount: number;
   requiredConfigKeys: string[];
+  sdkBinding: QueueProviderDriverSdkBindingSummary;
   status: QueueProviderDriverFoundationStatus;
   valid: boolean;
   workerIdempotencyStatus: "deferred";
   workerLeaseStatus: "deferred";
+}
+
+export interface QueueProviderDriverSdkBindingSummary {
+  activationGateSatisfied: boolean;
+  bindingId: string;
+  blockerCount: number;
+  deadLetterRouteCount: number;
+  diagnosticCodes: QueueProviderSdkBindingDiagnosticCode[];
+  disabledLiveOperationCount: number;
+  liveProviderCallAttempted: false;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: QueueProviderSdkBindingMode;
+  operationCapabilities: QueueProviderSdkBindingOperationCapability[];
+  operationCount: number;
+  productionReady: false;
+  providerKind: QueueProviderSdkBindingProviderKind;
+  queueRouteCount: number;
+  requiredConfigKeys: string[];
+  sdkClientConstructed: false;
+  sdkPackageRef: string;
+  status: QueueProviderSdkBindingFoundationStatus;
+  valid: boolean;
 }
 
 export interface QueueProviderDriverRegistration {
@@ -164,6 +197,7 @@ export interface QueueProviderDriverFoundationSummary extends QueueProviderDrive
   productionReady: false;
   profileId: QueueProviderDriverProfileId;
   readiness: QueueProviderDriverReadinessProjection;
+  sdkBinding: QueueProviderDriverSdkBindingSummary;
   valid: boolean;
 }
 
@@ -296,6 +330,13 @@ export const createQueueProviderDriverFoundation = (
   const modeResolution = resolveMode(profileResolution.profileId, options.mode);
   const providerResolution = resolveProviderId(options.providerId, env, profileResolution.profileId);
   const driverResolution = resolveDriverId(options.driverId, env, profileResolution.profileId, providerResolution.providerId);
+  const sdkBindingFoundation = createQueueProviderSdkBindingFoundation({
+    driverId: mapDriverToSdkBindingDriver(driverResolution.driverId),
+    env,
+    profileId: profileResolution.profileId,
+    providerId: mapDriverProviderToSdkBindingProvider(providerResolution.providerId),
+  });
+  const sdkBinding = createSdkBindingSummary(sdkBindingFoundation);
   const activationGateSatisfied = isActivationGateSatisfied(env);
   const productionDiagnostics =
     profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
@@ -305,6 +346,13 @@ export const createQueueProviderDriverFoundation = (
     ...providerResolution.diagnostics,
     ...driverResolution.diagnostics,
     ...productionDiagnostics,
+    ...sdkBindingFoundation.diagnosticCodes.map((code) =>
+      diagnostic(
+        code,
+        "queueProviderSdkBinding",
+        `Queue provider SDK binding readiness reports ${code}.`,
+      ),
+    ),
   ];
   const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
   const status = resolveStatus(profileResolution.profileId, blockerCount);
@@ -329,6 +377,7 @@ export const createQueueProviderDriverFoundation = (
     driverId: driverResolution.driverId,
     mode: modeResolution.mode,
     providerId: providerResolution.providerId,
+    sdkBinding,
     status,
     valid,
   });
@@ -344,6 +393,7 @@ export const createQueueProviderDriverFoundation = (
     productionReady: false,
     profileId: profileResolution.profileId,
     readiness,
+    sdkBinding,
     valid,
   };
 };
@@ -562,6 +612,7 @@ function createReadinessProjection(input: {
   driverId: string;
   mode: QueueProviderDriverMode;
   providerId: string;
+  sdkBinding: QueueProviderDriverSdkBindingSummary;
   status: QueueProviderDriverFoundationStatus;
   valid: boolean;
 }): QueueProviderDriverReadinessProjection {
@@ -581,12 +632,54 @@ function createReadinessProjection(input: {
     providerId: input.providerId,
     queueRouteCount: queueProviderDriverQueueRoutes.length,
     requiredConfigKeys: [
-      ...new Set(queueProviderDriverProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
+      ...new Set([
+        ...queueProviderDriverProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
+        ...input.sdkBinding.requiredConfigKeys,
+      ]),
     ],
+    sdkBinding: cloneSdkBindingSummary(input.sdkBinding),
     status: input.status,
     valid: input.valid,
     workerIdempotencyStatus: "deferred",
     workerLeaseStatus: "deferred",
+  };
+}
+
+function createSdkBindingSummary(
+  sdkBinding: ReturnType<typeof createQueueProviderSdkBindingFoundation>,
+): QueueProviderDriverSdkBindingSummary {
+  return {
+    activationGateSatisfied: sdkBinding.readiness.activationGateSatisfied,
+    bindingId: sdkBinding.bindingId,
+    blockerCount: sdkBinding.blockerCount,
+    deadLetterRouteCount: sdkBinding.readiness.deadLetterRouteCount,
+    diagnosticCodes: sdkBinding.diagnosticCodes,
+    disabledLiveOperationCount: sdkBinding.readiness.disabledLiveOperationCount,
+    liveProviderCallAttempted: false,
+    liveQueuePublishingEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    mode: sdkBinding.mode,
+    operationCapabilities: sdkBinding.operationCapabilities.map((item) => ({ ...item })),
+    operationCount: sdkBinding.readiness.operationCount,
+    productionReady: false,
+    providerKind: sdkBinding.providerKind,
+    queueRouteCount: sdkBinding.readiness.queueRouteCount,
+    requiredConfigKeys: sdkBinding.readiness.requiredConfigKeys,
+    sdkClientConstructed: false,
+    sdkPackageRef: sdkBinding.sdkPackageRef,
+    status: sdkBinding.status,
+    valid: sdkBinding.valid,
+  };
+}
+
+function cloneSdkBindingSummary(
+  sdkBinding: QueueProviderDriverSdkBindingSummary,
+): QueueProviderDriverSdkBindingSummary {
+  return {
+    ...sdkBinding,
+    diagnosticCodes: [...sdkBinding.diagnosticCodes],
+    operationCapabilities: sdkBinding.operationCapabilities.map((item) => ({ ...item })),
+    requiredConfigKeys: [...sdkBinding.requiredConfigKeys],
   };
 }
 
@@ -928,6 +1021,26 @@ function isSupportedProviderId(value: string): boolean {
 
 function isSupportedDriverId(value: string): boolean {
   return value === LOCAL_FAKE_DRIVER_ID || value === METADATA_DRIVER_ID || value === PRODUCTION_DRIVER_ID;
+}
+
+function mapDriverProviderToSdkBindingProvider(providerId: string): string {
+  const mapping: Record<string, string> = {
+    "local-fake": "local-stub",
+    "metadata-only": "metadata-only",
+    "production-queue-provider": "production-queue-provider",
+  };
+
+  return mapping[providerId] ?? providerId;
+}
+
+function mapDriverToSdkBindingDriver(driverId: string): string {
+  const mapping: Record<string, string> = {
+    "local-fake-queue-provider-driver": "local-stub-queue-provider-driver",
+    "metadata-only-queue-provider-driver": "metadata-only-queue-provider-driver",
+    "production-provider-driver": "production-provider-driver",
+  };
+
+  return mapping[driverId] ?? driverId;
 }
 
 function isSafeLabel(value: string): boolean {

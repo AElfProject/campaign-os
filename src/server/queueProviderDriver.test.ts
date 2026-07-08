@@ -9,6 +9,10 @@ import {
   queueProviderDriverProductionPreconditions,
   redactQueueProviderDriverValue,
 } from "./queueProviderDriver";
+import {
+  queueProviderSdkBindingOperationCapabilities,
+  queueProviderSdkBindingProductionPreconditions,
+} from "./queueProviderSdkBinding";
 
 describe("queue provider driver foundation", () => {
   it("declares a stable local fake registration and supported operations", () => {
@@ -65,6 +69,31 @@ describe("queue provider driver foundation", () => {
       operationCount: queueProviderDriverOperationCapabilities.length,
       productionReady: false,
       queueRouteCount: foundation.queueRoutes.length,
+      sdkBinding: expect.objectContaining({
+        bindingId: "local-stub-queue-provider-sdk-binding",
+        blockerCount: 0,
+        disabledLiveOperationCount: queueProviderSdkBindingOperationCapabilities.length,
+        liveProviderCallAttempted: false,
+        liveQueuePublishingEnabled: false,
+        liveWorkerExecutionEnabled: false,
+        mode: "dry_run",
+        operationCount: queueProviderSdkBindingOperationCapabilities.length,
+        productionReady: false,
+        providerKind: "local-stub",
+        sdkClientConstructed: false,
+        sdkPackageRef: "local-stub-sdk-package",
+        status: "local_ready",
+        valid: true,
+      }),
+      valid: true,
+    });
+    expect(foundation.sdkBinding).toMatchObject({
+      bindingId: "local-stub-queue-provider-sdk-binding",
+      liveProviderCallAttempted: false,
+      mode: "dry_run",
+      providerKind: "local-stub",
+      sdkClientConstructed: false,
+      status: "local_ready",
       valid: true,
     });
   });
@@ -83,6 +112,15 @@ describe("queue provider driver foundation", () => {
     expect(foundation.readiness.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
     expect(foundation.operationCapabilities.every((item) => item.liveEnabled === false)).toBe(true);
+    expect(foundation.sdkBinding).toMatchObject({
+      bindingId: "metadata-only-queue-provider-sdk-binding",
+      mode: "metadata_only",
+      providerKind: "redis-compatible",
+      sdkClientConstructed: false,
+      sdkPackageRef: "metadata-only-sdk-package",
+      status: "scaffolded",
+      valid: true,
+    });
   });
 
   it("fails closed for production-required when preconditions and activation are missing", () => {
@@ -91,7 +129,9 @@ describe("queue provider driver foundation", () => {
     expect(foundation.status).toBe("blocked");
     expect(foundation.valid).toBe(false);
     expect(foundation.productionReady).toBe(false);
-    expect(foundation.blockerCount).toBe(queueProviderDriverProductionPreconditions.length);
+    expect(foundation.blockerCount).toBe(
+      queueProviderDriverProductionPreconditions.length + queueProviderSdkBindingProductionPreconditions.length,
+    );
     expect(foundation.diagnosticCodes).toEqual([
       "QUEUE_PROVIDER_DRIVER_MISSING",
       "QUEUE_PROVIDER_DRIVER_ENDPOINT_MISSING",
@@ -104,7 +144,23 @@ describe("queue provider driver foundation", () => {
       "QUEUE_PROVIDER_DRIVER_OBSERVABILITY_MISSING",
       "QUEUE_PROVIDER_DRIVER_RUNBOOK_MISSING",
       "QUEUE_PROVIDER_DRIVER_LIVE_ENABLEMENT_MISSING",
+      "QUEUE_PROVIDER_SDK_PACKAGE_MISSING",
+      "QUEUE_PROVIDER_SDK_BINDING_MISSING",
+      "QUEUE_PROVIDER_DRIVER_MISSING",
+      "QUEUE_PROVIDER_SDK_ENDPOINT_MISSING",
+      "QUEUE_PROVIDER_SDK_CREDENTIALS_MISSING",
+      "QUEUE_PROVIDER_SDK_QUEUE_ROUTE_MISSING",
+      "QUEUE_PROVIDER_SDK_DEAD_LETTER_ROUTE_MISSING",
+      "QUEUE_PROVIDER_SDK_RETRY_POLICY_MISSING",
+      "QUEUE_PROVIDER_SDK_IDEMPOTENCY_STORE_MISSING",
+      "QUEUE_PROVIDER_SDK_WORKER_LEASE_MISSING",
+      "QUEUE_PROVIDER_SDK_OBSERVABILITY_MISSING",
+      "QUEUE_PROVIDER_SDK_RUNBOOK_MISSING",
+      "QUEUE_PROVIDER_SDK_LIVE_ENABLEMENT_MISSING",
     ]);
+    expect(foundation.sdkBinding.status).toBe("blocked");
+    expect(foundation.sdkBinding.sdkClientConstructed).toBe(false);
+    expect(foundation.sdkBinding.liveQueuePublishingEnabled).toBe(false);
   });
 
   it("keeps production-required scaffolded but not production-ready after all gates are explicit", () => {
@@ -116,9 +172,11 @@ describe("queue provider driver foundation", () => {
         CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "enabled",
         CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:review",
         CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "runbook-ref:queue-provider",
+        CAMPAIGN_OS_QUEUE_PROVIDER_BINDING: "production-provider-sdk-binding",
         CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-provider",
         CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
         CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "queue-endpoint-ref:provider",
+        CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE: "package-ref:@provider/queue-sdk",
         CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:review",
         CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:worker",
         CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
@@ -135,6 +193,18 @@ describe("queue provider driver foundation", () => {
     expect(foundation.readiness.productionReady).toBe(false);
     expect(foundation.readiness.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
+    expect(foundation.sdkBinding).toMatchObject({
+      bindingId: "production-provider-sdk-binding",
+      blockerCount: 0,
+      liveProviderCallAttempted: false,
+      mode: "production_required",
+      productionReady: false,
+      providerKind: "sqs-compatible",
+      sdkClientConstructed: false,
+      sdkPackageRef: "package-ref:@provider/queue-sdk",
+      status: "scaffolded",
+      valid: true,
+    });
   });
 
   it("accepts deterministic local fake operation metadata for all supported operations", () => {
@@ -236,6 +306,7 @@ describe("queue provider driver foundation", () => {
       objectKey: "exports/private-winners.csv",
       payload: "{\"wallet\":\"ELF_ABC_private\",\"payload\":true}",
       providerResponse: "provider-response-fragment:secret",
+      sdkPackageRef: "https://registry.invalid/@scope/pkg?token=sdk-secret",
       signedUrl: "https://storage.invalid/file.csv?X-Amz-Signature=signed-url-secret",
       walletAddress: "ELF_ABC_private",
     });
@@ -247,6 +318,7 @@ describe("queue provider driver foundation", () => {
     expect(serialized).not.toContain("idempotency-key-secret");
     expect(serialized).not.toContain("lease-token-secret");
     expect(serialized).not.toContain("private-winners");
+    expect(serialized).not.toContain("sdk-secret");
     expect(serialized).not.toContain("ELF_ABC_private");
     expect(serialized).toContain("[redacted]");
   });
