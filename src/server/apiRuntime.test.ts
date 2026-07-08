@@ -105,6 +105,44 @@ interface ExportPreviewPayload {
   readyRows: number;
 }
 
+interface AgentWalletActionPayload {
+  actionState: string;
+  allowedOperation: string;
+  auditTrail: {
+    executionAttempted: false;
+    sensitiveMaterialHandled: false;
+    walletSource: "AGENT_SKILL";
+  };
+  noContractWrite: true;
+  noExportFile: true;
+  noPrivateKeyBoundary: true;
+  noRewardDistribution: true;
+  noSignatureExecution: true;
+  noTransactionExecution: true;
+}
+
+interface GeneratedCampaignTasksPayload {
+  humanReviewRequired: boolean;
+  pointRules: unknown[];
+  taskList: unknown[];
+  walletCompatibility: unknown[];
+}
+
+interface CampaignPostsPayload {
+  artifacts: unknown[];
+  humanReviewRequired: boolean;
+}
+
+interface CampaignSummaryPayload {
+  localeMetrics: unknown[];
+  period: string;
+  referralWalletRiskMetrics: unknown[];
+  reportCards: unknown[];
+  riskSummary: unknown[];
+  walletLocaleMetrics: unknown[];
+  walletTypeMetrics: unknown[];
+}
+
 const forbiddenResponseKeys = [
   "privatekey",
   "mnemonic",
@@ -117,6 +155,15 @@ const forbiddenResponseKeys = [
   "objectkey",
   "secret",
 ];
+
+const allowedSafetyKeys = new Set([
+  "noContractWrite",
+  "noExportFile",
+  "noPrivateKeyBoundary",
+  "noRewardDistribution",
+  "noSignatureExecution",
+  "noTransactionExecution",
+]);
 
 const collectKeys = (value: unknown, keys: string[] = []): string[] => {
   if (!value || typeof value !== "object") {
@@ -132,7 +179,9 @@ const collectKeys = (value: unknown, keys: string[] = []): string[] => {
   }
 
   for (const [key, nested] of Object.entries(value)) {
-    keys.push(key.toLowerCase());
+    if (!allowedSafetyKeys.has(key)) {
+      keys.push(key.toLowerCase());
+    }
     collectKeys(nested, keys);
   }
 
@@ -265,9 +314,9 @@ describe("Campaign OS API runtime", () => {
     expect(healthData).toMatchObject({
       apiFoundation: expect.objectContaining({
         coverage: expect.objectContaining({
-          implementedLocalCount: 10,
+          implementedLocalCount: 11,
           notYetImplementedCount: 0,
-          productionShapedDeferredCount: 4,
+          productionShapedDeferredCount: 3,
           routeCount: expect.any(Number),
           surfaceCount: 14,
           validationIssueCount: 0,
@@ -1407,6 +1456,86 @@ describe("Campaign OS API runtime", () => {
     });
   });
 
+  it("calls AI Ops and Agent Skill API routes through deterministic local handlers", async () => {
+    const agentWalletAction = await runtime.handle({
+      method: "POST",
+      path: "/api/agent-wallet/actions/review",
+      headers: { "x-campaign-os-trace-id": "trace-agent-wallet-action" },
+      body: JSON.stringify({
+        actionIntent: "balance_query",
+        agentId: "agent_portkey_eoa_001",
+        campaignId: campaignDetail.id,
+        chainId: "AELF",
+        evidencePurpose: "operator_readiness_review",
+        humanApprovalState: "pending_review",
+        network: "mainnet",
+        operatorRole: "internal_operator",
+        taskId: "task-bridge",
+        walletSource: "AGENT_SKILL",
+      }),
+    });
+    const generatedTasks = await runtime.handle({
+      method: "POST",
+      path: `/api/campaigns/${campaignDetail.id}/tasks/generate`,
+      body: JSON.stringify({
+        goal: "Activate Awaken traders",
+        product: "Awaken",
+        targetUsers: ["AA wallet users", "new traders"],
+        walletPolicy: "ANY",
+      }),
+    });
+    const generatedPosts = await runtime.handle({
+      method: "POST",
+      path: `/api/campaigns/${campaignDetail.id}/posts/generate`,
+      body: JSON.stringify({
+        channel: "x",
+        contentKeys: ["socialPost", "faq"],
+        sourceLocale: "en-US",
+        targetLocales: ["zh-CN", "zh-TW"],
+      }),
+    });
+    const summary = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/summary?period=daily`,
+    });
+
+    expect(agentWalletAction.body.traceId).toBe("trace-agent-wallet-action");
+    expect(expectSuccessData<LocalServiceEnvelope<AgentWalletActionPayload>>(agentWalletAction).payload).toMatchObject({
+      actionState: "review_required",
+      allowedOperation: "readiness_review_only",
+      auditTrail: {
+        executionAttempted: false,
+        sensitiveMaterialHandled: false,
+        walletSource: "AGENT_SKILL",
+      },
+      noContractWrite: true,
+      noExportFile: true,
+      noPrivateKeyBoundary: true,
+      noRewardDistribution: true,
+      noSignatureExecution: true,
+      noTransactionExecution: true,
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<GeneratedCampaignTasksPayload>>(generatedTasks).payload).toMatchObject({
+      humanReviewRequired: true,
+      pointRules: expect.any(Array),
+      taskList: expect.any(Array),
+      walletCompatibility: expect.any(Array),
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignPostsPayload>>(generatedPosts).payload).toMatchObject({
+      artifacts: expect.any(Array),
+      humanReviewRequired: true,
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignSummaryPayload>>(summary).payload).toMatchObject({
+      localeMetrics: expect.any(Array),
+      period: "daily",
+      referralWalletRiskMetrics: expect.any(Array),
+      reportCards: expect.any(Array),
+      riskSummary: expect.any(Array),
+      walletLocaleMetrics: expect.any(Array),
+      walletTypeMetrics: expect.any(Array),
+    });
+  });
+
   it("routes campaign create, detail, and list through the Campaign DB repository in one runtime", async () => {
     let readinessCallCount = 0;
     const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({
@@ -2494,6 +2623,40 @@ describe("Campaign OS API runtime", () => {
         walletSource: "RAW_PRIVATE_KEY",
       }),
     });
+    const invalidAgentWalletAction = await runtime.handle({
+      method: "POST",
+      path: "/api/agent-wallet/actions/review",
+      headers: { "x-campaign-os-trace-id": "trace-invalid-agent-wallet-action" },
+      body: JSON.stringify({
+        actionIntent: "balance_query",
+        campaignId: campaignDetail.id,
+        taskId: "task-bridge",
+        walletSource: "AGENT_SKILL",
+      }),
+    });
+    const invalidGeneratedTasks = await runtime.handle({
+      method: "POST",
+      path: `/api/campaigns/${campaignDetail.id}/tasks/generate`,
+      body: JSON.stringify({
+        goal: "Activate Awaken traders",
+        product: "Awaken",
+        targetUsers: "AA wallet users",
+        walletPolicy: "ANY",
+      }),
+    });
+    const invalidGeneratedPosts = await runtime.handle({
+      method: "POST",
+      path: `/api/campaigns/${campaignDetail.id}/posts/generate`,
+      body: JSON.stringify({
+        channel: "x",
+        contentKeys: ["unsupported"],
+        sourceLocale: "en-US",
+      }),
+    });
+    const invalidSummary = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/summary?period=monthly`,
+    });
 
     expect(unknown).toMatchObject({
       status: 404,
@@ -2587,6 +2750,55 @@ describe("Campaign OS API runtime", () => {
         },
       },
     });
+    expect(invalidAgentWalletAction).toMatchObject({
+      status: 400,
+      body: {
+        ok: false,
+        traceId: "trace-invalid-agent-wallet-action",
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            field: "agentId",
+          },
+        },
+      },
+    });
+    expect(invalidGeneratedTasks).toMatchObject({
+      status: 400,
+      body: {
+        ok: false,
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            field: "targetUsers",
+          },
+        },
+      },
+    });
+    expect(invalidGeneratedPosts).toMatchObject({
+      status: 400,
+      body: {
+        ok: false,
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            field: "contentKeys",
+          },
+        },
+      },
+    });
+    expect(invalidSummary).toMatchObject({
+      status: 400,
+      body: {
+        ok: false,
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            field: "period",
+          },
+        },
+      },
+    });
     expect(await validationRepository.snapshot()).toMatchObject({
       recordCount: 0,
     });
@@ -2603,6 +2815,10 @@ describe("Campaign OS API runtime", () => {
       invalidRepositoryCreate,
       invalidWalletSource,
       invalidPersistedWalletSource,
+      invalidAgentWalletAction,
+      invalidGeneratedTasks,
+      invalidGeneratedPosts,
+      invalidSummary,
     ]) {
       expectNoForbiddenResponseKeys(response.body);
       expect(response.body.traceId).not.toHaveLength(0);
