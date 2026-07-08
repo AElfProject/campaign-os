@@ -77,6 +77,17 @@ const forbiddenRuntimeDependencyFragments = [
   "web3",
 ];
 
+const expectedAiOpsRuntimeRouteFiles = [
+  "src/server/apiFoundation.ts",
+  "src/server/apiRuntime.test.ts",
+  "src/server/handlers.ts",
+  "src/server/routes.test.ts",
+  "src/server/routes.ts",
+  "src/server/servicePorts.ts",
+  "src/server/topology.ts",
+  "src/server/validation.ts",
+];
+
 const providerHttpReadyEnv = {
   CAMPAIGN_OS_PROVIDER_HTTP_CREDENTIAL_REF: "credential-ref:provider-http",
   CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REF: "config-ref:provider-http-endpoint",
@@ -235,17 +246,10 @@ describe("backend scaffold public guardrails", () => {
     }
   });
 
-  it("keeps provider endpoint rollout readiness changes away from rendered UI files", () => {
+  it("keeps AI Ops runtime route changes away from rendered UI files", () => {
     const missionChangedFiles = changedFilesSinceMissionBase();
 
-    expect(missionChangedFiles).toEqual(
-      expect.arrayContaining([
-        "src/server/backendService.ts",
-        "src/server/providerHttpRequestPlanner.ts",
-        "src/server/providerHttpRuntimeRegistry.ts",
-        "src/server/workerSchedulerRuntime.ts",
-      ]),
-    );
+    expect(missionChangedFiles).toEqual(expect.arrayContaining(expectedAiOpsRuntimeRouteFiles));
     expect(missionChangedFiles).not.toEqual(
       expect.arrayContaining([
         expect.stringMatching(/^src\/(App|app|components|styles|i18n)\//),
@@ -254,17 +258,11 @@ describe("backend scaffold public guardrails", () => {
     );
   });
 
-  it("keeps M201 provider endpoint rollout scope out of rendered React and private public artifacts", () => {
+  it("keeps M202 AI Ops route scope out of rendered React and private public artifacts", () => {
     const publicTrackedFiles = trackedFiles();
     const missionChangedFiles = changedFilesSinceMissionBase();
 
-    expect(missionChangedFiles).toEqual(
-      expect.arrayContaining([
-        "src/server/providerHttpRequestPlanner.ts",
-        "src/server/providerHttpRuntimeRegistry.ts",
-        "src/server/workerSchedulerRuntime.ts",
-      ]),
-    );
+    expect(missionChangedFiles).toEqual(expect.arrayContaining(expectedAiOpsRuntimeRouteFiles));
     expect(missionChangedFiles).not.toEqual(
       expect.arrayContaining([
         expect.stringMatching(/^src\/(App|app|components|styles|i18n)\//),
@@ -403,13 +401,7 @@ describe("backend scaffold public guardrails", () => {
       liveProviderCallsEnabled: false,
       liveTelemetryExportEnabled: false,
     });
-    expect(missionChangedFiles).toEqual(
-      expect.arrayContaining([
-        "src/server/providerHttpRuntimeRegistry.ts",
-        "src/server/providerHttpRequestPlanner.ts",
-        "src/server/workerSchedulerRuntime.ts",
-      ]),
-    );
+    expect(missionChangedFiles).toEqual(expect.arrayContaining(expectedAiOpsRuntimeRouteFiles));
     expect(missionChangedFiles).not.toEqual(
       expect.arrayContaining([
         expect.stringMatching(/^src\/(App|app|components|styles|i18n)\//),
@@ -481,6 +473,34 @@ describe("backend scaffold public guardrails", () => {
           id: "runtime.contracts",
           readiness: "ready",
           serviceGroup: "runtime",
+        }),
+        expect.objectContaining({
+          apiSkillId: "agent_wallet_action",
+          id: "agent.wallet.action.review",
+          readiness: "review_required",
+          serviceGroup: "wallet_session",
+          supportMode: "local_seeded",
+        }),
+        expect.objectContaining({
+          apiSkillId: "generate_campaign_tasks",
+          id: "campaigns.tasks.generate",
+          readiness: "ready",
+          serviceGroup: "task",
+          supportMode: "local_seeded",
+        }),
+        expect.objectContaining({
+          apiSkillId: "generate_campaign_posts",
+          id: "campaigns.posts.generate",
+          readiness: "review_required",
+          serviceGroup: "i18n",
+          supportMode: "local_seeded",
+        }),
+        expect.objectContaining({
+          apiSkillId: "summarize_campaign",
+          id: "campaigns.summary",
+          readiness: "ready",
+          serviceGroup: "analytics",
+          supportMode: "local_seeded",
         }),
       ]),
     );

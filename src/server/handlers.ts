@@ -8,6 +8,8 @@ import {
   type CreateCampaignRequest,
   type CreateWalletSessionRequest,
   type ExportWinnersRequest,
+  type GenerateCampaignPostsRequest,
+  type GenerateCampaignTasksRequest,
   type GenerateI18nDraftRequest,
   type GetCampaignAnalyticsRequest,
   type GetCampaignDetailRequest,
@@ -15,6 +17,7 @@ import {
   type LocalCampaignDraft,
   type LocalServiceError,
   type LocalServiceResult,
+  type SummarizeCampaignRequest,
   type VerifyTaskRequest,
 } from "../domain/campaignService";
 import {
@@ -22,6 +25,7 @@ import {
   createServiceRegistry,
 } from "../domain/serviceRegistry";
 import type {
+  AgentWalletActionReadinessRequest,
   CampaignDiscoveryDetail,
   CampaignDiscoveryItem,
   CampaignDiscoveryReadModel,
@@ -66,22 +70,31 @@ import {
 } from "./persistence";
 import {
   bodyRecord,
+  campaignPostChannel,
+  campaignPostContentKeyArray,
   exportContractRootMode,
   exportFormat,
   isJsonRecord,
   optionalAccountType,
+  optionalLocaleArray,
   optionalLocale,
   optionalString,
   optionalWalletSource,
+  requiredAgentWalletHumanApprovalState,
   requiredAccountType,
   requiredBoolean,
   requiredNumber,
+  requiredNonEmptyStringArray,
+  requiredOwnerRole,
   requiredRecord,
   requiredRouteParam,
   requiredString,
   requiredVerificationType,
   requiredWalletCompatibility,
+  requiredWalletNetwork,
+  requiredWalletPolicy,
   requiredWalletSource,
+  summaryPeriod,
 } from "./validation";
 import {
   issueLocalSessionArtifact,
@@ -549,6 +562,52 @@ const i18nDraftRequest = (context: ApiRuntimeHandlerContext): GenerateI18nDraftR
   };
 };
 
+const agentWalletActionRequest = (context: ApiRuntimeHandlerContext): AgentWalletActionReadinessRequest => {
+  const body = bodyRecord(context.body);
+
+  return {
+    actionIntent: requiredString(body, "actionIntent"),
+    agentId: requiredString(body, "agentId"),
+    campaignId: requiredString(body, "campaignId"),
+    chainId: requiredString(body, "chainId"),
+    evidencePurpose: requiredString(body, "evidencePurpose"),
+    humanApprovalState: requiredAgentWalletHumanApprovalState(body),
+    network: requiredWalletNetwork(body),
+    operatorRole: requiredOwnerRole(body),
+    taskId: requiredString(body, "taskId"),
+    walletSource: requiredWalletSource(body),
+  };
+};
+
+const generateCampaignTasksRequest = (context: ApiRuntimeHandlerContext): GenerateCampaignTasksRequest => {
+  const body = bodyRecord(context.body);
+
+  return {
+    campaignId: requiredRouteParam(context.params, "campaignId"),
+    goal: requiredString(body, "goal"),
+    product: requiredString(body, "product"),
+    targetUsers: requiredNonEmptyStringArray(body, "targetUsers"),
+    walletPolicy: requiredWalletPolicy(body),
+  };
+};
+
+const generateCampaignPostsRequest = (context: ApiRuntimeHandlerContext): GenerateCampaignPostsRequest => {
+  const body = bodyRecord(context.body);
+
+  return {
+    campaignId: requiredRouteParam(context.params, "campaignId"),
+    channel: campaignPostChannel(body),
+    contentKeys: campaignPostContentKeyArray(body.contentKeys),
+    sourceLocale: optionalLocale(body.sourceLocale, "sourceLocale"),
+    targetLocales: optionalLocaleArray(body.targetLocales),
+  };
+};
+
+const summarizeCampaignRequest = (context: ApiRuntimeHandlerContext): SummarizeCampaignRequest => ({
+  campaignId: requiredRouteParam(context.params, "campaignId"),
+  period: summaryPeriod(context.query.period),
+});
+
 const createApiFoundationRuntimeMetadata = () => {
   const foundation = createApiFoundationReport();
   const servicePorts = createApiServicePortReport({ foundation });
@@ -795,6 +854,8 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       summary: governance.summary,
     };
   },
+  "agent.wallet.action.review": (context) =>
+    unwrapLocalResult(context.service.requestAgentWalletAction(agentWalletActionRequest(context)), context),
   "wallet.session.create": (context) => {
     const request = bodyRecord(context.body) as CreateWalletSessionRequest;
     const result = context.service.createWalletSession(request);
@@ -930,6 +991,8 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         taskId: payload.id,
       }),
     ),
+  "campaigns.tasks.generate": (context) =>
+    unwrapLocalResult(context.service.generateCampaignTasks(generateCampaignTasksRequest(context)), context),
   "tasks.verify": (context) =>
     persistLocalResult(
       context.service.verifyTask(verifyTaskRequest(context)),
@@ -958,6 +1021,8 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       } satisfies GetCampaignAnalyticsRequest),
       context,
     ),
+  "campaigns.summary": (context) =>
+    unwrapLocalResult(context.service.summarizeCampaign(summarizeCampaignRequest(context)), context),
   "campaigns.i18n.generate": (context) =>
     persistLocalResult(
       context.service.generateI18nDraft(i18nDraftRequest(context)),
@@ -974,6 +1039,8 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         },
       }),
     ),
+  "campaigns.posts.generate": (context) =>
+    unwrapLocalResult(context.service.generateCampaignPosts(generateCampaignPostsRequest(context)), context),
   "campaigns.export.preview": (context) =>
     persistLocalResult(
       context.service.exportWinners(exportRequest(context)),
