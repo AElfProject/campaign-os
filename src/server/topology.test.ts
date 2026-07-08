@@ -107,6 +107,15 @@ describe("backend service topology", () => {
       expect(expectedDeploymentUnitIds).toContain(service.deploymentUnit);
       expect(service.runtimeProfiles.length).toBeGreaterThan(0);
     }
+    expect(backendServiceBoundaries.find((service) => service.id === "campaign-service")).toMatchObject({
+      routeIds: expect.arrayContaining(["campaigns.lifecycle", "campaigns.launch.readiness"]),
+    });
+    expect(backendServiceBoundaries.find((service) => service.id === "verification-service")).toMatchObject({
+      routeIds: expect.arrayContaining(["campaigns.provider.readiness"]),
+    });
+    expect(backendServiceBoundaries.find((service) => service.id === "export-service")).toMatchObject({
+      routeIds: expect.arrayContaining(["campaigns.export.readiness"]),
+    });
   });
 
   it("keeps local review offline and production dependencies deferred or disabled", () => {

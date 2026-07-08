@@ -720,6 +720,34 @@ const createInvocationFailure = (
 
 const asRequest = <T>(payload: unknown): T => (payload ?? {}) as T;
 
+const providerReadinessApiSkillResult = (
+  service: CampaignOsLocalService,
+  payload: unknown,
+): LocalServiceResult<{
+  campaignId: string;
+  pipeline: VerificationPipelineReadinessGate;
+  providerEvidenceRegistry: ProviderEvidenceRegistry;
+}> => {
+  const request = asRequest<GetProviderEvidenceRegistryRequest>(payload);
+  const pipeline = service.getVerificationPipelineReadiness(request);
+
+  if (!pipeline.ok) {
+    return pipeline;
+  }
+
+  const providerEvidenceRegistry = service.getProviderEvidenceRegistry(request);
+
+  if (!providerEvidenceRegistry.ok) {
+    return providerEvidenceRegistry;
+  }
+
+  return success({
+    campaignId: providerEvidenceRegistry.payload.campaignId,
+    pipeline: pipeline.payload,
+    providerEvidenceRegistry: providerEvidenceRegistry.payload,
+  });
+};
+
 const apiSkillRouteHandlers: Record<ApiSkillId, ApiSkillRouteHandler> = {
   add_campaign_task: (service, payload) => service.addTask(asRequest<AddTaskRequest>(payload)),
   agent_wallet_action: (service, payload) =>
@@ -737,6 +765,13 @@ const apiSkillRouteHandlers: Record<ApiSkillId, ApiSkillRouteHandler> = {
   get_campaign_analytics: (service, payload) =>
     service.getCampaignAnalytics(asRequest<GetCampaignAnalyticsRequest>(payload)),
   get_campaign_detail: (service, payload) => service.getCampaignDetail(asRequest<GetCampaignDetailRequest>(payload)),
+  get_campaign_export_readiness: (service, payload) =>
+    service.getExportConfirmationReadiness(asRequest<GetCampaignAnalyticsRequest>(payload)),
+  get_campaign_launch_readiness: (service, payload) =>
+    service.getLaunchConsoleCampaignBundles(asRequest<GetLaunchConsoleCampaignBundlesRequest>(payload)),
+  get_campaign_lifecycle: (service, payload) =>
+    service.getCampaignLifecycleOperations(asRequest<GetCampaignLifecycleOperationsRequest>(payload)),
+  get_campaign_provider_readiness: providerReadinessApiSkillResult,
   list_campaigns: (service, payload) =>
     service.listCampaigns(payload === undefined ? undefined : asRequest<ListCampaignsRequest>(payload)),
   summarize_campaign: (service, payload) => service.summarizeCampaign(asRequest<SummarizeCampaignRequest>(payload)),

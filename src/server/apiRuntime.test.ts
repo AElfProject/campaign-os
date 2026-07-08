@@ -105,6 +105,71 @@ interface ExportPreviewPayload {
   readyRows: number;
 }
 
+interface CampaignLifecyclePayload {
+  campaignId: string;
+  currentStatus: string;
+  operations: Array<{ id: string }>;
+  summary: {
+    totalOperations: number;
+  };
+  supportedStatuses: string[];
+}
+
+interface LaunchReadinessPayload {
+  campaignId: string;
+  bundles: Array<{ stage: string }>;
+  handoffs: unknown[];
+  summary: {
+    totalBundles: number;
+  };
+}
+
+interface ExportReadinessPayload {
+  campaignId: string;
+  contractRootReadiness: Array<{
+    mode: string;
+    readiness: string;
+    safeDefault: boolean;
+  }>;
+  previewModes: unknown[];
+  summary: {
+    previewModeCount: number;
+  };
+}
+
+interface ProviderReadinessPayload {
+  campaignId: string;
+  pipeline: {
+    paths: unknown[];
+    summary: {
+      totalPaths: number;
+    };
+  };
+  providerEvidenceRegistry: {
+    entries: unknown[];
+    summary: {
+      totalEntries: number;
+    };
+  };
+}
+
+interface CampaignDbLimitedLifecyclePayload {
+  campaignId: string;
+  code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED";
+  diagnostic: {
+    code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED";
+    fullSeededLifecycleAvailable: false;
+  };
+  fullSeededLifecycleAvailable: false;
+  publishReadiness: {
+    ready: boolean;
+  };
+  source: "campaign_db_draft";
+  status: string;
+  supportedLocales: string[];
+  walletPolicy: string;
+}
+
 interface AgentWalletActionPayload {
   actionState: string;
   allowedOperation: string;
@@ -1456,6 +1521,163 @@ describe("Campaign OS API runtime", () => {
     });
   });
 
+  it("serves seeded lifecycle and readiness GET routes without persistence side effects", async () => {
+    const repository = createCampaignOsMemoryRepository();
+    const runtimeWithPersistence = createCampaignOsApiRuntime({ repository });
+    const lifecycle = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/lifecycle`,
+    });
+    const launchReadiness = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/launch-readiness`,
+    });
+    const exportReadiness = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-readiness`,
+    });
+    const providerReadiness = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/provider-readiness`,
+    });
+    const health = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: "/api/health",
+    });
+    const snapshot = await repository.snapshot();
+
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignLifecyclePayload>>(lifecycle).payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      currentStatus: "live",
+      operations: expect.arrayContaining([
+        expect.objectContaining({ id: "publish-campaign" }),
+        expect.objectContaining({ id: "export-campaign" }),
+      ]),
+      summary: {
+        totalOperations: expect.any(Number),
+      },
+      supportedStatuses: expect.arrayContaining(["draft", "live", "paused", "exported"]),
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<LaunchReadinessPayload>>(launchReadiness).payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      bundles: expect.arrayContaining([
+        expect.objectContaining({ stage: "pre_launch" }),
+        expect.objectContaining({ stage: "launch" }),
+        expect.objectContaining({ stage: "post_launch" }),
+      ]),
+      handoffs: expect.any(Array),
+      summary: {
+        totalBundles: 3,
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<ExportReadinessPayload>>(exportReadiness).payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      contractRootReadiness: expect.arrayContaining([
+        expect.objectContaining({
+          mode: "none",
+          readiness: "ready",
+          safeDefault: true,
+        }),
+        expect.objectContaining({
+          mode: "contract_claim",
+          readiness: "blocked",
+          safeDefault: false,
+        }),
+      ]),
+      previewModes: expect.any(Array),
+      summary: {
+        previewModeCount: expect.any(Number),
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<ProviderReadinessPayload>>(providerReadiness).payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      pipeline: {
+        paths: expect.any(Array),
+        summary: {
+          totalPaths: expect.any(Number),
+        },
+      },
+      providerEvidenceRegistry: {
+        entries: expect.any(Array),
+        summary: {
+          totalEntries: expect.any(Number),
+        },
+      },
+    });
+    expect(expectSuccessData(health)).toMatchObject({
+      persistence: expect.objectContaining({
+        recordCount: 0,
+        countsByKind: expect.objectContaining({
+          export_preview: 0,
+        }),
+      }),
+    });
+    expect(snapshot).toMatchObject({
+      recordCount: 0,
+      countsByKind: expect.objectContaining({
+        export_preview: 0,
+      }),
+    });
+    for (const response of [lifecycle, launchReadiness, exportReadiness, providerReadiness]) {
+      expectNoForbiddenResponseKeys(response.body);
+      expectNoForbiddenFragments(response.body, [
+        "fileUrl",
+        "mutationId",
+        "signedUrl",
+        "transactionId",
+      ]);
+    }
+  });
+
+  it("keeps lifecycle and readiness routes fail-closed for unknown campaign ids", async () => {
+    const responses = await Promise.all([
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/lifecycle",
+        headers: { "x-campaign-os-trace-id": "trace-missing-lifecycle" },
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/launch-readiness",
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/export-readiness",
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/provider-readiness",
+      }),
+    ]);
+
+    expect(responses[0]).toMatchObject({
+      status: 404,
+      body: {
+        ok: false,
+        traceId: "trace-missing-lifecycle",
+        error: {
+          code: "INVALID_CAMPAIGN",
+          details: {
+            campaignId: "missing-campaign",
+          },
+        },
+      },
+    });
+    for (const response of responses) {
+      expect(response.status).toBe(404);
+      expect(response.body.ok).toBe(false);
+      if (!response.body.ok) {
+        expect(response.body.error).toMatchObject({
+          code: "INVALID_CAMPAIGN",
+          details: {
+            campaignId: "missing-campaign",
+          },
+        });
+      }
+      expectNoForbiddenResponseKeys(response.body);
+    }
+  });
+
   it("calls AI Ops and Agent Skill API routes through deterministic local handlers", async () => {
     const agentWalletAction = await runtime.handle({
       method: "POST",
@@ -1636,6 +1858,77 @@ describe("Campaign OS API runtime", () => {
       },
     });
     expect(readinessCallCount).toBe(0);
+  });
+
+  it("returns limited lifecycle/readiness projections for repository-created drafts", async () => {
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime();
+    const create = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/campaigns",
+      headers: projectOwnerAuthHeaders("repo-owner-lifecycle", {
+        "x-campaign-os-trace-id": "trace-campaign-db-lifecycle-create",
+      }),
+      body: JSON.stringify({
+        contractMode: "OFF_CHAIN_MVP",
+        defaultLocale: "en-US",
+        duration: "2026-08-01/2026-08-14",
+        endTime: "2026-08-14T23:59:59Z",
+        goal: "Inspect repository draft lifecycle",
+        ownerAddress: "repo-owner-lifecycle",
+        projectId: "repo-project-lifecycle",
+        rewardDescription: "Repository-backed lifecycle remains limited.",
+        startTime: "2026-08-01T00:00:00Z",
+        supportedLocales: ["en-US", "zh-CN"],
+        walletPolicy: "AA_ONLY",
+      }),
+    });
+    const created = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload>>(create);
+    const lifecycle = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}/lifecycle`,
+    });
+    const launchReadiness = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}/launch-readiness`,
+    });
+    const exportReadiness = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}/export-readiness`,
+    });
+    const providerReadiness = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}/provider-readiness`,
+    });
+
+    for (const response of [lifecycle, launchReadiness, exportReadiness, providerReadiness]) {
+      expect(expectSuccessData<LocalServiceEnvelope<CampaignDbLimitedLifecyclePayload> & {
+        campaignDb: {
+          createdViaRepository: true;
+          storeId: string;
+        };
+      }>(response)).toMatchObject({
+        campaignDb: {
+          createdViaRepository: true,
+          storeId: "campaign-db",
+        },
+        payload: {
+          campaignId: "campaign-db-draft-0001",
+          code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED",
+          diagnostic: {
+            code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED",
+            fullSeededLifecycleAvailable: false,
+          },
+          fullSeededLifecycleAvailable: false,
+          publishReadiness: { ready: true },
+          source: "campaign_db_draft",
+          status: "draft",
+          supportedLocales: ["en-US", "zh-CN"],
+          walletPolicy: "AA_ONLY",
+        },
+      });
+      expectNoForbiddenResponseKeys(response.body);
+      expectNoForbiddenFragments(response.body, ["fileUrl", "mutationId", "signedUrl", "transactionId"]);
+    }
   });
 
   it("persists campaign draft API records across durable Campaign DB runtime recreation", async () => {

@@ -61,7 +61,12 @@ describe("API service ports", () => {
         "live worker execution gate",
       ]),
       notes: expect.stringContaining("BullMQ Redis-compatible package binding metadata"),
+      routeIds: expect.arrayContaining(["campaigns.provider.readiness"]),
       serviceId: "verification-service",
+    });
+    expect(apiServicePorts.find((port) => port.id === "campaign-port")).toMatchObject({
+      routeIds: expect.arrayContaining(["campaigns.lifecycle", "campaigns.launch.readiness"]),
+      serviceId: "campaign-service",
     });
     expect(apiServicePorts.find((port) => port.id === "runtime-observability-port")).toMatchObject({
       futureAttachPoints: expect.arrayContaining([
@@ -81,6 +86,9 @@ describe("API service ports", () => {
     });
     expect(apiServicePorts.find((port) => port.id === "export-port")?.futureAttachPoints).toEqual(
       expect.arrayContaining(["export artifact store", "contract writer approval gate"]),
+    );
+    expect(apiServicePorts.find((port) => port.id === "export-port")?.routeIds).toEqual(
+      expect.arrayContaining(["campaigns.export.preview", "campaigns.export.readiness"]),
     );
     expect(apiServicePorts.find((port) => port.id === "ai-ops-port")).toMatchObject({
       deferredCapabilities: expect.arrayContaining(["auth_session", "provider_adapters", "scheduler", "worker_queue"]),
