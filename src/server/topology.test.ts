@@ -14,6 +14,7 @@ import { providerIndexerAdapterGroups } from "./providerIndexerAdapters";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
+import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
@@ -140,6 +141,7 @@ describe("backend service topology", () => {
       attachPointPaths: expect.arrayContaining([
         "src/server/queueProviderDriver.ts",
         "src/server/queueProviderSdkBinding.ts",
+        "src/server/queueProviderPackageBinding.ts",
         "src/server/queueProviderAdapter.ts",
         "src/server/queueRuntime.ts",
         "src/server/workerIdempotencyStore.ts",
@@ -178,6 +180,9 @@ describe("backend service topology", () => {
         "worker-idempotency-store-idempotency-observability",
         ...queueProviderSdkBindingProductionPreconditions.map(
           (precondition) => `queue-provider-sdk-binding-${precondition.id}`,
+        ),
+        ...queueProviderPackageProductionPreconditions.map(
+          (precondition) => `queue-provider-package-${precondition.id}`,
         ),
       ]),
       productionTarget: "worker_service",
@@ -369,6 +374,9 @@ describe("backend service topology", () => {
         ...queueProviderSdkBindingProductionPreconditions.map(
           (precondition) => `queue-provider-sdk-binding-${precondition.id}`,
         ),
+        ...queueProviderPackageProductionPreconditions.map(
+          (precondition) => `queue-provider-package-${precondition.id}`,
+        ),
         "worker-lease-store-worker-lease-store-selection",
         "worker-lease-store-worker-lease-store-endpoint",
         "worker-lease-store-worker-lease-store-credentials",
@@ -397,6 +405,7 @@ describe("backend service topology", () => {
       queueProviderAdapterProductionPreconditions.length
         + queueProviderDriverProductionPreconditions.length
         + queueProviderSdkBindingProductionPreconditions.length
+        + queueProviderPackageProductionPreconditions.length
         + workerLeaseStoreProductionPreconditions.length
         + workerIdempotencyStoreProductionPreconditions.length,
     );
@@ -425,13 +434,21 @@ describe("backend service topology", () => {
       status: "deferred",
     });
     expect(workerRuntime).toMatchObject({
-      attachPointPaths: expect.arrayContaining(["src/server/queueProviderSdkBinding.ts"]),
+      attachPointPaths: expect.arrayContaining([
+        "src/server/queueProviderSdkBinding.ts",
+        "src/server/queueProviderPackageBinding.ts",
+      ]),
       currentImplementation: "source-topology-only",
       currentStatus: "local",
       productionRequiredBlockerIds: expect.arrayContaining(
-        queueProviderSdkBindingProductionPreconditions.map(
-          (precondition) => `queue-provider-sdk-binding-${precondition.id}`,
-        ),
+        [
+          ...queueProviderSdkBindingProductionPreconditions.map(
+            (precondition) => `queue-provider-sdk-binding-${precondition.id}`,
+          ),
+          ...queueProviderPackageProductionPreconditions.map(
+            (precondition) => `queue-provider-package-${precondition.id}`,
+          ),
+        ],
       ),
     });
     expect(sdkBindingAdapter?.status).not.toBe("required_for_production");

@@ -8,6 +8,7 @@ import {
   observabilityExporterProductionPreconditions,
   redactObservabilityExporterValue,
 } from "./observabilityExporter";
+import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
 
 const queueProviderSdkBindingConfigKeys = [
   "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
@@ -25,6 +26,23 @@ const queueProviderSdkBindingReadyEnv = {
   CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
   CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING: "production-provider-sdk-binding",
   CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE: "package-ref:@provider/queue-sdk",
+} satisfies Record<string, unknown>;
+
+const queueProviderPackageBindingReadyEnv = {
+  CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:queue-package",
+  CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
+  CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:queue-package",
+  CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:queue-package",
+  CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "runbook-ref:queue-package",
+  CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-package",
+  CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
+  CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
+  CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-package-binding-production",
+  CAMPAIGN_OS_REDIS_URL: "redis-ref:campaign-os",
+  CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:queue-package",
+  CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:queue-package",
+  CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
 } satisfies Record<string, unknown>;
 
 describe("observability exporter foundation", () => {
@@ -174,6 +192,53 @@ describe("observability exporter foundation", () => {
     expect(serialized).not.toContain("queue-secret");
     expect(serialized).not.toContain("queue-secret-token");
     expect(serialized).not.toContain("@provider/queue-sdk");
+  });
+
+  it("does not treat queue provider package binding readiness as telemetry exporter readiness", () => {
+    const packageBinding = createQueueProviderPackageBinding({
+      env: queueProviderPackageBindingReadyEnv,
+      profileId: "production-required",
+    });
+    const foundation = createObservabilityExporterFoundation({
+      env: queueProviderPackageBindingReadyEnv,
+      profileId: "production-required",
+    });
+    const capture = captureObservabilityDryRun({
+      eventCategory: "queue",
+      metricName: "queue.package_binding.metadata_ready",
+      operation: "metrics",
+      payloadReference: "payload-ref:queue:package-binding",
+      sourceRuntime: "queue-provider-package-binding",
+      traceId: "trace-observability-package-binding-metadata",
+    });
+    const serialized = JSON.stringify({ foundation, packageBinding });
+
+    expect(packageBinding.valid).toBe(true);
+    expect(packageBinding.productionReady).toBe(false);
+    expect(packageBinding.liveBrokerConnectionAttempted).toBe(false);
+    expect(packageBinding.sdkClientConstructed).toBe(false);
+    expect(foundation.status).toBe("blocked");
+    expect(foundation.valid).toBe(false);
+    expect(foundation.productionReady).toBe(false);
+    expect(foundation.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "OBSERVABILITY_EXPORTER_MISSING",
+        "OBSERVABILITY_CREDENTIALS_MISSING",
+        "OBSERVABILITY_SINK_MISSING",
+      ]),
+    );
+    expect(foundation.readiness.liveTelemetryExportEnabled).toBe(false);
+    expect(foundation.noLiveFlags).toEqual(observabilityExporterNoLiveFlags);
+    expect(capture).toMatchObject({
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportAttempted: false,
+      productionWriteAttempted: false,
+      status: "rejected",
+    });
+    expect(serialized).not.toContain("redis://");
+    expect(serialized).not.toContain("redis-pass");
+    expect(serialized).not.toContain("redis-secret");
+    expect(serialized).not.toContain("queue-package-secret-token");
   });
 
   it("fails closed for production-required when observability preconditions are missing", () => {

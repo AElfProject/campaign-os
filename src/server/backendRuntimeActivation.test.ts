@@ -9,6 +9,7 @@ import {
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
+import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { resolveApiServerRuntimeContract } from "./serverRuntime";
@@ -20,6 +21,9 @@ const secretFragments = [
   "https://lease.invalid/lease-secret",
   "metadata-provider-secret",
   "operator-policy-secret",
+  "bullmq-redis-binding-secret",
+  "redis.invalid",
+  "redis-password",
   "https://queue.invalid/queue-secret",
   "https://queue.invalid/dead-letter?token=queue-secret",
   "@provider/queue-sdk",
@@ -97,6 +101,8 @@ describe("backend runtime activation contract", () => {
         CAMPAIGN_OS_AUTH_SECRET: "super-secret",
         CAMPAIGN_OS_DATABASE_URL: "postgres://real-user:real-db-password@db.invalid/campaign-os",
         CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid/object-key-sample",
+        CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-binding-secret",
+        CAMPAIGN_OS_REDIS_URL: "redis://redis-user:redis-password@redis.invalid:6379/0",
         CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL: "https://lease.invalid/lease-secret",
         CAMPAIGN_OS_SCHEDULER_PROVIDER: "metadata-provider-secret",
         CAMPAIGN_OS_OPERATOR_AUTHORIZATION_POLICY: "operator-policy-secret",
@@ -124,6 +130,9 @@ describe("backend runtime activation contract", () => {
           ),
       ),
     ];
+    const queueProviderPackageConfigKeys = [
+      ...new Set(queueProviderPackageProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
     const observabilityExporterConfigKeys = [
       ...new Set(observabilityExporterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
@@ -140,8 +149,12 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
         "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
         "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_KIND",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+        "CAMPAIGN_OS_REDIS_URL",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
         "CAMPAIGN_OS_SCHEDULER_PROVIDER",
         "CAMPAIGN_OS_WORKER_QUEUE_URL",
@@ -185,8 +198,12 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER",
         "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
         "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_KIND",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+        "CAMPAIGN_OS_REDIS_URL",
         "CAMPAIGN_OS_WORKER_RETRY_POLICY",
         "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
         "CAMPAIGN_OS_WORKER_LEASE_STORE",
@@ -271,6 +288,16 @@ describe("backend runtime activation contract", () => {
             redacted: true,
             required: true,
             requiredFor: "production-required",
+          }),
+        ]),
+      );
+    }
+    for (const queueProviderPackageConfigKey of queueProviderPackageConfigKeys) {
+      expect(activation.deploymentHandoff.environmentKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: queueProviderPackageConfigKey,
+            redacted: true,
           }),
         ]),
       );
@@ -469,6 +496,10 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "provider", id: "queue-provider-sdk-binding-queue-provider-sdk-package-reference", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "queue-provider-sdk-binding-queue-provider-sdk-binding-registration", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "queue-provider-sdk-binding-queue-provider-sdk-live-enable-gate", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "queue-provider-package-queue-provider-package-approved-dependency", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "queue-provider-package-queue-provider-package-binding-registration", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "queue-provider-package-queue-provider-package-redis-endpoint-reference", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "queue-provider-package-queue-provider-package-live-enable-gate", status: "blocked" }),
         expect.objectContaining({ area: "contract", id: "contract-writer", status: "blocked" }),
         expect.objectContaining({ area: "storage", id: "object-storage", status: "deferred" }),
         expect.objectContaining({ area: "observability", id: "observability-exporter", status: "deferred" }),
@@ -531,6 +562,18 @@ describe("backend runtime activation contract", () => {
           expect.objectContaining({
             attachPoint: "src/server/queueProviderSdkBinding.ts",
             id: `queue-provider-sdk-binding-${precondition.id}`,
+            requiredBeforeProduction: true,
+            status: precondition.status,
+          }),
+        ),
+      ),
+    );
+    expect(activation.productionDependencyBlockers).toEqual(
+      expect.arrayContaining(
+        queueProviderPackageProductionPreconditions.map((precondition) =>
+          expect.objectContaining({
+            attachPoint: "src/server/queueProviderPackageBinding.ts",
+            id: `queue-provider-package-${precondition.id}`,
             requiredBeforeProduction: true,
             status: precondition.status,
           }),

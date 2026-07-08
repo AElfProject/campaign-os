@@ -10,6 +10,7 @@ import {
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
+import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
 import { queueRuntimeProductionPreconditions } from "./queueRuntime";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
@@ -98,6 +99,7 @@ const forbiddenConfigKeyFragments = [
   "mnemonic",
   "objectkey",
   "password",
+  "packagebinding",
   "provider",
   "providercredentials",
   "private",
@@ -244,6 +246,10 @@ const queueProviderSdkBindingRequiredConfigKeys = uniqueStrings(
   ),
 );
 
+const queueProviderPackageRequiredConfigKeys = uniqueStrings(
+  queueProviderPackageProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
+);
+
 const schedulerRuntimeRequiredConfigKeys = uniqueStrings(
   schedulerRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
 );
@@ -269,6 +275,7 @@ const backendProductionReadinessRequiredConfigKeys = uniqueStrings([
   ...queueProviderAdapterRequiredConfigKeys,
   ...queueProviderDriverRequiredConfigKeys,
   ...queueProviderSdkBindingRequiredConfigKeys,
+  ...queueProviderPackageRequiredConfigKeys,
   ...observabilityExporterRequiredConfigKeys,
 ]);
 

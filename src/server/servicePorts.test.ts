@@ -50,12 +50,15 @@ describe("API service ports", () => {
     expect(apiServicePorts.find((port) => port.id === "verification-port")).toMatchObject({
       deferredCapabilities: expect.arrayContaining(["provider_adapters", "worker_queue"]),
       futureAttachPoints: expect.arrayContaining([
+        "BullMQ Redis-compatible package binding metadata",
+        "Redis broker endpoint reference",
         "queue provider SDK package installation",
+        "queue provider package binding registration",
         "queue provider SDK binding registration",
         "real broker connection",
         "live worker execution gate",
       ]),
-      notes: expect.stringContaining("queue provider SDK package installation"),
+      notes: expect.stringContaining("BullMQ Redis-compatible package binding metadata"),
       serviceId: "verification-service",
     });
     expect(apiServicePorts.find((port) => port.id === "runtime-observability-port")).toMatchObject({
@@ -63,6 +66,7 @@ describe("API service ports", () => {
         "src/server/observabilityExporter.ts readiness foundation",
         "src/server/queueProviderDriver.ts readiness projection",
         "src/server/queueProviderSdkBinding.ts readiness projection",
+        "src/server/queueProviderPackageBinding.ts readiness projection",
         "metrics sink registration",
         "structured log sink",
         "trace collector",
