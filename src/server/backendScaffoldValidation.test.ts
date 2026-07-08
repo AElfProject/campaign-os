@@ -27,6 +27,15 @@ const changedFilesSinceMissionBase = () =>
     .split("\n")
     .filter(Boolean);
 
+const renderedUiRuntimeChangedFiles = (files: string[]) =>
+  files.filter((file) => {
+    if (/\.(test|spec)\.(ts|tsx)$/.test(file)) {
+      return false;
+    }
+
+    return /^src\/(App|app|components|styles|i18n)\//.test(file) || /^src\/.*\.(tsx|css)$/.test(file);
+  });
+
 const deferredCapabilityIds = [
   "production_database",
   "auth_session",
@@ -258,12 +267,7 @@ describe("backend scaffold public guardrails", () => {
     const missionChangedFiles = changedFilesSinceMissionBase();
 
     expect(missionChangedFiles).toEqual(expect.arrayContaining(expectedAiOpsRuntimeRouteFiles));
-    expect(missionChangedFiles).not.toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^src\/(App|app|components|styles|i18n)\//),
-        expect.stringMatching(/\.(tsx|css)$/),
-      ]),
-    );
+    expect(renderedUiRuntimeChangedFiles(missionChangedFiles)).toEqual([]);
   });
 
   it("keeps M202 AI Ops route scope out of rendered React and private public artifacts", () => {
@@ -271,12 +275,7 @@ describe("backend scaffold public guardrails", () => {
     const missionChangedFiles = changedFilesSinceMissionBase();
 
     expect(missionChangedFiles).toEqual(expect.arrayContaining(expectedAiOpsRuntimeRouteFiles));
-    expect(missionChangedFiles).not.toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^src\/(App|app|components|styles|i18n)\//),
-        expect.stringMatching(/^src\/.*\.(tsx|css)$/),
-      ]),
-    );
+    expect(renderedUiRuntimeChangedFiles(missionChangedFiles)).toEqual([]);
     expect(publicTrackedFiles).not.toEqual(
       expect.arrayContaining([
         expect.stringMatching(/^(docs\/current|kitty-specs|evidence|sync|\.kittify|\.agents|AGENTS\.md)(\/|$)/),
@@ -410,12 +409,7 @@ describe("backend scaffold public guardrails", () => {
       liveTelemetryExportEnabled: false,
     });
     expect(missionChangedFiles).toEqual(expect.arrayContaining(expectedAiOpsRuntimeRouteFiles));
-    expect(missionChangedFiles).not.toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^src\/(App|app|components|styles|i18n)\//),
-        expect.stringMatching(/^src\/.*\.(tsx|css)$/),
-      ]),
-    );
+    expect(renderedUiRuntimeChangedFiles(missionChangedFiles)).toEqual([]);
     for (const dependencyName of dependencyNames) {
       for (const forbiddenFragment of forbiddenRuntimeDependencyFragments) {
         expect(dependencyName.toLowerCase()).not.toContain(forbiddenFragment);
