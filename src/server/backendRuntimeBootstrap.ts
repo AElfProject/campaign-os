@@ -139,6 +139,22 @@ export interface BackendRuntimeReadinessProjection {
     id: BackendServiceReadinessReport["queueRuntimeFoundation"]["id"];
     liveCronExecutionEnabled: false;
     liveQueuePublishingEnabled: false;
+    liveQueuePublishingReadiness: {
+      activationStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["publishingReadiness"]["activationStatus"];
+      blockerCount: number;
+      diagnosticCodes: string[];
+      livePublishAttempted: boolean;
+      liveQueuePublishingEnabled: boolean;
+      noLiveSideEffects: BackendServiceReadinessReport["queueRuntimeFoundation"]["publishingReadiness"]["noLiveSideEffects"];
+      productionReady: false;
+      publishAttemptPolicy: BackendServiceReadinessReport["queueRuntimeFoundation"]["publishingReadiness"]["publishAttemptPolicy"];
+      publishRequestEvaluated: boolean;
+      publishResultStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["publishingReadiness"]["publishResultStatus"];
+      publisherId: string;
+      publisherProvided: boolean;
+      requiredConfigKeys: string[];
+      status: BackendServiceReadinessReport["queueRuntimeFoundation"]["publishingReadiness"]["status"];
+    };
     liveSchedulerExecutionEnabled: false;
     liveWorkerExecutionEnabled: false;
     productionReady: false;
@@ -158,6 +174,19 @@ export interface BackendRuntimeReadinessProjection {
       driverOperationCount: number;
       driverProductionReady: false;
       driverProviderId: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverProviderId"];
+      driverPublishAttemptPolicy: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverPublishAttemptPolicy"];
+      driverPublishDiagnosticCodes: string[];
+      driverPublishRequestEvaluated: boolean;
+      driverPublishResultStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverPublishResultStatus"];
+      driverPublishingActivationStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverPublishingActivationStatus"];
+      driverPublishingBlockerCount: number;
+      driverPublishingLivePublishAttempted: boolean;
+      driverPublishingLiveQueuePublishingEnabled: boolean;
+      driverPublishingNoLiveSideEffects: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverPublishingNoLiveSideEffects"];
+      driverPublishingPublisherId: string;
+      driverPublishingPublisherProvided: boolean;
+      driverPublishingRequiredConfigKeys: string[];
+      driverPublishingStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverPublishingStatus"];
       driverRequiredConfigKeys: string[];
       driverSdkBindingActivationGateSatisfied: boolean;
       driverSdkBindingBlockerCount: number;
@@ -523,6 +552,22 @@ const createReadinessProjection = (
     id: backendReadiness.queueRuntimeFoundation.id,
     liveCronExecutionEnabled: backendReadiness.queueRuntimeFoundation.noLiveFlags.liveCronExecutionEnabled,
     liveQueuePublishingEnabled: backendReadiness.queueRuntimeFoundation.noLiveFlags.liveQueuePublishingEnabled,
+    liveQueuePublishingReadiness: {
+      activationStatus: backendReadiness.queueRuntimeFoundation.publishingReadiness.activationStatus,
+      blockerCount: backendReadiness.queueRuntimeFoundation.publishingReadiness.blockerCount,
+      diagnosticCodes: backendReadiness.queueRuntimeFoundation.publishingReadiness.diagnosticCodes,
+      livePublishAttempted: backendReadiness.queueRuntimeFoundation.publishingReadiness.livePublishAttempted,
+      liveQueuePublishingEnabled: backendReadiness.queueRuntimeFoundation.publishingReadiness.liveQueuePublishingEnabled,
+      noLiveSideEffects: { ...backendReadiness.queueRuntimeFoundation.publishingReadiness.noLiveSideEffects },
+      productionReady: false,
+      publishAttemptPolicy: backendReadiness.queueRuntimeFoundation.publishingReadiness.publishAttemptPolicy,
+      publishRequestEvaluated: backendReadiness.queueRuntimeFoundation.publishingReadiness.publishRequestEvaluated,
+      publishResultStatus: backendReadiness.queueRuntimeFoundation.publishingReadiness.publishResultStatus,
+      publisherId: backendReadiness.queueRuntimeFoundation.publishingReadiness.publisherId,
+      publisherProvided: backendReadiness.queueRuntimeFoundation.publishingReadiness.publisherProvided,
+      requiredConfigKeys: backendReadiness.queueRuntimeFoundation.publishingReadiness.requiredConfigKeys,
+      status: backendReadiness.queueRuntimeFoundation.publishingReadiness.status,
+    },
     liveSchedulerExecutionEnabled: backendReadiness.queueRuntimeFoundation.noLiveFlags.liveSchedulerExecutionEnabled,
     liveWorkerExecutionEnabled: backendReadiness.queueRuntimeFoundation.noLiveFlags.liveWorkerExecutionEnabled,
     productionReady: backendReadiness.queueRuntimeFoundation.productionReady,
@@ -542,6 +587,19 @@ const createReadinessProjection = (
       driverOperationCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverOperationCount,
       driverProductionReady: backendReadiness.queueRuntimeFoundation.providerAdapter.driverProductionReady,
       driverProviderId: backendReadiness.queueRuntimeFoundation.providerAdapter.driverProviderId,
+      driverPublishAttemptPolicy: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishAttemptPolicy,
+      driverPublishDiagnosticCodes: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishDiagnosticCodes,
+      driverPublishRequestEvaluated: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishRequestEvaluated,
+      driverPublishResultStatus: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishResultStatus,
+      driverPublishingActivationStatus: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishingActivationStatus,
+      driverPublishingBlockerCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishingBlockerCount,
+      driverPublishingLivePublishAttempted: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishingLivePublishAttempted,
+      driverPublishingLiveQueuePublishingEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishingLiveQueuePublishingEnabled,
+      driverPublishingNoLiveSideEffects: { ...backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishingNoLiveSideEffects },
+      driverPublishingPublisherId: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishingPublisherId,
+      driverPublishingPublisherProvided: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishingPublisherProvided,
+      driverPublishingRequiredConfigKeys: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishingRequiredConfigKeys,
+      driverPublishingStatus: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishingStatus,
       driverRequiredConfigKeys: backendReadiness.queueRuntimeFoundation.providerAdapter.driverRequiredConfigKeys,
       driverSdkBindingActivationGateSatisfied: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingActivationGateSatisfied,
       driverSdkBindingBlockerCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingBlockerCount,

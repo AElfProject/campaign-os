@@ -12,6 +12,10 @@ import {
   type QueueProviderDriverFoundationStatus,
   type QueueProviderDriverMode,
   type QueueProviderDriverOperationCapability,
+  type QueueProviderDriverPublishAttemptPolicy,
+  type QueueProviderDriverPublishPosture,
+  type QueueProviderDriverPublishResultStatus,
+  type QueueProviderDriverPublishingReadinessSummary,
   type QueueProviderDriverSdkBindingSummary,
 } from "./queueProviderDriver";
 import type { QueueDegradedOutcome } from "./queueRuntime";
@@ -130,6 +134,8 @@ export interface QueueProviderDriverSummary {
   operationCount: number;
   productionReady: false;
   providerId: string;
+  publishPosture: QueueProviderDriverPublishPosture;
+  publishingReadiness: QueueProviderDriverPublishingReadinessSummary;
   queueRouteCount: number;
   requiredConfigKeys: string[];
   sdkBinding: QueueProviderDriverSdkBindingSummary;
@@ -154,6 +160,19 @@ export interface QueueProviderAdapterReadinessProjection {
   driverOperationCount: number;
   driverProductionReady: false;
   driverProviderId: string;
+  driverPublishAttemptPolicy: QueueProviderDriverPublishAttemptPolicy;
+  driverPublishDiagnosticCodes: QueueProviderDriverPublishPosture["diagnosticCodes"];
+  driverPublishRequestEvaluated: boolean;
+  driverPublishResultStatus: QueueProviderDriverPublishResultStatus;
+  driverPublishingActivationStatus: QueueProviderDriverPublishingReadinessSummary["activationStatus"];
+  driverPublishingBlockerCount: number;
+  driverPublishingLivePublishAttempted: boolean;
+  driverPublishingLiveQueuePublishingEnabled: boolean;
+  driverPublishingNoLiveSideEffects: QueueProviderDriverPublishingReadinessSummary["noLiveSideEffects"];
+  driverPublishingPublisherId: string;
+  driverPublishingPublisherProvided: boolean;
+  driverPublishingRequiredConfigKeys: string[];
+  driverPublishingStatus: QueueProviderDriverPublishingReadinessSummary["status"];
   driverQueueRouteCount: number;
   driverRequiredConfigKeys: string[];
   driverSdkBindingBlockerCount: number;
@@ -655,6 +674,19 @@ const createReadinessProjection = ({
   driverOperationCount: driver.operationCount,
   driverProductionReady: false,
   driverProviderId: driver.providerId,
+  driverPublishAttemptPolicy: driver.publishPosture.attemptPolicy,
+  driverPublishDiagnosticCodes: [...driver.publishPosture.diagnosticCodes],
+  driverPublishRequestEvaluated: driver.publishPosture.publishRequestEvaluated,
+  driverPublishResultStatus: driver.publishPosture.resultStatus,
+  driverPublishingActivationStatus: driver.publishingReadiness.activationStatus,
+  driverPublishingBlockerCount: driver.publishingReadiness.blockerCount,
+  driverPublishingLivePublishAttempted: driver.publishPosture.livePublishAttempted,
+  driverPublishingLiveQueuePublishingEnabled: driver.publishingReadiness.liveQueuePublishingEnabled,
+  driverPublishingNoLiveSideEffects: { ...driver.publishingReadiness.noLiveSideEffects },
+  driverPublishingPublisherId: driver.publishingReadiness.publisherId,
+  driverPublishingPublisherProvided: driver.publishingReadiness.publisherProvided,
+  driverPublishingRequiredConfigKeys: [...driver.publishingReadiness.requiredConfigKeys],
+  driverPublishingStatus: driver.publishingReadiness.status,
   driverQueueRouteCount: driver.queueRouteCount,
   driverRequiredConfigKeys: driver.requiredConfigKeys,
   driverSdkBindingBlockerCount: driver.sdkBinding.blockerCount,
@@ -723,6 +755,7 @@ const createReadinessProjection = ({
     ...new Set([
       ...queueProviderAdapterProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
       ...driver.requiredConfigKeys,
+      ...driver.publishingReadiness.requiredConfigKeys,
       ...driver.sdkBinding.requiredConfigKeys,
       ...driver.sdkBinding.packageBinding.brokerConnectionRequiredConfigKeys,
     ]),
@@ -745,6 +778,17 @@ const createDriverSummary = (
   operationCount: driver.readiness.operationCount,
   productionReady: false,
   providerId: driver.providerId,
+  publishPosture: {
+    ...driver.publishPosture,
+    diagnosticCodes: [...driver.publishPosture.diagnosticCodes],
+    noLiveSideEffects: { ...driver.publishPosture.noLiveSideEffects },
+  },
+  publishingReadiness: {
+    ...driver.publishingReadiness,
+    diagnosticCodes: [...driver.publishingReadiness.diagnosticCodes],
+    noLiveSideEffects: { ...driver.publishingReadiness.noLiveSideEffects },
+    requiredConfigKeys: [...driver.publishingReadiness.requiredConfigKeys],
+  },
   queueRouteCount: driver.readiness.queueRouteCount,
   requiredConfigKeys: driver.readiness.requiredConfigKeys,
   sdkBinding: {

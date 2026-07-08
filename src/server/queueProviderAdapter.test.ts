@@ -71,6 +71,16 @@ describe("queue provider adapter foundation", () => {
       driverLiveWorkerExecutionEnabled: false,
       driverMode: "dry_run",
       driverProviderId: "local-fake",
+      driverPublishAttemptPolicy: "disabled_no_live",
+      driverPublishRequestEvaluated: false,
+      driverPublishResultStatus: "not_requested",
+      driverPublishingActivationStatus: "disabled",
+      driverPublishingBlockerCount: 0,
+      driverPublishingLivePublishAttempted: false,
+      driverPublishingLiveQueuePublishingEnabled: false,
+      driverPublishingPublisherId: "not_configured",
+      driverPublishingPublisherProvided: false,
+      driverPublishingStatus: "disabled",
       driverSdkBindingBlockerCount: 0,
       driverSdkBindingDisabledLiveOperationCount: queueProviderSdkBindingOperationCapabilities.length,
       driverSdkBindingId: "local-stub-queue-provider-sdk-binding",
@@ -124,6 +134,21 @@ describe("queue provider adapter foundation", () => {
       liveQueuePublishingEnabled: false,
       liveWorkerExecutionEnabled: false,
       mode: "dry_run",
+      publishPosture: {
+        attemptPolicy: "disabled_no_live",
+        livePublishAttempted: false,
+        productionWriteAttempted: false,
+        publishRequestEvaluated: false,
+        published: false,
+        resultStatus: "not_requested",
+      },
+      publishingReadiness: {
+        activationStatus: "disabled",
+        liveQueuePublishingEnabled: false,
+        publishAttemptAllowed: false,
+        publisherProvided: false,
+        status: "disabled",
+      },
       productionReady: false,
       providerId: "local-fake",
       sdkBinding: expect.objectContaining({
@@ -494,6 +519,24 @@ describe("queue provider adapter foundation", () => {
     expect(workerLeaseOperationCapabilities.every((item) => item.liveEnabled === false)).toBe(true);
     expect(provider.readiness.liveQueuePublishingEnabled).toBe(false);
     expect(provider.readiness.liveWorkerExecutionEnabled).toBe(false);
+    expect(provider.readiness.driverPublishingActivationStatus).toBe("activation_required");
+    expect(provider.readiness.driverPublishingLiveQueuePublishingEnabled).toBe(false);
+    expect(provider.readiness.driverPublishingLivePublishAttempted).toBe(false);
+    expect(provider.readiness.driverPublishAttemptPolicy).toBe("blocked_until_ready");
+    expect(provider.readiness.driverPublishResultStatus).toBe("not_requested");
+    expect(provider.readiness.driverPublishingStatus).toBe("blocked");
+    expect(provider.readiness.driverPublishingRequiredConfigKeys).toEqual(
+      expect.arrayContaining([
+        "CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT",
+        "CAMPAIGN_OS_LIVE_QUEUE_PUBLISHER",
+        "CAMPAIGN_OS_PAYLOAD_REFERENCE_POLICY",
+        "CAMPAIGN_OS_PUBLISHER_REDACTION_POLICY",
+      ]),
+    );
+    expect(provider.driver.liveWorkerExecutionEnabled).toBe(false);
+    expect(provider.driver.publishPosture.productionWriteAttempted).toBe(false);
+    expect(provider.driver.publishingReadiness.liveQueuePublishingEnabled).toBe(false);
+    expect(Object.values(provider.readiness.driverPublishingNoLiveSideEffects).every((value) => value === false)).toBe(true);
     expect(leaseStore.readiness.liveQueuePublishingEnabled).toBe(false);
     expect(leaseStore.readiness.liveWorkerExecutionEnabled).toBe(false);
   });

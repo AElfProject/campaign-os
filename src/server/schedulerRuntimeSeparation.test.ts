@@ -26,6 +26,10 @@ import {
   evaluateWorkerIdempotencyDryRun,
   workerIdempotencyStoreNoLiveFlags,
 } from "./workerIdempotencyStore";
+import {
+  createLiveQueuePublishingReadiness,
+  type LiveQueuePublisher,
+} from "./liveQueuePublishingReadiness";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
 import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
@@ -47,8 +51,12 @@ const bullmqConstructionReadyEnv = {
   CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
   CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:queue-package",
   CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_LIVE_QUEUE_PUBLISHER: "test-live-queue-publisher",
+  CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT: "explicitly-enabled",
   CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:queue-package",
   CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "runbook-ref:queue-package",
+  CAMPAIGN_OS_PAYLOAD_REFERENCE_POLICY: "payload-reference-policy:hash-or-reference",
+  CAMPAIGN_OS_PUBLISHER_REDACTION_POLICY: "publisher-redaction:strict",
   CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-package",
   CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
   CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
@@ -66,6 +74,15 @@ const constructedBullmqFactory: BullmqConstructionFactory = {
     queueEvents: { clientId: "queue-events-ref", constructed: true },
     worker: { clientId: "worker-client-ref", constructed: true },
   }),
+};
+
+const liveQueuePublisher: LiveQueuePublisher = {
+  publish: () => ({
+    operationId: "publish-verification-jobs-task-verification-worker",
+    providerReference: "provider-ref:accepted",
+    status: "accepted",
+  }),
+  publisherId: "test-live-queue-publisher",
 };
 
 const serializedSchedulerOutput = () => {
@@ -425,6 +442,92 @@ describe("scheduler runtime separation boundaries", () => {
         expect.objectContaining({ liveEnabled: false, operation: "dead_letter" }),
       ]),
     );
+  });
+
+  it("keeps ready live publishing metadata from enabling worker, consume, ack, retry, or scheduler execution", () => {
+    const publishingReadiness = createLiveQueuePublishingReadiness({
+      constructionFactory: constructedBullmqFactory,
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+      publisher: liveQueuePublisher,
+    });
+    const scheduler = createSchedulerRuntimeFoundation({
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+    });
+    const queue = queueRuntime.createQueueRuntimeFoundation({
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+    });
+    const triggerResult = dryRunSchedulerTrigger({
+      idempotencyKey: "idempotency:task-verification-on-request:campaign-1",
+      jobId: "task-verification-worker",
+      queueHandoffReference: "queue-handoff:task-verification-worker-queue-plan",
+      scheduleId: "task-verification-on-request",
+      scheduledFor: "2026-07-07T13:30:00Z",
+      traceId: "trace-ready-publishing-scheduler-separation",
+      triggerSource: "api_request",
+      windowEnd: "2026-07-07T13:35:00Z",
+      windowStart: "2026-07-07T13:25:00Z",
+    });
+    const enqueueResult = queueRuntime.dryRunQueueEnqueue({
+      attempt: 1,
+      idempotencyKey: "idempotency:task-verification-on-request:campaign-1",
+      jobId: "task-verification-worker",
+      payloadReference: "payload-ref:sha256:task-verification-safe",
+      queueId: "verification-jobs",
+      requestedAt: "2026-07-07T13:30:00Z",
+      traceId: "trace-ready-publishing-queue-separation",
+    });
+
+    expect(publishingReadiness).toMatchObject({
+      liveQueuePublishingEnabled: true,
+      publishAttemptAllowed: true,
+      status: "ready",
+      valid: true,
+    });
+    expect(scheduler.readiness).toMatchObject({
+      liveCronExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
+    expect(scheduler.noLiveFlags.liveWorkerExecutionEnabled).toBe(false);
+    expect(scheduler.registrations.every((registration) =>
+      registration.liveCronExecutionEnabled === false
+      && registration.liveQueuePublishingEnabled === false
+      && registration.liveSchedulerExecutionEnabled === false
+      && registration.queueHandoff.liveQueuePublishingEnabled === false
+    )).toBe(true);
+    expect(queue.providerAdapter.operationCapabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ liveEnabled: false, operation: "ack" }),
+        expect.objectContaining({ liveEnabled: false, operation: "dead_letter" }),
+        expect.objectContaining({ liveEnabled: false, operation: "nack" }),
+        expect.objectContaining({ liveEnabled: false, operation: "retry" }),
+      ]),
+    );
+    expect(queue.readiness).toMatchObject({
+      liveQueuePublishingEnabled: false,
+    });
+    expect(queue.noLiveFlags).toMatchObject({
+      liveSchedulerExecutionEnabled: false,
+      liveWorkerExecutionEnabled: false,
+    });
+    expect(triggerResult).toMatchObject({
+      liveCronExecutionEnabled: false,
+      liveExecutionAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
+    expect(enqueueResult).toMatchObject({
+      livePublishAttempted: false,
+      liveQueuePublishingEnabled: false,
+    });
+    expect(enqueueResult.providerDriverOperation).toMatchObject({
+      livePublishAttempted: false,
+      productionWriteAttempted: false,
+      status: "accepted_local_fake",
+    });
   });
 
   it("keeps queue provider and scheduler readiness from satisfying idempotency readiness", () => {
