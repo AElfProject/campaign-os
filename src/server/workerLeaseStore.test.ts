@@ -47,6 +47,13 @@ const queueProviderPackageBindingReadyEnv = {
   CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
   CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
   CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-package-binding-production",
+  CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY: "circuit-closed",
+  CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS: "500",
+  CAMPAIGN_OS_REDIS_CREDENTIALS: "redis-auth-ref:queue-package",
+  CAMPAIGN_OS_REDIS_DATABASE: "redis-db-0",
+  CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY: "retry-exponential",
+  CAMPAIGN_OS_REDIS_TLS_POLICY: "tls-required",
   CAMPAIGN_OS_REDIS_URL: "redis-ref:campaign-os",
   CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:queue-package",
   CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:queue-package",
@@ -224,12 +231,24 @@ describe("worker lease store foundation", () => {
     expect(packageBinding).toMatchObject({
       brokerConnectionPosture: "reference_only",
       liveBrokerConnectionAttempted: false,
+      liveBrokerHealthCheckAttempted: false,
       liveQueuePublishingEnabled: false,
       liveWorkerExecutionEnabled: false,
       productionReady: false,
+      queueClientConstructed: false,
+      queueEventsConstructed: false,
       sdkClientConstructed: false,
       status: "scaffolded",
       valid: true,
+      workerConstructed: false,
+    });
+    expect(packageBinding.brokerConnection).toMatchObject({
+      healthCheckMode: "metadata_only",
+      liveBrokerHealthCheckAttempted: false,
+      queueClientConstructed: false,
+      queueEventsConstructed: false,
+      status: "scaffolded",
+      workerConstructed: false,
     });
     expect(packageBinding.definition.packageName).toBe("bullmq");
     expect(packageBinding.readiness.packageName).toBe("bullmq");

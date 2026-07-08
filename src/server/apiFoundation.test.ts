@@ -152,6 +152,7 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("verification")?.notes).toContain("queue runtime");
     expect(surfaceById.get("verification")?.notes).toContain("queue provider adapter activation");
     expect(surfaceById.get("verification")?.notes).toContain("BullMQ Redis-compatible package binding");
+    expect(surfaceById.get("verification")?.notes).toContain("Redis broker readiness metadata");
     expect(surfaceById.get("verification")?.notes).toContain("Redis broker reference");
     expect(surfaceById.get("verification")?.notes).toContain("queue provider SDK binding");
     expect(surfaceById.get("verification")?.notes).toContain("worker lease store metadata");
@@ -169,6 +170,7 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("export")?.notes).toContain("queue runtime");
     expect(surfaceById.get("export")?.notes).toContain("queue provider adapter activation");
     expect(surfaceById.get("export")?.notes).toContain("BullMQ Redis-compatible package binding");
+    expect(surfaceById.get("export")?.notes).toContain("Redis broker readiness metadata");
     expect(surfaceById.get("export")?.notes).toContain("queue provider SDK binding");
     expect(surfaceById.get("points-ranking")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["contract_writer", "production_database", "scheduler", "worker_queue"]),
@@ -187,6 +189,7 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("risk-scoring")?.notes).toContain("queue runtime");
     expect(surfaceById.get("risk-scoring")?.notes).toContain("queue provider adapter activation");
     expect(surfaceById.get("risk-scoring")?.notes).toContain("BullMQ Redis-compatible package binding");
+    expect(surfaceById.get("risk-scoring")?.notes).toContain("Redis broker readiness metadata");
     expect(surfaceById.get("risk-scoring")?.notes).toContain("queue provider SDK binding");
     expect(surfaceById.get("ai-ops")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
@@ -207,6 +210,8 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("runtime-observability")?.notes).toContain("worker lease readiness metadata");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("worker lease store activation");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("BullMQ Redis-compatible package binding readiness metadata");
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("Redis broker readiness metadata");
+    expect(surfaceById.get("runtime-observability")?.notes).toContain("live broker health-check");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("live broker connection");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("queue provider adapter readiness");
     expect(surfaceById.get("runtime-observability")?.notes).toContain("queue provider package binding");
@@ -216,6 +221,7 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("service-registry")?.notes).toContain("provider registry");
     expect(surfaceById.get("service-registry")?.notes).toContain("queue provider adapter readiness");
     expect(surfaceById.get("service-registry")?.notes).toContain("BullMQ Redis-compatible package binding readiness");
+    expect(surfaceById.get("service-registry")?.notes).toContain("Redis broker readiness metadata");
     expect(surfaceById.get("service-registry")?.notes).toContain("queue provider SDK binding readiness");
   });
 

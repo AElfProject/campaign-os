@@ -20,6 +20,10 @@ import {
   type QueueProviderPackagePreconditionArea,
 } from "./queueProviderPackageBinding";
 import {
+  redisBrokerConnectionProductionPreconditions,
+  type RedisBrokerConnectionPreconditionArea,
+} from "./redisBrokerConnectionReadiness";
+import {
   queueRuntimeProductionPreconditions,
   type QueueRuntimePreconditionArea,
 } from "./queueRuntime";
@@ -277,6 +281,26 @@ const queueProviderPackageConfigCategory = (
   return "scheduler";
 };
 
+const redisBrokerConnectionConfigCategory = (
+  area: RedisBrokerConnectionPreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (area === "observability") {
+    return "observability";
+  }
+
+  return "provider";
+};
+
+const redisBrokerConnectionDependencyArea = (
+  area: RedisBrokerConnectionPreconditionArea,
+): ProductionRuntimeDependencyArea => {
+  if (area === "observability") {
+    return "observability";
+  }
+
+  return "provider";
+};
+
 const normalizeQueueProviderSdkBindingConfigKey = (key: string): string =>
   key === "CAMPAIGN_OS_QUEUE_PROVIDER_BINDING" ? "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING" : key;
 
@@ -482,6 +506,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
       ),
     ),
   ),
+  ...redisBrokerConnectionProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        redisBrokerConnectionConfigCategory(precondition.area),
+        precondition.status,
+        "production-required",
+      ),
+    ),
+  ),
   ...observabilityExporterProductionPreconditions.flatMap((precondition) =>
     precondition.requiredConfigKeys.map((key) =>
       configKey(
@@ -650,6 +684,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     attachPoint: "src/server/queueProviderPackageBinding.ts",
     blockedBy: [...precondition.requiredConfigKeys],
     id: `queue-provider-package-${precondition.id}`,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
+  ...redisBrokerConnectionProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: redisBrokerConnectionDependencyArea(precondition.area),
+    attachPoint: "src/server/redisBrokerConnectionReadiness.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: `redis-broker-${precondition.id}`,
     requiredBeforeProduction: true,
     status: precondition.status,
   })),

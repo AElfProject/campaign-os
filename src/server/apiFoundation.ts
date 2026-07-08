@@ -702,7 +702,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["provider_adapters", "worker_queue"],
     label: "Verification",
-    notes: "Local seeded verification exists; provider/indexer handoff, provider evidence, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker reference, queue provider SDK binding, scheduler runtime, retry/backoff, worker idempotency store readiness metadata, worker lease store metadata, and dead-letter handling are deferred with pending/manual_review degradation.",
+    notes: "Local seeded verification exists; provider/indexer handoff, provider evidence, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, Redis broker reference, queue provider SDK binding, scheduler runtime, retry/backoff, worker idempotency store readiness metadata, worker lease store metadata, and dead-letter handling are deferred with pending/manual_review degradation.",
     routeIds: ["tasks.verify"],
     serviceId: "verification-service",
     state: "implemented_local",
@@ -720,7 +720,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["production_database", "scheduler", "worker_queue"],
     label: "Analytics",
-    notes: "Local analytics summary exists; warehouse-backed analytics ingestion, scheduler runtime, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, queue provider SDK binding, dead-letter queue, worker idempotency store readiness metadata, and observability exporter are deferred.",
+    notes: "Local analytics summary exists; warehouse-backed analytics ingestion, scheduler runtime, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, dead-letter queue, worker idempotency store readiness metadata, and observability exporter are deferred.",
     routeIds: ["campaigns.analytics"],
     serviceId: "runtime-observability",
     state: "implemented_local",
@@ -738,7 +738,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["object_storage_export", "contract_writer", "scheduler", "worker_queue"],
     label: "Export",
-    notes: "Local export preview exists; object storage adapter fulfillment, export preparation scheduler runtime, queue runtime handoff, queue provider adapter activation, BullMQ Redis-compatible package binding, queue provider SDK binding, worker idempotency store readiness metadata, dead-letter queue, observability exporter, and contract root writes are deferred.",
+    notes: "Local export preview exists; object storage adapter fulfillment, export preparation scheduler runtime, queue runtime handoff, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, worker idempotency store readiness metadata, dead-letter queue, observability exporter, and contract root writes are deferred.",
     routeIds: ["campaigns.export.preview"],
     serviceId: "export-service",
     state: "implemented_local",
@@ -747,7 +747,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["production_database", "contract_writer", "scheduler", "worker_queue"],
     label: "Points / Ranking",
-    notes: "Topology exists; production ledger, ranking persistence, reward handoff scheduler runtime, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, queue provider SDK binding, worker idempotency store readiness metadata, dead-letter queue, observability exporter, and optional root publication are deferred.",
+    notes: "Topology exists; production ledger, ranking persistence, reward handoff scheduler runtime, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, worker idempotency store readiness metadata, dead-letter queue, observability exporter, and optional root publication are deferred.",
     routeIds: [],
     serviceId: "points-ranking-service",
     state: "production_shaped_deferred",
@@ -765,7 +765,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["production_database", "provider_adapters", "scheduler", "worker_queue"],
     label: "Risk Scoring",
-    notes: "Topology exists; analytics warehouse adapter ingestion, stale review cleanup scheduler runtime, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, queue provider SDK binding, worker idempotency store readiness metadata, worker lease, dead-letter handling, and scoring workers are deferred.",
+    notes: "Topology exists; analytics warehouse adapter ingestion, stale review cleanup scheduler runtime, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, worker idempotency store readiness metadata, worker lease, dead-letter handling, and scoring workers are deferred.",
     routeIds: [],
     serviceId: "risk-scoring-service",
     state: "production_shaped_deferred",
@@ -774,7 +774,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["provider_adapters", "scheduler", "worker_queue"],
     label: "AI Ops",
-    notes: "Topology exists; AI provider adapter calls, approval flow, scheduler runtime, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, queue provider SDK binding, worker idempotency store readiness metadata, observability exporter, and worker execution are deferred.",
+    notes: "Topology exists; AI provider adapter calls, approval flow, scheduler runtime, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, worker idempotency store readiness metadata, observability exporter, and worker execution are deferred.",
     routeIds: [],
     serviceId: "ai-ops-service",
     state: "production_shaped_deferred",
@@ -783,7 +783,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["provider_adapters"],
     label: "Service Registry",
-    notes: "Local service readiness metadata exists; provider registry resolution, queue provider adapter readiness, BullMQ Redis-compatible package binding readiness, queue provider SDK binding readiness, worker idempotency store readiness metadata, and live adapter activation are deferred.",
+    notes: "Local service readiness metadata exists; provider registry resolution, queue provider adapter readiness, BullMQ Redis-compatible package binding readiness, Redis broker readiness metadata, queue provider SDK binding readiness, worker idempotency store readiness metadata, and live adapter activation are deferred.",
     routeIds: ["runtime.services"],
     serviceId: "service-registry",
     state: "implemented_local",
@@ -792,7 +792,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["scheduler", "worker_queue", "sensitive_material_boundary"],
     label: "Runtime Observability",
-    notes: "Local health, contracts, route coverage, topology reporting, BullMQ Redis-compatible package binding readiness metadata, queue provider SDK binding readiness metadata, worker idempotency store readiness metadata, worker lease readiness metadata, and observability exporter readiness metadata exist; live broker connection, worker execution, live telemetry export, metrics sink writes, structured logs, traces, alerts, and retry/dead-letter delivery remain disabled while contract sync handoff depends on deferred scheduler runtime, queue runtime, queue provider adapter readiness, queue provider package binding, queue provider SDK binding, worker idempotency store activation, worker lease store activation, dead-letter queue, and observability exporter.",
+    notes: "Local health, contracts, route coverage, topology reporting, BullMQ Redis-compatible package binding readiness metadata, Redis broker readiness metadata, queue provider SDK binding readiness metadata, worker idempotency store readiness metadata, worker lease readiness metadata, and observability exporter readiness metadata exist; live broker health-check, live broker connection, worker execution, live telemetry export, metrics sink writes, structured logs, traces, alerts, and retry/dead-letter delivery remain disabled while contract sync handoff depends on deferred scheduler runtime, queue runtime, queue provider adapter readiness, queue provider package binding, queue provider SDK binding, worker idempotency store activation, worker lease store activation, dead-letter queue, and observability exporter.",
     routeIds: ["runtime.health", "runtime.contracts"],
     serviceId: "runtime-observability",
     state: "implemented_local",

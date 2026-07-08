@@ -3,6 +3,7 @@ import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdap
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
 import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
+import { redisBrokerConnectionProductionPreconditions } from "./redisBrokerConnectionReadiness";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 import { workerIdempotencyStoreProductionPreconditions } from "./workerIdempotencyStore";
@@ -245,8 +246,13 @@ const topologySafeQueueProviderSdkBindingBlockerId = (id: string): string =>
   `queue-provider-sdk-binding-${id}`;
 const topologySafeQueueProviderPackageBlockerId = (id: string): string =>
   `queue-provider-package-${id}`;
+const topologySafeRedisBrokerConnectionBlockerId = (id: string): string =>
+  `redis-broker-${id}`;
 const observabilityExporterBlockerIds = observabilityExporterProductionPreconditions.map(
   (precondition) => precondition.id,
+);
+const redisBrokerConnectionBlockerIds = redisBrokerConnectionProductionPreconditions.map(
+  (precondition) => topologySafeRedisBrokerConnectionBlockerId(precondition.id),
 );
 
 export const backendServiceBoundaries = [
@@ -817,6 +823,7 @@ export const backendDeploymentUnits = [
       "src/server/queueProviderDriver.ts",
       "src/server/queueProviderSdkBinding.ts",
       "src/server/queueProviderPackageBinding.ts",
+      "src/server/redisBrokerConnectionReadiness.ts",
       "src/server/queueProviderAdapter.ts",
       "src/server/queueRuntime.ts",
       "src/server/workerIdempotencyStore.ts",
@@ -840,6 +847,7 @@ export const backendDeploymentUnits = [
       ...queueProviderPackageProductionPreconditions.map((precondition) =>
         topologySafeQueueProviderPackageBlockerId(precondition.id)
       ),
+      ...redisBrokerConnectionBlockerIds,
       ...workerLeaseStoreProductionPreconditions.map((precondition) => `worker-lease-store-${precondition.id}`),
       ...workerIdempotencyStoreProductionPreconditions.map(
         (precondition) => `worker-idempotency-store-${precondition.id}`,

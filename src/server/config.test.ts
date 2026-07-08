@@ -8,6 +8,7 @@ import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdap
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
 import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
+import { redisBrokerConnectionProductionPreconditions } from "./redisBrokerConnectionReadiness";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
@@ -78,6 +79,13 @@ describe("backend config contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE",
         "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_KIND",
+        "CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT",
+        "CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY",
+        "CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS",
+        "CAMPAIGN_OS_REDIS_CREDENTIALS",
+        "CAMPAIGN_OS_REDIS_DATABASE",
+        "CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY",
+        "CAMPAIGN_OS_REDIS_TLS_POLICY",
         "CAMPAIGN_OS_REDIS_URL",
         "CAMPAIGN_OS_SCHEDULER_PROVIDER",
         "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
@@ -297,6 +305,9 @@ describe("backend config contract", () => {
     const queueProviderPackageConfigKeys = [
       ...new Set(queueProviderPackageProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
+    const redisBrokerConnectionConfigKeys = [
+      ...new Set(redisBrokerConnectionProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
     const secretQueueProviderValues = {
       CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
       CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:queue-package",
@@ -314,6 +325,13 @@ describe("backend config contract", () => {
       CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-package-binding-production",
       CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING: "production-provider-sdk-binding",
       CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE: "package-ref:@provider/queue-sdk",
+      CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT: "explicitly-enabled",
+      CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY: "circuit:closed",
+      CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS: "500",
+      CAMPAIGN_OS_REDIS_CREDENTIALS: "redis-credential-ref:queue-package",
+      CAMPAIGN_OS_REDIS_DATABASE: "redis-db:0",
+      CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY: "retry:exponential",
+      CAMPAIGN_OS_REDIS_TLS_POLICY: "tls:required",
       CAMPAIGN_OS_REDIS_URL: "redis://redis-user:redis-pass@redis.invalid:6379/0?token=redis-secret",
       CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:queue-package",
       CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:queue-package",
@@ -333,6 +351,9 @@ describe("backend config contract", () => {
     expect(contract.productionReadiness.requiredConfigKeys).toEqual(
       expect.arrayContaining(queueProviderPackageConfigKeys),
     );
+    expect(contract.productionReadiness.requiredConfigKeys).toEqual(
+      expect.arrayContaining(redisBrokerConnectionConfigKeys),
+    );
     expect(contract.productionReadiness.missingConfigKeys).not.toEqual(
       expect.arrayContaining([
         "CAMPAIGN_OS_QUEUE_PROVIDER",
@@ -344,6 +365,13 @@ describe("backend config contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+        "CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT",
+        "CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY",
+        "CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS",
+        "CAMPAIGN_OS_REDIS_CREDENTIALS",
+        "CAMPAIGN_OS_REDIS_DATABASE",
+        "CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY",
+        "CAMPAIGN_OS_REDIS_TLS_POLICY",
         "CAMPAIGN_OS_REDIS_URL",
       ]),
     );

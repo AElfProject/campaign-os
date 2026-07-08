@@ -156,6 +156,12 @@ export interface QueueProviderDriverSdkBindingSummary {
   activationGateSatisfied: boolean;
   bindingId: string;
   blockerCount: number;
+  brokerConnectionBlockerCount: number;
+  brokerConnectionDiagnosticCodes: QueueProviderSdkPackageBindingSummary["brokerConnectionDiagnosticCodes"];
+  brokerConnectionHealthCheckMode: QueueProviderSdkPackageBindingSummary["brokerConnectionHealthCheckMode"];
+  brokerConnectionId: string;
+  brokerConnectionRequiredConfigKeys: string[];
+  brokerConnectionStatus: QueueProviderSdkPackageBindingSummary["brokerConnectionStatus"];
   deadLetterRouteCount: number;
   diagnosticCodes: QueueProviderSdkBindingDiagnosticCode[];
   disabledLiveOperationCount: number;
@@ -654,6 +660,12 @@ function createSdkBindingSummary(
     activationGateSatisfied: sdkBinding.readiness.activationGateSatisfied,
     bindingId: sdkBinding.bindingId,
     blockerCount: sdkBinding.blockerCount,
+    brokerConnectionBlockerCount: sdkBinding.readiness.packageBindingBrokerConnectionBlockerCount,
+    brokerConnectionDiagnosticCodes: [...sdkBinding.readiness.packageBindingBrokerConnectionDiagnosticCodes],
+    brokerConnectionHealthCheckMode: sdkBinding.readiness.packageBindingBrokerConnectionHealthCheckMode,
+    brokerConnectionId: sdkBinding.readiness.packageBindingBrokerConnectionId,
+    brokerConnectionRequiredConfigKeys: [...sdkBinding.readiness.packageBindingBrokerConnectionRequiredConfigKeys],
+    brokerConnectionStatus: sdkBinding.readiness.packageBindingBrokerConnectionStatus,
     deadLetterRouteCount: sdkBinding.readiness.deadLetterRouteCount,
     diagnosticCodes: sdkBinding.diagnosticCodes,
     disabledLiveOperationCount: sdkBinding.readiness.disabledLiveOperationCount,
@@ -680,6 +692,8 @@ function cloneSdkBindingSummary(
 ): QueueProviderDriverSdkBindingSummary {
   return {
     ...sdkBinding,
+    brokerConnectionDiagnosticCodes: [...sdkBinding.brokerConnectionDiagnosticCodes],
+    brokerConnectionRequiredConfigKeys: [...sdkBinding.brokerConnectionRequiredConfigKeys],
     diagnosticCodes: [...sdkBinding.diagnosticCodes],
     operationCapabilities: sdkBinding.operationCapabilities.map((item) => ({ ...item })),
     packageBinding: clonePackageBindingSummary(sdkBinding.packageBinding),
