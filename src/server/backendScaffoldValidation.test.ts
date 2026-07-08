@@ -78,14 +78,22 @@ const forbiddenRuntimeDependencyFragments = [
 ];
 
 const expectedAiOpsRuntimeRouteFiles = [
+  "src/domain/apiSkillContracts.test.ts",
+  "src/domain/apiSkillContracts.ts",
+  "src/domain/campaign.ts",
+  "src/domain/campaignService.test.ts",
+  "src/domain/campaignService.ts",
+  "src/domain/types.ts",
+  "src/server/apiFoundation.test.ts",
   "src/server/apiFoundation.ts",
   "src/server/apiRuntime.test.ts",
   "src/server/handlers.ts",
   "src/server/routes.test.ts",
   "src/server/routes.ts",
+  "src/server/servicePorts.test.ts",
   "src/server/servicePorts.ts",
+  "src/server/topology.test.ts",
   "src/server/topology.ts",
-  "src/server/validation.ts",
 ];
 
 const providerHttpReadyEnv = {
