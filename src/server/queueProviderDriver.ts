@@ -1,5 +1,18 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import {
+  createLiveQueuePublishingReadiness,
+  evaluateLiveQueuePublishRequest,
+  type LiveQueuePublishRequest,
+  type LiveQueuePublishResult,
+  type LiveQueuePublisher,
+  type LiveQueuePublishingActivationStatus,
+  type LiveQueuePublishingDiagnosticCode,
+  type LiveQueuePublishingMode,
+  type LiveQueuePublishingNoLiveSideEffects,
+  type LiveQueuePublishingReadinessSummary,
+  type LiveQueuePublishingStatus,
+} from "./liveQueuePublishingReadiness";
+import {
   createQueueProviderSdkBindingFoundation,
   type QueueProviderSdkBindingDiagnosticCode,
   type QueueProviderSdkBindingFoundationStatus,
@@ -65,6 +78,12 @@ export type QueueProviderDriverPreconditionArea =
   | "retry"
   | "runbook";
 export type QueueProviderDriverHealthStatus = "local_ok" | "metadata_only" | "blocked";
+export type QueueProviderDriverPublishAttemptPolicy =
+  | "disabled_no_live"
+  | "blocked_until_ready"
+  | "request_required"
+  | "request_evaluated";
+export type QueueProviderDriverPublishResultStatus = "not_requested" | LiveQueuePublishResult["status"];
 
 export interface QueueProviderDriverNoLiveFlags {
   liveAiCallsEnabled: false;
@@ -129,6 +148,38 @@ export interface QueueProviderDriverHealthCheck {
   status: QueueProviderDriverHealthStatus;
 }
 
+export interface QueueProviderDriverPublishingReadinessSummary {
+  activationStatus: LiveQueuePublishingActivationStatus;
+  blockerCount: number;
+  diagnosticCodes: LiveQueuePublishingDiagnosticCode[];
+  livePublishAttempted: boolean;
+  liveQueuePublishingEnabled: boolean;
+  mode: LiveQueuePublishingMode;
+  noLiveSideEffects: LiveQueuePublishingNoLiveSideEffects;
+  productionReady: false;
+  publishAttemptAllowed: boolean;
+  publisherId: string;
+  publisherProvided: boolean;
+  requiredConfigKeys: string[];
+  status: LiveQueuePublishingStatus;
+  valid: boolean;
+}
+
+export interface QueueProviderDriverPublishPosture {
+  attemptPolicy: QueueProviderDriverPublishAttemptPolicy;
+  diagnosticCodes: LiveQueuePublishingDiagnosticCode[];
+  idempotencyReferenceRequired: true;
+  livePublishAttempted: boolean;
+  noLiveSideEffects: LiveQueuePublishingNoLiveSideEffects;
+  payloadReferenceOrHashRequired: true;
+  productionWriteAttempted: false;
+  publishRequestEvaluated: boolean;
+  published: boolean;
+  resultStatus: QueueProviderDriverPublishResultStatus;
+  safeIdempotencyReferenceRequired: true;
+  safePayloadReferenceRequired: true;
+}
+
 export interface QueueProviderDriverReadinessProjection {
   activationGateSatisfied: boolean;
   blockerCount: number;
@@ -143,6 +194,19 @@ export interface QueueProviderDriverReadinessProjection {
   operationCount: number;
   productionReady: false;
   providerId: string;
+  publishAttemptPolicy: QueueProviderDriverPublishAttemptPolicy;
+  publishDiagnosticCodes: LiveQueuePublishingDiagnosticCode[];
+  publishRequestEvaluated: boolean;
+  publishResultStatus: QueueProviderDriverPublishResultStatus;
+  publishingActivationStatus: LiveQueuePublishingActivationStatus;
+  publishingBlockerCount: number;
+  publishingLivePublishAttempted: boolean;
+  publishingLiveQueuePublishingEnabled: boolean;
+  publishingNoLiveSideEffects: LiveQueuePublishingNoLiveSideEffects;
+  publishingPublisherId: string;
+  publishingPublisherProvided: boolean;
+  publishingRequiredConfigKeys: string[];
+  publishingStatus: LiveQueuePublishingStatus;
   queueRouteCount: number;
   requiredConfigKeys: string[];
   sdkBinding: QueueProviderDriverSdkBindingSummary;
@@ -200,6 +264,8 @@ export interface QueueProviderDriverRegistration {
   healthCheck: QueueProviderDriverHealthCheck;
   mode: QueueProviderDriverMode;
   operationCapabilities: QueueProviderDriverOperationCapability[];
+  publishPosture: QueueProviderDriverPublishPosture;
+  publishingReadiness: QueueProviderDriverPublishingReadinessSummary;
   providerId: string;
   queueRoutes: QueueProviderDriverQueueRoute[];
   requiredConfigKeys: string[];
@@ -215,6 +281,8 @@ export interface QueueProviderDriverFoundationSummary extends QueueProviderDrive
   preconditions: QueueProviderDriverProductionPrecondition[];
   productionReady: false;
   profileId: QueueProviderDriverProfileId;
+  publishPosture: QueueProviderDriverPublishPosture;
+  publishingReadiness: QueueProviderDriverPublishingReadinessSummary;
   readiness: QueueProviderDriverReadinessProjection;
   sdkBinding: QueueProviderDriverSdkBindingSummary;
   valid: boolean;
@@ -223,6 +291,9 @@ export interface QueueProviderDriverFoundationSummary extends QueueProviderDrive
 export interface CreateQueueProviderDriverFoundationOptions {
   driverId?: string;
   env?: Record<string, unknown>;
+  liveQueuePublisher?: LiveQueuePublisher;
+  liveQueuePublishRequest?: LiveQueuePublishRequest;
+  liveQueuePublishingReadiness?: LiveQueuePublishingReadinessSummary;
   mode?: string;
   profileId?: string;
   providerId?: string;
@@ -356,6 +427,18 @@ export const createQueueProviderDriverFoundation = (
     providerId: mapDriverProviderToSdkBindingProvider(providerResolution.providerId),
   });
   const sdkBinding = createSdkBindingSummary(sdkBindingFoundation);
+  const liveQueuePublishingReadiness = options.liveQueuePublishingReadiness
+    ?? createLiveQueuePublishingReadiness({
+      env,
+      profileId: profileResolution.profileId,
+      publisher: options.liveQueuePublisher,
+    });
+  const publishingReadiness = createPublishingReadinessSummary(liveQueuePublishingReadiness);
+  const publishPosture = createPublishPosture({
+    liveQueuePublisher: options.liveQueuePublisher,
+    liveQueuePublishRequest: options.liveQueuePublishRequest,
+    readiness: liveQueuePublishingReadiness,
+  });
   const activationGateSatisfied = isActivationGateSatisfied(env);
   const productionDiagnostics =
     profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
@@ -386,6 +469,8 @@ export const createQueueProviderDriverFoundation = (
     driverId: driverResolution.driverId,
     healthCheck,
     mode: modeResolution.mode,
+    publishPosture,
+    publishingReadiness,
     providerId: providerResolution.providerId,
     status,
   });
@@ -395,6 +480,8 @@ export const createQueueProviderDriverFoundation = (
     diagnostics,
     driverId: driverResolution.driverId,
     mode: modeResolution.mode,
+    publishPosture,
+    publishingReadiness,
     providerId: providerResolution.providerId,
     sdkBinding,
     status,
@@ -411,6 +498,8 @@ export const createQueueProviderDriverFoundation = (
     preconditions: queueProviderDriverProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
     profileId: profileResolution.profileId,
+    publishPosture,
+    publishingReadiness,
     readiness,
     sdkBinding,
     valid,
@@ -428,6 +517,10 @@ export const getQueueProviderDriverRegistration = (
       driverId: LOCAL_FAKE_DRIVER_ID,
       healthCheck: createHealthCheck("local_ready"),
       mode: "dry_run",
+      publishPosture: createPublishPosture({
+        readiness: createLiveQueuePublishingReadiness({ profileId: "local-review" }),
+      }),
+      publishingReadiness: createPublishingReadinessSummary(createLiveQueuePublishingReadiness({ profileId: "local-review" })),
       providerId: LOCAL_FAKE_PROVIDER_ID,
       status: "local_ready",
     });
@@ -439,6 +532,10 @@ export const getQueueProviderDriverRegistration = (
       driverId: METADATA_DRIVER_ID,
       healthCheck: createHealthCheck("scaffolded"),
       mode: "metadata_only",
+      publishPosture: createPublishPosture({
+        readiness: createLiveQueuePublishingReadiness({ profileId: "staging-scaffold" }),
+      }),
+      publishingReadiness: createPublishingReadinessSummary(createLiveQueuePublishingReadiness({ profileId: "staging-scaffold" })),
       providerId: METADATA_PROVIDER_ID,
       status: "scaffolded",
     });
@@ -450,6 +547,10 @@ export const getQueueProviderDriverRegistration = (
       driverId: PRODUCTION_DRIVER_ID,
       healthCheck: createHealthCheck("blocked"),
       mode: "production_required",
+      publishPosture: createPublishPosture({
+        readiness: createLiveQueuePublishingReadiness({ profileId: "production-required" }),
+      }),
+      publishingReadiness: createPublishingReadinessSummary(createLiveQueuePublishingReadiness({ profileId: "production-required" })),
       providerId: PRODUCTION_PROVIDER_ID,
       status: "blocked",
     });
@@ -605,6 +706,8 @@ function createRegistration(input: {
   driverId: string;
   healthCheck: QueueProviderDriverHealthCheck;
   mode: QueueProviderDriverMode;
+  publishPosture: QueueProviderDriverPublishPosture;
+  publishingReadiness: QueueProviderDriverPublishingReadinessSummary;
   providerId: string;
   status: QueueProviderDriverFoundationStatus;
 }): QueueProviderDriverRegistration {
@@ -615,6 +718,8 @@ function createRegistration(input: {
     healthCheck: input.healthCheck,
     mode: input.mode,
     operationCapabilities: queueProviderDriverOperationCapabilities.map((item) => ({ ...item })),
+    publishPosture: clonePublishPosture(input.publishPosture),
+    publishingReadiness: clonePublishingReadiness(input.publishingReadiness),
     providerId: input.providerId,
     queueRoutes: queueProviderDriverQueueRoutes.map((item) => ({ ...item, jobIds: [...item.jobIds] })),
     requiredConfigKeys: [
@@ -630,6 +735,8 @@ function createReadinessProjection(input: {
   diagnostics: readonly QueueProviderDriverDiagnostic[];
   driverId: string;
   mode: QueueProviderDriverMode;
+  publishPosture: QueueProviderDriverPublishPosture;
+  publishingReadiness: QueueProviderDriverPublishingReadinessSummary;
   providerId: string;
   sdkBinding: QueueProviderDriverSdkBindingSummary;
   status: QueueProviderDriverFoundationStatus;
@@ -649,10 +756,24 @@ function createReadinessProjection(input: {
     operationCount: queueProviderDriverOperationCapabilities.length,
     productionReady: false,
     providerId: input.providerId,
+    publishAttemptPolicy: input.publishPosture.attemptPolicy,
+    publishDiagnosticCodes: [...input.publishPosture.diagnosticCodes],
+    publishRequestEvaluated: input.publishPosture.publishRequestEvaluated,
+    publishResultStatus: input.publishPosture.resultStatus,
+    publishingActivationStatus: input.publishingReadiness.activationStatus,
+    publishingBlockerCount: input.publishingReadiness.blockerCount,
+    publishingLivePublishAttempted: input.publishPosture.livePublishAttempted,
+    publishingLiveQueuePublishingEnabled: input.publishingReadiness.liveQueuePublishingEnabled,
+    publishingNoLiveSideEffects: { ...input.publishingReadiness.noLiveSideEffects },
+    publishingPublisherId: input.publishingReadiness.publisherId,
+    publishingPublisherProvided: input.publishingReadiness.publisherProvided,
+    publishingRequiredConfigKeys: [...input.publishingReadiness.requiredConfigKeys],
+    publishingStatus: input.publishingReadiness.status,
     queueRouteCount: queueProviderDriverQueueRoutes.length,
     requiredConfigKeys: [
       ...new Set([
         ...queueProviderDriverProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
+        ...input.publishingReadiness.requiredConfigKeys,
         ...input.sdkBinding.requiredConfigKeys,
       ]),
     ],
@@ -661,6 +782,102 @@ function createReadinessProjection(input: {
     valid: input.valid,
     workerIdempotencyStatus: "deferred",
     workerLeaseStatus: "deferred",
+  };
+}
+
+function createPublishingReadinessSummary(
+  readiness: LiveQueuePublishingReadinessSummary,
+): QueueProviderDriverPublishingReadinessSummary {
+  return {
+    activationStatus: readiness.activationStatus,
+    blockerCount: readiness.blockerCount,
+    diagnosticCodes: [...readiness.diagnosticCodes],
+    livePublishAttempted: false,
+    liveQueuePublishingEnabled: readiness.liveQueuePublishingEnabled,
+    mode: readiness.mode,
+    noLiveSideEffects: { ...readiness.noLiveSideEffects },
+    productionReady: false,
+    publishAttemptAllowed: readiness.publishAttemptAllowed,
+    publisherId: readiness.publisherId,
+    publisherProvided: readiness.publisherProvided,
+    requiredConfigKeys: [...readiness.requiredConfigKeys],
+    status: readiness.status,
+    valid: readiness.valid,
+  };
+}
+
+function createPublishPosture(input: {
+  liveQueuePublisher?: LiveQueuePublisher;
+  liveQueuePublishRequest?: LiveQueuePublishRequest;
+  readiness: LiveQueuePublishingReadinessSummary;
+}): QueueProviderDriverPublishPosture {
+  if (!input.liveQueuePublishRequest) {
+    return {
+      attemptPolicy: input.readiness.publishAttemptAllowed ? "request_required" : resolveBlockedPublishPolicy(input.readiness.status),
+      diagnosticCodes: [...input.readiness.diagnosticCodes],
+      idempotencyReferenceRequired: true,
+      livePublishAttempted: false,
+      noLiveSideEffects: { ...input.readiness.noLiveSideEffects },
+      payloadReferenceOrHashRequired: true,
+      productionWriteAttempted: false,
+      publishRequestEvaluated: false,
+      published: false,
+      resultStatus: "not_requested",
+      safeIdempotencyReferenceRequired: true,
+      safePayloadReferenceRequired: true,
+    };
+  }
+
+  const result = evaluateLiveQueuePublishRequest(
+    input.liveQueuePublishRequest,
+    {
+      publisher: input.liveQueuePublisher,
+      readiness: input.readiness,
+    },
+  );
+
+  return {
+    attemptPolicy: "request_evaluated",
+    diagnosticCodes: [...result.diagnosticCodes],
+    idempotencyReferenceRequired: true,
+    livePublishAttempted: result.livePublishAttempted,
+    noLiveSideEffects: { ...result.noLiveSideEffects },
+    payloadReferenceOrHashRequired: true,
+    productionWriteAttempted: false,
+    publishRequestEvaluated: true,
+    published: result.published,
+    resultStatus: result.status,
+    safeIdempotencyReferenceRequired: true,
+    safePayloadReferenceRequired: true,
+  };
+}
+
+function resolveBlockedPublishPolicy(
+  readinessStatus: LiveQueuePublishingStatus,
+): QueueProviderDriverPublishAttemptPolicy {
+  return readinessStatus === "disabled" || readinessStatus === "scaffolded"
+    ? "disabled_no_live"
+    : "blocked_until_ready";
+}
+
+function clonePublishingReadiness(
+  readiness: QueueProviderDriverPublishingReadinessSummary,
+): QueueProviderDriverPublishingReadinessSummary {
+  return {
+    ...readiness,
+    diagnosticCodes: [...readiness.diagnosticCodes],
+    noLiveSideEffects: { ...readiness.noLiveSideEffects },
+    requiredConfigKeys: [...readiness.requiredConfigKeys],
+  };
+}
+
+function clonePublishPosture(
+  publishPosture: QueueProviderDriverPublishPosture,
+): QueueProviderDriverPublishPosture {
+  return {
+    ...publishPosture,
+    diagnosticCodes: [...publishPosture.diagnosticCodes],
+    noLiveSideEffects: { ...publishPosture.noLiveSideEffects },
   };
 }
 

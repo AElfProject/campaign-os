@@ -26,6 +26,10 @@ import {
   type QueueProviderDriverFoundationStatus,
   type QueueProviderDriverMode,
   type QueueProviderDriverOperationCapability,
+  type QueueProviderDriverPublishAttemptPolicy,
+  type QueueProviderDriverPublishPosture,
+  type QueueProviderDriverPublishResultStatus,
+  type QueueProviderDriverPublishingReadinessSummary,
   type QueueProviderDriverSdkBindingSummary,
   type QueueProviderOperationResult,
 } from "./queueProviderDriver";
@@ -146,6 +150,19 @@ export interface QueueRuntimeProviderAdapterSummary {
   driverOperationCount: number;
   driverProductionReady: false;
   driverProviderId: string;
+  driverPublishAttemptPolicy: QueueProviderDriverPublishAttemptPolicy;
+  driverPublishDiagnosticCodes: QueueProviderDriverPublishPosture["diagnosticCodes"];
+  driverPublishRequestEvaluated: boolean;
+  driverPublishResultStatus: QueueProviderDriverPublishResultStatus;
+  driverPublishingActivationStatus: QueueProviderDriverPublishingReadinessSummary["activationStatus"];
+  driverPublishingBlockerCount: number;
+  driverPublishingLivePublishAttempted: boolean;
+  driverPublishingLiveQueuePublishingEnabled: boolean;
+  driverPublishingNoLiveSideEffects: QueueProviderDriverPublishingReadinessSummary["noLiveSideEffects"];
+  driverPublishingPublisherId: string;
+  driverPublishingPublisherProvided: boolean;
+  driverPublishingRequiredConfigKeys: string[];
+  driverPublishingStatus: QueueProviderDriverPublishingReadinessSummary["status"];
   driverRequiredConfigKeys: string[];
   driverSdkBinding: QueueProviderDriverSdkBindingSummary;
   driverStatus: QueueProviderDriverFoundationStatus;
@@ -280,6 +297,19 @@ export interface QueueRuntimeReadinessProjection {
   providerAdapterDriverOperationCount: number;
   providerAdapterDriverProductionReady: false;
   providerAdapterDriverProviderId: string;
+  providerAdapterDriverPublishAttemptPolicy: QueueProviderDriverPublishAttemptPolicy;
+  providerAdapterDriverPublishDiagnosticCodes: QueueProviderDriverPublishPosture["diagnosticCodes"];
+  providerAdapterDriverPublishRequestEvaluated: boolean;
+  providerAdapterDriverPublishResultStatus: QueueProviderDriverPublishResultStatus;
+  providerAdapterDriverPublishingActivationStatus: QueueProviderDriverPublishingReadinessSummary["activationStatus"];
+  providerAdapterDriverPublishingBlockerCount: number;
+  providerAdapterDriverPublishingLivePublishAttempted: boolean;
+  providerAdapterDriverPublishingLiveQueuePublishingEnabled: boolean;
+  providerAdapterDriverPublishingNoLiveSideEffects: QueueProviderDriverPublishingReadinessSummary["noLiveSideEffects"];
+  providerAdapterDriverPublishingPublisherId: string;
+  providerAdapterDriverPublishingPublisherProvided: boolean;
+  providerAdapterDriverPublishingRequiredConfigKeys: string[];
+  providerAdapterDriverPublishingStatus: QueueProviderDriverPublishingReadinessSummary["status"];
   providerAdapterDriverRequiredConfigKeys: string[];
   providerAdapterDriverStatus: QueueProviderDriverFoundationStatus;
   providerAdapterDriverValid: boolean;
@@ -957,6 +987,19 @@ const createReadinessProjection = (
   providerAdapterDriverOperationCount: providerAdapter.driverOperationCount,
   providerAdapterDriverProductionReady: false,
   providerAdapterDriverProviderId: providerAdapter.driverProviderId,
+  providerAdapterDriverPublishAttemptPolicy: providerAdapter.driverPublishAttemptPolicy,
+  providerAdapterDriverPublishDiagnosticCodes: [...providerAdapter.driverPublishDiagnosticCodes],
+  providerAdapterDriverPublishRequestEvaluated: providerAdapter.driverPublishRequestEvaluated,
+  providerAdapterDriverPublishResultStatus: providerAdapter.driverPublishResultStatus,
+  providerAdapterDriverPublishingActivationStatus: providerAdapter.driverPublishingActivationStatus,
+  providerAdapterDriverPublishingBlockerCount: providerAdapter.driverPublishingBlockerCount,
+  providerAdapterDriverPublishingLivePublishAttempted: providerAdapter.driverPublishingLivePublishAttempted,
+  providerAdapterDriverPublishingLiveQueuePublishingEnabled: providerAdapter.driverPublishingLiveQueuePublishingEnabled,
+  providerAdapterDriverPublishingNoLiveSideEffects: { ...providerAdapter.driverPublishingNoLiveSideEffects },
+  providerAdapterDriverPublishingPublisherId: providerAdapter.driverPublishingPublisherId,
+  providerAdapterDriverPublishingPublisherProvided: providerAdapter.driverPublishingPublisherProvided,
+  providerAdapterDriverPublishingRequiredConfigKeys: [...providerAdapter.driverPublishingRequiredConfigKeys],
+  providerAdapterDriverPublishingStatus: providerAdapter.driverPublishingStatus,
   providerAdapterDriverRequiredConfigKeys: providerAdapter.driverRequiredConfigKeys,
   providerAdapterDriverStatus: providerAdapter.driverStatus,
   providerAdapterDriverValid: providerAdapter.driverValid,
@@ -1081,6 +1124,19 @@ const createProviderAdapterSummary = (
   driverOperationCount: providerAdapter.driver.operationCount,
   driverProductionReady: false,
   driverProviderId: providerAdapter.driver.providerId,
+  driverPublishAttemptPolicy: providerAdapter.driver.publishPosture.attemptPolicy,
+  driverPublishDiagnosticCodes: [...providerAdapter.driver.publishPosture.diagnosticCodes],
+  driverPublishRequestEvaluated: providerAdapter.driver.publishPosture.publishRequestEvaluated,
+  driverPublishResultStatus: providerAdapter.driver.publishPosture.resultStatus,
+  driverPublishingActivationStatus: providerAdapter.driver.publishingReadiness.activationStatus,
+  driverPublishingBlockerCount: providerAdapter.driver.publishingReadiness.blockerCount,
+  driverPublishingLivePublishAttempted: providerAdapter.driver.publishPosture.livePublishAttempted,
+  driverPublishingLiveQueuePublishingEnabled: providerAdapter.driver.publishingReadiness.liveQueuePublishingEnabled,
+  driverPublishingNoLiveSideEffects: { ...providerAdapter.driver.publishingReadiness.noLiveSideEffects },
+  driverPublishingPublisherId: providerAdapter.driver.publishingReadiness.publisherId,
+  driverPublishingPublisherProvided: providerAdapter.driver.publishingReadiness.publisherProvided,
+  driverPublishingRequiredConfigKeys: [...providerAdapter.driver.publishingReadiness.requiredConfigKeys],
+  driverPublishingStatus: providerAdapter.driver.publishingReadiness.status,
   driverRequiredConfigKeys: providerAdapter.driver.requiredConfigKeys,
   driverSdkBinding: {
     ...providerAdapter.driver.sdkBinding,

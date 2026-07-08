@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
+import {
+  createLiveQueuePublishingReadiness,
+  type LiveQueuePublisher,
+} from "./liveQueuePublishingReadiness";
 import {
   SUPPORTED_QUEUE_PROVIDER_DRIVER_PROFILES,
   createQueueProviderDriverFoundation,
@@ -25,6 +30,43 @@ const productionReadyBrokerEnv = {
   CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY: "retry-backoff:exponential",
   CAMPAIGN_OS_REDIS_TLS_POLICY: "tls-policy:required",
 } satisfies Record<string, unknown>;
+
+const productionReadyPublishingEnv = {
+  ...productionReadyBrokerEnv,
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY: "test-bullmq-construction-factory",
+  CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:review",
+  CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
+  CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:review",
+  CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_LIVE_QUEUE_PUBLISHER: "test-live-queue-publisher",
+  CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:review",
+  CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "runbook-ref:queue-provider",
+  CAMPAIGN_OS_PAYLOAD_REFERENCE_POLICY: "payload-reference-policy:hash-or-reference",
+  CAMPAIGN_OS_PUBLISHER_REDACTION_POLICY: "publisher-redaction:strict",
+  CAMPAIGN_OS_QUEUE_PROVIDER_BINDING: "production-provider-sdk-binding",
+  CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-provider",
+  CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
+  CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "queue-endpoint-ref:provider",
+  CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
+  CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
+  CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-package-binding-production",
+  CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE: "package-ref:@provider/queue-sdk",
+  CAMPAIGN_OS_REDIS_URL: "redis-ref:campaign-os",
+  CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:review",
+  CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:worker",
+  CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
+} satisfies Record<string, unknown>;
+
+const constructionFactory: BullmqConstructionFactory = {
+  construct: () => ({
+    queueClient: { clientId: "queue-client-ref", constructed: true, optionReferenceId: "queue-options-ref" },
+    queueEvents: { clientId: "queue-events-ref", constructed: true, optionReferenceId: "events-options-ref" },
+    worker: { clientId: "worker-client-ref", constructed: true, optionReferenceId: "worker-options-ref" },
+  }),
+  factoryId: "test-bullmq-construction-factory",
+};
 
 describe("queue provider driver foundation", () => {
   it("declares a stable local fake registration and supported operations", () => {
@@ -80,6 +122,16 @@ describe("queue provider driver foundation", () => {
       liveWorkerExecutionEnabled: false,
       operationCount: queueProviderDriverOperationCapabilities.length,
       productionReady: false,
+      publishAttemptPolicy: "disabled_no_live",
+      publishRequestEvaluated: false,
+      publishResultStatus: "not_requested",
+      publishingActivationStatus: "disabled",
+      publishingBlockerCount: 0,
+      publishingLivePublishAttempted: false,
+      publishingLiveQueuePublishingEnabled: false,
+      publishingPublisherId: "not_configured",
+      publishingPublisherProvided: false,
+      publishingStatus: "disabled",
       queueRouteCount: foundation.queueRoutes.length,
       sdkBinding: expect.objectContaining({
         bindingId: "local-stub-queue-provider-sdk-binding",
@@ -128,6 +180,29 @@ describe("queue provider driver foundation", () => {
       }),
       valid: true,
     });
+    expect(foundation.publishingReadiness).toMatchObject({
+      activationStatus: "disabled",
+      liveQueuePublishingEnabled: false,
+      mode: "dry_run",
+      publishAttemptAllowed: false,
+      publisherId: "not_configured",
+      publisherProvided: false,
+      status: "disabled",
+      valid: true,
+    });
+    expect(foundation.publishPosture).toMatchObject({
+      attemptPolicy: "disabled_no_live",
+      idempotencyReferenceRequired: true,
+      livePublishAttempted: false,
+      payloadReferenceOrHashRequired: true,
+      productionWriteAttempted: false,
+      publishRequestEvaluated: false,
+      published: false,
+      resultStatus: "not_requested",
+      safeIdempotencyReferenceRequired: true,
+      safePayloadReferenceRequired: true,
+    });
+    expect(Object.values(foundation.publishPosture.noLiveSideEffects).every((value) => value === false)).toBe(true);
     expect(foundation.sdkBinding).toMatchObject({
       bindingId: "local-stub-queue-provider-sdk-binding",
       liveProviderCallAttempted: false,
@@ -433,6 +508,107 @@ describe("queue provider driver foundation", () => {
     expect(result.livePublishAttempted).toBe(false);
     expect(result.productionWriteAttempted).toBe(false);
     expect(result.diagnosticCodes).toContain("QUEUE_PROVIDER_DRIVER_LIVE_ENABLEMENT_MISSING");
+  });
+
+  it("projects live publishing readiness and accepted publish posture without enabling worker execution", () => {
+    const publisher: LiveQueuePublisher = {
+      publish: () => ({
+        operationId: "publish-verification-jobs-task-verification-worker",
+        providerReference: "provider-ref:accepted",
+        status: "accepted",
+      }),
+      publisherId: "test-live-queue-publisher",
+    };
+    const liveQueuePublishingReadiness = createLiveQueuePublishingReadiness({
+      constructionFactory,
+      env: productionReadyPublishingEnv,
+      profileId: "production-required",
+      publisher,
+    });
+    const foundation = createQueueProviderDriverFoundation({
+      env: productionReadyPublishingEnv,
+      liveQueuePublishingReadiness,
+      liveQueuePublishRequest: {
+        attempt: 1,
+        idempotencyReference: "idem-ref:campaign-task-1",
+        jobId: "task-verification-worker",
+        payloadReference: "payload-ref:task-1",
+        queueId: "verification-jobs",
+        traceId: "trace-live-publish-driver",
+      },
+      liveQueuePublisher: publisher,
+      profileId: "production-required",
+      providerId: "production-queue-provider",
+    });
+
+    expect(foundation.publishingReadiness).toMatchObject({
+      activationStatus: "explicitly_enabled",
+      liveQueuePublishingEnabled: true,
+      mode: "production_required",
+      publishAttemptAllowed: true,
+      publisherId: "test-live-queue-publisher",
+      publisherProvided: true,
+      status: "ready",
+      valid: true,
+    });
+    expect(foundation.publishingReadiness.diagnosticCodes).toEqual([]);
+    expect(foundation.publishPosture).toMatchObject({
+      attemptPolicy: "request_evaluated",
+      livePublishAttempted: true,
+      productionWriteAttempted: false,
+      publishRequestEvaluated: true,
+      published: true,
+      resultStatus: "accepted",
+    });
+    expect(foundation.readiness).toMatchObject({
+      publishAttemptPolicy: "request_evaluated",
+      publishRequestEvaluated: true,
+      publishResultStatus: "accepted",
+      publishingActivationStatus: "explicitly_enabled",
+      publishingLivePublishAttempted: true,
+      publishingLiveQueuePublishingEnabled: true,
+      publishingPublisherProvided: true,
+      publishingStatus: "ready",
+    });
+    expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
+    expect(Object.values(foundation.readiness.publishingNoLiveSideEffects).every((value) => value === false)).toBe(true);
+  });
+
+  it("projects duplicate publish results from an injected ready publishing boundary", () => {
+    const publisher: LiveQueuePublisher = {
+      publish: () => ({
+        diagnosticCodes: ["LIVE_QUEUE_DUPLICATE_IDEMPOTENCY_REFERENCE"],
+        status: "duplicate",
+      }),
+      publisherId: "duplicate-live-queue-publisher",
+    };
+    const liveQueuePublishingReadiness = createLiveQueuePublishingReadiness({
+      constructionFactory,
+      env: productionReadyPublishingEnv,
+      profileId: "production-required",
+      publisher,
+    });
+    const foundation = createQueueProviderDriverFoundation({
+      env: productionReadyPublishingEnv,
+      liveQueuePublishingReadiness,
+      liveQueuePublishRequest: {
+        attempt: 1,
+        idempotencyReference: "idem-ref:duplicate",
+        jobId: "task-verification-worker",
+        payloadReference: "payload-ref:task-1",
+        queueId: "verification-jobs",
+        traceId: "trace-live-publish-duplicate",
+      },
+      liveQueuePublisher: publisher,
+      profileId: "production-required",
+      providerId: "production-queue-provider",
+    });
+
+    expect(foundation.publishingReadiness.publisherId).toBe("duplicate-live-queue-publisher");
+    expect(foundation.publishPosture.resultStatus).toBe("duplicate");
+    expect(foundation.publishPosture.livePublishAttempted).toBe(true);
+    expect(foundation.publishPosture.published).toBe(false);
+    expect(foundation.publishPosture.diagnosticCodes).toContain("LIVE_QUEUE_DUPLICATE_IDEMPOTENCY_REFERENCE");
   });
 
   it("redacts unsafe provider, queue, credential, payload, and response material", () => {

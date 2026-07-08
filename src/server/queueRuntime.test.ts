@@ -116,6 +116,16 @@ describe("queue runtime foundation", () => {
       driverLiveQueuePublishingEnabled: false,
       driverLiveWorkerExecutionEnabled: false,
       driverMode: "dry_run",
+      driverPublishAttemptPolicy: "disabled_no_live",
+      driverPublishRequestEvaluated: false,
+      driverPublishResultStatus: "not_requested",
+      driverPublishingActivationStatus: "disabled",
+      driverPublishingBlockerCount: 0,
+      driverPublishingLivePublishAttempted: false,
+      driverPublishingLiveQueuePublishingEnabled: false,
+      driverPublishingPublisherId: "not_configured",
+      driverPublishingPublisherProvided: false,
+      driverPublishingStatus: "disabled",
       driverProductionReady: false,
       driverProviderId: "local-fake",
       driverSdkBinding: expect.objectContaining({
@@ -170,6 +180,16 @@ describe("queue runtime foundation", () => {
       providerAdapterDriverLiveQueuePublishingEnabled: false,
       providerAdapterDriverLiveWorkerExecutionEnabled: false,
       providerAdapterDriverMode: "dry_run",
+      providerAdapterDriverPublishAttemptPolicy: "disabled_no_live",
+      providerAdapterDriverPublishRequestEvaluated: false,
+      providerAdapterDriverPublishResultStatus: "not_requested",
+      providerAdapterDriverPublishingActivationStatus: "disabled",
+      providerAdapterDriverPublishingBlockerCount: 0,
+      providerAdapterDriverPublishingLivePublishAttempted: false,
+      providerAdapterDriverPublishingLiveQueuePublishingEnabled: false,
+      providerAdapterDriverPublishingPublisherId: "not_configured",
+      providerAdapterDriverPublishingPublisherProvided: false,
+      providerAdapterDriverPublishingStatus: "disabled",
       providerAdapterDriverProviderId: "local-fake",
       providerAdapterDriverStatus: "local_ready",
       providerAdapterDriverSdkBindingId: "local-stub-queue-provider-sdk-binding",
@@ -621,6 +641,19 @@ describe("queue runtime foundation", () => {
     expect(foundation.providerAdapter.driverLiveWorkerExecutionEnabled).toBe(false);
     expect(foundation.providerAdapter.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.providerAdapter.liveWorkerExecutionEnabled).toBe(false);
+    expect(foundation.providerAdapter.driverPublishAttemptPolicy).toBe("disabled_no_live");
+    expect(foundation.providerAdapter.driverPublishResultStatus).toBe("not_requested");
+    expect(foundation.providerAdapter.driverPublishingActivationStatus).toBe("metadata_only");
+    expect(foundation.providerAdapter.driverPublishingLivePublishAttempted).toBe(false);
+    expect(foundation.providerAdapter.driverPublishingLiveQueuePublishingEnabled).toBe(false);
+    expect(foundation.providerAdapter.driverPublishingStatus).toBe("scaffolded");
+    expect(foundation.readiness.providerAdapterDriverPublishAttemptPolicy).toBe("disabled_no_live");
+    expect(foundation.readiness.providerAdapterDriverPublishResultStatus).toBe("not_requested");
+    expect(foundation.readiness.providerAdapterDriverPublishingActivationStatus).toBe("metadata_only");
+    expect(foundation.readiness.providerAdapterDriverPublishingLivePublishAttempted).toBe(false);
+    expect(foundation.readiness.providerAdapterDriverPublishingLiveQueuePublishingEnabled).toBe(false);
+    expect(foundation.readiness.providerAdapterDriverPublishingStatus).toBe("scaffolded");
+    expect(Object.values(foundation.readiness.providerAdapterDriverPublishingNoLiveSideEffects).every((value) => value === false)).toBe(true);
     expect(foundation.readiness.providerRequiredConfigKeys).toEqual(
       expect.arrayContaining([
         "CAMPAIGN_OS_QUEUE_PROVIDER",
