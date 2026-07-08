@@ -41,6 +41,8 @@ import type {
   NormalizedWalletSession,
   ProviderEvidenceRegistry,
   VerificationPipelineReadinessGate,
+  VerificationEvidenceSource,
+  VerificationProviderId,
 } from "../domain/types";
 import type { ApiRuntimeRouteId } from "./routes";
 import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
@@ -53,8 +55,10 @@ import type {
   CampaignDbAddTaskDraftInput,
   CampaignDbCreateDraftInput,
   CampaignDbDraft,
+  CampaignDbEligibilityProjection,
   CampaignDbListFilter,
   CampaignDbReadProjection,
+  CampaignDbTaskCompletion,
   CampaignDbTaskDraft,
 } from "./campaignDbRepository";
 import { createBackendTopologyReport } from "./topology";
@@ -453,6 +457,117 @@ const createCampaignDbTaskMetadata = (task: CampaignDbTaskDraft) => ({
   repositoryId: "campaign-db-repository-runtime",
   storeId: "campaign-db" as const,
   taskId: task.id,
+});
+
+const createCampaignDbCompletionMetadata = (completion: CampaignDbTaskCompletion) => ({
+  completionId: completion.id,
+  createdViaRepository: true,
+  repositoryId: "campaign-db-repository-runtime",
+  storeId: "campaign-db" as const,
+  taskId: completion.taskId,
+});
+
+const toCanonicalEvidenceSource = (
+  evidenceSource: CampaignDbTaskCompletion["evidenceSource"],
+): VerificationEvidenceSource =>
+  evidenceSource === "MANUAL" ? "MANUAL_REVIEW" : evidenceSource;
+
+const toProviderId = (
+  evidenceSource: CampaignDbTaskCompletion["evidenceSource"],
+): VerificationProviderId => {
+  switch (evidenceSource) {
+    case "AEFINDER":
+      return "aefinder";
+    case "AELFSCAN":
+      return "aelfscan";
+    case "DAPP_API":
+      return "dapp_api";
+    case "SOCIAL_API":
+      return "social_api";
+    case "MANUAL":
+    default:
+      return "manual_review";
+  }
+};
+
+const createRepositoryCompletionResponse = (
+  completion: CampaignDbTaskCompletion,
+  task: CampaignDbTaskDraft,
+) => ({
+  accountType: completion.accountType,
+  campaignId: completion.campaignId,
+  canonicalEvidenceSource: toCanonicalEvidenceSource(completion.evidenceSource),
+  evidence: {
+    capturedAt: completion.updatedAt,
+    evidenceHash: completion.evidenceHash ?? `evidence-hash:${completion.taskId}`,
+    evidenceId: `campaign-db-evidence-${completion.id}`,
+    live: false,
+    source: toCanonicalEvidenceSource(completion.evidenceSource),
+    sourceLabel: localized(
+      "Campaign DB local evidence",
+      "Campaign DB local evidence",
+    ),
+  },
+  evidenceHash: completion.evidenceHash ?? `evidence-hash:${completion.taskId}`,
+  evidenceSource: completion.evidenceSource,
+  manualReview: {
+    queued: completion.status === "manual_review",
+    ...(completion.status === "manual_review"
+      ? { reason: localized("Repository task requires manual review.", "Repository task requires manual review.") }
+      : {}),
+    severity: completion.status === "manual_review" ? "warning" as const : "info" as const,
+  },
+  nextAction: localized(
+    completion.status === "completed"
+      ? "Repository task completion recorded locally."
+      : "Repository task completion requires local review.",
+    completion.status === "completed"
+      ? "Repository task completion recorded locally."
+      : "Repository task completion requires local review.",
+  ),
+  pointsAwarded: completion.pointsAwarded,
+  pointsAvailable: task.points,
+  provider: {
+    fallbackReason: localized(
+      "Repository-created campaign uses deterministic local completion metadata.",
+      "Repository-created campaign uses deterministic local completion metadata.",
+    ),
+    nextAdapterStep: localized(
+      "Connect live verification adapter in a later mission.",
+      "Connect live verification adapter in a later mission.",
+    ),
+    providerId: toProviderId(completion.evidenceSource),
+    readiness: "local_only" as const,
+  },
+  riskFlags: [],
+  status: completion.status,
+  taskId: completion.taskId,
+  walletAddress: completion.walletAddress,
+  walletSource: completion.walletSource,
+});
+
+const createRepositoryEligibilityResponse = (
+  projection: CampaignDbEligibilityProjection,
+) => ({
+  accountType: projection.accountType,
+  campaignId: projection.campaignId,
+  eligible: projection.eligible,
+  localePreference: projection.localePreference,
+  missingTasks: projection.missingTasks,
+  nextAction: localized(
+    projection.eligible
+      ? "Repository campaign eligibility is satisfied locally."
+      : "Complete the missing repository campaign tasks before eligibility review.",
+    projection.eligible
+      ? "Repository campaign eligibility is satisfied locally."
+      : "Complete the missing repository campaign tasks before eligibility review.",
+  ),
+  riskFlags: projection.riskFlags,
+  score: projection.score,
+  status: projection.status,
+  walletAddress: projection.walletAddress,
+  walletSource: projection.walletSource,
+  walletTypeVerified: projection.walletTypeVerified,
 });
 
 const campaignDbDraftToDiscoveryDetail = (
@@ -1174,9 +1289,43 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
   },
   "campaigns.tasks.generate": (context) =>
     unwrapLocalResult(context.service.generateCampaignTasks(generateCampaignTasksRequest(context)), context),
-  "tasks.verify": (context) =>
-    persistLocalResult(
-      context.service.verifyTask(verifyTaskRequest(context)),
+  "tasks.verify": async (context) => {
+    const request = verifyTaskRequest(context);
+    const localResult = context.service.verifyTask(request);
+    let campaignDbCompletion: CampaignDbTaskCompletion | undefined;
+    let result = localResult;
+
+    if (!localResult.ok && localResult.error.code === "CAMPAIGN_NOT_FOUND") {
+      const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
+        traceId: context.traceId,
+      });
+      const campaignDbTask = campaignDbDraft?.tasks.find((task) => task.id === request.taskId);
+
+      if (campaignDbDraft && !campaignDbTask) {
+        throw invalidTask(request.taskId);
+      }
+
+      if (campaignDbDraft && campaignDbTask) {
+        campaignDbCompletion = await context.campaignDbRepository.upsertTaskCompletion!({
+          accountType: request.accountType,
+          campaignId: request.campaignId,
+          evidenceHash: `evidence-hash:${campaignDbTask.id}`,
+          taskId: request.taskId,
+          walletAddress: request.walletAddress,
+          walletSource: request.walletSource,
+        }, {
+          traceId: context.traceId,
+        });
+        result = {
+          boundary: campaignDbBoundary,
+          ok: true,
+          payload: createRepositoryCompletionResponse(campaignDbCompletion, campaignDbTask),
+        };
+      }
+    }
+
+    const response = await persistLocalResult(
+      result,
       context,
       (payload) => ({
         accountType: payload.accountType,
@@ -1192,9 +1341,51 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         walletAddress: payload.walletAddress,
         walletSource: payload.walletSource,
       }),
-    ),
-  "campaigns.eligibility": (context) =>
-    unwrapLocalResult(context.service.checkEligibility(eligibilityRequest(context)), context),
+    );
+
+    return campaignDbCompletion
+      ? {
+        ...response,
+        campaignDbCompletion: createCampaignDbCompletionMetadata(campaignDbCompletion),
+      }
+      : response;
+  },
+  "campaigns.eligibility": async (context) => {
+    const request = eligibilityRequest(context);
+    const localResult = context.service.checkEligibility(request);
+
+    if (localResult.ok || localResult.error.code !== "CAMPAIGN_NOT_FOUND") {
+      return unwrapLocalResult(localResult, context);
+    }
+
+    const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
+      traceId: context.traceId,
+    });
+
+    if (!campaignDbDraft) {
+      return unwrapLocalResult(localResult, context);
+    }
+
+    const projection = await context.campaignDbRepository.checkEligibility!({
+      accountType: request.accountType,
+      campaignId: request.campaignId,
+      walletAddress: request.walletAddress,
+      walletSource: request.walletSource,
+    }, {
+      traceId: context.traceId,
+    });
+
+    return {
+      boundary: campaignDbBoundary,
+      campaignDb: {
+        adapterId: projection.repository.adapterId,
+        createdViaRepository: projection.repository.createdViaRepository,
+        repositoryId: projection.repository.repositoryId,
+        storeId: projection.repository.storeId,
+      },
+      payload: createRepositoryEligibilityResponse(projection),
+    };
+  },
   "campaigns.analytics": (context) =>
     unwrapLocalResult(
       context.service.getCampaignAnalytics({

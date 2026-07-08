@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -28,6 +28,17 @@ const validTaskDraftInput = (campaignId: string) => ({
   templateCode: "bridge_ebridge",
   verificationType: "ON_CHAIN" as const,
   walletCompatibility: "ANY" as const,
+});
+
+const validCompletionInput = (campaignId: string, taskId: string) => ({
+  accountType: "EOA" as const,
+  campaignId,
+  evidenceHash: "evidence-hash:bridge-ebridge",
+  evidenceSource: "AELFSCAN" as const,
+  status: "completed" as const,
+  taskId,
+  walletAddress: "2F4CompletionWallet",
+  walletSource: "PORTKEY_EOA_EXTENSION" as const,
 });
 
 const withTempStorePath = async <T>(operation: (filePath: string) => Promise<T>) => {
@@ -224,19 +235,233 @@ describe("Campaign DB repository", () => {
     );
   });
 
+  it("stores task completions with wallet provenance and no-live events", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput(), {
+      traceId: "trace-completion-campaign",
+    });
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id), {
+      traceId: "trace-completion-task",
+    });
+
+    const completion = await repository.upsertTaskCompletion!(validCompletionInput(campaign.id, task.id), {
+      traceId: "trace-completion-upsert",
+    });
+
+    expect(completion).toMatchObject({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      completedAt: "2026-07-06T00:00:00.000Z",
+      evidenceHash: "evidence-hash:bridge-ebridge",
+      evidenceSource: "AELFSCAN",
+      id: "campaign-db-task-completion-0001",
+      pointsAwarded: 120,
+      status: "completed",
+      taskId: task.id,
+      walletAddress: "2F4CompletionWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
+    await expect(repository.getById(campaign.id)).resolves.toMatchObject({
+      completions: [
+        expect.objectContaining({
+          id: "campaign-db-task-completion-0001",
+          taskId: task.id,
+        }),
+      ],
+    });
+    await expect(repository.health()).resolves.toMatchObject({
+      completionRecordCount: 1,
+      eventCount: 13,
+      liveConnectionAttempted: false,
+      liveMigrationExecutionEnabled: false,
+      liveQueryExecutionEnabled: false,
+      productionReady: false,
+    });
+    expect(repository.getEvents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entity: "TaskCompletion",
+          liveExecution: false,
+          operation: "insert_task_completion",
+          traceId: "trace-completion-upsert",
+          type: "command.insert",
+        }),
+      ]),
+    );
+  });
+
+  it("upserts duplicate task completions without double scoring", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    const first = await repository.upsertTaskCompletion!(validCompletionInput(campaign.id, task.id));
+    const second = await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, task.id),
+      evidenceHash: "evidence-hash:bridge-ebridge-retry",
+    });
+    const eligibility = await repository.checkEligibility!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      walletAddress: "2F4CompletionWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.evidenceHash).toBe("evidence-hash:bridge-ebridge-retry");
+    expect(eligibility).toMatchObject({
+      eligible: true,
+      missingTasks: [],
+      score: 120,
+      status: "eligible",
+    });
+    await expect(repository.health()).resolves.toMatchObject({
+      completionRecordCount: 1,
+    });
+  });
+
+  it("projects eligibility from required and optional task completions", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const requiredTask = await repository.addTaskDraft({
+      ...validTaskDraftInput(campaign.id),
+      points: 120,
+      required: true,
+      templateCode: "bridge_ebridge",
+    });
+    const optionalTask = await repository.addTaskDraft({
+      ...validTaskDraftInput(campaign.id),
+      evidenceRule: { action: "share" },
+      points: 50,
+      required: false,
+      templateCode: "share_campaign",
+      verificationType: "SOCIAL",
+    });
+
+    await expect(repository.checkEligibility!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      walletAddress: "2F4CompletionWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    })).resolves.toMatchObject({
+      accountType: "EOA",
+      eligible: false,
+      localePreference: "en-US",
+      missingTasks: ["bridge_ebridge"],
+      riskFlags: [],
+      score: 0,
+      status: "not_eligible",
+      walletAddress: "2F4CompletionWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
+    });
+
+    await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, optionalTask.id),
+      evidenceHash: "evidence-hash:share-campaign",
+      evidenceSource: "SOCIAL_API",
+    });
+
+    await expect(repository.checkEligibility!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      walletAddress: "2F4CompletionWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    })).resolves.toMatchObject({
+      eligible: false,
+      missingTasks: ["bridge_ebridge"],
+      score: 50,
+      status: "not_eligible",
+    });
+
+    await repository.upsertTaskCompletion!(validCompletionInput(campaign.id, requiredTask.id));
+
+    await expect(repository.checkEligibility!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      walletAddress: "2F4CompletionWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    })).resolves.toMatchObject({
+      eligible: true,
+      missingTasks: [],
+      score: 170,
+      status: "eligible",
+    });
+  });
+
+  it("keeps pending required completions in pending eligibility", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, task.id),
+      evidenceHash: "evidence-hash:pending",
+      status: "pending",
+    });
+
+    await expect(repository.checkEligibility!({
+      campaignId: campaign.id,
+      walletAddress: "2F4CompletionWallet",
+    })).resolves.toMatchObject({
+      accountType: "UNKNOWN",
+      eligible: false,
+      missingTasks: ["bridge_ebridge"],
+      score: 0,
+      status: "pending",
+      walletSource: "OTHER",
+      walletTypeVerified: false,
+    });
+  });
+
   it("resets records and event lifecycle deterministically", async () => {
     const repository = createCampaignDbRepository();
     const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
 
-    await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+    await repository.upsertTaskCompletion!(validCompletionInput(campaign.id, task.id));
     await repository.reset();
 
     expect(await repository.health()).toMatchObject({
+      completionRecordCount: 0,
       eventCount: 0,
       recordCount: 0,
       taskRecordCount: 0,
     });
     await expect(repository.list()).resolves.toEqual([]);
+  });
+
+  it.each([
+    ["campaignId", { campaignId: "missing-campaign" }, "CAMPAIGN_DB_COMPLETION_CAMPAIGN_NOT_FOUND"],
+    ["taskId", { taskId: "missing-task" }, "CAMPAIGN_DB_COMPLETION_TASK_NOT_FOUND"],
+    ["walletAddress", { walletAddress: "" }, "CAMPAIGN_DB_COMPLETION_REQUIRED_FIELD_MISSING"],
+    ["accountType", { accountType: "BOT" }, "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_ACCOUNT_TYPE"],
+    ["walletSource", { walletSource: "UNSAFE_WALLET" }, "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_WALLET_SOURCE"],
+    ["status", { status: "ready" }, "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_STATUS"],
+    ["evidenceSource", { evidenceSource: "RAW_API" }, "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_EVIDENCE_SOURCE"],
+    ["evidenceHash", { evidenceHash: "https://secret.example/token=raw-secret" }, "CAMPAIGN_DB_COMPLETION_INVALID_EVIDENCE_HASH"],
+  ])("rejects invalid completion %s with stable diagnostics", async (_field, override, code) => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    await expect(repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, task.id),
+      ...override,
+    } as ReturnType<typeof validCompletionInput>)).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code,
+          severity: "error",
+        }),
+      ],
+    });
+    await expect(repository.checkEligibility!({
+      campaignId: campaign.id,
+      walletAddress: "2F4CompletionWallet",
+    })).resolves.toMatchObject({
+      score: 0,
+    });
   });
 
   it.each([
@@ -314,6 +539,10 @@ describe("Campaign DB repository", () => {
     await expect(repository.addTaskDraft(validTaskDraftInput("campaign-db-draft-0001"))).rejects.toBeInstanceOf(
       CampaignDbRepositoryError,
     );
+    await expect(repository.upsertTaskCompletion!(validCompletionInput(
+      "campaign-db-draft-0001",
+      "campaign-db-task-draft-0001",
+    ))).rejects.toBeInstanceOf(CampaignDbRepositoryError);
   });
 
   it("uses durable store mode to preserve drafts across repository instances", async () => {
@@ -327,14 +556,28 @@ describe("Campaign DB repository", () => {
         projectId: "project-m177",
         supportedLocales: ["en-US", "zh-CN"],
       });
-      await firstRepository.addTaskDraft({
+      const task = await firstRepository.addTaskDraft({
         ...validTaskDraftInput(created.id),
         templateCode: "vote_tmrwdao",
+      });
+      await firstRepository.upsertTaskCompletion!({
+        ...validCompletionInput(created.id, task.id),
+        evidenceHash: "evidence-hash:vote-tmrwdao",
       });
 
       const reopenedRepository = createCampaignDbRepository({
         durableStoreFilePath,
         mode: "durable_test",
+      });
+      await reopenedRepository.upsertTaskCompletion!({
+        accountType: "AA",
+        campaignId: created.id,
+        evidenceHash: "evidence-hash:vote-tmrwdao-aa",
+        evidenceSource: "AELFSCAN",
+        status: "completed",
+        taskId: task.id,
+        walletAddress: "2F4SecondCompletionWallet",
+        walletSource: "PORTKEY_AA",
       });
 
       await expect(reopenedRepository.getById(created.id)).resolves.toMatchObject({
@@ -352,9 +595,42 @@ describe("Campaign DB repository", () => {
             templateCode: "vote_tmrwdao",
           }),
         ],
+        completions: [
+          expect.objectContaining({
+            campaignId: created.id,
+            id: "campaign-db-task-completion-0001",
+            taskId: "campaign-db-task-draft-0001",
+            walletAddress: "2F4CompletionWallet",
+          }),
+          expect.objectContaining({
+            campaignId: created.id,
+            id: "campaign-db-task-completion-0002",
+            taskId: "campaign-db-task-draft-0001",
+            walletAddress: "2F4SecondCompletionWallet",
+          }),
+        ],
+      });
+      await expect(reopenedRepository.checkEligibility!({
+        accountType: "EOA",
+        campaignId: created.id,
+        walletAddress: "2F4CompletionWallet",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      })).resolves.toMatchObject({
+        eligible: true,
+        missingTasks: [],
+        score: 120,
+        status: "eligible",
       });
       await expect(reopenedRepository.list({ projectId: "project-m177" })).resolves.toEqual([
         expect.objectContaining({
+          completions: expect.arrayContaining([
+            expect.objectContaining({
+              id: "campaign-db-task-completion-0001",
+            }),
+            expect.objectContaining({
+              id: "campaign-db-task-completion-0002",
+            }),
+          ]),
           id: created.id,
           tasks: [
             expect.objectContaining({
@@ -366,16 +642,72 @@ describe("Campaign DB repository", () => {
       await expect(reopenedRepository.health()).resolves.toMatchObject({
         adapterId: "campaign-db-durable-test-adapter",
         campaignStore: expect.objectContaining({
+          completionRecordCount: 2,
           durable: true,
           mode: "durable_test",
           recordCount: 1,
           status: "ready",
           taskRecordCount: 1,
         }),
+        completionRecordCount: 2,
         recordCount: 1,
         selectedMode: "durable_test",
         status: "ready",
         taskRecordCount: 1,
+      });
+    });
+  });
+
+  it("loads old durable documents without completion records", async () => {
+    await withTempStorePath(async (durableStoreFilePath) => {
+      await mkdir(join(durableStoreFilePath, ".."), { recursive: true });
+      await writeFile(durableStoreFilePath, `${JSON.stringify({
+        records: [
+          {
+            contractMode: "OFF_CHAIN_MVP",
+            createdAt: "2026-07-06T00:00:00.000Z",
+            defaultLocale: "en-US",
+            duration: "2026-07-07 to 2026-07-14",
+            endTime: "2026-07-14T00:00:00.000Z",
+            goal: "Old durable document",
+            id: "campaign-db-draft-old",
+            ownerAddress: "2F4OldOwner",
+            projectId: "project-old",
+            publishReadiness: {
+              blockers: [],
+              ready: true,
+              warnings: [],
+            },
+            rewardDescription: "Old document reward",
+            startTime: "2026-07-07T00:00:00.000Z",
+            status: "draft",
+            supportedLocales: ["en-US"],
+            updatedAt: "2026-07-06T00:00:00.000Z",
+            walletPolicy: "ANY",
+          },
+        ],
+        taskRecords: [],
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        version: 1,
+      }, null, 2)}\n`, "utf8");
+
+      const repository = createCampaignDbRepository({
+        durableStoreFilePath,
+        mode: "durable_test",
+      });
+
+      await expect(repository.getById("campaign-db-draft-old")).resolves.toMatchObject({
+        completions: [],
+        id: "campaign-db-draft-old",
+        tasks: [],
+      });
+      await expect(repository.health()).resolves.toMatchObject({
+        campaignStore: expect.objectContaining({
+          completionRecordCount: 0,
+          recordCount: 1,
+          taskRecordCount: 0,
+        }),
+        completionRecordCount: 0,
       });
     });
   });

@@ -104,9 +104,15 @@ interface TaskDraftPayload {
 }
 
 interface VerificationPayload {
+  accountType?: string;
   evidenceSource: string;
+  evidenceHash?: string;
   pointsAwarded: number;
+  pointsAvailable?: number;
   status: string;
+  taskId?: string;
+  walletAddress?: string;
+  walletSource?: string;
 }
 
 interface I18nDraftPayload {
@@ -344,6 +350,9 @@ const createFailingCampaignDbRepository = (): CampaignDbRepository => ({
   addTaskDraft: async () => {
     throw new Error("campaign DB repository unavailable");
   },
+  checkEligibility: async () => {
+    throw new Error("campaign DB repository unavailable");
+  },
   createDraft: async () => {
     throw new Error("campaign DB repository unavailable");
   },
@@ -358,6 +367,9 @@ const createFailingCampaignDbRepository = (): CampaignDbRepository => ({
     throw new Error("campaign DB repository unavailable");
   },
   reset: async () => {
+    throw new Error("campaign DB repository unavailable");
+  },
+  upsertTaskCompletion: async () => {
     throw new Error("campaign DB repository unavailable");
   },
 });
@@ -2069,6 +2081,240 @@ describe("Campaign OS API runtime", () => {
       ],
     });
     expectNoForbiddenResponseKeys(taskDraft.body);
+  });
+
+  it("persists repository task completion and projects eligibility through API runtime", async () => {
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime();
+    const create = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/campaigns",
+      headers: projectOwnerAuthHeaders("repo-owner-completion", {
+        "x-campaign-os-trace-id": "trace-campaign-db-completion-create",
+      }),
+      body: JSON.stringify({
+        duration: "2026-08-01/2026-08-14",
+        endTime: "2026-08-14T23:59:59Z",
+        goal: "Persist repository completion",
+        ownerAddress: "repo-owner-completion",
+        projectId: "repo-project-completion",
+        rewardDescription: "Repository-backed completion rewards remain local-review only.",
+        startTime: "2026-08-01T00:00:00Z",
+      }),
+    });
+    const created = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload>>(create);
+    const requiredTask = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.payload.id}/tasks`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-completion-required-task" },
+      body: JSON.stringify({
+        evidenceRule: { source: "AELFSCAN", minAmount: 1 },
+        points: 120,
+        required: true,
+        templateCode: "bridge_ebridge",
+        verificationType: "ON_CHAIN",
+        walletCompatibility: "ANY",
+      }),
+    });
+    const optionalTask = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.payload.id}/tasks`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-completion-optional-task" },
+      body: JSON.stringify({
+        evidenceRule: { action: "share" },
+        points: 50,
+        required: false,
+        templateCode: "share_campaign",
+        verificationType: "SOCIAL",
+        walletCompatibility: "ANY",
+      }),
+    });
+    const requiredTaskPayload = expectSuccessData<LocalServiceEnvelope<TaskDraftPayload> & {
+      campaignDbTask: { taskId: string };
+    }>(requiredTask);
+    const optionalTaskPayload = expectSuccessData<LocalServiceEnvelope<TaskDraftPayload> & {
+      campaignDbTask: { taskId: string };
+    }>(optionalTask);
+    const missingEligibility = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}/eligibility?address=${encodeURIComponent("2F4CompletionWallet")}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-completion-missing-eligibility" },
+    });
+    const optionalVerification = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/tasks/${optionalTaskPayload.campaignDbTask.taskId}/verify`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-completion-optional-verify" },
+      body: JSON.stringify({
+        accountType: "EOA",
+        campaignId: created.payload.id,
+        walletAddress: "2F4CompletionWallet",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      }),
+    });
+    const optionalEligibility = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}/eligibility?address=${encodeURIComponent("2F4CompletionWallet")}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
+    });
+    const requiredVerification = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/tasks/${requiredTaskPayload.campaignDbTask.taskId}/verify`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-completion-required-verify" },
+      body: JSON.stringify({
+        accountType: "EOA",
+        campaignId: created.payload.id,
+        walletAddress: "2F4CompletionWallet",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      }),
+    });
+    const eligible = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}/eligibility?address=${encodeURIComponent("2F4CompletionWallet")}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-completion-eligible" },
+    });
+
+    expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(missingEligibility).payload).toMatchObject({
+      accountType: "EOA",
+      eligible: false,
+      missingTasks: ["bridge_ebridge"],
+      score: 0,
+      status: "not_eligible",
+      walletAddress: "2F4CompletionWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
+      campaignDbCompletion: { completionId: string; storeId: string };
+      persistence: { kind: string };
+    }>(optionalVerification)).toMatchObject({
+      campaignDbCompletion: {
+        completionId: "campaign-db-task-completion-0001",
+        storeId: "campaign-db",
+      },
+      payload: {
+        accountType: "EOA",
+        campaignId: created.payload.id,
+        evidenceSource: "SOCIAL_API",
+        pointsAwarded: 50,
+        pointsAvailable: 50,
+        status: "completed",
+        taskId: optionalTaskPayload.campaignDbTask.taskId,
+        walletAddress: "2F4CompletionWallet",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      },
+      persistence: { kind: "verification_attempt" },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(optionalEligibility).payload).toMatchObject({
+      eligible: false,
+      missingTasks: ["bridge_ebridge"],
+      score: 50,
+      status: "not_eligible",
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
+      campaignDbCompletion: { completionId: string };
+    }>(requiredVerification)).toMatchObject({
+      campaignDbCompletion: {
+        completionId: "campaign-db-task-completion-0002",
+      },
+      payload: {
+        evidenceSource: "AELFSCAN",
+        pointsAwarded: 120,
+        pointsAvailable: 120,
+        status: "completed",
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(eligible).payload).toMatchObject({
+      eligible: true,
+      missingTasks: [],
+      score: 170,
+      status: "eligible",
+    });
+    expectNoForbiddenResponseKeys(optionalVerification.body);
+    expectNoForbiddenFragments(optionalVerification.body, ["raw-secret", "privateKey", "signedUrl"]);
+  });
+
+  it("returns structured errors for unknown repository task verification", async () => {
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime();
+    const create = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/campaigns",
+      headers: projectOwnerAuthHeaders("repo-owner-missing-task"),
+      body: JSON.stringify({
+        duration: "2026-08-01/2026-08-14",
+        endTime: "2026-08-14T23:59:59Z",
+        goal: "Reject missing repository task",
+        ownerAddress: "repo-owner-missing-task",
+        projectId: "repo-project-missing-task",
+        rewardDescription: "Repository-backed task verification remains bounded.",
+        startTime: "2026-08-01T00:00:00Z",
+      }),
+    });
+    const created = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload>>(create);
+    const missingTask = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/tasks/missing-repository-task/verify",
+      body: JSON.stringify({
+        accountType: "EOA",
+        campaignId: created.payload.id,
+        walletAddress: "2F4CompletionWallet",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      }),
+    });
+
+    expect(missingTask.status).toBe(404);
+    expect(missingTask.body.ok).toBe(false);
+    if (!missingTask.body.ok) {
+      expect(missingTask.body.error).toMatchObject({
+        code: "INVALID_TASK",
+        details: { taskId: "missing-repository-task" },
+      });
+    }
+  });
+
+  it("keeps unknown repository campaign verification and eligibility failures structured", async () => {
+    const repository = createCampaignOsMemoryRepository();
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({ repository });
+    const missingCampaignId = "missing-repository-campaign";
+    const verification = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/tasks/missing-repository-task/verify",
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-missing-campaign-verify" },
+      body: JSON.stringify({
+        accountType: "EOA",
+        campaignId: missingCampaignId,
+        walletAddress: "2F4CompletionWallet",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      }),
+    });
+    const eligibility = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${missingCampaignId}/eligibility?address=${encodeURIComponent("2F4CompletionWallet")}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-missing-campaign-eligibility" },
+    });
+
+    expect(verification).toMatchObject({
+      status: 404,
+      body: {
+        ok: false,
+        traceId: "trace-campaign-db-missing-campaign-verify",
+        error: {
+          code: "INVALID_CAMPAIGN",
+          details: { campaignId: missingCampaignId },
+        },
+      },
+    });
+    expect(eligibility).toMatchObject({
+      status: 404,
+      body: {
+        ok: false,
+        traceId: "trace-campaign-db-missing-campaign-eligibility",
+        error: {
+          code: "INVALID_CAMPAIGN",
+          details: { campaignId: missingCampaignId },
+        },
+      },
+    });
+    expect(await repository.snapshot()).toMatchObject({
+      recordCount: 0,
+    });
   });
 
   it("persists campaign draft API records across durable Campaign DB runtime recreation", async () => {
