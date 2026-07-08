@@ -445,8 +445,8 @@ export const backendServiceBoundaries = [
     risks: [
       "AI provider, approval flow, scheduler runtime, queue runtime, observability, and worker execution are deferred.",
     ],
-    routeIds: [],
-    runtimeProfiles: productionRequiredProfiles,
+    routeIds: ["agent.wallet.action.review", "campaigns.tasks.generate", "campaigns.posts.generate"],
+    runtimeProfiles: productionProfiles,
   }),
   service({
     adapterGroups: [],
@@ -478,7 +478,7 @@ export const backendServiceBoundaries = [
       "Production observability exporter, metrics sink, trace collector, structured log sink, alert routing, redaction policy, and runbook are not selected yet.",
       "Analytics ingestion and contract sync handoffs require deferred queue runtime, scheduler runtime, idempotency store, dead-letter queue, and observability exporter before production.",
     ],
-    routeIds: ["runtime.health", "runtime.contracts", "campaigns.analytics"],
+    routeIds: ["runtime.health", "runtime.contracts", "campaigns.analytics", "campaigns.summary"],
     runtimeProfiles: productionProfiles,
   }),
 ] as const satisfies readonly BackendServiceBoundary[];

@@ -9,6 +9,7 @@ import {
 } from "./topology";
 
 export type ApiServicePortId =
+  | "ai-ops-port"
   | "campaign-port"
   | "eligibility-port"
   | "export-port"
@@ -101,7 +102,7 @@ export const apiServicePorts = [
     productionAdapterStatus: "local_metadata_only",
     requiresExternalNetwork: false,
     requiresSecret: false,
-    routeIds: ["runtime.health", "runtime.contracts", "campaigns.analytics"],
+    routeIds: ["runtime.health", "runtime.contracts", "campaigns.analytics", "campaigns.summary"],
     serviceId: "runtime-observability",
   }),
   servicePort({
@@ -241,6 +242,23 @@ export const apiServicePorts = [
     requiresSecret: false,
     routeIds: ["campaigns.export.preview"],
     serviceId: "export-service",
+  }),
+  servicePort({
+    deferredCapabilities: ["auth_session", "provider_adapters", "scheduler", "worker_queue"],
+    futureAttachPoints: [
+      "Agent Skill wallet action approval workflow",
+      "AI task generation provider adapter",
+      "AI campaign post provider adapter",
+      "AI Ops worker execution gate",
+    ],
+    id: "ai-ops-port",
+    localAdapter: "src/domain/campaignService.ts AI Ops local skill handlers",
+    notes: "AI Ops routes expose local contract metadata only; wallet action execution, live AI provider calls, scheduler handoff, queue execution, and worker execution remain disabled or deferred.",
+    productionAdapterStatus: "local_seeded",
+    requiresExternalNetwork: false,
+    requiresSecret: false,
+    routeIds: ["agent.wallet.action.review", "campaigns.tasks.generate", "campaigns.posts.generate"],
+    serviceId: "ai-ops-service",
   }),
 ] as const satisfies readonly ApiServicePort[];
 

@@ -72,7 +72,7 @@ describe("API runtime route catalog", () => {
     const routeIds = apiRuntimeRoutes.map((runtimeRoute) => runtimeRoute.id);
 
     expect(new Set(routeIds).size).toBe(apiRuntimeRoutes.length);
-    expect(apiRuntimeRoutes.length).toBeGreaterThanOrEqual(13);
+    expect(apiRuntimeRoutes.length).toBeGreaterThanOrEqual(17);
     expect(apiRuntimeRouteById["runtime.health"]).toMatchObject({
       method: "GET",
       path: "/api/health",
@@ -141,27 +141,30 @@ describe("API runtime route catalog", () => {
     expect(coverage.coveredSkillIds).toEqual(
       expect.arrayContaining([
         "add_campaign_task",
+        "agent_wallet_action",
         "check_eligibility",
         "create_campaign",
         "create_wallet_session",
         "export_winners",
+        "generate_campaign_posts",
+        "generate_campaign_tasks",
         "generate_i18n_draft",
         "get_campaign_analytics",
         "get_campaign_detail",
         "list_campaigns",
+        "summarize_campaign",
         "verify_task",
       ] satisfies ApiSkillId[]),
     );
-    expect(coverage.deferredSkillIds).toEqual(
-      requiredApiSkillIds.filter((skillId) => !coverage.coveredSkillIds.includes(skillId)),
-    );
-    expect(coverage.deferredSkillIds).toEqual(
+    expect(coverage.coveredSkillIds).toEqual(requiredApiSkillIds);
+    expect(coverage.deferredSkillIds).toEqual([]);
+    expect(coverage.routeIds).toEqual(
       expect.arrayContaining([
-        "agent_wallet_action",
-        "generate_campaign_posts",
-        "generate_campaign_tasks",
-        "summarize_campaign",
-      ] satisfies ApiSkillId[]),
+        "agent.wallet.action.review",
+        "campaigns.posts.generate",
+        "campaigns.summary",
+        "campaigns.tasks.generate",
+      ]),
     );
   });
 
@@ -253,9 +256,9 @@ describe("API runtime route catalog", () => {
       valid: true,
     });
     expect(foundation.coverage).toMatchObject({
-      implementedLocalCount: 10,
+      implementedLocalCount: 11,
       notYetImplementedCount: 0,
-      productionShapedDeferredCount: 4,
+      productionShapedDeferredCount: 3,
       routeCount: apiRuntimeRoutes.length,
       validationIssueCount: 0,
     });
