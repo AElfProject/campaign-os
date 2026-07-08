@@ -1,4 +1,6 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
+import type { ProviderHttpRuntimeSummary } from "./providerHttpRuntimeTypes";
 
 export type ProviderClientProfileId = BackendRuntimeProfileId;
 export type ProviderClientReadinessStatus = "disabled" | "blocked" | "failed" | "activated";
@@ -219,6 +221,7 @@ export interface ProviderClientReadinessSummary {
   preconditions: ProviderClientProductionPrecondition[];
   productionReady: false;
   profileId: ProviderClientProfileId;
+  providerHttpRuntime: ProviderHttpRuntimeSummary;
   providerClientsEnabled: boolean;
   providerClientsProvided: boolean;
   queueHandoff: ProviderWorkerQueueHandoff;
@@ -312,6 +315,11 @@ export const createProviderIndexerClientReadiness = (
   const profileResolution = resolveProfile(options.profileId);
   const activationStatus = resolveActivationStatus(profileResolution.profileId, env);
   const policy = createPolicy(env);
+  const providerHttpRuntime = createProviderHttpRuntimeSummary({
+    env,
+    profileId: profileResolution.profileId,
+    transportProvided: hasUsableValue(env.CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM),
+  });
   const productionDiagnostics = profileResolution.profileId === "production-required"
     ? createProductionDiagnostics(env, clients)
     : [];
@@ -342,6 +350,7 @@ export const createProviderIndexerClientReadiness = (
     preconditions: providerClientProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
     profileId: profileResolution.profileId,
+    providerHttpRuntime,
     providerClientsEnabled,
     providerClientsProvided: clients.length > 0,
     queueHandoff: createQueueHandoff(env, providerClientsEnabled),

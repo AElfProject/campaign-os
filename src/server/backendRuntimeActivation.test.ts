@@ -67,6 +67,22 @@ const providerClientConfigKeys = [
   "CAMPAIGN_OS_PROVIDER_REDACTION_POLICY",
 ];
 
+const providerHttpRuntimeConfigKeys = [
+  "CAMPAIGN_OS_PROVIDER_HTTP_RUNTIME_ENABLEMENT",
+  "CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REGISTRY_REF",
+  "CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REF",
+  "CAMPAIGN_OS_PROVIDER_HTTP_CREDENTIAL_REF",
+  "CAMPAIGN_OS_PROVIDER_HTTP_HEADER_REF",
+  "CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM",
+  "CAMPAIGN_OS_PROVIDER_HTTP_TIMEOUT_POLICY",
+  "CAMPAIGN_OS_PROVIDER_HTTP_RESPONSE_MAPPING_POLICY",
+  "CAMPAIGN_OS_PROVIDER_HTTP_REDACTION_POLICY",
+  "CAMPAIGN_OS_PROVIDER_HTTP_QUEUE_WORKER_HANDOFF",
+  "CAMPAIGN_OS_PROVIDER_HTTP_IDEMPOTENCY_REF",
+  "CAMPAIGN_OS_PROVIDER_HTTP_LEASE_REF",
+  "CAMPAIGN_OS_PROVIDER_HTTP_RUNBOOK_REF",
+];
+
 describe("backend runtime activation contract", () => {
   it("publishes stable runtime activation and package command metadata", () => {
     const runtime = resolveApiServerRuntimeContract({
@@ -178,6 +194,9 @@ describe("backend runtime activation contract", () => {
 
     expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
       expect.arrayContaining(providerClientConfigKeys),
+    );
+    expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
+      expect.arrayContaining(providerHttpRuntimeConfigKeys),
     );
     expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
       expect.arrayContaining([
@@ -317,6 +336,18 @@ describe("backend runtime activation contract", () => {
             required: true,
             requiredFor: "production-required",
             status: "blocked",
+          }),
+        ]),
+      );
+    }
+    for (const providerHttpRuntimeConfigKey of providerHttpRuntimeConfigKeys) {
+      expect(activation.deploymentHandoff.environmentKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: providerHttpRuntimeConfigKey,
+            redacted: true,
+            required: true,
+            requiredFor: "production-required",
           }),
         ]),
       );
@@ -659,6 +690,36 @@ describe("backend runtime activation contract", () => {
           area: "worker",
           blockedBy: ["CAMPAIGN_OS_PROVIDER_CONSUME_READINESS_HANDOFF"],
           id: "provider-client-provider-client-consume-readiness-handoff",
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          area: "provider",
+          blockedBy: ["CAMPAIGN_OS_PROVIDER_HTTP_RUNTIME_ENABLEMENT"],
+          id: "provider-http-runtime-provider-http-runtime-activation",
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          area: "provider",
+          blockedBy: ["CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM"],
+          id: "provider-http-runtime-provider-http-transport-seam",
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          area: "queue",
+          blockedBy: ["CAMPAIGN_OS_PROVIDER_HTTP_QUEUE_WORKER_HANDOFF"],
+          id: "provider-http-runtime-provider-http-queue-worker-handoff",
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          area: "worker",
+          blockedBy: ["CAMPAIGN_OS_PROVIDER_HTTP_IDEMPOTENCY_REF"],
+          id: "provider-http-runtime-provider-http-idempotency-reference",
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          area: "worker",
+          blockedBy: ["CAMPAIGN_OS_PROVIDER_HTTP_LEASE_REF"],
+          id: "provider-http-runtime-provider-http-lease-reference",
           status: "blocked",
         }),
         expect.objectContaining({ area: "scheduler", id: "scheduler-runtime-scheduler-provider", status: "blocked" }),

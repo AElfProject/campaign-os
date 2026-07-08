@@ -131,6 +131,16 @@ describe("backend runtime bootstrap contract", () => {
           diagnosticCodes: [],
           liveProviderCallsAttempted: false,
           productionReady: false,
+          providerHttpRuntime: {
+            activationStatus: "disabled",
+            endpointCount: 2,
+            liveHttpCallsAttempted: false,
+            productionReady: false,
+            runtimeId: "campaign-os-provider-http-client-runtime",
+            status: "disabled",
+            transportProvided: false,
+            valid: true,
+          },
           providerClientsEnabled: false,
           providerClientsProvided: false,
           queueHandoff: {

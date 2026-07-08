@@ -502,6 +502,16 @@ describe("Campaign OS API runtime", () => {
           diagnosticCodes: [],
           liveProviderCallsAttempted: false,
           productionReady: false,
+          providerHttpRuntime: expect.objectContaining({
+            activationStatus: "disabled",
+            endpointCount: 2,
+            liveHttpCallsAttempted: false,
+            productionReady: false,
+            runtimeId: "campaign-os-provider-http-client-runtime",
+            status: "disabled",
+            transportProvided: false,
+            valid: true,
+          }),
           providerClientsEnabled: false,
           providerClientsProvided: false,
           queueHandoff: expect.objectContaining({

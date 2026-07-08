@@ -82,6 +82,7 @@ export interface BackendRuntimeSmokeProviderClientReadinessSummary {
   diagnosticCodes: string[];
   liveProviderCallsAttempted: false;
   productionReady: false;
+  providerHttpRuntime: BackendRuntimeSmokeProviderHttpRuntimeSummary;
   providerClientsEnabled: boolean;
   providerClientsProvided: boolean;
   queueHandoffStatus?: string;
@@ -89,6 +90,20 @@ export interface BackendRuntimeSmokeProviderClientReadinessSummary {
   registryProviderGroupCount: number;
   requiredConfigKeys: string[];
   status?: string;
+  valid: boolean;
+}
+
+export interface BackendRuntimeSmokeProviderHttpRuntimeSummary {
+  activationStatus?: string;
+  blockerCount: number;
+  configuredCategories: string[];
+  diagnosticCodes: string[];
+  endpointCount: number;
+  liveHttpCallsAttempted: false;
+  productionReady: false;
+  runtimeId?: string;
+  status?: string;
+  transportProvided: boolean;
   valid: boolean;
 }
 
@@ -581,6 +596,9 @@ const summarizeProviderClientReadiness = (
   }
 
   const downstreamLiveFlags = readNestedRecord(record, ["downstreamLiveFlags"]);
+  const providerHttpRuntime = summarizeProviderHttpRuntime(
+    readNestedRecord(record, ["providerHttpRuntime"]),
+  );
   const queueHandoff = readNestedRecord(record, ["queueHandoff"]);
   const registry = readNestedRecord(record, ["registry"]);
   const explicitNoLive =
@@ -591,7 +609,7 @@ const summarizeProviderClientReadiness = (
     && downstreamLiveFlags !== undefined
     && Object.values(downstreamLiveFlags).every((value) => value === false);
 
-  if (!explicitNoLive) {
+  if (!explicitNoLive || !providerHttpRuntime) {
     return undefined;
   }
 
@@ -604,6 +622,7 @@ const summarizeProviderClientReadiness = (
     diagnosticCodes: getStringArray(record, "diagnosticCodes"),
     liveProviderCallsAttempted: false,
     productionReady: false,
+    providerHttpRuntime,
     providerClientsEnabled: false,
     providerClientsProvided: false,
     queueHandoffStatus: getString(queueHandoff, "consumeReadinessStatus"),
@@ -611,6 +630,39 @@ const summarizeProviderClientReadiness = (
     registryProviderGroupCount: providerGroups.length,
     requiredConfigKeys: getStringArray(record, "requiredConfigKeys"),
     status: getString(record, "status"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
+const summarizeProviderHttpRuntime = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeProviderHttpRuntimeSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const downstreamLiveFlags = readNestedRecord(record, ["downstreamLiveFlags"]);
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "liveHttpCallsAttempted")
+    && downstreamLiveFlags !== undefined
+    && Object.values(downstreamLiveFlags).every((value) => value === false);
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    activationStatus: getString(record, "activationStatus"),
+    blockerCount: getNumber(record, "blockerCount"),
+    configuredCategories: getStringArray(record, "configuredCategories"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    endpointCount: getNumber(record, "endpointCount"),
+    liveHttpCallsAttempted: false,
+    productionReady: false,
+    runtimeId: getString(record, "runtimeId") ?? getString(record, "id"),
+    status: getString(record, "status"),
+    transportProvided: getBoolean(record, "transportProvided"),
     valid: getBoolean(record, "valid"),
   };
 };
@@ -1328,6 +1380,13 @@ const isProviderClientReadinessSmokeReady = (
     && summary.activationStatus === "disabled"
     && summary.blockerCount === 0
     && summary.diagnosticCodes.length === 0
+    && summary.providerHttpRuntime.productionReady === false
+    && summary.providerHttpRuntime.liveHttpCallsAttempted === false
+    && summary.providerHttpRuntime.status === "disabled"
+    && summary.providerHttpRuntime.activationStatus === "disabled"
+    && summary.providerHttpRuntime.endpointCount >= 2
+    && summary.providerHttpRuntime.transportProvided === false
+    && summary.providerHttpRuntime.valid === true
     && summary.queueHandoffStatus === "disabled"
     && summary.registryClientCount === 0
     && summary.registryProviderGroupCount >= 5

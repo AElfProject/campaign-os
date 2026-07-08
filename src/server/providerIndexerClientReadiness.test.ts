@@ -102,6 +102,17 @@ describe("provider indexer client readiness boundary", () => {
       valid: true,
     });
     expect(readiness.downstreamLiveFlags).toEqual(providerClientDownstreamLiveFlags);
+    expect(readiness.providerHttpRuntime).toMatchObject({
+      activationStatus: "disabled",
+      endpointCount: 2,
+      id: "campaign-os-provider-http-client-runtime",
+      liveHttpCallsAttempted: false,
+      productionReady: false,
+      status: "disabled",
+      transportProvided: false,
+      valid: true,
+    });
+    expect(readiness.providerHttpRuntime.configuredCategories).toEqual(["indexer", "dapp_api"]);
     expect(Object.values(readiness.downstreamLiveFlags).every((value) => value === false)).toBe(
       true,
     );
@@ -116,6 +127,21 @@ describe("provider indexer client readiness boundary", () => {
     expect(readiness.productionReady).toBe(false);
     expect(readiness.providerClientsEnabled).toBe(false);
     expect(readiness.blockerCount).toBe(providerClientProductionPreconditions.length);
+    expect(readiness.providerHttpRuntime).toMatchObject({
+      activationStatus: "activation_required",
+      liveHttpCallsAttempted: false,
+      productionReady: false,
+      status: "blocked",
+      transportProvided: false,
+      valid: false,
+    });
+    expect(readiness.providerHttpRuntime.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "PROVIDER_HTTP_RUNTIME_ACTIVATION_MISSING",
+        "PROVIDER_HTTP_ENDPOINT_REGISTRY_MISSING",
+        "PROVIDER_HTTP_TRANSPORT_SEAM_MISSING",
+      ]),
+    );
     expect(readiness.diagnosticCodes).toEqual(missingProductionDiagnosticCodes);
     expect(readiness.diagnostics.every((diagnostic) => diagnostic.severity === "blocker")).toBe(
       true,

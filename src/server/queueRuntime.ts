@@ -1,4 +1,6 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
+import type { ProviderHttpRuntimeSummary } from "./providerHttpRuntimeTypes";
 import {
   createObservabilityExporterFoundation,
   type ObservabilityExporterDiagnosticCode,
@@ -300,6 +302,24 @@ export interface ProviderClientQueueHandoff {
   workerJobId: string;
 }
 
+export interface QueueProviderHttpRuntimePosture {
+  activationStatus: ProviderHttpRuntimeSummary["activationStatus"];
+  blockerCount: number;
+  diagnosticCodes: ProviderHttpRuntimeSummary["diagnosticCodes"];
+  endpointCount: number;
+  idempotencyPosture: "store-required-reference-only";
+  idempotencyStoreId: string;
+  leasePosture: "lease-required-reference-only";
+  leaseStoreId: string;
+  liveHttpCallsAttempted: false;
+  productionReady: false;
+  queueWorkerHandoffRequired: true;
+  runtimeId: ProviderHttpRuntimeSummary["id"];
+  status: ProviderHttpRuntimeSummary["status"];
+  transportProvided: boolean;
+  workerJobId: "task-verification-worker";
+}
+
 export interface QueueRuntimeReadinessProjection {
   blockerCount: number;
   diagnosticCodes: QueueRuntimeDiagnosticCode[];
@@ -332,6 +352,7 @@ export interface QueueRuntimeReadinessProjection {
   observabilityExporterSinkId: string;
   observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   providerClientQueueHandoff: ProviderClientQueueHandoff;
+  providerHttpRuntime: QueueProviderHttpRuntimePosture;
   providerAdapterDriverBlockerCount: number;
   providerAdapterDriverDiagnosticCodes: QueueProviderDriverDiagnosticCode[];
   providerAdapterDriverId: string;
@@ -828,6 +849,11 @@ export const createQueueRuntimeFoundation = (
       profileId: profileResolution.profileId,
     }),
   );
+  const providerHttpRuntime = createProviderHttpRuntimeSummary({
+    env,
+    profileId: profileResolution.profileId,
+    transportProvided: hasConfiguredValue(env, ["CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM"]),
+  });
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...registryDiagnostics,
@@ -842,6 +868,7 @@ export const createQueueRuntimeFoundation = (
     leaseStore,
     idempotencyStore,
     observabilityExporter,
+    providerHttpRuntime,
   );
 
   return {
@@ -1025,6 +1052,7 @@ const createReadinessProjection = (
   leaseStore: QueueRuntimeLeaseStoreSummary,
   idempotencyStore: QueueRuntimeIdempotencyStoreSummary,
   observabilityExporter: QueueRuntimeObservabilityExporterSummary,
+  providerHttpRuntime: ProviderHttpRuntimeSummary,
 ): QueueRuntimeReadinessProjection => ({
   blockerCount,
   diagnosticCodes: diagnostics.map((item) => item.code),
@@ -1057,6 +1085,11 @@ const createReadinessProjection = (
   observabilityExporterSinkId: observabilityExporter.sinkId,
   observabilityExporterStatus: observabilityExporter.status,
   providerClientQueueHandoff: createProviderClientQueueHandoff(),
+  providerHttpRuntime: createQueueProviderHttpRuntimePosture(
+    providerHttpRuntime,
+    leaseStore,
+    idempotencyStore,
+  ),
   providerAdapterDriverBlockerCount: providerAdapter.driverBlockerCount,
   providerAdapterDriverDiagnosticCodes: providerAdapter.driverDiagnosticCodes,
   providerAdapterDriverId: providerAdapter.driverId,
@@ -1160,6 +1193,28 @@ const createReadinessProjection = (
   queueCategoryCount: new Set(queueRuntimePlans.map((item) => item.queueCategory)).size,
   queueIds: [...new Set(queueRuntimePlans.map((item) => item.queueId))],
   queuePlanCount: queueRuntimePlans.length,
+});
+
+const createQueueProviderHttpRuntimePosture = (
+  runtime: ProviderHttpRuntimeSummary,
+  leaseStore: QueueRuntimeLeaseStoreSummary,
+  idempotencyStore: QueueRuntimeIdempotencyStoreSummary,
+): QueueProviderHttpRuntimePosture => ({
+  activationStatus: runtime.activationStatus,
+  blockerCount: runtime.blockerCount,
+  diagnosticCodes: [...runtime.diagnosticCodes],
+  endpointCount: runtime.endpointCount,
+  idempotencyPosture: "store-required-reference-only",
+  idempotencyStoreId: idempotencyStore.storeId,
+  leasePosture: "lease-required-reference-only",
+  leaseStoreId: leaseStore.storeId,
+  liveHttpCallsAttempted: false,
+  productionReady: false,
+  queueWorkerHandoffRequired: true,
+  runtimeId: runtime.id,
+  status: runtime.status,
+  transportProvided: runtime.transportProvided,
+  workerJobId: "task-verification-worker",
 });
 
 const createProviderClientQueueHandoff = (): ProviderClientQueueHandoff => {

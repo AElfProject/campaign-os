@@ -6,6 +6,12 @@ import {
   type ProviderClientReadinessStatus,
   type ProviderVerificationType,
 } from "./providerIndexerClientReadiness";
+import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
+import type {
+  ProviderHttpEndpointCategory,
+  ProviderHttpEndpointEntry,
+  ProviderHttpRuntimeSummary,
+} from "./providerHttpRuntimeTypes";
 
 export type ProviderIndexerProfileId = BackendRuntimeProfileId;
 export type ProviderGroupCategory =
@@ -100,6 +106,43 @@ export interface ProviderClientRegistryProjection {
   status: ProviderClientReadinessStatus;
 }
 
+export interface ProviderHttpEndpointProjectionEntry {
+  adapterGroupCategory: ProviderGroupCategory;
+  adapterGroupId: string;
+  adapterGroupStatus: ProviderGroupStatus;
+  category: ProviderHttpEndpointCategory;
+  credentialRef: string;
+  endpointId: string;
+  headerRefs: string[];
+  liveHttpCallsAttempted: false;
+  mappingIds: {
+    request: string;
+    response: string;
+  };
+  method: ProviderHttpEndpointEntry["method"];
+  productionReady: false;
+  providerGroupId: string;
+  retryPolicyRef: string;
+  supportedVerificationTypes: ProviderHttpEndpointEntry["supportedVerificationTypes"];
+  timeoutPolicyRef: string;
+  urlTemplateRef: string;
+}
+
+export interface ProviderHttpEndpointRegistryProjection {
+  activationStatus: ProviderHttpRuntimeSummary["activationStatus"];
+  configuredCategories: ProviderHttpRuntimeSummary["configuredCategories"];
+  deferredCategories: ProviderHttpEndpointCategory[];
+  diagnosticCodes: ProviderHttpRuntimeSummary["diagnosticCodes"];
+  endpointCount: number;
+  entries: ProviderHttpEndpointProjectionEntry[];
+  executionBoundary: "metadata_only_no_default_transport_no_live_calls";
+  id: ProviderHttpRuntimeSummary["id"];
+  liveHttpCallsAttempted: false;
+  productionReady: false;
+  status: ProviderHttpRuntimeSummary["status"];
+  transportProvided: boolean;
+}
+
 export interface ProviderIndexerDiagnostic {
   code: ProviderIndexerDiagnosticCode;
   field: string;
@@ -121,6 +164,7 @@ export interface ProviderIndexerFoundationSummary {
   productionReady: false;
   profileId: ProviderIndexerProfileId;
   providerClientRegistry: ProviderClientRegistryProjection;
+  providerHttpEndpointRegistry: ProviderHttpEndpointRegistryProjection;
   providerGroupCount: number;
   providerGroups: ProviderIndexerAdapterGroup[];
   status: ProviderIndexerFoundationStatus;
@@ -467,6 +511,59 @@ const createProviderClientRegistryProjection = (
   };
 };
 
+const createProviderHttpEndpointRegistryProjection = (
+  env: Record<string, unknown>,
+  profileId: ProviderIndexerProfileId,
+): ProviderHttpEndpointRegistryProjection => {
+  const runtime = createProviderHttpRuntimeSummary({
+    env,
+    profileId,
+    transportProvided: hasConfiguredValue(env, ["CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM"]),
+  });
+  const groupById = new Map(providerIndexerAdapterGroups.map((group) => [group.id, group]));
+  const configuredCategorySet = new Set(runtime.configuredCategories);
+
+  return {
+    activationStatus: runtime.activationStatus,
+    configuredCategories: runtime.configuredCategories,
+    deferredCategories: (["social_api", "ai_provider"] as ProviderHttpEndpointCategory[])
+      .filter((category) => !configuredCategorySet.has(category)),
+    diagnosticCodes: runtime.diagnosticCodes,
+    endpointCount: runtime.endpointCount,
+    entries: runtime.endpointRegistry.map((endpoint) => {
+      const group = groupById.get(endpoint.providerGroupId);
+
+      return {
+        adapterGroupCategory: group?.category ?? endpoint.category,
+        adapterGroupId: endpoint.providerGroupId,
+        adapterGroupStatus: group?.status ?? "deferred",
+        category: endpoint.category,
+        credentialRef: endpoint.credentialRef,
+        endpointId: endpoint.endpointId,
+        headerRefs: [...endpoint.headerRefs],
+        liveHttpCallsAttempted: false,
+        mappingIds: {
+          request: endpoint.requestMappingId,
+          response: endpoint.responseMappingId,
+        },
+        method: endpoint.method,
+        productionReady: false,
+        providerGroupId: endpoint.providerGroupId,
+        retryPolicyRef: endpoint.retryPolicyRef,
+        supportedVerificationTypes: [...endpoint.supportedVerificationTypes],
+        timeoutPolicyRef: endpoint.timeoutPolicyRef,
+        urlTemplateRef: endpoint.urlTemplateRef,
+      };
+    }),
+    executionBoundary: "metadata_only_no_default_transport_no_live_calls",
+    id: runtime.id,
+    liveHttpCallsAttempted: false,
+    productionReady: false,
+    status: runtime.status,
+    transportProvided: runtime.transportProvided,
+  };
+};
+
 export const redactProviderIndexerValue = (value: unknown): unknown => {
   if (Array.isArray(value)) {
     return value.map((item) => redactProviderIndexerValue(item));
@@ -519,6 +616,7 @@ export const createProviderIndexerFoundation = (
     productionReady: false,
     profileId: profileResolution.profileId,
     providerClientRegistry: createProviderClientRegistryProjection(env, profileResolution.profileId),
+    providerHttpEndpointRegistry: createProviderHttpEndpointRegistryProjection(env, profileResolution.profileId),
     providerGroupCount: providerIndexerAdapterGroups.length,
     providerGroups: providerIndexerAdapterGroups,
     status,

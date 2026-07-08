@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import packageJson from "../../package.json";
 import { apiRuntimeRoutes, createBackendServiceReadinessReport } from "./index";
+import { createProviderHttpDownstreamLiveFlags } from "./providerHttpRuntimeRegistry";
 
 const trackedFiles = () =>
   execFileSync("git", ["ls-files"], {
@@ -75,6 +76,22 @@ const forbiddenRuntimeDependencyFragments = [
   "viem",
   "web3",
 ];
+
+const providerHttpReadyEnv = {
+  CAMPAIGN_OS_PROVIDER_HTTP_CREDENTIAL_REF: "credential-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REF: "config-ref:provider-http-endpoint",
+  CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REGISTRY_REF: "config-ref:provider-http-registry",
+  CAMPAIGN_OS_PROVIDER_HTTP_HEADER_REF: "header-ref:provider-http-auth",
+  CAMPAIGN_OS_PROVIDER_HTTP_IDEMPOTENCY_REF: "idem-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_LEASE_REF: "lease-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_QUEUE_WORKER_HANDOFF: "config-ref:provider-http-worker",
+  CAMPAIGN_OS_PROVIDER_HTTP_REDACTION_POLICY: "policy-ref:provider-http-redaction",
+  CAMPAIGN_OS_PROVIDER_HTTP_RESPONSE_MAPPING_POLICY: "policy-ref:provider-http-response-map",
+  CAMPAIGN_OS_PROVIDER_HTTP_RUNBOOK_REF: "runbook-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_RUNTIME_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_PROVIDER_HTTP_TIMEOUT_POLICY: "timeout-policy:2500ms",
+  CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM: "config-ref:provider-http-transport",
+} satisfies Record<string, unknown>;
 
 describe("backend scaffold public guardrails", () => {
   it("keeps production backend capabilities deferred or blocked in local review", () => {
@@ -227,10 +244,101 @@ describe("backend scaffold public guardrails", () => {
     ]));
     expect(missionChangedFiles).not.toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/^src\/(app|components|styles|i18n)\//),
+        expect.stringMatching(/^src\/(App|app|components|styles|i18n)\//),
         expect.stringMatching(/\.(tsx|css)$/),
       ]),
     );
+  });
+
+  it("keeps M200 provider HTTP runtime scope out of rendered React and private public artifacts", () => {
+    const publicTrackedFiles = trackedFiles();
+    const missionChangedFiles = changedFilesSinceMissionBase();
+
+    expect(missionChangedFiles).toEqual(
+      expect.arrayContaining([
+        "src/server/providerHttpRuntimeRegistry.ts",
+        "src/server/providerHttpClientRuntime.ts",
+      ]),
+    );
+    expect(missionChangedFiles).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^src\/(App|app|components|styles|i18n)\//),
+        expect.stringMatching(/^src\/.*\.(tsx|css)$/),
+      ]),
+    );
+    expect(publicTrackedFiles).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^(docs\/current|kitty-specs|evidence|sync|\.kittify|\.agents|AGENTS\.md)(\/|$)/),
+      ]),
+    );
+  });
+
+  it("keeps backend smoke and activated provider HTTP projection non-production with all downstream flags false", () => {
+    const defaultReport = createBackendServiceReadinessReport();
+    const activatedReport = createBackendServiceReadinessReport({
+      configOptions: {
+        env: providerHttpReadyEnv,
+        profileId: "production-required",
+      },
+    });
+    const expectedDownstreamFlags = createProviderHttpDownstreamLiveFlags();
+
+    expect(defaultReport.validation.valid).toBe(true);
+    expect(defaultReport.providerClientReadiness.providerHttpRuntime).toMatchObject({
+      activationStatus: "disabled",
+      downstreamLiveFlags: expectedDownstreamFlags,
+      liveHttpCallsAttempted: false,
+      productionReady: false,
+      status: "disabled",
+      transportProvided: false,
+      valid: true,
+    });
+    expect(activatedReport.providerClientReadiness.providerHttpRuntime).toMatchObject({
+      activationStatus: "explicitly_enabled",
+      downstreamLiveFlags: expectedDownstreamFlags,
+      liveHttpCallsAttempted: false,
+      productionReady: false,
+      status: "activated",
+      transportProvided: true,
+      valid: true,
+    });
+    expect(activatedReport.providerClientReadiness.activationInventory.providerHttpRuntime).toMatchObject({
+      activationStatus: "explicitly_enabled",
+      blockedConfigKeys: [],
+      blockerIds: [],
+      status: "activated",
+    });
+    expect(activatedReport.workerSchedulerFoundation.providerHttpRuntime).toMatchObject({
+      activationStatus: "explicitly_enabled",
+      idempotencyPosture: "policy-and-store-reference-only",
+      leasePosture: "store-reference-only",
+      liveHttpCallsAttempted: false,
+      liveSchedulerExecutionEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      productionReady: false,
+      status: "activated",
+      transportProvided: true,
+    });
+    expect(activatedReport.queueRuntimeFoundation.noLiveFlags).toMatchObject({
+      liveAnalyticsIngestionEnabled: false,
+      liveContractCallsEnabled: false,
+      liveObjectStorageEnabled: false,
+      liveRewardDistributionEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+      liveWorkerExecutionEnabled: false,
+    });
+    expect(activatedReport.observabilityExporterFoundation.noLiveFlags).toMatchObject({
+      liveAnalyticsIngestionEnabled: false,
+      liveObjectStorageEnabled: false,
+      liveProviderCallsEnabled: false,
+      liveTelemetryExportEnabled: false,
+    });
+    expect(Object.values(activatedReport.providerClientReadiness.providerHttpRuntime.downstreamLiveFlags)).toEqual(
+      expect.arrayContaining([false]),
+    );
+    expect(Object.values(activatedReport.providerClientReadiness.providerHttpRuntime.downstreamLiveFlags).every(
+      (flag) => flag === false,
+    )).toBe(true);
   });
 
   it("does not treat production-required auth/session as anonymous local mode", () => {

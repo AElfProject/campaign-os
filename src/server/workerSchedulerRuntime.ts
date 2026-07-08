@@ -1,4 +1,6 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
+import type { ProviderHttpRuntimeSummary } from "./providerHttpRuntimeTypes";
 import {
   createWorkerIdempotencyStoreFoundation,
   type WorkerIdempotencyDiagnosticCode,
@@ -243,6 +245,26 @@ export interface ProviderWorkerJobHandoff {
   workerJobId: "task-verification-worker";
 }
 
+export interface WorkerProviderHttpRuntimePosture {
+  activationStatus: ProviderHttpRuntimeSummary["activationStatus"];
+  blockerCount: number;
+  diagnosticCodes: ProviderHttpRuntimeSummary["diagnosticCodes"];
+  endpointCount: number;
+  idempotencyPolicyId: string;
+  idempotencyPosture: "policy-and-store-reference-only";
+  leasePosture: "store-reference-only";
+  leaseStoreId: string;
+  liveHttpCallsAttempted: false;
+  liveSchedulerExecutionEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  productionReady: false;
+  queueId: "verification-jobs";
+  runtimeId: ProviderHttpRuntimeSummary["id"];
+  status: ProviderHttpRuntimeSummary["status"];
+  transportProvided: boolean;
+  workerJobId: "task-verification-worker";
+}
+
 export interface WorkerSchedulerFoundationSummary {
   blockerCount: number;
   diagnosticCodes: WorkerSchedulerDiagnosticCode[];
@@ -256,6 +278,7 @@ export interface WorkerSchedulerFoundationSummary {
   preconditions: WorkerRuntimePrecondition[];
   productionReady: false;
   profileId: WorkerSchedulerProfileId;
+  providerHttpRuntime: WorkerProviderHttpRuntimePosture;
   providerJobHandoffs: ProviderWorkerJobHandoff[];
   readiness: WorkerSchedulerReadinessProjection;
   retryBackoffPolicies: RetryBackoffPolicy[];
@@ -928,6 +951,11 @@ export const createWorkerSchedulerFoundation = (
       profileId: profileResolution.profileId,
     }),
   );
+  const providerHttpRuntime = createProviderHttpRuntimeSummary({
+    env,
+    profileId: profileResolution.profileId,
+    transportProvided: hasConfiguredValue(env, ["CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM"]),
+  });
   const diagnostics = [
     ...profileResolution.diagnostics,
     ...registryDiagnostics,
@@ -950,6 +978,11 @@ export const createWorkerSchedulerFoundation = (
     preconditions: workerSchedulerProductionPreconditions.map(({ field, message, ...item }) => item),
     productionReady: false,
     profileId: profileResolution.profileId,
+    providerHttpRuntime: createWorkerProviderHttpRuntimePosture(
+      providerHttpRuntime,
+      leaseStore,
+      idempotencyStore,
+    ),
     providerJobHandoffs: createProviderJobHandoffs(),
     readiness,
     retryBackoffPolicies: workerRetryBackoffPolicies,
@@ -1024,6 +1057,36 @@ const createProviderJobHandoffs = (): ProviderWorkerJobHandoff[] => {
       workerJobId: "task-verification-worker",
     },
   ];
+};
+
+const createWorkerProviderHttpRuntimePosture = (
+  runtime: ProviderHttpRuntimeSummary,
+  leaseStore: WorkerSchedulerLeaseStoreSummary,
+  idempotencyStore: WorkerSchedulerIdempotencyStoreSummary,
+): WorkerProviderHttpRuntimePosture => {
+  const taskVerificationPolicy = workerSchedulerPolicies.find((policy) =>
+    policy.jobId === "task-verification-worker"
+  );
+
+  return {
+    activationStatus: runtime.activationStatus,
+    blockerCount: runtime.blockerCount,
+    diagnosticCodes: [...runtime.diagnosticCodes],
+    endpointCount: runtime.endpointCount,
+    idempotencyPolicyId: taskVerificationPolicy?.idempotencyPolicyId ?? "task-verification-idempotency",
+    idempotencyPosture: "policy-and-store-reference-only",
+    leasePosture: "store-reference-only",
+    leaseStoreId: leaseStore.storeId,
+    liveHttpCallsAttempted: false,
+    liveSchedulerExecutionEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    productionReady: false,
+    queueId: "verification-jobs",
+    runtimeId: runtime.id,
+    status: runtime.status,
+    transportProvided: runtime.transportProvided,
+    workerJobId: "task-verification-worker",
+  };
 };
 
 const createIdempotencyStoreSummary = (

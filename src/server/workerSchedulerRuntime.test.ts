@@ -93,6 +93,23 @@ describe("worker scheduler runtime foundation", () => {
     expect(foundation.productionReady).toBe(false);
     expect(foundation.blockerCount).toBe(0);
     expect(foundation.noLiveFlags).toEqual(workerSchedulerNoLiveFlags);
+    expect(foundation.providerHttpRuntime).toMatchObject({
+      activationStatus: "disabled",
+      endpointCount: 2,
+      idempotencyPolicyId: "task-verification-idempotency",
+      idempotencyPosture: "policy-and-store-reference-only",
+      leasePosture: "store-reference-only",
+      leaseStoreId: "local-dry-run",
+      liveHttpCallsAttempted: false,
+      liveSchedulerExecutionEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      productionReady: false,
+      queueId: "verification-jobs",
+      runtimeId: "campaign-os-provider-http-client-runtime",
+      status: "disabled",
+      transportProvided: false,
+      workerJobId: "task-verification-worker",
+    });
     expect(foundation.readiness).toMatchObject({
       blockerCount: 0,
       consumeAckAttempted: false,

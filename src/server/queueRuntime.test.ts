@@ -93,6 +93,21 @@ describe("queue runtime foundation", () => {
       liveQueueConsumptionEnabled: false,
       liveQueuePublishingEnabled: false,
       productionReady: false,
+      providerHttpRuntime: {
+        activationStatus: "disabled",
+        endpointCount: 2,
+        idempotencyPosture: "store-required-reference-only",
+        idempotencyStoreId: "local-dry-run",
+        leasePosture: "lease-required-reference-only",
+        leaseStoreId: "local-dry-run",
+        liveHttpCallsAttempted: false,
+        productionReady: false,
+        queueWorkerHandoffRequired: true,
+        runtimeId: "campaign-os-provider-http-client-runtime",
+        status: "disabled",
+        transportProvided: false,
+        workerJobId: "task-verification-worker",
+      },
       queuePlanCount: 9,
     });
     expect(foundation.observabilityExporter).toMatchObject({
