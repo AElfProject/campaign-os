@@ -174,10 +174,21 @@ export interface WorkerIdempotencyReadinessProjection {
   observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   operationCount: number;
   productionReady: false;
+  providerIdempotencyPosture: ProviderIdempotencyPosture;
   queueProviderSdkBindingHandoff: WorkerIdempotencyQueueProviderSdkBindingReadinessHandoff;
   requiredConfigKeys: string[];
   status: WorkerIdempotencyStoreFoundationStatus;
   storeId: string;
+}
+
+export interface ProviderIdempotencyPosture {
+  duplicateDecisions: ["existing_completion", "duplicate_drop", "blocked", "manual_review"];
+  liveIdempotencyExecutionEnabled: false;
+  liveProviderExecutionAllowedOnDuplicate: false;
+  liveWorkerExecutionEnabled: false;
+  posture: "reference_or_hash_only";
+  rawIdempotencyKeySerialized: false;
+  requiredReferenceFields: ["idempotencyKeyReference", "completionEvidenceReference"];
 }
 
 export interface WorkerIdempotencyStoreFoundationSummary {
@@ -195,6 +206,7 @@ export interface WorkerIdempotencyStoreFoundationSummary {
   preconditions: WorkerIdempotencyProductionPrecondition[];
   productionReady: false;
   profileId: WorkerIdempotencyStoreProfileId;
+  providerIdempotencyPosture: ProviderIdempotencyPosture;
   readiness: WorkerIdempotencyReadinessProjection;
   status: WorkerIdempotencyStoreFoundationStatus;
   storeId: string;
@@ -233,6 +245,9 @@ export interface WorkerIdempotencyDryRunResult {
   liveWorkerExecutionEnabled: false;
   operation?: WorkerIdempotencyOperation;
   productionWriteAttempted: false;
+  providerIdempotencyDecision?: ProviderIdempotencyPosture["duplicateDecisions"][number];
+  providerIdempotencyPosture?: "reference_or_hash_only";
+  liveProviderExecutionAllowed?: false;
   requestedAt?: string;
   sideEffectBoundary?: string;
   status: "accepted_dry_run" | "rejected" | "duplicate_existing" | "conflict" | "stale_in_flight";
@@ -465,6 +480,7 @@ export const createWorkerIdempotencyStoreFoundation = (
     preconditions: workerIdempotencyStoreProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
     profileId: profileResolution.profileId,
+    providerIdempotencyPosture,
     readiness,
     status,
     storeId,
@@ -493,6 +509,9 @@ export const evaluateWorkerIdempotencyDryRun = (
     liveWorkerExecutionEnabled: false,
     operation: accepted ? request.operation : undefined,
     productionWriteAttempted: false,
+    providerIdempotencyDecision: accepted ? resolveProviderIdempotencyDecision(policy?.duplicateOutcome, request.operation) : undefined,
+    providerIdempotencyPosture: accepted ? "reference_or_hash_only" : undefined,
+    liveProviderExecutionAllowed: accepted ? false : undefined,
     requestedAt: accepted ? request.requestedAt : undefined,
     sideEffectBoundary: accepted ? request.sideEffectBoundary : undefined,
     status: accepted ? resolveAcceptedStatus(policy?.duplicateOutcome, request.operation) : "rejected",
@@ -725,6 +744,7 @@ const createReadinessProjection = ({
   observabilityExporterStatus: observabilityExporter.status,
   operationCount: workerIdempotencyOperationCapabilities.length,
   productionReady: false,
+  providerIdempotencyPosture,
   queueProviderSdkBindingHandoff: createQueueProviderSdkBindingReadinessHandoff(env),
   requiredConfigKeys: [
     ...new Set(workerIdempotencyStoreProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
@@ -732,6 +752,35 @@ const createReadinessProjection = ({
   status,
   storeId,
 });
+
+const providerIdempotencyPosture: ProviderIdempotencyPosture = {
+  duplicateDecisions: ["existing_completion", "duplicate_drop", "blocked", "manual_review"],
+  liveIdempotencyExecutionEnabled: false,
+  liveProviderExecutionAllowedOnDuplicate: false,
+  liveWorkerExecutionEnabled: false,
+  posture: "reference_or_hash_only",
+  rawIdempotencyKeySerialized: false,
+  requiredReferenceFields: ["idempotencyKeyReference", "completionEvidenceReference"],
+};
+
+const resolveProviderIdempotencyDecision = (
+  duplicateOutcome: IdempotencyDuplicateOutcome | undefined,
+  operation: WorkerIdempotencyOperation,
+): ProviderIdempotencyPosture["duplicateDecisions"][number] => {
+  if (operation === "replay" && duplicateOutcome === "return_existing") {
+    return "existing_completion";
+  }
+
+  if (operation === "release" || duplicateOutcome === "drop_duplicate") {
+    return "duplicate_drop";
+  }
+
+  if (operation === "conflict" || duplicateOutcome === "manual_review") {
+    return "manual_review";
+  }
+
+  return duplicateOutcome === "blocked" ? "blocked" : "manual_review";
+};
 
 const createQueueProviderSdkBindingReadinessHandoff = (
   env: Record<string, unknown>,

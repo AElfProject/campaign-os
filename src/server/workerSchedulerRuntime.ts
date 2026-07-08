@@ -220,8 +220,27 @@ export interface WorkerSchedulerReadinessProjection {
   liveWorkerExecutionEnabled: false;
   localReviewReady: boolean;
   productionReady: false;
+  providerClientReadinessDependency: "campaign-os-provider-indexer-client-readiness";
+  providerClientReadinessRequired: boolean;
+  providerJobHandoffCount: number;
+  providerVerificationWorkerJobId: "task-verification-worker";
   schedulePolicyCount: number;
   triggerSourceCount: number;
+}
+
+export interface ProviderWorkerJobHandoff {
+  circuitBreakerLabel: "provider-circuit-breaker:closed-required";
+  degradationLabel: "provider-degradation:manual-review";
+  idempotencyPolicyId: string;
+  idempotencyPosture: "reference-only-no-raw-key";
+  leasePosture: "reference-only-no-raw-token";
+  liveSchedulerExecutionEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  providerClientReadinessDependency: "campaign-os-provider-indexer-client-readiness";
+  providerClientReadinessRequired: true;
+  queueId: "verification-jobs";
+  retryPolicyId: string;
+  workerJobId: "task-verification-worker";
 }
 
 export interface WorkerSchedulerFoundationSummary {
@@ -237,6 +256,7 @@ export interface WorkerSchedulerFoundationSummary {
   preconditions: WorkerRuntimePrecondition[];
   productionReady: false;
   profileId: WorkerSchedulerProfileId;
+  providerJobHandoffs: ProviderWorkerJobHandoff[];
   readiness: WorkerSchedulerReadinessProjection;
   retryBackoffPolicies: RetryBackoffPolicy[];
   schedulerPolicies: SchedulerPolicy[];
@@ -930,6 +950,7 @@ export const createWorkerSchedulerFoundation = (
     preconditions: workerSchedulerProductionPreconditions.map(({ field, message, ...item }) => item),
     productionReady: false,
     profileId: profileResolution.profileId,
+    providerJobHandoffs: createProviderJobHandoffs(),
     readiness,
     retryBackoffPolicies: workerRetryBackoffPolicies,
     schedulerPolicies: workerSchedulerPolicies,
@@ -974,9 +995,36 @@ const createReadinessProjection = (
   liveWorkerExecutionEnabled: false,
   localReviewReady: blockerCount === 0,
   productionReady: false,
+  providerClientReadinessDependency: "campaign-os-provider-indexer-client-readiness",
+  providerClientReadinessRequired: true,
+  providerJobHandoffCount: createProviderJobHandoffs().length,
+  providerVerificationWorkerJobId: "task-verification-worker",
   schedulePolicyCount: workerSchedulerPolicies.length,
   triggerSourceCount: workerSchedulerTriggerSources.length,
 });
+
+const createProviderJobHandoffs = (): ProviderWorkerJobHandoff[] => {
+  const taskVerificationPolicy = workerSchedulerPolicies.find((policy) =>
+    policy.jobId === "task-verification-worker"
+  );
+
+  return [
+    {
+      circuitBreakerLabel: "provider-circuit-breaker:closed-required",
+      degradationLabel: "provider-degradation:manual-review",
+      idempotencyPolicyId: taskVerificationPolicy?.idempotencyPolicyId ?? "task-verification-idempotency",
+      idempotencyPosture: "reference-only-no-raw-key",
+      leasePosture: "reference-only-no-raw-token",
+      liveSchedulerExecutionEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      providerClientReadinessDependency: "campaign-os-provider-indexer-client-readiness",
+      providerClientReadinessRequired: true,
+      queueId: "verification-jobs",
+      retryPolicyId: taskVerificationPolicy?.retryPolicyId ?? "verification-exponential-review",
+      workerJobId: "task-verification-worker",
+    },
+  ];
+};
 
 const createIdempotencyStoreSummary = (
   idempotencyStore: ReturnType<typeof createWorkerIdempotencyStoreFoundation>,

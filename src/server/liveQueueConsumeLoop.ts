@@ -193,8 +193,23 @@ export interface LiveQueueConsumeReadinessProjection {
   liveQueueConsumptionEnabled: boolean;
   mode: LiveQueueConsumeMode;
   productionReady: false;
+  providerClientConsumeHandoff: ProviderClientConsumeHandoff;
   status: LiveQueueConsumeStatus;
   valid: boolean;
+}
+
+export interface ProviderClientConsumeHandoff {
+  consumeReadinessStatus: "activated" | "blocked" | "disabled";
+  liveAckAttempted: false;
+  liveDeadLetterAttempted: false;
+  liveNackAttempted: false;
+  liveProviderCallsEnabled: false;
+  liveReserveAttempted: false;
+  liveRetryAttempted: false;
+  payloadReferenceRequirement: "payload-reference-or-hash-required";
+  providerClientActivationPrerequisite: "consume-readiness-handoff";
+  providerVerificationQueueId: "verification-jobs";
+  providerVerificationWorkerJobId: "task-verification-worker";
 }
 
 export interface LiveQueueConsumeReadinessSummary {
@@ -216,6 +231,7 @@ export interface LiveQueueConsumeReadinessSummary {
   preconditions: LiveQueueConsumeProductionPrecondition[];
   productionReady: false;
   profileId: LiveQueueConsumeProfileId;
+  providerClientConsumeHandoff: ProviderClientConsumeHandoff;
   publishingReadiness: LiveQueuePublishingReadinessSummary;
   readiness: LiveQueueConsumeReadinessProjection;
   requiredConfigKeys: string[];
@@ -357,6 +373,7 @@ export const createLiveQueueConsumeLoopReadiness = (
     && blockerCount === 0;
   const liveQueueConsumptionEnabled = consumeAttemptAllowed;
   const status = resolveReadinessStatus(profileResolution.profileId, blockerCount, consumeAttemptAllowed);
+  const providerClientConsumeHandoff = createProviderClientConsumeHandoff(status, consumeAttemptAllowed);
   const valid = profileResolution.valid
     && modeResolution.valid
     && blockerCount === 0
@@ -371,6 +388,7 @@ export const createLiveQueueConsumeLoopReadiness = (
     handlerRegistryProvided: handlers.length > 0,
     liveQueueConsumptionEnabled,
     mode: modeResolution.mode,
+    providerClientConsumeHandoff,
     status,
     valid,
   });
@@ -393,6 +411,7 @@ export const createLiveQueueConsumeLoopReadiness = (
     preconditions: liveQueueConsumeProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
     profileId: profileResolution.profileId,
+    providerClientConsumeHandoff,
     publishingReadiness,
     readiness,
     requiredConfigKeys: getRequiredConfigKeys(),
@@ -580,6 +599,7 @@ function createReadinessProjection(input: {
   handlerRegistryProvided: boolean;
   liveQueueConsumptionEnabled: boolean;
   mode: LiveQueueConsumeMode;
+  providerClientConsumeHandoff: ProviderClientConsumeHandoff;
   status: LiveQueueConsumeStatus;
   valid: boolean;
 }): LiveQueueConsumeReadinessProjection {
@@ -594,8 +614,28 @@ function createReadinessProjection(input: {
     liveQueueConsumptionEnabled: input.liveQueueConsumptionEnabled,
     mode: input.mode,
     productionReady: false,
+    providerClientConsumeHandoff: input.providerClientConsumeHandoff,
     status: input.status,
     valid: input.valid,
+  };
+}
+
+function createProviderClientConsumeHandoff(
+  status: LiveQueueConsumeStatus,
+  consumeAttemptAllowed: boolean,
+): ProviderClientConsumeHandoff {
+  return {
+    consumeReadinessStatus: consumeAttemptAllowed ? "activated" : status === "blocked" ? "blocked" : "disabled",
+    liveAckAttempted: false,
+    liveDeadLetterAttempted: false,
+    liveNackAttempted: false,
+    liveProviderCallsEnabled: false,
+    liveReserveAttempted: false,
+    liveRetryAttempted: false,
+    payloadReferenceRequirement: "payload-reference-or-hash-required",
+    providerClientActivationPrerequisite: "consume-readiness-handoff",
+    providerVerificationQueueId: "verification-jobs",
+    providerVerificationWorkerJobId: "task-verification-worker",
   };
 }
 

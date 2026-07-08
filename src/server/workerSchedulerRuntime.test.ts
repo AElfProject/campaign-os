@@ -279,6 +279,36 @@ describe("worker scheduler runtime foundation", () => {
     );
   });
 
+  it("projects provider verification worker handoff with retry, circuit, degradation, lease, and idempotency posture", () => {
+    const foundation = createWorkerSchedulerFoundation({ profileId: "local-review" });
+    const providerJob = foundation.providerJobHandoffs.find((handoff) =>
+      handoff.workerJobId === "task-verification-worker"
+    );
+
+    expect(providerJob).toEqual({
+      circuitBreakerLabel: "provider-circuit-breaker:closed-required",
+      degradationLabel: "provider-degradation:manual-review",
+      idempotencyPolicyId: "task-verification-idempotency",
+      idempotencyPosture: "reference-only-no-raw-key",
+      leasePosture: "reference-only-no-raw-token",
+      liveSchedulerExecutionEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      providerClientReadinessDependency: "campaign-os-provider-indexer-client-readiness",
+      providerClientReadinessRequired: true,
+      queueId: "verification-jobs",
+      retryPolicyId: "verification-exponential-review",
+      workerJobId: "task-verification-worker",
+    });
+    expect(foundation.readiness.providerJobHandoffCount).toBe(1);
+    expect(foundation.readiness.providerVerificationWorkerJobId).toBe("task-verification-worker");
+    expect(foundation.readiness.providerClientReadinessDependency).toBe(
+      "campaign-os-provider-indexer-client-readiness",
+    );
+    expect(foundation.readiness.providerClientReadinessRequired).toBe(true);
+    expect(foundation.readiness.liveSchedulerExecutionEnabled).toBe(false);
+    expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
+  });
+
   it("redacts queue URLs, scheduler credentials, lease tokens, signed URLs, object keys, and raw job payloads", () => {
     const rawFixture = {
       bearerToken: "Bearer worker-token-456",

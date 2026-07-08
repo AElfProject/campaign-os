@@ -491,6 +491,58 @@ describe("queue runtime foundation", () => {
     expect(createQueueRuntimeFoundation().queuePlans.map((plan) => plan.jobId)).toEqual(beforePlans);
   });
 
+  it("projects provider-backed queue metadata and retry/dead-letter posture without live actions", () => {
+    const foundation = createQueueRuntimeFoundation({ profileId: "local-review" });
+    const providerPlan = foundation.queuePlans.find((plan) => plan.jobId === "task-verification-worker");
+    const enqueue = dryRunQueueEnqueue({
+      attempt: 3,
+      idempotencyKey: "idempotency:campaign-task-verification",
+      jobId: "task-verification-worker",
+      payloadReference: "payload-ref:sha256:task-verification-safe",
+      queueId: "verification-jobs",
+      traceId: "trace-queue-provider-handoff",
+    });
+
+    expect(providerPlan).toMatchObject({
+      deadLetterPolicy: "deferred-dead-letter-review-required",
+      id: "task-verification-worker-queue-plan",
+      livePublishingEnabled: false,
+      payloadReferencePolicy: "payload-reference-or-hash-only-no-raw-payload",
+      providerClientReadinessDependency: "campaign-os-provider-indexer-client-readiness",
+      providerClientReadinessRequired: true,
+      providerDegradationLabel: "manual_review",
+      providerRetryLabel: "verification-exponential-review",
+      queueId: "verification-jobs",
+      retryPolicyId: "verification-exponential-review",
+      workerJobId: "task-verification-worker",
+    });
+    expect(foundation.readiness.providerClientQueueHandoff).toMatchObject({
+      deadLetterPolicy: "deferred-dead-letter-review-required",
+      liveQueuePublishingEnabled: false,
+      payloadReferencePolicy: "payload-reference-or-hash-only-no-raw-payload",
+      providerClientReadinessDependency: "campaign-os-provider-indexer-client-readiness",
+      providerClientReadinessRequired: true,
+      providerDegradationLabel: "manual_review",
+      providerRetryLabel: "verification-exponential-review",
+      queueId: "verification-jobs",
+      workerJobId: "task-verification-worker",
+    });
+    expect(enqueue).toMatchObject({
+      accepted: true,
+      livePublishAttempted: false,
+      liveQueuePublishingEnabled: false,
+      providerClientReadinessDependency: "campaign-os-provider-indexer-client-readiness",
+      providerClientReadinessRequired: true,
+      providerDeadLetterPolicy: "deferred-dead-letter-review-required",
+      providerRetryPolicyId: "verification-exponential-review",
+      providerSdkBindingOperation: {
+        liveProviderCallAttempted: false,
+        livePublishAttempted: false,
+        productionWriteAttempted: false,
+      },
+    });
+  });
+
   it("rejects unknown jobs, mismatched queues, invalid attempts, missing trace ids, and unsafe payload references", () => {
     const cases = [
       {
