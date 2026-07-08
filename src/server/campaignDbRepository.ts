@@ -1,12 +1,14 @@
 import {
   campaignLifecycleStatuses,
   supportedLocales,
+  type AccountType,
   type CampaignStatus,
   type ContractMode,
   type SupportedLocale,
   type VerificationType,
   type WalletCompatibility,
   type WalletPolicy,
+  type WalletSource,
 } from "../domain/types";
 import {
   createCampaignDurableStore,
@@ -21,6 +23,7 @@ export type CampaignDbRepositoryEventType =
   | "transaction.commit"
   | "command.planned"
   | "command.insert"
+  | "command.update"
   | "query.lookup"
   | "query.list"
   | "diagnostic";
@@ -43,6 +46,14 @@ export type CampaignDbDiagnosticCode =
   | "CAMPAIGN_DB_TASK_REQUIRED_FIELD_MISSING"
   | "CAMPAIGN_DB_TASK_UNSUPPORTED_VERIFICATION_TYPE"
   | "CAMPAIGN_DB_TASK_UNSUPPORTED_WALLET_COMPATIBILITY"
+  | "CAMPAIGN_DB_COMPLETION_CAMPAIGN_NOT_FOUND"
+  | "CAMPAIGN_DB_COMPLETION_INVALID_EVIDENCE_HASH"
+  | "CAMPAIGN_DB_COMPLETION_REQUIRED_FIELD_MISSING"
+  | "CAMPAIGN_DB_COMPLETION_TASK_NOT_FOUND"
+  | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_ACCOUNT_TYPE"
+  | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_EVIDENCE_SOURCE"
+  | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_STATUS"
+  | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_WALLET_SOURCE"
   | "CAMPAIGN_DB_PRODUCTION_DEFERRED";
 
 export interface CampaignDbDiagnostic {
@@ -122,6 +133,41 @@ export interface CampaignDbAddTaskDraftInput {
   walletCompatibility: WalletCompatibility | string;
 }
 
+export type CampaignDbTaskCompletionStatus = "pending" | "completed" | "failed" | "manual_review";
+export type CampaignDbTaskCompletionEvidenceSource =
+  | "AEFINDER"
+  | "AELFSCAN"
+  | "DAPP_API"
+  | "SOCIAL_API"
+  | "MANUAL";
+
+export interface CampaignDbTaskCompletion {
+  accountType: AccountType;
+  campaignId: string;
+  completedAt?: string;
+  createdAt: string;
+  evidenceHash?: string;
+  evidenceSource: CampaignDbTaskCompletionEvidenceSource;
+  id: string;
+  pointsAwarded: number;
+  status: CampaignDbTaskCompletionStatus;
+  taskId: string;
+  updatedAt: string;
+  walletAddress: string;
+  walletSource: WalletSource;
+}
+
+export interface CampaignDbUpsertTaskCompletionInput {
+  accountType: AccountType | string;
+  campaignId: string;
+  evidenceHash?: string;
+  evidenceSource?: CampaignDbTaskCompletionEvidenceSource | string;
+  status?: CampaignDbTaskCompletionStatus | string;
+  taskId: string;
+  walletAddress: string;
+  walletSource: WalletSource | string;
+}
+
 export interface CampaignDbOperationContext {
   traceId?: string;
 }
@@ -134,7 +180,35 @@ export interface CampaignDbReadProjection extends CampaignDbDraft {
     storeId: "campaign-db";
       transactionId?: string;
   };
+  completions: CampaignDbTaskCompletion[];
   tasks: CampaignDbTaskDraft[];
+}
+
+export interface CampaignDbEligibilityInput {
+  accountType?: AccountType | string;
+  campaignId: string;
+  walletAddress: string;
+  walletSource?: WalletSource | string;
+}
+
+export interface CampaignDbEligibilityProjection {
+  accountType: AccountType;
+  campaignId: string;
+  eligible: boolean;
+  localePreference: "en-US";
+  missingTasks: string[];
+  repository: {
+    adapterId: string;
+    createdViaRepository: true;
+    repositoryId: string;
+    storeId: "campaign-db";
+  };
+  riskFlags: string[];
+  score: number;
+  status: "eligible" | "not_eligible" | "pending" | "risk_flagged" | "ended";
+  walletAddress: string;
+  walletSource: WalletSource;
+  walletTypeVerified: boolean;
 }
 
 export interface CampaignDbListFilter {
@@ -145,7 +219,7 @@ export interface CampaignDbListFilter {
 }
 
 export interface CampaignDbRepositoryEvent {
-  entity: "Campaign" | "CampaignTask";
+  entity: "Campaign" | "CampaignTask" | "TaskCompletion";
   id: string;
   liveExecution: false;
   operation: string;
@@ -163,6 +237,7 @@ export interface CampaignDbRepositoryHealth {
   diagnostics: CampaignDbDiagnostic[];
   eventCount: number;
   fallbackUsed: false;
+  completionRecordCount: number;
   id: "campaign-db-repository-runtime";
   liveConnectionAttempted: false;
   liveMigrationExecutionEnabled: false;
@@ -184,6 +259,10 @@ export interface CampaignDbRepository {
     input: CampaignDbAddTaskDraftInput,
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbTaskDraft>;
+  checkEligibility?(
+    input: CampaignDbEligibilityInput,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbEligibilityProjection>;
   createDraft(
     input: CampaignDbCreateDraftInput,
     context?: CampaignDbOperationContext,
@@ -199,6 +278,10 @@ export interface CampaignDbRepository {
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbReadProjection[]>;
   reset(): Promise<void>;
+  upsertTaskCompletion?(
+    input: CampaignDbUpsertTaskCompletionInput,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbTaskCompletion>;
 }
 
 export interface CreateCampaignDbRepositoryOptions {
@@ -223,6 +306,28 @@ export class CampaignDbRepositoryError extends Error {
 const defaultNow = () => "2026-07-06T00:00:00.000Z";
 const walletPolicies = ["ANY", "AA_ONLY", "EOA_ONLY"] as const satisfies readonly WalletPolicy[];
 const verificationTypes = ["WALLET", "ON_CHAIN", "DAPP_API", "SOCIAL", "MANUAL"] as const satisfies readonly VerificationType[];
+const accountTypes = ["AA", "EOA", "UNKNOWN"] as const satisfies readonly AccountType[];
+const walletSources = [
+  "PORTKEY_AA",
+  "PORTKEY_EOA_APP",
+  "PORTKEY_EOA_EXTENSION",
+  "NIGHTELF",
+  "AGENT_SKILL",
+  "OTHER",
+] as const satisfies readonly WalletSource[];
+const completionStatuses = [
+  "pending",
+  "completed",
+  "failed",
+  "manual_review",
+] as const satisfies readonly CampaignDbTaskCompletionStatus[];
+const completionEvidenceSources = [
+  "AEFINDER",
+  "AELFSCAN",
+  "DAPP_API",
+  "SOCIAL_API",
+  "MANUAL",
+] as const satisfies readonly CampaignDbTaskCompletionEvidenceSource[];
 const contractModes = [
   "OFF_CHAIN_MVP",
   "V2_COMPANION",
@@ -291,8 +396,20 @@ const isSupportedLocale = (value: string): value is SupportedLocale =>
 const isWalletPolicy = (value: string): value is WalletPolicy =>
   (walletPolicies as readonly string[]).includes(value);
 
+const isAccountType = (value: string): value is AccountType =>
+  (accountTypes as readonly string[]).includes(value);
+
+const isWalletSource = (value: string): value is WalletSource =>
+  (walletSources as readonly string[]).includes(value);
+
 const isVerificationType = (value: string): value is VerificationType =>
   (verificationTypes as readonly string[]).includes(value);
+
+const isCompletionStatus = (value: string): value is CampaignDbTaskCompletionStatus =>
+  (completionStatuses as readonly string[]).includes(value);
+
+const isCompletionEvidenceSource = (value: string): value is CampaignDbTaskCompletionEvidenceSource =>
+  (completionEvidenceSources as readonly string[]).includes(value);
 
 const isContractMode = (value: string): value is ContractMode =>
   (contractModes as readonly string[]).includes(value);
@@ -626,6 +743,196 @@ const validateAddTaskDraftInput = (
   };
 };
 
+const evidenceSourceForVerificationType = (
+  verificationType: VerificationType,
+): CampaignDbTaskCompletionEvidenceSource => {
+  switch (verificationType) {
+    case "ON_CHAIN":
+      return "AELFSCAN";
+    case "DAPP_API":
+      return "DAPP_API";
+    case "SOCIAL":
+      return "SOCIAL_API";
+    case "MANUAL":
+      return "MANUAL";
+    case "WALLET":
+    default:
+      return "MANUAL";
+  }
+};
+
+const requireCompletionString = (
+  input: CampaignDbUpsertTaskCompletionInput | CampaignDbEligibilityInput,
+  field: "campaignId" | "taskId" | "walletAddress",
+  issues: CampaignDbDiagnostic[],
+) => {
+  const value = input[field as keyof typeof input];
+
+  if (!isNonEmptyString(value)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_COMPLETION_REQUIRED_FIELD_MISSING",
+      field,
+      `Campaign DB task completion field '${field}' is required.`,
+    ));
+
+    return "";
+  }
+
+  return value.trim();
+};
+
+const normalizeCompletionAccountType = (
+  accountType: string | undefined,
+  issues: CampaignDbDiagnostic[],
+  allowDefault = false,
+): AccountType => {
+  const candidate = accountType ?? (allowDefault ? "UNKNOWN" : undefined);
+
+  if (!candidate || !isAccountType(candidate)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_ACCOUNT_TYPE",
+      "accountType",
+      "Campaign DB task completion accountType is unsupported.",
+    ));
+
+    return "UNKNOWN";
+  }
+
+  return candidate;
+};
+
+const normalizeCompletionWalletSource = (
+  walletSource: string | undefined,
+  issues: CampaignDbDiagnostic[],
+  allowDefault = false,
+): WalletSource => {
+  const candidate = walletSource ?? (allowDefault ? "OTHER" : undefined);
+
+  if (!candidate || !isWalletSource(candidate)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_WALLET_SOURCE",
+      "walletSource",
+      "Campaign DB task completion walletSource is unsupported.",
+    ));
+
+    return "OTHER";
+  }
+
+  return candidate;
+};
+
+const normalizeCompletionStatus = (
+  status: string | undefined,
+  issues: CampaignDbDiagnostic[],
+): CampaignDbTaskCompletionStatus => {
+  const candidate = status ?? "completed";
+
+  if (!isCompletionStatus(candidate)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_STATUS",
+      "status",
+      "Campaign DB task completion status is unsupported.",
+    ));
+
+    return "failed";
+  }
+
+  return candidate;
+};
+
+const normalizeCompletionEvidenceSource = (
+  evidenceSource: string | undefined,
+  fallback: VerificationType,
+  issues: CampaignDbDiagnostic[],
+): CampaignDbTaskCompletionEvidenceSource => {
+  const candidate = evidenceSource ?? evidenceSourceForVerificationType(fallback);
+
+  if (!isCompletionEvidenceSource(candidate)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_EVIDENCE_SOURCE",
+      "evidenceSource",
+      "Campaign DB task completion evidenceSource is unsupported.",
+    ));
+
+    return "MANUAL";
+  }
+
+  return candidate;
+};
+
+const normalizeEvidenceHash = (
+  evidenceHash: string | undefined,
+  issues: CampaignDbDiagnostic[],
+) => {
+  if (evidenceHash === undefined) {
+    return undefined;
+  }
+
+  const trimmed = evidenceHash.trim();
+
+  if (!trimmed || hasSecretLikeValue(trimmed)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_COMPLETION_INVALID_EVIDENCE_HASH",
+      "evidenceHash",
+      "Campaign DB task completion evidenceHash must be a safe reference, not raw evidence or a secret-like value.",
+    ));
+
+    return undefined;
+  }
+
+  return trimmed;
+};
+
+const validateUpsertTaskCompletionInput = (
+  input: CampaignDbUpsertTaskCompletionInput,
+  campaign: CampaignDbDraft | undefined,
+  task: CampaignDbTaskDraft | undefined,
+): Omit<CampaignDbTaskCompletion, "createdAt" | "id" | "updatedAt"> => {
+  const issues: CampaignDbDiagnostic[] = [];
+  const campaignId = requireCompletionString(input, "campaignId", issues);
+  const taskId = requireCompletionString(input, "taskId", issues);
+  const walletAddress = requireCompletionString(input, "walletAddress", issues);
+  const accountType = normalizeCompletionAccountType(input.accountType, issues);
+  const walletSource = normalizeCompletionWalletSource(input.walletSource, issues);
+  const status = normalizeCompletionStatus(input.status, issues);
+  const evidenceSource = normalizeCompletionEvidenceSource(input.evidenceSource, task?.verificationType ?? "MANUAL", issues);
+  const evidenceHash = normalizeEvidenceHash(input.evidenceHash, issues);
+
+  if (campaignId && !campaign) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_COMPLETION_CAMPAIGN_NOT_FOUND",
+      "campaignId",
+      `Campaign DB draft '${sanitizeCampaignDbDiagnosticValue("campaignId", campaignId)}' was not found.`,
+    ));
+  }
+
+  if (campaign && taskId && (!task || task.campaignId !== campaignId)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_COMPLETION_TASK_NOT_FOUND",
+      "taskId",
+      `Campaign DB task draft '${sanitizeCampaignDbDiagnosticValue("taskId", taskId)}' was not found for the campaign.`,
+    ));
+  }
+
+  if (issues.length > 0) {
+    throw new CampaignDbRepositoryError("Invalid Campaign DB task completion input.", issues);
+  }
+
+  const pointsAwarded = status === "completed" ? task?.points ?? 0 : 0;
+
+  return {
+    accountType,
+    campaignId,
+    ...(evidenceHash ? { evidenceHash } : {}),
+    evidenceSource,
+    pointsAwarded,
+    status,
+    taskId,
+    walletAddress,
+    walletSource,
+  };
+};
+
 const createProductionDeferredDiagnostic = (
   requestedDriverId: string | undefined,
 ): CampaignDbDiagnostic => diagnostic(
@@ -646,6 +953,7 @@ export const createCampaignDbRepository = ({
   requestedDriverId,
 }: CreateCampaignDbRepositoryOptions = {}): CampaignDbRepository => {
   const recordsById = new Map<string, CampaignDbDraft>();
+  const taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
   const taskRecordsById = new Map<string, CampaignDbTaskDraft>();
   const events: CampaignDbRepositoryEvent[] = [];
   const adapterId =
@@ -664,6 +972,7 @@ export const createCampaignDbRepository = ({
         })
       : undefined;
   let idSequence = 0;
+  let completionIdSequence = 0;
   let taskIdSequence = 0;
   let eventSequence = 0;
   let transactionSequence = 0;
@@ -690,6 +999,22 @@ export const createCampaignDbRepository = ({
     taskIdSequence += 1;
 
     return `campaign-db-task-draft-${taskIdSequence.toString().padStart(4, "0")}`;
+  };
+
+  const nextCompletionId = () => {
+    completionIdSequence += 1;
+
+    return `campaign-db-task-completion-${completionIdSequence.toString().padStart(4, "0")}`;
+  };
+
+  const nextCompletionIdForStore = async () => {
+    if (!activeDurableStore) {
+      return nextCompletionId();
+    }
+
+    const manifest = await activeDurableStore.manifest();
+
+    return `campaign-db-task-completion-${(manifest.completionRecordCount + 1).toString().padStart(4, "0")}`;
   };
 
   const nextTransactionId = () => {
@@ -732,6 +1057,25 @@ export const createCampaignDbRepository = ({
         .filter((task) => task.campaignId === campaignId)
         .sort((left, right) => left.id.localeCompare(right.id));
 
+  const listTaskCompletionsByCampaignId = async (campaignId: string) =>
+    activeDurableStore
+      ? await activeDurableStore.listTaskCompletionsByCampaignId(campaignId)
+      : Array.from(taskCompletionsById.values())
+        .filter((completion) => completion.campaignId === campaignId)
+        .sort((left, right) => {
+          const walletComparison = left.walletAddress.localeCompare(right.walletAddress);
+
+          return walletComparison === 0 ? left.taskId.localeCompare(right.taskId) : walletComparison;
+        });
+
+  const listTaskCompletionsByWallet = async (campaignId: string, walletAddress: string) =>
+    (await listTaskCompletionsByCampaignId(campaignId))
+      .filter((completion) => completion.walletAddress === walletAddress);
+
+  const findTaskCompletion = async (campaignId: string, taskId: string, walletAddress: string) =>
+    (await listTaskCompletionsByCampaignId(campaignId))
+      .find((completion) => completion.taskId === taskId && completion.walletAddress === walletAddress);
+
   const toProjection = async (draft: CampaignDbDraft): Promise<CampaignDbReadProjection> => ({
     ...draft,
     repository: {
@@ -740,6 +1084,7 @@ export const createCampaignDbRepository = ({
       repositoryId: "campaign-db-repository-runtime",
       storeId: "campaign-db",
     },
+    completions: await listTaskCompletionsByCampaignId(draft.id),
     tasks: await listTaskDraftsByCampaignId(draft.id),
   });
 
@@ -748,6 +1093,9 @@ export const createCampaignDbRepository = ({
 
   const resolveTaskRecordCount = async () =>
     activeDurableStore ? (await activeDurableStore.manifest()).taskRecordCount : taskRecordsById.size;
+
+  const resolveCompletionRecordCount = async () =>
+    activeDurableStore ? (await activeDurableStore.manifest()).completionRecordCount : taskCompletionsById.size;
 
   const durableDiagnostics = async () =>
     activeDurableStore
@@ -771,6 +1119,7 @@ export const createCampaignDbRepository = ({
       diagnostics,
       eventCount: events.length,
       fallbackUsed: false,
+      completionRecordCount: await resolveCompletionRecordCount(),
       id: "campaign-db-repository-runtime",
       liveConnectionAttempted: false,
       liveMigrationExecutionEnabled: false,
@@ -787,6 +1136,37 @@ export const createCampaignDbRepository = ({
         issues: diagnostics,
         valid: diagnostics.length === 0,
       },
+    };
+  };
+
+  const normalizeEligibilityInput = (
+    input: CampaignDbEligibilityInput,
+    campaignExists: boolean,
+  ) => {
+    const issues: CampaignDbDiagnostic[] = [];
+    const campaignId = requireCompletionString(input, "campaignId", issues);
+    const walletAddress = requireCompletionString(input, "walletAddress", issues);
+    const accountType = normalizeCompletionAccountType(input.accountType, issues, true);
+    const walletSource = normalizeCompletionWalletSource(input.walletSource, issues, true);
+
+    if (campaignId && !campaignExists) {
+      issues.push(diagnostic(
+        "CAMPAIGN_DB_COMPLETION_CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        `Campaign DB draft '${sanitizeCampaignDbDiagnosticValue("campaignId", campaignId)}' was not found.`,
+      ));
+    }
+
+    if (issues.length > 0) {
+      throw new CampaignDbRepositoryError("Invalid Campaign DB eligibility input.", issues);
+    }
+
+    return {
+      accountType,
+      campaignId,
+      walletAddress,
+      walletSource,
+      walletTypeVerified: input.accountType !== undefined && input.walletSource !== undefined,
     };
   };
 
@@ -844,6 +1224,68 @@ export const createCampaignDbRepository = ({
       });
 
       return task;
+    },
+    checkEligibility: async (input, context = {}) => {
+      assertWritable();
+      appendEvent({
+        operation: "lookup_campaign_eligibility",
+        traceId: context.traceId,
+        type: "query.lookup",
+      });
+
+      const campaign = activeDurableStore
+        ? await activeDurableStore.getById(input.campaignId)
+        : recordsById.get(input.campaignId);
+      const normalized = normalizeEligibilityInput(input, Boolean(campaign));
+      const tasks = await listTaskDraftsByCampaignId(normalized.campaignId);
+      const completions = await listTaskCompletionsByWallet(normalized.campaignId, normalized.walletAddress);
+      const completedTaskIds = new Set(
+        completions
+          .filter((completion) => completion.status === "completed")
+          .map((completion) => completion.taskId),
+      );
+      const pendingTaskIds = new Set(
+        completions
+          .filter((completion) => completion.status === "pending" || completion.status === "manual_review")
+          .map((completion) => completion.taskId),
+      );
+      const missingTasks = tasks
+        .filter((task) => task.required && !completedTaskIds.has(task.id))
+        .map((task) => task.templateCode || task.id);
+      const hasPendingRequiredTask = tasks
+        .some((task) => task.required && !completedTaskIds.has(task.id) && pendingTaskIds.has(task.id));
+      const riskFlags: string[] = [];
+      const score = completions
+        .filter((completion) => completion.status === "completed")
+        .reduce((total, completion) => total + completion.pointsAwarded, 0);
+      const status: CampaignDbEligibilityProjection["status"] =
+        riskFlags.length > 0
+          ? "risk_flagged"
+          : missingTasks.length === 0
+            ? "eligible"
+            : hasPendingRequiredTask
+              ? "pending"
+              : "not_eligible";
+
+      return {
+        accountType: normalized.accountType,
+        campaignId: normalized.campaignId,
+        eligible: status === "eligible",
+        localePreference: "en-US",
+        missingTasks,
+        repository: {
+          adapterId,
+          createdViaRepository: true,
+          repositoryId: "campaign-db-repository-runtime",
+          storeId: "campaign-db",
+        },
+        riskFlags,
+        score,
+        status,
+        walletAddress: normalized.walletAddress,
+        walletSource: normalized.walletSource,
+        walletTypeVerified: normalized.walletTypeVerified,
+      };
     },
     createDraft: async (input, context = {}) => {
       assertWritable();
@@ -940,13 +1382,73 @@ export const createCampaignDbRepository = ({
     },
     reset: async () => {
       recordsById.clear();
+      taskCompletionsById.clear();
       taskRecordsById.clear();
       await activeDurableStore?.reset();
       events.length = 0;
       idSequence = 0;
+      completionIdSequence = 0;
       taskIdSequence = 0;
       eventSequence = 0;
       transactionSequence = 0;
+    },
+    upsertTaskCompletion: async (input, context = {}) => {
+      assertWritable();
+
+      const campaign = activeDurableStore
+        ? await activeDurableStore.getById(input.campaignId)
+        : recordsById.get(input.campaignId);
+      const task = (await listTaskDraftsByCampaignId(input.campaignId))
+        .find((candidate) => candidate.id === input.taskId);
+      const validated = validateUpsertTaskCompletionInput(input, campaign, task);
+      const existing = await findTaskCompletion(validated.campaignId, validated.taskId, validated.walletAddress);
+      const transactionId = nextTransactionId();
+      appendEvent({
+        entity: "TaskCompletion",
+        operation: "begin_upsert_task_completion",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.begin",
+      });
+      appendEvent({
+        entity: "TaskCompletion",
+        operation: "plan_upsert_task_completion",
+        traceId: context.traceId,
+        transactionId,
+        type: "command.planned",
+      });
+
+      const timestamp = now();
+      const completion: CampaignDbTaskCompletion = {
+        ...validated,
+        ...(validated.status === "completed" ? { completedAt: timestamp } : {}),
+        createdAt: existing?.createdAt ?? timestamp,
+        id: existing?.id ?? await nextCompletionIdForStore(),
+        updatedAt: timestamp,
+      };
+
+      if (activeDurableStore) {
+        await activeDurableStore.upsertTaskCompletion(completion);
+      } else {
+        taskCompletionsById.set(completion.id, completion);
+      }
+
+      appendEvent({
+        entity: "TaskCompletion",
+        operation: existing ? "update_task_completion" : "insert_task_completion",
+        traceId: context.traceId,
+        transactionId,
+        type: existing ? "command.update" : "command.insert",
+      });
+      appendEvent({
+        entity: "TaskCompletion",
+        operation: "commit_upsert_task_completion",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.commit",
+      });
+
+      return completion;
     },
   };
 };

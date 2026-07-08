@@ -1,6 +1,11 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { CampaignDbDraft, CampaignDbDiagnostic, CampaignDbTaskDraft } from "./campaignDbRepository";
+import type {
+  CampaignDbDraft,
+  CampaignDbDiagnostic,
+  CampaignDbTaskCompletion,
+  CampaignDbTaskDraft,
+} from "./campaignDbRepository";
 
 export type CampaignDurableStoreMode = "local_seeded" | "durable_test" | "production_required";
 export type CampaignDurableStoreStatus = "ready" | "blocked";
@@ -34,6 +39,7 @@ export interface CampaignDurableStoreManifest {
   durable: boolean;
   fallbackUsed: false;
   mode: CampaignDurableStoreMode;
+  completionRecordCount: number;
   recordCount: number;
   status: CampaignDurableStoreStatus;
   storeId: "campaign-db";
@@ -53,9 +59,11 @@ export interface CampaignDurableStore {
   createTaskDraft(taskDraft: CampaignDbTaskDraft): Promise<CampaignDbTaskDraft>;
   getById(campaignId: string): Promise<CampaignDbDraft | undefined>;
   list(filter?: CampaignDurableStoreListOptions): Promise<CampaignDbDraft[]>;
+  listTaskCompletionsByCampaignId(campaignId: string): Promise<CampaignDbTaskCompletion[]>;
   listTaskDraftsByCampaignId(campaignId: string): Promise<CampaignDbTaskDraft[]>;
   manifest(): Promise<CampaignDurableStoreManifest>;
   reset(): Promise<void>;
+  upsertTaskCompletion(completion: CampaignDbTaskCompletion): Promise<CampaignDbTaskCompletion>;
 }
 
 export interface CreateCampaignDurableStoreOptions {
@@ -65,6 +73,7 @@ export interface CreateCampaignDurableStoreOptions {
 }
 
 interface CampaignDurableStoreDocument {
+  completionRecords: CampaignDbTaskCompletion[];
   records: CampaignDbDraft[];
   taskRecords: CampaignDbTaskDraft[];
   updatedAt: string;
@@ -73,6 +82,7 @@ interface CampaignDurableStoreDocument {
 
 const DEFAULT_BOUNDED_LIST_LIMIT = 100;
 const EMPTY_DOCUMENT: CampaignDurableStoreDocument = {
+  completionRecords: [],
   records: [],
   taskRecords: [],
   updatedAt: "1970-01-01T00:00:00.000Z",
@@ -122,6 +132,19 @@ const sortTaskDrafts = (records: readonly CampaignDbTaskDraft[]) =>
     return campaignComparison === 0 ? left.id.localeCompare(right.id) : campaignComparison;
   });
 
+const sortTaskCompletions = (records: readonly CampaignDbTaskCompletion[]) =>
+  [...records].sort((left, right) => {
+    const campaignComparison = left.campaignId.localeCompare(right.campaignId);
+
+    if (campaignComparison !== 0) {
+      return campaignComparison;
+    }
+
+    const walletComparison = left.walletAddress.localeCompare(right.walletAddress);
+
+    return walletComparison === 0 ? left.taskId.localeCompare(right.taskId) : walletComparison;
+  });
+
 const parseDocument = (raw: string): CampaignDurableStoreDocument => {
   const parsed = JSON.parse(raw) as Partial<CampaignDurableStoreDocument>;
 
@@ -130,6 +153,7 @@ const parseDocument = (raw: string): CampaignDurableStoreDocument => {
   }
 
   return {
+    completionRecords: Array.isArray(parsed.completionRecords) ? parsed.completionRecords : [],
     records: parsed.records,
     taskRecords: Array.isArray(parsed.taskRecords) ? parsed.taskRecords : [],
     updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : EMPTY_DOCUMENT.updatedAt,
@@ -143,6 +167,7 @@ export const createCampaignDurableStore = ({
   mode = "local_seeded",
 }: CreateCampaignDurableStoreOptions = {}): CampaignDurableStore => {
   const recordsById = new Map<string, CampaignDbDraft>();
+  const taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
   const taskRecordsById = new Map<string, CampaignDbTaskDraft>();
   const startupDiagnostics: CampaignDurableStoreDiagnostic[] = [];
   let initialized = false;
@@ -186,6 +211,7 @@ export const createCampaignDurableStore = ({
     initialized = true;
     const document = await readDocument();
     recordsById.clear();
+    taskCompletionsById.clear();
     taskRecordsById.clear();
 
     for (const draft of document.records) {
@@ -195,6 +221,10 @@ export const createCampaignDurableStore = ({
     for (const taskDraft of document.taskRecords) {
       taskRecordsById.set(taskDraft.id, taskDraft);
     }
+
+    for (const completion of document.completionRecords) {
+      taskCompletionsById.set(completion.id, completion);
+    }
   };
 
   const writeDocument = async () => {
@@ -203,6 +233,7 @@ export const createCampaignDurableStore = ({
     }
 
     const document: CampaignDurableStoreDocument = {
+      completionRecords: sortTaskCompletions(Array.from(taskCompletionsById.values())),
       records: sortDrafts(Array.from(recordsById.values())),
       taskRecords: sortTaskDrafts(Array.from(taskRecordsById.values())),
       updatedAt: new Date(0).toISOString(),
@@ -291,12 +322,19 @@ export const createCampaignDurableStore = ({
       return sortTaskDrafts(Array.from(taskRecordsById.values()))
         .filter((taskDraft) => taskDraft.campaignId === campaignId);
     },
+    listTaskCompletionsByCampaignId: async (campaignId) => {
+      await ensureInitialized();
+
+      return sortTaskCompletions(Array.from(taskCompletionsById.values()))
+        .filter((completion) => completion.campaignId === campaignId);
+    },
     manifest: async () => {
       await ensureInitialized();
       const diagnostics = currentDiagnostics();
 
       return {
         boundedListLimit,
+        completionRecordCount: taskCompletionsById.size,
         diagnosticCodes: diagnostics.map((issue) => issue.code),
         diagnostics,
         durable,
@@ -310,12 +348,20 @@ export const createCampaignDurableStore = ({
     },
     reset: async () => {
       recordsById.clear();
+      taskCompletionsById.clear();
       taskRecordsById.clear();
       initialized = true;
 
       if (filePath && durable) {
         await rm(filePath, { force: true });
       }
+    },
+    upsertTaskCompletion: async (completion) => {
+      await ensureInitialized();
+      taskCompletionsById.set(completion.id, completion);
+      await writeDocument();
+
+      return completion;
     },
   };
 };
