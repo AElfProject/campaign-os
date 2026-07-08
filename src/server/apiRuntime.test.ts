@@ -122,10 +122,48 @@ interface I18nDraftPayload {
 }
 
 interface ExportPreviewPayload {
+  artifact?: {
+    checksum: string;
+    columns: string[];
+    csvPreview?: string;
+    format: string;
+    generatedMode: string;
+    jsonPreview?: Array<Record<string, unknown>>;
+    localPreviewMode: boolean;
+    safety: {
+      noDownloadUrl: true;
+      noStorageWrite: true;
+      noContractRoot: true;
+      noRewardDistribution: true;
+    };
+  };
+  blockedRows?: number;
   campaignId: string;
   contractRootMode: string;
+  exportBatchId?: string;
   format: string;
   readyRows: number;
+  reviewRequiredRows?: number;
+  rows?: Array<{
+    accountType: string;
+    eligible: boolean;
+    evidenceHashes: string[];
+    exportBatchId: string;
+    localePreference: string;
+    missingTasks: string[];
+    rank?: number;
+    rowStatus: string;
+    taskRecords: Array<{
+      pointsAwarded: number;
+      required: boolean;
+      status: string;
+      taskId: string;
+      templateCode: string;
+    }>;
+    totalPoints: number;
+    walletAddress: string;
+    walletSource: string;
+  }>;
 }
 
 interface CampaignLifecyclePayload {
@@ -156,7 +194,11 @@ interface ExportReadinessPayload {
   }>;
   previewModes: unknown[];
   summary: {
+    blockedRows?: number;
     previewModeCount: number;
+    readyRows?: number;
+    reviewRequiredRows?: number;
+    totalRows?: number;
   };
 }
 
@@ -281,6 +323,14 @@ const expectNoForbiddenResponseKeys = (value: unknown) => {
 
   for (const forbiddenKey of forbiddenResponseKeys) {
     expect(keys).not.toContain(forbiddenKey);
+  }
+};
+
+const expectNoForbiddenOwnKeys = (value: unknown, unsafeKeys: readonly string[]) => {
+  const keys = collectKeys(value);
+
+  for (const unsafeKey of unsafeKeys) {
+    expect(keys).not.toContain(unsafeKey.toLowerCase());
   }
 };
 
@@ -1932,7 +1982,7 @@ describe("Campaign OS API runtime", () => {
       path: `/api/campaigns/${created.payload.id}/provider-readiness`,
     });
 
-    for (const response of [lifecycle, launchReadiness, exportReadiness, providerReadiness]) {
+    for (const response of [lifecycle, launchReadiness, providerReadiness]) {
       expect(expectSuccessData<LocalServiceEnvelope<CampaignDbLimitedLifecyclePayload> & {
         campaignDb: {
           createdViaRepository: true;
@@ -1961,6 +2011,56 @@ describe("Campaign OS API runtime", () => {
       expectNoForbiddenResponseKeys(response.body);
       expectNoForbiddenFragments(response.body, ["fileUrl", "mutationId", "signedUrl", "transactionId"]);
     }
+    expect(expectSuccessData<LocalServiceEnvelope<ExportReadinessPayload> & {
+      campaignDb: {
+        createdViaRepository: true;
+        storeId: string;
+      };
+    }>(exportReadiness)).toMatchObject({
+      campaignDb: {
+        createdViaRepository: true,
+        storeId: "campaign-db",
+      },
+      payload: {
+        batchId: "campaign-db-export-campaign-db-draft-0001",
+        campaignId: "campaign-db-draft-0001",
+        contractRootReadiness: expect.arrayContaining([
+          expect.objectContaining({
+            mode: "none",
+            readiness: "ready",
+            safeDefault: true,
+          }),
+          expect.objectContaining({
+            mode: "winners_root",
+            readiness: "blocked",
+            safeDefault: false,
+          }),
+        ]),
+        previewModes: expect.arrayContaining([
+          expect.objectContaining({
+            downloadAvailable: false,
+            generatesFile: false,
+            mode: "csv",
+            readiness: "ready",
+          }),
+          expect.objectContaining({
+            downloadAvailable: false,
+            generatesFile: false,
+            mode: "json",
+            readiness: "ready",
+          }),
+        ]),
+        summary: {
+          blockedRows: 0,
+          previewModeCount: 2,
+          readyRows: 0,
+          reviewRequiredRows: 0,
+          totalRows: 0,
+        },
+      },
+    });
+    expectNoForbiddenResponseKeys(exportReadiness.body);
+    expectNoForbiddenFragments(exportReadiness.body, ["fileUrl", "mutationId", "signedUrl", "transactionId"]);
   });
 
   it("persists repository-created campaign task drafts in Campaign DB projections", async () => {
@@ -2229,6 +2329,266 @@ describe("Campaign OS API runtime", () => {
     });
     expectNoForbiddenResponseKeys(optionalVerification.body);
     expectNoForbiddenFragments(optionalVerification.body, ["raw-secret", "privateKey", "signedUrl"]);
+  });
+
+  it("projects repository campaign export preview and readiness through API runtime", async () => {
+    const repository = createCampaignOsMemoryRepository();
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({ repository });
+    const create = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/campaigns",
+      headers: projectOwnerAuthHeaders("repo-owner-export", {
+        "x-campaign-os-trace-id": "trace-campaign-db-export-create",
+      }),
+      body: JSON.stringify({
+        duration: "2026-08-01/2026-08-14",
+        endTime: "2026-08-14T23:59:59Z",
+        goal: "Export repository completion",
+        ownerAddress: "repo-owner-export",
+        projectId: "repo-project-export",
+        rewardDescription: "Repository export rewards remain local-review only.",
+        startTime: "2026-08-01T00:00:00Z",
+      }),
+    });
+    const created = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload>>(create);
+    const requiredTask = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.payload.id}/tasks`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-required-task" },
+      body: JSON.stringify({
+        evidenceRule: { source: "AELFSCAN", minAmount: 1 },
+        points: 120,
+        required: true,
+        templateCode: "bridge_ebridge",
+        verificationType: "ON_CHAIN",
+        walletCompatibility: "ANY",
+      }),
+    });
+    const optionalTask = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.payload.id}/tasks`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-optional-task" },
+      body: JSON.stringify({
+        evidenceRule: { action: "share" },
+        points: 50,
+        required: false,
+        templateCode: "share_campaign",
+        verificationType: "SOCIAL",
+        walletCompatibility: "ANY",
+      }),
+    });
+    const requiredTaskPayload = expectSuccessData<LocalServiceEnvelope<TaskDraftPayload> & {
+      campaignDbTask: { taskId: string };
+    }>(requiredTask);
+    const optionalTaskPayload = expectSuccessData<LocalServiceEnvelope<TaskDraftPayload> & {
+      campaignDbTask: { taskId: string };
+    }>(optionalTask);
+
+    await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/tasks/${optionalTaskPayload.campaignDbTask.taskId}/verify`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-optional-verify" },
+      body: JSON.stringify({
+        accountType: "EOA",
+        campaignId: created.payload.id,
+        walletAddress: "2F4ExportWallet",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      }),
+    });
+    const blockedPreview = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.payload.id}/export`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-blocked-preview" },
+      body: JSON.stringify({
+        contractRootMode: "none",
+        format: "json",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      }),
+    });
+
+    await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/tasks/${requiredTaskPayload.campaignDbTask.taskId}/verify`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-required-verify" },
+      body: JSON.stringify({
+        accountType: "EOA",
+        campaignId: created.payload.id,
+        walletAddress: "2F4ExportWallet",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      }),
+    });
+    const readyPreview = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.payload.id}/export`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-ready-preview" },
+      body: JSON.stringify({
+        contractRootMode: "none",
+        format: "json",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      }),
+    });
+    const repeatedReadyPreview = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.payload.id}/export`,
+      body: JSON.stringify({
+        contractRootMode: "none",
+        format: "json",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      }),
+    });
+    const readiness = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}/export-readiness`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-readiness" },
+    });
+    const blockedPreviewData = expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload> & {
+      campaignDb: { createdViaRepository: true; storeId: string };
+    }>(blockedPreview);
+    const readyPreviewData = expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload> & {
+      campaignDb: { createdViaRepository: true; storeId: string };
+      persistence: { kind: string };
+    }>(readyPreview);
+    const repeatedReadyPreviewData = expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload>>(
+      repeatedReadyPreview,
+    );
+    const readinessData = expectSuccessData<LocalServiceEnvelope<ExportReadinessPayload> & {
+      campaignDb: { createdViaRepository: true; storeId: string };
+    }>(readiness);
+    const snapshot = await repository.snapshot();
+
+    expect(blockedPreviewData).toMatchObject({
+      campaignDb: {
+        createdViaRepository: true,
+        storeId: "campaign-db",
+      },
+      payload: {
+        blockedRows: 1,
+        campaignId: created.payload.id,
+        contractRootMode: "none",
+        format: "json",
+        readyRows: 0,
+        reviewRequiredRows: 0,
+        rows: [
+          expect.objectContaining({
+            missingTasks: ["bridge_ebridge"],
+            rowStatus: "blocked",
+            totalPoints: 50,
+            walletAddress: "2F4ExportWallet",
+          }),
+        ],
+      },
+    });
+    expect(readyPreviewData).toMatchObject({
+      campaignDb: {
+        createdViaRepository: true,
+        storeId: "campaign-db",
+      },
+      payload: {
+        artifact: expect.objectContaining({
+          checksum: expect.stringMatching(/^local-/),
+          format: "json",
+          generatedMode: "local_review_only",
+          localPreviewMode: true,
+          safety: expect.objectContaining({
+            noDownloadUrl: true,
+            noStorageWrite: true,
+            noContractRoot: true,
+            noRewardDistribution: true,
+          }),
+        }),
+        blockedRows: 0,
+        campaignId: created.payload.id,
+        contractRootMode: "none",
+        exportBatchId: `campaign-db-export-${created.payload.id}`,
+        format: "json",
+        readyRows: 1,
+        reviewRequiredRows: 0,
+        rows: [
+          expect.objectContaining({
+            accountType: "EOA",
+            eligible: true,
+            evidenceHashes: [
+              `evidence-hash:${requiredTaskPayload.campaignDbTask.taskId}`,
+              `evidence-hash:${optionalTaskPayload.campaignDbTask.taskId}`,
+            ],
+            localePreference: "en-US",
+            missingTasks: [],
+            rank: 1,
+            rowStatus: "ready",
+            totalPoints: 170,
+            walletAddress: "2F4ExportWallet",
+            walletSource: "PORTKEY_EOA_EXTENSION",
+          }),
+        ],
+      },
+      persistence: {
+        kind: "export_preview",
+      },
+    });
+    expect(repeatedReadyPreviewData.payload.rows).toEqual(readyPreviewData.payload.rows);
+    expect(repeatedReadyPreviewData.payload.artifact?.checksum).toBe(readyPreviewData.payload.artifact?.checksum);
+    expect(readinessData).toMatchObject({
+      campaignDb: {
+        createdViaRepository: true,
+        storeId: "campaign-db",
+      },
+      payload: {
+        batchId: `campaign-db-export-${created.payload.id}`,
+        campaignId: created.payload.id,
+        contractRootReadiness: expect.arrayContaining([
+          expect.objectContaining({ mode: "none", readiness: "ready", safeDefault: true }),
+          expect.objectContaining({ mode: "contract_claim", readiness: "blocked", safeDefault: false }),
+        ]),
+        previewModes: expect.arrayContaining([
+          expect.objectContaining({ downloadAvailable: false, generatesFile: false, mode: "csv" }),
+          expect.objectContaining({ downloadAvailable: false, generatesFile: false, mode: "json" }),
+        ]),
+        summary: {
+          blockedRows: 0,
+          previewModeCount: 2,
+          readyRows: 1,
+          reviewRequiredRows: 0,
+          totalRows: 1,
+        },
+      },
+    });
+    expect(snapshot.countsByKind.export_preview).toBe(3);
+    expect(snapshot.latestRecords[0]).toMatchObject({
+      campaignId: created.payload.id,
+      kind: "export_preview",
+      summary: expect.objectContaining({
+        blockedRows: 0,
+        contractRootMode: "none",
+        format: "json",
+        readyRows: 1,
+        reviewRequiredRows: 0,
+      }),
+    });
+    for (const response of [blockedPreview, readyPreview, repeatedReadyPreview, readiness]) {
+      expectNoForbiddenResponseKeys(response.body);
+      expectNoForbiddenOwnKeys(response.body, [
+        "downloadUrl",
+        "signedUrl",
+        "storageKey",
+        "objectKey",
+        "contractRoot",
+        "transactionId",
+        "signature",
+        "rewardDistribution",
+      ]);
+      expectNoForbiddenFragments(response.body, [
+        "kitty-specs",
+        "docs/current",
+        "evidence/",
+        "sync/",
+      ]);
+    }
   });
 
   it("returns structured errors for unknown repository task verification", async () => {

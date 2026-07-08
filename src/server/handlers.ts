@@ -8,6 +8,7 @@ import {
   type CreateCampaignRequest,
   type CreateWalletSessionRequest,
   type ExportWinnersRequest,
+  type ExportWinnersResponse,
   type GenerateCampaignPostsRequest,
   type GenerateCampaignTasksRequest,
   type GenerateI18nDraftRequest,
@@ -23,6 +24,7 @@ import {
   type LocalServiceResult,
   type SummarizeCampaignRequest,
   type VerifyTaskRequest,
+  type VerifyTaskResponse,
 } from "../domain/campaignService";
 import {
   createServiceDegradationGovernance,
@@ -56,6 +58,8 @@ import type {
   CampaignDbCreateDraftInput,
   CampaignDbDraft,
   CampaignDbEligibilityProjection,
+  CampaignDbExportProjection,
+  CampaignDbExportReadinessProjection,
   CampaignDbListFilter,
   CampaignDbReadProjection,
   CampaignDbTaskCompletion,
@@ -569,6 +573,47 @@ const createRepositoryEligibilityResponse = (
   walletSource: projection.walletSource,
   walletTypeVerified: projection.walletTypeVerified,
 });
+
+const createCampaignDbMetadata = (repository: {
+  adapterId: string;
+  createdViaRepository: true;
+  repositoryId: string;
+  storeId: "campaign-db";
+}) => ({
+  adapterId: repository.adapterId,
+  createdViaRepository: repository.createdViaRepository,
+  repositoryId: repository.repositoryId,
+  storeId: repository.storeId,
+});
+
+const exportProjectionBoundary = localized(
+  "Campaign DB repository export projection is local-review only. No export file, storage write, signed URL, contract root, contract transaction, reward custody, or reward distribution is executed.",
+  "Campaign DB repository 导出投影仅用于本地审核。不会生成导出文件、写入存储、生成 signed URL、写入合约 root、执行合约交易、托管奖励或发奖。",
+);
+
+const createRepositoryExportPreviewResponse = (
+  projection: CampaignDbExportProjection,
+) => ({
+  artifact: projection.artifact,
+  blockedRows: projection.blockedRows,
+  boundary: exportProjectionBoundary,
+  campaignId: projection.campaignId,
+  columns: projection.columns,
+  contractRootMode: projection.contractRootMode,
+  disclaimer: projection.disclaimer,
+  exportBatchId: projection.exportBatchId,
+  exportReadiness: projection.exportReadiness,
+  format: projection.format,
+  readyRows: projection.readyRows,
+  reviewRequiredRows: projection.reviewRequiredRows,
+  rows: projection.rows,
+});
+
+type RepositoryExportPreviewResponse = ReturnType<typeof createRepositoryExportPreviewResponse>;
+
+const createRepositoryExportReadinessResponse = (
+  readiness: CampaignDbExportReadinessProjection,
+): CampaignDbExportReadinessProjection => readiness;
 
 const campaignDbDraftToDiscoveryDetail = (
   draft: CampaignDbReadProjection,
@@ -1293,7 +1338,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     const request = verifyTaskRequest(context);
     const localResult = context.service.verifyTask(request);
     let campaignDbCompletion: CampaignDbTaskCompletion | undefined;
-    let result = localResult;
+    let result: LocalServiceResult<VerifyTaskResponse> = localResult;
 
     if (!localResult.ok && localResult.error.code === "CAMPAIGN_NOT_FOUND") {
       const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
@@ -1413,9 +1458,39 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     ),
   "campaigns.posts.generate": (context) =>
     unwrapLocalResult(context.service.generateCampaignPosts(generateCampaignPostsRequest(context)), context),
-  "campaigns.export.preview": (context) =>
-    persistLocalResult(
-      context.service.exportWinners(exportRequest(context)),
+  "campaigns.export.preview": async (context) => {
+    const request = exportRequest(context);
+    const localResult = context.service.exportWinners(request);
+    let campaignDb: ReturnType<typeof createCampaignDbMetadata> | undefined;
+    let result: LocalServiceResult<ExportWinnersResponse | RepositoryExportPreviewResponse> = localResult;
+
+    if (!localResult.ok && localResult.error.code === "CAMPAIGN_NOT_FOUND") {
+      const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
+        traceId: context.traceId,
+      });
+
+      if (campaignDbDraft && context.campaignDbRepository.projectExport) {
+        const projection = await context.campaignDbRepository.projectExport({
+          campaignId: request.campaignId,
+          contractRootMode: request.contractRootMode,
+          format: request.format,
+          includeLocalePreference: request.includeLocalePreference,
+          includeRiskFlags: request.includeRiskFlags,
+          includeWalletType: request.includeWalletType,
+        }, {
+          traceId: context.traceId,
+        });
+        campaignDb = createCampaignDbMetadata(projection.repository);
+        result = {
+          boundary: exportProjectionBoundary,
+          ok: true,
+          payload: createRepositoryExportPreviewResponse(projection),
+        };
+      }
+    }
+
+    const response = await persistLocalResult(
+      result,
       context,
       (payload) => ({
         campaignId: payload.campaignId,
@@ -1428,10 +1503,45 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
           reviewRequiredRows: payload.reviewRequiredRows,
         },
       }),
-    ),
-  "campaigns.export.readiness": (context) =>
-    unwrapCampaignReadinessOrDraft<ExportConfirmationReadinessGate>(
-      context,
-      context.service.getExportConfirmationReadiness(campaignIdRequest(context)),
-    ),
+    );
+
+    return campaignDb
+      ? {
+        ...response,
+        campaignDb,
+      }
+      : response;
+  },
+  "campaigns.export.readiness": async (context) => {
+    const request = campaignIdRequest(context);
+    const localResult = context.service.getExportConfirmationReadiness(request);
+
+    if (localResult.ok || localResult.error.code !== "CAMPAIGN_NOT_FOUND") {
+      return unwrapLocalResult(localResult, context);
+    }
+
+    const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
+      traceId: context.traceId,
+    });
+
+    if (!campaignDbDraft) {
+      return unwrapLocalResult(localResult, context);
+    }
+
+    if (!context.campaignDbRepository.getExportReadiness) {
+      return unwrapLocalResult(localResult, context);
+    }
+
+    const readiness = await context.campaignDbRepository.getExportReadiness({
+      campaignId: request.campaignId,
+    }, {
+      traceId: context.traceId,
+    });
+
+    return {
+      boundary: exportProjectionBoundary,
+      campaignDb: createCampaignDbMetadata(readiness.repository),
+      payload: createRepositoryExportReadinessResponse(readiness),
+    };
+  },
 });
