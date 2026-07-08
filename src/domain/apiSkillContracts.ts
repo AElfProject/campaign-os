@@ -57,6 +57,16 @@ const campaignDiscoveryBoundary = text(
   "仅 seeded/本地活动发现 contract。不会执行实时 marketplace API、App Hub 后端、Portfolio 同步、Forecast 预测、钱包 SDK、provider 调用、storage 写入、合约读取/发送、claim、导出文件、奖励托管或发奖。",
 );
 
+const campaignLifecycleBoundary = text(
+  "Seeded/local lifecycle and readiness inspection only. No lifecycle mutation, scheduler handoff, worker execution, provider call, wallet signature, storage write, export file, reward distribution, contract send/write, or contract root write is executed.",
+  "仅 seeded/本地 lifecycle 与 readiness 检查。不会执行 lifecycle 变更、scheduler 交接、worker 执行、provider 调用、钱包签名、storage 写入、导出文件、发奖、合约发送/写入或合约 root 写入。",
+);
+
+const providerReadinessBoundary = text(
+  "Verification/provider readiness inspection only. No live provider, indexer, dApp, social, wallet, worker, queue, secret, reward, export file, contract transaction, or contract root path is executed; those paths remain local metadata.",
+  "仅验证/provider readiness 检查。Provider、indexer、dApp、社交、钱包、worker、queue、secret、发奖、导出文件、合约交易与合约 root 路径都保持为本地 metadata；不会执行实时 provider 调用。",
+);
+
 const i18nDraftBoundary = text(
   "Seeded/local i18n draft contract only. No live API, AI provider, LLM gateway, backend persistence, publish mutation, auto-publish, secret handling, export file, reward, or contract write is executed.",
   "仅 seeded/本地 i18n 草稿 contract。不会执行实时 API、AI provider、LLM gateway、后端持久化、发布变更、自动发布、secret 处理、导出文件、发奖或合约写入。",
@@ -72,6 +82,11 @@ const exportBoundary = text(
   "仅导出 contract。Campaign OS 预览 winners 记录和字段，不会发奖，也不会写入合约 root。",
 );
 
+const exportReadinessBoundary = text(
+  "Export readiness inspection only. No live export job, file creation, storage key, signed URL, reward distribution, contract transaction, or contract root write is executed; Campaign OS exposes local export confirmation gates, preview-mode readiness, field coverage, row status coverage, and contract-root blockers.",
+  "仅导出 readiness 检查。Campaign OS 暴露本地导出确认门禁、预览模式 readiness、字段覆盖、行状态覆盖与合约 root 阻断项，但不会创建文件、storage key、signed URL、发奖、合约交易或合约 root 写入。",
+);
+
 const campaignStatusExample = campaignLifecycleStatuses.join(",");
 
 export const requiredApiSkillIds = [
@@ -80,6 +95,10 @@ export const requiredApiSkillIds = [
   "create_campaign",
   "list_campaigns",
   "get_campaign_detail",
+  "get_campaign_lifecycle",
+  "get_campaign_launch_readiness",
+  "get_campaign_provider_readiness",
+  "get_campaign_export_readiness",
   "add_campaign_task",
   "generate_campaign_tasks",
   "verify_task",
@@ -305,6 +324,123 @@ export const apiSkillContractRegistry: ApiSkillContract[] = [
     riskLevel: "medium",
     securityBoundary: campaignDiscoveryBoundary,
     title: text("Get campaign detail", "获取活动详情"),
+  },
+  {
+    apiGroup: "campaign_discovery",
+    evidenceSources: ["LOCAL_SEEDED", "MANUAL"],
+    id: "get_campaign_lifecycle",
+    inputFields: [
+      field("campaignId", "campaign", true, "Campaign identifier for lifecycle inspection.", "用于 lifecycle 检查的活动标识。", "camp-awaken-sprint"),
+    ],
+    nextAction: text(
+      "Use this as read-only lifecycle evidence until scheduler, worker, audit log, and production persistence are approved.",
+      "在 scheduler、worker、audit log 与生产持久化获批前，将其作为只读 lifecycle evidence 使用。",
+    ),
+    outputFields: [
+      field("currentStatus", "campaign", true, "Current seeded lifecycle status.", "当前 seeded lifecycle 状态。", "live"),
+      field("supportedStatuses", "campaign", true, "Supported lifecycle status set.", "支持的 lifecycle 状态集合。", campaignStatusExample),
+      field("operations", "campaign", true, "Read-only lifecycle operations with allowed/blocked/review state.", "带 allowed/blocked/review 状态的只读 lifecycle 操作。"),
+      field("launchGateGroups", "risk", true, "Launch gate groups associated with lifecycle operations.", "与 lifecycle 操作关联的 launch gate group。"),
+      field("summary", "analytics", true, "Lifecycle operation count and blocker summary.", "Lifecycle 操作数量与 blocker 摘要。"),
+      field("boundary", "risk", true, "No live backend or lifecycle mutation boundary.", "不执行实时后端或 lifecycle 变更的边界。"),
+    ],
+    purpose: text(
+      "Inspect seeded campaign lifecycle operations without changing campaign status.",
+      "检查 seeded 活动 lifecycle 操作，但不变更活动状态。",
+    ),
+    readiness: "local_only",
+    riskLevel: "medium",
+    securityBoundary: campaignLifecycleBoundary,
+    title: text("Get campaign lifecycle", "获取活动 lifecycle"),
+  },
+  {
+    apiGroup: "campaign_discovery",
+    evidenceSources: ["LOCAL_SEEDED", "MANUAL"],
+    id: "get_campaign_launch_readiness",
+    inputFields: [
+      field("campaignId", "campaign", true, "Campaign identifier for launch readiness inspection.", "用于 launch readiness 检查的活动标识。", "camp-awaken-sprint"),
+    ],
+    nextAction: text(
+      "Review pre-launch, launch, and post-launch bundles before any publish or scheduler handoff is designed.",
+      "在设计任何发布或 scheduler 交接前，先审核 pre-launch、launch 与 post-launch bundle。",
+    ),
+    outputFields: [
+      field("bundles", "campaign", true, "Pre-launch, launch, and post-launch readiness bundles.", "Pre-launch、launch 与 post-launch readiness bundle。"),
+      field("handoffs", "risk", true, "API Skill handoff contracts required before production launch.", "生产 launch 前所需的 API Skill handoff contract。"),
+      field("summary", "analytics", true, "Bundle readiness and blocker summary.", "Bundle readiness 与 blocker 摘要。"),
+      field("boundary", "risk", true, "No live Launch Console, publish mutation, or scheduler boundary.", "不执行实时 Launch Console、发布变更或 scheduler 的边界。"),
+    ],
+    purpose: text(
+      "Inspect local Launch Console readiness bundles without publishing or scheduling a campaign.",
+      "检查本地 Launch Console readiness bundle，但不发布或调度活动。",
+    ),
+    readiness: "review_required",
+    riskLevel: "medium",
+    securityBoundary: campaignLifecycleBoundary,
+    title: text("Get campaign launch readiness", "获取活动 launch readiness"),
+  },
+  {
+    apiGroup: "task_verification",
+    evidenceSources: [
+      "LOCAL_SEEDED",
+      "AEFINDER",
+      "AELFSCAN",
+      "DAPP_API",
+      "SOCIAL_API",
+      "WALLET_SESSION",
+      "MANUAL",
+    ],
+    id: "get_campaign_provider_readiness",
+    inputFields: [
+      field("campaignId", "campaign", true, "Campaign identifier for provider readiness inspection.", "用于 provider readiness 检查的活动标识。", "camp-awaken-sprint"),
+    ],
+    nextAction: text(
+      "Approve provider evidence, fallback semantics, queue handoff, and manual-review ownership before enabling live adapters.",
+      "启用实时 adapter 前先批准 provider evidence、fallback 语义、queue 交接与人工审核归属。",
+    ),
+    outputFields: [
+      field("pipeline", "evidence", true, "Verification pipeline readiness gate.", "验证 pipeline readiness gate。"),
+      field("providerEvidenceRegistry", "evidence", true, "Provider evidence registry and adapter contracts.", "Provider evidence registry 与 adapter contract。"),
+      field("entries", "evidence", true, "Provider evidence entries and live evidence state.", "Provider evidence 条目与实时 evidence 状态。"),
+      field("summary", "analytics", true, "Provider readiness counts and launch blockers.", "Provider readiness 计数与 launch blocker。"),
+      field("boundary", "risk", true, "No live provider/indexer/social/wallet call boundary.", "不执行实时 provider/indexer/social/wallet 调用的边界。"),
+    ],
+    purpose: text(
+      "Inspect verification pipeline and provider evidence readiness without calling external providers.",
+      "检查验证 pipeline 与 provider evidence readiness，但不调用外部 provider。",
+    ),
+    readiness: "review_required",
+    riskLevel: "high",
+    securityBoundary: providerReadinessBoundary,
+    title: text("Get campaign provider readiness", "获取活动 provider readiness"),
+  },
+  {
+    apiGroup: "export",
+    evidenceSources: ["LOCAL_SEEDED", "MANUAL"],
+    id: "get_campaign_export_readiness",
+    inputFields: [
+      field("campaignId", "campaign", true, "Campaign identifier for export readiness inspection.", "用于 export readiness 检查的活动标识。", "camp-awaken-sprint"),
+    ],
+    nextAction: text(
+      "Review row reasons, acknowledgements, and root blockers before approving any export workflow.",
+      "批准任何导出流程前，先审核行原因、确认项与 root 阻断项。",
+    ),
+    outputFields: [
+      field("previewModes", "export", true, "CSV and JSON preview-mode readiness without file generation.", "不生成文件的 CSV 与 JSON 预览模式 readiness。"),
+      field("fieldCoverage", "export", true, "Required export field coverage.", "必需导出字段覆盖。"),
+      field("rowStatusCoverage", "export", true, "Ready/review/blocked row status reasons.", "Ready/review/blocked 行状态原因。"),
+      field("acknowledgements", "risk", true, "Required human acknowledgements before export approval.", "导出批准前所需的人工确认。"),
+      field("contractRootReadiness", "contract", true, "Contract root mode readiness and blockers.", "合约 root 模式 readiness 与 blocker。"),
+      field("boundary", "risk", true, "No export file, storage, signed URL, reward, or contract write boundary.", "不生成导出文件、storage、signed URL、发奖或合约写入的边界。"),
+    ],
+    purpose: text(
+      "Inspect local export confirmation readiness without generating files or writing contract roots.",
+      "检查本地导出确认 readiness，但不生成文件或写入合约 root。",
+    ),
+    readiness: "review_required",
+    riskLevel: "high",
+    securityBoundary: exportReadinessBoundary,
+    title: text("Get campaign export readiness", "获取活动 export readiness"),
   },
   {
     apiGroup: "task_generation",

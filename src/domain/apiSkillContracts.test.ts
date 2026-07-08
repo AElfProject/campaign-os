@@ -12,11 +12,11 @@ const contractsById = Object.fromEntries(
 );
 
 describe("API Skill Contract registry", () => {
-  it("covers the complete v0.1 first skill batch plus the v0.2 wallet session, discovery, add-task, i18n draft, and agent wallet action APIs", () => {
+  it("covers the complete v0.1 first skill batch plus v0.2 wallet, discovery, readiness, add-task, i18n draft, and agent wallet action APIs", () => {
     expect(apiSkillContractRegistry.map((contract) => contract.id)).toEqual(requiredApiSkillIds);
     expect(createApiSkillContractSurface().summary).toMatchObject({
       missingSkillIds: [],
-      totalContracts: 14,
+      totalContracts: 18,
     });
   });
 
@@ -77,6 +77,82 @@ describe("API Skill Contract registry", () => {
     expect(listCampaigns.securityBoundary["en-US"]).toContain("App Hub backend");
     expect(listCampaigns.securityBoundary["en-US"]).toContain("Forecast prediction");
     expect(getCampaignDetail.securityBoundary["zh-CN"]).toContain("不会执行实时 marketplace API");
+  });
+
+  it("models read-only campaign lifecycle and readiness contracts", () => {
+    const lifecycle = contractsById.get_campaign_lifecycle;
+    const launchReadiness = contractsById.get_campaign_launch_readiness;
+    const providerReadiness = contractsById.get_campaign_provider_readiness;
+    const exportReadiness = contractsById.get_campaign_export_readiness;
+    const lifecycleFields = new Map(
+      [...lifecycle.inputFields, ...lifecycle.outputFields].map((field) => [field.name, field]),
+    );
+    const launchFields = new Map(
+      [...launchReadiness.inputFields, ...launchReadiness.outputFields].map((field) => [field.name, field]),
+    );
+    const providerFields = new Map(
+      [...providerReadiness.inputFields, ...providerReadiness.outputFields].map((field) => [field.name, field]),
+    );
+    const exportFields = new Map(
+      [...exportReadiness.inputFields, ...exportReadiness.outputFields].map((field) => [field.name, field]),
+    );
+
+    expect(lifecycle).toMatchObject({
+      apiGroup: "campaign_discovery",
+      readiness: "local_only",
+      riskLevel: "medium",
+    });
+    expect(launchReadiness).toMatchObject({
+      apiGroup: "campaign_discovery",
+      readiness: "review_required",
+      riskLevel: "medium",
+    });
+    expect(providerReadiness).toMatchObject({
+      apiGroup: "task_verification",
+      readiness: "review_required",
+      riskLevel: "high",
+    });
+    expect(exportReadiness).toMatchObject({
+      apiGroup: "export",
+      readiness: "review_required",
+      riskLevel: "high",
+    });
+    expect([...lifecycleFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "campaignId",
+        "currentStatus",
+        "supportedStatuses",
+        "operations",
+        "launchGateGroups",
+        "summary",
+        "boundary",
+      ]),
+    );
+    expect([...launchFields.keys()]).toEqual(
+      expect.arrayContaining(["campaignId", "bundles", "handoffs", "summary", "boundary"]),
+    );
+    expect([...providerFields.keys()]).toEqual(
+      expect.arrayContaining(["campaignId", "pipeline", "providerEvidenceRegistry", "entries", "summary", "boundary"]),
+    );
+    expect([...exportFields.keys()]).toEqual(
+      expect.arrayContaining([
+        "campaignId",
+        "previewModes",
+        "fieldCoverage",
+        "rowStatusCoverage",
+        "acknowledgements",
+        "contractRootReadiness",
+        "boundary",
+      ]),
+    );
+    expect(lifecycleFields.get("campaignId")).toMatchObject({ group: "campaign", required: true });
+    expect(providerFields.get("providerEvidenceRegistry")).toMatchObject({ group: "evidence", required: true });
+    expect(exportFields.get("contractRootReadiness")).toMatchObject({ group: "contract", required: true });
+    expect(lifecycle.securityBoundary["en-US"]).toContain("No lifecycle mutation");
+    expect(launchReadiness.securityBoundary["en-US"]).toContain("No lifecycle mutation");
+    expect(providerReadiness.securityBoundary["en-US"]).toContain("No live provider");
+    expect(exportReadiness.securityBoundary["en-US"]).toContain("No live export job");
+    expect(exportReadiness.securityBoundary["en-US"]).toContain("contract root write");
   });
 
   it("models the local wallet session API contract with optional public identity metadata", () => {
@@ -497,11 +573,11 @@ describe("API Skill Contract registry", () => {
 
     expect(surface.summary).toMatchObject({
       blockedCount: 0,
-      externalEvidenceCount: 5,
-      highRiskCount: 3,
-      localOnlyCount: 7,
+      externalEvidenceCount: 9,
+      highRiskCount: 5,
+      localOnlyCount: 8,
       readyCount: 3,
-      reviewRequiredCount: 4,
+      reviewRequiredCount: 7,
     });
     expect(surface.boundary["en-US"]).toContain("does not call live APIs");
     expect(surface.boundary["zh-CN"]).toContain("不会调用实时 API");

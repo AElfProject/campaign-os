@@ -2397,6 +2397,30 @@ describe("Campaign OS local API service facade", () => {
       },
       skillId: "export_winners",
     });
+    const lifecycle = service.invokeApiSkill({
+      payload: {
+        campaignId: campaignDetail.id,
+      },
+      skillId: "get_campaign_lifecycle",
+    });
+    const launchReadiness = service.invokeApiSkill({
+      payload: {
+        campaignId: campaignDetail.id,
+      },
+      skillId: "get_campaign_launch_readiness",
+    });
+    const providerReadiness = service.invokeApiSkill({
+      payload: {
+        campaignId: campaignDetail.id,
+      },
+      skillId: "get_campaign_provider_readiness",
+    });
+    const exportReadiness = service.invokeApiSkill({
+      payload: {
+        campaignId: campaignDetail.id,
+      },
+      skillId: "get_campaign_export_readiness",
+    });
     const posts = service.invokeApiSkill({
       payload: {
         campaignId: campaignDetail.id,
@@ -2481,6 +2505,71 @@ describe("Campaign OS local API service facade", () => {
     expect(hasOwnKeyDeep(exportWinners.payload, "downloadUrl")).toBe(false);
     expect(hasOwnKeyDeep(exportWinners.payload, "contractRoot")).toBe(false);
     expectLocalInvocationSafety(exportWinners.safety);
+
+    expect(lifecycle).toMatchObject({
+      apiGroup: "campaign_discovery",
+      ok: true,
+      readiness: "local_only",
+      riskLevel: "medium",
+      payload: expect.objectContaining({
+        campaignId: campaignDetail.id,
+        currentStatus: "live",
+        operations: expect.any(Array),
+      }),
+      skillId: "get_campaign_lifecycle",
+    });
+    expectLocalInvocationSafety(lifecycle.safety);
+
+    expect(launchReadiness).toMatchObject({
+      apiGroup: "campaign_discovery",
+      ok: true,
+      readiness: "review_required",
+      riskLevel: "medium",
+      payload: expect.objectContaining({
+        campaignId: campaignDetail.id,
+        bundles: expect.any(Array),
+        handoffs: expect.any(Array),
+      }),
+      skillId: "get_campaign_launch_readiness",
+    });
+    expectLocalInvocationSafety(launchReadiness.safety);
+
+    expect(providerReadiness).toMatchObject({
+      apiGroup: "task_verification",
+      ok: true,
+      readiness: "review_required",
+      riskLevel: "high",
+      payload: expect.objectContaining({
+        campaignId: campaignDetail.id,
+        pipeline: expect.objectContaining({
+          paths: expect.any(Array),
+        }),
+        providerEvidenceRegistry: expect.objectContaining({
+          entries: expect.any(Array),
+        }),
+      }),
+      skillId: "get_campaign_provider_readiness",
+    });
+    expectLocalInvocationSafety(providerReadiness.safety);
+
+    expect(exportReadiness).toMatchObject({
+      apiGroup: "export",
+      ok: true,
+      readiness: "review_required",
+      riskLevel: "high",
+      payload: expect.objectContaining({
+        campaignId: campaignDetail.id,
+        contractRootReadiness: expect.arrayContaining([
+          expect.objectContaining({
+            mode: "contract_claim",
+            readiness: "blocked",
+          }),
+        ]),
+        previewModes: expect.any(Array),
+      }),
+      skillId: "get_campaign_export_readiness",
+    });
+    expectLocalInvocationSafety(exportReadiness.safety);
 
     expect(posts).toMatchObject({
       apiGroup: "content_generation",
@@ -2567,7 +2656,41 @@ describe("Campaign OS local API service facade", () => {
       },
       skillId: "verify_task",
     });
-    const responses = [unknownSkill, malformedPayload, unsafeExport, walletMismatch, missingTask];
+    const missingLifecycle = service.invokeApiSkill({
+      payload: {
+        campaignId: "missing-campaign",
+      },
+      skillId: "get_campaign_lifecycle",
+    });
+    const missingLaunchReadiness = service.invokeApiSkill({
+      payload: {
+        campaignId: "missing-campaign",
+      },
+      skillId: "get_campaign_launch_readiness",
+    });
+    const missingProviderReadiness = service.invokeApiSkill({
+      payload: {
+        campaignId: "missing-campaign",
+      },
+      skillId: "get_campaign_provider_readiness",
+    });
+    const missingExportReadiness = service.invokeApiSkill({
+      payload: {
+        campaignId: "missing-campaign",
+      },
+      skillId: "get_campaign_export_readiness",
+    });
+    const responses = [
+      unknownSkill,
+      malformedPayload,
+      unsafeExport,
+      walletMismatch,
+      missingTask,
+      missingLifecycle,
+      missingLaunchReadiness,
+      missingProviderReadiness,
+      missingExportReadiness,
+    ];
 
     expect(unknownSkill).toMatchObject({
       error: expect.objectContaining({ code: "INVALID_SKILL", field: "skillId" }),
@@ -2597,6 +2720,17 @@ describe("Campaign OS local API service facade", () => {
       ok: false,
       skillId: "verify_task",
     });
+    for (const missingCampaignResponse of [
+      missingLifecycle,
+      missingLaunchReadiness,
+      missingProviderReadiness,
+      missingExportReadiness,
+    ]) {
+      expect(missingCampaignResponse).toMatchObject({
+        error: expect.objectContaining({ code: "CAMPAIGN_NOT_FOUND", field: "campaignId" }),
+        ok: false,
+      });
+    }
 
     for (const response of responses) {
       expect(response.payload).toBeUndefined();

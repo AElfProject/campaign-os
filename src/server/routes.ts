@@ -128,6 +128,7 @@ export const apiRuntimeRoutes = [
   }),
   route({
     apiGroup: "campaign_discovery",
+    apiSkillId: "get_campaign_lifecycle",
     boundary,
     id: "campaigns.lifecycle",
     method: "GET",
@@ -141,6 +142,7 @@ export const apiRuntimeRoutes = [
   }),
   route({
     apiGroup: "campaign_discovery",
+    apiSkillId: "get_campaign_launch_readiness",
     boundary,
     id: "campaigns.launch.readiness",
     method: "GET",
@@ -196,6 +198,7 @@ export const apiRuntimeRoutes = [
   }),
   route({
     apiGroup: "task_verification",
+    apiSkillId: "get_campaign_provider_readiness",
     boundary,
     id: "campaigns.provider.readiness",
     method: "GET",
@@ -293,6 +296,7 @@ export const apiRuntimeRoutes = [
   }),
   route({
     apiGroup: "export",
+    apiSkillId: "get_campaign_export_readiness",
     boundary,
     id: "campaigns.export.readiness",
     method: "GET",

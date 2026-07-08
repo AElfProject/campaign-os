@@ -88,24 +88,28 @@ describe("API runtime route catalog", () => {
       serviceGroup: "wallet_session",
     });
     expect(apiRuntimeRouteById["campaigns.lifecycle"]).toMatchObject({
+      apiSkillId: "get_campaign_lifecycle",
       method: "GET",
       path: "/api/campaigns/:campaignId/lifecycle",
       readiness: "local_only",
       serviceGroup: "campaign",
     });
     expect(apiRuntimeRouteById["campaigns.launch.readiness"]).toMatchObject({
+      apiSkillId: "get_campaign_launch_readiness",
       method: "GET",
       path: "/api/campaigns/:campaignId/launch-readiness",
       readiness: "review_required",
       serviceGroup: "campaign",
     });
     expect(apiRuntimeRouteById["campaigns.provider.readiness"]).toMatchObject({
+      apiSkillId: "get_campaign_provider_readiness",
       method: "GET",
       path: "/api/campaigns/:campaignId/provider-readiness",
       readiness: "review_required",
       serviceGroup: "verification",
     });
     expect(apiRuntimeRouteById["campaigns.export.readiness"]).toMatchObject({
+      apiSkillId: "get_campaign_export_readiness",
       method: "GET",
       path: "/api/campaigns/:campaignId/export-readiness",
       readiness: "review_required",
@@ -175,6 +179,10 @@ describe("API runtime route catalog", () => {
         "generate_i18n_draft",
         "get_campaign_analytics",
         "get_campaign_detail",
+        "get_campaign_export_readiness",
+        "get_campaign_launch_readiness",
+        "get_campaign_lifecycle",
+        "get_campaign_provider_readiness",
         "list_campaigns",
         "summarize_campaign",
         "verify_task",
