@@ -246,6 +246,7 @@ export interface BackendQueueRuntimeReadinessSummary {
   preconditions: QueueRuntimeFoundationSummary["preconditions"];
   productionReady: false;
   profileId: QueueRuntimeFoundationSummary["profileId"];
+  publishingReadiness: BackendQueuePublishingReadinessSummary;
   providerAdapter: BackendQueueProviderAdapterReadinessSummary;
   queuePlanCoverage: {
     jobIds: string[];
@@ -257,6 +258,23 @@ export interface BackendQueueRuntimeReadinessSummary {
   };
   status: QueueRuntimeFoundationSummary["status"];
   valid: boolean;
+}
+
+export interface BackendQueuePublishingReadinessSummary {
+  activationStatus: QueueRuntimeProviderAdapterSummary["driverPublishingActivationStatus"];
+  blockerCount: QueueRuntimeProviderAdapterSummary["driverPublishingBlockerCount"];
+  diagnosticCodes: QueueRuntimeProviderAdapterSummary["driverPublishDiagnosticCodes"];
+  livePublishAttempted: QueueRuntimeProviderAdapterSummary["driverPublishingLivePublishAttempted"];
+  liveQueuePublishingEnabled: QueueRuntimeProviderAdapterSummary["driverPublishingLiveQueuePublishingEnabled"];
+  noLiveSideEffects: QueueRuntimeProviderAdapterSummary["driverPublishingNoLiveSideEffects"];
+  productionReady: false;
+  publishAttemptPolicy: QueueRuntimeProviderAdapterSummary["driverPublishAttemptPolicy"];
+  publishRequestEvaluated: QueueRuntimeProviderAdapterSummary["driverPublishRequestEvaluated"];
+  publishResultStatus: QueueRuntimeProviderAdapterSummary["driverPublishResultStatus"];
+  publisherId: QueueRuntimeProviderAdapterSummary["driverPublishingPublisherId"];
+  publisherProvided: QueueRuntimeProviderAdapterSummary["driverPublishingPublisherProvided"];
+  requiredConfigKeys: QueueRuntimeProviderAdapterSummary["driverPublishingRequiredConfigKeys"];
+  status: QueueRuntimeProviderAdapterSummary["driverPublishingStatus"];
 }
 
 export interface BackendQueueProviderAdapterReadinessSummary {
@@ -275,6 +293,19 @@ export interface BackendQueueProviderAdapterReadinessSummary {
   driverOperationCount: QueueRuntimeProviderAdapterSummary["driverOperationCount"];
   driverProductionReady: false;
   driverProviderId: QueueRuntimeProviderAdapterSummary["driverProviderId"];
+  driverPublishAttemptPolicy: QueueRuntimeProviderAdapterSummary["driverPublishAttemptPolicy"];
+  driverPublishDiagnosticCodes: QueueRuntimeProviderAdapterSummary["driverPublishDiagnosticCodes"];
+  driverPublishRequestEvaluated: QueueRuntimeProviderAdapterSummary["driverPublishRequestEvaluated"];
+  driverPublishResultStatus: QueueRuntimeProviderAdapterSummary["driverPublishResultStatus"];
+  driverPublishingActivationStatus: QueueRuntimeProviderAdapterSummary["driverPublishingActivationStatus"];
+  driverPublishingBlockerCount: QueueRuntimeProviderAdapterSummary["driverPublishingBlockerCount"];
+  driverPublishingLivePublishAttempted: QueueRuntimeProviderAdapterSummary["driverPublishingLivePublishAttempted"];
+  driverPublishingLiveQueuePublishingEnabled: QueueRuntimeProviderAdapterSummary["driverPublishingLiveQueuePublishingEnabled"];
+  driverPublishingNoLiveSideEffects: QueueRuntimeProviderAdapterSummary["driverPublishingNoLiveSideEffects"];
+  driverPublishingPublisherId: QueueRuntimeProviderAdapterSummary["driverPublishingPublisherId"];
+  driverPublishingPublisherProvided: QueueRuntimeProviderAdapterSummary["driverPublishingPublisherProvided"];
+  driverPublishingRequiredConfigKeys: QueueRuntimeProviderAdapterSummary["driverPublishingRequiredConfigKeys"];
+  driverPublishingStatus: QueueRuntimeProviderAdapterSummary["driverPublishingStatus"];
   driverRequiredConfigKeys: QueueRuntimeProviderAdapterSummary["driverRequiredConfigKeys"];
   driverSdkBindingActivationGateSatisfied: boolean;
   driverSdkBindingBlockerCount: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["blockerCount"];
@@ -1583,6 +1614,22 @@ const createBackendQueueRuntimeReadinessSummary = ({
     preconditions: foundation.preconditions,
     productionReady: foundation.productionReady,
     profileId: foundation.profileId,
+    publishingReadiness: {
+      activationStatus: foundation.providerAdapter.driverPublishingActivationStatus,
+      blockerCount: foundation.providerAdapter.driverPublishingBlockerCount,
+      diagnosticCodes: foundation.providerAdapter.driverPublishDiagnosticCodes,
+      livePublishAttempted: foundation.providerAdapter.driverPublishingLivePublishAttempted,
+      liveQueuePublishingEnabled: foundation.providerAdapter.driverPublishingLiveQueuePublishingEnabled,
+      noLiveSideEffects: foundation.providerAdapter.driverPublishingNoLiveSideEffects,
+      productionReady: false,
+      publishAttemptPolicy: foundation.providerAdapter.driverPublishAttemptPolicy,
+      publishRequestEvaluated: foundation.providerAdapter.driverPublishRequestEvaluated,
+      publishResultStatus: foundation.providerAdapter.driverPublishResultStatus,
+      publisherId: foundation.providerAdapter.driverPublishingPublisherId,
+      publisherProvided: foundation.providerAdapter.driverPublishingPublisherProvided,
+      requiredConfigKeys: foundation.providerAdapter.driverPublishingRequiredConfigKeys,
+      status: foundation.providerAdapter.driverPublishingStatus,
+    },
     providerAdapter: {
       adapterId: foundation.providerAdapter.adapterId,
       blockerCount: foundation.providerAdapter.blockerCount,
@@ -1601,6 +1648,19 @@ const createBackendQueueRuntimeReadinessSummary = ({
       driverOperationCount: foundation.providerAdapter.driverOperationCount,
       driverProductionReady: foundation.providerAdapter.driverProductionReady,
       driverProviderId: foundation.providerAdapter.driverProviderId,
+      driverPublishAttemptPolicy: foundation.providerAdapter.driverPublishAttemptPolicy,
+      driverPublishDiagnosticCodes: foundation.providerAdapter.driverPublishDiagnosticCodes,
+      driverPublishRequestEvaluated: foundation.providerAdapter.driverPublishRequestEvaluated,
+      driverPublishResultStatus: foundation.providerAdapter.driverPublishResultStatus,
+      driverPublishingActivationStatus: foundation.providerAdapter.driverPublishingActivationStatus,
+      driverPublishingBlockerCount: foundation.providerAdapter.driverPublishingBlockerCount,
+      driverPublishingLivePublishAttempted: foundation.providerAdapter.driverPublishingLivePublishAttempted,
+      driverPublishingLiveQueuePublishingEnabled: foundation.providerAdapter.driverPublishingLiveQueuePublishingEnabled,
+      driverPublishingNoLiveSideEffects: foundation.providerAdapter.driverPublishingNoLiveSideEffects,
+      driverPublishingPublisherId: foundation.providerAdapter.driverPublishingPublisherId,
+      driverPublishingPublisherProvided: foundation.providerAdapter.driverPublishingPublisherProvided,
+      driverPublishingRequiredConfigKeys: foundation.providerAdapter.driverPublishingRequiredConfigKeys,
+      driverPublishingStatus: foundation.providerAdapter.driverPublishingStatus,
       driverRequiredConfigKeys: foundation.providerAdapter.driverRequiredConfigKeys,
       driverSdkBindingActivationGateSatisfied: foundation.providerAdapter.driverSdkBinding.activationGateSatisfied,
       driverSdkBindingBlockerCount: foundation.providerAdapter.driverSdkBinding.blockerCount,

@@ -37,6 +37,10 @@ import {
   type BullmqConstructionPreconditionArea,
 } from "./bullmqConstructionReadiness";
 import {
+  liveQueuePublishingProductionPreconditions,
+  type LiveQueuePublishingPreconditionArea,
+} from "./liveQueuePublishingReadiness";
+import {
   workerLeaseStoreProductionPreconditions,
   type WorkerLeasePreconditionArea,
 } from "./workerLeaseStore";
@@ -325,6 +329,29 @@ const bullmqConstructionDependencyArea = (
   return "provider";
 };
 
+const liveQueuePublishingConfigCategory = (
+  area: LiveQueuePublishingPreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (area === "activation" || area === "broker" || area === "construction" || area === "publisher" || area === "runbook") {
+    return "provider";
+  }
+
+  if (area === "dead_letter" || area === "payload" || area === "queue" || area === "redaction") {
+    return "queue";
+  }
+
+  if (area === "idempotency" || area === "lease") {
+    return "worker";
+  }
+
+  return "observability";
+};
+
+const liveQueuePublishingDependencyArea = (
+  area: LiveQueuePublishingPreconditionArea,
+): ProductionRuntimeDependencyArea =>
+  liveQueuePublishingConfigCategory(area) as ProductionRuntimeDependencyArea;
+
 const normalizeQueueProviderSdkBindingConfigKey = (key: string): string =>
   key === "CAMPAIGN_OS_QUEUE_PROVIDER_BINDING" ? "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING" : key;
 
@@ -540,6 +567,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
       ),
     ),
   ),
+  ...liveQueuePublishingProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        liveQueuePublishingConfigCategory(precondition.area),
+        precondition.status,
+        "production-required",
+      ),
+    ),
+  ),
   ...redisBrokerConnectionProductionPreconditions.flatMap((precondition) =>
     precondition.requiredConfigKeys.map((key) =>
       configKey(
@@ -726,6 +763,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     attachPoint: "src/server/bullmqConstructionReadiness.ts",
     blockedBy: [...precondition.requiredConfigKeys],
     id: `bullmq-construction-${precondition.id}`,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
+  ...liveQueuePublishingProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: liveQueuePublishingDependencyArea(precondition.area),
+    attachPoint: "src/server/liveQueuePublishingReadiness.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: `live-queue-publishing-${precondition.id}`,
     requiredBeforeProduction: true,
     status: precondition.status,
   })),

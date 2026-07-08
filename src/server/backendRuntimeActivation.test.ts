@@ -7,6 +7,7 @@ import {
   runtimeActivationConfigKeys,
 } from "./backendRuntimeActivation";
 import { bullmqConstructionProductionPreconditions } from "./bullmqConstructionReadiness";
+import { liveQueuePublishingProductionPreconditions } from "./liveQueuePublishingReadiness";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
@@ -151,6 +152,9 @@ describe("backend runtime activation contract", () => {
     const observabilityExporterConfigKeys = [
       ...new Set(observabilityExporterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
+    const liveQueuePublishingConfigKeys = [
+      ...new Set(liveQueuePublishingProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
 
     expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
       expect.arrayContaining([
@@ -179,6 +183,10 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY",
         "CAMPAIGN_OS_REDIS_TLS_POLICY",
         "CAMPAIGN_OS_REDIS_URL",
+        "CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT",
+        "CAMPAIGN_OS_LIVE_QUEUE_PUBLISHER",
+        "CAMPAIGN_OS_PAYLOAD_REFERENCE_POLICY",
+        "CAMPAIGN_OS_PUBLISHER_REDACTION_POLICY",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
         "CAMPAIGN_OS_SCHEDULER_PROVIDER",
         "CAMPAIGN_OS_WORKER_QUEUE_URL",
@@ -237,6 +245,10 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY",
         "CAMPAIGN_OS_REDIS_TLS_POLICY",
         "CAMPAIGN_OS_REDIS_URL",
+        "CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT",
+        "CAMPAIGN_OS_LIVE_QUEUE_PUBLISHER",
+        "CAMPAIGN_OS_PAYLOAD_REFERENCE_POLICY",
+        "CAMPAIGN_OS_PUBLISHER_REDACTION_POLICY",
         "CAMPAIGN_OS_WORKER_RETRY_POLICY",
         "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
         "CAMPAIGN_OS_WORKER_LEASE_STORE",
@@ -359,6 +371,18 @@ describe("backend runtime activation contract", () => {
         ]),
       );
     }
+    for (const liveQueuePublishingConfigKey of liveQueuePublishingConfigKeys) {
+      expect(activation.deploymentHandoff.environmentKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: liveQueuePublishingConfigKey,
+            redacted: true,
+            required: true,
+            requiredFor: "production-required",
+          }),
+        ]),
+      );
+    }
     for (const observabilityExporterConfigKey of observabilityExporterConfigKeys) {
       expect(activation.deploymentHandoff.environmentKeys).toEqual(
         expect.arrayContaining([
@@ -451,6 +475,34 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({
           category: "provider",
           key: "CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "provider",
+          key: "CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "provider",
+          key: "CAMPAIGN_OS_LIVE_QUEUE_PUBLISHER",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "queue",
+          key: "CAMPAIGN_OS_PAYLOAD_REFERENCE_POLICY",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "queue",
+          key: "CAMPAIGN_OS_PUBLISHER_REDACTION_POLICY",
           redacted: true,
           required: true,
           status: "blocked",
@@ -598,6 +650,10 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "provider", id: "bullmq-construction-bullmq-construction-runbook", status: "deferred" }),
         expect.objectContaining({ area: "provider", id: "redis-broker-redis-broker-credentials-reference", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "redis-broker-redis-broker-health-check-enable-gate", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "live-queue-publishing-live-queue-publishing-activation", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "live-queue-publishing-live-queue-publisher", status: "blocked" }),
+        expect.objectContaining({ area: "queue", id: "live-queue-publishing-live-queue-payload-reference-policy", status: "blocked" }),
+        expect.objectContaining({ area: "queue", id: "live-queue-publishing-live-queue-redaction-policy", status: "blocked" }),
         expect.objectContaining({ area: "contract", id: "contract-writer", status: "blocked" }),
         expect.objectContaining({ area: "storage", id: "object-storage", status: "deferred" }),
         expect.objectContaining({ area: "observability", id: "observability-exporter", status: "deferred" }),
@@ -696,6 +752,18 @@ describe("backend runtime activation contract", () => {
           expect.objectContaining({
             attachPoint: "src/server/redisBrokerConnectionReadiness.ts",
             id: `redis-broker-${precondition.id}`,
+            requiredBeforeProduction: true,
+            status: precondition.status,
+          }),
+        ),
+      ),
+    );
+    expect(activation.productionDependencyBlockers).toEqual(
+      expect.arrayContaining(
+        liveQueuePublishingProductionPreconditions.map((precondition) =>
+          expect.objectContaining({
+            attachPoint: "src/server/liveQueuePublishingReadiness.ts",
+            id: `live-queue-publishing-${precondition.id}`,
             requiredBeforeProduction: true,
             status: precondition.status,
           }),

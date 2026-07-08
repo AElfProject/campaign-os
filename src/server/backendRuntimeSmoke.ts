@@ -96,6 +96,7 @@ export interface BackendRuntimeSmokeQueueRuntimeFoundationSummary {
   id?: string;
   liveCronExecutionEnabled: false;
   liveQueuePublishingEnabled: false;
+  liveQueuePublishingReadiness: BackendRuntimeSmokeQueuePublishingReadinessSummary;
   liveSchedulerExecutionEnabled: false;
   liveWorkerExecutionEnabled: false;
   productionReady: false;
@@ -103,6 +104,23 @@ export interface BackendRuntimeSmokeQueueRuntimeFoundationSummary {
   queuePlanCount: number;
   status?: string;
   valid: boolean;
+}
+
+export interface BackendRuntimeSmokeQueuePublishingReadinessSummary {
+  activationStatus?: string;
+  blockerCount: number;
+  diagnosticCodes: string[];
+  livePublishAttempted: boolean;
+  liveQueuePublishingEnabled: boolean;
+  noLiveSideEffects: Record<string, false>;
+  productionReady: false;
+  publishAttemptPolicy?: string;
+  publishRequestEvaluated: boolean;
+  publishResultStatus?: string;
+  publisherId?: string;
+  publisherProvided: boolean;
+  requiredConfigKeys: string[];
+  status?: string;
 }
 
 export interface BackendRuntimeSmokeQueueProviderAdapterSummary {
@@ -121,6 +139,19 @@ export interface BackendRuntimeSmokeQueueProviderAdapterSummary {
   driverOperationCount: number;
   driverProductionReady: false;
   driverProviderId?: string;
+  driverPublishAttemptPolicy?: string;
+  driverPublishDiagnosticCodes: string[];
+  driverPublishRequestEvaluated: boolean;
+  driverPublishResultStatus?: string;
+  driverPublishingActivationStatus?: string;
+  driverPublishingBlockerCount: number;
+  driverPublishingLivePublishAttempted: boolean;
+  driverPublishingLiveQueuePublishingEnabled: boolean;
+  driverPublishingNoLiveSideEffects: Record<string, false>;
+  driverPublishingPublisherId?: string;
+  driverPublishingPublisherProvided: boolean;
+  driverPublishingRequiredConfigKeys: string[];
+  driverPublishingStatus?: string;
   driverRequiredConfigKeys: string[];
   driverSdkBindingActivationGateSatisfied: boolean;
   driverSdkBindingBlockerCount: number;
@@ -531,8 +562,12 @@ const summarizeQueueRuntimeFoundation = (
   const providerAdapter = summarizeQueueProviderAdapter(
     readNestedRecord(record, ["providerAdapter"]),
   );
+  const liveQueuePublishingReadinessRecord = readNestedRecord(record, ["liveQueuePublishingReadiness"]);
+  const liveQueuePublishingReadiness = liveQueuePublishingReadinessRecord
+    ? summarizeQueuePublishingReadiness(liveQueuePublishingReadinessRecord)
+    : summarizeQueuePublishingReadinessFromProviderAdapter(providerAdapter);
 
-  if (!providerAdapter) {
+  if (!providerAdapter || !liveQueuePublishingReadiness) {
     return undefined;
   }
 
@@ -543,6 +578,7 @@ const summarizeQueueRuntimeFoundation = (
     id: getString(record, "id"),
     liveCronExecutionEnabled: false,
     liveQueuePublishingEnabled: false,
+    liveQueuePublishingReadiness,
     liveSchedulerExecutionEnabled: false,
     liveWorkerExecutionEnabled: false,
     productionReady: false,
@@ -550,6 +586,68 @@ const summarizeQueueRuntimeFoundation = (
     queuePlanCount: getNumber(record, "queuePlanCount"),
     status: getString(record, "status"),
     valid: getBoolean(record, "valid"),
+  };
+};
+
+const summarizeQueuePublishingReadiness = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeQueuePublishingReadinessSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const noLiveSideEffects = readNestedRecord(record, ["noLiveSideEffects"]);
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "livePublishAttempted")
+    && isExplicitFalse(record, "liveQueuePublishingEnabled")
+    && noLiveSideEffects !== undefined
+    && Object.values(noLiveSideEffects).every((value) => value === false);
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    activationStatus: getString(record, "activationStatus"),
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    livePublishAttempted: false,
+    liveQueuePublishingEnabled: false,
+    noLiveSideEffects: noLiveSideEffects as Record<string, false>,
+    productionReady: false,
+    publishAttemptPolicy: getString(record, "publishAttemptPolicy"),
+    publishRequestEvaluated: getBoolean(record, "publishRequestEvaluated"),
+    publishResultStatus: getString(record, "publishResultStatus"),
+    publisherId: getString(record, "publisherId"),
+    publisherProvided: getBoolean(record, "publisherProvided"),
+    requiredConfigKeys: getStringArray(record, "requiredConfigKeys"),
+    status: getString(record, "status"),
+  };
+};
+
+const summarizeQueuePublishingReadinessFromProviderAdapter = (
+  providerAdapter: BackendRuntimeSmokeQueueProviderAdapterSummary | undefined,
+): BackendRuntimeSmokeQueuePublishingReadinessSummary | undefined => {
+  if (!providerAdapter) {
+    return undefined;
+  }
+
+  return {
+    activationStatus: providerAdapter.driverPublishingActivationStatus,
+    blockerCount: providerAdapter.driverPublishingBlockerCount,
+    diagnosticCodes: providerAdapter.driverPublishDiagnosticCodes,
+    livePublishAttempted: providerAdapter.driverPublishingLivePublishAttempted,
+    liveQueuePublishingEnabled: providerAdapter.driverPublishingLiveQueuePublishingEnabled,
+    noLiveSideEffects: providerAdapter.driverPublishingNoLiveSideEffects,
+    productionReady: false,
+    publishAttemptPolicy: providerAdapter.driverPublishAttemptPolicy,
+    publishRequestEvaluated: providerAdapter.driverPublishRequestEvaluated,
+    publishResultStatus: providerAdapter.driverPublishResultStatus,
+    publisherId: providerAdapter.driverPublishingPublisherId,
+    publisherProvided: providerAdapter.driverPublishingPublisherProvided,
+    requiredConfigKeys: providerAdapter.driverPublishingRequiredConfigKeys,
+    status: providerAdapter.driverPublishingStatus,
   };
 };
 
@@ -565,6 +663,12 @@ const summarizeQueueProviderAdapter = (
     && isExplicitFalse(record, "driverProductionReady")
     && isExplicitFalse(record, "driverLiveQueuePublishingEnabled")
     && isExplicitFalse(record, "driverLiveWorkerExecutionEnabled")
+    && isExplicitFalse(record, "driverPublishingLivePublishAttempted")
+    && isExplicitFalse(record, "driverPublishingLiveQueuePublishingEnabled")
+    && readNestedRecord(record, ["driverPublishingNoLiveSideEffects"]) !== undefined
+    && Object.values(readNestedRecord(record, ["driverPublishingNoLiveSideEffects"]) ?? {}).every(
+      (value) => value === false,
+    )
     && isExplicitFalse(record, "driverSdkBindingProductionReady")
     && isExplicitFalse(record, "driverSdkBindingSdkClientConstructed")
     && isExplicitFalse(record, "driverSdkBindingLiveProviderCallAttempted")
@@ -599,6 +703,19 @@ const summarizeQueueProviderAdapter = (
     driverOperationCount: getNumber(record, "driverOperationCount"),
     driverProductionReady: false,
     driverProviderId: getString(record, "driverProviderId"),
+    driverPublishAttemptPolicy: getString(record, "driverPublishAttemptPolicy"),
+    driverPublishDiagnosticCodes: getStringArray(record, "driverPublishDiagnosticCodes"),
+    driverPublishRequestEvaluated: getBoolean(record, "driverPublishRequestEvaluated"),
+    driverPublishResultStatus: getString(record, "driverPublishResultStatus"),
+    driverPublishingActivationStatus: getString(record, "driverPublishingActivationStatus"),
+    driverPublishingBlockerCount: getNumber(record, "driverPublishingBlockerCount"),
+    driverPublishingLivePublishAttempted: false,
+    driverPublishingLiveQueuePublishingEnabled: false,
+    driverPublishingNoLiveSideEffects: readNestedRecord(record, ["driverPublishingNoLiveSideEffects"]) as Record<string, false>,
+    driverPublishingPublisherId: getString(record, "driverPublishingPublisherId"),
+    driverPublishingPublisherProvided: getBoolean(record, "driverPublishingPublisherProvided"),
+    driverPublishingRequiredConfigKeys: getStringArray(record, "driverPublishingRequiredConfigKeys"),
+    driverPublishingStatus: getString(record, "driverPublishingStatus"),
     driverRequiredConfigKeys: getStringArray(record, "driverRequiredConfigKeys"),
     driverSdkBindingActivationGateSatisfied: getBoolean(record, "driverSdkBindingActivationGateSatisfied"),
     driverSdkBindingBlockerCount: getNumber(record, "driverSdkBindingBlockerCount"),
@@ -1040,9 +1157,34 @@ const isQueueRuntimeFoundationSmokeReady = (
     && summary.liveCronExecutionEnabled === false
     && summary.queuePlanCount >= 9
     && summary.dryRunEnqueueEnabled === true
+    && isQueuePublishingSmokeReady(summary.liveQueuePublishingReadiness)
     && isQueueProviderAdapterSmokeReady(summary.providerAdapter)
     && summary.status === "local_ready"
     && summary.valid === true;
+};
+
+const isQueuePublishingSmokeReady = (
+  summary: BackendRuntimeSmokeQueuePublishingReadinessSummary | undefined,
+): summary is BackendRuntimeSmokeQueuePublishingReadinessSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.livePublishAttempted === false
+    && summary.liveQueuePublishingEnabled === false
+    && summary.activationStatus === "disabled"
+    && summary.blockerCount === 0
+    && summary.diagnosticCodes.length === 0
+    && summary.publishAttemptPolicy === "disabled_no_live"
+    && summary.publishRequestEvaluated === false
+    && summary.publishResultStatus === "not_requested"
+    && summary.publisherId === "not_configured"
+    && summary.publisherProvided === false
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_LIVE_QUEUE_PUBLISHER")
+    && summary.status === "disabled"
+    && Object.values(summary.noLiveSideEffects).every((value) => value === false);
 };
 
 const isQueueProviderAdapterSmokeReady = (
@@ -1067,6 +1209,18 @@ const isQueueProviderAdapterSmokeReady = (
     && summary.driverProductionReady === false
     && summary.driverLiveQueuePublishingEnabled === false
     && summary.driverLiveWorkerExecutionEnabled === false
+    && summary.driverPublishingActivationStatus === "disabled"
+    && summary.driverPublishingBlockerCount === 0
+    && summary.driverPublishingLivePublishAttempted === false
+    && summary.driverPublishingLiveQueuePublishingEnabled === false
+    && summary.driverPublishAttemptPolicy === "disabled_no_live"
+    && summary.driverPublishResultStatus === "not_requested"
+    && summary.driverPublishingPublisherId === "not_configured"
+    && summary.driverPublishingPublisherProvided === false
+    && summary.driverPublishingRequiredConfigKeys.includes("CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT")
+    && summary.driverPublishingRequiredConfigKeys.includes("CAMPAIGN_OS_LIVE_QUEUE_PUBLISHER")
+    && summary.driverPublishingStatus === "disabled"
+    && Object.values(summary.driverPublishingNoLiveSideEffects).every((value) => value === false)
     && summary.driverOperationCount >= 8
     && summary.driverDisabledLiveOperationCount === summary.driverOperationCount
     && summary.driverBlockerCount === 0
