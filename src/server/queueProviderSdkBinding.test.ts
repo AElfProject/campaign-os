@@ -11,6 +11,7 @@ import {
 } from "./queueProviderSdkBinding";
 import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
 import { redisBrokerConnectionProductionPreconditions } from "./redisBrokerConnectionReadiness";
+import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
 const productionReadyBrokerEnv = {
   CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT: "explicitly-enabled",
@@ -42,6 +43,12 @@ const productionReadyBindingEnv = {
   CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:review",
   CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:worker",
   CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
+} satisfies Record<string, unknown>;
+
+const productionReadyConstructionEnv = {
+  ...productionReadyBindingEnv,
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY: "factory-ref:bullmq-construction",
 } satisfies Record<string, unknown>;
 
 describe("queue provider sdk binding foundation", () => {
@@ -115,6 +122,10 @@ describe("queue provider sdk binding foundation", () => {
       packageBindingLiveWorkerExecutionEnabled: false,
       packageBindingPackageName: "bullmq",
       packageBindingPackageRef: "npm:bullmq",
+      packageBindingBullmqConstructionAttempted: false,
+      packageBindingBullmqConstructionFactoryInvoked: false,
+      packageBindingBullmqConstructionProductionReady: false,
+      packageBindingBullmqConstructionStatus: "local_ready",
       packageBindingSdkClientConstructed: false,
       packageBindingStatus: "local_ready",
       productionReady: false,
@@ -130,6 +141,9 @@ describe("queue provider sdk binding foundation", () => {
       packageRef: "npm:bullmq",
       productionReady: false,
       providerKind: "redis-compatible",
+      bullmqConstructionStatus: "local_ready",
+      bullmqConstructionAttempted: false,
+      bullmqConstructionFactoryInvoked: false,
       sdkClientConstructed: false,
       status: "local_ready",
       valid: true,
@@ -215,6 +229,78 @@ describe("queue provider sdk binding foundation", () => {
     expect(foundation.packageBinding.status).toBe("blocked");
     expect(foundation.packageBinding.sdkClientConstructed).toBe(false);
     expect(foundation.packageBinding.liveBrokerConnectionAttempted).toBe(false);
+    expect(foundation.packageBinding.bullmqConstructionStatus).toBe("blocked");
+    expect(foundation.readiness.packageBindingBullmqConstructionStatus).toBe("blocked");
+  });
+
+  it("projects injected BullMQ construction through package binding without constructing SDK clients", () => {
+    const constructionFactory: BullmqConstructionFactory = {
+      factoryId: "sdk-binding-bullmq-construction-factory",
+      construct: () => ({
+        queueClient: { clientId: "queue-client-ref", constructed: true },
+        queueEvents: { clientId: "queue-events-ref", constructed: true },
+        worker: { clientId: "worker-client-ref", constructed: true },
+      }),
+    };
+
+    const foundation = createQueueProviderSdkBindingFoundation({
+      constructionFactory,
+      env: productionReadyConstructionEnv,
+      profileId: "production-required",
+      providerId: "production-queue-provider",
+      providerKind: "sqs-compatible",
+    });
+
+    expect(foundation.status).toBe("scaffolded");
+    expect(foundation.valid).toBe(true);
+    expect(foundation.sdkClientConstructed).toBe(false);
+    expect(foundation.packageBinding).toMatchObject({
+      bullmqConstructionAttempted: true,
+      bullmqConstructionFactoryInvoked: true,
+      bullmqConstructionStatus: "constructed",
+      queueClientConstructed: true,
+      queueEventsConstructed: true,
+      sdkClientConstructed: false,
+      workerConstructed: true,
+    });
+    expect(foundation.readiness).toMatchObject({
+      liveProviderCallsEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      packageBindingBullmqConstructionFactoryInvoked: true,
+      packageBindingBullmqConstructionStatus: "constructed",
+      packageBindingQueueClientConstructed: true,
+      packageBindingQueueEventsConstructed: true,
+      packageBindingSdkClientConstructed: false,
+      packageBindingWorkerConstructed: true,
+      productionReady: false,
+      sdkClientConstructed: false,
+    });
+  });
+
+  it("projects redacted BullMQ factory failures through SDK binding", () => {
+    const constructionFactory: BullmqConstructionFactory = {
+      factoryId: "throwing-sdk-binding-construction-factory",
+      construct: () => {
+        throw new Error("redis://redis-user:redis-pass@redis.invalid:6379/0 payload={\"wallet\":\"ELF_SECRET\"}");
+      },
+    };
+
+    const foundation = createQueueProviderSdkBindingFoundation({
+      constructionFactory,
+      env: productionReadyConstructionEnv,
+      profileId: "production-required",
+      providerId: "production-queue-provider",
+      providerKind: "sqs-compatible",
+    });
+
+    expect(foundation.packageBinding.bullmqConstructionStatus).toBe("failed");
+    expect(foundation.packageBinding.bullmqConstructionDiagnosticCodes).toContain("BULLMQ_CONSTRUCTION_FACTORY_FAILED");
+    expect(foundation.readiness.packageBindingBullmqConstructionStatus).toBe("failed");
+    expect(foundation.sdkClientConstructed).toBe(false);
+    expect(foundation.readiness.liveProviderCallsEnabled).toBe(false);
+    expect(JSON.stringify(foundation)).not.toContain("redis-pass");
+    expect(JSON.stringify(foundation)).not.toContain("ELF_SECRET");
   });
 
   it("keeps production-required scaffolded but not production-ready after all gates are explicit", () => {
@@ -251,6 +337,8 @@ describe("queue provider sdk binding foundation", () => {
       productionReady: false,
       queueClientConstructed: false,
       queueEventsConstructed: false,
+      bullmqConstructionStatus: "blocked",
+      bullmqConstructionFactoryInvoked: false,
       sdkClientConstructed: false,
       status: "scaffolded",
       valid: true,
@@ -259,6 +347,8 @@ describe("queue provider sdk binding foundation", () => {
     expect(foundation.readiness.packageBindingBrokerConnectionBlockerCount).toBe(0);
     expect(foundation.readiness.packageBindingBrokerConnectionHealthCheckMode).toBe("metadata_only");
     expect(foundation.readiness.packageBindingLiveBrokerHealthCheckAttempted).toBe(false);
+    expect(foundation.readiness.packageBindingBullmqConstructionStatus).toBe("blocked");
+    expect(foundation.readiness.packageBindingBullmqConstructionFactoryInvoked).toBe(false);
     expect(foundation.readiness.packageBindingQueueClientConstructed).toBe(false);
     expect(foundation.readiness.packageBindingQueueEventsConstructed).toBe(false);
     expect(foundation.readiness.packageBindingWorkerConstructed).toBe(false);

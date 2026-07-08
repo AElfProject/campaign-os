@@ -11,6 +11,7 @@ import {
   redisBrokerConnectionProductionPreconditions,
   type RedisBrokerConnectionDiagnosticCode,
 } from "./redisBrokerConnectionReadiness";
+import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
 const productionReadyBrokerEnv = {
   CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT: "explicitly-enabled",
@@ -51,6 +52,12 @@ const productionReadyPackageEnv = {
   CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:review",
   CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:worker",
   CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
+} satisfies Record<string, unknown>;
+
+const productionReadyConstructionEnv = {
+  ...productionReadyPackageEnv,
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY: "factory-ref:bullmq-construction",
 } satisfies Record<string, unknown>;
 
 describe("queue provider package binding foundation", () => {
@@ -101,6 +108,16 @@ describe("queue provider package binding foundation", () => {
     expect(foundation.noLiveFlags).toEqual(queueProviderPackageNoLiveFlags);
     expect(foundation.blockerCount).toBe(0);
     expect(foundation.diagnosticCodes).toEqual([]);
+    expect(foundation.bullmqConstruction).toMatchObject({
+      activationStatus: "disabled",
+      bullmqConstructionAttempted: false,
+      bullmqConstructionFactoryInvoked: false,
+      productionReady: false,
+      queueClientConstructed: false,
+      queueEventsConstructed: false,
+      status: "local_ready",
+      workerConstructed: false,
+    });
     expect(foundation.healthCheck).toMatchObject({
       liveBrokerHealthCheckAttempted: false,
       packageImportAttempted: false,
@@ -116,6 +133,10 @@ describe("queue provider package binding foundation", () => {
       packageRef: "npm:bullmq",
       productionReady: false,
       providerKind: "redis-compatible",
+      bullmqConstructionAttempted: false,
+      bullmqConstructionFactoryInvoked: false,
+      bullmqConstructionProductionReady: false,
+      bullmqConstructionStatus: "local_ready",
       sdkClientConstructed: false,
       valid: true,
     });
@@ -167,6 +188,79 @@ describe("queue provider package binding foundation", () => {
     expect(foundation.readiness.brokerConnectionBlockerCount).toBe(redisBrokerConnectionProductionPreconditions.length);
     expect(foundation.readiness.brokerConnectionDiagnosticCodes).toEqual(redisBrokerMissingDiagnosticCodes);
     expect(foundation.readiness.brokerConnectionHealthCheckMode).toBe("activation_required");
+    expect(foundation.bullmqConstructionStatus).toBe("blocked");
+    expect(foundation.bullmqConstructionDiagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "BULLMQ_CONSTRUCTION_ACTIVATION_MISSING",
+        "BULLMQ_CONSTRUCTION_FACTORY_MISSING",
+      ]),
+    );
+    expect(foundation.readiness.bullmqConstructionStatus).toBe("blocked");
+    expect(foundation.readiness.bullmqConstructionQueueClientConstructed).toBe(false);
+  });
+
+  it("projects injected BullMQ construction without enabling package live execution", () => {
+    const constructionFactory: BullmqConstructionFactory = {
+      factoryId: "package-binding-bullmq-construction-factory",
+      construct: () => ({
+        queueClient: { clientId: "queue-client-ref", constructed: true },
+        queueEvents: { clientId: "queue-events-ref", constructed: true },
+        worker: { clientId: "worker-client-ref", constructed: true },
+      }),
+    };
+
+    const foundation = createQueueProviderPackageBinding({
+      constructionFactory,
+      env: productionReadyConstructionEnv,
+      profileId: "production-required",
+    });
+
+    expect(foundation.status).toBe("scaffolded");
+    expect(foundation.valid).toBe(true);
+    expect(foundation.bullmqConstructionStatus).toBe("constructed");
+    expect(foundation.bullmqConstructionAttempted).toBe(true);
+    expect(foundation.bullmqConstructionFactoryInvoked).toBe(true);
+    expect(foundation.queueClientConstructed).toBe(true);
+    expect(foundation.queueEventsConstructed).toBe(true);
+    expect(foundation.workerConstructed).toBe(true);
+    expect(foundation.sdkClientConstructed).toBe(false);
+    expect(foundation.productionReady).toBe(false);
+    expect(foundation.liveQueuePublishingEnabled).toBe(false);
+    expect(foundation.liveWorkerExecutionEnabled).toBe(false);
+    expect(foundation.readiness).toMatchObject({
+      bullmqConstructionQueueClientConstructed: true,
+      bullmqConstructionQueueEventsConstructed: true,
+      bullmqConstructionStatus: "constructed",
+      bullmqConstructionWorkerConstructed: true,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      productionReady: false,
+      sdkClientConstructed: false,
+    });
+  });
+
+  it("projects redacted BullMQ factory failures through package binding", () => {
+    const constructionFactory: BullmqConstructionFactory = {
+      factoryId: "throwing-package-binding-construction-factory",
+      construct: () => {
+        throw new Error("redis://redis-user:redis-pass@redis.invalid:6379/0 payload={\"wallet\":\"ELF_SECRET\"}");
+      },
+    };
+
+    const foundation = createQueueProviderPackageBinding({
+      constructionFactory,
+      env: productionReadyConstructionEnv,
+      profileId: "production-required",
+    });
+
+    expect(foundation.bullmqConstructionStatus).toBe("failed");
+    expect(foundation.bullmqConstructionDiagnosticCodes).toContain("BULLMQ_CONSTRUCTION_FACTORY_FAILED");
+    expect(foundation.queueClientConstructed).toBe(false);
+    expect(foundation.workerConstructed).toBe(false);
+    expect(foundation.liveQueuePublishingEnabled).toBe(false);
+    expect(foundation.liveWorkerExecutionEnabled).toBe(false);
+    expect(JSON.stringify(foundation)).not.toContain("redis-pass");
+    expect(JSON.stringify(foundation)).not.toContain("ELF_SECRET");
   });
 
   it("keeps production-required scaffolded but not production-ready after all references are present", () => {
@@ -191,6 +285,8 @@ describe("queue provider package binding foundation", () => {
     expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
     expect(foundation.readiness.queueClientConstructed).toBe(false);
     expect(foundation.readiness.queueEventsConstructed).toBe(false);
+    expect(foundation.readiness.bullmqConstructionStatus).toBe("blocked");
+    expect(foundation.readiness.bullmqConstructionFactoryInvoked).toBe(false);
     expect(foundation.sdkClientConstructed).toBe(false);
     expect(foundation.workerConstructed).toBe(false);
   });

@@ -1,5 +1,13 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import {
+  createBullmqConstructionReadiness,
+  type BullmqConstructionActivationStatus,
+  type BullmqConstructionDiagnosticCode,
+  type BullmqConstructionFactory,
+  type BullmqConstructionMode,
+  type BullmqConstructionStatus,
+} from "./bullmqConstructionReadiness";
+import {
   createRedisBrokerConnectionReadiness,
   type RedisBrokerConnectionDiagnosticCode,
   type RedisBrokerConnectionMode,
@@ -47,6 +55,7 @@ export type QueueProviderPackageDiagnosticCode =
   | "QUEUE_PROVIDER_PACKAGE_RUNBOOK_MISSING"
   | "QUEUE_PROVIDER_PACKAGE_LIVE_ENABLEMENT_MISSING"
   | "UNSAFE_QUEUE_PROVIDER_PACKAGE_BINDING_CONFIG"
+  | BullmqConstructionDiagnosticCode
   | RedisBrokerConnectionDiagnosticCode;
 export type QueueProviderPackagePreconditionArea =
   | "activation"
@@ -144,6 +153,27 @@ export interface QueueProviderPackageBrokerConnectionSummary {
   workerConstructed: false;
 }
 
+export interface QueueProviderPackageBullmqConstructionSummary {
+  activationStatus: BullmqConstructionActivationStatus;
+  blockerCount: number;
+  browserBundleAllowed: false;
+  bullmqConstructionAttempted: boolean;
+  bullmqConstructionFactoryInvoked: boolean;
+  constructionId: string;
+  diagnosticCodes: BullmqConstructionDiagnosticCode[];
+  factoryId: string;
+  factoryProvided: boolean;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: BullmqConstructionMode;
+  productionReady: false;
+  queueClientConstructed: boolean;
+  queueEventsConstructed: boolean;
+  status: BullmqConstructionStatus;
+  valid: boolean;
+  workerConstructed: boolean;
+}
+
 export interface QueueProviderPackageReadinessProjection {
   bindingId: string;
   blockerCount: number;
@@ -156,6 +186,17 @@ export interface QueueProviderPackageReadinessProjection {
   brokerConnectionRequiredConfigKeys: string[];
   brokerConnectionStatus: RedisBrokerConnectionStatus;
   browserBundleAllowed: false;
+  bullmqConstruction: QueueProviderPackageBullmqConstructionSummary;
+  bullmqConstructionAttempted: boolean;
+  bullmqConstructionBlockerCount: number;
+  bullmqConstructionDiagnosticCodes: BullmqConstructionDiagnosticCode[];
+  bullmqConstructionFactoryInvoked: boolean;
+  bullmqConstructionId: string;
+  bullmqConstructionProductionReady: false;
+  bullmqConstructionQueueClientConstructed: boolean;
+  bullmqConstructionQueueEventsConstructed: boolean;
+  bullmqConstructionStatus: BullmqConstructionStatus;
+  bullmqConstructionWorkerConstructed: boolean;
   diagnosticCodes: QueueProviderPackageDiagnosticCode[];
   family: QueueProviderPackageFamily;
   importPosture: QueueProviderPackageImportPosture;
@@ -168,19 +209,20 @@ export interface QueueProviderPackageReadinessProjection {
   packageRef: "npm:bullmq";
   productionReady: false;
   providerKind: QueueProviderPackageProviderKind;
-  queueClientConstructed: false;
-  queueEventsConstructed: false;
+  queueClientConstructed: boolean;
+  queueEventsConstructed: boolean;
   requiredConfigKeys: string[];
   sdkClientConstructed: false;
   status: QueueProviderPackageBindingStatus;
   valid: boolean;
-  workerConstructed: false;
+  workerConstructed: boolean;
 }
 
 export interface QueueProviderPackageRegistration {
   bindingId: string;
   brokerConnection: QueueProviderPackageBrokerConnectionSummary;
   brokerConnectionPosture: QueueProviderBrokerConnectionPosture;
+  bullmqConstruction: QueueProviderPackageBullmqConstructionSummary;
   definition: QueueProviderPackageDefinition;
   healthCheck: QueueProviderPackageHealthCheck;
   mode: QueueProviderPackageBindingMode;
@@ -190,6 +232,13 @@ export interface QueueProviderPackageRegistration {
 
 export interface QueueProviderPackageBindingSummary extends QueueProviderPackageRegistration {
   blockerCount: number;
+  bullmqConstructionAttempted: boolean;
+  bullmqConstructionBlockerCount: number;
+  bullmqConstructionDiagnosticCodes: BullmqConstructionDiagnosticCode[];
+  bullmqConstructionFactoryInvoked: boolean;
+  bullmqConstructionId: string;
+  bullmqConstructionProductionReady: false;
+  bullmqConstructionStatus: BullmqConstructionStatus;
   diagnosticCodes: QueueProviderPackageDiagnosticCode[];
   diagnostics: QueueProviderPackageDiagnostic[];
   id: "campaign-os-queue-provider-package-binding-foundation";
@@ -201,16 +250,18 @@ export interface QueueProviderPackageBindingSummary extends QueueProviderPackage
   preconditions: QueueProviderPackagePrecondition[];
   productionReady: false;
   profileId: QueueProviderPackageBindingProfileId;
-  queueClientConstructed: false;
-  queueEventsConstructed: false;
+  queueClientConstructed: boolean;
+  queueEventsConstructed: boolean;
   readiness: QueueProviderPackageReadinessProjection;
   sdkClientConstructed: false;
   valid: boolean;
-  workerConstructed: false;
+  workerConstructed: boolean;
 }
 
 export interface CreateQueueProviderPackageBindingOptions {
   bindingId?: string;
+  constructionFactory?: BullmqConstructionFactory;
+  constructionId?: string;
   env?: Record<string, unknown>;
   family?: string;
   mode?: string;
@@ -294,6 +345,13 @@ export const createQueueProviderPackageBinding = (
     profileId: profileResolution.profileId,
   });
   const brokerConnection = createBrokerConnectionSummary(brokerConnectionFoundation);
+  const bullmqConstructionFoundation = createBullmqConstructionReadiness({
+    constructionFactory: options.constructionFactory,
+    constructionId: options.constructionId,
+    env,
+    profileId: profileResolution.profileId,
+  });
+  const bullmqConstruction = createBullmqConstructionSummary(bullmqConstructionFoundation);
   const productionDiagnostics =
     profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
   const diagnostics = [
@@ -328,6 +386,7 @@ export const createQueueProviderPackageBinding = (
     bindingId: bindingResolution.bindingId,
     brokerConnection,
     brokerConnectionPosture,
+    bullmqConstruction,
     definition,
     healthCheck: createHealthCheck(status),
     mode: modeResolution.mode,
@@ -338,6 +397,7 @@ export const createQueueProviderPackageBinding = (
     blockerCount,
     brokerConnection,
     brokerConnectionPosture,
+    bullmqConstruction,
     diagnostics,
     mode: modeResolution.mode,
     status,
@@ -347,6 +407,13 @@ export const createQueueProviderPackageBinding = (
   return {
     ...registration,
     blockerCount,
+    bullmqConstructionAttempted: bullmqConstruction.bullmqConstructionAttempted,
+    bullmqConstructionBlockerCount: bullmqConstruction.blockerCount,
+    bullmqConstructionDiagnosticCodes: [...bullmqConstruction.diagnosticCodes],
+    bullmqConstructionFactoryInvoked: bullmqConstruction.bullmqConstructionFactoryInvoked,
+    bullmqConstructionId: bullmqConstruction.constructionId,
+    bullmqConstructionProductionReady: false,
+    bullmqConstructionStatus: bullmqConstruction.status,
     diagnosticCodes: diagnostics.map((item) => item.code),
     diagnostics,
     id: FOUNDATION_ID,
@@ -358,12 +425,12 @@ export const createQueueProviderPackageBinding = (
     preconditions: queueProviderPackageProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
     profileId: profileResolution.profileId,
-    queueClientConstructed: false,
-    queueEventsConstructed: false,
+    queueClientConstructed: bullmqConstruction.queueClientConstructed,
+    queueEventsConstructed: bullmqConstruction.queueEventsConstructed,
     readiness,
     sdkClientConstructed: false,
     valid,
-    workerConstructed: false,
+    workerConstructed: bullmqConstruction.workerConstructed,
   };
 };
 
@@ -382,6 +449,11 @@ export const getQueueProviderPackageBindingRegistration = (
         }),
       ),
       brokerConnectionPosture: "not_configured",
+      bullmqConstruction: createBullmqConstructionSummary(
+        createBullmqConstructionReadiness({
+          profileId: "local-review",
+        }),
+      ),
       definition: createDefinition(),
       healthCheck: createHealthCheck("local_ready"),
       mode: "dry_run",
@@ -399,6 +471,11 @@ export const getQueueProviderPackageBindingRegistration = (
         }),
       ),
       brokerConnectionPosture: "reference_only",
+      bullmqConstruction: createBullmqConstructionSummary(
+        createBullmqConstructionReadiness({
+          profileId: "staging-scaffold",
+        }),
+      ),
       definition: createDefinition(),
       healthCheck: createHealthCheck("scaffolded"),
       mode: "metadata_only",
@@ -416,6 +493,11 @@ export const getQueueProviderPackageBindingRegistration = (
         }),
       ),
       brokerConnectionPosture: "blocked_until_activation",
+      bullmqConstruction: createBullmqConstructionSummary(
+        createBullmqConstructionReadiness({
+          profileId: "production-required",
+        }),
+      ),
       definition: createDefinition(),
       healthCheck: createHealthCheck("blocked"),
       mode: "production_required",
@@ -489,6 +571,7 @@ function createRegistration(input: {
   bindingId: string;
   brokerConnection: QueueProviderPackageBrokerConnectionSummary;
   brokerConnectionPosture: QueueProviderBrokerConnectionPosture;
+  bullmqConstruction: QueueProviderPackageBullmqConstructionSummary;
   definition: QueueProviderPackageDefinition;
   healthCheck: QueueProviderPackageHealthCheck;
   mode: QueueProviderPackageBindingMode;
@@ -498,6 +581,7 @@ function createRegistration(input: {
     bindingId: input.bindingId,
     brokerConnection: cloneBrokerConnectionSummary(input.brokerConnection),
     brokerConnectionPosture: input.brokerConnectionPosture,
+    bullmqConstruction: cloneBullmqConstructionSummary(input.bullmqConstruction),
     definition: { ...input.definition },
     healthCheck: input.healthCheck,
     mode: input.mode,
@@ -516,6 +600,7 @@ function createReadinessProjection(input: {
   blockerCount: number;
   brokerConnection: QueueProviderPackageBrokerConnectionSummary;
   brokerConnectionPosture: QueueProviderBrokerConnectionPosture;
+  bullmqConstruction: QueueProviderPackageBullmqConstructionSummary;
   diagnostics: readonly QueueProviderPackageDiagnostic[];
   mode: QueueProviderPackageBindingMode;
   status: QueueProviderPackageBindingStatus;
@@ -533,6 +618,17 @@ function createReadinessProjection(input: {
     brokerConnectionRequiredConfigKeys: [...input.brokerConnection.requiredConfigKeys],
     brokerConnectionStatus: input.brokerConnection.status,
     browserBundleAllowed: false,
+    bullmqConstruction: cloneBullmqConstructionSummary(input.bullmqConstruction),
+    bullmqConstructionAttempted: input.bullmqConstruction.bullmqConstructionAttempted,
+    bullmqConstructionBlockerCount: input.bullmqConstruction.blockerCount,
+    bullmqConstructionDiagnosticCodes: [...input.bullmqConstruction.diagnosticCodes],
+    bullmqConstructionFactoryInvoked: input.bullmqConstruction.bullmqConstructionFactoryInvoked,
+    bullmqConstructionId: input.bullmqConstruction.constructionId,
+    bullmqConstructionProductionReady: false,
+    bullmqConstructionQueueClientConstructed: input.bullmqConstruction.queueClientConstructed,
+    bullmqConstructionQueueEventsConstructed: input.bullmqConstruction.queueEventsConstructed,
+    bullmqConstructionStatus: input.bullmqConstruction.status,
+    bullmqConstructionWorkerConstructed: input.bullmqConstruction.workerConstructed,
     diagnosticCodes: input.diagnostics.map((item) => item.code),
     family: APPROVED_PACKAGE_FAMILY,
     importPosture: "declared_dependency_metadata",
@@ -545,8 +641,8 @@ function createReadinessProjection(input: {
     packageRef: APPROVED_PACKAGE_REF,
     productionReady: false,
     providerKind: APPROVED_PROVIDER_KIND,
-    queueClientConstructed: false,
-    queueEventsConstructed: false,
+    queueClientConstructed: input.bullmqConstruction.queueClientConstructed,
+    queueEventsConstructed: input.bullmqConstruction.queueEventsConstructed,
     requiredConfigKeys: [
       ...new Set([
         ...queueProviderPackageProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
@@ -556,7 +652,32 @@ function createReadinessProjection(input: {
     sdkClientConstructed: false,
     status: input.status,
     valid: input.valid,
-    workerConstructed: false,
+    workerConstructed: input.bullmqConstruction.workerConstructed,
+  };
+}
+
+function createBullmqConstructionSummary(
+  construction: ReturnType<typeof createBullmqConstructionReadiness>,
+): QueueProviderPackageBullmqConstructionSummary {
+  return {
+    activationStatus: construction.activationStatus,
+    blockerCount: construction.blockerCount,
+    browserBundleAllowed: false,
+    bullmqConstructionAttempted: construction.bullmqConstructionAttempted,
+    bullmqConstructionFactoryInvoked: construction.bullmqConstructionFactoryInvoked,
+    constructionId: construction.constructionId,
+    diagnosticCodes: [...construction.diagnosticCodes],
+    factoryId: construction.factoryId,
+    factoryProvided: construction.factoryProvided,
+    liveQueuePublishingEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    mode: construction.mode,
+    productionReady: false,
+    queueClientConstructed: construction.queueClientConstructed,
+    queueEventsConstructed: construction.queueEventsConstructed,
+    status: construction.status,
+    valid: construction.valid,
+    workerConstructed: construction.workerConstructed,
   };
 }
 
@@ -602,6 +723,15 @@ function cloneBrokerConnectionSummary(
     ...brokerConnection,
     diagnosticCodes: [...brokerConnection.diagnosticCodes],
     requiredConfigKeys: [...brokerConnection.requiredConfigKeys],
+  };
+}
+
+function cloneBullmqConstructionSummary(
+  bullmqConstruction: QueueProviderPackageBullmqConstructionSummary,
+): QueueProviderPackageBullmqConstructionSummary {
+  return {
+    ...bullmqConstruction,
+    diagnosticCodes: [...bullmqConstruction.diagnosticCodes],
   };
 }
 
