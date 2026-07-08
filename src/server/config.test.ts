@@ -6,6 +6,7 @@ import {
 } from "./config";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
+import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
@@ -71,6 +72,8 @@ describe("backend config contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
         "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
         "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
         "CAMPAIGN_OS_SCHEDULER_PROVIDER",
         "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
         "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
@@ -175,6 +178,8 @@ describe("backend config contract", () => {
       expect.arrayContaining([
         "CAMPAIGN_OS_AUTH_SECRET",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
         "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
         "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
         "CAMPAIGN_OS_SCHEDULER_PROVIDER",
@@ -274,12 +279,23 @@ describe("backend config contract", () => {
     const queueProviderDriverConfigKeys = [
       ...new Set(queueProviderDriverProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
+    const queueProviderSdkBindingConfigKeys = [
+      ...new Set(
+        queueProviderSdkBindingProductionPreconditions
+          .flatMap((precondition) => precondition.requiredConfigKeys)
+          .map((key) =>
+            key === "CAMPAIGN_OS_QUEUE_PROVIDER_BINDING" ? "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING" : key
+          ),
+      ),
+    ];
     const secretQueueProviderValues = {
       CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
       CAMPAIGN_OS_QUEUE_PROVIDER: "production-queue-provider",
       CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "provider-credential-secret",
       CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
       CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "https://queue-provider.invalid/hook?queue-provider-token=secret",
+      CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING: "production-provider-sdk-binding",
+      CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE: "package-ref:@provider/queue-sdk",
     };
     const contract = resolveBackendConfigContract({ env: secretQueueProviderValues });
 
@@ -289,12 +305,17 @@ describe("backend config contract", () => {
     expect(contract.productionReadiness.requiredConfigKeys).toEqual(
       expect.arrayContaining(queueProviderDriverConfigKeys),
     );
+    expect(contract.productionReadiness.requiredConfigKeys).toEqual(
+      expect.arrayContaining(queueProviderSdkBindingConfigKeys),
+    );
     expect(contract.productionReadiness.missingConfigKeys).not.toEqual(
       expect.arrayContaining([
         "CAMPAIGN_OS_QUEUE_PROVIDER",
         "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
         "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
         "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
       ]),
     );
     expect(
@@ -311,6 +332,7 @@ describe("backend config contract", () => {
     ).toBe("[redacted]");
     expect(collectStringValues(contract)).not.toContain("provider-credential-secret");
     expect(collectStringValues(contract)).not.toContain("queue-provider-token");
+    expect(collectStringValues(contract)).not.toContain("@provider/queue-sdk");
   });
 
   it("reports worker lease store production precondition keys without exposing env values", () => {

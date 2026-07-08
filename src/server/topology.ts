@@ -1,6 +1,7 @@
 import type { ApiRuntimeCapabilityId } from "./contracts";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
+import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 import { workerIdempotencyStoreProductionPreconditions } from "./workerIdempotencyStore";
@@ -35,6 +36,7 @@ export type BackendAdapterCategory =
   | "contract_reader"
   | "contract_writer"
   | "observability"
+  | "queue_provider"
   | "internal";
 export type BackendAdapterStatus = "local_stub" | "deferred" | "disabled" | "required_for_production";
 export type BackendAdapterConfigurationMode = "none" | "env" | "secret_manager" | "service_registry";
@@ -81,6 +83,7 @@ export type BackendAdapterGroupId =
   | "analytics-warehouse-adapter"
   | "object-storage-adapter"
   | "contract-reader-adapter"
+  | "queue-provider-sdk-binding-adapter"
   | "observability-exporter-adapter"
   | "contract-writer-adapter";
 export type BackendRuntimeProfileId = "local-review" | "staging-ready" | "production-required";
@@ -237,6 +240,8 @@ const topologySafeQueueProviderBlockerId = (id: string): string =>
   id === "queue-provider-credentials" ? "queue-provider-auth" : id;
 const topologySafeQueueProviderDriverBlockerId = (id: string): string =>
   `queue-provider-driver-${id}`;
+const topologySafeQueueProviderSdkBindingBlockerId = (id: string): string =>
+  `queue-provider-sdk-binding-${id}`;
 const observabilityExporterBlockerIds = observabilityExporterProductionPreconditions.map(
   (precondition) => precondition.id,
 );
@@ -309,7 +314,7 @@ export const backendServiceBoundaries = [
     readiness: "review_required",
     risks: [
       "Live providers, worker queue, scheduler runtime, retry/backoff, idempotency store, and worker lease are deferred.",
-      "Queue runtime activation requires provider selection, dead-letter handling, lease, idempotency, and observability before production verification workers.",
+      "Queue runtime activation requires provider SDK package installation, real broker connection, provider selection, dead-letter handling, lease, idempotency, and observability before production verification workers.",
       "Provider/indexer handoff degrades to pending or manual review while live calls are deferred.",
     ],
     routeIds: ["tasks.verify"],
@@ -663,6 +668,16 @@ export const backendAdapterGroups = [
     status: "deferred",
   }),
   adapterGroup({
+    category: "queue_provider",
+    configurationMode: "env",
+    failureMode: "keep_queue_provider_sdk_metadata_only",
+    forbiddenInLocalReview: true,
+    id: "queue-provider-sdk-binding-adapter",
+    name: "Queue Provider SDK Binding",
+    serviceIds: ["verification-service", "risk-scoring-service", "ai-ops-service", "runtime-observability"],
+    status: "deferred",
+  }),
+  adapterGroup({
     category: "observability",
     configurationMode: "service_registry",
     failureMode: "keep_runtime_metadata_local_only",
@@ -797,6 +812,7 @@ export const backendDeploymentUnits = [
     attachPointPath: "src/server/queueProviderAdapter.ts",
     attachPointPaths: [
       "src/server/queueProviderDriver.ts",
+      "src/server/queueProviderSdkBinding.ts",
       "src/server/queueProviderAdapter.ts",
       "src/server/queueRuntime.ts",
       "src/server/workerIdempotencyStore.ts",
@@ -813,6 +829,9 @@ export const backendDeploymentUnits = [
       ),
       ...queueProviderDriverProductionPreconditions.map((precondition) =>
         topologySafeQueueProviderDriverBlockerId(precondition.id)
+      ),
+      ...queueProviderSdkBindingProductionPreconditions.map((precondition) =>
+        topologySafeQueueProviderSdkBindingBlockerId(precondition.id)
       ),
       ...workerLeaseStoreProductionPreconditions.map((precondition) => `worker-lease-store-${precondition.id}`),
       ...workerIdempotencyStoreProductionPreconditions.map(

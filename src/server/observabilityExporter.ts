@@ -116,12 +116,12 @@ export interface ObservabilityExporterOperationCapability {
   supported: boolean;
 }
 
-export type QueueProviderDriverMetricsMetadataStatus =
+export type QueueProviderSdkBindingMetricsMetadataStatus =
   | "activation_gate_disabled"
   | "configured_metadata_only"
   | "missing_required_config";
 
-export interface QueueProviderDriverMetricsMetadata {
+export interface QueueProviderSdkBindingMetricsMetadata {
   activationGateSatisfied: boolean;
   configuredConfigKeys: string[];
   handoffMode: "metadata_only";
@@ -131,8 +131,8 @@ export interface QueueProviderDriverMetricsMetadata {
   liveTelemetryExportEnabled: false;
   liveTraceExportEnabled: false;
   requiredConfigKeys: string[];
-  source: "queue-provider-driver-readiness";
-  status: QueueProviderDriverMetricsMetadataStatus;
+  source: "queue-provider-sdk-binding-readiness";
+  status: QueueProviderSdkBindingMetricsMetadataStatus;
   vendorSdkCallsEnabled: false;
 }
 
@@ -151,7 +151,7 @@ export interface ObservabilityExporterReadinessProjection {
   mode: ObservabilityExporterMode;
   operationCount: number;
   productionReady: false;
-  queueProviderDriverMetricsMetadata: QueueProviderDriverMetricsMetadata;
+  queueProviderSdkBindingMetricsMetadata: QueueProviderSdkBindingMetricsMetadata;
   requiredConfigKeys: string[];
   sinkId: string;
   status: ObservabilityExporterFoundationStatus;
@@ -222,7 +222,9 @@ const FOUNDATION_ID = "campaign-os-observability-exporter-foundation" as const;
 const REDACTED_VALUE = "[redacted]";
 const RAW_OBSERVABILITY_PAYLOAD_VALUE = "[redacted-observability-payload]";
 const DEFAULT_METRIC_NAMESPACE = "campaign-os-runtime";
-const QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS = [
+const QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
   "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
   "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
   "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
@@ -593,7 +595,7 @@ const hasConfiguredValue = (env: Record<string, unknown>, keys: readonly string[
     return typeof value === "string" ? value.trim().length > 0 : value !== undefined && value !== null;
   });
 
-const isQueueProviderDriverActivationGateSatisfied = (env: Record<string, unknown>): boolean => {
+const isQueueProviderSdkBindingActivationGateSatisfied = (env: Record<string, unknown>): boolean => {
   const value = env.CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT;
 
   return typeof value === "string" && /^(enabled|explicitly-enabled|true)$/i.test(value.trim());
@@ -795,7 +797,7 @@ const createReadinessProjection = ({
   mode,
   operationCount: observabilityExporterOperationCapabilities.length,
   productionReady: false,
-  queueProviderDriverMetricsMetadata: createQueueProviderDriverMetricsMetadata(env),
+  queueProviderSdkBindingMetricsMetadata: createQueueProviderSdkBindingMetricsMetadata(env),
   requiredConfigKeys: [
     ...new Set(observabilityExporterProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
   ],
@@ -803,14 +805,14 @@ const createReadinessProjection = ({
   status,
 });
 
-const createQueueProviderDriverMetricsMetadata = (
+const createQueueProviderSdkBindingMetricsMetadata = (
   env: Record<string, unknown>,
-): QueueProviderDriverMetricsMetadata => {
-  const configuredConfigKeys = QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.filter((key) =>
+): QueueProviderSdkBindingMetricsMetadata => {
+  const configuredConfigKeys = QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS.filter((key) =>
     hasConfiguredValue(env, [key]),
   );
-  const activationGateSatisfied = isQueueProviderDriverActivationGateSatisfied(env);
-  const hasRequiredConfig = configuredConfigKeys.length === QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.length;
+  const activationGateSatisfied = isQueueProviderSdkBindingActivationGateSatisfied(env);
+  const hasRequiredConfig = configuredConfigKeys.length === QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS.length;
 
   return {
     activationGateSatisfied,
@@ -821,8 +823,8 @@ const createQueueProviderDriverMetricsMetadata = (
     liveMetricsExportEnabled: false,
     liveTelemetryExportEnabled: false,
     liveTraceExportEnabled: false,
-    requiredConfigKeys: [...QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS],
-    source: "queue-provider-driver-readiness",
+    requiredConfigKeys: [...QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS],
+    source: "queue-provider-sdk-binding-readiness",
     status: !hasRequiredConfig
       ? "missing_required_config"
       : activationGateSatisfied

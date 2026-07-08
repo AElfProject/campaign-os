@@ -9,6 +9,7 @@ import {
 } from "./backendProfiles";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
+import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
 import { queueRuntimeProductionPreconditions } from "./queueRuntime";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
@@ -219,6 +220,12 @@ const missingRequiredConfigKeys = (
 
 const uniqueStrings = (values: readonly string[]): string[] => Array.from(new Set(values));
 
+const normalizeQueueProviderSdkBindingConfigKey = (key: string): string =>
+  key === "CAMPAIGN_OS_QUEUE_PROVIDER_BINDING" ? "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING" : key;
+
+const normalizeQueueProviderSdkBindingConfigKeys = (keys: readonly string[]): string[] =>
+  keys.map(normalizeQueueProviderSdkBindingConfigKey);
+
 const queueRuntimeRequiredConfigKeys = uniqueStrings(
   queueRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
 );
@@ -229,6 +236,12 @@ const queueProviderAdapterRequiredConfigKeys = uniqueStrings(
 
 const queueProviderDriverRequiredConfigKeys = uniqueStrings(
   queueProviderDriverProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
+);
+
+const queueProviderSdkBindingRequiredConfigKeys = uniqueStrings(
+  queueProviderSdkBindingProductionPreconditions.flatMap((precondition) =>
+    normalizeQueueProviderSdkBindingConfigKeys(precondition.requiredConfigKeys)
+  ),
 );
 
 const schedulerRuntimeRequiredConfigKeys = uniqueStrings(
@@ -255,6 +268,7 @@ const backendProductionReadinessRequiredConfigKeys = uniqueStrings([
   ...queueRuntimeRequiredConfigKeys,
   ...queueProviderAdapterRequiredConfigKeys,
   ...queueProviderDriverRequiredConfigKeys,
+  ...queueProviderSdkBindingRequiredConfigKeys,
   ...observabilityExporterRequiredConfigKeys,
 ]);
 

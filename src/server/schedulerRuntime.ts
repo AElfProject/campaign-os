@@ -123,12 +123,12 @@ export interface SchedulerQueueHandoffSummary {
   queueRuntimeId: "campaign-os-queue-runtime-foundation";
 }
 
-export type QueueProviderDriverReadinessHandoffStatus =
+export type QueueProviderSdkBindingReadinessHandoffStatus =
   | "activation_gate_disabled"
   | "configured_metadata_only"
   | "missing_required_config";
 
-export interface SchedulerQueueProviderDriverReadinessHandoff {
+export interface SchedulerQueueProviderSdkBindingReadinessHandoff {
   activationGateSatisfied: boolean;
   configuredConfigKeys: string[];
   handoffMode: "metadata_only";
@@ -136,8 +136,8 @@ export interface SchedulerQueueProviderDriverReadinessHandoff {
   liveSchedulerExecutionEnabled: false;
   liveWorkerExecutionEnabled: false;
   requiredConfigKeys: string[];
-  source: "queue-provider-driver-readiness";
-  status: QueueProviderDriverReadinessHandoffStatus;
+  source: "queue-provider-sdk-binding-readiness";
+  status: QueueProviderSdkBindingReadinessHandoffStatus;
 }
 
 export interface SchedulerOperatorOverridePosture {
@@ -220,7 +220,7 @@ export interface SchedulerRuntimeReadinessProjection {
   observabilityExporterSinkId: string;
   observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   productionReady: false;
-  queueProviderDriverHandoff: SchedulerQueueProviderDriverReadinessHandoff;
+  queueProviderSdkBindingHandoff: SchedulerQueueProviderSdkBindingReadinessHandoff;
   registrationCount: number;
   requiredConfigKeys: string[];
   scheduleIds: string[];
@@ -252,7 +252,9 @@ const REDACTED_VALUE = "[redacted]";
 const RAW_TRIGGER_PAYLOAD_VALUE = "[redacted-trigger-payload]";
 const SCHEDULER_RUNTIME_ID = "campaign-os-scheduler-runtime-foundation" as const;
 const QUEUE_RUNTIME_ID = "campaign-os-queue-runtime-foundation" as const;
-const QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS = [
+const QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
   "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
   "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
   "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
@@ -782,7 +784,7 @@ const createReadinessProjection = (
   observabilityExporterSinkId: observabilityExporter.sinkId,
   observabilityExporterStatus: observabilityExporter.status,
   productionReady: false,
-  queueProviderDriverHandoff: createQueueProviderDriverReadinessHandoff(env),
+  queueProviderSdkBindingHandoff: createQueueProviderSdkBindingReadinessHandoff(env),
   registrationCount: schedulerRuntimeRegistrations.length,
   requiredConfigKeys: [
     ...new Set(schedulerRuntimeProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
@@ -791,14 +793,14 @@ const createReadinessProjection = (
   triggerSourceCount: new Set(schedulerRuntimeRegistrations.map((item) => item.triggerSource)).size,
 });
 
-const createQueueProviderDriverReadinessHandoff = (
+const createQueueProviderSdkBindingReadinessHandoff = (
   env: Record<string, unknown>,
-): SchedulerQueueProviderDriverReadinessHandoff => {
-  const configuredConfigKeys = QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.filter((key) =>
+): SchedulerQueueProviderSdkBindingReadinessHandoff => {
+  const configuredConfigKeys = QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS.filter((key) =>
     hasConfiguredValue(env, [key]),
   );
-  const activationGateSatisfied = isQueueProviderDriverActivationGateSatisfied(env);
-  const hasRequiredConfig = configuredConfigKeys.length === QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.length;
+  const activationGateSatisfied = isQueueProviderSdkBindingActivationGateSatisfied(env);
+  const hasRequiredConfig = configuredConfigKeys.length === QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS.length;
 
   return {
     activationGateSatisfied,
@@ -807,8 +809,8 @@ const createQueueProviderDriverReadinessHandoff = (
     liveQueuePublishingEnabled: false,
     liveSchedulerExecutionEnabled: false,
     liveWorkerExecutionEnabled: false,
-    requiredConfigKeys: [...QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS],
-    source: "queue-provider-driver-readiness",
+    requiredConfigKeys: [...QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS],
+    source: "queue-provider-sdk-binding-readiness",
     status: !hasRequiredConfig
       ? "missing_required_config"
       : activationGateSatisfied
@@ -859,7 +861,7 @@ const hasConfiguredValue = (env: Record<string, unknown>, keys: readonly string[
     return typeof value === "string" ? value.trim().length > 0 : value !== undefined && value !== null;
   });
 
-const isQueueProviderDriverActivationGateSatisfied = (env: Record<string, unknown>): boolean => {
+const isQueueProviderSdkBindingActivationGateSatisfied = (env: Record<string, unknown>): boolean => {
   const value = env.CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT;
 
   return typeof value === "string" && /^(enabled|explicitly-enabled|true)$/i.test(value.trim());

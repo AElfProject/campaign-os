@@ -17,18 +17,22 @@ import {
   workerSchedulerPolicies,
 } from "./workerSchedulerRuntime";
 
-const queueProviderDriverConfigKeys = [
+const queueProviderSdkBindingConfigKeys = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
   "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
   "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
   "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
   "CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT",
 ];
 
-const queueProviderDriverReadyEnv = {
+const queueProviderSdkBindingReadyEnv = {
   CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
   CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "Bearer queue-secret-token",
   CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
   CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
+  CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING: "production-provider-sdk-binding",
+  CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE: "package-ref:@provider/queue-sdk",
 } satisfies Record<string, unknown>;
 
 describe("scheduler runtime foundation", () => {
@@ -142,9 +146,9 @@ describe("scheduler runtime foundation", () => {
     expect(foundation.noLiveFlags).toEqual(schedulerRuntimeNoLiveFlags);
   });
 
-  it("treats queue provider driver readiness as scheduler metadata only", () => {
+  it("treats queue provider SDK binding readiness as scheduler metadata only", () => {
     const foundation = createSchedulerRuntimeFoundation({
-      env: queueProviderDriverReadyEnv,
+      env: queueProviderSdkBindingReadyEnv,
       profileId: "local-review",
     });
     const result = dryRunSchedulerTrigger({
@@ -153,22 +157,22 @@ describe("scheduler runtime foundation", () => {
       queueHandoffReference: "queue-handoff:task-verification-worker-queue-plan",
       scheduleId: "task-verification-on-request",
       scheduledFor: "2026-07-07T13:30:00Z",
-      traceId: "trace-scheduler-driver-metadata",
+      traceId: "trace-scheduler-sdk-binding-metadata",
       triggerSource: "api_request",
       windowEnd: "2026-07-07T13:35:00Z",
       windowStart: "2026-07-07T13:25:00Z",
     });
     const serialized = JSON.stringify(foundation);
 
-    expect(foundation.readiness.queueProviderDriverHandoff).toEqual({
+    expect(foundation.readiness.queueProviderSdkBindingHandoff).toEqual({
       activationGateSatisfied: true,
-      configuredConfigKeys: queueProviderDriverConfigKeys,
+      configuredConfigKeys: queueProviderSdkBindingConfigKeys,
       handoffMode: "metadata_only",
       liveQueuePublishingEnabled: false,
       liveSchedulerExecutionEnabled: false,
       liveWorkerExecutionEnabled: false,
-      requiredConfigKeys: queueProviderDriverConfigKeys,
-      source: "queue-provider-driver-readiness",
+      requiredConfigKeys: queueProviderSdkBindingConfigKeys,
+      source: "queue-provider-sdk-binding-readiness",
       status: "configured_metadata_only",
     });
     expect(foundation.noLiveFlags).toEqual(schedulerRuntimeNoLiveFlags);
@@ -188,6 +192,7 @@ describe("scheduler runtime foundation", () => {
     expect(serialized).not.toContain("queue-pass");
     expect(serialized).not.toContain("queue-secret");
     expect(serialized).not.toContain("queue-secret-token");
+    expect(serialized).not.toContain("@provider/queue-sdk");
   });
 
   it("fails closed for production-required when scheduler preconditions are missing", () => {

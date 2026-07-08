@@ -62,12 +62,12 @@ export type WorkerLeasePreconditionArea =
 export type WorkerLeaseDegradedOutcome =
   | QueueDegradedOutcome
   | "disable_worker_templates";
-export type QueueProviderDriverReadinessHandoffStatus =
+export type QueueProviderSdkBindingReadinessHandoffStatus =
   | "activation_gate_disabled"
   | "configured_metadata_only"
   | "missing_required_config";
 
-export interface WorkerLeaseQueueProviderDriverReadinessHandoff {
+export interface WorkerLeaseQueueProviderSdkBindingReadinessHandoff {
   activationGateSatisfied: boolean;
   configuredConfigKeys: string[];
   handoffMode: "metadata_only";
@@ -75,8 +75,8 @@ export interface WorkerLeaseQueueProviderDriverReadinessHandoff {
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   requiredConfigKeys: string[];
-  source: "queue-provider-driver-readiness";
-  status: QueueProviderDriverReadinessHandoffStatus;
+  source: "queue-provider-sdk-binding-readiness";
+  status: QueueProviderSdkBindingReadinessHandoffStatus;
 }
 
 export interface WorkerLeaseStoreNoLiveFlags {
@@ -170,7 +170,7 @@ export interface WorkerLeaseStoreReadinessProjection {
   observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   operationCount: number;
   productionReady: false;
-  queueProviderDriverHandoff: WorkerLeaseQueueProviderDriverReadinessHandoff;
+  queueProviderSdkBindingHandoff: WorkerLeaseQueueProviderSdkBindingReadinessHandoff;
   requiredConfigKeys: string[];
   storeId: string;
   ttlSeconds: number;
@@ -255,7 +255,9 @@ const RAW_LEASE_PAYLOAD_VALUE = "[redacted-lease-payload]";
 const FOUNDATION_ID = "campaign-os-worker-lease-store-foundation" as const;
 const DEFAULT_TTL_SECONDS = 120;
 const DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30;
-const QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS = [
+const QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
   "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
   "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
   "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
@@ -750,7 +752,7 @@ const createReadinessProjection = ({
   observabilityExporterStatus: observabilityExporter.status,
   operationCount: workerLeaseOperationCapabilities.length,
   productionReady: false,
-  queueProviderDriverHandoff: createQueueProviderDriverReadinessHandoff(env),
+  queueProviderSdkBindingHandoff: createQueueProviderSdkBindingReadinessHandoff(env),
   requiredConfigKeys: [
     ...new Set(workerLeaseStoreProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
   ],
@@ -758,14 +760,14 @@ const createReadinessProjection = ({
   ttlSeconds: readPositiveInteger(env.CAMPAIGN_OS_WORKER_LEASE_TTL_SECONDS) ?? DEFAULT_TTL_SECONDS,
 });
 
-const createQueueProviderDriverReadinessHandoff = (
+const createQueueProviderSdkBindingReadinessHandoff = (
   env: Record<string, unknown>,
-): WorkerLeaseQueueProviderDriverReadinessHandoff => {
-  const configuredConfigKeys = QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.filter((key) =>
+): WorkerLeaseQueueProviderSdkBindingReadinessHandoff => {
+  const configuredConfigKeys = QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS.filter((key) =>
     hasConfiguredValue(env, [key]),
   );
-  const activationGateSatisfied = isQueueProviderDriverActivationGateSatisfied(env);
-  const hasRequiredConfig = configuredConfigKeys.length === QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.length;
+  const activationGateSatisfied = isQueueProviderSdkBindingActivationGateSatisfied(env);
+  const hasRequiredConfig = configuredConfigKeys.length === QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS.length;
 
   return {
     activationGateSatisfied,
@@ -774,8 +776,8 @@ const createQueueProviderDriverReadinessHandoff = (
     liveLeaseClaimingEnabled: false,
     liveQueuePublishingEnabled: false,
     liveWorkerExecutionEnabled: false,
-    requiredConfigKeys: [...QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS],
-    source: "queue-provider-driver-readiness",
+    requiredConfigKeys: [...QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS],
+    source: "queue-provider-sdk-binding-readiness",
     status: !hasRequiredConfig
       ? "missing_required_config"
       : activationGateSatisfied
@@ -852,7 +854,7 @@ const readPositiveInteger = (value: unknown): number | undefined => {
   return Number.isInteger(numberValue) && numberValue > 0 ? numberValue : undefined;
 };
 
-const isQueueProviderDriverActivationGateSatisfied = (env: Record<string, unknown>): boolean => {
+const isQueueProviderSdkBindingActivationGateSatisfied = (env: Record<string, unknown>): boolean => {
   const value = env.CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT;
 
   return typeof value === "string" && /^(enabled|explicitly-enabled|true)$/i.test(value.trim());

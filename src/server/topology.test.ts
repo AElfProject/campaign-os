@@ -13,6 +13,7 @@ import {
 import { providerIndexerAdapterGroups } from "./providerIndexerAdapters";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
+import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
@@ -56,6 +57,7 @@ const expectedAdapterGroupIds = [
   "analytics-warehouse-adapter",
   "object-storage-adapter",
   "contract-reader-adapter",
+  "queue-provider-sdk-binding-adapter",
   "observability-exporter-adapter",
   "contract-writer-adapter",
 ];
@@ -137,6 +139,7 @@ describe("backend service topology", () => {
       attachPointPath: "src/server/queueProviderAdapter.ts",
       attachPointPaths: expect.arrayContaining([
         "src/server/queueProviderDriver.ts",
+        "src/server/queueProviderSdkBinding.ts",
         "src/server/queueProviderAdapter.ts",
         "src/server/queueRuntime.ts",
         "src/server/workerIdempotencyStore.ts",
@@ -173,6 +176,9 @@ describe("backend service topology", () => {
         "worker-idempotency-store-idempotency-clock-source",
         "worker-idempotency-store-idempotency-worker-lease-coordination",
         "worker-idempotency-store-idempotency-observability",
+        ...queueProviderSdkBindingProductionPreconditions.map(
+          (precondition) => `queue-provider-sdk-binding-${precondition.id}`,
+        ),
       ]),
       productionTarget: "worker_service",
       serviceIds: expect.arrayContaining([
@@ -334,6 +340,7 @@ describe("backend service topology", () => {
       attachPointPath: "src/server/queueProviderAdapter.ts",
       attachPointPaths: expect.arrayContaining([
         "src/server/queueProviderDriver.ts",
+        "src/server/queueProviderSdkBinding.ts",
         "src/server/queueProviderAdapter.ts",
         "src/server/queueRuntime.ts",
         "src/server/workerIdempotencyStore.ts",
@@ -359,6 +366,9 @@ describe("backend service topology", () => {
         "queue-provider-driver-queue-provider-driver-dead-letter",
         "queue-provider-driver-queue-provider-driver-retry-policy",
         "queue-provider-driver-queue-provider-driver-live-enable-gate",
+        ...queueProviderSdkBindingProductionPreconditions.map(
+          (precondition) => `queue-provider-sdk-binding-${precondition.id}`,
+        ),
         "worker-lease-store-worker-lease-store-selection",
         "worker-lease-store-worker-lease-store-endpoint",
         "worker-lease-store-worker-lease-store-credentials",
@@ -386,6 +396,7 @@ describe("backend service topology", () => {
     expect(workerRuntime?.productionRequiredBlockerIds).toHaveLength(
       queueProviderAdapterProductionPreconditions.length
         + queueProviderDriverProductionPreconditions.length
+        + queueProviderSdkBindingProductionPreconditions.length
         + workerLeaseStoreProductionPreconditions.length
         + workerIdempotencyStoreProductionPreconditions.length,
     );
@@ -394,6 +405,36 @@ describe("backend service topology", () => {
     expect(workerRuntime?.productionRequiredBlockerIds).not.toContain(
       "worker-idempotency-store-CAMPAIGN_OS_IDEMPOTENCY_STORE_CREDENTIALS",
     );
+  });
+
+  it("exposes queue provider SDK binding as deferred attach metadata without production readiness", () => {
+    const workerRuntime = backendDeploymentUnits.find((unit) => unit.id === "worker-runtime");
+    const sdkBindingAdapter = backendAdapterGroups.find((group) => group.id === "queue-provider-sdk-binding-adapter");
+
+    expect(sdkBindingAdapter).toMatchObject({
+      category: "queue_provider",
+      configurationMode: "env",
+      failureMode: "keep_queue_provider_sdk_metadata_only",
+      forbiddenInLocalReview: true,
+      serviceIds: expect.arrayContaining([
+        "verification-service",
+        "risk-scoring-service",
+        "ai-ops-service",
+        "runtime-observability",
+      ]),
+      status: "deferred",
+    });
+    expect(workerRuntime).toMatchObject({
+      attachPointPaths: expect.arrayContaining(["src/server/queueProviderSdkBinding.ts"]),
+      currentImplementation: "source-topology-only",
+      currentStatus: "local",
+      productionRequiredBlockerIds: expect.arrayContaining(
+        queueProviderSdkBindingProductionPreconditions.map(
+          (precondition) => `queue-provider-sdk-binding-${precondition.id}`,
+        ),
+      ),
+    });
+    expect(sdkBindingAdapter?.status).not.toBe("required_for_production");
   });
 
   it("exposes observability exporter as metadata-only topology attach point", () => {

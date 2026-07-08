@@ -70,12 +70,12 @@ export type IdempotencyDegradedOutcome =
   | "return_existing"
   | "drop_duplicate"
   | "recover_stale";
-export type QueueProviderDriverReadinessHandoffStatus =
+export type QueueProviderSdkBindingReadinessHandoffStatus =
   | "activation_gate_disabled"
   | "configured_metadata_only"
   | "missing_required_config";
 
-export interface WorkerIdempotencyQueueProviderDriverReadinessHandoff {
+export interface WorkerIdempotencyQueueProviderSdkBindingReadinessHandoff {
   activationGateSatisfied: boolean;
   configuredConfigKeys: string[];
   handoffMode: "metadata_only";
@@ -83,8 +83,8 @@ export interface WorkerIdempotencyQueueProviderDriverReadinessHandoff {
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   requiredConfigKeys: string[];
-  source: "queue-provider-driver-readiness";
-  status: QueueProviderDriverReadinessHandoffStatus;
+  source: "queue-provider-sdk-binding-readiness";
+  status: QueueProviderSdkBindingReadinessHandoffStatus;
 }
 
 export interface WorkerIdempotencyStoreNoLiveFlags {
@@ -174,7 +174,7 @@ export interface WorkerIdempotencyReadinessProjection {
   observabilityExporterStatus: ObservabilityExporterFoundationStatus;
   operationCount: number;
   productionReady: false;
-  queueProviderDriverHandoff: WorkerIdempotencyQueueProviderDriverReadinessHandoff;
+  queueProviderSdkBindingHandoff: WorkerIdempotencyQueueProviderSdkBindingReadinessHandoff;
   requiredConfigKeys: string[];
   status: WorkerIdempotencyStoreFoundationStatus;
   storeId: string;
@@ -246,7 +246,9 @@ const FOUNDATION_ID = "campaign-os-worker-idempotency-store-foundation" as const
 const DEFAULT_NAMESPACE = "campaign-os-workers";
 const DEFAULT_KEY_SCHEMA_VERSION = "v1";
 const MAX_DRY_RUN_ATTEMPT = 10;
-const QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS = [
+const QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS = [
+  "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+  "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
   "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
   "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
   "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
@@ -723,7 +725,7 @@ const createReadinessProjection = ({
   observabilityExporterStatus: observabilityExporter.status,
   operationCount: workerIdempotencyOperationCapabilities.length,
   productionReady: false,
-  queueProviderDriverHandoff: createQueueProviderDriverReadinessHandoff(env),
+  queueProviderSdkBindingHandoff: createQueueProviderSdkBindingReadinessHandoff(env),
   requiredConfigKeys: [
     ...new Set(workerIdempotencyStoreProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
   ],
@@ -731,14 +733,14 @@ const createReadinessProjection = ({
   storeId,
 });
 
-const createQueueProviderDriverReadinessHandoff = (
+const createQueueProviderSdkBindingReadinessHandoff = (
   env: Record<string, unknown>,
-): WorkerIdempotencyQueueProviderDriverReadinessHandoff => {
-  const configuredConfigKeys = QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.filter((key) =>
+): WorkerIdempotencyQueueProviderSdkBindingReadinessHandoff => {
+  const configuredConfigKeys = QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS.filter((key) =>
     hasConfiguredValue(env, [key]),
   );
-  const activationGateSatisfied = isQueueProviderDriverActivationGateSatisfied(env);
-  const hasRequiredConfig = configuredConfigKeys.length === QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS.length;
+  const activationGateSatisfied = isQueueProviderSdkBindingActivationGateSatisfied(env);
+  const hasRequiredConfig = configuredConfigKeys.length === QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS.length;
 
   return {
     activationGateSatisfied,
@@ -747,8 +749,8 @@ const createQueueProviderDriverReadinessHandoff = (
     liveIdempotencyExecutionEnabled: false,
     liveQueuePublishingEnabled: false,
     liveWorkerExecutionEnabled: false,
-    requiredConfigKeys: [...QUEUE_PROVIDER_DRIVER_REQUIRED_CONFIG_KEYS],
-    source: "queue-provider-driver-readiness",
+    requiredConfigKeys: [...QUEUE_PROVIDER_SDK_BINDING_REQUIRED_CONFIG_KEYS],
+    source: "queue-provider-sdk-binding-readiness",
     status: !hasRequiredConfig
       ? "missing_required_config"
       : activationGateSatisfied
@@ -959,7 +961,7 @@ const sanitizeIdempotencyString = (value: string): string => {
   return typeof redacted === "string" ? redacted : REDACTED_VALUE;
 };
 
-const isQueueProviderDriverActivationGateSatisfied = (env: Record<string, unknown>): boolean => {
+const isQueueProviderSdkBindingActivationGateSatisfied = (env: Record<string, unknown>): boolean => {
   const value = env.CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT;
 
   return typeof value === "string" && /^(enabled|explicitly-enabled|true)$/i.test(value.trim());
