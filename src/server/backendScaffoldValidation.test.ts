@@ -37,7 +37,7 @@ const renderedUiRuntimeChangedFiles = (files: string[]) =>
   });
 
 const expectHistoricalAiOpsRouteScopeWhenTouched = (files: string[]) => {
-  const touchesHistoricalAiOpsScope = expectedAiOpsRuntimeRouteFiles.some((file) => files.includes(file));
+  const touchesHistoricalAiOpsScope = aiOpsRuntimeRouteTriggerFiles.some((file) => files.includes(file));
 
   if (touchesHistoricalAiOpsScope) {
     expect(files).toEqual(expect.arrayContaining(expectedAiOpsRuntimeRouteFiles));
@@ -112,6 +112,10 @@ const expectedAiOpsRuntimeRouteFiles = [
   "src/server/topology.test.ts",
   "src/server/topology.ts",
 ];
+
+const aiOpsRuntimeRouteTriggerFiles = expectedAiOpsRuntimeRouteFiles.filter(
+  (file) => file !== "src/server/apiRuntime.test.ts" && file !== "src/server/handlers.ts",
+);
 
 const providerHttpReadyEnv = {
   CAMPAIGN_OS_PROVIDER_HTTP_CREDENTIAL_REF: "credential-ref:provider-http",
