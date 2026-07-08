@@ -235,13 +235,17 @@ describe("backend scaffold public guardrails", () => {
     }
   });
 
-  it("keeps provider client readiness changes away from rendered UI files", () => {
+  it("keeps provider endpoint rollout readiness changes away from rendered UI files", () => {
     const missionChangedFiles = changedFilesSinceMissionBase();
 
-    expect(missionChangedFiles).toEqual(expect.arrayContaining([
-      "src/server/providerIndexerClientReadiness.ts",
-      "src/server/backendService.ts",
-    ]));
+    expect(missionChangedFiles).toEqual(
+      expect.arrayContaining([
+        "src/server/backendService.ts",
+        "src/server/providerHttpRequestPlanner.ts",
+        "src/server/providerHttpRuntimeRegistry.ts",
+        "src/server/workerSchedulerRuntime.ts",
+      ]),
+    );
     expect(missionChangedFiles).not.toEqual(
       expect.arrayContaining([
         expect.stringMatching(/^src\/(App|app|components|styles|i18n)\//),
@@ -250,14 +254,15 @@ describe("backend scaffold public guardrails", () => {
     );
   });
 
-  it("keeps M200 provider HTTP runtime scope out of rendered React and private public artifacts", () => {
+  it("keeps M201 provider endpoint rollout scope out of rendered React and private public artifacts", () => {
     const publicTrackedFiles = trackedFiles();
     const missionChangedFiles = changedFilesSinceMissionBase();
 
     expect(missionChangedFiles).toEqual(
       expect.arrayContaining([
+        "src/server/providerHttpRequestPlanner.ts",
         "src/server/providerHttpRuntimeRegistry.ts",
-        "src/server/providerHttpClientRuntime.ts",
+        "src/server/workerSchedulerRuntime.ts",
       ]),
     );
     expect(missionChangedFiles).not.toEqual(
@@ -302,6 +307,15 @@ describe("backend scaffold public guardrails", () => {
       transportProvided: true,
       valid: true,
     });
+    expect(activatedReport.providerClientReadiness.providerHttpRuntime.endpointRollout).toMatchObject({
+      deferredCount: 2,
+      diagnosticCodes: [],
+      disabledCount: 0,
+      valid: true,
+    });
+    expect(activatedReport.providerClientReadiness.providerHttpRuntime.endpointRollout.configuredCategories).toEqual(
+      expect.arrayContaining(["indexer", "dapp_api", "social_api", "ai_provider"]),
+    );
     expect(activatedReport.providerClientReadiness.activationInventory.providerHttpRuntime).toMatchObject({
       activationStatus: "explicitly_enabled",
       blockedConfigKeys: [],
@@ -339,6 +353,74 @@ describe("backend scaffold public guardrails", () => {
     expect(Object.values(activatedReport.providerClientReadiness.providerHttpRuntime.downstreamLiveFlags).every(
       (flag) => flag === false,
     )).toBe(true);
+    expect(activatedReport.providerClientReadiness.providerHttpRuntime.downstreamLiveFlags).toMatchObject({
+      alternateQueuePublishing: false,
+      analyticsIngestion: false,
+      contractCalls: false,
+      liveTelemetryExport: false,
+      objectStorageWrites: false,
+      renderedUiBehavior: false,
+      rewardDistribution: false,
+      schedulerExecution: false,
+    });
+    expect(activatedReport.workerSchedulerFoundation.providerHttpRuntime.endpointRollout).toMatchObject({
+      deferredCount: 2,
+      valid: true,
+    });
+  });
+
+  it("keeps endpoint rollout readiness away from rendered UI, SDK dependencies, and live downstream systems", () => {
+    const report = createBackendServiceReadinessReport({
+      configOptions: {
+        env: providerHttpReadyEnv,
+        profileId: "production-required",
+      },
+    });
+    const missionChangedFiles = changedFilesSinceMissionBase();
+    const dependencyNames = Object.keys({
+      ...packageJson.dependencies,
+      ...packageJson.devDependencies,
+    });
+
+    expect(report.providerClientReadiness.providerHttpRuntime.endpointRollout).toMatchObject({
+      deferredCount: 2,
+      valid: true,
+    });
+    expect(report.providerClientReadiness.providerHttpRuntime.downstreamLiveFlags).toEqual(
+      createProviderHttpDownstreamLiveFlags(),
+    );
+    expect(report.queueRuntimeFoundation.noLiveFlags).toMatchObject({
+      liveAnalyticsIngestionEnabled: false,
+      liveContractCallsEnabled: false,
+      liveObjectStorageEnabled: false,
+      liveRewardDistributionEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+      liveWorkerExecutionEnabled: false,
+    });
+    expect(report.observabilityExporterFoundation.noLiveFlags).toMatchObject({
+      liveAnalyticsIngestionEnabled: false,
+      liveObjectStorageEnabled: false,
+      liveProviderCallsEnabled: false,
+      liveTelemetryExportEnabled: false,
+    });
+    expect(missionChangedFiles).toEqual(
+      expect.arrayContaining([
+        "src/server/providerHttpRuntimeRegistry.ts",
+        "src/server/providerHttpRequestPlanner.ts",
+        "src/server/workerSchedulerRuntime.ts",
+      ]),
+    );
+    expect(missionChangedFiles).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^src\/(App|app|components|styles|i18n)\//),
+        expect.stringMatching(/^src\/.*\.(tsx|css)$/),
+      ]),
+    );
+    for (const dependencyName of dependencyNames) {
+      for (const forbiddenFragment of forbiddenRuntimeDependencyFragments) {
+        expect(dependencyName.toLowerCase()).not.toContain(forbiddenFragment);
+      }
+    }
   });
 
   it("does not treat production-required auth/session as anonymous local mode", () => {

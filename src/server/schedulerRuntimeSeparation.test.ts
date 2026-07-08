@@ -843,6 +843,16 @@ describe("scheduler runtime separation boundaries", () => {
       transportProvided: true,
       valid: true,
     });
+    expect(providerHttpRuntime.endpointRollout).toMatchObject({
+      blockedCount: 0,
+      deferredCount: 2,
+      disabledCount: 0,
+      valid: true,
+    });
+    expect(providerHttpRuntime.endpointRollout.enabledCount).toBeGreaterThan(0);
+    expect(providerHttpRuntime.endpointRollout.configuredCategories).toEqual(
+      expect.arrayContaining(["indexer", "dapp_api", "social_api", "ai_provider"]),
+    );
     expect(providerHttpRuntime.downstreamLiveFlags).toEqual({
       alternateQueuePublishing: false,
       analyticsIngestion: false,
@@ -914,6 +924,65 @@ describe("scheduler runtime separation boundaries", () => {
       livePublishAttempted: false,
       liveQueuePublishingEnabled: false,
     });
+  });
+
+  it("keeps endpoint rollout readiness from enabling scheduler, queue, or domain side effects", () => {
+    const providerHttpRuntime = createProviderHttpRuntimeSummary({
+      env: providerHttpReadyEnv,
+      profileId: "production-required",
+      transportProvided: true,
+    });
+    const scheduler = createSchedulerRuntimeFoundation({
+      env: providerHttpReadyEnv,
+      profileId: "production-required",
+    });
+    const queue = queueRuntime.createQueueRuntimeFoundation({
+      env: providerHttpReadyEnv,
+      profileId: "production-required",
+    });
+    const analytics = createAdvancedAnalyticsReadiness(campaignDetail);
+    const exportFulfillment = createExportFulfillmentReadiness(campaignDetail);
+    const contractTransparency = createContractTransparencyMonitor(campaignDetail);
+    const lifecycle = createCampaignLifecycleOperations(campaignDetail);
+
+    expect(providerHttpRuntime.endpointRollout).toMatchObject({
+      deferredCount: 2,
+      valid: true,
+    });
+    expect(providerHttpRuntime.endpointRollout.providerFamilies).toEqual(
+      expect.arrayContaining(["aefinder", "aelfscan", "social-api", "ai-provider"]),
+    );
+    expect(providerHttpRuntime.downstreamLiveFlags).toEqual({
+      alternateQueuePublishing: false,
+      analyticsIngestion: false,
+      contractCalls: false,
+      liveTelemetryExport: false,
+      objectStorageWrites: false,
+      renderedUiBehavior: false,
+      rewardDistribution: false,
+      schedulerExecution: false,
+    });
+    expect(scheduler.readiness).toMatchObject({
+      liveCronExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
+    expect(queue.readiness).toMatchObject({
+      liveQueueConsumptionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      providerAdapterDriverConsumingLiveConsumeAttempted: false,
+      providerAdapterDriverSdkBindingPackageBindingLiveQueuePublishingEnabled: false,
+      providerAdapterDriverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false,
+    });
+    expect(analytics.boundary["en-US"]).toContain("No live analytics SDK");
+    expect(exportFulfillment.safety).toMatchObject({
+      noContractTransaction: true,
+      noRewardCustody: true,
+      noRewardDistribution: true,
+      noStorageWrite: true,
+    });
+    expect(contractTransparency.boundary["en-US"]).toContain("No live contract transaction");
+    expect(lifecycle.operations.every((operation) => operation.localOnly)).toBe(true);
   });
 
   it("keeps queue provider and scheduler readiness from satisfying idempotency readiness", () => {

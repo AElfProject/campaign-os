@@ -909,6 +909,14 @@ describe("observability exporter foundation", () => {
       liveTraceExportEnabled: false,
       productionReady: false,
     });
+    expect(runtime.endpointRollout).toMatchObject({
+      deferredCount: 2,
+      disabledCount: 0,
+      valid: true,
+    });
+    expect(runtime.endpointRollout.providerFamilies).toEqual(
+      expect.arrayContaining(["aefinder", "aelfscan", "social-api", "ai-provider"]),
+    );
     expect(capture).toMatchObject({
       liveMetricsExportEnabled: false,
       liveTelemetryExportAttempted: false,
@@ -936,6 +944,70 @@ describe("observability exporter foundation", () => {
       expect(serialized).not.toContain(forbidden);
     }
     expect(serialized).toContain("[REDACTED:ERROR]");
+  });
+
+  it("keeps endpoint rollout readiness metadata out of live observability and vendor export paths", () => {
+    const runtime = createProviderHttpRuntimeSummary({
+      env: providerHttpReadyEnv,
+      profileId: "production-required",
+      transportProvided: true,
+    });
+    const foundation = createObservabilityExporterFoundation({
+      env: {
+        ...providerHttpReadyEnv,
+        CAMPAIGN_OS_OBSERVABILITY_ALERT_ROUTING: "alert-routing:manual-review",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER: "production-observability-exporter",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS: "credential-ref:observability",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:exporter",
+        CAMPAIGN_OS_OBSERVABILITY_LOG_SINK_URL: "log-sink-ref:structured",
+        CAMPAIGN_OS_OBSERVABILITY_METRIC_NAMESPACE: "campaign-os-runtime",
+        CAMPAIGN_OS_OBSERVABILITY_REDACTION_POLICY: "redaction:strict",
+        CAMPAIGN_OS_OBSERVABILITY_RETENTION_DAYS: "30",
+        CAMPAIGN_OS_OBSERVABILITY_RETRY_DEAD_LETTER_POLICY: "retry:manual-dead-letter",
+        CAMPAIGN_OS_OBSERVABILITY_RUNBOOK_URL: "runbook-ref:observability",
+        CAMPAIGN_OS_OBSERVABILITY_SINK: "production-metrics-sink",
+        CAMPAIGN_OS_OBSERVABILITY_TRACE_COLLECTOR_URL: "trace-collector-ref:structured",
+      },
+      profileId: "production-required",
+    });
+    const capture = captureObservabilityDryRun({
+      eventCategory: "provider",
+      labels: {
+        rollout_status: "metadata_only",
+        runtime: "provider-http-endpoint-rollout",
+      },
+      metricName: "provider.http.endpoint_rollout.readiness",
+      operation: "metrics",
+      payloadReference: "payload-ref:provider-http:endpoint-rollout",
+      sourceRuntime: "backend-service",
+      traceId: "trace-provider-http-endpoint-rollout-observability",
+    });
+
+    expect(runtime.endpointRollout).toMatchObject({
+      deferredCount: 2,
+      valid: true,
+    });
+    expect(runtime.downstreamLiveFlags).toMatchObject({
+      analyticsIngestion: false,
+      liveTelemetryExport: false,
+      objectStorageWrites: false,
+      renderedUiBehavior: false,
+      rewardDistribution: false,
+      schedulerExecution: false,
+    });
+    expect(foundation.noLiveFlags).toMatchObject({
+      liveAnalyticsIngestionEnabled: false,
+      liveObjectStorageEnabled: false,
+      liveProviderCallsEnabled: false,
+      liveTelemetryExportEnabled: false,
+    });
+    expect(foundation.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(true);
+    expect(capture).toMatchObject({
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportAttempted: false,
+      productionWriteAttempted: false,
+      status: "accepted_dry_run",
+    });
   });
 
   it("returns accepted, rejected, and dropped dry-run outcomes without live export", () => {
