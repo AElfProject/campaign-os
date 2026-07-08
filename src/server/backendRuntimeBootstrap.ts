@@ -148,6 +148,7 @@ export interface BackendRuntimeReadinessProjection {
       diagnosticCodes: string[];
       downstreamLiveFlags: BackendServiceReadinessReport["providerClientReadiness"]["providerHttpRuntime"]["downstreamLiveFlags"];
       endpointCount: number;
+      endpointRollout: BackendServiceReadinessReport["providerClientReadiness"]["providerHttpRuntime"]["endpointRollout"];
       liveHttpCallsAttempted: false;
       productionReady: false;
       runtimeId: BackendServiceReadinessReport["providerClientReadiness"]["providerHttpRuntime"]["id"];
@@ -637,6 +638,7 @@ const createReadinessProjection = (
       diagnosticCodes: backendReadiness.providerClientReadiness.providerHttpRuntime.diagnosticCodes,
       downstreamLiveFlags: { ...backendReadiness.providerClientReadiness.providerHttpRuntime.downstreamLiveFlags },
       endpointCount: backendReadiness.providerClientReadiness.providerHttpRuntime.endpointCount,
+      endpointRollout: backendReadiness.providerClientReadiness.providerHttpRuntime.endpointRollout,
       liveHttpCallsAttempted: false,
       productionReady: backendReadiness.providerClientReadiness.providerHttpRuntime.productionReady,
       runtimeId: backendReadiness.providerClientReadiness.providerHttpRuntime.id,

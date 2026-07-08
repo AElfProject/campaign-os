@@ -95,7 +95,13 @@ describe("worker scheduler runtime foundation", () => {
     expect(foundation.noLiveFlags).toEqual(workerSchedulerNoLiveFlags);
     expect(foundation.providerHttpRuntime).toMatchObject({
       activationStatus: "disabled",
-      endpointCount: 2,
+      endpointCount: 13,
+      endpointRollout: {
+        deferredCount: 2,
+        enabledCount: 11,
+        providerFamilies: expect.arrayContaining(["aefinder", "aelfscan", "tmrwdao"]),
+        valid: true,
+      },
       idempotencyPolicyId: "task-verification-idempotency",
       idempotencyPosture: "policy-and-store-reference-only",
       leasePosture: "store-reference-only",

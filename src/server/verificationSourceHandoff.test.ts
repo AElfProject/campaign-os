@@ -120,6 +120,12 @@ describe("verification source handoff", () => {
         activationStatus: "disabled",
         endpointCount: 1,
         endpointIds: ["aefinder-aelfscan-indexer-query"],
+        endpointRollout: {
+          deferredCount: 2,
+          enabledCount: 11,
+          providerFamilies: expect.arrayContaining(["aefinder", "aelfscan"]),
+          valid: true,
+        },
         endpointRefs: ["provider.endpoint.aefinder_aelfscan.indexer.url"],
         liveHttpCallsAttempted: false,
         providerGroupIds: ["aefinder-aelfscan-indexers"],

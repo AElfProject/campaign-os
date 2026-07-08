@@ -1,6 +1,6 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
-import type { ProviderHttpRuntimeSummary } from "./providerHttpRuntimeTypes";
+import type { ProviderEndpointRolloutSummary, ProviderHttpRuntimeSummary } from "./providerHttpRuntimeTypes";
 import {
   createWorkerIdempotencyStoreFoundation,
   type WorkerIdempotencyDiagnosticCode,
@@ -250,6 +250,7 @@ export interface WorkerProviderHttpRuntimePosture {
   blockerCount: number;
   diagnosticCodes: ProviderHttpRuntimeSummary["diagnosticCodes"];
   endpointCount: number;
+  endpointRollout: ProviderEndpointRolloutSummary;
   idempotencyPolicyId: string;
   idempotencyPosture: "policy-and-store-reference-only";
   leasePosture: "store-reference-only";
@@ -1073,6 +1074,7 @@ const createWorkerProviderHttpRuntimePosture = (
     blockerCount: runtime.blockerCount,
     diagnosticCodes: [...runtime.diagnosticCodes],
     endpointCount: runtime.endpointCount,
+    endpointRollout: runtime.endpointRollout,
     idempotencyPolicyId: taskVerificationPolicy?.idempotencyPolicyId ?? "task-verification-idempotency",
     idempotencyPosture: "policy-and-store-reference-only",
     leasePosture: "store-reference-only",

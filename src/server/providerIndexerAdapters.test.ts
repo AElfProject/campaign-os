@@ -138,6 +138,19 @@ describe("provider indexer adapter foundation", () => {
     expect(projection.configuredCategories).toEqual(
       expect.arrayContaining(["indexer", "dapp_api", "social_api", "ai_provider"]),
     );
+    expect(projection.endpointRollout).toMatchObject({
+      blockedCount: 0,
+      deferredCount: 2,
+      disabledCount: 0,
+      enabledCount: 11,
+      endpointCount: 13,
+      providerFamilies: expect.arrayContaining(["aefinder", "aelfscan", "awaken", "portfolio"]),
+      requiredConfigKeys: expect.arrayContaining([
+        "CAMPAIGN_OS_PROVIDER_HTTP_AEFINDER_ENDPOINT_REF",
+        "CAMPAIGN_OS_PROVIDER_HTTP_AELFSCAN_ENDPOINT_REF",
+      ]),
+      valid: true,
+    });
     expect(projection.deferredCategories).toEqual([]);
     expect(projection.entries).toEqual(
       expect.arrayContaining([
