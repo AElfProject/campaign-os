@@ -40,6 +40,7 @@ import {
   createProviderIndexerClientReadiness,
   evaluateProviderVerificationRequest,
 } from "./providerIndexerClientReadiness";
+import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
 import { createWorkerSchedulerFoundation } from "./workerSchedulerRuntime";
 import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
@@ -119,6 +120,22 @@ const consumeReadyEnv = {
   CAMPAIGN_OS_LIVE_QUEUE_CONSUME_ENABLEMENT: "explicitly-enabled",
   CAMPAIGN_OS_LIVE_QUEUE_CONSUMER: "test-live-queue-consumer",
   CAMPAIGN_OS_RETRY_POLICY: "retry:exponential",
+} satisfies Record<string, unknown>;
+
+const providerHttpReadyEnv = {
+  CAMPAIGN_OS_PROVIDER_HTTP_CREDENTIAL_REF: "credential-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REF: "config-ref:provider-http-endpoint",
+  CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REGISTRY_REF: "config-ref:provider-http-registry",
+  CAMPAIGN_OS_PROVIDER_HTTP_HEADER_REF: "header-ref:provider-http-auth",
+  CAMPAIGN_OS_PROVIDER_HTTP_IDEMPOTENCY_REF: "idem-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_LEASE_REF: "lease-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_QUEUE_WORKER_HANDOFF: "config-ref:provider-http-worker",
+  CAMPAIGN_OS_PROVIDER_HTTP_REDACTION_POLICY: "policy-ref:provider-http-redaction",
+  CAMPAIGN_OS_PROVIDER_HTTP_RESPONSE_MAPPING_POLICY: "policy-ref:provider-http-response-map",
+  CAMPAIGN_OS_PROVIDER_HTTP_RUNBOOK_REF: "runbook-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_RUNTIME_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_PROVIDER_HTTP_TIMEOUT_POLICY: "timeout-policy:2500ms",
+  CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM: "config-ref:provider-http-transport",
 } satisfies Record<string, unknown>;
 
 const serializedSchedulerOutput = () => {
@@ -776,6 +793,126 @@ describe("scheduler runtime separation boundaries", () => {
       liveExecutionAttempted: false,
       liveQueuePublishingEnabled: false,
       liveSchedulerExecutionEnabled: false,
+    });
+  });
+
+  it("keeps provider HTTP runtime activation from starting scheduler drain, cron, worker, queue, idempotency, or lease paths", () => {
+    const providerHttpRuntime = createProviderHttpRuntimeSummary({
+      env: providerHttpReadyEnv,
+      profileId: "production-required",
+      transportProvided: true,
+    });
+    const scheduler = createSchedulerRuntimeFoundation({
+      env: providerHttpReadyEnv,
+      profileId: "production-required",
+    });
+    const workerScheduler = createWorkerSchedulerFoundation({
+      env: providerHttpReadyEnv,
+      profileId: "production-required",
+    });
+    const queue = queueRuntime.createQueueRuntimeFoundation({
+      env: providerHttpReadyEnv,
+      profileId: "production-required",
+    });
+    const triggerResult = dryRunSchedulerTrigger({
+      idempotencyKey: "idempotency:task-verification-on-request:campaign-1",
+      jobId: "task-verification-worker",
+      queueHandoffReference: "queue-handoff:task-verification-worker-queue-plan",
+      scheduleId: "task-verification-on-request",
+      scheduledFor: "2026-07-07T13:30:00Z",
+      traceId: "trace-provider-http-runtime-scheduler-separation",
+      triggerSource: "api_request",
+      windowEnd: "2026-07-07T13:35:00Z",
+      windowStart: "2026-07-07T13:25:00Z",
+    });
+    const enqueueResult = queueRuntime.dryRunQueueEnqueue({
+      attempt: 1,
+      idempotencyKey: "idempotency:task-verification-on-request:campaign-1",
+      jobId: "task-verification-worker",
+      payloadReference: "payload-ref:sha256:task-verification-safe",
+      queueId: "verification-jobs",
+      requestedAt: "2026-07-07T13:30:00Z",
+      traceId: "trace-provider-http-runtime-queue-separation",
+    });
+
+    expect(providerHttpRuntime).toMatchObject({
+      activationStatus: "explicitly_enabled",
+      liveHttpCallsAttempted: false,
+      productionReady: false,
+      status: "activated",
+      transportProvided: true,
+      valid: true,
+    });
+    expect(providerHttpRuntime.downstreamLiveFlags).toEqual({
+      alternateQueuePublishing: false,
+      analyticsIngestion: false,
+      contractCalls: false,
+      liveTelemetryExport: false,
+      objectStorageWrites: false,
+      renderedUiBehavior: false,
+      rewardDistribution: false,
+      schedulerExecution: false,
+    });
+    expect(scheduler.readiness).toMatchObject({
+      liveCronExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
+    expect(workerScheduler.providerHttpRuntime).toMatchObject({
+      activationStatus: "explicitly_enabled",
+      idempotencyPosture: "policy-and-store-reference-only",
+      leasePosture: "store-reference-only",
+      liveHttpCallsAttempted: false,
+      liveSchedulerExecutionEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      productionReady: false,
+      queueId: "verification-jobs",
+      status: "activated",
+      transportProvided: true,
+      workerJobId: "task-verification-worker",
+    });
+    expect(workerScheduler.readiness).toMatchObject({
+      consumeAckAttempted: false,
+      consumeDeadLetterAttempted: false,
+      consumeNackAttempted: false,
+      consumeRetryScheduled: false,
+      idempotencyStoreLiveIdempotencyExecutionEnabled: false,
+      leaseStoreLiveQueuePublishingEnabled: false,
+      leaseStoreLiveWorkerExecutionEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      productionReady: false,
+    });
+    expect(queue.readiness).toMatchObject({
+      idempotencyStoreLiveIdempotencyExecutionEnabled: false,
+      leaseStoreLiveQueuePublishingEnabled: false,
+      leaseStoreLiveWorkerExecutionEnabled: false,
+      liveQueueConsumptionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      providerAdapterDriverConsumingLiveConsumeAttempted: false,
+      providerAdapterDriverConsumingLiveQueueConsumptionEnabled: false,
+      providerAdapterDriverSdkBindingPackageBindingLiveQueuePublishingEnabled: false,
+      providerAdapterDriverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false,
+    });
+    expect(queue.idempotencyStore).toMatchObject({
+      liveIdempotencyExecutionEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      productionReady: false,
+    });
+    expect(queue.leaseStore).toMatchObject({
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      productionReady: false,
+    });
+    expect(triggerResult).toMatchObject({
+      liveCronExecutionEnabled: false,
+      liveExecutionAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
+    expect(enqueueResult).toMatchObject({
+      livePublishAttempted: false,
+      liveQueuePublishingEnabled: false,
     });
   });
 

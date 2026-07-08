@@ -24,6 +24,10 @@ import {
   redactProviderClientValue,
   type ProviderClient,
 } from "./providerIndexerClientReadiness";
+import { executeProviderHttpRequest } from "./providerHttpClientRuntime";
+import type { ProviderHttpVerificationRequestInput } from "./providerHttpRequestPlanner";
+import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
+import type { ProviderHttpTransport } from "./providerHttpTransport";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
 import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
@@ -118,6 +122,38 @@ const consumeReadyEnv = {
   CAMPAIGN_OS_LIVE_QUEUE_CONSUMER: "test-live-queue-consumer",
   CAMPAIGN_OS_RETRY_POLICY: "retry:exponential",
 } satisfies Record<string, unknown>;
+
+const providerHttpReadyEnv = {
+  CAMPAIGN_OS_PROVIDER_HTTP_CREDENTIAL_REF: "credential-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REF: "config-ref:provider-http-endpoint",
+  CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REGISTRY_REF: "config-ref:provider-http-registry",
+  CAMPAIGN_OS_PROVIDER_HTTP_HEADER_REF: "header-ref:provider-http-auth",
+  CAMPAIGN_OS_PROVIDER_HTTP_IDEMPOTENCY_REF: "idem-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_LEASE_REF: "lease-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_QUEUE_WORKER_HANDOFF: "config-ref:provider-http-worker",
+  CAMPAIGN_OS_PROVIDER_HTTP_REDACTION_POLICY: "policy-ref:provider-http-redaction",
+  CAMPAIGN_OS_PROVIDER_HTTP_RESPONSE_MAPPING_POLICY: "policy-ref:provider-http-response-map",
+  CAMPAIGN_OS_PROVIDER_HTTP_RUNBOOK_REF: "runbook-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_RUNTIME_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_PROVIDER_HTTP_TIMEOUT_POLICY: "timeout-policy:2500ms",
+  CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM: "config-ref:provider-http-transport",
+} satisfies Record<string, unknown>;
+
+const providerHttpRequest: ProviderHttpVerificationRequestInput = {
+  attempt: { count: 1, maxAttempts: 3 },
+  campaignId: "campaign-ref:provider-http",
+  endpointId: "aefinder-aelfscan-indexer-query",
+  evidenceHash: "sha256:provider-evidence",
+  evidenceRef: "evidence-ref:task-1",
+  idempotencyRef: "idem-ref:campaign-task-wallet",
+  leaseRef: "lease-ref:worker-task",
+  providerGroupId: "aefinder-aelfscan-indexers",
+  taskId: "task-ref:on-chain-1",
+  traceId: "trace-provider-http-observability-separation",
+  verificationType: "ON_CHAIN",
+  walletAccountRef: "account-ref:wallet-1",
+  walletSessionRef: "session-ref:wallet-1",
+};
 
 describe("observability exporter foundation", () => {
   it("declares a stable foundation id and supported profiles", () => {
@@ -789,6 +825,117 @@ describe("observability exporter foundation", () => {
       expect(serialized).not.toContain(forbidden);
     }
     expect(serialized).toContain("[redacted]");
+  });
+
+  it("keeps provider HTTP runtime diagnostics local without telemetry export or raw material leakage", async () => {
+    const runtime = createProviderHttpRuntimeSummary({
+      env: providerHttpReadyEnv,
+      profileId: "production-required",
+      transportProvided: true,
+    });
+    const throwingTransport: ProviderHttpTransport = () => {
+      throw new Error(
+        "provider https://provider-user:provider-pass@indexer.invalid/graphql?token=provider-secret Authorization: Bearer provider-token apiKey=provider-api-key signedUrl=https://storage.invalid/object?X-Amz-Signature=abc123 objectKey=tenant/raw/provider.json idempotency-token lease-token ELF_PROVIDER_WALLET",
+      );
+    };
+    const result = await executeProviderHttpRequest(providerHttpRequest, {
+      runtime,
+      transport: throwingTransport,
+    });
+    const foundation = createObservabilityExporterFoundation({
+      env: {
+        ...providerHttpReadyEnv,
+        CAMPAIGN_OS_OBSERVABILITY_ALERT_ROUTING: "alert-routing:manual-review",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER: "production-observability-exporter",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS: "credential-ref:observability",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:exporter",
+        CAMPAIGN_OS_OBSERVABILITY_LOG_SINK_URL: "log-sink-ref:structured",
+        CAMPAIGN_OS_OBSERVABILITY_METRIC_NAMESPACE: "campaign-os-runtime",
+        CAMPAIGN_OS_OBSERVABILITY_REDACTION_POLICY: "redaction:strict",
+        CAMPAIGN_OS_OBSERVABILITY_RETENTION_DAYS: "30",
+        CAMPAIGN_OS_OBSERVABILITY_RETRY_DEAD_LETTER_POLICY: "retry:manual-dead-letter",
+        CAMPAIGN_OS_OBSERVABILITY_RUNBOOK_URL: "runbook-ref:observability",
+        CAMPAIGN_OS_OBSERVABILITY_SINK: "production-metrics-sink",
+        CAMPAIGN_OS_OBSERVABILITY_TRACE_COLLECTOR_URL: "trace-collector-ref:structured",
+      },
+      profileId: "production-required",
+    });
+    const capture = captureObservabilityDryRun({
+      eventCategory: "provider",
+      labels: {
+        runtime: "provider-http-client-runtime",
+      },
+      metricName: "provider.http.transport.failed",
+      operation: "metrics",
+      payloadReference: "payload-ref:provider-http:transport-failed",
+      sourceRuntime: "backend-service",
+      traceId: "trace-provider-http-observability-capture",
+    });
+    const serialized = JSON.stringify({ capture, foundation, result, runtime });
+
+    expect(runtime).toMatchObject({
+      activationStatus: "explicitly_enabled",
+      productionReady: false,
+      status: "activated",
+      transportProvided: true,
+    });
+    expect(result).toMatchObject({
+      diagnosticCodes: ["transport_thrown_error"],
+      liveHttpCallsAttempted: false,
+      outcome: "blocked",
+      transportExecuted: false,
+    });
+    expect(result.downstreamLiveFlags).toEqual({
+      alternateQueuePublishing: false,
+      analyticsIngestion: false,
+      contractCalls: false,
+      liveTelemetryExport: false,
+      objectStorageWrites: false,
+      renderedUiBehavior: false,
+      rewardDistribution: false,
+      schedulerExecution: false,
+    });
+    expect(foundation.noLiveFlags).toMatchObject({
+      liveAnalyticsIngestionEnabled: false,
+      liveObjectStorageEnabled: false,
+      liveProviderCallsEnabled: false,
+      liveTelemetryExportEnabled: false,
+    });
+    expect(foundation.readiness).toMatchObject({
+      liveAlertRoutingEnabled: false,
+      liveLogExportEnabled: false,
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      productionReady: false,
+    });
+    expect(capture).toMatchObject({
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportAttempted: false,
+      productionWriteAttempted: false,
+      status: "accepted_dry_run",
+    });
+    for (const forbidden of [
+      "provider-user",
+      "provider-pass",
+      "provider-secret",
+      "provider-token",
+      "provider-api-key",
+      "Authorization",
+      "Bearer",
+      "signedUrl",
+      "abc123",
+      "objectKey",
+      "tenant/raw/provider.json",
+      "idempotency-token",
+      "lease-token",
+      "ELF_PROVIDER_WALLET",
+      "Error:",
+      "at ",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+    expect(serialized).toContain("[REDACTED:ERROR]");
   });
 
   it("returns accepted, rejected, and dropped dry-run outcomes without live export", () => {
