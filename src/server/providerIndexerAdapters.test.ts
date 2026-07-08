@@ -120,6 +120,56 @@ describe("provider indexer adapter foundation", () => {
     );
   });
 
+  it("projects provider HTTP endpoint metadata as refs-only adapter posture", () => {
+    const foundation = createProviderIndexerFoundation({ profileId: "local-review" });
+    const projection = foundation.providerHttpEndpointRegistry;
+    const serialized = JSON.stringify(projection);
+
+    expect(projection).toMatchObject({
+      activationStatus: "disabled",
+      endpointCount: 2,
+      executionBoundary: "metadata_only_no_default_transport_no_live_calls",
+      id: "campaign-os-provider-http-client-runtime",
+      liveHttpCallsAttempted: false,
+      productionReady: false,
+      status: "disabled",
+      transportProvided: false,
+    });
+    expect(projection.configuredCategories).toEqual(["indexer", "dapp_api"]);
+    expect(projection.deferredCategories).toEqual(["social_api", "ai_provider"]);
+    expect(projection.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          adapterGroupCategory: "indexer",
+          adapterGroupId: "aefinder-aelfscan-indexers",
+          adapterGroupStatus: "deferred",
+          category: "indexer",
+          endpointId: "aefinder-aelfscan-indexer-query",
+          mappingIds: {
+            request: "provider-http-request-map:on-chain-indexer-v1",
+            response: "provider-http-response-map:on-chain-indexer-v1",
+          },
+          providerGroupId: "aefinder-aelfscan-indexers",
+          supportedVerificationTypes: ["ON_CHAIN"],
+          timeoutPolicyRef: "timeout-policy:provider-http-indexer-2500ms",
+          urlTemplateRef: "provider.endpoint.aefinder_aelfscan.indexer.url",
+        }),
+        expect.objectContaining({
+          adapterGroupCategory: "dapp_api",
+          adapterGroupId: "dapp-api-adapters",
+          category: "dapp_api",
+          endpointId: "dapp-api-verification-status",
+          providerGroupId: "dapp-api-adapters",
+          supportedVerificationTypes: ["DAPP_API"],
+        }),
+      ]),
+    );
+    expect(serialized).not.toContain("Bearer ");
+    expect(serialized).not.toContain("api-key");
+    expect(serialized).not.toMatch(/https?:\/\//i);
+    expect(serialized).not.toMatch(/password|token=/i);
+  });
+
   it("keeps every live integration and worker execution disabled", () => {
     expect(providerIndexerNoLiveFlags).toEqual({
       liveAiCallsEnabled: false,

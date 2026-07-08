@@ -116,6 +116,18 @@ describe("verification source handoff", () => {
         readinessStatus: "disabled",
         supportedVerificationTypes: ["ON_CHAIN"],
       },
+      providerHttpRuntimePosture: {
+        activationStatus: "disabled",
+        endpointCount: 1,
+        endpointIds: ["aefinder-aelfscan-indexer-query"],
+        endpointRefs: ["provider.endpoint.aefinder_aelfscan.indexer.url"],
+        liveHttpCallsAttempted: false,
+        providerGroupIds: ["aefinder-aelfscan-indexers"],
+        runtimeId: "campaign-os-provider-http-client-runtime",
+        status: "disabled",
+        supportedVerificationTypes: ["ON_CHAIN"],
+        transportProvided: false,
+      },
       providerGroupIds: ["aefinder-aelfscan-indexers"],
       queuePosture: {
         dryRunEnqueueEnabled: true,
@@ -174,6 +186,9 @@ describe("verification source handoff", () => {
     ).toBe(true);
     expect(
       Object.values(handoffByType).every((entry) => entry.providerClientPosture.liveProviderCallsAttempted === false),
+    ).toBe(true);
+    expect(
+      Object.values(handoffByType).every((entry) => entry.providerHttpRuntimePosture.liveHttpCallsAttempted === false),
     ).toBe(true);
   });
 

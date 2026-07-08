@@ -10,6 +10,10 @@ import {
   type ProviderClientReadinessStatus,
   type ProviderVerificationType,
 } from "./providerIndexerClientReadiness";
+import type {
+  ProviderHttpEndpointCategory,
+  ProviderHttpRuntimeSummary,
+} from "./providerHttpRuntimeTypes";
 import {
   queueRuntimePlans,
   type QueueDegradedOutcome,
@@ -78,6 +82,24 @@ export interface VerificationProviderClientPosture {
   supportedVerificationTypes: ProviderVerificationType[];
 }
 
+export interface VerificationProviderHttpRuntimePosture {
+  activationStatus: ProviderHttpRuntimeSummary["activationStatus"];
+  blocked: boolean;
+  blockerCount: number;
+  configuredCategories: ProviderHttpEndpointCategory[];
+  diagnosticCodes: ProviderHttpRuntimeSummary["diagnosticCodes"];
+  endpointCount: number;
+  endpointIds: string[];
+  endpointRefs: string[];
+  headerRefs: string[];
+  liveHttpCallsAttempted: false;
+  providerGroupIds: string[];
+  runtimeId: ProviderHttpRuntimeSummary["id"];
+  status: ProviderHttpRuntimeSummary["status"];
+  supportedVerificationTypes: ProviderHttpRuntimeSummary["endpointRegistry"][number]["supportedVerificationTypes"];
+  transportProvided: boolean;
+}
+
 export interface VerificationSourcePolicy {
   authSessionRequired: boolean;
   defaultDegradationOutcome: VerificationDegradationOutcome;
@@ -86,6 +108,7 @@ export interface VerificationSourcePolicy {
   jobIds: string[];
   liveExecutionEnabled: false;
   providerClientPosture: VerificationProviderClientPosture;
+  providerHttpRuntimePosture: VerificationProviderHttpRuntimePosture;
   providerGroupIds: string[];
   providerReadinessSatisfiesAuthentication: boolean;
   queuePosture: VerificationQueuePosture;
@@ -97,7 +120,7 @@ export interface VerificationSourcePolicy {
 
 type VerificationSourcePolicyDefinition = Omit<
   VerificationSourcePolicy,
-  "providerClientPosture" | "queuePosture"
+  "providerClientPosture" | "providerHttpRuntimePosture" | "queuePosture"
 >;
 
 export interface VerificationSourceDiagnostic {
@@ -298,6 +321,7 @@ export const resolveVerificationSourceHandoff = (
   const evidenceLabels = options.evidenceSourceLabels ?? entry.evidenceSourceLabels;
   const clientReadiness = options.clientReadiness ?? createProviderIndexerClientReadiness();
   const providerClientPosture = createProviderClientPosture(entry, providerIds, clientReadiness);
+  const providerHttpRuntimePosture = createProviderHttpRuntimePosture(providerIds, clientReadiness.providerHttpRuntime);
   const diagnostics = [
     ...validateWorkerJobs(jobIds),
     ...validateProviderGroups(providerIds),
@@ -319,6 +343,7 @@ export const resolveVerificationSourceHandoff = (
       evidenceSourceLabels: sanitizeStrings(evidenceLabels),
       jobIds: sanitizeStrings(jobIds),
       providerClientPosture,
+      providerHttpRuntimePosture,
       providerGroupIds: providerIds,
       queuePosture: createQueuePosture(entry.workerRequired, jobIds, entry.unavailableWorkerOutcome),
     },
@@ -341,6 +366,10 @@ const sanitizePolicy = (
     sourcePolicy,
     sourcePolicy.providerGroupIds,
     createProviderIndexerClientReadiness(),
+  ),
+  providerHttpRuntimePosture: createProviderHttpRuntimePosture(
+    sourcePolicy.providerGroupIds,
+    createProviderIndexerClientReadiness().providerHttpRuntime,
   ),
   providerGroupIds: [...sourcePolicy.providerGroupIds],
   queuePosture: createQueuePosture(
@@ -613,6 +642,35 @@ const createProviderClientPosture = (
     supportedVerificationTypes: unique(
       groups.flatMap((group) => group.clientReadiness.supportedVerificationTypes),
     ),
+  };
+};
+
+const createProviderHttpRuntimePosture = (
+  providerGroupIds: readonly string[],
+  runtime: ProviderHttpRuntimeSummary,
+): VerificationProviderHttpRuntimePosture => {
+  const endpoints = runtime.endpointRegistry.filter((endpoint) =>
+    providerGroupIds.includes(endpoint.providerGroupId),
+  );
+
+  return {
+    activationStatus: runtime.activationStatus,
+    blocked: runtime.status !== "activated",
+    blockerCount: runtime.blockerCount,
+    configuredCategories: [...runtime.configuredCategories],
+    diagnosticCodes: [...runtime.diagnosticCodes],
+    endpointCount: endpoints.length,
+    endpointIds: sanitizeStrings(endpoints.map((endpoint) => endpoint.endpointId)),
+    endpointRefs: sanitizeStrings(endpoints.map((endpoint) => endpoint.urlTemplateRef)),
+    headerRefs: unique(endpoints.flatMap((endpoint) => endpoint.headerRefs)),
+    liveHttpCallsAttempted: false,
+    providerGroupIds: sanitizeStrings(providerGroupIds),
+    runtimeId: runtime.id,
+    status: runtime.status,
+    supportedVerificationTypes: unique(
+      endpoints.flatMap((endpoint) => endpoint.supportedVerificationTypes),
+    ),
+    transportProvided: runtime.transportProvided,
   };
 };
 

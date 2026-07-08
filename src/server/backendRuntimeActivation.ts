@@ -61,6 +61,10 @@ import {
   providerClientProductionPreconditions,
   type ProviderClientPreconditionArea,
 } from "./providerIndexerClientReadiness";
+import {
+  providerHttpRuntimeProductionPreconditions,
+} from "./providerHttpRuntimeRegistry";
+import type { ProviderHttpPreconditionArea } from "./providerHttpRuntimeTypes";
 
 export type RuntimeActivationConfigCategory =
   | "server"
@@ -499,6 +503,21 @@ const providerClientDependencyArea = (
 ): ProductionRuntimeDependencyArea =>
   providerClientConfigCategory(area) as ProductionRuntimeDependencyArea;
 
+const providerHttpConfigCategory = (
+  area: ProviderHttpPreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (area === "worker_queue" || area === "idempotency" || area === "lease") {
+    return area === "worker_queue" ? "queue" : "worker";
+  }
+
+  return "provider";
+};
+
+const providerHttpDependencyArea = (
+  area: ProviderHttpPreconditionArea,
+): ProductionRuntimeDependencyArea =>
+  providerHttpConfigCategory(area) as ProductionRuntimeDependencyArea;
+
 export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
   configKey("CAMPAIGN_OS_API_HOST", "server", "supported", "local-review"),
   configKey("CAMPAIGN_OS_API_PORT", "server", "supported", "local-review"),
@@ -516,6 +535,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
       configKey(
         key,
         providerClientConfigCategory(precondition.area),
+        precondition.status,
+        "production-required",
+      ),
+    ),
+  ),
+  ...providerHttpRuntimeProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        providerHttpConfigCategory(precondition.area),
         precondition.status,
         "production-required",
       ),
@@ -754,6 +783,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     attachPoint: "src/server/providerIndexerClientReadiness.ts",
     blockedBy: [...precondition.requiredConfigKeys],
     id: `provider-client-${precondition.id}`,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
+  ...providerHttpRuntimeProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: providerHttpDependencyArea(precondition.area),
+    attachPoint: "src/server/providerHttpRuntimeRegistry.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: `provider-http-runtime-${precondition.id}`,
     requiredBeforeProduction: true,
     status: precondition.status,
   })),

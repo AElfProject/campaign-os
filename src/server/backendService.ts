@@ -69,6 +69,7 @@ import {
   createProviderIndexerClientReadiness,
   type ProviderClientReadinessSummary,
 } from "./providerIndexerClientReadiness";
+import type { ProviderHttpRuntimeSummary } from "./providerHttpRuntimeTypes";
 import {
   createWorkerSchedulerFoundation,
   type WorkerSchedulerFoundationSummary,
@@ -135,6 +136,7 @@ export type BackendReadinessDiagnosticCode =
   | "DATABASE_READINESS_BLOCKED"
   | "PROVIDER_INDEXER_READINESS_BLOCKED"
   | "PROVIDER_CLIENT_READINESS_BLOCKED"
+  | "PROVIDER_HTTP_RUNTIME_READINESS_BLOCKED"
   | "PERSISTENCE_ADAPTER_INVALID"
   | "MIGRATION_MANIFEST_INVALID"
   | "API_FOUNDATION_INVALID"
@@ -461,6 +463,13 @@ export interface BackendProviderClientReadinessSummary extends ProviderClientRea
     activationStatus: ProviderClientReadinessSummary["activationStatus"];
     blockedConfigKeys: string[];
     blockerIds: string[];
+    providerHttpRuntime: {
+      activationStatus: ProviderHttpRuntimeSummary["activationStatus"];
+      blockedConfigKeys: string[];
+      blockerIds: string[];
+      runtimeId: ProviderHttpRuntimeSummary["id"];
+      status: ProviderHttpRuntimeSummary["status"];
+    };
     redacted: true;
     requiredConfigKeys: string[];
   };
@@ -488,6 +497,7 @@ export interface BackendWorkerSchedulerReadinessSummary {
     retryPolicyCount: number;
     schedulePolicyCount: number;
   };
+  providerHttpRuntime: WorkerSchedulerFoundationSummary["providerHttpRuntime"];
   status: WorkerSchedulerFoundationSummary["status"];
   valid: boolean;
   verificationSourceHandoff: {
@@ -1176,6 +1186,17 @@ const createValidationIssues = ({
     ));
   }
 
+  if (
+    providerClientReadiness.profileId === "production-required"
+    && providerClientReadiness.providerHttpRuntime.status !== "activated"
+  ) {
+    issues.push(errorDiagnostic(
+      "PROVIDER_HTTP_RUNTIME_READINESS_BLOCKED",
+      "providerClientReadiness.providerHttpRuntime",
+      "Provider HTTP runtime readiness is blocked before production activation.",
+    ));
+  }
+
   if (!queueRuntimeFoundation.valid) {
     issues.push(errorDiagnostic(
       "QUEUE_RUNTIME_READINESS_BLOCKED",
@@ -1668,8 +1689,12 @@ const createBackendProviderClientReadinessSummary = ({
     profileId,
   });
   const diagnosticCodeSet = new Set(readiness.diagnosticCodes);
+  const providerHttpDiagnosticCodeSet = new Set(readiness.providerHttpRuntime.diagnosticCodes);
   const blockerPreconditions = readiness.preconditions.filter((precondition) =>
     diagnosticCodeSet.has(precondition.diagnosticCode)
+  );
+  const providerHttpBlockerPreconditions = readiness.providerHttpRuntime.preconditions.filter((precondition) =>
+    providerHttpDiagnosticCodeSet.has(precondition.diagnosticCode)
   );
 
   return {
@@ -1680,6 +1705,15 @@ const createBackendProviderClientReadinessSummary = ({
         blockerPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
       ),
       blockerIds: blockerPreconditions.map((precondition) => precondition.id),
+      providerHttpRuntime: {
+        activationStatus: readiness.providerHttpRuntime.activationStatus,
+        blockedConfigKeys: uniqueStrings(
+          providerHttpBlockerPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
+        ),
+        blockerIds: providerHttpBlockerPreconditions.map((precondition) => precondition.id),
+        runtimeId: readiness.providerHttpRuntime.id,
+        status: readiness.providerHttpRuntime.status,
+      },
       redacted: true,
       requiredConfigKeys: readiness.requiredConfigKeys,
     },
@@ -1955,6 +1989,7 @@ const createBackendWorkerSchedulerReadinessSummary = ({
     preconditions: foundation.preconditions,
     productionReady: foundation.productionReady,
     profileId: foundation.profileId,
+    providerHttpRuntime: foundation.providerHttpRuntime,
     schedulePolicyCoverage: {
       idempotencyPolicyCount: foundation.idempotencyPolicies.length,
       retryPolicyCount: foundation.retryBackoffPolicies.length,

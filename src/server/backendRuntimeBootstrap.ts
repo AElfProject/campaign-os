@@ -141,6 +141,20 @@ export interface BackendRuntimeReadinessProjection {
     liveProviderCallsAttempted: false;
     policy: BackendServiceReadinessReport["providerClientReadiness"]["policy"];
     productionReady: false;
+    providerHttpRuntime: {
+      activationStatus: BackendServiceReadinessReport["providerClientReadiness"]["providerHttpRuntime"]["activationStatus"];
+      blockerCount: number;
+      configuredCategories: BackendServiceReadinessReport["providerClientReadiness"]["providerHttpRuntime"]["configuredCategories"];
+      diagnosticCodes: string[];
+      downstreamLiveFlags: BackendServiceReadinessReport["providerClientReadiness"]["providerHttpRuntime"]["downstreamLiveFlags"];
+      endpointCount: number;
+      liveHttpCallsAttempted: false;
+      productionReady: false;
+      runtimeId: BackendServiceReadinessReport["providerClientReadiness"]["providerHttpRuntime"]["id"];
+      status: BackendServiceReadinessReport["providerClientReadiness"]["providerHttpRuntime"]["status"];
+      transportProvided: boolean;
+      valid: boolean;
+    };
     providerClientsEnabled: boolean;
     providerClientsProvided: boolean;
     queueHandoff: BackendServiceReadinessReport["providerClientReadiness"]["queueHandoff"];
@@ -616,6 +630,20 @@ const createReadinessProjection = (
     liveProviderCallsAttempted: backendReadiness.providerClientReadiness.liveProviderCallsAttempted,
     policy: { ...backendReadiness.providerClientReadiness.policy },
     productionReady: backendReadiness.providerClientReadiness.productionReady,
+    providerHttpRuntime: {
+      activationStatus: backendReadiness.providerClientReadiness.providerHttpRuntime.activationStatus,
+      blockerCount: backendReadiness.providerClientReadiness.providerHttpRuntime.blockerCount,
+      configuredCategories: [...backendReadiness.providerClientReadiness.providerHttpRuntime.configuredCategories],
+      diagnosticCodes: backendReadiness.providerClientReadiness.providerHttpRuntime.diagnosticCodes,
+      downstreamLiveFlags: { ...backendReadiness.providerClientReadiness.providerHttpRuntime.downstreamLiveFlags },
+      endpointCount: backendReadiness.providerClientReadiness.providerHttpRuntime.endpointCount,
+      liveHttpCallsAttempted: false,
+      productionReady: backendReadiness.providerClientReadiness.providerHttpRuntime.productionReady,
+      runtimeId: backendReadiness.providerClientReadiness.providerHttpRuntime.id,
+      status: backendReadiness.providerClientReadiness.providerHttpRuntime.status,
+      transportProvided: backendReadiness.providerClientReadiness.providerHttpRuntime.transportProvided,
+      valid: backendReadiness.providerClientReadiness.providerHttpRuntime.valid,
+    },
     providerClientsEnabled: backendReadiness.providerClientReadiness.providerClientsEnabled,
     providerClientsProvided: backendReadiness.providerClientReadiness.providerClientsProvided,
     queueHandoff: { ...backendReadiness.providerClientReadiness.queueHandoff },

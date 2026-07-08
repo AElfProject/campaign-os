@@ -1968,6 +1968,10 @@ describe("backend service readiness report", () => {
           code: "PROVIDER_CLIENT_READINESS_BLOCKED",
           field: "providerClientReadiness",
         }),
+        expect.objectContaining({
+          code: "PROVIDER_HTTP_RUNTIME_READINESS_BLOCKED",
+          field: "providerClientReadiness.providerHttpRuntime",
+        }),
       ]),
     });
     expect(report.validation.issues).not.toEqual(
@@ -2001,6 +2005,14 @@ describe("backend service readiness report", () => {
           blockerCount: 12,
           liveProviderCallsAttempted: false,
           productionReady: false,
+          providerHttpRuntime: {
+            activationStatus: "activation_required",
+            liveHttpCallsAttempted: false,
+            productionReady: false,
+            status: "blocked",
+            transportProvided: false,
+            valid: false,
+          },
           providerClientsEnabled: false,
           providerClientsProvided: false,
           status: "blocked",
