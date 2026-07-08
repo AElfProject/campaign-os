@@ -16,6 +16,10 @@ import {
   createLiveQueuePublishingReadiness,
   type LiveQueuePublisher,
 } from "./liveQueuePublishingReadiness";
+import {
+  createLiveQueueConsumeLoopReadiness,
+  evaluateLiveQueueConsumeMessage,
+} from "./liveQueueConsumeLoop";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
 import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
@@ -471,6 +475,74 @@ describe("worker idempotency store foundation", () => {
       productionWriteAttempted: false,
       status: "accepted_dry_run",
     });
+  });
+
+  it("keeps default consume readiness from enabling idempotency writes and redacts idempotency references", () => {
+    const consumeReadiness = createLiveQueueConsumeLoopReadiness({ profileId: "local-review" });
+    const consumeResult = evaluateLiveQueueConsumeMessage(
+      {
+        attempt: 1,
+        idempotencyReference: "campaign/wallet/ELF_secret_wallet/task.json",
+        jobId: "task-verification-worker",
+        leaseReference: "lease-ref:task-verification-worker",
+        payloadReference: "payload-ref:task-verification-worker",
+        queueId: "verification-jobs",
+        traceId: "trace-consume-idempotency-separation",
+      },
+      { readiness: consumeReadiness },
+    );
+    const idempotencyStore = createWorkerIdempotencyStoreFoundation({ profileId: "local-review" });
+    const idempotencyEvaluation = evaluateWorkerIdempotencyDryRun({
+      attempt: 1,
+      completionEvidenceReference: "evidence-ref:task-verification-worker",
+      idempotencyKeyReference: "idempotency-key-ref:task-verification-worker",
+      jobId: "task-verification-worker",
+      operation: "claim",
+      sideEffectBoundary: "points-ledger-and-task-completion",
+      traceId: "trace-consume-default-idempotency-dry-run",
+      workerReference: "worker-ref:local-review",
+    });
+    const serialized = JSON.stringify({ consumeReadiness, consumeResult, idempotencyStore, idempotencyEvaluation });
+
+    expect(consumeReadiness).toMatchObject({
+      consumeAttemptAllowed: false,
+      liveConsumeAttempted: false,
+      liveQueueConsumptionEnabled: false,
+      productionReady: false,
+      status: "disabled",
+    });
+    expect(consumeReadiness.noLiveSideEffects).toMatchObject({
+      analyticsWrites: false,
+      contractCalls: false,
+      objectStorageWrites: false,
+      rewardDistribution: false,
+      telemetryExport: false,
+      workerExecution: false,
+    });
+    expect(consumeResult).toMatchObject({
+      diagnosticCodes: expect.arrayContaining([
+        "LIVE_QUEUE_CONSUME_NOT_READY",
+        "LIVE_QUEUE_UNSAFE_IDEMPOTENCY_REFERENCE",
+      ]),
+      handlerExecuted: false,
+      liveConsumeAttempted: false,
+      retryScheduled: false,
+      status: "blocked_by_gate",
+    });
+    expect(idempotencyStore.readiness).toMatchObject({
+      liveIdempotencyExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+    });
+    expect(idempotencyStore.noLiveFlags).toEqual(workerIdempotencyStoreNoLiveFlags);
+    expect(idempotencyEvaluation).toMatchObject({
+      liveIdempotencyOperationAttempted: false,
+      liveWorkerExecutionEnabled: false,
+      productionWriteAttempted: false,
+      status: "accepted_dry_run",
+    });
+    expect(serialized).not.toContain("campaign/wallet/ELF_secret_wallet/task.json");
+    expect(serialized).not.toContain("ELF_secret_wallet");
   });
 
   it("accepts safe dry-run requests and echoes only safe references", () => {

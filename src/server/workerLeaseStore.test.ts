@@ -12,6 +12,10 @@ import {
   type LiveQueuePublisher,
 } from "./liveQueuePublishingReadiness";
 import {
+  createLiveQueueConsumeLoopReadiness,
+  evaluateLiveQueueConsumeMessage,
+} from "./liveQueueConsumeLoop";
+import {
   SUPPORTED_WORKER_LEASE_STORE_PROFILES,
   createWorkerLeaseStoreFoundation,
   evaluateWorkerLeaseDryRun,
@@ -392,6 +396,78 @@ describe("worker lease store foundation", () => {
       liveSocialCallsEnabled: false,
       liveWorkerExecutionEnabled: false,
     });
+  });
+
+  it("keeps default consume readiness from enabling lease writes and redacts lease references", () => {
+    const consumeReadiness = createLiveQueueConsumeLoopReadiness({ profileId: "local-review" });
+    const consumeResult = evaluateLiveQueueConsumeMessage(
+      {
+        attempt: 1,
+        fencingTokenReference: "lease-token-secret-789",
+        idempotencyReference: "idempotency-ref:task-verification-worker",
+        jobId: "task-verification-worker",
+        leaseReference: "https://lease-user:lease-pass@lease.invalid/locks?token=lease-secret",
+        payloadReference: "payload-ref:task-verification-worker",
+        queueId: "verification-jobs",
+        traceId: "trace-consume-lease-separation",
+      },
+      { readiness: consumeReadiness },
+    );
+    const leaseStore = createWorkerLeaseStoreFoundation({ profileId: "local-review" });
+    const leaseEvaluation = evaluateWorkerLeaseDryRun({
+      fencingTokenReference: "fence-ref:task-verification-worker",
+      heartbeatIntervalSeconds: 30,
+      jobId: "task-verification-worker",
+      leaseKeyReference: "lease-key-ref:task-verification-worker",
+      operation: "claim",
+      traceId: "trace-consume-default-lease-dry-run",
+      ttlSeconds: 120,
+      workerReference: "worker-ref:local-review",
+    });
+    const serialized = JSON.stringify({ consumeReadiness, consumeResult, leaseStore, leaseEvaluation });
+
+    expect(consumeReadiness).toMatchObject({
+      consumeAttemptAllowed: false,
+      liveConsumeAttempted: false,
+      liveQueueConsumptionEnabled: false,
+      productionReady: false,
+      status: "disabled",
+    });
+    expect(consumeReadiness.noLiveSideEffects).toMatchObject({
+      deadLetter: false,
+      publishFallback: false,
+      retry: false,
+      schedulerExecution: false,
+      telemetryExport: false,
+      workerExecution: false,
+    });
+    expect(consumeResult).toMatchObject({
+      ackAttempted: false,
+      deadLetterAttempted: false,
+      diagnosticCodes: expect.arrayContaining([
+        "LIVE_QUEUE_CONSUME_NOT_READY",
+        "LIVE_QUEUE_UNSAFE_LEASE_REFERENCE",
+        "LIVE_QUEUE_UNSAFE_FENCING_REFERENCE",
+      ]),
+      handlerExecuted: false,
+      liveConsumeAttempted: false,
+      retryScheduled: false,
+      status: "blocked_by_gate",
+    });
+    expect(leaseStore.readiness).toMatchObject({
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+    });
+    expect(leaseStore.noLiveFlags).toEqual(workerLeaseStoreNoLiveFlags);
+    expect(leaseEvaluation).toMatchObject({
+      liveLeaseOperationAttempted: false,
+      liveWorkerExecutionEnabled: false,
+      status: "accepted_dry_run",
+    });
+    expect(serialized).not.toContain("lease-user");
+    expect(serialized).not.toContain("lease-pass");
+    expect(serialized).not.toContain("lease-secret");
+    expect(serialized).not.toContain("lease-token-secret-789");
   });
 
   it("keeps ready live publishing metadata from enabling lease or worker execution", () => {
