@@ -117,9 +117,9 @@ describe("API foundation registry", () => {
 
     expect(report.surfaces.map((surface) => surface.surfaceId)).toEqual(expectedSurfaceIds);
     expect(report.coverage).toMatchObject({
-      implementedLocalCount: 10,
+      implementedLocalCount: 11,
       notYetImplementedCount: 0,
-      productionShapedDeferredCount: 4,
+      productionShapedDeferredCount: 3,
       routeCount: apiRuntimeRoutes.length,
       surfaceCount: expectedSurfaceIds.length,
       validationIssueCount: 0,
@@ -132,7 +132,16 @@ describe("API foundation registry", () => {
     expect(report.surfaces.find((surface) => surface.surfaceId === "runtime-observability")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue", "sensitive_material_boundary"]),
       state: "implemented_local",
-      routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
+      routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts", "campaigns.summary"]),
+    });
+    expect(report.surfaces.find((surface) => surface.surfaceId === "ai-ops")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["provider_adapters", "scheduler", "worker_queue"]),
+      routeIds: expect.arrayContaining([
+        "agent.wallet.action.review",
+        "campaigns.tasks.generate",
+        "campaigns.posts.generate",
+      ]),
+      state: "implemented_local",
     });
   });
 

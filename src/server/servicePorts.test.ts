@@ -35,6 +35,7 @@ describe("API service ports", () => {
       "eligibility-port",
       "i18n-content-port",
       "export-port",
+      "ai-ops-port",
     ];
 
     expect(apiServicePorts.map((port) => port.id)).toEqual(expectedPortIds);
@@ -81,6 +82,24 @@ describe("API service ports", () => {
     expect(apiServicePorts.find((port) => port.id === "export-port")?.futureAttachPoints).toEqual(
       expect.arrayContaining(["export artifact store", "contract writer approval gate"]),
     );
+    expect(apiServicePorts.find((port) => port.id === "ai-ops-port")).toMatchObject({
+      deferredCapabilities: expect.arrayContaining(["auth_session", "provider_adapters", "scheduler", "worker_queue"]),
+      futureAttachPoints: expect.arrayContaining([
+        "Agent Skill wallet action approval workflow",
+        "AI task generation provider adapter",
+        "AI campaign post provider adapter",
+        "AI Ops worker execution gate",
+      ]),
+      productionAdapterStatus: "local_seeded",
+      requiresExternalNetwork: false,
+      requiresSecret: false,
+      routeIds: expect.arrayContaining([
+        "agent.wallet.action.review",
+        "campaigns.tasks.generate",
+        "campaigns.posts.generate",
+      ]),
+      serviceId: "ai-ops-service",
+    });
   });
 
   it("keeps production adapters disabled, deferred, or local-only", () => {
@@ -89,7 +108,7 @@ describe("API service ports", () => {
     expect(report.coverage).toMatchObject({
       deferredPortCount: 0,
       localMetadataOnlyPortCount: 2,
-      localSeededPortCount: 7,
+      localSeededPortCount: 8,
       portCount: apiServicePorts.length,
       validationIssueCount: 0,
     });
