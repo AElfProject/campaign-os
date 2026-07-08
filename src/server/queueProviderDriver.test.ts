@@ -116,8 +116,25 @@ describe("queue provider driver foundation", () => {
     expect(foundation.readiness).toMatchObject({
       activationGateSatisfied: false,
       blockerCount: 0,
+      consumeAckAttempted: false,
+      consumeAttemptPolicy: "disabled_no_live",
+      consumeDeadLetterAttempted: false,
+      consumeNackAttempted: false,
+      consumeRequestEvaluated: false,
+      consumeResultStatus: "not_requested",
+      consumeRetryScheduled: false,
+      consumingActivationStatus: "disabled",
+      consumingBlockerCount: 0,
+      consumingConsumerId: "not_configured",
+      consumingConsumerProvided: false,
+      consumingHandlerRegistryProvided: false,
+      consumingLiveConsumeAttempted: false,
+      consumingLiveQueueConsumptionEnabled: false,
+      consumingProductionReady: false,
+      consumingStatus: "disabled",
       deadLetterRouteCount: foundation.deadLetterRoutes.length,
       disabledLiveOperationCount: queueProviderDriverOperationCapabilities.length,
+      liveQueueConsumptionEnabled: false,
       liveQueuePublishingEnabled: false,
       liveWorkerExecutionEnabled: false,
       operationCount: queueProviderDriverOperationCapabilities.length,
@@ -180,6 +197,31 @@ describe("queue provider driver foundation", () => {
       }),
       valid: true,
     });
+    expect(foundation.consumingReadiness).toMatchObject({
+      activationStatus: "disabled",
+      consumeAttemptAllowed: false,
+      consumerId: "not_configured",
+      consumerProvided: false,
+      handlerRegistryProvided: false,
+      liveQueueConsumptionEnabled: false,
+      mode: "dry_run",
+      productionReady: false,
+      status: "disabled",
+      valid: true,
+    });
+    expect(foundation.consumePosture).toMatchObject({
+      ackAttempted: false,
+      attemptPolicy: "disabled_no_live",
+      deadLetterAttempted: false,
+      liveConsumeAttempted: false,
+      nackAttempted: false,
+      productionWriteAttempted: false,
+      consumeRequestEvaluated: false,
+      resultStatus: "not_requested",
+      retryScheduled: false,
+      workerExecutionAttempted: false,
+    });
+    expect(Object.values(foundation.consumePosture.noLiveSideEffects).every((value) => value === false)).toBe(true);
     expect(foundation.publishingReadiness).toMatchObject({
       activationStatus: "disabled",
       liveQueuePublishingEnabled: false,
@@ -234,7 +276,11 @@ describe("queue provider driver foundation", () => {
     expect(foundation.valid).toBe(true);
     expect(foundation.productionReady).toBe(false);
     expect(foundation.readiness.liveQueuePublishingEnabled).toBe(false);
+    expect(foundation.readiness.liveQueueConsumptionEnabled).toBe(false);
     expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
+    expect(foundation.readiness.consumingActivationStatus).toBe("metadata_only");
+    expect(foundation.readiness.consumingStatus).toBe("scaffolded");
+    expect(foundation.consumePosture.attemptPolicy).toBe("disabled_no_live");
     expect(foundation.operationCapabilities.every((item) => item.liveEnabled === false)).toBe(true);
     expect(foundation.sdkBinding).toMatchObject({
       bindingId: "metadata-only-queue-provider-sdk-binding",
@@ -361,6 +407,14 @@ describe("queue provider driver foundation", () => {
     expect(foundation.readiness.activationGateSatisfied).toBe(true);
     expect(foundation.productionReady).toBe(false);
     expect(foundation.readiness.productionReady).toBe(false);
+    expect(foundation.readiness.liveQueueConsumptionEnabled).toBe(false);
+    expect(foundation.readiness.consumingActivationStatus).toBe("activation_required");
+    expect(foundation.readiness.consumingStatus).toBe("blocked");
+    expect(foundation.consumePosture).toMatchObject({
+      attemptPolicy: "blocked_until_ready",
+      liveConsumeAttempted: false,
+      workerExecutionAttempted: false,
+    });
     expect(foundation.readiness.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
     expect(foundation.sdkBinding).toMatchObject({

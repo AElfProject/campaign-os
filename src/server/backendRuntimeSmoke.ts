@@ -95,6 +95,8 @@ export interface BackendRuntimeSmokeQueueRuntimeFoundationSummary {
   dryRunEnqueueEnabled: boolean;
   id?: string;
   liveCronExecutionEnabled: false;
+  liveQueueConsumptionEnabled: false;
+  liveQueueConsumingReadiness: BackendRuntimeSmokeQueueConsumingReadinessSummary;
   liveQueuePublishingEnabled: false;
   liveQueuePublishingReadiness: BackendRuntimeSmokeQueuePublishingReadinessSummary;
   liveSchedulerExecutionEnabled: false;
@@ -123,6 +125,28 @@ export interface BackendRuntimeSmokeQueuePublishingReadinessSummary {
   status?: string;
 }
 
+export interface BackendRuntimeSmokeQueueConsumingReadinessSummary {
+  activationStatus?: string;
+  ackAttempted: boolean;
+  blockerCount: number;
+  consumeAttemptPolicy?: string;
+  consumeRequestEvaluated: boolean;
+  consumeResultStatus?: string;
+  consumerId?: string;
+  consumerProvided: boolean;
+  deadLetterAttempted: boolean;
+  diagnosticCodes: string[];
+  handlerRegistryProvided: boolean;
+  liveConsumeAttempted: boolean;
+  liveQueueConsumptionEnabled: boolean;
+  nackAttempted: boolean;
+  noLiveSideEffects: Record<string, false>;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  retryScheduled: boolean;
+  status?: string;
+}
+
 export interface BackendRuntimeSmokeQueueProviderAdapterSummary {
   adapterId?: string;
   blockerCount: number;
@@ -133,12 +157,32 @@ export interface BackendRuntimeSmokeQueueProviderAdapterSummary {
   driverDiagnosticCodes: string[];
   driverDisabledLiveOperationCount: number;
   driverId?: string;
+  driverLiveQueueConsumptionEnabled: false;
   driverLiveQueuePublishingEnabled: false;
   driverLiveWorkerExecutionEnabled: false;
   driverMode?: string;
   driverOperationCount: number;
   driverProductionReady: false;
   driverProviderId?: string;
+  driverConsumeAckAttempted: boolean;
+  driverConsumeAttemptPolicy?: string;
+  driverConsumeDeadLetterAttempted: boolean;
+  driverConsumeDiagnosticCodes: string[];
+  driverConsumeNackAttempted: boolean;
+  driverConsumeRequestEvaluated: boolean;
+  driverConsumeResultStatus?: string;
+  driverConsumeRetryScheduled: boolean;
+  driverConsumingActivationStatus?: string;
+  driverConsumingBlockerCount: number;
+  driverConsumingConsumerId?: string;
+  driverConsumingConsumerProvided: boolean;
+  driverConsumingHandlerRegistryProvided: boolean;
+  driverConsumingLiveConsumeAttempted: boolean;
+  driverConsumingLiveQueueConsumptionEnabled: boolean;
+  driverConsumingNoLiveSideEffects: Record<string, false>;
+  driverConsumingProductionReady: false;
+  driverConsumingRequiredConfigKeys: string[];
+  driverConsumingStatus?: string;
   driverPublishAttemptPolicy?: string;
   driverPublishDiagnosticCodes: string[];
   driverPublishRequestEvaluated: boolean;
@@ -202,6 +246,7 @@ export interface BackendRuntimeSmokeQueueProviderAdapterSummary {
   driverSdkBindingValid: boolean;
   driverStatus?: string;
   driverValid: boolean;
+  liveQueueConsumptionEnabled: false;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode?: string;
@@ -546,9 +591,16 @@ const summarizeQueueRuntimeFoundation = (
     return undefined;
   }
 
+  const providerAdapter = summarizeQueueProviderAdapter(
+    readNestedRecord(record, ["providerAdapter"]),
+  );
   const noLiveFlags = readNestedRecord(record, ["noLiveFlags"]);
+  const liveQueueConsumptionDisabled = record.liveQueueConsumptionEnabled === undefined
+    ? providerAdapter?.liveQueueConsumptionEnabled === false
+    : isExplicitFalse(record, "liveQueueConsumptionEnabled");
   const explicitNoLive =
     isExplicitFalse(record, "productionReady")
+    && liveQueueConsumptionDisabled
     && isExplicitFalse(record, "liveQueuePublishingEnabled")
     && isExplicitFalse(noLiveFlags, "liveCronExecutionEnabled")
     && isExplicitFalse(noLiveFlags, "liveQueuePublishingEnabled")
@@ -559,15 +611,16 @@ const summarizeQueueRuntimeFoundation = (
     return undefined;
   }
 
-  const providerAdapter = summarizeQueueProviderAdapter(
-    readNestedRecord(record, ["providerAdapter"]),
-  );
   const liveQueuePublishingReadinessRecord = readNestedRecord(record, ["liveQueuePublishingReadiness"]);
   const liveQueuePublishingReadiness = liveQueuePublishingReadinessRecord
     ? summarizeQueuePublishingReadiness(liveQueuePublishingReadinessRecord)
     : summarizeQueuePublishingReadinessFromProviderAdapter(providerAdapter);
+  const liveQueueConsumingReadinessRecord = readNestedRecord(record, ["liveQueueConsumingReadiness"]);
+  const liveQueueConsumingReadiness = liveQueueConsumingReadinessRecord
+    ? summarizeQueueConsumingReadiness(liveQueueConsumingReadinessRecord)
+    : summarizeQueueConsumingReadinessFromProviderAdapter(providerAdapter);
 
-  if (!providerAdapter || !liveQueuePublishingReadiness) {
+  if (!providerAdapter || !liveQueuePublishingReadiness || !liveQueueConsumingReadiness) {
     return undefined;
   }
 
@@ -577,6 +630,8 @@ const summarizeQueueRuntimeFoundation = (
     dryRunEnqueueEnabled: getBoolean(record, "dryRunEnqueueEnabled"),
     id: getString(record, "id"),
     liveCronExecutionEnabled: false,
+    liveQueueConsumptionEnabled: false,
+    liveQueueConsumingReadiness,
     liveQueuePublishingEnabled: false,
     liveQueuePublishingReadiness,
     liveSchedulerExecutionEnabled: false,
@@ -586,6 +641,82 @@ const summarizeQueueRuntimeFoundation = (
     queuePlanCount: getNumber(record, "queuePlanCount"),
     status: getString(record, "status"),
     valid: getBoolean(record, "valid"),
+  };
+};
+
+const summarizeQueueConsumingReadiness = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeQueueConsumingReadinessSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const noLiveSideEffects = readNestedRecord(record, ["noLiveSideEffects"]);
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "ackAttempted")
+    && isExplicitFalse(record, "deadLetterAttempted")
+    && isExplicitFalse(record, "liveConsumeAttempted")
+    && isExplicitFalse(record, "liveQueueConsumptionEnabled")
+    && isExplicitFalse(record, "nackAttempted")
+    && isExplicitFalse(record, "retryScheduled")
+    && noLiveSideEffects !== undefined
+    && Object.values(noLiveSideEffects).every((value) => value === false);
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    activationStatus: getString(record, "activationStatus"),
+    ackAttempted: false,
+    blockerCount: getNumber(record, "blockerCount"),
+    consumeAttemptPolicy: getString(record, "consumeAttemptPolicy"),
+    consumeRequestEvaluated: getBoolean(record, "consumeRequestEvaluated"),
+    consumeResultStatus: getString(record, "consumeResultStatus"),
+    consumerId: getString(record, "consumerId"),
+    consumerProvided: getBoolean(record, "consumerProvided"),
+    deadLetterAttempted: false,
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    handlerRegistryProvided: getBoolean(record, "handlerRegistryProvided"),
+    liveConsumeAttempted: false,
+    liveQueueConsumptionEnabled: false,
+    nackAttempted: false,
+    noLiveSideEffects: noLiveSideEffects as Record<string, false>,
+    productionReady: false,
+    requiredConfigKeys: getStringArray(record, "requiredConfigKeys"),
+    retryScheduled: false,
+    status: getString(record, "status"),
+  };
+};
+
+const summarizeQueueConsumingReadinessFromProviderAdapter = (
+  providerAdapter: BackendRuntimeSmokeQueueProviderAdapterSummary | undefined,
+): BackendRuntimeSmokeQueueConsumingReadinessSummary | undefined => {
+  if (!providerAdapter) {
+    return undefined;
+  }
+
+  return {
+    activationStatus: providerAdapter.driverConsumingActivationStatus,
+    ackAttempted: providerAdapter.driverConsumeAckAttempted,
+    blockerCount: providerAdapter.driverConsumingBlockerCount,
+    consumeAttemptPolicy: providerAdapter.driverConsumeAttemptPolicy,
+    consumeRequestEvaluated: providerAdapter.driverConsumeRequestEvaluated,
+    consumeResultStatus: providerAdapter.driverConsumeResultStatus,
+    consumerId: providerAdapter.driverConsumingConsumerId,
+    consumerProvided: providerAdapter.driverConsumingConsumerProvided,
+    deadLetterAttempted: providerAdapter.driverConsumeDeadLetterAttempted,
+    diagnosticCodes: providerAdapter.driverConsumeDiagnosticCodes,
+    handlerRegistryProvided: providerAdapter.driverConsumingHandlerRegistryProvided,
+    liveConsumeAttempted: providerAdapter.driverConsumingLiveConsumeAttempted,
+    liveQueueConsumptionEnabled: providerAdapter.driverConsumingLiveQueueConsumptionEnabled,
+    nackAttempted: providerAdapter.driverConsumeNackAttempted,
+    noLiveSideEffects: providerAdapter.driverConsumingNoLiveSideEffects,
+    productionReady: false,
+    requiredConfigKeys: providerAdapter.driverConsumingRequiredConfigKeys,
+    retryScheduled: providerAdapter.driverConsumeRetryScheduled,
+    status: providerAdapter.driverConsumingStatus,
   };
 };
 
@@ -661,8 +792,19 @@ const summarizeQueueProviderAdapter = (
   const explicitNoLive =
     isExplicitFalse(record, "productionReady")
     && isExplicitFalse(record, "driverProductionReady")
+    && isExplicitFalse(record, "driverLiveQueueConsumptionEnabled")
     && isExplicitFalse(record, "driverLiveQueuePublishingEnabled")
     && isExplicitFalse(record, "driverLiveWorkerExecutionEnabled")
+    && isExplicitFalse(record, "driverConsumeAckAttempted")
+    && isExplicitFalse(record, "driverConsumeDeadLetterAttempted")
+    && isExplicitFalse(record, "driverConsumeNackAttempted")
+    && isExplicitFalse(record, "driverConsumeRetryScheduled")
+    && isExplicitFalse(record, "driverConsumingLiveConsumeAttempted")
+    && isExplicitFalse(record, "driverConsumingLiveQueueConsumptionEnabled")
+    && readNestedRecord(record, ["driverConsumingNoLiveSideEffects"]) !== undefined
+    && Object.values(readNestedRecord(record, ["driverConsumingNoLiveSideEffects"]) ?? {}).every(
+      (value) => value === false,
+    )
     && isExplicitFalse(record, "driverPublishingLivePublishAttempted")
     && isExplicitFalse(record, "driverPublishingLiveQueuePublishingEnabled")
     && readNestedRecord(record, ["driverPublishingNoLiveSideEffects"]) !== undefined
@@ -680,6 +822,7 @@ const summarizeQueueProviderAdapter = (
     && isExplicitFalse(record, "driverSdkBindingPackageBindingLiveQueuePublishingEnabled")
     && isExplicitFalse(record, "driverSdkBindingPackageBindingLiveWorkerExecutionEnabled")
     && isExplicitFalse(record, "driverSdkBindingPackageBindingSdkClientConstructed")
+    && isExplicitFalse(record, "liveQueueConsumptionEnabled")
     && isExplicitFalse(record, "liveQueuePublishingEnabled")
     && isExplicitFalse(record, "liveWorkerExecutionEnabled");
 
@@ -697,12 +840,32 @@ const summarizeQueueProviderAdapter = (
     driverDiagnosticCodes: getStringArray(record, "driverDiagnosticCodes"),
     driverDisabledLiveOperationCount: getNumber(record, "driverDisabledLiveOperationCount"),
     driverId: getString(record, "driverId"),
+    driverLiveQueueConsumptionEnabled: false,
     driverLiveQueuePublishingEnabled: false,
     driverLiveWorkerExecutionEnabled: false,
     driverMode: getString(record, "driverMode"),
     driverOperationCount: getNumber(record, "driverOperationCount"),
     driverProductionReady: false,
     driverProviderId: getString(record, "driverProviderId"),
+    driverConsumeAckAttempted: false,
+    driverConsumeAttemptPolicy: getString(record, "driverConsumeAttemptPolicy"),
+    driverConsumeDeadLetterAttempted: false,
+    driverConsumeDiagnosticCodes: getStringArray(record, "driverConsumeDiagnosticCodes"),
+    driverConsumeNackAttempted: false,
+    driverConsumeRequestEvaluated: getBoolean(record, "driverConsumeRequestEvaluated"),
+    driverConsumeResultStatus: getString(record, "driverConsumeResultStatus"),
+    driverConsumeRetryScheduled: false,
+    driverConsumingActivationStatus: getString(record, "driverConsumingActivationStatus"),
+    driverConsumingBlockerCount: getNumber(record, "driverConsumingBlockerCount"),
+    driverConsumingConsumerId: getString(record, "driverConsumingConsumerId"),
+    driverConsumingConsumerProvided: getBoolean(record, "driverConsumingConsumerProvided"),
+    driverConsumingHandlerRegistryProvided: getBoolean(record, "driverConsumingHandlerRegistryProvided"),
+    driverConsumingLiveConsumeAttempted: false,
+    driverConsumingLiveQueueConsumptionEnabled: false,
+    driverConsumingNoLiveSideEffects: readNestedRecord(record, ["driverConsumingNoLiveSideEffects"]) as Record<string, false>,
+    driverConsumingProductionReady: false,
+    driverConsumingRequiredConfigKeys: getStringArray(record, "driverConsumingRequiredConfigKeys"),
+    driverConsumingStatus: getString(record, "driverConsumingStatus"),
     driverPublishAttemptPolicy: getString(record, "driverPublishAttemptPolicy"),
     driverPublishDiagnosticCodes: getStringArray(record, "driverPublishDiagnosticCodes"),
     driverPublishRequestEvaluated: getBoolean(record, "driverPublishRequestEvaluated"),
@@ -766,6 +929,7 @@ const summarizeQueueProviderAdapter = (
     driverSdkBindingValid: getBoolean(record, "driverSdkBindingValid"),
     driverStatus: getString(record, "driverStatus"),
     driverValid: getBoolean(record, "driverValid"),
+    liveQueueConsumptionEnabled: false,
     liveQueuePublishingEnabled: false,
     liveWorkerExecutionEnabled: false,
     mode: getString(record, "mode"),
@@ -1151,16 +1315,47 @@ const isQueueRuntimeFoundationSmokeReady = (
   }
 
   return summary.productionReady === false
+    && summary.liveQueueConsumptionEnabled === false
     && summary.liveQueuePublishingEnabled === false
     && summary.liveWorkerExecutionEnabled === false
     && summary.liveSchedulerExecutionEnabled === false
     && summary.liveCronExecutionEnabled === false
     && summary.queuePlanCount >= 9
     && summary.dryRunEnqueueEnabled === true
+    && isQueueConsumingSmokeReady(summary.liveQueueConsumingReadiness)
     && isQueuePublishingSmokeReady(summary.liveQueuePublishingReadiness)
     && isQueueProviderAdapterSmokeReady(summary.providerAdapter)
     && summary.status === "local_ready"
     && summary.valid === true;
+};
+
+const isQueueConsumingSmokeReady = (
+  summary: BackendRuntimeSmokeQueueConsumingReadinessSummary | undefined,
+): summary is BackendRuntimeSmokeQueueConsumingReadinessSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.ackAttempted === false
+    && summary.deadLetterAttempted === false
+    && summary.liveConsumeAttempted === false
+    && summary.liveQueueConsumptionEnabled === false
+    && summary.nackAttempted === false
+    && summary.retryScheduled === false
+    && summary.activationStatus === "disabled"
+    && summary.blockerCount === 0
+    && summary.diagnosticCodes.length === 0
+    && summary.consumeAttemptPolicy === "disabled_no_live"
+    && summary.consumeRequestEvaluated === false
+    && summary.consumeResultStatus === "not_requested"
+    && summary.consumerId === "not_configured"
+    && summary.consumerProvided === false
+    && summary.handlerRegistryProvided === false
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_LIVE_QUEUE_CONSUME_ENABLEMENT")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_LIVE_QUEUE_CONSUMER")
+    && summary.status === "disabled"
+    && Object.values(summary.noLiveSideEffects).every((value) => value === false);
 };
 
 const isQueuePublishingSmokeReady = (
@@ -1207,8 +1402,26 @@ const isQueueProviderAdapterSmokeReady = (
     && summary.driverValid === true
     && summary.driverActivationGateSatisfied === false
     && summary.driverProductionReady === false
+    && summary.driverLiveQueueConsumptionEnabled === false
     && summary.driverLiveQueuePublishingEnabled === false
     && summary.driverLiveWorkerExecutionEnabled === false
+    && summary.driverConsumingActivationStatus === "disabled"
+    && summary.driverConsumingBlockerCount === 0
+    && summary.driverConsumingLiveConsumeAttempted === false
+    && summary.driverConsumingLiveQueueConsumptionEnabled === false
+    && summary.driverConsumeAckAttempted === false
+    && summary.driverConsumeDeadLetterAttempted === false
+    && summary.driverConsumeNackAttempted === false
+    && summary.driverConsumeRetryScheduled === false
+    && summary.driverConsumeAttemptPolicy === "disabled_no_live"
+    && summary.driverConsumeResultStatus === "not_requested"
+    && summary.driverConsumingConsumerId === "not_configured"
+    && summary.driverConsumingConsumerProvided === false
+    && summary.driverConsumingHandlerRegistryProvided === false
+    && summary.driverConsumingRequiredConfigKeys.includes("CAMPAIGN_OS_LIVE_QUEUE_CONSUME_ENABLEMENT")
+    && summary.driverConsumingRequiredConfigKeys.includes("CAMPAIGN_OS_LIVE_QUEUE_CONSUMER")
+    && summary.driverConsumingStatus === "disabled"
+    && Object.values(summary.driverConsumingNoLiveSideEffects).every((value) => value === false)
     && summary.driverPublishingActivationStatus === "disabled"
     && summary.driverPublishingBlockerCount === 0
     && summary.driverPublishingLivePublishAttempted === false

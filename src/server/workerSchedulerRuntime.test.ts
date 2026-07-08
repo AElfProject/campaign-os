@@ -95,6 +95,12 @@ describe("worker scheduler runtime foundation", () => {
     expect(foundation.noLiveFlags).toEqual(workerSchedulerNoLiveFlags);
     expect(foundation.readiness).toMatchObject({
       blockerCount: 0,
+      consumeAckAttempted: false,
+      consumeDeadLetterAttempted: false,
+      consumeHandoffJobCount: 9,
+      consumeHandoffPolicyReady: true,
+      consumeNackAttempted: false,
+      consumeRetryScheduled: false,
       leaseStoreBlockerCount: 0,
       leaseStoreDiagnosticCodes: [],
       leaseStoreId: "local-dry-run",
@@ -157,6 +163,8 @@ describe("worker scheduler runtime foundation", () => {
     expect(foundation.readiness.idempotencyStoreLiveIdempotencyExecutionEnabled).toBe(false);
     expect(foundation.readiness.liveSchedulerExecutionEnabled).toBe(false);
     expect(foundation.readiness.liveWorkerExecutionEnabled).toBe(false);
+    expect(foundation.readiness.consumeHandoffJobCount).toBe(workerJobCatalog.length);
+    expect(foundation.readiness.consumeHandoffPolicyReady).toBe(true);
   });
 
   it("projects worker lease store readiness without enabling live scheduler or worker execution", () => {
@@ -230,6 +238,8 @@ describe("worker scheduler runtime foundation", () => {
     expect(foundation.status).toBe("blocked");
     expect(foundation.valid).toBe(false);
     expect(foundation.productionReady).toBe(false);
+    expect(foundation.readiness.consumeHandoffJobCount).toBe(workerJobCatalog.length);
+    expect(foundation.readiness.consumeHandoffPolicyReady).toBe(false);
     expect(foundation.blockerCount).toBe(workerSchedulerProductionPreconditions.length);
     expect(foundation.diagnosticCodes).toEqual([
       "WORKER_QUEUE_MISSING",

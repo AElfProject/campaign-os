@@ -30,6 +30,12 @@ import {
   createLiveQueuePublishingReadiness,
   type LiveQueuePublisher,
 } from "./liveQueuePublishingReadiness";
+import {
+  createLiveQueueConsumeLoopReadiness,
+  evaluateLiveQueueConsumeMessage,
+  type LiveQueueConsumer,
+  type LiveQueueHandler,
+} from "./liveQueueConsumeLoop";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
 import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
@@ -84,6 +90,31 @@ const liveQueuePublisher: LiveQueuePublisher = {
   }),
   publisherId: "test-live-queue-publisher",
 };
+
+const liveQueueConsumer: LiveQueueConsumer = {
+  ack: () => ({ operationId: "ack-verification-jobs-task-verification-worker", status: "accepted" }),
+  consumerId: "test-live-queue-consumer",
+  deadLetter: () => ({ operationId: "dead-letter-verification-jobs-task-verification-worker", status: "accepted" }),
+  nack: () => ({ operationId: "nack-verification-jobs-task-verification-worker", status: "accepted" }),
+  reserve: () => ({ operationId: "reserve-verification-jobs-task-verification-worker", status: "accepted" }),
+  retry: () => ({ operationId: "retry-verification-jobs-task-verification-worker", status: "accepted" }),
+};
+
+const liveQueueHandlers: LiveQueueHandler[] = [
+  {
+    handle: () => ({ operationId: "handle-verification-jobs-task-verification-worker", status: "completed" }),
+    handlerId: "test-live-queue-handler",
+    jobIds: ["task-verification-worker"],
+  },
+];
+
+const consumeReadyEnv = {
+  ...bullmqConstructionReadyEnv,
+  CAMPAIGN_OS_CONSUME_HANDLER_REGISTRY: "handler-registry-ref:consume",
+  CAMPAIGN_OS_LIVE_QUEUE_CONSUME_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_LIVE_QUEUE_CONSUMER: "test-live-queue-consumer",
+  CAMPAIGN_OS_RETRY_POLICY: "retry:exponential",
+} satisfies Record<string, unknown>;
 
 const serializedSchedulerOutput = () => {
   const foundation = createSchedulerRuntimeFoundation();
@@ -528,6 +559,105 @@ describe("scheduler runtime separation boundaries", () => {
       productionWriteAttempted: false,
       status: "accepted_local_fake",
     });
+  });
+
+  it("keeps ready consume metadata from enabling scheduler execution or publish fallback paths", () => {
+    const consumeReadiness = createLiveQueueConsumeLoopReadiness({
+      constructionFactory: constructedBullmqFactory,
+      consumer: liveQueueConsumer,
+      env: consumeReadyEnv,
+      handlers: liveQueueHandlers,
+      liveQueuePublisher,
+      profileId: "production-required",
+    });
+    const consumeResult = evaluateLiveQueueConsumeMessage(
+      {
+        attempt: 1,
+        idempotencyReference: "idempotency-ref:task-verification-worker",
+        jobId: "task-verification-worker",
+        leaseReference: "lease-ref:task-verification-worker",
+        payloadReference: "payload-ref:task-verification-worker",
+        queueId: "verification-jobs",
+        traceId: "trace-ready-consume-scheduler-separation",
+      },
+      { readiness: consumeReadiness },
+    );
+    const scheduler = createSchedulerRuntimeFoundation();
+    const queue = queueRuntime.createQueueRuntimeFoundation({
+      env: consumeReadyEnv,
+      profileId: "production-required",
+    });
+    const triggerResult = dryRunSchedulerTrigger({
+      idempotencyKey: "idempotency:task-verification-on-request:campaign-1",
+      jobId: "task-verification-worker",
+      queueHandoffReference: "queue-handoff:task-verification-worker-queue-plan",
+      scheduleId: "task-verification-on-request",
+      scheduledFor: "2026-07-07T13:30:00Z",
+      traceId: "trace-ready-consume-trigger-separation",
+      triggerSource: "api_request",
+      windowEnd: "2026-07-07T13:35:00Z",
+      windowStart: "2026-07-07T13:25:00Z",
+    });
+
+    expect(consumeReadiness).toMatchObject({
+      consumeAttemptAllowed: true,
+      liveConsumeAttempted: false,
+      liveQueueConsumptionEnabled: true,
+      productionReady: false,
+      status: "ready",
+      valid: true,
+    });
+    expect(consumeReadiness.noLiveSideEffects).toMatchObject({
+      analyticsWrites: false,
+      contractCalls: false,
+      objectStorageWrites: false,
+      providerCalls: false,
+      publishFallback: false,
+      rewardDistribution: false,
+      schedulerExecution: false,
+      telemetryExport: false,
+      workerExecution: false,
+    });
+    expect(consumeResult).toMatchObject({
+      ackAttempted: true,
+      liveConsumeAttempted: true,
+      published: false,
+      status: "accepted",
+    });
+    expect(consumeResult.noLiveSideEffects).toMatchObject({
+      publishFallback: false,
+      schedulerExecution: false,
+      telemetryExport: false,
+      workerExecution: false,
+    });
+    expect(scheduler.readiness).toMatchObject({
+      liveCronExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
+    expect(scheduler.noLiveFlags.liveWorkerExecutionEnabled).toBe(false);
+    expect(triggerResult).toMatchObject({
+      liveCronExecutionEnabled: false,
+      liveExecutionAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
+    expect(queue.readiness).toMatchObject({
+      liveQueuePublishingEnabled: false,
+      providerAdapterDriverConsumingLiveConsumeAttempted: false,
+      providerAdapterDriverConsumingLiveQueueConsumptionEnabled: false,
+      providerAdapterDriverSdkBindingPackageBindingLiveQueuePublishingEnabled: false,
+      providerAdapterDriverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false,
+      providerAdapterDriverSdkBindingPackageBindingWorkerConstructed: false,
+    });
+    expect(queue.providerAdapter.operationCapabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ liveEnabled: false, operation: "ack" }),
+        expect.objectContaining({ liveEnabled: false, operation: "dead_letter" }),
+        expect.objectContaining({ liveEnabled: false, operation: "publish" }),
+        expect.objectContaining({ liveEnabled: false, operation: "retry" }),
+      ]),
+    );
   });
 
   it("keeps queue provider and scheduler readiness from satisfying idempotency readiness", () => {

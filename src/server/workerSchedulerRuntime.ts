@@ -191,6 +191,12 @@ export interface WorkerSchedulerIdempotencyStoreSummary {
 
 export interface WorkerSchedulerReadinessProjection {
   blockerCount: number;
+  consumeAckAttempted: false;
+  consumeDeadLetterAttempted: false;
+  consumeHandoffJobCount: number;
+  consumeHandoffPolicyReady: boolean;
+  consumeNackAttempted: false;
+  consumeRetryScheduled: false;
   diagnosticCodes: WorkerSchedulerDiagnosticCode[];
   idempotencyStoreBlockerCount: number;
   idempotencyStoreDiagnosticCodes: WorkerIdempotencyDiagnosticCode[];
@@ -939,6 +945,12 @@ const createReadinessProjection = (
   idempotencyStore: WorkerSchedulerIdempotencyStoreSummary,
 ): WorkerSchedulerReadinessProjection => ({
   blockerCount,
+  consumeAckAttempted: false,
+  consumeDeadLetterAttempted: false,
+  consumeHandoffJobCount: workerJobCatalog.length,
+  consumeHandoffPolicyReady: blockerCount === 0,
+  consumeNackAttempted: false,
+  consumeRetryScheduled: false,
   diagnosticCodes: diagnostics.map((item) => item.code),
   idempotencyStoreBlockerCount: idempotencyStore.blockerCount,
   idempotencyStoreDiagnosticCodes: idempotencyStore.diagnosticCodes,

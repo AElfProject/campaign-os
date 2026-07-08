@@ -12,6 +12,12 @@ import {
   createLiveQueuePublishingReadiness,
   type LiveQueuePublisher,
 } from "./liveQueuePublishingReadiness";
+import {
+  createLiveQueueConsumeLoopReadiness,
+  evaluateLiveQueueConsumeMessage,
+  type LiveQueueConsumer,
+  type LiveQueueHandler,
+} from "./liveQueueConsumeLoop";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
 import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
@@ -84,6 +90,28 @@ const liveQueuePublisher: LiveQueuePublisher = {
   }),
   publisherId: "test-live-queue-publisher",
 };
+
+const liveQueueConsumer: LiveQueueConsumer = {
+  ack: () => ({ operationId: "ack-verification-jobs-task-verification-worker", status: "accepted" }),
+  consumerId: "test-live-queue-consumer",
+  reserve: () => ({ operationId: "reserve-verification-jobs-task-verification-worker", status: "accepted" }),
+};
+
+const liveQueueHandlers: LiveQueueHandler[] = [
+  {
+    handle: () => ({ operationId: "handle-verification-jobs-task-verification-worker", status: "completed" }),
+    handlerId: "test-live-queue-handler",
+    jobIds: ["task-verification-worker"],
+  },
+];
+
+const consumeReadyEnv = {
+  ...bullmqConstructionReadyEnv,
+  CAMPAIGN_OS_CONSUME_HANDLER_REGISTRY: "handler-registry-ref:consume",
+  CAMPAIGN_OS_LIVE_QUEUE_CONSUME_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_LIVE_QUEUE_CONSUMER: "test-live-queue-consumer",
+  CAMPAIGN_OS_RETRY_POLICY: "retry:exponential",
+} satisfies Record<string, unknown>;
 
 describe("observability exporter foundation", () => {
   it("declares a stable foundation id and supported profiles", () => {
@@ -475,6 +503,133 @@ describe("observability exporter foundation", () => {
       productionWriteAttempted: false,
       status: "accepted_dry_run",
     });
+  });
+
+  it("keeps consume readiness from enabling telemetry export or leaking handler and consumer errors", () => {
+    const foundation = createObservabilityExporterFoundation({
+      env: {
+        ...consumeReadyEnv,
+        CAMPAIGN_OS_OBSERVABILITY_ALERT_ROUTING: "alert-routing:manual-review",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER: "production-observability-exporter",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS: "credential-ref:observability",
+        CAMPAIGN_OS_OBSERVABILITY_LOG_SINK_URL: "log-sink-ref:structured",
+        CAMPAIGN_OS_OBSERVABILITY_METRIC_NAMESPACE: "campaign-os-runtime",
+        CAMPAIGN_OS_OBSERVABILITY_REDACTION_POLICY: "redaction:strict",
+        CAMPAIGN_OS_OBSERVABILITY_RETENTION_DAYS: "30",
+        CAMPAIGN_OS_OBSERVABILITY_RETRY_DEAD_LETTER_POLICY: "retry:manual-dead-letter",
+        CAMPAIGN_OS_OBSERVABILITY_RUNBOOK_URL: "runbook-ref:observability",
+        CAMPAIGN_OS_OBSERVABILITY_SINK: "production-metrics-sink",
+        CAMPAIGN_OS_OBSERVABILITY_TRACE_COLLECTOR_URL: "trace-collector-ref:structured",
+      },
+      profileId: "production-required",
+    });
+    const readiness = createLiveQueueConsumeLoopReadiness({
+      constructionFactory: constructedBullmqFactory,
+      consumer: liveQueueConsumer,
+      env: consumeReadyEnv,
+      handlers: liveQueueHandlers,
+      liveQueuePublisher,
+      profileId: "production-required",
+    });
+    const throwingConsumer: LiveQueueConsumer = {
+      ...liveQueueConsumer,
+      reserve: () => {
+        throw new Error("consumer redis-pass ELF_SECRET");
+      },
+    };
+    const throwingHandler: LiveQueueHandler = {
+      handle: () => {
+        throw new Error("handler raw-signature-sample ELF_SECRET");
+      },
+      handlerId: "throwing-live-queue-handler",
+      jobIds: ["task-verification-worker"],
+    };
+    const message = {
+      attempt: 1,
+      idempotencyReference: "idempotency-ref:task-verification-worker",
+      jobId: "task-verification-worker",
+      leaseReference: "lease-ref:task-verification-worker",
+      payloadReference: "payload-ref:task-verification-worker",
+      queueId: "verification-jobs",
+      traceId: "trace-consume-observability-separation",
+    };
+    const consumerResult = evaluateLiveQueueConsumeMessage(message, {
+      consumer: throwingConsumer,
+      readiness,
+    });
+    const handlerResult = evaluateLiveQueueConsumeMessage(message, {
+      handlers: [throwingHandler],
+      readiness,
+    });
+    const capture = captureObservabilityDryRun({
+      eventCategory: "queue",
+      labels: {
+        runtime: "live-queue-consume-loop",
+      },
+      metricName: "queue.consume.boundary",
+      operation: "metrics",
+      payloadReference: "payload-ref:queue:consume-boundary",
+      sourceRuntime: "queue-runtime",
+      traceId: "trace-consume-observability-capture",
+    });
+    const serialized = JSON.stringify({ consumerResult, foundation, handlerResult, readiness });
+
+    expect(readiness).toMatchObject({
+      consumeAttemptAllowed: true,
+      liveQueueConsumptionEnabled: true,
+      productionReady: false,
+      status: "ready",
+    });
+    expect(readiness.noLiveSideEffects).toMatchObject({
+      analyticsWrites: false,
+      contractCalls: false,
+      objectStorageWrites: false,
+      providerCalls: false,
+      rewardDistribution: false,
+      telemetryExport: false,
+      workerExecution: false,
+    });
+    expect(foundation.noLiveFlags).toMatchObject({
+      liveAlertRoutingEnabled: false,
+      liveLogExportEnabled: false,
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+    });
+    expect(foundation.readiness).toMatchObject({
+      liveAlertRoutingEnabled: false,
+      liveLogExportEnabled: false,
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      productionReady: false,
+    });
+    expect(consumerResult).toMatchObject({
+      diagnosticCodes: ["LIVE_QUEUE_CONSUMER_FAILED"],
+      handlerExecuted: false,
+      liveConsumeAttempted: true,
+      noLiveSideEffects: expect.objectContaining({ telemetryExport: false }),
+      status: "failed",
+    });
+    expect(handlerResult).toMatchObject({
+      diagnosticCodes: ["LIVE_QUEUE_HANDLER_FAILED"],
+      handlerExecuted: true,
+      liveConsumeAttempted: true,
+      noLiveSideEffects: expect.objectContaining({ telemetryExport: false }),
+      status: "failed",
+    });
+    expect(capture).toMatchObject({
+      liveAlertRoutingEnabled: false,
+      liveLogExportEnabled: false,
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportAttempted: false,
+      liveTraceExportEnabled: false,
+      productionWriteAttempted: false,
+      status: "accepted_dry_run",
+    });
+    expect(serialized).not.toContain("redis-pass");
+    expect(serialized).not.toContain("raw-signature-sample");
+    expect(serialized).not.toContain("ELF_SECRET");
   });
 
   it("returns accepted, rejected, and dropped dry-run outcomes without live export", () => {

@@ -67,10 +67,27 @@ describe("queue provider adapter foundation", () => {
       driverBlockerCount: 0,
       driverDiagnosticCodes: [],
       driverId: "local-fake-queue-provider-driver",
+      driverLiveQueueConsumptionEnabled: false,
       driverLiveQueuePublishingEnabled: false,
       driverLiveWorkerExecutionEnabled: false,
       driverMode: "dry_run",
       driverProviderId: "local-fake",
+      driverConsumeAckAttempted: false,
+      driverConsumeAttemptPolicy: "disabled_no_live",
+      driverConsumeDeadLetterAttempted: false,
+      driverConsumeNackAttempted: false,
+      driverConsumeRequestEvaluated: false,
+      driverConsumeResultStatus: "not_requested",
+      driverConsumeRetryScheduled: false,
+      driverConsumingActivationStatus: "disabled",
+      driverConsumingBlockerCount: 0,
+      driverConsumingConsumerId: "not_configured",
+      driverConsumingConsumerProvided: false,
+      driverConsumingHandlerRegistryProvided: false,
+      driverConsumingLiveConsumeAttempted: false,
+      driverConsumingLiveQueueConsumptionEnabled: false,
+      driverConsumingProductionReady: false,
+      driverConsumingStatus: "disabled",
       driverPublishAttemptPolicy: "disabled_no_live",
       driverPublishRequestEvaluated: false,
       driverPublishResultStatus: "not_requested",
@@ -115,6 +132,7 @@ describe("queue provider adapter foundation", () => {
       driverSdkBindingValid: true,
       driverStatus: "local_ready",
       driverValid: true,
+      liveQueueConsumptionEnabled: false,
       liveQueuePublishingEnabled: false,
       liveWorkerExecutionEnabled: false,
       observabilityExporterBlockerCount: 0,
@@ -131,9 +149,25 @@ describe("queue provider adapter foundation", () => {
       activationGateSatisfied: false,
       blockerCount: 0,
       driverId: "local-fake-queue-provider-driver",
+      liveQueueConsumptionEnabled: false,
       liveQueuePublishingEnabled: false,
       liveWorkerExecutionEnabled: false,
       mode: "dry_run",
+      consumePosture: {
+        attemptPolicy: "disabled_no_live",
+        liveConsumeAttempted: false,
+        consumeRequestEvaluated: false,
+        resultStatus: "not_requested",
+        workerExecutionAttempted: false,
+      },
+      consumingReadiness: {
+        activationStatus: "disabled",
+        consumeAttemptAllowed: false,
+        consumerProvided: false,
+        handlerRegistryProvided: false,
+        liveQueueConsumptionEnabled: false,
+        status: "disabled",
+      },
       publishPosture: {
         attemptPolicy: "disabled_no_live",
         livePublishAttempted: false,
@@ -200,8 +234,18 @@ describe("queue provider adapter foundation", () => {
     expect(foundation.valid).toBe(true);
     expect(foundation.driver).toMatchObject({
       driverId: "metadata-only-queue-provider-driver",
+      liveQueueConsumptionEnabled: false,
       mode: "metadata_only",
       providerId: "metadata-only",
+      consumePosture: {
+        attemptPolicy: "disabled_no_live",
+        workerExecutionAttempted: false,
+      },
+      consumingReadiness: {
+        activationStatus: "metadata_only",
+        liveQueueConsumptionEnabled: false,
+        status: "scaffolded",
+      },
       sdkBinding: expect.objectContaining({
         bindingId: "metadata-only-queue-provider-sdk-binding",
         mode: "metadata_only",
@@ -403,6 +447,12 @@ describe("queue provider adapter foundation", () => {
       valid: true,
     });
     expect(foundation.readiness.driverSdkBindingSdkClientConstructed).toBe(false);
+    expect(foundation.readiness.driverLiveQueueConsumptionEnabled).toBe(false);
+    expect(foundation.readiness.driverConsumingActivationStatus).toBe("activation_required");
+    expect(foundation.readiness.driverConsumingLiveQueueConsumptionEnabled).toBe(false);
+    expect(foundation.readiness.driverConsumeAttemptPolicy).toBe("blocked_until_ready");
+    expect(foundation.readiness.driverConsumeRequestEvaluated).toBe(false);
+    expect(foundation.readiness.driverConsumeResultStatus).toBe("not_requested");
     expect(foundation.readiness.driverSdkBindingLiveProviderCallAttempted).toBe(false);
     expect(foundation.readiness.driverSdkBindingLiveQueuePublishingEnabled).toBe(false);
     expect(foundation.readiness.driverSdkBindingPackageBindingBlockerCount).toBe(0);

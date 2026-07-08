@@ -22,6 +22,10 @@ import {
 } from "./queueProviderAdapter";
 import {
   executeLocalFakeQueueProviderOperation,
+  type QueueProviderDriverConsumeAttemptPolicy,
+  type QueueProviderDriverConsumePosture,
+  type QueueProviderDriverConsumeReadinessSummary,
+  type QueueProviderDriverConsumeResultStatus,
   type QueueProviderDriverDiagnosticCode,
   type QueueProviderDriverFoundationStatus,
   type QueueProviderDriverMode,
@@ -143,6 +147,7 @@ export interface QueueRuntimeProviderAdapterSummary {
   driverBlockerCount: number;
   driverDiagnosticCodes: QueueProviderDriverDiagnosticCode[];
   driverId: string;
+  driverLiveQueueConsumptionEnabled: false;
   driverLiveQueuePublishingEnabled: false;
   driverLiveWorkerExecutionEnabled: false;
   driverMode: QueueProviderDriverMode;
@@ -150,6 +155,25 @@ export interface QueueRuntimeProviderAdapterSummary {
   driverOperationCount: number;
   driverProductionReady: false;
   driverProviderId: string;
+  driverConsumeAckAttempted: false;
+  driverConsumeAttemptPolicy: QueueProviderDriverConsumeAttemptPolicy;
+  driverConsumeDeadLetterAttempted: false;
+  driverConsumeDiagnosticCodes: QueueProviderDriverConsumePosture["diagnosticCodes"];
+  driverConsumeNackAttempted: false;
+  driverConsumeRequestEvaluated: false;
+  driverConsumeResultStatus: QueueProviderDriverConsumeResultStatus;
+  driverConsumeRetryScheduled: false;
+  driverConsumingActivationStatus: QueueProviderDriverConsumeReadinessSummary["activationStatus"];
+  driverConsumingBlockerCount: number;
+  driverConsumingConsumerId: string;
+  driverConsumingConsumerProvided: boolean;
+  driverConsumingHandlerRegistryProvided: boolean;
+  driverConsumingLiveConsumeAttempted: boolean;
+  driverConsumingLiveQueueConsumptionEnabled: boolean;
+  driverConsumingNoLiveSideEffects: QueueProviderDriverConsumeReadinessSummary["noLiveSideEffects"];
+  driverConsumingProductionReady: false;
+  driverConsumingRequiredConfigKeys: string[];
+  driverConsumingStatus: QueueProviderDriverConsumeReadinessSummary["status"];
   driverPublishAttemptPolicy: QueueProviderDriverPublishAttemptPolicy;
   driverPublishDiagnosticCodes: QueueProviderDriverPublishPosture["diagnosticCodes"];
   driverPublishRequestEvaluated: boolean;
@@ -167,6 +191,7 @@ export interface QueueRuntimeProviderAdapterSummary {
   driverSdkBinding: QueueProviderDriverSdkBindingSummary;
   driverStatus: QueueProviderDriverFoundationStatus;
   driverValid: boolean;
+  liveQueueConsumptionEnabled: false;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode: QueueProviderAdapterMode;
@@ -278,6 +303,7 @@ export interface QueueRuntimeReadinessProjection {
   leaseStoreMode: WorkerLeaseStoreMode;
   leaseStoreRequiredConfigKeys: string[];
   leaseStoreStatus: WorkerLeaseStoreFoundationStatus;
+  liveQueueConsumptionEnabled: false;
   liveQueuePublishingEnabled: false;
   observabilityExporterBlockerCount: number;
   observabilityExporterDiagnosticCodes: ObservabilityExporterDiagnosticCode[];
@@ -291,12 +317,32 @@ export interface QueueRuntimeReadinessProjection {
   providerAdapterDriverBlockerCount: number;
   providerAdapterDriverDiagnosticCodes: QueueProviderDriverDiagnosticCode[];
   providerAdapterDriverId: string;
+  providerAdapterDriverLiveQueueConsumptionEnabled: false;
   providerAdapterDriverLiveQueuePublishingEnabled: false;
   providerAdapterDriverLiveWorkerExecutionEnabled: false;
   providerAdapterDriverMode: QueueProviderDriverMode;
   providerAdapterDriverOperationCount: number;
   providerAdapterDriverProductionReady: false;
   providerAdapterDriverProviderId: string;
+  providerAdapterDriverConsumeAckAttempted: false;
+  providerAdapterDriverConsumeAttemptPolicy: QueueProviderDriverConsumeAttemptPolicy;
+  providerAdapterDriverConsumeDeadLetterAttempted: false;
+  providerAdapterDriverConsumeDiagnosticCodes: QueueProviderDriverConsumePosture["diagnosticCodes"];
+  providerAdapterDriverConsumeNackAttempted: false;
+  providerAdapterDriverConsumeRequestEvaluated: false;
+  providerAdapterDriverConsumeResultStatus: QueueProviderDriverConsumeResultStatus;
+  providerAdapterDriverConsumeRetryScheduled: false;
+  providerAdapterDriverConsumingActivationStatus: QueueProviderDriverConsumeReadinessSummary["activationStatus"];
+  providerAdapterDriverConsumingBlockerCount: number;
+  providerAdapterDriverConsumingConsumerId: string;
+  providerAdapterDriverConsumingConsumerProvided: boolean;
+  providerAdapterDriverConsumingHandlerRegistryProvided: boolean;
+  providerAdapterDriverConsumingLiveConsumeAttempted: boolean;
+  providerAdapterDriverConsumingLiveQueueConsumptionEnabled: boolean;
+  providerAdapterDriverConsumingNoLiveSideEffects: QueueProviderDriverConsumeReadinessSummary["noLiveSideEffects"];
+  providerAdapterDriverConsumingProductionReady: false;
+  providerAdapterDriverConsumingRequiredConfigKeys: string[];
+  providerAdapterDriverConsumingStatus: QueueProviderDriverConsumeReadinessSummary["status"];
   providerAdapterDriverPublishAttemptPolicy: QueueProviderDriverPublishAttemptPolicy;
   providerAdapterDriverPublishDiagnosticCodes: QueueProviderDriverPublishPosture["diagnosticCodes"];
   providerAdapterDriverPublishRequestEvaluated: boolean;
@@ -968,6 +1014,7 @@ const createReadinessProjection = (
   leaseStoreMode: leaseStore.mode,
   leaseStoreRequiredConfigKeys: leaseStore.requiredConfigKeys,
   leaseStoreStatus: leaseStore.status,
+  liveQueueConsumptionEnabled: false,
   liveQueuePublishingEnabled: false,
   observabilityExporterBlockerCount: observabilityExporter.blockerCount,
   observabilityExporterDiagnosticCodes: observabilityExporter.diagnosticCodes,
@@ -981,12 +1028,32 @@ const createReadinessProjection = (
   providerAdapterDriverBlockerCount: providerAdapter.driverBlockerCount,
   providerAdapterDriverDiagnosticCodes: providerAdapter.driverDiagnosticCodes,
   providerAdapterDriverId: providerAdapter.driverId,
+  providerAdapterDriverLiveQueueConsumptionEnabled: false,
   providerAdapterDriverLiveQueuePublishingEnabled: false,
   providerAdapterDriverLiveWorkerExecutionEnabled: false,
   providerAdapterDriverMode: providerAdapter.driverMode,
   providerAdapterDriverOperationCount: providerAdapter.driverOperationCount,
   providerAdapterDriverProductionReady: false,
   providerAdapterDriverProviderId: providerAdapter.driverProviderId,
+  providerAdapterDriverConsumeAckAttempted: false,
+  providerAdapterDriverConsumeAttemptPolicy: providerAdapter.driverConsumeAttemptPolicy,
+  providerAdapterDriverConsumeDeadLetterAttempted: false,
+  providerAdapterDriverConsumeDiagnosticCodes: [...providerAdapter.driverConsumeDiagnosticCodes],
+  providerAdapterDriverConsumeNackAttempted: false,
+  providerAdapterDriverConsumeRequestEvaluated: false,
+  providerAdapterDriverConsumeResultStatus: providerAdapter.driverConsumeResultStatus,
+  providerAdapterDriverConsumeRetryScheduled: false,
+  providerAdapterDriverConsumingActivationStatus: providerAdapter.driverConsumingActivationStatus,
+  providerAdapterDriverConsumingBlockerCount: providerAdapter.driverConsumingBlockerCount,
+  providerAdapterDriverConsumingConsumerId: providerAdapter.driverConsumingConsumerId,
+  providerAdapterDriverConsumingConsumerProvided: providerAdapter.driverConsumingConsumerProvided,
+  providerAdapterDriverConsumingHandlerRegistryProvided: providerAdapter.driverConsumingHandlerRegistryProvided,
+  providerAdapterDriverConsumingLiveConsumeAttempted: providerAdapter.driverConsumingLiveConsumeAttempted,
+  providerAdapterDriverConsumingLiveQueueConsumptionEnabled: providerAdapter.driverConsumingLiveQueueConsumptionEnabled,
+  providerAdapterDriverConsumingNoLiveSideEffects: { ...providerAdapter.driverConsumingNoLiveSideEffects },
+  providerAdapterDriverConsumingProductionReady: false,
+  providerAdapterDriverConsumingRequiredConfigKeys: [...providerAdapter.driverConsumingRequiredConfigKeys],
+  providerAdapterDriverConsumingStatus: providerAdapter.driverConsumingStatus,
   providerAdapterDriverPublishAttemptPolicy: providerAdapter.driverPublishAttemptPolicy,
   providerAdapterDriverPublishDiagnosticCodes: [...providerAdapter.driverPublishDiagnosticCodes],
   providerAdapterDriverPublishRequestEvaluated: providerAdapter.driverPublishRequestEvaluated,
@@ -1117,6 +1184,7 @@ const createProviderAdapterSummary = (
   driverBlockerCount: providerAdapter.driver.blockerCount,
   driverDiagnosticCodes: providerAdapter.driver.diagnosticCodes,
   driverId: providerAdapter.driver.driverId,
+  driverLiveQueueConsumptionEnabled: false,
   driverLiveQueuePublishingEnabled: false,
   driverLiveWorkerExecutionEnabled: false,
   driverMode: providerAdapter.driver.mode,
@@ -1124,6 +1192,25 @@ const createProviderAdapterSummary = (
   driverOperationCount: providerAdapter.driver.operationCount,
   driverProductionReady: false,
   driverProviderId: providerAdapter.driver.providerId,
+  driverConsumeAckAttempted: false,
+  driverConsumeAttemptPolicy: providerAdapter.driver.consumePosture.attemptPolicy,
+  driverConsumeDeadLetterAttempted: false,
+  driverConsumeDiagnosticCodes: [...providerAdapter.driver.consumePosture.diagnosticCodes],
+  driverConsumeNackAttempted: false,
+  driverConsumeRequestEvaluated: false,
+  driverConsumeResultStatus: providerAdapter.driver.consumePosture.resultStatus,
+  driverConsumeRetryScheduled: false,
+  driverConsumingActivationStatus: providerAdapter.driver.consumingReadiness.activationStatus,
+  driverConsumingBlockerCount: providerAdapter.driver.consumingReadiness.blockerCount,
+  driverConsumingConsumerId: providerAdapter.driver.consumingReadiness.consumerId,
+  driverConsumingConsumerProvided: providerAdapter.driver.consumingReadiness.consumerProvided,
+  driverConsumingHandlerRegistryProvided: providerAdapter.driver.consumingReadiness.handlerRegistryProvided,
+  driverConsumingLiveConsumeAttempted: providerAdapter.driver.consumingReadiness.liveConsumeAttempted,
+  driverConsumingLiveQueueConsumptionEnabled: providerAdapter.driver.consumingReadiness.liveQueueConsumptionEnabled,
+  driverConsumingNoLiveSideEffects: { ...providerAdapter.driver.consumingReadiness.noLiveSideEffects },
+  driverConsumingProductionReady: false,
+  driverConsumingRequiredConfigKeys: [...providerAdapter.driver.consumingReadiness.requiredConfigKeys],
+  driverConsumingStatus: providerAdapter.driver.consumingReadiness.status,
   driverPublishAttemptPolicy: providerAdapter.driver.publishPosture.attemptPolicy,
   driverPublishDiagnosticCodes: [...providerAdapter.driver.publishPosture.diagnosticCodes],
   driverPublishRequestEvaluated: providerAdapter.driver.publishPosture.publishRequestEvaluated,
@@ -1158,6 +1245,7 @@ const createProviderAdapterSummary = (
   },
   driverStatus: providerAdapter.driver.status,
   driverValid: providerAdapter.driver.valid,
+  liveQueueConsumptionEnabled: false,
   liveQueuePublishingEnabled: false,
   liveWorkerExecutionEnabled: false,
   mode: providerAdapter.mode,

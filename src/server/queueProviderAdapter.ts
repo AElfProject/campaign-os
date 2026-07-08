@@ -11,6 +11,10 @@ import {
   type QueueProviderDriverDiagnosticCode,
   type QueueProviderDriverFoundationStatus,
   type QueueProviderDriverMode,
+  type QueueProviderDriverConsumeAttemptPolicy,
+  type QueueProviderDriverConsumePosture,
+  type QueueProviderDriverConsumeReadinessSummary,
+  type QueueProviderDriverConsumeResultStatus,
   type QueueProviderDriverOperationCapability,
   type QueueProviderDriverPublishAttemptPolicy,
   type QueueProviderDriverPublishPosture,
@@ -127,6 +131,7 @@ export interface QueueProviderDriverSummary {
   diagnosticCodes: QueueProviderDriverDiagnosticCode[];
   disabledLiveOperationCount: number;
   driverId: string;
+  liveQueueConsumptionEnabled: false;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode: QueueProviderDriverMode;
@@ -134,6 +139,8 @@ export interface QueueProviderDriverSummary {
   operationCount: number;
   productionReady: false;
   providerId: string;
+  consumePosture: QueueProviderDriverConsumePosture;
+  consumingReadiness: QueueProviderDriverConsumeReadinessSummary;
   publishPosture: QueueProviderDriverPublishPosture;
   publishingReadiness: QueueProviderDriverPublishingReadinessSummary;
   queueRouteCount: number;
@@ -154,12 +161,32 @@ export interface QueueProviderAdapterReadinessProjection {
   driverDiagnosticCodes: QueueProviderDriverDiagnosticCode[];
   driverDisabledLiveOperationCount: number;
   driverId: string;
+  driverLiveQueueConsumptionEnabled: false;
   driverLiveQueuePublishingEnabled: false;
   driverLiveWorkerExecutionEnabled: false;
   driverMode: QueueProviderDriverMode;
   driverOperationCount: number;
   driverProductionReady: false;
   driverProviderId: string;
+  driverConsumeAckAttempted: false;
+  driverConsumeAttemptPolicy: QueueProviderDriverConsumeAttemptPolicy;
+  driverConsumeDeadLetterAttempted: false;
+  driverConsumeDiagnosticCodes: QueueProviderDriverConsumePosture["diagnosticCodes"];
+  driverConsumeNackAttempted: false;
+  driverConsumeRequestEvaluated: false;
+  driverConsumeResultStatus: QueueProviderDriverConsumeResultStatus;
+  driverConsumeRetryScheduled: false;
+  driverConsumingActivationStatus: QueueProviderDriverConsumeReadinessSummary["activationStatus"];
+  driverConsumingBlockerCount: number;
+  driverConsumingConsumerId: string;
+  driverConsumingConsumerProvided: boolean;
+  driverConsumingHandlerRegistryProvided: boolean;
+  driverConsumingLiveConsumeAttempted: boolean;
+  driverConsumingLiveQueueConsumptionEnabled: boolean;
+  driverConsumingNoLiveSideEffects: QueueProviderDriverConsumeReadinessSummary["noLiveSideEffects"];
+  driverConsumingProductionReady: false;
+  driverConsumingRequiredConfigKeys: string[];
+  driverConsumingStatus: QueueProviderDriverConsumeReadinessSummary["status"];
   driverPublishAttemptPolicy: QueueProviderDriverPublishAttemptPolicy;
   driverPublishDiagnosticCodes: QueueProviderDriverPublishPosture["diagnosticCodes"];
   driverPublishRequestEvaluated: boolean;
@@ -223,6 +250,7 @@ export interface QueueProviderAdapterReadinessProjection {
   driverSdkBindingValid: boolean;
   driverStatus: QueueProviderDriverFoundationStatus;
   driverValid: boolean;
+  liveQueueConsumptionEnabled: false;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode: QueueProviderAdapterMode;
@@ -668,12 +696,32 @@ const createReadinessProjection = ({
   driverDiagnosticCodes: driver.diagnosticCodes,
   driverDisabledLiveOperationCount: driver.disabledLiveOperationCount,
   driverId: driver.driverId,
+  driverLiveQueueConsumptionEnabled: false,
   driverLiveQueuePublishingEnabled: false,
   driverLiveWorkerExecutionEnabled: false,
   driverMode: driver.mode,
   driverOperationCount: driver.operationCount,
   driverProductionReady: false,
   driverProviderId: driver.providerId,
+  driverConsumeAckAttempted: false,
+  driverConsumeAttemptPolicy: driver.consumePosture.attemptPolicy,
+  driverConsumeDeadLetterAttempted: false,
+  driverConsumeDiagnosticCodes: [...driver.consumePosture.diagnosticCodes],
+  driverConsumeNackAttempted: false,
+  driverConsumeRequestEvaluated: false,
+  driverConsumeResultStatus: driver.consumePosture.resultStatus,
+  driverConsumeRetryScheduled: false,
+  driverConsumingActivationStatus: driver.consumingReadiness.activationStatus,
+  driverConsumingBlockerCount: driver.consumingReadiness.blockerCount,
+  driverConsumingConsumerId: driver.consumingReadiness.consumerId,
+  driverConsumingConsumerProvided: driver.consumingReadiness.consumerProvided,
+  driverConsumingHandlerRegistryProvided: driver.consumingReadiness.handlerRegistryProvided,
+  driverConsumingLiveConsumeAttempted: false,
+  driverConsumingLiveQueueConsumptionEnabled: driver.consumingReadiness.liveQueueConsumptionEnabled,
+  driverConsumingNoLiveSideEffects: { ...driver.consumingReadiness.noLiveSideEffects },
+  driverConsumingProductionReady: false,
+  driverConsumingRequiredConfigKeys: [...driver.consumingReadiness.requiredConfigKeys],
+  driverConsumingStatus: driver.consumingReadiness.status,
   driverPublishAttemptPolicy: driver.publishPosture.attemptPolicy,
   driverPublishDiagnosticCodes: [...driver.publishPosture.diagnosticCodes],
   driverPublishRequestEvaluated: driver.publishPosture.publishRequestEvaluated,
@@ -737,6 +785,7 @@ const createReadinessProjection = ({
   driverSdkBindingValid: driver.sdkBinding.valid,
   driverStatus: driver.status,
   driverValid: driver.valid,
+  liveQueueConsumptionEnabled: false,
   liveQueuePublishingEnabled: false,
   liveWorkerExecutionEnabled: false,
   mode,
@@ -771,6 +820,7 @@ const createDriverSummary = (
   diagnosticCodes: driver.diagnosticCodes,
   disabledLiveOperationCount: driver.readiness.disabledLiveOperationCount,
   driverId: driver.driverId,
+  liveQueueConsumptionEnabled: false,
   liveQueuePublishingEnabled: false,
   liveWorkerExecutionEnabled: false,
   mode: driver.mode,
@@ -778,6 +828,17 @@ const createDriverSummary = (
   operationCount: driver.readiness.operationCount,
   productionReady: false,
   providerId: driver.providerId,
+  consumePosture: {
+    ...driver.consumePosture,
+    diagnosticCodes: [...driver.consumePosture.diagnosticCodes],
+    noLiveSideEffects: { ...driver.consumePosture.noLiveSideEffects },
+  },
+  consumingReadiness: {
+    ...driver.consumingReadiness,
+    diagnosticCodes: [...driver.consumingReadiness.diagnosticCodes],
+    noLiveSideEffects: { ...driver.consumingReadiness.noLiveSideEffects },
+    requiredConfigKeys: [...driver.consumingReadiness.requiredConfigKeys],
+  },
   publishPosture: {
     ...driver.publishPosture,
     diagnosticCodes: [...driver.publishPosture.diagnosticCodes],
