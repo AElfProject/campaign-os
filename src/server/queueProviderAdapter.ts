@@ -165,6 +165,18 @@ export interface QueueProviderAdapterReadinessProjection {
   driverSdkBindingLiveWorkerExecutionEnabled: false;
   driverSdkBindingMode: QueueProviderDriverSdkBindingSummary["mode"];
   driverSdkBindingOperationCount: number;
+  driverSdkBindingPackageBindingBlockerCount: number;
+  driverSdkBindingPackageBindingBrowserBundleAllowed: false;
+  driverSdkBindingPackageBindingDiagnosticCodes: QueueProviderDriverSdkBindingSummary["packageBinding"]["diagnosticCodes"];
+  driverSdkBindingPackageBindingFamily: QueueProviderDriverSdkBindingSummary["packageBinding"]["family"];
+  driverSdkBindingPackageBindingId: string;
+  driverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false;
+  driverSdkBindingPackageBindingLiveQueuePublishingEnabled: false;
+  driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false;
+  driverSdkBindingPackageBindingPackageName: "bullmq";
+  driverSdkBindingPackageBindingPackageRef: "npm:bullmq";
+  driverSdkBindingPackageBindingSdkClientConstructed: false;
+  driverSdkBindingPackageBindingStatus: QueueProviderDriverSdkBindingSummary["packageBinding"]["status"];
   driverSdkBindingProductionReady: false;
   driverSdkBindingProviderKind: QueueProviderDriverSdkBindingSummary["providerKind"];
   driverSdkBindingQueueRouteCount: number;
@@ -637,6 +649,18 @@ const createReadinessProjection = ({
   driverSdkBindingLiveWorkerExecutionEnabled: false,
   driverSdkBindingMode: driver.sdkBinding.mode,
   driverSdkBindingOperationCount: driver.sdkBinding.operationCount,
+  driverSdkBindingPackageBindingBlockerCount: driver.sdkBinding.packageBinding.blockerCount,
+  driverSdkBindingPackageBindingBrowserBundleAllowed: false,
+  driverSdkBindingPackageBindingDiagnosticCodes: driver.sdkBinding.packageBinding.diagnosticCodes,
+  driverSdkBindingPackageBindingFamily: driver.sdkBinding.packageBinding.family,
+  driverSdkBindingPackageBindingId: driver.sdkBinding.packageBinding.bindingId,
+  driverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false,
+  driverSdkBindingPackageBindingLiveQueuePublishingEnabled: false,
+  driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false,
+  driverSdkBindingPackageBindingPackageName: driver.sdkBinding.packageBinding.packageName,
+  driverSdkBindingPackageBindingPackageRef: driver.sdkBinding.packageBinding.packageRef,
+  driverSdkBindingPackageBindingSdkClientConstructed: false,
+  driverSdkBindingPackageBindingStatus: driver.sdkBinding.packageBinding.status,
   driverSdkBindingProductionReady: false,
   driverSdkBindingProviderKind: driver.sdkBinding.providerKind,
   driverSdkBindingQueueRouteCount: driver.sdkBinding.queueRouteCount,

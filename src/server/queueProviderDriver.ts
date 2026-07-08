@@ -6,6 +6,7 @@ import {
   type QueueProviderSdkBindingMode,
   type QueueProviderSdkBindingOperationCapability,
   type QueueProviderSdkBindingProviderKind,
+  type QueueProviderSdkPackageBindingSummary,
 } from "./queueProviderSdkBinding";
 
 export type QueueProviderDriverProfileId = BackendRuntimeProfileId;
@@ -164,6 +165,7 @@ export interface QueueProviderDriverSdkBindingSummary {
   mode: QueueProviderSdkBindingMode;
   operationCapabilities: QueueProviderSdkBindingOperationCapability[];
   operationCount: number;
+  packageBinding: QueueProviderSdkPackageBindingSummary;
   productionReady: false;
   providerKind: QueueProviderSdkBindingProviderKind;
   queueRouteCount: number;
@@ -661,6 +663,7 @@ function createSdkBindingSummary(
     mode: sdkBinding.mode,
     operationCapabilities: sdkBinding.operationCapabilities.map((item) => ({ ...item })),
     operationCount: sdkBinding.readiness.operationCount,
+    packageBinding: clonePackageBindingSummary(sdkBinding.packageBinding),
     productionReady: false,
     providerKind: sdkBinding.providerKind,
     queueRouteCount: sdkBinding.readiness.queueRouteCount,
@@ -679,7 +682,18 @@ function cloneSdkBindingSummary(
     ...sdkBinding,
     diagnosticCodes: [...sdkBinding.diagnosticCodes],
     operationCapabilities: sdkBinding.operationCapabilities.map((item) => ({ ...item })),
+    packageBinding: clonePackageBindingSummary(sdkBinding.packageBinding),
     requiredConfigKeys: [...sdkBinding.requiredConfigKeys],
+  };
+}
+
+function clonePackageBindingSummary(
+  packageBinding: QueueProviderSdkPackageBindingSummary,
+): QueueProviderSdkPackageBindingSummary {
+  return {
+    ...packageBinding,
+    diagnosticCodes: [...packageBinding.diagnosticCodes],
+    requiredConfigKeys: [...packageBinding.requiredConfigKeys],
   };
 }
 

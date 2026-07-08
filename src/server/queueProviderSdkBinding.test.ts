@@ -9,6 +9,7 @@ import {
   queueProviderSdkBindingProductionPreconditions,
   redactQueueProviderSdkBindingValue,
 } from "./queueProviderSdkBinding";
+import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
 
 const productionReadyBindingEnv = {
   CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:review",
@@ -21,7 +22,11 @@ const productionReadyBindingEnv = {
   CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-provider-sdk",
   CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
   CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "queue-endpoint-ref:provider-sdk",
+  CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
+  CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
+  CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-package-binding-production",
   CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE: "package-ref:@provider/queue-sdk",
+  CAMPAIGN_OS_REDIS_URL: "redis-ref:campaign-os",
   CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:review",
   CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:worker",
   CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
@@ -89,7 +94,32 @@ describe("queue provider sdk binding foundation", () => {
       liveQueuePublishingEnabled: false,
       liveWorkerExecutionEnabled: false,
       operationCount: queueProviderSdkBindingOperationCapabilities.length,
+      packageBindingBlockerCount: 0,
+      packageBindingBrowserBundleAllowed: false,
+      packageBindingFamily: "bullmq-redis-compatible",
+      packageBindingId: "bullmq-redis-package-binding-local",
+      packageBindingLiveBrokerConnectionAttempted: false,
+      packageBindingLiveQueuePublishingEnabled: false,
+      packageBindingLiveWorkerExecutionEnabled: false,
+      packageBindingPackageName: "bullmq",
+      packageBindingPackageRef: "npm:bullmq",
+      packageBindingSdkClientConstructed: false,
+      packageBindingStatus: "local_ready",
       productionReady: false,
+      valid: true,
+    });
+    expect(foundation.packageBinding).toMatchObject({
+      bindingId: "bullmq-redis-package-binding-local",
+      blockerCount: 0,
+      browserBundleAllowed: false,
+      family: "bullmq-redis-compatible",
+      liveBrokerConnectionAttempted: false,
+      packageName: "bullmq",
+      packageRef: "npm:bullmq",
+      productionReady: false,
+      providerKind: "redis-compatible",
+      sdkClientConstructed: false,
+      status: "local_ready",
       valid: true,
     });
   });
@@ -111,6 +141,14 @@ describe("queue provider sdk binding foundation", () => {
     expect(foundation.readiness.liveProviderCallsEnabled).toBe(false);
     expect(foundation.readiness.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.operationCapabilities.every((item) => item.liveEnabled === false)).toBe(true);
+    expect(foundation.packageBinding).toMatchObject({
+      bindingId: "bullmq-redis-package-binding-staging",
+      brokerConnectionPosture: "blocked_until_activation",
+      mode: "metadata_only",
+      packageName: "bullmq",
+      status: "scaffolded",
+      valid: true,
+    });
   });
 
   it("fails closed for production-required when preconditions and activation are missing", () => {
@@ -119,7 +157,9 @@ describe("queue provider sdk binding foundation", () => {
     expect(foundation.status).toBe("blocked");
     expect(foundation.valid).toBe(false);
     expect(foundation.productionReady).toBe(false);
-    expect(foundation.blockerCount).toBe(queueProviderSdkBindingProductionPreconditions.length);
+    expect(foundation.blockerCount).toBe(
+      queueProviderSdkBindingProductionPreconditions.length + queueProviderPackageProductionPreconditions.length,
+    );
     expect(foundation.diagnosticCodes).toEqual([
       "QUEUE_PROVIDER_SDK_PACKAGE_MISSING",
       "QUEUE_PROVIDER_SDK_BINDING_MISSING",
@@ -134,7 +174,23 @@ describe("queue provider sdk binding foundation", () => {
       "QUEUE_PROVIDER_SDK_OBSERVABILITY_MISSING",
       "QUEUE_PROVIDER_SDK_RUNBOOK_MISSING",
       "QUEUE_PROVIDER_SDK_LIVE_ENABLEMENT_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_BINDING_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_PROVIDER_KIND_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_REDIS_ENDPOINT_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_CREDENTIALS_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_WORKER_QUEUE_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_DEAD_LETTER_QUEUE_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_RETRY_POLICY_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_IDEMPOTENCY_STORE_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_WORKER_LEASE_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_OBSERVABILITY_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_RUNBOOK_MISSING",
+      "QUEUE_PROVIDER_PACKAGE_LIVE_ENABLEMENT_MISSING",
     ]);
+    expect(foundation.packageBinding.status).toBe("blocked");
+    expect(foundation.packageBinding.sdkClientConstructed).toBe(false);
+    expect(foundation.packageBinding.liveBrokerConnectionAttempted).toBe(false);
   });
 
   it("keeps production-required scaffolded but not production-ready after all gates are explicit", () => {
@@ -158,6 +214,17 @@ describe("queue provider sdk binding foundation", () => {
     expect(foundation.readiness.liveProviderCallsEnabled).toBe(false);
     expect(foundation.readiness.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.sdkClientConstructed).toBe(false);
+    expect(foundation.packageBinding).toMatchObject({
+      bindingId: "bullmq-redis-package-binding-production",
+      blockerCount: 0,
+      brokerConnectionPosture: "reference_only",
+      liveBrokerConnectionAttempted: false,
+      packageName: "bullmq",
+      productionReady: false,
+      sdkClientConstructed: false,
+      status: "scaffolded",
+      valid: true,
+    });
   });
 
   it("accepts deterministic local stub operation metadata for all supported operations", () => {
