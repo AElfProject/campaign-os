@@ -178,6 +178,16 @@ describe("provider HTTP runtime registry", () => {
     const deferredEndpoints = summary.endpointRegistry.filter(
       (endpoint) => endpoint.rolloutStatus === "deferred",
     );
+    const socialEndpoint = findProviderHttpEndpointForVerification({
+      endpointId: "social-api-verification-status",
+      providerGroupId: "social-api-adapters",
+      verificationType: "SOCIAL",
+    });
+    const aiEndpoint = findProviderHttpEndpointForVerification({
+      endpointId: "ai-provider-verification-status",
+      providerGroupId: "ai-provider-adapters",
+      verificationType: "MANUAL",
+    });
 
     expect(summary.endpointRollout.deferredCount).toBeGreaterThanOrEqual(2);
     expect(deferredEndpoints.map((endpoint) => endpoint.category)).toEqual(
@@ -186,6 +196,8 @@ describe("provider HTTP runtime registry", () => {
     expect(
       deferredEndpoints.every((endpoint) => endpoint.supportedVerificationTypes.length > 0),
     ).toBe(true);
+    expect(socialEndpoint).toBeUndefined();
+    expect(aiEndpoint).toBeUndefined();
   });
 
   it("looks up endpoints by id and blocks verification type mismatches", () => {

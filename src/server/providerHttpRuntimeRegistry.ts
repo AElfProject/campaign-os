@@ -284,6 +284,10 @@ export const findProviderHttpEndpointForVerification = (
     return undefined;
   }
 
+  if (endpoint.rolloutStatus !== "enabled") {
+    return undefined;
+  }
+
   return endpoint.supportedVerificationTypes.includes(input.verificationType)
     ? endpoint
     : undefined;

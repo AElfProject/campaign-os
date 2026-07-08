@@ -108,6 +108,36 @@ describe("provider HTTP request planner", () => {
     );
   });
 
+  it("keeps deferred social and AI placeholders out of request planning", () => {
+    const socialPlaceholder = planProviderHttpRequest(
+      {
+        ...safeRequest,
+        endpointId: "social-api-verification-status",
+        providerGroupId: "social-api-adapters",
+        verificationType: "SOCIAL",
+      },
+      activatedRuntime,
+    );
+    const aiPlaceholder = planProviderHttpRequest(
+      {
+        ...safeRequest,
+        endpointId: "ai-provider-verification-status",
+        providerGroupId: "ai-provider-adapters",
+        verificationType: "MANUAL",
+      },
+      activatedRuntime,
+    );
+
+    expect(socialPlaceholder).toMatchObject({
+      diagnostics: [expect.objectContaining({ code: "verification_type_mismatch" })],
+      ok: false,
+    });
+    expect(aiPlaceholder).toMatchObject({
+      diagnostics: [expect.objectContaining({ code: "verification_type_mismatch" })],
+      ok: false,
+    });
+  });
+
   it("rejects disabled or blocked runtime before planning", () => {
     const disabledRuntime = createProviderHttpRuntimeSummary({ profileId: "local-review" });
     const blockedRuntime = createProviderHttpRuntimeSummary({ profileId: "production-required" });
