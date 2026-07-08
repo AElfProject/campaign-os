@@ -50,10 +50,12 @@ import {
   type BackendServiceReadinessReport,
 } from "./backendService";
 import type {
+  CampaignDbAddTaskDraftInput,
   CampaignDbCreateDraftInput,
   CampaignDbDraft,
   CampaignDbListFilter,
   CampaignDbReadProjection,
+  CampaignDbTaskDraft,
 } from "./campaignDbRepository";
 import { createBackendTopologyReport } from "./topology";
 import { createRuntimeSafety } from "./envelope";
@@ -185,6 +187,15 @@ const persistLocalResult = async <TPayload>(
   };
 };
 
+const createTaskDraftResponse = (request: AddTaskRequest): LocalServiceResult<AddTaskRequest & { id: string }> => ({
+  ok: true,
+  boundary: campaignDbBoundary,
+  payload: {
+    ...request,
+    id: `local-task-${request.templateCode}`,
+  },
+});
+
 const createCampaignRequest = (context: ApiRuntimeHandlerContext): CreateCampaignRequest => {
   const body = bodyRecord(context.body);
 
@@ -214,6 +225,16 @@ const addTaskRequest = (context: ApiRuntimeHandlerContext): AddTaskRequest => {
     walletCompatibility: requiredWalletCompatibility(body),
   };
 };
+
+const campaignDbTaskDraftInput = (request: AddTaskRequest): CampaignDbAddTaskDraftInput => ({
+  campaignId: request.campaignId,
+  evidenceRule: request.evidenceRule,
+  points: request.points,
+  required: request.required,
+  templateCode: request.templateCode,
+  verificationType: request.verificationType,
+  walletCompatibility: request.walletCompatibility,
+});
 
 const verifyTaskRequest = (context: ApiRuntimeHandlerContext): VerifyTaskRequest => {
   const body = bodyRecord(context.body);
@@ -272,6 +293,7 @@ const createCampaignDbSummary = (
   draftCount: drafts.length,
   repositoryId: "campaign-db-repository-runtime",
   storeId: "campaign-db",
+  taskDraftCount: drafts.reduce((total, draft) => total + draft.tasks.length, 0),
 });
 
 const createCampaignDiscoverySummary = (
@@ -395,19 +417,19 @@ const enrichWalletSessionWithProofMetadata = (
   };
 };
 
-const createCampaignDbTaskSummary = (draft: CampaignDbDraft) => ({
-  points: 0,
-  required: false,
-  taskId: `${draft.id}-repository-draft`,
-  title: localized("Repository draft", "Repository 草稿"),
-  verificationType: "MANUAL" as const,
+const createCampaignDbTaskSummary = (task: CampaignDbTaskDraft) => ({
+  points: task.points,
+  required: task.required,
+  taskId: task.id,
+  title: localized(task.templateCode, task.templateCode),
+  verificationType: task.verificationType,
 });
 
-const campaignDbDraftToDiscoveryItem = (draft: CampaignDbDraft): CampaignDiscoveryItem => ({
+const campaignDbDraftToDiscoveryItem = (draft: CampaignDbReadProjection): CampaignDiscoveryItem => ({
   boundary: campaignDbBoundary,
   campaignType: localized("Repository Draft", "Repository 草稿"),
   consumerSurfaces: ["user_app", "app_hub", "portfolio", "forecast"],
-  coreTasks: [createCampaignDbTaskSummary(draft)],
+  coreTasks: draft.tasks.map(createCampaignDbTaskSummary),
   cta: campaignDbCta,
   endTime: draft.endTime,
   id: draft.id,
@@ -426,8 +448,15 @@ const campaignDbDraftToDiscoveryItem = (draft: CampaignDbDraft): CampaignDiscove
   walletPolicy: draft.walletPolicy,
 });
 
+const createCampaignDbTaskMetadata = (task: CampaignDbTaskDraft) => ({
+  createdViaRepository: true,
+  repositoryId: "campaign-db-repository-runtime",
+  storeId: "campaign-db" as const,
+  taskId: task.id,
+});
+
 const campaignDbDraftToDiscoveryDetail = (
-  draft: CampaignDbDraft,
+  draft: CampaignDbReadProjection,
 ): CampaignDiscoveryDetail => {
   const item = campaignDbDraftToDiscoveryItem(draft);
 
@@ -1105,9 +1134,22 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         context.service.getProviderEvidenceRegistry(providerEvidenceRegistryRequest(context)),
       ),
     ),
-  "campaigns.tasks.add": (context) =>
-    persistLocalResult(
-      context.service.addTask(addTaskRequest(context)),
+  "campaigns.tasks.add": async (context) => {
+    const request = addTaskRequest(context);
+    const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
+      traceId: context.traceId,
+    });
+    const localResult = context.service.addTask(request);
+    const result = campaignDbDraft && !localResult.ok && localResult.error.code === "CAMPAIGN_NOT_FOUND"
+      ? createTaskDraftResponse(request)
+      : localResult;
+    const campaignDbTask = campaignDbDraft
+      ? await context.campaignDbRepository.addTaskDraft(campaignDbTaskDraftInput(request), {
+        traceId: context.traceId,
+      })
+      : undefined;
+    const response = await persistLocalResult(
+      result,
       context,
       (payload) => ({
         campaignId: payload.campaignId,
@@ -1121,7 +1163,15 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         },
         taskId: payload.id,
       }),
-    ),
+    );
+
+    return campaignDbTask
+      ? {
+        ...response,
+        campaignDbTask: createCampaignDbTaskMetadata(campaignDbTask),
+      }
+      : response;
+  },
   "campaigns.tasks.generate": (context) =>
     unwrapLocalResult(context.service.generateCampaignTasks(generateCampaignTasksRequest(context)), context),
   "tasks.verify": (context) =>

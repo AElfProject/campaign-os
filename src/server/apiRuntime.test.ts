@@ -21,6 +21,12 @@ interface LocalServiceEnvelope<TPayload> {
 
 interface CampaignListPayload {
   items?: Array<{
+    coreTasks?: Array<{
+      points: number;
+      required: boolean;
+      taskId: string;
+      verificationType: string;
+    }>;
     id: string;
     status: string;
   }>;
@@ -34,6 +40,12 @@ interface CampaignDetailPayload {
     id: string;
     status?: string;
   };
+  tasks?: Array<{
+    points: number;
+    required: boolean;
+    taskId: string;
+    verificationType: string;
+  }>;
 }
 
 interface EligibilityPayload {
@@ -84,6 +96,11 @@ interface CampaignDraftPayload {
 interface TaskDraftPayload {
   campaignId: string;
   id: string;
+  points?: number;
+  required?: boolean;
+  templateCode?: string;
+  verificationType?: string;
+  walletCompatibility?: string;
 }
 
 interface VerificationPayload {
@@ -324,6 +341,9 @@ const createFailingRepository = (): CampaignOsRepository => ({
 });
 
 const createFailingCampaignDbRepository = (): CampaignDbRepository => ({
+  addTaskDraft: async () => {
+    throw new Error("campaign DB repository unavailable");
+  },
   createDraft: async () => {
     throw new Error("campaign DB repository unavailable");
   },
@@ -1929,6 +1949,126 @@ describe("Campaign OS API runtime", () => {
       expectNoForbiddenResponseKeys(response.body);
       expectNoForbiddenFragments(response.body, ["fileUrl", "mutationId", "signedUrl", "transactionId"]);
     }
+  });
+
+  it("persists repository-created campaign task drafts in Campaign DB projections", async () => {
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime();
+    const create = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/campaigns",
+      headers: projectOwnerAuthHeaders("repo-owner-task", {
+        "x-campaign-os-trace-id": "trace-campaign-db-task-create",
+      }),
+      body: JSON.stringify({
+        duration: "2026-08-01/2026-08-14",
+        endTime: "2026-08-14T23:59:59Z",
+        goal: "Persist repository task draft",
+        ownerAddress: "repo-owner-task",
+        projectId: "repo-project-task",
+        rewardDescription: "Repository-backed task rewards remain local-review only.",
+        startTime: "2026-08-01T00:00:00Z",
+      }),
+    });
+    const created = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload>>(create);
+    const taskDraft = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.payload.id}/tasks`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-task-add" },
+      body: JSON.stringify({
+        evidenceRule: { source: "AELFSCAN", minAmount: 1 },
+        points: 120,
+        required: true,
+        templateCode: "bridge_ebridge",
+        verificationType: "ON_CHAIN",
+        walletCompatibility: "ANY",
+      }),
+    });
+    const detail = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-task-detail" },
+    });
+    const list = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: "/api/campaigns?projectId=repo-project-task&ownerAddress=repo-owner-task&status=draft",
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-task-list" },
+    });
+
+    expect(expectSuccessData<LocalServiceEnvelope<TaskDraftPayload> & {
+      campaignDbTask: {
+        createdViaRepository: boolean;
+        storeId: string;
+        taskId: string;
+      };
+      persistence: {
+        kind: string;
+        recordId: string;
+      };
+    }>(taskDraft)).toMatchObject({
+      campaignDbTask: {
+        createdViaRepository: true,
+        storeId: "campaign-db",
+        taskId: "campaign-db-task-draft-0001",
+      },
+      payload: {
+        campaignId: "campaign-db-draft-0001",
+        id: "local-task-bridge_ebridge",
+        points: 120,
+        required: true,
+        templateCode: "bridge_ebridge",
+        verificationType: "ON_CHAIN",
+        walletCompatibility: "ANY",
+      },
+      persistence: {
+        kind: "task_draft",
+        recordId: expect.any(String),
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload>>(detail).payload).toMatchObject({
+      item: {
+        id: "campaign-db-draft-0001",
+        coreTasks: [
+          expect.objectContaining({
+            points: 120,
+            required: true,
+            taskId: "campaign-db-task-draft-0001",
+            verificationType: "ON_CHAIN",
+          }),
+        ],
+      },
+      tasks: [
+        expect.objectContaining({
+          points: 120,
+          required: true,
+          taskId: "campaign-db-task-draft-0001",
+          verificationType: "ON_CHAIN",
+        }),
+      ],
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignListPayload> & {
+      payload: CampaignListPayload & {
+        campaignDb: {
+          draftCount: number;
+          taskDraftCount: number;
+        };
+      };
+    }>(list).payload).toMatchObject({
+      campaignDb: {
+        draftCount: 1,
+        taskDraftCount: 1,
+      },
+      items: [
+        expect.objectContaining({
+          coreTasks: [
+            expect.objectContaining({
+              taskId: "campaign-db-task-draft-0001",
+            }),
+          ],
+          id: "campaign-db-draft-0001",
+        }),
+      ],
+    });
+    expectNoForbiddenResponseKeys(taskDraft.body);
   });
 
   it("persists campaign draft API records across durable Campaign DB runtime recreation", async () => {

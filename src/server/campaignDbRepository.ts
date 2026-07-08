@@ -4,6 +4,8 @@ import {
   type CampaignStatus,
   type ContractMode,
   type SupportedLocale,
+  type VerificationType,
+  type WalletCompatibility,
   type WalletPolicy,
 } from "../domain/types";
 import {
@@ -35,6 +37,12 @@ export type CampaignDbDiagnosticCode =
   | "CAMPAIGN_DB_UNSUPPORTED_CONTRACT_MODE"
   | "CAMPAIGN_DB_UNSUPPORTED_STATUS"
   | "CAMPAIGN_DB_INVALID_TIME_WINDOW"
+  | "CAMPAIGN_DB_TASK_CAMPAIGN_NOT_FOUND"
+  | "CAMPAIGN_DB_TASK_INVALID_EVIDENCE_RULE"
+  | "CAMPAIGN_DB_TASK_INVALID_POINTS"
+  | "CAMPAIGN_DB_TASK_REQUIRED_FIELD_MISSING"
+  | "CAMPAIGN_DB_TASK_UNSUPPORTED_VERIFICATION_TYPE"
+  | "CAMPAIGN_DB_TASK_UNSUPPORTED_WALLET_COMPATIBILITY"
   | "CAMPAIGN_DB_PRODUCTION_DEFERRED";
 
 export interface CampaignDbDiagnostic {
@@ -91,6 +99,29 @@ export interface CampaignDbCreateDraftInput {
   walletPolicy?: WalletPolicy | string;
 }
 
+export interface CampaignDbTaskDraft {
+  campaignId: string;
+  createdAt: string;
+  evidenceRule: Record<string, string | number | boolean>;
+  id: string;
+  points: number;
+  required: boolean;
+  templateCode: string;
+  updatedAt: string;
+  verificationType: VerificationType;
+  walletCompatibility: WalletCompatibility;
+}
+
+export interface CampaignDbAddTaskDraftInput {
+  campaignId: string;
+  evidenceRule: Record<string, string | number | boolean>;
+  points: number;
+  required: boolean;
+  templateCode: string;
+  verificationType: VerificationType | string;
+  walletCompatibility: WalletCompatibility | string;
+}
+
 export interface CampaignDbOperationContext {
   traceId?: string;
 }
@@ -101,8 +132,9 @@ export interface CampaignDbReadProjection extends CampaignDbDraft {
     createdViaRepository: true;
     repositoryId: string;
     storeId: "campaign-db";
-    transactionId?: string;
+      transactionId?: string;
   };
+  tasks: CampaignDbTaskDraft[];
 }
 
 export interface CampaignDbListFilter {
@@ -113,7 +145,7 @@ export interface CampaignDbListFilter {
 }
 
 export interface CampaignDbRepositoryEvent {
-  entity: "Campaign";
+  entity: "Campaign" | "CampaignTask";
   id: string;
   liveExecution: false;
   operation: string;
@@ -140,6 +172,7 @@ export interface CampaignDbRepositoryHealth {
   selectedMode: CampaignDbRepositoryMode;
   status: CampaignDbRepositoryStatus;
   storeId: "campaign-db";
+  taskRecordCount: number;
   validation: {
     issues: CampaignDbDiagnostic[];
     valid: boolean;
@@ -147,6 +180,10 @@ export interface CampaignDbRepositoryHealth {
 }
 
 export interface CampaignDbRepository {
+  addTaskDraft(
+    input: CampaignDbAddTaskDraftInput,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbTaskDraft>;
   createDraft(
     input: CampaignDbCreateDraftInput,
     context?: CampaignDbOperationContext,
@@ -185,6 +222,7 @@ export class CampaignDbRepositoryError extends Error {
 
 const defaultNow = () => "2026-07-06T00:00:00.000Z";
 const walletPolicies = ["ANY", "AA_ONLY", "EOA_ONLY"] as const satisfies readonly WalletPolicy[];
+const verificationTypes = ["WALLET", "ON_CHAIN", "DAPP_API", "SOCIAL", "MANUAL"] as const satisfies readonly VerificationType[];
 const contractModes = [
   "OFF_CHAIN_MVP",
   "V2_COMPANION",
@@ -252,6 +290,9 @@ const isSupportedLocale = (value: string): value is SupportedLocale =>
 
 const isWalletPolicy = (value: string): value is WalletPolicy =>
   (walletPolicies as readonly string[]).includes(value);
+
+const isVerificationType = (value: string): value is VerificationType =>
+  (verificationTypes as readonly string[]).includes(value);
 
 const isContractMode = (value: string): value is ContractMode =>
   (contractModes as readonly string[]).includes(value);
@@ -443,6 +484,148 @@ const validateCreateDraftInput = (
   };
 };
 
+const requireTaskString = (
+  input: CampaignDbAddTaskDraftInput,
+  field: keyof Pick<CampaignDbAddTaskDraftInput, "campaignId" | "templateCode">,
+  issues: CampaignDbDiagnostic[],
+) => {
+  const value = input[field];
+
+  if (!isNonEmptyString(value)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_TASK_REQUIRED_FIELD_MISSING",
+      field,
+      `Campaign DB task draft field '${field}' is required.`,
+    ));
+
+    return "";
+  }
+
+  return value.trim();
+};
+
+const normalizeTaskWalletCompatibility = (
+  walletCompatibility: string,
+  issues: CampaignDbDiagnostic[],
+): WalletCompatibility => {
+  if (!isWalletPolicy(walletCompatibility)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_TASK_UNSUPPORTED_WALLET_COMPATIBILITY",
+      "walletCompatibility",
+      "Campaign DB task draft walletCompatibility is unsupported.",
+    ));
+
+    return "ANY";
+  }
+
+  return walletCompatibility;
+};
+
+const normalizeTaskVerificationType = (
+  verificationType: string,
+  issues: CampaignDbDiagnostic[],
+): VerificationType => {
+  if (!isVerificationType(verificationType)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_TASK_UNSUPPORTED_VERIFICATION_TYPE",
+      "verificationType",
+      "Campaign DB task draft verificationType is unsupported.",
+    ));
+
+    return "MANUAL";
+  }
+
+  return verificationType;
+};
+
+const normalizeTaskPoints = (
+  points: number,
+  issues: CampaignDbDiagnostic[],
+) => {
+  if (!Number.isFinite(points) || !Number.isInteger(points) || points <= 0) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_TASK_INVALID_POINTS",
+      "points",
+      "Campaign DB task draft points must be a positive integer.",
+    ));
+
+    return 0;
+  }
+
+  return points;
+};
+
+const normalizeTaskEvidenceRule = (
+  evidenceRule: Record<string, string | number | boolean>,
+  issues: CampaignDbDiagnostic[],
+) => {
+  const invalid =
+    !evidenceRule ||
+    typeof evidenceRule !== "object" ||
+    Array.isArray(evidenceRule) ||
+    Object.keys(evidenceRule).length === 0 ||
+    Object.entries(evidenceRule).some(([key, value]) =>
+      hasSecretLikeKey(key) ||
+      (typeof value === "string" && hasSecretLikeValue(value)) ||
+      (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean")
+    );
+
+  if (invalid) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_TASK_INVALID_EVIDENCE_RULE",
+      "evidenceRule",
+      "Campaign DB task draft evidenceRule must be a non-empty plain record with safe primitive values.",
+    ));
+
+    return {};
+  }
+
+  return { ...evidenceRule };
+};
+
+const validateAddTaskDraftInput = (
+  input: CampaignDbAddTaskDraftInput,
+  campaignExists: boolean,
+): Omit<CampaignDbTaskDraft, "createdAt" | "id" | "updatedAt"> => {
+  const issues: CampaignDbDiagnostic[] = [];
+  const campaignId = requireTaskString(input, "campaignId", issues);
+  const templateCode = requireTaskString(input, "templateCode", issues);
+  const walletCompatibility = normalizeTaskWalletCompatibility(input.walletCompatibility, issues);
+  const verificationType = normalizeTaskVerificationType(input.verificationType, issues);
+  const points = normalizeTaskPoints(input.points, issues);
+  const evidenceRule = normalizeTaskEvidenceRule(input.evidenceRule, issues);
+
+  if (campaignId && !campaignExists) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_TASK_CAMPAIGN_NOT_FOUND",
+      "campaignId",
+      `Campaign DB draft '${sanitizeCampaignDbDiagnosticValue("campaignId", campaignId)}' was not found.`,
+    ));
+  }
+
+  if (typeof input.required !== "boolean") {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_TASK_REQUIRED_FIELD_MISSING",
+      "required",
+      "Campaign DB task draft required flag must be boolean.",
+    ));
+  }
+
+  if (issues.length > 0) {
+    throw new CampaignDbRepositoryError("Invalid Campaign DB task draft input.", issues);
+  }
+
+  return {
+    campaignId,
+    evidenceRule,
+    points,
+    required: input.required,
+    templateCode,
+    verificationType,
+    walletCompatibility,
+  };
+};
+
 const createProductionDeferredDiagnostic = (
   requestedDriverId: string | undefined,
 ): CampaignDbDiagnostic => diagnostic(
@@ -463,6 +646,7 @@ export const createCampaignDbRepository = ({
   requestedDriverId,
 }: CreateCampaignDbRepositoryOptions = {}): CampaignDbRepository => {
   const recordsById = new Map<string, CampaignDbDraft>();
+  const taskRecordsById = new Map<string, CampaignDbTaskDraft>();
   const events: CampaignDbRepositoryEvent[] = [];
   const adapterId =
     mode === "production_deferred"
@@ -480,6 +664,7 @@ export const createCampaignDbRepository = ({
         })
       : undefined;
   let idSequence = 0;
+  let taskIdSequence = 0;
   let eventSequence = 0;
   let transactionSequence = 0;
 
@@ -501,6 +686,12 @@ export const createCampaignDbRepository = ({
     return `campaign-db-draft-${idSequence.toString().padStart(4, "0")}`;
   };
 
+  const nextTaskId = () => {
+    taskIdSequence += 1;
+
+    return `campaign-db-task-draft-${taskIdSequence.toString().padStart(4, "0")}`;
+  };
+
   const nextTransactionId = () => {
     transactionSequence += 1;
 
@@ -508,11 +699,13 @@ export const createCampaignDbRepository = ({
   };
 
   const appendEvent = ({
+    entity = "Campaign",
     operation,
     traceId,
     transactionId,
     type,
   }: {
+    entity?: CampaignDbRepositoryEvent["entity"];
     operation: string;
     traceId?: string;
     transactionId?: string;
@@ -520,7 +713,7 @@ export const createCampaignDbRepository = ({
   }) => {
     eventSequence += 1;
     events.push({
-      entity: "Campaign",
+      entity,
       id: `campaign-db-event-${eventSequence.toString().padStart(4, "0")}`,
       liveExecution: false,
       operation,
@@ -532,7 +725,14 @@ export const createCampaignDbRepository = ({
     });
   };
 
-  const toProjection = (draft: CampaignDbDraft): CampaignDbReadProjection => ({
+  const listTaskDraftsByCampaignId = async (campaignId: string) =>
+    activeDurableStore
+      ? await activeDurableStore.listTaskDraftsByCampaignId(campaignId)
+      : Array.from(taskRecordsById.values())
+        .filter((task) => task.campaignId === campaignId)
+        .sort((left, right) => left.id.localeCompare(right.id));
+
+  const toProjection = async (draft: CampaignDbDraft): Promise<CampaignDbReadProjection> => ({
     ...draft,
     repository: {
       adapterId,
@@ -540,10 +740,14 @@ export const createCampaignDbRepository = ({
       repositoryId: "campaign-db-repository-runtime",
       storeId: "campaign-db",
     },
+    tasks: await listTaskDraftsByCampaignId(draft.id),
   });
 
   const resolveRecordCount = async () =>
     activeDurableStore ? (await activeDurableStore.manifest()).recordCount : recordsById.size;
+
+  const resolveTaskRecordCount = async () =>
+    activeDurableStore ? (await activeDurableStore.manifest()).taskRecordCount : taskRecordsById.size;
 
   const durableDiagnostics = async () =>
     activeDurableStore
@@ -578,6 +782,7 @@ export const createCampaignDbRepository = ({
         ? "blocked"
         : "ready",
       storeId: "campaign-db",
+      taskRecordCount: await resolveTaskRecordCount(),
       validation: {
         issues: diagnostics,
         valid: diagnostics.length === 0,
@@ -586,6 +791,60 @@ export const createCampaignDbRepository = ({
   };
 
   return {
+    addTaskDraft: async (input, context = {}) => {
+      assertWritable();
+
+      const campaign = activeDurableStore
+        ? await activeDurableStore.getById(input.campaignId)
+        : recordsById.get(input.campaignId);
+      const validated = validateAddTaskDraftInput(input, Boolean(campaign));
+      const transactionId = nextTransactionId();
+      appendEvent({
+        entity: "CampaignTask",
+        operation: "begin_add_task_draft",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.begin",
+      });
+      appendEvent({
+        entity: "CampaignTask",
+        operation: "plan_insert_campaign_task_draft",
+        traceId: context.traceId,
+        transactionId,
+        type: "command.planned",
+      });
+
+      const createdAt = now();
+      const task: CampaignDbTaskDraft = {
+        ...validated,
+        createdAt,
+        id: nextTaskId(),
+        updatedAt: createdAt,
+      };
+
+      if (activeDurableStore) {
+        await activeDurableStore.createTaskDraft(task);
+      } else {
+        taskRecordsById.set(task.id, task);
+      }
+
+      appendEvent({
+        entity: "CampaignTask",
+        operation: "insert_campaign_task_draft",
+        traceId: context.traceId,
+        transactionId,
+        type: "command.insert",
+      });
+      appendEvent({
+        entity: "CampaignTask",
+        operation: "commit_add_task_draft",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.commit",
+      });
+
+      return task;
+    },
     createDraft: async (input, context = {}) => {
       assertWritable();
 
@@ -644,7 +903,7 @@ export const createCampaignDbRepository = ({
         ? await activeDurableStore.getById(campaignId)
         : recordsById.get(campaignId);
 
-      return draft ? toProjection(draft) : undefined;
+      return draft ? await toProjection(draft) : undefined;
     },
     getEvents: () => [...events],
     health,
@@ -659,7 +918,7 @@ export const createCampaignDbRepository = ({
         ? await activeDurableStore.list(filter)
         : Array.from(recordsById.values());
 
-      return records
+      const filteredRecords = records
         .filter((draft) => {
           if (filter.projectId && draft.projectId !== filter.projectId) {
             return false;
@@ -675,14 +934,17 @@ export const createCampaignDbRepository = ({
 
           return true;
         })
-        .sort((left, right) => left.id.localeCompare(right.id))
-        .map(toProjection);
+        .sort((left, right) => left.id.localeCompare(right.id));
+
+      return Promise.all(filteredRecords.map(toProjection));
     },
     reset: async () => {
       recordsById.clear();
+      taskRecordsById.clear();
       await activeDurableStore?.reset();
       events.length = 0;
       idSequence = 0;
+      taskIdSequence = 0;
       eventSequence = 0;
       transactionSequence = 0;
     },
