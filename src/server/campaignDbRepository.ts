@@ -1,9 +1,18 @@
 import {
+  EXPORT_CSV_COLUMNS,
   campaignLifecycleStatuses,
   supportedLocales,
   type AccountType,
   type CampaignStatus,
   type ContractMode,
+  type ExportAcknowledgementId,
+  type ExportContractRootMode,
+  type ExportCsvColumn,
+  type ExportPreviewMode,
+  type ExportReadinessState,
+  type ExportRowReasonCode,
+  type ExportRowStatus,
+  type LocalizedText,
   type SupportedLocale,
   type VerificationType,
   type WalletCompatibility,
@@ -54,6 +63,11 @@ export type CampaignDbDiagnosticCode =
   | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_EVIDENCE_SOURCE"
   | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_STATUS"
   | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_WALLET_SOURCE"
+  | "CAMPAIGN_DB_EXPORT_CAMPAIGN_NOT_FOUND"
+  | "CAMPAIGN_DB_EXPORT_REQUIRED_COLUMN_DISABLED"
+  | "CAMPAIGN_DB_EXPORT_REQUIRED_FIELD_MISSING"
+  | "CAMPAIGN_DB_EXPORT_UNSUPPORTED_CONTRACT_ROOT_MODE"
+  | "CAMPAIGN_DB_EXPORT_UNSUPPORTED_FORMAT"
   | "CAMPAIGN_DB_PRODUCTION_DEFERRED";
 
 export interface CampaignDbDiagnostic {
@@ -211,6 +225,174 @@ export interface CampaignDbEligibilityProjection {
   walletTypeVerified: boolean;
 }
 
+export interface CampaignDbExportProjectionInput {
+  campaignId: string;
+  contractRootMode?: ExportContractRootMode | string;
+  format?: ExportPreviewMode | string;
+  includeLocalePreference?: boolean;
+  includeRiskFlags?: boolean;
+  includeWalletType?: boolean;
+}
+
+export interface CampaignDbExportProjectionRequest {
+  campaignId: string;
+  contractRootMode: "none";
+  format: ExportPreviewMode;
+  includeLocalePreference: true;
+  includeRiskFlags: true;
+  includeWalletType: true;
+}
+
+export type CampaignDbExportTaskStatus = CampaignDbTaskCompletionStatus | "missing";
+
+export interface CampaignDbExportTaskRecord {
+  completedAt?: string;
+  evidenceHash?: string;
+  evidenceSource?: CampaignDbTaskCompletionEvidenceSource;
+  pointsAwarded: number;
+  pointsAvailable: number;
+  required: boolean;
+  status: CampaignDbExportTaskStatus;
+  taskId: string;
+  templateCode: string;
+  updatedAt?: string;
+  verificationType: VerificationType;
+}
+
+export interface CampaignDbExportRow {
+  accountType: AccountType;
+  campaignId: string;
+  eligible: boolean;
+  evidenceHashes: string[];
+  exportBatchId: string;
+  localePreference: "en-US";
+  missingColumnValues: ExportCsvColumn[];
+  missingTasks: string[];
+  rank?: number;
+  referrerAddress: string;
+  riskFlags: string[];
+  rowStatus: ExportRowStatus;
+  taskRecords: CampaignDbExportTaskRecord[];
+  totalPoints: number;
+  walletAddress: string;
+  walletSource: WalletSource;
+  walletTypeVerified: boolean;
+}
+
+export interface CampaignDbExportArtifact {
+  artifactId: string;
+  campaignId: string;
+  checksum: string;
+  checksumAlgorithm: "fnv1a32-local-review";
+  columns: readonly ExportCsvColumn[];
+  createdAt: string;
+  format: ExportPreviewMode;
+  generatedMode: "local_review_only";
+  localPreviewMode: true;
+  mimeType: string;
+  payloadBytes: number;
+  csvPreview?: string;
+  jsonPreview?: Array<Record<ExportCsvColumn, string | number | boolean | string[]>>;
+  safety: {
+    localOnly: true;
+    noContractRoot: true;
+    noContractTransaction: true;
+    noDownloadUrl: true;
+    noRewardCustody: true;
+    noRewardDistribution: true;
+    noStorageWrite: true;
+    verifiedRecordsOnly: true;
+  };
+}
+
+export interface CampaignDbExportPreviewModeReadiness {
+  boundary: LocalizedText;
+  downloadAvailable: false;
+  generatesFile: false;
+  includedFields: readonly ExportCsvColumn[];
+  label: LocalizedText;
+  mode: ExportPreviewMode;
+  nextAction: LocalizedText;
+  readiness: ExportReadinessState;
+}
+
+export interface CampaignDbExportFieldCoverage {
+  coverageReady: boolean;
+  missingFields: readonly ExportCsvColumn[];
+  presentFields: readonly ExportCsvColumn[];
+  requiredFields: readonly ExportCsvColumn[];
+}
+
+export interface CampaignDbExportRowStatusReason {
+  affectedRows: number;
+  label: LocalizedText;
+  nextAction: LocalizedText;
+  reasonCode: ExportRowReasonCode;
+  rowStatus: ExportRowStatus;
+}
+
+export interface CampaignDbExportAcknowledgement {
+  acknowledged: boolean;
+  description: LocalizedText;
+  id: ExportAcknowledgementId;
+  label: LocalizedText;
+  ownerRole: "project_owner" | "internal_operator";
+  required: boolean;
+}
+
+export interface CampaignDbExportContractRootReadiness {
+  approvalRequired: boolean;
+  boundary: LocalizedText;
+  label: LocalizedText;
+  mode: ExportContractRootMode;
+  nextAction: LocalizedText;
+  readiness: ExportReadinessState;
+  safeDefault: boolean;
+}
+
+export interface CampaignDbExportReadinessProjection {
+  acknowledgements: CampaignDbExportAcknowledgement[];
+  batchId: string;
+  boundary: LocalizedText;
+  campaignId: string;
+  contractRootReadiness: CampaignDbExportContractRootReadiness[];
+  fieldCoverage: CampaignDbExportFieldCoverage;
+  nextAction: LocalizedText;
+  previewModes: CampaignDbExportPreviewModeReadiness[];
+  repository: {
+    adapterId: string;
+    createdViaRepository: true;
+    repositoryId: string;
+    storeId: "campaign-db";
+  };
+  rowStatusCoverage: CampaignDbExportRowStatusReason[];
+  summary: {
+    acknowledgedItems: number;
+    blockedRows: number;
+    previewModeCount: number;
+    readyRows: number;
+    requiredAcknowledgements: number;
+    reviewRequiredRows: number;
+    totalRows: number;
+  };
+}
+
+export interface CampaignDbExportProjection {
+  artifact: CampaignDbExportArtifact;
+  blockedRows: number;
+  campaignId: string;
+  columns: readonly ExportCsvColumn[];
+  contractRootMode: "none";
+  disclaimer: string;
+  exportBatchId: string;
+  exportReadiness: CampaignDbExportReadinessProjection;
+  format: ExportPreviewMode;
+  readyRows: number;
+  repository: CampaignDbExportReadinessProjection["repository"];
+  reviewRequiredRows: number;
+  rows: CampaignDbExportRow[];
+}
+
 export interface CampaignDbListFilter {
   limit?: number;
   ownerAddress?: string;
@@ -277,6 +459,14 @@ export interface CampaignDbRepository {
     filter?: CampaignDbListFilter,
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbReadProjection[]>;
+  getExportReadiness?(
+    input: CampaignDbExportProjectionInput,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbExportReadinessProjection>;
+  projectExport?(
+    input: CampaignDbExportProjectionInput,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbExportProjection>;
   reset(): Promise<void>;
   upsertTaskCompletion?(
     input: CampaignDbUpsertTaskCompletionInput,
@@ -328,6 +518,13 @@ const completionEvidenceSources = [
   "SOCIAL_API",
   "MANUAL",
 ] as const satisfies readonly CampaignDbTaskCompletionEvidenceSource[];
+const exportFormats = ["csv", "json"] as const satisfies readonly ExportPreviewMode[];
+const exportContractRootModes = [
+  "none",
+  "eligibility_root",
+  "winners_root",
+  "contract_claim",
+] as const satisfies readonly ExportContractRootMode[];
 const contractModes = [
   "OFF_CHAIN_MVP",
   "V2_COMPANION",
@@ -410,6 +607,12 @@ const isCompletionStatus = (value: string): value is CampaignDbTaskCompletionSta
 
 const isCompletionEvidenceSource = (value: string): value is CampaignDbTaskCompletionEvidenceSource =>
   (completionEvidenceSources as readonly string[]).includes(value);
+
+const isExportFormat = (value: string): value is ExportPreviewMode =>
+  (exportFormats as readonly string[]).includes(value);
+
+const isExportContractRootMode = (value: string): value is ExportContractRootMode =>
+  (exportContractRootModes as readonly string[]).includes(value);
 
 const isContractMode = (value: string): value is ContractMode =>
   (contractModes as readonly string[]).includes(value);
@@ -933,6 +1136,586 @@ const validateUpsertTaskCompletionInput = (
   };
 };
 
+const localized = (enUS: string, zhCN = enUS, zhTW = enUS): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": zhTW,
+});
+
+const exportProjectionBoundary = localized(
+  "Campaign DB repository export projection is local-review only. No export file, storage write, signed URL, contract root, contract transaction, reward custody, or reward distribution is executed.",
+  "Campaign DB repository 导出投影仅用于本地审核。不会生成导出文件、写入存储、生成 signed URL、写入合约 root、执行合约交易、托管奖励或发奖。",
+);
+
+const exportProjectionNextAction = localized(
+  "Review local rows and keep production export storage, contract roots, and reward fulfillment in later approval missions.",
+  "审核本地行数据；生产导出存储、合约 root 与奖励履约留给后续审批任务。",
+);
+
+const exportPreviewModeBoundary = localized(
+  "Preview mode renders local review payloads only and does not generate files or downloads.",
+  "预览模式仅生成本地审核 payload，不生成文件或下载链接。",
+);
+
+const exportContractRootBoundary = localized(
+  "Contract root generation is disabled in the repository export projection.",
+  "Repository 导出投影禁用合约 root 生成。",
+);
+
+const requireExportString = (
+  input: CampaignDbExportProjectionInput,
+  field: "campaignId",
+  issues: CampaignDbDiagnostic[],
+) => {
+  const value = input[field];
+
+  if (!isNonEmptyString(value)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EXPORT_REQUIRED_FIELD_MISSING",
+      field,
+      `Campaign DB export field '${field}' is required.`,
+    ));
+
+    return "";
+  }
+
+  return value.trim();
+};
+
+const validateExportProjectionInput = (
+  input: CampaignDbExportProjectionInput,
+  campaignExists: boolean,
+): CampaignDbExportProjectionRequest => {
+  const issues: CampaignDbDiagnostic[] = [];
+  const campaignId = requireExportString(input, "campaignId", issues);
+  const format = input.format ?? "csv";
+  const contractRootMode = input.contractRootMode ?? "none";
+
+  if (format && !isExportFormat(format)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EXPORT_UNSUPPORTED_FORMAT",
+      "format",
+      "Campaign DB export projection supports only csv or json local preview modes.",
+    ));
+  }
+
+  if (contractRootMode && !isExportContractRootMode(contractRootMode)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EXPORT_UNSUPPORTED_CONTRACT_ROOT_MODE",
+      "contractRootMode",
+      "Campaign DB export projection contractRootMode is unsupported.",
+    ));
+  } else if (contractRootMode !== "none") {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EXPORT_UNSUPPORTED_CONTRACT_ROOT_MODE",
+      "contractRootMode",
+      "Campaign DB export projection keeps contractRootMode limited to none.",
+    ));
+  }
+
+  if (campaignId && !campaignExists) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EXPORT_CAMPAIGN_NOT_FOUND",
+      "campaignId",
+      `Campaign DB draft '${sanitizeCampaignDbDiagnosticValue("campaignId", campaignId)}' was not found for export projection.`,
+    ));
+  }
+
+  if (input.includeWalletType === false) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EXPORT_REQUIRED_COLUMN_DISABLED",
+      "includeWalletType",
+      "Campaign DB export projection requires wallet type and wallet source columns.",
+    ));
+  }
+
+  if (input.includeLocalePreference === false) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EXPORT_REQUIRED_COLUMN_DISABLED",
+      "includeLocalePreference",
+      "Campaign DB export projection requires locale preference column.",
+    ));
+  }
+
+  if (input.includeRiskFlags === false) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EXPORT_REQUIRED_COLUMN_DISABLED",
+      "includeRiskFlags",
+      "Campaign DB export projection requires risk flag columns.",
+    ));
+  }
+
+  if (issues.length > 0) {
+    throw new CampaignDbRepositoryError("Invalid Campaign DB export projection input.", issues);
+  }
+
+  return {
+    campaignId,
+    contractRootMode: "none",
+    format: format as ExportPreviewMode,
+    includeLocalePreference: true,
+    includeRiskFlags: true,
+    includeWalletType: true,
+  };
+};
+
+const latestCompletion = (
+  left: CampaignDbTaskCompletion | undefined,
+  right: CampaignDbTaskCompletion,
+) => {
+  if (!left) {
+    return right;
+  }
+
+  const updatedComparison = left.updatedAt.localeCompare(right.updatedAt);
+
+  return updatedComparison < 0 || (updatedComparison === 0 && left.id.localeCompare(right.id) < 0)
+    ? right
+    : left;
+};
+
+const latestTimestampForRow = (row: CampaignDbExportRow) =>
+  [...row.taskRecords
+    .map((record) => record.completedAt ?? record.updatedAt ?? "")
+    .filter(Boolean)
+    .sort()]
+    .pop() ?? "";
+
+const exportBatchIdFor = (campaignId: string) => `campaign-db-export-${campaignId}`;
+
+const exportTaskRecordToken = (record: CampaignDbExportTaskRecord) =>
+  [
+    record.taskId,
+    record.templateCode,
+    record.status,
+    record.pointsAwarded,
+    record.evidenceHash ?? "no-evidence",
+  ].join(":");
+
+const createMissingTaskRecord = (task: CampaignDbTaskDraft): CampaignDbExportTaskRecord => ({
+  pointsAwarded: 0,
+  pointsAvailable: task.points,
+  required: task.required,
+  status: "missing",
+  taskId: task.id,
+  templateCode: task.templateCode,
+  verificationType: task.verificationType,
+});
+
+const createCompletedTaskRecord = (
+  task: CampaignDbTaskDraft,
+  completion: CampaignDbTaskCompletion,
+): CampaignDbExportTaskRecord => ({
+  ...(completion.completedAt ? { completedAt: completion.completedAt } : {}),
+  ...(completion.evidenceHash ? { evidenceHash: completion.evidenceHash } : {}),
+  evidenceSource: completion.evidenceSource,
+  pointsAwarded: completion.status === "completed" ? completion.pointsAwarded : 0,
+  pointsAvailable: task.points,
+  required: task.required,
+  status: completion.status,
+  taskId: task.id,
+  templateCode: task.templateCode,
+  updatedAt: completion.updatedAt,
+  verificationType: task.verificationType,
+});
+
+const rowStatusPriority = (status: ExportRowStatus) =>
+  status === "ready" ? 0 : status === "review_required" ? 1 : 2;
+
+const sortExportRows = (rows: CampaignDbExportRow[]) =>
+  [...rows].sort((left, right) => {
+    const statusComparison = rowStatusPriority(left.rowStatus) - rowStatusPriority(right.rowStatus);
+
+    if (statusComparison !== 0) {
+      return statusComparison;
+    }
+
+    const pointsComparison = right.totalPoints - left.totalPoints;
+
+    if (pointsComparison !== 0) {
+      return pointsComparison;
+    }
+
+    const leftTimestamp = latestTimestampForRow(left);
+    const rightTimestamp = latestTimestampForRow(right);
+    const timestampComparison = leftTimestamp.localeCompare(rightTimestamp);
+
+    if (timestampComparison !== 0) {
+      return timestampComparison;
+    }
+
+    return left.walletAddress.localeCompare(right.walletAddress);
+  });
+
+const assignExportRanks = (rows: CampaignDbExportRow[]) => {
+  let rank = 0;
+
+  return rows.map((row) => {
+    if (row.rowStatus === "blocked") {
+      const { rank: _rank, ...unrankedRow } = row;
+
+      return unrankedRow;
+    }
+
+    rank += 1;
+
+    return {
+      ...row,
+      rank,
+    };
+  });
+};
+
+const createExportRows = (
+  campaign: CampaignDbDraft,
+  tasks: CampaignDbTaskDraft[],
+  completions: CampaignDbTaskCompletion[],
+  exportBatchId: string,
+): CampaignDbExportRow[] => {
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const completionsByWallet = new Map<string, Map<string, CampaignDbTaskCompletion>>();
+
+  for (const completion of completions) {
+    if (!tasksById.has(completion.taskId)) {
+      continue;
+    }
+
+    const walletCompletions = completionsByWallet.get(completion.walletAddress) ?? new Map<string, CampaignDbTaskCompletion>();
+    walletCompletions.set(completion.taskId, latestCompletion(walletCompletions.get(completion.taskId), completion));
+    completionsByWallet.set(completion.walletAddress, walletCompletions);
+  }
+
+  const rows = Array.from(completionsByWallet.entries()).map(([walletAddress, walletCompletions]) => {
+    const completionValues = Array.from(walletCompletions.values())
+      .sort((left, right) => left.taskId.localeCompare(right.taskId));
+    const firstCompletion = completionValues[0];
+    const taskRecords = tasks
+      .map((task) => {
+        const completion = walletCompletions.get(task.id);
+
+        return completion ? createCompletedTaskRecord(task, completion) : createMissingTaskRecord(task);
+      })
+      .sort((left, right) => left.taskId.localeCompare(right.taskId));
+    const completedTaskIds = new Set(
+      taskRecords
+        .filter((record) => record.status === "completed")
+        .map((record) => record.taskId),
+    );
+    const reviewRequiredTaskIds = new Set(
+      taskRecords
+        .filter((record) => record.status === "pending" || record.status === "manual_review")
+        .map((record) => record.taskId),
+    );
+    const failedTaskIds = new Set(
+      taskRecords
+        .filter((record) => record.status === "failed")
+        .map((record) => record.taskId),
+    );
+    const missingTasks = tasks
+      .filter((task) => task.required && (!completedTaskIds.has(task.id) || failedTaskIds.has(task.id)))
+      .map((task) => task.templateCode || task.id);
+    const hasReviewRequiredTask = tasks
+      .some((task) => task.required && !completedTaskIds.has(task.id) && reviewRequiredTaskIds.has(task.id));
+    const rowStatus: ExportRowStatus =
+      missingTasks.length === 0
+        ? "ready"
+        : hasReviewRequiredTask
+          ? "review_required"
+          : "blocked";
+    const totalPoints = taskRecords
+      .filter((record) => record.status === "completed")
+      .reduce((total, record) => total + record.pointsAwarded, 0);
+    const evidenceHashes = taskRecords
+      .map((record) => record.evidenceHash)
+      .filter((value): value is string => Boolean(value))
+      .sort();
+
+    return {
+      accountType: firstCompletion?.accountType ?? "UNKNOWN",
+      campaignId: campaign.id,
+      eligible: rowStatus === "ready",
+      evidenceHashes,
+      exportBatchId,
+      localePreference: campaign.defaultLocale,
+      missingColumnValues: [],
+      missingTasks,
+      referrerAddress: "",
+      riskFlags: [],
+      rowStatus,
+      taskRecords,
+      totalPoints,
+      walletAddress,
+      walletSource: firstCompletion?.walletSource ?? "OTHER",
+      walletTypeVerified: firstCompletion?.accountType !== undefined && firstCompletion?.walletSource !== undefined,
+    };
+  });
+
+  return assignExportRanks(sortExportRows(rows));
+};
+
+const exportRowValueByColumn = (
+  row: CampaignDbExportRow,
+  column: ExportCsvColumn,
+): string | number | boolean | string[] => {
+  switch (column) {
+    case "campaign_id":
+      return row.campaignId;
+    case "wallet_address":
+      return row.walletAddress;
+    case "account_type":
+      return row.accountType;
+    case "wallet_source":
+      return row.walletSource;
+    case "locale_preference":
+      return row.localePreference;
+    case "total_points":
+      return row.totalPoints;
+    case "rank":
+      return row.rank ?? "";
+    case "eligible":
+      return row.eligible;
+    case "missing_tasks":
+      return row.missingTasks;
+    case "risk_flags":
+      return row.riskFlags;
+    case "referrer_address":
+      return row.referrerAddress;
+    case "task_records":
+      return row.taskRecords.map(exportTaskRecordToken);
+    case "evidence_hashes":
+      return row.evidenceHashes;
+    case "export_batch_id":
+      return row.exportBatchId;
+  }
+};
+
+const serializeExportScalar = (value: string | number | boolean | string[]) =>
+  Array.isArray(value) ? value.join("|") : String(value);
+
+const escapeCsvValue = (value: string | number | boolean | string[]) => {
+  const serialized = serializeExportScalar(value);
+
+  return /[",\n\r]/.test(serialized) ? `"${serialized.replace(/"/g, "\"\"")}"` : serialized;
+};
+
+const projectExportRowForArtifact = (row: CampaignDbExportRow) =>
+  Object.fromEntries(
+    EXPORT_CSV_COLUMNS.map((column) => [column, exportRowValueByColumn(row, column)]),
+  ) as Record<ExportCsvColumn, string | number | boolean | string[]>;
+
+const serializeExportRowsToCsv = (rows: CampaignDbExportRow[]) =>
+  [
+    EXPORT_CSV_COLUMNS.join(","),
+    ...rows.map((row) =>
+      EXPORT_CSV_COLUMNS.map((column) => escapeCsvValue(exportRowValueByColumn(row, column))).join(",")
+    ),
+  ].join("\n");
+
+const createLocalReviewChecksum = (payload: string): string => {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < payload.length; index += 1) {
+    hash ^= payload.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return `local-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+};
+
+const exportArtifactMimeTypes: Record<ExportPreviewMode, string> = {
+  csv: "text/csv;charset=utf-8",
+  json: "application/json;charset=utf-8",
+};
+
+const createExportArtifact = (
+  campaignId: string,
+  exportBatchId: string,
+  rows: CampaignDbExportRow[],
+  format: ExportPreviewMode,
+  createdAt: string,
+): CampaignDbExportArtifact => {
+  const jsonRows = rows.map(projectExportRowForArtifact);
+  const payload = format === "csv"
+    ? serializeExportRowsToCsv(rows)
+    : JSON.stringify({
+      campaignId,
+      columns: EXPORT_CSV_COLUMNS,
+      rows: jsonRows,
+    }, null, 2);
+
+  return {
+    artifactId: `${campaignId}-${exportBatchId}-${format}-local-preview`,
+    campaignId,
+    checksum: createLocalReviewChecksum(payload),
+    checksumAlgorithm: "fnv1a32-local-review",
+    columns: EXPORT_CSV_COLUMNS,
+    createdAt,
+    format,
+    generatedMode: "local_review_only",
+    localPreviewMode: true,
+    mimeType: exportArtifactMimeTypes[format],
+    payloadBytes: new TextEncoder().encode(payload).length,
+    ...(format === "csv" ? { csvPreview: payload } : { jsonPreview: jsonRows }),
+    safety: {
+      localOnly: true,
+      noContractRoot: true,
+      noContractTransaction: true,
+      noDownloadUrl: true,
+      noRewardCustody: true,
+      noRewardDistribution: true,
+      noStorageWrite: true,
+      verifiedRecordsOnly: true,
+    },
+  };
+};
+
+const createPreviewModeReadiness = (
+  mode: ExportPreviewMode,
+): CampaignDbExportPreviewModeReadiness => ({
+  boundary: exportPreviewModeBoundary,
+  downloadAvailable: false,
+  generatesFile: false,
+  includedFields: EXPORT_CSV_COLUMNS,
+  label: localized(`${mode.toUpperCase()} local preview`),
+  mode,
+  nextAction: localized("Use this mode for local review only before production export storage exists."),
+  readiness: "ready",
+});
+
+const createExportFieldCoverage = (): CampaignDbExportFieldCoverage => ({
+  coverageReady: true,
+  missingFields: [],
+  presentFields: EXPORT_CSV_COLUMNS,
+  requiredFields: EXPORT_CSV_COLUMNS,
+});
+
+const rowStatusReasonCode = (status: ExportRowStatus): ExportRowReasonCode => {
+  switch (status) {
+    case "ready":
+      return "eligible_verified";
+    case "review_required":
+      return "risk_review_required";
+    case "blocked":
+    default:
+      return "missing_required_tasks";
+  }
+};
+
+const rowStatusLabel = (status: ExportRowStatus): LocalizedText => {
+  switch (status) {
+    case "ready":
+      return localized("Ready rows", "就绪行");
+    case "review_required":
+      return localized("Review-required rows", "需审核行");
+    case "blocked":
+    default:
+      return localized("Blocked rows", "阻断行");
+  }
+};
+
+const createRowStatusCoverage = (
+  rows: readonly CampaignDbExportRow[],
+): CampaignDbExportRowStatusReason[] =>
+  (["ready", "review_required", "blocked"] as const).map((status) => ({
+    affectedRows: rows.filter((row) => row.rowStatus === status).length,
+    label: rowStatusLabel(status),
+    nextAction: status === "ready"
+      ? localized("Keep rows available for local export review.")
+      : status === "review_required"
+        ? localized("Resolve pending or manual-review required tasks before approval.")
+        : localized("Complete missing required tasks before export approval."),
+    reasonCode: rowStatusReasonCode(status),
+    rowStatus: status,
+  }));
+
+const createExportAcknowledgements = (): CampaignDbExportAcknowledgement[] => [
+  {
+    acknowledged: false,
+    description: localized("Only local completion records are included in this preview."),
+    id: "verified-records-only",
+    label: localized("Verified records only"),
+    ownerRole: "internal_operator",
+    required: true,
+  },
+  {
+    acknowledged: false,
+    description: localized("The campaign project owns any future reward fulfillment."),
+    id: "project-owned-reward-distribution",
+    label: localized("Project-owned reward distribution"),
+    ownerRole: "project_owner",
+    required: true,
+  },
+  {
+    acknowledged: false,
+    description: localized("Campaign OS does not custody rewards in this local projection."),
+    id: "no-reward-custody",
+    label: localized("No reward custody"),
+    ownerRole: "project_owner",
+    required: true,
+  },
+  {
+    acknowledged: false,
+    description: localized("Campaign OS does not distribute rewards in this local projection."),
+    id: "no-reward-distribution",
+    label: localized("No reward distribution"),
+    ownerRole: "project_owner",
+    required: true,
+  },
+  {
+    acknowledged: false,
+    description: localized("The preview does not create a real export file or download."),
+    id: "no-real-export-file",
+    label: localized("No real export file"),
+    ownerRole: "internal_operator",
+    required: true,
+  },
+];
+
+const createContractRootReadiness = (
+  mode: ExportContractRootMode,
+): CampaignDbExportContractRootReadiness => ({
+  approvalRequired: mode !== "none",
+  boundary: exportContractRootBoundary,
+  label: localized(mode === "none" ? "No contract root" : `${mode} disabled`),
+  mode,
+  nextAction: mode === "none"
+    ? localized("Keep no-root mode for local export review.")
+    : localized("Plan a later contract-root approval mission before enabling this mode."),
+  readiness: mode === "none" ? "ready" : "blocked",
+  safeDefault: mode === "none",
+});
+
+const createExportReadinessProjection = (
+  campaignId: string,
+  exportBatchId: string,
+  rows: readonly CampaignDbExportRow[],
+  repository: CampaignDbExportReadinessProjection["repository"],
+): CampaignDbExportReadinessProjection => {
+  const acknowledgements = createExportAcknowledgements();
+
+  return {
+    acknowledgements,
+    batchId: exportBatchId,
+    boundary: exportProjectionBoundary,
+    campaignId,
+    contractRootReadiness: exportContractRootModes.map(createContractRootReadiness),
+    fieldCoverage: createExportFieldCoverage(),
+    nextAction: exportProjectionNextAction,
+    previewModes: exportFormats.map(createPreviewModeReadiness),
+    repository,
+    rowStatusCoverage: createRowStatusCoverage(rows),
+    summary: {
+      acknowledgedItems: acknowledgements.filter((item) => item.acknowledged).length,
+      blockedRows: rows.filter((row) => row.rowStatus === "blocked").length,
+      previewModeCount: exportFormats.length,
+      readyRows: rows.filter((row) => row.rowStatus === "ready").length,
+      requiredAcknowledgements: acknowledgements.filter((item) => item.required).length,
+      reviewRequiredRows: rows.filter((row) => row.rowStatus === "review_required").length,
+      totalRows: rows.length,
+    },
+  };
+};
+
 const createProductionDeferredDiagnostic = (
   requestedDriverId: string | undefined,
 ): CampaignDbDiagnostic => diagnostic(
@@ -1076,17 +1859,66 @@ export const createCampaignDbRepository = ({
     (await listTaskCompletionsByCampaignId(campaignId))
       .find((completion) => completion.taskId === taskId && completion.walletAddress === walletAddress);
 
+  const repositoryMetadata = () => ({
+    adapterId,
+    createdViaRepository: true as const,
+    repositoryId: "campaign-db-repository-runtime",
+    storeId: "campaign-db" as const,
+  });
+
   const toProjection = async (draft: CampaignDbDraft): Promise<CampaignDbReadProjection> => ({
     ...draft,
-    repository: {
-      adapterId,
-      createdViaRepository: true,
-      repositoryId: "campaign-db-repository-runtime",
-      storeId: "campaign-db",
-    },
+    repository: repositoryMetadata(),
     completions: await listTaskCompletionsByCampaignId(draft.id),
     tasks: await listTaskDraftsByCampaignId(draft.id),
   });
+
+  const createExportState = async (
+    input: CampaignDbExportProjectionInput,
+    context: CampaignDbOperationContext,
+  ) => {
+    assertWritable();
+    appendEvent({
+      operation: "lookup_campaign_export_projection",
+      traceId: context.traceId,
+      type: "query.lookup",
+    });
+
+    const campaign = activeDurableStore
+      ? await activeDurableStore.getById(input.campaignId)
+      : recordsById.get(input.campaignId);
+    const normalized = validateExportProjectionInput(input, Boolean(campaign));
+
+    if (!campaign) {
+      throw new CampaignDbRepositoryError("Invalid Campaign DB export projection input.", [
+        diagnostic(
+          "CAMPAIGN_DB_EXPORT_CAMPAIGN_NOT_FOUND",
+          "campaignId",
+          `Campaign DB draft '${sanitizeCampaignDbDiagnosticValue("campaignId", normalized.campaignId)}' was not found for export projection.`,
+        ),
+      ]);
+    }
+
+    const tasks = await listTaskDraftsByCampaignId(normalized.campaignId);
+    const completions = await listTaskCompletionsByCampaignId(normalized.campaignId);
+    const exportBatchId = exportBatchIdFor(normalized.campaignId);
+    const rows = createExportRows(campaign, tasks, completions, exportBatchId);
+    const repository = repositoryMetadata();
+    const exportReadiness = createExportReadinessProjection(
+      normalized.campaignId,
+      exportBatchId,
+      rows,
+      repository,
+    );
+
+    return {
+      exportBatchId,
+      exportReadiness,
+      normalized,
+      repository,
+      rows,
+    };
+  };
 
   const resolveRecordCount = async () =>
     activeDurableStore ? (await activeDurableStore.manifest()).recordCount : recordsById.size;
@@ -1379,6 +2211,43 @@ export const createCampaignDbRepository = ({
         .sort((left, right) => left.id.localeCompare(right.id));
 
       return Promise.all(filteredRecords.map(toProjection));
+    },
+    getExportReadiness: async (input, context = {}) => {
+      const { exportReadiness } = await createExportState(input, context);
+
+      return exportReadiness;
+    },
+    projectExport: async (input, context = {}) => {
+      const {
+        exportBatchId,
+        exportReadiness,
+        normalized,
+        repository,
+        rows,
+      } = await createExportState(input, context);
+      const artifact = createExportArtifact(
+        normalized.campaignId,
+        exportBatchId,
+        rows,
+        normalized.format,
+        now(),
+      );
+
+      return {
+        artifact,
+        blockedRows: exportReadiness.summary.blockedRows,
+        campaignId: normalized.campaignId,
+        columns: EXPORT_CSV_COLUMNS,
+        contractRootMode: normalized.contractRootMode,
+        disclaimer: "Repository export preview is local-review only and does not distribute rewards.",
+        exportBatchId,
+        exportReadiness,
+        format: normalized.format,
+        readyRows: exportReadiness.summary.readyRows,
+        repository,
+        reviewRequiredRows: exportReadiness.summary.reviewRequiredRows,
+        rows,
+      };
     },
     reset: async () => {
       recordsById.clear();

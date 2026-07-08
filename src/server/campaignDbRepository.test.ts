@@ -41,6 +41,21 @@ const validCompletionInput = (campaignId: string, taskId: string) => ({
   walletSource: "PORTKEY_EOA_EXTENSION" as const,
 });
 
+const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasOwnKeyDeep(item, key));
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return Object.prototype.hasOwnProperty.call(record, key)
+    || Object.values(record).some((item) => hasOwnKeyDeep(item, key));
+};
+
 const withTempStorePath = async <T>(operation: (filePath: string) => Promise<T>) => {
   const directory = await mkdtemp(join(tmpdir(), "campaign-os-repository-"));
 
@@ -414,6 +429,327 @@ describe("Campaign DB repository", () => {
     });
   });
 
+  it("projects deterministic repository export rows and readiness counts", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const requiredTask = await repository.addTaskDraft({
+      ...validTaskDraftInput(campaign.id),
+      points: 120,
+      required: true,
+      templateCode: "bridge_ebridge",
+    });
+    const optionalTask = await repository.addTaskDraft({
+      ...validTaskDraftInput(campaign.id),
+      evidenceRule: { action: "share" },
+      points: 50,
+      required: false,
+      templateCode: "share_campaign",
+      verificationType: "SOCIAL",
+    });
+
+    await repository.upsertTaskCompletion!(validCompletionInput(campaign.id, requiredTask.id));
+    await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, optionalTask.id),
+      evidenceHash: "evidence-hash:share-campaign",
+      evidenceSource: "SOCIAL_API",
+    });
+    await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, requiredTask.id),
+      evidenceHash: "evidence-hash:wallet-b-required",
+      walletAddress: "2F4SecondCompletionWallet",
+    });
+    await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, requiredTask.id),
+      evidenceHash: "evidence-hash:pending-required",
+      status: "pending",
+      walletAddress: "2F4PendingWallet",
+    });
+    await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, optionalTask.id),
+      evidenceHash: "evidence-hash:blocked-optional",
+      evidenceSource: "SOCIAL_API",
+      walletAddress: "2F4BlockedWallet",
+    });
+
+    const projection = await repository.projectExport!({
+      campaignId: campaign.id,
+      contractRootMode: "none",
+      format: "csv",
+    }, {
+      traceId: "trace-export-projection",
+    });
+    const repeatedProjection = await repository.projectExport!({
+      campaignId: campaign.id,
+      contractRootMode: "none",
+      format: "csv",
+    });
+
+    expect(projection).toMatchObject({
+      blockedRows: 1,
+      campaignId: campaign.id,
+      contractRootMode: "none",
+      exportBatchId: `campaign-db-export-${campaign.id}`,
+      format: "csv",
+      readyRows: 2,
+      reviewRequiredRows: 1,
+      repository: {
+        adapterId: "campaign-db-deterministic-adapter",
+        createdViaRepository: true,
+        storeId: "campaign-db",
+      },
+    });
+    expect(projection.rows.map((row) => ({
+      rank: row.rank,
+      rowStatus: row.rowStatus,
+      totalPoints: row.totalPoints,
+      walletAddress: row.walletAddress,
+    }))).toEqual([
+      {
+        rank: 1,
+        rowStatus: "ready",
+        totalPoints: 170,
+        walletAddress: "2F4CompletionWallet",
+      },
+      {
+        rank: 2,
+        rowStatus: "ready",
+        totalPoints: 120,
+        walletAddress: "2F4SecondCompletionWallet",
+      },
+      {
+        rank: 3,
+        rowStatus: "review_required",
+        totalPoints: 0,
+        walletAddress: "2F4PendingWallet",
+      },
+      {
+        rank: undefined,
+        rowStatus: "blocked",
+        totalPoints: 50,
+        walletAddress: "2F4BlockedWallet",
+      },
+    ]);
+    expect(projection.rows[0]).toMatchObject({
+      accountType: "EOA",
+      eligible: true,
+      evidenceHashes: ["evidence-hash:bridge-ebridge", "evidence-hash:share-campaign"],
+      localePreference: "en-US",
+      missingColumnValues: [],
+      missingTasks: [],
+      referrerAddress: "",
+      riskFlags: [],
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
+    });
+    expect(projection.rows[0].taskRecords).toEqual([
+      expect.objectContaining({
+        pointsAwarded: 120,
+        pointsAvailable: 120,
+        required: true,
+        status: "completed",
+        taskId: requiredTask.id,
+        templateCode: "bridge_ebridge",
+      }),
+      expect.objectContaining({
+        evidenceHash: "evidence-hash:share-campaign",
+        pointsAwarded: 50,
+        pointsAvailable: 50,
+        required: false,
+        status: "completed",
+        taskId: optionalTask.id,
+        templateCode: "share_campaign",
+      }),
+    ]);
+    expect(projection.rows[2]).toMatchObject({
+      missingTasks: ["bridge_ebridge"],
+      rowStatus: "review_required",
+      taskRecords: expect.arrayContaining([
+        expect.objectContaining({
+          pointsAwarded: 0,
+          required: true,
+          status: "pending",
+          taskId: requiredTask.id,
+        }),
+      ]),
+    });
+    expect(projection.rows[3]).toMatchObject({
+      missingTasks: ["bridge_ebridge"],
+      rowStatus: "blocked",
+      taskRecords: expect.arrayContaining([
+        expect.objectContaining({
+          pointsAwarded: 0,
+          required: true,
+          status: "missing",
+          taskId: requiredTask.id,
+        }),
+      ]),
+    });
+    expect(projection.artifact).toMatchObject({
+      checksumAlgorithm: "fnv1a32-local-review",
+      columns: [
+        "campaign_id",
+        "wallet_address",
+        "account_type",
+        "wallet_source",
+        "locale_preference",
+        "total_points",
+        "rank",
+        "eligible",
+        "missing_tasks",
+        "risk_flags",
+        "referrer_address",
+        "task_records",
+        "evidence_hashes",
+        "export_batch_id",
+      ],
+      format: "csv",
+      generatedMode: "local_review_only",
+      localPreviewMode: true,
+      mimeType: "text/csv;charset=utf-8",
+      safety: {
+        localOnly: true,
+        noContractRoot: true,
+        noContractTransaction: true,
+        noDownloadUrl: true,
+        noRewardCustody: true,
+        noRewardDistribution: true,
+        noStorageWrite: true,
+      },
+    });
+    expect(projection.artifact.csvPreview).toContain("campaign_id,wallet_address,account_type");
+    expect(repeatedProjection.rows).toEqual(projection.rows);
+    expect(repeatedProjection.artifact.checksum).toBe(projection.artifact.checksum);
+    expect(projection.exportReadiness).toMatchObject({
+      batchId: `campaign-db-export-${campaign.id}`,
+      summary: {
+        blockedRows: 1,
+        previewModeCount: 2,
+        readyRows: 2,
+        reviewRequiredRows: 1,
+        totalRows: 4,
+      },
+    });
+    expect(projection.exportReadiness.previewModes).toEqual([
+      expect.objectContaining({ downloadAvailable: false, generatesFile: false, mode: "csv", readiness: "ready" }),
+      expect.objectContaining({ downloadAvailable: false, generatesFile: false, mode: "json", readiness: "ready" }),
+    ]);
+    expect(projection.exportReadiness.contractRootReadiness).toEqual([
+      expect.objectContaining({ mode: "none", readiness: "ready", safeDefault: true }),
+      expect.objectContaining({ mode: "eligibility_root", readiness: "blocked", safeDefault: false }),
+      expect.objectContaining({ mode: "winners_root", readiness: "blocked", safeDefault: false }),
+      expect.objectContaining({ mode: "contract_claim", readiness: "blocked", safeDefault: false }),
+    ]);
+  });
+
+  it("keeps duplicate completion upserts single-counted in export projection", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    const first = await repository.upsertTaskCompletion!(validCompletionInput(campaign.id, task.id));
+    const second = await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, task.id),
+      evidenceHash: "evidence-hash:bridge-ebridge-retry",
+    });
+    const projection = await repository.projectExport!({
+      campaignId: campaign.id,
+      format: "json",
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(projection.rows).toHaveLength(1);
+    expect(projection.rows[0]).toMatchObject({
+      evidenceHashes: ["evidence-hash:bridge-ebridge-retry"],
+      totalPoints: 120,
+    });
+    expect(projection.rows[0].taskRecords).toHaveLength(1);
+    expect(projection.artifact).toMatchObject({
+      format: "json",
+      jsonPreview: [
+        expect.objectContaining({
+          evidence_hashes: ["evidence-hash:bridge-ebridge-retry"],
+          total_points: 120,
+        }),
+      ],
+    });
+  });
+
+  it("returns empty local export projection for campaigns without completions", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    const projection = await repository.projectExport!({
+      campaignId: campaign.id,
+      format: "csv",
+    });
+
+    expect(projection.rows).toEqual([]);
+    expect(projection).toMatchObject({
+      blockedRows: 0,
+      readyRows: 0,
+      reviewRequiredRows: 0,
+    });
+    expect(projection.artifact.csvPreview).toBe(
+      "campaign_id,wallet_address,account_type,wallet_source,locale_preference,total_points,rank,eligible,missing_tasks,risk_flags,referrer_address,task_records,evidence_hashes,export_batch_id",
+    );
+    expect(projection.exportReadiness.summary).toMatchObject({
+      totalRows: 0,
+      readyRows: 0,
+      reviewRequiredRows: 0,
+      blockedRows: 0,
+    });
+  });
+
+  it("rejects unsafe repository export projection requests", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+
+    await expect(repository.projectExport!({
+      campaignId: campaign.id,
+      contractRootMode: "winners_root",
+    })).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_EXPORT_UNSUPPORTED_CONTRACT_ROOT_MODE",
+          field: "contractRootMode",
+        }),
+      ],
+    });
+    await expect(repository.projectExport!({
+      campaignId: campaign.id,
+      format: "xlsx",
+    })).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_EXPORT_UNSUPPORTED_FORMAT",
+          field: "format",
+        }),
+      ],
+    });
+    await expect(repository.projectExport!({
+      campaignId: campaign.id,
+      includeRiskFlags: false,
+    })).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_EXPORT_REQUIRED_COLUMN_DISABLED",
+          field: "includeRiskFlags",
+        }),
+      ],
+    });
+    await expect(repository.projectExport!({
+      campaignId: "missing-campaign",
+    })).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_EXPORT_CAMPAIGN_NOT_FOUND",
+          field: "campaignId",
+        }),
+      ],
+    });
+  });
+
   it("resets records and event lifecycle deterministically", async () => {
     const repository = createCampaignDbRepository();
     const campaign = await repository.createDraft(validDraftInput());
@@ -543,6 +879,12 @@ describe("Campaign DB repository", () => {
       "campaign-db-draft-0001",
       "campaign-db-task-draft-0001",
     ))).rejects.toBeInstanceOf(CampaignDbRepositoryError);
+    await expect(repository.projectExport!({
+      campaignId: "campaign-db-draft-0001",
+    })).rejects.toBeInstanceOf(CampaignDbRepositoryError);
+    await expect(repository.getExportReadiness!({
+      campaignId: "campaign-db-draft-0001",
+    })).rejects.toBeInstanceOf(CampaignDbRepositoryError);
   });
 
   it("uses durable store mode to preserve drafts across repository instances", async () => {
@@ -621,6 +963,43 @@ describe("Campaign DB repository", () => {
         score: 120,
         status: "eligible",
       });
+      const exportProjection = await reopenedRepository.projectExport!({
+        campaignId: created.id,
+        format: "json",
+      });
+
+      expect(exportProjection).toMatchObject({
+        campaignId: created.id,
+        readyRows: 2,
+        reviewRequiredRows: 0,
+        blockedRows: 0,
+      });
+      expect(exportProjection.rows.map((row) => ({
+        rank: row.rank,
+        rowStatus: row.rowStatus,
+        walletAddress: row.walletAddress,
+      }))).toEqual([
+        {
+          rank: 1,
+          rowStatus: "ready",
+          walletAddress: "2F4CompletionWallet",
+        },
+        {
+          rank: 2,
+          rowStatus: "ready",
+          walletAddress: "2F4SecondCompletionWallet",
+        },
+      ]);
+      expect(exportProjection.artifact.jsonPreview).toEqual([
+        expect.objectContaining({
+          export_batch_id: `campaign-db-export-${created.id}`,
+          wallet_address: "2F4CompletionWallet",
+        }),
+        expect.objectContaining({
+          export_batch_id: `campaign-db-export-${created.id}`,
+          wallet_address: "2F4SecondCompletionWallet",
+        }),
+      ]);
       await expect(reopenedRepository.list({ projectId: "project-m177" })).resolves.toEqual([
         expect.objectContaining({
           completions: expect.arrayContaining([
@@ -656,6 +1035,45 @@ describe("Campaign DB repository", () => {
         taskRecordCount: 1,
       });
     });
+  });
+
+  it("keeps repository export projection free from live side-effect and private-artifact fields", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    await repository.upsertTaskCompletion!(validCompletionInput(campaign.id, task.id));
+
+    const projection = await repository.projectExport!({
+      campaignId: campaign.id,
+      format: "json",
+    });
+    const readiness = await repository.getExportReadiness!({
+      campaignId: campaign.id,
+    });
+    const serialized = JSON.stringify({ projection, readiness });
+
+    for (const key of [
+      "downloadUrl",
+      "signedUrl",
+      "storageKey",
+      "objectKey",
+      "contractRoot",
+      "transactionId",
+      "signature",
+      "rewardDistribution",
+      "providerPayload",
+    ]) {
+      expect(hasOwnKeyDeep(projection, key)).toBe(false);
+      expect(hasOwnKeyDeep(readiness, key)).toBe(false);
+    }
+
+    expect(serialized).not.toContain("kitty-specs");
+    expect(serialized).not.toContain("docs/current");
+    expect(serialized).not.toContain("evidence/");
+    expect(serialized).not.toContain("sync/");
+    expect(serialized).not.toContain("signedUrl");
+    expect(serialized).not.toContain("objectKey");
   });
 
   it("loads old durable documents without completion records", async () => {
