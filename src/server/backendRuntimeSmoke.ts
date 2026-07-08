@@ -132,6 +132,18 @@ export interface BackendRuntimeSmokeQueueProviderAdapterSummary {
   driverSdkBindingLiveWorkerExecutionEnabled: false;
   driverSdkBindingMode?: string;
   driverSdkBindingOperationCount: number;
+  driverSdkBindingPackageBindingBlockerCount: number;
+  driverSdkBindingPackageBindingBrowserBundleAllowed: false;
+  driverSdkBindingPackageBindingDiagnosticCodes: string[];
+  driverSdkBindingPackageBindingFamily?: string;
+  driverSdkBindingPackageBindingId?: string;
+  driverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false;
+  driverSdkBindingPackageBindingLiveQueuePublishingEnabled: false;
+  driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false;
+  driverSdkBindingPackageBindingPackageName?: string;
+  driverSdkBindingPackageBindingPackageRef?: string;
+  driverSdkBindingPackageBindingSdkClientConstructed: false;
+  driverSdkBindingPackageBindingStatus?: string;
   driverSdkBindingProductionReady: false;
   driverSdkBindingProviderKind?: string;
   driverSdkBindingQueueRouteCount: number;
@@ -541,6 +553,11 @@ const summarizeQueueProviderAdapter = (
     && isExplicitFalse(record, "driverSdkBindingLiveProviderCallAttempted")
     && isExplicitFalse(record, "driverSdkBindingLiveQueuePublishingEnabled")
     && isExplicitFalse(record, "driverSdkBindingLiveWorkerExecutionEnabled")
+    && isExplicitFalse(record, "driverSdkBindingPackageBindingBrowserBundleAllowed")
+    && isExplicitFalse(record, "driverSdkBindingPackageBindingLiveBrokerConnectionAttempted")
+    && isExplicitFalse(record, "driverSdkBindingPackageBindingLiveQueuePublishingEnabled")
+    && isExplicitFalse(record, "driverSdkBindingPackageBindingLiveWorkerExecutionEnabled")
+    && isExplicitFalse(record, "driverSdkBindingPackageBindingSdkClientConstructed")
     && isExplicitFalse(record, "liveQueuePublishingEnabled")
     && isExplicitFalse(record, "liveWorkerExecutionEnabled");
 
@@ -575,6 +592,18 @@ const summarizeQueueProviderAdapter = (
     driverSdkBindingLiveWorkerExecutionEnabled: false,
     driverSdkBindingMode: getString(record, "driverSdkBindingMode"),
     driverSdkBindingOperationCount: getNumber(record, "driverSdkBindingOperationCount"),
+    driverSdkBindingPackageBindingBlockerCount: getNumber(record, "driverSdkBindingPackageBindingBlockerCount"),
+    driverSdkBindingPackageBindingBrowserBundleAllowed: false,
+    driverSdkBindingPackageBindingDiagnosticCodes: getStringArray(record, "driverSdkBindingPackageBindingDiagnosticCodes"),
+    driverSdkBindingPackageBindingFamily: getString(record, "driverSdkBindingPackageBindingFamily"),
+    driverSdkBindingPackageBindingId: getString(record, "driverSdkBindingPackageBindingId"),
+    driverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false,
+    driverSdkBindingPackageBindingLiveQueuePublishingEnabled: false,
+    driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false,
+    driverSdkBindingPackageBindingPackageName: getString(record, "driverSdkBindingPackageBindingPackageName"),
+    driverSdkBindingPackageBindingPackageRef: getString(record, "driverSdkBindingPackageBindingPackageRef"),
+    driverSdkBindingPackageBindingSdkClientConstructed: false,
+    driverSdkBindingPackageBindingStatus: getString(record, "driverSdkBindingPackageBindingStatus"),
     driverSdkBindingProductionReady: false,
     driverSdkBindingProviderKind: getString(record, "driverSdkBindingProviderKind"),
     driverSdkBindingQueueRouteCount: getNumber(record, "driverSdkBindingQueueRouteCount"),
@@ -1029,6 +1058,18 @@ const isQueueProviderAdapterSmokeReady = (
     && summary.driverSdkBindingRequiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE")
     && summary.driverSdkBindingRequiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER_BINDING")
     && summary.driverSdkBindingRequiredConfigKeys.includes("CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT")
+    && summary.driverSdkBindingPackageBindingId === "bullmq-redis-package-binding-local"
+    && summary.driverSdkBindingPackageBindingFamily === "bullmq-redis-compatible"
+    && summary.driverSdkBindingPackageBindingPackageName === "bullmq"
+    && summary.driverSdkBindingPackageBindingPackageRef === "npm:bullmq"
+    && summary.driverSdkBindingPackageBindingStatus === "local_ready"
+    && summary.driverSdkBindingPackageBindingBrowserBundleAllowed === false
+    && summary.driverSdkBindingPackageBindingLiveBrokerConnectionAttempted === false
+    && summary.driverSdkBindingPackageBindingLiveQueuePublishingEnabled === false
+    && summary.driverSdkBindingPackageBindingLiveWorkerExecutionEnabled === false
+    && summary.driverSdkBindingPackageBindingSdkClientConstructed === false
+    && summary.driverSdkBindingPackageBindingBlockerCount === 0
+    && summary.driverSdkBindingPackageBindingDiagnosticCodes.length === 0
     && summary.operationCount >= 8
     && summary.disabledLiveOperationCount === summary.operationCount
     && summary.requiredConfigKeys.includes("CAMPAIGN_OS_QUEUE_PROVIDER")
