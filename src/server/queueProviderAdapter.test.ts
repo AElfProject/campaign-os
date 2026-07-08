@@ -81,6 +81,13 @@ describe("queue provider adapter foundation", () => {
       driverSdkBindingOperationCount: queueProviderSdkBindingOperationCapabilities.length,
       driverSdkBindingPackageBindingBlockerCount: 0,
       driverSdkBindingPackageBindingBrowserBundleAllowed: false,
+      driverSdkBindingPackageBindingBullmqConstructionAttempted: false,
+      driverSdkBindingPackageBindingBullmqConstructionBlockerCount: 0,
+      driverSdkBindingPackageBindingBullmqConstructionDiagnosticCodes: [],
+      driverSdkBindingPackageBindingBullmqConstructionFactoryInvoked: false,
+      driverSdkBindingPackageBindingBullmqConstructionId: "bullmq-construction-local",
+      driverSdkBindingPackageBindingBullmqConstructionProductionReady: false,
+      driverSdkBindingPackageBindingBullmqConstructionStatus: "local_ready",
       driverSdkBindingPackageBindingFamily: "bullmq-redis-compatible",
       driverSdkBindingPackageBindingId: "bullmq-redis-package-binding-local",
       driverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false,
@@ -377,6 +384,16 @@ describe("queue provider adapter foundation", () => {
     expect(foundation.readiness.driverSdkBindingPackageBindingBrokerConnectionBlockerCount).toBe(0);
     expect(foundation.readiness.driverSdkBindingPackageBindingBrokerConnectionHealthCheckMode).toBe("metadata_only");
     expect(foundation.readiness.driverSdkBindingPackageBindingBrokerConnectionStatus).toBe("scaffolded");
+    expect(foundation.readiness.driverSdkBindingPackageBindingBullmqConstructionAttempted).toBe(false);
+    expect(foundation.readiness.driverSdkBindingPackageBindingBullmqConstructionBlockerCount).toBe(2);
+    expect(foundation.readiness.driverSdkBindingPackageBindingBullmqConstructionDiagnosticCodes).toEqual([
+      "BULLMQ_CONSTRUCTION_ACTIVATION_MISSING",
+      "BULLMQ_CONSTRUCTION_FACTORY_MISSING",
+    ]);
+    expect(foundation.readiness.driverSdkBindingPackageBindingBullmqConstructionFactoryInvoked).toBe(false);
+    expect(foundation.readiness.driverSdkBindingPackageBindingBullmqConstructionId).toBe("bullmq-construction-production");
+    expect(foundation.readiness.driverSdkBindingPackageBindingBullmqConstructionProductionReady).toBe(false);
+    expect(foundation.readiness.driverSdkBindingPackageBindingBullmqConstructionStatus).toBe("blocked");
     expect(foundation.readiness.driverSdkBindingPackageBindingLiveBrokerConnectionAttempted).toBe(false);
     expect(foundation.readiness.driverSdkBindingPackageBindingLiveBrokerHealthCheckAttempted).toBe(false);
     expect(foundation.readiness.driverSdkBindingPackageBindingPackageName).toBe("bullmq");

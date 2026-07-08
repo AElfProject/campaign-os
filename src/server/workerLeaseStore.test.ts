@@ -17,6 +17,7 @@ import {
   workerLeaseStoreProductionPreconditions,
 } from "./workerLeaseStore";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
+import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
 const queueProviderSdkBindingConfigKeys = [
   "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
@@ -59,6 +60,21 @@ const queueProviderPackageBindingReadyEnv = {
   CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:queue-package",
   CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
 } satisfies Record<string, unknown>;
+
+const bullmqConstructionReadyEnv = {
+  ...queueProviderPackageBindingReadyEnv,
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY: "factory-ref:bullmq-construction",
+} satisfies Record<string, unknown>;
+
+const constructedBullmqFactory: BullmqConstructionFactory = {
+  factoryId: "lease-store-bullmq-construction-factory",
+  construct: () => ({
+    queueClient: { clientId: "queue-client-ref", constructed: true },
+    queueEvents: { clientId: "queue-events-ref", constructed: true },
+    worker: { clientId: "worker-client-ref", constructed: true },
+  }),
+};
 
 describe("worker lease store foundation", () => {
   it("declares a stable foundation id and supported profiles", () => {
@@ -269,6 +285,60 @@ describe("worker lease store foundation", () => {
     expect(serialized).not.toContain("redis-pass");
     expect(serialized).not.toContain("redis-secret");
     expect(serialized).not.toContain("queue-package-secret-token");
+  });
+
+  it("keeps constructed BullMQ clients from satisfying lease store readiness or live lease execution", () => {
+    const packageBinding = createQueueProviderPackageBinding({
+      constructionFactory: constructedBullmqFactory,
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+    });
+    const leaseStore = createWorkerLeaseStoreFoundation({
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+    });
+    const evaluation = evaluateWorkerLeaseDryRun({
+      fencingTokenReference: "fence-ref:task-verification-worker",
+      heartbeatIntervalSeconds: 30,
+      jobId: "task-verification-worker",
+      leaseKeyReference: "lease-key-ref:task-verification-worker",
+      operation: "claim",
+      traceId: "trace-constructed-bullmq-lease-separation",
+      ttlSeconds: 120,
+      workerReference: "worker-ref:local-review",
+    });
+
+    expect(packageBinding).toMatchObject({
+      bullmqConstructionStatus: "constructed",
+      liveBrokerConnectionAttempted: false,
+      liveBrokerHealthCheckAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      productionReady: false,
+      queueClientConstructed: true,
+      queueEventsConstructed: true,
+      sdkClientConstructed: false,
+      workerConstructed: true,
+    });
+    expect(leaseStore.status).toBe("blocked");
+    expect(leaseStore.valid).toBe(false);
+    expect(leaseStore.productionReady).toBe(false);
+    expect(leaseStore.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "WORKER_LEASE_STORE_MISSING",
+        "WORKER_LEASE_CREDENTIALS_MISSING",
+        "WORKER_LEASE_CLOCK_MISSING",
+      ]),
+    );
+    expect(leaseStore.readiness.liveQueuePublishingEnabled).toBe(false);
+    expect(leaseStore.readiness.liveWorkerExecutionEnabled).toBe(false);
+    expect(leaseStore.noLiveFlags).toEqual(workerLeaseStoreNoLiveFlags);
+    expect(leaseStore.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(true);
+    expect(evaluation).toMatchObject({
+      liveLeaseOperationAttempted: false,
+      liveWorkerExecutionEnabled: false,
+      status: "accepted_dry_run",
+    });
   });
 
   it("keeps every lease operation metadata-only or disabled for staging", () => {

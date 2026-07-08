@@ -9,6 +9,7 @@ import {
   redactObservabilityExporterValue,
 } from "./observabilityExporter";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
+import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
 const queueProviderSdkBindingConfigKeys = [
   "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
@@ -51,6 +52,21 @@ const queueProviderPackageBindingReadyEnv = {
   CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:queue-package",
   CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
 } satisfies Record<string, unknown>;
+
+const bullmqConstructionReadyEnv = {
+  ...queueProviderPackageBindingReadyEnv,
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY: "factory-ref:bullmq-construction",
+} satisfies Record<string, unknown>;
+
+const constructedBullmqFactory: BullmqConstructionFactory = {
+  factoryId: "observability-bullmq-construction-factory",
+  construct: () => ({
+    queueClient: { clientId: "queue-client-ref", constructed: true },
+    queueEvents: { clientId: "queue-events-ref", constructed: true },
+    worker: { clientId: "worker-client-ref", constructed: true },
+  }),
+};
 
 describe("observability exporter foundation", () => {
   it("declares a stable foundation id and supported profiles", () => {
@@ -255,6 +271,58 @@ describe("observability exporter foundation", () => {
     expect(serialized).not.toContain("redis-pass");
     expect(serialized).not.toContain("redis-secret");
     expect(serialized).not.toContain("queue-package-secret-token");
+  });
+
+  it("keeps constructed BullMQ clients from satisfying telemetry exporter readiness", () => {
+    const packageBinding = createQueueProviderPackageBinding({
+      constructionFactory: constructedBullmqFactory,
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+    });
+    const foundation = createObservabilityExporterFoundation({
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+    });
+    const capture = captureObservabilityDryRun({
+      eventCategory: "queue",
+      metricName: "queue.package_binding.metadata_ready",
+      operation: "metrics",
+      payloadReference: "payload-ref:queue:package-binding",
+      sourceRuntime: "queue-provider-package-binding",
+      traceId: "trace-constructed-bullmq-observability-separation",
+    });
+
+    expect(packageBinding).toMatchObject({
+      bullmqConstructionStatus: "constructed",
+      liveBrokerConnectionAttempted: false,
+      liveBrokerHealthCheckAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      productionReady: false,
+      queueClientConstructed: true,
+      queueEventsConstructed: true,
+      sdkClientConstructed: false,
+      workerConstructed: true,
+    });
+    expect(foundation.status).toBe("blocked");
+    expect(foundation.valid).toBe(false);
+    expect(foundation.productionReady).toBe(false);
+    expect(foundation.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "OBSERVABILITY_EXPORTER_MISSING",
+        "OBSERVABILITY_CREDENTIALS_MISSING",
+        "OBSERVABILITY_SINK_MISSING",
+      ]),
+    );
+    expect(foundation.readiness.liveTelemetryExportEnabled).toBe(false);
+    expect(foundation.noLiveFlags).toEqual(observabilityExporterNoLiveFlags);
+    expect(foundation.operationCapabilities.every((capability) => capability.liveEnabled === false)).toBe(true);
+    expect(capture).toMatchObject({
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportAttempted: false,
+      productionWriteAttempted: false,
+      status: "rejected",
+    });
   });
 
   it("fails closed for production-required when observability preconditions are missing", () => {

@@ -172,6 +172,17 @@ export interface QueueProviderDriverSdkBindingSummary {
   operationCapabilities: QueueProviderSdkBindingOperationCapability[];
   operationCount: number;
   packageBinding: QueueProviderSdkPackageBindingSummary;
+  packageBindingBullmqConstructionAttempted: boolean;
+  packageBindingBullmqConstructionBlockerCount: number;
+  packageBindingBullmqConstructionDiagnosticCodes: QueueProviderSdkPackageBindingSummary["bullmqConstructionDiagnosticCodes"];
+  packageBindingBullmqConstructionFactoryInvoked: boolean;
+  packageBindingBullmqConstructionId: string;
+  packageBindingBullmqConstructionProductionReady: false;
+  packageBindingBullmqConstructionStatus: QueueProviderSdkPackageBindingSummary["bullmqConstructionStatus"];
+  packageBindingQueueClientConstructed: boolean;
+  packageBindingQueueEventsConstructed: boolean;
+  packageBindingSdkClientConstructed: false;
+  packageBindingWorkerConstructed: boolean;
   productionReady: false;
   providerKind: QueueProviderSdkBindingProviderKind;
   queueRouteCount: number;
@@ -676,6 +687,17 @@ function createSdkBindingSummary(
     operationCapabilities: sdkBinding.operationCapabilities.map((item) => ({ ...item })),
     operationCount: sdkBinding.readiness.operationCount,
     packageBinding: clonePackageBindingSummary(sdkBinding.packageBinding),
+    packageBindingBullmqConstructionAttempted: sdkBinding.readiness.packageBindingBullmqConstructionAttempted,
+    packageBindingBullmqConstructionBlockerCount: sdkBinding.readiness.packageBindingBullmqConstructionBlockerCount,
+    packageBindingBullmqConstructionDiagnosticCodes: [...sdkBinding.readiness.packageBindingBullmqConstructionDiagnosticCodes],
+    packageBindingBullmqConstructionFactoryInvoked: sdkBinding.readiness.packageBindingBullmqConstructionFactoryInvoked,
+    packageBindingBullmqConstructionId: sdkBinding.readiness.packageBindingBullmqConstructionId,
+    packageBindingBullmqConstructionProductionReady: false,
+    packageBindingBullmqConstructionStatus: sdkBinding.readiness.packageBindingBullmqConstructionStatus,
+    packageBindingQueueClientConstructed: sdkBinding.readiness.packageBindingQueueClientConstructed,
+    packageBindingQueueEventsConstructed: sdkBinding.readiness.packageBindingQueueEventsConstructed,
+    packageBindingSdkClientConstructed: false,
+    packageBindingWorkerConstructed: sdkBinding.readiness.packageBindingWorkerConstructed,
     productionReady: false,
     providerKind: sdkBinding.providerKind,
     queueRouteCount: sdkBinding.readiness.queueRouteCount,
@@ -697,6 +719,7 @@ function cloneSdkBindingSummary(
     diagnosticCodes: [...sdkBinding.diagnosticCodes],
     operationCapabilities: sdkBinding.operationCapabilities.map((item) => ({ ...item })),
     packageBinding: clonePackageBindingSummary(sdkBinding.packageBinding),
+    packageBindingBullmqConstructionDiagnosticCodes: [...sdkBinding.packageBindingBullmqConstructionDiagnosticCodes],
     requiredConfigKeys: [...sdkBinding.requiredConfigKeys],
   };
 }
@@ -706,6 +729,18 @@ function clonePackageBindingSummary(
 ): QueueProviderSdkPackageBindingSummary {
   return {
     ...packageBinding,
+    brokerConnection: {
+      ...packageBinding.brokerConnection,
+      diagnosticCodes: [...packageBinding.brokerConnection.diagnosticCodes],
+      requiredConfigKeys: [...packageBinding.brokerConnection.requiredConfigKeys],
+    },
+    brokerConnectionDiagnosticCodes: [...packageBinding.brokerConnectionDiagnosticCodes],
+    brokerConnectionRequiredConfigKeys: [...packageBinding.brokerConnectionRequiredConfigKeys],
+    bullmqConstruction: {
+      ...packageBinding.bullmqConstruction,
+      diagnosticCodes: [...packageBinding.bullmqConstruction.diagnosticCodes],
+    },
+    bullmqConstructionDiagnosticCodes: [...packageBinding.bullmqConstructionDiagnosticCodes],
     diagnosticCodes: [...packageBinding.diagnosticCodes],
     requiredConfigKeys: [...packageBinding.requiredConfigKeys],
   };

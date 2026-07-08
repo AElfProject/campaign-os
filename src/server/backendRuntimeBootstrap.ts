@@ -177,6 +177,13 @@ export interface BackendRuntimeReadinessProjection {
       driverSdkBindingPackageBindingBrokerConnectionStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingBrokerConnectionStatus"];
       driverSdkBindingPackageBindingBlockerCount: number;
       driverSdkBindingPackageBindingBrowserBundleAllowed: false;
+      driverSdkBindingPackageBindingBullmqConstructionAttempted: boolean;
+      driverSdkBindingPackageBindingBullmqConstructionBlockerCount: number;
+      driverSdkBindingPackageBindingBullmqConstructionDiagnosticCodes: string[];
+      driverSdkBindingPackageBindingBullmqConstructionFactoryInvoked: boolean;
+      driverSdkBindingPackageBindingBullmqConstructionId: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingBullmqConstructionId"];
+      driverSdkBindingPackageBindingBullmqConstructionProductionReady: false;
+      driverSdkBindingPackageBindingBullmqConstructionStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingBullmqConstructionStatus"];
       driverSdkBindingPackageBindingDiagnosticCodes: string[];
       driverSdkBindingPackageBindingFamily: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingFamily"];
       driverSdkBindingPackageBindingId: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingId"];
@@ -186,11 +193,11 @@ export interface BackendRuntimeReadinessProjection {
       driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false;
       driverSdkBindingPackageBindingPackageName: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingPackageName"];
       driverSdkBindingPackageBindingPackageRef: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingPackageRef"];
-      driverSdkBindingPackageBindingQueueClientConstructed: false;
-      driverSdkBindingPackageBindingQueueEventsConstructed: false;
+      driverSdkBindingPackageBindingQueueClientConstructed: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingQueueClientConstructed"];
+      driverSdkBindingPackageBindingQueueEventsConstructed: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingQueueEventsConstructed"];
       driverSdkBindingPackageBindingSdkClientConstructed: false;
       driverSdkBindingPackageBindingStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingStatus"];
-      driverSdkBindingPackageBindingWorkerConstructed: false;
+      driverSdkBindingPackageBindingWorkerConstructed: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingWorkerConstructed"];
       driverSdkBindingProductionReady: false;
       driverSdkBindingProviderKind: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingProviderKind"];
       driverSdkBindingQueueRouteCount: number;
@@ -554,6 +561,13 @@ const createReadinessProjection = (
       driverSdkBindingPackageBindingBrokerConnectionStatus: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingBrokerConnectionStatus,
       driverSdkBindingPackageBindingBlockerCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingBlockerCount,
       driverSdkBindingPackageBindingBrowserBundleAllowed: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingBrowserBundleAllowed,
+      driverSdkBindingPackageBindingBullmqConstructionAttempted: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingBullmqConstructionAttempted,
+      driverSdkBindingPackageBindingBullmqConstructionBlockerCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingBullmqConstructionBlockerCount,
+      driverSdkBindingPackageBindingBullmqConstructionDiagnosticCodes: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingBullmqConstructionDiagnosticCodes,
+      driverSdkBindingPackageBindingBullmqConstructionFactoryInvoked: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingBullmqConstructionFactoryInvoked,
+      driverSdkBindingPackageBindingBullmqConstructionId: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingBullmqConstructionId,
+      driverSdkBindingPackageBindingBullmqConstructionProductionReady: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingBullmqConstructionProductionReady,
+      driverSdkBindingPackageBindingBullmqConstructionStatus: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingBullmqConstructionStatus,
       driverSdkBindingPackageBindingDiagnosticCodes: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingDiagnosticCodes,
       driverSdkBindingPackageBindingFamily: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingFamily,
       driverSdkBindingPackageBindingId: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingId,

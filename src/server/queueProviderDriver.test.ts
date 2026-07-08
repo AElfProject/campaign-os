@@ -90,8 +90,25 @@ describe("queue provider driver foundation", () => {
         liveWorkerExecutionEnabled: false,
         mode: "dry_run",
         operationCount: queueProviderSdkBindingOperationCapabilities.length,
+        packageBindingBullmqConstructionAttempted: false,
+        packageBindingBullmqConstructionBlockerCount: 0,
+        packageBindingBullmqConstructionDiagnosticCodes: [],
+        packageBindingBullmqConstructionFactoryInvoked: false,
+        packageBindingBullmqConstructionId: "bullmq-construction-local",
+        packageBindingBullmqConstructionProductionReady: false,
+        packageBindingBullmqConstructionStatus: "local_ready",
+        packageBindingQueueClientConstructed: false,
+        packageBindingQueueEventsConstructed: false,
+        packageBindingSdkClientConstructed: false,
+        packageBindingWorkerConstructed: false,
         packageBinding: expect.objectContaining({
           bindingId: "bullmq-redis-package-binding-local",
+          bullmqConstructionAttempted: false,
+          bullmqConstructionBlockerCount: 0,
+          bullmqConstructionDiagnosticCodes: [],
+          bullmqConstructionFactoryInvoked: false,
+          bullmqConstructionId: "bullmq-construction-local",
+          bullmqConstructionStatus: "local_ready",
           browserBundleAllowed: false,
           family: "bullmq-redis-compatible",
           liveBrokerConnectionAttempted: false,
@@ -228,6 +245,12 @@ describe("queue provider driver foundation", () => {
     expect(foundation.sdkBinding.liveQueuePublishingEnabled).toBe(false);
     expect(foundation.sdkBinding.packageBinding.status).toBe("blocked");
     expect(foundation.sdkBinding.packageBinding.liveBrokerConnectionAttempted).toBe(false);
+    expect(foundation.sdkBinding.packageBinding.bullmqConstructionStatus).toBe("blocked");
+    expect(foundation.sdkBinding.packageBinding.bullmqConstructionAttempted).toBe(false);
+    expect(foundation.sdkBinding.packageBinding.bullmqConstructionFactoryInvoked).toBe(false);
+    expect(foundation.sdkBinding.packageBinding.queueClientConstructed).toBe(false);
+    expect(foundation.sdkBinding.packageBinding.queueEventsConstructed).toBe(false);
+    expect(foundation.sdkBinding.packageBinding.workerConstructed).toBe(false);
   });
 
   it("keeps production-required scaffolded but not production-ready after all gates are explicit", () => {
@@ -272,6 +295,20 @@ describe("queue provider driver foundation", () => {
         brokerConnectionStatus: "scaffolded",
         blockerCount: 0,
         liveProviderCallAttempted: false,
+        packageBindingBullmqConstructionAttempted: false,
+        packageBindingBullmqConstructionBlockerCount: 2,
+        packageBindingBullmqConstructionDiagnosticCodes: [
+          "BULLMQ_CONSTRUCTION_ACTIVATION_MISSING",
+          "BULLMQ_CONSTRUCTION_FACTORY_MISSING",
+        ],
+        packageBindingBullmqConstructionFactoryInvoked: false,
+        packageBindingBullmqConstructionId: "bullmq-construction-production",
+        packageBindingBullmqConstructionProductionReady: false,
+        packageBindingBullmqConstructionStatus: "blocked",
+        packageBindingQueueClientConstructed: false,
+        packageBindingQueueEventsConstructed: false,
+        packageBindingSdkClientConstructed: false,
+        packageBindingWorkerConstructed: false,
       mode: "production_required",
         packageBinding: expect.objectContaining({
           bindingId: "bullmq-redis-package-binding-production",
@@ -279,6 +316,15 @@ describe("queue provider driver foundation", () => {
           brokerConnectionBlockerCount: 0,
           brokerConnectionHealthCheckMode: "metadata_only",
           brokerConnectionStatus: "scaffolded",
+          bullmqConstructionAttempted: false,
+          bullmqConstructionBlockerCount: 2,
+          bullmqConstructionDiagnosticCodes: [
+            "BULLMQ_CONSTRUCTION_ACTIVATION_MISSING",
+            "BULLMQ_CONSTRUCTION_FACTORY_MISSING",
+          ],
+          bullmqConstructionFactoryInvoked: false,
+          bullmqConstructionId: "bullmq-construction-production",
+          bullmqConstructionStatus: "blocked",
           liveBrokerConnectionAttempted: false,
           liveBrokerHealthCheckAttempted: false,
           packageName: "bullmq",

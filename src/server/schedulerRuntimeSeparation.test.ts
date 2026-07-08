@@ -26,6 +26,8 @@ import {
   evaluateWorkerIdempotencyDryRun,
   workerIdempotencyStoreNoLiveFlags,
 } from "./workerIdempotencyStore";
+import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
+import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
 const redisBrokerConnectionReadyEnv = {
   CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT: "explicitly-enabled",
@@ -36,6 +38,35 @@ const redisBrokerConnectionReadyEnv = {
   CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY: "retry-exponential",
   CAMPAIGN_OS_REDIS_TLS_POLICY: "tls-required",
 } satisfies Record<string, unknown>;
+
+const bullmqConstructionReadyEnv = {
+  ...redisBrokerConnectionReadyEnv,
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_BULLMQ_CONSTRUCTION_FACTORY: "factory-ref:bullmq-construction",
+  CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:queue-package",
+  CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
+  CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:queue-package",
+  CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:queue-package",
+  CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "runbook-ref:queue-package",
+  CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-package",
+  CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
+  CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
+  CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-package-binding-production",
+  CAMPAIGN_OS_REDIS_URL: "redis-ref:campaign-os",
+  CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:queue-package",
+  CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:queue-package",
+  CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
+} satisfies Record<string, unknown>;
+
+const constructedBullmqFactory: BullmqConstructionFactory = {
+  factoryId: "scheduler-separation-bullmq-construction-factory",
+  construct: () => ({
+    queueClient: { clientId: "queue-client-ref", constructed: true },
+    queueEvents: { clientId: "queue-events-ref", constructed: true },
+    worker: { clientId: "worker-client-ref", constructed: true },
+  }),
+};
 
 const serializedSchedulerOutput = () => {
   const foundation = createSchedulerRuntimeFoundation();
@@ -213,6 +244,64 @@ describe("scheduler runtime separation boundaries", () => {
     expect(scheduler.readiness.liveCronExecutionEnabled).toBe(false);
     expect(scheduler.readiness.liveQueuePublishingEnabled).toBe(false);
     expect(scheduler.readiness.liveSchedulerExecutionEnabled).toBe(false);
+    expect(triggerResult).toMatchObject({
+      liveCronExecutionEnabled: false,
+      liveExecutionAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
+  });
+
+  it("keeps constructed BullMQ clients separate from scheduler and queue execution", () => {
+    const packageBinding = createQueueProviderPackageBinding({
+      constructionFactory: constructedBullmqFactory,
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+    });
+    const scheduler = createSchedulerRuntimeFoundation({
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+    });
+    const queue = queueRuntime.createQueueRuntimeFoundation({
+      env: bullmqConstructionReadyEnv,
+      profileId: "production-required",
+    });
+    const triggerResult = dryRunSchedulerTrigger({
+      idempotencyKey: "idempotency:task-verification-on-request:campaign-1",
+      jobId: "task-verification-worker",
+      queueHandoffReference: "queue-handoff:task-verification-worker-queue-plan",
+      scheduleId: "task-verification-on-request",
+      scheduledFor: "2026-07-07T13:30:00Z",
+      traceId: "trace-constructed-bullmq-scheduler-separation",
+      triggerSource: "api_request",
+      windowEnd: "2026-07-07T13:35:00Z",
+      windowStart: "2026-07-07T13:25:00Z",
+    });
+
+    expect(packageBinding).toMatchObject({
+      bullmqConstructionStatus: "constructed",
+      liveBrokerConnectionAttempted: false,
+      liveBrokerHealthCheckAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      productionReady: false,
+      queueClientConstructed: true,
+      queueEventsConstructed: true,
+      sdkClientConstructed: false,
+      workerConstructed: true,
+    });
+    expect(scheduler.readiness).toMatchObject({
+      liveCronExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
+    expect(queue.readiness).toMatchObject({
+      liveQueuePublishingEnabled: false,
+      providerAdapterDriverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false,
+      providerAdapterDriverSdkBindingPackageBindingLiveBrokerHealthCheckAttempted: false,
+      providerAdapterDriverSdkBindingPackageBindingLiveQueuePublishingEnabled: false,
+      providerAdapterDriverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false,
+    });
     expect(triggerResult).toMatchObject({
       liveCronExecutionEnabled: false,
       liveExecutionAttempted: false,
