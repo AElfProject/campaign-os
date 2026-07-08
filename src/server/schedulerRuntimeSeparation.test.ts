@@ -36,7 +36,12 @@ import {
   type LiveQueueConsumer,
   type LiveQueueHandler,
 } from "./liveQueueConsumeLoop";
+import {
+  createProviderIndexerClientReadiness,
+  evaluateProviderVerificationRequest,
+} from "./providerIndexerClientReadiness";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
+import { createWorkerSchedulerFoundation } from "./workerSchedulerRuntime";
 import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
 const redisBrokerConnectionReadyEnv = {
@@ -658,6 +663,120 @@ describe("scheduler runtime separation boundaries", () => {
         expect.objectContaining({ liveEnabled: false, operation: "retry" }),
       ]),
     );
+  });
+
+  it("keeps provider client readiness as metadata without enabling scheduler, workers, or consume side effects", () => {
+    const providerClientReadiness = createProviderIndexerClientReadiness();
+    const providerResult = evaluateProviderVerificationRequest(
+      {
+        attempt: { count: 1, maxAttempts: 3 },
+        campaignId: "campaign-1",
+        evidenceHash: "sha256:provider-evidence",
+        evidenceRef: "evidence-ref:provider-evidence",
+        idempotencyRef: "idempotency-ref:provider-readiness",
+        leaseRef: "lease-ref:provider-readiness",
+        providerGroupId: "aefinder-aelfscan-indexers",
+        queueId: "verification-jobs",
+        taskId: "task-1",
+        traceId: "trace-provider-client-separation",
+        verificationType: "ON_CHAIN",
+        walletAccountRef: "wallet-account-ref:participant",
+        walletSessionRef: "wallet-session-ref:participant",
+        workerJobId: "task-verification-worker",
+      },
+      { readiness: providerClientReadiness },
+    );
+    const scheduler = createSchedulerRuntimeFoundation();
+    const workerScheduler = createWorkerSchedulerFoundation();
+    const queue = queueRuntime.createQueueRuntimeFoundation();
+    const consumeReadiness = createLiveQueueConsumeLoopReadiness();
+    const triggerResult = dryRunSchedulerTrigger({
+      idempotencyKey: "idempotency:task-verification-on-request:campaign-1",
+      jobId: "task-verification-worker",
+      queueHandoffReference: "queue-handoff:task-verification-worker-queue-plan",
+      scheduleId: "task-verification-on-request",
+      scheduledFor: "2026-07-07T13:30:00Z",
+      traceId: "trace-provider-client-scheduler-separation",
+      triggerSource: "api_request",
+      windowEnd: "2026-07-07T13:35:00Z",
+      windowStart: "2026-07-07T13:25:00Z",
+    });
+
+    expect(providerClientReadiness).toMatchObject({
+      activationStatus: "disabled",
+      liveProviderCallsAttempted: false,
+      productionReady: false,
+      providerClientsEnabled: false,
+      providerClientsProvided: false,
+      status: "disabled",
+      valid: true,
+    });
+    expect(providerClientReadiness.downstreamLiveFlags).toEqual({
+      alternateQueuePublish: false,
+      analyticsIngestion: false,
+      contractCalls: false,
+      objectStorageWrites: false,
+      rewardDistribution: false,
+      schedulerExecution: false,
+      telemetryVendorExport: false,
+    });
+    expect(providerResult).toMatchObject({
+      clientExecuted: false,
+      diagnosticCodes: expect.arrayContaining(["PROVIDER_CLIENT_NOT_READY"]),
+      liveProviderCallsAttempted: false,
+      outcome: "blocked",
+      retryPosture: "blocked",
+    });
+    expect(providerResult.downstreamLiveFlags).toEqual(providerClientReadiness.downstreamLiveFlags);
+    expect(scheduler.readiness).toMatchObject({
+      liveCronExecutionEnabled: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
+    expect(workerScheduler.readiness).toMatchObject({
+      consumeAckAttempted: false,
+      consumeDeadLetterAttempted: false,
+      consumeNackAttempted: false,
+      consumeRetryScheduled: false,
+      liveSchedulerExecutionEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      providerClientReadinessDependency: providerClientReadiness.id,
+      providerClientReadinessRequired: true,
+    });
+    expect(workerScheduler.providerJobHandoffs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          liveSchedulerExecutionEnabled: false,
+          liveWorkerExecutionEnabled: false,
+          providerClientReadinessDependency: providerClientReadiness.id,
+          providerClientReadinessRequired: true,
+        }),
+      ]),
+    );
+    expect(queue.readiness).toMatchObject({
+      liveQueuePublishingEnabled: false,
+      providerAdapterDriverConsumingLiveConsumeAttempted: false,
+      providerAdapterDriverConsumingLiveQueueConsumptionEnabled: false,
+      providerAdapterDriverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false,
+    });
+    expect(consumeReadiness).toMatchObject({
+      consumeAttemptAllowed: false,
+      liveConsumeAttempted: false,
+      liveQueueConsumptionEnabled: false,
+      productionReady: false,
+    });
+    expect(consumeReadiness.noLiveSideEffects).toMatchObject({
+      publishFallback: false,
+      schedulerExecution: false,
+      telemetryExport: false,
+      workerExecution: false,
+    });
+    expect(triggerResult).toMatchObject({
+      liveCronExecutionEnabled: false,
+      liveExecutionAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
   });
 
   it("keeps queue provider and scheduler readiness from satisfying idempotency readiness", () => {

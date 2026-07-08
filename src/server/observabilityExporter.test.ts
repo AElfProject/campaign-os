@@ -18,6 +18,12 @@ import {
   type LiveQueueConsumer,
   type LiveQueueHandler,
 } from "./liveQueueConsumeLoop";
+import {
+  createProviderIndexerClientReadiness,
+  evaluateProviderVerificationRequest,
+  redactProviderClientValue,
+  type ProviderClient,
+} from "./providerIndexerClientReadiness";
 import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
 import type { BullmqConstructionFactory } from "./bullmqConstructionReadiness";
 
@@ -630,6 +636,159 @@ describe("observability exporter foundation", () => {
     expect(serialized).not.toContain("redis-pass");
     expect(serialized).not.toContain("raw-signature-sample");
     expect(serialized).not.toContain("ELF_SECRET");
+  });
+
+  it("keeps provider client readiness from enabling telemetry export, analytics ingestion, or raw provider payload leakage", () => {
+    const throwingProviderClient: ProviderClient = {
+      clientId: "throwing-provider-client",
+      evaluate: () => {
+        throw new Error("provider raw payload token=provider-secret ELF_PROVIDER_WALLET");
+      },
+      providerGroupId: "aefinder-aelfscan-indexers",
+    };
+    const readiness = createProviderIndexerClientReadiness({
+      clients: [throwingProviderClient],
+      env: {
+        CAMPAIGN_OS_PROVIDER_CIRCUIT_BREAKER_POLICY: "circuit-breaker-ref:provider",
+        CAMPAIGN_OS_PROVIDER_CLIENT_ENABLEMENT: "explicitly-enabled",
+        CAMPAIGN_OS_PROVIDER_CLIENT_SEAM: "provider-client-seam-ref",
+        CAMPAIGN_OS_PROVIDER_CONSUME_READINESS_HANDOFF: "consume-readiness-ref",
+        CAMPAIGN_OS_PROVIDER_CREDENTIAL_REF: "credential-ref:provider",
+        CAMPAIGN_OS_PROVIDER_DEGRADATION_POLICY: "degradation-ref:provider",
+        CAMPAIGN_OS_PROVIDER_ENDPOINT_REF: "endpoint-ref:provider",
+        CAMPAIGN_OS_PROVIDER_REDACTION_POLICY: "redaction-ref:provider",
+        CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "registry-ref:provider",
+        CAMPAIGN_OS_PROVIDER_RETRY_POLICY: "retry-ref:provider",
+        CAMPAIGN_OS_PROVIDER_RUNBOOK_URL: "runbook-ref:provider",
+        CAMPAIGN_OS_PROVIDER_TIMEOUT_POLICY: "timeout-ref:provider",
+        CAMPAIGN_OS_PROVIDER_WORKER_QUEUE_HANDOFF: "verification-jobs",
+      },
+      profileId: "production-required",
+    });
+    const providerResult = evaluateProviderVerificationRequest(
+      {
+        attempt: { count: 1, maxAttempts: 3 },
+        campaignId: "campaign-1",
+        evidenceRef: "evidence-ref:provider",
+        idempotencyRef: "idempotency-ref:provider",
+        leaseRef: "lease-ref:provider",
+        providerGroupId: "aefinder-aelfscan-indexers",
+        queueId: "verification-jobs",
+        taskId: "task-1",
+        traceId: "trace-provider-observability-separation",
+        verificationType: "ON_CHAIN",
+        walletAccountRef: "wallet-account-ref:participant",
+        walletSessionRef: "wallet-session-ref:participant",
+        workerJobId: "task-verification-worker",
+      },
+      {
+        clients: [throwingProviderClient],
+        readiness,
+      },
+    );
+    const foundation = createObservabilityExporterFoundation({
+      env: {
+        CAMPAIGN_OS_OBSERVABILITY_ALERT_ROUTING: "alert-routing:manual-review",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER: "production-observability-exporter",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER_CREDENTIALS: "credential-ref:observability",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:exporter",
+        CAMPAIGN_OS_OBSERVABILITY_LOG_SINK_URL: "log-sink-ref:structured",
+        CAMPAIGN_OS_OBSERVABILITY_METRIC_NAMESPACE: "campaign-os-runtime",
+        CAMPAIGN_OS_OBSERVABILITY_REDACTION_POLICY: "redaction:strict",
+        CAMPAIGN_OS_OBSERVABILITY_RETENTION_DAYS: "30",
+        CAMPAIGN_OS_OBSERVABILITY_RETRY_DEAD_LETTER_POLICY: "retry:manual-dead-letter",
+        CAMPAIGN_OS_OBSERVABILITY_RUNBOOK_URL: "runbook-ref:observability",
+        CAMPAIGN_OS_OBSERVABILITY_SINK: "production-metrics-sink",
+        CAMPAIGN_OS_OBSERVABILITY_TRACE_COLLECTOR_URL: "trace-collector-ref:structured",
+      },
+      profileId: "production-required",
+    });
+    const capture = captureObservabilityDryRun({
+      eventCategory: "provider",
+      labels: {
+        provider_group: "aefinder-aelfscan-indexers",
+        runtime: "provider-client-readiness",
+      },
+      metricName: "provider.client.readiness",
+      operation: "metrics",
+      payloadReference: "payload-ref:provider:readiness",
+      sourceRuntime: "backend-service",
+      traceId: "trace-provider-observability-capture",
+    });
+    const redacted = redactProviderClientValue({
+      idempotencyKey: "idempotency-secret-token",
+      leaseToken: "lease-secret-token",
+      objectKey: "tenant/raw/provider-response.json",
+      providerError: "provider raw error token=provider-secret",
+      providerPayload: "{\"walletAddress\":\"ELF_PROVIDER_WALLET\",\"taskId\":\"raw\"}",
+      signedUrl: "https://storage.example/provider.json?X-Amz-Signature=abc123",
+      traceToken: "trace-secret-token",
+    });
+    const serialized = JSON.stringify({
+      capture,
+      foundation,
+      providerResult,
+      readiness,
+      redacted,
+    });
+
+    expect(readiness).toMatchObject({
+      liveProviderCallsAttempted: false,
+      productionReady: false,
+      providerClientsEnabled: true,
+      providerClientsProvided: true,
+      status: "activated",
+      valid: true,
+    });
+    expect(readiness.downstreamLiveFlags).toEqual({
+      alternateQueuePublish: false,
+      analyticsIngestion: false,
+      contractCalls: false,
+      objectStorageWrites: false,
+      rewardDistribution: false,
+      schedulerExecution: false,
+      telemetryVendorExport: false,
+    });
+    expect(providerResult).toMatchObject({
+      clientExecuted: true,
+      diagnosticCodes: ["PROVIDER_CLIENT_THROWN_ERROR"],
+      downstreamLiveFlags: readiness.downstreamLiveFlags,
+      liveProviderCallsAttempted: true,
+      outcome: "failed",
+      retryPosture: "blocked",
+    });
+    expect(providerResult.providerErrorRedacted).toBe("[redacted]");
+    expect(foundation.noLiveFlags).toMatchObject({
+      liveAnalyticsIngestionEnabled: false,
+      liveObjectStorageEnabled: false,
+      liveProviderCallsEnabled: false,
+      liveTelemetryExportEnabled: false,
+    });
+    expect(foundation.readiness).toMatchObject({
+      liveLogExportEnabled: false,
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportEnabled: false,
+      liveTraceExportEnabled: false,
+      productionReady: false,
+    });
+    expect(capture).toMatchObject({
+      liveMetricsExportEnabled: false,
+      liveTelemetryExportAttempted: false,
+      productionWriteAttempted: false,
+      status: "accepted_dry_run",
+    });
+    for (const forbidden of [
+      "provider-secret",
+      "ELF_PROVIDER_WALLET",
+      "idempotency-secret-token",
+      "lease-secret-token",
+      "tenant/raw/provider-response.json",
+      "abc123",
+      "trace-secret-token",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+    expect(serialized).toContain("[redacted]");
   });
 
   it("returns accepted, rejected, and dropped dry-run outcomes without live export", () => {
