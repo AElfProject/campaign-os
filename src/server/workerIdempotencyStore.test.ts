@@ -12,6 +12,7 @@ import {
   workerIdempotencyStoreNoLiveFlags,
   workerIdempotencyStoreProductionPreconditions,
 } from "./workerIdempotencyStore";
+import { createQueueProviderPackageBinding } from "./queueProviderPackageBinding";
 
 const queueProviderSdkBindingConfigKeys = [
   "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
@@ -29,6 +30,23 @@ const queueProviderSdkBindingReadyEnv = {
   CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
   CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING: "production-provider-sdk-binding",
   CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE: "package-ref:@provider/queue-sdk",
+} satisfies Record<string, unknown>;
+
+const queueProviderPackageBindingReadyEnv = {
+  CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:queue-package",
+  CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
+  CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:queue-package",
+  CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:queue-package",
+  CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "runbook-ref:queue-package",
+  CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-package",
+  CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
+  CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
+  CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-package-binding-production",
+  CAMPAIGN_OS_REDIS_URL: "redis-ref:campaign-os",
+  CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:queue-package",
+  CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:queue-package",
+  CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
 } satisfies Record<string, unknown>;
 
 describe("worker idempotency store foundation", () => {
@@ -181,6 +199,45 @@ describe("worker idempotency store foundation", () => {
     expect(serialized).not.toContain("queue-secret");
     expect(serialized).not.toContain("queue-secret-token");
     expect(serialized).not.toContain("@provider/queue-sdk");
+  });
+
+  it("does not treat queue provider package binding readiness as idempotency readiness", () => {
+    const packageBinding = createQueueProviderPackageBinding({
+      env: queueProviderPackageBindingReadyEnv,
+      profileId: "production-required",
+    });
+    const idempotencyStore = createWorkerIdempotencyStoreFoundation({
+      env: queueProviderPackageBindingReadyEnv,
+      profileId: "production-required",
+    });
+    const serialized = JSON.stringify({ idempotencyStore, packageBinding });
+
+    expect(packageBinding.valid).toBe(true);
+    expect(packageBinding.productionReady).toBe(false);
+    expect(packageBinding.noLiveFlags).toMatchObject({
+      liveBrokerConnectionAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      sdkClientConstructed: false,
+    });
+    expect(idempotencyStore.status).toBe("blocked");
+    expect(idempotencyStore.valid).toBe(false);
+    expect(idempotencyStore.productionReady).toBe(false);
+    expect(idempotencyStore.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "IDEMPOTENCY_STORE_MISSING",
+        "IDEMPOTENCY_STORE_CREDENTIALS_MISSING",
+        "IDEMPOTENCY_NAMESPACE_MISSING",
+        "IDEMPOTENCY_KEY_SCHEMA_VERSION_MISSING",
+      ]),
+    );
+    expect(idempotencyStore.readiness.liveIdempotencyExecutionEnabled).toBe(false);
+    expect(idempotencyStore.readiness.liveWorkerExecutionEnabled).toBe(false);
+    expect(idempotencyStore.noLiveFlags).toEqual(workerIdempotencyStoreNoLiveFlags);
+    expect(serialized).not.toContain("redis://");
+    expect(serialized).not.toContain("redis-pass");
+    expect(serialized).not.toContain("redis-secret");
+    expect(serialized).not.toContain("queue-package-secret-token");
   });
 
   it("fails closed for production-required when idempotency preconditions are missing", () => {

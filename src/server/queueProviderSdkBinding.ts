@@ -1,4 +1,14 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
+import {
+  createQueueProviderPackageBinding,
+  type QueueProviderBrokerConnectionPosture,
+  type QueueProviderPackageBindingMode,
+  type QueueProviderPackageBindingStatus,
+  type QueueProviderPackageDiagnosticCode,
+  type QueueProviderPackageFamily,
+  type QueueProviderPackageImportPosture,
+  type QueueProviderPackageProviderKind,
+} from "./queueProviderPackageBinding";
 
 export type QueueProviderSdkBindingProfileId = BackendRuntimeProfileId;
 export type QueueProviderSdkBindingFoundationStatus = "local_ready" | "scaffolded" | "blocked";
@@ -52,7 +62,8 @@ export type QueueProviderSdkBindingDiagnosticCode =
   | "UNSAFE_IDEMPOTENCY_REFERENCE"
   | "INVALID_PROVIDER_TIMESTAMP"
   | "UNSAFE_DEAD_LETTER_REASON"
-  | "UNSAFE_PROVIDER_RESPONSE_REFERENCE";
+  | "UNSAFE_PROVIDER_RESPONSE_REFERENCE"
+  | QueueProviderPackageDiagnosticCode;
 export type QueueProviderSdkBindingPreconditionArea =
   | "activation"
   | "auth"
@@ -133,6 +144,28 @@ export interface QueueProviderSdkBindingHealthCheck {
   status: QueueProviderSdkBindingHealthStatus;
 }
 
+export interface QueueProviderSdkPackageBindingSummary {
+  bindingId: string;
+  blockerCount: number;
+  brokerConnectionPosture: QueueProviderBrokerConnectionPosture;
+  browserBundleAllowed: false;
+  diagnosticCodes: QueueProviderPackageDiagnosticCode[];
+  family: QueueProviderPackageFamily;
+  importPosture: QueueProviderPackageImportPosture;
+  liveBrokerConnectionAttempted: false;
+  liveQueuePublishingEnabled: false;
+  liveWorkerExecutionEnabled: false;
+  mode: QueueProviderPackageBindingMode;
+  packageName: "bullmq";
+  packageRef: "npm:bullmq";
+  productionReady: false;
+  providerKind: QueueProviderPackageProviderKind;
+  requiredConfigKeys: string[];
+  sdkClientConstructed: false;
+  status: QueueProviderPackageBindingStatus;
+  valid: boolean;
+}
+
 export interface QueueProviderSdkBindingReadinessProjection {
   activationGateSatisfied: boolean;
   bindingId: string;
@@ -148,6 +181,19 @@ export interface QueueProviderSdkBindingReadinessProjection {
   mode: QueueProviderSdkBindingMode;
   observabilityExporterHandoffStatus: "deferred";
   operationCount: number;
+  packageBinding: QueueProviderSdkPackageBindingSummary;
+  packageBindingBlockerCount: number;
+  packageBindingBrowserBundleAllowed: false;
+  packageBindingDiagnosticCodes: QueueProviderPackageDiagnosticCode[];
+  packageBindingFamily: QueueProviderPackageFamily;
+  packageBindingId: string;
+  packageBindingLiveBrokerConnectionAttempted: false;
+  packageBindingLiveQueuePublishingEnabled: false;
+  packageBindingLiveWorkerExecutionEnabled: false;
+  packageBindingPackageName: "bullmq";
+  packageBindingPackageRef: "npm:bullmq";
+  packageBindingSdkClientConstructed: false;
+  packageBindingStatus: QueueProviderPackageBindingStatus;
   productionReady: false;
   providerId: string;
   providerKind: QueueProviderSdkBindingProviderKind;
@@ -183,6 +229,7 @@ export interface QueueProviderSdkBindingFoundationSummary extends QueueProviderS
   id: "campaign-os-queue-provider-sdk-binding-foundation";
   liveProviderCallAttempted: false;
   noLiveFlags: QueueProviderSdkBindingNoLiveFlags;
+  packageBinding: QueueProviderSdkPackageBindingSummary;
   preconditions: QueueProviderSdkBindingProductionPrecondition[];
   productionReady: false;
   profileId: QueueProviderSdkBindingProfileId;
@@ -348,6 +395,11 @@ export const createQueueProviderSdkBindingFoundation = (
   const driverResolution = resolveDriverId(options.driverId, env, profileResolution.profileId, providerResolution.providerId);
   const bindingResolution = resolveBindingId(options.bindingId, env, profileResolution.profileId);
   const sdkPackageResolution = resolveSdkPackageRef(options.sdkPackageRef, env, profileResolution.profileId);
+  const packageBindingFoundation = createQueueProviderPackageBinding({
+    env,
+    profileId: profileResolution.profileId,
+  });
+  const packageBinding = createPackageBindingSummary(packageBindingFoundation);
   const activationGateSatisfied = isActivationGateSatisfied(env);
   const productionDiagnostics =
     profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
@@ -360,6 +412,13 @@ export const createQueueProviderSdkBindingFoundation = (
     ...bindingResolution.diagnostics,
     ...sdkPackageResolution.diagnostics,
     ...productionDiagnostics,
+    ...packageBindingFoundation.diagnosticCodes.map((code) =>
+      diagnostic(
+        code,
+        "queueProviderPackageBinding",
+        `Queue provider package binding readiness reports ${code}.`,
+      ),
+    ),
   ];
   const blockerCount = diagnostics.filter((item) => item.severity === "error").length;
   const status = resolveStatus(profileResolution.profileId, blockerCount);
@@ -371,6 +430,7 @@ export const createQueueProviderSdkBindingFoundation = (
     && driverResolution.valid
     && bindingResolution.valid
     && sdkPackageResolution.valid
+    && packageBinding.valid
     && blockerCount === 0;
   const registration = createRegistration({
     activationGateSatisfied,
@@ -390,6 +450,7 @@ export const createQueueProviderSdkBindingFoundation = (
     diagnostics,
     driverId: driverResolution.driverId,
     mode: modeResolution.mode,
+    packageBinding,
     providerId: providerResolution.providerId,
     providerKind: providerKindResolution.providerKind,
     sdkPackageRef: sdkPackageResolution.sdkPackageRef,
@@ -405,6 +466,7 @@ export const createQueueProviderSdkBindingFoundation = (
     id: FOUNDATION_ID,
     liveProviderCallAttempted: false,
     noLiveFlags: queueProviderSdkBindingNoLiveFlags,
+    packageBinding,
     preconditions: queueProviderSdkBindingProductionPreconditions.map((item) => ({ ...item })),
     productionReady: false,
     profileId: profileResolution.profileId,
@@ -651,6 +713,7 @@ function createReadinessProjection(input: {
   diagnostics: readonly QueueProviderSdkBindingDiagnostic[];
   driverId: string;
   mode: QueueProviderSdkBindingMode;
+  packageBinding: QueueProviderSdkPackageBindingSummary;
   providerId: string;
   providerKind: QueueProviderSdkBindingProviderKind;
   sdkPackageRef: string;
@@ -672,18 +735,70 @@ function createReadinessProjection(input: {
     mode: input.mode,
     observabilityExporterHandoffStatus: "deferred",
     operationCount: queueProviderSdkBindingOperationCapabilities.length,
+    packageBinding: clonePackageBindingSummary(input.packageBinding),
+    packageBindingBlockerCount: input.packageBinding.blockerCount,
+    packageBindingBrowserBundleAllowed: false,
+    packageBindingDiagnosticCodes: [...input.packageBinding.diagnosticCodes],
+    packageBindingFamily: input.packageBinding.family,
+    packageBindingId: input.packageBinding.bindingId,
+    packageBindingLiveBrokerConnectionAttempted: false,
+    packageBindingLiveQueuePublishingEnabled: false,
+    packageBindingLiveWorkerExecutionEnabled: false,
+    packageBindingPackageName: input.packageBinding.packageName,
+    packageBindingPackageRef: input.packageBinding.packageRef,
+    packageBindingSdkClientConstructed: false,
+    packageBindingStatus: input.packageBinding.status,
     productionReady: false,
     providerId: input.providerId,
     providerKind: input.providerKind,
     queueRouteCount: queueProviderSdkBindingQueueRoutes.length,
     requiredConfigKeys: [
-      ...new Set(queueProviderSdkBindingProductionPreconditions.flatMap((item) => item.requiredConfigKeys)),
+      ...new Set([
+        ...queueProviderSdkBindingProductionPreconditions.flatMap((item) => item.requiredConfigKeys),
+        ...input.packageBinding.requiredConfigKeys,
+      ]),
     ],
     sdkClientConstructed: false,
     sdkPackageRef: input.sdkPackageRef,
     status: input.status,
     valid: input.valid,
     workerLeaseStoreHandoffStatus: "deferred",
+  };
+}
+
+function createPackageBindingSummary(
+  packageBinding: ReturnType<typeof createQueueProviderPackageBinding>,
+): QueueProviderSdkPackageBindingSummary {
+  return {
+    bindingId: packageBinding.bindingId,
+    blockerCount: packageBinding.blockerCount,
+    brokerConnectionPosture: packageBinding.brokerConnectionPosture,
+    browserBundleAllowed: false,
+    diagnosticCodes: [...packageBinding.diagnosticCodes],
+    family: packageBinding.definition.family,
+    importPosture: packageBinding.definition.importPosture,
+    liveBrokerConnectionAttempted: false,
+    liveQueuePublishingEnabled: false,
+    liveWorkerExecutionEnabled: false,
+    mode: packageBinding.mode,
+    packageName: packageBinding.definition.packageName,
+    packageRef: packageBinding.definition.packageRef,
+    productionReady: false,
+    providerKind: packageBinding.definition.providerKind,
+    requiredConfigKeys: [...packageBinding.readiness.requiredConfigKeys],
+    sdkClientConstructed: false,
+    status: packageBinding.status,
+    valid: packageBinding.valid,
+  };
+}
+
+function clonePackageBindingSummary(
+  packageBinding: QueueProviderSdkPackageBindingSummary,
+): QueueProviderSdkPackageBindingSummary {
+  return {
+    ...packageBinding,
+    diagnosticCodes: [...packageBinding.diagnosticCodes],
+    requiredConfigKeys: [...packageBinding.requiredConfigKeys],
   };
 }
 

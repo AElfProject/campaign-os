@@ -2,6 +2,7 @@ import type { ApiRuntimeCapabilityId } from "./contracts";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
+import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 import { workerIdempotencyStoreProductionPreconditions } from "./workerIdempotencyStore";
@@ -242,6 +243,8 @@ const topologySafeQueueProviderDriverBlockerId = (id: string): string =>
   `queue-provider-driver-${id}`;
 const topologySafeQueueProviderSdkBindingBlockerId = (id: string): string =>
   `queue-provider-sdk-binding-${id}`;
+const topologySafeQueueProviderPackageBlockerId = (id: string): string =>
+  `queue-provider-package-${id}`;
 const observabilityExporterBlockerIds = observabilityExporterProductionPreconditions.map(
   (precondition) => precondition.id,
 );
@@ -314,7 +317,7 @@ export const backendServiceBoundaries = [
     readiness: "review_required",
     risks: [
       "Live providers, worker queue, scheduler runtime, retry/backoff, idempotency store, and worker lease are deferred.",
-      "Queue runtime activation requires provider SDK package installation, real broker connection, provider selection, dead-letter handling, lease, idempotency, and observability before production verification workers.",
+      "Queue runtime activation requires approved BullMQ package binding, Redis-compatible broker reference, provider SDK package installation, real broker connection, provider selection, dead-letter handling, lease, idempotency, and observability before production verification workers.",
       "Provider/indexer handoff degrades to pending or manual review while live calls are deferred.",
     ],
     routeIds: ["tasks.verify"],
@@ -673,7 +676,7 @@ export const backendAdapterGroups = [
     failureMode: "keep_queue_provider_sdk_metadata_only",
     forbiddenInLocalReview: true,
     id: "queue-provider-sdk-binding-adapter",
-    name: "Queue Provider SDK Binding",
+    name: "Queue Provider Package / SDK Binding",
     serviceIds: ["verification-service", "risk-scoring-service", "ai-ops-service", "runtime-observability"],
     status: "deferred",
   }),
@@ -813,6 +816,7 @@ export const backendDeploymentUnits = [
     attachPointPaths: [
       "src/server/queueProviderDriver.ts",
       "src/server/queueProviderSdkBinding.ts",
+      "src/server/queueProviderPackageBinding.ts",
       "src/server/queueProviderAdapter.ts",
       "src/server/queueRuntime.ts",
       "src/server/workerIdempotencyStore.ts",
@@ -832,6 +836,9 @@ export const backendDeploymentUnits = [
       ),
       ...queueProviderSdkBindingProductionPreconditions.map((precondition) =>
         topologySafeQueueProviderSdkBindingBlockerId(precondition.id)
+      ),
+      ...queueProviderPackageProductionPreconditions.map((precondition) =>
+        topologySafeQueueProviderPackageBlockerId(precondition.id)
       ),
       ...workerLeaseStoreProductionPreconditions.map((precondition) => `worker-lease-store-${precondition.id}`),
       ...workerIdempotencyStoreProductionPreconditions.map(

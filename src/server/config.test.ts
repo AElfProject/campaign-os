@@ -7,6 +7,7 @@ import {
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
+import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
@@ -74,6 +75,10 @@ describe("backend config contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_KIND",
+        "CAMPAIGN_OS_REDIS_URL",
         "CAMPAIGN_OS_SCHEDULER_PROVIDER",
         "CAMPAIGN_OS_SCHEDULER_ENDPOINT",
         "CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL",
@@ -103,6 +108,7 @@ describe("backend config contract", () => {
         "CAMPAIGN_OS_OBSERVABILITY_REDACTION_POLICY",
         "CAMPAIGN_OS_OBSERVABILITY_RUNBOOK_URL",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+        "CAMPAIGN_OS_OPERATOR_RUNBOOK_URL",
         "CAMPAIGN_OS_DEGRADATION_POLICY",
         "CAMPAIGN_OS_DEAD_LETTER_QUEUE",
       ]),
@@ -288,14 +294,30 @@ describe("backend config contract", () => {
           ),
       ),
     ];
+    const queueProviderPackageConfigKeys = [
+      ...new Set(queueProviderPackageProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
     const secretQueueProviderValues = {
       CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
+      CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:queue-package",
+      CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
+      CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:queue-package",
+      CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+      CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:queue-package",
+      CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "https://runbooks.invalid/package?token=package-runbook-secret",
       CAMPAIGN_OS_QUEUE_PROVIDER: "production-queue-provider",
       CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "provider-credential-secret",
       CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
       CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "https://queue-provider.invalid/hook?queue-provider-token=secret",
+      CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
+      CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
+      CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-package-binding-production",
       CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING: "production-provider-sdk-binding",
       CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE: "package-ref:@provider/queue-sdk",
+      CAMPAIGN_OS_REDIS_URL: "redis://redis-user:redis-pass@redis.invalid:6379/0?token=redis-secret",
+      CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:queue-package",
+      CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:queue-package",
+      CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
     };
     const contract = resolveBackendConfigContract({ env: secretQueueProviderValues });
 
@@ -308,14 +330,21 @@ describe("backend config contract", () => {
     expect(contract.productionReadiness.requiredConfigKeys).toEqual(
       expect.arrayContaining(queueProviderSdkBindingConfigKeys),
     );
+    expect(contract.productionReadiness.requiredConfigKeys).toEqual(
+      expect.arrayContaining(queueProviderPackageConfigKeys),
+    );
     expect(contract.productionReadiness.missingConfigKeys).not.toEqual(
       expect.arrayContaining([
         "CAMPAIGN_OS_QUEUE_PROVIDER",
         "CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS",
         "CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER",
         "CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_KIND",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE",
+        "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+        "CAMPAIGN_OS_REDIS_URL",
       ]),
     );
     expect(
@@ -333,6 +362,9 @@ describe("backend config contract", () => {
     expect(collectStringValues(contract)).not.toContain("provider-credential-secret");
     expect(collectStringValues(contract)).not.toContain("queue-provider-token");
     expect(collectStringValues(contract)).not.toContain("@provider/queue-sdk");
+    expect(collectStringValues(contract)).not.toContain("redis-pass");
+    expect(collectStringValues(contract)).not.toContain("redis-secret");
+    expect(collectStringValues(contract)).not.toContain("package-runbook-secret");
   });
 
   it("reports worker lease store production precondition keys without exposing env values", () => {

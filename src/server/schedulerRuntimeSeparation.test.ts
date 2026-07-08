@@ -143,6 +143,65 @@ describe("scheduler runtime separation boundaries", () => {
     expect(triggerResult.liveSchedulerExecutionEnabled).toBe(false);
   });
 
+  it("does not infer scheduler or live broker execution from package binding metadata", () => {
+    const scheduler = createSchedulerRuntimeFoundation();
+    const queue = queueRuntime.createQueueRuntimeFoundation({
+      env: {
+        CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:queue-package",
+        CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
+        CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:queue-package",
+        CAMPAIGN_OS_LIVE_QUEUE_ENABLEMENT: "explicitly-enabled",
+        CAMPAIGN_OS_OBSERVABILITY_EXPORTER_URL: "observability-ref:queue-package",
+        CAMPAIGN_OS_OPERATOR_RUNBOOK_URL: "runbook-ref:queue-package",
+        CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-package",
+        CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
+        CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
+        CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-package-binding-production",
+        CAMPAIGN_OS_REDIS_URL: "redis-ref:campaign-os",
+        CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:queue-package",
+        CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:queue-package",
+        CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
+      },
+      profileId: "production-required",
+      providerId: "metadata-only",
+    });
+    const triggerResult = dryRunSchedulerTrigger({
+      idempotencyKey: "idempotency:task-verification-on-request:campaign-1",
+      jobId: "task-verification-worker",
+      queueHandoffReference: "queue-handoff:task-verification-worker-queue-plan",
+      scheduleId: "task-verification-on-request",
+      scheduledFor: "2026-07-07T13:30:00Z",
+      traceId: "trace-package-binding-separation",
+      triggerSource: "api_request",
+      windowEnd: "2026-07-07T13:35:00Z",
+      windowStart: "2026-07-07T13:25:00Z",
+    });
+
+    expect(queue.providerAdapter.driverSdkBinding.packageBinding).toMatchObject({
+      browserBundleAllowed: false,
+      liveBrokerConnectionAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveWorkerExecutionEnabled: false,
+      packageName: "bullmq",
+      productionReady: false,
+      sdkClientConstructed: false,
+      status: "scaffolded",
+      valid: true,
+    });
+    expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingLiveBrokerConnectionAttempted).toBe(false);
+    expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingLiveQueuePublishingEnabled).toBe(false);
+    expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingLiveWorkerExecutionEnabled).toBe(false);
+    expect(scheduler.readiness.liveCronExecutionEnabled).toBe(false);
+    expect(scheduler.readiness.liveQueuePublishingEnabled).toBe(false);
+    expect(scheduler.readiness.liveSchedulerExecutionEnabled).toBe(false);
+    expect(triggerResult).toMatchObject({
+      liveCronExecutionEnabled: false,
+      liveExecutionAttempted: false,
+      liveQueuePublishingEnabled: false,
+      liveSchedulerExecutionEnabled: false,
+    });
+  });
+
   it("keeps scheduler readiness from satisfying worker lease store readiness", () => {
     const schedulerEnv = {
       CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:scheduler",
@@ -224,8 +283,12 @@ describe("scheduler runtime separation boundaries", () => {
         CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-provider",
         CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
         CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "queue-endpoint-ref:provider",
+        CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
+        CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
+        CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-package-binding-production",
         CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING: "production-provider-sdk-binding",
         CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE: "package-ref:@provider/queue-sdk",
+        CAMPAIGN_OS_REDIS_URL: "redis-ref:campaign-os",
         CAMPAIGN_OS_WORKER_LEASE_STORE_URL: "lease-store-ref:review",
         CAMPAIGN_OS_WORKER_QUEUE_URL: "queue-ref:worker",
         CAMPAIGN_OS_WORKER_RETRY_POLICY: "retry:exponential",
@@ -265,8 +328,12 @@ describe("scheduler runtime separation boundaries", () => {
       CAMPAIGN_OS_QUEUE_PROVIDER_CREDENTIALS: "credential-ref:queue-provider",
       CAMPAIGN_OS_QUEUE_PROVIDER_DRIVER: "production-provider-driver",
       CAMPAIGN_OS_QUEUE_PROVIDER_ENDPOINT: "queue-endpoint-ref:provider",
+      CAMPAIGN_OS_QUEUE_PROVIDER_KIND: "redis-compatible",
+      CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE: "bullmq",
+      CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-package-binding-production",
       CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING: "production-provider-sdk-binding",
       CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE: "package-ref:@provider/queue-sdk",
+      CAMPAIGN_OS_REDIS_URL: "redis-ref:campaign-os",
       CAMPAIGN_OS_SCHEDULER_ENDPOINT: "scheduler-endpoint-ref:review",
       CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL: "scheduler-lease-ref:review",
       CAMPAIGN_OS_SCHEDULER_PROVIDER: "metadata-only-scheduler",

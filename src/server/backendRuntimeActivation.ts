@@ -16,6 +16,10 @@ import {
   type QueueProviderSdkBindingPreconditionArea,
 } from "./queueProviderSdkBinding";
 import {
+  queueProviderPackageProductionPreconditions,
+  type QueueProviderPackagePreconditionArea,
+} from "./queueProviderPackageBinding";
+import {
   queueRuntimeProductionPreconditions,
   type QueueRuntimePreconditionArea,
 } from "./queueRuntime";
@@ -243,6 +247,36 @@ const queueProviderSdkBindingConfigCategory = (
   return area;
 };
 
+const queueProviderPackageConfigCategory = (
+  area: QueueProviderPackagePreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (
+    area === "activation"
+    || area === "binding"
+    || area === "broker"
+    || area === "credentials"
+    || area === "package"
+    || area === "provider"
+    || area === "runbook"
+  ) {
+    return "provider";
+  }
+
+  if (area === "dead_letter" || area === "queue") {
+    return "queue";
+  }
+
+  if (area === "idempotency" || area === "lease") {
+    return "worker";
+  }
+
+  if (area === "observability") {
+    return "observability";
+  }
+
+  return "scheduler";
+};
+
 const normalizeQueueProviderSdkBindingConfigKey = (key: string): string =>
   key === "CAMPAIGN_OS_QUEUE_PROVIDER_BINDING" ? "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING" : key;
 
@@ -438,6 +472,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
       ),
     ),
   ),
+  ...queueProviderPackageProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        queueProviderPackageConfigCategory(precondition.area),
+        precondition.status,
+        key === "CAMPAIGN_OS_DEGRADATION_POLICY" ? "future-production" : "production-required",
+      ),
+    ),
+  ),
   ...observabilityExporterProductionPreconditions.flatMap((precondition) =>
     precondition.requiredConfigKeys.map((key) =>
       configKey(
@@ -598,6 +642,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     attachPoint: "src/server/queueProviderSdkBinding.ts",
     blockedBy: precondition.requiredConfigKeys.map(normalizeQueueProviderSdkBindingConfigKey),
     id: `queue-provider-sdk-binding-${precondition.id}`,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
+  ...queueProviderPackageProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: queueProviderPackageConfigCategory(precondition.area) as ProductionRuntimeDependencyArea,
+    attachPoint: "src/server/queueProviderPackageBinding.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: `queue-provider-package-${precondition.id}`,
     requiredBeforeProduction: true,
     status: precondition.status,
   })),

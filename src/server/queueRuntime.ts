@@ -293,6 +293,18 @@ export interface QueueRuntimeReadinessProjection {
   providerAdapterDriverSdkBindingLiveWorkerExecutionEnabled: false;
   providerAdapterDriverSdkBindingMode: QueueProviderDriverSdkBindingSummary["mode"];
   providerAdapterDriverSdkBindingOperationCount: number;
+  providerAdapterDriverSdkBindingPackageBindingBlockerCount: number;
+  providerAdapterDriverSdkBindingPackageBindingBrowserBundleAllowed: false;
+  providerAdapterDriverSdkBindingPackageBindingDiagnosticCodes: QueueProviderDriverSdkBindingSummary["packageBinding"]["diagnosticCodes"];
+  providerAdapterDriverSdkBindingPackageBindingFamily: QueueProviderDriverSdkBindingSummary["packageBinding"]["family"];
+  providerAdapterDriverSdkBindingPackageBindingId: string;
+  providerAdapterDriverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false;
+  providerAdapterDriverSdkBindingPackageBindingLiveQueuePublishingEnabled: false;
+  providerAdapterDriverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false;
+  providerAdapterDriverSdkBindingPackageBindingPackageName: "bullmq";
+  providerAdapterDriverSdkBindingPackageBindingPackageRef: "npm:bullmq";
+  providerAdapterDriverSdkBindingPackageBindingSdkClientConstructed: false;
+  providerAdapterDriverSdkBindingPackageBindingStatus: QueueProviderDriverSdkBindingSummary["packageBinding"]["status"];
   providerAdapterDriverSdkBindingProductionReady: false;
   providerAdapterDriverSdkBindingProviderKind: QueueProviderDriverSdkBindingSummary["providerKind"];
   providerAdapterDriverSdkBindingQueueRouteCount: number;
@@ -941,6 +953,18 @@ const createReadinessProjection = (
   providerAdapterDriverSdkBindingLiveWorkerExecutionEnabled: false,
   providerAdapterDriverSdkBindingMode: providerAdapter.driverSdkBinding.mode,
   providerAdapterDriverSdkBindingOperationCount: providerAdapter.driverSdkBinding.operationCount,
+  providerAdapterDriverSdkBindingPackageBindingBlockerCount: providerAdapter.driverSdkBinding.packageBinding.blockerCount,
+  providerAdapterDriverSdkBindingPackageBindingBrowserBundleAllowed: false,
+  providerAdapterDriverSdkBindingPackageBindingDiagnosticCodes: providerAdapter.driverSdkBinding.packageBinding.diagnosticCodes,
+  providerAdapterDriverSdkBindingPackageBindingFamily: providerAdapter.driverSdkBinding.packageBinding.family,
+  providerAdapterDriverSdkBindingPackageBindingId: providerAdapter.driverSdkBinding.packageBinding.bindingId,
+  providerAdapterDriverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false,
+  providerAdapterDriverSdkBindingPackageBindingLiveQueuePublishingEnabled: false,
+  providerAdapterDriverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false,
+  providerAdapterDriverSdkBindingPackageBindingPackageName: providerAdapter.driverSdkBinding.packageBinding.packageName,
+  providerAdapterDriverSdkBindingPackageBindingPackageRef: providerAdapter.driverSdkBinding.packageBinding.packageRef,
+  providerAdapterDriverSdkBindingPackageBindingSdkClientConstructed: false,
+  providerAdapterDriverSdkBindingPackageBindingStatus: providerAdapter.driverSdkBinding.packageBinding.status,
   providerAdapterDriverSdkBindingProductionReady: false,
   providerAdapterDriverSdkBindingProviderKind: providerAdapter.driverSdkBinding.providerKind,
   providerAdapterDriverSdkBindingQueueRouteCount: providerAdapter.driverSdkBinding.queueRouteCount,
@@ -1028,6 +1052,11 @@ const createProviderAdapterSummary = (
     ...providerAdapter.driver.sdkBinding,
     diagnosticCodes: [...providerAdapter.driver.sdkBinding.diagnosticCodes],
     operationCapabilities: providerAdapter.driver.sdkBinding.operationCapabilities.map((item) => ({ ...item })),
+    packageBinding: {
+      ...providerAdapter.driver.sdkBinding.packageBinding,
+      diagnosticCodes: [...providerAdapter.driver.sdkBinding.packageBinding.diagnosticCodes],
+      requiredConfigKeys: [...providerAdapter.driver.sdkBinding.packageBinding.requiredConfigKeys],
+    },
     requiredConfigKeys: [...providerAdapter.driver.sdkBinding.requiredConfigKeys],
   },
   driverStatus: providerAdapter.driver.status,

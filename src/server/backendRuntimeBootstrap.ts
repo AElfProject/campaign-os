@@ -169,6 +169,18 @@ export interface BackendRuntimeReadinessProjection {
       driverSdkBindingLiveWorkerExecutionEnabled: false;
       driverSdkBindingMode: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingMode"];
       driverSdkBindingOperationCount: number;
+      driverSdkBindingPackageBindingBlockerCount: number;
+      driverSdkBindingPackageBindingBrowserBundleAllowed: false;
+      driverSdkBindingPackageBindingDiagnosticCodes: string[];
+      driverSdkBindingPackageBindingFamily: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingFamily"];
+      driverSdkBindingPackageBindingId: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingId"];
+      driverSdkBindingPackageBindingLiveBrokerConnectionAttempted: false;
+      driverSdkBindingPackageBindingLiveQueuePublishingEnabled: false;
+      driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false;
+      driverSdkBindingPackageBindingPackageName: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingPackageName"];
+      driverSdkBindingPackageBindingPackageRef: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingPackageRef"];
+      driverSdkBindingPackageBindingSdkClientConstructed: false;
+      driverSdkBindingPackageBindingStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingPackageBindingStatus"];
       driverSdkBindingProductionReady: false;
       driverSdkBindingProviderKind: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverSdkBindingProviderKind"];
       driverSdkBindingQueueRouteCount: number;
@@ -524,6 +536,18 @@ const createReadinessProjection = (
       driverSdkBindingLiveWorkerExecutionEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingLiveWorkerExecutionEnabled,
       driverSdkBindingMode: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingMode,
       driverSdkBindingOperationCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingOperationCount,
+      driverSdkBindingPackageBindingBlockerCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingBlockerCount,
+      driverSdkBindingPackageBindingBrowserBundleAllowed: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingBrowserBundleAllowed,
+      driverSdkBindingPackageBindingDiagnosticCodes: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingDiagnosticCodes,
+      driverSdkBindingPackageBindingFamily: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingFamily,
+      driverSdkBindingPackageBindingId: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingId,
+      driverSdkBindingPackageBindingLiveBrokerConnectionAttempted: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingLiveBrokerConnectionAttempted,
+      driverSdkBindingPackageBindingLiveQueuePublishingEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingLiveQueuePublishingEnabled,
+      driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingLiveWorkerExecutionEnabled,
+      driverSdkBindingPackageBindingPackageName: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingPackageName,
+      driverSdkBindingPackageBindingPackageRef: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingPackageRef,
+      driverSdkBindingPackageBindingSdkClientConstructed: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingSdkClientConstructed,
+      driverSdkBindingPackageBindingStatus: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingPackageBindingStatus,
       driverSdkBindingProductionReady: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingProductionReady,
       driverSdkBindingProviderKind: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingProviderKind,
       driverSdkBindingQueueRouteCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingQueueRouteCount,
