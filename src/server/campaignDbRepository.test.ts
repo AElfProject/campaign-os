@@ -20,6 +20,16 @@ const validDraftInput = () => ({
   startTime: "2026-07-07T00:00:00.000Z",
 });
 
+const validTaskDraftInput = (campaignId: string) => ({
+  campaignId,
+  evidenceRule: { minAmount: 1, source: "AELFSCAN" },
+  points: 120,
+  required: true,
+  templateCode: "bridge_ebridge",
+  verificationType: "ON_CHAIN" as const,
+  walletCompatibility: "ANY" as const,
+});
+
 const withTempStorePath = async <T>(operation: (filePath: string) => Promise<T>) => {
   const directory = await mkdtemp(join(tmpdir(), "campaign-os-repository-"));
 
@@ -95,6 +105,48 @@ describe("Campaign DB repository", () => {
     ]);
   });
 
+  it("adds task drafts to repository-created campaign projections", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id), {
+      traceId: "trace-task-create",
+    });
+
+    expect(task).toMatchObject({
+      id: "campaign-db-task-draft-0001",
+      campaignId: campaign.id,
+      evidenceRule: { minAmount: 1, source: "AELFSCAN" },
+      points: 120,
+      required: true,
+      templateCode: "bridge_ebridge",
+      verificationType: "ON_CHAIN",
+      walletCompatibility: "ANY",
+    });
+    expect(task.createdAt).toBe("2026-07-06T00:00:00.000Z");
+    expect(task.updatedAt).toBe(task.createdAt);
+    await expect(repository.getById(campaign.id)).resolves.toMatchObject({
+      id: campaign.id,
+      tasks: [
+        expect.objectContaining({
+          id: "campaign-db-task-draft-0001",
+          templateCode: "bridge_ebridge",
+        }),
+      ],
+    });
+    await expect(repository.list({ projectId: "project-m176" })).resolves.toEqual([
+      expect.objectContaining({
+        id: campaign.id,
+        tasks: [
+          expect.objectContaining({
+            id: "campaign-db-task-draft-0001",
+            campaignId: campaign.id,
+          }),
+        ],
+      }),
+    ]);
+  });
+
   it("captures deterministic no-live transaction, command, and query events", async () => {
     const repository = createCampaignDbRepository();
     const draft = await repository.createDraft(validDraftInput(), {
@@ -139,15 +191,50 @@ describe("Campaign DB repository", () => {
     );
   });
 
+  it("captures deterministic no-live task transaction events", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput(), {
+      traceId: "trace-campaign-events",
+    });
+
+    await repository.addTaskDraft(validTaskDraftInput(campaign.id), {
+      traceId: "trace-task-events",
+    });
+
+    const health = await repository.health();
+
+    expect(health).toMatchObject({
+      eventCount: 8,
+      liveConnectionAttempted: false,
+      liveMigrationExecutionEnabled: false,
+      liveQueryExecutionEnabled: false,
+      productionReady: false,
+      taskRecordCount: 1,
+    });
+    expect(repository.getEvents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entity: "CampaignTask",
+          liveExecution: false,
+          operation: "insert_campaign_task_draft",
+          traceId: "trace-task-events",
+          type: "command.insert",
+        }),
+      ]),
+    );
+  });
+
   it("resets records and event lifecycle deterministically", async () => {
     const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
 
-    await repository.createDraft(validDraftInput());
+    await repository.addTaskDraft(validTaskDraftInput(campaign.id));
     await repository.reset();
 
     expect(await repository.health()).toMatchObject({
       eventCount: 0,
       recordCount: 0,
+      taskRecordCount: 0,
     });
     await expect(repository.list()).resolves.toEqual([]);
   });
@@ -175,6 +262,33 @@ describe("Campaign DB repository", () => {
     });
   });
 
+  it.each([
+    ["campaignId", { campaignId: "missing-campaign" }, "CAMPAIGN_DB_TASK_CAMPAIGN_NOT_FOUND"],
+    ["templateCode", { templateCode: "" }, "CAMPAIGN_DB_TASK_REQUIRED_FIELD_MISSING"],
+    ["walletCompatibility", { walletCompatibility: "PORTKEY_ONLY" }, "CAMPAIGN_DB_TASK_UNSUPPORTED_WALLET_COMPATIBILITY"],
+    ["verificationType", { verificationType: "REFERRAL" }, "CAMPAIGN_DB_TASK_UNSUPPORTED_VERIFICATION_TYPE"],
+    ["points", { points: 0 }, "CAMPAIGN_DB_TASK_INVALID_POINTS"],
+    ["evidenceRule", { evidenceRule: [] }, "CAMPAIGN_DB_TASK_INVALID_EVIDENCE_RULE"],
+  ])("rejects invalid task draft %s with stable diagnostics", async (_field, override, code) => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+
+    await expect(repository.addTaskDraft({
+      ...validTaskDraftInput(campaign.id),
+      ...override,
+    } as ReturnType<typeof validTaskDraftInput>)).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code,
+          severity: "error",
+        }),
+      ],
+    });
+    await expect(repository.getById(campaign.id)).resolves.toMatchObject({
+      tasks: [],
+    });
+  });
+
   it("redacts secret-like diagnostic values", async () => {
     const repository = createCampaignDbRepository({
       mode: "production_deferred",
@@ -197,6 +311,9 @@ describe("Campaign DB repository", () => {
     expect(sanitizeCampaignDbDiagnosticValue("databaseToken", "abc123")).toBe("[redacted]");
     expect(sanitizeCampaignDbDiagnosticValue("driverId", "campaign-os-driver")).toBe("campaign-os-driver");
     await expect(repository.createDraft(validDraftInput())).rejects.toBeInstanceOf(CampaignDbRepositoryError);
+    await expect(repository.addTaskDraft(validTaskDraftInput("campaign-db-draft-0001"))).rejects.toBeInstanceOf(
+      CampaignDbRepositoryError,
+    );
   });
 
   it("uses durable store mode to preserve drafts across repository instances", async () => {
@@ -209,6 +326,10 @@ describe("Campaign DB repository", () => {
         ...validDraftInput(),
         projectId: "project-m177",
         supportedLocales: ["en-US", "zh-CN"],
+      });
+      await firstRepository.addTaskDraft({
+        ...validTaskDraftInput(created.id),
+        templateCode: "vote_tmrwdao",
       });
 
       const reopenedRepository = createCampaignDbRepository({
@@ -224,9 +345,23 @@ describe("Campaign DB repository", () => {
           createdViaRepository: true,
           storeId: "campaign-db",
         }),
+        tasks: [
+          expect.objectContaining({
+            campaignId: created.id,
+            id: "campaign-db-task-draft-0001",
+            templateCode: "vote_tmrwdao",
+          }),
+        ],
       });
       await expect(reopenedRepository.list({ projectId: "project-m177" })).resolves.toEqual([
-        expect.objectContaining({ id: created.id }),
+        expect.objectContaining({
+          id: created.id,
+          tasks: [
+            expect.objectContaining({
+              id: "campaign-db-task-draft-0001",
+            }),
+          ],
+        }),
       ]);
       await expect(reopenedRepository.health()).resolves.toMatchObject({
         adapterId: "campaign-db-durable-test-adapter",
@@ -235,10 +370,12 @@ describe("Campaign DB repository", () => {
           mode: "durable_test",
           recordCount: 1,
           status: "ready",
+          taskRecordCount: 1,
         }),
         recordCount: 1,
         selectedMode: "durable_test",
         status: "ready",
+        taskRecordCount: 1,
       });
     });
   });
@@ -258,8 +395,10 @@ describe("Campaign DB repository", () => {
       await expect(repository.health()).resolves.toMatchObject({
         campaignStore: expect.objectContaining({
           recordCount: 0,
+          taskRecordCount: 0,
         }),
         recordCount: 0,
+        taskRecordCount: 0,
       });
     });
   });

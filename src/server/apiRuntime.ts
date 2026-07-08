@@ -612,6 +612,8 @@ const createSafeCampaignDbRepository = (
   };
 
   return {
+    addTaskDraft: (input, context) =>
+      wrap("campaignDb.addTaskDraft", () => repository.addTaskDraft(input, context)),
     createDraft: (input, context) =>
       wrap("campaignDb.createDraft", () => repository.createDraft(input, context)),
     getById: (campaignId, context) =>

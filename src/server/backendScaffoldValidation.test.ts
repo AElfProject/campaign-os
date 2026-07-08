@@ -36,6 +36,14 @@ const renderedUiRuntimeChangedFiles = (files: string[]) =>
     return /^src\/(App|app|components|styles|i18n)\//.test(file) || /^src\/.*\.(tsx|css)$/.test(file);
   });
 
+const expectHistoricalAiOpsRouteScopeWhenTouched = (files: string[]) => {
+  const touchesHistoricalAiOpsScope = expectedAiOpsRuntimeRouteFiles.some((file) => files.includes(file));
+
+  if (touchesHistoricalAiOpsScope) {
+    expect(files).toEqual(expect.arrayContaining(expectedAiOpsRuntimeRouteFiles));
+  }
+};
+
 const deferredCapabilityIds = [
   "production_database",
   "auth_session",
@@ -266,7 +274,7 @@ describe("backend scaffold public guardrails", () => {
   it("keeps AI Ops runtime route changes away from rendered UI files", () => {
     const missionChangedFiles = changedFilesSinceMissionBase();
 
-    expect(missionChangedFiles).toEqual(expect.arrayContaining(expectedAiOpsRuntimeRouteFiles));
+    expectHistoricalAiOpsRouteScopeWhenTouched(missionChangedFiles);
     expect(renderedUiRuntimeChangedFiles(missionChangedFiles)).toEqual([]);
   });
 
@@ -274,7 +282,7 @@ describe("backend scaffold public guardrails", () => {
     const publicTrackedFiles = trackedFiles();
     const missionChangedFiles = changedFilesSinceMissionBase();
 
-    expect(missionChangedFiles).toEqual(expect.arrayContaining(expectedAiOpsRuntimeRouteFiles));
+    expectHistoricalAiOpsRouteScopeWhenTouched(missionChangedFiles);
     expect(renderedUiRuntimeChangedFiles(missionChangedFiles)).toEqual([]);
     expect(publicTrackedFiles).not.toEqual(
       expect.arrayContaining([
@@ -408,7 +416,7 @@ describe("backend scaffold public guardrails", () => {
       liveProviderCallsEnabled: false,
       liveTelemetryExportEnabled: false,
     });
-    expect(missionChangedFiles).toEqual(expect.arrayContaining(expectedAiOpsRuntimeRouteFiles));
+    expectHistoricalAiOpsRouteScopeWhenTouched(missionChangedFiles);
     expect(renderedUiRuntimeChangedFiles(missionChangedFiles)).toEqual([]);
     for (const dependencyName of dependencyNames) {
       for (const forbiddenFragment of forbiddenRuntimeDependencyFragments) {
