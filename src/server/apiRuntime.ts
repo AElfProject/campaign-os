@@ -614,6 +614,8 @@ const createSafeCampaignDbRepository = (
   return {
     addTaskDraft: (input, context) =>
       wrap("campaignDb.addTaskDraft", () => repository.addTaskDraft(input, context)),
+    checkEligibility: (input, context) =>
+      wrap("campaignDb.checkEligibility", () => repository.checkEligibility!(input, context)),
     createDraft: (input, context) =>
       wrap("campaignDb.createDraft", () => repository.createDraft(input, context)),
     getById: (campaignId, context) =>
@@ -623,6 +625,8 @@ const createSafeCampaignDbRepository = (
     list: (filter, context) =>
       wrap("campaignDb.list", () => repository.list(filter, context)),
     reset: () => wrap("campaignDb.reset", () => repository.reset()),
+    upsertTaskCompletion: (input, context) =>
+      wrap("campaignDb.upsertTaskCompletion", () => repository.upsertTaskCompletion!(input, context)),
   };
 };
 
