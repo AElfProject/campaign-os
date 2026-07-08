@@ -13,6 +13,10 @@ import {
   type GenerateI18nDraftRequest,
   type GetCampaignAnalyticsRequest,
   type GetCampaignDetailRequest,
+  type GetCampaignLifecycleOperationsRequest,
+  type GetLaunchConsoleCampaignBundlesRequest,
+  type GetProviderEvidenceRegistryRequest,
+  type GetVerificationPipelineReadinessRequest,
   type ListCampaignsRequest,
   type LocalCampaignDraft,
   type LocalServiceError,
@@ -26,12 +30,17 @@ import {
 } from "../domain/serviceRegistry";
 import type {
   AgentWalletActionReadinessRequest,
+  CampaignLifecycleOperations,
   CampaignDiscoveryDetail,
   CampaignDiscoveryItem,
   CampaignDiscoveryReadModel,
   CampaignDiscoverySummary,
+  ExportConfirmationReadinessGate,
+  LaunchConsoleCampaignBundleSurface,
   LocalizedText,
   NormalizedWalletSession,
+  ProviderEvidenceRegistry,
+  VerificationPipelineReadinessGate,
 } from "../domain/types";
 import type { ApiRuntimeRouteId } from "./routes";
 import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
@@ -518,6 +527,110 @@ const campaignDbDraftToLocalCampaignDraft = (
   walletPolicy: draft.walletPolicy,
 });
 
+const campaignDbLifecycleLimitedBoundary = localized(
+  "Campaign DB draft is available for limited local lifecycle/readiness inspection only. Full seeded lifecycle gates are not available for repository-created drafts.",
+  "Campaign DB 草稿仅支持有限的本地 lifecycle/readiness 检查。Repository 创建的草稿不提供完整 seeded lifecycle gate。",
+);
+
+const campaignDbDraftToLifecycleLimitedProjection = (draft: CampaignDbReadProjection) => ({
+  boundary: campaignDbLifecycleLimitedBoundary,
+  campaignId: draft.id,
+  code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED",
+  contractMode: draft.contractMode,
+  diagnostic: {
+    code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED",
+    fullSeededLifecycleAvailable: false,
+    message: localized(
+      "Repository-created campaign draft lacks the seeded shell detail required for full lifecycle, launch, provider, and export readiness gates.",
+      "Repository 创建的活动草稿缺少完整 lifecycle、launch、provider 与 export readiness gate 所需的 seeded shell detail。",
+    ),
+  },
+  fullSeededLifecycleAvailable: false,
+  publishReadiness: draft.publishReadiness,
+  source: "campaign_db_draft" as const,
+  status: draft.status,
+  supportedLocales: [...draft.supportedLocales],
+  walletPolicy: draft.walletPolicy,
+});
+
+const campaignIdRequest = (
+  context: ApiRuntimeHandlerContext,
+): GetCampaignAnalyticsRequest => ({
+  campaignId: requiredRouteParam(context.params, "campaignId"),
+});
+
+const campaignLifecycleRequest = (
+  context: ApiRuntimeHandlerContext,
+): GetCampaignLifecycleOperationsRequest => campaignIdRequest(context);
+
+const launchConsoleRequest = (
+  context: ApiRuntimeHandlerContext,
+): GetLaunchConsoleCampaignBundlesRequest => campaignIdRequest(context);
+
+const verificationPipelineReadinessRequest = (
+  context: ApiRuntimeHandlerContext,
+): GetVerificationPipelineReadinessRequest => campaignIdRequest(context);
+
+const providerEvidenceRegistryRequest = (
+  context: ApiRuntimeHandlerContext,
+): GetProviderEvidenceRegistryRequest => campaignIdRequest(context);
+
+const unwrapCampaignReadinessOrDraft = async <TPayload>(
+  context: ApiRuntimeHandlerContext,
+  result: LocalServiceResult<TPayload>,
+) => {
+  if (result.ok || result.error.code !== "CAMPAIGN_NOT_FOUND") {
+    return unwrapLocalResult(result, context);
+  }
+
+  const campaignId = requiredRouteParam(context.params, "campaignId");
+  const campaignDbDraft = await context.campaignDbRepository.getById(campaignId, {
+    traceId: context.traceId,
+  });
+
+  if (campaignDbDraft) {
+    return {
+      boundary: campaignDbLifecycleLimitedBoundary,
+      campaignDb: {
+        adapterId: campaignDbDraft.repository.adapterId,
+        createdViaRepository: true,
+        repositoryId: campaignDbDraft.repository.repositoryId,
+        storeId: campaignDbDraft.repository.storeId,
+      },
+      payload: campaignDbDraftToLifecycleLimitedProjection(campaignDbDraft),
+    };
+  }
+
+  return unwrapLocalResult(result, context);
+};
+
+const createProviderReadinessResult = (
+  pipeline: LocalServiceResult<VerificationPipelineReadinessGate>,
+  providerEvidenceRegistry: LocalServiceResult<ProviderEvidenceRegistry>,
+): LocalServiceResult<{
+  campaignId: string;
+  pipeline: VerificationPipelineReadinessGate;
+  providerEvidenceRegistry: ProviderEvidenceRegistry;
+}> => {
+  if (!pipeline.ok) {
+    return pipeline;
+  }
+
+  if (!providerEvidenceRegistry.ok) {
+    return providerEvidenceRegistry;
+  }
+
+  return {
+    boundary: pipeline.boundary,
+    ok: true,
+    payload: {
+      campaignId: providerEvidenceRegistry.payload.campaignId,
+      pipeline: pipeline.payload,
+      providerEvidenceRegistry: providerEvidenceRegistry.payload,
+    },
+  };
+};
+
 const canUseCampaignDbCreateFallback = (error: LocalServiceError) =>
   error.code === "UNSUPPORTED_LOCALE" && error.field === "supportedLocales";
 
@@ -974,6 +1087,24 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
 
     return unwrapLocalResult(context.service.getCampaignDetail(request), context);
   },
+  "campaigns.lifecycle": (context) =>
+    unwrapCampaignReadinessOrDraft<CampaignLifecycleOperations>(
+      context,
+      context.service.getCampaignLifecycleOperations(campaignLifecycleRequest(context)),
+    ),
+  "campaigns.launch.readiness": (context) =>
+    unwrapCampaignReadinessOrDraft<LaunchConsoleCampaignBundleSurface>(
+      context,
+      context.service.getLaunchConsoleCampaignBundles(launchConsoleRequest(context)),
+    ),
+  "campaigns.provider.readiness": (context) =>
+    unwrapCampaignReadinessOrDraft(
+      context,
+      createProviderReadinessResult(
+        context.service.getVerificationPipelineReadiness(verificationPipelineReadinessRequest(context)),
+        context.service.getProviderEvidenceRegistry(providerEvidenceRegistryRequest(context)),
+      ),
+    ),
   "campaigns.tasks.add": (context) =>
     persistLocalResult(
       context.service.addTask(addTaskRequest(context)),
@@ -1056,5 +1187,10 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
           reviewRequiredRows: payload.reviewRequiredRows,
         },
       }),
+    ),
+  "campaigns.export.readiness": (context) =>
+    unwrapCampaignReadinessOrDraft<ExportConfirmationReadinessGate>(
+      context,
+      context.service.getExportConfirmationReadiness(campaignIdRequest(context)),
     ),
 });
