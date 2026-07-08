@@ -233,6 +233,7 @@ export const createBullmqConstructionReadiness = (
     profileId: profileResolution.profileId,
   });
   const activation = createActivation(profileResolution.profileId, env);
+  const factoryId = resolveFactoryId(options.constructionFactory);
   const productionDiagnostics =
     profileResolution.profileId === "production-required" ? createProductionDiagnostics(env) : [];
   const unsafeDiagnostics = createUnsafeConfigDiagnostics(env, options.constructionId);
@@ -271,7 +272,7 @@ export const createBullmqConstructionReadiness = (
   const registration = createRegistration({
     activation,
     constructionId: constructionResolution.constructionId,
-    factoryId: options.constructionFactory?.factoryId ?? "not_configured",
+    factoryId,
     factoryProvided: Boolean(options.constructionFactory),
     mode: modeResolution.mode,
     status,
@@ -356,6 +357,12 @@ export const getBullmqConstructionReadinessRegistration = (
 
   return undefined;
 };
+
+function resolveFactoryId(constructionFactory: BullmqConstructionFactory | undefined): string {
+  return constructionFactory
+    ? sanitizeBullmqConstructionString(constructionFactory.factoryId)
+    : "not_configured";
+}
 
 export const redactBullmqConstructionValue = (value: unknown): unknown => {
   if (value instanceof Error) {

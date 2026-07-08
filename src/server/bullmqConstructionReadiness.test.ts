@@ -223,7 +223,7 @@ describe("BullMQ construction readiness foundation", () => {
 
   it("blocks unsafe construction config values and redacts serialized output", () => {
     const constructionFactory: BullmqConstructionFactory = {
-      factoryId: "unsafe-config-factory",
+      factoryId: "redis://redis-user:redis-pass@redis.invalid/0?token=secret",
       construct: () => ({
         queueClient: { clientId: "queue-client-ref", constructed: true },
         queueEvents: { clientId: "queue-events-ref", constructed: true },
@@ -247,6 +247,8 @@ describe("BullMQ construction readiness foundation", () => {
       expect.arrayContaining(["BULLMQ_CONSTRUCTION_UNSAFE_CONFIG"]),
     );
     expect(foundation.bullmqConstructionFactoryInvoked).toBe(false);
+    expect(foundation.factoryId).toBe("[redacted]");
+    expect(foundation.readiness.factoryId).toBe("[redacted]");
     expect(JSON.stringify(foundation)).not.toContain("redis-pass");
     expect(JSON.stringify(foundation)).not.toContain("token=secret");
   });
