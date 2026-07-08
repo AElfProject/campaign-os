@@ -2269,6 +2269,54 @@ describe("Campaign OS API runtime", () => {
     }
   });
 
+  it("keeps unknown repository campaign verification and eligibility failures structured", async () => {
+    const repository = createCampaignOsMemoryRepository();
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({ repository });
+    const missingCampaignId = "missing-repository-campaign";
+    const verification = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/tasks/missing-repository-task/verify",
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-missing-campaign-verify" },
+      body: JSON.stringify({
+        accountType: "EOA",
+        campaignId: missingCampaignId,
+        walletAddress: "2F4CompletionWallet",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      }),
+    });
+    const eligibility = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${missingCampaignId}/eligibility?address=${encodeURIComponent("2F4CompletionWallet")}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-missing-campaign-eligibility" },
+    });
+
+    expect(verification).toMatchObject({
+      status: 404,
+      body: {
+        ok: false,
+        traceId: "trace-campaign-db-missing-campaign-verify",
+        error: {
+          code: "INVALID_CAMPAIGN",
+          details: { campaignId: missingCampaignId },
+        },
+      },
+    });
+    expect(eligibility).toMatchObject({
+      status: 404,
+      body: {
+        ok: false,
+        traceId: "trace-campaign-db-missing-campaign-eligibility",
+        error: {
+          code: "INVALID_CAMPAIGN",
+          details: { campaignId: missingCampaignId },
+        },
+      },
+    });
+    expect(await repository.snapshot()).toMatchObject({
+      recordCount: 0,
+    });
+  });
+
   it("persists campaign draft API records across durable Campaign DB runtime recreation", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-campaign-db-"));
 
