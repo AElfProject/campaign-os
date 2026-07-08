@@ -51,6 +51,7 @@ describe("API service ports", () => {
       deferredCapabilities: expect.arrayContaining(["provider_adapters", "worker_queue"]),
       futureAttachPoints: expect.arrayContaining([
         "BullMQ Redis-compatible package binding metadata",
+        "Redis broker connection readiness metadata",
         "Redis broker endpoint reference",
         "queue provider SDK package installation",
         "queue provider package binding registration",
@@ -67,6 +68,7 @@ describe("API service ports", () => {
         "src/server/queueProviderDriver.ts readiness projection",
         "src/server/queueProviderSdkBinding.ts readiness projection",
         "src/server/queueProviderPackageBinding.ts readiness projection",
+        "src/server/redisBrokerConnectionReadiness.ts readiness metadata",
         "metrics sink registration",
         "structured log sink",
         "trace collector",

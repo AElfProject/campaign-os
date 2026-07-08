@@ -10,6 +10,7 @@ import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdap
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
 import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
+import { redisBrokerConnectionProductionPreconditions } from "./redisBrokerConnectionReadiness";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { resolveApiServerRuntimeContract } from "./serverRuntime";
@@ -102,6 +103,13 @@ describe("backend runtime activation contract", () => {
         CAMPAIGN_OS_DATABASE_URL: "postgres://real-user:real-db-password@db.invalid/campaign-os",
         CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid/object-key-sample",
         CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING: "bullmq-redis-binding-secret",
+        CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT: "redis-health-check-secret",
+        CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY: "redis-circuit-secret",
+        CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS: "redis-timeout-secret",
+        CAMPAIGN_OS_REDIS_CREDENTIALS: "redis-credentials-secret",
+        CAMPAIGN_OS_REDIS_DATABASE: "redis-database-secret",
+        CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY: "redis-retry-secret",
+        CAMPAIGN_OS_REDIS_TLS_POLICY: "redis-tls-secret",
         CAMPAIGN_OS_REDIS_URL: "redis://redis-user:redis-password@redis.invalid:6379/0",
         CAMPAIGN_OS_SCHEDULER_LEASE_STORE_URL: "https://lease.invalid/lease-secret",
         CAMPAIGN_OS_SCHEDULER_PROVIDER: "metadata-provider-secret",
@@ -133,6 +141,9 @@ describe("backend runtime activation contract", () => {
     const queueProviderPackageConfigKeys = [
       ...new Set(queueProviderPackageProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
+    const redisBrokerConnectionConfigKeys = [
+      ...new Set(redisBrokerConnectionProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
     const observabilityExporterConfigKeys = [
       ...new Set(observabilityExporterProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
@@ -154,6 +165,13 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+        "CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT",
+        "CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY",
+        "CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS",
+        "CAMPAIGN_OS_REDIS_CREDENTIALS",
+        "CAMPAIGN_OS_REDIS_DATABASE",
+        "CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY",
+        "CAMPAIGN_OS_REDIS_TLS_POLICY",
         "CAMPAIGN_OS_REDIS_URL",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
         "CAMPAIGN_OS_SCHEDULER_PROVIDER",
@@ -203,6 +221,13 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_QUEUE_PROVIDER_PACKAGE_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING",
         "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_PACKAGE",
+        "CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT",
+        "CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY",
+        "CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS",
+        "CAMPAIGN_OS_REDIS_CREDENTIALS",
+        "CAMPAIGN_OS_REDIS_DATABASE",
+        "CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY",
+        "CAMPAIGN_OS_REDIS_TLS_POLICY",
         "CAMPAIGN_OS_REDIS_URL",
         "CAMPAIGN_OS_WORKER_RETRY_POLICY",
         "CAMPAIGN_OS_IDEMPOTENCY_STORE_URL",
@@ -302,6 +327,18 @@ describe("backend runtime activation contract", () => {
         ]),
       );
     }
+    for (const redisBrokerConnectionConfigKey of redisBrokerConnectionConfigKeys) {
+      expect(activation.deploymentHandoff.environmentKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: redisBrokerConnectionConfigKey,
+            redacted: true,
+            required: true,
+            requiredFor: "production-required",
+          }),
+        ]),
+      );
+    }
     for (const observabilityExporterConfigKey of observabilityExporterConfigKeys) {
       expect(activation.deploymentHandoff.environmentKeys).toEqual(
         expect.arrayContaining([
@@ -326,6 +363,27 @@ describe("backend runtime activation contract", () => {
           category: "auth",
           key: "CAMPAIGN_OS_AUTH_SECRET",
           redacted: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "provider",
+          key: "CAMPAIGN_OS_REDIS_CREDENTIALS",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "provider",
+          key: "CAMPAIGN_OS_REDIS_TLS_POLICY",
+          redacted: true,
+          required: true,
+          status: "blocked",
+        }),
+        expect.objectContaining({
+          category: "provider",
+          key: "CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT",
+          redacted: true,
+          required: true,
           status: "blocked",
         }),
         expect.objectContaining({
@@ -500,6 +558,8 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "provider", id: "queue-provider-package-queue-provider-package-binding-registration", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "queue-provider-package-queue-provider-package-redis-endpoint-reference", status: "blocked" }),
         expect.objectContaining({ area: "provider", id: "queue-provider-package-queue-provider-package-live-enable-gate", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "redis-broker-redis-broker-credentials-reference", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "redis-broker-redis-broker-health-check-enable-gate", status: "blocked" }),
         expect.objectContaining({ area: "contract", id: "contract-writer", status: "blocked" }),
         expect.objectContaining({ area: "storage", id: "object-storage", status: "deferred" }),
         expect.objectContaining({ area: "observability", id: "observability-exporter", status: "deferred" }),
@@ -574,6 +634,18 @@ describe("backend runtime activation contract", () => {
           expect.objectContaining({
             attachPoint: "src/server/queueProviderPackageBinding.ts",
             id: `queue-provider-package-${precondition.id}`,
+            requiredBeforeProduction: true,
+            status: precondition.status,
+          }),
+        ),
+      ),
+    );
+    expect(activation.productionDependencyBlockers).toEqual(
+      expect.arrayContaining(
+        redisBrokerConnectionProductionPreconditions.map((precondition) =>
+          expect.objectContaining({
+            attachPoint: "src/server/redisBrokerConnectionReadiness.ts",
+            id: `redis-broker-${precondition.id}`,
             requiredBeforeProduction: true,
             status: precondition.status,
           }),

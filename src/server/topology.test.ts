@@ -15,6 +15,7 @@ import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdap
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
 import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
+import { redisBrokerConnectionProductionPreconditions } from "./redisBrokerConnectionReadiness";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
@@ -142,6 +143,7 @@ describe("backend service topology", () => {
         "src/server/queueProviderDriver.ts",
         "src/server/queueProviderSdkBinding.ts",
         "src/server/queueProviderPackageBinding.ts",
+        "src/server/redisBrokerConnectionReadiness.ts",
         "src/server/queueProviderAdapter.ts",
         "src/server/queueRuntime.ts",
         "src/server/workerIdempotencyStore.ts",
@@ -183,6 +185,9 @@ describe("backend service topology", () => {
         ),
         ...queueProviderPackageProductionPreconditions.map(
           (precondition) => `queue-provider-package-${precondition.id}`,
+        ),
+        ...redisBrokerConnectionProductionPreconditions.map(
+          (precondition) => `redis-broker-${precondition.id}`,
         ),
       ]),
       productionTarget: "worker_service",
@@ -377,6 +382,9 @@ describe("backend service topology", () => {
         ...queueProviderPackageProductionPreconditions.map(
           (precondition) => `queue-provider-package-${precondition.id}`,
         ),
+        ...redisBrokerConnectionProductionPreconditions.map(
+          (precondition) => `redis-broker-${precondition.id}`,
+        ),
         "worker-lease-store-worker-lease-store-selection",
         "worker-lease-store-worker-lease-store-endpoint",
         "worker-lease-store-worker-lease-store-credentials",
@@ -406,6 +414,7 @@ describe("backend service topology", () => {
         + queueProviderDriverProductionPreconditions.length
         + queueProviderSdkBindingProductionPreconditions.length
         + queueProviderPackageProductionPreconditions.length
+        + redisBrokerConnectionProductionPreconditions.length
         + workerLeaseStoreProductionPreconditions.length
         + workerIdempotencyStoreProductionPreconditions.length,
     );

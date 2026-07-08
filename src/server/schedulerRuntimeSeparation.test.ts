@@ -27,6 +27,16 @@ import {
   workerIdempotencyStoreNoLiveFlags,
 } from "./workerIdempotencyStore";
 
+const redisBrokerConnectionReadyEnv = {
+  CAMPAIGN_OS_REDIS_BROKER_HEALTH_CHECK_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_REDIS_CIRCUIT_BREAKER_POLICY: "circuit-closed",
+  CAMPAIGN_OS_REDIS_CONNECTION_TIMEOUT_MS: "500",
+  CAMPAIGN_OS_REDIS_CREDENTIALS: "redis-auth-ref:campaign-os",
+  CAMPAIGN_OS_REDIS_DATABASE: "redis-db-0",
+  CAMPAIGN_OS_REDIS_RETRY_BACKOFF_POLICY: "retry-exponential",
+  CAMPAIGN_OS_REDIS_TLS_POLICY: "tls-required",
+} satisfies Record<string, unknown>;
+
 const serializedSchedulerOutput = () => {
   const foundation = createSchedulerRuntimeFoundation();
   const acceptedTrigger = dryRunSchedulerTrigger({
@@ -147,6 +157,7 @@ describe("scheduler runtime separation boundaries", () => {
     const scheduler = createSchedulerRuntimeFoundation();
     const queue = queueRuntime.createQueueRuntimeFoundation({
       env: {
+        ...redisBrokerConnectionReadyEnv,
         CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:queue-package",
         CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
         CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:queue-package",
@@ -180,17 +191,25 @@ describe("scheduler runtime separation boundaries", () => {
     expect(queue.providerAdapter.driverSdkBinding.packageBinding).toMatchObject({
       browserBundleAllowed: false,
       liveBrokerConnectionAttempted: false,
+      liveBrokerHealthCheckAttempted: false,
       liveQueuePublishingEnabled: false,
       liveWorkerExecutionEnabled: false,
       packageName: "bullmq",
       productionReady: false,
+      queueClientConstructed: false,
+      queueEventsConstructed: false,
       sdkClientConstructed: false,
       status: "scaffolded",
       valid: true,
+      workerConstructed: false,
     });
     expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingLiveBrokerConnectionAttempted).toBe(false);
+    expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingLiveBrokerHealthCheckAttempted).toBe(false);
     expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingLiveQueuePublishingEnabled).toBe(false);
     expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingLiveWorkerExecutionEnabled).toBe(false);
+    expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingQueueClientConstructed).toBe(false);
+    expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingQueueEventsConstructed).toBe(false);
+    expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingWorkerConstructed).toBe(false);
     expect(scheduler.readiness.liveCronExecutionEnabled).toBe(false);
     expect(scheduler.readiness.liveQueuePublishingEnabled).toBe(false);
     expect(scheduler.readiness.liveSchedulerExecutionEnabled).toBe(false);
@@ -272,6 +291,7 @@ describe("scheduler runtime separation boundaries", () => {
     const localQueue = queueRuntime.createQueueRuntimeFoundation();
     const configuredProviderQueue = queueRuntime.createQueueRuntimeFoundation({
       env: {
+        ...redisBrokerConnectionReadyEnv,
         CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:review",
         CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
         CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:review",
@@ -304,6 +324,10 @@ describe("scheduler runtime separation boundaries", () => {
     expect(configuredProviderQueue.providerAdapter.productionReady).toBe(false);
     expect(configuredProviderQueue.productionReady).toBe(false);
     expect(configuredProviderQueue.readiness.liveQueuePublishingEnabled).toBe(false);
+    expect(configuredProviderQueue.readiness.providerAdapterDriverSdkBindingPackageBindingLiveBrokerHealthCheckAttempted).toBe(false);
+    expect(configuredProviderQueue.readiness.providerAdapterDriverSdkBindingPackageBindingQueueClientConstructed).toBe(false);
+    expect(configuredProviderQueue.readiness.providerAdapterDriverSdkBindingPackageBindingQueueEventsConstructed).toBe(false);
+    expect(configuredProviderQueue.readiness.providerAdapterDriverSdkBindingPackageBindingWorkerConstructed).toBe(false);
     expect(configuredProviderQueue.providerAdapter.operationCapabilities).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ liveEnabled: false, operation: "publish" }),
@@ -316,6 +340,7 @@ describe("scheduler runtime separation boundaries", () => {
 
   it("keeps queue provider and scheduler readiness from satisfying idempotency readiness", () => {
     const sharedEnv = {
+      ...redisBrokerConnectionReadyEnv,
       CAMPAIGN_OS_DEAD_LETTER_QUEUE: "dead-letter-ref:review",
       CAMPAIGN_OS_DEGRADATION_POLICY: "degradation:manual-review",
       CAMPAIGN_OS_IDEMPOTENCY_STORE_URL: "idempotency-store-ref:review",
@@ -377,6 +402,10 @@ describe("scheduler runtime separation boundaries", () => {
     expect(idempotencyStore.readiness.requiredConfigKeys).not.toEqual(scheduler.readiness.requiredConfigKeys);
     expect(idempotencyStore.readiness.liveIdempotencyExecutionEnabled).toBe(false);
     expect(queue.readiness.liveQueuePublishingEnabled).toBe(false);
+    expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingLiveBrokerHealthCheckAttempted).toBe(false);
+    expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingQueueClientConstructed).toBe(false);
+    expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingQueueEventsConstructed).toBe(false);
+    expect(queue.readiness.providerAdapterDriverSdkBindingPackageBindingWorkerConstructed).toBe(false);
     expect(scheduler.readiness.liveSchedulerExecutionEnabled).toBe(false);
   });
 

@@ -11,6 +11,7 @@ import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdap
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
 import { queueProviderSdkBindingProductionPreconditions } from "./queueProviderSdkBinding";
 import { queueProviderPackageProductionPreconditions } from "./queueProviderPackageBinding";
+import { redisBrokerConnectionProductionPreconditions } from "./redisBrokerConnectionReadiness";
 import { queueRuntimeProductionPreconditions } from "./queueRuntime";
 import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
@@ -250,6 +251,10 @@ const queueProviderPackageRequiredConfigKeys = uniqueStrings(
   queueProviderPackageProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
 );
 
+const redisBrokerConnectionRequiredConfigKeys = uniqueStrings(
+  redisBrokerConnectionProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
+);
+
 const schedulerRuntimeRequiredConfigKeys = uniqueStrings(
   schedulerRuntimeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
 );
@@ -276,6 +281,7 @@ const backendProductionReadinessRequiredConfigKeys = uniqueStrings([
   ...queueProviderDriverRequiredConfigKeys,
   ...queueProviderSdkBindingRequiredConfigKeys,
   ...queueProviderPackageRequiredConfigKeys,
+  ...redisBrokerConnectionRequiredConfigKeys,
   ...observabilityExporterRequiredConfigKeys,
 ]);
 
