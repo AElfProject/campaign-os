@@ -7,6 +7,7 @@ import {
   runtimeActivationConfigKeys,
 } from "./backendRuntimeActivation";
 import { bullmqConstructionProductionPreconditions } from "./bullmqConstructionReadiness";
+import { liveQueueConsumeProductionPreconditions } from "./liveQueueConsumeLoop";
 import { liveQueuePublishingProductionPreconditions } from "./liveQueuePublishingReadiness";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
 import { queueProviderDriverProductionPreconditions } from "./queueProviderDriver";
@@ -155,6 +156,9 @@ describe("backend runtime activation contract", () => {
     const liveQueuePublishingConfigKeys = [
       ...new Set(liveQueuePublishingProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
     ];
+    const liveQueueConsumeConfigKeys = [
+      ...new Set(liveQueueConsumeProductionPreconditions.flatMap((precondition) => precondition.requiredConfigKeys)),
+    ];
 
     expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
       expect.arrayContaining([
@@ -185,6 +189,9 @@ describe("backend runtime activation contract", () => {
         "CAMPAIGN_OS_REDIS_URL",
         "CAMPAIGN_OS_LIVE_QUEUE_PUBLISHING_ENABLEMENT",
         "CAMPAIGN_OS_LIVE_QUEUE_PUBLISHER",
+        "CAMPAIGN_OS_LIVE_QUEUE_CONSUME_ENABLEMENT",
+        "CAMPAIGN_OS_LIVE_QUEUE_CONSUMER",
+        "CAMPAIGN_OS_CONSUME_HANDLER_REGISTRY",
         "CAMPAIGN_OS_PAYLOAD_REFERENCE_POLICY",
         "CAMPAIGN_OS_PUBLISHER_REDACTION_POLICY",
         "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
@@ -379,6 +386,16 @@ describe("backend runtime activation contract", () => {
             redacted: true,
             required: true,
             requiredFor: "production-required",
+          }),
+        ]),
+      );
+    }
+    for (const liveQueueConsumeConfigKey of liveQueueConsumeConfigKeys) {
+      expect(activation.deploymentHandoff.environmentKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: liveQueueConsumeConfigKey,
+            redacted: true,
           }),
         ]),
       );
@@ -654,6 +671,11 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "provider", id: "live-queue-publishing-live-queue-publisher", status: "blocked" }),
         expect.objectContaining({ area: "queue", id: "live-queue-publishing-live-queue-payload-reference-policy", status: "blocked" }),
         expect.objectContaining({ area: "queue", id: "live-queue-publishing-live-queue-redaction-policy", status: "blocked" }),
+        expect.objectContaining({ area: "provider", id: "live-queue-consume-live-queue-consume-activation", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "live-queue-consume-live-queue-consumer", status: "blocked" }),
+        expect.objectContaining({ area: "worker", id: "live-queue-consume-live-queue-handler-registry", status: "blocked" }),
+        expect.objectContaining({ area: "queue", id: "live-queue-consume-live-queue-consume-payload-reference-policy", status: "blocked" }),
+        expect.objectContaining({ area: "queue", id: "live-queue-consume-live-queue-consume-redaction-policy", status: "blocked" }),
         expect.objectContaining({ area: "contract", id: "contract-writer", status: "blocked" }),
         expect.objectContaining({ area: "storage", id: "object-storage", status: "deferred" }),
         expect.objectContaining({ area: "observability", id: "observability-exporter", status: "deferred" }),
@@ -764,6 +786,18 @@ describe("backend runtime activation contract", () => {
           expect.objectContaining({
             attachPoint: "src/server/liveQueuePublishingReadiness.ts",
             id: `live-queue-publishing-${precondition.id}`,
+            requiredBeforeProduction: true,
+            status: precondition.status,
+          }),
+        ),
+      ),
+    );
+    expect(activation.productionDependencyBlockers).toEqual(
+      expect.arrayContaining(
+        liveQueueConsumeProductionPreconditions.map((precondition) =>
+          expect.objectContaining({
+            attachPoint: "src/server/liveQueueConsumeLoop.ts",
+            id: `live-queue-consume-${precondition.id}`,
             requiredBeforeProduction: true,
             status: precondition.status,
           }),

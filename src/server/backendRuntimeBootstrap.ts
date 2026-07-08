@@ -138,6 +138,28 @@ export interface BackendRuntimeReadinessProjection {
     dryRunEnqueueEnabled: boolean;
     id: BackendServiceReadinessReport["queueRuntimeFoundation"]["id"];
     liveCronExecutionEnabled: false;
+    liveQueueConsumptionEnabled: false;
+    liveQueueConsumingReadiness: {
+      activationStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["consumingReadiness"]["activationStatus"];
+      ackAttempted: boolean;
+      blockerCount: number;
+      consumeAttemptPolicy: BackendServiceReadinessReport["queueRuntimeFoundation"]["consumingReadiness"]["consumeAttemptPolicy"];
+      consumeRequestEvaluated: boolean;
+      consumeResultStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["consumingReadiness"]["consumeResultStatus"];
+      consumerId: string;
+      consumerProvided: boolean;
+      deadLetterAttempted: boolean;
+      diagnosticCodes: string[];
+      handlerRegistryProvided: boolean;
+      liveConsumeAttempted: boolean;
+      liveQueueConsumptionEnabled: boolean;
+      nackAttempted: boolean;
+      noLiveSideEffects: BackendServiceReadinessReport["queueRuntimeFoundation"]["consumingReadiness"]["noLiveSideEffects"];
+      productionReady: false;
+      requiredConfigKeys: string[];
+      retryScheduled: boolean;
+      status: BackendServiceReadinessReport["queueRuntimeFoundation"]["consumingReadiness"]["status"];
+    };
     liveQueuePublishingEnabled: false;
     liveQueuePublishingReadiness: {
       activationStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["publishingReadiness"]["activationStatus"];
@@ -168,12 +190,32 @@ export interface BackendRuntimeReadinessProjection {
       driverDiagnosticCodes: string[];
       driverDisabledLiveOperationCount: number;
       driverId: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverId"];
+      driverLiveQueueConsumptionEnabled: false;
       driverLiveQueuePublishingEnabled: false;
       driverLiveWorkerExecutionEnabled: false;
       driverMode: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverMode"];
       driverOperationCount: number;
       driverProductionReady: false;
       driverProviderId: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverProviderId"];
+      driverConsumeAckAttempted: boolean;
+      driverConsumeAttemptPolicy: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverConsumeAttemptPolicy"];
+      driverConsumeDeadLetterAttempted: boolean;
+      driverConsumeDiagnosticCodes: string[];
+      driverConsumeNackAttempted: boolean;
+      driverConsumeRequestEvaluated: boolean;
+      driverConsumeResultStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverConsumeResultStatus"];
+      driverConsumeRetryScheduled: boolean;
+      driverConsumingActivationStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverConsumingActivationStatus"];
+      driverConsumingBlockerCount: number;
+      driverConsumingConsumerId: string;
+      driverConsumingConsumerProvided: boolean;
+      driverConsumingHandlerRegistryProvided: boolean;
+      driverConsumingLiveConsumeAttempted: boolean;
+      driverConsumingLiveQueueConsumptionEnabled: boolean;
+      driverConsumingNoLiveSideEffects: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverConsumingNoLiveSideEffects"];
+      driverConsumingProductionReady: false;
+      driverConsumingRequiredConfigKeys: string[];
+      driverConsumingStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverConsumingStatus"];
       driverPublishAttemptPolicy: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverPublishAttemptPolicy"];
       driverPublishDiagnosticCodes: string[];
       driverPublishRequestEvaluated: boolean;
@@ -237,6 +279,7 @@ export interface BackendRuntimeReadinessProjection {
       driverSdkBindingValid: boolean;
       driverStatus: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["driverStatus"];
       driverValid: boolean;
+      liveQueueConsumptionEnabled: false;
       liveQueuePublishingEnabled: false;
       liveWorkerExecutionEnabled: false;
       mode: BackendServiceReadinessReport["queueRuntimeFoundation"]["providerAdapter"]["mode"];
@@ -551,6 +594,28 @@ const createReadinessProjection = (
     dryRunEnqueueEnabled: backendReadiness.queueRuntimeFoundation.dryRunEnqueue.enabled,
     id: backendReadiness.queueRuntimeFoundation.id,
     liveCronExecutionEnabled: backendReadiness.queueRuntimeFoundation.noLiveFlags.liveCronExecutionEnabled,
+    liveQueueConsumptionEnabled: false,
+    liveQueueConsumingReadiness: {
+      activationStatus: backendReadiness.queueRuntimeFoundation.consumingReadiness.activationStatus,
+      ackAttempted: backendReadiness.queueRuntimeFoundation.consumingReadiness.ackAttempted,
+      blockerCount: backendReadiness.queueRuntimeFoundation.consumingReadiness.blockerCount,
+      consumeAttemptPolicy: backendReadiness.queueRuntimeFoundation.consumingReadiness.consumeAttemptPolicy,
+      consumeRequestEvaluated: backendReadiness.queueRuntimeFoundation.consumingReadiness.consumeRequestEvaluated,
+      consumeResultStatus: backendReadiness.queueRuntimeFoundation.consumingReadiness.consumeResultStatus,
+      consumerId: backendReadiness.queueRuntimeFoundation.consumingReadiness.consumerId,
+      consumerProvided: backendReadiness.queueRuntimeFoundation.consumingReadiness.consumerProvided,
+      deadLetterAttempted: backendReadiness.queueRuntimeFoundation.consumingReadiness.deadLetterAttempted,
+      diagnosticCodes: backendReadiness.queueRuntimeFoundation.consumingReadiness.diagnosticCodes,
+      handlerRegistryProvided: backendReadiness.queueRuntimeFoundation.consumingReadiness.handlerRegistryProvided,
+      liveConsumeAttempted: backendReadiness.queueRuntimeFoundation.consumingReadiness.liveConsumeAttempted,
+      liveQueueConsumptionEnabled: backendReadiness.queueRuntimeFoundation.consumingReadiness.liveQueueConsumptionEnabled,
+      nackAttempted: backendReadiness.queueRuntimeFoundation.consumingReadiness.nackAttempted,
+      noLiveSideEffects: { ...backendReadiness.queueRuntimeFoundation.consumingReadiness.noLiveSideEffects },
+      productionReady: false,
+      requiredConfigKeys: backendReadiness.queueRuntimeFoundation.consumingReadiness.requiredConfigKeys,
+      retryScheduled: backendReadiness.queueRuntimeFoundation.consumingReadiness.retryScheduled,
+      status: backendReadiness.queueRuntimeFoundation.consumingReadiness.status,
+    },
     liveQueuePublishingEnabled: backendReadiness.queueRuntimeFoundation.noLiveFlags.liveQueuePublishingEnabled,
     liveQueuePublishingReadiness: {
       activationStatus: backendReadiness.queueRuntimeFoundation.publishingReadiness.activationStatus,
@@ -581,12 +646,32 @@ const createReadinessProjection = (
       driverDiagnosticCodes: backendReadiness.queueRuntimeFoundation.providerAdapter.driverDiagnosticCodes,
       driverDisabledLiveOperationCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverDisabledLiveOperationCount,
       driverId: backendReadiness.queueRuntimeFoundation.providerAdapter.driverId,
+      driverLiveQueueConsumptionEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.driverLiveQueueConsumptionEnabled,
       driverLiveQueuePublishingEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.driverLiveQueuePublishingEnabled,
       driverLiveWorkerExecutionEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.driverLiveWorkerExecutionEnabled,
       driverMode: backendReadiness.queueRuntimeFoundation.providerAdapter.driverMode,
       driverOperationCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverOperationCount,
       driverProductionReady: backendReadiness.queueRuntimeFoundation.providerAdapter.driverProductionReady,
       driverProviderId: backendReadiness.queueRuntimeFoundation.providerAdapter.driverProviderId,
+      driverConsumeAckAttempted: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumeAckAttempted,
+      driverConsumeAttemptPolicy: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumeAttemptPolicy,
+      driverConsumeDeadLetterAttempted: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumeDeadLetterAttempted,
+      driverConsumeDiagnosticCodes: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumeDiagnosticCodes,
+      driverConsumeNackAttempted: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumeNackAttempted,
+      driverConsumeRequestEvaluated: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumeRequestEvaluated,
+      driverConsumeResultStatus: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumeResultStatus,
+      driverConsumeRetryScheduled: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumeRetryScheduled,
+      driverConsumingActivationStatus: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumingActivationStatus,
+      driverConsumingBlockerCount: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumingBlockerCount,
+      driverConsumingConsumerId: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumingConsumerId,
+      driverConsumingConsumerProvided: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumingConsumerProvided,
+      driverConsumingHandlerRegistryProvided: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumingHandlerRegistryProvided,
+      driverConsumingLiveConsumeAttempted: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumingLiveConsumeAttempted,
+      driverConsumingLiveQueueConsumptionEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumingLiveQueueConsumptionEnabled,
+      driverConsumingNoLiveSideEffects: { ...backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumingNoLiveSideEffects },
+      driverConsumingProductionReady: false,
+      driverConsumingRequiredConfigKeys: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumingRequiredConfigKeys,
+      driverConsumingStatus: backendReadiness.queueRuntimeFoundation.providerAdapter.driverConsumingStatus,
       driverPublishAttemptPolicy: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishAttemptPolicy,
       driverPublishDiagnosticCodes: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishDiagnosticCodes,
       driverPublishRequestEvaluated: backendReadiness.queueRuntimeFoundation.providerAdapter.driverPublishRequestEvaluated,
@@ -650,6 +735,7 @@ const createReadinessProjection = (
       driverSdkBindingValid: backendReadiness.queueRuntimeFoundation.providerAdapter.driverSdkBindingValid,
       driverStatus: backendReadiness.queueRuntimeFoundation.providerAdapter.driverStatus,
       driverValid: backendReadiness.queueRuntimeFoundation.providerAdapter.driverValid,
+      liveQueueConsumptionEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.liveQueueConsumptionEnabled,
       liveQueuePublishingEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.liveQueuePublishingEnabled,
       liveWorkerExecutionEnabled: backendReadiness.queueRuntimeFoundation.providerAdapter.liveWorkerExecutionEnabled,
       mode: backendReadiness.queueRuntimeFoundation.providerAdapter.mode,

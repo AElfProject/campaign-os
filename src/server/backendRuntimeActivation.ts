@@ -41,6 +41,10 @@ import {
   type LiveQueuePublishingPreconditionArea,
 } from "./liveQueuePublishingReadiness";
 import {
+  liveQueueConsumeProductionPreconditions,
+  type LiveQueueConsumePreconditionArea,
+} from "./liveQueueConsumeLoop";
+import {
   workerLeaseStoreProductionPreconditions,
   type WorkerLeasePreconditionArea,
 } from "./workerLeaseStore";
@@ -352,6 +356,29 @@ const liveQueuePublishingDependencyArea = (
 ): ProductionRuntimeDependencyArea =>
   liveQueuePublishingConfigCategory(area) as ProductionRuntimeDependencyArea;
 
+const liveQueueConsumeConfigCategory = (
+  area: LiveQueueConsumePreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (area === "activation" || area === "construction" || area === "publishing" || area === "runbook") {
+    return "provider";
+  }
+
+  if (area === "dead_letter" || area === "payload" || area === "queue" || area === "redaction") {
+    return "queue";
+  }
+
+  if (area === "consumer" || area === "handler" || area === "idempotency" || area === "lease" || area === "retry") {
+    return "worker";
+  }
+
+  return "observability";
+};
+
+const liveQueueConsumeDependencyArea = (
+  area: LiveQueueConsumePreconditionArea,
+): ProductionRuntimeDependencyArea =>
+  liveQueueConsumeConfigCategory(area) as ProductionRuntimeDependencyArea;
+
 const normalizeQueueProviderSdkBindingConfigKey = (key: string): string =>
   key === "CAMPAIGN_OS_QUEUE_PROVIDER_BINDING" ? "CAMPAIGN_OS_QUEUE_PROVIDER_SDK_BINDING" : key;
 
@@ -577,6 +604,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
       ),
     ),
   ),
+  ...liveQueueConsumeProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        liveQueueConsumeConfigCategory(precondition.area),
+        precondition.status,
+        "production-required",
+      ),
+    ),
+  ),
   ...redisBrokerConnectionProductionPreconditions.flatMap((precondition) =>
     precondition.requiredConfigKeys.map((key) =>
       configKey(
@@ -771,6 +808,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     attachPoint: "src/server/liveQueuePublishingReadiness.ts",
     blockedBy: [...precondition.requiredConfigKeys],
     id: `live-queue-publishing-${precondition.id}`,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
+  ...liveQueueConsumeProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: liveQueueConsumeDependencyArea(precondition.area),
+    attachPoint: "src/server/liveQueueConsumeLoop.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: `live-queue-consume-${precondition.id}`,
     requiredBeforeProduction: true,
     status: precondition.status,
   })),

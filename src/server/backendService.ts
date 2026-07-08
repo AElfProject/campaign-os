@@ -246,6 +246,7 @@ export interface BackendQueueRuntimeReadinessSummary {
   preconditions: QueueRuntimeFoundationSummary["preconditions"];
   productionReady: false;
   profileId: QueueRuntimeFoundationSummary["profileId"];
+  consumingReadiness: BackendQueueConsumingReadinessSummary;
   publishingReadiness: BackendQueuePublishingReadinessSummary;
   providerAdapter: BackendQueueProviderAdapterReadinessSummary;
   queuePlanCoverage: {
@@ -277,6 +278,28 @@ export interface BackendQueuePublishingReadinessSummary {
   status: QueueRuntimeProviderAdapterSummary["driverPublishingStatus"];
 }
 
+export interface BackendQueueConsumingReadinessSummary {
+  activationStatus: QueueRuntimeProviderAdapterSummary["driverConsumingActivationStatus"];
+  ackAttempted: QueueRuntimeProviderAdapterSummary["driverConsumeAckAttempted"];
+  blockerCount: QueueRuntimeProviderAdapterSummary["driverConsumingBlockerCount"];
+  consumeAttemptPolicy: QueueRuntimeProviderAdapterSummary["driverConsumeAttemptPolicy"];
+  consumeRequestEvaluated: QueueRuntimeProviderAdapterSummary["driverConsumeRequestEvaluated"];
+  consumeResultStatus: QueueRuntimeProviderAdapterSummary["driverConsumeResultStatus"];
+  consumerId: QueueRuntimeProviderAdapterSummary["driverConsumingConsumerId"];
+  consumerProvided: QueueRuntimeProviderAdapterSummary["driverConsumingConsumerProvided"];
+  deadLetterAttempted: QueueRuntimeProviderAdapterSummary["driverConsumeDeadLetterAttempted"];
+  diagnosticCodes: QueueRuntimeProviderAdapterSummary["driverConsumeDiagnosticCodes"];
+  handlerRegistryProvided: QueueRuntimeProviderAdapterSummary["driverConsumingHandlerRegistryProvided"];
+  liveConsumeAttempted: QueueRuntimeProviderAdapterSummary["driverConsumingLiveConsumeAttempted"];
+  liveQueueConsumptionEnabled: QueueRuntimeProviderAdapterSummary["driverConsumingLiveQueueConsumptionEnabled"];
+  nackAttempted: QueueRuntimeProviderAdapterSummary["driverConsumeNackAttempted"];
+  noLiveSideEffects: QueueRuntimeProviderAdapterSummary["driverConsumingNoLiveSideEffects"];
+  productionReady: false;
+  requiredConfigKeys: QueueRuntimeProviderAdapterSummary["driverConsumingRequiredConfigKeys"];
+  retryScheduled: QueueRuntimeProviderAdapterSummary["driverConsumeRetryScheduled"];
+  status: QueueRuntimeProviderAdapterSummary["driverConsumingStatus"];
+}
+
 export interface BackendQueueProviderAdapterReadinessSummary {
   adapterId: QueueRuntimeProviderAdapterSummary["adapterId"];
   blockerCount: QueueRuntimeProviderAdapterSummary["blockerCount"];
@@ -287,12 +310,32 @@ export interface BackendQueueProviderAdapterReadinessSummary {
   driverDiagnosticCodes: QueueRuntimeProviderAdapterSummary["driverDiagnosticCodes"];
   driverDisabledLiveOperationCount: number;
   driverId: QueueRuntimeProviderAdapterSummary["driverId"];
+  driverLiveQueueConsumptionEnabled: false;
   driverLiveQueuePublishingEnabled: false;
   driverLiveWorkerExecutionEnabled: false;
   driverMode: QueueRuntimeProviderAdapterSummary["driverMode"];
   driverOperationCount: QueueRuntimeProviderAdapterSummary["driverOperationCount"];
   driverProductionReady: false;
   driverProviderId: QueueRuntimeProviderAdapterSummary["driverProviderId"];
+  driverConsumeAckAttempted: QueueRuntimeProviderAdapterSummary["driverConsumeAckAttempted"];
+  driverConsumeAttemptPolicy: QueueRuntimeProviderAdapterSummary["driverConsumeAttemptPolicy"];
+  driverConsumeDeadLetterAttempted: QueueRuntimeProviderAdapterSummary["driverConsumeDeadLetterAttempted"];
+  driverConsumeDiagnosticCodes: QueueRuntimeProviderAdapterSummary["driverConsumeDiagnosticCodes"];
+  driverConsumeNackAttempted: QueueRuntimeProviderAdapterSummary["driverConsumeNackAttempted"];
+  driverConsumeRequestEvaluated: QueueRuntimeProviderAdapterSummary["driverConsumeRequestEvaluated"];
+  driverConsumeResultStatus: QueueRuntimeProviderAdapterSummary["driverConsumeResultStatus"];
+  driverConsumeRetryScheduled: QueueRuntimeProviderAdapterSummary["driverConsumeRetryScheduled"];
+  driverConsumingActivationStatus: QueueRuntimeProviderAdapterSummary["driverConsumingActivationStatus"];
+  driverConsumingBlockerCount: QueueRuntimeProviderAdapterSummary["driverConsumingBlockerCount"];
+  driverConsumingConsumerId: QueueRuntimeProviderAdapterSummary["driverConsumingConsumerId"];
+  driverConsumingConsumerProvided: QueueRuntimeProviderAdapterSummary["driverConsumingConsumerProvided"];
+  driverConsumingHandlerRegistryProvided: QueueRuntimeProviderAdapterSummary["driverConsumingHandlerRegistryProvided"];
+  driverConsumingLiveConsumeAttempted: QueueRuntimeProviderAdapterSummary["driverConsumingLiveConsumeAttempted"];
+  driverConsumingLiveQueueConsumptionEnabled: QueueRuntimeProviderAdapterSummary["driverConsumingLiveQueueConsumptionEnabled"];
+  driverConsumingNoLiveSideEffects: QueueRuntimeProviderAdapterSummary["driverConsumingNoLiveSideEffects"];
+  driverConsumingProductionReady: false;
+  driverConsumingRequiredConfigKeys: QueueRuntimeProviderAdapterSummary["driverConsumingRequiredConfigKeys"];
+  driverConsumingStatus: QueueRuntimeProviderAdapterSummary["driverConsumingStatus"];
   driverPublishAttemptPolicy: QueueRuntimeProviderAdapterSummary["driverPublishAttemptPolicy"];
   driverPublishDiagnosticCodes: QueueRuntimeProviderAdapterSummary["driverPublishDiagnosticCodes"];
   driverPublishRequestEvaluated: QueueRuntimeProviderAdapterSummary["driverPublishRequestEvaluated"];
@@ -356,6 +399,7 @@ export interface BackendQueueProviderAdapterReadinessSummary {
   driverSdkBindingValid: QueueRuntimeProviderAdapterSummary["driverSdkBinding"]["valid"];
   driverStatus: QueueRuntimeProviderAdapterSummary["driverStatus"];
   driverValid: QueueRuntimeProviderAdapterSummary["driverValid"];
+  liveQueueConsumptionEnabled: false;
   liveQueuePublishingEnabled: false;
   liveWorkerExecutionEnabled: false;
   mode: QueueRuntimeProviderAdapterSummary["mode"];
@@ -1614,6 +1658,27 @@ const createBackendQueueRuntimeReadinessSummary = ({
     preconditions: foundation.preconditions,
     productionReady: foundation.productionReady,
     profileId: foundation.profileId,
+    consumingReadiness: {
+      activationStatus: foundation.providerAdapter.driverConsumingActivationStatus,
+      ackAttempted: foundation.providerAdapter.driverConsumeAckAttempted,
+      blockerCount: foundation.providerAdapter.driverConsumingBlockerCount,
+      consumeAttemptPolicy: foundation.providerAdapter.driverConsumeAttemptPolicy,
+      consumeRequestEvaluated: foundation.providerAdapter.driverConsumeRequestEvaluated,
+      consumeResultStatus: foundation.providerAdapter.driverConsumeResultStatus,
+      consumerId: foundation.providerAdapter.driverConsumingConsumerId,
+      consumerProvided: foundation.providerAdapter.driverConsumingConsumerProvided,
+      deadLetterAttempted: foundation.providerAdapter.driverConsumeDeadLetterAttempted,
+      diagnosticCodes: foundation.providerAdapter.driverConsumeDiagnosticCodes,
+      handlerRegistryProvided: foundation.providerAdapter.driverConsumingHandlerRegistryProvided,
+      liveConsumeAttempted: foundation.providerAdapter.driverConsumingLiveConsumeAttempted,
+      liveQueueConsumptionEnabled: foundation.providerAdapter.driverConsumingLiveQueueConsumptionEnabled,
+      nackAttempted: foundation.providerAdapter.driverConsumeNackAttempted,
+      noLiveSideEffects: foundation.providerAdapter.driverConsumingNoLiveSideEffects,
+      productionReady: false,
+      requiredConfigKeys: foundation.providerAdapter.driverConsumingRequiredConfigKeys,
+      retryScheduled: foundation.providerAdapter.driverConsumeRetryScheduled,
+      status: foundation.providerAdapter.driverConsumingStatus,
+    },
     publishingReadiness: {
       activationStatus: foundation.providerAdapter.driverPublishingActivationStatus,
       blockerCount: foundation.providerAdapter.driverPublishingBlockerCount,
@@ -1642,12 +1707,32 @@ const createBackendQueueRuntimeReadinessSummary = ({
         (operation) => operation.liveEnabled === false,
       ).length,
       driverId: foundation.providerAdapter.driverId,
+      driverLiveQueueConsumptionEnabled: foundation.providerAdapter.driverLiveQueueConsumptionEnabled,
       driverLiveQueuePublishingEnabled: foundation.providerAdapter.driverLiveQueuePublishingEnabled,
       driverLiveWorkerExecutionEnabled: foundation.providerAdapter.driverLiveWorkerExecutionEnabled,
       driverMode: foundation.providerAdapter.driverMode,
       driverOperationCount: foundation.providerAdapter.driverOperationCount,
       driverProductionReady: foundation.providerAdapter.driverProductionReady,
       driverProviderId: foundation.providerAdapter.driverProviderId,
+      driverConsumeAckAttempted: foundation.providerAdapter.driverConsumeAckAttempted,
+      driverConsumeAttemptPolicy: foundation.providerAdapter.driverConsumeAttemptPolicy,
+      driverConsumeDeadLetterAttempted: foundation.providerAdapter.driverConsumeDeadLetterAttempted,
+      driverConsumeDiagnosticCodes: foundation.providerAdapter.driverConsumeDiagnosticCodes,
+      driverConsumeNackAttempted: foundation.providerAdapter.driverConsumeNackAttempted,
+      driverConsumeRequestEvaluated: foundation.providerAdapter.driverConsumeRequestEvaluated,
+      driverConsumeResultStatus: foundation.providerAdapter.driverConsumeResultStatus,
+      driverConsumeRetryScheduled: foundation.providerAdapter.driverConsumeRetryScheduled,
+      driverConsumingActivationStatus: foundation.providerAdapter.driverConsumingActivationStatus,
+      driverConsumingBlockerCount: foundation.providerAdapter.driverConsumingBlockerCount,
+      driverConsumingConsumerId: foundation.providerAdapter.driverConsumingConsumerId,
+      driverConsumingConsumerProvided: foundation.providerAdapter.driverConsumingConsumerProvided,
+      driverConsumingHandlerRegistryProvided: foundation.providerAdapter.driverConsumingHandlerRegistryProvided,
+      driverConsumingLiveConsumeAttempted: foundation.providerAdapter.driverConsumingLiveConsumeAttempted,
+      driverConsumingLiveQueueConsumptionEnabled: foundation.providerAdapter.driverConsumingLiveQueueConsumptionEnabled,
+      driverConsumingNoLiveSideEffects: foundation.providerAdapter.driverConsumingNoLiveSideEffects,
+      driverConsumingProductionReady: false,
+      driverConsumingRequiredConfigKeys: foundation.providerAdapter.driverConsumingRequiredConfigKeys,
+      driverConsumingStatus: foundation.providerAdapter.driverConsumingStatus,
       driverPublishAttemptPolicy: foundation.providerAdapter.driverPublishAttemptPolicy,
       driverPublishDiagnosticCodes: foundation.providerAdapter.driverPublishDiagnosticCodes,
       driverPublishRequestEvaluated: foundation.providerAdapter.driverPublishRequestEvaluated,
@@ -1711,6 +1796,7 @@ const createBackendQueueRuntimeReadinessSummary = ({
       driverSdkBindingValid: foundation.providerAdapter.driverSdkBinding.valid,
       driverStatus: foundation.providerAdapter.driverStatus,
       driverValid: foundation.providerAdapter.driverValid,
+      liveQueueConsumptionEnabled: foundation.providerAdapter.liveQueueConsumptionEnabled,
       liveQueuePublishingEnabled: foundation.providerAdapter.liveQueuePublishingEnabled,
       liveWorkerExecutionEnabled: foundation.providerAdapter.liveWorkerExecutionEnabled,
       mode: foundation.providerAdapter.mode,

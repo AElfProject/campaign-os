@@ -86,6 +86,47 @@ const expectedQueuePublishingReadiness = {
   status: "disabled",
 };
 
+const expectedQueueConsumingReadiness = {
+  activationStatus: "disabled",
+  ackAttempted: false,
+  blockerCount: 0,
+  consumeAttemptPolicy: "disabled_no_live",
+  consumeRequestEvaluated: false,
+  consumeResultStatus: "not_requested",
+  consumerId: "not_configured",
+  consumerProvided: false,
+  deadLetterAttempted: false,
+  diagnosticCodes: [],
+  handlerRegistryProvided: false,
+  liveConsumeAttempted: false,
+  liveQueueConsumptionEnabled: false,
+  nackAttempted: false,
+  noLiveSideEffects: expect.objectContaining({
+    ack: false,
+    analyticsWrites: false,
+    contractCalls: false,
+    deadLetter: false,
+    handlerSideEffects: false,
+    nack: false,
+    objectStorageWrites: false,
+    providerCalls: false,
+    publishFallback: false,
+    retry: false,
+    rewardDistribution: false,
+    schedulerExecution: false,
+    telemetryExport: false,
+    workerExecution: false,
+  }),
+  productionReady: false,
+  requiredConfigKeys: expect.arrayContaining([
+    "CAMPAIGN_OS_LIVE_QUEUE_CONSUME_ENABLEMENT",
+    "CAMPAIGN_OS_LIVE_QUEUE_CONSUMER",
+    "CAMPAIGN_OS_CONSUME_HANDLER_REGISTRY",
+  ]),
+  retryScheduled: false,
+  status: "disabled",
+};
+
 const expectedQueueProviderAdapter = {
   adapterId: "local-dry-run-queue-provider-adapter",
   blockerCount: 0,
@@ -96,12 +137,51 @@ const expectedQueueProviderAdapter = {
   driverDiagnosticCodes: [],
   driverDisabledLiveOperationCount: 8,
   driverId: "local-fake-queue-provider-driver",
+  driverLiveQueueConsumptionEnabled: false,
   driverLiveQueuePublishingEnabled: false,
   driverLiveWorkerExecutionEnabled: false,
   driverMode: "dry_run",
   driverOperationCount: 8,
   driverProductionReady: false,
   driverProviderId: "local-fake",
+  driverConsumeAckAttempted: false,
+  driverConsumeAttemptPolicy: "disabled_no_live",
+  driverConsumeDeadLetterAttempted: false,
+  driverConsumeDiagnosticCodes: [],
+  driverConsumeNackAttempted: false,
+  driverConsumeRequestEvaluated: false,
+  driverConsumeResultStatus: "not_requested",
+  driverConsumeRetryScheduled: false,
+  driverConsumingActivationStatus: "disabled",
+  driverConsumingBlockerCount: 0,
+  driverConsumingConsumerId: "not_configured",
+  driverConsumingConsumerProvided: false,
+  driverConsumingHandlerRegistryProvided: false,
+  driverConsumingLiveConsumeAttempted: false,
+  driverConsumingLiveQueueConsumptionEnabled: false,
+  driverConsumingNoLiveSideEffects: expect.objectContaining({
+    ack: false,
+    analyticsWrites: false,
+    contractCalls: false,
+    deadLetter: false,
+    handlerSideEffects: false,
+    nack: false,
+    objectStorageWrites: false,
+    providerCalls: false,
+    publishFallback: false,
+    retry: false,
+    rewardDistribution: false,
+    schedulerExecution: false,
+    telemetryExport: false,
+    workerExecution: false,
+  }),
+  driverConsumingProductionReady: false,
+  driverConsumingRequiredConfigKeys: expect.arrayContaining([
+    "CAMPAIGN_OS_LIVE_QUEUE_CONSUME_ENABLEMENT",
+    "CAMPAIGN_OS_LIVE_QUEUE_CONSUMER",
+    "CAMPAIGN_OS_CONSUME_HANDLER_REGISTRY",
+  ]),
+  driverConsumingStatus: "disabled",
   driverPublishAttemptPolicy: "disabled_no_live",
   driverPublishDiagnosticCodes: [],
   driverPublishRequestEvaluated: false,
@@ -206,6 +286,7 @@ const expectedQueueProviderAdapter = {
   driverSdkBindingValid: true,
   driverStatus: "local_ready",
   driverValid: true,
+  liveQueueConsumptionEnabled: false,
   liveQueuePublishingEnabled: false,
   liveWorkerExecutionEnabled: false,
   mode: "dry_run",
@@ -366,6 +447,8 @@ describe("backend runtime smoke command", () => {
             dryRunEnqueueEnabled: true,
             id: "campaign-os-queue-runtime-foundation",
             liveCronExecutionEnabled: false,
+            liveQueueConsumptionEnabled: false,
+            liveQueueConsumingReadiness: expectedQueueConsumingReadiness,
             liveQueuePublishingEnabled: false,
             liveSchedulerExecutionEnabled: false,
             liveWorkerExecutionEnabled: false,
@@ -421,6 +504,8 @@ describe("backend runtime smoke command", () => {
             dryRunEnqueueEnabled: true,
             id: "campaign-os-queue-runtime-foundation",
             liveCronExecutionEnabled: false,
+            liveQueueConsumptionEnabled: false,
+            liveQueueConsumingReadiness: expectedQueueConsumingReadiness,
             liveQueuePublishingEnabled: false,
             liveSchedulerExecutionEnabled: false,
             liveWorkerExecutionEnabled: false,
@@ -491,6 +576,8 @@ describe("backend runtime smoke command", () => {
         dryRunEnqueueEnabled: true,
         id: "campaign-os-queue-runtime-foundation",
         liveCronExecutionEnabled: false,
+        liveQueueConsumptionEnabled: false,
+        liveQueueConsumingReadiness: expectedQueueConsumingReadiness,
         liveQueuePublishingEnabled: false,
         liveSchedulerExecutionEnabled: false,
         liveWorkerExecutionEnabled: false,
@@ -684,6 +771,38 @@ describe("backend runtime smoke command", () => {
     );
   });
 
+  it("fails closed when queue provider adapter smoke payload enables live consumption", async () => {
+    const fetchWithLiveQueueProviderConsumeFlag: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              queueRuntimeFoundation?: {
+                providerAdapter?: Record<string, unknown>;
+              };
+            };
+          };
+        };
+      };
+      const providerAdapter = payload.data?.serverRuntime?.readiness?.queueRuntimeFoundation?.providerAdapter;
+
+      if (providerAdapter) {
+        providerAdapter.liveQueueConsumptionEnabled = true;
+        providerAdapter.driverConsumingLiveConsumeAttempted = true;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveQueueProviderConsumeFlag })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
   it("fails closed when queue publishing readiness metadata is missing from smoke payloads", async () => {
     const fetchWithoutQueuePublishingReadiness: typeof fetch = async (input, init) => {
       const response = await fetch(input, init);
@@ -714,6 +833,40 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutQueuePublishingReadiness })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when queue consuming readiness metadata is missing from smoke payloads", async () => {
+    const fetchWithoutQueueConsumingReadiness: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              queueRuntimeFoundation?: {
+                liveQueueConsumingReadiness?: unknown;
+                providerAdapter?: Record<string, unknown>;
+              };
+            };
+          };
+        };
+      };
+      const queueRuntimeFoundation = payload.data?.serverRuntime?.readiness?.queueRuntimeFoundation;
+
+      if (queueRuntimeFoundation) {
+        delete queueRuntimeFoundation.liveQueueConsumingReadiness;
+        delete queueRuntimeFoundation.providerAdapter?.driverConsumingActivationStatus;
+        delete queueRuntimeFoundation.providerAdapter?.driverConsumingNoLiveSideEffects;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutQueueConsumingReadiness })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });
@@ -778,6 +931,75 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveQueuePublishingReadiness })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when queue consuming readiness claims live consume effects", async () => {
+    const fetchWithLiveQueueConsumingReadiness: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          serverRuntime?: {
+            readiness?: {
+              queueRuntimeFoundation?: {
+                liveQueueConsumingReadiness?: Record<string, unknown>;
+              };
+            };
+          };
+        };
+      };
+      const queueRuntimeFoundation = payload.data?.serverRuntime?.readiness?.queueRuntimeFoundation;
+
+      if (queueRuntimeFoundation) {
+        queueRuntimeFoundation.liveQueueConsumingReadiness = {
+          activationStatus: "disabled",
+          ackAttempted: false,
+          blockerCount: 0,
+          consumeAttemptPolicy: "disabled_no_live",
+          consumeRequestEvaluated: false,
+          consumeResultStatus: "not_requested",
+          consumerId: "not_configured",
+          consumerProvided: false,
+          deadLetterAttempted: false,
+          diagnosticCodes: [],
+          handlerRegistryProvided: false,
+          liveConsumeAttempted: true,
+          liveQueueConsumptionEnabled: true,
+          nackAttempted: false,
+          noLiveSideEffects: {
+            ack: false,
+            analyticsWrites: false,
+            contractCalls: false,
+            deadLetter: false,
+            handlerSideEffects: false,
+            nack: false,
+            objectStorageWrites: false,
+            providerCalls: false,
+            publishFallback: false,
+            retry: false,
+            rewardDistribution: false,
+            schedulerExecution: false,
+            telemetryExport: false,
+            workerExecution: false,
+          },
+          productionReady: false,
+          requiredConfigKeys: [
+            "CAMPAIGN_OS_LIVE_QUEUE_CONSUME_ENABLEMENT",
+            "CAMPAIGN_OS_LIVE_QUEUE_CONSUMER",
+          ],
+          retryScheduled: false,
+          status: "disabled",
+        };
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveQueueConsumingReadiness })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });
