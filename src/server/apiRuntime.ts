@@ -621,9 +621,13 @@ const createSafeCampaignDbRepository = (
     getById: (campaignId, context) =>
       wrap("campaignDb.getById", () => repository.getById(campaignId, context)),
     getEvents: () => repository.getEvents(),
+    getExportReadiness: (input, context) =>
+      wrap("campaignDb.getExportReadiness", () => repository.getExportReadiness!(input, context)),
     health: () => wrap("campaignDb.health", () => repository.health()),
     list: (filter, context) =>
       wrap("campaignDb.list", () => repository.list(filter, context)),
+    projectExport: (input, context) =>
+      wrap("campaignDb.projectExport", () => repository.projectExport!(input, context)),
     reset: () => wrap("campaignDb.reset", () => repository.reset()),
     upsertTaskCompletion: (input, context) =>
       wrap("campaignDb.upsertTaskCompletion", () => repository.upsertTaskCompletion!(input, context)),
