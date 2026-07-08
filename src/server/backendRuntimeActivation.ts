@@ -57,6 +57,10 @@ import {
   observabilityExporterProductionPreconditions,
   type ObservabilityPreconditionArea,
 } from "./observabilityExporter";
+import {
+  providerClientProductionPreconditions,
+  type ProviderClientPreconditionArea,
+} from "./providerIndexerClientReadiness";
 
 export type RuntimeActivationConfigCategory =
   | "server"
@@ -480,6 +484,21 @@ const observabilityExporterConfigCategory = (
   return "observability";
 };
 
+const providerClientConfigCategory = (
+  area: ProviderClientPreconditionArea,
+): RuntimeActivationConfigCategory => {
+  if (area === "consume" || area === "worker_queue") {
+    return area === "consume" ? "worker" : "queue";
+  }
+
+  return "provider";
+};
+
+const providerClientDependencyArea = (
+  area: ProviderClientPreconditionArea,
+): ProductionRuntimeDependencyArea =>
+  providerClientConfigCategory(area) as ProductionRuntimeDependencyArea;
+
 export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
   configKey("CAMPAIGN_OS_API_HOST", "server", "supported", "local-review"),
   configKey("CAMPAIGN_OS_API_PORT", "server", "supported", "local-review"),
@@ -492,6 +511,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
   configKey("CAMPAIGN_OS_DATABASE_URL", "database", "blocked", "production-required"),
   configKey("CAMPAIGN_OS_AUTH_SECRET", "auth", "blocked", "production-required"),
   configKey("CAMPAIGN_OS_PROVIDER_REGISTRY_URL", "provider", "deferred", "production-required"),
+  ...providerClientProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        providerClientConfigCategory(precondition.area),
+        precondition.status,
+        "production-required",
+      ),
+    ),
+  ),
   ...schedulerRuntimeProductionPreconditions.flatMap((precondition) =>
     precondition.requiredConfigKeys.map((key) =>
       configKey(
@@ -720,6 +749,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: "deferred",
   },
+  ...providerClientProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: providerClientDependencyArea(precondition.area),
+    attachPoint: "src/server/providerIndexerClientReadiness.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: `provider-client-${precondition.id}`,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
   ...schedulerRuntimeProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
     area: schedulerRuntimeDependencyArea(precondition.area),
     attachPoint: "src/server/schedulerRuntime.ts",

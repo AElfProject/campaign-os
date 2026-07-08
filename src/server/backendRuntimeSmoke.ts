@@ -23,6 +23,7 @@ export interface BackendRuntimeSmokeCheck {
   ok: boolean;
   observabilityExporterFoundation?: BackendRuntimeSmokeObservabilityExporterFoundationSummary;
   persistenceFoundation?: BackendRuntimeSmokePersistenceFoundationSummary;
+  providerClientReadiness?: BackendRuntimeSmokeProviderClientReadinessSummary;
   providerIndexerFoundation?: BackendRuntimeSmokeProviderIndexerFoundationSummary;
   queueRuntimeFoundation?: BackendRuntimeSmokeQueueRuntimeFoundationSummary;
   schedulerRuntimeFoundation?: BackendRuntimeSmokeSchedulerRuntimeFoundationSummary;
@@ -73,6 +74,22 @@ export interface BackendRuntimeSmokeProviderIndexerFoundationSummary {
   valid: boolean;
   verificationSourceCoverageCount: number;
   workerExecutionEnabled: false;
+}
+
+export interface BackendRuntimeSmokeProviderClientReadinessSummary {
+  activationStatus?: string;
+  blockerCount: number;
+  diagnosticCodes: string[];
+  liveProviderCallsAttempted: false;
+  productionReady: false;
+  providerClientsEnabled: boolean;
+  providerClientsProvided: boolean;
+  queueHandoffStatus?: string;
+  registryClientCount: number;
+  registryProviderGroupCount: number;
+  requiredConfigKeys: string[];
+  status?: string;
+  valid: boolean;
 }
 
 export interface BackendRuntimeSmokeWorkerSchedulerFoundationSummary {
@@ -344,6 +361,7 @@ export interface BackendRuntimeSmokeSummary {
   liveSideEffectsEnabled: boolean;
   observabilityExporterFoundation: BackendRuntimeSmokeObservabilityExporterFoundationSummary;
   persistenceFoundation: BackendRuntimeSmokePersistenceFoundationSummary;
+  providerClientReadiness: BackendRuntimeSmokeProviderClientReadinessSummary;
   port: number;
   productionReady: boolean;
   providerIndexerFoundation: BackendRuntimeSmokeProviderIndexerFoundationSummary;
@@ -403,6 +421,13 @@ const readProviderIndexerFoundation = (
   value: unknown,
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["serverRuntime", "readiness", "providerIndexerFoundation"]);
+
+const readProviderClientReadiness = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["serverRuntime", "readiness", "providerClientReadiness"])
+  ?? readNestedRecord(value, ["backendService", "backendRuntimeBootstrap", "readiness", "providerClientReadiness"])
+  ?? readNestedRecord(value, ["backendService", "providerClientReadiness"]);
 
 const readWorkerSchedulerFoundation = (
   value: unknown,
@@ -545,6 +570,48 @@ const summarizeProviderIndexerFoundation = (
     valid: getBoolean(record, "valid"),
     verificationSourceCoverageCount: getNumber(coverage, "summaryCount"),
     workerExecutionEnabled: false,
+  };
+};
+
+const summarizeProviderClientReadiness = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeProviderClientReadinessSummary | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  const downstreamLiveFlags = readNestedRecord(record, ["downstreamLiveFlags"]);
+  const queueHandoff = readNestedRecord(record, ["queueHandoff"]);
+  const registry = readNestedRecord(record, ["registry"]);
+  const explicitNoLive =
+    isExplicitFalse(record, "productionReady")
+    && isExplicitFalse(record, "providerClientsEnabled")
+    && isExplicitFalse(record, "providerClientsProvided")
+    && isExplicitFalse(record, "liveProviderCallsAttempted")
+    && downstreamLiveFlags !== undefined
+    && Object.values(downstreamLiveFlags).every((value) => value === false);
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  const providerGroups = getStringArray(record, "registryProviderGroups")
+    .concat(getStringArray(registry, "providerGroups"));
+
+  return {
+    activationStatus: getString(record, "activationStatus"),
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    liveProviderCallsAttempted: false,
+    productionReady: false,
+    providerClientsEnabled: false,
+    providerClientsProvided: false,
+    queueHandoffStatus: getString(queueHandoff, "consumeReadinessStatus"),
+    registryClientCount: getNumber(record, "registryClientCount") || getNumber(registry, "clientCount"),
+    registryProviderGroupCount: providerGroups.length,
+    requiredConfigKeys: getStringArray(record, "requiredConfigKeys"),
+    status: getString(record, "status"),
+    valid: getBoolean(record, "valid"),
   };
 };
 
@@ -1132,6 +1199,9 @@ const createSmokeCheck = async ({
   const providerIndexerFoundation = summarizeProviderIndexerFoundation(
     readProviderIndexerFoundation(payload.data),
   );
+  const providerClientReadiness = summarizeProviderClientReadiness(
+    readProviderClientReadiness(payload.data),
+  );
   const workerSchedulerFoundation = summarizeWorkerSchedulerFoundation(
     readWorkerSchedulerFoundation(payload.data),
   );
@@ -1161,6 +1231,7 @@ const createSmokeCheck = async ({
       ok: payload.ok === true && payload.traceId === traceId,
       observabilityExporterFoundation,
       persistenceFoundation,
+      providerClientReadiness,
       providerIndexerFoundation,
       queueRuntimeFoundation,
       schedulerRuntimeFoundation,
@@ -1240,6 +1311,34 @@ const isProviderIndexerFoundationSmokeReady = (
     && summary.providerGroupCount >= 10
     && summary.verificationSourceCoverageCount >= 5
     && summary.status === "local_ready"
+    && summary.valid === true;
+};
+
+const isProviderClientReadinessSmokeReady = (
+  summary: BackendRuntimeSmokeProviderClientReadinessSummary | undefined,
+): summary is BackendRuntimeSmokeProviderClientReadinessSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveProviderCallsAttempted === false
+    && summary.providerClientsEnabled === false
+    && summary.providerClientsProvided === false
+    && summary.activationStatus === "disabled"
+    && summary.blockerCount === 0
+    && summary.diagnosticCodes.length === 0
+    && summary.queueHandoffStatus === "disabled"
+    && summary.registryClientCount === 0
+    && summary.registryProviderGroupCount >= 5
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_PROVIDER_CLIENT_ENABLEMENT")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_PROVIDER_REGISTRY_URL")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_PROVIDER_ENDPOINT_REF")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_PROVIDER_CREDENTIAL_REF")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_PROVIDER_CLIENT_SEAM")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_PROVIDER_CONSUME_READINESS_HANDOFF")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_PROVIDER_REDACTION_POLICY")
+    && summary.status === "disabled"
     && summary.valid === true;
 };
 
@@ -1579,6 +1678,7 @@ export const runBackendRuntimeSmoke = async ({
     const authSessionFoundation = contracts.check.authSessionFoundation;
     const persistenceFoundation = contracts.check.persistenceFoundation;
     const providerIndexerFoundation = contracts.check.providerIndexerFoundation;
+    const providerClientReadiness = contracts.check.providerClientReadiness;
     const queueRuntimeFoundation = contracts.check.queueRuntimeFoundation;
     const schedulerRuntimeFoundation = contracts.check.schedulerRuntimeFoundation;
     const workerIdempotencyStoreFoundation = contracts.check.workerIdempotencyStoreFoundation;
@@ -1601,6 +1701,8 @@ export const runBackendRuntimeSmoke = async ({
       || !isPersistenceFoundationSmokeReady(persistenceFoundation)
       || !isProviderIndexerFoundationSmokeReady(health.check.providerIndexerFoundation)
       || !isProviderIndexerFoundationSmokeReady(providerIndexerFoundation)
+      || !isProviderClientReadinessSmokeReady(health.check.providerClientReadiness)
+      || !isProviderClientReadinessSmokeReady(providerClientReadiness)
       || !isQueueRuntimeFoundationSmokeReady(health.check.queueRuntimeFoundation)
       || !isQueueRuntimeFoundationSmokeReady(queueRuntimeFoundation)
       || !isSchedulerRuntimeFoundationSmokeReady(health.check.schedulerRuntimeFoundation)
@@ -1628,6 +1730,7 @@ export const runBackendRuntimeSmoke = async ({
       liveSideEffectsEnabled: getBoolean(activation, "liveSideEffectsEnabled"),
       observabilityExporterFoundation,
       persistenceFoundation,
+      providerClientReadiness,
       port: new URL(server.url).port ? Number(new URL(server.url).port) : 0,
       productionReady: getBoolean(activation, "productionReady"),
       providerIndexerFoundation,

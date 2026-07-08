@@ -132,6 +132,25 @@ export interface BackendRuntimeReadinessProjection {
     status: BackendServiceReadinessReport["observabilityExporterFoundation"]["status"];
     valid: boolean;
   };
+  providerClientReadiness: {
+    activationStatus: BackendServiceReadinessReport["providerClientReadiness"]["activationStatus"];
+    blockerCount: number;
+    diagnosticCodes: string[];
+    downstreamLiveFlags: BackendServiceReadinessReport["providerClientReadiness"]["downstreamLiveFlags"];
+    id: BackendServiceReadinessReport["providerClientReadiness"]["id"];
+    liveProviderCallsAttempted: false;
+    policy: BackendServiceReadinessReport["providerClientReadiness"]["policy"];
+    productionReady: false;
+    providerClientsEnabled: boolean;
+    providerClientsProvided: boolean;
+    queueHandoff: BackendServiceReadinessReport["providerClientReadiness"]["queueHandoff"];
+    redacted: true;
+    registryClientCount: number;
+    registryProviderGroups: string[];
+    requiredConfigKeys: string[];
+    status: BackendServiceReadinessReport["providerClientReadiness"]["status"];
+    valid: boolean;
+  };
   queueRuntimeFoundation: {
     blockerCount: number;
     diagnosticCodes: string[];
@@ -587,6 +606,25 @@ const createReadinessProjection = (
     sinkId: backendReadiness.observabilityExporterFoundation.sinkId,
     status: backendReadiness.observabilityExporterFoundation.status,
     valid: backendReadiness.observabilityExporterFoundation.valid,
+  },
+  providerClientReadiness: {
+    activationStatus: backendReadiness.providerClientReadiness.activationStatus,
+    blockerCount: backendReadiness.providerClientReadiness.blockerCount,
+    diagnosticCodes: backendReadiness.providerClientReadiness.diagnosticCodes,
+    downstreamLiveFlags: { ...backendReadiness.providerClientReadiness.downstreamLiveFlags },
+    id: backendReadiness.providerClientReadiness.id,
+    liveProviderCallsAttempted: backendReadiness.providerClientReadiness.liveProviderCallsAttempted,
+    policy: { ...backendReadiness.providerClientReadiness.policy },
+    productionReady: backendReadiness.providerClientReadiness.productionReady,
+    providerClientsEnabled: backendReadiness.providerClientReadiness.providerClientsEnabled,
+    providerClientsProvided: backendReadiness.providerClientReadiness.providerClientsProvided,
+    queueHandoff: { ...backendReadiness.providerClientReadiness.queueHandoff },
+    redacted: true,
+    registryClientCount: backendReadiness.providerClientReadiness.registry.clients.length,
+    registryProviderGroups: backendReadiness.providerClientReadiness.registry.providerGroups,
+    requiredConfigKeys: backendReadiness.providerClientReadiness.requiredConfigKeys,
+    status: backendReadiness.providerClientReadiness.status,
+    valid: backendReadiness.providerClientReadiness.valid,
   },
   queueRuntimeFoundation: {
     blockerCount: backendReadiness.queueRuntimeFoundation.blockerCount,
