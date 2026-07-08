@@ -14,6 +14,11 @@ import type {
 } from "./providerHttpRuntimeTypes";
 
 export type ProviderHttpRequestPlannerDiagnosticCode =
+  | "endpoint_blocked"
+  | "endpoint_deferred"
+  | "endpoint_disabled"
+  | "endpoint_required_config_missing"
+  | "endpoint_unsafe_rollout_metadata"
   | "invalid_attempt"
   | "missing_campaign_id"
   | "missing_idempotency_ref"
@@ -155,6 +160,9 @@ export const planProviderHttpRequest = (
       ),
     );
   } else {
+    diagnostics.push(...validateEndpointRollout(endpoint));
+    diagnostics.push(...detectUnsafeEndpointRolloutMetadata(endpoint));
+
     if (endpoint.providerGroupId !== input.providerGroupId) {
       diagnostics.push(
         diagnostic(
@@ -168,6 +176,7 @@ export const planProviderHttpRequest = (
 
     if (
       input.verificationType
+      && endpoint.rolloutStatus === "enabled"
       && !findProviderHttpEndpointForVerification(
         {
           endpointId: endpoint.endpointId,
@@ -337,6 +346,88 @@ const detectUnsafeRequestMaterial = (
   );
 };
 
+const validateEndpointRollout = (
+  endpoint: ProviderHttpEndpointEntry,
+): ProviderHttpRequestPlannerDiagnostic[] => {
+  const diagnostics: ProviderHttpRequestPlannerDiagnostic[] = [];
+
+  if (endpoint.rolloutStatus === "deferred") {
+    diagnostics.push(
+      diagnostic(
+        "endpoint_deferred",
+        "rolloutStatus",
+        "Provider HTTP endpoint rollout is deferred and cannot be planned.",
+      ),
+    );
+  }
+
+  if (endpoint.rolloutStatus === "disabled") {
+    diagnostics.push(
+      diagnostic(
+        "endpoint_disabled",
+        "rolloutStatus",
+        "Provider HTTP endpoint rollout is disabled and cannot be planned.",
+      ),
+    );
+  }
+
+  if (endpoint.rolloutStatus === "blocked") {
+    diagnostics.push(
+      diagnostic(
+        "endpoint_blocked",
+        "rolloutStatus",
+        "Provider HTTP endpoint rollout is blocked and cannot be planned.",
+      ),
+    );
+  }
+
+  const missingConfigKeys = endpoint.requiredConfigKeys.filter((key) => !hasPresentValue(key));
+
+  if (missingConfigKeys.length > 0) {
+    diagnostics.push(
+      diagnostic(
+        "endpoint_required_config_missing",
+        "requiredConfigKeys",
+        "Provider HTTP endpoint rollout requires non-empty config references.",
+      ),
+    );
+  }
+
+  return diagnostics;
+};
+
+const detectUnsafeEndpointRolloutMetadata = (
+  endpoint: ProviderHttpEndpointEntry,
+): ProviderHttpRequestPlannerDiagnostic[] => {
+  const unsafeFields = [
+    "credentialRef",
+    "requestMappingId",
+    "responseMappingId",
+    "retryPolicyRef",
+    "timeoutPolicyRef",
+    "urlTemplateRef",
+    ...endpoint.headerRefs.map((_, index) => `headerRefs.${index}`),
+    ...endpoint.requiredConfigKeys.map((_, index) => `requiredConfigKeys.${index}`),
+  ].filter((field) => isUnsafeEndpointRolloutField(field, readEndpointPath(endpoint, field)));
+
+  if (unsafeFields.length === 0) {
+    return [];
+  }
+
+  return [
+    {
+      code: "endpoint_unsafe_rollout_metadata",
+      field: "endpointRegistry",
+      message: "Provider HTTP endpoint rollout metadata contains unsafe material and was redacted.",
+      redactedFields: unsafeFields.map((field) => `${endpoint.endpointId}.${field}`),
+      redactedValue: redactProviderHttpRuntimeValue(
+        Object.fromEntries(unsafeFields.map((field) => [field, readEndpointPath(endpoint, field)])),
+      ),
+      severity: "blocker",
+    },
+  ];
+};
+
 const containsUnsafeSafeFieldValue = (value: unknown): boolean => {
   if (value === undefined || value === null) {
     return false;
@@ -344,6 +435,14 @@ const containsUnsafeSafeFieldValue = (value: unknown): boolean => {
 
   if (typeof value === "object" && !(value instanceof Error)) {
     return containsUnsafeProviderHttpRuntimeMaterial(value);
+  }
+
+  return containsUnsafeProviderHttpRuntimeMaterial(value);
+};
+
+const isUnsafeEndpointRolloutField = (field: string, value: unknown): boolean => {
+  if (field === "urlTemplateRef" && typeof value === "string" && /^https?:\/\//i.test(value)) {
+    return true;
   }
 
   return containsUnsafeProviderHttpRuntimeMaterial(value);
@@ -397,4 +496,18 @@ function readPath(source: ProviderHttpVerificationRequestInput, path: string): u
 
     return (value as Record<string, unknown>)[part];
   }, source);
+}
+
+function readEndpointPath(endpoint: ProviderHttpEndpointEntry, path: string): unknown {
+  return path.split(".").reduce<unknown>((value, part) => {
+    if (!value || typeof value !== "object") {
+      return undefined;
+    }
+
+    if (Array.isArray(value)) {
+      return value[Number(part)];
+    }
+
+    return (value as Record<string, unknown>)[part];
+  }, endpoint);
 }

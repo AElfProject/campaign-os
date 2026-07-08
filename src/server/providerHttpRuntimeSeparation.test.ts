@@ -71,6 +71,16 @@ const assertProviderHttpRuntimeNoLive = (
 ) => {
   expect(value.productionReady).toBe(false);
   expect(value.liveHttpCallsAttempted).toBe(false);
+  expect(value.downstreamLiveFlags).toMatchObject({
+    alternateQueuePublishing: false,
+    analyticsIngestion: false,
+    contractCalls: false,
+    liveTelemetryExport: false,
+    objectStorageWrites: false,
+    renderedUiBehavior: false,
+    rewardDistribution: false,
+    schedulerExecution: false,
+  });
   expect(value.downstreamLiveFlags).toEqual(expectedDownstreamLiveFlags);
   expect(Object.values(value.downstreamLiveFlags).every((flag) => flag === false)).toBe(true);
 };
@@ -266,7 +276,13 @@ describe("provider HTTP runtime separation boundaries", () => {
     });
 
     expect(runtime.status).toBe("activated");
-    expect(runtime.downstreamLiveFlags).toEqual(expectedDownstreamLiveFlags);
+    assertProviderHttpRuntimeNoLive(runtime);
+    expect(runtime.endpointRollout).toMatchObject({
+      blockedCount: 0,
+      disabledCount: 0,
+      enabledCount: 11,
+      valid: true,
+    });
     expect(workerScheduler.providerHttpRuntime).toMatchObject({
       activationStatus: "explicitly_enabled",
       idempotencyPosture: "policy-and-store-reference-only",
@@ -324,7 +340,16 @@ describe("provider HTTP runtime separation boundaries", () => {
     });
     expect(backendReport.providerClientReadiness.providerHttpRuntime).toMatchObject({
       activationStatus: "explicitly_enabled",
-      downstreamLiveFlags: expectedDownstreamLiveFlags,
+      downstreamLiveFlags: {
+        alternateQueuePublishing: false,
+        analyticsIngestion: false,
+        contractCalls: false,
+        liveTelemetryExport: false,
+        objectStorageWrites: false,
+        renderedUiBehavior: false,
+        rewardDistribution: false,
+        schedulerExecution: false,
+      },
       liveHttpCallsAttempted: false,
       productionReady: false,
       status: "activated",
