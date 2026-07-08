@@ -173,6 +173,13 @@ export interface QueueProviderAdapterReadinessProjection {
   driverSdkBindingPackageBindingBrokerConnectionStatus: QueueProviderDriverSdkBindingSummary["packageBinding"]["brokerConnectionStatus"];
   driverSdkBindingPackageBindingBlockerCount: number;
   driverSdkBindingPackageBindingBrowserBundleAllowed: false;
+  driverSdkBindingPackageBindingBullmqConstructionAttempted: boolean;
+  driverSdkBindingPackageBindingBullmqConstructionBlockerCount: number;
+  driverSdkBindingPackageBindingBullmqConstructionDiagnosticCodes: QueueProviderDriverSdkBindingSummary["packageBinding"]["bullmqConstructionDiagnosticCodes"];
+  driverSdkBindingPackageBindingBullmqConstructionFactoryInvoked: boolean;
+  driverSdkBindingPackageBindingBullmqConstructionId: string;
+  driverSdkBindingPackageBindingBullmqConstructionProductionReady: false;
+  driverSdkBindingPackageBindingBullmqConstructionStatus: QueueProviderDriverSdkBindingSummary["packageBinding"]["bullmqConstructionStatus"];
   driverSdkBindingPackageBindingDiagnosticCodes: QueueProviderDriverSdkBindingSummary["packageBinding"]["diagnosticCodes"];
   driverSdkBindingPackageBindingFamily: QueueProviderDriverSdkBindingSummary["packageBinding"]["family"];
   driverSdkBindingPackageBindingId: string;
@@ -182,11 +189,11 @@ export interface QueueProviderAdapterReadinessProjection {
   driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false;
   driverSdkBindingPackageBindingPackageName: "bullmq";
   driverSdkBindingPackageBindingPackageRef: "npm:bullmq";
-  driverSdkBindingPackageBindingQueueClientConstructed: false;
-  driverSdkBindingPackageBindingQueueEventsConstructed: false;
+  driverSdkBindingPackageBindingQueueClientConstructed: boolean;
+  driverSdkBindingPackageBindingQueueEventsConstructed: boolean;
   driverSdkBindingPackageBindingSdkClientConstructed: false;
   driverSdkBindingPackageBindingStatus: QueueProviderDriverSdkBindingSummary["packageBinding"]["status"];
-  driverSdkBindingPackageBindingWorkerConstructed: false;
+  driverSdkBindingPackageBindingWorkerConstructed: boolean;
   driverSdkBindingProductionReady: false;
   driverSdkBindingProviderKind: QueueProviderDriverSdkBindingSummary["providerKind"];
   driverSdkBindingQueueRouteCount: number;
@@ -667,6 +674,13 @@ const createReadinessProjection = ({
   driverSdkBindingPackageBindingBrokerConnectionStatus: driver.sdkBinding.packageBinding.brokerConnectionStatus,
   driverSdkBindingPackageBindingBlockerCount: driver.sdkBinding.packageBinding.blockerCount,
   driverSdkBindingPackageBindingBrowserBundleAllowed: false,
+  driverSdkBindingPackageBindingBullmqConstructionAttempted: driver.sdkBinding.packageBinding.bullmqConstructionAttempted,
+  driverSdkBindingPackageBindingBullmqConstructionBlockerCount: driver.sdkBinding.packageBinding.bullmqConstructionBlockerCount,
+  driverSdkBindingPackageBindingBullmqConstructionDiagnosticCodes: driver.sdkBinding.packageBinding.bullmqConstructionDiagnosticCodes,
+  driverSdkBindingPackageBindingBullmqConstructionFactoryInvoked: driver.sdkBinding.packageBinding.bullmqConstructionFactoryInvoked,
+  driverSdkBindingPackageBindingBullmqConstructionId: driver.sdkBinding.packageBinding.bullmqConstructionId,
+  driverSdkBindingPackageBindingBullmqConstructionProductionReady: false,
+  driverSdkBindingPackageBindingBullmqConstructionStatus: driver.sdkBinding.packageBinding.bullmqConstructionStatus,
   driverSdkBindingPackageBindingDiagnosticCodes: driver.sdkBinding.packageBinding.diagnosticCodes,
   driverSdkBindingPackageBindingFamily: driver.sdkBinding.packageBinding.family,
   driverSdkBindingPackageBindingId: driver.sdkBinding.packageBinding.bindingId,
@@ -676,11 +690,11 @@ const createReadinessProjection = ({
   driverSdkBindingPackageBindingLiveWorkerExecutionEnabled: false,
   driverSdkBindingPackageBindingPackageName: driver.sdkBinding.packageBinding.packageName,
   driverSdkBindingPackageBindingPackageRef: driver.sdkBinding.packageBinding.packageRef,
-  driverSdkBindingPackageBindingQueueClientConstructed: false,
-  driverSdkBindingPackageBindingQueueEventsConstructed: false,
+  driverSdkBindingPackageBindingQueueClientConstructed: driver.sdkBinding.packageBinding.queueClientConstructed,
+  driverSdkBindingPackageBindingQueueEventsConstructed: driver.sdkBinding.packageBinding.queueEventsConstructed,
   driverSdkBindingPackageBindingSdkClientConstructed: false,
   driverSdkBindingPackageBindingStatus: driver.sdkBinding.packageBinding.status,
-  driverSdkBindingPackageBindingWorkerConstructed: false,
+  driverSdkBindingPackageBindingWorkerConstructed: driver.sdkBinding.packageBinding.workerConstructed,
   driverSdkBindingProductionReady: false,
   driverSdkBindingProviderKind: driver.sdkBinding.providerKind,
   driverSdkBindingQueueRouteCount: driver.sdkBinding.queueRouteCount,
