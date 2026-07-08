@@ -313,6 +313,42 @@ describe("provider indexer client readiness boundary", () => {
     expect(JSON.stringify(thrownResult)).not.toContain("secret");
   });
 
+  it("redacts provider-supplied diagnostics and unsafe completion evidence", () => {
+    const unsafeResponseReadiness = createReadyReadiness({
+      ...completedClient,
+      evaluate: () => ({
+        diagnostics: [
+          {
+            code: "PROVIDER_CLIENT_MALFORMED_RESPONSE",
+            field: "providerPayload",
+            message: "raw token=secret walletAddress=ELF_SECRET",
+            redactedFields: [],
+            severity: "blocker",
+          },
+        ],
+        evidenceHash: "sha256:provider-evidence?token=secret",
+        evidenceRef: "https://storage.example/raw.csv?X-Amz-Signature=abc123",
+        status: "completed",
+      }),
+    });
+    const result = evaluateProviderVerificationRequest(safeRequest, {
+      readiness: unsafeResponseReadiness,
+    });
+    const serialized = JSON.stringify(result);
+
+    expect(result).toMatchObject({
+      clientExecuted: true,
+      diagnosticCodes: expect.arrayContaining([
+        "PROVIDER_CLIENT_COMPLETION_EVIDENCE_MISSING",
+        "PROVIDER_CLIENT_MALFORMED_RESPONSE",
+      ]),
+      outcome: "blocked",
+    });
+    expect(serialized).not.toContain("ELF_SECRET");
+    expect(serialized).not.toContain("token=secret");
+    expect(serialized).not.toContain("abc123");
+  });
+
   it("redacts nested provider client material", () => {
     const redacted = redactProviderClientValue({
       apiKey: "api-key-live-123",

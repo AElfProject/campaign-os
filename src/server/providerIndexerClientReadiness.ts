@@ -659,11 +659,16 @@ function normalizeProviderResponse(
   request: ProviderVerificationRequest,
   response: ProviderClientResponse,
 ): ProviderNormalizedResult {
-  const responseDiagnostics = response.diagnostics ?? [];
+  const responseDiagnostics = sanitizeDiagnostics(response.diagnostics ?? []);
 
   switch (response.status) {
     case "completed": {
-      if (!hasPresentValue(response.evidenceRef) || !hasPresentValue(response.evidenceHash)) {
+      if (
+        !hasPresentValue(response.evidenceRef)
+        || !hasPresentValue(response.evidenceHash)
+        || hasUnsafeReference(response.evidenceRef)
+        || hasUnsafeReference(response.evidenceHash)
+      ) {
         return createResult(request, {
           clientExecuted: true,
           diagnostics: [
@@ -880,6 +885,17 @@ function diagnostic(
     redactedFields: [],
     severity,
   };
+}
+
+function sanitizeDiagnostics(diagnostics: ProviderClientDiagnostic[]): ProviderClientDiagnostic[] {
+  return diagnostics.map((item) => ({
+    code: item.code,
+    field: sanitizeProviderString(item.field),
+    message: sanitizeProviderString(item.message),
+    nextAction: item.nextAction ? sanitizeProviderString(item.nextAction) : undefined,
+    redactedFields: item.redactedFields.map((field) => sanitizeProviderString(field)),
+    severity: item.severity,
+  }));
 }
 
 function getRequiredConfigKeys(): string[] {
