@@ -124,13 +124,15 @@ export const apiServicePorts = [
   servicePort({
     deferredCapabilities: ["auth_session", "production_database"],
     futureAttachPoints: [
+      "src/server/walletSessionRepository.ts sanitized wallet session repository",
+      "src/server/walletSessionDurableStore.ts durable-test wallet session store",
       "wallet signature verification",
-      "session repository",
+      "production session repository adapter",
       "RBAC guard",
     ],
     id: "wallet-session-port",
-    localAdapter: "src/domain/campaignService.ts create_wallet_session local handler",
-    notes: "Normalized local wallet sessions exist; production auth/session storage is deferred.",
+    localAdapter: "src/server/handlers.ts wallet.session.create with src/server/walletSessionRepository.ts",
+    notes: "Normalized local wallet sessions are stored in a sanitized repository-backed local session store; live wallet verification, JWT/cookie issuing, signing keys, secret manager, RBAC, and production session storage are deferred.",
     productionAdapterStatus: "local_seeded",
     requiresExternalNetwork: false,
     requiresSecret: false,

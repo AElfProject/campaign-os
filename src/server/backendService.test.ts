@@ -911,6 +911,7 @@ describe("backend service readiness report", () => {
         "agent credential provider",
       ]),
       currentStatus: "local-only",
+      note: expect.stringContaining("sanitized wallet session repository records are ready"),
     });
     expect(report.attachMap.find((item) => item.area === "worker-lease")).toMatchObject({
       attachPoint: "src/server/workerLeaseStore.ts",

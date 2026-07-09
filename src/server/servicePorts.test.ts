@@ -64,6 +64,21 @@ describe("API service ports", () => {
       routeIds: expect.arrayContaining(["campaigns.provider.readiness"]),
       serviceId: "verification-service",
     });
+    expect(apiServicePorts.find((port) => port.id === "wallet-session-port")).toMatchObject({
+      deferredCapabilities: expect.arrayContaining(["auth_session", "production_database"]),
+      futureAttachPoints: expect.arrayContaining([
+        "src/server/walletSessionRepository.ts sanitized wallet session repository",
+        "src/server/walletSessionDurableStore.ts durable-test wallet session store",
+        "production session repository adapter",
+      ]),
+      localAdapter: expect.stringContaining("src/server/walletSessionRepository.ts"),
+      notes: expect.stringContaining("repository-backed local session store"),
+      productionAdapterStatus: "local_seeded",
+      requiresExternalNetwork: false,
+      requiresSecret: false,
+      routeIds: ["wallet.session.create"],
+      serviceId: "wallet-session-service",
+    });
     expect(apiServicePorts.find((port) => port.id === "campaign-port")).toMatchObject({
       notes: expect.stringContaining("local seeded read models"),
       productionAdapterStatus: "local_seeded",

@@ -900,7 +900,7 @@ export const backendAttachMap: BackendAttachPoint[] = [
       "agent credential provider",
     ],
     currentStatus: "local-only",
-    note: "Local wallet proof verifier and local opaque session issuer contracts are ready; live verification, signing, secret manager, session store, and ownership source remain production blockers.",
+    note: "Local wallet proof verifier, local opaque session issuer contracts, and sanitized wallet session repository records are ready; live verification, signing, secret manager, production session store, and ownership source remain production blockers.",
     requiredBeforeProduction: true,
   },
   {

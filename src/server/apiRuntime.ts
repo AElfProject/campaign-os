@@ -34,6 +34,12 @@ import {
   type CreateCampaignDbRepositoryOptions,
 } from "./campaignDbRepository";
 import {
+  WalletSessionRepositoryError,
+  createWalletSessionRepository,
+  type CreateWalletSessionRepositoryOptions,
+  type WalletSessionRepository,
+} from "./walletSessionRepository";
+import {
   createCampaignOsRepository,
   type CampaignOsRepository,
 } from "./persistence";
@@ -74,6 +80,7 @@ export interface ApiRuntimeHandlerContext {
   service: CampaignOsLocalService;
   traceId: string;
   version: string;
+  walletSessionRepository: WalletSessionRepository;
 }
 
 export type ApiRuntimeHandler = (context: ApiRuntimeHandlerContext) => unknown | Promise<unknown>;
@@ -98,6 +105,8 @@ export interface CreateCampaignOsApiRuntimeOptions {
   runtimeConfigOptions?: CampaignOsRuntimeConfigOptions;
   service?: CampaignOsLocalService;
   version?: string;
+  walletSessionRepository?: WalletSessionRepository;
+  walletSessionRepositoryOptions?: CreateWalletSessionRepositoryOptions;
 }
 
 let generatedTraceSequence = 0;
@@ -640,6 +649,41 @@ const createSafeCampaignDbRepository = (
   };
 };
 
+const createSafeWalletSessionRepository = (
+  repository: WalletSessionRepository,
+): WalletSessionRepository => {
+  const wrap = async <TResult>(operation: string, run: () => Promise<TResult>) => {
+    try {
+      return await run();
+    } catch (error) {
+      if (error instanceof WalletSessionRepositoryError) {
+        const firstDiagnostic = error.diagnostics[0];
+
+        if (firstDiagnostic?.code === "WALLET_SESSION_REQUIRED_FIELD_MISSING") {
+          throw invalidRequest(
+            firstDiagnostic.field,
+            firstDiagnostic.message,
+          );
+        }
+      }
+
+      throw persistenceUnavailable(operation);
+    }
+  };
+
+  return {
+    close: () => wrap("walletSessionRepository.close", () => repository.close()),
+    getBySessionId: (sessionId, context) =>
+      wrap("walletSessionRepository.getBySessionId", () => repository.getBySessionId(sessionId, context)),
+    health: () => wrap("walletSessionRepository.health", () => repository.health()),
+    list: (filter, context) =>
+      wrap("walletSessionRepository.list", () => repository.list(filter, context)),
+    reset: () => wrap("walletSessionRepository.reset", () => repository.reset()),
+    upsertSession: (session, context) =>
+      wrap("walletSessionRepository.upsertSession", () => repository.upsertSession(session, context)),
+  };
+};
+
 export const createCampaignOsApiRuntime = ({
   backendServiceReadiness,
   campaignDbRepository,
@@ -650,6 +694,8 @@ export const createCampaignOsApiRuntime = ({
   runtimeConfigOptions,
   service = createCampaignOsLocalService(),
   version,
+  walletSessionRepository,
+  walletSessionRepositoryOptions,
 }: CreateCampaignOsApiRuntimeOptions = {}): CampaignOsApiRuntime => {
   let configError: unknown;
   const resolvedConfig = (() => {
@@ -678,6 +724,9 @@ export const createCampaignOsApiRuntime = ({
   );
   const safeCampaignDbRepository = createSafeCampaignDbRepository(
     campaignDbRepository ?? createCampaignDbRepository(campaignDbRepositoryOptions),
+  );
+  const safeWalletSessionRepository = createSafeWalletSessionRepository(
+    walletSessionRepository ?? createWalletSessionRepository(walletSessionRepositoryOptions),
   );
   const handlers = createApiRuntimeHandlers();
   const matchers = apiRuntimeRoutes.map(compileRouteMatcher);
@@ -736,6 +785,7 @@ export const createCampaignOsApiRuntime = ({
           service,
           traceId,
           version: runtimeVersion,
+          walletSessionRepository: safeWalletSessionRepository,
         });
         const responseData = shouldAttachDatabaseReadiness(matcher.route.id)
           ? withBackendServiceReadinessMetadata({
