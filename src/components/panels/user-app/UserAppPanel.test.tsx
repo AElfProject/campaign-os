@@ -1,11 +1,24 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../../app/App";
 import { campaignDetail } from "../../../domain";
+import { loadCampaignDiscoveryApiBridgeState } from "../../../api/campaignDiscoveryApiBridge";
 import { UserAppPanel } from "./UserAppPanel";
 
+vi.mock("../../../api/campaignDiscoveryApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/campaignDiscoveryApiBridge")>();
+
+  return {
+    ...actual,
+    loadCampaignDiscoveryApiBridgeState: vi.fn(actual.loadCampaignDiscoveryApiBridgeState),
+  };
+});
+
 describe("User App shell", () => {
+  const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
+  const mockedLoadBridgeState = vi.mocked(loadCampaignDiscoveryApiBridgeState);
+
   const getUserAppConnectWalletButton = (name: string) => {
     const header = screen.queryByRole("banner");
     const buttons = screen.getAllByRole("button", { name });
@@ -16,8 +29,131 @@ describe("User App shell", () => {
     return userAppButton as HTMLElement;
   };
 
+  beforeEach(() => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
+    mockedLoadBridgeState.mockReset();
+  });
+
   afterEach(() => {
     window.localStorage.clear();
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = originalApiBaseUrl;
+  });
+
+  it("renders disabled seeded fallback bridge state while preserving seeded campaign cards", () => {
+    render(<UserAppPanel locale="en-US" />);
+
+    const bridge = screen.getByRole("complementary", { name: "Campaign Discovery API bridge status" });
+
+    expect(mockedLoadBridgeState).not.toHaveBeenCalled();
+    expect(within(bridge).getByText("Seeded fallback")).toBeInTheDocument();
+    expect(within(bridge).getByText("Campaign count")).toBeInTheDocument();
+    expect(within(bridge).getByText("3")).toBeInTheDocument();
+    expect(within(bridge).getByText("Local API not configured")).toBeInTheDocument();
+    expect(within(bridge).getByText("No API trace")).toBeInTheDocument();
+    expect(within(bridge).getByText(/No production service/)).toBeInTheDocument();
+    expect(screen.getAllByText("Forest NFT Quest").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("TMRWDAO Governance Streak").length).toBeGreaterThan(0);
+  });
+
+  it("renders API-backed bridge state with trace ID and route readiness", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5174";
+    mockedLoadBridgeState.mockResolvedValueOnce({
+      boundary: {
+        "en-US": "Local API review only; no production side effects are executed.",
+        "zh-CN": "Local API review only; no production side effects are executed.",
+        "zh-TW": "Local API review only; no production side effects are executed.",
+      },
+      campaignCount: 1,
+      campaigns: [
+        {
+          ...campaignDetail,
+          campaignType: { "en-US": "API campaign", "zh-CN": "API campaign", "zh-TW": "API campaign" },
+          consumerSurfaces: ["user_app"],
+          coreTasks: [],
+          cta: {
+            kind: "start",
+            label: { "en-US": "Start", "zh-CN": "Start", "zh-TW": "Start" },
+            reason: { "en-US": "API campaign", "zh-CN": "API campaign", "zh-TW": "API campaign" },
+          },
+          points: 42,
+          tags: [],
+          timeWindow: { "en-US": "Local API", "zh-CN": "Local API", "zh-TW": "Local API" },
+        },
+      ],
+      configured: true,
+      healthStatus: "ready",
+      loading: false,
+      readinessSummary: "ready; 18 routes",
+      routeCount: 18,
+      source: "api",
+      traceId: "trace-api-visible",
+    });
+
+    render(<UserAppPanel locale="en-US" />);
+
+    const bridge = await screen.findByRole("complementary", { name: "Campaign Discovery API bridge status" });
+
+    expect(mockedLoadBridgeState).toHaveBeenCalledWith(expect.objectContaining({
+      config: expect.objectContaining({
+        baseUrl: "http://127.0.0.1:5174",
+        tracePrefix: "user-app-campaign-discovery",
+      }),
+    }));
+    await waitFor(() => expect(within(bridge).getByText("API runtime")).toBeInTheDocument());
+    expect(within(bridge).getByText("trace-api-visible")).toBeInTheDocument();
+    expect(within(bridge).getByText("ready; 18 routes")).toBeInTheDocument();
+    expect(within(bridge).getByText("1")).toBeInTheDocument();
+    expect(screen.getAllByText("Awaken Sprint").length).toBeGreaterThan(0);
+  });
+
+  it("renders sanitized error fallback diagnostics without private paths or live action controls", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5174";
+    mockedLoadBridgeState.mockResolvedValueOnce({
+      boundary: {
+        "en-US": "Local API review only; no production side effects are executed.",
+        "zh-CN": "Local API review only; no production side effects are executed.",
+        "zh-TW": "Local API review only; no production side effects are executed.",
+      },
+      campaignCount: 4,
+      campaigns: [],
+      configured: true,
+      diagnostic: {
+        code: "API_CAMPAIGNS_FAILED",
+        message: {
+          "en-US": "The local campaign discovery route did not return usable campaign data.",
+          "zh-CN": "The local campaign discovery route did not return usable campaign data.",
+          "zh-TW": "The local campaign discovery route did not return usable campaign data.",
+        },
+        safeDetails: {
+          endpoint: "/api/campaigns",
+          status: 500,
+        },
+      },
+      loading: false,
+      readinessSummary: "ready; 18 routes",
+      routeCount: 18,
+      source: "error_fallback",
+      traceId: "trace-error-visible",
+    });
+
+    render(<UserAppPanel locale="en-US" />);
+
+    const bridge = await screen.findByRole("complementary", { name: "Campaign Discovery API bridge status" });
+
+    await waitFor(() => expect(within(bridge).getByText("Error fallback")).toBeInTheDocument());
+    expect(within(bridge).getByText("Diagnostic: The local campaign discovery route did not return usable campaign data.")).toBeInTheDocument();
+    expect(within(bridge).getByText("trace-error-visible")).toBeInTheDocument();
+    expect(screen.getAllByText("Forest NFT Quest").length).toBeGreaterThan(0);
+
+    const bridgeText = bridge.textContent?.toLowerCase() ?? "";
+    for (const unsafe of ["private key", "seed phrase", "bearer token", "kitty-specs", "evidence/"]) {
+      expect(bridgeText).not.toContain(unsafe);
+    }
+    expect(
+      within(bridge).queryByRole("button", {
+        name: /connectwallet|signature|provider call|contract write|reward custody|reward distribution/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders local campaign detail navigation and targets existing sections without URL mutation", () => {
