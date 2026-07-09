@@ -12,6 +12,9 @@ import {
   type GenerateCampaignPostsRequest,
   type GenerateCampaignTasksRequest,
   type GenerateI18nDraftRequest,
+  type GetCompanionContractReadinessRequest,
+  type GetContractTransparencyRequest,
+  type GetDeliveryChecklistReadinessRequest,
   type GetCampaignAnalyticsRequest,
   type GetCampaignDetailRequest,
   type GetCampaignLifecycleOperationsRequest,
@@ -842,6 +845,18 @@ const launchConsoleRequest = (
   context: ApiRuntimeHandlerContext,
 ): GetLaunchConsoleCampaignBundlesRequest => campaignIdRequest(context);
 
+const deliveryChecklistReadinessRequest = (
+  context: ApiRuntimeHandlerContext,
+): GetDeliveryChecklistReadinessRequest => campaignIdRequest(context);
+
+const companionContractReadinessRequest = (
+  context: ApiRuntimeHandlerContext,
+): GetCompanionContractReadinessRequest => campaignIdRequest(context);
+
+const contractTransparencyRequest = (
+  context: ApiRuntimeHandlerContext,
+): GetContractTransparencyRequest => campaignIdRequest(context);
+
 const verificationPipelineReadinessRequest = (
   context: ApiRuntimeHandlerContext,
 ): GetVerificationPipelineReadinessRequest => campaignIdRequest(context);
@@ -1385,6 +1400,21 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     unwrapCampaignReadinessOrDraft<LaunchConsoleCampaignBundleSurface>(
       context,
       context.service.getLaunchConsoleCampaignBundles(launchConsoleRequest(context)),
+    ),
+  "campaigns.delivery.readiness": (context) =>
+    unwrapLocalResult(
+      context.service.getDeliveryChecklistReadiness(deliveryChecklistReadinessRequest(context)),
+      context,
+    ),
+  "campaigns.companion.contract.readiness": (context) =>
+    unwrapLocalResult(
+      context.service.getCompanionContractReadiness(companionContractReadinessRequest(context)),
+      context,
+    ),
+  "campaigns.contract.transparency": (context) =>
+    unwrapLocalResult(
+      context.service.getContractTransparency(contractTransparencyRequest(context)),
+      context,
     ),
   "campaigns.provider.readiness": (context) =>
     unwrapCampaignReadinessOrDraft(

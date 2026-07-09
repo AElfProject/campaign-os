@@ -69,7 +69,10 @@ import {
   type CampaignDiscoveryReadModel,
   type CampaignShellDetail,
   type CampaignLifecycleOperations,
+  type CompanionContractReadiness,
+  type ContractTransparencyMonitor,
   type CampaignStatus,
+  type DeliveryChecklistReadinessConsole,
   type ContractMode,
   type ExportConfirmationReadinessGate,
   type ExportArtifact,
@@ -276,6 +279,18 @@ export interface GetCampaignLifecycleOperationsRequest {
 }
 
 export interface GetLaunchConsoleCampaignBundlesRequest {
+  campaignId: string;
+}
+
+export interface GetDeliveryChecklistReadinessRequest {
+  campaignId: string;
+}
+
+export interface GetCompanionContractReadinessRequest {
+  campaignId: string;
+}
+
+export interface GetContractTransparencyRequest {
   campaignId: string;
 }
 
@@ -507,6 +522,15 @@ export interface CampaignOsLocalService {
   getLaunchConsoleCampaignBundles(
     request: GetLaunchConsoleCampaignBundlesRequest,
   ): LocalServiceResult<LaunchConsoleCampaignBundleSurface>;
+  getDeliveryChecklistReadiness(
+    request: GetDeliveryChecklistReadinessRequest,
+  ): LocalServiceResult<DeliveryChecklistReadinessConsole & { campaignId: string }>;
+  getCompanionContractReadiness(
+    request: GetCompanionContractReadinessRequest,
+  ): LocalServiceResult<CompanionContractReadiness & { campaignId: string }>;
+  getContractTransparency(
+    request: GetContractTransparencyRequest,
+  ): LocalServiceResult<ContractTransparencyMonitor>;
   getAntiSybilV2GraphReadiness(
     request: GetAntiSybilV2GraphReadinessRequest,
   ): LocalServiceResult<AntiSybilV2GraphReadiness>;
@@ -2402,6 +2426,61 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
     return success(createLaunchConsoleCampaignBundles(campaign));
   },
 
+  getDeliveryChecklistReadiness: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local service facade.",
+        "本地 service facade 中不存在该活动。",
+      );
+    }
+
+    const adminOps = createAdminOpsReadModel(campaign);
+
+    return success({
+      campaignId: campaign.id,
+      ...adminOps.deliveryChecklistReadiness,
+    });
+  },
+
+  getCompanionContractReadiness: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local service facade.",
+        "本地 service facade 中不存在该活动。",
+      );
+    }
+
+    const adminOps = createAdminOpsReadModel(campaign);
+
+    return success({
+      campaignId: campaign.id,
+      ...adminOps.companionContractReadiness,
+    });
+  },
+
+  getContractTransparency: (request) => {
+    const campaign = findCampaign(request.campaignId);
+
+    if (!campaign) {
+      return failure(
+        "CAMPAIGN_NOT_FOUND",
+        "campaignId",
+        "Campaign is not available in the local service facade.",
+        "本地 service facade 中不存在该活动。",
+      );
+    }
+
+    return success(createAdminOpsReadModel(campaign).contractTransparencyMonitor);
+  },
+
   getAntiSybilV2GraphReadiness: (request) => {
     const campaign = findCampaign(request.campaignId);
 
@@ -2444,6 +2523,9 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
       "getExportConfirmationReadiness",
       "getCampaignLifecycleOperations",
       "getLaunchConsoleCampaignBundles",
+      "getDeliveryChecklistReadiness",
+      "getCompanionContractReadiness",
+      "getContractTransparency",
       "getAntiSybilV2GraphReadiness",
       "generateCampaignPosts",
       "summarizeCampaign",
@@ -2499,6 +2581,9 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
         "getExportConfirmationReadiness",
         "getCampaignLifecycleOperations",
         "getLaunchConsoleCampaignBundles",
+        "getDeliveryChecklistReadiness",
+        "getCompanionContractReadiness",
+        "getContractTransparency",
         "getAntiSybilV2GraphReadiness",
         "exportWinners",
       ],
