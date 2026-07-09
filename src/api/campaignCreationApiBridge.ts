@@ -35,6 +35,7 @@ export interface CampaignCreationApiDiagnostic {
 
 export interface CampaignCreationApiConfig {
   baseUrl?: string;
+  headers?: Record<string, string>;
   timeoutMs?: number;
   tracePrefix?: string;
 }
@@ -100,6 +101,7 @@ interface SubmitCampaignCreationApiBridgeDraftInput {
 interface NormalizedConfig {
   baseUrl?: URL;
   diagnostic?: CampaignCreationApiDiagnostic;
+  headers: Record<string, string>;
   normalizedTracePrefix: string;
   timeoutMs: number;
 }
@@ -271,14 +273,26 @@ const normalizeTracePrefix = (tracePrefix: string | undefined) => {
   return sanitized || "campaign-creation-review";
 };
 
+const normalizeHeaders = (headers: Record<string, string> | undefined) =>
+  Object.fromEntries(
+    Object.entries(headers ?? {})
+      .filter(([key, value]) => key.trim() && value.trim())
+      .map(([key, value]) => [
+        sanitizeCampaignCreationApiText(key).toLowerCase(),
+        sanitizeCampaignCreationApiText(value),
+      ]),
+  );
+
 const normalizeConfig = (config: CampaignCreationApiConfig | undefined): NormalizedConfig => {
   const timeoutMs = clampTimeout(config?.timeoutMs);
   const normalizedTracePrefix = normalizeTracePrefix(config?.tracePrefix);
+  const headers = normalizeHeaders(config?.headers);
   const rawBaseUrl = config?.baseUrl?.trim();
 
   if (!rawBaseUrl) {
     return {
       diagnostic: diagnostic("API_BASE_URL_MISSING", "info"),
+      headers,
       normalizedTracePrefix,
       timeoutMs,
     };
@@ -293,6 +307,7 @@ const normalizeConfig = (config: CampaignCreationApiConfig | undefined): Normali
           reason: "unsupported_protocol",
           url: rawBaseUrl,
         }),
+        headers,
         normalizedTracePrefix,
         timeoutMs,
       };
@@ -300,6 +315,7 @@ const normalizeConfig = (config: CampaignCreationApiConfig | undefined): Normali
 
     return {
       baseUrl,
+      headers,
       normalizedTracePrefix,
       timeoutMs,
     };
@@ -309,6 +325,7 @@ const normalizeConfig = (config: CampaignCreationApiConfig | undefined): Normali
         reason: "malformed_url",
         url: rawBaseUrl,
       }),
+      headers,
       normalizedTracePrefix,
       timeoutMs,
     };
@@ -353,6 +370,7 @@ const safeFetchJson = async (
   endpoint: EndpointPath,
   traceId: string,
   timeoutMs: number,
+  headers: Record<string, string>,
   init: Pick<RequestInit, "body" | "method">,
 ): Promise<FetchJsonResult> => {
   const timeout = withTimeoutSignal(timeoutMs);
@@ -362,6 +380,7 @@ const safeFetchJson = async (
       body: init.body,
       headers: {
         accept: "application/json",
+        ...headers,
         ...(init.body ? { "content-type": "application/json" } : {}),
         "x-campaign-os-trace-id": traceId,
       },
@@ -700,6 +719,7 @@ export const submitCampaignCreationApiBridgeDraft = async ({
     "/api/health",
     createTraceId(normalizedConfig.normalizedTracePrefix),
     normalizedConfig.timeoutMs,
+    normalizedConfig.headers,
     { method: "GET" },
   );
 
@@ -722,6 +742,7 @@ export const submitCampaignCreationApiBridgeDraft = async ({
     "/api/campaigns",
     createTraceId(normalizedConfig.normalizedTracePrefix),
     normalizedConfig.timeoutMs,
+    normalizedConfig.headers,
     {
       body: JSON.stringify(draft),
       method: "POST",
@@ -763,6 +784,7 @@ export const submitCampaignCreationApiBridgeDraft = async ({
     "/api/campaigns",
     createTraceId(normalizedConfig.normalizedTracePrefix),
     normalizedConfig.timeoutMs,
+    normalizedConfig.headers,
     { method: "GET" },
   );
   const listTraceId = list.traceId ?? extractTraceId(list.body) ?? createTraceIdValue;

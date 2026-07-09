@@ -152,7 +152,14 @@ describe("campaign creation API bridge", () => {
       }, { traceId: "trace-list" })) as unknown as CampaignCreationApiFetch;
 
     const state = await submitCampaignCreationApiBridgeDraft({
-      config: { baseUrl: "http://127.0.0.1:5184/", tracePrefix: "creation-review" },
+      config: {
+        baseUrl: "http://127.0.0.1:5184/",
+        headers: {
+          "x-campaign-os-roles": "project_owner",
+          "x-campaign-os-wallet-address": "ELF_local_review_owner",
+        },
+        tracePrefix: "creation-review",
+      },
       draft,
       fetchImpl,
       seededCampaignCount: 2,
@@ -199,6 +206,8 @@ describe("campaign creation API bridge", () => {
         body: JSON.stringify(draft),
         headers: expect.objectContaining({
           "content-type": "application/json",
+          "x-campaign-os-roles": "project_owner",
+          "x-campaign-os-wallet-address": "ELF_local_review_owner",
           "x-campaign-os-trace-id": expect.stringMatching(/^creation-review-/),
         }),
         method: "POST",

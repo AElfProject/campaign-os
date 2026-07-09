@@ -126,7 +126,14 @@ const DEFAULT_ALLOWED_METHODS = ["GET", "POST", "OPTIONS"] as const;
 const DEFAULT_ALLOWED_HEADERS = [
   "authorization",
   "content-type",
+  "x-campaign-os-account-type",
+  "x-campaign-os-credential-boundary",
+  "x-campaign-os-proof-status",
+  "x-campaign-os-roles",
+  "x-campaign-os-session-id",
   "x-campaign-os-trace-id",
+  "x-campaign-os-wallet-address",
+  "x-campaign-os-wallet-source",
 ] as const;
 const DEFAULT_JSON_CONTENT_TYPES = ["application/json"] as const;
 

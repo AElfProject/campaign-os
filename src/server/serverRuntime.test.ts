@@ -126,6 +126,15 @@ describe("API server runtime contract", () => {
       "https://review.invalid",
       "http://localhost:5173",
     ]);
+    expect(contract.corsPolicy.allowedHeaders).toEqual(expect.arrayContaining([
+      "x-campaign-os-account-type",
+      "x-campaign-os-credential-boundary",
+      "x-campaign-os-proof-status",
+      "x-campaign-os-roles",
+      "x-campaign-os-session-id",
+      "x-campaign-os-wallet-address",
+      "x-campaign-os-wallet-source",
+    ]));
     expect(contract.requestGuard.maxBodyBytes).toBe(4096);
     expect(contract.shutdown.shutdownTimeoutMs).toBe(7000);
   });

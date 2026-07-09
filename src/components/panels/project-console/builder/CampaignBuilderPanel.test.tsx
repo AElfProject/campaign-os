@@ -1,10 +1,21 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CampaignCreationApiBridgeState } from "../../../../api/campaignCreationApiBridge";
 import { projectConsoleCopy } from "../copy";
 import { CampaignBuilderPanel } from "./CampaignBuilderPanel";
 
 describe("CampaignBuilderPanel", () => {
+  const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
+
+  beforeEach(() => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
+  });
+
+  afterEach(() => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = originalApiBaseUrl;
+  });
+
   it("renders the default English draft overview and wallet policy", () => {
     render(<CampaignBuilderPanel copy={projectConsoleCopy["en-US"]} locale="en-US" />);
 
@@ -126,5 +137,133 @@ describe("CampaignBuilderPanel", () => {
     expect(creationWorkflow.getByText(/不会创建实时活动/)).toBeInTheDocument();
     expect(creationWorkflow.getAllByText(/自动发布/).length).toBeGreaterThan(0);
     expect(creationWorkflow.getAllByText(/奖励发放/).length).toBeGreaterThan(0);
+  });
+
+  it("shows API-backed create/list metadata after creating a local review draft", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    const apiState: CampaignCreationApiBridgeState = {
+      boundary: {
+        "en-US": "Local API review only; no production database, wallet signature, contract write, reward custody, or reward distribution is executed.",
+        "zh-CN": "Local API review only.",
+        "zh-TW": "Local API review only.",
+      },
+      campaignCount: 4,
+      configured: true,
+      createdDraftId: "draft-api-visible-1234567890",
+      diagnostics: [],
+      listContainsCreatedDraft: true,
+      loading: false,
+      persistence: {
+        kind: "campaign_draft",
+        recordId: "record-api-visible",
+      },
+      repository: {
+        createdViaRepository: true,
+        draftId: "draft-api-visible-1234567890",
+        repositoryId: "campaign-db-memory",
+        storeId: "campaign-db",
+      },
+      source: "api_runtime",
+      status: "created",
+      traceId: "trace-project-console-visible-1234567890",
+    };
+    const bridgeRunner = vi.fn(async () => apiState);
+
+    render(
+      <CampaignBuilderPanel
+        bridgeRunner={bridgeRunner}
+        copy={projectConsoleCopy["en-US"]}
+        locale="en-US"
+      />,
+    );
+
+    const review = screen.getByRole("complementary", { name: "Local API campaign creation review" });
+    fireEvent.click(within(review).getByRole("button", { name: "Create local API draft" }));
+
+    await waitFor(() => expect(within(review).getByText("draft-api-visible-1234567890")).toBeInTheDocument());
+    expect(bridgeRunner).toHaveBeenCalledWith(expect.objectContaining({
+      draft: expect.objectContaining({
+        contractMode: "OFF_CHAIN_MVP",
+        duration: "2026-07-01T00:00:00Z/2026-07-21T00:00:00Z",
+        ownerAddress: "ELF_local_review_owner",
+        projectId: "awaken",
+        walletPolicy: "ANY",
+      }),
+      seededCampaignCount: 1,
+    }));
+    expect(within(review).getAllByText("API runtime").length).toBeGreaterThan(0);
+    expect(within(review).getByText("trace-project-console-visible-1234567890")).toBeInTheDocument();
+    expect(within(review).getByText("campaign-db-memory")).toBeInTheDocument();
+    expect(within(review).getByText("campaign-db")).toBeInTheDocument();
+    expect(within(review).getByText("record-api-visible")).toBeInTheDocument();
+    expect(within(review).getByText("4")).toBeInTheDocument();
+    expect(within(review).getByText("Created draft confirmed in refreshed list")).toBeInTheDocument();
+    expect(screen.getByText("Awaken Summer Sprint")).toBeInTheDocument();
+  });
+
+  it("shows seeded fallback when local API config is missing while preserving builder content", () => {
+    render(<CampaignBuilderPanel copy={projectConsoleCopy["en-US"]} locale="en-US" />);
+
+    const review = screen.getByRole("complementary", { name: "Local API campaign creation review" });
+
+    expect(within(review).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+    expect(within(review).getByText("Local API base URL is not configured; seeded builder review remains available.")).toBeInTheDocument();
+    expect(within(review).getByRole("button", { name: "Create local API draft" })).toBeDisabled();
+    expect(within(review).getByText("No API draft yet")).toBeInTheDocument();
+    expect(screen.getByText("Awaken Summer Sprint")).toBeInTheDocument();
+    expect(screen.getByLabelText("Campaign Creation Workflow Readiness")).toBeInTheDocument();
+  });
+
+  it("shows sanitized error fallback diagnostics without blanking seeded content", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    const bridgeRunner = vi.fn(async (): Promise<CampaignCreationApiBridgeState> => ({
+      boundary: {
+        "en-US": "Local API review only; no production database, wallet signature, contract write, reward custody, or reward distribution is executed.",
+        "zh-CN": "Local API review only.",
+        "zh-TW": "Local API review only.",
+      },
+      campaignCount: 1,
+      configured: true,
+      diagnostics: [
+        {
+          code: "API_REQUEST_FAILED",
+          message: {
+            "en-US": "The local API request failed, so the seeded campaign builder remains visible.",
+            "zh-CN": "The local API request failed, so the seeded campaign builder remains visible.",
+            "zh-TW": "The local API request failed, so the seeded campaign builder remains visible.",
+          },
+          safeDetails: {
+            reason: "redacted credential from redacted private path",
+          },
+          severity: "error",
+        },
+      ],
+      loading: false,
+      source: "error_fallback",
+      status: "error",
+      traceId: "trace-error-safe",
+    }));
+
+    const { container } = render(
+      <CampaignBuilderPanel
+        bridgeRunner={bridgeRunner}
+        copy={projectConsoleCopy["en-US"]}
+        locale="en-US"
+      />,
+    );
+    const review = screen.getByRole("complementary", { name: "Local API campaign creation review" });
+
+    fireEvent.click(within(review).getByRole("button", { name: "Create local API draft" }));
+
+    await waitFor(() => expect(within(review).getAllByText("Error fallback").length).toBeGreaterThan(0));
+    expect(within(review).getByText(/The local API request failed/)).toBeInTheDocument();
+    expect(within(review).getByText(/redacted credential from redacted private path/)).toBeInTheDocument();
+    expect(within(review).getByText("trace-error-safe")).toBeInTheDocument();
+    expect(screen.getByText("Awaken Summer Sprint")).toBeInTheDocument();
+
+    const renderedText = container.textContent?.toLowerCase() ?? "";
+    for (const forbidden of ["private key", "seed phrase", "bearer token", "raw signature", "provider payload", "campaign-os-kitty"]) {
+      expect(renderedText).not.toContain(forbidden);
+    }
   });
 });
