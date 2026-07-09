@@ -775,7 +775,9 @@ export const submitCampaignCreationApiBridgeDraft = async ({
       ? listResult
         ? undefined
         : diagnostic("API_RESPONSE_INVALID", "warning", { endpoint: "/api/campaigns" })
-      : list.diagnostic ?? diagnostic("API_LIST_FAILED", "warning", { endpoint: "/api/campaigns" });
+      : list.diagnostic
+        ? { ...list.diagnostic, severity: "warning" as const }
+        : diagnostic("API_LIST_FAILED", "warning", { endpoint: "/api/campaigns" });
 
   return {
     boundary: creationPayload.boundary ?? campaignCreationApiBoundary,

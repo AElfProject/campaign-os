@@ -306,7 +306,7 @@ describe("campaign creation API bridge", () => {
     expect(state).toMatchObject({
       campaignCount: 2,
       createdDraftId: "draft-api-2",
-      diagnostics: [{ code: "API_LIST_FAILED", severity: "error" }],
+      diagnostics: [{ code: "API_LIST_FAILED", severity: "warning" }],
       persistence: {
         recordId: "record-2",
       },
