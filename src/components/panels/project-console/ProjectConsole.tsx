@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   backendRuntimeReadinessApiBoundary,
   createBackendRuntimeReadinessApiLoadingState,
@@ -1997,9 +1997,10 @@ export const ProjectConsole = ({
     });
   };
 
-  const runPublishDeliveryApiReview = () => {
+  const loadPublishDeliveryApiReview = useCallback(() => {
     if (!publishDeliveryApiBaseUrl?.trim()) {
       setPublishDeliveryApiState(createPublishDeliveryReviewSeededFallbackState(campaign.id));
+      setPublishDeliveryApiReviewInFlight(false);
       return;
     }
 
@@ -2024,7 +2025,17 @@ export const ProjectConsole = ({
         setPublishDeliveryApiReviewInFlight(false);
       }
     });
+  }, [campaign.id, publishDeliveryApiBaseUrl]);
+
+  const runPublishDeliveryApiReview = () => {
+    loadPublishDeliveryApiReview();
   };
+
+  useEffect(() => {
+    if (activeWorkspace === "export") {
+      loadPublishDeliveryApiReview();
+    }
+  }, [activeWorkspace, loadPublishDeliveryApiReview]);
 
   const runBackendReadinessApiReview = () => {
     if (!backendReadinessApiBaseUrl?.trim()) {

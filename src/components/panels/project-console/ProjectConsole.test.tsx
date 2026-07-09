@@ -318,6 +318,7 @@ describe("Project Console shell", () => {
     mockedSubmitExportArtifactDeliveryApiReview.mockReset();
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockReset();
     mockedLoadPublishDeliveryReviewApiBridgeState.mockReset();
+    mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValue(publishDeliveryReviewApiState());
   });
 
   afterEach(() => {
@@ -1755,15 +1756,13 @@ describe("Project Console shell", () => {
     expect(within(backendReadiness).getByText("runtime.production.database")).toBeInTheDocument();
   });
 
-  it("clicks Publish Delivery Review Bridge action and renders API-backed joint MVP state", async () => {
+  it("loads Publish Delivery Review Bridge automatically and renders API-backed joint MVP state", async () => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
     mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValueOnce(publishDeliveryReviewApiState());
 
     render(<ProjectConsole activeWorkspace="export" campaign={campaignDetail} locale="en-US" />);
 
     const publishDeliveryReview = screen.getByLabelText("Publish Delivery Review Bridge");
-
-    fireEvent.click(within(publishDeliveryReview).getByRole("button", { name: "Review local bridge" }));
 
     await waitFor(() => expect(mockedLoadPublishDeliveryReviewApiBridgeState).toHaveBeenCalledWith({
       campaignId: campaignDetail.id,
@@ -1775,6 +1774,7 @@ describe("Project Console shell", () => {
 
     await waitFor(() => expect(within(publishDeliveryReview).getByText("API runtime")).toBeInTheDocument());
     expect(within(publishDeliveryReview).getByText("trace-publish-api-visible")).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByRole("button", { name: "Review local bridge" })).toBeInTheDocument();
     expect(within(publishDeliveryReview).getByText("productionReady=false")).toBeInTheDocument();
     expect(within(publishDeliveryReview).getByText("Delivery checklist")).toBeInTheDocument();
     expect(within(publishDeliveryReview).getByText("Repository evidence")).toBeInTheDocument();
