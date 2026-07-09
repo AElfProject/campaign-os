@@ -704,7 +704,7 @@ export const loadPublishDeliveryReviewApiBridgeState = async ({
   }
 
   return {
-    boundary: publishDeliveryReviewBoundary,
+    boundary: publishDeliveryReviewApiBoundary,
     campaignId,
     configured: true,
     diagnostics: [],

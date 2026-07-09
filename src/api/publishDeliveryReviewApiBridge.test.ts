@@ -128,6 +128,9 @@ describe("publish delivery review API bridge", () => {
     });
 
     expect(state).toMatchObject({
+      boundary: expect.objectContaining({
+        "en-US": expect.stringContaining("Local front-end/back-end publish delivery review bridge"),
+      }),
       campaignId,
       configured: true,
       diagnostics: [],
