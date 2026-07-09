@@ -42,6 +42,10 @@ import {
   type AuthEnforcementDecision,
 } from "./authEnforcement";
 import { getProtectedRouteAuth } from "./authSession";
+import {
+  createExportArtifactRegistry,
+  type ExportArtifactRegistry,
+} from "./exportArtifactRegistry";
 
 export type ApiRuntimeHeaders = Record<string, string | readonly string[] | undefined>;
 
@@ -62,6 +66,7 @@ export interface ApiRuntimeHandlerContext {
   backendServiceReadiness: BackendServiceReadinessFactory;
   body: unknown;
   campaignDbRepository: CampaignDbRepository;
+  exportArtifactRegistry: ExportArtifactRegistry;
   params: Record<string, string>;
   repository: CampaignOsRepository;
   query: Record<string, string>;
@@ -87,6 +92,7 @@ export interface CreateCampaignOsApiRuntimeOptions {
   backendServiceReadiness?: BackendServiceReadinessFactory;
   campaignDbRepository?: CampaignDbRepository;
   campaignDbRepositoryOptions?: CreateCampaignDbRepositoryOptions;
+  exportArtifactRegistry?: ExportArtifactRegistry;
   repository?: CampaignOsRepository;
   runtimeConfig?: CampaignOsRuntimeConfig;
   runtimeConfigOptions?: CampaignOsRuntimeConfigOptions;
@@ -638,6 +644,7 @@ export const createCampaignOsApiRuntime = ({
   backendServiceReadiness,
   campaignDbRepository,
   campaignDbRepositoryOptions,
+  exportArtifactRegistry = createExportArtifactRegistry(),
   repository,
   runtimeConfig,
   runtimeConfigOptions,
@@ -721,6 +728,7 @@ export const createCampaignOsApiRuntime = ({
           backendServiceReadiness: requestBackendServiceReadiness,
           body,
           campaignDbRepository: safeCampaignDbRepository,
+          exportArtifactRegistry,
           params,
           repository: safeRepository,
           query,

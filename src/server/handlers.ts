@@ -31,6 +31,7 @@ import {
   createServiceRegistry,
 } from "../domain/serviceRegistry";
 import type {
+  ExportArtifact,
   AgentWalletActionReadinessRequest,
   CampaignLifecycleOperations,
   CampaignDiscoveryDetail,
@@ -58,6 +59,7 @@ import type {
   CampaignDbCreateDraftInput,
   CampaignDbDraft,
   CampaignDbEligibilityProjection,
+  CampaignDbExportArtifact,
   CampaignDbExportProjection,
   CampaignDbExportReadinessProjection,
   CampaignDbListFilter,
@@ -610,6 +612,90 @@ const createRepositoryExportPreviewResponse = (
 });
 
 type RepositoryExportPreviewResponse = ReturnType<typeof createRepositoryExportPreviewResponse>;
+type ExportPreviewRegistryPayload = ExportWinnersResponse | RepositoryExportPreviewResponse;
+
+const isRepositoryExportPreviewResponse = (
+  payload: ExportPreviewRegistryPayload,
+): payload is RepositoryExportPreviewResponse => "exportBatchId" in payload;
+
+const repositoryArtifactForRegistry = (
+  artifact: CampaignDbExportArtifact,
+  payload: RepositoryExportPreviewResponse,
+): ExportArtifact => ({
+  batchId: payload.exportBatchId,
+  campaignId: artifact.campaignId,
+  extension: artifact.format,
+  fileName: `${artifact.campaignId}-${payload.exportBatchId}-local-review.${artifact.format}`,
+  format: artifact.format,
+  metadata: {
+    blockedRows: payload.blockedRows,
+    checksum: artifact.checksum,
+    checksumAlgorithm: artifact.checksumAlgorithm,
+    columns: artifact.columns,
+    generatedMode: artifact.generatedMode,
+    payloadBytes: artifact.payloadBytes,
+    readyRows: payload.readyRows,
+    reviewRequiredRows: payload.reviewRequiredRows,
+    totalRows: payload.rows.length,
+  },
+  mimeType: artifact.mimeType,
+  payload: artifact.format === "csv"
+    ? artifact.csvPreview ?? ""
+    : JSON.stringify(artifact.jsonPreview ?? []),
+  safety: {
+    boundary: exportProjectionBoundary,
+    localOnly: true,
+    noContractRoot: true,
+    noContractTransaction: true,
+    noDownloadUrl: true,
+    noRewardCustody: true,
+    noRewardDistribution: true,
+    noStorageWrite: true,
+    rewardDistributionOwner: "campaign_project",
+    verifiedRecordsOnly: true,
+  },
+});
+
+const artifactForRegistry = (payload: ExportPreviewRegistryPayload): ExportArtifact =>
+  isRepositoryExportPreviewResponse(payload)
+    ? repositoryArtifactForRegistry(payload.artifact, payload)
+    : payload.artifact;
+
+const withExportArtifactRegistry = (
+  response: {
+    payload: ExportPreviewRegistryPayload;
+  },
+  context: ApiRuntimeHandlerContext,
+) => {
+  if (!response.payload.artifact) {
+    return response;
+  }
+
+  const registryArtifact = artifactForRegistry(response.payload);
+  const registration = context.exportArtifactRegistry.register(
+    registryArtifact,
+    {
+      routeId: context.route.id,
+      traceId: context.traceId,
+    },
+  );
+
+  if (!registration.ok) {
+    throw invalidRequest(
+      registration.diagnostics[0]?.field ?? "artifact",
+      registration.diagnostics[0]?.message
+        ?? "Export artifact registry rejected the local export artifact.",
+    );
+  }
+
+  return {
+    ...response,
+    payload: {
+      ...response.payload,
+      artifactRegistry: registration.record,
+    },
+  };
+};
 
 const createRepositoryExportReadinessResponse = (
   readiness: CampaignDbExportReadinessProjection,
@@ -1505,12 +1591,14 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       }),
     );
 
+    const registeredResponse = withExportArtifactRegistry(response, context);
+
     return campaignDb
       ? {
-        ...response,
+        ...registeredResponse,
         campaignDb,
       }
-      : response;
+      : registeredResponse;
   },
   "campaigns.export.readiness": async (context) => {
     const request = campaignIdRequest(context);

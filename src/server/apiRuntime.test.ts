@@ -123,19 +123,58 @@ interface I18nDraftPayload {
 
 interface ExportPreviewPayload {
   artifact?: {
-    checksum: string;
+    batchId?: string;
+    campaignId?: string;
+    checksum?: string;
     columns: string[];
     csvPreview?: string;
+    fileName?: string;
     format: string;
     generatedMode: string;
     jsonPreview?: Array<Record<string, unknown>>;
     localPreviewMode: boolean;
+    metadata?: {
+      checksum: string;
+    };
     safety: {
       noDownloadUrl: true;
       noStorageWrite: true;
       noContractRoot: true;
       noRewardDistribution: true;
     };
+  };
+  artifactRegistry?: {
+    artifactId: string;
+    auditEvents: Array<{
+      routeId: string;
+      traceId: string;
+      type: string;
+    }>;
+    checksum: string;
+    expiresAt: string;
+    retention: {
+      mode: "local_review_ttl";
+      productionStorageBacked: false;
+      purgeRequired: true;
+      ttlHours: number;
+    };
+    routeId: string;
+    safety: {
+      contractRootWriteEnabled: false;
+      downloadUrlEnabled: false;
+      forbiddenFieldsAbsent: true;
+      localReviewOnly: true;
+      objectKeyEnabled: false;
+      providerCallEnabled: false;
+      queueExecutionEnabled: false;
+      rewardCustodyEnabled: false;
+      rewardDistributionEnabled: false;
+      schedulerExecutionEnabled: false;
+      signedUrlEnabled: false;
+      storageWriteEnabled: false;
+      walletSigningEnabled: false;
+    };
+    traceId: string;
   };
   blockedRows?: number;
   campaignId: string;
@@ -287,12 +326,23 @@ const forbiddenResponseKeys = [
 ];
 
 const allowedSafetyKeys = new Set([
+  "contractRootWriteEnabled",
+  "downloadUrlEnabled",
+  "objectKeyEnabled",
   "noContractWrite",
   "noExportFile",
   "noPrivateKeyBoundary",
   "noRewardDistribution",
   "noSignatureExecution",
   "noTransactionExecution",
+  "providerCallEnabled",
+  "queueExecutionEnabled",
+  "rewardCustodyEnabled",
+  "rewardDistributionEnabled",
+  "schedulerExecutionEnabled",
+  "signedUrlEnabled",
+  "storageWriteEnabled",
+  "walletSigningEnabled",
 ]);
 
 const collectKeys = (value: unknown, keys: string[] = []): string[] => {
@@ -340,6 +390,43 @@ const expectNoForbiddenFragments = (value: unknown, fragments: readonly string[]
   for (const fragment of fragments) {
     expect(serialized).not.toContain(fragment.toLowerCase());
   }
+};
+
+const stableTestHash = (input: string) => {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, "0");
+};
+
+const expectedExportArtifactRegistryId = (
+  payload: ExportPreviewPayload,
+  routeId: string,
+  traceId: string,
+) => {
+  if (!payload.artifact?.campaignId || !(payload.artifact.batchId ?? payload.exportBatchId)) {
+    throw new Error("Expected export preview artifact to include registry identity fields.");
+  }
+
+  const batchId = payload.artifact.batchId ?? payload.exportBatchId;
+  const checksum = payload.artifact.metadata?.checksum ?? payload.artifact.checksum;
+
+  if (!checksum) {
+    throw new Error("Expected export preview artifact to include registry checksum.");
+  }
+
+  return `export-artifact-local-${stableTestHash([
+    payload.artifact.campaignId,
+    batchId,
+    payload.artifact.format,
+    checksum,
+    routeId,
+    traceId,
+  ].join("|"))}`;
 };
 
 const expectSuccessData = <TPayload = unknown>(response: ApiRuntimeResponse<unknown>) => {
@@ -2502,6 +2589,44 @@ describe("Campaign OS API runtime", () => {
             noRewardDistribution: true,
           }),
         }),
+        artifactRegistry: expect.objectContaining({
+          artifactId: expect.any(String),
+          auditEvents: expect.arrayContaining([
+            expect.objectContaining({
+              routeId: "campaigns.export.preview",
+              traceId: "trace-campaign-db-export-ready-preview",
+              type: "registered_local_artifact",
+            }),
+            expect.objectContaining({
+              routeId: "campaigns.export.preview",
+              traceId: "trace-campaign-db-export-ready-preview",
+              type: "storage_disabled",
+            }),
+          ]),
+          retention: expect.objectContaining({
+            mode: "local_review_ttl",
+            productionStorageBacked: false,
+            purgeRequired: true,
+            ttlHours: 24,
+          }),
+          routeId: "campaigns.export.preview",
+          safety: expect.objectContaining({
+            contractRootWriteEnabled: false,
+            downloadUrlEnabled: false,
+            forbiddenFieldsAbsent: true,
+            localReviewOnly: true,
+            objectKeyEnabled: false,
+            providerCallEnabled: false,
+            queueExecutionEnabled: false,
+            rewardCustodyEnabled: false,
+            rewardDistributionEnabled: false,
+            schedulerExecutionEnabled: false,
+            signedUrlEnabled: false,
+            storageWriteEnabled: false,
+            walletSigningEnabled: false,
+          }),
+          traceId: "trace-campaign-db-export-ready-preview",
+        }),
         blockedRows: 0,
         campaignId: created.payload.id,
         contractRootMode: "none",
@@ -2531,8 +2656,23 @@ describe("Campaign OS API runtime", () => {
         kind: "export_preview",
       },
     });
+    expect(readyPreviewData.payload.artifactRegistry?.checksum).toBe(readyPreviewData.payload.artifact?.checksum);
+    expect(readyPreviewData.payload.artifactRegistry?.artifactId).toBe(
+      expectedExportArtifactRegistryId(
+        readyPreviewData.payload,
+        "campaigns.export.preview",
+        "trace-campaign-db-export-ready-preview",
+      ),
+    );
     expect(repeatedReadyPreviewData.payload.rows).toEqual(readyPreviewData.payload.rows);
     expect(repeatedReadyPreviewData.payload.artifact?.checksum).toBe(readyPreviewData.payload.artifact?.checksum);
+    expect(repeatedReadyPreviewData.payload.artifactRegistry?.checksum).toBe(
+      readyPreviewData.payload.artifactRegistry?.checksum,
+    );
+    expect(repeatedReadyPreviewData.payload.artifactRegistry?.artifactId).not.toBe(
+      readyPreviewData.payload.artifactRegistry?.artifactId,
+    );
+    expect(repeatedReadyPreviewData.payload.artifactRegistry?.traceId).toBe(repeatedReadyPreview.body.traceId);
     expect(readinessData).toMatchObject({
       campaignDb: {
         createdViaRepository: true,
@@ -3205,11 +3345,56 @@ describe("Campaign OS API runtime", () => {
       targetLocale: "zh-CN",
     });
     expect(expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload>>(exportPreview).payload).toMatchObject({
+      artifactRegistry: expect.objectContaining({
+        auditEvents: expect.arrayContaining([
+          expect.objectContaining({
+            routeId: "campaigns.export.preview",
+            type: "registered_local_artifact",
+          }),
+          expect.objectContaining({
+            routeId: "campaigns.export.preview",
+            type: "storage_disabled",
+          }),
+        ]),
+        retention: expect.objectContaining({
+          mode: "local_review_ttl",
+          productionStorageBacked: false,
+          purgeRequired: true,
+          ttlHours: 24,
+        }),
+        routeId: "campaigns.export.preview",
+        safety: expect.objectContaining({
+          contractRootWriteEnabled: false,
+          downloadUrlEnabled: false,
+          forbiddenFieldsAbsent: true,
+          localReviewOnly: true,
+          objectKeyEnabled: false,
+          providerCallEnabled: false,
+          queueExecutionEnabled: false,
+          rewardCustodyEnabled: false,
+          rewardDistributionEnabled: false,
+          schedulerExecutionEnabled: false,
+          signedUrlEnabled: false,
+          storageWriteEnabled: false,
+          walletSigningEnabled: false,
+        }),
+      }),
       campaignId: campaignDetail.id,
       contractRootMode: "none",
       format: "json",
       readyRows: expect.any(Number),
     });
+    const seededExportPayload = expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload>>(exportPreview).payload;
+    expect(seededExportPayload.artifactRegistry?.checksum).toBe(seededExportPayload.artifact?.metadata?.checksum);
+    expect(seededExportPayload.artifactRegistry?.traceId).toBe(exportPreview.body.traceId);
+    expect(seededExportPayload.artifactRegistry?.artifactId).toBe(
+      expectedExportArtifactRegistryId(
+        seededExportPayload,
+        "campaigns.export.preview",
+        exportPreview.body.traceId,
+      ),
+    );
+    expect(seededExportPayload.artifactRegistry?.expiresAt).toBe("2026-07-10T00:00:00.000Z");
     expect(expectSuccessData(health)).toMatchObject({
       persistence: expect.objectContaining({
         recordCount: 6,
