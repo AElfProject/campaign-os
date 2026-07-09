@@ -7,6 +7,17 @@ import {
   type CampaignDiscoveryApiSource,
 } from "../../../api/campaignDiscoveryApiBridge";
 import {
+  createUserParticipationApiLoadingState,
+  sanitizeUserParticipationApiText,
+  submitUserParticipationApiReview,
+  userParticipationApiBoundary,
+  type UserParticipationApiBridgeState,
+  type UserParticipationApiDiagnostic,
+  type UserParticipationApiSource,
+  type UserParticipationApiStatus,
+  type UserParticipationReviewRequest,
+} from "../../../api/userParticipationApiBridge";
+import {
   campaignDetail,
   createCampaignDiscoveryReadModel,
   createCampaignMarketplaceReadiness,
@@ -162,7 +173,7 @@ const compactActionButtonStyle: CSSProperties = {
 const disabledActionButtonStyle: CSSProperties = {
   ...compactActionButtonStyle,
   background: "#e2e8f0",
-  borderColor: "#cbd5e1",
+  border: "1px solid #cbd5e1",
   color: "#475569",
   cursor: "not-allowed",
 };
@@ -294,6 +305,29 @@ const apiBridgeBadgeStyle = (source: CampaignDiscoveryApiSource): CSSProperties 
   };
 };
 
+const userParticipationApiBadgeStyle = (source: UserParticipationApiSource): CSSProperties => {
+  const palette: Record<UserParticipationApiSource, { background: string; border: string; color: string }> = {
+    api_runtime: { background: "#dcfce7", border: "#86efac", color: "#166534" },
+    error_fallback: { background: "#fef3c7", border: "#facc15", color: "#92400e" },
+    loading: { background: "#e0f2fe", border: "#7dd3fc", color: "#075985" },
+    seeded_fallback: { background: "#eef2ff", border: "#c7d2fe", color: "#3730a3" },
+  };
+  const colors = palette[source];
+
+  return {
+    background: colors.background,
+    border: `1px solid ${colors.border}`,
+    borderRadius: 999,
+    color: colors.color,
+    fontSize: 12,
+    fontWeight: 900,
+    lineHeight: 1.2,
+    maxWidth: "100%",
+    overflowWrap: "anywhere",
+    padding: "6px 8px",
+  };
+};
+
 const mobileHubGridStyle: CSSProperties = {
   alignItems: "stretch",
   display: "grid",
@@ -384,6 +418,8 @@ type LocalTaskActionResult = LocalServiceResult<ExecuteTaskVerificationActionRes
 
 type UserAppLocalSection = "campaigns" | "points" | "referrals" | "eligibility";
 
+type UserParticipationReviewState = UserParticipationApiBridgeState | undefined;
+
 const userAppLocalSectionOrder: UserAppLocalSection[] = [
   "campaigns",
   "points",
@@ -404,6 +440,99 @@ const taskActionLabel = (
   };
 
   return labels[kind];
+};
+
+const userParticipationApiSourceLabel = (
+  source: UserParticipationApiSource,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels: Record<UserParticipationApiSource, string> = {
+    api_runtime: copy.userParticipationApiSourceApiRuntime,
+    error_fallback: copy.userParticipationApiSourceErrorFallback,
+    loading: copy.userParticipationApiSourceLoading,
+    seeded_fallback: copy.userParticipationApiSourceSeededFallback,
+  };
+
+  return labels[source];
+};
+
+const userParticipationApiStatusLabel = (
+  status: UserParticipationApiStatus,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels: Record<UserParticipationApiStatus, string> = {
+    eligibility_checked: copy.userParticipationApiStatusEligibilityChecked,
+    error: copy.userParticipationApiStatusError,
+    fallback: copy.userParticipationApiStatusFallback,
+    loading: copy.userParticipationApiStatusLoading,
+    partial: copy.userParticipationApiStatusPartial,
+    verified: copy.userParticipationApiStatusVerified,
+  };
+
+  return labels[status];
+};
+
+const userParticipationApiSeededDiagnostic: UserParticipationApiDiagnostic = {
+  code: "API_BASE_URL_MISSING",
+  message: {
+    "en-US": "No local participation API base URL is configured, so the seeded User App remains visible.",
+    "zh-CN": "未配置本地参与 API base URL，因此继续显示 seeded User App。",
+    "zh-TW": "未設定本地參與 API base URL，因此繼續顯示 seeded User App。",
+  },
+  severity: "info",
+};
+
+const createUserParticipationSeededFallbackState = (
+  request: UserParticipationReviewRequest,
+): UserParticipationApiBridgeState => ({
+  boundary: userParticipationApiBoundary,
+  configured: false,
+  diagnostics: [userParticipationApiSeededDiagnostic],
+  loading: false,
+  request,
+  source: "seeded_fallback",
+  status: "fallback",
+});
+
+const userParticipationFallbackMessage = (
+  state: UserParticipationApiBridgeState,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  if (state.status === "partial") {
+    return copy.userParticipationApiPartialSuccess;
+  }
+
+  if (state.status === "error") {
+    return copy.userParticipationApiErrorFallback;
+  }
+
+  if (state.status === "fallback") {
+    return copy.userParticipationApiSeededFallback;
+  }
+
+  return undefined;
+};
+
+const userParticipationDiagnosticsText = (
+  diagnostics: readonly UserParticipationApiDiagnostic[],
+  locale: BusinessContentLocale,
+  emptyLabel: string,
+) => {
+  if (diagnostics.length === 0) {
+    return emptyLabel;
+  }
+
+  return diagnostics
+    .map((diagnostic) => {
+      const safeDetails = diagnostic.safeDetails
+        ? ` (${Object.entries(diagnostic.safeDetails)
+            .map(([key, value]) => `${sanitizeUserParticipationApiText(key)}=${sanitizeUserParticipationApiText(value)}`)
+            .join(", ")})`
+        : "";
+
+      return `${diagnostic.code}: ${getLocalizedText(diagnostic.message, locale)}${safeDetails}`;
+    })
+    .join(" · ");
 };
 
 const renderChips = (items: readonly string[], emptyLabel: string) => (
@@ -946,6 +1075,125 @@ const CampaignDiscoveryApiStatusPanel = ({
   );
 };
 
+const UserParticipationApiStatusPanel = ({
+  copy,
+  locale,
+  state,
+}: {
+  copy: typeof userAppCopy["en-US"];
+  locale: BusinessContentLocale;
+  state: UserParticipationApiBridgeState;
+}) => {
+  const fallbackMessage = userParticipationFallbackMessage(state, copy);
+  const walletProvenance = [
+    state.request.walletAddress,
+    state.verification?.walletSource ?? state.eligibility?.walletSource ?? state.request.walletSource,
+    state.verification?.accountType ?? state.eligibility?.accountType ?? state.request.accountType,
+  ].join(" · ");
+  const verificationStatus = state.verification
+    ? `${state.verification.status} · ${copy.pointsAwarded}: ${state.verification.pointsAwarded}/${
+        state.verification.pointsAvailable ?? "-"
+      }`
+    : "-";
+  const eligibilityStatus = state.eligibility
+    ? `${state.eligibility.status} · ${copy.score}: ${state.eligibility.score} · ${copy.walletTypeVerified}: ${
+        state.eligibility.walletTypeVerified ? copy.eligible : copy.notEligible
+      }`
+    : "-";
+  const metadataRows = [
+    [copy.userParticipationApiTraceId, state.traceId ?? copy.userParticipationApiTraceUnavailable],
+    [copy.userParticipationApiTaskId, state.verification?.taskId ?? state.request.taskId],
+    [copy.userParticipationApiWalletProvenance, walletProvenance],
+    [copy.userParticipationApiVerificationStatus, verificationStatus],
+    [copy.userParticipationApiEligibilityStatus, eligibilityStatus],
+    [
+      copy.localePreference,
+      state.eligibility?.localePreference ?? "-",
+    ],
+    [
+      copy.userParticipationApiEvidenceHash,
+      state.verification?.evidenceHash ?? "-",
+    ],
+    [
+      copy.evidenceSource,
+      state.verification?.evidenceSource ? formatSource(state.verification.evidenceSource) : "-",
+    ],
+    [
+      copy.userParticipationApiPersistence,
+      state.persistence
+        ? [state.persistence.kind, state.persistence.recordId].filter(Boolean).join(" · ")
+        : "-",
+    ],
+    [
+      copy.userParticipationApiRepository,
+      state.repository
+        ? [state.repository.repositoryId, state.repository.storeId, state.repository.adapterId]
+            .filter(Boolean)
+            .join(" · ")
+        : "-",
+    ],
+  ] as const;
+  const missingTasks = state.eligibility?.missingTasks ?? [];
+  const riskFlags = [
+    ...(state.verification?.riskFlags ?? []),
+    ...(state.eligibility?.riskFlags ?? []),
+  ];
+
+  return (
+    <aside aria-label={copy.userParticipationApiRegionLabel} style={apiBridgeStatusStyle}>
+      <div style={{ ...rowStyle, alignItems: "flex-start" }}>
+        <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+          <p style={labelStyle}>{copy.userParticipationApiEyebrow}</p>
+          <strong style={{ color: "#071426", fontSize: 18, lineHeight: 1.2 }}>
+            {copy.userParticipationApiTitle}
+          </strong>
+        </div>
+        <span style={userParticipationApiBadgeStyle(state.source)}>
+          {userParticipationApiSourceLabel(state.source, copy)}
+        </span>
+      </div>
+      <dl style={apiBridgeMetricGridStyle}>
+        <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+          <dt style={labelStyle}>{copy.status}</dt>
+          <dd style={{ color: "#071426", fontSize: 13, fontWeight: 800, margin: 0, overflowWrap: "anywhere" }}>
+            {userParticipationApiStatusLabel(state.status, copy)}
+          </dd>
+        </div>
+        {metadataRows.map(([label, value]) => (
+          <div key={label} style={{ display: "grid", gap: 3, minWidth: 0 }}>
+            <dt style={labelStyle}>{label}</dt>
+            <dd style={{ color: "#071426", fontSize: 13, fontWeight: 800, margin: 0, overflowWrap: "anywhere" }}>
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <div style={gridStyle}>
+        <article style={{ ...cardStyle, background: "#ffffff" }}>
+          <p style={labelStyle}>{copy.userParticipationApiMissingTasks}</p>
+          {renderChips(missingTasks, copy.noMissingTasks)}
+        </article>
+        <article style={{ ...cardStyle, background: "#ffffff" }}>
+          <p style={labelStyle}>{copy.riskFlags}</p>
+          {renderChips([...new Set(riskFlags)], copy.riskClear)}
+        </article>
+      </div>
+      <p style={{ color: state.diagnostics.length > 0 ? "#92400e" : "#475569", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0, overflowWrap: "anywhere" }}>
+        {copy.userParticipationApiDiagnostics}:{" "}
+        {userParticipationDiagnosticsText(state.diagnostics, locale, copy.userParticipationApiNoDiagnostics)}
+      </p>
+      {fallbackMessage ? (
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+          {fallbackMessage}
+        </p>
+      ) : null}
+      <p style={{ color: "#475569", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+        {copy.userParticipationApiLocalBoundary}: {getLocalizedText(state.boundary, locale)}
+      </p>
+    </aside>
+  );
+};
+
 const WorkspaceTaskList = ({
   copy,
   emptyLabel,
@@ -1307,6 +1555,7 @@ export const UserAppPanel = ({
   const [leaderboardMode, setLeaderboardMode] = useState<LeaderboardModeId>("total_points");
   const [latestTaskActions, setLatestTaskActions] = useState<Record<string, LocalTaskActionResult>>({});
   const [activeLocalSection, setActiveLocalSection] = useState<UserAppLocalSection>("campaigns");
+  const userParticipationApiRequestSeq = useRef(0);
   const localSectionRefs = {
     campaigns: useRef<HTMLElement>(null),
     eligibility: useRef<HTMLElement>(null),
@@ -1343,6 +1592,13 @@ export const UserAppPanel = ({
   const campaignFeed = campaignDiscovery.items;
   const campaignFeedKey = campaignFeed.map((item) => item.id).join("|");
   const apiBridgeBaseUrl = campaignDiscoveryApiBaseUrl();
+  const userParticipationApiRequest = useMemo<UserParticipationReviewRequest>(() => ({
+    accountType: participant.accountType,
+    campaignId: campaign.id,
+    taskId: campaign.tasks[0]?.id ?? "unknown-task",
+    walletAddress: participant.walletAddress,
+    walletSource: participant.walletSource,
+  }), [campaign.id, participant.accountType, participant.walletAddress, participant.walletSource, campaign.tasks]);
   const initialApiBridgeState = useMemo<CampaignDiscoveryApiBridgeState<CampaignDiscoveryItem>>(() => {
     if (apiBridgeBaseUrl?.trim()) {
       return {
@@ -1363,6 +1619,15 @@ export const UserAppPanel = ({
   }, [apiBridgeBaseUrl, campaignFeedKey]);
   const [apiBridgeState, setApiBridgeState] =
     useState<CampaignDiscoveryApiBridgeState<CampaignDiscoveryItem>>(initialApiBridgeState);
+  const initialUserParticipationApiState = useMemo<UserParticipationApiBridgeState>(() => {
+    if (apiBridgeBaseUrl?.trim()) {
+      return createUserParticipationApiLoadingState(userParticipationApiRequest);
+    }
+
+    return createUserParticipationSeededFallbackState(userParticipationApiRequest);
+  }, [apiBridgeBaseUrl, userParticipationApiRequest]);
+  const [userParticipationApiState, setUserParticipationApiState] =
+    useState<UserParticipationReviewState>(initialUserParticipationApiState);
   const visibleCampaignFeed = apiBridgeState.source === "api" ? apiBridgeState.campaigns : campaignFeed;
   const appHubCampaign = campaignDiscovery.details[0]?.item ?? campaignFeed[0];
   const diagnosticMetrics: Array<[string, string, WalletDiagnosticState]> = [
@@ -1465,6 +1730,7 @@ export const UserAppPanel = ({
     let cancelled = false;
 
     setApiBridgeState(initialApiBridgeState);
+    setUserParticipationApiState(initialUserParticipationApiState);
 
     if (!apiBridgeBaseUrl?.trim()) {
       return () => {
@@ -1487,7 +1753,7 @@ export const UserAppPanel = ({
     return () => {
       cancelled = true;
     };
-  }, [apiBridgeBaseUrl, campaignFeedKey, initialApiBridgeState]);
+  }, [apiBridgeBaseUrl, campaignFeedKey, initialApiBridgeState, initialUserParticipationApiState]);
 
   const localNavItems = userAppLocalSectionOrder.map((id) => {
     const labels: Record<UserAppLocalSection, string> = {
@@ -1533,6 +1799,38 @@ export const UserAppPanel = ({
     }));
   };
 
+  const runUserParticipationApiReview = (taskId: string) => {
+    const request: UserParticipationReviewRequest = {
+      accountType: participant.accountType,
+      campaignId: campaign.id,
+      taskId,
+      walletAddress: participant.walletAddress,
+      walletSource: participant.walletSource,
+    };
+
+    if (!apiBridgeBaseUrl?.trim()) {
+      setUserParticipationApiState(createUserParticipationSeededFallbackState(request));
+      return;
+    }
+
+    setUserParticipationApiState(createUserParticipationApiLoadingState(request));
+
+    const requestSeq = userParticipationApiRequestSeq.current + 1;
+    userParticipationApiRequestSeq.current = requestSeq;
+
+    void submitUserParticipationApiReview({
+      config: {
+        baseUrl: apiBridgeBaseUrl,
+        tracePrefix: "user-app-participation-review",
+      },
+      request,
+    }).then((state) => {
+      if (userParticipationApiRequestSeq.current === requestSeq) {
+        setUserParticipationApiState(state);
+      }
+    });
+  };
+
   return (
     <div style={{ display: "grid", gap: 18, minWidth: 0 }}>
       <section style={panelStyle}>
@@ -1549,6 +1847,9 @@ export const UserAppPanel = ({
           </button>
         </div>
         <CampaignDiscoveryApiStatusPanel copy={copy} locale={locale} state={apiBridgeState} />
+        {userParticipationApiState ? (
+          <UserParticipationApiStatusPanel copy={copy} locale={locale} state={userParticipationApiState} />
+        ) : null}
         <div style={feedGridStyle}>
           {visibleCampaignFeed.map((item) => (
             <CampaignFeedCard copy={copy} item={item} key={item.id} locale={locale} />
@@ -2663,6 +2964,15 @@ export const UserAppPanel = ({
             const actionProofType: TaskVerificationProofType | undefined =
               actionKind === "submit_proof" ? "screenshot" : undefined;
             const latestAction = latestTaskActions[task.id];
+            const taskApiState =
+              userParticipationApiState?.request.taskId === task.id ? userParticipationApiState : undefined;
+            const apiReviewLoading = taskApiState?.loading ?? false;
+            const apiReviewEnabled = Boolean(apiBridgeBaseUrl?.trim()) && Boolean(action?.enabled) && !apiReviewLoading;
+            const apiReviewLabel = apiReviewLoading
+              ? copy.userParticipationApiLoadingAction
+              : apiBridgeBaseUrl?.trim()
+                ? copy.userParticipationApiReviewAction
+                : copy.userParticipationApiNotConfiguredAction;
 
             return (
               <li key={task.id} style={listItemStyle}>
@@ -2686,6 +2996,14 @@ export const UserAppPanel = ({
                     type="button"
                   >
                     {taskActionLabel(actionKind, copy)}
+                  </button>
+                  <button
+                    disabled={!apiReviewEnabled}
+                    onClick={() => runUserParticipationApiReview(task.id)}
+                    style={apiReviewEnabled ? compactActionButtonStyle : disabledActionButtonStyle}
+                    type="button"
+                  >
+                    {apiReviewLabel}
                   </button>
                   <span style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>
                     {copy.localOnlyActionBoundary}
