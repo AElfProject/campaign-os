@@ -174,10 +174,12 @@ const backendReadinessBadgeState = (
 const listOrFallback = (items: readonly string[], fallback: string) => (items.length > 0 ? items : [fallback]);
 
 const sanitizePanelDiagnosticText = (value: unknown) =>
-  sanitizeBackendRuntimeReadinessApiText(value).replace(
-    /\b(redacted bearer credential|redacted credential|password=redacted)\s*=\s*[^&\s"'<>]+/gi,
-    "$1",
-  );
+  sanitizeBackendRuntimeReadinessApiText(value)
+    .replace(
+      /\b(redacted bearer credential|redacted credential|password=redacted)\s*=\s*[^&\s"'<>]+/gi,
+      "$1",
+    )
+    .replace(/\/Users\/[^"'\s<>]+/gi, "redacted local path");
 
 export function BackendRuntimeReadinessPanel({
   apiConfigured,

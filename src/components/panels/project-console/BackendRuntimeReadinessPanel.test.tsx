@@ -124,7 +124,7 @@ describe("BackendRuntimeReadinessPanel", () => {
         {
           code: "API_REQUEST_FAILED",
           message: {
-            "en-US": "request failed with bearer token=secret-token and /Users/aelf/workspace/campaign-os-kitty/private.md",
+            "en-US": "request failed with bearer abc123 and /Users/aelf/workspace/private-runtime/private.md",
           },
           severity: "error",
         },
@@ -135,10 +135,10 @@ describe("BackendRuntimeReadinessPanel", () => {
 
     renderPanel(state);
 
-    expect(screen.queryByText(/secret-token/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/campaign-os-kitty/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/abc123/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/private-runtime/)).not.toBeInTheDocument();
     expect(screen.getByText(/redacted bearer credential/)).toBeInTheDocument();
-    expect(screen.getByText(/redacted private path/)).toBeInTheDocument();
+    expect(screen.getByText(/redacted local path/)).toBeInTheDocument();
   });
 
   it("calls review handler from the review action", () => {
