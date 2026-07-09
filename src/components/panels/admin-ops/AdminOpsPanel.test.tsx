@@ -964,6 +964,45 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("Final reward distribution is handled by the campaign project.");
     expect(screen.getByText("Risk flags and eligibility results are review inputs; Campaign OS does not distribute rewards.")).toBeInTheDocument();
     expectVisibleText("Export batch: export-awaken-sprint-preview");
+    const repositoryExportProjectionReview = screen.getByLabelText("Repository export projection review");
+    expect(
+      within(repositoryExportProjectionReview).getByRole("heading", {
+        name: "Repository export projection review",
+      }),
+    ).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getByText(/Repository-created local projection/)).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getByText("Repository export batch")).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getAllByText("campaign-db-export-camp-awaken-sprint").length).toBeGreaterThan(0);
+    expect(within(repositoryExportProjectionReview).getByText("campaign-db / campaign-db-deterministic-adapter")).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getByText("Repository CSV column coverage")).toBeInTheDocument();
+    for (const column of EXPORT_CSV_COLUMNS) {
+      expect(within(repositoryExportProjectionReview).getAllByText(column).length).toBeGreaterThan(0);
+    }
+    expect(within(repositoryExportProjectionReview).getByText("Repository preview rows")).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getAllByText("3E9...7cD").length).toBeGreaterThan(0);
+    expect(within(repositoryExportProjectionReview).getAllByText("PORTKEY_EOA_EXTENSION").length).toBeGreaterThan(0);
+    expect(within(repositoryExportProjectionReview).getAllByText("en-US").length).toBeGreaterThan(0);
+    expect(within(repositoryExportProjectionReview).getAllByText("review required").length).toBeGreaterThan(0);
+    expect(within(repositoryExportProjectionReview).getByText("bridge_ebridge")).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getAllByText("referral_velocity_review").length).toBeGreaterThan(0);
+    expect(within(repositoryExportProjectionReview).getByText(/bridge_ebridge: pending \/ 0/)).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getByText(/social_follow: failed \/ 0/)).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getAllByText(/demo-task-bridge-3E9/).length).toBeGreaterThan(0);
+    expect(within(repositoryExportProjectionReview).getAllByText(/demo-task-social-3E9/).length).toBeGreaterThan(0);
+    expect(within(repositoryExportProjectionReview).getByText("Repository local review only")).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getByText("No downloadable file")).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getByText("No storage write or object key")).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getByText("No signed URL")).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getByText("No contract root or contract write")).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getByText("No wallet signing")).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getByText("No queue or scheduler execution")).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getByText("No reward custody")).toBeInTheDocument();
+    expect(within(repositoryExportProjectionReview).getByText("No reward distribution")).toBeInTheDocument();
+    expect(
+      within(repositoryExportProjectionReview).queryByRole("button", {
+        name: /export|download|signed URL|storage|contract|wallet|queue|scheduler|custody|reward|distribute/i,
+      }),
+    ).not.toBeInTheDocument();
     const fulfillmentReadiness = screen.getByLabelText("Export fulfillment readiness");
     expect(
       within(fulfillmentReadiness).getByRole("heading", { name: "Export fulfillment readiness" }),
