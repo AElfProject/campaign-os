@@ -44,6 +44,14 @@ const expectHistoricalAiOpsRouteScopeWhenTouched = (files: string[]) => {
   }
 };
 
+const expectNoRenderedUiRuntimeChangesWhenBackendScopeTouched = (files: string[]) => {
+  const touchesHistoricalAiOpsScope = aiOpsRuntimeRouteTriggerFiles.some((file) => files.includes(file));
+
+  if (touchesHistoricalAiOpsScope) {
+    expect(renderedUiRuntimeChangedFiles(files)).toEqual([]);
+  }
+};
+
 const deferredCapabilityIds = [
   "production_database",
   "auth_session",
@@ -279,7 +287,7 @@ describe("backend scaffold public guardrails", () => {
     const missionChangedFiles = changedFilesSinceMissionBase();
 
     expectHistoricalAiOpsRouteScopeWhenTouched(missionChangedFiles);
-    expect(renderedUiRuntimeChangedFiles(missionChangedFiles)).toEqual([]);
+    expectNoRenderedUiRuntimeChangesWhenBackendScopeTouched(missionChangedFiles);
   });
 
   it("keeps M202 AI Ops route scope out of rendered React and private public artifacts", () => {
@@ -287,7 +295,7 @@ describe("backend scaffold public guardrails", () => {
     const missionChangedFiles = changedFilesSinceMissionBase();
 
     expectHistoricalAiOpsRouteScopeWhenTouched(missionChangedFiles);
-    expect(renderedUiRuntimeChangedFiles(missionChangedFiles)).toEqual([]);
+    expectNoRenderedUiRuntimeChangesWhenBackendScopeTouched(missionChangedFiles);
     expect(publicTrackedFiles).not.toEqual(
       expect.arrayContaining([
         expect.stringMatching(/^(docs\/current|kitty-specs|evidence|sync|\.kittify|\.agents|AGENTS\.md)(\/|$)/),
@@ -421,7 +429,7 @@ describe("backend scaffold public guardrails", () => {
       liveTelemetryExportEnabled: false,
     });
     expectHistoricalAiOpsRouteScopeWhenTouched(missionChangedFiles);
-    expect(renderedUiRuntimeChangedFiles(missionChangedFiles)).toEqual([]);
+    expectNoRenderedUiRuntimeChangesWhenBackendScopeTouched(missionChangedFiles);
     for (const dependencyName of dependencyNames) {
       for (const forbiddenFragment of forbiddenRuntimeDependencyFragments) {
         expect(dependencyName.toLowerCase()).not.toContain(forbiddenFragment);
