@@ -430,6 +430,35 @@ const enrichWalletSessionWithProofMetadata = (
   };
 };
 
+const normalizeWalletSessionRepositoryLastSeenAt = (
+  request: CreateWalletSessionRequest,
+  payload: NormalizedWalletSession,
+) => {
+  const candidate = request.proofEvaluatedAt ?? payload.lastSeenAt ?? payload.connectedAt;
+
+  if (!candidate) {
+    return undefined;
+  }
+
+  const timestamp = Date.parse(candidate);
+
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : payload.lastSeenAt;
+};
+
+const walletSessionRepositoryPayload = (
+  request: CreateWalletSessionRequest,
+  payload: NormalizedWalletSession,
+): NormalizedWalletSession => {
+  const lastSeenAt = normalizeWalletSessionRepositoryLastSeenAt(request, payload);
+
+  return lastSeenAt
+    ? {
+      ...payload,
+      lastSeenAt,
+    }
+    : payload;
+};
+
 const createCampaignDbTaskSummary = (task: CampaignDbTaskDraft) => ({
   points: task.points,
   required: task.required,
@@ -1273,17 +1302,28 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
   },
   "agent.wallet.action.review": (context) =>
     unwrapLocalResult(context.service.requestAgentWalletAction(agentWalletActionRequest(context)), context),
-  "wallet.session.create": (context) => {
+  "wallet.session.create": async (context) => {
     const request = bodyRecord(context.body) as CreateWalletSessionRequest;
     const result = context.service.createWalletSession(request);
+    if (!result.ok) {
+      return unwrapLocalResult(result, context);
+    }
 
-    return persistLocalResult(
-      result.ok
-        ? {
-          ...result,
-          payload: enrichWalletSessionWithProofMetadata(request, result.payload),
-        }
-        : result,
+    const enrichedResult = {
+      ...result,
+      payload: walletSessionRepositoryPayload(
+        request,
+        enrichWalletSessionWithProofMetadata(request, result.payload),
+      ),
+    };
+
+    const repositoryResult = await context.walletSessionRepository.upsertSession(
+      enrichedResult.payload,
+      { traceId: context.traceId },
+    );
+
+    const response = await persistLocalResult(
+      enrichedResult,
       context,
       (payload) => ({
         accountType: payload.accountType,
@@ -1304,6 +1344,11 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         walletSource: payload.walletSource,
       }),
     );
+
+    return {
+      ...response,
+      walletSessionRepository: repositoryResult.metadata,
+    };
   },
   "campaigns.list": async (context) => {
     const response = unwrapLocalResult(

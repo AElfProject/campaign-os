@@ -6,6 +6,7 @@ import { campaignDetail } from "../domain/fixtures";
 import { createCampaignOsApiRuntime, type ApiRuntimeResponse } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
 import type { CampaignDbRepository } from "./campaignDbRepository";
+import { createWalletSessionRepository } from "./walletSessionRepository";
 import {
   createCampaignOsJsonRepository,
   createCampaignOsMemoryRepository,
@@ -82,6 +83,17 @@ interface WalletSessionPayload {
   verificationStatus?: string;
   walletSource: string;
   walletTypeVerified?: boolean;
+}
+
+interface WalletSessionRepositoryMetadataPayload {
+  adapterId: string;
+  created: boolean;
+  recordId: string;
+  repositoryId: "wallet-session-repository-runtime";
+  sessionId: string;
+  storeId: "wallet-sessions";
+  upserted: true;
+  walletAddress: string;
 }
 
 interface CampaignDraftPayload {
@@ -3716,7 +3728,10 @@ describe("Campaign OS API runtime", () => {
       sessionId: "sess-eoa-app-001",
       walletSource: "PORTKEY_EOA_APP",
     });
-    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & { persistence: unknown }>(
+    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & {
+      persistence: unknown;
+      walletSessionRepository: WalletSessionRepositoryMetadataPayload;
+    }>(
       persistedWalletSession,
     )).toMatchObject({
       payload: {
@@ -3735,6 +3750,16 @@ describe("Campaign OS API runtime", () => {
       persistence: {
         kind: "wallet_session",
         recordId: expect.any(String),
+      },
+      walletSessionRepository: {
+        adapterId: "wallet-session-deterministic-adapter",
+        created: true,
+        recordId: "wallet-session:sess-eoa-app-001",
+        repositoryId: "wallet-session-repository-runtime",
+        sessionId: "sess-eoa-app-001",
+        storeId: "wallet-sessions",
+        upserted: true,
+        walletAddress: "8A2...1eF",
       },
     });
     expect(expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload>>(campaignDraft).payload).toMatchObject({
@@ -3843,6 +3868,173 @@ describe("Campaign OS API runtime", () => {
         proofTrustLevel: "verified_local",
       },
     });
+  });
+
+  it("stores wallet sessions in the dedicated repository with upsert semantics", async () => {
+    const walletSessionRepository = createWalletSessionRepository();
+    const runtimeWithWalletSessionRepository = createCampaignOsApiRuntime({
+      walletSessionRepository,
+    });
+
+    const first = await runtimeWithWalletSessionRepository.handle({
+      method: "POST",
+      path: "/api/wallet/session",
+      body: JSON.stringify({
+        adapterName: "PortkeyDiscoverWallet",
+        fixtureId: "sess-eoa-app-001",
+        proofEvaluatedAt: "2026-07-07T04:00:00.000Z",
+        proofIssuedAt: "2026-07-07T03:59:00.000Z",
+        signature: "raw-route-signature",
+      }),
+    });
+    const second = await runtimeWithWalletSessionRepository.handle({
+      method: "POST",
+      path: "/api/wallet/session",
+      body: JSON.stringify({
+        adapterName: "PortkeyDiscoverWallet",
+        fixtureId: "sess-eoa-app-001",
+        proofEvaluatedAt: "2026-07-07T04:05:00.000Z",
+        proofIssuedAt: "2026-07-07T04:04:00.000Z",
+        signature: "raw-route-signature-refresh",
+      }),
+    });
+    const health = await walletSessionRepository.health();
+    const record = await walletSessionRepository.getBySessionId("sess-eoa-app-001");
+
+    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & {
+      walletSessionRepository: WalletSessionRepositoryMetadataPayload;
+    }>(first).walletSessionRepository).toMatchObject({
+      created: true,
+      recordId: "wallet-session:sess-eoa-app-001",
+      repositoryId: "wallet-session-repository-runtime",
+      sessionId: "sess-eoa-app-001",
+      storeId: "wallet-sessions",
+      upserted: true,
+      walletAddress: "8A2...1eF",
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & {
+      walletSessionRepository: WalletSessionRepositoryMetadataPayload;
+    }>(second).walletSessionRepository).toMatchObject({
+      created: false,
+      recordId: "wallet-session:sess-eoa-app-001",
+      sessionId: "sess-eoa-app-001",
+    });
+    expect(health).toMatchObject({
+      recordCount: 1,
+      selectedMode: "deterministic_test",
+      status: "ready",
+    });
+    expect(record).toMatchObject({
+      connectedAt: "2026-06-21T08:00:00.000Z",
+      lastSeenAt: "2026-07-07T04:05:00.000Z",
+      productionReadiness: {
+        productionReady: false,
+      },
+      proof: {
+        liveVerificationExecuted: false,
+        status: "verified",
+      },
+      sessionId: "sess-eoa-app-001",
+      walletAddress: "8A2...1eF",
+      walletSource: "PORTKEY_EOA_APP",
+    });
+    expectNoForbiddenFragments(record, [
+      "raw-route-signature",
+      "raw-route-signature-refresh",
+    ]);
+  });
+
+  it("stores unsupported wallet sessions as sanitized repository review records", async () => {
+    const walletSessionRepository = createWalletSessionRepository();
+    const runtimeWithWalletSessionRepository = createCampaignOsApiRuntime({
+      walletSessionRepository,
+    });
+    const unsupported = await runtimeWithWalletSessionRepository.handle({
+      method: "POST",
+      path: "/api/wallet/session",
+      body: JSON.stringify({
+        address: "2F4...9aB",
+        adapterName: "UnsupportedWallet",
+        chainId: "AELF",
+        network: "mainnet",
+        nonce: "nonce-unsupported-wallet",
+        proofEvaluatedAt: "2026-07-07T04:00:00.000Z",
+        proofIssuedAt: "2026-07-07T03:59:00.000Z",
+        signature: "raw-unsupported-signature",
+      }),
+    });
+
+    const payload = expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & {
+      walletSessionRepository: WalletSessionRepositoryMetadataPayload;
+    }>(unsupported);
+    const records = await walletSessionRepository.list({ walletAddress: payload.walletSessionRepository.walletAddress });
+
+    expect(payload.walletSessionRepository).toMatchObject({
+      recordId: expect.stringContaining("wallet-session:"),
+      repositoryId: "wallet-session-repository-runtime",
+      upserted: true,
+    });
+    expect(records).toEqual([
+      expect.objectContaining({
+        productionReadiness: expect.objectContaining({
+          productionReady: false,
+        }),
+        proof: expect.objectContaining({
+          liveVerificationExecuted: false,
+          status: "blocked",
+          trustLevel: "blocked",
+        }),
+        verificationStatus: "unsupported_wallet",
+        walletTypeVerified: false,
+      }),
+    ]);
+    expectNoForbiddenFragments(records, ["nonce-unsupported-wallet", "raw-unsupported-signature"]);
+  });
+
+  it("reloads dedicated wallet session repository records in durable-test mode", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-wallet-session-runtime-"));
+
+    try {
+      const filePath = join(tempDir, "wallet-sessions.json");
+      const firstRuntime = createCampaignOsApiRuntime({
+        walletSessionRepositoryOptions: {
+          durableStoreFilePath: filePath,
+          mode: "durable_test",
+        },
+      });
+
+      await firstRuntime.handle({
+        method: "POST",
+        path: "/api/wallet/session",
+        body: JSON.stringify({
+          adapterName: "PortkeyDiscoverWallet",
+          fixtureId: "sess-eoa-app-001",
+          signature: "durable-raw-signature",
+        }),
+      });
+
+      const reopenedRepository = createWalletSessionRepository({
+        durableStoreFilePath: filePath,
+        mode: "durable_test",
+      });
+
+      await expect(reopenedRepository.getBySessionId("sess-eoa-app-001")).resolves.toMatchObject({
+        recordId: "wallet-session:sess-eoa-app-001",
+        sessionId: "sess-eoa-app-001",
+        walletAddress: "8A2...1eF",
+      });
+      await expect(reopenedRepository.health()).resolves.toMatchObject({
+        recordCount: 1,
+        selectedMode: "durable_test",
+        status: "ready",
+      });
+      expectNoForbiddenFragments(
+        await reopenedRepository.getBySessionId("sess-eoa-app-001"),
+        ["durable-raw-signature"],
+      );
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
   });
 
   it("persists write route records across local JSON runtime recreation", async () => {
