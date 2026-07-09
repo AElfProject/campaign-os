@@ -771,8 +771,14 @@ const normalizePreview = (payload: unknown): ExportArtifactDeliveryPreviewResult
     return undefined;
   }
 
+  const artifact = normalizeArtifact(payload.artifact);
+  const artifactRegistry = normalizeRegistry(payload.artifactRegistry);
   const campaignId = optionalText(payload.campaignId);
-  const exportBatchId = optionalText(payload.exportBatchId) ?? optionalText(payload.batchId);
+  const exportBatchId =
+    optionalText(payload.exportBatchId) ??
+    optionalText(payload.batchId) ??
+    artifact?.batchId ??
+    artifactRegistry?.batchId;
   const format = optionalText(payload.format);
   const readyRows = numberValue(payload.readyRows);
   const reviewRequiredRows = numberValue(payload.reviewRequiredRows);
@@ -791,8 +797,6 @@ const normalizePreview = (payload: unknown): ExportArtifactDeliveryPreviewResult
     return undefined;
   }
 
-  const artifact = normalizeArtifact(payload.artifact);
-  const artifactRegistry = normalizeRegistry(payload.artifactRegistry);
   const contractRootMode = optionalText(payload.contractRootMode);
   const disclaimer = optionalText(payload.disclaimer);
 

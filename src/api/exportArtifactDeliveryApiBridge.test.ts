@@ -406,6 +406,49 @@ describe("export artifact delivery API bridge", () => {
     );
   });
 
+  it("accepts the current seeded runtime preview shape when the batch id only exists on artifact metadata", async () => {
+    const { exportBatchId: _unused, ...seededRuntimePreviewPayload } = previewPayload;
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: seededRuntimePreviewPayload,
+        },
+        ok: true,
+        traceId: "trace-export-preview-envelope",
+      }, { traceId: "trace-export-preview-header" }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: auditListPayload,
+        },
+        ok: true,
+        traceId: "trace-export-audit-list-envelope",
+      }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: auditDetailPayload,
+        },
+        ok: true,
+        traceId: "trace-export-audit-detail-envelope",
+      })) as unknown as ExportArtifactDeliveryApiFetch;
+
+    const state = await submitExportArtifactDeliveryApiReview({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl,
+      request,
+    });
+
+    expect(state).toMatchObject({
+      artifactId: "export-artifact-local-camp-awaken-sprint",
+      diagnostics: [],
+      preview: {
+        exportBatchId: "export-awaken-sprint-preview",
+      },
+      source: "api_runtime",
+      status: "delivered",
+    });
+  });
+
   it("keeps seeded fallback when the preview route fails", async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(response({
       error: {
