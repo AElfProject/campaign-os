@@ -12,6 +12,7 @@ import {
   createParticipantWorkspaceReadModel,
   createParticipationReadModel,
   createPortfolioCampaignHistoryReadModel,
+  createReferralRuntimeReviewModel,
   createUserWinnersExportStatusReadModel,
   createWalletConnectionDiagnostics,
   deriveTaskVerificationAction,
@@ -1199,6 +1200,7 @@ export const UserAppPanel = ({
   const copy = userAppCopy[locale];
   const participation = createParticipationReadModel(campaign, participant);
   const participantWorkspace = createParticipantWorkspaceReadModel(campaign, participant);
+  const referralRuntimeReview = createReferralRuntimeReviewModel({ campaign, participant }, locale);
   const winnersExportStatus = createUserWinnersExportStatusReadModel(campaign, participant);
   const eligibilityChecker = createEligibilityCheckerReadModel(campaign, checkedEligibilityAddress);
   const eligibilityResult = eligibilityChecker.result;
@@ -1863,6 +1865,64 @@ export const UserAppPanel = ({
             </p>
             <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
               {getLocalizedText(participantWorkspace.referral.boundary, locale)}
+            </p>
+          </article>
+
+          <article aria-label={referralRuntimeReview.ariaLabel} style={cardStyle}>
+            <div style={rowStyle}>
+              <div style={{ minWidth: 0 }}>
+                <p style={labelStyle}>{copy.referralRuntimeReview}</p>
+                <strong>{copy.referralRuntimeReview}</strong>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: "6px 0 0" }}>
+                  {copy.referralRuntimeReviewSubtitle}
+                </p>
+              </div>
+              <PublishStateBadge
+                label={referralRuntimeReview.participant.bindingStatus}
+                state={referralRuntimeReview.participant.bindingStatus === "risk_review" ? "warning" : "ready"}
+              />
+            </div>
+            <dl style={{ display: "grid", gap: 10, margin: 0 }}>
+              {[
+                [copy.referralBindingStatus, referralRuntimeReview.participant.bindingStatus],
+                [copy.walletAddress, referralRuntimeReview.participant.inviteeWalletAddress],
+                [copy.referrerAddress, referralRuntimeReview.participant.referrerAddress || "-"],
+                [copy.qualifiedAction, referralRuntimeReview.participant.qualifiedActionCompleted ? copy.ready : copy.pending],
+                [copy.invitedCount, String(referralRuntimeReview.participant.rawInvites)],
+                [copy.workspaceQualifiedInvitees, String(referralRuntimeReview.participant.qualifiedInvitees)],
+                [copy.referralPoints, String(referralRuntimeReview.participant.referralPoints)],
+                [copy.riskFlags, referralRuntimeReview.participant.riskFlags.join(", ") || copy.riskClear],
+              ].map(([label, value]) => (
+                <div key={label} style={rowStyle}>
+                  <dt style={{ color: "#64748b", fontSize: 13, fontWeight: 800 }}>{label}</dt>
+                  <dd style={{ color: "#071426", fontSize: 13, fontWeight: 700, margin: 0, overflowWrap: "anywhere" }}>
+                    {value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            <div style={gridStyle}>
+              <article style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={labelStyle}>{copy.eligibility}</p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {referralRuntimeReview.participant.eligibilityImpact}
+                </p>
+              </article>
+              <article style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={labelStyle}>{copy.exportBatch}</p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {referralRuntimeReview.participant.exportImpact}
+                </p>
+              </article>
+            </div>
+            <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+              {referralRuntimeReview.participant.antiFarmRule}
+            </p>
+            <p style={{ color: "#071426", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+              {copy.nextAction}: {referralRuntimeReview.participant.nextAction}
+            </p>
+            <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+              {referralRuntimeReview.boundary}
             </p>
           </article>
 
