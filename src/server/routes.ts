@@ -308,6 +308,32 @@ export const apiRuntimeRoutes = [
     summary: text("Inspect local export confirmation readiness.", "检查本地导出确认 readiness。"),
     supportMode: "local_seeded",
   }),
+  route({
+    apiGroup: "export",
+    boundary,
+    id: "campaigns.export.artifacts.list",
+    method: "GET",
+    path: "/api/campaigns/:campaignId/export-artifacts",
+    productionDependencies: dependenciesFor("export"),
+    readiness: "review_required",
+    riskLevel: "high",
+    serviceGroup: "export",
+    summary: text("List local export artifact audit records.", "列出本地导出 artifact 审计记录。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "export",
+    boundary,
+    id: "campaigns.export.artifacts.detail",
+    method: "GET",
+    path: "/api/campaigns/:campaignId/export-artifacts/:artifactId",
+    productionDependencies: dependenciesFor("export"),
+    readiness: "review_required",
+    riskLevel: "high",
+    serviceGroup: "export",
+    summary: text("Get a local export artifact audit record.", "获取本地导出 artifact 审计记录。"),
+    supportMode: "local_seeded",
+  }),
 ] as const satisfies readonly ApiRuntimeRouteContract[];
 
 export type ApiRuntimeRouteId = (typeof apiRuntimeRoutes)[number]["id"];

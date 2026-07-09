@@ -390,7 +390,7 @@ export const backendServiceBoundaries = [
     adapterGroups: ["object-storage-adapter", "contract-writer-adapter"],
     dataStores: ["export-artifact-store"],
     deploymentUnit: "api-runtime",
-    description: "Winner export, export readiness, artifact storage, and optional root publication boundary.",
+    description: "Winner export, export readiness, artifact audit read metadata, artifact storage, and optional root publication boundary.",
     domainArea: "export",
     futureRouteGroups: ["exports"],
     id: "export-service",
@@ -401,7 +401,12 @@ export const backendServiceBoundaries = [
       "Storage-backed exports and contract writes are disabled/deferred.",
       "Export preparation handoff requires the deferred queue runtime, idempotency store, dead-letter queue, and observability exporter before production.",
     ],
-    routeIds: ["campaigns.export.preview", "campaigns.export.readiness"],
+    routeIds: [
+      "campaigns.export.preview",
+      "campaigns.export.readiness",
+      "campaigns.export.artifacts.list",
+      "campaigns.export.artifacts.detail",
+    ],
     runtimeProfiles: productionProfiles,
   }),
   service({
