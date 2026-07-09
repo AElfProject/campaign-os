@@ -478,6 +478,194 @@ export type LocaleFallbackMap<T> = Record<"en-US", T> & Partial<Record<Supported
 export type LocalizedText = LocaleFallbackMap<string>;
 export type LocaleStatusMap = LocaleFallbackMap<LocaleStatus>;
 
+export type PublishDeliveryReviewSource =
+  | "api_runtime"
+  | "seeded_fallback"
+  | "error_fallback"
+  | "loading";
+export type PublishDeliveryReviewStatus =
+  | "ready"
+  | "blocked"
+  | "warning"
+  | "fallback"
+  | "loading"
+  | "error";
+export type PublishDeliveryReviewLaunchState = "ready" | "warning" | "blocked" | "local_only";
+
+export interface PublishDeliveryReviewDiagnostic {
+  code: string;
+  severity: "info" | "warning" | "error";
+  message: LocalizedText;
+  source: string;
+}
+
+export interface PublishDeliveryReviewSummary {
+  blockerCount: number;
+  warningCount: number;
+  passedCount: number;
+  checklistCoveredCount: number;
+  checklistTotalCount: number;
+  launchBundleCount: number;
+  handoffReviewRequiredCount: number;
+  repositoryEvidenceCount: number;
+  exportEvidenceHashCoverage: number;
+  productionBlockerCount: number;
+  topNextAction: LocalizedText;
+}
+
+export interface PublishDeliveryReviewItem {
+  id: string;
+  ownerRole: OwnerRole;
+  status: "passed" | "warning" | "blocker" | "review_required" | "local_only";
+  title: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface PublishDeliveryReviewApprovalRoute {
+  ownerRole: OwnerRole;
+  status: "ready" | "warning" | "blocker";
+  gateIds: string[];
+  label: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface PublishDeliveryReviewGateSection {
+  ready: boolean;
+  launchState: "ready" | "warning" | "blocked";
+  counts: {
+    blockers: number;
+    warnings: number;
+    passed: number;
+    total: number;
+  };
+  topBlockers: PublishDeliveryReviewItem[];
+  topWarnings: PublishDeliveryReviewItem[];
+  approvalRoutes: PublishDeliveryReviewApprovalRoute[];
+  boundary: LocalizedText;
+}
+
+export interface PublishDeliveryReviewChecklistGroupCoverage {
+  groupId: DeliveryChecklistGroupId;
+  ownerRole: OwnerRole;
+  totalItems: number;
+  passedItems: number;
+  warningItems: number;
+  blockedItems: number;
+  reviewRequiredItems: number;
+  topNextAction: LocalizedText;
+}
+
+export interface PublishDeliveryReviewChecklistSection {
+  groups: PublishDeliveryReviewChecklistGroupCoverage[];
+  totalItems: number;
+  coveredItems: number;
+  blockedItems: number;
+  needsReviewItems: number;
+  deferredItems: number;
+  topNextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
+export interface PublishDeliveryReviewLaunchBundleSummary {
+  id: string;
+  stage: "pre_launch" | "launch" | "post_launch";
+  status: string;
+  ownerRole: string;
+  title: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface PublishDeliveryReviewLaunchHandoffSummary {
+  id: ApiSkillId;
+  readiness: ApiSkillContractReadiness;
+  reviewState: string;
+  riskLevel: string;
+  title: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface PublishDeliveryReviewLaunchBundleSection {
+  summary: {
+    totalBundles: number;
+    readyCount: number;
+    reviewRequiredCount: number;
+    blockedCount: number;
+    localOnlyCount: number;
+    launchBlockingCount: number;
+    handoffRequiredCount: number;
+  };
+  bundles: PublishDeliveryReviewLaunchBundleSummary[];
+  handoffs: PublishDeliveryReviewLaunchHandoffSummary[];
+  boundary: LocalizedText;
+  nextAction: LocalizedText;
+}
+
+export interface PublishDeliveryReviewNoLiveSideEffects {
+  liveProviderExecuted: false;
+  liveContractExecuted: false;
+  liveRewardExecuted: false;
+  liveStorageExecuted: false;
+}
+
+export interface PublishDeliveryReviewRepositoryEvidenceSection {
+  available: boolean;
+  repositoryId?: string;
+  storeId?: string;
+  createdViaRepository?: boolean;
+  taskEvidenceCount: number;
+  completedEvidenceCount: number;
+  manualReviewEvidenceCount: number;
+  failedEvidenceCount: number;
+  evidenceHashCoverage: number;
+  exportRowsWithEvidence: number;
+  boundary: LocalizedText;
+  noLiveSideEffects: PublishDeliveryReviewNoLiveSideEffects;
+}
+
+export interface PublishDeliveryReviewBackendBlocker {
+  code: string;
+  field: string;
+  message: string;
+  severity: "error" | "warning" | "info";
+}
+
+export interface PublishDeliveryReviewBackendRuntimeSection {
+  productionReady: false;
+  status: "ready" | "blocked" | "scaffold";
+  profileId: string;
+  productionDependencyBlockers: PublishDeliveryReviewBackendBlocker[];
+  noLiveSideEffects: Record<string, false>;
+  tracePolicy: {
+    traceHeaderName: "x-campaign-os-trace-id";
+    successEnvelopeTraceId: true;
+    failureEnvelopeTraceId: true;
+  };
+  routeCoverage: {
+    routeCount: number;
+    reviewRequiredCount: number;
+    readyCount: number;
+    blockedCount: number;
+  };
+}
+
+export interface PublishDeliveryReview {
+  campaignId: string;
+  source: PublishDeliveryReviewSource;
+  status: PublishDeliveryReviewStatus;
+  launchState: PublishDeliveryReviewLaunchState;
+  ready: boolean;
+  summary: PublishDeliveryReviewSummary;
+  publishGate: PublishDeliveryReviewGateSection;
+  deliveryChecklist: PublishDeliveryReviewChecklistSection;
+  launchBundles: PublishDeliveryReviewLaunchBundleSection;
+  repositoryEvidence: PublishDeliveryReviewRepositoryEvidenceSection;
+  backendRuntime: PublishDeliveryReviewBackendRuntimeSection;
+  diagnostics: PublishDeliveryReviewDiagnostic[];
+  boundary: LocalizedText;
+  traceId?: string;
+  lastReviewedAt: string;
+}
+
 export type ExternalServiceId =
   | "wallet-connector"
   | "wallet-signing"

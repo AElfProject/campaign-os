@@ -169,6 +169,22 @@ export const apiRuntimeRoutes = [
   }),
   route({
     apiGroup: "campaign_discovery",
+    boundary: text(
+      "Local front-end/back-end publish delivery review bridge. No live API, production publish, provider call, contract write, storage write, or reward execution is performed.",
+      "本地前后端 publish delivery review bridge。不会执行真实发布、provider 调用、合约写入、storage 写入或奖励执行。",
+    ),
+    id: "campaigns.publish.delivery.review",
+    method: "GET",
+    path: "/api/campaigns/:campaignId/publish-delivery-review",
+    productionDependencies: dependenciesFor("campaign"),
+    readiness: "review_required",
+    riskLevel: "medium",
+    serviceGroup: "campaign",
+    summary: text("Inspect the local publish and delivery joint review payload.", "检查本地发布与交付联合 review payload。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "campaign_discovery",
     boundary,
     id: "campaigns.companion.contract.readiness",
     method: "GET",

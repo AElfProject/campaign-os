@@ -115,6 +115,7 @@ describe("backend service topology", () => {
         "campaigns.lifecycle",
         "campaigns.launch.readiness",
         "campaigns.delivery.readiness",
+        "campaigns.publish.delivery.review",
         "campaigns.companion.contract.readiness",
         "campaigns.contract.transparency",
       ]),
