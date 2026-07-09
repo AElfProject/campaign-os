@@ -53,10 +53,24 @@ export interface RepositoryExportProjectionPreviewRow {
   referrerAddress: string;
   riskFlags: readonly string[];
   rowStatus: ExportRowStatus;
+  taskEvidence: readonly RepositoryExportProjectionTaskEvidence[];
   taskRecordSummary: readonly string[];
   totalPoints: number;
   walletAddress: string;
   walletSource: WalletSource;
+}
+
+export interface RepositoryExportProjectionTaskEvidence {
+  evidenceHash?: string;
+  evidenceId?: string;
+  evidenceRef?: string;
+  liveContractExecuted: false;
+  liveProviderExecuted: false;
+  liveRewardExecuted: false;
+  liveStorageExecuted: false;
+  status: CampaignDbExportTaskRecord["status"];
+  taskId: string;
+  templateCode: string;
 }
 
 export interface RepositoryExportProjectionSafety {
@@ -251,7 +265,24 @@ const createColumnCoverage = (
 };
 
 const taskRecordSummary = (record: CampaignDbExportTaskRecord) =>
-  `${record.templateCode}: ${record.status} / ${record.pointsAwarded}`;
+  [
+    `${record.templateCode}: ${record.status} / ${record.pointsAwarded}`,
+    record.evidenceId ? `evidence=${record.evidenceId}` : undefined,
+    record.evidenceHash ? `hash=${record.evidenceHash}` : undefined,
+  ].filter(Boolean).join(" / ");
+
+const taskEvidence = (record: CampaignDbExportTaskRecord): RepositoryExportProjectionTaskEvidence => ({
+  ...(record.evidenceHash ? { evidenceHash: record.evidenceHash } : {}),
+  ...(record.evidenceId ? { evidenceId: record.evidenceId } : {}),
+  ...(record.evidenceRef ? { evidenceRef: record.evidenceRef } : {}),
+  liveContractExecuted: record.liveContractExecuted ?? false,
+  liveProviderExecuted: record.liveProviderExecuted ?? false,
+  liveRewardExecuted: record.liveRewardExecuted ?? false,
+  liveStorageExecuted: record.liveStorageExecuted ?? false,
+  status: record.status,
+  taskId: record.taskId,
+  templateCode: record.templateCode,
+});
 
 const createPreviewRows = (
   projection: CampaignDbExportProjection,
@@ -267,6 +298,7 @@ const createPreviewRows = (
     referrerAddress: row.referrerAddress,
     riskFlags: [...row.riskFlags],
     rowStatus: row.rowStatus,
+    taskEvidence: row.taskRecords.map(taskEvidence),
     taskRecordSummary: row.taskRecords.map(taskRecordSummary),
     totalPoints: row.totalPoints,
     walletAddress: row.walletAddress,
