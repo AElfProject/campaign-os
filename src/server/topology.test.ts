@@ -151,10 +151,22 @@ describe("backend service topology", () => {
         expect.stringContaining("live wallet verification"),
       ]),
     });
+    expect(backendServiceBoundaries.find((service) => service.id === "referral-service")).toMatchObject({
+      description: expect.stringContaining("local Campaign DB referral binding read model"),
+      readiness: "local_only",
+      risks: expect.arrayContaining([
+        expect.stringContaining("production Campaign DB referral binding table migration"),
+        expect.stringContaining("Live wallet verification"),
+        expect.stringContaining("provider risk signals"),
+        expect.stringContaining("reward distribution"),
+      ]),
+      routeIds: [],
+      runtimeProfiles: expect.arrayContaining(["local-review", "staging-ready", "production-required"]),
+    });
     expect(backendDataStores.find((store) => store.id === "campaign-db")).toMatchObject({
       containsSensitiveData: true,
-      records: expect.arrayContaining(["campaign_participants"]),
-      retentionRisk: expect.stringContaining("participant wallet/risk read models"),
+      records: expect.arrayContaining(["campaign_participants", "campaign_referral_bindings"]),
+      retentionRisk: expect.stringContaining("referral binding relationships"),
     });
   });
 
@@ -352,6 +364,10 @@ describe("backend service topology", () => {
     expect(serviceById.get("eligibility-service")?.risks.join(" ")).toContain("participant repository/read model");
     expect(serviceById.get("eligibility-service")?.risks.join(" ")).toContain("live wallet verification");
     expect(serviceById.get("eligibility-service")?.risks.join(" ")).toContain("queue runtime");
+    expect(serviceById.get("referral-service")?.risks.join(" ")).toContain("referral binding read model");
+    expect(serviceById.get("referral-service")?.risks.join(" ")).toContain("provider risk signals");
+    expect(serviceById.get("referral-service")?.risks.join(" ")).toContain("queue runtime");
+    expect(serviceById.get("referral-service")?.risks.join(" ")).toContain("dead-letter");
     expect(serviceById.get("export-service")?.risks.join(" ")).toContain("observability exporter");
     expect(serviceById.get("export-service")?.risks.join(" ")).toContain("Export preparation handoff");
     expect(serviceById.get("export-service")?.risks.join(" ")).toContain("production DB migration");

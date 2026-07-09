@@ -643,6 +643,7 @@ export interface CampaignDbVerticalSliceReadinessSummary {
     fallbackUsed: false;
     mode: "local_seeded" | "durable_test" | "production_required";
     participantRecordCount?: number;
+    referralBindingRecordCount?: number;
     recordCount: number;
     status: CampaignDbVerticalSliceStatus;
     storeId: "campaign-db";
@@ -677,13 +678,32 @@ export interface CampaignDbVerticalSliceReadinessSummary {
     status: "available" | "blocked";
     storeId: "campaign-db";
   };
+  referralBindingReadModel?: {
+    contractTransactionsEnabled: false;
+    durableTestMode: boolean;
+    futureHandoff: "future Campaign DB referral binding table service";
+    liveProviderRiskSignalsEnabled: false;
+    liveWalletVerificationEnabled: false;
+    localDeterministicMode: boolean;
+    productionDbMigrationReady: false;
+    providerCallsEnabled: false;
+    recordName: "campaign_referral_bindings";
+    referralBindingRecordCount: number;
+    rewardDistributionEnabled: false;
+    status: "available" | "blocked";
+    storeId: "campaign-db";
+  };
   repositoryContract: {
+    bindReferral?: true;
     createDraft: true;
     getById: true;
     getParticipant?: true;
+    getReferralBinding?: true;
     health: true;
     list: true;
     listParticipantsByCampaignId?: true;
+    listReferralBindings?: true;
+    markReferralQualified?: true;
     reset: true;
     upsertParticipant?: true;
   };
@@ -846,6 +866,7 @@ export interface CampaignDbVerticalSliceStoreReadinessInput {
   durable?: boolean;
   mode?: "local_seeded" | "durable_test" | "production_required";
   participantRecordCount?: number;
+  referralBindingRecordCount?: number;
   recordCount?: number;
   status?: CampaignDbVerticalSliceStatus;
 }
@@ -1501,6 +1522,7 @@ const createCampaignDbVerticalSliceReadinessSummary = ({
       fallbackUsed: false,
       mode: requestedStoreMode,
       participantRecordCount: campaignStore?.participantRecordCount ?? 0,
+      referralBindingRecordCount: campaignStore?.referralBindingRecordCount ?? 0,
       recordCount: campaignStore?.recordCount ?? 0,
       status,
       storeId: "campaign-db",
@@ -1539,13 +1561,32 @@ const createCampaignDbVerticalSliceReadinessSummary = ({
       status: status === "ready" ? "available" : "blocked",
       storeId: "campaign-db",
     },
+    referralBindingReadModel: {
+      contractTransactionsEnabled: false,
+      durableTestMode: !productionRequired && requestedStoreMode === "durable_test",
+      futureHandoff: "future Campaign DB referral binding table service",
+      liveProviderRiskSignalsEnabled: false,
+      liveWalletVerificationEnabled: false,
+      localDeterministicMode: !productionRequired && requestedStoreMode === "local_seeded",
+      productionDbMigrationReady: false,
+      providerCallsEnabled: false,
+      recordName: "campaign_referral_bindings",
+      referralBindingRecordCount: campaignStore?.referralBindingRecordCount ?? 0,
+      rewardDistributionEnabled: false,
+      status: status === "ready" ? "available" : "blocked",
+      storeId: "campaign-db",
+    },
     repositoryContract: {
+      bindReferral: true,
       createDraft: true,
       getById: true,
       getParticipant: true,
+      getReferralBinding: true,
       health: true,
       list: true,
       listParticipantsByCampaignId: true,
+      listReferralBindings: true,
+      markReferralQualified: true,
       reset: true,
       upsertParticipant: true,
     },
