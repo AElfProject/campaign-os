@@ -25291,6 +25291,9 @@ export const createAdminOpsReadModel = (
     campaign.walletSessions,
     walletProviderEvidenceReleaseApprovalLiveEvidence,
   );
+  const deliveryChecklistWalletProviderQaGate = createWalletProviderQaReadinessGate(
+    campaign.walletSessions,
+  );
   const walletProviderEvidenceRecovery = recoverWalletProviderEvidenceState(
     campaign,
     walletProviderQaGate,
@@ -25339,7 +25342,7 @@ export const createAdminOpsReadModel = (
       contractClaimPreapprovalPackage,
     }),
     p1LocaleActivationReadiness: createP1LocaleActivationReadiness(),
-    deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(walletProviderQaGate),
+    deliveryChecklistReadiness: createDeliveryChecklistReadinessConsole(deliveryChecklistWalletProviderQaGate),
     walletProviderQaGate,
     walletProviderEvidenceIntake,
     walletProviderEvidenceApprovalAudit,
