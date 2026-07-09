@@ -41,6 +41,12 @@ const validCompletionInput = (campaignId: string, taskId: string) => ({
   walletSource: "PORTKEY_EOA_EXTENSION" as const,
 });
 
+const validEvidenceInput = (campaignId: string, taskId: string) => ({
+  ...validCompletionInput(campaignId, taskId),
+  diagnosticCodes: ["task_verified", "local_review", "task_verified"],
+  evidenceRef: "local-review:evidence/bridge-ebridge",
+});
+
 const validReferralBindingInput = (campaignId: string) => ({
   campaignId,
   inviteeAccountType: "EOA" as const,
@@ -342,6 +348,226 @@ describe("Campaign DB repository", () => {
     });
     await expect(repository.health()).resolves.toMatchObject({
       completionRecordCount: 1,
+    });
+  });
+
+  it("stores, updates, lists, projects, and resets task evidence records", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    const first = await repository.upsertTaskEvidence!(validEvidenceInput(campaign.id, task.id), {
+      traceId: "trace-evidence-upsert",
+    });
+    const second = await repository.upsertTaskEvidence!({
+      ...validEvidenceInput(campaign.id, task.id),
+      diagnosticCodes: ["local_review", "retry_verified"],
+      evidenceHash: "evidence-hash:bridge-ebridge-retry",
+      evidenceRef: "local-review:evidence/bridge-ebridge-retry",
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second).toMatchObject({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      diagnosticCodes: ["local_review", "retry_verified"],
+      evidenceHash: "evidence-hash:bridge-ebridge-retry",
+      evidenceRef: "local-review:evidence/bridge-ebridge-retry",
+      evidenceSource: "AELFSCAN",
+      id: "campaign-db-task-evidence-0001",
+      liveContractExecuted: false,
+      liveProviderExecuted: false,
+      liveRewardExecuted: false,
+      liveStorageExecuted: false,
+      pointsAwarded: 120,
+      status: "completed",
+      taskId: task.id,
+      walletAddress: "2F4CompletionWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
+    await expect(repository.listTaskEvidence!({
+      campaignId: campaign.id,
+      taskId: task.id,
+      walletAddress: "2F4CompletionWallet",
+    })).resolves.toEqual([second]);
+    await expect(repository.getById(campaign.id)).resolves.toMatchObject({
+      taskEvidence: [
+        expect.objectContaining({
+          evidenceHash: "evidence-hash:bridge-ebridge-retry",
+          id: "campaign-db-task-evidence-0001",
+        }),
+      ],
+    });
+    await expect(repository.health()).resolves.toMatchObject({
+      liveContractExecutionEnabled: false,
+      liveProviderExecutionEnabled: false,
+      liveRewardExecutionEnabled: false,
+      liveStorageExecutionEnabled: false,
+      taskEvidenceRecordCount: 1,
+    });
+    expect(repository.getEvents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entity: "TaskEvidence",
+          liveExecution: false,
+          operation: "insert_task_evidence",
+          traceId: "trace-evidence-upsert",
+          type: "command.insert",
+        }),
+      ]),
+    );
+
+    await repository.reset();
+
+    await expect(repository.listTaskEvidence!({ campaignId: campaign.id })).resolves.toEqual([]);
+    await expect(repository.health()).resolves.toMatchObject({
+      taskEvidenceRecordCount: 0,
+    });
+  });
+
+  it("pairs task evidence and completion through idempotent verification", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    const first = await repository.upsertTaskVerification!(validCompletionInput(campaign.id, task.id));
+    const second = await repository.upsertTaskVerification!({
+      ...validCompletionInput(campaign.id, task.id),
+      evidenceHash: "evidence-hash:bridge-ebridge-reverified",
+    });
+    const listedEvidence = await repository.listTaskEvidence!({ campaignId: campaign.id });
+
+    expect(second.completion.id).toBe(first.completion.id);
+    expect(second.evidence.id).toBe(first.evidence.id);
+    expect(second.completion).toMatchObject({
+      evidenceHash: "evidence-hash:bridge-ebridge-reverified",
+      evidenceId: first.evidence.id,
+      id: "campaign-db-task-completion-0001",
+      pointsAwarded: 120,
+      status: "completed",
+    });
+    expect(second.evidence).toMatchObject({
+      completionId: first.completion.id,
+      evidenceHash: "evidence-hash:bridge-ebridge-reverified",
+      id: "campaign-db-task-evidence-0001",
+      pointsAwarded: 120,
+    });
+    expect(listedEvidence).toHaveLength(1);
+    await expect(repository.health()).resolves.toMatchObject({
+      completionRecordCount: 1,
+      taskEvidenceRecordCount: 1,
+    });
+    await expect(repository.checkEligibility!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      walletAddress: "2F4CompletionWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    })).resolves.toMatchObject({
+      evidence: [
+        expect.objectContaining({
+          completionId: first.completion.id,
+          id: first.evidence.id,
+        }),
+      ],
+      score: 120,
+      status: "eligible",
+    });
+  });
+
+  it("projects task evidence metadata into repository export rows", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    const evidence = await repository.upsertTaskEvidence!(validEvidenceInput(campaign.id, task.id));
+    await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, task.id),
+      evidenceHash: evidence.evidenceHash,
+      evidenceId: evidence.id,
+    });
+
+    const projection = await repository.projectExport!({
+      campaignId: campaign.id,
+      format: "json",
+    });
+
+    expect(projection.rows[0]).toMatchObject({
+      evidenceHashes: ["evidence-hash:bridge-ebridge"],
+      taskRecords: [
+        expect.objectContaining({
+          evidenceHash: "evidence-hash:bridge-ebridge",
+          evidenceId: "campaign-db-task-evidence-0001",
+          evidenceRef: "local-review:evidence/bridge-ebridge",
+          evidenceSource: "AELFSCAN",
+          liveContractExecuted: false,
+          liveProviderExecuted: false,
+          liveRewardExecuted: false,
+          liveStorageExecuted: false,
+          status: "completed",
+          taskId: task.id,
+        }),
+      ],
+    });
+  });
+
+  it("rejects unsafe task evidence fields with evidence diagnostics", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    await expect(repository.upsertTaskEvidence!({
+      ...validEvidenceInput(campaign.id, task.id),
+      accountType: "BOT",
+      diagnosticCodes: ["token"],
+      evidenceHash: "https://example.com/raw-secret",
+      evidenceRef: "/Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/kitty-specs/private.md",
+      evidenceSource: "RAW_RPC",
+      status: "settled",
+      walletSource: "RAW_EXTENSION",
+    })).rejects.toMatchObject({
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ code: "CAMPAIGN_DB_EVIDENCE_INVALID_DIAGNOSTIC_CODE" }),
+        expect.objectContaining({ code: "CAMPAIGN_DB_EVIDENCE_INVALID_EVIDENCE_HASH" }),
+        expect.objectContaining({ code: "CAMPAIGN_DB_EVIDENCE_INVALID_EVIDENCE_REF" }),
+        expect.objectContaining({ code: "CAMPAIGN_DB_EVIDENCE_UNSUPPORTED_ACCOUNT_TYPE" }),
+        expect.objectContaining({ code: "CAMPAIGN_DB_EVIDENCE_UNSUPPORTED_EVIDENCE_SOURCE" }),
+        expect.objectContaining({ code: "CAMPAIGN_DB_EVIDENCE_UNSUPPORTED_STATUS" }),
+        expect.objectContaining({ code: "CAMPAIGN_DB_EVIDENCE_UNSUPPORTED_WALLET_SOURCE" }),
+      ]),
+    });
+    await expect(repository.listTaskEvidence!({ campaignId: campaign.id })).resolves.toEqual([]);
+  });
+
+  it("lists and projects 1000 local task evidence records within the review threshold", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    for (let index = 0; index < 1000; index += 1) {
+      await repository.upsertTaskEvidence!({
+        ...validEvidenceInput(campaign.id, task.id),
+        evidenceHash: `evidence-hash:bulk-${index.toString().padStart(4, "0")}`,
+        walletAddress: `2F4EvidenceWallet${index.toString().padStart(4, "0")}`,
+      });
+    }
+
+    const startedAt = Date.now();
+    const listed = await repository.listTaskEvidence!({ campaignId: campaign.id, limit: 1000 });
+    const projection = await repository.getById(campaign.id);
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(listed).toHaveLength(1000);
+    expect(projection?.taskEvidence).toHaveLength(1000);
+    expect(elapsedMs).toBeLessThan(1000);
+    expect(listed[0]).toMatchObject({
+      liveContractExecuted: false,
+      liveProviderExecuted: false,
+      liveRewardExecuted: false,
+      liveStorageExecuted: false,
+      walletAddress: "2F4EvidenceWallet0000",
+    });
+    expect(listed[999]).toMatchObject({
+      walletAddress: "2F4EvidenceWallet0999",
     });
   });
 
