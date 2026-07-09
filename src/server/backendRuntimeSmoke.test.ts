@@ -483,6 +483,19 @@ describe("backend runtime smoke command", () => {
           },
           endpoint: "/api/contracts",
           ok: true,
+          productionBackendReadiness: {
+            contractsEndpoint: "/api/contracts",
+            healthEndpoint: "/api/health",
+            missingApiSkillIds: [],
+            noLiveSideEffectsAllFalse: true,
+            productionReady: false,
+            profileId: "local-review",
+            routeCount: expect.any(Number),
+            smokeCommand: "npm run server:smoke",
+            startCommand: "npm run server:start",
+            status: "ready",
+            traceHeaderName: "x-campaign-os-trace-id",
+          },
           providerIndexerFoundation: {
             blockerCount: 0,
             liveProviderCallsEnabled: false,
@@ -541,6 +554,19 @@ describe("backend runtime smoke command", () => {
           },
           endpoint: "/api/health",
           ok: true,
+          productionBackendReadiness: {
+            contractsEndpoint: "/api/contracts",
+            healthEndpoint: "/api/health",
+            missingApiSkillIds: [],
+            noLiveSideEffectsAllFalse: true,
+            productionReady: false,
+            profileId: "local-review",
+            routeCount: expect.any(Number),
+            smokeCommand: "npm run server:smoke",
+            startCommand: "npm run server:start",
+            status: "ready",
+            traceHeaderName: "x-campaign-os-trace-id",
+          },
           providerIndexerFoundation: {
             blockerCount: 0,
             liveProviderCallsEnabled: false,
@@ -605,6 +631,19 @@ describe("backend runtime smoke command", () => {
         status: "metadata_ready",
         storeCoverageCount: 6,
         valid: true,
+      },
+      productionBackendReadiness: {
+        contractsEndpoint: "/api/contracts",
+        healthEndpoint: "/api/health",
+        missingApiSkillIds: [],
+        noLiveSideEffectsAllFalse: true,
+        productionReady: false,
+        profileId: "local-review",
+        routeCount: expect.any(Number),
+        smokeCommand: "npm run server:smoke",
+        startCommand: "npm run server:start",
+        status: "ready",
+        traceHeaderName: "x-campaign-os-trace-id",
       },
       productionReady: false,
       providerClientReadiness: expectedProviderClientReadiness,
@@ -693,6 +732,28 @@ describe("backend runtime smoke command", () => {
       ]),
     );
     expectNoSecretLeak(summary);
+  });
+
+  it("fails closed when production backend readiness metadata is missing from smoke payloads", async () => {
+    const fetchWithoutProductionBackendReadiness: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          productionBackendReadiness?: Record<string, unknown>;
+        };
+      };
+
+      delete payload.data?.productionBackendReadiness;
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutProductionBackendReadiness })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
   });
 
   it("fails closed when provider client readiness metadata is missing from smoke payloads", async () => {

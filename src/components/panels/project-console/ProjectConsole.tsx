@@ -1,5 +1,12 @@
 import { useRef, useState, type CSSProperties } from "react";
 import {
+  backendRuntimeReadinessApiBoundary,
+  createBackendRuntimeReadinessApiLoadingState,
+  loadBackendRuntimeReadinessApiBridgeState,
+  seededBackendRuntimeReadinessSummary,
+  type BackendRuntimeReadinessApiBridgeState,
+} from "../../../api/backendRuntimeReadinessApiBridge";
+import {
   createExportArtifactDeliveryApiLoadingState,
   createExportArtifactDeliverySeededFallbackState,
   sanitizeExportArtifactDeliveryApiText,
@@ -121,6 +128,7 @@ import { PublishGateDecisionCenter } from "./builder/PublishGateDecisionCenter";
 import { PublishReadinessPanel } from "./builder/PublishReadinessPanel";
 import { RewardsEligibilityBuilder } from "./builder/RewardsEligibilityBuilder";
 import { TaskTemplateLibrary } from "./builder/TaskTemplateLibrary";
+import { BackendRuntimeReadinessPanel } from "./BackendRuntimeReadinessPanel";
 import { projectConsoleCopy } from "./copy";
 
 type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
@@ -1252,6 +1260,29 @@ const readableCode = (value: string) => value.replace(/_/g, " ");
 const exportArtifactDeliveryApiBaseUrl = () =>
   import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
+const backendRuntimeReadinessApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
+const createBackendRuntimeReadinessSeededFallbackState = (): BackendRuntimeReadinessApiBridgeState => ({
+  boundary: backendRuntimeReadinessApiBoundary,
+  configured: false,
+  diagnostics: [
+    {
+      code: "API_BASE_URL_MISSING",
+      message: {
+        "en-US": "No local backend readiness API base URL is configured, so seeded readiness is shown.",
+        "zh-CN": "未配置本地 backend readiness API base URL，因此显示 seeded readiness。",
+        "zh-TW": "未設定本地 backend readiness API base URL，因此顯示 seeded readiness。",
+      },
+      severity: "info",
+    },
+  ],
+  loading: false,
+  source: "seeded_fallback",
+  status: "fallback",
+  summary: seededBackendRuntimeReadinessSummary,
+});
+
 const exportDeliveryApiSourceLabel = (
   source: ExportArtifactDeliveryApiSource,
   copy: typeof projectConsoleCopy["en-US"],
@@ -1755,6 +1786,7 @@ export const ProjectConsole = ({
     createSeededDraftComposerState,
   );
   const exportDeliveryApiRequestSeq = useRef(0);
+  const backendReadinessApiRequestSeq = useRef(0);
   const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
   const title = getLocalizedText(campaign.title, locale);
   const subtitle = getLocalizedText(campaign.subtitle, locale);
@@ -1847,6 +1879,14 @@ export const ProjectConsole = ({
       : createExportArtifactDeliverySeededFallbackState(exportDeliveryApiRequest),
   );
   const [exportDeliveryApiReviewInFlight, setExportDeliveryApiReviewInFlight] = useState(false);
+  const backendReadinessApiBaseUrl = backendRuntimeReadinessApiBaseUrl();
+  const [backendReadinessApiState, setBackendReadinessApiState] =
+    useState<BackendRuntimeReadinessApiBridgeState>(() =>
+      backendReadinessApiBaseUrl?.trim()
+        ? createBackendRuntimeReadinessApiLoadingState()
+        : createBackendRuntimeReadinessSeededFallbackState(),
+    );
+  const [backendReadinessApiReviewInFlight, setBackendReadinessApiReviewInFlight] = useState(false);
   const advancedAnalytics = commandCenter.advancedAnalytics;
   const aiOptimizationSummary = commandCenter.aiOptimization.projectOwnerSummary;
   const aiOpsKpiAdoption = commandCenter.aiOpsKpiAdoption;
@@ -1917,6 +1957,34 @@ export const ProjectConsole = ({
     }).finally(() => {
       if (exportDeliveryApiRequestSeq.current === requestSeq) {
         setExportDeliveryApiReviewInFlight(false);
+      }
+    });
+  };
+
+  const runBackendReadinessApiReview = () => {
+    if (!backendReadinessApiBaseUrl?.trim()) {
+      setBackendReadinessApiState(createBackendRuntimeReadinessSeededFallbackState());
+      return;
+    }
+
+    setBackendReadinessApiReviewInFlight(true);
+    setBackendReadinessApiState(createBackendRuntimeReadinessApiLoadingState());
+
+    const requestSeq = backendReadinessApiRequestSeq.current + 1;
+    backendReadinessApiRequestSeq.current = requestSeq;
+
+    void loadBackendRuntimeReadinessApiBridgeState({
+      config: {
+        baseUrl: backendReadinessApiBaseUrl,
+        tracePrefix: "project-console-backend-readiness-review",
+      },
+    }).then((state) => {
+      if (backendReadinessApiRequestSeq.current === requestSeq) {
+        setBackendReadinessApiState(state);
+      }
+    }).finally(() => {
+      if (backendReadinessApiRequestSeq.current === requestSeq) {
+        setBackendReadinessApiReviewInFlight(false);
       }
     });
   };
@@ -6213,6 +6281,15 @@ export const ProjectConsole = ({
           </div>
         </section>
       )}
+
+      <BackendRuntimeReadinessPanel
+        apiConfigured={Boolean(backendReadinessApiBaseUrl?.trim())}
+        copy={copy}
+        locale={locale}
+        onReview={runBackendReadinessApiReview}
+        reviewInFlight={backendReadinessApiReviewInFlight}
+        state={backendReadinessApiState}
+      />
 
       <section aria-label={copy.walletAdapterReadiness} style={panelStyle}>
         <div style={headingRowStyle}>

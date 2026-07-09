@@ -681,6 +681,48 @@ describe("Campaign OS API runtime", () => {
 
     expect(health.body.traceId).toBe("trace-health");
     expect(health.headers["x-campaign-os-trace-id"]).toBe("trace-health");
+    const expectedLocalProductionBackendReadiness = expect.objectContaining({
+      deployHandoff: expect.objectContaining({
+        contractsEndpoint: "/api/contracts",
+        healthEndpoint: "/api/health",
+        runtimeTarget: "api_service",
+        smokeCommand: "npm run server:smoke",
+        startCommand: "npm run server:start",
+      }),
+      noLiveSideEffects: expect.objectContaining({
+        contractWriteExecuted: false,
+        productionDatabaseConnected: false,
+        providerNetworkExecuted: false,
+        rewardDistributionExecuted: false,
+        schedulerExecuted: false,
+      }),
+      productionReady: false,
+      profile: expect.objectContaining({
+        id: "local-review",
+        missingRequiredConfigKeys: [],
+        requiredConfigKeys: [],
+        secretValuesExposed: false,
+      }),
+      routeCoverage: expect.objectContaining({
+        missingApiSkillIds: [],
+        requiredApiSkillCount: expect.any(Number),
+        routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
+        runtimeRouteCount: expect.any(Number),
+      }),
+      status: "ready",
+      tracePolicy: expect.objectContaining({
+        failureEnvelopeTraceId: true,
+        startupLogIncludesTracePolicy: true,
+        successEnvelopeTraceId: true,
+        traceHeaderName: "x-campaign-os-trace-id",
+      }),
+    });
+    expect(healthData).toMatchObject({
+      productionBackendReadiness: expectedLocalProductionBackendReadiness,
+    });
+    expect(contractData).toMatchObject({
+      productionBackendReadiness: expectedLocalProductionBackendReadiness,
+    });
     expect(healthData).toMatchObject({
       apiFoundation: expect.objectContaining({
         coverage: expect.objectContaining({
@@ -1654,13 +1696,56 @@ describe("Campaign OS API runtime", () => {
     expectNoForbiddenResponseKeys(health.body);
   });
 
+  it("distinguishes staging-scaffold production backend readiness metadata", async () => {
+    const stagingRuntime = createCampaignOsApiRuntime({
+      runtimeConfigOptions: {
+        env: {
+          CAMPAIGN_OS_BACKEND_PROFILE: "staging-scaffold",
+        },
+      },
+    });
+    const health = await stagingRuntime.handle({
+      method: "GET",
+      path: "/api/health",
+    });
+    const contracts = await stagingRuntime.handle({
+      method: "GET",
+      path: "/api/contracts",
+    });
+
+    const expectedStagingReadiness = expect.objectContaining({
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: "PRODUCTION_BACKEND_STAGING_SCAFFOLD",
+          severity: "info",
+        }),
+      ]),
+      productionReady: false,
+      profile: expect.objectContaining({
+        id: "staging-scaffold",
+        missingRequiredConfigKeys: [],
+        requiredConfigKeys: [],
+        requiresSecrets: false,
+        secretValuesExposed: false,
+        status: "scaffold",
+      }),
+      status: "scaffold",
+    });
+
+    expect(expectSuccessData(health)).toMatchObject({
+      productionBackendReadiness: expectedStagingReadiness,
+    });
+    expect(expectSuccessData(contracts)).toMatchObject({
+      productionBackendReadiness: expectedStagingReadiness,
+    });
+  });
+
   it("surfaces production-required database readiness as blocked without exposing secrets", async () => {
     const productionRuntime = createCampaignOsApiRuntime({
       runtimeConfigOptions: {
         env: {
           CAMPAIGN_OS_AUTH_SECRET: "runtime-auth-secret",
           CAMPAIGN_OS_BACKEND_PROFILE: "production-required",
-          CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT: "https://writer.invalid",
           CAMPAIGN_OS_DATABASE_URL: "postgres://db.invalid/campaign-os",
           CAMPAIGN_OS_PROVIDER_REGISTRY_URL: "https://providers.invalid",
           CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue.invalid",
@@ -1674,6 +1759,57 @@ describe("Campaign OS API runtime", () => {
     const contracts = await productionRuntime.handle({
       method: "GET",
       path: "/api/contracts",
+    });
+    const expectedProductionBackendReadiness = expect.objectContaining({
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: "PRODUCTION_BACKEND_PROFILE_BLOCKED",
+          safeDetails: expect.objectContaining({
+            missingRequiredConfigKeyCount: 1,
+            requiredConfigKeyCount: 5,
+          }),
+          severity: "error",
+        }),
+        expect.objectContaining({
+          code: "PRODUCTION_BACKEND_MISSING_CONFIG",
+          safeDetails: expect.objectContaining({
+            missingRequiredConfigKeys: "CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT",
+          }),
+          severity: "error",
+        }),
+      ]),
+      noLiveSideEffects: expect.objectContaining({
+        contractWriteExecuted: false,
+        productionDatabaseConnected: false,
+        providerNetworkExecuted: false,
+        rewardDistributionExecuted: false,
+        schedulerExecuted: false,
+      }),
+      productionReady: false,
+      profile: expect.objectContaining({
+        configuredRequiredConfigKeys: expect.arrayContaining([
+          "CAMPAIGN_OS_AUTH_SECRET",
+          "CAMPAIGN_OS_DATABASE_URL",
+          "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+          "CAMPAIGN_OS_WORKER_QUEUE_URL",
+        ]),
+        id: "production-required",
+        missingRequiredConfigKeys: ["CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT"],
+        requiredConfigKeys: expect.arrayContaining([
+          "CAMPAIGN_OS_AUTH_SECRET",
+          "CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT",
+          "CAMPAIGN_OS_DATABASE_URL",
+          "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+          "CAMPAIGN_OS_WORKER_QUEUE_URL",
+        ]),
+        requiresSecrets: true,
+        secretValuesExposed: false,
+        status: "blocked",
+      }),
+      routeCoverage: expect.objectContaining({
+        missingApiSkillIds: [],
+      }),
+      status: "blocked",
     });
 
     expect(expectSuccessData(health)).toMatchObject({
@@ -1792,6 +1928,7 @@ describe("Campaign OS API runtime", () => {
           valid: false,
         }),
       }),
+      productionBackendReadiness: expectedProductionBackendReadiness,
     });
     expect(expectSuccessData(contracts)).toMatchObject({
       apiService: expect.objectContaining({
@@ -1914,9 +2051,12 @@ describe("Campaign OS API runtime", () => {
           valid: true,
         }),
       }),
+      productionBackendReadiness: expectedProductionBackendReadiness,
     });
     expect(JSON.stringify(health.body)).not.toContain("runtime-auth-secret");
     expect(JSON.stringify(contracts.body)).not.toContain("postgres://db.invalid/campaign-os");
+    expect(JSON.stringify(contracts.body)).not.toContain("https://providers.invalid");
+    expect(JSON.stringify(contracts.body)).not.toContain("https://queue.invalid");
     expectNoForbiddenResponseKeys(health.body);
     expectNoForbiddenResponseKeys(contracts.body);
   });

@@ -57,6 +57,7 @@ import {
   createBackendPersistenceRuntimeSummary,
   type BackendServiceReadinessReport,
 } from "./backendService";
+import { createProductionBackendReadinessSummary } from "./productionBackendReadiness";
 import {
   CampaignDbRepositoryError,
   type CampaignDbI18nDraftProjection,
@@ -96,6 +97,7 @@ import {
   type PersistenceRecordKind,
   type PersistenceSummary,
 } from "./persistence";
+import { resolveApiServerRuntimeContract } from "./serverRuntime";
 import {
   bodyRecord,
   campaignPostChannel,
@@ -1271,10 +1273,44 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
   },
 });
 
+const createSafeReadinessEnv = (report: BackendServiceReadinessReport) => {
+  const missingKeys = new Set(report.config.productionReadiness.missingConfigKeys);
+
+  return Object.fromEntries(
+    report.config.productionReadiness.requiredConfigKeys.map((key) => [
+      key,
+      missingKeys.has(key) ? undefined : "configured",
+    ]),
+  );
+};
+
+const createProductionBackendReadinessMetadata = (
+  report: BackendServiceReadinessReport,
+) => {
+  const env = createSafeReadinessEnv(report);
+
+  return createProductionBackendReadinessSummary({
+    activation: report.backendRuntimeBootstrap.activation,
+    env,
+    generatedAt: report.backendRuntimeBootstrap.startup.startedAt,
+    routeCoverage: createApiRuntimeContractCoverage(),
+    runtime: resolveApiServerRuntimeContract({
+      env,
+      host: report.config.host,
+      port: report.config.port,
+      profileId: report.config.profileId,
+      shutdownTimeoutMs: report.backendRuntimeBootstrap.shutdown.shutdownTimeoutMs,
+      startedAt: report.backendRuntimeBootstrap.startup.startedAt,
+      version: report.config.version,
+    }),
+  });
+};
+
 export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntimeHandler> => ({
   "runtime.health": async (context) => {
     const apiFoundation = createApiFoundationRuntimeMetadata();
     const backendService = context.backendServiceReadiness();
+    const productionBackendReadiness = createProductionBackendReadinessMetadata(backendService);
     const coverage = context.service.getCoverageSummary();
     const services = createServiceDegradationGovernance();
     const persistence = await context.repository.health();
@@ -1289,6 +1325,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       mode: "local_seeded",
       capabilities: createApiRuntimeCapabilityCatalog(),
       persistence,
+      productionBackendReadiness,
       routeCount: apiRuntimeRoutes.length,
       safety: createRuntimeSafety(),
       serviceGroups: apiRuntimeServiceGroups,
@@ -1314,6 +1351,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
   "runtime.contracts": async (context) => {
     const apiFoundation = createApiFoundationRuntimeMetadata();
     const backendService = context.backendServiceReadiness();
+    const productionBackendReadiness = createProductionBackendReadinessMetadata(backendService);
     const persistence = await context.repository.health();
     const topology = createBackendTopologyReport({
       knownRouteIds: apiRuntimeRoutes.map((route) => route.id),
@@ -1330,6 +1368,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         boundary: persistenceBoundary,
         health: persistence,
       },
+      productionBackendReadiness,
       routes: apiRuntimeRoutes,
       serviceGroups: apiRuntimeServiceGroups,
       topology,
