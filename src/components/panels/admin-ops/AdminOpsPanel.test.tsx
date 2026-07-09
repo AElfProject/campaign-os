@@ -1003,6 +1003,37 @@ describe("Admin/Ops shell", () => {
         name: /export|download|signed URL|storage|contract|wallet|queue|scheduler|custody|reward|distribute/i,
       }),
     ).not.toBeInTheDocument();
+    const referralRuntimeReview = screen.getByLabelText("Referral runtime review");
+    expect(
+      within(referralRuntimeReview).getByRole("heading", { name: "Referral runtime review" }),
+    ).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("Operator review of local Campaign DB referral binding coverage, export referrer coverage, risk posture, and production-deferred handoff.")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("Binding records")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("Qualified bindings")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("Risk review bindings")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("Rows with referrer")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("referrer_address coverage")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getAllByText("referrer_address").length).toBeGreaterThan(0);
+    expect(within(referralRuntimeReview).getByText("local Campaign DB referral binding read model")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("future Campaign DB referral binding table service")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("Production deferred")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("Representative referral rows")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getAllByText("3E9...7cD").length).toBeGreaterThan(0);
+    expect(within(referralRuntimeReview).getAllByText("REF...3E9").length).toBeGreaterThan(0);
+    expect(within(referralRuntimeReview).getAllByText("referral_velocity_review").length).toBeGreaterThan(0);
+    expect(within(referralRuntimeReview).getByText("No production referral API")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("No production DB migration")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("No wallet/provider risk call")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("No contract write")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("No queue or scheduler")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("No reward custody")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("No reward distribution")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText(/Local referral runtime review only/)).toBeInTheDocument();
+    expect(
+      within(referralRuntimeReview).queryByRole("button", {
+        name: /production referral|migration|wallet signing|provider call|risk call|contract write|storage write|queue|scheduler|payout|custody|distribution/i,
+      }),
+    ).not.toBeInTheDocument();
     const fulfillmentReadiness = screen.getByLabelText("Export fulfillment readiness");
     expect(
       within(fulfillmentReadiness).getByRole("heading", { name: "Export fulfillment readiness" }),

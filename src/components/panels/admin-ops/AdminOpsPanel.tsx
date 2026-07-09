@@ -9,6 +9,7 @@ import {
   createExportConfirmationReadinessGate,
   createLiveWalletConnectorBoundary,
   createRepositoryExportProjectionReviewModel,
+  createReferralRuntimeReviewModel,
   createResidualGapMissionQueue,
   createServiceDegradationGovernance,
   createWalletProviderEvidenceAllApprovedSampleSnapshot,
@@ -2023,10 +2024,13 @@ export const AdminOpsPanel = ({
       ));
   const exportReadiness = createExportConfirmationReadinessGate(campaign);
   const exportArtifact = createExportArtifact(campaign.exportPreview, "csv");
-  const repositoryExportProjectionReview = createRepositoryExportProjectionReviewModel(
-    createRepositoryExportProjectionSample(campaign),
-    locale,
-  );
+  const repositoryExportProjection = createRepositoryExportProjectionSample(campaign);
+  const repositoryExportProjectionReview = createRepositoryExportProjectionReviewModel(repositoryExportProjection, locale);
+  const referralRuntimeReview = createReferralRuntimeReviewModel({
+    campaign,
+    exportProjection: repositoryExportProjection,
+    participant: campaign.participants[1] ?? campaign.participants[0],
+  }, locale);
   const exportFulfillmentReadiness = adminOps.exportFulfillmentReadiness;
   const exportStorageFulfillmentApprovalReadiness = adminOps.exportStorageFulfillmentApprovalReadiness;
   const exportStorageApprovalTopCheck = exportStorageFulfillmentApprovalReadiness.checks.find(
@@ -9804,6 +9808,163 @@ export const AdminOpsPanel = ({
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+        <div aria-label={copy.referralRuntimeReview} style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.referralRuntimeReview}</p>
+              <h4 style={{ fontSize: 18, margin: 0 }}>{copy.referralRuntimeReview}</h4>
+              <p style={mutedTextStyle}>{copy.referralRuntimeReviewSubtitle}</p>
+            </div>
+            <PublishStateBadge
+              label={readableCode(referralRuntimeReview.admin.readinessState)}
+              state={exportReadinessState(referralRuntimeReview.admin.readinessState)}
+            />
+          </div>
+          <div style={compactGridStyle}>
+            {[
+              {
+                label: copy.referralRuntimeBindings,
+                state: "ready" as const,
+                value: referralRuntimeReview.admin.bindingRecordCount,
+              },
+              {
+                label: copy.referralRuntimeQualified,
+                state: "ready" as const,
+                value: referralRuntimeReview.admin.qualifiedBindingCount,
+              },
+              {
+                label: copy.referralRuntimePending,
+                state: referralRuntimeReview.admin.pendingBindingCount > 0 ? "warning" as const : "ready" as const,
+                value: referralRuntimeReview.admin.pendingBindingCount,
+              },
+              {
+                label: copy.referralRuntimeRiskReview,
+                state: referralRuntimeReview.admin.riskReviewBindingCount > 0 ? "warning" as const : "ready" as const,
+                value: referralRuntimeReview.admin.riskReviewBindingCount,
+              },
+              {
+                label: copy.referralRuntimeRowsWithReferrer,
+                state: "ready" as const,
+                value: referralRuntimeReview.admin.exportRowsWithReferrer,
+              },
+              {
+                label: copy.referralRuntimeRowsMissingReferrer,
+                state: referralRuntimeReview.admin.exportRowsMissingReferrer > 0 ? "blocker" as const : "ready" as const,
+                value: referralRuntimeReview.admin.exportRowsMissingReferrer,
+              },
+            ].map(({ label, state, value }) => (
+              <article key={label} style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={labelStyle}>{label}</p>
+                <p style={{ ...valueStyle, fontSize: 20 }}>{value}</p>
+                <PublishStateBadge label={String(value)} state={state} />
+              </article>
+            ))}
+          </div>
+          <div style={gridStyle}>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.referralRuntimeReferrerCoverage}</p>
+              <div style={chipListStyle}>
+                <span style={chipStyle}>referrer_address</span>
+                <PublishStateBadge
+                  label={referralRuntimeReview.admin.referrerAddressColumnCovered ? copy.covered : copy.blocked}
+                  state={referralRuntimeReview.admin.referrerAddressColumnCovered ? "ready" : "blocker"}
+                />
+              </div>
+              <p style={wrapTextStyle}>{referralRuntimeReview.admin.topBlocker}</p>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.referralRuntimeBackendReadModel}</p>
+              <p style={wrapTextStyle}>{referralRuntimeReview.admin.backendReadModel}</p>
+              <p style={labelStyle}>{copy.referralRuntimeFutureHandoff}</p>
+              <p style={wrapTextStyle}>{referralRuntimeReview.admin.futureHandoff}</p>
+              <div style={rowStyle}>
+                <span style={mutedTextStyle}>{copy.referralRuntimeProductionDeferred}</span>
+                <PublishStateBadge
+                  label={String(referralRuntimeReview.admin.productionDeferred)}
+                  state={referralRuntimeReview.admin.productionDeferred ? "ready" : "blocker"}
+                />
+              </div>
+            </article>
+          </div>
+          <article style={{ ...cardStyle, minHeight: 0 }}>
+            <div style={rowStyle}>
+              <p style={labelStyle}>{copy.referralRuntimeBoundary}</p>
+              <PublishStateBadge label={copy.localOnly} state="ready" />
+            </div>
+            <div style={sourceMetricListStyle}>
+              {[
+                copy.referralRuntimeNoProductionApi,
+                copy.referralRuntimeNoDbMigration,
+                copy.referralRuntimeNoWalletProviderRisk,
+                copy.referralRuntimeNoContractWrite,
+                copy.referralRuntimeNoStorageWrite,
+                copy.referralRuntimeNoQueueScheduler,
+                copy.referralRuntimeNoRewardCustody,
+                copy.referralRuntimeNoRewardDistribution,
+              ].map((boundary) => (
+                <div key={boundary} style={rowStyle}>
+                  <span style={mutedTextStyle}>{boundary}</span>
+                  <PublishStateBadge label={copy.covered} state="ready" />
+                </div>
+              ))}
+            </div>
+            <p style={boundaryStyle}>{referralRuntimeReview.boundary}</p>
+          </article>
+          <div style={stackStyle}>
+            <p style={labelStyle}>{copy.referralRuntimeRepresentativeRows}</p>
+            <div style={scrollContainerStyle}>
+              <table style={exportTableStyle}>
+                <thead>
+                  <tr>
+                    <th style={thStyle}>{copy.wallet}</th>
+                    <th style={thStyle}>{copy.referrerAddress}</th>
+                    <th style={thStyle}>{copy.status}</th>
+                    <th style={thStyle}>{copy.riskFlags}</th>
+                    <th style={thStyle}>{copy.missingTasks}</th>
+                    <th style={thStyle}>{copy.taskRecords}</th>
+                    <th style={thStyle}>{copy.evidenceHashes}</th>
+                    <th style={thStyle}>{copy.exportBatch}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {referralRuntimeReview.exportRows.slice(0, 4).map((row) => (
+                    <tr key={`${row.walletAddress}-${row.exportBatchId}`}>
+                      <td style={tdStyle}>{row.walletAddress}</td>
+                      <td style={tdStyle}>{row.referrerAddress || "-"}</td>
+                      <td style={tdStyle}>
+                        <PublishStateBadge
+                          label={readableCode(row.rowStatus)}
+                          state={row.rowStatus === "blocked" ? "blocker" : row.rowStatus === "review_required" ? "warning" : "ready"}
+                        />
+                      </td>
+                      <td style={tdStyle}>{row.riskFlags.join(", ") || "-"}</td>
+                      <td style={tdStyle}>{row.missingTasks.join(", ") || "-"}</td>
+                      <td style={tdStyle}>
+                        <div style={stackStyle}>
+                          {row.taskRecordSummary.map((record) => (
+                            <span key={record} style={codeListStyle}>
+                              {record}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td style={tdStyle}>
+                        <div style={stackStyle}>
+                          {row.evidenceHashes.map((hash) => (
+                            <span key={hash} style={codeListStyle}>
+                              {hash}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td style={tdStyle}>{row.exportBatchId}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
         <div aria-label={copy.exportFulfillmentReadiness} style={cardStyle}>
