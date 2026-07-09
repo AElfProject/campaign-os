@@ -331,6 +331,20 @@ const formatSafeDetails = (
       .join("; ")
     : undefined;
 
+const formatRepositoryMetadata = (state: CampaignCreationApiBridgeState) => {
+  const repository = state.repository;
+
+  if (!repository) {
+    return "-";
+  }
+
+  return (
+    repository.repositoryId
+    ?? repository.adapterId
+    ?? (repository.createdViaRepository ? "createdViaRepository: true" : "-")
+  );
+};
+
 const campaignCreationDraftInputFromDraft = (
   draft: CampaignDraft,
   locale: BusinessContentLocale,
@@ -539,7 +553,7 @@ export const CampaignBuilderPanel = ({
               [copy.campaignCreationApiStatus, visibleBridgeState.status],
               [copy.campaignCreationApiCreatedDraftId, visibleBridgeState.createdDraftId ?? copy.campaignCreationApiNoDraft],
               [copy.campaignCreationApiTraceId, visibleBridgeState.traceId ?? copy.campaignCreationApiNoTrace],
-              [copy.campaignCreationApiRepository, visibleBridgeState.repository?.repositoryId ?? "-"],
+              [copy.campaignCreationApiRepository, formatRepositoryMetadata(visibleBridgeState)],
               [copy.campaignCreationApiStore, visibleBridgeState.repository?.storeId ?? "-"],
               [copy.campaignCreationApiPersistence, visibleBridgeState.persistence?.recordId ?? "-"],
               [copy.campaignCreationApiCampaignCount, String(visibleBridgeState.campaignCount)],

@@ -160,7 +160,6 @@ describe("CampaignBuilderPanel", () => {
       repository: {
         createdViaRepository: true,
         draftId: "draft-api-visible-1234567890",
-        repositoryId: "campaign-db-memory",
         storeId: "campaign-db",
       },
       source: "api_runtime",
@@ -193,7 +192,7 @@ describe("CampaignBuilderPanel", () => {
     }));
     expect(within(review).getAllByText("API runtime").length).toBeGreaterThan(0);
     expect(within(review).getByText("trace-project-console-visible-1234567890")).toBeInTheDocument();
-    expect(within(review).getByText("campaign-db-memory")).toBeInTheDocument();
+    expect(within(review).getByText("createdViaRepository: true")).toBeInTheDocument();
     expect(within(review).getByText("campaign-db")).toBeInTheDocument();
     expect(within(review).getByText("record-api-visible")).toBeInTheDocument();
     expect(within(review).getByText("4")).toBeInTheDocument();
