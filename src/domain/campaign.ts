@@ -20087,7 +20087,7 @@ const closeoutHandoffLabels: Record<DeliveryChecklistCloseoutHandoffTarget, Loca
   evidence_traceability: localized("Evidence traceability", "证据追踪"),
   future_scope: localized("Future mission", "未来 mission"),
   i18n_reviewer: localized("i18n reviewer", "多语言审核人"),
-  live_wallet_qa: localized("Live wallet QA", "真实钱包 QA"),
+  live_wallet_qa: localized("Wallet provider QA", "真实钱包 QA"),
   none: localized("No immediate handoff", "暂无立即交接"),
   project_owner_review: localized("Project owner review", "项目方审核"),
 };

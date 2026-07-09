@@ -2756,7 +2756,7 @@ describe("Campaign OS domain foundation", () => {
       missingEvidence: false,
       missingVerification: false,
     });
-    expect(closeoutByItemId["qa-portkey-aa-connect"]?.handoffLabel["en-US"]).toBe("Live wallet QA");
+    expect(closeoutByItemId["qa-portkey-aa-connect"]?.handoffLabel["en-US"]).toBe("Wallet provider QA");
     expect(closeoutByItemId["qa-eoa-extension-connect"]).toMatchObject({
       queueId: "needs_review",
       handoffTarget: "live_wallet_qa",
