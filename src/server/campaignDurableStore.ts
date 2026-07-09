@@ -4,6 +4,7 @@ import type {
   CampaignDbDraft,
   CampaignDbDiagnostic,
   CampaignDbParticipantRecord,
+  CampaignDbReferralBindingRecord,
   CampaignDbTaskCompletion,
   CampaignDbTaskDraft,
 } from "./campaignDbRepository";
@@ -42,6 +43,7 @@ export interface CampaignDurableStoreManifest {
   mode: CampaignDurableStoreMode;
   completionRecordCount: number;
   participantRecordCount: number;
+  referralBindingRecordCount: number;
   recordCount: number;
   status: CampaignDurableStoreStatus;
   storeId: "campaign-db";
@@ -61,12 +63,15 @@ export interface CampaignDurableStore {
   createTaskDraft(taskDraft: CampaignDbTaskDraft): Promise<CampaignDbTaskDraft>;
   getById(campaignId: string): Promise<CampaignDbDraft | undefined>;
   getParticipant(campaignId: string, walletAddress: string): Promise<CampaignDbParticipantRecord | undefined>;
+  getReferralBinding(campaignId: string, inviteeWalletAddress: string): Promise<CampaignDbReferralBindingRecord | undefined>;
   list(filter?: CampaignDurableStoreListOptions): Promise<CampaignDbDraft[]>;
   listParticipantsByCampaignId(campaignId: string): Promise<CampaignDbParticipantRecord[]>;
+  listReferralBindingsByCampaignId(campaignId: string): Promise<CampaignDbReferralBindingRecord[]>;
   listTaskCompletionsByCampaignId(campaignId: string): Promise<CampaignDbTaskCompletion[]>;
   listTaskDraftsByCampaignId(campaignId: string): Promise<CampaignDbTaskDraft[]>;
   manifest(): Promise<CampaignDurableStoreManifest>;
   reset(): Promise<void>;
+  upsertReferralBinding(binding: CampaignDbReferralBindingRecord): Promise<CampaignDbReferralBindingRecord>;
   upsertParticipant(participant: CampaignDbParticipantRecord): Promise<CampaignDbParticipantRecord>;
   upsertTaskCompletion(completion: CampaignDbTaskCompletion): Promise<CampaignDbTaskCompletion>;
 }
@@ -80,6 +85,7 @@ export interface CreateCampaignDurableStoreOptions {
 interface CampaignDurableStoreDocument {
   completionRecords: CampaignDbTaskCompletion[];
   participantRecords: CampaignDbParticipantRecord[];
+  referralBindingRecords: CampaignDbReferralBindingRecord[];
   records: CampaignDbDraft[];
   taskRecords: CampaignDbTaskDraft[];
   updatedAt: string;
@@ -90,6 +96,7 @@ const DEFAULT_BOUNDED_LIST_LIMIT = 100;
 const EMPTY_DOCUMENT: CampaignDurableStoreDocument = {
   completionRecords: [],
   participantRecords: [],
+  referralBindingRecords: [],
   records: [],
   taskRecords: [],
   updatedAt: "1970-01-01T00:00:00.000Z",
@@ -159,6 +166,15 @@ const sortParticipants = (records: readonly CampaignDbParticipantRecord[]) =>
     return campaignComparison === 0 ? left.walletAddress.localeCompare(right.walletAddress) : campaignComparison;
   });
 
+const sortReferralBindings = (records: readonly CampaignDbReferralBindingRecord[]) =>
+  [...records].sort((left, right) => {
+    const campaignComparison = left.campaignId.localeCompare(right.campaignId);
+
+    return campaignComparison === 0
+      ? left.inviteeWalletAddress.localeCompare(right.inviteeWalletAddress)
+      : campaignComparison;
+  });
+
 const parseDocument = (raw: string): CampaignDurableStoreDocument => {
   const parsed = JSON.parse(raw) as Partial<CampaignDurableStoreDocument>;
 
@@ -169,6 +185,7 @@ const parseDocument = (raw: string): CampaignDurableStoreDocument => {
   return {
     completionRecords: Array.isArray(parsed.completionRecords) ? parsed.completionRecords : [],
     participantRecords: Array.isArray(parsed.participantRecords) ? parsed.participantRecords : [],
+    referralBindingRecords: Array.isArray(parsed.referralBindingRecords) ? parsed.referralBindingRecords : [],
     records: parsed.records,
     taskRecords: Array.isArray(parsed.taskRecords) ? parsed.taskRecords : [],
     updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : EMPTY_DOCUMENT.updatedAt,
@@ -183,6 +200,7 @@ export const createCampaignDurableStore = ({
 }: CreateCampaignDurableStoreOptions = {}): CampaignDurableStore => {
   const recordsById = new Map<string, CampaignDbDraft>();
   const participantRecordsById = new Map<string, CampaignDbParticipantRecord>();
+  const referralBindingRecordsById = new Map<string, CampaignDbReferralBindingRecord>();
   const taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
   const taskRecordsById = new Map<string, CampaignDbTaskDraft>();
   const startupDiagnostics: CampaignDurableStoreDiagnostic[] = [];
@@ -228,6 +246,7 @@ export const createCampaignDurableStore = ({
     const document = await readDocument();
     recordsById.clear();
     participantRecordsById.clear();
+    referralBindingRecordsById.clear();
     taskCompletionsById.clear();
     taskRecordsById.clear();
 
@@ -237,6 +256,10 @@ export const createCampaignDurableStore = ({
 
     for (const participant of document.participantRecords) {
       participantRecordsById.set(`${participant.campaignId}::${participant.walletAddress}`, participant);
+    }
+
+    for (const binding of document.referralBindingRecords) {
+      referralBindingRecordsById.set(`${binding.campaignId}::${binding.inviteeWalletAddress}`, binding);
     }
 
     for (const taskDraft of document.taskRecords) {
@@ -256,6 +279,7 @@ export const createCampaignDurableStore = ({
     const document: CampaignDurableStoreDocument = {
       completionRecords: sortTaskCompletions(Array.from(taskCompletionsById.values())),
       participantRecords: sortParticipants(Array.from(participantRecordsById.values())),
+      referralBindingRecords: sortReferralBindings(Array.from(referralBindingRecordsById.values())),
       records: sortDrafts(Array.from(recordsById.values())),
       taskRecords: sortTaskDrafts(Array.from(taskRecordsById.values())),
       updatedAt: new Date(0).toISOString(),
@@ -321,6 +345,11 @@ export const createCampaignDurableStore = ({
 
       return participantRecordsById.get(`${campaignId}::${walletAddress}`);
     },
+    getReferralBinding: async (campaignId, inviteeWalletAddress) => {
+      await ensureInitialized();
+
+      return referralBindingRecordsById.get(`${campaignId}::${inviteeWalletAddress}`);
+    },
     list: async (filter = {}) => {
       await ensureInitialized();
       const limit = clampLimit(filter.limit, boundedListLimit);
@@ -361,6 +390,12 @@ export const createCampaignDurableStore = ({
       return sortParticipants(Array.from(participantRecordsById.values()))
         .filter((participant) => participant.campaignId === campaignId);
     },
+    listReferralBindingsByCampaignId: async (campaignId) => {
+      await ensureInitialized();
+
+      return sortReferralBindings(Array.from(referralBindingRecordsById.values()))
+        .filter((binding) => binding.campaignId === campaignId);
+    },
     manifest: async () => {
       await ensureInitialized();
       const diagnostics = currentDiagnostics();
@@ -374,6 +409,7 @@ export const createCampaignDurableStore = ({
         fallbackUsed: false,
         mode,
         participantRecordCount: participantRecordsById.size,
+        referralBindingRecordCount: referralBindingRecordsById.size,
         recordCount: recordsById.size,
         status: diagnostics.length > 0 ? "blocked" : "ready",
         storeId: "campaign-db",
@@ -383,6 +419,7 @@ export const createCampaignDurableStore = ({
     reset: async () => {
       recordsById.clear();
       participantRecordsById.clear();
+      referralBindingRecordsById.clear();
       taskCompletionsById.clear();
       taskRecordsById.clear();
       initialized = true;
@@ -397,6 +434,13 @@ export const createCampaignDurableStore = ({
       await writeDocument();
 
       return completion;
+    },
+    upsertReferralBinding: async (binding) => {
+      await ensureInitialized();
+      referralBindingRecordsById.set(`${binding.campaignId}::${binding.inviteeWalletAddress}`, binding);
+      await writeDocument();
+
+      return binding;
     },
     upsertParticipant: async (participant) => {
       await ensureInitialized();

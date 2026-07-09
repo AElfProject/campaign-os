@@ -14,6 +14,7 @@ export type ApiServicePortId =
   | "eligibility-port"
   | "export-port"
   | "i18n-content-port"
+  | "referral-port"
   | "runtime-observability-port"
   | "service-registry-port"
   | "task-template-port"
@@ -144,6 +145,7 @@ export const apiServicePorts = [
     futureAttachPoints: [
       "campaign repository",
       "src/server/campaignDbRepository.ts campaign participant repository/read model",
+      "src/server/campaignDbRepository.ts campaign referral binding read model",
       "project owner authorization",
       "publish checklist persistence",
       "lifecycle transition audit log",
@@ -152,10 +154,11 @@ export const apiServicePorts = [
       "companion contract review repository",
       "contract transparency reviewer workflow",
       "future Campaign DB participant table service",
+      "future Campaign DB referral binding table service",
     ],
     id: "campaign-port",
     localAdapter: "src/domain/campaignService.ts campaign local handlers",
-    notes: "Campaign discovery, draft creation, lifecycle operation inspection, launch readiness inspection, delivery readiness inspection, companion contract readiness inspection, contract transparency inspection, and campaign participant repository/read model metadata use local deterministic or durable-test read models; production DB migration, mutation audit, scheduler handoff, auth, wallet SDK calls, contract writes, storage writes, reward custody, and reward distribution are deferred.",
+    notes: "Campaign discovery, draft creation, lifecycle operation inspection, launch readiness inspection, delivery readiness inspection, companion contract readiness inspection, contract transparency inspection, campaign participant repository/read model metadata, and campaign referral binding read model metadata use local deterministic or durable-test read models; production DB migration, mutation audit, scheduler handoff, auth, wallet SDK calls, provider risk calls, contract writes, storage writes, reward custody, and reward distribution are deferred.",
     productionAdapterStatus: "local_seeded",
     requiresExternalNetwork: false,
     requiresSecret: false,
@@ -217,14 +220,16 @@ export const apiServicePorts = [
     deferredCapabilities: ["production_database", "provider_adapters"],
     futureAttachPoints: [
       "src/server/campaignDbRepository.ts campaign participant repository/read model",
+      "src/server/campaignDbRepository.ts campaign referral binding read model",
       "eligibility repository",
       "risk signal reader",
       "chain evidence reader",
       "future Campaign DB participant table service",
+      "future Campaign DB referral binding table service",
     ],
     id: "eligibility-port",
     localAdapter: "src/domain/campaignService.ts check_eligibility local handler",
-    notes: "Local eligibility checks use the campaign participant repository/read model in deterministic and durable-test modes; live wallet verification, production DB migration, live evidence, and production risk stores are deferred.",
+    notes: "Local eligibility checks use the campaign participant repository/read model and campaign referral binding read model in deterministic and durable-test modes; live wallet verification, production DB migration, live evidence, provider risk calls, and production risk stores are deferred.",
     productionAdapterStatus: "local_seeded",
     requiresExternalNetwork: false,
     requiresSecret: false,
@@ -251,6 +256,7 @@ export const apiServicePorts = [
     deferredCapabilities: ["contract_writer", "object_storage_export"],
     futureAttachPoints: [
       "src/server/campaignDbRepository.ts participant-backed export projection",
+      "src/server/campaignDbRepository.ts referral binding export projection",
       "src/server/exportArtifactRegistry.ts local artifact registry",
       "src/server/exportArtifactRegistry.ts local audit read model",
       "export artifact store",
@@ -259,10 +265,11 @@ export const apiServicePorts = [
       "contract writer approval gate",
       "export confirmation readiness store",
       "future Campaign DB participant table service",
+      "future Campaign DB referral binding table service",
     ],
     id: "export-port",
     localAdapter: "src/domain/campaignService.ts export_winners local preview handler with src/server/exportArtifactRegistry.ts metadata attachment",
-    notes: "Export preview, export artifact registry metadata, export artifact audit read metadata, export readiness inspection, and participant-backed export projection are local; production DB migration, storage-backed files, signed downloads, live object keys, contract transaction, contract writes, and reward distribution are deferred or disabled.",
+    notes: "Export preview, export artifact registry metadata, export artifact audit read metadata, export readiness inspection, participant-backed export projection, and referral binding export projection are local; production DB migration, storage-backed files, signed downloads, live object keys, contract transaction, contract writes, provider risk calls, and reward distribution are deferred or disabled.",
     productionAdapterStatus: "local_seeded",
     requiresExternalNetwork: false,
     requiresSecret: false,
@@ -273,6 +280,26 @@ export const apiServicePorts = [
       "campaigns.export.artifacts.detail",
     ],
     serviceId: "export-service",
+  }),
+  servicePort({
+    deferredCapabilities: ["production_database", "provider_adapters", "scheduler", "worker_queue"],
+    futureAttachPoints: [
+      "src/server/campaignDbRepository.ts campaign referral binding read model",
+      "future Campaign DB referral binding table service",
+      "risk event repository",
+      "provider risk signal reader",
+      "referral qualification worker handoff",
+      "manual review queue",
+      "dead-letter queue",
+    ],
+    id: "referral-port",
+    localAdapter: "src/server/campaignDbRepository.ts referral binding repository/read model metadata",
+    notes: "Wallet-aware referral binding metadata is local deterministic or durable-test only; production referral API routes, production DB migration, live wallet verification, provider risk calls, risk event ingestion, contract transactions, reward custody, and reward distribution are deferred or disabled.",
+    productionAdapterStatus: "local_metadata_only",
+    requiresExternalNetwork: false,
+    requiresSecret: false,
+    routeIds: [],
+    serviceId: "referral-service",
   }),
   servicePort({
     deferredCapabilities: ["auth_session", "provider_adapters", "scheduler", "worker_queue"],

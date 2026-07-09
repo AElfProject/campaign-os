@@ -41,6 +41,16 @@ const validCompletionInput = (campaignId: string, taskId: string) => ({
   walletSource: "PORTKEY_EOA_EXTENSION" as const,
 });
 
+const validReferralBindingInput = (campaignId: string) => ({
+  campaignId,
+  inviteeAccountType: "EOA" as const,
+  inviteeWalletAddress: "2F4InviteeWallet",
+  inviteeWalletSource: "PORTKEY_EOA_EXTENSION" as const,
+  referrerAccountType: "AA" as const,
+  referrerWalletAddress: "2F4ReferrerWallet",
+  referrerWalletSource: "PORTKEY_AA" as const,
+});
+
 const hasOwnKeyDeep = (value: unknown, key: string): boolean => {
   if (!value || typeof value !== "object") {
     return false;
@@ -541,6 +551,190 @@ describe("Campaign DB repository", () => {
     await expect(repository.listParticipants!({ campaignId: campaign.id })).resolves.toEqual([]);
   });
 
+  it("binds campaign referrals with wallet identity and campaign-scoped uniqueness", async () => {
+    const repository = createCampaignDbRepository();
+    const firstCampaign = await repository.createDraft(validDraftInput());
+    const secondCampaign = await repository.createDraft({
+      ...validDraftInput(),
+      projectId: "project-referral-second",
+    });
+
+    const first = await repository.bindReferral!(validReferralBindingInput(firstCampaign.id), {
+      traceId: "trace-referral-bind",
+    });
+    const secondCampaignBinding = await repository.bindReferral!({
+      ...validReferralBindingInput(secondCampaign.id),
+      referrerWalletAddress: "2F4SecondCampaignReferrer",
+    });
+
+    expect(first).toMatchObject({
+      campaignId: firstCampaign.id,
+      id: "campaign-db-referral-binding-0001",
+      inviteeAccountType: "EOA",
+      inviteeWalletAddress: "2F4InviteeWallet",
+      inviteeWalletSource: "PORTKEY_EOA_EXTENSION",
+      qualifiedActionCompleted: false,
+      referrerAccountType: "AA",
+      referrerWalletAddress: "2F4ReferrerWallet",
+      referrerWalletSource: "PORTKEY_AA",
+      riskFlags: [],
+      status: "pending",
+    });
+    expect(first.createdAt).toBe("2026-07-06T00:00:00.000Z");
+    expect(secondCampaignBinding).toMatchObject({
+      campaignId: secondCampaign.id,
+      id: "campaign-db-referral-binding-0002",
+      inviteeWalletAddress: "2F4InviteeWallet",
+      referrerWalletAddress: "2F4SecondCampaignReferrer",
+    });
+    await expect(repository.getReferralBinding!(firstCampaign.id, "2F4InviteeWallet")).resolves.toMatchObject({
+      id: first.id,
+      referrerWalletAddress: "2F4ReferrerWallet",
+    });
+    await expect(repository.listReferralBindings!({ campaignId: firstCampaign.id })).resolves.toEqual([
+      expect.objectContaining({
+        id: first.id,
+        inviteeWalletAddress: "2F4InviteeWallet",
+      }),
+    ]);
+    await expect(repository.health()).resolves.toMatchObject({
+      referralBindingRecordCount: 2,
+    });
+    expect(repository.getEvents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entity: "ReferralBinding",
+          liveExecution: false,
+          operation: "insert_referral_binding",
+          traceId: "trace-referral-bind",
+          type: "command.insert",
+        }),
+      ]),
+    );
+  });
+
+  it("rejects self-referral and duplicate invitee binding with stable diagnostics", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+
+    await expect(repository.bindReferral!({
+      ...validReferralBindingInput(campaign.id),
+      inviteeWalletAddress: "2F4SameWallet",
+      referrerWalletAddress: "2F4SameWallet",
+    })).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_REFERRAL_SELF_REFERRAL_BLOCKED",
+          severity: "error",
+        }),
+      ],
+    });
+
+    await repository.bindReferral!(validReferralBindingInput(campaign.id));
+
+    await expect(repository.bindReferral!({
+      ...validReferralBindingInput(campaign.id),
+      referrerWalletAddress: "2F4AnotherReferrer",
+    })).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code: "CAMPAIGN_DB_REFERRAL_DUPLICATE_BINDING",
+          severity: "error",
+        }),
+      ],
+    });
+    await expect(repository.listReferralBindings!({ campaignId: campaign.id })).resolves.toHaveLength(1);
+  });
+
+  it.each([
+    ["campaignId", { campaignId: "missing-campaign" }, "CAMPAIGN_DB_REFERRAL_CAMPAIGN_NOT_FOUND"],
+    ["inviteeWalletAddress", { inviteeWalletAddress: "" }, "CAMPAIGN_DB_REFERRAL_REQUIRED_FIELD_MISSING"],
+    ["referrerWalletAddress", { referrerWalletAddress: "" }, "CAMPAIGN_DB_REFERRAL_REQUIRED_FIELD_MISSING"],
+    ["inviteeAccountType", { inviteeAccountType: "BOT" }, "CAMPAIGN_DB_REFERRAL_UNSUPPORTED_ACCOUNT_TYPE"],
+    ["referrerAccountType", { referrerAccountType: "BOT" }, "CAMPAIGN_DB_REFERRAL_UNSUPPORTED_ACCOUNT_TYPE"],
+    ["inviteeWalletSource", { inviteeWalletSource: "UNSAFE_WALLET" }, "CAMPAIGN_DB_REFERRAL_UNSUPPORTED_WALLET_SOURCE"],
+    ["referrerWalletSource", { referrerWalletSource: "UNSAFE_WALLET" }, "CAMPAIGN_DB_REFERRAL_UNSUPPORTED_WALLET_SOURCE"],
+    ["riskFlags", { riskFlags: ["same_device", "https://secret.example/token=raw-secret"] }, "CAMPAIGN_DB_REFERRAL_INVALID_RISK_FLAGS"],
+  ])("rejects invalid referral binding %s with stable diagnostics", async (_field, override, code) => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+
+    await expect(repository.bindReferral!({
+      ...validReferralBindingInput(campaign.id),
+      ...override,
+    })).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code,
+          severity: "error",
+        }),
+      ],
+    });
+    await expect(repository.listReferralBindings!({ campaignId: campaign.id })).resolves.toEqual([]);
+  });
+
+  it("marks an existing referral binding qualified with safe evidence", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const binding = await repository.bindReferral!({
+      ...validReferralBindingInput(campaign.id),
+      riskFlags: ["same_device_review"],
+    });
+
+    const qualified = await repository.markReferralQualified!({
+      campaignId: campaign.id,
+      inviteeWalletAddress: "2F4InviteeWallet",
+      qualifiedActionEvidenceHash: "evidence-hash:invitee-bridge",
+      riskFlags: ["same_funding_source_review"],
+    }, {
+      traceId: "trace-referral-qualified",
+    });
+
+    expect(qualified).toMatchObject({
+      id: binding.id,
+      qualifiedActionCompleted: true,
+      qualifiedActionCompletedAt: "2026-07-06T00:00:00.000Z",
+      qualifiedActionEvidenceHash: "evidence-hash:invitee-bridge",
+      riskFlags: ["same_device_review", "same_funding_source_review"],
+      status: "qualified",
+    });
+    expect(qualified.createdAt).toBe(binding.createdAt);
+    expect(repository.getEvents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entity: "ReferralBinding",
+          operation: "update_referral_qualification",
+          traceId: "trace-referral-qualified",
+          type: "command.update",
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    ["missing binding", { inviteeWalletAddress: "2F4MissingInvitee" }, "CAMPAIGN_DB_REFERRAL_BINDING_NOT_FOUND"],
+    ["unsafe evidence", { qualifiedActionEvidenceHash: "https://secret.example/token=raw-secret" }, "CAMPAIGN_DB_REFERRAL_INVALID_EVIDENCE_HASH"],
+    ["empty evidence", { qualifiedActionEvidenceHash: "" }, "CAMPAIGN_DB_REFERRAL_INVALID_EVIDENCE_HASH"],
+  ])("rejects invalid referral qualification %s", async (_case, override, code) => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    await repository.bindReferral!(validReferralBindingInput(campaign.id));
+
+    await expect(repository.markReferralQualified!({
+      campaignId: campaign.id,
+      inviteeWalletAddress: "2F4InviteeWallet",
+      qualifiedActionEvidenceHash: "evidence-hash:invitee-bridge",
+      ...override,
+    })).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code,
+          severity: "error",
+        }),
+      ],
+    });
+  });
+
   it("projects deterministic repository export rows and readiness counts", async () => {
     const repository = createCampaignDbRepository();
     const campaign = await repository.createDraft(validDraftInput());
@@ -753,7 +947,7 @@ describe("Campaign DB repository", () => {
     ]);
   });
 
-  it("uses participant records as eligibility and export identity source", async () => {
+  it("uses participant and referral records as eligibility and export identity source", async () => {
     const repository = createCampaignDbRepository();
     const campaign = await repository.createDraft(validDraftInput());
     const requiredTask = await repository.addTaskDraft({
@@ -809,6 +1003,16 @@ describe("Campaign DB repository", () => {
       evidenceHash: "evidence-hash:clean-required",
       walletAddress: "2F4CleanParticipant",
     });
+    await repository.bindReferral!({
+      ...validReferralBindingInput(campaign.id),
+      inviteeAccountType: "EOA",
+      inviteeWalletAddress: "2F4CleanParticipant",
+      inviteeWalletSource: "PORTKEY_EOA_EXTENSION",
+      referrerAccountType: "AA",
+      referrerWalletAddress: "2F4ParticipantIdentity",
+      referrerWalletSource: "PORTKEY_AA",
+      riskFlags: ["same_funding_source_review"],
+    });
 
     await expect(repository.checkEligibility!({
       accountType: "EOA",
@@ -835,6 +1039,7 @@ describe("Campaign DB repository", () => {
       accountType: row.accountType,
       localePreference: row.localePreference,
       rank: row.rank,
+      referrerAddress: row.referrerAddress,
       riskFlags: row.riskFlags,
       rowStatus: row.rowStatus,
       totalPoints: row.totalPoints,
@@ -842,24 +1047,26 @@ describe("Campaign DB repository", () => {
       walletSource: row.walletSource,
     }))).toEqual([
       {
-        accountType: "EOA",
-        localePreference: "ko-KR",
-        rank: 1,
-        riskFlags: [],
-        rowStatus: "ready",
-        totalPoints: 120,
-        walletAddress: "2F4CleanParticipant",
-        walletSource: "PORTKEY_EOA_EXTENSION",
-      },
-      {
         accountType: "AA",
         localePreference: "zh-CN",
-        rank: 2,
+        rank: 1,
+        referrerAddress: "",
         riskFlags: ["manual_review_queue"],
         rowStatus: "review_required",
         totalPoints: 170,
         walletAddress: "2F4ParticipantIdentity",
         walletSource: "PORTKEY_AA",
+      },
+      {
+        accountType: "EOA",
+        localePreference: "ko-KR",
+        rank: 2,
+        referrerAddress: "2F4ParticipantIdentity",
+        riskFlags: ["same_funding_source_review"],
+        rowStatus: "review_required",
+        totalPoints: 120,
+        walletAddress: "2F4CleanParticipant",
+        walletSource: "PORTKEY_EOA_EXTENSION",
       },
     ]);
   });
@@ -1175,6 +1382,12 @@ describe("Campaign DB repository", () => {
         walletTypeVerified: true,
         walletVerifiedAt: "2026-07-07T05:00:00.000Z",
       });
+      await firstRepository.bindReferral!({
+        ...validReferralBindingInput(created.id),
+        inviteeWalletAddress: "2F4CompletionWallet",
+        referrerWalletAddress: "2F4DurableReferrer",
+        riskFlags: ["same_device_review"],
+      });
 
       const reopenedRepository = createCampaignDbRepository({
         durableStoreFilePath,
@@ -1229,6 +1442,12 @@ describe("Campaign DB repository", () => {
         walletSignatureStatus: "signed",
         walletTypeVerified: true,
       });
+      await expect(reopenedRepository.getReferralBinding!(created.id, "2F4CompletionWallet")).resolves.toMatchObject({
+        campaignId: created.id,
+        inviteeWalletAddress: "2F4CompletionWallet",
+        referrerWalletAddress: "2F4DurableReferrer",
+        riskFlags: ["same_device_review"],
+      });
       await expect(reopenedRepository.checkEligibility!({
         accountType: "EOA",
         campaignId: created.id,
@@ -1270,7 +1489,7 @@ describe("Campaign DB repository", () => {
         {
           localePreference: "vi-VN",
           rank: 2,
-          riskFlags: ["referral_velocity_review"],
+          riskFlags: ["referral_velocity_review", "same_device_review"],
           rowStatus: "review_required",
           walletAddress: "2F4CompletionWallet",
         },
@@ -1283,7 +1502,8 @@ describe("Campaign DB repository", () => {
         expect.objectContaining({
           export_batch_id: `campaign-db-export-${created.id}`,
           locale_preference: "vi-VN",
-          risk_flags: ["referral_velocity_review"],
+          referrer_address: "2F4DurableReferrer",
+          risk_flags: ["referral_velocity_review", "same_device_review"],
           wallet_address: "2F4CompletionWallet",
         }),
       ]);
@@ -1310,6 +1530,7 @@ describe("Campaign DB repository", () => {
         campaignStore: expect.objectContaining({
           completionRecordCount: 2,
           participantRecordCount: 1,
+          referralBindingRecordCount: 1,
           durable: true,
           mode: "durable_test",
           recordCount: 1,
@@ -1318,6 +1539,7 @@ describe("Campaign DB repository", () => {
         }),
         completionRecordCount: 2,
         participantRecordCount: 1,
+        referralBindingRecordCount: 1,
         recordCount: 1,
         selectedMode: "durable_test",
         status: "ready",

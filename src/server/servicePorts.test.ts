@@ -35,6 +35,7 @@ describe("API service ports", () => {
       "eligibility-port",
       "i18n-content-port",
       "export-port",
+      "referral-port",
       "ai-ops-port",
     ];
 
@@ -82,7 +83,9 @@ describe("API service ports", () => {
     expect(apiServicePorts.find((port) => port.id === "campaign-port")).toMatchObject({
       futureAttachPoints: expect.arrayContaining([
         "src/server/campaignDbRepository.ts campaign participant repository/read model",
+        "src/server/campaignDbRepository.ts campaign referral binding read model",
         "future Campaign DB participant table service",
+        "future Campaign DB referral binding table service",
       ]),
       notes: expect.stringContaining("campaign participant repository/read model"),
       productionAdapterStatus: "local_seeded",
@@ -99,6 +102,9 @@ describe("API service ports", () => {
     });
     expect(apiServicePorts.find((port) => port.id === "campaign-port")?.notes).toContain(
       "local deterministic or durable-test",
+    );
+    expect(apiServicePorts.find((port) => port.id === "campaign-port")?.notes).toContain(
+      "campaign referral binding read model metadata",
     );
     expect(apiServicePorts.find((port) => port.id === "campaign-port")?.notes).toContain("reward distribution");
     expect(apiServicePorts.find((port) => port.id === "runtime-observability-port")).toMatchObject({
@@ -120,11 +126,13 @@ describe("API service ports", () => {
     expect(apiServicePorts.find((port) => port.id === "export-port")?.futureAttachPoints).toEqual(
       expect.arrayContaining([
         "src/server/campaignDbRepository.ts participant-backed export projection",
+        "src/server/campaignDbRepository.ts referral binding export projection",
         "src/server/exportArtifactRegistry.ts local artifact registry",
         "src/server/exportArtifactRegistry.ts local audit read model",
         "export artifact store",
         "contract writer approval gate",
         "future Campaign DB participant table service",
+        "future Campaign DB referral binding table service",
       ]),
     );
     expect(apiServicePorts.find((port) => port.id === "export-port")?.routeIds).toEqual(
@@ -148,7 +156,9 @@ describe("API service ports", () => {
     expect(apiServicePorts.find((port) => port.id === "eligibility-port")).toMatchObject({
       futureAttachPoints: expect.arrayContaining([
         "src/server/campaignDbRepository.ts campaign participant repository/read model",
+        "src/server/campaignDbRepository.ts campaign referral binding read model",
         "future Campaign DB participant table service",
+        "future Campaign DB referral binding table service",
       ]),
       notes: expect.stringContaining("campaign participant repository/read model"),
       productionAdapterStatus: "local_seeded",
@@ -159,9 +169,31 @@ describe("API service ports", () => {
       "deterministic and durable-test",
     );
     expect(apiServicePorts.find((port) => port.id === "eligibility-port")?.notes).toContain(
+      "campaign referral binding read model",
+    );
+    expect(apiServicePorts.find((port) => port.id === "eligibility-port")?.notes).toContain(
       "live wallet verification",
     );
     expect(apiServicePorts.find((port) => port.id === "eligibility-port")?.notes).toContain("production DB migration");
+    expect(apiServicePorts.find((port) => port.id === "referral-port")).toMatchObject({
+      deferredCapabilities: expect.arrayContaining(["production_database", "provider_adapters", "scheduler", "worker_queue"]),
+      futureAttachPoints: expect.arrayContaining([
+        "src/server/campaignDbRepository.ts campaign referral binding read model",
+        "future Campaign DB referral binding table service",
+        "provider risk signal reader",
+        "dead-letter queue",
+      ]),
+      localAdapter: expect.stringContaining("src/server/campaignDbRepository.ts"),
+      notes: expect.stringContaining("Wallet-aware referral binding metadata"),
+      productionAdapterStatus: "local_metadata_only",
+      requiresExternalNetwork: false,
+      requiresSecret: false,
+      routeIds: [],
+      serviceId: "referral-service",
+    });
+    expect(apiServicePorts.find((port) => port.id === "referral-port")?.notes).toContain("production referral API routes");
+    expect(apiServicePorts.find((port) => port.id === "referral-port")?.notes).toContain("provider risk calls");
+    expect(apiServicePorts.find((port) => port.id === "referral-port")?.notes).toContain("reward distribution");
     expect(apiServicePorts.find((port) => port.id === "ai-ops-port")).toMatchObject({
       deferredCapabilities: expect.arrayContaining(["auth_session", "provider_adapters", "scheduler", "worker_queue"]),
       futureAttachPoints: expect.arrayContaining([
@@ -187,7 +219,7 @@ describe("API service ports", () => {
 
     expect(report.coverage).toMatchObject({
       deferredPortCount: 0,
-      localMetadataOnlyPortCount: 2,
+      localMetadataOnlyPortCount: 3,
       localSeededPortCount: 8,
       portCount: apiServicePorts.length,
       validationIssueCount: 0,

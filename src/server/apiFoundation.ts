@@ -1037,7 +1037,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["auth_session", "production_database", "scheduler", "worker_queue"],
     label: "Campaign",
-    notes: "Local campaign discovery, draft creation, lifecycle operation inspection, launch readiness inspection, delivery readiness inspection, companion contract readiness inspection, contract transparency inspection, and campaign participant repository/read model metadata exist in deterministic and durable-test modes; durable storage, owner auth, production DB migration to the future Campaign DB participant table service, scheduler runtime, queue runtime lifecycle handoff, contract writer, wallet SDK, storage write, reward custody, reward distribution, and queue provider adapter activation are deferred.",
+    notes: "Local campaign discovery, draft creation, lifecycle operation inspection, launch readiness inspection, delivery readiness inspection, companion contract readiness inspection, contract transparency inspection, campaign participant repository/read model metadata, and campaign referral binding read model metadata exist in deterministic and durable-test modes; durable storage, owner auth, production DB migration to the future Campaign DB participant table service and future Campaign DB referral binding table service, scheduler runtime, queue runtime lifecycle handoff, contract writer, wallet SDK, storage write, reward custody, reward distribution, and queue provider adapter activation are deferred.",
     routeIds: [
       "campaigns.list",
       "campaigns.create",
@@ -1073,7 +1073,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["production_database", "provider_adapters", "scheduler", "worker_queue"],
     label: "Eligibility",
-    notes: "Local eligibility checks read the campaign participant repository/read model in deterministic or durable-test mode; live wallet verification, live indexer/provider evidence, production DB migration, scheduler runtime, queue runtime, queue provider adapter activation, dead-letter queue, worker idempotency store readiness metadata, and production risk stores are deferred.",
+    notes: "Local eligibility checks read the campaign participant repository/read model and campaign referral binding read model in deterministic or durable-test mode; live wallet verification, live indexer/provider evidence, production DB migration, scheduler runtime, queue runtime, queue provider adapter activation, dead-letter queue, worker idempotency store readiness metadata, and production risk stores are deferred.",
     routeIds: ["campaigns.eligibility"],
     serviceId: "eligibility-service",
     state: "implemented_local",
@@ -1100,7 +1100,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["object_storage_export", "contract_writer", "scheduler", "worker_queue"],
     label: "Export",
-    notes: "Local export preview, export readiness inspection, export artifact audit read metadata, and participant-backed export projection read the campaign participant repository/read model; no production DB migration, contract transaction, or reward distribution runs are enabled while object storage adapter fulfillment, export preparation scheduler runtime, queue runtime handoff, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, worker idempotency store readiness metadata, dead-letter queue, observability exporter, and contract root writes are deferred.",
+    notes: "Local export preview, export readiness inspection, export artifact audit read metadata, and participant-backed export projection read the campaign participant repository/read model and campaign referral binding read model; no production DB migration, contract transaction, or reward distribution runs are enabled while object storage adapter fulfillment, export preparation scheduler runtime, queue runtime handoff, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, worker idempotency store readiness metadata, dead-letter queue, observability exporter, and contract root writes are deferred.",
     routeIds: [
       "campaigns.export.preview",
       "campaigns.export.readiness",
@@ -1123,7 +1123,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["production_database", "provider_adapters"],
     label: "Referral",
-    notes: "Topology exists; wallet-aware referral persistence and risk signals are deferred.",
+    notes: "Local Campaign DB referral binding read model metadata exists for wallet-aware invitee/referrer binding counts, qualification state, and export projection handoff; production referral API routes, production DB migration, live wallet verification, provider risk signals, risk event ingestion, contract transactions, reward custody, and reward distribution are deferred.",
     routeIds: [],
     serviceId: "referral-service",
     state: "production_shaped_deferred",

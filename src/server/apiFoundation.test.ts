@@ -213,7 +213,26 @@ describe("API foundation registry", () => {
     expect(report.surfaces.find((surface) => surface.surfaceId === "campaign")?.notes).toContain(
       "future Campaign DB participant table service",
     );
+    expect(report.surfaces.find((surface) => surface.surfaceId === "campaign")?.notes).toContain(
+      "campaign referral binding read model metadata",
+    );
     expect(report.surfaces.find((surface) => surface.surfaceId === "campaign")?.notes).toContain("contract writer");
+    expect(report.surfaces.find((surface) => surface.surfaceId === "referral")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["production_database", "provider_adapters"]),
+      notes: expect.stringContaining("Local Campaign DB referral binding read model metadata"),
+      routeIds: [],
+      serviceId: "referral-service",
+      state: "production_shaped_deferred",
+    });
+    expect(report.surfaces.find((surface) => surface.surfaceId === "referral")?.notes).toContain(
+      "production referral API routes",
+    );
+    expect(report.surfaces.find((surface) => surface.surfaceId === "referral")?.notes).toContain(
+      "provider risk signals",
+    );
+    expect(report.surfaces.find((surface) => surface.surfaceId === "referral")?.notes).toContain(
+      "reward distribution",
+    );
     expect(report.surfaces.find((surface) => surface.surfaceId === "verification")).toMatchObject({
       routeIds: expect.arrayContaining(["campaigns.provider.readiness"]),
     });
@@ -262,6 +281,7 @@ describe("API foundation registry", () => {
       notes: expect.stringContaining("campaign participant repository/read model"),
     });
     expect(surfaceById.get("eligibility")?.notes).toContain("deterministic or durable-test");
+    expect(surfaceById.get("eligibility")?.notes).toContain("campaign referral binding read model");
     expect(surfaceById.get("eligibility")?.notes).toContain("live wallet verification");
     expect(surfaceById.get("eligibility")?.notes).toContain("production DB migration");
     expect(surfaceById.get("eligibility")?.notes).toContain("dead-letter queue");
@@ -270,6 +290,7 @@ describe("API foundation registry", () => {
       notes: expect.stringContaining("participant-backed export projection"),
     });
     expect(surfaceById.get("export")?.notes).toContain("campaign participant repository/read model");
+    expect(surfaceById.get("export")?.notes).toContain("campaign referral binding read model");
     expect(surfaceById.get("export")?.notes).toContain("no production DB migration");
     expect(surfaceById.get("export")?.notes).toContain("contract transaction");
     expect(surfaceById.get("export")?.notes).toContain("reward distribution");

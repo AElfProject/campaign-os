@@ -74,6 +74,15 @@ export type CampaignDbDiagnosticCode =
   | "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_LOCALE"
   | "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_SIGNATURE_STATUS"
   | "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_WALLET_SOURCE"
+  | "CAMPAIGN_DB_REFERRAL_BINDING_NOT_FOUND"
+  | "CAMPAIGN_DB_REFERRAL_CAMPAIGN_NOT_FOUND"
+  | "CAMPAIGN_DB_REFERRAL_DUPLICATE_BINDING"
+  | "CAMPAIGN_DB_REFERRAL_INVALID_EVIDENCE_HASH"
+  | "CAMPAIGN_DB_REFERRAL_INVALID_RISK_FLAGS"
+  | "CAMPAIGN_DB_REFERRAL_REQUIRED_FIELD_MISSING"
+  | "CAMPAIGN_DB_REFERRAL_SELF_REFERRAL_BLOCKED"
+  | "CAMPAIGN_DB_REFERRAL_UNSUPPORTED_ACCOUNT_TYPE"
+  | "CAMPAIGN_DB_REFERRAL_UNSUPPORTED_WALLET_SOURCE"
   | "CAMPAIGN_DB_EXPORT_CAMPAIGN_NOT_FOUND"
   | "CAMPAIGN_DB_EXPORT_REQUIRED_COLUMN_DISABLED"
   | "CAMPAIGN_DB_EXPORT_REQUIRED_FIELD_MISSING"
@@ -213,6 +222,44 @@ export interface CampaignDbUpsertParticipantInput {
   walletVerifiedAt?: string;
 }
 
+export type CampaignDbReferralBindingStatus = "pending" | "qualified" | "risk_review";
+
+export interface CampaignDbReferralBindingRecord {
+  campaignId: string;
+  createdAt: string;
+  id: string;
+  inviteeAccountType: AccountType;
+  inviteeWalletAddress: string;
+  inviteeWalletSource: WalletSource;
+  qualifiedActionCompleted: boolean;
+  qualifiedActionCompletedAt?: string;
+  qualifiedActionEvidenceHash?: string;
+  referrerAccountType: AccountType;
+  referrerWalletAddress: string;
+  referrerWalletSource: WalletSource;
+  riskFlags: string[];
+  status: CampaignDbReferralBindingStatus;
+  updatedAt: string;
+}
+
+export interface CampaignDbBindReferralInput {
+  campaignId: string;
+  inviteeAccountType: AccountType | string;
+  inviteeWalletAddress: string;
+  inviteeWalletSource: WalletSource | string;
+  referrerAccountType: AccountType | string;
+  referrerWalletAddress: string;
+  referrerWalletSource: WalletSource | string;
+  riskFlags?: readonly string[];
+}
+
+export interface CampaignDbMarkReferralQualifiedInput {
+  campaignId: string;
+  inviteeWalletAddress: string;
+  qualifiedActionEvidenceHash: string;
+  riskFlags?: readonly string[];
+}
+
 export interface CampaignDbUpsertTaskCompletionInput {
   accountType: AccountType | string;
   campaignId: string;
@@ -238,6 +285,7 @@ export interface CampaignDbReadProjection extends CampaignDbDraft {
   };
   completions: CampaignDbTaskCompletion[];
   participants: CampaignDbParticipantRecord[];
+  referralBindings: CampaignDbReferralBindingRecord[];
   tasks: CampaignDbTaskDraft[];
 }
 
@@ -449,8 +497,15 @@ export interface CampaignDbParticipantListFilter {
   walletAddress?: string;
 }
 
+export interface CampaignDbReferralBindingListFilter {
+  campaignId: string;
+  inviteeWalletAddress?: string;
+  limit?: number;
+  referrerWalletAddress?: string;
+}
+
 export interface CampaignDbRepositoryEvent {
-  entity: "Campaign" | "CampaignParticipant" | "CampaignTask" | "TaskCompletion";
+  entity: "Campaign" | "CampaignParticipant" | "CampaignTask" | "ReferralBinding" | "TaskCompletion";
   id: string;
   liveExecution: false;
   operation: string;
@@ -475,6 +530,7 @@ export interface CampaignDbRepositoryHealth {
   liveQueryExecutionEnabled: false;
   productionReady: false;
   participantRecordCount: number;
+  referralBindingRecordCount: number;
   recordCount: number;
   selectedMode: CampaignDbRepositoryMode;
   status: CampaignDbRepositoryStatus;
@@ -522,11 +578,28 @@ export interface CampaignDbRepository {
     input: CampaignDbExportProjectionInput,
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbExportReadinessProjection>;
+  getReferralBinding?(
+    campaignId: string,
+    inviteeWalletAddress: string,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbReferralBindingRecord | undefined>;
+  listReferralBindings?(
+    filter: CampaignDbReferralBindingListFilter,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbReferralBindingRecord[]>;
+  markReferralQualified?(
+    input: CampaignDbMarkReferralQualifiedInput,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbReferralBindingRecord>;
   projectExport?(
     input: CampaignDbExportProjectionInput,
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbExportProjection>;
   reset(): Promise<void>;
+  bindReferral?(
+    input: CampaignDbBindReferralInput,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbReferralBindingRecord>;
   upsertParticipant?(
     input: CampaignDbUpsertParticipantInput,
     context?: CampaignDbOperationContext,
@@ -1041,7 +1114,9 @@ const requireCompletionString = (
   field: "campaignId" | "taskId" | "walletAddress",
   issues: CampaignDbDiagnostic[],
 ) => {
-  const value = input[field as keyof typeof input];
+  const value = field === "taskId"
+    ? ("taskId" in input ? input.taskId : undefined)
+    : input[field];
 
   if (!isNonEmptyString(value)) {
     issues.push(diagnostic(
@@ -1209,6 +1284,8 @@ const validateUpsertTaskCompletionInput = (
 };
 
 const participantKey = (campaignId: string, walletAddress: string) => `${campaignId}::${walletAddress}`;
+const referralBindingKey = (campaignId: string, inviteeWalletAddress: string) =>
+  `${campaignId}::${inviteeWalletAddress}`;
 
 const requireParticipantString = (
   input: CampaignDbUpsertParticipantInput,
@@ -1427,6 +1504,222 @@ const validateUpsertParticipantInput = (
     walletSource,
     walletTypeVerified: input.walletTypeVerified === true,
     ...(walletVerifiedAt ? { walletVerifiedAt } : {}),
+  };
+};
+
+const requireReferralString = (
+  input: CampaignDbBindReferralInput | CampaignDbMarkReferralQualifiedInput,
+  field: "campaignId" | "inviteeWalletAddress" | "referrerWalletAddress",
+  issues: CampaignDbDiagnostic[],
+) => {
+  const value = field === "referrerWalletAddress"
+    ? ("referrerWalletAddress" in input ? input.referrerWalletAddress : undefined)
+    : input[field];
+
+  if (!isNonEmptyString(value)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_REFERRAL_REQUIRED_FIELD_MISSING",
+      field,
+      `Campaign DB referral field '${field}' is required.`,
+    ));
+
+    return "";
+  }
+
+  return value.trim();
+};
+
+const normalizeReferralAccountType = (
+  accountType: string,
+  field: "inviteeAccountType" | "referrerAccountType",
+  issues: CampaignDbDiagnostic[],
+): AccountType => {
+  if (!isAccountType(accountType)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_REFERRAL_UNSUPPORTED_ACCOUNT_TYPE",
+      field,
+      "Campaign DB referral account type is unsupported.",
+    ));
+
+    return "UNKNOWN";
+  }
+
+  return accountType;
+};
+
+const normalizeReferralWalletSource = (
+  walletSource: string,
+  field: "inviteeWalletSource" | "referrerWalletSource",
+  issues: CampaignDbDiagnostic[],
+): WalletSource => {
+  if (!isWalletSource(walletSource)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_REFERRAL_UNSUPPORTED_WALLET_SOURCE",
+      field,
+      "Campaign DB referral wallet source is unsupported.",
+    ));
+
+    return "OTHER";
+  }
+
+  return walletSource;
+};
+
+const normalizeReferralRiskFlags = (
+  riskFlags: readonly string[] | undefined,
+  issues: CampaignDbDiagnostic[],
+) => {
+  const flags = riskFlags ?? [];
+  const invalid = !Array.isArray(flags) ||
+    flags.some((flag) => !isNonEmptyString(flag) || hasSecretLikeValue(flag));
+
+  if (invalid) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_REFERRAL_INVALID_RISK_FLAGS",
+      "riskFlags",
+      "Campaign DB referral riskFlags must be safe non-empty string references.",
+    ));
+
+    return [];
+  }
+
+  return Array.from(new Set(flags.map((flag) => flag.trim()))).sort();
+};
+
+const normalizeReferralEvidenceHash = (
+  evidenceHash: string | undefined,
+  issues: CampaignDbDiagnostic[],
+) => {
+  if (!isNonEmptyString(evidenceHash)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_REFERRAL_INVALID_EVIDENCE_HASH",
+      "qualifiedActionEvidenceHash",
+      "Campaign DB referral qualification requires a safe evidence reference.",
+    ));
+
+    return "";
+  }
+
+  const trimmed = evidenceHash.trim();
+
+  if (hasSecretLikeValue(trimmed)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_REFERRAL_INVALID_EVIDENCE_HASH",
+      "qualifiedActionEvidenceHash",
+      "Campaign DB referral qualification evidence must be a safe reference, not raw evidence or a secret-like value.",
+    ));
+
+    return "";
+  }
+
+  return trimmed;
+};
+
+const mergeSafeFlags = (...sets: readonly string[][]) =>
+  Array.from(new Set(sets.flat().map((flag) => flag.trim()).filter(Boolean))).sort();
+
+const referralStatusForRiskFlags = (
+  qualified: boolean,
+  riskFlags: readonly string[],
+): CampaignDbReferralBindingStatus => qualified ? "qualified" : riskFlags.length > 0 ? "risk_review" : "pending";
+
+const validateBindReferralInput = (
+  input: CampaignDbBindReferralInput,
+  campaign: CampaignDbDraft | undefined,
+  existing: CampaignDbReferralBindingRecord | undefined,
+): Omit<CampaignDbReferralBindingRecord, "createdAt" | "id" | "qualifiedActionCompleted" | "updatedAt"> => {
+  const issues: CampaignDbDiagnostic[] = [];
+  const campaignId = requireReferralString(input, "campaignId", issues);
+  const inviteeWalletAddress = requireReferralString(input, "inviteeWalletAddress", issues);
+  const referrerWalletAddress = requireReferralString(input, "referrerWalletAddress", issues);
+  const inviteeAccountType = normalizeReferralAccountType(input.inviteeAccountType, "inviteeAccountType", issues);
+  const referrerAccountType = normalizeReferralAccountType(input.referrerAccountType, "referrerAccountType", issues);
+  const inviteeWalletSource = normalizeReferralWalletSource(input.inviteeWalletSource, "inviteeWalletSource", issues);
+  const referrerWalletSource = normalizeReferralWalletSource(input.referrerWalletSource, "referrerWalletSource", issues);
+  const riskFlags = normalizeReferralRiskFlags(input.riskFlags, issues);
+
+  if (campaignId && !campaign) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_REFERRAL_CAMPAIGN_NOT_FOUND",
+      "campaignId",
+      `Campaign DB draft '${sanitizeCampaignDbDiagnosticValue("campaignId", campaignId)}' was not found.`,
+    ));
+  }
+
+  if (inviteeWalletAddress && referrerWalletAddress && inviteeWalletAddress === referrerWalletAddress) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_REFERRAL_SELF_REFERRAL_BLOCKED",
+      "inviteeWalletAddress",
+      "Campaign DB referral binding rejects self-referral.",
+    ));
+  }
+
+  if (existing) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_REFERRAL_DUPLICATE_BINDING",
+      "inviteeWalletAddress",
+      "Campaign DB referral binding already exists for this campaign and invitee.",
+    ));
+  }
+
+  if (issues.length > 0) {
+    throw new CampaignDbRepositoryError("Invalid Campaign DB referral binding input.", issues);
+  }
+
+  return {
+    campaignId,
+    inviteeAccountType,
+    inviteeWalletAddress,
+    inviteeWalletSource,
+    referrerAccountType,
+    referrerWalletAddress,
+    referrerWalletSource,
+    riskFlags,
+    status: referralStatusForRiskFlags(false, riskFlags),
+  };
+};
+
+const validateMarkReferralQualifiedInput = (
+  input: CampaignDbMarkReferralQualifiedInput,
+  campaign: CampaignDbDraft | undefined,
+  existing: CampaignDbReferralBindingRecord | undefined,
+): {
+  campaignId: string;
+  evidenceHash: string;
+  inviteeWalletAddress: string;
+  riskFlags: string[];
+} => {
+  const issues: CampaignDbDiagnostic[] = [];
+  const campaignId = requireReferralString(input, "campaignId", issues);
+  const inviteeWalletAddress = requireReferralString(input, "inviteeWalletAddress", issues);
+  const evidenceHash = normalizeReferralEvidenceHash(input.qualifiedActionEvidenceHash, issues);
+  const riskFlags = normalizeReferralRiskFlags(input.riskFlags, issues);
+
+  if (campaignId && !campaign) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_REFERRAL_CAMPAIGN_NOT_FOUND",
+      "campaignId",
+      `Campaign DB draft '${sanitizeCampaignDbDiagnosticValue("campaignId", campaignId)}' was not found.`,
+    ));
+  }
+
+  if (campaign && !existing) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_REFERRAL_BINDING_NOT_FOUND",
+      "inviteeWalletAddress",
+      "Campaign DB referral binding was not found for this campaign and invitee.",
+    ));
+  }
+
+  if (issues.length > 0) {
+    throw new CampaignDbRepositoryError("Invalid Campaign DB referral qualification input.", issues);
+  }
+
+  return {
+    campaignId,
+    evidenceHash,
+    inviteeWalletAddress,
+    riskFlags,
   };
 };
 
@@ -1665,11 +1958,15 @@ const createExportRows = (
   tasks: CampaignDbTaskDraft[],
   completions: CampaignDbTaskCompletion[],
   participants: CampaignDbParticipantRecord[],
+  referralBindings: CampaignDbReferralBindingRecord[],
   exportBatchId: string,
 ): CampaignDbExportRow[] => {
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
   const completionsByWallet = new Map<string, Map<string, CampaignDbTaskCompletion>>();
   const participantsByWallet = new Map(participants.map((participant) => [participant.walletAddress, participant]));
+  const referralBindingsByInvitee = new Map(
+    referralBindings.map((binding) => [binding.inviteeWalletAddress, binding]),
+  );
 
   for (const completion of completions) {
     if (!tasksById.has(completion.taskId)) {
@@ -1688,6 +1985,7 @@ const createExportRows = (
   const rows = walletAddresses.map((walletAddress) => {
     const walletCompletions = completionsByWallet.get(walletAddress) ?? new Map<string, CampaignDbTaskCompletion>();
     const participant = participantsByWallet.get(walletAddress);
+    const referralBinding = referralBindingsByInvitee.get(walletAddress);
     const completionValues = Array.from(walletCompletions.values())
       .sort((left, right) => left.taskId.localeCompare(right.taskId));
     const firstCompletion = completionValues[0];
@@ -1718,7 +2016,7 @@ const createExportRows = (
       .map((task) => task.templateCode || task.id);
     const hasReviewRequiredTask = tasks
       .some((task) => task.required && !completedTaskIds.has(task.id) && reviewRequiredTaskIds.has(task.id));
-    const riskFlags = participant?.riskFlags ?? [];
+    const riskFlags = mergeSafeFlags(participant?.riskFlags ?? [], referralBinding?.riskFlags ?? []);
     const rowStatus: ExportRowStatus =
       riskFlags.length > 0
         ? "review_required"
@@ -1744,7 +2042,7 @@ const createExportRows = (
       localePreference: participant?.localePreference ?? campaign.defaultLocale,
       missingColumnValues: [],
       missingTasks,
-      referrerAddress: "",
+      referrerAddress: referralBinding?.referrerWalletAddress ?? "",
       riskFlags,
       rowStatus,
       taskRecords,
@@ -2043,6 +2341,7 @@ export const createCampaignDbRepository = ({
 }: CreateCampaignDbRepositoryOptions = {}): CampaignDbRepository => {
   const recordsById = new Map<string, CampaignDbDraft>();
   const participantRecordsById = new Map<string, CampaignDbParticipantRecord>();
+  const referralBindingRecordsById = new Map<string, CampaignDbReferralBindingRecord>();
   const taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
   const taskRecordsById = new Map<string, CampaignDbTaskDraft>();
   const events: CampaignDbRepositoryEvent[] = [];
@@ -2064,6 +2363,7 @@ export const createCampaignDbRepository = ({
   let idSequence = 0;
   let completionIdSequence = 0;
   let participantIdSequence = 0;
+  let referralBindingIdSequence = 0;
   let taskIdSequence = 0;
   let eventSequence = 0;
   let transactionSequence = 0;
@@ -2104,6 +2404,12 @@ export const createCampaignDbRepository = ({
     return `campaign-db-participant-${participantIdSequence.toString().padStart(4, "0")}`;
   };
 
+  const nextReferralBindingId = () => {
+    referralBindingIdSequence += 1;
+
+    return `campaign-db-referral-binding-${referralBindingIdSequence.toString().padStart(4, "0")}`;
+  };
+
   const nextCompletionIdForStore = async () => {
     if (!activeDurableStore) {
       return nextCompletionId();
@@ -2122,6 +2428,16 @@ export const createCampaignDbRepository = ({
     const manifest = await activeDurableStore.manifest();
 
     return `campaign-db-participant-${(manifest.participantRecordCount + 1).toString().padStart(4, "0")}`;
+  };
+
+  const nextReferralBindingIdForStore = async () => {
+    if (!activeDurableStore) {
+      return nextReferralBindingId();
+    }
+
+    const manifest = await activeDurableStore.manifest();
+
+    return `campaign-db-referral-binding-${(manifest.referralBindingRecordCount + 1).toString().padStart(4, "0")}`;
   };
 
   const nextTransactionId = () => {
@@ -2182,10 +2498,22 @@ export const createCampaignDbRepository = ({
         .filter((participant) => participant.campaignId === campaignId)
         .sort((left, right) => left.walletAddress.localeCompare(right.walletAddress));
 
+  const listReferralBindingsByCampaignId = async (campaignId: string) =>
+    activeDurableStore
+      ? await activeDurableStore.listReferralBindingsByCampaignId(campaignId)
+      : Array.from(referralBindingRecordsById.values())
+        .filter((binding) => binding.campaignId === campaignId)
+        .sort((left, right) => left.inviteeWalletAddress.localeCompare(right.inviteeWalletAddress));
+
   const getParticipantRecord = async (campaignId: string, walletAddress: string) =>
     activeDurableStore
       ? await activeDurableStore.getParticipant(campaignId, walletAddress)
       : participantRecordsById.get(participantKey(campaignId, walletAddress));
+
+  const getReferralBindingRecord = async (campaignId: string, inviteeWalletAddress: string) =>
+    activeDurableStore
+      ? await activeDurableStore.getReferralBinding(campaignId, inviteeWalletAddress)
+      : referralBindingRecordsById.get(referralBindingKey(campaignId, inviteeWalletAddress));
 
   const listTaskCompletionsByWallet = async (campaignId: string, walletAddress: string) =>
     (await listTaskCompletionsByCampaignId(campaignId))
@@ -2207,6 +2535,7 @@ export const createCampaignDbRepository = ({
     repository: repositoryMetadata(),
     completions: await listTaskCompletionsByCampaignId(draft.id),
     participants: await listParticipantsByCampaignId(draft.id),
+    referralBindings: await listReferralBindingsByCampaignId(draft.id),
     tasks: await listTaskDraftsByCampaignId(draft.id),
   });
 
@@ -2239,8 +2568,9 @@ export const createCampaignDbRepository = ({
     const tasks = await listTaskDraftsByCampaignId(normalized.campaignId);
     const completions = await listTaskCompletionsByCampaignId(normalized.campaignId);
     const participants = await listParticipantsByCampaignId(normalized.campaignId);
+    const referralBindings = await listReferralBindingsByCampaignId(normalized.campaignId);
     const exportBatchId = exportBatchIdFor(normalized.campaignId);
-    const rows = createExportRows(campaign, tasks, completions, participants, exportBatchId);
+    const rows = createExportRows(campaign, tasks, completions, participants, referralBindings, exportBatchId);
     const repository = repositoryMetadata();
     const exportReadiness = createExportReadinessProjection(
       normalized.campaignId,
@@ -2269,6 +2599,11 @@ export const createCampaignDbRepository = ({
 
   const resolveParticipantRecordCount = async () =>
     activeDurableStore ? (await activeDurableStore.manifest()).participantRecordCount : participantRecordsById.size;
+
+  const resolveReferralBindingRecordCount = async () =>
+    activeDurableStore
+      ? (await activeDurableStore.manifest()).referralBindingRecordCount
+      : referralBindingRecordsById.size;
 
   const durableDiagnostics = async () =>
     activeDurableStore
@@ -2299,6 +2634,7 @@ export const createCampaignDbRepository = ({
       liveQueryExecutionEnabled: false,
       participantRecordCount: await resolveParticipantRecordCount(),
       productionReady: false,
+      referralBindingRecordCount: await resolveReferralBindingRecordCount(),
       recordCount: await resolveRecordCount(),
       selectedMode: mode,
       status: mode === "production_deferred" || diagnostics.some((issue) => issue.severity === "error")
@@ -2405,6 +2741,62 @@ export const createCampaignDbRepository = ({
       });
 
       return task;
+    },
+    bindReferral: async (input, context = {}) => {
+      assertWritable();
+
+      const campaign = activeDurableStore
+        ? await activeDurableStore.getById(input.campaignId)
+        : recordsById.get(input.campaignId);
+      const existing = await getReferralBindingRecord(input.campaignId, input.inviteeWalletAddress);
+      const validated = validateBindReferralInput(input, campaign, existing);
+      const transactionId = nextTransactionId();
+      appendEvent({
+        entity: "ReferralBinding",
+        operation: "begin_bind_referral",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.begin",
+      });
+      appendEvent({
+        entity: "ReferralBinding",
+        operation: "plan_insert_referral_binding",
+        traceId: context.traceId,
+        transactionId,
+        type: "command.planned",
+      });
+
+      const timestamp = now();
+      const binding: CampaignDbReferralBindingRecord = {
+        ...validated,
+        createdAt: timestamp,
+        id: await nextReferralBindingIdForStore(),
+        qualifiedActionCompleted: false,
+        updatedAt: timestamp,
+      };
+
+      if (activeDurableStore) {
+        await activeDurableStore.upsertReferralBinding(binding);
+      } else {
+        referralBindingRecordsById.set(referralBindingKey(binding.campaignId, binding.inviteeWalletAddress), binding);
+      }
+
+      appendEvent({
+        entity: "ReferralBinding",
+        operation: "insert_referral_binding",
+        traceId: context.traceId,
+        transactionId,
+        type: "command.insert",
+      });
+      appendEvent({
+        entity: "ReferralBinding",
+        operation: "commit_bind_referral",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.commit",
+      });
+
+      return binding;
     },
     checkEligibility: async (input, context = {}) => {
       assertWritable();
@@ -2539,6 +2931,16 @@ export const createCampaignDbRepository = ({
 
       return await getParticipantRecord(campaignId, walletAddress);
     },
+    getReferralBinding: async (campaignId, inviteeWalletAddress, context = {}) => {
+      appendEvent({
+        entity: "ReferralBinding",
+        operation: "lookup_referral_binding",
+        traceId: context.traceId,
+        type: "query.lookup",
+      });
+
+      return await getReferralBindingRecord(campaignId, inviteeWalletAddress);
+    },
     health,
     list: async (filter = {}, context = {}) => {
       appendEvent({
@@ -2586,10 +2988,84 @@ export const createCampaignDbRepository = ({
         .filter((participant) => !filter.walletAddress || participant.walletAddress === filter.walletAddress)
         .slice(0, limit);
     },
+    listReferralBindings: async (filter, context = {}) => {
+      appendEvent({
+        entity: "ReferralBinding",
+        operation: "list_referral_bindings",
+        traceId: context.traceId,
+        type: "query.list",
+      });
+      const bindings = await listReferralBindingsByCampaignId(filter.campaignId);
+      const maxLimit = bindings.length || 1;
+      const limit = Math.max(1, Math.min(Math.trunc(filter.limit ?? maxLimit), maxLimit));
+
+      return bindings
+        .filter((binding) => !filter.inviteeWalletAddress || binding.inviteeWalletAddress === filter.inviteeWalletAddress)
+        .filter((binding) => !filter.referrerWalletAddress || binding.referrerWalletAddress === filter.referrerWalletAddress)
+        .slice(0, limit);
+    },
     getExportReadiness: async (input, context = {}) => {
       const { exportReadiness } = await createExportState(input, context);
 
       return exportReadiness;
+    },
+    markReferralQualified: async (input, context = {}) => {
+      assertWritable();
+
+      const campaign = activeDurableStore
+        ? await activeDurableStore.getById(input.campaignId)
+        : recordsById.get(input.campaignId);
+      const existing = await getReferralBindingRecord(input.campaignId, input.inviteeWalletAddress);
+      const validated = validateMarkReferralQualifiedInput(input, campaign, existing);
+      const transactionId = nextTransactionId();
+      appendEvent({
+        entity: "ReferralBinding",
+        operation: "begin_mark_referral_qualified",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.begin",
+      });
+      appendEvent({
+        entity: "ReferralBinding",
+        operation: "plan_update_referral_qualification",
+        traceId: context.traceId,
+        transactionId,
+        type: "command.planned",
+      });
+
+      const timestamp = now();
+      const binding: CampaignDbReferralBindingRecord = {
+        ...existing!,
+        qualifiedActionCompleted: true,
+        qualifiedActionCompletedAt: timestamp,
+        qualifiedActionEvidenceHash: validated.evidenceHash,
+        riskFlags: mergeSafeFlags(existing!.riskFlags, validated.riskFlags),
+        status: "qualified",
+        updatedAt: timestamp,
+      };
+
+      if (activeDurableStore) {
+        await activeDurableStore.upsertReferralBinding(binding);
+      } else {
+        referralBindingRecordsById.set(referralBindingKey(binding.campaignId, binding.inviteeWalletAddress), binding);
+      }
+
+      appendEvent({
+        entity: "ReferralBinding",
+        operation: "update_referral_qualification",
+        traceId: context.traceId,
+        transactionId,
+        type: "command.update",
+      });
+      appendEvent({
+        entity: "ReferralBinding",
+        operation: "commit_mark_referral_qualified",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.commit",
+      });
+
+      return binding;
     },
     projectExport: async (input, context = {}) => {
       const {
@@ -2628,11 +3104,13 @@ export const createCampaignDbRepository = ({
       taskCompletionsById.clear();
       taskRecordsById.clear();
       participantRecordsById.clear();
+      referralBindingRecordsById.clear();
       await activeDurableStore?.reset();
       events.length = 0;
       idSequence = 0;
       completionIdSequence = 0;
       participantIdSequence = 0;
+      referralBindingIdSequence = 0;
       taskIdSequence = 0;
       eventSequence = 0;
       transactionSequence = 0;
