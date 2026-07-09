@@ -19,6 +19,7 @@ import {
 } from "./index";
 import { createApiFoundationReport } from "./apiFoundation";
 import { createApiServicePortReport } from "./servicePorts";
+import { createProductionBackendRouteCoverage } from "./productionBackendReadiness";
 
 const unsafeKeys = [
   "apikey",
@@ -222,6 +223,13 @@ describe("API runtime route catalog", () => {
     );
     expect(coverage.coveredSkillIds).toEqual(requiredApiSkillIds);
     expect(coverage.deferredSkillIds).toEqual([]);
+    expect(createProductionBackendRouteCoverage(apiRuntimeRoutes, coverage)).toMatchObject({
+      missingApiSkillIds: [],
+      requiredApiSkillCount: requiredApiSkillIds.length,
+      routeCount: apiRuntimeRoutes.length,
+      routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
+      runtimeRouteCount: apiRuntimeRoutes.filter((runtimeRoute) => runtimeRoute.serviceGroup === "runtime").length,
+    });
     expect(coverage.routeIds).toEqual(
       expect.arrayContaining([
         "agent.wallet.action.review",

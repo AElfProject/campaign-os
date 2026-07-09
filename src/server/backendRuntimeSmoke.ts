@@ -23,6 +23,7 @@ export interface BackendRuntimeSmokeCheck {
   ok: boolean;
   observabilityExporterFoundation?: BackendRuntimeSmokeObservabilityExporterFoundationSummary;
   persistenceFoundation?: BackendRuntimeSmokePersistenceFoundationSummary;
+  productionBackendReadiness?: BackendRuntimeSmokeProductionBackendReadinessSummary;
   providerClientReadiness?: BackendRuntimeSmokeProviderClientReadinessSummary;
   providerIndexerFoundation?: BackendRuntimeSmokeProviderIndexerFoundationSummary;
   queueRuntimeFoundation?: BackendRuntimeSmokeQueueRuntimeFoundationSummary;
@@ -377,6 +378,20 @@ export interface BackendRuntimeSmokeObservabilityExporterFoundationSummary {
   valid: boolean;
 }
 
+export interface BackendRuntimeSmokeProductionBackendReadinessSummary {
+  contractsEndpoint?: string;
+  healthEndpoint?: string;
+  missingApiSkillIds: string[];
+  noLiveSideEffectsAllFalse: boolean;
+  productionReady: false;
+  profileId?: string;
+  routeCount: number;
+  smokeCommand?: string;
+  startCommand?: string;
+  status?: string;
+  traceHeaderName?: string;
+}
+
 export interface BackendRuntimeSmokeSummary {
   activationId?: string;
   authSessionFoundation: BackendRuntimeSmokeAuthSessionFoundationSummary;
@@ -388,6 +403,7 @@ export interface BackendRuntimeSmokeSummary {
   liveSideEffectsEnabled: boolean;
   observabilityExporterFoundation: BackendRuntimeSmokeObservabilityExporterFoundationSummary;
   persistenceFoundation: BackendRuntimeSmokePersistenceFoundationSummary;
+  productionBackendReadiness: BackendRuntimeSmokeProductionBackendReadinessSummary;
   providerClientReadiness: BackendRuntimeSmokeProviderClientReadinessSummary;
   port: number;
   productionReady: boolean;
@@ -494,6 +510,11 @@ const readObservabilityExporterFoundation = (
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["serverRuntime", "readiness", "observabilityExporterFoundation"]);
 
+const readProductionBackendReadiness = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["productionBackendReadiness"]);
+
 const getNumber = (
   record: Record<string, unknown> | undefined,
   key: string,
@@ -503,6 +524,38 @@ const getString = (
   record: Record<string, unknown> | undefined,
   key: string,
 ): string | undefined => typeof record?.[key] === "string" ? record[key] : undefined;
+
+const summarizeProductionBackendReadiness = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeProductionBackendReadinessSummary | undefined => {
+  if (!record || !isExplicitFalse(record, "productionReady")) {
+    return undefined;
+  }
+
+  const deployHandoff = readNestedRecord(record, ["deployHandoff"]);
+  const noLiveSideEffects = readNestedRecord(record, ["noLiveSideEffects"]);
+  const profile = readNestedRecord(record, ["profile"]);
+  const routeCoverage = readNestedRecord(record, ["routeCoverage"]);
+  const tracePolicy = readNestedRecord(record, ["tracePolicy"]);
+  const noLiveSideEffectsAllFalse =
+    noLiveSideEffects !== undefined
+    && Object.values(noLiveSideEffects).length > 0
+    && Object.values(noLiveSideEffects).every((value) => value === false);
+
+  return {
+    contractsEndpoint: getString(deployHandoff, "contractsEndpoint"),
+    healthEndpoint: getString(deployHandoff, "healthEndpoint"),
+    missingApiSkillIds: getStringArray(routeCoverage, "missingApiSkillIds"),
+    noLiveSideEffectsAllFalse,
+    productionReady: false,
+    profileId: getString(profile, "id"),
+    routeCount: getNumber(routeCoverage, "routeCount"),
+    smokeCommand: getString(deployHandoff, "smokeCommand"),
+    startCommand: getString(deployHandoff, "startCommand"),
+    status: getString(record, "status"),
+    traceHeaderName: getString(tracePolicy, "traceHeaderName"),
+  };
+};
 
 const summarizePersistenceFoundation = (
   record: Record<string, unknown> | undefined,
@@ -1308,6 +1361,9 @@ const createSmokeCheck = async ({
   const observabilityExporterFoundation = summarizeObservabilityExporterFoundation(
     readObservabilityExporterFoundation(payload.data),
   );
+  const productionBackendReadiness = summarizeProductionBackendReadiness(
+    readProductionBackendReadiness(payload.data),
+  );
 
   return {
     activation,
@@ -1319,6 +1375,7 @@ const createSmokeCheck = async ({
       ok: payload.ok === true && payload.traceId === traceId,
       observabilityExporterFoundation,
       persistenceFoundation,
+      productionBackendReadiness,
       providerClientReadiness,
       providerIndexerFoundation,
       queueRuntimeFoundation,
@@ -1744,6 +1801,20 @@ const isObservabilityExporterFoundationSmokeReady = (
     && summary.valid === true;
 };
 
+const isProductionBackendReadinessSmokeReady = (
+  summary: BackendRuntimeSmokeProductionBackendReadinessSummary | undefined,
+): summary is BackendRuntimeSmokeProductionBackendReadinessSummary =>
+  summary !== undefined
+  && summary.contractsEndpoint === "/api/contracts"
+  && summary.healthEndpoint === "/api/health"
+  && summary.missingApiSkillIds.length === 0
+  && summary.noLiveSideEffectsAllFalse === true
+  && summary.productionReady === false
+  && summary.routeCount > 0
+  && summary.smokeCommand === "npm run server:smoke"
+  && summary.startCommand === "npm run server:start"
+  && summary.traceHeaderName === "x-campaign-os-trace-id";
+
 export const runBackendRuntimeSmoke = async ({
   env,
   fetchImpl = fetch,
@@ -1787,6 +1858,7 @@ export const runBackendRuntimeSmoke = async ({
     const workerLeaseStoreFoundation = contracts.check.workerLeaseStoreFoundation;
     const workerSchedulerFoundation = contracts.check.workerSchedulerFoundation;
     const observabilityExporterFoundation = contracts.check.observabilityExporterFoundation;
+    const productionBackendReadiness = contracts.check.productionBackendReadiness;
 
     if (
       health.check.status !== 200
@@ -1811,6 +1883,8 @@ export const runBackendRuntimeSmoke = async ({
       || !isSchedulerRuntimeFoundationSmokeReady(schedulerRuntimeFoundation)
       || !isObservabilityExporterFoundationSmokeReady(health.check.observabilityExporterFoundation)
       || !isObservabilityExporterFoundationSmokeReady(observabilityExporterFoundation)
+      || !isProductionBackendReadinessSmokeReady(health.check.productionBackendReadiness)
+      || !isProductionBackendReadinessSmokeReady(productionBackendReadiness)
       || !isWorkerIdempotencyStoreFoundationSmokeReady(health.check.workerIdempotencyStoreFoundation)
       || !isWorkerIdempotencyStoreFoundationSmokeReady(workerIdempotencyStoreFoundation)
       || !isWorkerLeaseStoreFoundationSmokeReady(health.check.workerLeaseStoreFoundation)
@@ -1832,6 +1906,7 @@ export const runBackendRuntimeSmoke = async ({
       liveSideEffectsEnabled: getBoolean(activation, "liveSideEffectsEnabled"),
       observabilityExporterFoundation,
       persistenceFoundation,
+      productionBackendReadiness,
       providerClientReadiness,
       port: new URL(server.url).port ? Number(new URL(server.url).port) : 0,
       productionReady: getBoolean(activation, "productionReady"),
