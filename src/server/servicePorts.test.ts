@@ -85,11 +85,22 @@ describe("API service ports", () => {
       serviceId: "runtime-observability",
     });
     expect(apiServicePorts.find((port) => port.id === "export-port")?.futureAttachPoints).toEqual(
-      expect.arrayContaining(["export artifact store", "contract writer approval gate"]),
+      expect.arrayContaining([
+        "src/server/exportArtifactRegistry.ts local artifact registry",
+        "export artifact store",
+        "contract writer approval gate",
+      ]),
     );
     expect(apiServicePorts.find((port) => port.id === "export-port")?.routeIds).toEqual(
       expect.arrayContaining(["campaigns.export.preview", "campaigns.export.readiness"]),
     );
+    expect(apiServicePorts.find((port) => port.id === "export-port")).toMatchObject({
+      localAdapter: expect.stringContaining("src/server/exportArtifactRegistry.ts"),
+      notes: expect.stringContaining("export artifact registry metadata"),
+      productionAdapterStatus: "local_seeded",
+      requiresExternalNetwork: false,
+      requiresSecret: false,
+    });
     expect(apiServicePorts.find((port) => port.id === "ai-ops-port")).toMatchObject({
       deferredCapabilities: expect.arrayContaining(["auth_session", "provider_adapters", "scheduler", "worker_queue"]),
       futureAttachPoints: expect.arrayContaining([

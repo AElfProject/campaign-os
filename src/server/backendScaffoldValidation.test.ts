@@ -121,9 +121,15 @@ const expectedAiOpsRuntimeRouteFiles = [
   "src/server/topology.ts",
 ];
 
-const aiOpsRuntimeRouteTriggerFiles = expectedAiOpsRuntimeRouteFiles.filter(
-  (file) => file !== "src/server/apiRuntime.test.ts" && file !== "src/server/handlers.ts",
-);
+const aiOpsRuntimeRouteTriggerFiles = [
+  "src/domain/apiSkillContracts.ts",
+  "src/domain/campaign.ts",
+  "src/domain/campaignService.ts",
+  "src/domain/types.ts",
+  "src/server/apiFoundation.ts",
+  "src/server/routes.ts",
+  "src/server/topology.ts",
+];
 
 const providerHttpReadyEnv = {
   CAMPAIGN_OS_PROVIDER_HTTP_CREDENTIAL_REF: "credential-ref:provider-http",
