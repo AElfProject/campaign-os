@@ -65,7 +65,17 @@ describe("API service ports", () => {
       serviceId: "verification-service",
     });
     expect(apiServicePorts.find((port) => port.id === "campaign-port")).toMatchObject({
-      routeIds: expect.arrayContaining(["campaigns.lifecycle", "campaigns.launch.readiness"]),
+      notes: expect.stringContaining("local seeded read models"),
+      productionAdapterStatus: "local_seeded",
+      requiresExternalNetwork: false,
+      requiresSecret: false,
+      routeIds: expect.arrayContaining([
+        "campaigns.lifecycle",
+        "campaigns.launch.readiness",
+        "campaigns.delivery.readiness",
+        "campaigns.companion.contract.readiness",
+        "campaigns.contract.transparency",
+      ]),
       serviceId: "campaign-service",
     });
     expect(apiServicePorts.find((port) => port.id === "runtime-observability-port")).toMatchObject({
