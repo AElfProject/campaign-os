@@ -101,6 +101,24 @@ describe("API runtime route catalog", () => {
       readiness: "review_required",
       serviceGroup: "campaign",
     });
+    expect(apiRuntimeRouteById["campaigns.delivery.readiness"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns/:campaignId/delivery-readiness",
+      readiness: "review_required",
+      serviceGroup: "campaign",
+    });
+    expect(apiRuntimeRouteById["campaigns.companion.contract.readiness"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns/:campaignId/companion-contract-readiness",
+      readiness: "review_required",
+      serviceGroup: "campaign",
+    });
+    expect(apiRuntimeRouteById["campaigns.contract.transparency"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns/:campaignId/contract-transparency",
+      readiness: "review_required",
+      serviceGroup: "campaign",
+    });
     expect(apiRuntimeRouteById["campaigns.provider.readiness"]).toMatchObject({
       apiSkillId: "get_campaign_provider_readiness",
       method: "GET",
@@ -209,6 +227,9 @@ describe("API runtime route catalog", () => {
         "agent.wallet.action.review",
         "campaigns.export.artifacts.detail",
         "campaigns.export.artifacts.list",
+        "campaigns.delivery.readiness",
+        "campaigns.companion.contract.readiness",
+        "campaigns.contract.transparency",
         "campaigns.export.readiness",
         "campaigns.lifecycle",
         "campaigns.launch.readiness",

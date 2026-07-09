@@ -80,6 +80,20 @@ describe("API foundation registry", () => {
       operationId: "getCampaignLaunchReadiness",
       serviceId: "campaign-service",
     });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.delivery.readiness")).toMatchObject({
+      operationId: "getCampaignDeliveryReadiness",
+      serviceId: "campaign-service",
+    });
+    expect(
+      registry.routes.find((route) => route.routeId === "campaigns.companion.contract.readiness"),
+    ).toMatchObject({
+      operationId: "getCampaignCompanionContractReadiness",
+      serviceId: "campaign-service",
+    });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.contract.transparency")).toMatchObject({
+      operationId: "getCampaignContractTransparency",
+      serviceId: "campaign-service",
+    });
     expect(registry.routes.find((route) => route.routeId === "campaigns.provider.readiness")).toMatchObject({
       operationId: "getCampaignProviderReadiness",
       serviceId: "verification-service",
@@ -124,6 +138,21 @@ describe("API foundation registry", () => {
         }),
       ]),
     );
+    for (const routeId of [
+      "campaigns.delivery.readiness",
+      "campaigns.companion.contract.readiness",
+      "campaigns.contract.transparency",
+    ]) {
+      expect(requestFieldsByRoute.get(routeId)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            location: "path",
+            name: "campaignId",
+            required: true,
+          }),
+        ]),
+      );
+    }
     expect(requestFieldsByRoute.get("tasks.verify")?.map((field) => field?.name)).toEqual(
       expect.arrayContaining(["accountType", "campaignId", "taskId", "walletAddress", "walletSource"]),
     );
@@ -165,7 +194,14 @@ describe("API foundation registry", () => {
       routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts", "campaigns.summary"]),
     });
     expect(report.surfaces.find((surface) => surface.surfaceId === "campaign")).toMatchObject({
-      routeIds: expect.arrayContaining(["campaigns.lifecycle", "campaigns.launch.readiness"]),
+      notes: expect.stringContaining("contract writer"),
+      routeIds: expect.arrayContaining([
+        "campaigns.lifecycle",
+        "campaigns.launch.readiness",
+        "campaigns.delivery.readiness",
+        "campaigns.companion.contract.readiness",
+        "campaigns.contract.transparency",
+      ]),
     });
     expect(report.surfaces.find((surface) => surface.surfaceId === "verification")).toMatchObject({
       routeIds: expect.arrayContaining(["campaigns.provider.readiness"]),

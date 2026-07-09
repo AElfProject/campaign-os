@@ -224,6 +224,78 @@ interface LaunchReadinessPayload {
   };
 }
 
+interface DeliveryReadinessPayload {
+  campaignId: string;
+  closeout: {
+    rows: Array<{
+      handoffTarget: string;
+      itemId: string;
+      queueId: string;
+    }>;
+    summary: {
+      ready: boolean;
+      topHandoffTarget: string;
+      topQueueId: string;
+      topRowId: string | null;
+    };
+  };
+  groups: Array<{
+    id: string;
+    items: Array<{
+      evidence: Record<string, string>;
+      id: string;
+      status: string;
+    }>;
+  }>;
+  summary: {
+    ready: boolean;
+    totalItems: number;
+  };
+  traceability: {
+    rows: Array<{
+      itemId: string;
+      proofLevel: string;
+      status: string;
+    }>;
+    summary: {
+      ready: boolean;
+    };
+  };
+}
+
+interface CompanionContractReadinessPayload {
+  campaignId: string;
+  categories: Array<{
+    id: string;
+    evidenceItems: Array<{
+      kind: string;
+      status: string;
+    }>;
+    status: string;
+  }>;
+  summary: {
+    ready: boolean;
+    totalCategories: number;
+  };
+}
+
+interface ContractTransparencyPayload {
+  campaignId: string;
+  closeoutContext: {
+    status: string;
+    topGateId: string;
+  };
+  lanes: Array<{
+    blocksExecution: boolean;
+    id: string;
+    readiness: string;
+  }>;
+  summary: {
+    totalLanes: number;
+    topLaneId: string;
+  };
+}
+
 interface ExportReadinessPayload {
   campaignId: string;
   contractRootReadiness: Array<{
@@ -1874,6 +1946,18 @@ describe("Campaign OS API runtime", () => {
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/launch-readiness`,
     });
+    const deliveryReadiness = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/delivery-readiness`,
+    });
+    const companionContractReadiness = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/companion-contract-readiness`,
+    });
+    const contractTransparency = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/contract-transparency`,
+    });
     const exportReadiness = await runtimeWithPersistence.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/export-readiness`,
@@ -1912,6 +1996,90 @@ describe("Campaign OS API runtime", () => {
         totalBundles: 3,
       },
     });
+    expect(expectSuccessData<LocalServiceEnvelope<DeliveryReadinessPayload>>(deliveryReadiness).payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      closeout: {
+        rows: expect.arrayContaining([
+          expect.objectContaining({
+            handoffTarget: "live_wallet_qa",
+            itemId: "qa-portkey-aa-connect",
+            queueId: "needs_review",
+          }),
+        ]),
+        summary: expect.objectContaining({
+          ready: false,
+          topHandoffTarget: "live_wallet_qa",
+          topQueueId: "needs_review",
+          topRowId: "closeout:qa:qa-portkey-aa-connect",
+        }),
+      },
+      groups: expect.arrayContaining([
+        expect.objectContaining({
+          id: "qa",
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              evidence: expect.objectContaining({
+                "en-US": expect.stringContaining("Live Portkey AA provider evidence is not attached yet"),
+              }),
+              id: "qa-portkey-aa-connect",
+              status: "needs_review",
+            }),
+          ]),
+        }),
+      ]),
+      traceability: {
+        rows: expect.arrayContaining([
+          expect.objectContaining({
+            itemId: "qa-portkey-aa-connect",
+            proofLevel: "live_evidence_required",
+            status: "needs_review",
+          }),
+        ]),
+        summary: expect.any(Object),
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<CompanionContractReadinessPayload>>(
+      companionContractReadiness,
+    ).payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      categories: expect.arrayContaining([
+        expect.objectContaining({
+          id: "campaign-registry-methods-events",
+          evidenceItems: expect.arrayContaining([
+            expect.objectContaining({ kind: "method" }),
+            expect.objectContaining({ kind: "event" }),
+          ]),
+        }),
+      ]),
+      summary: {
+        ready: true,
+        totalCategories: expect.any(Number),
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<ContractTransparencyPayload>>(contractTransparency).payload)
+      .toMatchObject({
+        campaignId: campaignDetail.id,
+        closeoutContext: expect.objectContaining({
+          status: expect.any(String),
+          topGateId: expect.any(String),
+        }),
+        lanes: expect.arrayContaining([
+          expect.objectContaining({
+            blocksExecution: false,
+            id: "off-chain-mvp",
+            readiness: "ready",
+          }),
+          expect.objectContaining({
+            blocksExecution: true,
+            id: "reward-custody-claim",
+            readiness: "blocked",
+          }),
+        ]),
+        summary: {
+          totalLanes: expect.any(Number),
+          topLaneId: expect.any(String),
+        },
+      });
     expect(expectSuccessData<LocalServiceEnvelope<ExportReadinessPayload>>(exportReadiness).payload).toMatchObject({
       campaignId: campaignDetail.id,
       contractRootReadiness: expect.arrayContaining([
@@ -1960,12 +2128,23 @@ describe("Campaign OS API runtime", () => {
         export_preview: 0,
       }),
     });
-    for (const response of [lifecycle, launchReadiness, exportReadiness, providerReadiness]) {
+    for (const response of [
+      lifecycle,
+      launchReadiness,
+      deliveryReadiness,
+      companionContractReadiness,
+      contractTransparency,
+      exportReadiness,
+      providerReadiness,
+    ]) {
       expectNoForbiddenResponseKeys(response.body);
       expectNoForbiddenFragments(response.body, [
         "fileUrl",
         "mutationId",
+        "privateKey",
+        "rawSignature",
         "signedUrl",
+        "storageKey",
         "transactionId",
       ]);
     }
@@ -1981,6 +2160,18 @@ describe("Campaign OS API runtime", () => {
       runtime.handle({
         method: "GET",
         path: "/api/campaigns/missing-campaign/launch-readiness",
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/delivery-readiness",
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/companion-contract-readiness",
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/contract-transparency",
       }),
       runtime.handle({
         method: "GET",

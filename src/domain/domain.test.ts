@@ -2590,7 +2590,7 @@ describe("Campaign OS domain foundation", () => {
     }
   });
 
-  it("builds the delivery checklist readiness console with release-approved v0.2 wallet evidence", () => {
+  it("builds the delivery checklist readiness console without promoting local wallet evidence to live coverage", () => {
     const adminOps = createAdminOpsReadModel(campaignDetail);
     const readiness = adminOps.deliveryChecklistReadiness;
     const items = readiness.groups.flatMap((group) => group.items);
@@ -2611,7 +2611,7 @@ describe("Campaign OS domain foundation", () => {
       blockedItems: items.filter((item) => item.status === "blocked").length,
       deferredItems: items.filter((item) => item.status === "deferred").length,
     });
-    expect(new Set(items.map((item) => item.status))).toEqual(new Set(["covered", "deferred"]));
+    expect(new Set(items.map((item) => item.status))).toEqual(new Set(["covered", "needs_review", "deferred"]));
     expect(readiness.traceability.rows).toHaveLength(items.length);
     expect(readiness.traceability.summary).toMatchObject({
       deferredRows: items.filter((item) => item.status === "deferred").length,
@@ -2741,27 +2741,27 @@ describe("Campaign OS domain foundation", () => {
       missingVerificationRows: closeout.rows.filter((row) => row.missingVerification).length,
       missingEvidenceRows: closeout.rows.filter((row) => row.missingEvidence).length,
       deferredRows: closeout.rows.filter((row) => row.queueId === "deferred").length,
-      ready: true,
+      ready: false,
     });
-    expect(closeout.summary.topQueueId).toBe("deferred");
-    expect(closeout.summary.topHandoffTarget).toBe("none");
-    expect(closeout.summary.topRowId).toBeNull();
+    expect(closeout.summary.topQueueId).toBe("needs_review");
+    expect(closeout.summary.topHandoffTarget).toBe("live_wallet_qa");
+    expect(closeout.summary.topRowId).toBe("closeout:qa:qa-portkey-aa-connect");
     expect(closeout.boundary["en-US"]).toContain("Review-only closeout workflow");
     expect(closeout.boundary["en-US"]).toContain("does not execute live wallet SDKs");
     expect(closeoutByItemId["qa-portkey-aa-connect"]).toMatchObject({
-      queueId: "covered",
-      handoffTarget: "none",
+      queueId: "needs_review",
+      handoffTarget: "live_wallet_qa",
       proofLevel: "live_evidence_required",
-      status: "covered",
+      status: "needs_review",
       missingEvidence: false,
       missingVerification: false,
     });
-    expect(closeoutByItemId["qa-portkey-aa-connect"]?.handoffLabel["en-US"]).toBe("No immediate handoff");
+    expect(closeoutByItemId["qa-portkey-aa-connect"]?.handoffLabel["en-US"]).toBe("Wallet provider QA");
     expect(closeoutByItemId["qa-eoa-extension-connect"]).toMatchObject({
-      queueId: "covered",
-      handoffTarget: "none",
+      queueId: "needs_review",
+      handoffTarget: "live_wallet_qa",
       proofLevel: "live_evidence_required",
-      status: "covered",
+      status: "needs_review",
     });
     expect(closeoutByItemId["product-aa-eoa-support"]).toMatchObject({
       queueId: "covered",
@@ -3021,28 +3021,28 @@ describe("Campaign OS domain foundation", () => {
       "claim-mode disabled and future approval-gated",
     );
     expect(itemsById["qa-wrong-chain-error"]).toMatchObject({
-      status: "covered",
+      status: "needs_review",
       blocksDelivery: false,
     });
     expect(itemsById["qa-portkey-aa-connect"]?.surface["en-US"]).toBe("Wallet Provider QA Gate");
     expect(itemsById["qa-portkey-aa-connect"]?.evidence["en-US"]).toContain(
-      "Live Portkey AA provider evidence has been reviewed",
+      "Live Portkey AA provider evidence is not attached yet",
     );
     expect(itemsById["qa-eoa-extension-connect"]?.evidence["en-US"]).toContain(
-      "Live EOA browser-extension evidence has been reviewed",
+      "Live EOA browser-extension evidence is not attached yet",
     );
     expect(itemsById["qa-extension-not-installed-error"]).toMatchObject({
-      status: "covered",
+      status: "needs_review",
       blocksDelivery: false,
     });
     expect(itemsById["qa-extension-not-installed-error"]?.evidence["en-US"]).toContain(
-      "extension-not-installed recovery evidence has been reviewed",
+      "Live EOA extension-not-installed recovery evidence is not attached yet",
     );
     expect(itemsById["qa-wrong-chain-error"]?.nextAction["en-US"]).toContain(
-      "Keep reviewed live-provider evidence attached",
+      "Attach live wrong-chain switch/recovery evidence",
     );
     expect(itemsById["qa-unsupported-wallet-error"]?.evidence["zh-TW"]).toContain(
-      "真實不支援錢包 provider fallback 證據已審核",
+      "尚未附上真實不支援錢包 provider fallback 證據",
     );
     expect(itemsById["qa-export-csv-columns"]).toMatchObject({
       status: "covered",
@@ -3068,7 +3068,13 @@ describe("Campaign OS domain foundation", () => {
       "Keep reward custody outside Campaign OS",
     );
     expect(readiness.blockers.map((item) => item.id)).toEqual([]);
-    expect(readiness.needsReview.map((item) => item.id)).toEqual([]);
+    expect(readiness.needsReview.map((item) => item.id)).toEqual([
+      "qa-portkey-aa-connect",
+      "qa-eoa-extension-connect",
+      "qa-extension-not-installed-error",
+      "qa-wrong-chain-error",
+      "qa-unsupported-wallet-error",
+    ]);
     expect(readiness.needsReview.map((item) => item.id)).not.toEqual(
       expect.arrayContaining(["product-reward-disclaimer-locales", "qa-reward-disclaimer-blocker"]),
     );
@@ -3329,12 +3335,21 @@ describe("Campaign OS domain foundation", () => {
       "wrong-chain-error",
       "unsupported-wallet-error",
     ]);
+    expect(adminOps.walletProviderQaGate.scenarios[0]).toMatchObject({
+      liveEvidenceStatus: "ready",
+      releaseImpact: "ready",
+      evidence: {
+        "en-US": "Live Portkey AA provider evidence has been reviewed.",
+      },
+    });
     expect(readinessById["qa-portkey-aa-connect"]).toMatchObject({
-      status: "covered",
-      evidence: adminOps.walletProviderQaGate.scenarios[0].evidence,
+      status: "needs_review",
+      evidence: {
+        "en-US": expect.stringContaining("Live Portkey AA provider evidence is not attached yet"),
+      },
     });
     expect(readinessById["qa-portkey-aa-connect"]?.nextAction["en-US"]).toContain(
-      "Keep reviewed live-provider evidence attached",
+      "Attach live Portkey AA connect evidence",
     );
     expect(adminOps.walletProviderQaGate.boundary["en-US"]).toContain("no live wallet SDK connection");
     expect(adminOps.walletProviderQaGate.boundary["zh-CN"]).toContain("奖励发放");

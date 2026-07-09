@@ -108,7 +108,16 @@ describe("backend service topology", () => {
       expect(service.runtimeProfiles.length).toBeGreaterThan(0);
     }
     expect(backendServiceBoundaries.find((service) => service.id === "campaign-service")).toMatchObject({
-      routeIds: expect.arrayContaining(["campaigns.lifecycle", "campaigns.launch.readiness"]),
+      risks: expect.arrayContaining([
+        expect.stringContaining("read-only local review metadata"),
+      ]),
+      routeIds: expect.arrayContaining([
+        "campaigns.lifecycle",
+        "campaigns.launch.readiness",
+        "campaigns.delivery.readiness",
+        "campaigns.companion.contract.readiness",
+        "campaigns.contract.transparency",
+      ]),
     });
     expect(backendServiceBoundaries.find((service) => service.id === "verification-service")).toMatchObject({
       routeIds: expect.arrayContaining(["campaigns.provider.readiness"]),
