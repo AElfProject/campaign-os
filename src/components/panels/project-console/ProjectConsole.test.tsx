@@ -1,10 +1,23 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  submitExportArtifactDeliveryApiReview,
+  type ExportArtifactDeliveryApiBridgeState,
+} from "../../../api/exportArtifactDeliveryApiBridge";
 import { App } from "../../../app/App";
 import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
 import { projectConsoleCopy } from "./copy";
 import { ProjectConsole } from "./ProjectConsole";
+
+vi.mock("../../../api/exportArtifactDeliveryApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/exportArtifactDeliveryApiBridge")>();
+
+  return {
+    ...actual,
+    submitExportArtifactDeliveryApiReview: vi.fn(actual.submitExportArtifactDeliveryApiReview),
+  };
+});
 
 const getProjectWorkspaceNav = () =>
   screen.getByRole("navigation", { name: "Project Console workspace navigation" });
@@ -25,9 +38,209 @@ const clickWorkspace = (name: string) => {
   fireEvent.click(within(getProjectWorkspaceNav()).getByRole("button", { name }));
 };
 
+const apiDeliveredState = (): ExportArtifactDeliveryApiBridgeState => ({
+  artifactId: "export-artifact-local-camp-awaken-sprint",
+  auditDetail: {
+    artifactId: "export-artifact-local-camp-awaken-sprint",
+    boundary: {
+      "en-US": "Local export artifact registry only.",
+      "zh-CN": "Local export artifact registry only.",
+      "zh-TW": "Local export artifact registry only.",
+    },
+    campaignId: campaignDetail.id,
+    record: {
+      artifactId: "export-artifact-local-camp-awaken-sprint",
+      auditEvents: [
+        {
+          id: "audit-event-registered",
+          routeId: "campaigns.export.preview",
+          traceId: "trace-export-api-visible",
+          type: "registered_local_artifact",
+        },
+        {
+          id: "audit-event-storage-disabled",
+          routeId: "campaigns.export.preview",
+          traceId: "trace-export-api-visible",
+          type: "storage_disabled",
+        },
+      ],
+      batchId: "export-awaken-sprint-preview",
+      campaignId: campaignDetail.id,
+      checksum: "sha256-api-artifact",
+      checksumAlgorithm: "sha256",
+      expiresAt: "2026-07-10T00:00:00.000Z",
+      retention: {
+        mode: "local_review_ttl",
+        productionStorageBacked: false,
+        purgeRequired: true,
+        ttlHours: 24,
+      },
+      routeId: "campaigns.export.preview",
+      traceId: "trace-export-api-visible",
+    },
+    safety: {
+      localReviewOnly: true,
+      noDownloadUrl: true,
+      noStorageWrite: true,
+    },
+  },
+  auditList: {
+    boundary: {
+      "en-US": "Local export artifact registry only.",
+      "zh-CN": "Local export artifact registry only.",
+      "zh-TW": "Local export artifact registry only.",
+    },
+    campaignId: campaignDetail.id,
+    records: [{
+      artifactId: "export-artifact-local-camp-awaken-sprint",
+      auditEvents: [
+        {
+          id: "audit-event-registered",
+          routeId: "campaigns.export.preview",
+          traceId: "trace-export-api-visible",
+          type: "registered_local_artifact",
+        },
+      ],
+      batchId: "export-awaken-sprint-preview",
+      campaignId: campaignDetail.id,
+      checksum: "sha256-api-artifact",
+      checksumAlgorithm: "sha256",
+      expiresAt: "2026-07-10T00:00:00.000Z",
+      retention: {
+        mode: "local_review_ttl",
+        productionStorageBacked: false,
+        purgeRequired: true,
+        ttlHours: 24,
+      },
+      routeId: "campaigns.export.preview",
+      traceId: "trace-export-api-visible",
+    }],
+    summary: {
+      activeRecords: 1,
+      blockedRows: 0,
+      expiredRecords: 0,
+      readyRows: 1,
+      reviewRequiredRows: 3,
+      totalRecords: 1,
+      totalRows: 4,
+    },
+  },
+  boundary: {
+    "en-US":
+      "Local export artifact delivery API review only. No download URL, storage write, signed URL, provider call, contract root write, wallet signing, queue execution, scheduler execution, reward custody, or reward distribution is executed.",
+    "zh-CN": "Local export artifact delivery API review only.",
+    "zh-TW": "Local export artifact delivery API review only.",
+  },
+  configured: true,
+  diagnostics: [],
+  loading: false,
+  preview: {
+    artifact: {
+      batchId: "export-awaken-sprint-preview",
+      campaignId: campaignDetail.id,
+      fileName: "camp-awaken-sprint-export-awaken-sprint-preview-api-review.csv",
+      format: "csv",
+      metadata: {
+        blockedRows: 0,
+        checksum: "sha256-api-artifact",
+        checksumAlgorithm: "sha256",
+        columns: ["wallet_address", "wallet_type", "locale_preference"],
+        payloadBytes: 768,
+        readyRows: 1,
+        reviewRequiredRows: 3,
+        totalRows: 4,
+      },
+      mimeType: "text/csv",
+      safety: {
+        localOnly: true,
+        noContractRoot: true,
+        noDownloadUrl: true,
+        noRewardDistribution: true,
+        noStorageWrite: true,
+      },
+    },
+    artifactRegistry: {
+      artifactId: "export-artifact-local-camp-awaken-sprint",
+      auditEvents: [
+        {
+          id: "audit-event-registered",
+          routeId: "campaigns.export.preview",
+          traceId: "trace-export-api-visible",
+          type: "registered_local_artifact",
+        },
+      ],
+      batchId: "export-awaken-sprint-preview",
+      campaignId: campaignDetail.id,
+      checksum: "sha256-api-artifact",
+      checksumAlgorithm: "sha256",
+      expiresAt: "2026-07-10T00:00:00.000Z",
+      retention: {
+        mode: "local_review_ttl",
+        productionStorageBacked: false,
+        purgeRequired: true,
+        ttlHours: 24,
+      },
+      routeId: "campaigns.export.preview",
+      traceId: "trace-export-api-visible",
+    },
+    blockedRows: 0,
+    campaignId: campaignDetail.id,
+    columns: ["wallet_address", "wallet_type", "locale_preference"],
+    contractRootMode: "none",
+    exportBatchId: "export-awaken-sprint-preview",
+    format: "csv",
+    readyRows: 1,
+    reviewRequiredRows: 3,
+  },
+  registry: {
+    artifactId: "export-artifact-local-camp-awaken-sprint",
+    auditEvents: [
+      {
+        id: "audit-event-registered",
+        routeId: "campaigns.export.preview",
+        traceId: "trace-export-api-visible",
+        type: "registered_local_artifact",
+      },
+    ],
+    batchId: "export-awaken-sprint-preview",
+    campaignId: campaignDetail.id,
+    checksum: "sha256-api-artifact",
+    checksumAlgorithm: "sha256",
+    expiresAt: "2026-07-10T00:00:00.000Z",
+    retention: {
+      mode: "local_review_ttl",
+      productionStorageBacked: false,
+      purgeRequired: true,
+      ttlHours: 24,
+    },
+    routeId: "campaigns.export.preview",
+    traceId: "trace-export-api-visible",
+  },
+  request: {
+    campaignId: campaignDetail.id,
+    contractRootMode: "none",
+    format: "csv",
+    includeLocalePreference: true,
+    includeRiskFlags: true,
+    includeWalletType: true,
+  },
+  source: "api_runtime",
+  status: "delivered",
+  traceId: "trace-export-api-visible",
+});
+
 describe("Project Console shell", () => {
+  const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
+  const mockedSubmitExportArtifactDeliveryApiReview = vi.mocked(submitExportArtifactDeliveryApiReview);
+
+  beforeEach(() => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
+    mockedSubmitExportArtifactDeliveryApiReview.mockReset();
+  });
+
   afterEach(() => {
     window.localStorage.clear();
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = originalApiBaseUrl;
   });
 
   it("renders Campaigns as the default workspace with seeded operational data", () => {
@@ -1142,6 +1355,14 @@ describe("Project Console shell", () => {
     expect(screen.getAllByText(EXPORT_CSV_COLUMNS.join(",")).length).toBeGreaterThan(0);
     expect(screen.getByText(/Campaign OS exports verified records only/)).toBeInTheDocument();
     expect(screen.getByText(/Local export artifact only/)).toBeInTheDocument();
+    const exportDeliveryApi = screen.getByLabelText("Export Delivery API review");
+    expect(mockedSubmitExportArtifactDeliveryApiReview).not.toHaveBeenCalled();
+    expect(within(exportDeliveryApi).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+    expect(within(exportDeliveryApi).getByText("No local API base URL configured; seeded export review remains visible and no fetch is sent.")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByRole("button", { name: "Review local API delivery" })).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("API_BASE_URL_MISSING: No local export delivery API base URL is configured, so seeded export review remains visible.")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText(/No download URL, storage write, signed URL/)).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("No wallet signing")).toBeInTheDocument();
     const localArtifact = screen.getByLabelText("Local export artifact");
     expect(within(localArtifact).getByText("camp-awaken-sprint-export-awaken-sprint-preview-local-review.csv")).toBeInTheDocument();
     expect(within(localArtifact).getByText("CSV")).toBeInTheDocument();
@@ -1365,6 +1586,153 @@ describe("Project Console shell", () => {
     ).toBeGreaterThan(0);
     expect(screen.getByText(/does not call live APIs/i)).toBeInTheDocument();
     expect(screen.queryByLabelText("Locale analytics readiness")).not.toBeInTheDocument();
+  });
+
+  it("clicks Export Delivery API review action and renders preview registry plus audit detail", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedSubmitExportArtifactDeliveryApiReview.mockResolvedValueOnce(apiDeliveredState());
+
+    render(<App />);
+
+    clickWorkspace("Export");
+
+    const exportDeliveryApi = screen.getByLabelText("Export Delivery API review");
+
+    fireEvent.click(within(exportDeliveryApi).getByRole("button", { name: "Review local API delivery" }));
+
+    await waitFor(() => expect(mockedSubmitExportArtifactDeliveryApiReview).toHaveBeenCalledWith({
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        tracePrefix: "project-console-export-delivery-review",
+      },
+      request: {
+        campaignId: campaignDetail.id,
+        contractRootMode: "none",
+        format: "csv",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      },
+    }));
+
+    await waitFor(() => expect(within(exportDeliveryApi).getByText("API runtime")).toBeInTheDocument());
+    expect(within(exportDeliveryApi).getByText("Delivered")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("trace-export-api-visible")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getAllByText("export-artifact-local-camp-awaken-sprint").length).toBeGreaterThan(0);
+    expect(within(exportDeliveryApi).getByText("camp-awaken-sprint-export-awaken-sprint-preview-api-review.csv")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("sha256-api-artifact")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("Audit list: API audit ready")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("campaigns.export.preview")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("registered local artifact")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("storage disabled")).toBeInTheDocument();
+  });
+
+  it("shows partial Export Delivery API state while preserving seeded export panels", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    const partialState = apiDeliveredState();
+    mockedSubmitExportArtifactDeliveryApiReview.mockResolvedValueOnce({
+      ...partialState,
+      auditDetail: undefined,
+      diagnostics: [{
+        code: "API_AUDIT_DETAIL_FAILED",
+        message: {
+          "en-US": "The local export artifact audit detail route did not return a usable record.",
+          "zh-CN": "The local export artifact audit detail route did not return a usable record.",
+          "zh-TW": "The local export artifact audit detail route did not return a usable record.",
+        },
+        safeDetails: { endpoint: "/api/campaigns/camp-awaken-sprint/export-artifacts/export-artifact-local-camp-awaken-sprint", status: 404 },
+        severity: "error",
+      }],
+      status: "partial",
+      traceId: "trace-export-audit-detail-failed",
+    });
+
+    render(<App />);
+
+    clickWorkspace("Export");
+
+    const exportDeliveryApi = screen.getByLabelText("Export Delivery API review");
+
+    fireEvent.click(within(exportDeliveryApi).getByRole("button", { name: "Review local API delivery" }));
+
+    await waitFor(() => expect(within(exportDeliveryApi).getByText("Partial API result")).toBeInTheDocument());
+    expect(within(exportDeliveryApi).getByText("trace-export-audit-detail-failed")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText(/API_AUDIT_DETAIL_FAILED/)).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("camp-awaken-sprint-export-awaken-sprint-preview-api-review.csv")).toBeInTheDocument();
+    expect(screen.getByLabelText("Local export artifact")).toBeInTheDocument();
+    expect(screen.getByLabelText("Storage provider approval summary")).toBeInTheDocument();
+    expect(screen.getByLabelText("Export fulfillment readiness")).toBeInTheDocument();
+    expect(screen.getByLabelText("Export confirmation readiness")).toBeInTheDocument();
+  });
+
+  it("sanitizes unsafe Export Delivery API diagnostics and avoids live side-effect controls", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedSubmitExportArtifactDeliveryApiReview.mockResolvedValueOnce({
+      boundary: {
+        "en-US":
+          "Local export artifact delivery API review only. No download URL, storage write, signed URL, provider call, contract root write, wallet signing, queue execution, scheduler execution, reward custody, or reward distribution is executed.",
+        "zh-CN": "Local export artifact delivery API review only.",
+        "zh-TW": "Local export artifact delivery API review only.",
+      },
+      configured: true,
+      diagnostics: [{
+        code: "API_REQUEST_FAILED",
+        message: {
+          "en-US": "Request failed with private key, seed phrase, bearer token, signed URL, object key, storage key, raw signature, provider payload, stack trace, and /Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/raw?token=secret.",
+          "zh-CN": "Request failed with private key.",
+          "zh-TW": "Request failed with private key.",
+        },
+        severity: "error",
+      }],
+      loading: false,
+      request: {
+        campaignId: campaignDetail.id,
+        contractRootMode: "none",
+        format: "csv",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      },
+      source: "error_fallback",
+      status: "error",
+      traceId: "trace-export-error-visible",
+    });
+
+    render(<App />);
+
+    clickWorkspace("Export");
+
+    const exportDeliveryApi = screen.getByLabelText("Export Delivery API review");
+
+    fireEvent.click(within(exportDeliveryApi).getByRole("button", { name: "Review local API delivery" }));
+
+    await waitFor(() => expect(within(exportDeliveryApi).getAllByText("Error fallback").length).toBeGreaterThan(0));
+    expect(within(exportDeliveryApi).getByText(/API_REQUEST_FAILED/)).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("trace-export-error-visible")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByRole("button", { name: "Review local API delivery" })).toBeInTheDocument();
+
+    const diagnostics = within(exportDeliveryApi).getByLabelText("Sanitized diagnostics");
+    const diagnosticsText = diagnostics.textContent?.toLowerCase() ?? "";
+    for (const unsafe of [
+      "private key",
+      "seed phrase",
+      "bearer token",
+      "signed url",
+      "object key",
+      "storage key",
+      "raw signature",
+      "provider payload",
+      "stack trace",
+      "campaign-os-kitty",
+      "token=secret",
+    ]) {
+      expect(diagnosticsText).not.toContain(unsafe);
+    }
+    expect(
+      within(exportDeliveryApi).queryByRole("button", {
+        name: /download|upload|store|signed URL|contract root|wallet signing|custody|distribute|reward/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("switches major Project Console copy manually to zh-CN", () => {
