@@ -1,9 +1,11 @@
 import "@testing-library/jest-dom/vitest";
+import { act } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../../app/App";
 import { campaignDetail } from "../../../domain";
 import { loadCampaignDiscoveryApiBridgeState } from "../../../api/campaignDiscoveryApiBridge";
+import { submitUserParticipationApiReview } from "../../../api/userParticipationApiBridge";
 import { UserAppPanel } from "./UserAppPanel";
 
 vi.mock("../../../api/campaignDiscoveryApiBridge", async (importOriginal) => {
@@ -15,9 +17,19 @@ vi.mock("../../../api/campaignDiscoveryApiBridge", async (importOriginal) => {
   };
 });
 
+vi.mock("../../../api/userParticipationApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/userParticipationApiBridge")>();
+
+  return {
+    ...actual,
+    submitUserParticipationApiReview: vi.fn(actual.submitUserParticipationApiReview),
+  };
+});
+
 describe("User App shell", () => {
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
   const mockedLoadBridgeState = vi.mocked(loadCampaignDiscoveryApiBridgeState);
+  const mockedSubmitUserParticipationReview = vi.mocked(submitUserParticipationApiReview);
 
   const getUserAppConnectWalletButton = (name: string) => {
     const header = screen.queryByRole("banner");
@@ -29,9 +41,26 @@ describe("User App shell", () => {
     return userAppButton as HTMLElement;
   };
 
+  const clickBridgeTaskApiReview = async () => {
+    const taskVerification = screen.getByRole("heading", { name: "Task verification states" }).closest("section");
+
+    expect(taskVerification).not.toBeNull();
+
+    const bridgeTask = within(taskVerification as HTMLElement)
+      .getAllByRole("listitem")
+      .find((item) => within(item).queryByText("Bridge via eBridge"));
+
+    expect(bridgeTask).toBeDefined();
+
+    await act(async () => {
+      fireEvent.click(within(bridgeTask as HTMLElement).getByRole("button", { name: "Review with API" }));
+    });
+  };
+
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
     mockedLoadBridgeState.mockReset();
+    mockedSubmitUserParticipationReview.mockReset();
   });
 
   afterEach(() => {
@@ -53,6 +82,20 @@ describe("User App shell", () => {
     expect(within(bridge).getByText(/No production service/)).toBeInTheDocument();
     expect(screen.getAllByText("Forest NFT Quest").length).toBeGreaterThan(0);
     expect(screen.getAllByText("TMRWDAO Governance Streak").length).toBeGreaterThan(0);
+  });
+
+  it("renders seeded fallback user participation API state when API base URL is absent", () => {
+    render(<UserAppPanel locale="en-US" />);
+
+    const bridge = screen.getByRole("complementary", { name: "User Participation API review status" });
+
+    expect(mockedSubmitUserParticipationReview).not.toHaveBeenCalled();
+    expect(within(bridge).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+    expect(bridge).toHaveTextContent("API_BASE_URL_MISSING: No local participation API base URL is configured, so the seeded User App remains visible.");
+    expect(within(bridge).getByText(/Local-only API review boundary/)).toBeInTheDocument();
+    expect(within(bridge).getByText(/No live provider or indexer call/)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Eligibility checker" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "API not configured" }).length).toBeGreaterThan(0);
   });
 
   it("renders API-backed bridge state with trace ID and route readiness", async () => {
@@ -104,6 +147,227 @@ describe("User App shell", () => {
     expect(within(bridge).getByText("ready; 18 routes")).toBeInTheDocument();
     expect(within(bridge).getByText("1")).toBeInTheDocument();
     expect(screen.getAllByText("Awaken Sprint").length).toBeGreaterThan(0);
+  });
+
+  it("clicks API review action and renders verification plus eligibility result", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5174";
+    mockedLoadBridgeState.mockResolvedValueOnce({
+      boundary: {
+        "en-US": "Local API review only; no production side effects are executed.",
+        "zh-CN": "Local API review only; no production side effects are executed.",
+        "zh-TW": "Local API review only; no production side effects are executed.",
+      },
+      campaignCount: 0,
+      campaigns: [],
+      configured: true,
+      loading: false,
+      source: "error_fallback",
+    });
+    mockedSubmitUserParticipationReview.mockResolvedValueOnce({
+      boundary: {
+        "en-US": "Local user participation API review only. No live provider or indexer call, wallet signature, contract write, export file, storage write, reward custody, or reward distribution is executed.",
+        "zh-CN": "Local user participation API review only.",
+        "zh-TW": "Local user participation API review only.",
+      },
+      configured: true,
+      diagnostics: [],
+      eligibility: {
+        accountType: "EOA",
+        campaignId: campaignDetail.id,
+        eligible: false,
+        localePreference: "zh-CN",
+        missingTasks: ["task-swap"],
+        riskFlags: ["referral_velocity_review"],
+        score: 160,
+        status: "pending",
+        walletAddress: "3E9...7cD",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+        walletTypeVerified: true,
+      },
+      loading: false,
+      request: {
+        accountType: "EOA",
+        campaignId: campaignDetail.id,
+        taskId: "task-bridge",
+        walletAddress: "3E9...7cD",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      },
+      source: "api_runtime",
+      status: "eligibility_checked",
+      traceId: "trace-participation-visible",
+      verification: {
+        accountType: "EOA",
+        campaignId: campaignDetail.id,
+        evidenceHash: "api-evidence-hash",
+        evidenceSource: "DAPP_API",
+        pointsAwarded: 120,
+        pointsAvailable: 120,
+        riskFlags: [],
+        status: "completed",
+        taskId: "task-bridge",
+        walletAddress: "3E9...7cD",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      },
+    });
+
+    render(<UserAppPanel locale="en-US" />);
+
+    await clickBridgeTaskApiReview();
+
+    await waitFor(() => expect(mockedSubmitUserParticipationReview).toHaveBeenCalledWith({
+      config: {
+        baseUrl: "http://127.0.0.1:5174",
+        tracePrefix: "user-app-participation-review",
+      },
+      request: {
+        accountType: "EOA",
+        campaignId: campaignDetail.id,
+        taskId: "task-bridge",
+        walletAddress: "3E9...7cD",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      },
+    }));
+
+    const bridge = await screen.findByRole("complementary", { name: "User Participation API review status" });
+
+    expect(within(bridge).getByText("API runtime")).toBeInTheDocument();
+    expect(within(bridge).getByText("trace-participation-visible")).toBeInTheDocument();
+    expect(within(bridge).getByText("completed · Points awarded: 120/120")).toBeInTheDocument();
+    expect(within(bridge).getByText("pending · Score: 160 · Wallet type verified: Eligible")).toBeInTheDocument();
+    expect(within(bridge).getByText("api-evidence-hash")).toBeInTheDocument();
+    expect(within(bridge).getByText("task-swap")).toBeInTheDocument();
+    expect(within(bridge).getByText("referral_velocity_review")).toBeInTheDocument();
+    expect(bridge).toHaveTextContent("No diagnostics");
+  });
+
+  it("shows partial state when eligibility refresh fails after verification", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5174";
+    mockedLoadBridgeState.mockResolvedValueOnce({
+      boundary: {
+        "en-US": "Local API review only.",
+        "zh-CN": "Local API review only.",
+        "zh-TW": "Local API review only.",
+      },
+      campaignCount: 0,
+      campaigns: [],
+      configured: true,
+      loading: false,
+      source: "error_fallback",
+    });
+    mockedSubmitUserParticipationReview.mockResolvedValueOnce({
+      boundary: {
+        "en-US": "Local user participation API review only. No live provider or indexer call, wallet signature, contract write, export file, storage write, reward custody, or reward distribution is executed.",
+        "zh-CN": "Local user participation API review only.",
+        "zh-TW": "Local user participation API review only.",
+      },
+      configured: true,
+      diagnostics: [{
+        code: "API_ELIGIBILITY_FAILED",
+        message: {
+          "en-US": "Task verification completed, but the local eligibility refresh did not return a usable result.",
+          "zh-CN": "Task verification completed.",
+          "zh-TW": "Task verification completed.",
+        },
+        safeDetails: { endpoint: "/api/campaigns/camp-awaken-sprint/eligibility", status: 500 },
+        severity: "error",
+      }],
+      loading: false,
+      request: {
+        accountType: "EOA",
+        campaignId: campaignDetail.id,
+        taskId: "task-bridge",
+        walletAddress: "3E9...7cD",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      },
+      source: "api_runtime",
+      status: "partial",
+      traceId: "trace-partial-visible",
+      verification: {
+        accountType: "EOA",
+        campaignId: campaignDetail.id,
+        pointsAwarded: 40,
+        riskFlags: [],
+        status: "manual_review",
+        taskId: "task-bridge",
+        walletAddress: "3E9...7cD",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      },
+    });
+
+    render(<UserAppPanel locale="en-US" />);
+
+    await clickBridgeTaskApiReview();
+
+    const bridge = await screen.findByRole("complementary", { name: "User Participation API review status" });
+
+    await waitFor(() => expect(within(bridge).getByText("Partial success")).toBeInTheDocument());
+    expect(within(bridge).getByText("manual_review · Points awarded: 40/-")).toBeInTheDocument();
+    expect(within(bridge).getByText(/API_ELIGIBILITY_FAILED/)).toBeInTheDocument();
+    expect(within(bridge).getByText("Task verification completed, but eligibility refresh needs follow-up.")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Eligibility checker" })).toBeInTheDocument();
+  });
+
+  it("shows sanitized diagnostics for unsafe API errors", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5174";
+    mockedLoadBridgeState.mockResolvedValueOnce({
+      boundary: {
+        "en-US": "Local API review only.",
+        "zh-CN": "Local API review only.",
+        "zh-TW": "Local API review only.",
+      },
+      campaignCount: 0,
+      campaigns: [],
+      configured: true,
+      loading: false,
+      source: "error_fallback",
+    });
+    mockedSubmitUserParticipationReview.mockResolvedValueOnce({
+      boundary: {
+        "en-US": "Local user participation API review only. No live provider or indexer call, wallet signature, contract write, export file, storage write, reward custody, or reward distribution is executed.",
+        "zh-CN": "Local user participation API review only.",
+        "zh-TW": "Local user participation API review only.",
+      },
+      configured: true,
+      diagnostics: [{
+        code: "API_VERIFY_FAILED",
+        message: {
+          "en-US": "The local task verification route did not return a usable result.",
+          "zh-CN": "The local task verification route did not return a usable result.",
+          "zh-TW": "The local task verification route did not return a usable result.",
+        },
+        safeDetails: {
+          error: "redacted signature and redacted key at redacted private path?redacted-query",
+          endpoint: "/api/tasks/task-bridge/verify",
+        },
+        severity: "error",
+      }],
+      loading: false,
+      request: {
+        accountType: "EOA",
+        campaignId: campaignDetail.id,
+        taskId: "task-bridge",
+        walletAddress: "3E9...7cD",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      },
+      source: "error_fallback",
+      status: "error",
+      traceId: "trace-error-visible",
+    });
+
+    render(<UserAppPanel locale="en-US" />);
+
+    await clickBridgeTaskApiReview();
+
+    const bridge = await screen.findByRole("complementary", { name: "User Participation API review status" });
+
+    await waitFor(() => expect(within(bridge).getAllByText("Error fallback").length).toBeGreaterThan(0));
+    expect(within(bridge).getByText(/API_VERIFY_FAILED/)).toBeInTheDocument();
+    expect(within(bridge).getByText("The seeded User App remains visible because the API review could not finish safely.")).toBeInTheDocument();
+
+    const bridgeText = bridge.textContent?.toLowerCase() ?? "";
+    for (const unsafe of ["raw signature", "private key", "seed phrase", "bearer token", "campaign-os-kitty", "token=secret"]) {
+      expect(bridgeText).not.toContain(unsafe);
+    }
   });
 
   it("renders sanitized error fallback diagnostics without private paths or live action controls", async () => {
