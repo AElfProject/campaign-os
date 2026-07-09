@@ -376,7 +376,7 @@ export const backendServiceBoundaries = [
     adapterGroups: ["aefinder-aelfscan-indexers", "manual-review"],
     dataStores: ["campaign-db", "task-evidence-db", "risk-event-db"],
     deploymentUnit: "api-runtime",
-    description: "Wallet-aware eligibility decision boundary.",
+    description: "Wallet-aware eligibility decision boundary backed by the local campaign participant repository/read model.",
     domainArea: "verification",
     futureRouteGroups: ["eligibility"],
     id: "eligibility-service",
@@ -384,6 +384,7 @@ export const backendServiceBoundaries = [
     productionRequired: true,
     readiness: "local_only",
     risks: [
+      "Campaign participant repository/read model is local deterministic or durable-test only; production Campaign DB participant table migration and live wallet verification are deferred.",
       "Live evidence and risk stores are deferred; unavailable provider evidence stays pending or manual review.",
       "Eligibility refresh handoff requires the deferred queue runtime, scheduler runtime, idempotency store, dead-letter queue, and provider handoff before production.",
     ],
@@ -392,9 +393,9 @@ export const backendServiceBoundaries = [
   }),
   service({
     adapterGroups: ["object-storage-adapter", "contract-writer-adapter"],
-    dataStores: ["export-artifact-store"],
+    dataStores: ["campaign-db", "export-artifact-store"],
     deploymentUnit: "api-runtime",
-    description: "Winner export, export readiness, artifact audit read metadata, artifact storage, and optional root publication boundary.",
+    description: "Winner export, participant-backed export projection, export readiness, artifact audit read metadata, artifact storage, and optional root publication boundary.",
     domainArea: "export",
     futureRouteGroups: ["exports"],
     id: "export-service",
@@ -402,6 +403,7 @@ export const backendServiceBoundaries = [
     productionRequired: true,
     readiness: "review_required",
     risks: [
+      "Participant-backed export projection is local deterministic or durable-test only; production DB migration, contract transaction, and reward distribution are deferred.",
       "Storage-backed exports and contract writes are disabled/deferred.",
       "Export preparation handoff requires the deferred queue runtime, idempotency store, dead-letter queue, and observability exporter before production.",
     ],
@@ -500,15 +502,15 @@ export const backendServiceBoundaries = [
 
 export const backendDataStores = [
   dataStore({
-    containsSensitiveData: false,
+    containsSensitiveData: true,
     currentMode: "seeded",
     id: "campaign-db",
     migrationRequired: true,
     name: "Campaign DB",
     ownerServiceId: "campaign-service",
     productionMode: "relational_db",
-    records: ["campaigns", "campaign_tasks", "campaign_publish_checks", "referral_rules"],
-    retentionRisk: "Campaign configuration and task records need explicit retention before production.",
+    records: ["campaigns", "campaign_tasks", "campaign_publish_checks", "campaign_participants", "referral_rules"],
+    retentionRisk: "Campaign configuration, task records, participant wallet/risk read models, and retention policy need explicit production table rules before production.",
   }),
   dataStore({
     containsSensitiveData: true,

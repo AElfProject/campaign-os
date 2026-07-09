@@ -642,6 +642,7 @@ export interface CampaignDbVerticalSliceReadinessSummary {
     durable: boolean;
     fallbackUsed: false;
     mode: "local_seeded" | "durable_test" | "production_required";
+    participantRecordCount?: number;
     recordCount: number;
     status: CampaignDbVerticalSliceStatus;
     storeId: "campaign-db";
@@ -663,12 +664,28 @@ export interface CampaignDbVerticalSliceReadinessSummary {
   };
   productionActivationBlockers: string[];
   profileId: BackendConfigContract["profileId"];
+  participantReadModel?: {
+    contractTransactionsEnabled: false;
+    durableTestMode: boolean;
+    futureHandoff: "future Campaign DB participant table service";
+    liveWalletVerificationEnabled: false;
+    localDeterministicMode: boolean;
+    participantRecordCount: number;
+    productionDbMigrationReady: false;
+    recordName: "campaign_participants";
+    rewardDistributionEnabled: false;
+    status: "available" | "blocked";
+    storeId: "campaign-db";
+  };
   repositoryContract: {
     createDraft: true;
     getById: true;
+    getParticipant?: true;
     health: true;
     list: true;
+    listParticipantsByCampaignId?: true;
     reset: true;
+    upsertParticipant?: true;
   };
   status: CampaignDbVerticalSliceStatus;
   storeId: "campaign-db";
@@ -828,6 +845,7 @@ export interface CampaignDbVerticalSliceStoreReadinessInput {
   boundedListLimit?: number;
   durable?: boolean;
   mode?: "local_seeded" | "durable_test" | "production_required";
+  participantRecordCount?: number;
   recordCount?: number;
   status?: CampaignDbVerticalSliceStatus;
 }
@@ -1482,6 +1500,7 @@ const createCampaignDbVerticalSliceReadinessSummary = ({
       durable: storeDurable,
       fallbackUsed: false,
       mode: requestedStoreMode,
+      participantRecordCount: campaignStore?.participantRecordCount ?? 0,
       recordCount: campaignStore?.recordCount ?? 0,
       status,
       storeId: "campaign-db",
@@ -1507,12 +1526,28 @@ const createCampaignDbVerticalSliceReadinessSummary = ({
     },
     productionActivationBlockers: diagnostics.map((diagnostic) => diagnostic.message),
     profileId: config.profileId,
+    participantReadModel: {
+      contractTransactionsEnabled: false,
+      durableTestMode: !productionRequired && requestedStoreMode === "durable_test",
+      futureHandoff: "future Campaign DB participant table service",
+      liveWalletVerificationEnabled: false,
+      localDeterministicMode: !productionRequired && requestedStoreMode === "local_seeded",
+      participantRecordCount: campaignStore?.participantRecordCount ?? 0,
+      productionDbMigrationReady: false,
+      recordName: "campaign_participants",
+      rewardDistributionEnabled: false,
+      status: status === "ready" ? "available" : "blocked",
+      storeId: "campaign-db",
+    },
     repositoryContract: {
       createDraft: true,
       getById: true,
+      getParticipant: true,
       health: true,
       list: true,
+      listParticipantsByCampaignId: true,
       reset: true,
+      upsertParticipant: true,
     },
     status,
     storeId: "campaign-db",

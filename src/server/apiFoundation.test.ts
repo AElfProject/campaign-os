@@ -201,7 +201,7 @@ describe("API foundation registry", () => {
       routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts", "campaigns.summary"]),
     });
     expect(report.surfaces.find((surface) => surface.surfaceId === "campaign")).toMatchObject({
-      notes: expect.stringContaining("contract writer"),
+      notes: expect.stringContaining("campaign participant repository/read model"),
       routeIds: expect.arrayContaining([
         "campaigns.lifecycle",
         "campaigns.launch.readiness",
@@ -210,6 +210,10 @@ describe("API foundation registry", () => {
         "campaigns.contract.transparency",
       ]),
     });
+    expect(report.surfaces.find((surface) => surface.surfaceId === "campaign")?.notes).toContain(
+      "future Campaign DB participant table service",
+    );
+    expect(report.surfaces.find((surface) => surface.surfaceId === "campaign")?.notes).toContain("contract writer");
     expect(report.surfaces.find((surface) => surface.surfaceId === "verification")).toMatchObject({
       routeIds: expect.arrayContaining(["campaigns.provider.readiness"]),
     });
@@ -255,12 +259,21 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("task-template")?.notes).toContain("disable_provider_task_templates");
     expect(surfaceById.get("eligibility")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
-      notes: expect.stringContaining("dead-letter queue"),
+      notes: expect.stringContaining("campaign participant repository/read model"),
     });
+    expect(surfaceById.get("eligibility")?.notes).toContain("deterministic or durable-test");
+    expect(surfaceById.get("eligibility")?.notes).toContain("live wallet verification");
+    expect(surfaceById.get("eligibility")?.notes).toContain("production DB migration");
+    expect(surfaceById.get("eligibility")?.notes).toContain("dead-letter queue");
     expect(surfaceById.get("export")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["contract_writer", "object_storage_export", "scheduler", "worker_queue"]),
-      notes: expect.stringContaining("observability exporter"),
+      notes: expect.stringContaining("participant-backed export projection"),
     });
+    expect(surfaceById.get("export")?.notes).toContain("campaign participant repository/read model");
+    expect(surfaceById.get("export")?.notes).toContain("no production DB migration");
+    expect(surfaceById.get("export")?.notes).toContain("contract transaction");
+    expect(surfaceById.get("export")?.notes).toContain("reward distribution");
+    expect(surfaceById.get("export")?.notes).toContain("observability exporter");
     expect(surfaceById.get("export")?.notes).toContain("scheduler runtime");
     expect(surfaceById.get("export")?.notes).toContain("queue runtime");
     expect(surfaceById.get("export")?.notes).toContain("queue provider adapter activation");
@@ -318,6 +331,17 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("service-registry")?.notes).toContain("BullMQ Redis-compatible package binding readiness");
     expect(surfaceById.get("service-registry")?.notes).toContain("Redis broker readiness metadata");
     expect(surfaceById.get("service-registry")?.notes).toContain("queue provider SDK binding readiness");
+  });
+
+  it("does not expose private Kitty artifact paths in public API metadata", () => {
+    const serialized = JSON.stringify(createApiFoundationReport());
+
+    expect(serialized).not.toContain("kitty-specs");
+    expect(serialized).not.toContain("docs/current");
+    expect(serialized).not.toContain("evidence/");
+    expect(serialized).not.toContain("sync/");
+    expect(serialized).not.toContain(".kittify");
+    expect(serialized).not.toContain("AGENTS.md");
   });
 
   it("validates capability references and path placeholders", () => {
