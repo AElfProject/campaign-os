@@ -312,6 +312,53 @@ interface CampaignSummaryPayload {
   walletTypeMetrics: unknown[];
 }
 
+interface ExportArtifactAuditPayload {
+  artifactId?: string;
+  campaignId: string;
+  filters?: {
+    artifactId?: string;
+    batchId?: string;
+    format?: string;
+    retentionState?: string;
+    traceId?: string;
+  };
+  record?: {
+    artifactId: string;
+    batchId: string;
+    campaignId: string;
+    checksum: string;
+    routeId: string;
+    safety: {
+      downloadUrlEnabled: false;
+      localReviewOnly: true;
+      storageWriteEnabled: false;
+    };
+    traceId: string;
+  };
+  records?: Array<{
+    artifactId: string;
+    batchId: string;
+    campaignId: string;
+    checksum: string;
+    routeId: string;
+    traceId: string;
+  }>;
+  safety: {
+    downloadUrlEnabled: false;
+    localReviewOnly: true;
+    storageWriteEnabled: false;
+  };
+  summary?: {
+    activeRecords: number;
+    blockedRows: number;
+    expiredRecords: number;
+    readyRows: number;
+    reviewRequiredRows: number;
+    totalRecords: number;
+    totalRows: number;
+  };
+}
+
 const forbiddenResponseKeys = [
   "privatekey",
   "mnemonic",
@@ -1287,6 +1334,132 @@ describe("Campaign OS API runtime", () => {
       format: "json",
     });
     expect(readinessCallCount).toBe(0);
+  });
+
+  it("queries local export artifact audit records after seeded preview registration", async () => {
+    const runtime = createCampaignOsApiRuntime();
+    const emptyList = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts`,
+    });
+    const preview = await runtime.handle({
+      method: "POST",
+      path: `/api/campaigns/${campaignDetail.id}/export`,
+      headers: { "x-campaign-os-trace-id": "trace-seeded-export-audit-preview" },
+      body: JSON.stringify({
+        contractRootMode: "none",
+        format: "json",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      }),
+    });
+    const previewPayload = expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload>>(preview).payload;
+    const artifactId = previewPayload.artifactRegistry?.artifactId;
+
+    if (!artifactId) {
+      throw new Error("Expected seeded export preview to register an artifact id.");
+    }
+
+    const repeatedPreview = await runtime.handle({
+      method: "POST",
+      path: `/api/campaigns/${campaignDetail.id}/export`,
+      headers: { "x-campaign-os-trace-id": "trace-seeded-export-audit-preview" },
+      body: JSON.stringify({
+        contractRootMode: "none",
+        format: "json",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      }),
+    });
+    const repeatedPreviewPayload = expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload>>(
+      repeatedPreview,
+    ).payload;
+
+    expect(repeatedPreviewPayload.artifactRegistry?.artifactId).toBe(artifactId);
+
+    const list = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts?format=json&traceId=trace-seeded-export-audit-preview`,
+    });
+    const detail = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts/${encodeURIComponent(artifactId)}`,
+    });
+    const invalidFilter = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts?format=xml`,
+    });
+    const missingDetail = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts/export-artifact-local-missing`,
+    });
+
+    expect(expectSuccessData<LocalServiceEnvelope<ExportArtifactAuditPayload>>(emptyList).payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      records: [],
+      summary: {
+        activeRecords: 0,
+        blockedRows: 0,
+        expiredRecords: 0,
+        readyRows: 0,
+        reviewRequiredRows: 0,
+        totalRecords: 0,
+        totalRows: 0,
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<ExportArtifactAuditPayload>>(list).payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      filters: {
+        format: "json",
+        traceId: "trace-seeded-export-audit-preview",
+      },
+      records: [
+        expect.objectContaining({
+          artifactId,
+          campaignId: campaignDetail.id,
+          routeId: "campaigns.export.preview",
+          traceId: "trace-seeded-export-audit-preview",
+        }),
+      ],
+      safety: expect.objectContaining({
+        downloadUrlEnabled: false,
+        localReviewOnly: true,
+        storageWriteEnabled: false,
+      }),
+      summary: expect.objectContaining({
+        totalRecords: 1,
+      }),
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<ExportArtifactAuditPayload>>(detail).payload).toMatchObject({
+      artifactId,
+      campaignId: campaignDetail.id,
+      record: expect.objectContaining({
+        artifactId,
+        campaignId: campaignDetail.id,
+        routeId: "campaigns.export.preview",
+        traceId: "trace-seeded-export-audit-preview",
+      }),
+    });
+    expect(invalidFilter.status).toBe(400);
+    expect(invalidFilter.body.ok).toBe(false);
+    expect(missingDetail.status).toBe(400);
+    expect(missingDetail.body.ok).toBe(false);
+
+    for (const response of [emptyList, preview, repeatedPreview, list, detail, invalidFilter, missingDetail]) {
+      expectNoForbiddenResponseKeys(response.body);
+      expectNoForbiddenOwnKeys(response.body, [
+        "downloadUrl",
+        "signedUrl",
+        "storageKey",
+        "objectKey",
+        "providerPayload",
+        "walletSignature",
+        "rewardDistribution",
+      ]);
+      expectNoForbiddenFragments(response.body, ["2F4Wallet", "csvPreview", "jsonPreview", "https://", "X-Amz-Signature"]);
+    }
   });
 
   it("uses one backend readiness report per runtime metadata response", async () => {
@@ -2547,6 +2720,20 @@ describe("Campaign OS API runtime", () => {
     const readinessData = expectSuccessData<LocalServiceEnvelope<ExportReadinessPayload> & {
       campaignDb: { createdViaRepository: true; storeId: string };
     }>(readiness);
+    const auditList = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}/export-artifacts?artifactId=${encodeURIComponent(
+        readyPreviewData.payload.artifactRegistry?.artifactId ?? "",
+      )}`,
+    });
+    const auditDetail = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}/export-artifacts/${encodeURIComponent(
+        readyPreviewData.payload.artifactRegistry?.artifactId ?? "",
+      )}`,
+    });
+    const auditListData = expectSuccessData<LocalServiceEnvelope<ExportArtifactAuditPayload>>(auditList);
+    const auditDetailData = expectSuccessData<LocalServiceEnvelope<ExportArtifactAuditPayload>>(auditDetail);
     const snapshot = await repository.snapshot();
 
     expect(blockedPreviewData).toMatchObject({
@@ -2698,6 +2885,39 @@ describe("Campaign OS API runtime", () => {
         },
       },
     });
+    expect(auditListData.payload).toMatchObject({
+      campaignId: created.payload.id,
+      filters: {
+        artifactId: readyPreviewData.payload.artifactRegistry?.artifactId,
+      },
+      records: [
+        expect.objectContaining({
+          artifactId: readyPreviewData.payload.artifactRegistry?.artifactId,
+          batchId: `campaign-db-export-${created.payload.id}`,
+          campaignId: created.payload.id,
+          routeId: "campaigns.export.preview",
+          traceId: "trace-campaign-db-export-ready-preview",
+        }),
+      ],
+      safety: expect.objectContaining({
+        downloadUrlEnabled: false,
+        localReviewOnly: true,
+        storageWriteEnabled: false,
+      }),
+      summary: expect.objectContaining({
+        totalRecords: 1,
+      }),
+    });
+    expect(auditDetailData.payload).toMatchObject({
+      artifactId: readyPreviewData.payload.artifactRegistry?.artifactId,
+      campaignId: created.payload.id,
+      record: expect.objectContaining({
+        artifactId: readyPreviewData.payload.artifactRegistry?.artifactId,
+        batchId: `campaign-db-export-${created.payload.id}`,
+        routeId: "campaigns.export.preview",
+        traceId: "trace-campaign-db-export-ready-preview",
+      }),
+    });
     expect(snapshot.countsByKind.export_preview).toBe(3);
     expect(snapshot.latestRecords[0]).toMatchObject({
       campaignId: created.payload.id,
@@ -2710,7 +2930,7 @@ describe("Campaign OS API runtime", () => {
         reviewRequiredRows: 0,
       }),
     });
-    for (const response of [blockedPreview, readyPreview, repeatedReadyPreview, readiness]) {
+    for (const response of [blockedPreview, readyPreview, repeatedReadyPreview, readiness, auditList, auditDetail]) {
       expectNoForbiddenResponseKeys(response.body);
       expectNoForbiddenOwnKeys(response.body, [
         "downloadUrl",

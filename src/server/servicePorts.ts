@@ -239,6 +239,7 @@ export const apiServicePorts = [
     deferredCapabilities: ["contract_writer", "object_storage_export"],
     futureAttachPoints: [
       "src/server/exportArtifactRegistry.ts local artifact registry",
+      "src/server/exportArtifactRegistry.ts local audit read model",
       "export artifact store",
       "signed download broker",
       "eligibility root publisher",
@@ -247,11 +248,16 @@ export const apiServicePorts = [
     ],
     id: "export-port",
     localAdapter: "src/domain/campaignService.ts export_winners local preview handler with src/server/exportArtifactRegistry.ts metadata attachment",
-    notes: "Export preview, export artifact registry metadata, and export readiness inspection are local; storage-backed files, signed downloads, live object keys, and contract writes are deferred or disabled.",
+    notes: "Export preview, export artifact registry metadata, export artifact audit read metadata, and export readiness inspection are local; storage-backed files, signed downloads, live object keys, and contract writes are deferred or disabled.",
     productionAdapterStatus: "local_seeded",
     requiresExternalNetwork: false,
     requiresSecret: false,
-    routeIds: ["campaigns.export.preview", "campaigns.export.readiness"],
+    routeIds: [
+      "campaigns.export.preview",
+      "campaigns.export.readiness",
+      "campaigns.export.artifacts.list",
+      "campaigns.export.artifacts.detail",
+    ],
     serviceId: "export-service",
   }),
   servicePort({

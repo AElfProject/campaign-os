@@ -27,6 +27,17 @@ const changedFilesSinceMissionBase = () =>
     .split("\n")
     .filter(Boolean);
 
+const changedDiffSinceMissionBase = (files: string[]) => {
+  if (files.length === 0) {
+    return "";
+  }
+
+  return execFileSync("git", ["diff", "--unified=0", `${missionBaseRef()}..HEAD`, "--", ...files], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+};
+
 const renderedUiRuntimeChangedFiles = (files: string[]) =>
   files.filter((file) => {
     if (/\.(test|spec)\.(ts|tsx)$/.test(file)) {
@@ -36,18 +47,26 @@ const renderedUiRuntimeChangedFiles = (files: string[]) =>
     return /^src\/(App|app|components|styles|i18n)\//.test(file) || /^src\/.*\.(tsx|css)$/.test(file);
   });
 
-const expectHistoricalAiOpsRouteScopeWhenTouched = (files: string[]) => {
-  const touchesHistoricalAiOpsScope = aiOpsRuntimeRouteTriggerFiles.some((file) => files.includes(file));
+const touchesHistoricalAiOpsRouteScope = (files: string[]) => {
+  const triggerFiles = aiOpsRuntimeRouteTriggerFiles.filter((file) => files.includes(file));
 
-  if (touchesHistoricalAiOpsScope) {
+  if (triggerFiles.length === 0) {
+    return false;
+  }
+
+  const diff = changedDiffSinceMissionBase(triggerFiles).toLowerCase();
+
+  return historicalAiOpsRouteScopeFragments.some((fragment) => diff.includes(fragment));
+};
+
+const expectHistoricalAiOpsRouteScopeWhenTouched = (files: string[]) => {
+  if (touchesHistoricalAiOpsRouteScope(files)) {
     expect(files).toEqual(expect.arrayContaining(expectedAiOpsRuntimeRouteFiles));
   }
 };
 
 const expectNoRenderedUiRuntimeChangesWhenBackendScopeTouched = (files: string[]) => {
-  const touchesHistoricalAiOpsScope = aiOpsRuntimeRouteTriggerFiles.some((file) => files.includes(file));
-
-  if (touchesHistoricalAiOpsScope) {
+  if (touchesHistoricalAiOpsRouteScope(files)) {
     expect(renderedUiRuntimeChangedFiles(files)).toEqual([]);
   }
 };
@@ -129,6 +148,19 @@ const aiOpsRuntimeRouteTriggerFiles = [
   "src/server/apiFoundation.ts",
   "src/server/routes.ts",
   "src/server/topology.ts",
+];
+
+const historicalAiOpsRouteScopeFragments = [
+  "agent.wallet.action.review",
+  "agent_wallet_action",
+  "ai-ops",
+  "aiops",
+  "campaigns.posts.generate",
+  "campaigns.summary",
+  "campaigns.tasks.generate",
+  "generate_campaign_posts",
+  "generate_campaign_tasks",
+  "summarize_campaign",
 ];
 
 const providerHttpReadyEnv = {

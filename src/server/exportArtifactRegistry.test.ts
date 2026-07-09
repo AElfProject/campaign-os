@@ -63,6 +63,21 @@ const expectSuccess = (
   return result.record;
 };
 
+const forbiddenAuditResponseMarkers = [
+  "csvPreview",
+  "jsonPreview",
+  "downloadUrl",
+  "storageKey",
+  "objectKey",
+  "signedUrl",
+  "providerPayload",
+  "contractRoot",
+  "transactionId",
+  "walletSignature",
+  "rewardCustody",
+  "rewardDistribution",
+];
+
 describe("export artifact registry", () => {
   it("registers deterministic local review artifact metadata", () => {
     const registry = createExportArtifactRegistry();
@@ -184,5 +199,230 @@ describe("export artifact registry", () => {
 
     expect(record.artifactId).toMatch(/^export-artifact-local-[0-9a-f]{8}$/);
     expect(elapsedMs).toBeLessThan(20);
+  });
+
+  it("lists zero-count audit records for campaigns without registrations", () => {
+    const result = createExportArtifactRegistry().list({
+      campaignId: "camp-empty",
+      now: "2026-07-09T12:00:00.000Z",
+    });
+
+    expect(result.ok).toBe(true);
+
+    if (!result.ok) {
+      throw new Error("Expected empty audit list to succeed.");
+    }
+
+    expect(result.payload).toMatchObject({
+      campaignId: "camp-empty",
+      filters: {},
+      records: [],
+      summary: {
+        activeRecords: 0,
+        blockedRows: 0,
+        expiredRecords: 0,
+        readyRows: 0,
+        reviewRequiredRows: 0,
+        totalRecords: 0,
+        totalRows: 0,
+      },
+    });
+    expect(result.payload.safety.localReviewOnly).toBe(true);
+  });
+
+  it("upserts registrations into a queryable campaign audit list", () => {
+    const registry = createExportArtifactRegistry();
+    const record = expectSuccess(registry.register(artifactFixture(), registryContext));
+    const repeated = expectSuccess(registry.register(artifactFixture(), registryContext));
+    const list = registry.list({
+      campaignId: "camp-awaken-sprint",
+      now: "2026-07-09T12:00:00.000Z",
+    });
+
+    expect(repeated.artifactId).toBe(record.artifactId);
+    expect(list.ok).toBe(true);
+
+    if (!list.ok) {
+      throw new Error("Expected audit list to succeed.");
+    }
+
+    expect(list.payload.records).toHaveLength(1);
+    expect(list.payload.records[0]).toMatchObject({
+      artifactId: record.artifactId,
+      batchId: "export-awaken-sprint-preview",
+      campaignId: "camp-awaken-sprint",
+      traceId: "trace-export-registry",
+    });
+    expect(list.payload.summary).toMatchObject({
+      activeRecords: 1,
+      blockedRows: 0,
+      expiredRecords: 0,
+      readyRows: 1,
+      reviewRequiredRows: 3,
+      totalRecords: 1,
+      totalRows: 4,
+    });
+  });
+
+  it("filters audit records by batch, artifact, trace, format, and retention state", () => {
+    const registry = createExportArtifactRegistry();
+    const active = expectSuccess(registry.register(artifactFixture(), registryContext));
+    const expired = expectSuccess(registry.register(
+      {
+        ...artifactFixture(),
+        batchId: "export-awaken-sprint-expired",
+        metadata: {
+          ...artifactFixture().metadata,
+          checksum: "local-expired",
+        },
+      },
+      {
+        ...registryContext,
+        createdAt: "2026-07-07T00:00:00.000Z",
+        traceId: "trace-export-expired",
+      },
+    ));
+
+    const filtered = registry.list({
+      artifactId: active.artifactId,
+      batchId: "export-awaken-sprint-preview",
+      campaignId: "camp-awaken-sprint",
+      format: "csv",
+      now: "2026-07-09T12:00:00.000Z",
+      retentionState: "active",
+      traceId: "trace-export-registry",
+    });
+    const expiredList = registry.list({
+      campaignId: "camp-awaken-sprint",
+      now: "2026-07-09T12:00:00.000Z",
+      retentionState: "expired",
+    });
+
+    expect(filtered.ok).toBe(true);
+    expect(expiredList.ok).toBe(true);
+
+    if (!filtered.ok || !expiredList.ok) {
+      throw new Error("Expected filtered audit lists to succeed.");
+    }
+
+    expect(filtered.payload.records.map((record) => record.artifactId)).toEqual([active.artifactId]);
+    expect(expiredList.payload.records.map((record) => record.artifactId)).toEqual([expired.artifactId]);
+  });
+
+  it("gets a single audit record by campaign and artifact id", () => {
+    const registry = createExportArtifactRegistry();
+    const record = expectSuccess(registry.register(artifactFixture(), registryContext));
+    const detail = registry.get({
+      artifactId: record.artifactId,
+      campaignId: "camp-awaken-sprint",
+    });
+
+    expect(detail.ok).toBe(true);
+
+    if (!detail.ok) {
+      throw new Error("Expected artifact detail to succeed.");
+    }
+
+    expect(detail.payload).toMatchObject({
+      artifactId: record.artifactId,
+      campaignId: "camp-awaken-sprint",
+      record: {
+        artifactId: record.artifactId,
+        checksum: "local-1234abcd",
+      },
+    });
+  });
+
+  it("fails closed for invalid audit filters and missing artifact details", () => {
+    const registry = createExportArtifactRegistry();
+    const record = expectSuccess(registry.register(artifactFixture(), registryContext));
+    const invalidFormat = registry.list({
+      campaignId: "camp-awaken-sprint",
+      format: "xml",
+    });
+    const missing = registry.get({
+      artifactId: record.artifactId,
+      campaignId: "camp-other",
+    });
+
+    expect(invalidFormat.ok).toBe(false);
+    expect(missing.ok).toBe(false);
+
+    if (!invalidFormat.ok) {
+      expect(invalidFormat.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: "EXPORT_ARTIFACT_REGISTRY_INVALID_FILTER",
+          field: "format",
+        }),
+      );
+    }
+    if (!missing.ok) {
+      expect(missing.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: "EXPORT_ARTIFACT_REGISTRY_ARTIFACT_NOT_FOUND",
+          field: "artifactId",
+        }),
+      );
+    }
+  });
+
+  it("keeps audit list and detail responses free of payload and live side-effect markers", () => {
+    const registry = createExportArtifactRegistry();
+    const record = expectSuccess(registry.register(artifactFixture(), registryContext));
+    const list = registry.list({ campaignId: "camp-awaken-sprint" });
+    const detail = registry.get({
+      artifactId: record.artifactId,
+      campaignId: "camp-awaken-sprint",
+    });
+
+    expect(list.ok).toBe(true);
+    expect(detail.ok).toBe(true);
+
+    const serialized = JSON.stringify({ detail, list });
+
+    for (const marker of forbiddenAuditResponseMarkers) {
+      expect(serialized).not.toContain(`"${marker}":`);
+    }
+    expect(serialized).not.toContain("2F4Wallet");
+    expect(serialized).not.toContain("X-Amz-Signature");
+  });
+
+  it("lists fifty local audit records under the focused performance budget", () => {
+    const registry = createExportArtifactRegistry();
+
+    for (let index = 0; index < 50; index += 1) {
+      expectSuccess(registry.register(
+        {
+          ...artifactFixture(),
+          batchId: `export-batch-${index.toString().padStart(2, "0")}`,
+          metadata: {
+            ...artifactFixture().metadata,
+            checksum: `local-${index.toString().padStart(2, "0")}`,
+          },
+        },
+        {
+          ...registryContext,
+          traceId: `trace-${index.toString().padStart(2, "0")}`,
+        },
+      ));
+    }
+
+    const startedAt = performance.now();
+    const list = registry.list({
+      campaignId: "camp-awaken-sprint",
+      now: "2026-07-09T12:00:00.000Z",
+    });
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(list.ok).toBe(true);
+
+    if (!list.ok) {
+      throw new Error("Expected audit list to succeed.");
+    }
+
+    expect(list.payload.records).toHaveLength(50);
+    expect(list.payload.summary.totalRecords).toBe(50);
+    expect(elapsedMs).toBeLessThan(50);
+    expect(elapsedMs / list.payload.records.length).toBeLessThan(1);
   });
 });

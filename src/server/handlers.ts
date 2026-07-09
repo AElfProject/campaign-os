@@ -937,6 +937,20 @@ const exportRequest = (context: ApiRuntimeHandlerContext): ExportWinnersRequest 
   };
 };
 
+const exportArtifactAuditListRequest = (context: ApiRuntimeHandlerContext) => ({
+  artifactId: optionalString(context.query.artifactId),
+  batchId: optionalString(context.query.batchId),
+  campaignId: requiredRouteParam(context.params, "campaignId"),
+  format: optionalString(context.query.format),
+  retentionState: optionalString(context.query.retentionState),
+  traceId: optionalString(context.query.traceId),
+});
+
+const exportArtifactAuditDetailRequest = (context: ApiRuntimeHandlerContext) => ({
+  artifactId: requiredRouteParam(context.params, "artifactId"),
+  campaignId: requiredRouteParam(context.params, "campaignId"),
+});
+
 const i18nDraftRequest = (context: ApiRuntimeHandlerContext): GenerateI18nDraftRequest => {
   const body = bodyRecord(context.body);
 
@@ -1630,6 +1644,36 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       boundary: exportProjectionBoundary,
       campaignDb: createCampaignDbMetadata(readiness.repository),
       payload: createRepositoryExportReadinessResponse(readiness),
+    };
+  },
+  "campaigns.export.artifacts.list": (context) => {
+    const result = context.exportArtifactRegistry.list(exportArtifactAuditListRequest(context));
+
+    if (!result.ok) {
+      throw invalidRequest(
+        result.diagnostics[0]?.field ?? "exportArtifactAudit",
+        result.diagnostics[0]?.message ?? "Export artifact audit list rejected the request.",
+      );
+    }
+
+    return {
+      boundary: result.payload.boundary,
+      payload: result.payload,
+    };
+  },
+  "campaigns.export.artifacts.detail": (context) => {
+    const result = context.exportArtifactRegistry.get(exportArtifactAuditDetailRequest(context));
+
+    if (!result.ok) {
+      throw invalidRequest(
+        result.diagnostics[0]?.field ?? "exportArtifactAudit",
+        result.diagnostics[0]?.message ?? "Export artifact audit record was not found.",
+      );
+    }
+
+    return {
+      boundary: result.payload.boundary,
+      payload: result.payload,
     };
   },
 });
