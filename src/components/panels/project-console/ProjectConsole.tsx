@@ -1,4 +1,14 @@
-import { useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties } from "react";
+import {
+  createExportArtifactDeliveryApiLoadingState,
+  createExportArtifactDeliverySeededFallbackState,
+  sanitizeExportArtifactDeliveryApiText,
+  submitExportArtifactDeliveryApiReview,
+  type ExportArtifactDeliveryApiBridgeState,
+  type ExportArtifactDeliveryApiSource,
+  type ExportArtifactDeliveryApiStatus,
+  type ExportArtifactDeliveryRequest,
+} from "../../../api/exportArtifactDeliveryApiBridge";
 import {
   createAiContentPackWorkbench,
   createApiSkillContractSurface,
@@ -287,6 +297,11 @@ const boundaryStyle: CSSProperties = {
   lineHeight: 1.45,
   margin: 0,
   padding: 12,
+};
+
+const wrapTextStyle: CSSProperties = {
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
 };
 
 const formControlStyle: CSSProperties = {
@@ -1234,6 +1249,43 @@ const serviceFieldGroupLabel = (group: string) => {
 
 const readableCode = (value: string) => value.replace(/_/g, " ");
 
+const exportArtifactDeliveryApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
+const exportDeliveryApiSourceLabel = (
+  source: ExportArtifactDeliveryApiSource,
+  copy: typeof projectConsoleCopy["en-US"],
+) => {
+  const labels: Record<ExportArtifactDeliveryApiSource, string> = {
+    api_runtime: copy.exportDeliveryApiSourceApiRuntime,
+    error_fallback: copy.exportDeliveryApiSourceErrorFallback,
+    loading: copy.exportDeliveryApiSourceLoading,
+    seeded_fallback: copy.exportDeliveryApiSourceSeededFallback,
+  };
+
+  return labels[source];
+};
+
+const exportDeliveryApiStatusLabel = (
+  status: ExportArtifactDeliveryApiStatus,
+  copy: typeof projectConsoleCopy["en-US"],
+) => {
+  const labels: Record<ExportArtifactDeliveryApiStatus, string> = {
+    delivered: copy.exportDeliveryApiStatusDelivered,
+    error: copy.exportDeliveryApiStatusError,
+    fallback: copy.exportDeliveryApiStatusFallback,
+    loading: copy.exportDeliveryApiStatusLoading,
+    partial: copy.exportDeliveryApiStatusPartial,
+  };
+
+  return labels[status];
+};
+
+const exportDeliveryApiBadgeState = (
+  status: ExportArtifactDeliveryApiStatus,
+): "blocker" | "ready" | "warning" =>
+  status === "delivered" ? "ready" : status === "error" ? "blocker" : "warning";
+
 const exportReadinessBadgeState = (readiness: ExportReadinessState) =>
   readiness === "blocked" ? "blocker" : readiness === "review_required" ? "warning" : "ready";
 
@@ -1702,6 +1754,7 @@ export const ProjectConsole = ({
   const [draftComposer, setDraftComposer] = useState<DraftComposerState>(
     createSeededDraftComposerState,
   );
+  const exportDeliveryApiRequestSeq = useRef(0);
   const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
   const title = getLocalizedText(campaign.title, locale);
   const subtitle = getLocalizedText(campaign.subtitle, locale);
@@ -1779,6 +1832,21 @@ export const ProjectConsole = ({
   const exportStorageProviderApprovalTopCheck = exportStorageProviderApprovalPacket.checks.find(
     (check) => check.id === exportStorageProviderApprovalPacket.summary.topCheckId,
   ) ?? exportStorageProviderApprovalPacket.checks[0];
+  const exportDeliveryApiBaseUrl = exportArtifactDeliveryApiBaseUrl();
+  const exportDeliveryApiRequest: ExportArtifactDeliveryRequest = {
+    campaignId: campaign.id,
+    contractRootMode: "none",
+    format: "csv",
+    includeLocalePreference: true,
+    includeRiskFlags: true,
+    includeWalletType: true,
+  };
+  const [exportDeliveryApiState, setExportDeliveryApiState] = useState<ExportArtifactDeliveryApiBridgeState>(() =>
+    exportDeliveryApiBaseUrl?.trim()
+      ? createExportArtifactDeliveryApiLoadingState(exportDeliveryApiRequest)
+      : createExportArtifactDeliverySeededFallbackState(exportDeliveryApiRequest),
+  );
+  const [exportDeliveryApiReviewInFlight, setExportDeliveryApiReviewInFlight] = useState(false);
   const advancedAnalytics = commandCenter.advancedAnalytics;
   const aiOptimizationSummary = commandCenter.aiOptimization.projectOwnerSummary;
   const aiOpsKpiAdoption = commandCenter.aiOpsKpiAdoption;
@@ -1822,6 +1890,35 @@ export const ProjectConsole = ({
     }
 
     onWorkspaceChange?.(workspace);
+  };
+
+  const runExportDeliveryApiReview = () => {
+    if (!exportDeliveryApiBaseUrl?.trim()) {
+      setExportDeliveryApiState(createExportArtifactDeliverySeededFallbackState(exportDeliveryApiRequest));
+      return;
+    }
+
+    setExportDeliveryApiReviewInFlight(true);
+    setExportDeliveryApiState(createExportArtifactDeliveryApiLoadingState(exportDeliveryApiRequest));
+
+    const requestSeq = exportDeliveryApiRequestSeq.current + 1;
+    exportDeliveryApiRequestSeq.current = requestSeq;
+
+    void submitExportArtifactDeliveryApiReview({
+      config: {
+        baseUrl: exportDeliveryApiBaseUrl,
+        tracePrefix: "project-console-export-delivery-review",
+      },
+      request: exportDeliveryApiRequest,
+    }).then((state) => {
+      if (exportDeliveryApiRequestSeq.current === requestSeq) {
+        setExportDeliveryApiState(state);
+      }
+    }).finally(() => {
+      if (exportDeliveryApiRequestSeq.current === requestSeq) {
+        setExportDeliveryApiReviewInFlight(false);
+      }
+    });
   };
 
   const stats = [
@@ -5170,6 +5267,187 @@ export const ProjectConsole = ({
             </p>
           </div>
         </div>
+
+        <article aria-label={copy.exportDeliveryApiRegionLabel} style={{ ...workflowStyle, minHeight: 0 }}>
+          <div style={headingRowStyle}>
+            <div>
+              <p style={statLabelStyle}>{copy.exportDeliveryApiStatus}</p>
+              <h4 style={{ fontSize: 18, lineHeight: 1.2, margin: "4px 0" }}>
+                {copy.exportDeliveryApiRegionLabel}
+              </h4>
+              <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                {exportDeliveryApiBaseUrl?.trim()
+                  ? copy.exportDeliveryApiConfigured
+                  : copy.exportDeliveryApiNotConfigured}
+              </p>
+            </div>
+            <span style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <PublishStateBadge
+                label={exportDeliveryApiSourceLabel(exportDeliveryApiState.source, copy)}
+                state={exportDeliveryApiBadgeState(exportDeliveryApiState.status)}
+              />
+              <PublishStateBadge
+                label={exportDeliveryApiStatusLabel(exportDeliveryApiState.status, copy)}
+                state={exportDeliveryApiBadgeState(exportDeliveryApiState.status)}
+              />
+            </span>
+          </div>
+
+          <div style={sectionGridStyle}>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={statLabelStyle}>{copy.exportDeliveryApiTraceId}</p>
+              <p style={{ color: "#071426", fontSize: 13, fontWeight: 900, lineHeight: 1.35, margin: 0, ...wrapTextStyle }}>
+                {exportDeliveryApiState.traceId ?? copy.exportDeliveryApiNoTrace}
+              </p>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={statLabelStyle}>{copy.exportDeliveryApiExportBatchId}</p>
+              <p style={{ color: "#071426", fontSize: 13, fontWeight: 900, lineHeight: 1.35, margin: 0, ...wrapTextStyle }}>
+                {exportDeliveryApiState.preview?.exportBatchId ?? exportArtifact?.batchId ?? copy.exportDeliveryApiNoPreview}
+              </p>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={statLabelStyle}>{copy.exportDeliveryApiArtifactId}</p>
+              <p style={{ color: "#071426", fontSize: 13, fontWeight: 900, lineHeight: 1.35, margin: 0, ...wrapTextStyle }}>
+                {exportDeliveryApiState.artifactId ?? exportDeliveryApiState.registry?.artifactId ?? copy.exportDeliveryApiNoArtifact}
+              </p>
+            </article>
+          </div>
+
+          <button
+            disabled={exportDeliveryApiReviewInFlight}
+            onClick={runExportDeliveryApiReview}
+            style={{
+              ...actionButtonStyle,
+              opacity: exportDeliveryApiReviewInFlight ? 0.72 : 1,
+              cursor: exportDeliveryApiReviewInFlight ? "wait" : "pointer",
+            }}
+            type="button"
+          >
+            {exportDeliveryApiReviewInFlight
+              ? copy.exportDeliveryApiLoading
+              : copy.exportDeliveryApiReviewAction}
+          </button>
+
+          {exportDeliveryApiState.preview && (
+            <div aria-label={copy.exportDeliveryApiPreviewRegistration} style={sectionGridStyle}>
+              <article style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.exportDeliveryApiPreviewRegistration}</p>
+                <strong style={{ ...wrapTextStyle }}>
+                  {exportDeliveryApiState.preview.artifact?.fileName ?? copy.exportDeliveryApiNoPreview}
+                </strong>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {exportDeliveryApiState.preview.format.toUpperCase()} · {exportDeliveryApiState.preview.artifact?.mimeType ?? "text/csv"}
+                </p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.exportDeliveryApiRows}: {exportDeliveryApiState.preview.readyRows} / {exportDeliveryApiState.preview.reviewRequiredRows} / {exportDeliveryApiState.preview.blockedRows}
+                </p>
+              </article>
+
+              <article style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.exportDeliveryApiChecksum}</p>
+                <strong style={{ ...wrapTextStyle }}>
+                  {exportDeliveryApiState.registry?.checksum ??
+                    exportDeliveryApiState.preview.artifact?.metadata?.checksum ??
+                    copy.exportDeliveryApiNoPreview}
+                </strong>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {exportDeliveryApiState.registry?.checksumAlgorithm ??
+                    exportDeliveryApiState.preview.artifact?.metadata?.checksumAlgorithm ??
+                    "sha256"}
+                </p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.exportDeliveryApiPayloadBytes}: {formatNumber(exportDeliveryApiState.preview.artifact?.metadata?.payloadBytes ?? 0)}
+                </p>
+              </article>
+
+              <article style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.exportDeliveryApiRetention}</p>
+                <strong style={{ ...wrapTextStyle }}>
+                  {readableCode(exportDeliveryApiState.registry?.retention?.mode ?? copy.exportDeliveryApiNoPreview)}
+                </strong>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.exportDeliveryApiExpiry}: {exportDeliveryApiState.registry?.expiresAt ?? exportDeliveryApiState.registry?.retention?.expiresAt ?? copy.exportDeliveryApiNoPreview}
+                </p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.exportDeliveryApiTtl}: {exportDeliveryApiState.registry?.retention?.ttlHours ?? 0}h
+                </p>
+              </article>
+            </div>
+          )}
+
+          {(exportDeliveryApiState.auditList || exportDeliveryApiState.auditDetail || exportDeliveryApiState.registry) && (
+            <div aria-label={copy.exportDeliveryApiAuditRecords} style={sectionGridStyle}>
+              <article style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.exportDeliveryApiAuditRecords}</p>
+                <p style={{ ...statValueStyle, fontSize: 20 }}>
+                  {exportDeliveryApiState.auditList?.summary.totalRecords ??
+                    (exportDeliveryApiState.registry ? 1 : 0)}
+                </p>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                  {copy.exportDeliveryApiAuditList}: {exportDeliveryApiState.auditList ? copy.exportDeliveryApiAuditReady : copy.exportDeliveryApiAuditPending}
+                </p>
+              </article>
+
+              <article style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.exportDeliveryApiAuditDetail}</p>
+                <strong style={{ ...wrapTextStyle }}>
+                  {exportDeliveryApiState.auditDetail?.record.routeId ??
+                    exportDeliveryApiState.registry?.routeId ??
+                    copy.exportDeliveryApiAuditPending}
+                </strong>
+                <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0, ...wrapTextStyle }}>
+                  {exportDeliveryApiState.auditDetail?.artifactId ??
+                    exportDeliveryApiState.registry?.artifactId ??
+                    copy.exportDeliveryApiNoArtifact}
+                </p>
+              </article>
+
+              <article style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={statLabelStyle}>{copy.exportDeliveryApiAuditEvents}</p>
+                <ul style={compactListStyle}>
+                  {(exportDeliveryApiState.auditDetail?.record.auditEvents ??
+                    exportDeliveryApiState.registry?.auditEvents ??
+                    []).map((event) => (
+                    <li key={`${event.id ?? event.type}-${event.routeId ?? "route"}`} style={{ ...chipStyle, ...wrapTextStyle }}>
+                      {readableCode(event.type)}
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            </div>
+          )}
+
+          <ul style={compactListStyle}>
+            <li style={chipStyle}>{copy.exportDeliveryApiNoDownloadUrl}</li>
+            <li style={chipStyle}>{copy.exportDeliveryApiNoStorageWrite}</li>
+            <li style={chipStyle}>{copy.exportDeliveryApiNoContractRoot}</li>
+            <li style={chipStyle}>{copy.exportDeliveryApiNoWalletSigning}</li>
+            <li style={chipStyle}>{copy.exportDeliveryApiNoRewardDistribution}</li>
+          </ul>
+
+          {exportDeliveryApiState.diagnostics.length > 0 && (
+            <div aria-label={copy.exportDeliveryApiDiagnostics} style={{ display: "grid", gap: 8 }}>
+              <p style={statLabelStyle}>{copy.exportDeliveryApiDiagnostics}</p>
+              {exportDeliveryApiState.diagnostics.map((diagnostic) => (
+                <p
+                  key={`${diagnostic.code}-${diagnostic.severity}`}
+                  style={{
+                    ...boundaryStyle,
+                    color: diagnostic.severity === "error" ? "#991b1b" : "#9a3412",
+                    ...wrapTextStyle,
+                  }}
+                >
+                  {diagnostic.code}: {sanitizeExportArtifactDeliveryApiText(getLocalizedText(diagnostic.message, locale))}
+                </p>
+              ))}
+            </div>
+          )}
+
+          <p style={{ ...boundaryStyle, ...wrapTextStyle }}>
+            {copy.exportDeliveryApiBoundary}: {getLocalizedText(exportDeliveryApiState.boundary, locale)}
+          </p>
+        </article>
 
         {exportArtifact && (
           <article aria-label={copy.exportArtifact} style={{ ...workflowStyle, minHeight: 0 }}>
