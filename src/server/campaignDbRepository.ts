@@ -17,6 +17,7 @@ import {
   type VerificationType,
   type WalletCompatibility,
   type WalletPolicy,
+  type WalletSignatureStatus,
   type WalletSource,
 } from "../domain/types";
 import {
@@ -63,6 +64,16 @@ export type CampaignDbDiagnosticCode =
   | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_EVIDENCE_SOURCE"
   | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_STATUS"
   | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_WALLET_SOURCE"
+  | "CAMPAIGN_DB_PARTICIPANT_CAMPAIGN_NOT_FOUND"
+  | "CAMPAIGN_DB_PARTICIPANT_INVALID_POINTS"
+  | "CAMPAIGN_DB_PARTICIPANT_INVALID_RANK"
+  | "CAMPAIGN_DB_PARTICIPANT_INVALID_RISK_FLAGS"
+  | "CAMPAIGN_DB_PARTICIPANT_INVALID_WALLET_VERIFIED_AT"
+  | "CAMPAIGN_DB_PARTICIPANT_REQUIRED_FIELD_MISSING"
+  | "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_ACCOUNT_TYPE"
+  | "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_LOCALE"
+  | "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_SIGNATURE_STATUS"
+  | "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_WALLET_SOURCE"
   | "CAMPAIGN_DB_EXPORT_CAMPAIGN_NOT_FOUND"
   | "CAMPAIGN_DB_EXPORT_REQUIRED_COLUMN_DISABLED"
   | "CAMPAIGN_DB_EXPORT_REQUIRED_FIELD_MISSING"
@@ -171,6 +182,37 @@ export interface CampaignDbTaskCompletion {
   walletSource: WalletSource;
 }
 
+export interface CampaignDbParticipantRecord {
+  accountType: AccountType;
+  campaignId: string;
+  createdAt: string;
+  id: string;
+  localePreference: SupportedLocale;
+  rank?: number;
+  riskFlags: string[];
+  totalPoints: number;
+  updatedAt: string;
+  walletAddress: string;
+  walletSignatureStatus: WalletSignatureStatus;
+  walletSource: WalletSource;
+  walletTypeVerified: boolean;
+  walletVerifiedAt?: string;
+}
+
+export interface CampaignDbUpsertParticipantInput {
+  accountType: AccountType | string;
+  campaignId: string;
+  localePreference?: SupportedLocale | string;
+  rank?: number;
+  riskFlags?: readonly string[];
+  totalPoints?: number;
+  walletAddress: string;
+  walletSignatureStatus?: WalletSignatureStatus | string;
+  walletSource: WalletSource | string;
+  walletTypeVerified?: boolean;
+  walletVerifiedAt?: string;
+}
+
 export interface CampaignDbUpsertTaskCompletionInput {
   accountType: AccountType | string;
   campaignId: string;
@@ -195,6 +237,7 @@ export interface CampaignDbReadProjection extends CampaignDbDraft {
       transactionId?: string;
   };
   completions: CampaignDbTaskCompletion[];
+  participants: CampaignDbParticipantRecord[];
   tasks: CampaignDbTaskDraft[];
 }
 
@@ -209,7 +252,7 @@ export interface CampaignDbEligibilityProjection {
   accountType: AccountType;
   campaignId: string;
   eligible: boolean;
-  localePreference: "en-US";
+  localePreference: SupportedLocale;
   missingTasks: string[];
   repository: {
     adapterId: string;
@@ -265,7 +308,7 @@ export interface CampaignDbExportRow {
   eligible: boolean;
   evidenceHashes: string[];
   exportBatchId: string;
-  localePreference: "en-US";
+  localePreference: SupportedLocale;
   missingColumnValues: ExportCsvColumn[];
   missingTasks: string[];
   rank?: number;
@@ -400,8 +443,14 @@ export interface CampaignDbListFilter {
   status?: CampaignStatus | string;
 }
 
+export interface CampaignDbParticipantListFilter {
+  campaignId: string;
+  limit?: number;
+  walletAddress?: string;
+}
+
 export interface CampaignDbRepositoryEvent {
-  entity: "Campaign" | "CampaignTask" | "TaskCompletion";
+  entity: "Campaign" | "CampaignParticipant" | "CampaignTask" | "TaskCompletion";
   id: string;
   liveExecution: false;
   operation: string;
@@ -425,6 +474,7 @@ export interface CampaignDbRepositoryHealth {
   liveMigrationExecutionEnabled: false;
   liveQueryExecutionEnabled: false;
   productionReady: false;
+  participantRecordCount: number;
   recordCount: number;
   selectedMode: CampaignDbRepositoryMode;
   status: CampaignDbRepositoryStatus;
@@ -454,11 +504,20 @@ export interface CampaignDbRepository {
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbReadProjection | undefined>;
   getEvents(): CampaignDbRepositoryEvent[];
+  getParticipant?(
+    campaignId: string,
+    walletAddress: string,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbParticipantRecord | undefined>;
   health(): Promise<CampaignDbRepositoryHealth>;
   list(
     filter?: CampaignDbListFilter,
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbReadProjection[]>;
+  listParticipants?(
+    filter: CampaignDbParticipantListFilter,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbParticipantRecord[]>;
   getExportReadiness?(
     input: CampaignDbExportProjectionInput,
     context?: CampaignDbOperationContext,
@@ -468,6 +527,10 @@ export interface CampaignDbRepository {
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbExportProjection>;
   reset(): Promise<void>;
+  upsertParticipant?(
+    input: CampaignDbUpsertParticipantInput,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbParticipantRecord>;
   upsertTaskCompletion?(
     input: CampaignDbUpsertTaskCompletionInput,
     context?: CampaignDbOperationContext,
@@ -518,6 +581,12 @@ const completionEvidenceSources = [
   "SOCIAL_API",
   "MANUAL",
 ] as const satisfies readonly CampaignDbTaskCompletionEvidenceSource[];
+const walletSignatureStatuses = [
+  "signed",
+  "missing",
+  "not_required",
+  "not_available",
+] as const satisfies readonly WalletSignatureStatus[];
 const exportFormats = ["csv", "json"] as const satisfies readonly ExportPreviewMode[];
 const exportContractRootModes = [
   "none",
@@ -598,6 +667,9 @@ const isAccountType = (value: string): value is AccountType =>
 
 const isWalletSource = (value: string): value is WalletSource =>
   (walletSources as readonly string[]).includes(value);
+
+const isWalletSignatureStatus = (value: string): value is WalletSignatureStatus =>
+  (walletSignatureStatuses as readonly string[]).includes(value);
 
 const isVerificationType = (value: string): value is VerificationType =>
   (verificationTypes as readonly string[]).includes(value);
@@ -1136,6 +1208,228 @@ const validateUpsertTaskCompletionInput = (
   };
 };
 
+const participantKey = (campaignId: string, walletAddress: string) => `${campaignId}::${walletAddress}`;
+
+const requireParticipantString = (
+  input: CampaignDbUpsertParticipantInput,
+  field: "campaignId" | "walletAddress",
+  issues: CampaignDbDiagnostic[],
+) => {
+  const value = input[field];
+
+  if (!isNonEmptyString(value)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_PARTICIPANT_REQUIRED_FIELD_MISSING",
+      field,
+      `Campaign DB participant field '${field}' is required.`,
+    ));
+
+    return "";
+  }
+
+  return value.trim();
+};
+
+const normalizeParticipantAccountType = (
+  accountType: string,
+  issues: CampaignDbDiagnostic[],
+): AccountType => {
+  if (!isAccountType(accountType)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_ACCOUNT_TYPE",
+      "accountType",
+      "Campaign DB participant accountType is unsupported.",
+    ));
+
+    return "UNKNOWN";
+  }
+
+  return accountType;
+};
+
+const normalizeParticipantWalletSource = (
+  walletSource: string,
+  issues: CampaignDbDiagnostic[],
+): WalletSource => {
+  if (!isWalletSource(walletSource)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_WALLET_SOURCE",
+      "walletSource",
+      "Campaign DB participant walletSource is unsupported.",
+    ));
+
+    return "OTHER";
+  }
+
+  return walletSource;
+};
+
+const normalizeParticipantLocale = (
+  localePreference: string | undefined,
+  campaign: CampaignDbDraft | undefined,
+  issues: CampaignDbDiagnostic[],
+): SupportedLocale => {
+  const candidate = localePreference ?? campaign?.defaultLocale ?? "en-US";
+
+  if (!isSupportedLocale(candidate)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_LOCALE",
+      "localePreference",
+      "Campaign DB participant localePreference must be supported by the campaign.",
+    ));
+
+    return campaign?.defaultLocale ?? "en-US";
+  }
+
+  return candidate;
+};
+
+const normalizeParticipantSignatureStatus = (
+  walletSignatureStatus: string | undefined,
+  issues: CampaignDbDiagnostic[],
+): WalletSignatureStatus => {
+  const candidate = walletSignatureStatus ?? "missing";
+
+  if (!isWalletSignatureStatus(candidate)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_SIGNATURE_STATUS",
+      "walletSignatureStatus",
+      "Campaign DB participant walletSignatureStatus is unsupported.",
+    ));
+
+    return "missing";
+  }
+
+  return candidate;
+};
+
+const normalizeParticipantRiskFlags = (
+  riskFlags: readonly string[] | undefined,
+  issues: CampaignDbDiagnostic[],
+) => {
+  const flags = riskFlags ?? [];
+  const invalid = !Array.isArray(flags) ||
+    flags.some((flag) => !isNonEmptyString(flag) || hasSecretLikeValue(flag));
+
+  if (invalid) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_PARTICIPANT_INVALID_RISK_FLAGS",
+      "riskFlags",
+      "Campaign DB participant riskFlags must be safe non-empty string references.",
+    ));
+
+    return [];
+  }
+
+  return Array.from(new Set(flags.map((flag) => flag.trim()))).sort();
+};
+
+const normalizeParticipantWalletVerifiedAt = (
+  walletVerifiedAt: string | undefined,
+  issues: CampaignDbDiagnostic[],
+) => {
+  if (walletVerifiedAt === undefined) {
+    return undefined;
+  }
+
+  const trimmed = walletVerifiedAt.trim();
+
+  if (!trimmed || hasSecretLikeValue(trimmed)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_PARTICIPANT_INVALID_WALLET_VERIFIED_AT",
+      "walletVerifiedAt",
+      "Campaign DB participant walletVerifiedAt must be a safe timestamp reference.",
+    ));
+
+    return undefined;
+  }
+
+  return trimmed;
+};
+
+const normalizeParticipantTotalPoints = (
+  totalPoints: number | undefined,
+  issues: CampaignDbDiagnostic[],
+) => {
+  const points = totalPoints ?? 0;
+
+  if (!Number.isFinite(points) || !Number.isInteger(points) || points < 0) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_PARTICIPANT_INVALID_POINTS",
+      "totalPoints",
+      "Campaign DB participant totalPoints must be a non-negative integer.",
+    ));
+
+    return 0;
+  }
+
+  return points;
+};
+
+const normalizeParticipantRank = (
+  rank: number | undefined,
+  issues: CampaignDbDiagnostic[],
+) => {
+  if (rank === undefined) {
+    return undefined;
+  }
+
+  if (!Number.isFinite(rank) || !Number.isInteger(rank) || rank <= 0) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_PARTICIPANT_INVALID_RANK",
+      "rank",
+      "Campaign DB participant rank must be a positive integer when present.",
+    ));
+
+    return undefined;
+  }
+
+  return rank;
+};
+
+const validateUpsertParticipantInput = (
+  input: CampaignDbUpsertParticipantInput,
+  campaign: CampaignDbDraft | undefined,
+): Omit<CampaignDbParticipantRecord, "createdAt" | "id" | "updatedAt"> => {
+  const issues: CampaignDbDiagnostic[] = [];
+  const campaignId = requireParticipantString(input, "campaignId", issues);
+  const walletAddress = requireParticipantString(input, "walletAddress", issues);
+  const accountType = normalizeParticipantAccountType(input.accountType, issues);
+  const walletSource = normalizeParticipantWalletSource(input.walletSource, issues);
+  const localePreference = normalizeParticipantLocale(input.localePreference, campaign, issues);
+  const walletSignatureStatus = normalizeParticipantSignatureStatus(input.walletSignatureStatus, issues);
+  const walletVerifiedAt = normalizeParticipantWalletVerifiedAt(input.walletVerifiedAt, issues);
+  const riskFlags = normalizeParticipantRiskFlags(input.riskFlags, issues);
+  const totalPoints = normalizeParticipantTotalPoints(input.totalPoints, issues);
+  const rank = normalizeParticipantRank(input.rank, issues);
+
+  if (campaignId && !campaign) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_PARTICIPANT_CAMPAIGN_NOT_FOUND",
+      "campaignId",
+      `Campaign DB draft '${sanitizeCampaignDbDiagnosticValue("campaignId", campaignId)}' was not found.`,
+    ));
+  }
+
+  if (issues.length > 0) {
+    throw new CampaignDbRepositoryError("Invalid Campaign DB participant input.", issues);
+  }
+
+  return {
+    accountType,
+    campaignId,
+    localePreference,
+    ...(rank ? { rank } : {}),
+    riskFlags,
+    totalPoints,
+    walletAddress,
+    walletSignatureStatus,
+    walletSource,
+    walletTypeVerified: input.walletTypeVerified === true,
+    ...(walletVerifiedAt ? { walletVerifiedAt } : {}),
+  };
+};
+
 const localized = (enUS: string, zhCN = enUS, zhTW = enUS): LocalizedText => ({
   "en-US": enUS,
   "zh-CN": zhCN,
@@ -1370,10 +1664,12 @@ const createExportRows = (
   campaign: CampaignDbDraft,
   tasks: CampaignDbTaskDraft[],
   completions: CampaignDbTaskCompletion[],
+  participants: CampaignDbParticipantRecord[],
   exportBatchId: string,
 ): CampaignDbExportRow[] => {
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
   const completionsByWallet = new Map<string, Map<string, CampaignDbTaskCompletion>>();
+  const participantsByWallet = new Map(participants.map((participant) => [participant.walletAddress, participant]));
 
   for (const completion of completions) {
     if (!tasksById.has(completion.taskId)) {
@@ -1385,7 +1681,13 @@ const createExportRows = (
     completionsByWallet.set(completion.walletAddress, walletCompletions);
   }
 
-  const rows = Array.from(completionsByWallet.entries()).map(([walletAddress, walletCompletions]) => {
+  const walletAddresses = Array.from(new Set([
+    ...participants.map((participant) => participant.walletAddress),
+    ...completionsByWallet.keys(),
+  ])).sort();
+  const rows = walletAddresses.map((walletAddress) => {
+    const walletCompletions = completionsByWallet.get(walletAddress) ?? new Map<string, CampaignDbTaskCompletion>();
+    const participant = participantsByWallet.get(walletAddress);
     const completionValues = Array.from(walletCompletions.values())
       .sort((left, right) => left.taskId.localeCompare(right.taskId));
     const firstCompletion = completionValues[0];
@@ -1416,12 +1718,15 @@ const createExportRows = (
       .map((task) => task.templateCode || task.id);
     const hasReviewRequiredTask = tasks
       .some((task) => task.required && !completedTaskIds.has(task.id) && reviewRequiredTaskIds.has(task.id));
+    const riskFlags = participant?.riskFlags ?? [];
     const rowStatus: ExportRowStatus =
-      missingTasks.length === 0
-        ? "ready"
-        : hasReviewRequiredTask
-          ? "review_required"
-          : "blocked";
+      riskFlags.length > 0
+        ? "review_required"
+        : missingTasks.length === 0
+          ? "ready"
+          : hasReviewRequiredTask
+            ? "review_required"
+            : "blocked";
     const totalPoints = taskRecords
       .filter((record) => record.status === "completed")
       .reduce((total, record) => total + record.pointsAwarded, 0);
@@ -1431,22 +1736,23 @@ const createExportRows = (
       .sort();
 
     return {
-      accountType: firstCompletion?.accountType ?? "UNKNOWN",
+      accountType: participant?.accountType ?? firstCompletion?.accountType ?? "UNKNOWN",
       campaignId: campaign.id,
       eligible: rowStatus === "ready",
       evidenceHashes,
       exportBatchId,
-      localePreference: campaign.defaultLocale,
+      localePreference: participant?.localePreference ?? campaign.defaultLocale,
       missingColumnValues: [],
       missingTasks,
       referrerAddress: "",
-      riskFlags: [],
+      riskFlags,
       rowStatus,
       taskRecords,
       totalPoints,
       walletAddress,
-      walletSource: firstCompletion?.walletSource ?? "OTHER",
-      walletTypeVerified: firstCompletion?.accountType !== undefined && firstCompletion?.walletSource !== undefined,
+      walletSource: participant?.walletSource ?? firstCompletion?.walletSource ?? "OTHER",
+      walletTypeVerified: participant?.walletTypeVerified ??
+        (firstCompletion?.accountType !== undefined && firstCompletion?.walletSource !== undefined),
     };
   });
 
@@ -1736,6 +2042,7 @@ export const createCampaignDbRepository = ({
   requestedDriverId,
 }: CreateCampaignDbRepositoryOptions = {}): CampaignDbRepository => {
   const recordsById = new Map<string, CampaignDbDraft>();
+  const participantRecordsById = new Map<string, CampaignDbParticipantRecord>();
   const taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
   const taskRecordsById = new Map<string, CampaignDbTaskDraft>();
   const events: CampaignDbRepositoryEvent[] = [];
@@ -1756,6 +2063,7 @@ export const createCampaignDbRepository = ({
       : undefined;
   let idSequence = 0;
   let completionIdSequence = 0;
+  let participantIdSequence = 0;
   let taskIdSequence = 0;
   let eventSequence = 0;
   let transactionSequence = 0;
@@ -1790,6 +2098,12 @@ export const createCampaignDbRepository = ({
     return `campaign-db-task-completion-${completionIdSequence.toString().padStart(4, "0")}`;
   };
 
+  const nextParticipantId = () => {
+    participantIdSequence += 1;
+
+    return `campaign-db-participant-${participantIdSequence.toString().padStart(4, "0")}`;
+  };
+
   const nextCompletionIdForStore = async () => {
     if (!activeDurableStore) {
       return nextCompletionId();
@@ -1798,6 +2112,16 @@ export const createCampaignDbRepository = ({
     const manifest = await activeDurableStore.manifest();
 
     return `campaign-db-task-completion-${(manifest.completionRecordCount + 1).toString().padStart(4, "0")}`;
+  };
+
+  const nextParticipantIdForStore = async () => {
+    if (!activeDurableStore) {
+      return nextParticipantId();
+    }
+
+    const manifest = await activeDurableStore.manifest();
+
+    return `campaign-db-participant-${(manifest.participantRecordCount + 1).toString().padStart(4, "0")}`;
   };
 
   const nextTransactionId = () => {
@@ -1851,6 +2175,18 @@ export const createCampaignDbRepository = ({
           return walletComparison === 0 ? left.taskId.localeCompare(right.taskId) : walletComparison;
         });
 
+  const listParticipantsByCampaignId = async (campaignId: string) =>
+    activeDurableStore
+      ? await activeDurableStore.listParticipantsByCampaignId(campaignId)
+      : Array.from(participantRecordsById.values())
+        .filter((participant) => participant.campaignId === campaignId)
+        .sort((left, right) => left.walletAddress.localeCompare(right.walletAddress));
+
+  const getParticipantRecord = async (campaignId: string, walletAddress: string) =>
+    activeDurableStore
+      ? await activeDurableStore.getParticipant(campaignId, walletAddress)
+      : participantRecordsById.get(participantKey(campaignId, walletAddress));
+
   const listTaskCompletionsByWallet = async (campaignId: string, walletAddress: string) =>
     (await listTaskCompletionsByCampaignId(campaignId))
       .filter((completion) => completion.walletAddress === walletAddress);
@@ -1870,6 +2206,7 @@ export const createCampaignDbRepository = ({
     ...draft,
     repository: repositoryMetadata(),
     completions: await listTaskCompletionsByCampaignId(draft.id),
+    participants: await listParticipantsByCampaignId(draft.id),
     tasks: await listTaskDraftsByCampaignId(draft.id),
   });
 
@@ -1901,8 +2238,9 @@ export const createCampaignDbRepository = ({
 
     const tasks = await listTaskDraftsByCampaignId(normalized.campaignId);
     const completions = await listTaskCompletionsByCampaignId(normalized.campaignId);
+    const participants = await listParticipantsByCampaignId(normalized.campaignId);
     const exportBatchId = exportBatchIdFor(normalized.campaignId);
-    const rows = createExportRows(campaign, tasks, completions, exportBatchId);
+    const rows = createExportRows(campaign, tasks, completions, participants, exportBatchId);
     const repository = repositoryMetadata();
     const exportReadiness = createExportReadinessProjection(
       normalized.campaignId,
@@ -1928,6 +2266,9 @@ export const createCampaignDbRepository = ({
 
   const resolveCompletionRecordCount = async () =>
     activeDurableStore ? (await activeDurableStore.manifest()).completionRecordCount : taskCompletionsById.size;
+
+  const resolveParticipantRecordCount = async () =>
+    activeDurableStore ? (await activeDurableStore.manifest()).participantRecordCount : participantRecordsById.size;
 
   const durableDiagnostics = async () =>
     activeDurableStore
@@ -1956,6 +2297,7 @@ export const createCampaignDbRepository = ({
       liveConnectionAttempted: false,
       liveMigrationExecutionEnabled: false,
       liveQueryExecutionEnabled: false,
+      participantRecordCount: await resolveParticipantRecordCount(),
       productionReady: false,
       recordCount: await resolveRecordCount(),
       selectedMode: mode,
@@ -1971,7 +2313,7 @@ export const createCampaignDbRepository = ({
     };
   };
 
-  const normalizeEligibilityInput = (
+  const normalizeEligibilityInput = async (
     input: CampaignDbEligibilityInput,
     campaignExists: boolean,
   ) => {
@@ -1980,6 +2322,9 @@ export const createCampaignDbRepository = ({
     const walletAddress = requireCompletionString(input, "walletAddress", issues);
     const accountType = normalizeCompletionAccountType(input.accountType, issues, true);
     const walletSource = normalizeCompletionWalletSource(input.walletSource, issues, true);
+    const participant = campaignExists
+      ? await getParticipantRecord(campaignId, walletAddress)
+      : undefined;
 
     if (campaignId && !campaignExists) {
       issues.push(diagnostic(
@@ -1994,11 +2339,15 @@ export const createCampaignDbRepository = ({
     }
 
     return {
-      accountType,
+      accountType: participant?.accountType ?? accountType,
       campaignId,
+      localePreference: participant?.localePreference ?? "en-US",
+      participant,
+      riskFlags: participant?.riskFlags ?? [],
       walletAddress,
-      walletSource,
-      walletTypeVerified: input.accountType !== undefined && input.walletSource !== undefined,
+      walletSource: participant?.walletSource ?? walletSource,
+      walletTypeVerified: participant?.walletTypeVerified ??
+        (input.accountType !== undefined && input.walletSource !== undefined),
     };
   };
 
@@ -2068,7 +2417,7 @@ export const createCampaignDbRepository = ({
       const campaign = activeDurableStore
         ? await activeDurableStore.getById(input.campaignId)
         : recordsById.get(input.campaignId);
-      const normalized = normalizeEligibilityInput(input, Boolean(campaign));
+      const normalized = await normalizeEligibilityInput(input, Boolean(campaign));
       const tasks = await listTaskDraftsByCampaignId(normalized.campaignId);
       const completions = await listTaskCompletionsByWallet(normalized.campaignId, normalized.walletAddress);
       const completedTaskIds = new Set(
@@ -2086,7 +2435,7 @@ export const createCampaignDbRepository = ({
         .map((task) => task.templateCode || task.id);
       const hasPendingRequiredTask = tasks
         .some((task) => task.required && !completedTaskIds.has(task.id) && pendingTaskIds.has(task.id));
-      const riskFlags: string[] = [];
+      const riskFlags = normalized.riskFlags;
       const score = completions
         .filter((completion) => completion.status === "completed")
         .reduce((total, completion) => total + completion.pointsAwarded, 0);
@@ -2103,7 +2452,7 @@ export const createCampaignDbRepository = ({
         accountType: normalized.accountType,
         campaignId: normalized.campaignId,
         eligible: status === "eligible",
-        localePreference: "en-US",
+        localePreference: normalized.localePreference,
         missingTasks,
         repository: {
           adapterId,
@@ -2180,6 +2529,16 @@ export const createCampaignDbRepository = ({
       return draft ? await toProjection(draft) : undefined;
     },
     getEvents: () => [...events],
+    getParticipant: async (campaignId, walletAddress, context = {}) => {
+      appendEvent({
+        entity: "CampaignParticipant",
+        operation: "lookup_campaign_participant",
+        traceId: context.traceId,
+        type: "query.lookup",
+      });
+
+      return await getParticipantRecord(campaignId, walletAddress);
+    },
     health,
     list: async (filter = {}, context = {}) => {
       appendEvent({
@@ -2211,6 +2570,21 @@ export const createCampaignDbRepository = ({
         .sort((left, right) => left.id.localeCompare(right.id));
 
       return Promise.all(filteredRecords.map(toProjection));
+    },
+    listParticipants: async (filter, context = {}) => {
+      appendEvent({
+        entity: "CampaignParticipant",
+        operation: "list_campaign_participants",
+        traceId: context.traceId,
+        type: "query.list",
+      });
+      const participants = await listParticipantsByCampaignId(filter.campaignId);
+      const maxLimit = participants.length || 1;
+      const limit = Math.max(1, Math.min(Math.trunc(filter.limit ?? maxLimit), maxLimit));
+
+      return participants
+        .filter((participant) => !filter.walletAddress || participant.walletAddress === filter.walletAddress)
+        .slice(0, limit);
     },
     getExportReadiness: async (input, context = {}) => {
       const { exportReadiness } = await createExportState(input, context);
@@ -2253,13 +2627,70 @@ export const createCampaignDbRepository = ({
       recordsById.clear();
       taskCompletionsById.clear();
       taskRecordsById.clear();
+      participantRecordsById.clear();
       await activeDurableStore?.reset();
       events.length = 0;
       idSequence = 0;
       completionIdSequence = 0;
+      participantIdSequence = 0;
       taskIdSequence = 0;
       eventSequence = 0;
       transactionSequence = 0;
+    },
+    upsertParticipant: async (input, context = {}) => {
+      assertWritable();
+
+      const campaign = activeDurableStore
+        ? await activeDurableStore.getById(input.campaignId)
+        : recordsById.get(input.campaignId);
+      const validated = validateUpsertParticipantInput(input, campaign);
+      const existing = await getParticipantRecord(validated.campaignId, validated.walletAddress);
+      const transactionId = nextTransactionId();
+      appendEvent({
+        entity: "CampaignParticipant",
+        operation: "begin_upsert_campaign_participant",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.begin",
+      });
+      appendEvent({
+        entity: "CampaignParticipant",
+        operation: "plan_upsert_campaign_participant",
+        traceId: context.traceId,
+        transactionId,
+        type: "command.planned",
+      });
+
+      const timestamp = now();
+      const participant: CampaignDbParticipantRecord = {
+        ...validated,
+        createdAt: existing?.createdAt ?? timestamp,
+        id: existing?.id ?? await nextParticipantIdForStore(),
+        updatedAt: timestamp,
+      };
+
+      if (activeDurableStore) {
+        await activeDurableStore.upsertParticipant(participant);
+      } else {
+        participantRecordsById.set(participantKey(participant.campaignId, participant.walletAddress), participant);
+      }
+
+      appendEvent({
+        entity: "CampaignParticipant",
+        operation: existing ? "update_campaign_participant" : "insert_campaign_participant",
+        traceId: context.traceId,
+        transactionId,
+        type: existing ? "command.update" : "command.insert",
+      });
+      appendEvent({
+        entity: "CampaignParticipant",
+        operation: "commit_upsert_campaign_participant",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.commit",
+      });
+
+      return participant;
     },
     upsertTaskCompletion: async (input, context = {}) => {
       assertWritable();

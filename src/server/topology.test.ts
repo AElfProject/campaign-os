@@ -136,7 +136,25 @@ describe("backend service topology", () => {
       routeIds: expect.arrayContaining(["campaigns.provider.readiness"]),
     });
     expect(backendServiceBoundaries.find((service) => service.id === "export-service")).toMatchObject({
+      dataStores: expect.arrayContaining(["campaign-db", "export-artifact-store"]),
+      description: expect.stringContaining("participant-backed export projection"),
       routeIds: expect.arrayContaining(["campaigns.export.readiness"]),
+      risks: expect.arrayContaining([
+        expect.stringContaining("contract transaction"),
+        expect.stringContaining("reward distribution"),
+      ]),
+    });
+    expect(backendServiceBoundaries.find((service) => service.id === "eligibility-service")).toMatchObject({
+      description: expect.stringContaining("campaign participant repository/read model"),
+      risks: expect.arrayContaining([
+        expect.stringContaining("production Campaign DB participant table migration"),
+        expect.stringContaining("live wallet verification"),
+      ]),
+    });
+    expect(backendDataStores.find((store) => store.id === "campaign-db")).toMatchObject({
+      containsSensitiveData: true,
+      records: expect.arrayContaining(["campaign_participants"]),
+      retentionRisk: expect.stringContaining("participant wallet/risk read models"),
     });
   });
 
@@ -331,9 +349,14 @@ describe("backend service topology", () => {
     expect(serviceById.get("verification-service")?.risks.join(" ")).toContain("Queue runtime activation");
     expect(serviceById.get("verification-service")?.risks.join(" ")).toContain("dead-letter");
     expect(serviceById.get("eligibility-service")?.risks.join(" ")).toContain("provider handoff");
+    expect(serviceById.get("eligibility-service")?.risks.join(" ")).toContain("participant repository/read model");
+    expect(serviceById.get("eligibility-service")?.risks.join(" ")).toContain("live wallet verification");
     expect(serviceById.get("eligibility-service")?.risks.join(" ")).toContain("queue runtime");
     expect(serviceById.get("export-service")?.risks.join(" ")).toContain("observability exporter");
     expect(serviceById.get("export-service")?.risks.join(" ")).toContain("Export preparation handoff");
+    expect(serviceById.get("export-service")?.risks.join(" ")).toContain("production DB migration");
+    expect(serviceById.get("export-service")?.risks.join(" ")).toContain("contract transaction");
+    expect(serviceById.get("export-service")?.risks.join(" ")).toContain("reward distribution");
     expect(serviceById.get("risk-scoring-service")?.risks.join(" ")).toContain("worker lease");
     expect(serviceById.get("risk-scoring-service")?.risks.join(" ")).toContain("dead-letter");
     expect(serviceById.get("risk-scoring-service")?.risks.join(" ")).toContain("Risk cleanup");
@@ -620,9 +643,16 @@ describe("backend service topology", () => {
   it("does not expose sensitive material in topology metadata", () => {
     const report = createBackendTopologyReport({ knownRouteIds });
     const flattened = flattenForScan(report);
+    const serialized = JSON.stringify(report);
 
     for (const fragment of forbiddenFragments) {
       expect(flattened).not.toContain(fragment);
     }
+    expect(serialized).not.toContain("kitty-specs");
+    expect(serialized).not.toContain("docs/current");
+    expect(serialized).not.toContain("evidence/");
+    expect(serialized).not.toContain("sync/");
+    expect(serialized).not.toContain(".kittify");
+    expect(serialized).not.toContain("AGENTS.md");
   });
 });

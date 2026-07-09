@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type {
   CampaignDbDraft,
   CampaignDbDiagnostic,
+  CampaignDbParticipantRecord,
   CampaignDbTaskCompletion,
   CampaignDbTaskDraft,
 } from "./campaignDbRepository";
@@ -40,6 +41,7 @@ export interface CampaignDurableStoreManifest {
   fallbackUsed: false;
   mode: CampaignDurableStoreMode;
   completionRecordCount: number;
+  participantRecordCount: number;
   recordCount: number;
   status: CampaignDurableStoreStatus;
   storeId: "campaign-db";
@@ -58,11 +60,14 @@ export interface CampaignDurableStore {
   create(draft: CampaignDbDraft): Promise<CampaignDbDraft>;
   createTaskDraft(taskDraft: CampaignDbTaskDraft): Promise<CampaignDbTaskDraft>;
   getById(campaignId: string): Promise<CampaignDbDraft | undefined>;
+  getParticipant(campaignId: string, walletAddress: string): Promise<CampaignDbParticipantRecord | undefined>;
   list(filter?: CampaignDurableStoreListOptions): Promise<CampaignDbDraft[]>;
+  listParticipantsByCampaignId(campaignId: string): Promise<CampaignDbParticipantRecord[]>;
   listTaskCompletionsByCampaignId(campaignId: string): Promise<CampaignDbTaskCompletion[]>;
   listTaskDraftsByCampaignId(campaignId: string): Promise<CampaignDbTaskDraft[]>;
   manifest(): Promise<CampaignDurableStoreManifest>;
   reset(): Promise<void>;
+  upsertParticipant(participant: CampaignDbParticipantRecord): Promise<CampaignDbParticipantRecord>;
   upsertTaskCompletion(completion: CampaignDbTaskCompletion): Promise<CampaignDbTaskCompletion>;
 }
 
@@ -74,6 +79,7 @@ export interface CreateCampaignDurableStoreOptions {
 
 interface CampaignDurableStoreDocument {
   completionRecords: CampaignDbTaskCompletion[];
+  participantRecords: CampaignDbParticipantRecord[];
   records: CampaignDbDraft[];
   taskRecords: CampaignDbTaskDraft[];
   updatedAt: string;
@@ -83,6 +89,7 @@ interface CampaignDurableStoreDocument {
 const DEFAULT_BOUNDED_LIST_LIMIT = 100;
 const EMPTY_DOCUMENT: CampaignDurableStoreDocument = {
   completionRecords: [],
+  participantRecords: [],
   records: [],
   taskRecords: [],
   updatedAt: "1970-01-01T00:00:00.000Z",
@@ -145,6 +152,13 @@ const sortTaskCompletions = (records: readonly CampaignDbTaskCompletion[]) =>
     return walletComparison === 0 ? left.taskId.localeCompare(right.taskId) : walletComparison;
   });
 
+const sortParticipants = (records: readonly CampaignDbParticipantRecord[]) =>
+  [...records].sort((left, right) => {
+    const campaignComparison = left.campaignId.localeCompare(right.campaignId);
+
+    return campaignComparison === 0 ? left.walletAddress.localeCompare(right.walletAddress) : campaignComparison;
+  });
+
 const parseDocument = (raw: string): CampaignDurableStoreDocument => {
   const parsed = JSON.parse(raw) as Partial<CampaignDurableStoreDocument>;
 
@@ -154,6 +168,7 @@ const parseDocument = (raw: string): CampaignDurableStoreDocument => {
 
   return {
     completionRecords: Array.isArray(parsed.completionRecords) ? parsed.completionRecords : [],
+    participantRecords: Array.isArray(parsed.participantRecords) ? parsed.participantRecords : [],
     records: parsed.records,
     taskRecords: Array.isArray(parsed.taskRecords) ? parsed.taskRecords : [],
     updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : EMPTY_DOCUMENT.updatedAt,
@@ -167,6 +182,7 @@ export const createCampaignDurableStore = ({
   mode = "local_seeded",
 }: CreateCampaignDurableStoreOptions = {}): CampaignDurableStore => {
   const recordsById = new Map<string, CampaignDbDraft>();
+  const participantRecordsById = new Map<string, CampaignDbParticipantRecord>();
   const taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
   const taskRecordsById = new Map<string, CampaignDbTaskDraft>();
   const startupDiagnostics: CampaignDurableStoreDiagnostic[] = [];
@@ -211,11 +227,16 @@ export const createCampaignDurableStore = ({
     initialized = true;
     const document = await readDocument();
     recordsById.clear();
+    participantRecordsById.clear();
     taskCompletionsById.clear();
     taskRecordsById.clear();
 
     for (const draft of document.records) {
       recordsById.set(draft.id, draft);
+    }
+
+    for (const participant of document.participantRecords) {
+      participantRecordsById.set(`${participant.campaignId}::${participant.walletAddress}`, participant);
     }
 
     for (const taskDraft of document.taskRecords) {
@@ -234,6 +255,7 @@ export const createCampaignDurableStore = ({
 
     const document: CampaignDurableStoreDocument = {
       completionRecords: sortTaskCompletions(Array.from(taskCompletionsById.values())),
+      participantRecords: sortParticipants(Array.from(participantRecordsById.values())),
       records: sortDrafts(Array.from(recordsById.values())),
       taskRecords: sortTaskDrafts(Array.from(taskRecordsById.values())),
       updatedAt: new Date(0).toISOString(),
@@ -294,6 +316,11 @@ export const createCampaignDurableStore = ({
 
       return recordsById.get(campaignId);
     },
+    getParticipant: async (campaignId, walletAddress) => {
+      await ensureInitialized();
+
+      return participantRecordsById.get(`${campaignId}::${walletAddress}`);
+    },
     list: async (filter = {}) => {
       await ensureInitialized();
       const limit = clampLimit(filter.limit, boundedListLimit);
@@ -328,6 +355,12 @@ export const createCampaignDurableStore = ({
       return sortTaskCompletions(Array.from(taskCompletionsById.values()))
         .filter((completion) => completion.campaignId === campaignId);
     },
+    listParticipantsByCampaignId: async (campaignId) => {
+      await ensureInitialized();
+
+      return sortParticipants(Array.from(participantRecordsById.values()))
+        .filter((participant) => participant.campaignId === campaignId);
+    },
     manifest: async () => {
       await ensureInitialized();
       const diagnostics = currentDiagnostics();
@@ -340,6 +373,7 @@ export const createCampaignDurableStore = ({
         durable,
         fallbackUsed: false,
         mode,
+        participantRecordCount: participantRecordsById.size,
         recordCount: recordsById.size,
         status: diagnostics.length > 0 ? "blocked" : "ready",
         storeId: "campaign-db",
@@ -348,6 +382,7 @@ export const createCampaignDurableStore = ({
     },
     reset: async () => {
       recordsById.clear();
+      participantRecordsById.clear();
       taskCompletionsById.clear();
       taskRecordsById.clear();
       initialized = true;
@@ -362,6 +397,13 @@ export const createCampaignDurableStore = ({
       await writeDocument();
 
       return completion;
+    },
+    upsertParticipant: async (participant) => {
+      await ensureInitialized();
+      participantRecordsById.set(`${participant.campaignId}::${participant.walletAddress}`, participant);
+      await writeDocument();
+
+      return participant;
     },
   };
 };

@@ -429,6 +429,118 @@ describe("Campaign DB repository", () => {
     });
   });
 
+  it("upserts campaign participants with wallet identity and campaign scoped uniqueness", async () => {
+    const repository = createCampaignDbRepository();
+    const firstCampaign = await repository.createDraft(validDraftInput());
+    const secondCampaign = await repository.createDraft({
+      ...validDraftInput(),
+      projectId: "project-second",
+    });
+
+    const first = await repository.upsertParticipant!({
+      accountType: "EOA",
+      campaignId: firstCampaign.id,
+      localePreference: "zh-CN",
+      riskFlags: ["manual_review_queue"],
+      walletAddress: "2F4ParticipantWallet",
+      walletSignatureStatus: "signed",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
+      walletVerifiedAt: "2026-07-07T01:00:00.000Z",
+    }, {
+      traceId: "trace-participant-upsert",
+    });
+    const updated = await repository.upsertParticipant!({
+      accountType: "AA",
+      campaignId: firstCampaign.id,
+      localePreference: "ja-JP",
+      riskFlags: [],
+      walletAddress: "2F4ParticipantWallet",
+      walletSignatureStatus: "signed",
+      walletSource: "PORTKEY_AA",
+      walletTypeVerified: true,
+      walletVerifiedAt: "2026-07-07T02:00:00.000Z",
+    });
+    const secondCampaignParticipant = await repository.upsertParticipant!({
+      accountType: "EOA",
+      campaignId: secondCampaign.id,
+      walletAddress: "2F4ParticipantWallet",
+      walletSource: "NIGHTELF",
+    });
+
+    expect(first).toMatchObject({
+      accountType: "EOA",
+      campaignId: firstCampaign.id,
+      id: "campaign-db-participant-0001",
+      localePreference: "zh-CN",
+      riskFlags: ["manual_review_queue"],
+      totalPoints: 0,
+      walletAddress: "2F4ParticipantWallet",
+      walletSignatureStatus: "signed",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
+      walletVerifiedAt: "2026-07-07T01:00:00.000Z",
+    });
+    expect(updated).toMatchObject({
+      accountType: "AA",
+      id: first.id,
+      localePreference: "ja-JP",
+      riskFlags: [],
+      walletSource: "PORTKEY_AA",
+      walletVerifiedAt: "2026-07-07T02:00:00.000Z",
+    });
+    expect(updated.createdAt).toBe(first.createdAt);
+    expect(secondCampaignParticipant).toMatchObject({
+      campaignId: secondCampaign.id,
+      id: "campaign-db-participant-0002",
+      localePreference: "en-US",
+      walletSignatureStatus: "missing",
+      walletTypeVerified: false,
+    });
+    await expect(repository.getParticipant!(firstCampaign.id, "2F4ParticipantWallet")).resolves.toMatchObject({
+      id: first.id,
+      walletSource: "PORTKEY_AA",
+    });
+    await expect(repository.listParticipants!({ campaignId: firstCampaign.id })).resolves.toEqual([
+      expect.objectContaining({
+        id: first.id,
+        walletAddress: "2F4ParticipantWallet",
+      }),
+    ]);
+    await expect(repository.health()).resolves.toMatchObject({
+      participantRecordCount: 2,
+    });
+  });
+
+  it.each([
+    ["campaignId", { campaignId: "missing-campaign" }, "CAMPAIGN_DB_PARTICIPANT_CAMPAIGN_NOT_FOUND"],
+    ["walletAddress", { walletAddress: "" }, "CAMPAIGN_DB_PARTICIPANT_REQUIRED_FIELD_MISSING"],
+    ["accountType", { accountType: "BOT" }, "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_ACCOUNT_TYPE"],
+    ["walletSource", { walletSource: "UNSAFE_WALLET" }, "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_WALLET_SOURCE"],
+    ["localePreference", { localePreference: "fr-FR" }, "CAMPAIGN_DB_PARTICIPANT_UNSUPPORTED_LOCALE"],
+    ["riskFlags", { riskFlags: ["manual_review", "https://secret.example/token=raw-secret"] }, "CAMPAIGN_DB_PARTICIPANT_INVALID_RISK_FLAGS"],
+    ["walletVerifiedAt", { walletVerifiedAt: "" }, "CAMPAIGN_DB_PARTICIPANT_INVALID_WALLET_VERIFIED_AT"],
+  ])("rejects invalid participant %s with stable diagnostics", async (_field, override, code) => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+
+    await expect(repository.upsertParticipant!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      walletAddress: "2F4ParticipantWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      ...override,
+    })).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code,
+          severity: "error",
+        }),
+      ],
+    });
+    await expect(repository.listParticipants!({ campaignId: campaign.id })).resolves.toEqual([]);
+  });
+
   it("projects deterministic repository export rows and readiness counts", async () => {
     const repository = createCampaignDbRepository();
     const campaign = await repository.createDraft(validDraftInput());
@@ -639,6 +751,152 @@ describe("Campaign DB repository", () => {
       expect.objectContaining({ mode: "winners_root", readiness: "blocked", safeDefault: false }),
       expect.objectContaining({ mode: "contract_claim", readiness: "blocked", safeDefault: false }),
     ]);
+  });
+
+  it("uses participant records as eligibility and export identity source", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const requiredTask = await repository.addTaskDraft({
+      ...validTaskDraftInput(campaign.id),
+      points: 120,
+      required: true,
+      templateCode: "bridge_ebridge",
+    });
+    const optionalTask = await repository.addTaskDraft({
+      ...validTaskDraftInput(campaign.id),
+      evidenceRule: { action: "share" },
+      points: 50,
+      required: false,
+      templateCode: "share_campaign",
+      verificationType: "SOCIAL",
+    });
+
+    await repository.upsertParticipant!({
+      accountType: "AA",
+      campaignId: campaign.id,
+      localePreference: "zh-CN",
+      riskFlags: ["manual_review_queue"],
+      walletAddress: "2F4ParticipantIdentity",
+      walletSignatureStatus: "signed",
+      walletSource: "PORTKEY_AA",
+      walletTypeVerified: true,
+      walletVerifiedAt: "2026-07-07T03:00:00.000Z",
+    });
+    await repository.upsertParticipant!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      localePreference: "ko-KR",
+      walletAddress: "2F4CleanParticipant",
+      walletSignatureStatus: "signed",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
+      walletVerifiedAt: "2026-07-07T04:00:00.000Z",
+    });
+    await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, requiredTask.id),
+      accountType: "EOA",
+      walletAddress: "2F4ParticipantIdentity",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
+    await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, optionalTask.id),
+      evidenceHash: "evidence-hash:participant-share",
+      evidenceSource: "SOCIAL_API",
+      walletAddress: "2F4ParticipantIdentity",
+    });
+    await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, requiredTask.id),
+      evidenceHash: "evidence-hash:clean-required",
+      walletAddress: "2F4CleanParticipant",
+    });
+
+    await expect(repository.checkEligibility!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      walletAddress: "2F4ParticipantIdentity",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    })).resolves.toMatchObject({
+      accountType: "AA",
+      eligible: false,
+      localePreference: "zh-CN",
+      missingTasks: [],
+      riskFlags: ["manual_review_queue"],
+      score: 170,
+      status: "risk_flagged",
+      walletSource: "PORTKEY_AA",
+      walletTypeVerified: true,
+    });
+    const projection = await repository.projectExport!({
+      campaignId: campaign.id,
+      format: "json",
+    });
+
+    expect(projection.rows.map((row) => ({
+      accountType: row.accountType,
+      localePreference: row.localePreference,
+      rank: row.rank,
+      riskFlags: row.riskFlags,
+      rowStatus: row.rowStatus,
+      totalPoints: row.totalPoints,
+      walletAddress: row.walletAddress,
+      walletSource: row.walletSource,
+    }))).toEqual([
+      {
+        accountType: "EOA",
+        localePreference: "ko-KR",
+        rank: 1,
+        riskFlags: [],
+        rowStatus: "ready",
+        totalPoints: 120,
+        walletAddress: "2F4CleanParticipant",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      },
+      {
+        accountType: "AA",
+        localePreference: "zh-CN",
+        rank: 2,
+        riskFlags: ["manual_review_queue"],
+        rowStatus: "review_required",
+        totalPoints: 170,
+        walletAddress: "2F4ParticipantIdentity",
+        walletSource: "PORTKEY_AA",
+      },
+    ]);
+  });
+
+  it("exports participant-only records for local review before completions exist", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+    await repository.upsertParticipant!({
+      accountType: "UNKNOWN",
+      campaignId: campaign.id,
+      localePreference: "es-ES",
+      walletAddress: "2F4AddressOnlyParticipant",
+      walletSource: "OTHER",
+    });
+
+    const projection = await repository.projectExport!({
+      campaignId: campaign.id,
+      format: "csv",
+    });
+
+    expect(projection.rows).toEqual([
+      expect.objectContaining({
+        accountType: "UNKNOWN",
+        eligible: false,
+        localePreference: "es-ES",
+        missingTasks: ["bridge_ebridge"],
+        rowStatus: "blocked",
+        totalPoints: 0,
+        walletAddress: "2F4AddressOnlyParticipant",
+        walletSource: "OTHER",
+        walletTypeVerified: false,
+      }),
+    ]);
+    expect(projection.rows[0]).not.toHaveProperty("rank");
+    expect(projection.blockedRows).toBe(1);
+    expect(projection.artifact.csvPreview).toContain("2F4AddressOnlyParticipant");
   });
 
   it("keeps duplicate completion upserts single-counted in export projection", async () => {
@@ -906,6 +1164,17 @@ describe("Campaign DB repository", () => {
         ...validCompletionInput(created.id, task.id),
         evidenceHash: "evidence-hash:vote-tmrwdao",
       });
+      await firstRepository.upsertParticipant!({
+        accountType: "EOA",
+        campaignId: created.id,
+        localePreference: "vi-VN",
+        riskFlags: ["referral_velocity_review"],
+        walletAddress: "2F4CompletionWallet",
+        walletSignatureStatus: "signed",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+        walletTypeVerified: true,
+        walletVerifiedAt: "2026-07-07T05:00:00.000Z",
+      });
 
       const reopenedRepository = createCampaignDbRepository({
         durableStoreFilePath,
@@ -952,16 +1221,26 @@ describe("Campaign DB repository", () => {
           }),
         ],
       });
+      await expect(reopenedRepository.getParticipant!(created.id, "2F4CompletionWallet")).resolves.toMatchObject({
+        campaignId: created.id,
+        localePreference: "vi-VN",
+        riskFlags: ["referral_velocity_review"],
+        walletAddress: "2F4CompletionWallet",
+        walletSignatureStatus: "signed",
+        walletTypeVerified: true,
+      });
       await expect(reopenedRepository.checkEligibility!({
         accountType: "EOA",
         campaignId: created.id,
         walletAddress: "2F4CompletionWallet",
         walletSource: "PORTKEY_EOA_EXTENSION",
       })).resolves.toMatchObject({
-        eligible: true,
+        eligible: false,
+        localePreference: "vi-VN",
         missingTasks: [],
+        riskFlags: ["referral_velocity_review"],
         score: 120,
-        status: "eligible",
+        status: "risk_flagged",
       });
       const exportProjection = await reopenedRepository.projectExport!({
         campaignId: created.id,
@@ -970,34 +1249,42 @@ describe("Campaign DB repository", () => {
 
       expect(exportProjection).toMatchObject({
         campaignId: created.id,
-        readyRows: 2,
-        reviewRequiredRows: 0,
+        readyRows: 1,
+        reviewRequiredRows: 1,
         blockedRows: 0,
       });
       expect(exportProjection.rows.map((row) => ({
+        localePreference: row.localePreference,
         rank: row.rank,
+        riskFlags: row.riskFlags,
         rowStatus: row.rowStatus,
         walletAddress: row.walletAddress,
       }))).toEqual([
         {
+          localePreference: "en-US",
           rank: 1,
           rowStatus: "ready",
-          walletAddress: "2F4CompletionWallet",
+          riskFlags: [],
+          walletAddress: "2F4SecondCompletionWallet",
         },
         {
+          localePreference: "vi-VN",
           rank: 2,
-          rowStatus: "ready",
-          walletAddress: "2F4SecondCompletionWallet",
+          riskFlags: ["referral_velocity_review"],
+          rowStatus: "review_required",
+          walletAddress: "2F4CompletionWallet",
         },
       ]);
       expect(exportProjection.artifact.jsonPreview).toEqual([
         expect.objectContaining({
           export_batch_id: `campaign-db-export-${created.id}`,
-          wallet_address: "2F4CompletionWallet",
+          wallet_address: "2F4SecondCompletionWallet",
         }),
         expect.objectContaining({
           export_batch_id: `campaign-db-export-${created.id}`,
-          wallet_address: "2F4SecondCompletionWallet",
+          locale_preference: "vi-VN",
+          risk_flags: ["referral_velocity_review"],
+          wallet_address: "2F4CompletionWallet",
         }),
       ]);
       await expect(reopenedRepository.list({ projectId: "project-m177" })).resolves.toEqual([
@@ -1022,6 +1309,7 @@ describe("Campaign DB repository", () => {
         adapterId: "campaign-db-durable-test-adapter",
         campaignStore: expect.objectContaining({
           completionRecordCount: 2,
+          participantRecordCount: 1,
           durable: true,
           mode: "durable_test",
           recordCount: 1,
@@ -1029,6 +1317,7 @@ describe("Campaign DB repository", () => {
           taskRecordCount: 1,
         }),
         completionRecordCount: 2,
+        participantRecordCount: 1,
         recordCount: 1,
         selectedMode: "durable_test",
         status: "ready",

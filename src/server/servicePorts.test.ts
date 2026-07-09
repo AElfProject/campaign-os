@@ -80,7 +80,11 @@ describe("API service ports", () => {
       serviceId: "wallet-session-service",
     });
     expect(apiServicePorts.find((port) => port.id === "campaign-port")).toMatchObject({
-      notes: expect.stringContaining("local seeded read models"),
+      futureAttachPoints: expect.arrayContaining([
+        "src/server/campaignDbRepository.ts campaign participant repository/read model",
+        "future Campaign DB participant table service",
+      ]),
+      notes: expect.stringContaining("campaign participant repository/read model"),
       productionAdapterStatus: "local_seeded",
       requiresExternalNetwork: false,
       requiresSecret: false,
@@ -93,6 +97,10 @@ describe("API service ports", () => {
       ]),
       serviceId: "campaign-service",
     });
+    expect(apiServicePorts.find((port) => port.id === "campaign-port")?.notes).toContain(
+      "local deterministic or durable-test",
+    );
+    expect(apiServicePorts.find((port) => port.id === "campaign-port")?.notes).toContain("reward distribution");
     expect(apiServicePorts.find((port) => port.id === "runtime-observability-port")).toMatchObject({
       futureAttachPoints: expect.arrayContaining([
         "src/server/observabilityExporter.ts readiness foundation",
@@ -111,10 +119,12 @@ describe("API service ports", () => {
     });
     expect(apiServicePorts.find((port) => port.id === "export-port")?.futureAttachPoints).toEqual(
       expect.arrayContaining([
+        "src/server/campaignDbRepository.ts participant-backed export projection",
         "src/server/exportArtifactRegistry.ts local artifact registry",
         "src/server/exportArtifactRegistry.ts local audit read model",
         "export artifact store",
         "contract writer approval gate",
+        "future Campaign DB participant table service",
       ]),
     );
     expect(apiServicePorts.find((port) => port.id === "export-port")?.routeIds).toEqual(
@@ -127,11 +137,31 @@ describe("API service ports", () => {
     );
     expect(apiServicePorts.find((port) => port.id === "export-port")).toMatchObject({
       localAdapter: expect.stringContaining("src/server/exportArtifactRegistry.ts"),
-      notes: expect.stringContaining("export artifact audit read metadata"),
+      notes: expect.stringContaining("participant-backed export projection"),
       productionAdapterStatus: "local_seeded",
       requiresExternalNetwork: false,
       requiresSecret: false,
     });
+    expect(apiServicePorts.find((port) => port.id === "export-port")?.notes).toContain("production DB migration");
+    expect(apiServicePorts.find((port) => port.id === "export-port")?.notes).toContain("contract transaction");
+    expect(apiServicePorts.find((port) => port.id === "export-port")?.notes).toContain("reward distribution");
+    expect(apiServicePorts.find((port) => port.id === "eligibility-port")).toMatchObject({
+      futureAttachPoints: expect.arrayContaining([
+        "src/server/campaignDbRepository.ts campaign participant repository/read model",
+        "future Campaign DB participant table service",
+      ]),
+      notes: expect.stringContaining("campaign participant repository/read model"),
+      productionAdapterStatus: "local_seeded",
+      requiresExternalNetwork: false,
+      requiresSecret: false,
+    });
+    expect(apiServicePorts.find((port) => port.id === "eligibility-port")?.notes).toContain(
+      "deterministic and durable-test",
+    );
+    expect(apiServicePorts.find((port) => port.id === "eligibility-port")?.notes).toContain(
+      "live wallet verification",
+    );
+    expect(apiServicePorts.find((port) => port.id === "eligibility-port")?.notes).toContain("production DB migration");
     expect(apiServicePorts.find((port) => port.id === "ai-ops-port")).toMatchObject({
       deferredCapabilities: expect.arrayContaining(["auth_session", "provider_adapters", "scheduler", "worker_queue"]),
       futureAttachPoints: expect.arrayContaining([
@@ -169,6 +199,17 @@ describe("API service ports", () => {
       );
       expect(port.productionAdapterStatus).not.toBe("enabled");
     }
+  });
+
+  it("does not expose private Kitty artifact paths in public service port metadata", () => {
+    const serialized = JSON.stringify(createApiServicePortReport());
+
+    expect(serialized).not.toContain("kitty-specs");
+    expect(serialized).not.toContain("docs/current");
+    expect(serialized).not.toContain("evidence/");
+    expect(serialized).not.toContain("sync/");
+    expect(serialized).not.toContain(".kittify");
+    expect(serialized).not.toContain("AGENTS.md");
   });
 
   it("fails closed for unknown service and route references", () => {
