@@ -612,6 +612,10 @@ const createSafeCampaignDbRepository = (
       return await run();
     } catch (error) {
       if (error instanceof CampaignDbRepositoryError) {
+        if (operation === "campaignDb.generateI18nDraft") {
+          throw error;
+        }
+
         const firstDiagnostic = error.diagnostics[0];
 
         if (firstDiagnostic?.code !== "CAMPAIGN_DB_PRODUCTION_DEFERRED") {
@@ -636,6 +640,8 @@ const createSafeCampaignDbRepository = (
     getById: (campaignId, context) =>
       wrap("campaignDb.getById", () => repository.getById(campaignId, context)),
     getEvents: () => repository.getEvents(),
+    generateI18nDraft: (input, context) =>
+      wrap("campaignDb.generateI18nDraft", () => repository.generateI18nDraft!(input, context)),
     getExportReadiness: (input, context) =>
       wrap("campaignDb.getExportReadiness", () => repository.getExportReadiness!(input, context)),
     health: () => wrap("campaignDb.health", () => repository.health()),

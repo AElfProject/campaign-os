@@ -57,6 +57,10 @@ import {
   createBackendPersistenceRuntimeSummary,
   type BackendServiceReadinessReport,
 } from "./backendService";
+import {
+  CampaignDbRepositoryError,
+  type CampaignDbI18nDraftProjection,
+} from "./campaignDbRepository";
 import type {
   CampaignDbAddTaskDraftInput,
   CampaignDbCreateDraftInput,
@@ -198,6 +202,30 @@ const persistLocalResult = async <TPayload>(
       recordId: record.id,
     },
   };
+};
+
+const campaignDbI18nDiagnosticToRuntimeError = (
+  error: CampaignDbRepositoryError,
+  request: GenerateI18nDraftRequest,
+) => {
+  const diagnostic = error.diagnostics[0];
+
+  if (diagnostic?.code === "CAMPAIGN_DB_I18N_UNSUPPORTED_SOURCE_LOCALE") {
+    return unsupportedLocale(request.sourceLocale);
+  }
+
+  if (diagnostic?.code === "CAMPAIGN_DB_I18N_UNSUPPORTED_TARGET_LOCALE") {
+    return unsupportedLocale(request.targetLocale);
+  }
+
+  if (diagnostic?.code === "CAMPAIGN_DB_I18N_CAMPAIGN_NOT_FOUND") {
+    return invalidCampaign(request.campaignId);
+  }
+
+  return invalidRequest(
+    diagnostic?.field ?? "request",
+    diagnostic?.message ?? "Campaign DB i18n draft request is invalid.",
+  );
 };
 
 const createTaskDraftResponse = (request: AddTaskRequest): LocalServiceResult<AddTaskRequest & { id: string }> => ({
@@ -606,6 +634,24 @@ const createRepositoryEligibilityResponse = (
   walletAddress: projection.walletAddress,
   walletSource: projection.walletSource,
   walletTypeVerified: projection.walletTypeVerified,
+});
+
+const createRepositoryI18nDraftResponse = (
+  projection: CampaignDbI18nDraftProjection,
+) => ({
+  aiDraft: projection.draft.aiDraft,
+  campaignId: projection.draft.campaignId,
+  contentKeys: projection.draft.contentKeys,
+  draft: projection.draft.draft,
+  fallbackToEnglish: projection.draft.fallbackToEnglish,
+  humanReviewRequired: projection.draft.humanReviewRequired,
+  noAutoPublishNotice: localized(
+    "AI generated translation cannot auto-publish before human review.",
+    "AI 生成翻译必须经过人工审核后才能发布。",
+    "AI generated translation cannot auto-publish before human review.",
+  ),
+  sourceLocale: projection.draft.sourceLocale,
+  targetLocale: projection.draft.targetLocale,
 });
 
 const createCampaignDbMetadata = (repository: {
@@ -1615,9 +1661,46 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     ),
   "campaigns.summary": (context) =>
     unwrapLocalResult(context.service.summarizeCampaign(summarizeCampaignRequest(context)), context),
-  "campaigns.i18n.generate": (context) =>
-    persistLocalResult(
-      context.service.generateI18nDraft(i18nDraftRequest(context)),
+  "campaigns.i18n.generate": async (context) => {
+    const request = i18nDraftRequest(context);
+    const localResult = context.service.generateI18nDraft(request);
+    let campaignDb: ReturnType<typeof createCampaignDbMetadata> | undefined;
+    let result = localResult;
+
+    if (!localResult.ok && localResult.error.code === "CAMPAIGN_NOT_FOUND") {
+      const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
+        traceId: context.traceId,
+      });
+
+      if (campaignDbDraft && context.campaignDbRepository.generateI18nDraft) {
+        try {
+          const projection = await context.campaignDbRepository.generateI18nDraft({
+            campaignId: request.campaignId,
+            contentKeys: request.contentKeys,
+            sourceLocale: request.sourceLocale,
+            targetLocale: request.targetLocale,
+          }, {
+            traceId: context.traceId,
+          });
+
+          campaignDb = createCampaignDbMetadata(projection.repository);
+          result = {
+            boundary: campaignDbBoundary,
+            ok: true,
+            payload: createRepositoryI18nDraftResponse(projection),
+          };
+        } catch (error) {
+          if (error instanceof CampaignDbRepositoryError) {
+            throw campaignDbI18nDiagnosticToRuntimeError(error, request);
+          }
+
+          throw error;
+        }
+      }
+    }
+
+    const response = await persistLocalResult(
+      result,
       context,
       (payload) => ({
         campaignId: context.params.campaignId,
@@ -1630,7 +1713,15 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
           targetLocale: payload.targetLocale,
         },
       }),
-    ),
+    );
+
+    return campaignDb
+      ? {
+        ...response,
+        campaignDb,
+      }
+      : response;
+  },
   "campaigns.posts.generate": (context) =>
     unwrapLocalResult(context.service.generateCampaignPosts(generateCampaignPostsRequest(context)), context),
   "campaigns.export.preview": async (context) => {
