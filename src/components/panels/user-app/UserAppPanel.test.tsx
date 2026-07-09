@@ -172,11 +172,26 @@ describe("User App shell", () => {
     expect(within(participantWorkspace).getAllByText("Pending / ready tasks").length).toBeGreaterThan(0);
     expect(within(participantWorkspace).getByText("Complete missing required task")).toBeInTheDocument();
     expect(within(participantWorkspace).getByText("Review task status")).toBeInTheDocument();
-    expect(within(participantWorkspace).getByText(/Raw signups do not count/)).toBeInTheDocument();
+    expect(within(participantWorkspace).getAllByText(/Raw signups do not count/).length).toBeGreaterThan(0);
     expect(within(participantWorkspace).getByText(/not settled by a live points ledger/)).toBeInTheDocument();
     expect(within(participantWorkspace).getByText(/no live Referral registry write/)).toBeInTheDocument();
-    expect(within(participantWorkspace).getByText(/reward custody/)).toBeInTheDocument();
+    expect(within(participantWorkspace).getAllByText(/reward custody/).length).toBeGreaterThan(0);
     expect(within(participantWorkspace).getByText(/reward distribution is executed/)).toBeInTheDocument();
+    const referralRuntimeReview = screen.getByRole("article", { name: "Referral runtime review" });
+    expect(within(referralRuntimeReview).getAllByText("Referral runtime review").length).toBeGreaterThan(0);
+    expect(within(referralRuntimeReview).getByText("Binding status")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("Referrer address")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText("REF...3E9")).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getAllByText("referral_velocity_review").length).toBeGreaterThan(0);
+    expect(within(referralRuntimeReview).getByText(/Export projection includes referrer_address/)).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText(/Referral risk review is required/)).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText(/No production referral API/)).toBeInTheDocument();
+    expect(within(referralRuntimeReview).getByText(/reward distribution is enabled/)).toBeInTheDocument();
+    expect(
+      within(referralRuntimeReview).queryByRole("button", {
+        name: /production referral|migrate|wallet signing|contract write|reward|distribution|payout/i,
+      }),
+    ).not.toBeInTheDocument();
     expect(screen.getAllByText("Complete Bridge via eBridge before this ecosystem action.").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Awaken Sprint" })).toBeInTheDocument();
     expect(getUserAppConnectWalletButton("Connect Wallet")).toBeInTheDocument();
@@ -459,11 +474,11 @@ describe("User App shell", () => {
     expect(within(participantWorkspace).getAllByText("待处理 / 待开始任务").length).toBeGreaterThan(0);
     expect(within(participantWorkspace).getByText("完成缺失的必做任务")).toBeInTheDocument();
     expect(within(participantWorkspace).getByText("审核任务状态")).toBeInTheDocument();
-    expect(within(participantWorkspace).getByText(/仅注册不会计分/)).toBeInTheDocument();
+    expect(within(participantWorkspace).getAllByText(/仅注册不会计分/).length).toBeGreaterThan(0);
     expect(within(participantWorkspace).getByText(/不是由实时 points ledger 结算/)).toBeInTheDocument();
     expect(within(participantWorkspace).getByText(/不会执行实时 Referral registry 写入/)).toBeInTheDocument();
     expect(within(participantWorkspace).getByText(/不是实时账本/)).toBeInTheDocument();
-    expect(within(participantWorkspace).getByText(/奖励托管或发奖/)).toBeInTheDocument();
+    expect(within(participantWorkspace).getAllByText(/奖励托管或发奖/).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Awaken 冲刺活动" })).toBeInTheDocument();
     expect(getUserAppConnectWalletButton("连接钱包")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "检查资格" }).length).toBeGreaterThan(0);
