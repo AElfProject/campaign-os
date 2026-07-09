@@ -117,6 +117,12 @@ describe("i18n translation API bridge", () => {
           kind: "i18n_draft",
           recordId: "record-i18n-1",
         },
+        campaignDb: {
+          adapterId: "campaign-db-deterministic-adapter",
+          createdViaRepository: true,
+          repositoryId: "campaign-db-repository-runtime",
+          storeId: "campaign-db",
+        },
       },
       ok: true,
       traceId: "trace-i18n-envelope",
@@ -136,6 +142,10 @@ describe("i18n translation API bridge", () => {
 
     expect(state).toMatchObject({
       campaignId: request.campaignId,
+      campaignDb: {
+        createdViaRepository: true,
+        storeId: "campaign-db",
+      },
       configured: true,
       contentKeys: request.contentKeys,
       diagnostics: [],
@@ -178,6 +188,55 @@ describe("i18n translation API bridge", () => {
         method: "POST",
       }),
     );
+  });
+
+  it("normalizes repository metadata from flattened runtime envelopes", async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(response({
+      campaignDb: {
+        adapterId: "campaign-db-deterministic-adapter",
+        createdViaRepository: true,
+        repositoryId: "campaign-db-repository-runtime",
+        storeId: "campaign-db",
+      },
+      data: {
+        payload: {
+          aiDraft: true,
+          campaignId: request.campaignId,
+          contentKeys: ["title"],
+          draft: {
+            title: "本地草稿标题",
+          },
+          fallbackToEnglish: true,
+          humanReviewRequired: true,
+          sourceLocale: "en-US",
+          targetLocale: "zh-CN",
+        },
+      },
+      ok: true,
+      traceId: "trace-i18n-flat-metadata",
+    })) as unknown as I18nTranslationApiFetch;
+
+    const state = await submitI18nTranslationApiDraft({
+      config: { baseUrl: "http://127.0.0.1:5184/" },
+      fetchImpl,
+      request,
+    });
+
+    expect(state).toMatchObject({
+      campaignDb: {
+        adapterId: "campaign-db-deterministic-adapter",
+        createdViaRepository: true,
+        repositoryId: "campaign-db-repository-runtime",
+        storeId: "campaign-db",
+      },
+      draft: {
+        fallbackToEnglish: true,
+        humanReviewRequired: true,
+      },
+      source: "api_runtime",
+      status: "draft_generated",
+      traceId: "trace-i18n-flat-metadata",
+    });
   });
 
   it("keeps seeded fallback when i18n generation fails with unsafe details", async () => {

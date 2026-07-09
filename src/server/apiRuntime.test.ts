@@ -128,6 +128,11 @@ interface VerificationPayload {
 }
 
 interface I18nDraftPayload {
+  aiDraft?: boolean;
+  campaignId?: string;
+  contentKeys?: string[];
+  draft?: Record<string, string>;
+  fallbackToEnglish?: boolean;
   humanReviewRequired: boolean;
   sourceLocale: string;
   targetLocale: string;
@@ -2403,6 +2408,156 @@ describe("Campaign OS API runtime", () => {
       },
     });
     expect(readinessCallCount).toBe(0);
+  });
+
+  it("generates i18n drafts for repository-created campaigns through the runtime route", async () => {
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime();
+    const create = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/campaigns",
+      headers: projectOwnerAuthHeaders("repo-owner-i18n", {
+        "x-campaign-os-trace-id": "trace-campaign-db-i18n-create",
+      }),
+      body: JSON.stringify({
+        contractMode: "OFF_CHAIN_MVP",
+        defaultLocale: "en-US",
+        duration: "2026-08-01/2026-08-14",
+        endTime: "2026-08-14T23:59:59Z",
+        goal: "Localize repository campaign",
+        ownerAddress: "repo-owner-i18n",
+        projectId: "repo-project-i18n",
+        rewardDescription: "100 ELF local review rewards",
+        rewardDisclaimerHash: "reward-disclaimer-hash-i18n",
+        startTime: "2026-08-01T00:00:00Z",
+        supportedLocales: ["en-US", "zh-CN"],
+        walletPolicy: "ANY",
+      }),
+    });
+    const created = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload> & {
+      campaignDb: {
+        draftId: string;
+        storeId: string;
+      };
+    }>(create);
+    const i18nDraft = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.campaignDb.draftId}/i18n/generate`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-i18n-generate" },
+      body: JSON.stringify({
+        contentKeys: ["title", "description", "rewardDisclaimer", "faq"],
+        sourceLocale: "en-US",
+        targetLocale: "zh-CN",
+      }),
+    });
+    const payload = expectSuccessData<LocalServiceEnvelope<I18nDraftPayload> & {
+      campaignDb: {
+        createdViaRepository: boolean;
+        storeId: string;
+      };
+      persistence: {
+        kind: string;
+        recordId: string;
+      };
+    }>(i18nDraft);
+
+    expect(payload).toMatchObject({
+      campaignDb: {
+        createdViaRepository: true,
+        storeId: "campaign-db",
+      },
+      payload: {
+        aiDraft: true,
+        campaignId: created.campaignDb.draftId,
+        contentKeys: ["title", "description", "rewardDisclaimer", "faq"],
+        draft: {
+          description: "Localize repository campaign. Reward context: 100 ELF local review rewards.",
+          faq: "Campaign details, eligibility, and rewards remain subject to project owner review.",
+          rewardDisclaimer: "Rewards for 100 ELF local review rewards require human review before publish. Disclaimer hash: reward-disclaimer-hash-i18n.",
+          title: "Localize repository campaign",
+        },
+        fallbackToEnglish: true,
+        humanReviewRequired: true,
+        sourceLocale: "en-US",
+        targetLocale: "zh-CN",
+      },
+      persistence: {
+        kind: "i18n_draft",
+        recordId: expect.any(String),
+      },
+    });
+    expect(i18nDraft.body.traceId).toBe("trace-campaign-db-i18n-generate");
+  });
+
+  it("rejects invalid repository i18n draft requests without persistence records", async () => {
+    const repository = createCampaignOsMemoryRepository();
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({ repository });
+    const create = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/campaigns",
+      headers: projectOwnerAuthHeaders("repo-owner-i18n-invalid"),
+      body: JSON.stringify({
+        duration: "2026-08-01/2026-08-14",
+        endTime: "2026-08-14T23:59:59Z",
+        goal: "Reject invalid repository campaign i18n",
+        ownerAddress: "repo-owner-i18n-invalid",
+        projectId: "repo-project-i18n-invalid",
+        rewardDescription: "Repository-backed rewards remain local-review only.",
+        startTime: "2026-08-01T00:00:00Z",
+        supportedLocales: ["en-US", "zh-CN"],
+      }),
+    });
+    const created = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload> & {
+      campaignDb: {
+        draftId: string;
+      };
+    }>(create);
+    const unsupportedTarget = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.campaignDb.draftId}/i18n/generate`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-i18n-unsupported" },
+      body: JSON.stringify({
+        contentKeys: ["title"],
+        sourceLocale: "en-US",
+        targetLocale: "zh-TW",
+      }),
+    });
+    const emptyContentKeys = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.campaignDb.draftId}/i18n/generate`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-i18n-empty-keys" },
+      body: JSON.stringify({
+        contentKeys: [],
+        sourceLocale: "en-US",
+        targetLocale: "zh-CN",
+      }),
+    });
+    const snapshot = await repository.snapshot();
+
+    expect(unsupportedTarget).toMatchObject({
+      status: 400,
+      body: {
+        ok: false,
+        traceId: "trace-campaign-db-i18n-unsupported",
+        error: {
+          code: "UNSUPPORTED_LOCALE",
+          details: { locale: "zh-TW" },
+        },
+      },
+    });
+    expect(emptyContentKeys).toMatchObject({
+      status: 400,
+      body: {
+        ok: false,
+        traceId: "trace-campaign-db-i18n-empty-keys",
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            field: "contentKeys",
+          },
+        },
+      },
+    });
+    expect(snapshot.countsByKind.i18n_draft).toBe(0);
   });
 
   it("returns limited lifecycle/readiness projections for repository-created drafts", async () => {

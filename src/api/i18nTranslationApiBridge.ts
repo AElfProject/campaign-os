@@ -49,6 +49,13 @@ export interface I18nTranslationApiPersistenceMetadata {
   recordId?: string;
 }
 
+export interface I18nTranslationApiCampaignDbMetadata {
+  adapterId?: string;
+  createdViaRepository?: boolean;
+  repositoryId?: string;
+  storeId?: string;
+}
+
 export interface I18nTranslationApiDraftResult {
   aiDraft?: boolean;
   draft: Record<string, string>;
@@ -63,6 +70,7 @@ export interface I18nTranslationApiBridgeState {
   campaignId?: string;
   configured: boolean;
   contentKeys: string[];
+  campaignDb?: I18nTranslationApiCampaignDbMetadata;
   diagnostics: readonly I18nTranslationApiDiagnostic[];
   draft?: I18nTranslationApiDraftResult;
   loading: boolean;
@@ -465,6 +473,23 @@ const persistenceMetadataFromValue = (value: unknown): I18nTranslationApiPersist
   return Object.keys(metadata).length > 0 ? metadata : undefined;
 };
 
+const campaignDbMetadataFromValue = (value: unknown): I18nTranslationApiCampaignDbMetadata | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const metadata: I18nTranslationApiCampaignDbMetadata = {
+    ...(optionalStringField(value, "adapterId") ? { adapterId: optionalStringField(value, "adapterId") } : {}),
+    ...(typeof value.createdViaRepository === "boolean"
+      ? { createdViaRepository: value.createdViaRepository }
+      : {}),
+    ...(optionalStringField(value, "repositoryId") ? { repositoryId: optionalStringField(value, "repositoryId") } : {}),
+    ...(optionalStringField(value, "storeId") ? { storeId: optionalStringField(value, "storeId") } : {}),
+  };
+
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+};
+
 const getDataRecord = (body: unknown): Record<string, unknown> | undefined => {
   if (!isApiEnvelope(body) || !isRecord(body.data)) {
     return undefined;
@@ -505,6 +530,12 @@ const normalizeDraftPayload = (
   const campaignId = optionalStringField(payload, "campaignId") ?? request.campaignId;
   const noAutoPublishNotice = localizedTextFromValue(payload.noAutoPublishNotice);
   const humanReviewRequired = optionalBooleanField(payload, "humanReviewRequired");
+  const campaignDb = campaignDbMetadataFromValue(
+    data?.campaignDb
+      ?? (isRecord(body) ? body.campaignDb : undefined)
+      ?? payload.campaignDb,
+  );
+  const persistence = persistenceMetadataFromValue(data?.persistence);
 
   if (!campaignId || !sourceLocale || !targetLocale || !contentKeys.length) {
     return undefined;
@@ -533,9 +564,8 @@ const normalizeDraftPayload = (
         },
       }
       : {}),
-    ...(data && persistenceMetadataFromValue(data.persistence)
-      ? { persistence: persistenceMetadataFromValue(data.persistence) }
-      : {}),
+    ...(campaignDb ? { campaignDb } : {}),
+    ...(persistence ? { persistence } : {}),
     sourceLocale,
     targetLocale,
     ...(isRecord(payload.translationManager)
