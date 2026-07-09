@@ -10,6 +10,11 @@ import {
   submitExportArtifactDeliveryApiReview,
   type ExportArtifactDeliveryApiBridgeState,
 } from "../../../api/exportArtifactDeliveryApiBridge";
+import {
+  createPublishDeliveryReviewApiSeededFallbackState,
+  loadPublishDeliveryReviewApiBridgeState,
+  type PublishDeliveryReviewApiBridgeState,
+} from "../../../api/publishDeliveryReviewApiBridge";
 import { App } from "../../../app/App";
 import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
 import { projectConsoleCopy } from "./copy";
@@ -30,6 +35,15 @@ vi.mock("../../../api/backendRuntimeReadinessApiBridge", async (importOriginal) 
   return {
     ...actual,
     loadBackendRuntimeReadinessApiBridgeState: vi.fn(actual.loadBackendRuntimeReadinessApiBridgeState),
+  };
+});
+
+vi.mock("../../../api/publishDeliveryReviewApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/publishDeliveryReviewApiBridge")>();
+
+  return {
+    ...actual,
+    loadPublishDeliveryReviewApiBridgeState: vi.fn(actual.loadPublishDeliveryReviewApiBridgeState),
   };
 });
 
@@ -273,15 +287,38 @@ const backendReadinessApiState = (): BackendRuntimeReadinessApiBridgeState => ({
   traceId: "trace-backend-api-visible",
 });
 
+const publishDeliveryReviewApiState = (): PublishDeliveryReviewApiBridgeState => {
+  const state = createPublishDeliveryReviewApiSeededFallbackState(campaignDetail.id, "trace-publish-api-visible");
+
+  return {
+    ...state,
+    configured: true,
+    diagnostics: [],
+    routeCount: 32,
+    source: "api_runtime",
+    status: "blocked",
+    traceId: "trace-publish-api-visible",
+    review: {
+      ...state.review,
+      source: "api_runtime",
+      status: "blocked",
+      traceId: "trace-publish-api-visible",
+    },
+  };
+};
+
 describe("Project Console shell", () => {
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
   const mockedSubmitExportArtifactDeliveryApiReview = vi.mocked(submitExportArtifactDeliveryApiReview);
   const mockedLoadBackendRuntimeReadinessApiBridgeState = vi.mocked(loadBackendRuntimeReadinessApiBridgeState);
+  const mockedLoadPublishDeliveryReviewApiBridgeState = vi.mocked(loadPublishDeliveryReviewApiBridgeState);
 
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
     mockedSubmitExportArtifactDeliveryApiReview.mockReset();
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockReset();
+    mockedLoadPublishDeliveryReviewApiBridgeState.mockReset();
+    mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValue(publishDeliveryReviewApiState());
   });
 
   afterEach(() => {
@@ -1556,6 +1593,15 @@ describe("Project Console shell", () => {
     expect(within(backendReadiness).getByText("API_BASE_URL_MISSING: No local backend readiness API base URL is configured, so seeded readiness is shown.")).toBeInTheDocument();
     expect(within(backendReadiness).getByText(/No live provider call/)).toBeInTheDocument();
 
+    const publishDeliveryReview = screen.getByLabelText("Publish Delivery Review Bridge");
+    expect(mockedLoadPublishDeliveryReviewApiBridgeState).not.toHaveBeenCalled();
+    expect(within(publishDeliveryReview).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+    expect(within(publishDeliveryReview).getByText("No API trace yet")).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText(/No local API base URL configured/)).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText(/API_BASE_URL_MISSING/)).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText("No production publish")).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText("No reward distribution")).toBeInTheDocument();
+
     const walletAdapterReadiness = screen.getByLabelText("aelf-web-login adapter readiness");
     expect(
       within(walletAdapterReadiness).getByRole("heading", {
@@ -1708,6 +1754,35 @@ describe("Project Console shell", () => {
     expect(within(backendReadiness).getByText("staging-scaffold")).toBeInTheDocument();
     expect(within(backendReadiness).getByText("17 / 18 API skills")).toBeInTheDocument();
     expect(within(backendReadiness).getByText("runtime.production.database")).toBeInTheDocument();
+  });
+
+  it("loads Publish Delivery Review Bridge automatically and renders API-backed joint MVP state", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValueOnce(publishDeliveryReviewApiState());
+
+    render(<ProjectConsole activeWorkspace="export" campaign={campaignDetail} locale="en-US" />);
+
+    const publishDeliveryReview = screen.getByLabelText("Publish Delivery Review Bridge");
+
+    await waitFor(() => expect(mockedLoadPublishDeliveryReviewApiBridgeState).toHaveBeenCalledWith({
+      campaignId: campaignDetail.id,
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        tracePrefix: "project-console-publish-delivery-review",
+      },
+    }));
+
+    await waitFor(() => expect(within(publishDeliveryReview).getByText("API runtime")).toBeInTheDocument());
+    expect(within(publishDeliveryReview).getByText("trace-publish-api-visible")).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByRole("button", { name: "Review local bridge" })).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText("productionReady=false")).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText("Delivery checklist")).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText("Repository evidence")).toBeInTheDocument();
+    expect(
+      within(publishDeliveryReview).queryByRole("button", {
+        name: /publish|contract|reward|distribute|custody|provider/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows partial Export Delivery API state while preserving seeded export panels", async () => {

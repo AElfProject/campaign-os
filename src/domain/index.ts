@@ -4,6 +4,7 @@ export * from "./campaign";
 export * from "./campaignService";
 export * from "./fixtures";
 export * from "./locale";
+export * from "./publishDeliveryReview";
 export * from "./referralRuntimeReview";
 export * from "./repositoryExportProjectionReview";
 export * from "./serviceRegistry";

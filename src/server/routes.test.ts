@@ -108,6 +108,12 @@ describe("API runtime route catalog", () => {
       readiness: "review_required",
       serviceGroup: "campaign",
     });
+    expect(apiRuntimeRouteById["campaigns.publish.delivery.review"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns/:campaignId/publish-delivery-review",
+      readiness: "review_required",
+      serviceGroup: "campaign",
+    });
     expect(apiRuntimeRouteById["campaigns.companion.contract.readiness"]).toMatchObject({
       method: "GET",
       path: "/api/campaigns/:campaignId/companion-contract-readiness",
@@ -236,6 +242,7 @@ describe("API runtime route catalog", () => {
         "campaigns.export.artifacts.detail",
         "campaigns.export.artifacts.list",
         "campaigns.delivery.readiness",
+        "campaigns.publish.delivery.review",
         "campaigns.companion.contract.readiness",
         "campaigns.contract.transparency",
         "campaigns.export.readiness",

@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   backendRuntimeReadinessApiBoundary,
   createBackendRuntimeReadinessApiLoadingState,
@@ -6,6 +6,12 @@ import {
   seededBackendRuntimeReadinessSummary,
   type BackendRuntimeReadinessApiBridgeState,
 } from "../../../api/backendRuntimeReadinessApiBridge";
+import {
+  createPublishDeliveryReviewApiLoadingState,
+  createPublishDeliveryReviewApiSeededFallbackState,
+  loadPublishDeliveryReviewApiBridgeState,
+  type PublishDeliveryReviewApiBridgeState,
+} from "../../../api/publishDeliveryReviewApiBridge";
 import {
   createExportArtifactDeliveryApiLoadingState,
   createExportArtifactDeliverySeededFallbackState,
@@ -130,6 +136,7 @@ import { RewardsEligibilityBuilder } from "./builder/RewardsEligibilityBuilder";
 import { TaskTemplateLibrary } from "./builder/TaskTemplateLibrary";
 import { BackendRuntimeReadinessPanel } from "./BackendRuntimeReadinessPanel";
 import { projectConsoleCopy } from "./copy";
+import { PublishDeliveryReviewPanel } from "./PublishDeliveryReviewPanel";
 
 type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
 type EditableCampaignLocale = Extract<SupportedLocale, "en-US" | "zh-CN" | "zh-TW">;
@@ -1263,6 +1270,26 @@ const exportArtifactDeliveryApiBaseUrl = () =>
 const backendRuntimeReadinessApiBaseUrl = () =>
   import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
+const publishDeliveryReviewApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
+const createPublishDeliveryReviewSeededFallbackState = (
+  campaignId: string,
+): PublishDeliveryReviewApiBridgeState => ({
+  ...createPublishDeliveryReviewApiSeededFallbackState(campaignId),
+  diagnostics: [
+    {
+      code: "API_BASE_URL_MISSING",
+      message: {
+        "en-US": "No local publish delivery review API base URL is configured, so seeded review data is shown.",
+        "zh-CN": "未配置本地 publish delivery review API base URL，因此显示 seeded review 数据。",
+        "zh-TW": "未設定本地 publish delivery review API base URL，因此顯示 seeded review 資料。",
+      },
+      severity: "info",
+    },
+  ],
+});
+
 const createBackendRuntimeReadinessSeededFallbackState = (): BackendRuntimeReadinessApiBridgeState => ({
   boundary: backendRuntimeReadinessApiBoundary,
   configured: false,
@@ -1785,6 +1812,7 @@ export const ProjectConsole = ({
   const [draftComposer, setDraftComposer] = useState<DraftComposerState>(
     createSeededDraftComposerState,
   );
+  const publishDeliveryApiRequestSeq = useRef(0);
   const exportDeliveryApiRequestSeq = useRef(0);
   const backendReadinessApiRequestSeq = useRef(0);
   const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
@@ -1865,6 +1893,7 @@ export const ProjectConsole = ({
     (check) => check.id === exportStorageProviderApprovalPacket.summary.topCheckId,
   ) ?? exportStorageProviderApprovalPacket.checks[0];
   const exportDeliveryApiBaseUrl = exportArtifactDeliveryApiBaseUrl();
+  const publishDeliveryApiBaseUrl = publishDeliveryReviewApiBaseUrl();
   const exportDeliveryApiRequest: ExportArtifactDeliveryRequest = {
     campaignId: campaign.id,
     contractRootMode: "none",
@@ -1879,6 +1908,13 @@ export const ProjectConsole = ({
       : createExportArtifactDeliverySeededFallbackState(exportDeliveryApiRequest),
   );
   const [exportDeliveryApiReviewInFlight, setExportDeliveryApiReviewInFlight] = useState(false);
+  const [publishDeliveryApiState, setPublishDeliveryApiState] =
+    useState<PublishDeliveryReviewApiBridgeState>(() =>
+      publishDeliveryApiBaseUrl?.trim()
+        ? createPublishDeliveryReviewApiLoadingState(campaign.id)
+        : createPublishDeliveryReviewSeededFallbackState(campaign.id),
+    );
+  const [publishDeliveryApiReviewInFlight, setPublishDeliveryApiReviewInFlight] = useState(false);
   const backendReadinessApiBaseUrl = backendRuntimeReadinessApiBaseUrl();
   const [backendReadinessApiState, setBackendReadinessApiState] =
     useState<BackendRuntimeReadinessApiBridgeState>(() =>
@@ -1960,6 +1996,46 @@ export const ProjectConsole = ({
       }
     });
   };
+
+  const loadPublishDeliveryApiReview = useCallback(() => {
+    if (!publishDeliveryApiBaseUrl?.trim()) {
+      setPublishDeliveryApiState(createPublishDeliveryReviewSeededFallbackState(campaign.id));
+      setPublishDeliveryApiReviewInFlight(false);
+      return;
+    }
+
+    setPublishDeliveryApiReviewInFlight(true);
+    setPublishDeliveryApiState(createPublishDeliveryReviewApiLoadingState(campaign.id));
+
+    const requestSeq = publishDeliveryApiRequestSeq.current + 1;
+    publishDeliveryApiRequestSeq.current = requestSeq;
+
+    void loadPublishDeliveryReviewApiBridgeState({
+      campaignId: campaign.id,
+      config: {
+        baseUrl: publishDeliveryApiBaseUrl,
+        tracePrefix: "project-console-publish-delivery-review",
+      },
+    }).then((state) => {
+      if (publishDeliveryApiRequestSeq.current === requestSeq) {
+        setPublishDeliveryApiState(state);
+      }
+    }).finally(() => {
+      if (publishDeliveryApiRequestSeq.current === requestSeq) {
+        setPublishDeliveryApiReviewInFlight(false);
+      }
+    });
+  }, [campaign.id, publishDeliveryApiBaseUrl]);
+
+  const runPublishDeliveryApiReview = () => {
+    loadPublishDeliveryApiReview();
+  };
+
+  useEffect(() => {
+    if (activeWorkspace === "export") {
+      loadPublishDeliveryApiReview();
+    }
+  }, [activeWorkspace, loadPublishDeliveryApiReview]);
 
   const runBackendReadinessApiReview = () => {
     if (!backendReadinessApiBaseUrl?.trim()) {
@@ -6281,6 +6357,14 @@ export const ProjectConsole = ({
           </div>
         </section>
       )}
+
+      <PublishDeliveryReviewPanel
+        apiConfigured={Boolean(publishDeliveryApiBaseUrl?.trim())}
+        locale={locale}
+        onReview={runPublishDeliveryApiReview}
+        reviewInFlight={publishDeliveryApiReviewInFlight}
+        state={publishDeliveryApiState}
+      />
 
       <BackendRuntimeReadinessPanel
         apiConfigured={Boolean(backendReadinessApiBaseUrl?.trim())}

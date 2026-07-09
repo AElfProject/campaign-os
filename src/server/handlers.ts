@@ -29,6 +29,14 @@ import {
   type VerifyTaskRequest,
   type VerifyTaskResponse,
 } from "../domain/campaignService";
+import { createDeliveryChecklistReadinessConsole, createLaunchConsoleCampaignBundles } from "../domain/campaign";
+import { createPublishGateDecisionCenter, seededCampaignDraft } from "../domain/builder";
+import { campaignDetail } from "../domain/fixtures";
+import {
+  createPublishDeliveryReview,
+  type PublishDeliveryReviewBackendRuntimeInput,
+  type PublishDeliveryReviewRepositoryEvidenceInput,
+} from "../domain/publishDeliveryReview";
 import {
   createServiceDegradationGovernance,
   createServiceRegistry,
@@ -49,6 +57,7 @@ import type {
   VerificationPipelineReadinessGate,
   VerificationEvidenceSource,
   VerificationProviderId,
+  PublishDeliveryReview,
 } from "../domain/types";
 import type { ApiRuntimeRouteId } from "./routes";
 import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
@@ -999,6 +1008,197 @@ const unwrapCampaignReadinessOrDraft = async <TPayload>(
   return unwrapLocalResult(result, context);
 };
 
+const createPublishDeliveryReviewBackendRuntimeInput = (
+  report: BackendServiceReadinessReport,
+): PublishDeliveryReviewBackendRuntimeInput => {
+  const routeCountByReadiness = (readiness: "ready" | "review_required" | "blocked") =>
+    apiRuntimeRoutes.filter((route) => route.readiness === readiness).length;
+  const validationBlockers = report.validation.issues.map((issue) => ({
+    code: issue.code,
+    field: issue.field,
+    message: issue.message,
+    severity: issue.severity,
+  }));
+  const dependencyBlockers = [
+    ...report.apiService.blockedDependencyIds,
+    ...report.apiService.deferredDependencyIds,
+  ].map((dependencyId) => ({
+    code: "PRODUCTION_DEPENDENCY_DEFERRED",
+    field: dependencyId,
+    message: `${dependencyId} is not active in the local-review runtime.`,
+    severity: "warning" as const,
+  }));
+
+  return {
+    noLiveSideEffects: {
+      analyticsWarehouseWriteExecuted: false,
+      contractWriteExecuted: report.apiService.contractWriteEnabled,
+      migrationRunnerExecuted: report.persistenceFoundation.liveMigrationExecutionEnabled,
+      productionDatabaseWriteExecuted: report.persistenceFoundation.liveQueryExecutionEnabled,
+      providerCallExecuted: report.providerClientReadiness.liveProviderCallsAttempted,
+      queueExecutionExecuted: report.queueRuntimeFoundation.dryRunEnqueue.liveQueuePublishingEnabled,
+      rewardCustodyExecuted: false,
+      rewardDistributionExecuted: false,
+      schedulerExecutionExecuted: false,
+      storageWriteExecuted: false,
+      walletSignatureExecuted: report.authSessionFoundation.liveSigningExecuted,
+    },
+    productionDependencyBlockers: [...validationBlockers, ...dependencyBlockers],
+    productionReady: report.apiService.productionReady,
+    profileId: report.apiService.profileId,
+    routeCoverage: {
+      blockedCount: routeCountByReadiness("blocked"),
+      readyCount: routeCountByReadiness("ready"),
+      reviewRequiredCount: routeCountByReadiness("review_required"),
+      routeCount: apiRuntimeRoutes.length,
+    },
+    status: report.apiService.productionReady
+      ? "ready"
+      : report.validation.issues.length > 0
+        ? "blocked"
+        : "scaffold",
+  };
+};
+
+const repositoryEvidenceFromTaskEvidence = (
+  taskEvidence: readonly CampaignDbTaskEvidenceRecord[],
+  draft?: CampaignDbReadProjection,
+): PublishDeliveryReviewRepositoryEvidenceInput => {
+  const evidenceWithHash = taskEvidence.filter((evidence) => evidence.evidenceHash.trim().length > 0);
+  const completedEvidenceCount = taskEvidence.filter((evidence) => evidence.status === "completed").length;
+  const manualReviewEvidenceCount = taskEvidence.filter((evidence) => evidence.status === "manual_review").length;
+  const failedEvidenceCount = taskEvidence.filter((evidence) => evidence.status === "failed").length;
+
+  return {
+    available: Boolean(draft) || taskEvidence.length > 0,
+    completedEvidenceCount,
+    createdViaRepository: draft?.repository.createdViaRepository,
+    evidenceHashCoverage: taskEvidence.length > 0 ? evidenceWithHash.length / taskEvidence.length : 0,
+    failedEvidenceCount,
+    manualReviewEvidenceCount,
+    repositoryId: draft?.repository.repositoryId,
+    storeId: draft?.repository.storeId,
+    taskEvidenceCount: taskEvidence.length,
+  };
+};
+
+const createRepositoryEvidenceInput = async (
+  context: ApiRuntimeHandlerContext,
+  campaignId: string,
+): Promise<PublishDeliveryReviewRepositoryEvidenceInput> => {
+  const campaignDbDraft = await context.campaignDbRepository.getById(campaignId, {
+    traceId: context.traceId,
+  });
+  const taskEvidence = context.campaignDbRepository.listTaskEvidence
+    ? await context.campaignDbRepository.listTaskEvidence({ campaignId }, { traceId: context.traceId })
+    : [];
+  const repositoryEvidence = repositoryEvidenceFromTaskEvidence(taskEvidence, campaignDbDraft);
+
+  if (campaignDbDraft && context.campaignDbRepository.projectExport) {
+    try {
+      const projection = await context.campaignDbRepository.projectExport({
+        campaignId,
+        contractRootMode: "none",
+        format: "json",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      }, {
+        traceId: context.traceId,
+      });
+      const exportRowsWithEvidence = projection.rows.filter((row) => row.evidenceHashes.length > 0).length;
+      const exportEvidenceHashCount = projection.rows.reduce(
+        (total, row) => total + row.evidenceHashes.length,
+        0,
+      );
+
+      return {
+        ...repositoryEvidence,
+        available: true,
+        exportRowsWithEvidence,
+        evidenceHashCoverage: Math.max(
+          repositoryEvidence.evidenceHashCoverage ?? 0,
+          projection.rows.length > 0 ? exportRowsWithEvidence / projection.rows.length : 0,
+          taskEvidence.length > 0 ? exportEvidenceHashCount / taskEvidence.length : 0,
+        ),
+      };
+    } catch (error) {
+      if (error instanceof CampaignDbRepositoryError) {
+        return repositoryEvidence;
+      }
+
+      throw error;
+    }
+  }
+
+  return repositoryEvidence;
+};
+
+const createPublishDeliveryReviewPayload = async (
+  context: ApiRuntimeHandlerContext,
+): Promise<{ boundary: LocalizedText; payload: PublishDeliveryReview }> => {
+  const campaignId = requiredRouteParam(context.params, "campaignId");
+  const detailResult = context.service.getCampaignDetail({ campaignId });
+  const campaignDbDraft = await context.campaignDbRepository.getById(campaignId, {
+    traceId: context.traceId,
+  });
+
+  if (!detailResult.ok && !campaignDbDraft) {
+    unwrapLocalResult(detailResult, context);
+    throw invalidCampaign(campaignId);
+  }
+
+  const launchResult = detailResult.ok
+    ? context.service.getLaunchConsoleCampaignBundles({ campaignId })
+    : {
+      boundary: campaignDbBoundary,
+      ok: true as const,
+      payload: createLaunchConsoleCampaignBundles(campaignDetail),
+    };
+  const deliveryResult = detailResult.ok
+    ? context.service.getDeliveryChecklistReadiness({ campaignId })
+    : {
+      boundary: campaignDbBoundary,
+      ok: true as const,
+      payload: {
+        campaignId,
+        ...createDeliveryChecklistReadinessConsole(),
+      },
+    };
+  const launchResponse = unwrapLocalResult(launchResult, context);
+  const deliveryResponse = unwrapLocalResult(deliveryResult, context);
+  const backendRuntime = createPublishDeliveryReviewBackendRuntimeInput(
+    context.backendServiceReadiness(),
+  );
+  const repositoryEvidence = await createRepositoryEvidenceInput(context, campaignId);
+
+  return {
+    boundary: context.route.boundary,
+    payload: createPublishDeliveryReview({
+      backendRuntime,
+      campaignId,
+      deliveryChecklist: deliveryResponse.payload,
+      diagnostics: detailResult.ok
+        ? []
+        : [
+          {
+            code: "CAMPAIGN_DB_DRAFT_REVIEW_SCAFFOLD",
+            message: localized(
+              "Repository-created drafts use the local seeded publish and delivery review scaffold until full draft-to-builder projection lands.",
+              "Repository 创建的草稿暂用本地 seeded 发布与交付 review scaffold，直到完整 draft-to-builder projection 落地。",
+            ),
+            severity: "info",
+            source: "campaignDb",
+          },
+        ],
+      launchBundles: launchResponse.payload,
+      publishGate: createPublishGateDecisionCenter(seededCampaignDraft),
+      repositoryEvidence,
+      traceId: context.traceId,
+    }),
+  };
+};
+
 const createProviderReadinessResult = (
   pipeline: LocalServiceResult<VerificationPipelineReadinessGate>,
   providerEvidenceRegistry: LocalServiceResult<ProviderEvidenceRegistry>,
@@ -1564,6 +1764,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       context.service.getDeliveryChecklistReadiness(deliveryChecklistReadinessRequest(context)),
       context,
     ),
+  "campaigns.publish.delivery.review": (context) => createPublishDeliveryReviewPayload(context),
   "campaigns.companion.contract.readiness": (context) =>
     unwrapLocalResult(
       context.service.getCompanionContractReadiness(companionContractReadinessRequest(context)),

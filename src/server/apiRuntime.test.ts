@@ -374,6 +374,80 @@ interface ProviderReadinessPayload {
   };
 }
 
+interface PublishDeliveryReviewPayload {
+  backendRuntime: {
+    noLiveSideEffects: Record<string, false>;
+    productionDependencyBlockers: Array<{ code: string; field: string; message: string }>;
+    productionReady: false;
+    routeCoverage: {
+      readyCount: number;
+      reviewRequiredCount: number;
+      routeCount: number;
+    };
+    status: string;
+    tracePolicy: {
+      failureEnvelopeTraceId: true;
+      successEnvelopeTraceId: true;
+      traceHeaderName: "x-campaign-os-trace-id";
+    };
+  };
+  boundary: {
+    "en-US": string;
+  };
+  campaignId: string;
+  deliveryChecklist: {
+    groups: Array<{
+      groupId: string;
+      totalItems: number;
+    }>;
+    totalItems: number;
+  };
+  diagnostics: Array<{ code: string; source: string }>;
+  launchBundles: {
+    bundles: Array<{ stage: string }>;
+    summary: {
+      handoffRequiredCount: number;
+      totalBundles: number;
+    };
+  };
+  publishGate: {
+    counts: {
+      blockers: number;
+      passed: number;
+      total: number;
+      warnings: number;
+    };
+  };
+  repositoryEvidence: {
+    available: boolean;
+    completedEvidenceCount: number;
+    createdViaRepository?: boolean;
+    evidenceHashCoverage: number;
+    exportRowsWithEvidence: number;
+    failedEvidenceCount: number;
+    manualReviewEvidenceCount: number;
+    noLiveSideEffects: {
+      liveContractExecuted: false;
+      liveProviderExecuted: false;
+      liveRewardExecuted: false;
+      liveStorageExecuted: false;
+    };
+    repositoryId?: string;
+    storeId?: string;
+    taskEvidenceCount: number;
+  };
+  source: string;
+  status: string;
+  summary: {
+    checklistTotalCount: number;
+    handoffReviewRequiredCount: number;
+    launchBundleCount: number;
+    productionBlockerCount: number;
+    repositoryEvidenceCount: number;
+  };
+  traceId?: string;
+}
+
 interface CampaignDbLimitedLifecyclePayload {
   campaignId: string;
   code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED";
@@ -743,7 +817,11 @@ describe("Campaign OS API runtime", () => {
       routeCoverage: expect.objectContaining({
         missingApiSkillIds: [],
         requiredApiSkillCount: expect.any(Number),
-        routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
+        routeIds: expect.arrayContaining([
+          "runtime.health",
+          "runtime.contracts",
+          "campaigns.publish.delivery.review",
+        ]),
         runtimeRouteCount: expect.any(Number),
       }),
       status: "ready",
@@ -759,6 +837,14 @@ describe("Campaign OS API runtime", () => {
     });
     expect(contractData).toMatchObject({
       productionBackendReadiness: expectedLocalProductionBackendReadiness,
+      routes: expect.arrayContaining([
+        expect.objectContaining({
+          id: "campaigns.publish.delivery.review",
+          method: "GET",
+          path: "/api/campaigns/:campaignId/publish-delivery-review",
+          readiness: "review_required",
+        }),
+      ]),
     });
     expect(healthData).toMatchObject({
       apiFoundation: expect.objectContaining({
@@ -812,10 +898,24 @@ describe("Campaign OS API runtime", () => {
             surfaceId: "points-ranking",
           }),
           expect.objectContaining({
-            routeIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
+            routeIds: expect.arrayContaining([
+              "runtime.health",
+              "runtime.contracts",
+            ]),
             serviceId: "runtime-observability",
             state: "implemented_local",
             surfaceId: "runtime-observability",
+          }),
+          expect.objectContaining({
+            routeIds: expect.arrayContaining([
+              "campaigns.lifecycle",
+              "campaigns.launch.readiness",
+              "campaigns.delivery.readiness",
+              "campaigns.publish.delivery.review",
+            ]),
+            serviceId: "campaign-service",
+            state: "implemented_local",
+            surfaceId: "campaign",
           }),
         ]),
         validation: expect.objectContaining({
@@ -2144,6 +2244,11 @@ describe("Campaign OS API runtime", () => {
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/delivery-readiness`,
     });
+    const publishDeliveryReview = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/publish-delivery-review`,
+      headers: { "x-campaign-os-trace-id": "trace-publish-delivery-review-seeded" },
+    });
     const companionContractReadiness = await runtimeWithPersistence.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/companion-contract-readiness`,
@@ -2232,6 +2337,64 @@ describe("Campaign OS API runtime", () => {
         summary: expect.any(Object),
       },
     });
+    expect(expectSuccessData<LocalServiceEnvelope<PublishDeliveryReviewPayload>>(publishDeliveryReview)).toMatchObject({
+      boundary: expect.objectContaining({
+        "en-US": expect.stringContaining("Local front-end/back-end publish delivery review bridge"),
+      }),
+      payload: {
+        backendRuntime: expect.objectContaining({
+          productionReady: false,
+          productionDependencyBlockers: expect.arrayContaining([
+            expect.objectContaining({ code: "PRODUCTION_DEPENDENCY_DEFERRED" }),
+          ]),
+          tracePolicy: {
+            failureEnvelopeTraceId: true,
+            successEnvelopeTraceId: true,
+            traceHeaderName: "x-campaign-os-trace-id",
+          },
+        }),
+        campaignId: campaignDetail.id,
+        deliveryChecklist: expect.objectContaining({
+          groups: expect.arrayContaining([
+            expect.objectContaining({ groupId: "product" }),
+            expect.objectContaining({ groupId: "architecture" }),
+            expect.objectContaining({ groupId: "ui" }),
+            expect.objectContaining({ groupId: "contract" }),
+            expect.objectContaining({ groupId: "qa" }),
+          ]),
+        }),
+        launchBundles: expect.objectContaining({
+          bundles: expect.arrayContaining([
+            expect.objectContaining({ stage: "pre_launch" }),
+            expect.objectContaining({ stage: "launch" }),
+            expect.objectContaining({ stage: "post_launch" }),
+          ]),
+        }),
+        publishGate: expect.objectContaining({
+          counts: expect.objectContaining({
+            total: expect.any(Number),
+          }),
+        }),
+        repositoryEvidence: expect.objectContaining({
+          available: false,
+          noLiveSideEffects: {
+            liveContractExecuted: false,
+            liveProviderExecuted: false,
+            liveRewardExecuted: false,
+            liveStorageExecuted: false,
+          },
+        }),
+        summary: expect.objectContaining({
+          launchBundleCount: 3,
+          productionBlockerCount: expect.any(Number),
+        }),
+        traceId: "trace-publish-delivery-review-seeded",
+      },
+    });
+    expect(Object.values(
+      expectSuccessData<LocalServiceEnvelope<PublishDeliveryReviewPayload>>(publishDeliveryReview)
+        .payload.backendRuntime.noLiveSideEffects,
+    ).every((value) => value === false)).toBe(true);
     expect(expectSuccessData<LocalServiceEnvelope<CompanionContractReadinessPayload>>(
       companionContractReadiness,
     ).payload).toMatchObject({
@@ -2326,6 +2489,7 @@ describe("Campaign OS API runtime", () => {
       lifecycle,
       launchReadiness,
       deliveryReadiness,
+      publishDeliveryReview,
       companionContractReadiness,
       contractTransparency,
       exportReadiness,
@@ -2358,6 +2522,10 @@ describe("Campaign OS API runtime", () => {
       runtime.handle({
         method: "GET",
         path: "/api/campaigns/missing-campaign/delivery-readiness",
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/publish-delivery-review",
       }),
       runtime.handle({
         method: "GET",
@@ -2768,6 +2936,11 @@ describe("Campaign OS API runtime", () => {
       method: "GET",
       path: `/api/campaigns/${created.payload.id}/launch-readiness`,
     });
+    const publishDeliveryReview = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}/publish-delivery-review`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-publish-delivery-review" },
+    });
     const exportReadiness = await runtimeWithCampaignDbRepository.handle({
       method: "GET",
       path: `/api/campaigns/${created.payload.id}/export-readiness`,
@@ -2852,6 +3025,25 @@ describe("Campaign OS API runtime", () => {
           reviewRequiredRows: 0,
           totalRows: 0,
         },
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<PublishDeliveryReviewPayload>>(publishDeliveryReview)).toMatchObject({
+      payload: {
+        campaignId: created.payload.id,
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            code: "CAMPAIGN_DB_DRAFT_REVIEW_SCAFFOLD",
+            source: "campaignDb",
+          }),
+        ]),
+        repositoryEvidence: expect.objectContaining({
+          available: true,
+          createdViaRepository: true,
+          repositoryId: "campaign-db-repository-runtime",
+          storeId: "campaign-db",
+          taskEvidenceCount: 0,
+        }),
+        traceId: "trace-campaign-db-publish-delivery-review",
       },
     });
     expectNoForbiddenResponseKeys(exportReadiness.body);

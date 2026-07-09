@@ -91,6 +91,10 @@ describe("API foundation registry", () => {
       operationId: "getCampaignDeliveryReadiness",
       serviceId: "campaign-service",
     });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.publish.delivery.review")).toMatchObject({
+      operationId: "getCampaignPublishDeliveryReview",
+      serviceId: "campaign-service",
+    });
     expect(
       registry.routes.find((route) => route.routeId === "campaigns.companion.contract.readiness"),
     ).toMatchObject({
@@ -147,6 +151,7 @@ describe("API foundation registry", () => {
     );
     for (const routeId of [
       "campaigns.delivery.readiness",
+      "campaigns.publish.delivery.review",
       "campaigns.companion.contract.readiness",
       "campaigns.contract.transparency",
     ]) {
@@ -206,6 +211,7 @@ describe("API foundation registry", () => {
         "campaigns.lifecycle",
         "campaigns.launch.readiness",
         "campaigns.delivery.readiness",
+        "campaigns.publish.delivery.review",
         "campaigns.companion.contract.readiness",
         "campaigns.contract.transparency",
       ]),
