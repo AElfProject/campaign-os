@@ -1,4 +1,11 @@
-import { useRef, useState, type CSSProperties, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
+import {
+  campaignDiscoveryApiBoundary,
+  createCampaignDiscoveryApiLoadingState,
+  loadCampaignDiscoveryApiBridgeState,
+  type CampaignDiscoveryApiBridgeState,
+  type CampaignDiscoveryApiSource,
+} from "../../../api/campaignDiscoveryApiBridge";
 import {
   campaignDetail,
   createCampaignDiscoveryReadModel,
@@ -247,6 +254,46 @@ const feedGridStyle: CSSProperties = {
   gridTemplateColumns: "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
 };
 
+const apiBridgeStatusStyle: CSSProperties = {
+  background: "#f8fbff",
+  border: "1px solid #c9d8ea",
+  borderRadius: 8,
+  display: "grid",
+  gap: 12,
+  minWidth: 0,
+  padding: 14,
+};
+
+const apiBridgeMetricGridStyle: CSSProperties = {
+  display: "grid",
+  gap: 10,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
+};
+
+const apiBridgeBadgeStyle = (source: CampaignDiscoveryApiSource): CSSProperties => {
+  const palette: Record<CampaignDiscoveryApiSource, { background: string; border: string; color: string }> = {
+    api: { background: "#dcfce7", border: "#86efac", color: "#166534" },
+    disabled: { background: "#eef2ff", border: "#c7d2fe", color: "#3730a3" },
+    error_fallback: { background: "#fef3c7", border: "#facc15", color: "#92400e" },
+    loading: { background: "#e0f2fe", border: "#7dd3fc", color: "#075985" },
+    seeded_fallback: { background: "#eef2ff", border: "#c7d2fe", color: "#3730a3" },
+  };
+  const colors = palette[source];
+
+  return {
+    background: colors.background,
+    border: `1px solid ${colors.border}`,
+    borderRadius: 999,
+    color: colors.color,
+    fontSize: 12,
+    fontWeight: 900,
+    lineHeight: 1.2,
+    maxWidth: "100%",
+    overflowWrap: "anywhere",
+    padding: "6px 8px",
+  };
+};
+
 const mobileHubGridStyle: CSSProperties = {
   alignItems: "stretch",
   display: "grid",
@@ -329,6 +376,9 @@ const publishStateBadgeState = (state: PublishState) =>
 const formatSource = (value: string) => value.replace(/_/g, " ");
 
 const localCampaignService = createCampaignOsLocalService();
+
+const campaignDiscoveryApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
 type LocalTaskActionResult = LocalServiceResult<ExecuteTaskVerificationActionResponse>;
 
@@ -830,6 +880,72 @@ const CampaignFeedCard = ({
   </article>
 );
 
+const campaignDiscoveryApiSourceLabel = (
+  source: CampaignDiscoveryApiSource,
+  copy: typeof userAppCopy["en-US"],
+) => {
+  const labels: Record<CampaignDiscoveryApiSource, string> = {
+    api: copy.apiBridgeSourceApi,
+    disabled: copy.apiBridgeSourceDisabled,
+    error_fallback: copy.apiBridgeSourceErrorFallback,
+    loading: copy.apiBridgeSourceLoading,
+    seeded_fallback: copy.apiBridgeSourceSeededFallback,
+  };
+
+  return labels[source];
+};
+
+const CampaignDiscoveryApiStatusPanel = ({
+  copy,
+  locale,
+  state,
+}: {
+  copy: typeof userAppCopy["en-US"];
+  locale: BusinessContentLocale;
+  state: CampaignDiscoveryApiBridgeState<CampaignDiscoveryItem>;
+}) => {
+  const diagnosticMessage = state.diagnostic ? getLocalizedText(state.diagnostic.message, locale) : undefined;
+  const metricRows = [
+    [copy.apiBridgeCampaignCount, String(state.campaignCount)],
+    [copy.apiBridgeReadinessSummary, state.readinessSummary ?? copy.apiBridgeReadinessUnavailable],
+    [copy.apiBridgeTraceId, state.traceId ?? copy.apiBridgeTraceUnavailable],
+  ] as const;
+
+  return (
+    <aside aria-label={copy.apiBridgeRegionLabel} style={apiBridgeStatusStyle}>
+      <div style={{ ...rowStyle, alignItems: "flex-start" }}>
+        <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+          <p style={labelStyle}>{copy.apiBridgeEyebrow}</p>
+          <strong style={{ color: "#071426", fontSize: 18, lineHeight: 1.2 }}>
+            {copy.apiBridgeTitle}
+          </strong>
+        </div>
+        <span style={apiBridgeBadgeStyle(state.source)}>
+          {campaignDiscoveryApiSourceLabel(state.source, copy)}
+        </span>
+      </div>
+      <dl style={apiBridgeMetricGridStyle}>
+        {metricRows.map(([label, value]) => (
+          <div key={label} style={{ display: "grid", gap: 3, minWidth: 0 }}>
+            <dt style={labelStyle}>{label}</dt>
+            <dd style={{ color: "#071426", fontSize: 13, fontWeight: 800, margin: 0, overflowWrap: "anywhere" }}>
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {diagnosticMessage ? (
+        <p style={{ color: "#92400e", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+          {copy.apiBridgeDiagnostic}: {diagnosticMessage}
+        </p>
+      ) : null}
+      <p style={{ color: "#475569", fontSize: 13, fontWeight: 800, lineHeight: 1.45, margin: 0 }}>
+        {getLocalizedText(state.boundary, locale)}
+      </p>
+    </aside>
+  );
+};
+
 const WorkspaceTaskList = ({
   copy,
   emptyLabel,
@@ -1225,6 +1341,29 @@ export const UserAppPanel = ({
   );
   const campaignDiscovery = createCampaignDiscoveryReadModel(campaign, participant);
   const campaignFeed = campaignDiscovery.items;
+  const campaignFeedKey = campaignFeed.map((item) => item.id).join("|");
+  const apiBridgeBaseUrl = campaignDiscoveryApiBaseUrl();
+  const initialApiBridgeState = useMemo<CampaignDiscoveryApiBridgeState<CampaignDiscoveryItem>>(() => {
+    if (apiBridgeBaseUrl?.trim()) {
+      return {
+        ...createCampaignDiscoveryApiLoadingState({ campaignCount: campaignFeed.length }),
+        boundary: campaignDiscoveryApiBoundary,
+        campaigns: campaignFeed,
+      };
+    }
+
+    return {
+      boundary: campaignDiscoveryApiBoundary,
+      campaignCount: campaignFeed.length,
+      campaigns: campaignFeed,
+      configured: false,
+      loading: false,
+      source: "disabled",
+    };
+  }, [apiBridgeBaseUrl, campaignFeedKey]);
+  const [apiBridgeState, setApiBridgeState] =
+    useState<CampaignDiscoveryApiBridgeState<CampaignDiscoveryItem>>(initialApiBridgeState);
+  const visibleCampaignFeed = apiBridgeState.source === "api" ? apiBridgeState.campaigns : campaignFeed;
   const appHubCampaign = campaignDiscovery.details[0]?.item ?? campaignFeed[0];
   const diagnosticMetrics: Array<[string, string, WalletDiagnosticState]> = [
     [copy.diagnosticsTotal, String(walletDiagnostics.totalSessions), "ready"],
@@ -1322,6 +1461,34 @@ export const UserAppPanel = ({
     setCheckedEligibilityAddress(eligibilityAddressInput.trim());
   };
 
+  useEffect(() => {
+    let cancelled = false;
+
+    setApiBridgeState(initialApiBridgeState);
+
+    if (!apiBridgeBaseUrl?.trim()) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void loadCampaignDiscoveryApiBridgeState<CampaignDiscoveryItem>({
+      config: {
+        baseUrl: apiBridgeBaseUrl,
+        tracePrefix: "user-app-campaign-discovery",
+      },
+      seededCampaigns: campaignFeed,
+    }).then((state) => {
+      if (!cancelled) {
+        setApiBridgeState(state);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBridgeBaseUrl, campaignFeedKey, initialApiBridgeState]);
+
   const localNavItems = userAppLocalSectionOrder.map((id) => {
     const labels: Record<UserAppLocalSection, string> = {
       campaigns: copy.localNavCampaigns,
@@ -1381,8 +1548,9 @@ export const UserAppPanel = ({
             {copy.connectWallet}
           </button>
         </div>
+        <CampaignDiscoveryApiStatusPanel copy={copy} locale={locale} state={apiBridgeState} />
         <div style={feedGridStyle}>
-          {campaignFeed.map((item) => (
+          {visibleCampaignFeed.map((item) => (
             <CampaignFeedCard copy={copy} item={item} key={item.id} locale={locale} />
           ))}
         </div>
