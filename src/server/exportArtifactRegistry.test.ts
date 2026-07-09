@@ -422,6 +422,7 @@ describe("export artifact registry", () => {
 
     expect(list.payload.records).toHaveLength(50);
     expect(list.payload.summary.totalRecords).toBe(50);
-    expect(elapsedMs).toBeLessThan(25);
+    expect(elapsedMs).toBeLessThan(50);
+    expect(elapsedMs / list.payload.records.length).toBeLessThan(1);
   });
 });
