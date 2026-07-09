@@ -1,14 +1,29 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { I18nTranslationApiBridgeState } from "../../../../api/i18nTranslationApiBridge";
 import { I18nContractReadiness } from "./I18nContractReadiness";
 
 describe("I18nContractReadiness", () => {
+  const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
+
+  beforeEach(() => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
+  });
+
+  afterEach(() => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = originalApiBaseUrl;
+  });
+
   it("shows English source and Chinese AI draft fallback gates in the Translation Manager", () => {
     render(<I18nContractReadiness locale="en-US" />);
 
     expect(screen.getByRole("heading", { name: "i18n, contract, and review gates" })).toBeInTheDocument();
     expect(screen.getByLabelText("Translation Manager")).toBeInTheDocument();
+    const apiReview = screen.getByRole("complementary", { name: "Local i18n API draft review" });
+    expect(within(apiReview).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+    expect(within(apiReview).getByText("No local i18n API base URL is configured, so the seeded translation manager remains visible.")).toBeInTheDocument();
+    expect(within(apiReview).getByRole("button", { name: "Generate local i18n draft" })).toBeDisabled();
     expect(screen.getAllByText("English source content").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Awaken Sprint").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Chinese AI draft").length).toBeGreaterThan(0);
@@ -115,7 +130,7 @@ describe("I18nContractReadiness", () => {
 
     for (const boundary of [
       "No live AI provider",
-      "No backend persistence",
+      "No production persistence",
       "No publish mutation",
       "No storage write",
       "No contract write",
@@ -148,7 +163,7 @@ describe("I18nContractReadiness", () => {
     expect(screen.getByLabelText("最新本地动作")).toHaveTextContent("人工审核已完成");
     for (const boundary of [
       "无实时 AI provider",
-      "无后端持久化",
+      "无生产持久化",
       "无发布变更",
       "无 storage 写入",
       "无合约写入",
@@ -175,5 +190,124 @@ describe("I18nContractReadiness", () => {
     expect(screen.getByText("Blocker")).toBeInTheDocument();
     expect(screen.getByText("This review workbench does not distribute rewards, take reward custody, or execute contract transactions.")).toBeInTheDocument();
     expect(screen.getByText("Contract claim is not enabled in this MVP shell and does not execute reward distribution.")).toBeInTheDocument();
+  });
+
+  it("applies API-backed i18n draft to the target review session while keeping publish blocked", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    const apiState: I18nTranslationApiBridgeState = {
+      boundary: {
+        "en-US": "Local i18n draft review only. No live AI provider, LLM gateway, production persistence, auto-publish, contract write, export file, storage write, reward custody, or reward distribution is executed.",
+        "zh-CN": "仅用于本地 i18n 草稿评审。",
+        "zh-TW": "僅用於本地 i18n 草稿評審。",
+      },
+      campaignId: "camp-awaken-sprint",
+      configured: true,
+      contentKeys: ["title", "description", "socialPost", "rewardDisclaimer"],
+      diagnostics: [],
+      draft: {
+        aiDraft: true,
+        draft: {
+          description: "本地 API 草稿描述",
+          rewardDisclaimer: "本地 API 奖励声明：导出 winners 不等于发奖。",
+          socialPost: "本地 API 社交文案",
+          title: "本地 API 草稿标题",
+        },
+        fallbackToEnglish: false,
+        humanReviewRequired: true,
+        noAutoPublishNotice: {
+          "en-US": "API-backed draft requires human review before publish.",
+          "zh-CN": "API 草稿发布前需要人工审核。",
+          "zh-TW": "API 草稿發布前需要人工審核。",
+        },
+      },
+      loading: false,
+      persistence: {
+        kind: "i18n_draft",
+        recordId: "record-i18n-visible",
+      },
+      source: "api_runtime",
+      sourceLocale: "en-US",
+      status: "draft_generated",
+      targetLocale: "zh-CN",
+      traceId: "trace-i18n-visible-1234567890",
+    };
+    const bridgeRunner = vi.fn(async () => apiState);
+
+    render(<I18nContractReadiness bridgeRunner={bridgeRunner} locale="en-US" />);
+
+    const apiReview = screen.getByRole("complementary", { name: "Local i18n API draft review" });
+    fireEvent.click(within(apiReview).getByRole("button", { name: "Generate local i18n draft" }));
+
+    await waitFor(() => expect(within(apiReview).getAllByText("API-backed draft").length).toBeGreaterThan(0));
+    expect(bridgeRunner).toHaveBeenCalledWith(expect.objectContaining({
+      request: {
+        campaignId: "camp-awaken-sprint",
+        contentKeys: ["title", "description", "socialPost", "rewardDisclaimer"],
+        sourceLocale: "en-US",
+        targetLocale: "zh-CN",
+      },
+    }));
+    expect(within(apiReview).getByText("trace-i18n-visible-1234567890")).toBeInTheDocument();
+    expect(within(apiReview).getByText("camp-awaken-sprint")).toBeInTheDocument();
+    expect(within(apiReview).getByText("en-US → zh-CN")).toBeInTheDocument();
+    expect(within(apiReview).getByText("title, description, socialPost, rewardDisclaimer")).toBeInTheDocument();
+    expect(within(apiReview).getByText("record-i18n-visible")).toBeInTheDocument();
+    expect(within(apiReview).getAllByText("Human review required").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("本地 API 草稿标题").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("本地 API 草稿描述").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("本地 API 奖励声明：导出 winners 不等于发奖。").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Publish revision" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark reviewed" }));
+    expect(screen.getByRole("button", { name: "Publish revision" })).not.toBeDisabled();
+  });
+
+  it("shows sanitized API error diagnostics while preserving seeded translation content", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    const bridgeRunner = vi.fn(async (): Promise<I18nTranslationApiBridgeState> => ({
+      boundary: {
+        "en-US": "Local i18n draft review only. No live AI provider, LLM gateway, production persistence, auto-publish, contract write, export file, storage write, reward custody, or reward distribution is executed.",
+        "zh-CN": "仅用于本地 i18n 草稿评审。",
+        "zh-TW": "僅用於本地 i18n 草稿評審。",
+      },
+      configured: true,
+      contentKeys: ["title", "description", "rewardDisclaimer"],
+      diagnostics: [
+        {
+          code: "API_REQUEST_FAILED",
+          message: {
+            "en-US": "The local i18n API request failed, so the seeded translation manager remains visible.",
+            "zh-CN": "本地 i18n API 请求失败，因此继续显示 seeded 翻译管理。",
+            "zh-TW": "本地 i18n API 請求失敗，因此繼續顯示 seeded 翻譯管理。",
+          },
+          safeDetails: {
+            reason: "redacted credential from redacted private path",
+          },
+          severity: "error",
+        },
+      ],
+      loading: false,
+      source: "error_fallback",
+      sourceLocale: "en-US",
+      status: "error",
+      targetLocale: "zh-CN",
+      traceId: "trace-i18n-error-safe",
+    }));
+
+    const { container } = render(<I18nContractReadiness bridgeRunner={bridgeRunner} locale="en-US" />);
+    const apiReview = screen.getByRole("complementary", { name: "Local i18n API draft review" });
+    fireEvent.click(within(apiReview).getByRole("button", { name: "Generate local i18n draft" }));
+
+    await waitFor(() => expect(within(apiReview).getAllByText("Error fallback").length).toBeGreaterThan(0));
+    expect(within(apiReview).getByText(/The local i18n API request failed/)).toBeInTheDocument();
+    expect(within(apiReview).getByText(/redacted credential from redacted private path/)).toBeInTheDocument();
+    expect(within(apiReview).getByText("trace-i18n-error-safe")).toBeInTheDocument();
+    expect(screen.getAllByText("Awaken 冲刺活动").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Publish revision" })).toBeDisabled();
+
+    const renderedText = container.textContent?.toLowerCase() ?? "";
+    for (const forbidden of ["private key", "seed phrase", "bearer token", "raw signature", "provider payload", "campaign-os-kitty"]) {
+      expect(renderedText).not.toContain(forbidden);
+    }
   });
 });

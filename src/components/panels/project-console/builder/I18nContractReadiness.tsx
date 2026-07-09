@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { CheckCircle2, Languages, RotateCcw, Sparkles, Upload, type LucideIcon } from "lucide-react";
 import {
+  createI18nTranslationApiLoadingState,
+  createI18nTranslationSeededFallbackState,
+  submitI18nTranslationApiDraft,
+  type I18nTranslationApiBridgeState,
+  type I18nTranslationApiConfig,
+  type I18nTranslationApiFetch,
+  type I18nTranslationDraftRequest,
+} from "../../../../api/i18nTranslationApiBridge";
+import {
   campaignDetail,
   createContractImpactReviewModel,
   createTranslationManagerReadModel,
@@ -26,20 +35,47 @@ import { ContractModeBadge, LocaleStatusBadge, PublishStateBadge, ReviewSeverity
 type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
 
 interface I18nContractReadinessProps {
+  apiConfig?: I18nTranslationApiConfig;
+  bridgeRunner?: I18nTranslationBridgeRunner;
   campaign?: CampaignShellDetail;
+  fetchImpl?: I18nTranslationApiFetch;
   locale: BusinessContentLocale;
 }
+
+type I18nTranslationBridgeRunner = (input: {
+  config?: I18nTranslationApiConfig;
+  fetchImpl?: I18nTranslationApiFetch;
+  request: I18nTranslationDraftRequest;
+}) => Promise<I18nTranslationApiBridgeState>;
 
 const copy = {
   "en-US": {
     actionResult: "Latest local action",
     actionWorkflow: "Local action workflow",
+    apiBackedDraft: "API-backed draft",
+    apiBridgeReview: "Local i18n API draft review",
+    apiBridgeStatus: "API bridge status",
+    apiContentKeys: "Content keys",
+    apiDiagnostics: "Diagnostics",
+    apiErrorFallback: "Error fallback",
+    apiGenerateDraft: "Generate local i18n draft",
+    apiLoading: "Generating local draft",
+    apiNoCampaign: "No campaign ID",
+    apiNoDiagnostics: "No diagnostics",
+    apiNoPersistence: "No persistence record",
+    apiNoTrace: "No trace ID",
+    apiPersistence: "Persistence",
+    apiRetryDraft: "Retry local i18n draft",
+    apiSeededFallback: "Seeded fallback",
+    apiSource: "Bridge source",
+    apiStatus: "Status",
     aiCannotPublish: "AI generated translation cannot auto-publish before human review.",
     aiDraft: "AI draft",
     available: "Available",
     blockedHighImpact: "Blocked pending high-impact manual review",
     blocksPublish: "Blocks publish",
     boundary: "Boundary",
+    campaignId: "Campaign ID",
     completedLocally: "Completed locally",
     compareReview: "Compare with English",
     compareReviewPrompt: "Source and draft comparison",
@@ -55,13 +91,14 @@ const copy = {
     futurePlanned: "Future / planned",
     generateWithAi: "Generate with AI",
     highImpactBlocker: "High-impact manual review blocker",
+    humanReviewRequired: "Human review required",
     humanReview: "Human review",
     latestAction: "Latest action",
     localeList: "Locale list",
     localOnlyBoundary: "Local-only boundary",
     markReviewed: "Mark reviewed",
     missing: "Missing",
-    noBackendPersistence: "No backend persistence",
+    noBackendPersistence: "No production persistence",
     noContractWrite: "No contract write",
     noExportFile: "No export file",
     noLiveAiProvider: "No live AI provider",
@@ -89,6 +126,7 @@ const copy = {
     targetLocale: "Target locale",
     targetColumn: "Translation draft",
     title: "i18n, contract, and review gates",
+    traceId: "Trace ID",
     translationManager: "Translation Manager",
     translationRole: "Translation",
     useEnglishFallback: "Use English fallback",
@@ -97,12 +135,30 @@ const copy = {
   "zh-CN": {
     actionResult: "最新本地动作",
     actionWorkflow: "本地动作工作流",
+    apiBackedDraft: "API 草稿",
+    apiBridgeReview: "本地 i18n API 草稿审核",
+    apiBridgeStatus: "API bridge 状态",
+    apiContentKeys: "内容键",
+    apiDiagnostics: "诊断",
+    apiErrorFallback: "错误回退",
+    apiGenerateDraft: "生成本地 i18n 草稿",
+    apiLoading: "正在生成本地草稿",
+    apiNoCampaign: "无 campaign ID",
+    apiNoDiagnostics: "无诊断",
+    apiNoPersistence: "无持久化记录",
+    apiNoTrace: "无 trace ID",
+    apiPersistence: "持久化",
+    apiRetryDraft: "重试本地 i18n 草稿",
+    apiSeededFallback: "Seeded 回退",
+    apiSource: "Bridge 来源",
+    apiStatus: "状态",
     aiCannotPublish: "AI 生成翻译必须经过人工审核后才能发布。",
     aiDraft: "AI 草稿",
     available: "可用",
     blockedHighImpact: "等待高影响人工审核，已阻断",
     blocksPublish: "阻断发布",
     boundary: "边界",
+    campaignId: "Campaign ID",
     completedLocally: "已在本地完成",
     compareReview: "对照英文",
     compareReviewPrompt: "源内容与草稿对照",
@@ -118,13 +174,14 @@ const copy = {
     futurePlanned: "未来规划",
     generateWithAi: "用 AI 生成",
     highImpactBlocker: "高影响人工审核阻断",
+    humanReviewRequired: "需要人工审核",
     humanReview: "人工审核",
     latestAction: "最新动作",
     localeList: "语言列表",
     localOnlyBoundary: "仅本地边界",
     markReviewed: "标记已审核",
     missing: "缺失",
-    noBackendPersistence: "无后端持久化",
+    noBackendPersistence: "无生产持久化",
     noContractWrite: "无合约写入",
     noExportFile: "无导出文件",
     noLiveAiProvider: "无实时 AI provider",
@@ -152,6 +209,7 @@ const copy = {
     targetLocale: "目标语言",
     targetColumn: "翻译草稿",
     title: "多语言、合约与审核门禁",
+    traceId: "Trace ID",
     translationManager: "翻译管理",
     translationRole: "翻译",
     useEnglishFallback: "使用英文回退",
@@ -160,12 +218,30 @@ const copy = {
   "zh-TW": {
     actionResult: "最新本地動作",
     actionWorkflow: "本地動作工作流",
+    apiBackedDraft: "API 草稿",
+    apiBridgeReview: "本地 i18n API 草稿審核",
+    apiBridgeStatus: "API bridge 狀態",
+    apiContentKeys: "內容鍵",
+    apiDiagnostics: "診斷",
+    apiErrorFallback: "錯誤回退",
+    apiGenerateDraft: "生成本地 i18n 草稿",
+    apiLoading: "正在生成本地草稿",
+    apiNoCampaign: "無 campaign ID",
+    apiNoDiagnostics: "無診斷",
+    apiNoPersistence: "無持久化記錄",
+    apiNoTrace: "無 trace ID",
+    apiPersistence: "持久化",
+    apiRetryDraft: "重試本地 i18n 草稿",
+    apiSeededFallback: "Seeded 回退",
+    apiSource: "Bridge 來源",
+    apiStatus: "狀態",
     aiCannotPublish: "AI 生成翻譯必須經過人工審核後才能發布。",
     aiDraft: "AI 草稿",
     available: "可用",
     blockedHighImpact: "等待高影響人工審核，已阻斷",
     blocksPublish: "阻斷發布",
     boundary: "邊界",
+    campaignId: "Campaign ID",
     completedLocally: "已在本地完成",
     compareReview: "對照英文",
     compareReviewPrompt: "源內容與草稿對照",
@@ -181,13 +257,14 @@ const copy = {
     futurePlanned: "未來規劃",
     generateWithAi: "用 AI 生成",
     highImpactBlocker: "高影響人工審核阻斷",
+    humanReviewRequired: "需要人工審核",
     humanReview: "人工審核",
     latestAction: "最新動作",
     localeList: "語言列表",
     localOnlyBoundary: "僅本地邊界",
     markReviewed: "標記已審核",
     missing: "缺失",
-    noBackendPersistence: "無後端持久化",
+    noBackendPersistence: "無生產持久化",
     noContractWrite: "無合約寫入",
     noExportFile: "無匯出檔案",
     noLiveAiProvider: "無即時 AI provider",
@@ -215,6 +292,7 @@ const copy = {
     targetLocale: "目標語言",
     targetColumn: "翻譯草稿",
     title: "多語言、合約與審核門禁",
+    traceId: "Trace ID",
     translationManager: "翻譯管理",
     translationRole: "翻譯",
     useEnglishFallback: "使用英文回退",
@@ -376,6 +454,20 @@ const rewardDisclaimerRowStyle: CSSProperties = {
   padding: "12px 0",
 };
 
+const apiMetricGridStyle: CSSProperties = {
+  display: "grid",
+  gap: 10,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))",
+};
+
+const wrapValueStyle: CSSProperties = {
+  ...bodyStyle,
+  color: "#0f172a",
+  fontWeight: 800,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
 const mediaStyle = `
 @media (max-width: 720px) {
   [data-translation-compare-row] {
@@ -509,6 +601,138 @@ const noLiveBoundaryItems = (labels: (typeof copy)[BusinessContentLocale]) => [
   labels.noRewardCustodyDistribution,
 ];
 
+const i18nTranslationApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
+const localProjectOwnerHeaders = {
+  "x-campaign-os-account-type": "AA",
+  "x-campaign-os-credential-boundary": "ordinary_user_wallet",
+  "x-campaign-os-proof-status": "verified",
+  "x-campaign-os-roles": "project_owner",
+  "x-campaign-os-session-id": "sess-project-console-i18n-review",
+  "x-campaign-os-wallet-address": "ELF_local_review_owner",
+  "x-campaign-os-wallet-source": "PORTKEY_AA",
+};
+
+const sourceLabelForApiState = (
+  state: I18nTranslationApiBridgeState,
+  labels: (typeof copy)[BusinessContentLocale],
+) => {
+  if (state.loading) {
+    return labels.apiLoading;
+  }
+
+  if (state.source === "api_runtime") {
+    return labels.apiBackedDraft;
+  }
+
+  if (state.source === "error_fallback") {
+    return labels.apiErrorFallback;
+  }
+
+  return labels.apiSeededFallback;
+};
+
+const apiBridgeBadgeState = (state: I18nTranslationApiBridgeState): PublishState => {
+  if (state.status === "draft_generated") {
+    return "ready";
+  }
+
+  if (state.status === "error") {
+    return "warning";
+  }
+
+  return state.loading ? "warning" : "ready";
+};
+
+const formatSafeDetails = (
+  safeDetails: Record<string, boolean | number | string> | undefined,
+) =>
+  safeDetails
+    ? Object.entries(safeDetails)
+      .map(([key, value]) => `${key}: ${String(value)}`)
+      .join("; ")
+    : undefined;
+
+const contentKeysForCampaign = (campaign: CampaignShellDetail) => {
+  const source = campaign.contentRevisions.find((revision) => revision.locale === "en-US")
+    ?? campaign.contentRevisions[0];
+
+  return [
+    source?.title ? "title" : undefined,
+    source?.description ? "description" : undefined,
+    source?.socialPost ? "socialPost" : undefined,
+    source?.rewardDisclaimer ? "rewardDisclaimer" : undefined,
+  ].filter((key): key is string => Boolean(key));
+};
+
+const createI18nTranslationRequest = (
+  campaign: CampaignShellDetail,
+  targetLocale: Exclude<SupportedLocale, "en-US">,
+): I18nTranslationDraftRequest => ({
+  campaignId: campaign.id,
+  contentKeys: contentKeysForCampaign(campaign),
+  sourceLocale: "en-US",
+  targetLocale,
+});
+
+const createInitialApiBridgeState = (
+  request: I18nTranslationDraftRequest,
+  apiConfig: I18nTranslationApiConfig | undefined,
+): I18nTranslationApiBridgeState =>
+  apiConfig?.baseUrl?.trim()
+    ? {
+        ...createI18nTranslationSeededFallbackState(request),
+        configured: true,
+        diagnostics: [],
+      }
+    : createI18nTranslationSeededFallbackState(request);
+
+const mapApiDraftToContentRevisions = (
+  revisions: readonly ContentRevision[],
+  state: I18nTranslationApiBridgeState,
+): ContentRevision[] | undefined => {
+  if (state.status !== "draft_generated" || !state.draft?.draft || state.sourceLocale !== "en-US") {
+    return undefined;
+  }
+
+  const targetLocale = state.targetLocale;
+  const draft = state.draft.draft;
+  const existing = revisions.find((revision) => revision.locale === targetLocale);
+  const source = revisions.find((revision) => revision.locale === "en-US");
+  const hasMappedValue = ["title", "description", "socialPost", "rewardDisclaimer"].some((key) =>
+    typeof draft[key] === "string" && draft[key].trim().length > 0,
+  );
+
+  if (!hasMappedValue) {
+    return undefined;
+  }
+
+  const replacement: ContentRevision = {
+    campaignId: state.campaignId ?? existing?.campaignId ?? source?.campaignId ?? "",
+    description: draft.description?.trim() || existing?.description || "",
+    id: existing?.id ?? `rev-${targetLocale.toLowerCase()}-api-local`,
+    locale: targetLocale,
+    rewardDisclaimer: draft.rewardDisclaimer?.trim() || existing?.rewardDisclaimer || "",
+    socialPost: draft.socialPost?.trim() || existing?.socialPost || "",
+    sourceLocale: "en-US",
+    status: "ai_draft",
+    title: draft.title?.trim() || existing?.title || "",
+    updatedAt: "2026-07-09T00:00:00Z",
+  };
+  let replaced = false;
+  const nextRevisions = revisions.map((revision) => {
+    if (revision.locale !== targetLocale) {
+      return { ...revision };
+    }
+
+    replaced = true;
+    return replacement;
+  });
+
+  return replaced ? nextRevisions : [...nextRevisions, replacement];
+};
+
 const reviewActionStateLabel = (
   state: I18nReviewAction["state"],
   labels: (typeof copy)[BusinessContentLocale],
@@ -597,6 +821,114 @@ const ActionResultPanel = ({
     </div>
   </article>
 );
+
+const I18nApiBridgeReviewPanel = ({
+  labels,
+  locale,
+  onGenerate,
+  state,
+}: {
+  labels: (typeof copy)[BusinessContentLocale];
+  locale: BusinessContentLocale;
+  onGenerate: () => void;
+  state: I18nTranslationApiBridgeState;
+}) => {
+  const diagnostics = state.diagnostics.slice(0, 2);
+  const buttonLabel = state.status === "error" ? labels.apiRetryDraft : labels.apiGenerateDraft;
+
+  return (
+    <aside aria-label={labels.apiBridgeReview} role="complementary" style={cardStyle}>
+      <div style={statStripStyle}>
+        <span style={{ display: "grid", gap: 4, minWidth: 0 }}>
+          <p style={labelStyle}>{labels.apiBridgeStatus}</p>
+          <p style={valueStyle}>{sourceLabelForApiState(state, labels)}</p>
+        </span>
+        <span style={badgeRowStyle}>
+          <PublishStateBadge label={sourceLabelForApiState(state, labels)} state={apiBridgeBadgeState(state)} />
+          {state.draft?.humanReviewRequired ? (
+            <PublishStateBadge label={labels.humanReviewRequired} state="warning" />
+          ) : null}
+        </span>
+      </div>
+
+      <button
+        disabled={!state.configured || state.loading}
+        onClick={onGenerate}
+        style={{
+          ...actionButtonStyle,
+          cursor: !state.configured || state.loading ? "not-allowed" : "pointer",
+          opacity: !state.configured || state.loading ? 0.62 : 1,
+          width: "fit-content",
+        }}
+        type="button"
+      >
+        <Sparkles aria-hidden="true" size={15} strokeWidth={2.4} />
+        {state.loading ? labels.apiLoading : buttonLabel}
+      </button>
+
+      <dl style={apiMetricGridStyle}>
+        {[
+          [labels.apiStatus, state.status],
+          [labels.apiSource, state.source],
+          [labels.campaignId, state.campaignId ?? labels.apiNoCampaign],
+          [labels.traceId, state.traceId ?? labels.apiNoTrace],
+          [labels.sourceLocale, `${state.sourceLocale} → ${state.targetLocale}`],
+          [labels.apiContentKeys, state.contentKeys.join(", ")],
+          [
+            labels.apiPersistence,
+            state.persistence?.recordId ?? state.persistence?.kind ?? labels.apiNoPersistence,
+          ],
+          [
+            labels.humanReview,
+            state.draft?.humanReviewRequired ? labels.humanReviewRequired : labels.aiCannotPublish,
+          ],
+        ].map(([label, value]) => (
+          <div key={label} style={{ display: "grid", gap: 3, minWidth: 0 }}>
+            <dt style={labelStyle}>{label}</dt>
+            <dd style={wrapValueStyle}>{value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      {diagnostics.length > 0 ? (
+        <ul style={listStyle}>
+          {diagnostics.map((item) => (
+            <li
+              key={`${item.code}-${item.severity}`}
+              style={{
+                borderTop: "1px solid #dbe6f4",
+                display: "grid",
+                gap: 6,
+                listStyle: "none",
+                minWidth: 0,
+                padding: "10px 0 0",
+              }}
+            >
+              <span style={badgeRowStyle}>
+                <PublishStateBadge
+                  label={labels.apiDiagnostics}
+                  state={item.severity === "error" ? "blocker" : "warning"}
+                />
+                <PublishStateBadge label={item.code} state="warning" />
+              </span>
+              <span style={wrapValueStyle}>
+                {getLocalizedText(item.message, locale)}
+                {formatSafeDetails(item.safeDetails) ? ` (${formatSafeDetails(item.safeDetails)})` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p style={bodyStyle}>{labels.apiNoDiagnostics}</p>
+      )}
+
+      <div>
+        <p style={labelStyle}>{labels.boundary}</p>
+        <p style={bodyStyle}>{getLocalizedText(state.boundary, locale)}</p>
+      </div>
+    </aside>
+  );
+};
 
 const TranslationPanelCard = ({
   labels,
@@ -826,12 +1158,34 @@ const ContractModeRow = ({
 );
 
 export const I18nContractReadiness = ({
+  apiConfig,
+  bridgeRunner,
   campaign = campaignDetail,
+  fetchImpl,
   locale,
 }: I18nContractReadinessProps) => {
   const labels = copy[locale];
   const targetLocale: Exclude<SupportedLocale, "en-US"> = "zh-CN";
+  const defaultApiConfig = useMemo<I18nTranslationApiConfig>(
+    () => ({
+      baseUrl: apiConfig?.baseUrl ?? i18nTranslationApiBaseUrl(),
+      headers: {
+        ...localProjectOwnerHeaders,
+        ...(apiConfig?.headers ?? {}),
+      },
+      timeoutMs: apiConfig?.timeoutMs,
+      tracePrefix: apiConfig?.tracePrefix ?? "project-console-i18n-translation",
+    }),
+    [apiConfig],
+  );
+  const bridgeRequest = useMemo(
+    () => createI18nTranslationRequest(campaign, targetLocale),
+    [campaign, targetLocale],
+  );
   const [contentRevisions, setContentRevisions] = useState(() => cloneContentRevisions(campaign.contentRevisions));
+  const [apiBridgeState, setApiBridgeState] = useState<I18nTranslationApiBridgeState>(() =>
+    createInitialApiBridgeState(bridgeRequest, defaultApiConfig),
+  );
   const localCampaign = useMemo(
     () => ({
       ...campaign,
@@ -862,7 +1216,8 @@ export const I18nContractReadiness = ({
 
   useEffect(() => {
     setContentRevisions(cloneContentRevisions(campaign.contentRevisions));
-  }, [campaign]);
+    setApiBridgeState(createInitialApiBridgeState(bridgeRequest, defaultApiConfig));
+  }, [campaign, bridgeRequest, defaultApiConfig]);
 
   const handleRunAction = (actionId: I18nReviewActionId) => {
     const result = executeI18nReviewAction(localCampaign, {
@@ -876,6 +1231,56 @@ export const I18nContractReadiness = ({
     }
 
     setLastActionResult(result);
+  };
+
+  const runBridge = bridgeRunner ?? ((input) =>
+    submitI18nTranslationApiDraft({
+      config: input.config,
+      fetchImpl: input.fetchImpl,
+      request: input.request,
+    }));
+
+  const handleGenerateApiDraft = async () => {
+    if (!apiBridgeState.configured || apiBridgeState.loading) {
+      return;
+    }
+
+    setApiBridgeState(createI18nTranslationApiLoadingState(bridgeRequest));
+
+    try {
+      const result = await runBridge({
+        config: defaultApiConfig,
+        fetchImpl,
+        request: bridgeRequest,
+      });
+
+      setApiBridgeState(result);
+      const mappedRevisions = mapApiDraftToContentRevisions(contentRevisions, result);
+
+      if (mappedRevisions) {
+        setContentRevisions(mappedRevisions);
+      }
+    } catch {
+      const fallback = createI18nTranslationSeededFallbackState(bridgeRequest);
+
+      setApiBridgeState({
+        ...fallback,
+        configured: true,
+        diagnostics: [
+          {
+            code: "API_REQUEST_FAILED",
+            message: {
+              "en-US": "The local i18n API request failed, so the seeded translation manager remains visible.",
+              "zh-CN": "本地 i18n API 请求失败，因此继续显示 seeded 翻译管理。",
+              "zh-TW": "本地 i18n API 請求失敗，因此繼續顯示 seeded 翻譯管理。",
+            },
+            severity: "error",
+          },
+        ],
+        source: "error_fallback",
+        status: "error",
+      });
+    }
   };
 
   return (
@@ -902,6 +1307,12 @@ export const I18nContractReadiness = ({
           labels={labels}
           locale={locale}
           localeItems={translationManager.localeItems}
+        />
+        <I18nApiBridgeReviewPanel
+          labels={labels}
+          locale={locale}
+          onGenerate={handleGenerateApiDraft}
+          state={apiBridgeState}
         />
         <p style={bodyStyle}>{getLocalizedText(translationManager.noAutoPublishNotice, locale)}</p>
         <p style={bodyStyle}>{labels.fallbackWarning}</p>
