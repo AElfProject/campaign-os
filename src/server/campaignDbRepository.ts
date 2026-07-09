@@ -88,6 +88,10 @@ export type CampaignDbDiagnosticCode =
   | "CAMPAIGN_DB_EXPORT_REQUIRED_FIELD_MISSING"
   | "CAMPAIGN_DB_EXPORT_UNSUPPORTED_CONTRACT_ROOT_MODE"
   | "CAMPAIGN_DB_EXPORT_UNSUPPORTED_FORMAT"
+  | "CAMPAIGN_DB_I18N_CAMPAIGN_NOT_FOUND"
+  | "CAMPAIGN_DB_I18N_REQUIRED_FIELD_MISSING"
+  | "CAMPAIGN_DB_I18N_UNSUPPORTED_SOURCE_LOCALE"
+  | "CAMPAIGN_DB_I18N_UNSUPPORTED_TARGET_LOCALE"
   | "CAMPAIGN_DB_PRODUCTION_DEFERRED";
 
 export interface CampaignDbDiagnostic {
@@ -269,6 +273,37 @@ export interface CampaignDbUpsertTaskCompletionInput {
   taskId: string;
   walletAddress: string;
   walletSource: WalletSource | string;
+}
+
+export interface CampaignDbI18nDraftInput {
+  campaignId: string;
+  contentKeys: readonly string[];
+  sourceLocale: SupportedLocale | string;
+  targetLocale: SupportedLocale | string;
+}
+
+export interface CampaignDbI18nDraftRecord {
+  aiDraft: true;
+  campaignId: string;
+  contentKeys: string[];
+  createdAt: string;
+  draft: Record<string, string>;
+  fallbackToEnglish: boolean;
+  humanReviewRequired: true;
+  id: string;
+  sourceLocale: "en-US";
+  targetLocale: Exclude<SupportedLocale, "en-US">;
+  updatedAt: string;
+}
+
+export interface CampaignDbI18nDraftProjection {
+  draft: CampaignDbI18nDraftRecord;
+  repository: {
+    adapterId: string;
+    createdViaRepository: true;
+    repositoryId: string;
+    storeId: "campaign-db";
+  };
 }
 
 export interface CampaignDbOperationContext {
@@ -505,7 +540,13 @@ export interface CampaignDbReferralBindingListFilter {
 }
 
 export interface CampaignDbRepositoryEvent {
-  entity: "Campaign" | "CampaignParticipant" | "CampaignTask" | "ReferralBinding" | "TaskCompletion";
+  entity:
+    | "Campaign"
+    | "CampaignContentRevision"
+    | "CampaignParticipant"
+    | "CampaignTask"
+    | "ReferralBinding"
+    | "TaskCompletion";
   id: string;
   liveExecution: false;
   operation: string;
@@ -525,6 +566,7 @@ export interface CampaignDbRepositoryHealth {
   fallbackUsed: false;
   completionRecordCount: number;
   id: "campaign-db-repository-runtime";
+  i18nDraftRecordCount: number;
   liveConnectionAttempted: false;
   liveMigrationExecutionEnabled: false;
   liveQueryExecutionEnabled: false;
@@ -555,6 +597,10 @@ export interface CampaignDbRepository {
     input: CampaignDbCreateDraftInput,
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbDraft>;
+  generateI18nDraft?(
+    input: CampaignDbI18nDraftInput,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbI18nDraftProjection>;
   getById(
     campaignId: string,
     context?: CampaignDbOperationContext,
@@ -1281,6 +1327,111 @@ const validateUpsertTaskCompletionInput = (
     walletAddress,
     walletSource,
   };
+};
+
+const normalizeI18nContentKeys = (
+  contentKeys: readonly string[] | undefined,
+  issues: CampaignDbDiagnostic[],
+) => {
+  const normalizedKeys = Array.from(new Set(
+    (contentKeys ?? [])
+      .map((key) => key.trim())
+      .filter((key) => key.length > 0 && !hasSecretLikeKey(key) && !hasSecretLikeValue(key)),
+  ));
+
+  if (normalizedKeys.length === 0) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_I18N_REQUIRED_FIELD_MISSING",
+      "contentKeys",
+      "Campaign DB i18n draft contentKeys must include at least one safe content key.",
+    ));
+  }
+
+  return normalizedKeys;
+};
+
+const validateI18nDraftInput = (
+  input: CampaignDbI18nDraftInput,
+  campaign: CampaignDbDraft | undefined,
+): {
+  campaignId: string;
+  contentKeys: string[];
+  sourceLocale: "en-US";
+  targetLocale: Exclude<SupportedLocale, "en-US">;
+} => {
+  const issues: CampaignDbDiagnostic[] = [];
+  const campaignId = isNonEmptyString(input.campaignId) ? input.campaignId.trim() : "";
+  const contentKeys = normalizeI18nContentKeys(input.contentKeys, issues);
+  const sourceLocale = input.sourceLocale;
+  const targetLocale = input.targetLocale;
+
+  if (!campaignId) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_I18N_REQUIRED_FIELD_MISSING",
+      "campaignId",
+      "Campaign DB i18n draft campaignId is required.",
+    ));
+  } else if (!campaign) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_I18N_CAMPAIGN_NOT_FOUND",
+      "campaignId",
+      `Campaign DB draft '${sanitizeCampaignDbDiagnosticValue("campaignId", campaignId)}' was not found for i18n draft generation.`,
+    ));
+  }
+
+  if (sourceLocale !== "en-US") {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_I18N_UNSUPPORTED_SOURCE_LOCALE",
+      "sourceLocale",
+      "Campaign DB i18n draft sourceLocale must be en-US.",
+    ));
+  }
+
+  if (
+    !isSupportedLocale(targetLocale) ||
+    targetLocale === "en-US" ||
+    (campaign !== undefined && !campaign.supportedLocales.includes(targetLocale))
+  ) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_I18N_UNSUPPORTED_TARGET_LOCALE",
+      "targetLocale",
+      "Campaign DB i18n draft targetLocale must be enabled by the campaign and cannot be en-US.",
+    ));
+  }
+
+  if (issues.length > 0) {
+    throw new CampaignDbRepositoryError("Invalid Campaign DB i18n draft input.", issues);
+  }
+
+  return {
+    campaignId,
+    contentKeys,
+    sourceLocale: "en-US",
+    targetLocale: targetLocale as Exclude<SupportedLocale, "en-US">,
+  };
+};
+
+const i18nDraftTextForKey = (campaign: CampaignDbDraft, key: string) => {
+  switch (key) {
+    case "title":
+      return campaign.goal;
+    case "subtitle":
+      return `${campaign.projectId} campaign draft`;
+    case "description":
+      return `${campaign.goal}. Reward context: ${campaign.rewardDescription}.`;
+    case "rewardDisclaimer":
+      return campaign.rewardDisclaimerHash
+        ? `Rewards for ${campaign.rewardDescription} require human review before publish. Disclaimer hash: ${campaign.rewardDisclaimerHash}.`
+        : `Rewards for ${campaign.rewardDescription} require human review before publish.`;
+    case "faq":
+      return "Campaign details, eligibility, and rewards remain subject to project owner review.";
+    case "riskWarning":
+      return "Eligibility, wallet type, risk flags, and reward claims remain subject to review.";
+    case "socialPost":
+      return `Join ${campaign.goal} and complete wallet-aware campaign tasks.`;
+    default:
+      return `${key}: ${campaign.goal}`;
+  }
 };
 
 const participantKey = (campaignId: string, walletAddress: string) => `${campaignId}::${walletAddress}`;
@@ -2340,6 +2491,7 @@ export const createCampaignDbRepository = ({
   requestedDriverId,
 }: CreateCampaignDbRepositoryOptions = {}): CampaignDbRepository => {
   const recordsById = new Map<string, CampaignDbDraft>();
+  const i18nDraftRecordsById = new Map<string, CampaignDbI18nDraftRecord>();
   const participantRecordsById = new Map<string, CampaignDbParticipantRecord>();
   const referralBindingRecordsById = new Map<string, CampaignDbReferralBindingRecord>();
   const taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
@@ -2362,6 +2514,7 @@ export const createCampaignDbRepository = ({
       : undefined;
   let idSequence = 0;
   let completionIdSequence = 0;
+  let i18nDraftIdSequence = 0;
   let participantIdSequence = 0;
   let referralBindingIdSequence = 0;
   let taskIdSequence = 0;
@@ -2396,6 +2549,12 @@ export const createCampaignDbRepository = ({
     completionIdSequence += 1;
 
     return `campaign-db-task-completion-${completionIdSequence.toString().padStart(4, "0")}`;
+  };
+
+  const nextI18nDraftId = () => {
+    i18nDraftIdSequence += 1;
+
+    return `campaign-db-i18n-draft-${i18nDraftIdSequence.toString().padStart(4, "0")}`;
   };
 
   const nextParticipantId = () => {
@@ -2597,6 +2756,8 @@ export const createCampaignDbRepository = ({
   const resolveCompletionRecordCount = async () =>
     activeDurableStore ? (await activeDurableStore.manifest()).completionRecordCount : taskCompletionsById.size;
 
+  const resolveI18nDraftRecordCount = async () => i18nDraftRecordsById.size;
+
   const resolveParticipantRecordCount = async () =>
     activeDurableStore ? (await activeDurableStore.manifest()).participantRecordCount : participantRecordsById.size;
 
@@ -2629,6 +2790,7 @@ export const createCampaignDbRepository = ({
       fallbackUsed: false,
       completionRecordCount: await resolveCompletionRecordCount(),
       id: "campaign-db-repository-runtime",
+      i18nDraftRecordCount: await resolveI18nDraftRecordCount(),
       liveConnectionAttempted: false,
       liveMigrationExecutionEnabled: false,
       liveQueryExecutionEnabled: false,
@@ -2921,6 +3083,68 @@ export const createCampaignDbRepository = ({
       return draft ? await toProjection(draft) : undefined;
     },
     getEvents: () => [...events],
+    generateI18nDraft: async (input, context = {}) => {
+      assertWritable();
+
+      const campaign = activeDurableStore
+        ? await activeDurableStore.getById(input.campaignId)
+        : recordsById.get(input.campaignId);
+      const validated = validateI18nDraftInput(input, campaign);
+      const transactionId = nextTransactionId();
+      appendEvent({
+        entity: "CampaignContentRevision",
+        operation: "begin_generate_i18n_draft",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.begin",
+      });
+      appendEvent({
+        entity: "CampaignContentRevision",
+        operation: "plan_insert_i18n_draft",
+        traceId: context.traceId,
+        transactionId,
+        type: "command.planned",
+      });
+
+      const timestamp = now();
+      const draft: CampaignDbI18nDraftRecord = {
+        aiDraft: true,
+        campaignId: validated.campaignId,
+        contentKeys: validated.contentKeys,
+        createdAt: timestamp,
+        draft: Object.fromEntries(
+          validated.contentKeys.map((key) => [key, i18nDraftTextForKey(campaign!, key)]),
+        ),
+        fallbackToEnglish: true,
+        humanReviewRequired: true,
+        id: nextI18nDraftId(),
+        sourceLocale: validated.sourceLocale,
+        targetLocale: validated.targetLocale,
+        updatedAt: timestamp,
+      };
+
+      i18nDraftRecordsById.set(draft.id, draft);
+
+      appendEvent({
+        entity: "CampaignContentRevision",
+        operation: "insert_i18n_draft",
+        traceId: context.traceId,
+        transactionId,
+        type: "command.insert",
+      });
+      appendEvent({
+        entity: "CampaignContentRevision",
+        operation: "commit_generate_i18n_draft",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.commit",
+      });
+
+      return {
+        draft,
+        repository: repositoryMetadata(),
+      };
+    },
     getParticipant: async (campaignId, walletAddress, context = {}) => {
       appendEvent({
         entity: "CampaignParticipant",
@@ -3101,6 +3325,7 @@ export const createCampaignDbRepository = ({
     },
     reset: async () => {
       recordsById.clear();
+      i18nDraftRecordsById.clear();
       taskCompletionsById.clear();
       taskRecordsById.clear();
       participantRecordsById.clear();
@@ -3109,6 +3334,7 @@ export const createCampaignDbRepository = ({
       events.length = 0;
       idSequence = 0;
       completionIdSequence = 0;
+      i18nDraftIdSequence = 0;
       participantIdSequence = 0;
       referralBindingIdSequence = 0;
       taskIdSequence = 0;

@@ -439,6 +439,103 @@ describe("Campaign DB repository", () => {
     });
   });
 
+  it("generates repository i18n drafts with English fallback and human review gates", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft({
+      ...validDraftInput(),
+      goal: "Launch multilingual wallet campaign",
+      rewardDescription: "100 ELF local review rewards",
+      rewardDisclaimerHash: "reward-disclaimer-hash-001",
+      supportedLocales: ["en-US", "zh-CN", "zh-TW"],
+    });
+
+    const projection = await repository.generateI18nDraft!({
+      campaignId: campaign.id,
+      contentKeys: ["title", "description", "rewardDisclaimer", "faq", "title"],
+      sourceLocale: "en-US",
+      targetLocale: "zh-CN",
+    }, {
+      traceId: "trace-i18n-draft",
+    });
+
+    expect(projection).toMatchObject({
+      draft: {
+        aiDraft: true,
+        campaignId: campaign.id,
+        contentKeys: ["title", "description", "rewardDisclaimer", "faq"],
+        fallbackToEnglish: true,
+        humanReviewRequired: true,
+        id: "campaign-db-i18n-draft-0001",
+        sourceLocale: "en-US",
+        targetLocale: "zh-CN",
+      },
+      repository: {
+        adapterId: "campaign-db-deterministic-adapter",
+        createdViaRepository: true,
+        repositoryId: "campaign-db-repository-runtime",
+        storeId: "campaign-db",
+      },
+    });
+    expect(projection.draft.draft).toEqual({
+      description: "Launch multilingual wallet campaign. Reward context: 100 ELF local review rewards.",
+      faq: "Campaign details, eligibility, and rewards remain subject to project owner review.",
+      rewardDisclaimer: "Rewards for 100 ELF local review rewards require human review before publish. Disclaimer hash: reward-disclaimer-hash-001.",
+      title: "Launch multilingual wallet campaign",
+    });
+    await expect(repository.health()).resolves.toMatchObject({
+      i18nDraftRecordCount: 1,
+      liveConnectionAttempted: false,
+      liveMigrationExecutionEnabled: false,
+      liveQueryExecutionEnabled: false,
+      productionReady: false,
+    });
+    expect(repository.getEvents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entity: "CampaignContentRevision",
+          liveExecution: false,
+          operation: "insert_i18n_draft",
+          traceId: "trace-i18n-draft",
+          type: "command.insert",
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    ["missing campaign", { campaignId: "missing-campaign" }, "CAMPAIGN_DB_I18N_CAMPAIGN_NOT_FOUND"],
+    ["unsupported source locale", { sourceLocale: "zh-CN" }, "CAMPAIGN_DB_I18N_UNSUPPORTED_SOURCE_LOCALE"],
+    ["English target locale", { targetLocale: "en-US" }, "CAMPAIGN_DB_I18N_UNSUPPORTED_TARGET_LOCALE"],
+    ["disabled target locale", { targetLocale: "zh-TW" }, "CAMPAIGN_DB_I18N_UNSUPPORTED_TARGET_LOCALE"],
+    ["empty content keys", { contentKeys: [] }, "CAMPAIGN_DB_I18N_REQUIRED_FIELD_MISSING"],
+    ["unsafe content keys", { contentKeys: ["https://secret.example/token=raw-secret"] }, "CAMPAIGN_DB_I18N_REQUIRED_FIELD_MISSING"],
+  ])("rejects invalid i18n draft %s without creating records", async (_case, override, code) => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft({
+      ...validDraftInput(),
+      supportedLocales: ["en-US", "zh-CN"],
+    });
+
+    await expect(repository.generateI18nDraft!({
+      campaignId: campaign.id,
+      contentKeys: ["title"],
+      sourceLocale: "en-US",
+      targetLocale: "zh-CN",
+      ...override,
+    })).rejects.toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          code,
+          severity: "error",
+        }),
+      ],
+    });
+    await expect(repository.health()).resolves.toMatchObject({
+      i18nDraftRecordCount: 0,
+    });
+    expect(repository.getEvents().some((event) => event.operation === "insert_i18n_draft")).toBe(false);
+  });
+
   it("upserts campaign participants with wallet identity and campaign scoped uniqueness", async () => {
     const repository = createCampaignDbRepository();
     const firstCampaign = await repository.createDraft(validDraftInput());
