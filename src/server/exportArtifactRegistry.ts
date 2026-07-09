@@ -21,7 +21,9 @@ export const exportArtifactRegistryForbiddenFields = [
 ] as const;
 
 export type ExportArtifactRegistryDiagnosticCode =
+  | "EXPORT_ARTIFACT_REGISTRY_ARTIFACT_NOT_FOUND"
   | "EXPORT_ARTIFACT_REGISTRY_INVALID_ARTIFACT"
+  | "EXPORT_ARTIFACT_REGISTRY_INVALID_FILTER"
   | "EXPORT_ARTIFACT_REGISTRY_REQUIRED_FIELD_MISSING"
   | "EXPORT_ARTIFACT_REGISTRY_UNSAFE_FIELD";
 
@@ -113,7 +115,81 @@ export type RegisterExportArtifactResult =
     safety: ExportArtifactRegistrySafety;
   };
 
+export type ExportArtifactAuditRetentionState = "active" | "expired";
+
+export interface ListExportArtifactAuditRecordsQuery {
+  artifactId?: string;
+  batchId?: string;
+  campaignId: string;
+  format?: string;
+  now?: string;
+  retentionState?: string;
+  traceId?: string;
+}
+
+export interface GetExportArtifactAuditRecordQuery {
+  artifactId: string;
+  campaignId: string;
+}
+
+export interface ExportArtifactAuditSummary {
+  activeRecords: number;
+  blockedRows: number;
+  expiredRecords: number;
+  readyRows: number;
+  reviewRequiredRows: number;
+  totalRecords: number;
+  totalRows: number;
+}
+
+export interface ExportArtifactAuditListPayload {
+  boundary: LocalizedText;
+  campaignId: string;
+  filters: {
+    artifactId?: string;
+    batchId?: string;
+    format?: ExportPreviewMode;
+    retentionState?: ExportArtifactAuditRetentionState;
+    traceId?: string;
+  };
+  records: readonly ExportArtifactRegistryRecord[];
+  safety: ExportArtifactRegistrySafety;
+  summary: ExportArtifactAuditSummary;
+}
+
+export interface ExportArtifactAuditDetailPayload {
+  artifactId: string;
+  boundary: LocalizedText;
+  campaignId: string;
+  record: ExportArtifactRegistryRecord;
+  safety: ExportArtifactRegistrySafety;
+}
+
+export type ExportArtifactAuditListResult =
+  | {
+    ok: true;
+    payload: ExportArtifactAuditListPayload;
+  }
+  | {
+    diagnostics: readonly ExportArtifactRegistryDiagnostic[];
+    ok: false;
+    safety: ExportArtifactRegistrySafety;
+  };
+
+export type ExportArtifactAuditDetailResult =
+  | {
+    ok: true;
+    payload: ExportArtifactAuditDetailPayload;
+  }
+  | {
+    diagnostics: readonly ExportArtifactRegistryDiagnostic[];
+    ok: false;
+    safety: ExportArtifactRegistrySafety;
+  };
+
 export interface ExportArtifactRegistry {
+  get(query: GetExportArtifactAuditRecordQuery): ExportArtifactAuditDetailResult;
+  list(query: ListExportArtifactAuditRecordsQuery): ExportArtifactAuditListResult;
   register(
     artifact: unknown,
     context: RegisterExportArtifactContext,
@@ -323,8 +399,189 @@ const createAuditEvents = ({
   },
 ];
 
-export const createExportArtifactRegistry = (): ExportArtifactRegistry => ({
-  register: (
+const normalizeFilterText = (value: string | undefined) => {
+  const normalized = value?.trim();
+
+  return normalized ? normalized : undefined;
+};
+
+const parseFormatFilter = (
+  value: string | undefined,
+): ExportPreviewMode | undefined | ExportArtifactRegistryDiagnostic => {
+  const normalized = normalizeFilterText(value);
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (normalized === "csv" || normalized === "json") {
+    return normalized;
+  }
+
+  return diagnostic(
+    "EXPORT_ARTIFACT_REGISTRY_INVALID_FILTER",
+    "format",
+    "Export artifact audit list supports format filters csv or json only.",
+  );
+};
+
+const parseRetentionStateFilter = (
+  value: string | undefined,
+): ExportArtifactAuditRetentionState | undefined | ExportArtifactRegistryDiagnostic => {
+  const normalized = normalizeFilterText(value);
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (normalized === "active" || normalized === "expired") {
+    return normalized;
+  }
+
+  return diagnostic(
+    "EXPORT_ARTIFACT_REGISTRY_INVALID_FILTER",
+    "retentionState",
+    "Export artifact audit list supports retentionState filters active or expired only.",
+  );
+};
+
+const referenceNow = (now: string | undefined) => {
+  const parsed = Date.parse(now ?? DEFAULT_CREATED_AT);
+
+  return Number.isFinite(parsed) ? parsed : Date.parse(DEFAULT_CREATED_AT);
+};
+
+const retentionStateFor = (
+  record: ExportArtifactRegistryRecord,
+  now: string | undefined,
+): ExportArtifactAuditRetentionState => {
+  const expiresAt = Date.parse(record.expiresAt);
+
+  return Number.isFinite(expiresAt) && expiresAt <= referenceNow(now) ? "expired" : "active";
+};
+
+const createAuditSummary = (
+  records: readonly ExportArtifactRegistryRecord[],
+  now: string | undefined,
+): ExportArtifactAuditSummary => records.reduce<ExportArtifactAuditSummary>(
+  (summary, record) => {
+    const state = retentionStateFor(record, now);
+
+    return {
+      activeRecords: summary.activeRecords + (state === "active" ? 1 : 0),
+      blockedRows: summary.blockedRows + record.blockedRows,
+      expiredRecords: summary.expiredRecords + (state === "expired" ? 1 : 0),
+      readyRows: summary.readyRows + record.readyRows,
+      reviewRequiredRows: summary.reviewRequiredRows + record.reviewRequiredRows,
+      totalRecords: summary.totalRecords + 1,
+      totalRows: summary.totalRows + record.totalRows,
+    };
+  },
+  {
+    activeRecords: 0,
+    blockedRows: 0,
+    expiredRecords: 0,
+    readyRows: 0,
+    reviewRequiredRows: 0,
+    totalRecords: 0,
+    totalRows: 0,
+  },
+);
+
+const sortAuditRecords = (
+  records: readonly ExportArtifactRegistryRecord[],
+) => [...records].sort((left, right) =>
+  left.createdAt.localeCompare(right.createdAt)
+    || left.artifactId.localeCompare(right.artifactId));
+
+const createListFailure = (
+  issue: ExportArtifactRegistryDiagnostic,
+): ExportArtifactAuditListResult => ({
+  diagnostics: [issue],
+  ok: false,
+  safety: createSafety(false),
+});
+
+export const createExportArtifactRegistry = (): ExportArtifactRegistry => {
+  const recordsByArtifactId = new Map<string, ExportArtifactRegistryRecord>();
+
+  const list = (
+    query: ListExportArtifactAuditRecordsQuery,
+  ): ExportArtifactAuditListResult => {
+    const format = parseFormatFilter(query.format);
+
+    if (format && typeof format !== "string") {
+      return createListFailure(format);
+    }
+
+    const retentionState = parseRetentionStateFilter(query.retentionState);
+
+    if (retentionState && typeof retentionState !== "string") {
+      return createListFailure(retentionState);
+    }
+
+    const filters = {
+      ...(normalizeFilterText(query.artifactId) ? { artifactId: normalizeFilterText(query.artifactId) } : {}),
+      ...(normalizeFilterText(query.batchId) ? { batchId: normalizeFilterText(query.batchId) } : {}),
+      ...(format ? { format } : {}),
+      ...(retentionState ? { retentionState } : {}),
+      ...(normalizeFilterText(query.traceId) ? { traceId: normalizeFilterText(query.traceId) } : {}),
+    };
+    const records = sortAuditRecords(
+      Array.from(recordsByArtifactId.values()).filter((record) =>
+        record.campaignId === query.campaignId
+          && (!filters.artifactId || record.artifactId === filters.artifactId)
+          && (!filters.batchId || record.batchId === filters.batchId)
+          && (!filters.format || record.format === filters.format)
+          && (!filters.traceId || record.traceId === filters.traceId)
+          && (!filters.retentionState || retentionStateFor(record, query.now) === filters.retentionState)),
+    );
+
+    return {
+      ok: true,
+      payload: {
+        boundary: registryBoundary,
+        campaignId: query.campaignId,
+        filters,
+        records,
+        safety: createSafety(true),
+        summary: createAuditSummary(records, query.now),
+      },
+    };
+  };
+
+  const get = (
+    query: GetExportArtifactAuditRecordQuery,
+  ): ExportArtifactAuditDetailResult => {
+    const record = recordsByArtifactId.get(query.artifactId);
+
+    if (!record || record.campaignId !== query.campaignId) {
+      return {
+        diagnostics: [
+          diagnostic(
+            "EXPORT_ARTIFACT_REGISTRY_ARTIFACT_NOT_FOUND",
+            "artifactId",
+            "Export artifact audit record was not found for this campaign.",
+          ),
+        ],
+        ok: false,
+        safety: createSafety(false),
+      };
+    }
+
+    return {
+      ok: true,
+      payload: {
+        artifactId: query.artifactId,
+        boundary: registryBoundary,
+        campaignId: query.campaignId,
+        record,
+        safety: createSafety(true),
+      },
+    };
+  };
+
+  const register = (
     artifact: unknown,
     context: RegisterExportArtifactContext,
   ): RegisterExportArtifactResult => {
@@ -404,36 +661,45 @@ export const createExportArtifactRegistry = (): ExportArtifactRegistry => ({
       traceId: traceId as string,
     }))}`;
     const safety = createSafety(true);
+    const record: ExportArtifactRegistryRecord = {
+      artifactId,
+      auditEvents: createAuditEvents({
+        createdAt,
+        routeId: routeId as string,
+        traceId: traceId as string,
+      }),
+      batchId: batchId as string,
+      blockedRows: blockedRows as number,
+      boundary: registryBoundary,
+      campaignId: campaignId as string,
+      checksum: checksum as string,
+      checksumAlgorithm: checksumAlgorithm as string,
+      createdAt,
+      expiresAt: retention.expiresAt,
+      fileName: fileName as string,
+      format: format as ExportPreviewMode,
+      mimeType: mimeType as string,
+      payloadBytes: payloadBytes as number,
+      readyRows: readyRows as number,
+      retention,
+      reviewRequiredRows: reviewRequiredRows as number,
+      routeId: routeId as string,
+      safety,
+      totalRows: totalRows as number,
+      traceId: traceId as string,
+    };
+
+    recordsByArtifactId.set(artifactId, record);
 
     return {
       ok: true,
-      record: {
-        artifactId,
-        auditEvents: createAuditEvents({
-          createdAt,
-          routeId: routeId as string,
-          traceId: traceId as string,
-        }),
-        batchId: batchId as string,
-        blockedRows: blockedRows as number,
-        boundary: registryBoundary,
-        campaignId: campaignId as string,
-        checksum: checksum as string,
-        checksumAlgorithm: checksumAlgorithm as string,
-        createdAt,
-        expiresAt: retention.expiresAt,
-        fileName: fileName as string,
-        format: format as ExportPreviewMode,
-        mimeType: mimeType as string,
-        payloadBytes: payloadBytes as number,
-        readyRows: readyRows as number,
-        retention,
-        reviewRequiredRows: reviewRequiredRows as number,
-        routeId: routeId as string,
-        safety,
-        totalRows: totalRows as number,
-        traceId: traceId as string,
-      },
+      record,
     };
-  },
-});
+  };
+
+  return {
+    get,
+    list,
+    register,
+  };
+};
