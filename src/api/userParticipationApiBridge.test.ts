@@ -4,6 +4,7 @@ import {
   sanitizeUserParticipationApiText,
   submitUserParticipationApiReview,
   type UserParticipationApiFetch,
+  type UserParticipationRepositoryEvidenceMetadata,
   type UserParticipationReviewRequest,
 } from "./userParticipationApiBridge";
 
@@ -24,6 +25,19 @@ const response = (
   ok: options.ok ?? true,
   status: options.status ?? 200,
 } as unknown as Response);
+
+const normalizedEvidenceMetadata: UserParticipationRepositoryEvidenceMetadata = {
+  evidenceHash: "evidence-hash:tpl-bridge-ebridge",
+  evidenceId: "campaign-db-evidence-1",
+  evidenceSource: "DAPP_API",
+  liveContractExecuted: false,
+  liveProviderExecuted: false,
+  liveRewardExecuted: false,
+  liveStorageExecuted: false,
+  repositoryId: "campaign-db-repository-runtime",
+  storeId: "campaign-db",
+  taskId: request.taskId,
+};
 
 describe("user participation API bridge", () => {
   it("creates a loading state without touching the network", () => {
@@ -106,6 +120,12 @@ describe("user participation API bridge", () => {
             kind: "verification_attempt",
             recordId: "verify-record-1",
           },
+          campaignDbEvidence: {
+            ...normalizedEvidenceMetadata,
+            completionId: "completion-ignored",
+            evidenceRef: "provider payload raw signature should be omitted",
+            signedUrl: "https://secret.example/raw?token=unsafe",
+          },
         },
         ok: true,
         traceId: "trace-verify-envelope",
@@ -120,6 +140,18 @@ describe("user participation API bridge", () => {
           payload: {
             accountType: "EOA",
             campaignId: request.campaignId,
+            campaignDbEvidence: [
+              normalizedEvidenceMetadata,
+              {
+                evidenceHash: "https://secret.example/raw?token=unsafe",
+                evidenceId: "private key evidence",
+                evidenceSource: "provider payload",
+                liveProviderExecuted: true,
+                repositoryId: "/Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/evidence",
+                taskId: "raw signature",
+              },
+              "malformed-evidence",
+            ],
             eligible: false,
             localePreference: "en-US",
             missingTasks: ["vote_tmrwdao"],
@@ -156,6 +188,7 @@ describe("user participation API bridge", () => {
       configured: true,
       diagnostics: [],
       eligibility: {
+        campaignDbEvidence: [normalizedEvidenceMetadata],
         campaignId: request.campaignId,
         missingTasks: ["vote_tmrwdao"],
         score: 220,
@@ -177,6 +210,7 @@ describe("user participation API bridge", () => {
       verification: {
         accountType: "EOA",
         campaignId: request.campaignId,
+        repositoryEvidence: normalizedEvidenceMetadata,
         pointsAwarded: 120,
         status: "completed",
         taskId: request.taskId,
@@ -222,6 +256,10 @@ describe("user participation API bridge", () => {
         data: {
           payload: {
             accountType: "EOA",
+            campaignDbEvidence: {
+              ...normalizedEvidenceMetadata,
+              evidenceId: "campaign-db-evidence-partial",
+            },
             campaignId: request.campaignId,
             pointsAwarded: 40,
             riskFlags: [],
@@ -261,6 +299,10 @@ describe("user participation API bridge", () => {
       status: "partial",
       traceId: "trace-eligibility-failed",
       verification: {
+        repositoryEvidence: {
+          ...normalizedEvidenceMetadata,
+          evidenceId: "campaign-db-evidence-partial",
+        },
         status: "manual_review",
         taskId: request.taskId,
       },
@@ -355,8 +397,8 @@ describe("user participation API bridge", () => {
   it("sanitizes unsafe free-form text", () => {
     expect(
       sanitizeUserParticipationApiText(
-        "private key raw signature provider payload stack trace /Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/evidence?token=secret",
+        "Authorization: Bearer abc.def.ghi seed phrase private key raw signature provider payload stack trace https://secret.example/raw?token=secret /Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/evidence?token=secret",
       ).toLowerCase(),
-    ).not.toMatch(/private key|raw signature|provider payload|stack trace|campaign-os-kitty|token=secret/);
+    ).not.toMatch(/bearer abc|seed phrase|private key|raw signature|provider payload|stack trace|campaign-os-kitty|token=secret/);
   });
 });

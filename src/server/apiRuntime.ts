@@ -647,11 +647,17 @@ const createSafeCampaignDbRepository = (
     health: () => wrap("campaignDb.health", () => repository.health()),
     list: (filter, context) =>
       wrap("campaignDb.list", () => repository.list(filter, context)),
+    listTaskEvidence: (filter, context) =>
+      wrap("campaignDb.listTaskEvidence", () => repository.listTaskEvidence!(filter, context)),
     projectExport: (input, context) =>
       wrap("campaignDb.projectExport", () => repository.projectExport!(input, context)),
     reset: () => wrap("campaignDb.reset", () => repository.reset()),
     upsertTaskCompletion: (input, context) =>
       wrap("campaignDb.upsertTaskCompletion", () => repository.upsertTaskCompletion!(input, context)),
+    upsertTaskEvidence: (input, context) =>
+      wrap("campaignDb.upsertTaskEvidence", () => repository.upsertTaskEvidence!(input, context)),
+    upsertTaskVerification: (input, context) =>
+      wrap("campaignDb.upsertTaskVerification", () => repository.upsertTaskVerification!(input, context)),
   };
 };
 

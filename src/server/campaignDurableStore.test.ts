@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import type { CampaignDbDraft, CampaignDbTaskDraft } from "./campaignDbRepository";
+import type { CampaignDbDraft, CampaignDbTaskDraft, CampaignDbTaskEvidenceRecord } from "./campaignDbRepository";
 import {
   CampaignDurableStoreError,
   createCampaignDurableStore,
@@ -46,6 +46,34 @@ const taskDraft = (
   updatedAt: createdAt,
   verificationType: "ON_CHAIN",
   walletCompatibility: "ANY",
+});
+
+const taskEvidence = (
+  id: string,
+  campaignId: string,
+  taskId = "campaign-db-task-draft-0001",
+  walletAddress = "2F4EvidenceWallet",
+): CampaignDbTaskEvidenceRecord => ({
+  accountType: "EOA",
+  campaignId,
+  capturedAt: "2026-07-07T00:00:00.000Z",
+  completionId: "campaign-db-task-completion-0001",
+  createdAt: "2026-07-07T00:00:00.000Z",
+  diagnosticCodes: ["local_review"],
+  evidenceHash: `evidence-hash:${id}`,
+  evidenceRef: `local-review:evidence/${id}`,
+  evidenceSource: "AELFSCAN",
+  id,
+  liveContractExecuted: false,
+  liveProviderExecuted: false,
+  liveRewardExecuted: false,
+  liveStorageExecuted: false,
+  pointsAwarded: 120,
+  status: "completed",
+  taskId,
+  updatedAt: "2026-07-07T00:00:00.000Z",
+  walletAddress,
+  walletSource: "PORTKEY_EOA_EXTENSION",
 });
 
 const withTempStorePath = async <T>(operation: (filePath: string) => Promise<T>) => {
@@ -106,6 +134,68 @@ describe("Campaign durable store", () => {
     });
   });
 
+  it("persists, filters, counts, and resets task evidence records", async () => {
+    await withTempStorePath(async (filePath) => {
+      const firstStore = createCampaignDurableStore({ filePath, mode: "durable_test" });
+
+      await firstStore.create(draft("campaign-db-draft-0001"));
+      await firstStore.createTaskDraft(taskDraft("campaign-db-task-draft-0001", "campaign-db-draft-0001"));
+      await firstStore.upsertTaskEvidence(taskEvidence(
+        "campaign-db-task-evidence-0002",
+        "campaign-db-draft-0001",
+        "campaign-db-task-draft-0001",
+        "2F4WalletB",
+      ));
+      await firstStore.upsertTaskEvidence(taskEvidence(
+        "campaign-db-task-evidence-0001",
+        "campaign-db-draft-0001",
+        "campaign-db-task-draft-0001",
+        "2F4WalletA",
+      ));
+      await firstStore.close();
+
+      const reopenedStore = createCampaignDurableStore({ filePath, mode: "durable_test" });
+
+      await expect(reopenedStore.listTaskEvidence({
+        campaignId: "campaign-db-draft-0001",
+        taskId: "campaign-db-task-draft-0001",
+      })).resolves.toEqual([
+        expect.objectContaining({
+          id: "campaign-db-task-evidence-0001",
+          liveContractExecuted: false,
+          liveProviderExecuted: false,
+          liveRewardExecuted: false,
+          liveStorageExecuted: false,
+          walletAddress: "2F4WalletA",
+        }),
+        expect.objectContaining({
+          id: "campaign-db-task-evidence-0002",
+          walletAddress: "2F4WalletB",
+        }),
+      ]);
+      await expect(reopenedStore.listTaskEvidence({
+        campaignId: "campaign-db-draft-0001",
+        walletAddress: "2F4WalletB",
+      })).resolves.toEqual([
+        expect.objectContaining({ id: "campaign-db-task-evidence-0002" }),
+      ]);
+      await expect(reopenedStore.manifest()).resolves.toMatchObject({
+        recordCount: 1,
+        taskEvidenceRecordCount: 2,
+        taskRecordCount: 1,
+      });
+
+      await reopenedStore.reset();
+
+      await expect(reopenedStore.listTaskEvidence({ campaignId: "campaign-db-draft-0001" })).resolves.toEqual([]);
+      await expect(reopenedStore.manifest()).resolves.toMatchObject({
+        recordCount: 0,
+        taskEvidenceRecordCount: 0,
+        taskRecordCount: 0,
+      });
+    });
+  });
+
   it("loads old campaign-only documents with empty task records", async () => {
     await withTempStorePath(async (filePath) => {
       await writeFile(
@@ -124,8 +214,10 @@ describe("Campaign durable store", () => {
         id: "campaign-db-draft-legacy",
       });
       await expect(store.listTaskDraftsByCampaignId("campaign-db-draft-legacy")).resolves.toEqual([]);
+      await expect(store.listTaskEvidence({ campaignId: "campaign-db-draft-legacy" })).resolves.toEqual([]);
       await expect(store.manifest()).resolves.toMatchObject({
         recordCount: 1,
+        taskEvidenceRecordCount: 0,
         taskRecordCount: 0,
       });
     });
@@ -182,6 +274,7 @@ describe("Campaign durable store", () => {
     await store.reset();
 
     await expect(store.list()).resolves.toEqual([]);
+    await expect(store.listTaskEvidence({ campaignId: "campaign-db-draft-local" })).resolves.toEqual([]);
     await expect(store.listTaskDraftsByCampaignId("campaign-db-draft-local")).resolves.toEqual([]);
   });
 

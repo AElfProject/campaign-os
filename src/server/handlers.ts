@@ -73,7 +73,9 @@ import type {
   CampaignDbListFilter,
   CampaignDbReadProjection,
   CampaignDbTaskCompletion,
+  CampaignDbTaskEvidenceRecord,
   CampaignDbTaskDraft,
+  CampaignDbTaskVerificationProjection,
 } from "./campaignDbRepository";
 import { createBackendTopologyReport } from "./topology";
 import { createRuntimeSafety } from "./envelope";
@@ -530,9 +532,27 @@ const createCampaignDbTaskMetadata = (task: CampaignDbTaskDraft) => ({
 const createCampaignDbCompletionMetadata = (completion: CampaignDbTaskCompletion) => ({
   completionId: completion.id,
   createdViaRepository: true,
+  ...(completion.evidenceId ? { evidenceId: completion.evidenceId } : {}),
   repositoryId: "campaign-db-repository-runtime",
   storeId: "campaign-db" as const,
   taskId: completion.taskId,
+});
+
+const createCampaignDbEvidenceMetadata = (evidence: CampaignDbTaskEvidenceRecord) => ({
+  createdViaRepository: true,
+  ...(evidence.completionId ? { completionId: evidence.completionId } : {}),
+  evidenceHash: evidence.evidenceHash,
+  evidenceId: evidence.id,
+  ...(evidence.evidenceRef ? { evidenceRef: evidence.evidenceRef } : {}),
+  evidenceSource: evidence.evidenceSource,
+  liveContractExecuted: evidence.liveContractExecuted,
+  liveProviderExecuted: evidence.liveProviderExecuted,
+  liveRewardExecuted: evidence.liveRewardExecuted,
+  liveStorageExecuted: evidence.liveStorageExecuted,
+  repositoryId: "campaign-db-repository-runtime",
+  status: evidence.status,
+  storeId: "campaign-db" as const,
+  taskId: evidence.taskId,
 });
 
 const toCanonicalEvidenceSource = (
@@ -561,23 +581,30 @@ const toProviderId = (
 const createRepositoryCompletionResponse = (
   completion: CampaignDbTaskCompletion,
   task: CampaignDbTaskDraft,
+  evidence?: CampaignDbTaskEvidenceRecord,
 ) => ({
   accountType: completion.accountType,
   campaignId: completion.campaignId,
-  canonicalEvidenceSource: toCanonicalEvidenceSource(completion.evidenceSource),
+  canonicalEvidenceSource: toCanonicalEvidenceSource(evidence?.evidenceSource ?? completion.evidenceSource),
   evidence: {
-    capturedAt: completion.updatedAt,
-    evidenceHash: completion.evidenceHash ?? `evidence-hash:${completion.taskId}`,
-    evidenceId: `campaign-db-evidence-${completion.id}`,
+    capturedAt: evidence?.capturedAt ?? completion.updatedAt,
+    evidenceHash: evidence?.evidenceHash ?? completion.evidenceHash ?? `evidence-hash:${completion.taskId}`,
+    evidenceId: evidence?.id ?? completion.evidenceId ?? `campaign-db-evidence-${completion.id}`,
     live: false,
-    source: toCanonicalEvidenceSource(completion.evidenceSource),
+    source: toCanonicalEvidenceSource(evidence?.evidenceSource ?? completion.evidenceSource),
     sourceLabel: localized(
       "Campaign DB local evidence",
       "Campaign DB local evidence",
     ),
   },
-  evidenceHash: completion.evidenceHash ?? `evidence-hash:${completion.taskId}`,
-  evidenceSource: completion.evidenceSource,
+  ...(evidence?.id ?? completion.evidenceId ? { evidenceId: evidence?.id ?? completion.evidenceId } : {}),
+  ...(evidence?.evidenceRef ? { evidenceRef: evidence.evidenceRef } : {}),
+  evidenceHash: evidence?.evidenceHash ?? completion.evidenceHash ?? `evidence-hash:${completion.taskId}`,
+  evidenceSource: evidence?.evidenceSource ?? completion.evidenceSource,
+  liveContractExecuted: evidence?.liveContractExecuted ?? false,
+  liveProviderExecuted: evidence?.liveProviderExecuted ?? false,
+  liveRewardExecuted: evidence?.liveRewardExecuted ?? false,
+  liveStorageExecuted: evidence?.liveStorageExecuted ?? false,
   manualReview: {
     queued: completion.status === "manual_review",
     ...(completion.status === "manual_review"
@@ -622,6 +649,7 @@ const createRepositoryEligibilityResponse = (
   eligible: projection.eligible,
   localePreference: projection.localePreference,
   missingTasks: projection.missingTasks,
+  campaignDbEvidence: projection.evidence.map(createCampaignDbEvidenceMetadata),
   nextAction: localized(
     projection.eligible
       ? "Repository campaign eligibility is satisfied locally."
@@ -1598,6 +1626,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     const request = verifyTaskRequest(context);
     const localResult = context.service.verifyTask(request);
     let campaignDbCompletion: CampaignDbTaskCompletion | undefined;
+    let campaignDbEvidence: CampaignDbTaskEvidenceRecord | undefined;
     let result: LocalServiceResult<VerifyTaskResponse> = localResult;
 
     if (!localResult.ok && localResult.error.code === "CAMPAIGN_NOT_FOUND") {
@@ -1611,7 +1640,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       }
 
       if (campaignDbDraft && campaignDbTask) {
-        campaignDbCompletion = await context.campaignDbRepository.upsertTaskCompletion!({
+        const verification = await context.campaignDbRepository.upsertTaskVerification!({
           accountType: request.accountType,
           campaignId: request.campaignId,
           evidenceHash: `evidence-hash:${campaignDbTask.id}`,
@@ -1620,11 +1649,13 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
           walletSource: request.walletSource,
         }, {
           traceId: context.traceId,
-        });
+        }) satisfies CampaignDbTaskVerificationProjection;
+        campaignDbCompletion = verification.completion;
+        campaignDbEvidence = verification.evidence;
         result = {
           boundary: campaignDbBoundary,
           ok: true,
-          payload: createRepositoryCompletionResponse(campaignDbCompletion, campaignDbTask),
+          payload: createRepositoryCompletionResponse(campaignDbCompletion, campaignDbTask, campaignDbEvidence),
         };
       }
     }
@@ -1652,6 +1683,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       ? {
         ...response,
         campaignDbCompletion: createCampaignDbCompletionMetadata(campaignDbCompletion),
+        ...(campaignDbEvidence ? { campaignDbEvidence: createCampaignDbEvidenceMetadata(campaignDbEvidence) } : {}),
       }
       : response;
   },

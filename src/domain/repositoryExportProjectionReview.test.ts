@@ -174,7 +174,13 @@ const projectionFixture = (): CampaignDbExportProjection => ({
         {
           completedAt: "2026-07-09T00:00:00.000Z",
           evidenceHash: "evidence-hash:bridge",
+          evidenceId: "campaign-db-task-evidence-0001",
+          evidenceRef: "local-review:bridge",
           evidenceSource: "AEFINDER",
+          liveContractExecuted: false,
+          liveProviderExecuted: false,
+          liveRewardExecuted: false,
+          liveStorageExecuted: false,
           pointsAwarded: 120,
           pointsAvailable: 120,
           required: true,
@@ -206,7 +212,12 @@ const projectionFixture = (): CampaignDbExportProjection => ({
       taskRecords: [
         {
           evidenceHash: "evidence-hash:pending",
+          evidenceId: "campaign-db-task-evidence-0002",
           evidenceSource: "MANUAL",
+          liveContractExecuted: false,
+          liveProviderExecuted: false,
+          liveRewardExecuted: false,
+          liveStorageExecuted: false,
           pointsAwarded: 0,
           pointsAvailable: 120,
           required: true,
@@ -321,7 +332,23 @@ describe("repository export projection review model", () => {
       walletAddress: "2F4ReadyWallet",
       walletSource: "PORTKEY_EOA_EXTENSION",
     });
-    expect(model.previewRows[0].taskRecordSummary).toEqual(["bridge_ebridge: completed / 120"]);
+    expect(model.previewRows[0].taskRecordSummary).toEqual([
+      "bridge_ebridge: completed / 120 / evidence=campaign-db-task-evidence-0001 / hash=evidence-hash:bridge",
+    ]);
+    expect(model.previewRows[0].taskEvidence).toEqual([
+      {
+        evidenceHash: "evidence-hash:bridge",
+        evidenceId: "campaign-db-task-evidence-0001",
+        evidenceRef: "local-review:bridge",
+        liveContractExecuted: false,
+        liveProviderExecuted: false,
+        liveRewardExecuted: false,
+        liveStorageExecuted: false,
+        status: "completed",
+        taskId: "task-bridge",
+        templateCode: "bridge_ebridge",
+      },
+    ]);
     expect(model.previewRows[1]).toMatchObject({
       missingTasks: ["bridge_ebridge"],
       riskFlags: ["manual_review_required"],

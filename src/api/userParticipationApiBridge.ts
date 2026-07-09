@@ -49,6 +49,19 @@ export interface UserParticipationReviewRequest {
   walletSource: WalletSource;
 }
 
+export interface UserParticipationRepositoryEvidenceMetadata {
+  evidenceHash?: string;
+  evidenceId?: string;
+  evidenceSource?: string;
+  liveContractExecuted?: false;
+  liveProviderExecuted?: false;
+  liveRewardExecuted?: false;
+  liveStorageExecuted?: false;
+  repositoryId?: string;
+  storeId?: string;
+  taskId?: string;
+}
+
 export interface UserParticipationVerificationResult {
   accountType: AccountType | string;
   campaignId: string;
@@ -57,6 +70,7 @@ export interface UserParticipationVerificationResult {
   nextAction?: LocalizedText;
   pointsAwarded: number;
   pointsAvailable?: number;
+  repositoryEvidence?: UserParticipationRepositoryEvidenceMetadata;
   riskFlags: readonly string[];
   status: Exclude<TaskVerificationStatus, "ready"> | string;
   taskId: string;
@@ -66,6 +80,7 @@ export interface UserParticipationVerificationResult {
 
 export interface UserParticipationEligibilityResult {
   accountType?: AccountType | string;
+  campaignDbEvidence?: readonly UserParticipationRepositoryEvidenceMetadata[];
   campaignId: string;
   eligible: boolean;
   localePreference?: string;
@@ -461,6 +476,28 @@ const metadataPayload = (body: unknown, key: "campaignDb" | "persistence") => {
   return undefined;
 };
 
+const campaignDbEvidencePayload = (body: unknown) => {
+  if (!isRecord(body)) {
+    return undefined;
+  }
+
+  if (isRecord(body.data)) {
+    if ("campaignDbEvidence" in body.data) {
+      return body.data.campaignDbEvidence;
+    }
+
+    if (isRecord(body.data.payload) && "campaignDbEvidence" in body.data.payload) {
+      return body.data.payload.campaignDbEvidence;
+    }
+  }
+
+  if ("campaignDbEvidence" in body) {
+    return body.campaignDbEvidence;
+  }
+
+  return undefined;
+};
+
 const optionalText = (value: unknown) =>
   typeof value === "string" ? sanitizeUserParticipationApiText(value) : undefined;
 
@@ -492,7 +529,97 @@ const localizedText = (value: unknown): LocalizedText | undefined => {
   };
 };
 
-const normalizeVerification = (payload: unknown): UserParticipationVerificationResult | undefined => {
+const repositoryEvidenceTextFields = [
+  "evidenceHash",
+  "evidenceId",
+  "evidenceSource",
+  "repositoryId",
+  "storeId",
+  "taskId",
+] as const satisfies readonly (keyof UserParticipationRepositoryEvidenceMetadata)[];
+
+const repositoryEvidenceNoLiveFields = [
+  "liveContractExecuted",
+  "liveProviderExecuted",
+  "liveRewardExecuted",
+  "liveStorageExecuted",
+] as const satisfies readonly (keyof UserParticipationRepositoryEvidenceMetadata)[];
+
+const unsafeRepositoryEvidenceText = (value: string) => {
+  const sanitized = sanitizeUserParticipationApiText(value);
+
+  return sanitized !== value || /https?:\/\//i.test(value);
+};
+
+const safeRepositoryEvidenceText = (value: unknown) => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed || unsafeRepositoryEvidenceText(trimmed)) {
+    return undefined;
+  }
+
+  return sanitizeUserParticipationApiText(trimmed);
+};
+
+const normalizeRepositoryEvidenceMetadata = (
+  payload: unknown,
+): UserParticipationRepositoryEvidenceMetadata | undefined => {
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+
+  const metadata: UserParticipationRepositoryEvidenceMetadata = {};
+
+  for (const field of repositoryEvidenceTextFields) {
+    if (!(field in payload) || payload[field] === undefined || payload[field] === null) {
+      continue;
+    }
+
+    const value = safeRepositoryEvidenceText(payload[field]);
+
+    if (!value) {
+      return undefined;
+    }
+
+    metadata[field] = value;
+  }
+
+  for (const field of repositoryEvidenceNoLiveFields) {
+    if (!(field in payload) || payload[field] === undefined || payload[field] === null) {
+      continue;
+    }
+
+    if (payload[field] !== false) {
+      return undefined;
+    }
+
+    metadata[field] = false;
+  }
+
+  return Object.keys(metadata).length ? metadata : undefined;
+};
+
+const normalizeRepositoryEvidenceList = (
+  payload: unknown,
+): readonly UserParticipationRepositoryEvidenceMetadata[] | undefined => {
+  const records = Array.isArray(payload) ? payload : [payload];
+  const normalized = records.flatMap((record) => {
+    const metadata = normalizeRepositoryEvidenceMetadata(record);
+
+    return metadata ? [metadata] : [];
+  });
+
+  return normalized.length ? normalized : undefined;
+};
+
+const normalizeVerification = (
+  payload: unknown,
+  repositoryEvidence?: UserParticipationRepositoryEvidenceMetadata,
+): UserParticipationVerificationResult | undefined => {
   if (!isRecord(payload)) {
     return undefined;
   }
@@ -504,6 +631,8 @@ const normalizeVerification = (payload: unknown): UserParticipationVerificationR
   const walletSource = optionalText(payload.walletSource);
   const status = optionalText(payload.status);
   const pointsAwarded = numberValue(payload.pointsAwarded);
+  const evidenceHash = safeRepositoryEvidenceText(payload.evidenceHash);
+  const evidenceSource = safeRepositoryEvidenceText(payload.evidenceSource);
 
   if (!campaignId || !taskId || !walletAddress || !accountType || !walletSource || !status || pointsAwarded === undefined) {
     return undefined;
@@ -512,11 +641,12 @@ const normalizeVerification = (payload: unknown): UserParticipationVerificationR
   return {
     accountType,
     campaignId,
-    ...(optionalText(payload.evidenceHash) ? { evidenceHash: optionalText(payload.evidenceHash) } : {}),
-    ...(optionalText(payload.evidenceSource) ? { evidenceSource: optionalText(payload.evidenceSource) } : {}),
+    ...(evidenceHash ? { evidenceHash } : {}),
+    ...(evidenceSource ? { evidenceSource } : {}),
     ...(localizedText(payload.nextAction) ? { nextAction: localizedText(payload.nextAction) } : {}),
     pointsAwarded,
     ...(numberValue(payload.pointsAvailable) !== undefined ? { pointsAvailable: numberValue(payload.pointsAvailable) } : {}),
+    ...(repositoryEvidence ? { repositoryEvidence } : {}),
     riskFlags: textArray(payload.riskFlags),
     status,
     taskId,
@@ -525,7 +655,10 @@ const normalizeVerification = (payload: unknown): UserParticipationVerificationR
   };
 };
 
-const normalizeEligibility = (payload: unknown): UserParticipationEligibilityResult | undefined => {
+const normalizeEligibility = (
+  payload: unknown,
+  campaignDbEvidence?: readonly UserParticipationRepositoryEvidenceMetadata[],
+): UserParticipationEligibilityResult | undefined => {
   if (!isRecord(payload)) {
     return undefined;
   }
@@ -548,6 +681,7 @@ const normalizeEligibility = (payload: unknown): UserParticipationEligibilityRes
 
   return {
     ...(optionalText(payload.accountType) ? { accountType: optionalText(payload.accountType) } : {}),
+    ...(campaignDbEvidence ? { campaignDbEvidence } : {}),
     campaignId,
     eligible: payload.eligible,
     ...(optionalText(payload.localePreference) ? { localePreference: optionalText(payload.localePreference) } : {}),
@@ -660,7 +794,8 @@ export const submitUserParticipationApiReview = async ({
     );
   }
 
-  const verification = normalizeVerification(dataPayload(verify.body));
+  const verifyRepositoryEvidence = normalizeRepositoryEvidenceMetadata(campaignDbEvidencePayload(verify.body));
+  const verification = normalizeVerification(dataPayload(verify.body), verifyRepositoryEvidence);
 
   if (!verification) {
     return fallbackState(
@@ -712,7 +847,8 @@ export const submitUserParticipationApiReview = async ({
     };
   }
 
-  const normalizedEligibility = normalizeEligibility(dataPayload(eligibility.body));
+  const eligibilityRepositoryEvidence = normalizeRepositoryEvidenceList(campaignDbEvidencePayload(eligibility.body));
+  const normalizedEligibility = normalizeEligibility(dataPayload(eligibility.body), eligibilityRepositoryEvidence);
 
   if (!normalizedEligibility) {
     return {

@@ -50,7 +50,19 @@ interface CampaignDetailPayload {
 }
 
 interface EligibilityPayload {
+  campaignDbEvidence?: Array<{
+    completionId?: string;
+    evidenceHash: string;
+    evidenceId: string;
+    liveContractExecuted: false;
+    liveProviderExecuted: false;
+    liveRewardExecuted: false;
+    liveStorageExecuted: false;
+    taskId: string;
+  }>;
   eligible: boolean;
+  score?: number;
+  status?: string;
   walletAddress: string;
 }
 
@@ -117,8 +129,18 @@ interface TaskDraftPayload {
 
 interface VerificationPayload {
   accountType?: string;
+  evidence?: {
+    evidenceHash?: string;
+    evidenceId?: string;
+    live: false;
+  };
+  evidenceId?: string;
   evidenceSource: string;
   evidenceHash?: string;
+  liveContractExecuted?: false;
+  liveProviderExecuted?: false;
+  liveRewardExecuted?: false;
+  liveStorageExecuted?: false;
   pointsAwarded: number;
   pointsAvailable?: number;
   status: string;
@@ -210,6 +232,12 @@ interface ExportPreviewPayload {
     rank?: number;
     rowStatus: string;
     taskRecords: Array<{
+      evidenceHash?: string;
+      evidenceId?: string;
+      liveContractExecuted?: false;
+      liveProviderExecuted?: false;
+      liveRewardExecuted?: false;
+      liveStorageExecuted?: false;
       pointsAwarded: number;
       required: boolean;
       status: string;
@@ -639,10 +667,19 @@ const createFailingCampaignDbRepository = (): CampaignDbRepository => ({
   list: async () => {
     throw new Error("campaign DB repository unavailable");
   },
+  listTaskEvidence: async () => {
+    throw new Error("campaign DB repository unavailable");
+  },
   reset: async () => {
     throw new Error("campaign DB repository unavailable");
   },
   upsertTaskCompletion: async () => {
+    throw new Error("campaign DB repository unavailable");
+  },
+  upsertTaskEvidence: async () => {
+    throw new Error("campaign DB repository unavailable");
+  },
+  upsertTaskVerification: async () => {
     throw new Error("campaign DB repository unavailable");
   },
 });
@@ -3040,17 +3077,49 @@ describe("Campaign OS API runtime", () => {
       walletTypeVerified: true,
     });
     expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
-      campaignDbCompletion: { completionId: string; storeId: string };
+      campaignDbCompletion: { completionId: string; evidenceId: string; storeId: string };
+      campaignDbEvidence: {
+        completionId: string;
+        evidenceHash: string;
+        evidenceId: string;
+        liveContractExecuted: false;
+        liveProviderExecuted: false;
+        liveRewardExecuted: false;
+        liveStorageExecuted: false;
+        storeId: string;
+      };
       persistence: { kind: string };
     }>(optionalVerification)).toMatchObject({
       campaignDbCompletion: {
         completionId: "campaign-db-task-completion-0001",
+        evidenceId: "campaign-db-task-evidence-0001",
+        storeId: "campaign-db",
+      },
+      campaignDbEvidence: {
+        completionId: "campaign-db-task-completion-0001",
+        evidenceHash: `evidence-hash:${optionalTaskPayload.campaignDbTask.taskId}`,
+        evidenceId: "campaign-db-task-evidence-0001",
+        liveContractExecuted: false,
+        liveProviderExecuted: false,
+        liveRewardExecuted: false,
+        liveStorageExecuted: false,
         storeId: "campaign-db",
       },
       payload: {
         accountType: "EOA",
         campaignId: created.payload.id,
+        evidence: {
+          evidenceHash: `evidence-hash:${optionalTaskPayload.campaignDbTask.taskId}`,
+          evidenceId: "campaign-db-task-evidence-0001",
+          live: false,
+        },
+        evidenceHash: `evidence-hash:${optionalTaskPayload.campaignDbTask.taskId}`,
+        evidenceId: "campaign-db-task-evidence-0001",
         evidenceSource: "SOCIAL_API",
+        liveContractExecuted: false,
+        liveProviderExecuted: false,
+        liveRewardExecuted: false,
+        liveStorageExecuted: false,
         pointsAwarded: 50,
         pointsAvailable: 50,
         status: "completed",
@@ -3061,18 +3130,38 @@ describe("Campaign OS API runtime", () => {
       persistence: { kind: "verification_attempt" },
     });
     expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(optionalEligibility).payload).toMatchObject({
+      campaignDbEvidence: [
+        expect.objectContaining({
+          completionId: "campaign-db-task-completion-0001",
+          evidenceHash: `evidence-hash:${optionalTaskPayload.campaignDbTask.taskId}`,
+          evidenceId: "campaign-db-task-evidence-0001",
+          liveContractExecuted: false,
+          liveProviderExecuted: false,
+          liveRewardExecuted: false,
+          liveStorageExecuted: false,
+          taskId: optionalTaskPayload.campaignDbTask.taskId,
+        }),
+      ],
       eligible: false,
       missingTasks: ["bridge_ebridge"],
       score: 50,
       status: "not_eligible",
     });
     expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
-      campaignDbCompletion: { completionId: string };
+      campaignDbCompletion: { completionId: string; evidenceId: string };
+      campaignDbEvidence: { completionId: string; evidenceId: string };
     }>(requiredVerification)).toMatchObject({
       campaignDbCompletion: {
         completionId: "campaign-db-task-completion-0002",
+        evidenceId: "campaign-db-task-evidence-0002",
+      },
+      campaignDbEvidence: {
+        completionId: "campaign-db-task-completion-0002",
+        evidenceId: "campaign-db-task-evidence-0002",
       },
       payload: {
+        evidenceHash: `evidence-hash:${requiredTaskPayload.campaignDbTask.taskId}`,
+        evidenceId: "campaign-db-task-evidence-0002",
         evidenceSource: "AELFSCAN",
         pointsAwarded: 120,
         pointsAvailable: 120,
@@ -3080,6 +3169,18 @@ describe("Campaign OS API runtime", () => {
       },
     });
     expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(eligible).payload).toMatchObject({
+      campaignDbEvidence: expect.arrayContaining([
+        expect.objectContaining({
+          completionId: "campaign-db-task-completion-0001",
+          evidenceId: "campaign-db-task-evidence-0001",
+          taskId: optionalTaskPayload.campaignDbTask.taskId,
+        }),
+        expect.objectContaining({
+          completionId: "campaign-db-task-completion-0002",
+          evidenceId: "campaign-db-task-evidence-0002",
+          taskId: requiredTaskPayload.campaignDbTask.taskId,
+        }),
+      ]),
       eligible: true,
       missingTasks: [],
       score: 170,
@@ -3166,10 +3267,21 @@ describe("Campaign OS API runtime", () => {
       }),
     });
 
-    await runtimeWithCampaignDbRepository.handle({
+    const requiredVerification = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: `/api/tasks/${requiredTaskPayload.campaignDbTask.taskId}/verify`,
       headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-required-verify" },
+      body: JSON.stringify({
+        accountType: "EOA",
+        campaignId: created.payload.id,
+        walletAddress: "2F4ExportWallet",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      }),
+    });
+    const repeatedRequiredVerification = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/tasks/${requiredTaskPayload.campaignDbTask.taskId}/verify`,
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-required-reverify" },
       body: JSON.stringify({
         accountType: "EOA",
         campaignId: created.payload.id,
@@ -3233,6 +3345,14 @@ describe("Campaign OS API runtime", () => {
     const auditListData = expectSuccessData<LocalServiceEnvelope<ExportArtifactAuditPayload>>(auditList);
     const auditDetailData = expectSuccessData<LocalServiceEnvelope<ExportArtifactAuditPayload>>(auditDetail);
     const snapshot = await repository.snapshot();
+    const requiredVerificationData = expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
+      campaignDbCompletion: { completionId: string; evidenceId: string };
+      campaignDbEvidence: { completionId: string; evidenceHash: string; evidenceId: string };
+    }>(requiredVerification);
+    const repeatedRequiredVerificationData = expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
+      campaignDbCompletion: { completionId: string; evidenceId: string };
+      campaignDbEvidence: { completionId: string; evidenceId: string };
+    }>(repeatedRequiredVerification);
 
     expect(blockedPreviewData).toMatchObject({
       campaignDb: {
@@ -3341,6 +3461,42 @@ describe("Campaign OS API runtime", () => {
         kind: "export_preview",
       },
     });
+    expect(requiredVerificationData).toMatchObject({
+      campaignDbCompletion: {
+        completionId: "campaign-db-task-completion-0002",
+        evidenceId: "campaign-db-task-evidence-0002",
+      },
+      campaignDbEvidence: {
+        completionId: "campaign-db-task-completion-0002",
+        evidenceHash: `evidence-hash:${requiredTaskPayload.campaignDbTask.taskId}`,
+        evidenceId: "campaign-db-task-evidence-0002",
+      },
+    });
+    expect(repeatedRequiredVerificationData.campaignDbCompletion).toEqual(requiredVerificationData.campaignDbCompletion);
+    expect(repeatedRequiredVerificationData.campaignDbEvidence).toEqual(requiredVerificationData.campaignDbEvidence);
+    expect(readyPreviewData.payload.rows).toHaveLength(1);
+    expect(readyPreviewData.payload.rows?.[0]?.taskRecords).toEqual([
+      expect.objectContaining({
+        evidenceHash: `evidence-hash:${requiredTaskPayload.campaignDbTask.taskId}`,
+        evidenceId: "campaign-db-task-evidence-0002",
+        liveContractExecuted: false,
+        liveProviderExecuted: false,
+        liveRewardExecuted: false,
+        liveStorageExecuted: false,
+        pointsAwarded: 120,
+        taskId: requiredTaskPayload.campaignDbTask.taskId,
+      }),
+      expect.objectContaining({
+        evidenceHash: `evidence-hash:${optionalTaskPayload.campaignDbTask.taskId}`,
+        evidenceId: "campaign-db-task-evidence-0001",
+        liveContractExecuted: false,
+        liveProviderExecuted: false,
+        liveRewardExecuted: false,
+        liveStorageExecuted: false,
+        pointsAwarded: 50,
+        taskId: optionalTaskPayload.campaignDbTask.taskId,
+      }),
+    ]);
     expect(readyPreviewData.payload.artifactRegistry?.checksum).toBe(readyPreviewData.payload.artifact?.checksum);
     expect(readyPreviewData.payload.artifactRegistry?.artifactId).toBe(
       expectedExportArtifactRegistryId(

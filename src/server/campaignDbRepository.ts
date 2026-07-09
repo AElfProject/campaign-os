@@ -64,6 +64,16 @@ export type CampaignDbDiagnosticCode =
   | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_EVIDENCE_SOURCE"
   | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_STATUS"
   | "CAMPAIGN_DB_COMPLETION_UNSUPPORTED_WALLET_SOURCE"
+  | "CAMPAIGN_DB_EVIDENCE_CAMPAIGN_NOT_FOUND"
+  | "CAMPAIGN_DB_EVIDENCE_INVALID_DIAGNOSTIC_CODE"
+  | "CAMPAIGN_DB_EVIDENCE_INVALID_EVIDENCE_HASH"
+  | "CAMPAIGN_DB_EVIDENCE_INVALID_EVIDENCE_REF"
+  | "CAMPAIGN_DB_EVIDENCE_REQUIRED_FIELD_MISSING"
+  | "CAMPAIGN_DB_EVIDENCE_TASK_NOT_FOUND"
+  | "CAMPAIGN_DB_EVIDENCE_UNSUPPORTED_ACCOUNT_TYPE"
+  | "CAMPAIGN_DB_EVIDENCE_UNSUPPORTED_EVIDENCE_SOURCE"
+  | "CAMPAIGN_DB_EVIDENCE_UNSUPPORTED_STATUS"
+  | "CAMPAIGN_DB_EVIDENCE_UNSUPPORTED_WALLET_SOURCE"
   | "CAMPAIGN_DB_PARTICIPANT_CAMPAIGN_NOT_FOUND"
   | "CAMPAIGN_DB_PARTICIPANT_INVALID_POINTS"
   | "CAMPAIGN_DB_PARTICIPANT_INVALID_RANK"
@@ -184,6 +194,7 @@ export interface CampaignDbTaskCompletion {
   campaignId: string;
   completedAt?: string;
   createdAt: string;
+  evidenceId?: string;
   evidenceHash?: string;
   evidenceSource: CampaignDbTaskCompletionEvidenceSource;
   id: string;
@@ -267,12 +278,69 @@ export interface CampaignDbMarkReferralQualifiedInput {
 export interface CampaignDbUpsertTaskCompletionInput {
   accountType: AccountType | string;
   campaignId: string;
+  evidenceId?: string;
   evidenceHash?: string;
   evidenceSource?: CampaignDbTaskCompletionEvidenceSource | string;
   status?: CampaignDbTaskCompletionStatus | string;
   taskId: string;
   walletAddress: string;
   walletSource: WalletSource | string;
+}
+
+export interface CampaignDbTaskEvidenceRecord {
+  accountType: AccountType;
+  campaignId: string;
+  capturedAt: string;
+  completionId?: string;
+  createdAt: string;
+  diagnosticCodes: string[];
+  evidenceHash: string;
+  evidenceRef?: string;
+  evidenceSource: CampaignDbTaskCompletionEvidenceSource;
+  id: string;
+  liveContractExecuted: false;
+  liveProviderExecuted: false;
+  liveRewardExecuted: false;
+  liveStorageExecuted: false;
+  pointsAwarded: number;
+  status: CampaignDbTaskCompletionStatus;
+  taskId: string;
+  updatedAt: string;
+  walletAddress: string;
+  walletSource: WalletSource;
+}
+
+export interface CampaignDbUpsertTaskEvidenceInput {
+  accountType: AccountType | string;
+  campaignId: string;
+  completionId?: string;
+  diagnosticCodes?: readonly string[];
+  evidenceHash?: string;
+  evidenceRef?: string;
+  evidenceSource?: CampaignDbTaskCompletionEvidenceSource | string;
+  pointsAwarded?: number;
+  status?: CampaignDbTaskCompletionStatus | string;
+  taskId: string;
+  walletAddress: string;
+  walletSource: WalletSource | string;
+}
+
+export interface CampaignDbTaskEvidenceListFilter {
+  campaignId: string;
+  limit?: number;
+  taskId?: string;
+  walletAddress?: string;
+}
+
+export interface CampaignDbTaskVerificationProjection {
+  completion: CampaignDbTaskCompletion;
+  evidence: CampaignDbTaskEvidenceRecord;
+  repository: {
+    adapterId: string;
+    createdViaRepository: true;
+    repositoryId: string;
+    storeId: "campaign-db";
+  };
 }
 
 export interface CampaignDbI18nDraftInput {
@@ -321,6 +389,7 @@ export interface CampaignDbReadProjection extends CampaignDbDraft {
   completions: CampaignDbTaskCompletion[];
   participants: CampaignDbParticipantRecord[];
   referralBindings: CampaignDbReferralBindingRecord[];
+  taskEvidence: CampaignDbTaskEvidenceRecord[];
   tasks: CampaignDbTaskDraft[];
 }
 
@@ -335,6 +404,7 @@ export interface CampaignDbEligibilityProjection {
   accountType: AccountType;
   campaignId: string;
   eligible: boolean;
+  evidence: CampaignDbTaskEvidenceRecord[];
   localePreference: SupportedLocale;
   missingTasks: string[];
   repository: {
@@ -373,8 +443,14 @@ export type CampaignDbExportTaskStatus = CampaignDbTaskCompletionStatus | "missi
 
 export interface CampaignDbExportTaskRecord {
   completedAt?: string;
+  evidenceId?: string;
   evidenceHash?: string;
+  evidenceRef?: string;
   evidenceSource?: CampaignDbTaskCompletionEvidenceSource;
+  liveContractExecuted?: false;
+  liveProviderExecuted?: false;
+  liveRewardExecuted?: false;
+  liveStorageExecuted?: false;
   pointsAwarded: number;
   pointsAvailable: number;
   required: boolean;
@@ -546,6 +622,7 @@ export interface CampaignDbRepositoryEvent {
     | "CampaignParticipant"
     | "CampaignTask"
     | "ReferralBinding"
+    | "TaskEvidence"
     | "TaskCompletion";
   id: string;
   liveExecution: false;
@@ -568,8 +645,12 @@ export interface CampaignDbRepositoryHealth {
   id: "campaign-db-repository-runtime";
   i18nDraftRecordCount: number;
   liveConnectionAttempted: false;
+  liveContractExecutionEnabled: false;
   liveMigrationExecutionEnabled: false;
+  liveProviderExecutionEnabled: false;
   liveQueryExecutionEnabled: false;
+  liveRewardExecutionEnabled: false;
+  liveStorageExecutionEnabled: false;
   productionReady: false;
   participantRecordCount: number;
   referralBindingRecordCount: number;
@@ -577,6 +658,7 @@ export interface CampaignDbRepositoryHealth {
   selectedMode: CampaignDbRepositoryMode;
   status: CampaignDbRepositoryStatus;
   storeId: "campaign-db";
+  taskEvidenceRecordCount: number;
   taskRecordCount: number;
   validation: {
     issues: CampaignDbDiagnostic[];
@@ -616,6 +698,10 @@ export interface CampaignDbRepository {
     filter?: CampaignDbListFilter,
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbReadProjection[]>;
+  listTaskEvidence?(
+    filter: CampaignDbTaskEvidenceListFilter,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbTaskEvidenceRecord[]>;
   listParticipants?(
     filter: CampaignDbParticipantListFilter,
     context?: CampaignDbOperationContext,
@@ -654,6 +740,14 @@ export interface CampaignDbRepository {
     input: CampaignDbUpsertTaskCompletionInput,
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbTaskCompletion>;
+  upsertTaskEvidence?(
+    input: CampaignDbUpsertTaskEvidenceInput,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbTaskEvidenceRecord>;
+  upsertTaskVerification?(
+    input: CampaignDbUpsertTaskCompletionInput,
+    context?: CampaignDbOperationContext,
+  ): Promise<CampaignDbTaskVerificationProjection>;
 }
 
 export interface CreateCampaignDbRepositoryOptions {
@@ -732,6 +826,14 @@ const secretLikeKeyFragments = [
   "token",
   "url",
 ];
+const privateArtifactPathFragments = [
+  "/.agents",
+  "/.kittify",
+  "/evidence/",
+  "/kitty-specs/",
+  "/sync/",
+  "campaign-os-kitty",
+];
 
 const diagnostic = (
   code: CampaignDbDiagnosticCode,
@@ -758,9 +860,11 @@ const hasSecretLikeKey = (key: string) => {
 
 const hasSecretLikeValue = (value: string) => {
   const normalizedValue = normalizeSecretKey(value);
+  const normalizedPath = value.toLowerCase();
 
   return value.includes("://") ||
     value.includes("@") ||
+    privateArtifactPathFragments.some((fragment) => normalizedPath.includes(fragment)) ||
     secretLikeKeyFragments.some((fragment) => normalizedValue.includes(fragment));
 };
 
@@ -1279,6 +1383,163 @@ const normalizeEvidenceHash = (
   return trimmed;
 };
 
+const requireEvidenceString = (
+  input: CampaignDbUpsertTaskEvidenceInput,
+  field: "campaignId" | "taskId" | "walletAddress",
+  issues: CampaignDbDiagnostic[],
+) => {
+  const value = input[field];
+
+  if (!isNonEmptyString(value)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EVIDENCE_REQUIRED_FIELD_MISSING",
+      field,
+      `Campaign DB task evidence field '${field}' is required.`,
+    ));
+
+    return "";
+  }
+
+  return value.trim();
+};
+
+const normalizeEvidenceAccountType = (
+  accountType: string | undefined,
+  issues: CampaignDbDiagnostic[],
+): AccountType => {
+  if (!accountType || !isAccountType(accountType)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EVIDENCE_UNSUPPORTED_ACCOUNT_TYPE",
+      "accountType",
+      "Campaign DB task evidence accountType is unsupported.",
+    ));
+
+    return "UNKNOWN";
+  }
+
+  return accountType;
+};
+
+const normalizeEvidenceWalletSource = (
+  walletSource: string | undefined,
+  issues: CampaignDbDiagnostic[],
+): WalletSource => {
+  if (!walletSource || !isWalletSource(walletSource)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EVIDENCE_UNSUPPORTED_WALLET_SOURCE",
+      "walletSource",
+      "Campaign DB task evidence walletSource is unsupported.",
+    ));
+
+    return "OTHER";
+  }
+
+  return walletSource;
+};
+
+const normalizeEvidenceStatus = (
+  status: string | undefined,
+  issues: CampaignDbDiagnostic[],
+): CampaignDbTaskCompletionStatus => {
+  const candidate = status ?? "completed";
+
+  if (!isCompletionStatus(candidate)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EVIDENCE_UNSUPPORTED_STATUS",
+      "status",
+      "Campaign DB task evidence status is unsupported.",
+    ));
+
+    return "failed";
+  }
+
+  return candidate;
+};
+
+const normalizeEvidenceSource = (
+  evidenceSource: string | undefined,
+  fallback: VerificationType,
+  issues: CampaignDbDiagnostic[],
+): CampaignDbTaskCompletionEvidenceSource => {
+  const candidate = evidenceSource ?? evidenceSourceForVerificationType(fallback);
+
+  if (!isCompletionEvidenceSource(candidate)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EVIDENCE_UNSUPPORTED_EVIDENCE_SOURCE",
+      "evidenceSource",
+      "Campaign DB task evidence evidenceSource is unsupported.",
+    ));
+
+    return "MANUAL";
+  }
+
+  return candidate;
+};
+
+const normalizeEvidenceRef = (
+  evidenceRef: string | undefined,
+  issues: CampaignDbDiagnostic[],
+) => {
+  if (evidenceRef === undefined) {
+    return undefined;
+  }
+
+  const trimmed = evidenceRef.trim();
+
+  if (!trimmed || hasSecretLikeValue(trimmed)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EVIDENCE_INVALID_EVIDENCE_REF",
+      "evidenceRef",
+      "Campaign DB task evidence reference must be a safe local-review reference, not raw evidence or a secret-like value.",
+    ));
+
+    return undefined;
+  }
+
+  return trimmed;
+};
+
+const normalizeEvidenceDiagnosticCodes = (
+  diagnosticCodes: readonly string[] | undefined,
+  issues: CampaignDbDiagnostic[],
+) => {
+  const codes = diagnosticCodes ?? [];
+  const invalid = !Array.isArray(codes) ||
+    codes.some((code) => !isNonEmptyString(code) || hasSecretLikeValue(code));
+
+  if (invalid) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EVIDENCE_INVALID_DIAGNOSTIC_CODE",
+      "diagnosticCodes",
+      "Campaign DB task evidence diagnostic codes must be safe non-empty string references.",
+    ));
+
+    return [];
+  }
+
+  return Array.from(new Set(codes.map((code) => code.trim()))).sort();
+};
+
+const normalizeEvidenceHashForTask = (
+  evidenceHash: string | undefined,
+  taskId: string,
+  issues: CampaignDbDiagnostic[],
+) => {
+  const normalized = (evidenceHash ?? `evidence-hash:${taskId}`).trim();
+
+  if (!normalized || hasSecretLikeValue(normalized)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EVIDENCE_INVALID_EVIDENCE_HASH",
+      "evidenceHash",
+      "Campaign DB task evidence requires a safe evidence hash.",
+    ));
+
+    return "";
+  }
+
+  return normalized;
+};
+
 const validateUpsertTaskCompletionInput = (
   input: CampaignDbUpsertTaskCompletionInput,
   campaign: CampaignDbDraft | undefined,
@@ -1319,8 +1580,68 @@ const validateUpsertTaskCompletionInput = (
   return {
     accountType,
     campaignId,
+    ...(input.evidenceId ? { evidenceId: input.evidenceId } : {}),
     ...(evidenceHash ? { evidenceHash } : {}),
     evidenceSource,
+    pointsAwarded,
+    status,
+    taskId,
+    walletAddress,
+    walletSource,
+  };
+};
+
+const validateUpsertTaskEvidenceInput = (
+  input: CampaignDbUpsertTaskEvidenceInput,
+  campaign: CampaignDbDraft | undefined,
+  task: CampaignDbTaskDraft | undefined,
+): Omit<CampaignDbTaskEvidenceRecord, "capturedAt" | "createdAt" | "id" | "updatedAt"> => {
+  const issues: CampaignDbDiagnostic[] = [];
+  const campaignId = requireEvidenceString(input, "campaignId", issues);
+  const taskId = requireEvidenceString(input, "taskId", issues);
+  const walletAddress = requireEvidenceString(input, "walletAddress", issues);
+  const accountType = normalizeEvidenceAccountType(input.accountType, issues);
+  const walletSource = normalizeEvidenceWalletSource(input.walletSource, issues);
+  const status = normalizeEvidenceStatus(input.status, issues);
+  const evidenceSource = normalizeEvidenceSource(input.evidenceSource, task?.verificationType ?? "MANUAL", issues);
+  const evidenceHash = normalizeEvidenceHashForTask(input.evidenceHash, taskId, issues);
+  const evidenceRef = normalizeEvidenceRef(input.evidenceRef, issues);
+  const diagnosticCodes = normalizeEvidenceDiagnosticCodes(input.diagnosticCodes, issues);
+
+  if (campaignId && !campaign) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EVIDENCE_CAMPAIGN_NOT_FOUND",
+      "campaignId",
+      `Campaign DB draft '${sanitizeCampaignDbDiagnosticValue("campaignId", campaignId)}' was not found for task evidence.`,
+    ));
+  }
+
+  if (campaign && taskId && (!task || task.campaignId !== campaignId)) {
+    issues.push(diagnostic(
+      "CAMPAIGN_DB_EVIDENCE_TASK_NOT_FOUND",
+      "taskId",
+      `Campaign DB task draft '${sanitizeCampaignDbDiagnosticValue("taskId", taskId)}' was not found for task evidence.`,
+    ));
+  }
+
+  if (issues.length > 0) {
+    throw new CampaignDbRepositoryError("Invalid Campaign DB task evidence input.", issues);
+  }
+
+  const pointsAwarded = status === "completed" ? input.pointsAwarded ?? task?.points ?? 0 : 0;
+
+  return {
+    accountType,
+    campaignId,
+    ...(input.completionId ? { completionId: input.completionId } : {}),
+    diagnosticCodes,
+    evidenceHash,
+    ...(evidenceRef ? { evidenceRef } : {}),
+    evidenceSource,
+    liveContractExecuted: false,
+    liveProviderExecuted: false,
+    liveRewardExecuted: false,
+    liveStorageExecuted: false,
     pointsAwarded,
     status,
     taskId,
@@ -2043,10 +2364,17 @@ const createMissingTaskRecord = (task: CampaignDbTaskDraft): CampaignDbExportTas
 const createCompletedTaskRecord = (
   task: CampaignDbTaskDraft,
   completion: CampaignDbTaskCompletion,
+  evidence?: CampaignDbTaskEvidenceRecord,
 ): CampaignDbExportTaskRecord => ({
   ...(completion.completedAt ? { completedAt: completion.completedAt } : {}),
-  ...(completion.evidenceHash ? { evidenceHash: completion.evidenceHash } : {}),
-  evidenceSource: completion.evidenceSource,
+  ...(evidence?.id ?? completion.evidenceId ? { evidenceId: evidence?.id ?? completion.evidenceId } : {}),
+  ...(evidence?.evidenceHash ?? completion.evidenceHash ? { evidenceHash: evidence?.evidenceHash ?? completion.evidenceHash } : {}),
+  ...(evidence?.evidenceRef ? { evidenceRef: evidence.evidenceRef } : {}),
+  evidenceSource: evidence?.evidenceSource ?? completion.evidenceSource,
+  liveContractExecuted: evidence?.liveContractExecuted ?? false,
+  liveProviderExecuted: evidence?.liveProviderExecuted ?? false,
+  liveRewardExecuted: evidence?.liveRewardExecuted ?? false,
+  liveStorageExecuted: evidence?.liveStorageExecuted ?? false,
   pointsAwarded: completion.status === "completed" ? completion.pointsAwarded : 0,
   pointsAvailable: task.points,
   required: task.required,
@@ -2108,12 +2436,14 @@ const createExportRows = (
   campaign: CampaignDbDraft,
   tasks: CampaignDbTaskDraft[],
   completions: CampaignDbTaskCompletion[],
+  evidenceRecords: CampaignDbTaskEvidenceRecord[],
   participants: CampaignDbParticipantRecord[],
   referralBindings: CampaignDbReferralBindingRecord[],
   exportBatchId: string,
 ): CampaignDbExportRow[] => {
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
   const completionsByWallet = new Map<string, Map<string, CampaignDbTaskCompletion>>();
+  const evidenceByWallet = new Map<string, Map<string, CampaignDbTaskEvidenceRecord>>();
   const participantsByWallet = new Map(participants.map((participant) => [participant.walletAddress, participant]));
   const referralBindingsByInvitee = new Map(
     referralBindings.map((binding) => [binding.inviteeWalletAddress, binding]),
@@ -2129,12 +2459,29 @@ const createExportRows = (
     completionsByWallet.set(completion.walletAddress, walletCompletions);
   }
 
+  for (const evidence of evidenceRecords) {
+    if (!tasksById.has(evidence.taskId)) {
+      continue;
+    }
+
+    const walletEvidence = evidenceByWallet.get(evidence.walletAddress) ?? new Map<string, CampaignDbTaskEvidenceRecord>();
+    const existing = walletEvidence.get(evidence.taskId);
+
+    if (!existing || existing.updatedAt.localeCompare(evidence.updatedAt) <= 0) {
+      walletEvidence.set(evidence.taskId, evidence);
+    }
+
+    evidenceByWallet.set(evidence.walletAddress, walletEvidence);
+  }
+
   const walletAddresses = Array.from(new Set([
     ...participants.map((participant) => participant.walletAddress),
     ...completionsByWallet.keys(),
+    ...evidenceByWallet.keys(),
   ])).sort();
   const rows = walletAddresses.map((walletAddress) => {
     const walletCompletions = completionsByWallet.get(walletAddress) ?? new Map<string, CampaignDbTaskCompletion>();
+    const walletEvidence = evidenceByWallet.get(walletAddress) ?? new Map<string, CampaignDbTaskEvidenceRecord>();
     const participant = participantsByWallet.get(walletAddress);
     const referralBinding = referralBindingsByInvitee.get(walletAddress);
     const completionValues = Array.from(walletCompletions.values())
@@ -2143,8 +2490,9 @@ const createExportRows = (
     const taskRecords = tasks
       .map((task) => {
         const completion = walletCompletions.get(task.id);
+        const evidence = walletEvidence.get(task.id);
 
-        return completion ? createCompletedTaskRecord(task, completion) : createMissingTaskRecord(task);
+        return completion ? createCompletedTaskRecord(task, completion, evidence) : createMissingTaskRecord(task);
       })
       .sort((left, right) => left.taskId.localeCompare(right.taskId));
     const completedTaskIds = new Set(
@@ -2495,6 +2843,7 @@ export const createCampaignDbRepository = ({
   const participantRecordsById = new Map<string, CampaignDbParticipantRecord>();
   const referralBindingRecordsById = new Map<string, CampaignDbReferralBindingRecord>();
   const taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
+  const taskEvidenceById = new Map<string, CampaignDbTaskEvidenceRecord>();
   const taskRecordsById = new Map<string, CampaignDbTaskDraft>();
   const events: CampaignDbRepositoryEvent[] = [];
   const adapterId =
@@ -2517,6 +2866,7 @@ export const createCampaignDbRepository = ({
   let i18nDraftIdSequence = 0;
   let participantIdSequence = 0;
   let referralBindingIdSequence = 0;
+  let taskEvidenceIdSequence = 0;
   let taskIdSequence = 0;
   let eventSequence = 0;
   let transactionSequence = 0;
@@ -2551,6 +2901,12 @@ export const createCampaignDbRepository = ({
     return `campaign-db-task-completion-${completionIdSequence.toString().padStart(4, "0")}`;
   };
 
+  const nextTaskEvidenceId = () => {
+    taskEvidenceIdSequence += 1;
+
+    return `campaign-db-task-evidence-${taskEvidenceIdSequence.toString().padStart(4, "0")}`;
+  };
+
   const nextI18nDraftId = () => {
     i18nDraftIdSequence += 1;
 
@@ -2577,6 +2933,16 @@ export const createCampaignDbRepository = ({
     const manifest = await activeDurableStore.manifest();
 
     return `campaign-db-task-completion-${(manifest.completionRecordCount + 1).toString().padStart(4, "0")}`;
+  };
+
+  const nextTaskEvidenceIdForStore = async () => {
+    if (!activeDurableStore) {
+      return nextTaskEvidenceId();
+    }
+
+    const manifest = await activeDurableStore.manifest();
+
+    return `campaign-db-task-evidence-${(manifest.taskEvidenceRecordCount + 1).toString().padStart(4, "0")}`;
   };
 
   const nextParticipantIdForStore = async () => {
@@ -2650,6 +3016,17 @@ export const createCampaignDbRepository = ({
           return walletComparison === 0 ? left.taskId.localeCompare(right.taskId) : walletComparison;
         });
 
+  const listTaskEvidenceByCampaignId = async (campaignId: string) =>
+    activeDurableStore
+      ? await activeDurableStore.listTaskEvidence({ campaignId })
+      : Array.from(taskEvidenceById.values())
+        .filter((evidence) => evidence.campaignId === campaignId)
+        .sort((left, right) => {
+          const walletComparison = left.walletAddress.localeCompare(right.walletAddress);
+
+          return walletComparison === 0 ? left.taskId.localeCompare(right.taskId) : walletComparison;
+        });
+
   const listParticipantsByCampaignId = async (campaignId: string) =>
     activeDurableStore
       ? await activeDurableStore.listParticipantsByCampaignId(campaignId)
@@ -2678,9 +3055,17 @@ export const createCampaignDbRepository = ({
     (await listTaskCompletionsByCampaignId(campaignId))
       .filter((completion) => completion.walletAddress === walletAddress);
 
+  const listTaskEvidenceByWallet = async (campaignId: string, walletAddress: string) =>
+    (await listTaskEvidenceByCampaignId(campaignId))
+      .filter((evidence) => evidence.walletAddress === walletAddress);
+
   const findTaskCompletion = async (campaignId: string, taskId: string, walletAddress: string) =>
     (await listTaskCompletionsByCampaignId(campaignId))
       .find((completion) => completion.taskId === taskId && completion.walletAddress === walletAddress);
+
+  const findTaskEvidence = async (campaignId: string, taskId: string, walletAddress: string) =>
+    (await listTaskEvidenceByCampaignId(campaignId))
+      .find((evidence) => evidence.taskId === taskId && evidence.walletAddress === walletAddress);
 
   const repositoryMetadata = () => ({
     adapterId,
@@ -2695,6 +3080,7 @@ export const createCampaignDbRepository = ({
     completions: await listTaskCompletionsByCampaignId(draft.id),
     participants: await listParticipantsByCampaignId(draft.id),
     referralBindings: await listReferralBindingsByCampaignId(draft.id),
+    taskEvidence: await listTaskEvidenceByCampaignId(draft.id),
     tasks: await listTaskDraftsByCampaignId(draft.id),
   });
 
@@ -2726,10 +3112,11 @@ export const createCampaignDbRepository = ({
 
     const tasks = await listTaskDraftsByCampaignId(normalized.campaignId);
     const completions = await listTaskCompletionsByCampaignId(normalized.campaignId);
+    const evidenceRecords = await listTaskEvidenceByCampaignId(normalized.campaignId);
     const participants = await listParticipantsByCampaignId(normalized.campaignId);
     const referralBindings = await listReferralBindingsByCampaignId(normalized.campaignId);
     const exportBatchId = exportBatchIdFor(normalized.campaignId);
-    const rows = createExportRows(campaign, tasks, completions, participants, referralBindings, exportBatchId);
+    const rows = createExportRows(campaign, tasks, completions, evidenceRecords, participants, referralBindings, exportBatchId);
     const repository = repositoryMetadata();
     const exportReadiness = createExportReadinessProjection(
       normalized.campaignId,
@@ -2755,6 +3142,9 @@ export const createCampaignDbRepository = ({
 
   const resolveCompletionRecordCount = async () =>
     activeDurableStore ? (await activeDurableStore.manifest()).completionRecordCount : taskCompletionsById.size;
+
+  const resolveTaskEvidenceRecordCount = async () =>
+    activeDurableStore ? (await activeDurableStore.manifest()).taskEvidenceRecordCount : taskEvidenceById.size;
 
   const resolveI18nDraftRecordCount = async () => i18nDraftRecordsById.size;
 
@@ -2792,8 +3182,12 @@ export const createCampaignDbRepository = ({
       id: "campaign-db-repository-runtime",
       i18nDraftRecordCount: await resolveI18nDraftRecordCount(),
       liveConnectionAttempted: false,
+      liveContractExecutionEnabled: false,
       liveMigrationExecutionEnabled: false,
+      liveProviderExecutionEnabled: false,
       liveQueryExecutionEnabled: false,
+      liveRewardExecutionEnabled: false,
+      liveStorageExecutionEnabled: false,
       participantRecordCount: await resolveParticipantRecordCount(),
       productionReady: false,
       referralBindingRecordCount: await resolveReferralBindingRecordCount(),
@@ -2803,6 +3197,7 @@ export const createCampaignDbRepository = ({
         ? "blocked"
         : "ready",
       storeId: "campaign-db",
+      taskEvidenceRecordCount: await resolveTaskEvidenceRecordCount(),
       taskRecordCount: await resolveTaskRecordCount(),
       validation: {
         issues: diagnostics,
@@ -2849,7 +3244,7 @@ export const createCampaignDbRepository = ({
     };
   };
 
-  return {
+  const repositoryApi: CampaignDbRepository = {
     addTaskDraft: async (input, context = {}) => {
       assertWritable();
 
@@ -2974,6 +3369,7 @@ export const createCampaignDbRepository = ({
       const normalized = await normalizeEligibilityInput(input, Boolean(campaign));
       const tasks = await listTaskDraftsByCampaignId(normalized.campaignId);
       const completions = await listTaskCompletionsByWallet(normalized.campaignId, normalized.walletAddress);
+      const evidence = await listTaskEvidenceByWallet(normalized.campaignId, normalized.walletAddress);
       const completedTaskIds = new Set(
         completions
           .filter((completion) => completion.status === "completed")
@@ -3006,6 +3402,7 @@ export const createCampaignDbRepository = ({
         accountType: normalized.accountType,
         campaignId: normalized.campaignId,
         eligible: status === "eligible",
+        evidence,
         localePreference: normalized.localePreference,
         missingTasks,
         repository: {
@@ -3197,6 +3594,25 @@ export const createCampaignDbRepository = ({
 
       return Promise.all(filteredRecords.map(toProjection));
     },
+    listTaskEvidence: async (filter, context = {}) => {
+      appendEvent({
+        entity: "TaskEvidence",
+        operation: "list_task_evidence",
+        traceId: context.traceId,
+        type: "query.list",
+      });
+
+      const evidenceRecords = activeDurableStore
+        ? await activeDurableStore.listTaskEvidence(filter)
+        : await listTaskEvidenceByCampaignId(filter.campaignId);
+      const maxLimit = evidenceRecords.length || 1;
+      const limit = Math.max(1, Math.min(Math.trunc(filter.limit ?? maxLimit), maxLimit));
+
+      return evidenceRecords
+        .filter((evidence) => !filter.taskId || evidence.taskId === filter.taskId)
+        .filter((evidence) => !filter.walletAddress || evidence.walletAddress === filter.walletAddress)
+        .slice(0, limit);
+    },
     listParticipants: async (filter, context = {}) => {
       appendEvent({
         entity: "CampaignParticipant",
@@ -3327,6 +3743,7 @@ export const createCampaignDbRepository = ({
       recordsById.clear();
       i18nDraftRecordsById.clear();
       taskCompletionsById.clear();
+      taskEvidenceById.clear();
       taskRecordsById.clear();
       participantRecordsById.clear();
       referralBindingRecordsById.clear();
@@ -3337,6 +3754,7 @@ export const createCampaignDbRepository = ({
       i18nDraftIdSequence = 0;
       participantIdSequence = 0;
       referralBindingIdSequence = 0;
+      taskEvidenceIdSequence = 0;
       taskIdSequence = 0;
       eventSequence = 0;
       transactionSequence = 0;
@@ -3454,5 +3872,119 @@ export const createCampaignDbRepository = ({
 
       return completion;
     },
+    upsertTaskEvidence: async (input, context = {}) => {
+      assertWritable();
+
+      const campaign = activeDurableStore
+        ? await activeDurableStore.getById(input.campaignId)
+        : recordsById.get(input.campaignId);
+      const task = (await listTaskDraftsByCampaignId(input.campaignId))
+        .find((candidate) => candidate.id === input.taskId);
+      const validated = validateUpsertTaskEvidenceInput(input, campaign, task);
+      const existing = await findTaskEvidence(validated.campaignId, validated.taskId, validated.walletAddress);
+      const transactionId = nextTransactionId();
+      appendEvent({
+        entity: "TaskEvidence",
+        operation: "begin_upsert_task_evidence",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.begin",
+      });
+      appendEvent({
+        entity: "TaskEvidence",
+        operation: "plan_upsert_task_evidence",
+        traceId: context.traceId,
+        transactionId,
+        type: "command.planned",
+      });
+
+      const timestamp = now();
+      const evidence: CampaignDbTaskEvidenceRecord = {
+        ...validated,
+        capturedAt: timestamp,
+        createdAt: existing?.createdAt ?? timestamp,
+        id: existing?.id ?? await nextTaskEvidenceIdForStore(),
+        updatedAt: timestamp,
+      };
+
+      if (activeDurableStore) {
+        await activeDurableStore.upsertTaskEvidence(evidence);
+      } else {
+        taskEvidenceById.set(evidence.id, evidence);
+      }
+
+      appendEvent({
+        entity: "TaskEvidence",
+        operation: existing ? "update_task_evidence" : "insert_task_evidence",
+        traceId: context.traceId,
+        transactionId,
+        type: existing ? "command.update" : "command.insert",
+      });
+      appendEvent({
+        entity: "TaskEvidence",
+        operation: "commit_upsert_task_evidence",
+        traceId: context.traceId,
+        transactionId,
+        type: "transaction.commit",
+      });
+
+      return evidence;
+    },
+    upsertTaskVerification: async (input, context = {}) => {
+      assertWritable();
+
+      const evidence = await repositoryApi.upsertTaskEvidence?.({
+        accountType: input.accountType,
+        campaignId: input.campaignId,
+        evidenceHash: input.evidenceHash,
+        evidenceSource: input.evidenceSource,
+        status: input.status,
+        taskId: input.taskId,
+        walletAddress: input.walletAddress,
+        walletSource: input.walletSource,
+      }, context);
+
+      if (!evidence) {
+        throw new CampaignDbRepositoryError("Campaign DB task evidence operation is unavailable.", [
+          diagnostic(
+            "CAMPAIGN_DB_EVIDENCE_REQUIRED_FIELD_MISSING",
+            "upsertTaskEvidence",
+            "Campaign DB task evidence operation is unavailable.",
+          ),
+        ]);
+      }
+
+      const completion = await repositoryApi.upsertTaskCompletion?.({
+        ...input,
+        evidenceHash: evidence.evidenceHash,
+        evidenceId: evidence.id,
+        evidenceSource: evidence.evidenceSource,
+        status: evidence.status,
+      }, context);
+
+      if (!completion) {
+        throw new CampaignDbRepositoryError("Campaign DB task completion operation is unavailable.", [
+          diagnostic(
+            "CAMPAIGN_DB_COMPLETION_REQUIRED_FIELD_MISSING",
+            "upsertTaskCompletion",
+            "Campaign DB task completion operation is unavailable.",
+          ),
+        ]);
+      }
+
+      const linkedEvidence = await repositoryApi.upsertTaskEvidence?.({
+        ...evidence,
+        completionId: completion.id,
+        pointsAwarded: completion.pointsAwarded,
+      }, context);
+
+      return {
+        completion,
+        evidence: linkedEvidence ?? evidence,
+        repository: repositoryMetadata(),
+      };
+    },
   };
+
+  return repositoryApi;
 };
