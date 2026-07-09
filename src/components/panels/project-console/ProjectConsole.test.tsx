@@ -2,6 +2,11 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  loadBackendRuntimeReadinessApiBridgeState,
+  seededBackendRuntimeReadinessSummary,
+  type BackendRuntimeReadinessApiBridgeState,
+} from "../../../api/backendRuntimeReadinessApiBridge";
+import {
   submitExportArtifactDeliveryApiReview,
   type ExportArtifactDeliveryApiBridgeState,
 } from "../../../api/exportArtifactDeliveryApiBridge";
@@ -16,6 +21,15 @@ vi.mock("../../../api/exportArtifactDeliveryApiBridge", async (importOriginal) =
   return {
     ...actual,
     submitExportArtifactDeliveryApiReview: vi.fn(actual.submitExportArtifactDeliveryApiReview),
+  };
+});
+
+vi.mock("../../../api/backendRuntimeReadinessApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/backendRuntimeReadinessApiBridge")>();
+
+  return {
+    ...actual,
+    loadBackendRuntimeReadinessApiBridgeState: vi.fn(actual.loadBackendRuntimeReadinessApiBridgeState),
   };
 });
 
@@ -229,13 +243,45 @@ const apiDeliveredState = (): ExportArtifactDeliveryApiBridgeState => ({
   traceId: "trace-export-api-visible",
 });
 
+const backendReadinessApiState = (): BackendRuntimeReadinessApiBridgeState => ({
+  boundary: {
+    "en-US": "Local Campaign OS backend runtime readiness review only. No live provider call.",
+    "zh-CN": "Local Campaign OS backend runtime readiness review only.",
+    "zh-TW": "Local Campaign OS backend runtime readiness review only.",
+  },
+  configured: true,
+  diagnostics: [],
+  loading: false,
+  source: "api_runtime",
+  status: "ready",
+  summary: {
+    ...seededBackendRuntimeReadinessSummary,
+    profile: {
+      ...seededBackendRuntimeReadinessSummary.profile,
+      id: "staging-scaffold",
+      label: "Staging scaffold backend profile",
+      status: "scaffold",
+      supportMode: "api_runtime",
+    },
+    routeCoverage: {
+      ...seededBackendRuntimeReadinessSummary.routeCoverage,
+      coveredApiSkillCount: 17,
+      missingApiSkillIds: ["runtime.production.database"],
+      requiredApiSkillCount: 18,
+    },
+  },
+  traceId: "trace-backend-api-visible",
+});
+
 describe("Project Console shell", () => {
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
   const mockedSubmitExportArtifactDeliveryApiReview = vi.mocked(submitExportArtifactDeliveryApiReview);
+  const mockedLoadBackendRuntimeReadinessApiBridgeState = vi.mocked(loadBackendRuntimeReadinessApiBridgeState);
 
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
     mockedSubmitExportArtifactDeliveryApiReview.mockReset();
+    mockedLoadBackendRuntimeReadinessApiBridgeState.mockReset();
   });
 
   afterEach(() => {
@@ -1499,6 +1545,17 @@ describe("Project Console shell", () => {
       within(serviceFacade).getAllByText(/No live AeFinder, AelfScan, dApp API, social API, wallet SDK, reward distribution, export file, secret storage, or contract write/).length,
     ).toBeGreaterThan(0);
 
+    const backendReadiness = screen.getByLabelText("Backend Runtime Readiness review");
+    expect(mockedLoadBackendRuntimeReadinessApiBridgeState).not.toHaveBeenCalled();
+    expect(within(backendReadiness).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+    expect(within(backendReadiness).getByText("No API trace yet")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText("npm run server:start")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText("npm run server:smoke")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText("/api/health")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText("/api/contracts")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText("API_BASE_URL_MISSING: No local backend readiness API base URL is configured, so seeded readiness is shown.")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText(/No live provider call/)).toBeInTheDocument();
+
     const walletAdapterReadiness = screen.getByLabelText("aelf-web-login adapter readiness");
     expect(
       within(walletAdapterReadiness).getByRole("heading", {
@@ -1625,6 +1682,32 @@ describe("Project Console shell", () => {
     expect(within(exportDeliveryApi).getByText("campaigns.export.preview")).toBeInTheDocument();
     expect(within(exportDeliveryApi).getByText("registered local artifact")).toBeInTheDocument();
     expect(within(exportDeliveryApi).getByText("storage disabled")).toBeInTheDocument();
+  });
+
+  it("clicks Backend Runtime Readiness review action and renders API-backed metadata", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedLoadBackendRuntimeReadinessApiBridgeState.mockResolvedValueOnce(backendReadinessApiState());
+
+    render(<App />);
+
+    clickWorkspace("Export");
+
+    const backendReadiness = screen.getByLabelText("Backend Runtime Readiness review");
+
+    fireEvent.click(within(backendReadiness).getByRole("button", { name: "Review backend runtime" }));
+
+    await waitFor(() => expect(mockedLoadBackendRuntimeReadinessApiBridgeState).toHaveBeenCalledWith({
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        tracePrefix: "project-console-backend-readiness-review",
+      },
+    }));
+
+    await waitFor(() => expect(within(backendReadiness).getByText("API runtime")).toBeInTheDocument());
+    expect(within(backendReadiness).getByText("trace-backend-api-visible")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText("staging-scaffold")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText("17 / 18 API skills")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText("runtime.production.database")).toBeInTheDocument();
   });
 
   it("shows partial Export Delivery API state while preserving seeded export panels", async () => {
