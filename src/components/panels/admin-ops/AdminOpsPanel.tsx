@@ -8,6 +8,7 @@ import {
   createExportArtifact,
   createExportConfirmationReadinessGate,
   createLiveWalletConnectorBoundary,
+  createRepositoryExportProjectionReviewModel,
   createResidualGapMissionQueue,
   createServiceDegradationGovernance,
   createWalletProviderEvidenceAllApprovedSampleSnapshot,
@@ -19,6 +20,7 @@ import {
   getLocalizedText,
   recoverWalletProviderEvidenceState,
   serializeWalletProviderEvidenceRecoverySnapshot,
+  EXPORT_CSV_COLUMNS,
   type AelfWebLoginAdapterLiveEvidenceStatus,
   type AelfWebLoginAdapterReadiness,
   type AiOpsReportHandoffStatus,
@@ -40,7 +42,9 @@ import {
   type DeliveryChecklistCloseoutQueueId,
   type DeliveryChecklistStatus,
   type DeliveryChecklistTraceabilityProofLevel,
+  type ExportCsvColumn,
   type ExportReadinessState,
+  type ExportRowStatus,
   type AiContentArtifactLifecycle,
   type AiContentQualityGateStatus,
   type AdvancedAnalyticsReadinessState,
@@ -48,6 +52,7 @@ import {
   type CampaignLifecycleOperation,
   type CampaignLifecycleOperationState,
   type CampaignLifecycleStatus,
+  type CampaignTask,
   type ContractClaimPreapprovalGateState,
   type ContractClaimExecutionApprovalEvidenceState,
   type ContractTransparencyReadiness,
@@ -96,7 +101,14 @@ import {
   type WalletProviderQaLiveEvidenceStatus,
   type WalletProviderQaReleaseImpact,
   type WalletProviderQaSeededStatus,
+  type LocalizedText,
 } from "../../../domain";
+import type {
+  CampaignDbExportProjection,
+  CampaignDbExportRow,
+  CampaignDbExportTaskRecord,
+  CampaignDbTaskCompletionEvidenceSource,
+} from "../../../server/campaignDbRepository";
 import {
   Badge,
   ContractModeBadge,
@@ -967,6 +979,266 @@ const readableCode = (value: string) => value.replace(/_/g, " ");
 const exportReadinessState = (readiness: ExportReadinessState) =>
   readiness === "blocked" ? "blocker" : readiness === "review_required" ? "warning" : "ready";
 
+const repositoryExportProjectionBoundary: LocalizedText = {
+  "en-US":
+    "Repository-created export projection is local-review only. It does not create a downloadable file, storage write, object key, signed URL, contract root, wallet signature, queue job, scheduler run, reward custody, or reward distribution.",
+  "zh-CN":
+    "Repository 创建的导出投影仅用于本地审核。不会创建可下载文件、写入存储、生成 object key、signed URL、合约 root、钱包签名、queue job、scheduler run、奖励托管或发奖。",
+  "zh-TW":
+    "Repository 建立的匯出投影僅用於本地審核。不會建立可下載檔案、寫入儲存、產生 object key、signed URL、合約 root、錢包簽名、queue job、scheduler run、獎勵託管或發獎。",
+};
+
+const repositoryExportProjectionNextAction: LocalizedText = {
+  "en-US":
+    "Review the repository rows and keep production export storage, contract roots, and project-owned reward fulfillment in later approval missions.",
+  "zh-CN":
+    "审核 repository 行数据；生产导出存储、合约 root 与项目方奖励履约留给后续审批 mission。",
+  "zh-TW":
+    "審核 repository 列資料；生產匯出儲存、合約 root 與專案方獎勵履約留給後續審批 mission。",
+};
+
+const repositoryExportProjectionLocalText = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
+  "en-US": enUS,
+  "zh-CN": zhCN,
+  "zh-TW": zhTW,
+});
+
+const repositoryExportTaskRecord = (
+  token: string,
+  index: number,
+  taskById: ReadonlyMap<string, CampaignTask>,
+): CampaignDbExportTaskRecord => {
+  const [taskId = `task-${index + 1}`, status = "missing", source = "manual"] = token.split(":");
+  const task = taskById.get(taskId);
+  const normalizedStatus = (
+    status === "completed" ||
+    status === "pending" ||
+    status === "failed" ||
+    status === "manual_review" ||
+    status === "missing"
+      ? status
+      : "missing"
+  );
+  const evidenceSource = source.toUpperCase() === "AELFSCAN"
+    ? "AELFSCAN"
+    : source.toUpperCase() === "SOCIAL_API"
+      ? "SOCIAL_API"
+      : "MANUAL";
+
+  return {
+    evidenceSource: evidenceSource as CampaignDbTaskCompletionEvidenceSource,
+    pointsAwarded: normalizedStatus === "completed" ? task?.points ?? 0 : 0,
+    pointsAvailable: task?.points ?? 0,
+    required: task?.required ?? index === 0,
+    status: normalizedStatus,
+    taskId,
+    templateCode: task?.templateCode ?? taskId.replace(/^task-/, ""),
+    verificationType: task?.verificationType ?? (source.toUpperCase() === "SOCIAL_API" ? "SOCIAL" : "ON_CHAIN"),
+  };
+};
+
+const repositoryExportRowReason = (
+  rowStatus: ExportRowStatus,
+  affectedRows: number,
+) => ({
+  affectedRows,
+  label: repositoryExportProjectionLocalText(
+    rowStatus === "ready"
+      ? "Repository ready rows"
+      : rowStatus === "review_required"
+        ? "Repository review-required rows"
+        : "Repository blocked rows",
+    rowStatus === "ready"
+      ? "Repository 就绪行"
+      : rowStatus === "review_required"
+        ? "Repository 需审核行"
+        : "Repository 阻断行",
+    rowStatus === "ready"
+      ? "Repository 就緒行"
+      : rowStatus === "review_required"
+        ? "Repository 需審核行"
+        : "Repository 阻斷行",
+  ),
+  nextAction: repositoryExportProjectionLocalText(
+    rowStatus === "ready"
+      ? "Keep repository rows available for local export review."
+      : rowStatus === "review_required"
+        ? "Resolve pending or manual-review repository rows before approval."
+        : "Complete missing required repository tasks before export approval.",
+    rowStatus === "ready"
+      ? "保持 repository 行可用于本地导出审核。"
+      : rowStatus === "review_required"
+        ? "批准前先处理待处理或人工审核的 repository 行。"
+        : "导出批准前先完成缺失的 repository 必做任务。",
+    rowStatus === "ready"
+      ? "保持 repository 列可用於本地匯出審核。"
+      : rowStatus === "review_required"
+        ? "批准前先處理待處理或人工審核的 repository 列。"
+        : "匯出批准前先完成缺失的 repository 必做任務。",
+  ),
+  reasonCode: rowStatus === "ready"
+    ? "eligible_verified" as const
+    : rowStatus === "review_required"
+      ? "risk_review_required" as const
+      : "missing_required_tasks" as const,
+  rowStatus,
+});
+
+const createRepositoryExportProjectionSample = (
+  campaign: CampaignShellDetail,
+): CampaignDbExportProjection => {
+  const exportBatchId = `campaign-db-export-${campaign.id}`;
+  const taskById = new Map(campaign.tasks.map((task) => [task.id, task]));
+  const rows: CampaignDbExportRow[] = campaign.exportPreview.rows.map((row) => ({
+    accountType: row.accountType,
+    campaignId: row.campaignId,
+    eligible: row.eligible,
+    evidenceHashes: [...row.evidenceHashes],
+    exportBatchId,
+    localePreference: "en-US",
+    missingColumnValues: [...row.missingColumnValues],
+    missingTasks: [...row.missingTasks],
+    ...(row.rank === undefined ? {} : { rank: row.rank }),
+    referrerAddress: row.referrerAddress,
+    riskFlags: [...row.riskFlags],
+    rowStatus: row.rowStatus,
+    taskRecords: row.taskRecords.map((record, index) => repositoryExportTaskRecord(record, index, taskById)),
+    totalPoints: row.totalPoints,
+    walletAddress: row.walletAddress,
+    walletSource: row.walletSource,
+    walletTypeVerified: row.walletTypeVerified,
+  }));
+  const readyRows = rows.filter((row) => row.rowStatus === "ready").length;
+  const reviewRequiredRows = rows.filter((row) => row.rowStatus === "review_required").length;
+  const blockedRows = rows.filter((row) => row.rowStatus === "blocked").length;
+  const repository = {
+    adapterId: "campaign-db-deterministic-adapter",
+    createdViaRepository: true,
+    repositoryId: "campaign-db-deterministic-adapter",
+    storeId: "campaign-db" as const,
+  } as const;
+  const acknowledgedItems = 0;
+  const requiredAcknowledgements = 5;
+
+  return {
+    artifact: {
+      artifactId: `${campaign.id}-${exportBatchId}-csv-local-preview`,
+      campaignId: campaign.id,
+      checksum: "local-review-ui-only",
+      checksumAlgorithm: "fnv1a32-local-review",
+      columns: EXPORT_CSV_COLUMNS,
+      createdAt: "2026-07-09T00:00:00.000Z",
+      csvPreview: EXPORT_CSV_COLUMNS.join(","),
+      format: "csv",
+      generatedMode: "local_review_only",
+      localPreviewMode: true,
+      mimeType: "text/csv;charset=utf-8",
+      payloadBytes: rows.length * EXPORT_CSV_COLUMNS.length,
+      safety: {
+        localOnly: true,
+        noContractRoot: true,
+        noContractTransaction: true,
+        noDownloadUrl: true,
+        noRewardCustody: true,
+        noRewardDistribution: true,
+        noStorageWrite: true,
+        verifiedRecordsOnly: true,
+      },
+    },
+    blockedRows,
+    campaignId: campaign.id,
+    columns: EXPORT_CSV_COLUMNS,
+    contractRootMode: "none",
+    disclaimer: campaign.exportPreview.disclaimer,
+    exportBatchId,
+    exportReadiness: {
+      acknowledgements: [
+        "verified-records-only",
+        "project-owned-reward-distribution",
+        "no-reward-custody",
+        "no-reward-distribution",
+        "no-real-export-file",
+      ].map((id) => ({
+        acknowledged: false,
+        description: repositoryExportProjectionBoundary,
+        id: id as "verified-records-only",
+        label: repositoryExportProjectionLocalText(
+          id.replace(/-/g, " "),
+          id.replace(/-/g, " "),
+          id.replace(/-/g, " "),
+        ),
+        ownerRole: id === "verified-records-only" || id === "no-real-export-file"
+          ? "internal_operator"
+          : "project_owner",
+        required: true,
+      })),
+      batchId: exportBatchId,
+      boundary: repositoryExportProjectionBoundary,
+      campaignId: campaign.id,
+      contractRootReadiness: [
+        {
+          approvalRequired: false,
+          boundary: repositoryExportProjectionBoundary,
+          label: repositoryExportProjectionLocalText("No contract root", "不生成合约 root", "不生成合約 root"),
+          mode: "none",
+          nextAction: repositoryExportProjectionNextAction,
+          readiness: "ready",
+          safeDefault: true,
+        },
+      ],
+      fieldCoverage: {
+        coverageReady: true,
+        missingFields: [],
+        presentFields: EXPORT_CSV_COLUMNS,
+        requiredFields: EXPORT_CSV_COLUMNS,
+      },
+      nextAction: repositoryExportProjectionNextAction,
+      previewModes: [
+        {
+          boundary: repositoryExportProjectionBoundary,
+          downloadAvailable: false,
+          generatesFile: false,
+          includedFields: EXPORT_CSV_COLUMNS,
+          label: repositoryExportProjectionLocalText("CSV local preview", "CSV 本地预览", "CSV 本地預覽"),
+          mode: "csv",
+          nextAction: repositoryExportProjectionNextAction,
+          readiness: "ready",
+        },
+        {
+          boundary: repositoryExportProjectionBoundary,
+          downloadAvailable: false,
+          generatesFile: false,
+          includedFields: EXPORT_CSV_COLUMNS,
+          label: repositoryExportProjectionLocalText("JSON local preview", "JSON 本地预览", "JSON 本地預覽"),
+          mode: "json",
+          nextAction: repositoryExportProjectionNextAction,
+          readiness: "ready",
+        },
+      ],
+      repository,
+      rowStatusCoverage: [
+        repositoryExportRowReason("ready", readyRows),
+        repositoryExportRowReason("review_required", reviewRequiredRows),
+        repositoryExportRowReason("blocked", blockedRows),
+      ],
+      summary: {
+        acknowledgedItems,
+        blockedRows,
+        previewModeCount: 2,
+        readyRows,
+        requiredAcknowledgements,
+        reviewRequiredRows,
+        totalRows: rows.length,
+      },
+    },
+    format: "csv",
+    readyRows,
+    repository,
+    reviewRequiredRows,
+    rows,
+  };
+};
+
 const advancedAnalyticsReadinessState = (readiness: AdvancedAnalyticsReadinessState) =>
   readiness === "blocked" ? "blocker" : readiness === "ready" ? "ready" : "warning";
 
@@ -1751,6 +2023,10 @@ export const AdminOpsPanel = ({
       ));
   const exportReadiness = createExportConfirmationReadinessGate(campaign);
   const exportArtifact = createExportArtifact(campaign.exportPreview, "csv");
+  const repositoryExportProjectionReview = createRepositoryExportProjectionReviewModel(
+    createRepositoryExportProjectionSample(campaign),
+    locale,
+  );
   const exportFulfillmentReadiness = adminOps.exportFulfillmentReadiness;
   const exportStorageFulfillmentApprovalReadiness = adminOps.exportStorageFulfillmentApprovalReadiness;
   const exportStorageApprovalTopCheck = exportStorageFulfillmentApprovalReadiness.checks.find(
@@ -9346,6 +9622,188 @@ export const AdminOpsPanel = ({
           <p style={labelStyle}>{copy.exactColumnOrder}</p>
           <div style={scrollContainerStyle}>
             <code style={contractCodeStyle}>{columnContract}</code>
+          </div>
+        </div>
+        <div aria-label={repositoryExportProjectionReview.ariaLabel} style={cardStyle}>
+          <div style={rowStyle}>
+            <div style={stackStyle}>
+              <p style={labelStyle}>{copy.repositoryExportProjectionReview}</p>
+              <h4 style={{ fontSize: 18, margin: 0 }}>{copy.repositoryExportProjectionReview}</h4>
+              <p style={mutedTextStyle}>{copy.repositoryExportProjectionSubtitle}</p>
+            </div>
+            <PublishStateBadge
+              label={readableCode(repositoryExportProjectionReview.readinessState)}
+              state={exportReadinessState(repositoryExportProjectionReview.readinessState)}
+            />
+          </div>
+          <div style={compactGridStyle}>
+            {[
+              {
+                label: copy.readyRows,
+                state: "ready" as const,
+                value: repositoryExportProjectionReview.summary.readyRows,
+              },
+              {
+                label: copy.reviewRequired,
+                state: repositoryExportProjectionReview.summary.reviewRequiredRows > 0
+                  ? "warning" as const
+                  : "ready" as const,
+                value: repositoryExportProjectionReview.summary.reviewRequiredRows,
+              },
+              {
+                label: copy.blocked,
+                state: repositoryExportProjectionReview.summary.blockedRows > 0
+                  ? "blocker" as const
+                  : "ready" as const,
+                value: repositoryExportProjectionReview.summary.blockedRows,
+              },
+              {
+                label: copy.repositoryExportProjectionAcknowledgements,
+                state: repositoryExportProjectionReview.summary.acknowledgedItems ===
+                  repositoryExportProjectionReview.summary.requiredAcknowledgements
+                  ? "ready" as const
+                  : "warning" as const,
+                value: `${repositoryExportProjectionReview.summary.acknowledgedItems}/${repositoryExportProjectionReview.summary.requiredAcknowledgements}`,
+              },
+            ].map(({ label, state, value }) => (
+              <article key={label} style={{ ...cardStyle, minHeight: 0 }}>
+                <p style={labelStyle}>{label}</p>
+                <p style={{ ...valueStyle, fontSize: 20 }}>{value}</p>
+                <PublishStateBadge label={String(value)} state={state} />
+              </article>
+            ))}
+          </div>
+          <div style={gridStyle}>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.repositoryExportProjectionBatch}</p>
+              <p style={wrapTextStyle}>{repositoryExportProjectionReview.exportBatchId}</p>
+              <p style={labelStyle}>{copy.repositoryExportProjectionSource}</p>
+              <p style={wrapTextStyle}>{repositoryExportProjectionReview.repositoryLabel}</p>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.repositoryExportProjectionTopBlocker}</p>
+              <div style={rowStyle}>
+                <strong>{repositoryExportProjectionReview.topBlocker.label}</strong>
+                <PublishStateBadge
+                  label={readableCode(repositoryExportProjectionReview.topBlocker.state)}
+                  state={exportReadinessState(repositoryExportProjectionReview.topBlocker.state)}
+                />
+              </div>
+              <p style={wrapTextStyle}>{repositoryExportProjectionReview.topBlocker.nextAction}</p>
+            </article>
+          </div>
+          <article style={{ ...cardStyle, minHeight: 0 }}>
+            <div style={rowStyle}>
+              <p style={labelStyle}>{copy.repositoryExportProjectionSafety}</p>
+              <PublishStateBadge label={copy.repositoryExportProjectionLocalOnly} state="ready" />
+            </div>
+            <div style={sourceMetricListStyle}>
+              {[
+                copy.repositoryExportProjectionNoFile,
+                copy.repositoryExportProjectionNoStorage,
+                copy.repositoryExportProjectionNoSignedUrl,
+                copy.repositoryExportProjectionNoContractRoot,
+                copy.repositoryExportProjectionNoWalletSigning,
+                copy.repositoryExportProjectionNoQueueScheduler,
+                copy.repositoryExportProjectionNoRewardCustody,
+                copy.repositoryExportProjectionNoRewardDistribution,
+              ].map((boundary) => (
+                <div key={boundary} style={rowStyle}>
+                  <span style={mutedTextStyle}>{boundary}</span>
+                  <PublishStateBadge label={copy.covered} state="ready" />
+                </div>
+              ))}
+            </div>
+            <p style={boundaryStyle}>{repositoryExportProjectionReview.nextAction}</p>
+          </article>
+          <div style={gridStyle}>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.repositoryExportProjectionColumnCoverage}</p>
+              <div style={chipListStyle}>
+                {repositoryExportProjectionReview.columnCoverage.map((column) => (
+                  <span key={column.column} style={chipStyle} title={column.detail}>
+                    {column.column}
+                  </span>
+                ))}
+              </div>
+            </article>
+            <article style={{ ...cardStyle, minHeight: 0 }}>
+              <p style={labelStyle}>{copy.repositoryExportProjectionRows}</p>
+              <p style={wrapTextStyle}>
+                {repositoryExportProjectionReview.previewRows.length} {copy.totalRows}
+              </p>
+              <p style={wrapTextStyle}>{copy.repositoryExportProjectionBatch}: {repositoryExportProjectionReview.exportBatchId}</p>
+            </article>
+          </div>
+          <div style={scrollContainerStyle}>
+            <table style={exportTableStyle}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>{copy.wallet}</th>
+                  <th style={thStyle}>{copy.accountType}</th>
+                  <th style={thStyle}>{copy.walletSource}</th>
+                  <th style={thStyle}>{copy.localePreference}</th>
+                  <th style={thStyle}>{copy.pointsRank}</th>
+                  <th style={thStyle}>{copy.status}</th>
+                  <th style={thStyle}>{copy.missingTasks}</th>
+                  <th style={thStyle}>{copy.riskFlags}</th>
+                  <th style={thStyle}>{copy.taskRecords}</th>
+                  <th style={thStyle}>{copy.evidenceHashes}</th>
+                  <th style={thStyle}>{copy.exportBatch}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {repositoryExportProjectionReview.previewRows.map((row) => (
+                  <tr key={`${row.walletAddress}-${row.exportBatchId}`}>
+                    <td style={tdStyle}>
+                      <div style={stackStyle}>
+                        <span>{row.walletAddress}</span>
+                        <WalletBadge accountType={row.accountType} walletSource={row.walletSource} />
+                      </div>
+                    </td>
+                    <td style={tdStyle}>{row.accountType}</td>
+                    <td style={tdStyle}>{row.walletSource}</td>
+                    <td style={tdStyle}>{row.localePreference}</td>
+                    <td style={tdStyle}>
+                      {row.totalPoints} / #{row.rank ?? "-"}
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={stackStyle}>
+                        <PublishStateBadge
+                          label={readableCode(row.rowStatus)}
+                          state={row.rowStatus === "blocked" ? "blocker" : row.rowStatus === "review_required" ? "warning" : "ready"}
+                        />
+                        <PublishStateBadge
+                          label={row.eligible ? "eligible" : "ineligible"}
+                          state={row.eligible ? "ready" : "warning"}
+                        />
+                      </div>
+                    </td>
+                    <td style={tdStyle}>{row.missingTasks.join(", ") || "-"}</td>
+                    <td style={tdStyle}>{row.riskFlags.join(", ") || "-"}</td>
+                    <td style={tdStyle}>
+                      <div style={stackStyle}>
+                        {row.taskRecordSummary.map((record) => (
+                          <span key={record} style={codeListStyle}>
+                            {record}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={stackStyle}>
+                        {row.evidenceHashes.map((hash) => (
+                          <span key={hash} style={codeListStyle}>
+                            {hash}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td style={tdStyle}>{row.exportBatchId}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
         <div aria-label={copy.exportFulfillmentReadiness} style={cardStyle}>
