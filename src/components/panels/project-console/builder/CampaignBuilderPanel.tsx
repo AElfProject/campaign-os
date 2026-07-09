@@ -1,4 +1,11 @@
-import type { CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  campaignCreationApiBoundary,
+  createCampaignCreationApiLoadingState,
+  submitCampaignCreationApiBridgeDraft,
+  type CampaignCreationApiBridgeState,
+  type CampaignCreationDraftInput,
+} from "../../../../api/campaignCreationApiBridge";
 import {
   computeBuilderPublishReadiness,
   createAiCampaignPlannerDecisionConsole,
@@ -20,10 +27,17 @@ import type { ProjectConsoleCopy } from "../copy";
 type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
 
 interface CampaignBuilderPanelProps {
+  bridgeRunner?: CampaignCreationBridgeRunner;
+  bridgeStateOverride?: CampaignCreationApiBridgeState;
   copy: ProjectConsoleCopy;
   draft?: CampaignDraft;
   locale: BusinessContentLocale;
 }
+
+type CampaignCreationBridgeRunner = (input: {
+  draft: CampaignCreationDraftInput;
+  seededCampaignCount: number;
+}) => Promise<CampaignCreationApiBridgeState>;
 
 const panelStyle: CSSProperties = {
   background: "#ffffff",
@@ -133,6 +147,28 @@ const ghostButtonStyle: CSSProperties = {
   padding: "0 12px",
 };
 
+const apiReviewPanelStyle: CSSProperties = {
+  ...cardStyle,
+  background: "#f8fbff",
+  minHeight: 226,
+};
+
+const apiMetricGridStyle: CSSProperties = {
+  display: "grid",
+  gap: 10,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))",
+};
+
+const apiValueStyle: CSSProperties = {
+  color: "#071426",
+  fontSize: 13,
+  fontWeight: 800,
+  lineHeight: 1.35,
+  margin: 0,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
 const selectedButtonStyle: CSSProperties = {
   ...ghostButtonStyle,
   background: "#071426",
@@ -234,7 +270,139 @@ const compactLocalizedText = (value: string) => value.replace(/_/g, " ");
 
 const launchDecisionLocales = ["en-US", "zh-CN", "zh-TW"] as const satisfies readonly SupportedLocale[];
 
+const campaignCreationApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
+const localProjectOwnerHeaders = {
+  "x-campaign-os-account-type": "AA",
+  "x-campaign-os-credential-boundary": "ordinary_user_wallet",
+  "x-campaign-os-proof-status": "verified",
+  "x-campaign-os-roles": "project_owner",
+  "x-campaign-os-session-id": "sess-project-console-local-review",
+  "x-campaign-os-wallet-address": "ELF_local_review_owner",
+  "x-campaign-os-wallet-source": "PORTKEY_AA",
+};
+
+const campaignCreationSourceLabel = (
+  state: CampaignCreationApiBridgeState,
+  copy: ProjectConsoleCopy,
+) => {
+  if (state.loading) {
+    return copy.campaignCreationApiLoading;
+  }
+  if (state.source === "api_runtime") {
+    return copy.campaignCreationApiRuntimeSource;
+  }
+  if (state.source === "error_fallback") {
+    return copy.campaignCreationApiErrorFallback;
+  }
+
+  return copy.campaignCreationApiSeededFallback;
+};
+
+const apiBadgeState = (state: CampaignCreationApiBridgeState) => {
+  if (state.status === "created") {
+    return "ready";
+  }
+  if (state.status === "error") {
+    return "warning";
+  }
+
+  return state.loading ? "warning" : "ready";
+};
+
+const listRefreshLabel = (state: CampaignCreationApiBridgeState, copy: ProjectConsoleCopy) => {
+  if (state.listContainsCreatedDraft === true) {
+    return copy.campaignCreationApiListConfirmed;
+  }
+  if (state.listContainsCreatedDraft === false) {
+    return copy.campaignCreationApiListMissing;
+  }
+
+  return copy.campaignCreationApiListUnknown;
+};
+
+const formatSafeDetails = (
+  safeDetails: Record<string, boolean | number | string> | undefined,
+) =>
+  safeDetails
+    ? Object.entries(safeDetails)
+      .map(([key, value]) => `${key}: ${String(value)}`)
+      .join("; ")
+    : undefined;
+
+const formatRepositoryMetadata = (state: CampaignCreationApiBridgeState) => {
+  const repository = state.repository;
+
+  if (!repository) {
+    return "-";
+  }
+
+  return (
+    repository.repositoryId
+    ?? repository.adapterId
+    ?? (repository.createdViaRepository ? "createdViaRepository: true" : "-")
+  );
+};
+
+const campaignCreationDraftInputFromDraft = (
+  draft: CampaignDraft,
+  locale: BusinessContentLocale,
+): CampaignCreationDraftInput => ({
+  contractMode: "OFF_CHAIN_MVP",
+  defaultLocale: draft.defaultLocale,
+  duration: `${draft.timePeriod.startTime}/${draft.timePeriod.endTime}`,
+  endTime: draft.timePeriod.endTime,
+  goal: `${draft.projectName}: ${getLocalizedText(draft.campaignName, locale)} (${draft.objective})`,
+  ownerAddress: "ELF_local_review_owner",
+  projectId: draft.projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "local-project",
+  rewardDescription: getLocalizedText(draft.rewardPlan.description, locale),
+  startTime: draft.timePeriod.startTime,
+  status: "draft",
+  supportedLocales: draft.supportedLocales,
+  walletPolicy: draft.walletPolicy,
+});
+
+const createInitialBridgeState = (
+  baseUrl: string | undefined,
+  seededCampaignCount: number,
+): CampaignCreationApiBridgeState => {
+  if (baseUrl?.trim()) {
+    return {
+      boundary: campaignCreationApiBoundary,
+      campaignCount: seededCampaignCount,
+      configured: true,
+      diagnostics: [],
+      loading: false,
+      source: "seeded_fallback",
+      status: "fallback",
+    };
+  }
+
+  return {
+    boundary: campaignCreationApiBoundary,
+    campaignCount: seededCampaignCount,
+    configured: false,
+    diagnostics: [
+      {
+        code: "API_BASE_URL_MISSING",
+        message: {
+          "en-US": "No local API base URL is configured, so the seeded campaign builder remains visible.",
+          "zh-CN": "未配置本地 API base URL，因此继续显示 seeded 活动创建器。",
+          "zh-TW": "未設定本地 API base URL，因此繼續顯示 seeded 活動建立器。",
+        },
+        severity: "info",
+      },
+    ],
+    loading: false,
+    source: "seeded_fallback",
+    status: "fallback",
+  };
+};
+
 export const CampaignBuilderPanel = ({
+  bridgeRunner,
+  bridgeStateOverride,
   copy,
   draft = seededCampaignDraft,
   locale,
@@ -246,6 +414,56 @@ export const CampaignBuilderPanel = ({
   const missingBasics = readiness.blockers.filter((check) => check.group === "basics");
   const campaignName = getLocalizedText(draft.campaignName, locale);
   const activePolicy = draft.walletPolicy;
+  const apiBaseUrl = campaignCreationApiBaseUrl();
+  const seededCampaignCount = 1;
+  const initialBridgeState = useMemo(
+    () => bridgeStateOverride ?? createInitialBridgeState(apiBaseUrl, seededCampaignCount),
+    [apiBaseUrl, bridgeStateOverride],
+  );
+  const [bridgeState, setBridgeState] = useState<CampaignCreationApiBridgeState>(initialBridgeState);
+  const isMountedRef = useRef(true);
+  const visibleBridgeState = bridgeStateOverride ?? bridgeState;
+  const runBridge = bridgeRunner ?? ((input) =>
+    submitCampaignCreationApiBridgeDraft({
+      config: {
+        baseUrl: apiBaseUrl,
+        headers: localProjectOwnerHeaders,
+        tracePrefix: "project-console-campaign-creation",
+      },
+      draft: input.draft,
+      seededCampaignCount: input.seededCampaignCount,
+    }));
+  const diagnostics = visibleBridgeState.diagnostics.slice(0, 2);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!bridgeStateOverride) {
+      setBridgeState(initialBridgeState);
+    }
+  }, [bridgeStateOverride, initialBridgeState]);
+
+  const submitApiDraft = async () => {
+    if (!visibleBridgeState.configured || visibleBridgeState.loading) {
+      return;
+    }
+
+    setBridgeState(createCampaignCreationApiLoadingState({ campaignCount: visibleBridgeState.campaignCount }));
+    const result = await runBridge({
+      draft: campaignCreationDraftInputFromDraft(draft, locale),
+      seededCampaignCount,
+    });
+
+    if (isMountedRef.current) {
+      setBridgeState(result);
+    }
+  };
 
   return (
     <section aria-label={copy.builderEntryTitle} style={panelStyle}>
@@ -295,6 +513,81 @@ export const CampaignBuilderPanel = ({
           </div>
           <p style={bodyTextStyle}>{copy.builderCompletenessSummary}</p>
         </article>
+
+        <aside aria-label={copy.campaignCreationApiRegionLabel} style={apiReviewPanelStyle}>
+          <div style={headingRowStyle}>
+            <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+              <p style={labelStyle}>{copy.campaignCreationApiReview}</p>
+              <p style={{ ...valueStyle, fontSize: 18 }}>
+                {campaignCreationSourceLabel(visibleBridgeState, copy)}
+              </p>
+            </div>
+            <PublishStateBadge
+              label={campaignCreationSourceLabel(visibleBridgeState, copy)}
+              state={apiBadgeState(visibleBridgeState)}
+            />
+          </div>
+
+          <button
+            disabled={!visibleBridgeState.configured || visibleBridgeState.loading}
+            onClick={submitApiDraft}
+            style={{
+              ...selectedButtonStyle,
+              cursor: !visibleBridgeState.configured || visibleBridgeState.loading ? "not-allowed" : "pointer",
+              opacity: !visibleBridgeState.configured || visibleBridgeState.loading ? 0.62 : 1,
+              width: "fit-content",
+            }}
+            type="button"
+          >
+            {visibleBridgeState.loading ? copy.campaignCreationApiLoading : copy.campaignCreationApiCreateDraft}
+          </button>
+
+          <p style={bodyTextStyle}>
+            {visibleBridgeState.configured
+              ? copy.campaignCreationApiConfigured
+              : copy.campaignCreationApiNotConfigured}
+          </p>
+
+          <dl style={apiMetricGridStyle}>
+            {[
+              [copy.campaignCreationApiStatus, visibleBridgeState.status],
+              [copy.campaignCreationApiCreatedDraftId, visibleBridgeState.createdDraftId ?? copy.campaignCreationApiNoDraft],
+              [copy.campaignCreationApiTraceId, visibleBridgeState.traceId ?? copy.campaignCreationApiNoTrace],
+              [copy.campaignCreationApiRepository, formatRepositoryMetadata(visibleBridgeState)],
+              [copy.campaignCreationApiStore, visibleBridgeState.repository?.storeId ?? "-"],
+              [copy.campaignCreationApiPersistence, visibleBridgeState.persistence?.recordId ?? "-"],
+              [copy.campaignCreationApiCampaignCount, String(visibleBridgeState.campaignCount)],
+              [copy.campaignCreationApiListRefresh, listRefreshLabel(visibleBridgeState, copy)],
+            ].map(([label, value]) => (
+              <div key={label} style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                <dt style={labelStyle}>{label}</dt>
+                <dd style={apiValueStyle}>{value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          {diagnostics.length > 0 ? (
+            <ul style={listStyle}>
+              {diagnostics.map((item) => (
+                <li key={`${item.code}-${item.severity}`} style={{ ...listItemStyle, alignItems: "start", justifyContent: "start" }}>
+                  <PublishStateBadge
+                    label={copy.campaignCreationApiDiagnostic}
+                    state={item.severity === "error" ? "blocker" : "warning"}
+                  />
+                  <span style={wrapTextStyle}>
+                    {getLocalizedText(item.message, locale)}
+                    {formatSafeDetails(item.safeDetails) ? ` (${formatSafeDetails(item.safeDetails)})` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          <p style={{ ...bodyTextStyle, fontWeight: 800 }}>
+            <strong>{copy.campaignCreationApiBoundary}: </strong>
+            {getLocalizedText(visibleBridgeState.boundary, locale)}
+          </p>
+        </aside>
 
         <article style={cardStyle}>
           <p style={labelStyle}>{copy.builderLocaleScope}</p>

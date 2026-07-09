@@ -248,6 +248,7 @@ describe("server request guard", () => {
     const decision = evaluateServerRequestGuard({
       headers: {
         "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type, x-campaign-os-proof-status, x-campaign-os-roles, x-campaign-os-wallet-address",
         origin: "http://localhost:5173",
         "x-campaign-os-trace-id": "trace-preflight",
       },
@@ -262,6 +263,9 @@ describe("server request guard", () => {
     });
     expect("body" in decision).toBe(false);
     expect(decision.headers["access-control-allow-methods"]).toContain("POST");
+    expect(decision.headers["access-control-allow-headers"]).toContain("x-campaign-os-proof-status");
+    expect(decision.headers["access-control-allow-headers"]).toContain("x-campaign-os-roles");
+    expect(decision.headers["access-control-allow-headers"]).toContain("x-campaign-os-wallet-address");
     expect(decision.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
     expect(decision.headers["x-campaign-os-trace-id"]).toBe("trace-preflight");
   });
