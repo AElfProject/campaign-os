@@ -68,6 +68,13 @@ describe("API foundation registry", () => {
       operationId: "createWalletSession",
       serviceId: "wallet-session-service",
     });
+    expect(registry.surfaces.find((surface) => surface.surfaceId === "wallet-session")).toMatchObject({
+      deferredDependencies: expect.arrayContaining(["auth_session", "production_database"]),
+      notes: expect.stringContaining("wallet session repository"),
+      routeIds: ["wallet.session.create"],
+      serviceId: "wallet-session-service",
+      state: "implemented_local",
+    });
     expect(registry.routes.find((route) => route.routeId === "campaigns.export.preview")).toMatchObject({
       operationId: "previewCampaignExport",
       serviceId: "export-service",

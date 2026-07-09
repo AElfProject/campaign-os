@@ -119,6 +119,19 @@ describe("backend service topology", () => {
         "campaigns.contract.transparency",
       ]),
     });
+    expect(backendServiceBoundaries.find((service) => service.id === "wallet-session-service")).toMatchObject({
+      dataStores: ["wallet-session-db"],
+      description: expect.stringContaining("repository-backed local wallet_sessions persistence"),
+      risks: expect.arrayContaining([
+        expect.stringContaining("Repository-backed wallet session records are local review only"),
+      ]),
+      routeIds: ["wallet.session.create"],
+    });
+    expect(backendDataStores.find((store) => store.id === "wallet-session-db")).toMatchObject({
+      currentMode: "local_json",
+      records: expect.arrayContaining(["wallet_sessions", "repository_health"]),
+      retentionRisk: expect.stringContaining("production session store rules"),
+    });
     expect(backendServiceBoundaries.find((service) => service.id === "verification-service")).toMatchObject({
       routeIds: expect.arrayContaining(["campaigns.provider.readiness"]),
     });

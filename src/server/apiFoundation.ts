@@ -1028,7 +1028,7 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["auth_session", "production_database"],
     label: "Wallet Session",
-    notes: "Local normalized session creation exists; real signature/session persistence is deferred.",
+    notes: "Local normalized session creation writes sanitized records to the wallet session repository; live signature verification, production auth/session storage, signing keys, and secret manager integration are deferred.",
     routeIds: ["wallet.session.create"],
     serviceId: "wallet-session-service",
     state: "implemented_local",
