@@ -115,6 +115,20 @@ describe("API runtime route catalog", () => {
       readiness: "review_required",
       serviceGroup: "export",
     });
+    expect(apiRuntimeRouteById["campaigns.export.artifacts.list"]).toMatchObject({
+      apiGroup: "export",
+      method: "GET",
+      path: "/api/campaigns/:campaignId/export-artifacts",
+      readiness: "review_required",
+      serviceGroup: "export",
+    });
+    expect(apiRuntimeRouteById["campaigns.export.artifacts.detail"]).toMatchObject({
+      apiGroup: "export",
+      method: "GET",
+      path: "/api/campaigns/:campaignId/export-artifacts/:artifactId",
+      readiness: "review_required",
+      serviceGroup: "export",
+    });
 
     for (const runtimeRoute of apiRuntimeRoutes) {
       expect(runtimeRoute.id.trim()).not.toHaveLength(0);
@@ -193,6 +207,8 @@ describe("API runtime route catalog", () => {
     expect(coverage.routeIds).toEqual(
       expect.arrayContaining([
         "agent.wallet.action.review",
+        "campaigns.export.artifacts.detail",
+        "campaigns.export.artifacts.list",
         "campaigns.export.readiness",
         "campaigns.lifecycle",
         "campaigns.launch.readiness",

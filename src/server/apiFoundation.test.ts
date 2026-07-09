@@ -88,6 +88,14 @@ describe("API foundation registry", () => {
       operationId: "getCampaignExportReadiness",
       serviceId: "export-service",
     });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.export.artifacts.list")).toMatchObject({
+      operationId: "listCampaignExportArtifacts",
+      serviceId: "export-service",
+    });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.export.artifacts.detail")).toMatchObject({
+      operationId: "getCampaignExportArtifact",
+      serviceId: "export-service",
+    });
     expect(registry.routes.find((route) => route.routeId === "campaigns.analytics")).toMatchObject({
       serviceId: "runtime-observability",
     });
@@ -121,6 +129,12 @@ describe("API foundation registry", () => {
     );
     expect(requestFieldsByRoute.get("campaigns.eligibility")?.map((field) => field?.name)).toEqual(
       expect.arrayContaining(["accountType", "address", "campaignId", "walletAddress", "walletSource"]),
+    );
+    expect(requestFieldsByRoute.get("campaigns.export.artifacts.list")?.map((field) => field?.name)).toEqual(
+      expect.arrayContaining(["artifactId", "batchId", "campaignId", "format", "retentionState", "traceId"]),
+    );
+    expect(requestFieldsByRoute.get("campaigns.export.artifacts.detail")?.map((field) => field?.name)).toEqual(
+      expect.arrayContaining(["artifactId", "campaignId"]),
     );
 
     for (const field of registry.requestFields.filter((item) => item.valueType === "enum")) {
@@ -157,7 +171,11 @@ describe("API foundation registry", () => {
       routeIds: expect.arrayContaining(["campaigns.provider.readiness"]),
     });
     expect(report.surfaces.find((surface) => surface.surfaceId === "export")).toMatchObject({
-      routeIds: expect.arrayContaining(["campaigns.export.readiness"]),
+      routeIds: expect.arrayContaining([
+        "campaigns.export.artifacts.detail",
+        "campaigns.export.artifacts.list",
+        "campaigns.export.readiness",
+      ]),
     });
     expect(report.surfaces.find((surface) => surface.surfaceId === "ai-ops")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["provider_adapters", "scheduler", "worker_queue"]),

@@ -87,16 +87,22 @@ describe("API service ports", () => {
     expect(apiServicePorts.find((port) => port.id === "export-port")?.futureAttachPoints).toEqual(
       expect.arrayContaining([
         "src/server/exportArtifactRegistry.ts local artifact registry",
+        "src/server/exportArtifactRegistry.ts local audit read model",
         "export artifact store",
         "contract writer approval gate",
       ]),
     );
     expect(apiServicePorts.find((port) => port.id === "export-port")?.routeIds).toEqual(
-      expect.arrayContaining(["campaigns.export.preview", "campaigns.export.readiness"]),
+      expect.arrayContaining([
+        "campaigns.export.artifacts.detail",
+        "campaigns.export.artifacts.list",
+        "campaigns.export.preview",
+        "campaigns.export.readiness",
+      ]),
     );
     expect(apiServicePorts.find((port) => port.id === "export-port")).toMatchObject({
       localAdapter: expect.stringContaining("src/server/exportArtifactRegistry.ts"),
-      notes: expect.stringContaining("export artifact registry metadata"),
+      notes: expect.stringContaining("export artifact audit read metadata"),
       productionAdapterStatus: "local_seeded",
       requiresExternalNetwork: false,
       requiresSecret: false,
