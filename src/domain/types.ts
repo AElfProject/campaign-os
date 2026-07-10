@@ -5147,6 +5147,61 @@ export interface ExportArtifact {
   safety: ExportArtifactSafety;
 }
 
+export interface LocalExportFileRowCounts {
+  totalRows: number;
+  readyRows: number;
+  reviewRequiredRows: number;
+  blockedRows: number;
+}
+
+export interface LocalExportFileRetention {
+  mode: "local_review_ttl";
+  state: "active" | "expired";
+  createdAt: string;
+  expiresAt: string;
+  ttlHours: number;
+  productionStorageBacked: false;
+  purgeRequired: boolean;
+}
+
+export interface LocalExportFileSafety {
+  localOnly: true;
+  localReviewOnly: true;
+  forbiddenFieldsAbsent: boolean;
+  downloadUrlEnabled: false;
+  storageWriteEnabled: false;
+  signedUrlEnabled: false;
+  objectKeyEnabled: false;
+  providerCallEnabled: false;
+  walletSigningEnabled: false;
+  contractRootWriteEnabled: false;
+  queueExecutionEnabled: false;
+  schedulerExecutionEnabled: false;
+  rewardCustodyEnabled: false;
+  rewardDistributionEnabled: false;
+  boundary: LocalizedText;
+}
+
+export interface LocalExportFileHandoff {
+  handoffId: string;
+  campaignId: string;
+  artifactId: string;
+  batchId: string;
+  traceId: string;
+  format: ExportPreviewMode;
+  fileName: string;
+  mimeType: string;
+  payload: string;
+  payloadBytes: number;
+  checksum: string;
+  checksumAlgorithm: string;
+  columns: readonly ExportCsvColumn[];
+  rowCounts: LocalExportFileRowCounts;
+  retention: LocalExportFileRetention;
+  safety: LocalExportFileSafety;
+  boundary: LocalizedText;
+}
+
 export interface EligibilityRootExportSafety {
   claimExecutionEnabled: false;
   contractWriteExecuted: false;
