@@ -298,6 +298,30 @@ describe("Campaign OS API server entrypoint", () => {
     }
   });
 
+  it("allows Vite fallback dev origins for API-backed local review", async () => {
+    const server = await startCampaignOsApiServer({ logger: false, port: 0 });
+
+    try {
+      const response = await fetch(`${server.url}/api/campaigns/camp-awaken-sprint/points-ranking-ledger-runtime`, {
+        headers: {
+          "access-control-request-headers": "accept, x-campaign-os-trace-id",
+          "access-control-request-method": "GET",
+          origin: "http://127.0.0.1:5177",
+          "x-campaign-os-trace-id": "trace-vite-fallback-preflight",
+        },
+        method: "OPTIONS",
+      });
+
+      expect(response.status).toBe(204);
+      expect(response.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:5177");
+      expect(response.headers.get("access-control-allow-methods")).toContain("GET");
+      expect(response.headers.get("access-control-allow-headers")).toContain("x-campaign-os-trace-id");
+      expect(response.headers.get("x-campaign-os-trace-id")).toBe("trace-vite-fallback-preflight");
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("returns traceable guarded failures before business handlers", async () => {
     const server = await startCampaignOsApiServer({
       logger: false,

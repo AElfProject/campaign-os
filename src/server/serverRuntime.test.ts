@@ -51,7 +51,14 @@ describe("API server runtime contract", () => {
       preflightHandledBeforeRuntime: true,
     });
     expect(contract.corsPolicy.allowedOrigins).toEqual(
-      expect.arrayContaining(["http://localhost:5173", "http://127.0.0.1:5173"]),
+      expect.arrayContaining([
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5177",
+        "http://127.0.0.1:5177",
+        "http://localhost:5184",
+        "http://127.0.0.1:5184",
+      ]),
     );
     expect(contract.shutdown.shutdownTimeoutMs).toBe(5_000);
     expect(contract.environmentKeys).toEqual(

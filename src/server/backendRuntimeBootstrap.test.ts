@@ -61,7 +61,7 @@ describe("backend runtime bootstrap contract", () => {
       supportMode: "local_seeded",
       valid: true,
       startup: {
-        allowedOriginCount: 2,
+        allowedOriginCount: 24,
         attachPointCount: expect.any(Number),
         blockedAttachPointCount: expect.any(Number),
         corsEnabled: true,
