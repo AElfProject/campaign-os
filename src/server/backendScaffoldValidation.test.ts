@@ -156,7 +156,6 @@ const historicalAiOpsRouteScopeFragments = [
   "ai-ops",
   "aiops",
   "campaigns.posts.generate",
-  "campaigns.summary",
   "campaigns.tasks.generate",
   "generate_campaign_posts",
   "generate_campaign_tasks",
