@@ -148,6 +148,30 @@ describe("backend config contract", () => {
     expect(contract.profile.externalNetworkAllowed).toBe(false);
   });
 
+  it("blocks local durable persistence when the review state directory is missing", () => {
+    const contract = resolveBackendConfigContract({
+      env: {
+        CAMPAIGN_OS_PERSISTENCE_MODE: "local_json",
+      },
+    });
+
+    expect(contract).toMatchObject({
+      persistenceDirectory: undefined,
+      persistenceMode: "local_json",
+      valid: false,
+    });
+    expect(contract.productionReadiness.status).toBe("blocked");
+    expect(contract.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "MISSING_LOCAL_PERSISTENCE_DIR",
+          field: "CAMPAIGN_OS_PERSISTENCE_DIR",
+          severity: "error",
+        }),
+      ]),
+    );
+  });
+
   it("fails closed for unknown profile and unsupported persistence mode", () => {
     const contract = resolveBackendConfigContract({
       env: {
@@ -666,5 +690,13 @@ describe("backend config contract", () => {
       },
       version: "0.2.1-test",
     });
+
+    expect(() =>
+      resolveCampaignOsRuntimeConfig({
+        env: {
+          CAMPAIGN_OS_PERSISTENCE_MODE: "local_json",
+        },
+      }),
+    ).toThrow("local_json persistence requires CAMPAIGN_OS_PERSISTENCE_DIR");
   });
 });

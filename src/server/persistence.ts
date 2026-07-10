@@ -142,6 +142,8 @@ const forbiddenKeyFragments = [
   "signedurl",
   "token",
 ];
+const forbiddenStringValuePattern =
+  /(\.agents|\.kittify|\/docs\/current|\/evidence\/|\/kitty-specs\/|\/sync\/|bearer\s+|campaign-os-kitty|object[-_\s]?key|password=|private[-_\s]?key|raw[-_\s]?signature|seed[-_\s]?phrase|secret|signed[-_\s]?url|token=)/i;
 
 const emptyCounts = (): PersistenceCountsByKind =>
   Object.fromEntries(recordKinds.map((kind) => [kind, 0])) as PersistenceCountsByKind;
@@ -153,12 +155,19 @@ const hasForbiddenKey = (key: string) => {
 };
 
 const sanitizeSummaryValue = (value: unknown): PersistenceSummaryValue | undefined => {
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+  if (typeof value === "string") {
+    return forbiddenStringValuePattern.test(value) ? undefined : value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
     return value;
   }
 
   if (Array.isArray(value)) {
-    const strings = value.filter((item): item is string => typeof item === "string");
+    const strings = value.filter(
+      (item): item is string =>
+        typeof item === "string" && !forbiddenStringValuePattern.test(item),
+    );
 
     return strings.length > 0 ? strings : undefined;
   }

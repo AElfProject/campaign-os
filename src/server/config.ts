@@ -25,6 +25,7 @@ export type BackendConfigDiagnosticSeverity = "error" | "warning" | "info";
 export type BackendConfigDiagnosticCode =
   | "UNKNOWN_BACKEND_PROFILE"
   | "UNSUPPORTED_PERSISTENCE_MODE"
+  | "MISSING_LOCAL_PERSISTENCE_DIR"
   | "MISSING_PRODUCTION_CONFIG"
   | "PRODUCTION_CAPABILITY_DEFERRED"
   | "PRODUCTION_CAPABILITY_ENABLEMENT_BLOCKED";
@@ -341,6 +342,28 @@ const missingProductionConfigDiagnostics = (
     severity: "error",
   }));
 
+const missingLocalPersistenceDirectoryDiagnostics = ({
+  localDataDir,
+  mode,
+}: {
+  localDataDir?: string;
+  mode: CampaignOsPersistenceMode;
+}): BackendConfigDiagnostic[] => {
+  if (mode !== "local_json" || localDataDir) {
+    return [];
+  }
+
+  return [
+    {
+      code: "MISSING_LOCAL_PERSISTENCE_DIR",
+      field: "CAMPAIGN_OS_PERSISTENCE_DIR",
+      message:
+        "Local durable persistence requires CAMPAIGN_OS_PERSISTENCE_DIR or persistence.localDataDir.",
+      severity: "error",
+    },
+  ];
+};
+
 export const resolveBackendConfigContract = ({
   env = typeof process === "undefined" ? {} : process.env,
   host = env.CAMPAIGN_OS_API_HOST ?? DEFAULT_HOST,
@@ -353,6 +376,7 @@ export const resolveBackendConfigContract = ({
   const profileResolution = resolveBackendRuntimeProfile(requestedProfileId);
   const requestedPersistenceMode = persistence.mode ?? env.CAMPAIGN_OS_PERSISTENCE_MODE;
   const persistenceModeResolution = resolveBackendPersistenceMode(requestedPersistenceMode);
+  const localDataDir = persistence.localDataDir ?? env.CAMPAIGN_OS_PERSISTENCE_DIR;
   const profile = profileResolution.profile;
   const missingConfigKeys =
     profile.id === "production-required"
@@ -374,6 +398,10 @@ export const resolveBackendConfigContract = ({
       severity: diagnostic.severity,
     })),
     ...persistenceModeResolution.diagnostics,
+    ...missingLocalPersistenceDirectoryDiagnostics({
+      localDataDir,
+      mode: persistenceModeResolution.mode,
+    }),
     ...missingProductionConfigDiagnostics(missingConfigKeys),
     ...blockedEnablementDiagnostics,
     ...deferredDiagnostics,
@@ -387,7 +415,7 @@ export const resolveBackendConfigContract = ({
     host,
     persistenceDirectory:
       persistenceModeResolution.mode === "local_json"
-        ? persistence.localDataDir ?? env.CAMPAIGN_OS_PERSISTENCE_DIR
+        ? localDataDir
         : undefined,
     persistenceMode: persistenceModeResolution.mode,
     productionPersistence: {
@@ -422,6 +450,9 @@ export const resolveCampaignOsRuntimeConfig = ({
   const explicitMode = persistence.mode ?? env.CAMPAIGN_OS_PERSISTENCE_MODE;
   const mode = resolvePersistenceMode(explicitMode, explicitMode);
   const localDataDir = persistence.localDataDir ?? env.CAMPAIGN_OS_PERSISTENCE_DIR;
+  if (mode === "local_json" && !localDataDir) {
+    throw new Error("local_json persistence requires CAMPAIGN_OS_PERSISTENCE_DIR or persistence.localDataDir.");
+  }
   const adapterLabel = persistence.adapterLabel ?? sanitizeAdapterLabel(mode, localDataDir);
 
   return {
