@@ -1356,8 +1356,10 @@ const exportDeliveryApiStatusLabel = (
   copy: typeof projectConsoleCopy["en-US"],
 ) => {
   const labels: Record<ExportArtifactDeliveryApiStatus, string> = {
+    blocked: copy.exportDeliveryApiStatusError,
     delivered: copy.exportDeliveryApiStatusDelivered,
     error: copy.exportDeliveryApiStatusError,
+    expired: copy.exportDeliveryApiStatusPartial,
     fallback: copy.exportDeliveryApiStatusFallback,
     loading: copy.exportDeliveryApiStatusLoading,
     partial: copy.exportDeliveryApiStatusPartial,
@@ -1369,7 +1371,7 @@ const exportDeliveryApiStatusLabel = (
 const exportDeliveryApiBadgeState = (
   status: ExportArtifactDeliveryApiStatus,
 ): "blocker" | "ready" | "warning" =>
-  status === "delivered" ? "ready" : status === "error" ? "blocker" : "warning";
+  status === "delivered" ? "ready" : status === "error" || status === "blocked" ? "blocker" : "warning";
 
 const exportReadinessBadgeState = (readiness: ExportReadinessState) =>
   readiness === "blocked" ? "blocker" : readiness === "review_required" ? "warning" : "ready";

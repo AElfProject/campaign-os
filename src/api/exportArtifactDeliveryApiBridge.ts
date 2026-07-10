@@ -14,8 +14,10 @@ export type ExportArtifactDeliveryApiSource =
   | "seeded_fallback";
 
 export type ExportArtifactDeliveryApiStatus =
+  | "blocked"
   | "delivered"
   | "error"
+  | "expired"
   | "fallback"
   | "loading"
   | "partial";
@@ -27,6 +29,9 @@ export interface ExportArtifactDeliveryApiDiagnostic {
     | "API_BASE_URL_INVALID"
     | "API_BASE_URL_MISSING"
     | "API_EXPORT_PREVIEW_FAILED"
+    | "API_FILE_HANDOFF_BLOCKED"
+    | "API_FILE_HANDOFF_EXPIRED"
+    | "API_FILE_HANDOFF_FAILED"
     | "API_REQUEST_FAILED"
     | "API_REQUEST_TIMEOUT"
     | "API_RESPONSE_INVALID";
@@ -118,10 +123,12 @@ export interface ExportArtifactDeliveryAuditEvent {
 }
 
 export interface ExportArtifactDeliveryRetention {
+  createdAt?: string;
   expiresAt?: string;
   mode?: string;
   productionStorageBacked?: false;
   purgeRequired?: boolean;
+  state?: "active" | "expired";
   ttlHours?: number;
 }
 
@@ -194,6 +201,53 @@ export interface ExportArtifactDeliveryAuditDetailResult {
   safety?: ExportArtifactDeliverySafetyFlags;
 }
 
+export interface ExportArtifactDeliveryFileHandoffRowCounts {
+  blockedRows: number;
+  readyRows: number;
+  reviewRequiredRows: number;
+  totalRows: number;
+}
+
+export interface ExportArtifactDeliveryFileHandoffAuditDetail {
+  batchId?: string;
+  checksum?: string;
+  checksumAlgorithm?: string;
+  fileName?: string;
+  payloadBytes?: number;
+  previewRouteId?: string;
+  previewTraceId?: string;
+  retentionState?: "active" | "expired";
+  source?: string;
+}
+
+export interface ExportArtifactDeliveryFileHandoff {
+  artifactId: string;
+  batchId: string;
+  boundary?: LocalizedText;
+  campaignId: string;
+  checksum: string;
+  checksumAlgorithm: string;
+  columns: readonly string[];
+  fileName: string;
+  format: ExportPreviewMode;
+  handoffId: string;
+  mimeType: string;
+  payloadBytes: number;
+  payloadText?: string;
+  retention: ExportArtifactDeliveryRetention;
+  rowCounts: ExportArtifactDeliveryFileHandoffRowCounts;
+  safety: ExportArtifactDeliverySafetyFlags;
+  traceId: string;
+}
+
+export interface ExportArtifactDeliveryFileHandoffResult {
+  artifactId: string;
+  auditDetail?: ExportArtifactDeliveryFileHandoffAuditDetail;
+  campaignId: string;
+  handoff: ExportArtifactDeliveryFileHandoff;
+  safety: ExportArtifactDeliverySafetyFlags;
+}
+
 export interface ExportArtifactDeliveryApiBridgeState {
   artifactId?: string;
   auditDetail?: ExportArtifactDeliveryAuditDetailResult;
@@ -204,6 +258,7 @@ export interface ExportArtifactDeliveryApiBridgeState {
   diagnostics: readonly ExportArtifactDeliveryApiDiagnostic[];
   eligibilityRootPacket?: EligibilityRootExportReviewPacket;
   loading: boolean;
+  fileHandoff?: ExportArtifactDeliveryFileHandoffResult;
   persistence?: ExportArtifactDeliveryPersistenceMetadata;
   preview?: ExportArtifactDeliveryPreviewResult;
   registry?: ExportArtifactDeliveryRegistryRecord;
@@ -248,7 +303,7 @@ interface FetchJsonResult {
   traceId?: string;
 }
 
-type EndpointKind = "audit_detail" | "audit_list" | "preview";
+type EndpointKind = "audit_detail" | "audit_list" | "file_handoff" | "preview";
 
 const defaultTimeoutMs = 2_000;
 const minTimeoutMs = 250;
@@ -288,6 +343,21 @@ const diagnosticMessages: Record<ExportArtifactDeliveryApiDiagnostic["code"], Lo
     "en-US": "The local export preview route did not return a usable preview.",
     "zh-CN": "本地导出 preview route 未返回可用 preview。",
     "zh-TW": "本地匯出 preview route 未回傳可用 preview。",
+  },
+  API_FILE_HANDOFF_BLOCKED: {
+    "en-US": "The local export file handoff route rejected an unsupported or unsafe request.",
+    "zh-CN": "本地导出 file handoff route 拒绝了不支持或不安全的请求。",
+    "zh-TW": "本地匯出 file handoff route 拒絕了不支援或不安全的請求。",
+  },
+  API_FILE_HANDOFF_EXPIRED: {
+    "en-US": "The local export file handoff has expired, but preview and audit context remain available.",
+    "zh-CN": "本地导出 file handoff 已过期，但 preview 和 audit 上下文仍可用。",
+    "zh-TW": "本地匯出 file handoff 已過期，但 preview 和 audit 脈絡仍可用。",
+  },
+  API_FILE_HANDOFF_FAILED: {
+    "en-US": "The local export file handoff route did not return a usable handoff payload.",
+    "zh-CN": "本地导出 file handoff route 未返回可用 handoff payload。",
+    "zh-TW": "本地匯出 file handoff route 未回傳可用 handoff payload。",
   },
   API_REQUEST_FAILED: {
     "en-US": "The local export delivery API request failed, so seeded export review remains visible.",
@@ -488,6 +558,10 @@ const diagnosticCodeForEndpoint = (
 
   if (endpointKind === "audit_list") {
     return "API_AUDIT_LIST_FAILED";
+  }
+
+  if (endpointKind === "file_handoff") {
+    return "API_FILE_HANDOFF_FAILED";
   }
 
   return "API_EXPORT_PREVIEW_FAILED";
@@ -902,10 +976,14 @@ const normalizeRetention = (payload: unknown): ExportArtifactDeliveryRetention |
   }
 
   const retention = {
+    ...(optionalText(payload.createdAt) ? { createdAt: optionalText(payload.createdAt) } : {}),
     ...(optionalText(payload.expiresAt) ? { expiresAt: optionalText(payload.expiresAt) } : {}),
     ...(optionalText(payload.mode) ? { mode: optionalText(payload.mode) } : {}),
     ...(payload.productionStorageBacked === false ? { productionStorageBacked: false as const } : {}),
     ...(booleanValue(payload.purgeRequired) !== undefined ? { purgeRequired: booleanValue(payload.purgeRequired) } : {}),
+    ...(optionalText(payload.state) === "active" || optionalText(payload.state) === "expired"
+      ? { state: optionalText(payload.state) as "active" | "expired" }
+      : {}),
     ...(numberValue(payload.ttlHours) !== undefined ? { ttlHours: numberValue(payload.ttlHours) } : {}),
   };
 
@@ -1190,6 +1268,186 @@ const normalizeAuditDetail = (payload: unknown): ExportArtifactDeliveryAuditDeta
   };
 };
 
+const normalizeFileHandoffRowCounts = (payload: unknown): ExportArtifactDeliveryFileHandoffRowCounts | undefined => {
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+
+  const totalRows = numberValue(payload.totalRows);
+  const readyRows = numberValue(payload.readyRows);
+  const reviewRequiredRows = numberValue(payload.reviewRequiredRows);
+  const blockedRows = numberValue(payload.blockedRows);
+
+  if (
+    totalRows === undefined ||
+    readyRows === undefined ||
+    reviewRequiredRows === undefined ||
+    blockedRows === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    blockedRows,
+    readyRows,
+    reviewRequiredRows,
+    totalRows,
+  };
+};
+
+const normalizeFileHandoffAuditDetail = (
+  payload: unknown,
+): ExportArtifactDeliveryFileHandoffAuditDetail | undefined => {
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+
+  const retentionState = optionalText(payload.retentionState);
+  const auditDetail = {
+    ...(optionalText(payload.batchId) ? { batchId: optionalText(payload.batchId) } : {}),
+    ...(optionalText(payload.checksum) ? { checksum: optionalText(payload.checksum) } : {}),
+    ...(optionalText(payload.checksumAlgorithm) ? { checksumAlgorithm: optionalText(payload.checksumAlgorithm) } : {}),
+    ...(optionalText(payload.fileName) ? { fileName: optionalText(payload.fileName) } : {}),
+    ...(numberValue(payload.payloadBytes) !== undefined ? { payloadBytes: numberValue(payload.payloadBytes) } : {}),
+    ...(optionalText(payload.previewRouteId) ? { previewRouteId: optionalText(payload.previewRouteId) } : {}),
+    ...(optionalText(payload.previewTraceId) ? { previewTraceId: optionalText(payload.previewTraceId) } : {}),
+    ...(retentionState === "active" || retentionState === "expired"
+      ? { retentionState: retentionState as "active" | "expired" }
+      : {}),
+    ...(optionalText(payload.source) ? { source: optionalText(payload.source) } : {}),
+  };
+
+  return Object.keys(auditDetail).length > 0 ? auditDetail : undefined;
+};
+
+const isRequiredFileHandoffSafety = (
+  safety: ExportArtifactDeliverySafetyFlags | undefined,
+): safety is ExportArtifactDeliverySafetyFlags =>
+  Boolean(
+    safety &&
+    safety.localOnly === true &&
+    safety.localReviewOnly === true &&
+    safety.forbiddenFieldsAbsent === true &&
+    safety.contractRootWriteEnabled === false &&
+    safety.downloadUrlEnabled === false &&
+    safety.objectKeyEnabled === false &&
+    safety.providerCallEnabled === false &&
+    safety.queueExecutionEnabled === false &&
+    safety.rewardCustodyEnabled === false &&
+    safety.rewardDistributionEnabled === false &&
+    safety.schedulerExecutionEnabled === false &&
+    safety.signedUrlEnabled === false &&
+    safety.storageWriteEnabled === false &&
+    safety.walletSigningEnabled === false
+  );
+
+const normalizeFileHandoff = (payload: unknown): ExportArtifactDeliveryFileHandoff | undefined => {
+  if (!isRecord(payload) || hasUnsafePacketKey(payload)) {
+    return undefined;
+  }
+
+  const artifactId = requiredText(payload.artifactId);
+  const batchId = requiredText(payload.batchId);
+  const campaignId = requiredText(payload.campaignId);
+  const checksum = requiredText(payload.checksum);
+  const checksumAlgorithm = requiredText(payload.checksumAlgorithm);
+  const columns = textArray(payload.columns);
+  const fileName = requiredText(payload.fileName);
+  const format = requiredText(payload.format);
+  const handoffId = requiredText(payload.handoffId);
+  const mimeType = requiredText(payload.mimeType);
+  const payloadText = requiredText(payload.payload);
+  const payloadBytes = requiredNumber(payload.payloadBytes);
+  const retention = normalizeRetention(payload.retention);
+  const rowCounts = normalizeFileHandoffRowCounts(payload.rowCounts);
+  const safety = normalizeSafety(payload.safety);
+  const traceIdValue = requiredText(payload.traceId);
+  const boundary = localizedText(payload.boundary);
+
+  if (
+    !artifactId ||
+    !batchId ||
+    !campaignId ||
+    !checksum ||
+    !checksumAlgorithm ||
+    columns.length === 0 ||
+    !fileName ||
+    (format !== "csv" && format !== "json") ||
+    !handoffId ||
+    !mimeType ||
+    !payloadText ||
+    payloadBytes === undefined ||
+    !retention ||
+    retention.mode !== "local_review_ttl" ||
+    retention.productionStorageBacked !== false ||
+    retention.state !== "active" ||
+    !rowCounts ||
+    !isRequiredFileHandoffSafety(safety) ||
+    !traceIdValue
+  ) {
+    return undefined;
+  }
+
+  const sanitizedPayloadText = sanitizeExportArtifactDeliveryApiText(payloadText);
+
+  if (sanitizedPayloadText !== payloadText) {
+    return undefined;
+  }
+
+  return {
+    artifactId,
+    batchId,
+    ...(boundary ? { boundary } : {}),
+    campaignId,
+    checksum,
+    checksumAlgorithm,
+    columns,
+    fileName,
+    format,
+    handoffId,
+    mimeType,
+    payloadBytes,
+    payloadText,
+    retention,
+    rowCounts,
+    safety,
+    traceId: traceIdValue,
+  };
+};
+
+const normalizeFileHandoffResult = (
+  payload: unknown,
+): ExportArtifactDeliveryFileHandoffResult | undefined => {
+  if (!isRecord(payload) || hasUnsafePacketKey(payload)) {
+    return undefined;
+  }
+
+  const artifactId = requiredText(payload.artifactId);
+  const campaignId = requiredText(payload.campaignId);
+  const handoff = normalizeFileHandoff(payload.handoff);
+  const auditDetail = normalizeFileHandoffAuditDetail(payload.auditDetail);
+  const safety = normalizeSafety(payload.safety);
+
+  if (
+    !artifactId ||
+    !campaignId ||
+    !handoff ||
+    handoff.artifactId !== artifactId ||
+    handoff.campaignId !== campaignId ||
+    !isRequiredFileHandoffSafety(safety)
+  ) {
+    return undefined;
+  }
+
+  return {
+    artifactId,
+    ...(auditDetail ? { auditDetail } : {}),
+    campaignId,
+    handoff,
+    safety,
+  };
+};
+
 const normalizePersistence = (payload: unknown): ExportArtifactDeliveryPersistenceMetadata | undefined => {
   if (!isRecord(payload)) {
     return undefined;
@@ -1258,6 +1516,68 @@ const fallbackState = (
   status,
   ...(traceIdValue ? { traceId: traceIdValue } : {}),
 });
+
+const fileHandoffFailureStatus = (
+  result: FetchJsonResult,
+): Extract<ExportArtifactDeliveryApiStatus, "blocked" | "error" | "expired" | "partial"> => {
+  const serialized = JSON.stringify(result.body ?? result.diagnostic ?? "").toLowerCase();
+
+  if (serialized.includes("local_export_file_expired")) {
+    return "expired";
+  }
+
+  if (
+    serialized.includes("unsupported_export_mode") ||
+    serialized.includes("unsafe") ||
+    serialized.includes("signedurl") ||
+    serialized.includes("objectkey") ||
+    serialized.includes("storagekey") ||
+    serialized.includes("walletsignature") ||
+    serialized.includes("providerpayload") ||
+    serialized.includes("transactionid") ||
+    serialized.includes("privatekey") ||
+    serialized.includes("rewardcustody") ||
+    serialized.includes("rewarddistribution")
+  ) {
+    return "blocked";
+  }
+
+  if (
+    result.status !== undefined && result.status >= 500 ||
+    result.diagnostic?.code === "API_REQUEST_FAILED" ||
+    result.diagnostic?.code === "API_REQUEST_TIMEOUT"
+  ) {
+    return "error";
+  }
+
+  return "partial";
+};
+
+const fileHandoffDiagnosticCode = (
+  status: Extract<ExportArtifactDeliveryApiStatus, "blocked" | "error" | "expired" | "partial">,
+): ExportArtifactDeliveryApiDiagnostic["code"] => {
+  if (status === "expired") {
+    return "API_FILE_HANDOFF_EXPIRED";
+  }
+
+  if (status === "blocked") {
+    return "API_FILE_HANDOFF_BLOCKED";
+  }
+
+  if (status === "error") {
+    return "API_REQUEST_FAILED";
+  }
+
+  return "API_FILE_HANDOFF_FAILED";
+};
+
+const fileHandoffPayloadTextUnsafe = (payload: unknown) => {
+  if (!isRecord(payload) || !isRecord(payload.handoff) || typeof payload.handoff.payload !== "string") {
+    return false;
+  }
+
+  return sanitizeExportArtifactDeliveryApiText(payload.handoff.payload) !== payload.handoff.payload;
+};
 
 export const createExportArtifactDeliveryApiLoadingState = (
   request: ExportArtifactDeliveryRequest,
@@ -1498,6 +1818,109 @@ export const submitExportArtifactDeliveryApiReview = async ({
     };
   }
 
+  const fileHandoffEndpoint =
+    `/api/campaigns/${encodeURIComponent(normalizedRequest.campaignId)}/export-artifacts/${encodeURIComponent(artifactId)}/file`;
+  const fileHandoff = await safeFetchJson(
+    fetchImpl,
+    queryEndpointUrl(normalizedConfig.baseUrl, fileHandoffEndpoint, {
+      format: normalizedRequest.format,
+    }),
+    fileHandoffEndpoint,
+    "file_handoff",
+    {
+      headers: requestHeaders(normalizedConfig, false, traceId(normalizedConfig.normalizedTracePrefix)),
+      method: "GET",
+    },
+    normalizedConfig.timeoutMs,
+  );
+
+  if (!fileHandoff.ok) {
+    const status = fileHandoffFailureStatus(fileHandoff);
+
+    return {
+      artifactId,
+      auditDetail: normalizedAuditDetail,
+      auditList: normalizedAuditList,
+      boundary: exportArtifactDeliveryApiBoundary,
+      configured: true,
+      contractRootReview,
+      diagnostics: [
+        diagnostic(fileHandoffDiagnosticCode(status), status === "partial" ? "warning" : "error", {
+          endpoint: fileHandoffEndpoint,
+          status: fileHandoff.status,
+        }),
+      ],
+      ...(eligibilityRootPacket ? { eligibilityRootPacket } : {}),
+      loading: false,
+      ...(persistence ? { persistence } : {}),
+      preview: normalizedPreview,
+      registry,
+      ...(repository ? { repository } : {}),
+      request,
+      source: "api_runtime",
+      status,
+      traceId: fileHandoff.traceId ?? auditDetail.traceId ?? auditList.traceId ?? preview.traceId,
+    };
+  }
+
+  const fileHandoffPayload = dataPayload(fileHandoff.body);
+
+  if (hasUnsafePacketKey(fileHandoffPayload) || fileHandoffPayloadTextUnsafe(fileHandoffPayload)) {
+    return {
+      artifactId,
+      auditDetail: normalizedAuditDetail,
+      auditList: normalizedAuditList,
+      boundary: exportArtifactDeliveryApiBoundary,
+      configured: true,
+      contractRootReview,
+      diagnostics: [
+        diagnostic("API_FILE_HANDOFF_BLOCKED", "error", {
+          endpoint: fileHandoffEndpoint,
+          status: fileHandoff.status,
+        }),
+      ],
+      ...(eligibilityRootPacket ? { eligibilityRootPacket } : {}),
+      loading: false,
+      ...(persistence ? { persistence } : {}),
+      preview: normalizedPreview,
+      registry,
+      ...(repository ? { repository } : {}),
+      request,
+      source: "api_runtime",
+      status: "blocked",
+      traceId: fileHandoff.traceId ?? auditDetail.traceId ?? auditList.traceId ?? preview.traceId,
+    };
+  }
+
+  const normalizedFileHandoff = normalizeFileHandoffResult(fileHandoffPayload);
+
+  if (!normalizedFileHandoff) {
+    return {
+      artifactId,
+      auditDetail: normalizedAuditDetail,
+      auditList: normalizedAuditList,
+      boundary: exportArtifactDeliveryApiBoundary,
+      configured: true,
+      contractRootReview,
+      diagnostics: [
+        diagnostic("API_FILE_HANDOFF_FAILED", "warning", {
+          endpoint: fileHandoffEndpoint,
+          status: fileHandoff.status,
+        }),
+      ],
+      ...(eligibilityRootPacket ? { eligibilityRootPacket } : {}),
+      loading: false,
+      ...(persistence ? { persistence } : {}),
+      preview: normalizedPreview,
+      registry,
+      ...(repository ? { repository } : {}),
+      request,
+      source: "api_runtime",
+      status: "partial",
+      traceId: fileHandoff.traceId ?? auditDetail.traceId ?? auditList.traceId ?? preview.traceId,
+    };
+  }
+
   return {
     artifactId,
     auditDetail: normalizedAuditDetail,
@@ -1507,6 +1930,7 @@ export const submitExportArtifactDeliveryApiReview = async ({
     contractRootReview,
     diagnostics: [],
     ...(eligibilityRootPacket ? { eligibilityRootPacket } : {}),
+    fileHandoff: normalizedFileHandoff,
     loading: false,
     ...(persistence ? { persistence } : {}),
     preview: normalizedPreview,
@@ -1515,6 +1939,6 @@ export const submitExportArtifactDeliveryApiReview = async ({
     request,
     source: "api_runtime",
     status: "delivered",
-    traceId: auditDetail.traceId ?? auditList.traceId ?? preview.traceId,
+    traceId: fileHandoff.traceId ?? auditDetail.traceId ?? auditList.traceId ?? preview.traceId,
   };
 };

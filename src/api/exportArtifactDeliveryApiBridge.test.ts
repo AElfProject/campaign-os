@@ -241,6 +241,89 @@ const auditDetailPayload = {
   },
 };
 
+const fileHandoffPayload = {
+  artifactId: "export-artifact-local-camp-awaken-sprint",
+  auditDetail: {
+    batchId: "export-awaken-sprint-preview",
+    checksum: "sha256-local-artifact",
+    checksumAlgorithm: "sha256",
+    fileName: "camp-awaken-sprint-export-awaken-sprint-preview-local-review.json",
+    payloadBytes: 128,
+    previewRouteId: "campaigns.export.preview",
+    previewTraceId: "trace-export-preview-header",
+    retentionState: "active",
+    source: "deterministic_local_export",
+  },
+  campaignId: request.campaignId,
+  handoff: {
+    artifactId: "export-artifact-local-camp-awaken-sprint",
+    batchId: "export-awaken-sprint-preview",
+    boundary: {
+      "en-US": "Local export file handoff only.",
+      "zh-CN": "仅本地导出文件 handoff。",
+      "zh-TW": "Local export file handoff only.",
+    },
+    campaignId: request.campaignId,
+    checksum: "sha256-local-artifact",
+    checksumAlgorithm: "sha256",
+    columns: ["wallet_address", "wallet_type", "locale_preference"],
+    fileName: "camp-awaken-sprint-export-awaken-sprint-preview-local-review.json",
+    format: "json",
+    handoffId: "camp-awaken-sprint-export-awaken-sprint-preview-json-local-file-handoff",
+    mimeType: "application/json;charset=utf-8",
+    payload: "{\"campaignId\":\"camp-awaken-sprint\",\"rows\":[]}",
+    payloadBytes: 128,
+    retention: {
+      createdAt: "2026-07-09T00:00:00.000Z",
+      expiresAt: "2026-07-10T00:00:00.000Z",
+      mode: "local_review_ttl",
+      productionStorageBacked: false,
+      purgeRequired: true,
+      state: "active",
+      ttlHours: 24,
+    },
+    rowCounts: {
+      blockedRows: 0,
+      readyRows: 3,
+      reviewRequiredRows: 1,
+      totalRows: 4,
+    },
+    safety: {
+      contractRootWriteEnabled: false,
+      downloadUrlEnabled: false,
+      forbiddenFieldsAbsent: true,
+      localOnly: true,
+      localReviewOnly: true,
+      objectKeyEnabled: false,
+      providerCallEnabled: false,
+      queueExecutionEnabled: false,
+      rewardCustodyEnabled: false,
+      rewardDistributionEnabled: false,
+      schedulerExecutionEnabled: false,
+      signedUrlEnabled: false,
+      storageWriteEnabled: false,
+      walletSigningEnabled: false,
+    },
+    traceId: "trace-export-file-handoff-header",
+  },
+  safety: {
+    contractRootWriteEnabled: false,
+    downloadUrlEnabled: false,
+    forbiddenFieldsAbsent: true,
+    localOnly: true,
+    localReviewOnly: true,
+    objectKeyEnabled: false,
+    providerCallEnabled: false,
+    queueExecutionEnabled: false,
+    rewardCustodyEnabled: false,
+    rewardDistributionEnabled: false,
+    schedulerExecutionEnabled: false,
+    signedUrlEnabled: false,
+    storageWriteEnabled: false,
+    walletSigningEnabled: false,
+  },
+};
+
 describe("export artifact delivery API bridge", () => {
   it("creates a loading state without touching the network", () => {
     const state = createExportArtifactDeliveryApiLoadingState(request);
@@ -327,7 +410,14 @@ describe("export artifact delivery API bridge", () => {
         },
         ok: true,
         traceId: "trace-export-audit-detail-envelope",
-      }, { traceId: "trace-export-audit-detail-header" })) as unknown as ExportArtifactDeliveryApiFetch;
+      }, { traceId: "trace-export-audit-detail-header" }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: fileHandoffPayload,
+        },
+        ok: true,
+        traceId: "trace-export-file-handoff-envelope",
+      }, { traceId: "trace-export-file-handoff-header" })) as unknown as ExportArtifactDeliveryApiFetch;
 
     const state = await submitExportArtifactDeliveryApiReview({
       config: {
@@ -374,6 +464,33 @@ describe("export artifact delivery API bridge", () => {
         },
       },
       diagnostics: [],
+      fileHandoff: {
+        artifactId: "export-artifact-local-camp-awaken-sprint",
+        handoff: {
+          artifactId: "export-artifact-local-camp-awaken-sprint",
+          checksum: "sha256-local-artifact",
+          fileName: "camp-awaken-sprint-export-awaken-sprint-preview-local-review.json",
+          format: "json",
+          payloadBytes: 128,
+          payloadText: "{\"campaignId\":\"camp-awaken-sprint\",\"rows\":[]}",
+          retention: {
+            productionStorageBacked: false,
+            state: "active",
+            ttlHours: 24,
+          },
+          rowCounts: {
+            readyRows: 3,
+            reviewRequiredRows: 1,
+            totalRows: 4,
+          },
+          safety: {
+            forbiddenFieldsAbsent: true,
+            localReviewOnly: true,
+            signedUrlEnabled: false,
+            storageWriteEnabled: false,
+          },
+        },
+      },
       persistence: {
         kind: "export_preview",
         recordId: "persist-export-preview-1",
@@ -414,7 +531,7 @@ describe("export artifact delivery API bridge", () => {
       },
       source: "api_runtime",
       status: "delivered",
-      traceId: "trace-export-audit-detail-header",
+      traceId: "trace-export-file-handoff-header",
     });
     expect(fetchImpl).toHaveBeenNthCalledWith(
       1,
@@ -458,6 +575,17 @@ describe("export artifact delivery API bridge", () => {
         method: "GET",
       }),
     );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      4,
+      "http://127.0.0.1:5184/api/campaigns/camp-awaken-sprint/export-artifacts/export-artifact-local-camp-awaken-sprint/file?format=json",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          accept: "application/json",
+          "x-campaign-os-trace-id": expect.stringMatching(/^export-delivery-review-/),
+        }),
+        method: "GET",
+      }),
+    );
   });
 
   it("normalizes eligibility root export packets and request review metadata", async () => {
@@ -487,6 +615,13 @@ describe("export artifact delivery API bridge", () => {
         },
         ok: true,
         traceId: "trace-export-audit-detail-envelope",
+      }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: fileHandoffPayload,
+        },
+        ok: true,
+        traceId: "trace-export-file-handoff-envelope",
       })) as unknown as ExportArtifactDeliveryApiFetch;
 
     const state = await submitExportArtifactDeliveryApiReview({
@@ -522,6 +657,14 @@ describe("export artifact delivery API bridge", () => {
         eligibilityRootPacket: {
           eligibleWalletCount: 1,
           totalRows: 1,
+        },
+      },
+      fileHandoff: {
+        handoff: {
+          payloadBytes: 128,
+          retention: {
+            state: "active",
+          },
         },
       },
       source: "api_runtime",
@@ -573,6 +716,13 @@ describe("export artifact delivery API bridge", () => {
         },
         ok: true,
         traceId: "trace-export-audit-detail-envelope",
+      }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: fileHandoffPayload,
+        },
+        ok: true,
+        traceId: "trace-export-file-handoff-envelope",
       })) as unknown as ExportArtifactDeliveryApiFetch;
 
     const state = await submitExportArtifactDeliveryApiReview({
@@ -586,6 +736,11 @@ describe("export artifact delivery API bridge", () => {
       diagnostics: [],
       preview: {
         exportBatchId: "export-awaken-sprint-preview",
+      },
+      fileHandoff: {
+        handoff: {
+          payloadBytes: 128,
+        },
       },
       source: "api_runtime",
       status: "delivered",
@@ -749,6 +904,232 @@ describe("export artifact delivery API bridge", () => {
     expect(state.auditDetail).toBeUndefined();
   });
 
+  it("keeps preview and audit context visible when file handoff is unavailable", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: previewPayload,
+        },
+        ok: true,
+        traceId: "trace-export-preview-envelope",
+      }, { traceId: "trace-export-preview-header" }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: auditListPayload,
+        },
+        ok: true,
+        traceId: "trace-export-audit-list-envelope",
+      }, { traceId: "trace-export-audit-list-header" }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: auditDetailPayload,
+        },
+        ok: true,
+        traceId: "trace-export-audit-detail-envelope",
+      }, { traceId: "trace-export-audit-detail-header" }))
+      .mockResolvedValueOnce(response({
+        error: {
+          message: "file handoff not found",
+        },
+        ok: false,
+        traceId: "trace-export-file-handoff-missing",
+      }, { ok: false, status: 404, traceId: "trace-export-file-handoff-missing" })) as unknown as ExportArtifactDeliveryApiFetch;
+
+    const state = await submitExportArtifactDeliveryApiReview({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl,
+      request,
+    });
+
+    expect(state).toMatchObject({
+      artifactId: "export-artifact-local-camp-awaken-sprint",
+      auditDetail: {
+        artifactId: "export-artifact-local-camp-awaken-sprint",
+      },
+      auditList: {
+        summary: {
+          totalRecords: 1,
+        },
+      },
+      diagnostics: [{ code: "API_FILE_HANDOFF_FAILED", severity: "warning" }],
+      preview: {
+        exportBatchId: "export-awaken-sprint-preview",
+      },
+      source: "api_runtime",
+      status: "partial",
+      traceId: "trace-export-file-handoff-missing",
+    });
+    expect(state.fileHandoff).toBeUndefined();
+  });
+
+  it("surfaces expired file handoff as a safe expired state", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: previewPayload,
+        },
+        ok: true,
+        traceId: "trace-export-preview-envelope",
+      }, { traceId: "trace-export-preview-header" }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: auditListPayload,
+        },
+        ok: true,
+        traceId: "trace-export-audit-list-envelope",
+      }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: auditDetailPayload,
+        },
+        ok: true,
+        traceId: "trace-export-audit-detail-envelope",
+      }))
+      .mockResolvedValueOnce(response({
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            field: "retention",
+            reason: "LOCAL_EXPORT_FILE_EXPIRED: local export file handoff retention has expired.",
+          },
+        },
+        ok: false,
+        traceId: "trace-export-file-handoff-expired",
+      }, { ok: false, status: 400, traceId: "trace-export-file-handoff-expired" })) as unknown as ExportArtifactDeliveryApiFetch;
+
+    const state = await submitExportArtifactDeliveryApiReview({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl,
+      request,
+    });
+
+    expect(state).toMatchObject({
+      auditDetail: {
+        artifactId: "export-artifact-local-camp-awaken-sprint",
+      },
+      diagnostics: [{ code: "API_FILE_HANDOFF_EXPIRED", severity: "error" }],
+      preview: {
+        exportBatchId: "export-awaken-sprint-preview",
+      },
+      source: "api_runtime",
+      status: "expired",
+      traceId: "trace-export-file-handoff-expired",
+    });
+  });
+
+  it("surfaces unsupported or unsafe file handoff failures as blocked without leaking values", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: previewPayload,
+        },
+        ok: true,
+        traceId: "trace-export-preview-envelope",
+      }, { traceId: "trace-export-preview-header" }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: auditListPayload,
+        },
+        ok: true,
+        traceId: "trace-export-audit-list-envelope",
+      }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: auditDetailPayload,
+        },
+        ok: true,
+        traceId: "trace-export-audit-detail-envelope",
+      }))
+      .mockResolvedValueOnce(response({
+        error: {
+          code: "UNSUPPORTED_EXPORT_MODE",
+          details: {
+            field: "signedUrl",
+            reason:
+              "signedUrl=https://storage.invalid/file?token=secret and /Users/redacted/workspace/campaign-os-kitty/raw were rejected",
+          },
+        },
+        ok: false,
+        traceId: "trace-export-file-handoff-blocked",
+      }, { ok: false, status: 400, traceId: "trace-export-file-handoff-blocked" })) as unknown as ExportArtifactDeliveryApiFetch;
+
+    const state = await submitExportArtifactDeliveryApiReview({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl,
+      request,
+    });
+    const serialized = JSON.stringify(state).toLowerCase();
+
+    expect(state).toMatchObject({
+      diagnostics: [{ code: "API_FILE_HANDOFF_BLOCKED", severity: "error" }],
+      source: "api_runtime",
+      status: "blocked",
+      traceId: "trace-export-file-handoff-blocked",
+    });
+    for (const unsafe of ["https://storage.invalid", "token=secret", "campaign-os-kitty"]) {
+      expect(serialized).not.toContain(unsafe);
+    }
+  });
+
+  it("blocks successful file handoff envelopes that contain unsafe handoff fields", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: previewPayload,
+        },
+        ok: true,
+        traceId: "trace-export-preview-envelope",
+      }, { traceId: "trace-export-preview-header" }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: auditListPayload,
+        },
+        ok: true,
+        traceId: "trace-export-audit-list-envelope",
+      }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: auditDetailPayload,
+        },
+        ok: true,
+        traceId: "trace-export-audit-detail-envelope",
+      }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: {
+            ...fileHandoffPayload,
+            handoff: {
+              ...fileHandoffPayload.handoff,
+              signedUrl: "https://storage.invalid/file?token=secret",
+            },
+          },
+        },
+        ok: true,
+        traceId: "trace-export-file-handoff-unsafe-envelope",
+      }, { traceId: "trace-export-file-handoff-unsafe-header" })) as unknown as ExportArtifactDeliveryApiFetch;
+
+    const state = await submitExportArtifactDeliveryApiReview({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl,
+      request,
+    });
+    const serialized = JSON.stringify(state).toLowerCase();
+
+    expect(state).toMatchObject({
+      diagnostics: [{ code: "API_FILE_HANDOFF_BLOCKED" }],
+      source: "api_runtime",
+      status: "blocked",
+    });
+    expect(state.fileHandoff).toBeUndefined();
+    for (const unsafe of ["\"signedurl\":\"", "https://storage.invalid", "token=secret"]) {
+      expect(serialized).not.toContain(unsafe);
+    }
+  });
+
   it("returns a sanitized timeout diagnostic when the request is aborted", async () => {
     const fetchImpl = vi.fn(async () => {
       throw new DOMException(
@@ -894,6 +1275,13 @@ describe("export artifact delivery API bridge", () => {
         },
         ok: true,
         traceId: "trace-export-audit-detail-envelope",
+      }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: fileHandoffPayload,
+        },
+        ok: true,
+        traceId: "trace-export-file-handoff-envelope",
       })) as unknown as ExportArtifactDeliveryApiFetch;
     const startedAt = performance.now();
 
