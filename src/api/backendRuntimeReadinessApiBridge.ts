@@ -123,11 +123,46 @@ export interface BackendRuntimeReadinessSummary {
   tracePolicy: BackendRuntimeReadinessTracePolicy;
 }
 
+export type BackendRuntimePersistencePostureStatus =
+  | "durable_local"
+  | "memory_review"
+  | "production_deferred"
+  | "unavailable"
+  | "unknown";
+
+export interface BackendRuntimePersistenceRecordPreview {
+  createdAt?: string;
+  kind: string;
+  routeId?: string;
+  traceId?: string;
+}
+
+export interface BackendRuntimePersistenceSafetyFlags {
+  durable: boolean;
+  localOnly: boolean;
+  noMigrationRunner: boolean;
+  noProductionDatabase: boolean;
+  noSecretHandling: boolean;
+}
+
+export interface BackendRuntimePersistencePosture {
+  adapterLabel?: string;
+  diagnosticCodes: readonly string[];
+  latestRecords: readonly BackendRuntimePersistenceRecordPreview[];
+  mode: "local_json" | "memory" | "production_deferred" | "unknown";
+  nextAction: LocalizedText;
+  recordCount: number;
+  safety: BackendRuntimePersistenceSafetyFlags;
+  status: BackendRuntimePersistencePostureStatus;
+  statusLabel: LocalizedText;
+}
+
 export interface BackendRuntimeReadinessApiBridgeState {
   boundary: LocalizedText;
   configured: boolean;
   diagnostics: readonly BackendRuntimeReadinessApiDiagnostic[];
   loading: boolean;
+  persistencePosture?: BackendRuntimePersistencePosture;
   source: BackendRuntimeReadinessApiSource;
   status: BackendRuntimeReadinessApiStatus;
   summary: BackendRuntimeReadinessSummary;
@@ -227,6 +262,9 @@ const unsafePatterns: Array<[RegExp, string]> = [
   [/\bapi[-_\s]*key\b/gi, "redacted credential"],
   [/\b(token|access_token|refresh_token|api_key|apikey)=([^&\s"'<>]+)/gi, "redacted query credential"],
   [/\/Users\/[^"'\s<>]*campaign-os-kitty[^"'\s<>]*/gi, "redacted private path"],
+  [/\/(?:Users|var|tmp|private\/var)\/[^"'\s<>]*/gi, "redacted local path"],
+  [/[A-Z]:\\[^"'\s<>]*/gi, "redacted local path"],
+  [/(^|[\/\\])(?:docs\/current|kitty-specs|evidence|sync|\.agents|\.kittify)([\/\\][^"'\s<>]*)?/gi, " redacted private artifact"],
   [/\bprovider[-_\s]*payload\b/gi, "redacted provider data"],
   [/\bprovider[-_\s]*call\b/gi, "redacted provider call"],
   [/\bstack\s*trace\b/gi, "redacted stack"],
@@ -325,6 +363,31 @@ export const seededBackendRuntimeReadinessSummary: BackendRuntimeReadinessSummar
     startupLogIncludesTracePolicy: true,
     successEnvelopeTraceId: true,
     traceHeaderName: "x-campaign-os-trace-id",
+  },
+};
+
+export const seededBackendRuntimePersistencePosture: BackendRuntimePersistencePosture = {
+  diagnosticCodes: [],
+  latestRecords: [],
+  mode: "memory",
+  nextAction: {
+    "en-US": "Configure durable local persistence to prove review records survive restart.",
+    "zh-CN": "配置 durable local persistence，以证明 review 记录可在重启后保留。",
+    "zh-TW": "設定 durable local persistence，以證明 review 記錄可在重啟後保留。",
+  },
+  recordCount: 0,
+  safety: {
+    durable: false,
+    localOnly: true,
+    noMigrationRunner: true,
+    noProductionDatabase: true,
+    noSecretHandling: true,
+  },
+  status: "memory_review",
+  statusLabel: {
+    "en-US": "Memory-only review persistence",
+    "zh-CN": "Memory-only review persistence",
+    "zh-TW": "Memory-only review persistence",
   },
 };
 
@@ -556,6 +619,190 @@ const noLiveSideEffectsValid = (
     "walletSdkExecuted",
   ].every((key) => value[key] === false);
 
+const safeString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim()
+    ? sanitizeBackendRuntimeReadinessApiText(value)
+    : undefined;
+
+const numberValue = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : 0;
+
+const recordArray = (value: unknown): Record<string, unknown>[] =>
+  Array.isArray(value) ? value.filter(isRecord) : [];
+
+const diagnosticCodesFrom = (value: unknown): string[] =>
+  stringArray(value)?.map(sanitizeBackendRuntimeReadinessApiText) ?? [];
+
+const persistenceStatusLabel = (
+  status: BackendRuntimePersistencePostureStatus,
+): LocalizedText => {
+  const labels: Record<BackendRuntimePersistencePostureStatus, LocalizedText> = {
+    durable_local: {
+      "en-US": "Durable local review persistence",
+      "zh-CN": "Durable local review persistence",
+      "zh-TW": "Durable local review persistence",
+    },
+    memory_review: {
+      "en-US": "Memory-only review persistence",
+      "zh-CN": "Memory-only review persistence",
+      "zh-TW": "Memory-only review persistence",
+    },
+    production_deferred: {
+      "en-US": "Production persistence deferred",
+      "zh-CN": "Production persistence deferred",
+      "zh-TW": "Production persistence deferred",
+    },
+    unavailable: {
+      "en-US": "Durable local persistence unavailable",
+      "zh-CN": "Durable local persistence unavailable",
+      "zh-TW": "Durable local persistence unavailable",
+    },
+    unknown: {
+      "en-US": "Persistence posture unavailable",
+      "zh-CN": "Persistence posture unavailable",
+      "zh-TW": "Persistence posture unavailable",
+    },
+  };
+
+  return labels[status];
+};
+
+const persistenceNextAction = (
+  status: BackendRuntimePersistencePostureStatus,
+): LocalizedText => {
+  const actions: Record<BackendRuntimePersistencePostureStatus, LocalizedText> = {
+    durable_local: {
+      "en-US": "Review persisted local records before restart-sensitive handoff.",
+      "zh-CN": "在重启敏感的交付前 review 已持久化的本地记录。",
+      "zh-TW": "在重啟敏感的交付前 review 已持久化的本地記錄。",
+    },
+    memory_review: seededBackendRuntimePersistencePosture.nextAction,
+    production_deferred: {
+      "en-US": "Keep production database and migration work deferred to a backend mission.",
+      "zh-CN": "生产数据库与 migration 工作继续 defer 到后端 mission。",
+      "zh-TW": "生產資料庫與 migration 工作繼續 defer 到後端 mission。",
+    },
+    unavailable: {
+      "en-US": "Set CAMPAIGN_OS_PERSISTENCE_DIR for local_json review or switch back to memory review.",
+      "zh-CN": "为 local_json review 设置 CAMPAIGN_OS_PERSISTENCE_DIR，或切回 memory review。",
+      "zh-TW": "為 local_json review 設定 CAMPAIGN_OS_PERSISTENCE_DIR，或切回 memory review。",
+    },
+    unknown: {
+      "en-US": "Check /api/health persistence metadata before relying on restart behavior.",
+      "zh-CN": "依赖重启行为前，先检查 /api/health persistence metadata。",
+      "zh-TW": "依賴重啟行為前，先檢查 /api/health persistence metadata。",
+    },
+  };
+
+  return actions[status];
+};
+
+const normalizeLatestRecords = (
+  records: unknown,
+): BackendRuntimePersistenceRecordPreview[] =>
+  recordArray(records).slice(0, 5).map((record) => ({
+    ...(safeString(record.createdAt) ? { createdAt: safeString(record.createdAt) } : {}),
+    kind: safeString(record.kind) ?? "unknown",
+    ...(safeString(record.routeId) ? { routeId: safeString(record.routeId) } : {}),
+    ...(safeString(record.traceId) ? { traceId: safeString(record.traceId) } : {}),
+  }));
+
+const normalizePersistenceHealth = (
+  persistence: Record<string, unknown>,
+): BackendRuntimePersistencePosture => {
+  const rawMode = persistence.mode;
+  const mode =
+    rawMode === "local_json" || rawMode === "memory" ? rawMode : "unknown";
+  const status =
+    persistence.status === "unavailable"
+      ? "unavailable"
+      : mode === "local_json" && persistence.durable === true
+        ? "durable_local"
+        : mode === "memory"
+          ? "memory_review"
+          : "unknown";
+
+  return {
+    ...(safeString(persistence.adapterLabel) ? { adapterLabel: safeString(persistence.adapterLabel) } : {}),
+    diagnosticCodes: diagnosticCodesFrom(persistence.diagnosticCodes),
+    latestRecords: normalizeLatestRecords(persistence.latestRecords),
+    mode,
+    nextAction: persistenceNextAction(status),
+    recordCount: numberValue(persistence.recordCount),
+    safety: {
+      durable: persistence.durable === true,
+      localOnly: persistence.localOnly === true,
+      noMigrationRunner: persistence.noMigrationRunner === true,
+      noProductionDatabase: persistence.noProductionDatabase === true,
+      noSecretHandling: persistence.noSecretHandling === true,
+    },
+    status,
+    statusLabel: persistenceStatusLabel(status),
+  };
+};
+
+const productionDeferredPersistencePosture = (): BackendRuntimePersistencePosture => ({
+  ...seededBackendRuntimePersistencePosture,
+  diagnosticCodes: ["PRODUCTION_PERSISTENCE_DEFERRED"],
+  mode: "production_deferred",
+  nextAction: persistenceNextAction("production_deferred"),
+  status: "production_deferred",
+  statusLabel: persistenceStatusLabel("production_deferred"),
+});
+
+const errorPersistencePosture = (body: unknown): BackendRuntimePersistencePosture | undefined => {
+  if (!isApiEnvelope(body) || body.ok !== false || !isRecord(body.error)) {
+    return undefined;
+  }
+
+  const details = isRecord(body.error.details) ? body.error.details : {};
+  const field = safeString(details.field);
+  const diagnosticCodes = diagnosticCodesFrom(details.diagnosticCodes);
+  const persistenceMode = safeString(details.persistenceMode);
+
+  if (field !== "runtimeConfig.persistence.localDataDir" && persistenceMode !== "local_json") {
+    return undefined;
+  }
+
+  return {
+    diagnosticCodes,
+    latestRecords: [],
+    mode: "local_json",
+    nextAction: persistenceNextAction("unavailable"),
+    recordCount: 0,
+    safety: {
+      durable: true,
+      localOnly: true,
+      noMigrationRunner: true,
+      noProductionDatabase: true,
+      noSecretHandling: true,
+    },
+    status: "unavailable",
+    statusLabel: persistenceStatusLabel("unavailable"),
+  };
+};
+
+const persistencePostureFromEnvelope = (
+  body: unknown,
+  summary?: BackendRuntimeReadinessSummary,
+): BackendRuntimePersistencePosture => {
+  if (isApiEnvelope(body) && isRecord(body.data) && isRecord(body.data.persistence)) {
+    return normalizePersistenceHealth(body.data.persistence);
+  }
+
+  const errorPosture = errorPersistencePosture(body);
+
+  if (errorPosture) {
+    return errorPosture;
+  }
+
+  if (summary?.status === "blocked" || summary?.profile.id === "production-required") {
+    return productionDeferredPersistencePosture();
+  }
+
+  return seededBackendRuntimePersistencePosture;
+};
+
 const isProfile = (value: unknown): value is BackendRuntimeReadinessProfile =>
   isRecord(value)
   && isValidProfileId(value.id)
@@ -619,6 +866,103 @@ const isDiagnosticSummary = (value: unknown): value is BackendRuntimeReadinessDi
   && typeof value.message === "string"
   && (value.severity === "error" || value.severity === "info" || value.severity === "warning");
 
+const uniqueSafeStrings = (values: readonly string[]): string[] => {
+  const seen = new Set<string>();
+
+  return values.reduce<string[]>((items, value) => {
+    const safeValue = safeString(value);
+
+    if (!safeValue || seen.has(safeValue)) {
+      return items;
+    }
+
+    seen.add(safeValue);
+    items.push(safeValue);
+    return items;
+  }, []);
+};
+
+const normalizeDependencyBlockers = (
+  blockers: readonly BackendRuntimeReadinessDependencyBlocker[],
+): BackendRuntimeReadinessDependencyBlocker[] => {
+  const areaLabels = uniqueSafeStrings(blockers.map((blocker) => blocker.area));
+  const reservedLabels = new Set(areaLabels);
+  const blockedByLabels = new Set(areaLabels);
+  const grouped = new Map<string, BackendRuntimeReadinessDependencyBlocker>();
+
+  for (const area of areaLabels) {
+    const firstBlocker = blockers.find((blocker) => safeString(blocker.area) === area);
+
+    if (!firstBlocker) {
+      continue;
+    }
+
+    grouped.set(area, {
+      area,
+      attachPoint: safeString(firstBlocker.attachPoint) ?? "runtime readiness",
+      blockedBy: [],
+      id: safeString(firstBlocker.id) ?? area,
+      requiredBeforeProduction: true,
+      status: firstBlocker.status,
+    });
+  }
+
+  for (const blocker of blockers) {
+    const area = safeString(blocker.area);
+    const groupedBlocker = area ? grouped.get(area) : undefined;
+
+    if (!groupedBlocker) {
+      continue;
+    }
+
+    if (blocker.status === "blocked") {
+      groupedBlocker.status = "blocked";
+    }
+
+    const nextBlockedBy = uniqueSafeStrings(blocker.blockedBy).filter((label) => {
+      if (blockedByLabels.has(label) || reservedLabels.has(label)) {
+        return false;
+      }
+
+      blockedByLabels.add(label);
+      return true;
+    });
+
+    groupedBlocker.blockedBy = [
+      ...groupedBlocker.blockedBy,
+      ...nextBlockedBy,
+    ];
+  }
+
+  return Array.from(grouped.values());
+};
+
+const normalizeReadinessSummary = (
+  summary: BackendRuntimeReadinessSummary,
+): BackendRuntimeReadinessSummary => ({
+  ...summary,
+  diagnostics: summary.diagnostics.map((diagnostic) => ({
+    ...diagnostic,
+    code: sanitizeBackendRuntimeReadinessApiText(diagnostic.code),
+    message: sanitizeBackendRuntimeReadinessApiText(diagnostic.message),
+  })),
+  productionDependencyBlockers: normalizeDependencyBlockers(summary.productionDependencyBlockers),
+  profile: {
+    ...summary.profile,
+    configuredRequiredConfigKeys: uniqueSafeStrings(summary.profile.configuredRequiredConfigKeys),
+    label: sanitizeBackendRuntimeReadinessApiText(summary.profile.label),
+    missingRequiredConfigKeys: uniqueSafeStrings(summary.profile.missingRequiredConfigKeys),
+    requiredConfigKeys: uniqueSafeStrings(summary.profile.requiredConfigKeys),
+    status: sanitizeBackendRuntimeReadinessApiText(summary.profile.status),
+    supportMode: sanitizeBackendRuntimeReadinessApiText(summary.profile.supportMode),
+  },
+  routeCoverage: {
+    ...summary.routeCoverage,
+    missingApiSkillIds: uniqueSafeStrings(summary.routeCoverage.missingApiSkillIds),
+    routeIds: uniqueSafeStrings(summary.routeCoverage.routeIds),
+  },
+});
+
 const readinessSummaryFromEnvelope = (body: unknown): BackendRuntimeReadinessSummary | undefined => {
   if (!isApiEnvelope(body) || !body.ok || !isRecord(body.data)) {
     return undefined;
@@ -645,17 +989,19 @@ const readinessSummaryFromEnvelope = (body: unknown): BackendRuntimeReadinessSum
     return undefined;
   }
 
-  return summary as unknown as BackendRuntimeReadinessSummary;
+  return normalizeReadinessSummary(summary as unknown as BackendRuntimeReadinessSummary);
 };
 
 const fallbackState = ({
   configured,
   diagnostics,
+  persistencePosture = seededBackendRuntimePersistencePosture,
   status,
   traceId,
 }: {
   configured: boolean;
   diagnostics: readonly BackendRuntimeReadinessApiDiagnostic[];
+  persistencePosture?: BackendRuntimePersistencePosture;
   status: Extract<BackendRuntimeReadinessApiStatus, "error" | "fallback">;
   traceId?: string;
 }): BackendRuntimeReadinessApiBridgeState => ({
@@ -663,6 +1009,7 @@ const fallbackState = ({
   configured,
   diagnostics,
   loading: false,
+  persistencePosture,
   source: status === "error" ? "error_fallback" : "seeded_fallback",
   status,
   summary: seededBackendRuntimeReadinessSummary,
@@ -674,6 +1021,7 @@ export const createBackendRuntimeReadinessApiLoadingState = (): BackendRuntimeRe
   configured: true,
   diagnostics: [],
   loading: true,
+  persistencePosture: seededBackendRuntimePersistencePosture,
   source: "loading",
   status: "loading",
   summary: seededBackendRuntimeReadinessSummary,
@@ -708,6 +1056,7 @@ export const loadBackendRuntimeReadinessApiBridgeState = async ({
       diagnostics: [
         health.diagnostic ?? diagnostic("API_RESPONSE_INVALID", "error", { endpoint: "/api/health" }),
       ],
+      persistencePosture: persistencePostureFromEnvelope(health.body),
       status: "error",
       traceId: health.traceId ?? extractTraceId(health.body),
     });
@@ -728,6 +1077,7 @@ export const loadBackendRuntimeReadinessApiBridgeState = async ({
       diagnostics: [
         contracts.diagnostic ?? diagnostic("API_RESPONSE_INVALID", "error", { endpoint: "/api/contracts" }),
       ],
+      persistencePosture: persistencePostureFromEnvelope(health.body, healthSummary),
       status: "error",
       traceId: contracts.traceId ?? extractTraceId(contracts.body) ?? health.traceId,
     });
@@ -738,6 +1088,7 @@ export const loadBackendRuntimeReadinessApiBridgeState = async ({
     configured: true,
     diagnostics: [],
     loading: false,
+    persistencePosture: persistencePostureFromEnvelope(health.body, contractsSummary),
     source: "api_runtime",
     status: contractsSummary.status,
     summary: contractsSummary,

@@ -5180,6 +5180,194 @@ describe("Campaign OS API runtime", () => {
     }
   });
 
+  it("reports durable local persistence health across runtime recreation", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-runtime-health-json-"));
+
+    try {
+      const runtimeConfigOptions = {
+        persistence: {
+          localDataDir: tempDir,
+          mode: "local_json" as const,
+        },
+      };
+      const firstRuntime = createCampaignOsApiRuntime({ runtimeConfigOptions });
+
+      const walletSession = await firstRuntime.handle({
+        method: "POST",
+        path: "/api/wallet/session",
+        headers: { "x-campaign-os-trace-id": "trace-durable-wallet" },
+        body: JSON.stringify({
+          adapterName: "PortkeyDiscoverWallet",
+          fixtureId: "sess-eoa-app-001",
+          nonce: "nonce-durable-health",
+          signature: "raw-durable-health-signature",
+        }),
+      });
+      const verification = await firstRuntime.handle({
+        method: "POST",
+        path: "/api/tasks/task-bridge/verify",
+        headers: { "x-campaign-os-trace-id": "trace-durable-verification" },
+        body: JSON.stringify({
+          accountType: "AA",
+          campaignId: campaignDetail.id,
+          walletAddress: "2F4...9aB",
+          walletSource: "PORTKEY_AA",
+        }),
+      });
+      const exportPreview = await firstRuntime.handle({
+        method: "POST",
+        path: `/api/campaigns/${campaignDetail.id}/export`,
+        headers: { "x-campaign-os-trace-id": "trace-durable-export-preview" },
+        body: JSON.stringify({
+          contractRootMode: "none",
+          format: "json",
+          includeLocalePreference: true,
+          includeRiskFlags: true,
+          includeWalletType: true,
+        }),
+      });
+      const firstHealth = await firstRuntime.handle({
+        method: "GET",
+        path: "/api/health",
+        headers: { "x-campaign-os-trace-id": "trace-durable-health-first" },
+      });
+      const recreatedRuntime = createCampaignOsApiRuntime({ runtimeConfigOptions });
+      const recreatedHealth = await recreatedRuntime.handle({
+        method: "GET",
+        path: "/api/health",
+        headers: { "x-campaign-os-trace-id": "trace-durable-health-recreated" },
+      });
+
+      expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & {
+        persistence: unknown;
+      }>(walletSession).persistence).toMatchObject({
+        kind: "wallet_session",
+      });
+      expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
+        persistence: unknown;
+      }>(verification).persistence).toMatchObject({
+        kind: "verification_attempt",
+      });
+      expect(expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload> & {
+        persistence: unknown;
+      }>(exportPreview)).toMatchObject({
+        payload: expect.objectContaining({
+          artifactRegistry: expect.objectContaining({
+            routeId: "campaigns.export.preview",
+            safety: expect.objectContaining({
+              localReviewOnly: true,
+              objectKeyEnabled: false,
+              signedUrlEnabled: false,
+              storageWriteEnabled: false,
+            }),
+          }),
+          format: "json",
+        }),
+        persistence: {
+          kind: "export_preview",
+          recordId: expect.any(String),
+        },
+      });
+
+      const expectedPersistenceHealth = {
+        adapterLabel: expect.stringMatching(/^local_json:/),
+        adapterPortId: "campaign-os-local-json-adapter",
+        countsByKind: expect.objectContaining({
+          export_preview: 1,
+          verification_attempt: 1,
+          wallet_session: 1,
+        }),
+        durable: true,
+        localOnly: true,
+        mode: "local_json",
+        noMigrationRunner: true,
+        noProductionDatabase: true,
+        noSecretHandling: true,
+        recordCount: 3,
+        status: "ok",
+      };
+
+      expect(expectSuccessData(firstHealth)).toMatchObject({
+        persistence: expectedPersistenceHealth,
+      });
+      expect(expectSuccessData(recreatedHealth)).toMatchObject({
+        backendService: expect.objectContaining({
+          databaseAdapterRuntime: expect.objectContaining({
+            liveConnectionAttempted: false,
+            liveQueryExecutionEnabled: false,
+            productionDbRuntime: expect.objectContaining({
+              driverProductionReady: false,
+            }),
+          }),
+          persistenceRuntime: expect.objectContaining({
+            liveExecutionEnabled: false,
+            status: "active_local",
+          }),
+        }),
+        persistence: expectedPersistenceHealth,
+      });
+      expect(expectSuccessData<{
+        persistence: {
+          latestRecords: Array<{ kind: string }>;
+        };
+      }>(recreatedHealth).persistence.latestRecords.map((record) => record.kind)).toEqual(
+        expect.arrayContaining(["wallet_session", "verification_attempt", "export_preview"]),
+      );
+      expectNoForbiddenFragments(recreatedHealth.body, [
+        tempDir,
+        "nonce-durable-health",
+        "raw-durable-health-signature",
+        "campaign-os-kitty",
+        "/docs/current",
+        "/kitty-specs",
+        "/evidence/",
+        "/sync/",
+      ]);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("fails closed when durable local runtime configuration is incomplete", async () => {
+    const blockedRuntime = createCampaignOsApiRuntime({
+      runtimeConfigOptions: {
+        env: {
+          CAMPAIGN_OS_PERSISTENCE_MODE: "local_json",
+        },
+      },
+    });
+
+    const health = await blockedRuntime.handle({
+      method: "GET",
+      path: "/api/health",
+      headers: { "x-campaign-os-trace-id": "trace-durable-config-blocked" },
+    });
+
+    expect(health.status).toBe(400);
+    expect(health.body).toMatchObject({
+      ok: false,
+      traceId: "trace-durable-config-blocked",
+      error: {
+        code: "INVALID_REQUEST",
+        details: {
+          diagnosticCodes: ["MISSING_LOCAL_PERSISTENCE_DIR"],
+          fallbackUsed: false,
+          field: "runtimeConfig.persistence.localDataDir",
+          persistenceMode: "local_json",
+          status: "blocked",
+        },
+      },
+    });
+    expectNoForbiddenFragments(health.body, [
+      "memory",
+      "campaign-os-kitty",
+      "/docs/current",
+      "/kitty-specs",
+      "/evidence/",
+      "/sync/",
+    ]);
+  });
+
   it("fails closed for missing or stale wallet proof route metadata", async () => {
     const missingSignature = await runtime.handle({
       method: "POST",

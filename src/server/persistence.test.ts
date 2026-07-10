@@ -185,6 +185,71 @@ describe("Campaign OS persistence boundary", () => {
     }
   });
 
+  it("preserves at least 100 safe local JSON records across repository recreation", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-persistence-bulk-"));
+
+    try {
+      const config = {
+        adapterLabel: "local_json:bulk",
+        localDataDir: tempDir,
+        mode: "local_json" as const,
+      };
+      const firstRepository = createCampaignOsJsonRepository(config);
+      await firstRepository.initialize();
+
+      for (let index = 0; index < 100; index += 1) {
+        await firstRepository.record({
+          campaignId: "camp-awaken-sprint",
+          kind: "export_preview",
+          routeId: "campaigns.export.preview",
+          summary: {
+            blockedRows: index % 3,
+            objectKey: `exports/private-${index}.csv`,
+            readyRows: index,
+            signedUrl: `https://storage.invalid/private-${index}?token=secret`,
+            traceLabel: `durable-review-${index}`,
+          },
+          traceId: `trace-durable-${index}`,
+        });
+      }
+
+      const secondRepository = createCampaignOsJsonRepository(config);
+      await secondRepository.initialize();
+      const snapshot = await secondRepository.snapshot();
+      const health = await secondRepository.health();
+
+      expect(snapshot).toMatchObject({
+        mode: "local_json",
+        recordCount: 100,
+        countsByKind: {
+          export_preview: 100,
+        },
+      });
+      expect(snapshot.latestRecords).toHaveLength(10);
+      expect(snapshot.latestRecords[0].summary).toMatchObject({
+        readyRows: 99,
+        traceLabel: "durable-review-99",
+      });
+      expect(snapshot.latestRecords[0].summary).not.toHaveProperty("objectKey");
+      expect(snapshot.latestRecords[0].summary).not.toHaveProperty("signedUrl");
+      expect(health).toMatchObject({
+        adapterLabel: "local_json:bulk",
+        adapterPortId: "campaign-os-local-json-adapter",
+        durable: true,
+        localOnly: true,
+        mode: "local_json",
+        noMigrationRunner: true,
+        noProductionDatabase: true,
+        noSecretHandling: true,
+        status: "ok",
+      });
+      expectNoForbiddenKeys(snapshot);
+      expectNoForbiddenKeys(health);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("sanitizes existing local JSON records before exposing snapshots", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-persistence-existing-"));
 
@@ -360,13 +425,22 @@ describe("Campaign OS persistence boundary", () => {
     expect(
       sanitizePersistenceSummary({
         contentKeys: ["title", "description"],
+        diagnostics: [
+          "ready",
+          "Bearer sample-token",
+          "/Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/evidence/private.md",
+        ],
         nested: { ignored: true },
         objectKey: "storage/private.csv",
+        operatorNote: "Visible review note.",
         points: 120,
+        privatePath: "/Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/secret.md",
         token: "bearer",
       }),
     ).toEqual({
       contentKeys: ["title", "description"],
+      diagnostics: ["ready"],
+      operatorNote: "Visible review note.",
       points: 120,
     });
   });
