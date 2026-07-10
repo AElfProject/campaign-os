@@ -13,6 +13,12 @@ import {
   type PublishDeliveryReviewApiBridgeState,
 } from "../../../api/publishDeliveryReviewApiBridge";
 import {
+  createPointsRankingLedgerRuntimeApiLoadingState,
+  createPointsRankingLedgerRuntimeApiSeededFallbackState,
+  loadPointsRankingLedgerRuntimeApiBridgeState,
+  type PointsRankingLedgerRuntimeApiBridgeState,
+} from "../../../api/pointsRankingLedgerRuntimeApiBridge";
+import {
   createExportArtifactDeliveryApiLoadingState,
   createExportArtifactDeliverySeededFallbackState,
   sanitizeExportArtifactDeliveryApiText,
@@ -135,6 +141,7 @@ import { PublishReadinessPanel } from "./builder/PublishReadinessPanel";
 import { RewardsEligibilityBuilder } from "./builder/RewardsEligibilityBuilder";
 import { TaskTemplateLibrary } from "./builder/TaskTemplateLibrary";
 import { BackendRuntimeReadinessPanel } from "./BackendRuntimeReadinessPanel";
+import { PointsRankingLedgerRuntimePanel } from "./PointsRankingLedgerRuntimePanel";
 import { projectConsoleCopy } from "./copy";
 import { PublishDeliveryReviewPanel } from "./PublishDeliveryReviewPanel";
 
@@ -1273,6 +1280,9 @@ const backendRuntimeReadinessApiBaseUrl = () =>
 const publishDeliveryReviewApiBaseUrl = () =>
   import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
+const pointsRankingLedgerRuntimeApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
 const createPublishDeliveryReviewSeededFallbackState = (
   campaignId: string,
 ): PublishDeliveryReviewApiBridgeState => ({
@@ -1284,6 +1294,23 @@ const createPublishDeliveryReviewSeededFallbackState = (
         "en-US": "No local publish delivery review API base URL is configured, so seeded review data is shown.",
         "zh-CN": "未配置本地 publish delivery review API base URL，因此显示 seeded review 数据。",
         "zh-TW": "未設定本地 publish delivery review API base URL，因此顯示 seeded review 資料。",
+      },
+      severity: "info",
+    },
+  ],
+});
+
+const createPointsRankingLedgerRuntimeSeededFallbackState = (
+  campaignId: string,
+): PointsRankingLedgerRuntimeApiBridgeState => ({
+  ...createPointsRankingLedgerRuntimeApiSeededFallbackState(campaignId),
+  diagnostics: [
+    {
+      code: "API_BASE_URL_MISSING",
+      message: {
+        "en-US": "No local points ranking ledger runtime API base URL is configured, so seeded review data is shown.",
+        "zh-CN": "未配置本地 points ranking ledger runtime API base URL，因此显示 seeded review 数据。",
+        "zh-TW": "未設定本地 points ranking ledger runtime API base URL，因此顯示 seeded review 資料。",
       },
       severity: "info",
     },
@@ -1813,6 +1840,7 @@ export const ProjectConsole = ({
     createSeededDraftComposerState,
   );
   const publishDeliveryApiRequestSeq = useRef(0);
+  const pointsRankingLedgerRuntimeApiRequestSeq = useRef(0);
   const exportDeliveryApiRequestSeq = useRef(0);
   const backendReadinessApiRequestSeq = useRef(0);
   const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
@@ -1894,6 +1922,7 @@ export const ProjectConsole = ({
   ) ?? exportStorageProviderApprovalPacket.checks[0];
   const exportDeliveryApiBaseUrl = exportArtifactDeliveryApiBaseUrl();
   const publishDeliveryApiBaseUrl = publishDeliveryReviewApiBaseUrl();
+  const pointsRankingLedgerRuntimeApiBase = pointsRankingLedgerRuntimeApiBaseUrl();
   const exportDeliveryApiRequest: ExportArtifactDeliveryRequest = {
     campaignId: campaign.id,
     contractRootMode: "none",
@@ -1915,6 +1944,13 @@ export const ProjectConsole = ({
         : createPublishDeliveryReviewSeededFallbackState(campaign.id),
     );
   const [publishDeliveryApiReviewInFlight, setPublishDeliveryApiReviewInFlight] = useState(false);
+  const [pointsRankingLedgerRuntimeApiState, setPointsRankingLedgerRuntimeApiState] =
+    useState<PointsRankingLedgerRuntimeApiBridgeState>(() =>
+      pointsRankingLedgerRuntimeApiBase?.trim()
+        ? createPointsRankingLedgerRuntimeApiLoadingState(campaign.id)
+        : createPointsRankingLedgerRuntimeSeededFallbackState(campaign.id),
+    );
+  const [pointsRankingLedgerRuntimeApiReviewInFlight, setPointsRankingLedgerRuntimeApiReviewInFlight] = useState(false);
   const backendReadinessApiBaseUrl = backendRuntimeReadinessApiBaseUrl();
   const [backendReadinessApiState, setBackendReadinessApiState] =
     useState<BackendRuntimeReadinessApiBridgeState>(() =>
@@ -2031,11 +2067,47 @@ export const ProjectConsole = ({
     loadPublishDeliveryApiReview();
   };
 
+  const loadPointsRankingLedgerRuntimeApiReview = useCallback(() => {
+    if (!pointsRankingLedgerRuntimeApiBase?.trim()) {
+      setPointsRankingLedgerRuntimeApiState(createPointsRankingLedgerRuntimeSeededFallbackState(campaign.id));
+      setPointsRankingLedgerRuntimeApiReviewInFlight(false);
+      return;
+    }
+
+    setPointsRankingLedgerRuntimeApiReviewInFlight(true);
+    setPointsRankingLedgerRuntimeApiState(createPointsRankingLedgerRuntimeApiLoadingState(campaign.id));
+
+    const requestSeq = pointsRankingLedgerRuntimeApiRequestSeq.current + 1;
+    pointsRankingLedgerRuntimeApiRequestSeq.current = requestSeq;
+
+    void loadPointsRankingLedgerRuntimeApiBridgeState({
+      campaignId: campaign.id,
+      config: {
+        baseUrl: pointsRankingLedgerRuntimeApiBase,
+        tracePrefix: "project-console-points-ranking-ledger-runtime",
+      },
+    }).then((state) => {
+      if (pointsRankingLedgerRuntimeApiRequestSeq.current === requestSeq) {
+        setPointsRankingLedgerRuntimeApiState(state);
+      }
+    }).finally(() => {
+      if (pointsRankingLedgerRuntimeApiRequestSeq.current === requestSeq) {
+        setPointsRankingLedgerRuntimeApiReviewInFlight(false);
+      }
+    });
+  }, [campaign.id, pointsRankingLedgerRuntimeApiBase]);
+
+  const runPointsRankingLedgerRuntimeApiReview = () => {
+    loadPointsRankingLedgerRuntimeApiReview();
+  };
+
   useEffect(() => {
     if (activeWorkspace === "export") {
       loadPublishDeliveryApiReview();
+      loadPointsRankingLedgerRuntimeApiReview();
     }
-  }, [activeWorkspace, loadPublishDeliveryApiReview]);
+  }, [activeWorkspace, loadPointsRankingLedgerRuntimeApiReview, loadPublishDeliveryApiReview]);
+
 
   const runBackendReadinessApiReview = () => {
     if (!backendReadinessApiBaseUrl?.trim()) {
@@ -6364,6 +6436,15 @@ export const ProjectConsole = ({
         onReview={runPublishDeliveryApiReview}
         reviewInFlight={publishDeliveryApiReviewInFlight}
         state={publishDeliveryApiState}
+      />
+
+      <PointsRankingLedgerRuntimePanel
+        apiConfigured={Boolean(pointsRankingLedgerRuntimeApiBase?.trim())}
+        copy={copy}
+        locale={locale}
+        onReview={runPointsRankingLedgerRuntimeApiReview}
+        reviewInFlight={pointsRankingLedgerRuntimeApiReviewInFlight}
+        state={pointsRankingLedgerRuntimeApiState}
       />
 
       <BackendRuntimeReadinessPanel
