@@ -84,6 +84,7 @@ describe("API runtime validation helpers", () => {
     expect(exportFormat("json")).toBe("json");
     expect(exportContractRootMode(undefined)).toBe("none");
     expect(exportContractRootMode("none")).toBe("none");
+    expect(exportContractRootMode("eligibility_root")).toBe("eligibility_root");
 
     expectRuntimeError(() => optionalLocale("fr-FR", "targetLocale"), "UNSUPPORTED_LOCALE", { locale: "fr-FR" });
     expectInvalidRequest(() => exportFormat("xml"), "format");
@@ -91,6 +92,11 @@ describe("API runtime validation helpers", () => {
       () => exportContractRootMode("winners_root"),
       "UNSUPPORTED_EXPORT_MODE",
       { mode: "winners_root" },
+    );
+    expectRuntimeError(
+      () => exportContractRootMode("contract_claim"),
+      "UNSUPPORTED_EXPORT_MODE",
+      { mode: "contract_claim" },
     );
   });
 });

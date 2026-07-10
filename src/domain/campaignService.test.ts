@@ -1476,9 +1476,25 @@ describe("Campaign OS local API service facade", () => {
       includeRiskFlags: true,
       includeWalletType: true,
     });
+    const eligibilityRootExport = service.exportWinners({
+      campaignId: campaignDetail.id,
+      contractRootMode: "eligibility_root",
+      format: "csv",
+      includeLocalePreference: true,
+      includeRiskFlags: true,
+      includeWalletType: true,
+    });
+    const repeatedEligibilityRootExport = service.exportWinners({
+      campaignId: campaignDetail.id,
+      contractRootMode: "eligibility_root",
+      format: "csv",
+      includeLocalePreference: true,
+      includeRiskFlags: true,
+      includeWalletType: true,
+    });
     const unsafeExport = service.exportWinners({
       campaignId: campaignDetail.id,
-      contractRootMode: "eligibility_root" as never,
+      contractRootMode: "contract_claim",
       format: "csv",
       includeLocalePreference: true,
       includeRiskFlags: true,
@@ -1946,6 +1962,59 @@ describe("Campaign OS local API service facade", () => {
     expect(repeatedJsonExportPreview.payload?.artifact.metadata.checksum).toBe(
       jsonExportPreview.payload?.artifact.metadata.checksum,
     );
+    expect(eligibilityRootExport).toMatchObject({
+      ok: true,
+      payload: {
+        campaignId: campaignDetail.id,
+        contractRootMode: "eligibility_root",
+        eligibilityRootPacket: {
+          mode: "eligibility_root",
+          publicationStatus: "not_published",
+          contractWriteEnabled: false,
+          exportBatchId: expect.any(String),
+          generatedMode: "local_review_only",
+          rootHash: expect.stringMatching(/^local-root-/),
+          rootId: expect.any(String),
+          rootVersion: 1,
+          safety: {
+            claimExecutionEnabled: false,
+            contractWriteExecuted: false,
+            providerCallExecuted: false,
+            rewardCustodyEnabled: false,
+            rewardDistributionEnabled: false,
+            signedUrlGenerated: false,
+            storageWriteExecuted: false,
+            walletSignatureRequested: false,
+          },
+        },
+      },
+    });
+    expect(eligibilityRootExport.payload?.eligibilityRootPacket?.rootHash).toBe(
+      repeatedEligibilityRootExport.payload?.eligibilityRootPacket?.rootHash,
+    );
+    expect(eligibilityRootExport.payload?.eligibilityRootPacket?.evidenceHashes).toEqual(
+      [...(eligibilityRootExport.payload?.eligibilityRootPacket?.evidenceHashes ?? [])].sort(),
+    );
+    expect(eligibilityRootExport.payload?.eligibilityRootPacket?.rows[0]).toEqual(
+      expect.objectContaining({
+        accountType: expect.any(String),
+        eligible: expect.any(Boolean),
+        evidenceHashes: expect.any(Array),
+        localePreference: expect.any(String),
+        missingTasks: expect.any(Array),
+        riskFlags: expect.any(Array),
+        totalPoints: expect.any(Number),
+        walletAddress: expect.any(String),
+        walletSource: expect.any(String),
+      }),
+    );
+    expect(eligibilityRootExport.payload?.eligibilityRootPacket?.eligibleWalletCount).toBe(
+      eligibilityRootExport.payload?.eligibilityRootPacket?.rows.filter((row) => row.eligible).length,
+    );
+    expect(hasOwnKeyDeep(eligibilityRootExport.payload, "transactionId")).toBe(false);
+    expect(hasOwnKeyDeep(eligibilityRootExport.payload, "signedPayload")).toBe(false);
+    expect(hasOwnKeyDeep(eligibilityRootExport.payload, "downloadUrl")).toBe(false);
+    expect(hasOwnKeyDeep(eligibilityRootExport.payload, "storageKey")).toBe(false);
     expect(jsonExportPreview.payload?.exportReadiness.previewModes.find((mode) => mode.mode === "json")).toMatchObject({
       downloadAvailable: false,
       generatesFile: false,
@@ -2626,10 +2695,21 @@ describe("Campaign OS local API service facade", () => {
       payload: {},
       skillId: "create_campaign",
     });
-    const unsafeExport = service.invokeApiSkill({
+    const eligibilityRootExport = service.invokeApiSkill({
       payload: {
         campaignId: campaignDetail.id,
         contractRootMode: "eligibility_root",
+        format: "csv",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      },
+      skillId: "export_winners",
+    });
+    const unsafeExport = service.invokeApiSkill({
+      payload: {
+        campaignId: campaignDetail.id,
+        contractRootMode: "contract_claim",
         format: "csv",
         includeLocalePreference: true,
         includeRiskFlags: true,
@@ -2704,6 +2784,18 @@ describe("Campaign OS local API service facade", () => {
       error: expect.objectContaining({ code: "INVALID_REQUEST", field: "payload" }),
       ok: false,
       skillId: "create_campaign",
+    });
+    expect(eligibilityRootExport).toMatchObject({
+      ok: true,
+      payload: {
+        contractRootMode: "eligibility_root",
+        eligibilityRootPacket: {
+          contractWriteEnabled: false,
+          mode: "eligibility_root",
+          publicationStatus: "not_published",
+        },
+      },
+      skillId: "export_winners",
     });
     expect(unsafeExport).toMatchObject({
       error: expect.objectContaining({ code: "UNSUPPORTED_EXPORT_MODE", field: "contractRootMode" }),
