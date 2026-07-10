@@ -78,6 +78,10 @@ import {
   createBackendPersistenceRuntimeSummary,
   type BackendServiceReadinessReport,
 } from "./backendService";
+import {
+  createObjectStorageExportReadiness,
+  type ObjectStorageExportReadiness,
+} from "./objectStorageExportRuntime";
 import { createProductionBackendReadinessSummary } from "./productionBackendReadiness";
 import {
   CampaignDbRepositoryError,
@@ -1459,6 +1463,50 @@ const createPointsRankingLedgerRuntimePayload = (
   };
 };
 
+const createObjectStorageExportRuntimeManifest = () => ({
+  artifacts: campaignDetail.exportPreview.rows[0]?.exportBatchId
+    ? [{
+      batchId: campaignDetail.exportPreview.rows[0].exportBatchId,
+      format: "csv",
+    }]
+    : [],
+  retentionClass: "review_only" as const,
+});
+
+const createObjectStorageExportReadinessPayload = (
+  context: ApiRuntimeHandlerContext,
+): {
+  boundary: LocalizedText;
+  payload: ObjectStorageExportReadiness & {
+    campaignId: string;
+    source: "api_runtime";
+    traceId: string;
+  };
+} => {
+  const campaignId = requiredRouteParam(context.params, "campaignId");
+  const detailResult = context.service.getCampaignDetail({ campaignId });
+
+  if (!detailResult.ok) {
+    unwrapLocalResult(detailResult, context);
+    throw invalidCampaign(campaignId);
+  }
+
+  return {
+    boundary: context.route.boundary,
+    payload: {
+      ...createObjectStorageExportReadiness({
+        manifest: {
+          ...createObjectStorageExportRuntimeManifest(),
+          traceId: context.traceId,
+        },
+      }),
+      campaignId,
+      source: "api_runtime",
+      traceId: context.traceId,
+    },
+  };
+};
+
 const createProviderReadinessResult = (
   pipeline: LocalServiceResult<VerificationPipelineReadinessGate>,
   providerEvidenceRegistry: LocalServiceResult<ProviderEvidenceRegistry>,
@@ -1700,6 +1748,7 @@ const createBackendServiceHealthMetadata = (
   entrypointId: report.entrypoint.id,
   databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime),
   migrationRunnerStatus: report.migration.runnerStatus,
+  objectStorageExportRuntime: report.objectStorageExportRuntime,
   persistenceFoundation: report.persistenceFoundation,
   persistenceRuntime: createBackendPersistenceRuntimeSummary(report.persistenceRuntime),
   profile: {
@@ -1729,6 +1778,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
   deferredProductionCapabilities: report.profile.deferredCapabilities,
   entrypoint: backendServiceEntrypointMetadata(report),
   migrationManifest: backendMigrationManifestSummary(report),
+  objectStorageExportRuntime: report.objectStorageExportRuntime,
   persistenceAdapterPort: backendPersistenceAdapterSummary(report),
   persistenceFoundation: report.persistenceFoundation,
   persistenceRuntime: createBackendPersistenceRuntimeSummary(report.persistenceRuntime),
@@ -2026,6 +2076,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     ),
   "campaigns.publish.delivery.review": (context) => createPublishDeliveryReviewPayload(context),
   "campaigns.points.ranking.ledger.runtime": (context) => createPointsRankingLedgerRuntimePayload(context),
+  "campaigns.export.storage.readiness": (context) => createObjectStorageExportReadinessPayload(context),
   "campaigns.companion.contract.readiness": (context) =>
     unwrapLocalResult(
       context.service.getCompanionContractReadiness(companionContractReadinessRequest(context)),

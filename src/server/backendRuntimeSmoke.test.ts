@@ -705,6 +705,27 @@ describe("backend runtime smoke command", () => {
         valid: true,
       },
       observabilityExporterFoundation: expectedObservabilityExporterFoundation,
+      objectStorageExportRuntime: {
+        blockerCount: expect.any(Number),
+        diagnosticCodes: expect.arrayContaining([
+          "OBJECT_STORAGE_APPROVAL_REQUIRED",
+          "OBJECT_STORAGE_LIVE_EXECUTION_DISABLED",
+        ]),
+        downloadEnabled: false,
+        localReviewOnly: true,
+        manifestOnly: true,
+        objectKeyCreated: false,
+        productionReady: false,
+        providerCallAttempted: false,
+        providerStatus: "not_configured",
+        requiredConfigKeys: expect.arrayContaining([
+          "CAMPAIGN_OS_OBJECT_STORAGE_PROVIDER_REF",
+          "CAMPAIGN_OS_OBJECT_STORAGE_APPROVAL_REF",
+        ]),
+        signedUrlCreated: false,
+        status: "blocked",
+        valid: true,
+      },
       schedulerRuntimeFoundation: expectedSchedulerRuntimeFoundation,
       workerIdempotencyStoreFoundation: expectedWorkerIdempotencyStoreFoundation,
       workerLeaseStoreFoundation: expectedWorkerLeaseStoreFoundation,
@@ -749,6 +770,8 @@ describe("backend runtime smoke command", () => {
         "wallet-proof-verifier",
         "session-issuer",
         "contract-writer",
+        "object-storage",
+        "object-storage-export",
         "reward-custody",
         "reward-distribution",
       ]),
@@ -798,6 +821,36 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutProductionBackendReadiness })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when object storage export readiness metadata is missing from smoke payloads", async () => {
+    const fetchWithoutObjectStorageExportRuntime: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          backendService?: {
+            objectStorageExportRuntime?: Record<string, unknown>;
+          };
+          serverRuntime?: {
+            readiness?: {
+              objectStorageExportRuntime?: Record<string, unknown>;
+            };
+          };
+        };
+      };
+
+      delete payload.data?.backendService?.objectStorageExportRuntime;
+      delete payload.data?.serverRuntime?.readiness?.objectStorageExportRuntime;
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutObjectStorageExportRuntime })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });

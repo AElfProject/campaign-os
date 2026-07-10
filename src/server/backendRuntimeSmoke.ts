@@ -25,6 +25,7 @@ export interface BackendRuntimeSmokeCheck {
   deploymentHandoff?: unknown;
   endpoint: "/api/health" | "/api/contracts";
   ok: boolean;
+  objectStorageExportRuntime?: BackendRuntimeSmokeObjectStorageExportRuntimeSummary;
   observabilityExporterFoundation?: BackendRuntimeSmokeObservabilityExporterFoundationSummary;
   persistenceFoundation?: BackendRuntimeSmokePersistenceFoundationSummary;
   productionBackendReadiness?: BackendRuntimeSmokeProductionBackendReadinessSummary;
@@ -82,6 +83,22 @@ export interface BackendRuntimeSmokeAuthSessionFoundationSummary {
   liveSigningExecuted: boolean;
   liveVerificationExecuted: boolean;
   productionReady: boolean;
+  status?: string;
+  valid: boolean;
+}
+
+export interface BackendRuntimeSmokeObjectStorageExportRuntimeSummary {
+  blockerCount: number;
+  diagnosticCodes: string[];
+  downloadEnabled: false;
+  localReviewOnly: true;
+  manifestOnly: true;
+  objectKeyCreated: false;
+  productionReady: false;
+  providerCallAttempted: false;
+  providerStatus?: string;
+  requiredConfigKeys: string[];
+  signedUrlCreated: false;
   status?: string;
   valid: boolean;
 }
@@ -429,6 +446,7 @@ export interface BackendRuntimeSmokeSummary {
   host: string;
   durableLocalPersistence: BackendRuntimeSmokeDurableLocalPersistenceSummary;
   liveSideEffectsEnabled: boolean;
+  objectStorageExportRuntime: BackendRuntimeSmokeObjectStorageExportRuntimeSummary;
   observabilityExporterFoundation: BackendRuntimeSmokeObservabilityExporterFoundationSummary;
   persistenceFoundation: BackendRuntimeSmokePersistenceFoundationSummary;
   productionBackendReadiness: BackendRuntimeSmokeProductionBackendReadinessSummary;
@@ -538,6 +556,12 @@ const readObservabilityExporterFoundation = (
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["serverRuntime", "readiness", "observabilityExporterFoundation"]);
 
+const readObjectStorageExportRuntime = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["backendService", "objectStorageExportRuntime"])
+  ?? readNestedRecord(value, ["serverRuntime", "readiness", "objectStorageExportRuntime"]);
+
 const readProductionBackendReadiness = (
   value: unknown,
 ): Record<string, unknown> | undefined =>
@@ -641,6 +665,45 @@ const summarizeAuthSessionFoundation = (
     liveSigningExecuted: false,
     liveVerificationExecuted: false,
     productionReady: false,
+    status: getString(record, "status"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
+const summarizeObjectStorageExportRuntime = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeObjectStorageExportRuntimeSummary | undefined => {
+  if (!record || !isExplicitFalse(record, "productionReady")) {
+    return undefined;
+  }
+
+  const safety = readNestedRecord(record, ["safety"]);
+  const explicitNoLive =
+    safety !== undefined
+    && isExplicitFalse(safety, "downloadEnabled")
+    && isExplicitFalse(safety, "liveUploadEnabled")
+    && isExplicitFalse(safety, "objectKeyCreated")
+    && isExplicitFalse(safety, "providerCallAttempted")
+    && isExplicitFalse(safety, "signedUrlCreated")
+    && safety.localReviewOnly === true
+    && safety.manifestOnly === true;
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    downloadEnabled: false,
+    localReviewOnly: true,
+    manifestOnly: true,
+    objectKeyCreated: false,
+    productionReady: false,
+    providerCallAttempted: false,
+    providerStatus: getString(record, "providerStatus"),
+    requiredConfigKeys: getStringArray(record, "requiredConfigKeys"),
+    signedUrlCreated: false,
     status: getString(record, "status"),
     valid: getBoolean(record, "valid"),
   };
@@ -1389,6 +1452,9 @@ const createSmokeCheck = async ({
   const observabilityExporterFoundation = summarizeObservabilityExporterFoundation(
     readObservabilityExporterFoundation(payload.data),
   );
+  const objectStorageExportRuntime = summarizeObjectStorageExportRuntime(
+    readObjectStorageExportRuntime(payload.data),
+  );
   const productionBackendReadiness = summarizeProductionBackendReadiness(
     readProductionBackendReadiness(payload.data),
   );
@@ -1401,6 +1467,7 @@ const createSmokeCheck = async ({
       deploymentHandoff,
       endpoint,
       ok: payload.ok === true && payload.traceId === traceId,
+      objectStorageExportRuntime,
       observabilityExporterFoundation,
       persistenceFoundation,
       productionBackendReadiness,
@@ -1714,6 +1781,27 @@ const isAuthSessionFoundationSmokeReady = (
     && summary.liveSigningExecuted === false
     && summary.liveVerificationExecuted === false
     && summary.status === "local_ready"
+    && summary.valid === true;
+};
+
+const isObjectStorageExportRuntimeSmokeReady = (
+  summary: BackendRuntimeSmokeObjectStorageExportRuntimeSummary | undefined,
+): summary is BackendRuntimeSmokeObjectStorageExportRuntimeSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.downloadEnabled === false
+    && summary.objectKeyCreated === false
+    && summary.providerCallAttempted === false
+    && summary.signedUrlCreated === false
+    && summary.localReviewOnly === true
+    && summary.manifestOnly === true
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_OBJECT_STORAGE_PROVIDER_REF")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_OBJECT_STORAGE_APPROVAL_REF")
+    && summary.diagnosticCodes.includes("OBJECT_STORAGE_LIVE_EXECUTION_DISABLED")
+    && summary.status === "blocked"
     && summary.valid === true;
 };
 
@@ -2139,6 +2227,7 @@ export const runBackendRuntimeSmoke = async ({
     const workerLeaseStoreFoundation = contracts.check.workerLeaseStoreFoundation;
     const workerSchedulerFoundation = contracts.check.workerSchedulerFoundation;
     const observabilityExporterFoundation = contracts.check.observabilityExporterFoundation;
+    const objectStorageExportRuntime = contracts.check.objectStorageExportRuntime;
     const productionBackendReadiness = contracts.check.productionBackendReadiness;
 
     if (
@@ -2164,6 +2253,8 @@ export const runBackendRuntimeSmoke = async ({
       || !isSchedulerRuntimeFoundationSmokeReady(schedulerRuntimeFoundation)
       || !isObservabilityExporterFoundationSmokeReady(health.check.observabilityExporterFoundation)
       || !isObservabilityExporterFoundationSmokeReady(observabilityExporterFoundation)
+      || !isObjectStorageExportRuntimeSmokeReady(health.check.objectStorageExportRuntime)
+      || !isObjectStorageExportRuntimeSmokeReady(objectStorageExportRuntime)
       || !isProductionBackendReadinessSmokeReady(health.check.productionBackendReadiness)
       || !isProductionBackendReadinessSmokeReady(productionBackendReadiness)
       || !isWorkerIdempotencyStoreFoundationSmokeReady(health.check.workerIdempotencyStoreFoundation)
@@ -2195,6 +2286,7 @@ export const runBackendRuntimeSmoke = async ({
       durableLocalPersistence,
       host,
       liveSideEffectsEnabled: getBoolean(activation, "liveSideEffectsEnabled"),
+      objectStorageExportRuntime,
       observabilityExporterFoundation,
       persistenceFoundation,
       productionBackendReadiness,

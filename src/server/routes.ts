@@ -381,6 +381,22 @@ export const apiRuntimeRoutes = [
   }),
   route({
     apiGroup: "export",
+    boundary: text(
+      "Local object storage export readiness review route. No live API, upload, object key creation, signed URL creation, download, provider call, contract write, wallet signature, reward custody, or reward distribution is performed.",
+      "本地 object storage export readiness review route。不会执行实时 API、上传、object key 创建、signed URL 创建、下载、provider 调用、合约写入、钱包签名、奖励托管或发奖。",
+    ),
+    id: "campaigns.export.storage.readiness",
+    method: "GET",
+    path: "/api/campaigns/:campaignId/export/storage-readiness",
+    productionDependencies: dependenciesFor("export"),
+    readiness: "review_required",
+    riskLevel: "high",
+    serviceGroup: "export",
+    summary: text("Inspect local object storage export readiness.", "检查本地 object storage export readiness。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "export",
     boundary,
     id: "campaigns.export.artifacts.list",
     method: "GET",

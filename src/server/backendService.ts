@@ -113,6 +113,11 @@ import {
   resolveApiServerRuntimeContract,
   type ResolveApiServerRuntimeContractOptions,
 } from "./serverRuntime";
+import {
+  createObjectStorageExportReadiness,
+  type ObjectStorageExportReadiness,
+  type ObjectStorageExportRuntimeConfig,
+} from "./objectStorageExportRuntime";
 
 export type BackendAttachPointArea =
   | "production-persistence"
@@ -217,6 +222,7 @@ export interface BackendServiceReadinessReport {
   databaseReadiness: BackendDatabaseReadinessReport;
   entrypoint: BackendServiceEntrypoint;
   migration: MigrationManifest;
+  objectStorageExportRuntime: ObjectStorageExportReadiness;
   observabilityExporterFoundation: BackendObservabilityExporterReadinessSummary;
   persistenceFoundation: BackendPersistenceFoundationSummary;
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
@@ -913,6 +919,29 @@ const apiServiceDeferredDependencyIds = [
   "deployment-config",
   "observability-exporter",
 ] as const;
+
+const createObjectStorageExportRuntimeConfig = (
+  env: Record<string, string | undefined>,
+): ObjectStorageExportRuntimeConfig => ({
+  bucketRef: env.CAMPAIGN_OS_OBJECT_STORAGE_BUCKET_REF,
+  credentialRef: env.CAMPAIGN_OS_OBJECT_STORAGE_CREDENTIAL_REF,
+  providerRef: env.CAMPAIGN_OS_OBJECT_STORAGE_PROVIDER_REF,
+  retentionPolicyRef: env.CAMPAIGN_OS_OBJECT_STORAGE_RETENTION_POLICY_REF,
+  signedUrlPolicyRef: env.CAMPAIGN_OS_OBJECT_STORAGE_SIGNED_URL_POLICY_REF,
+});
+
+const createBackendObjectStorageExportReadiness = (
+  env: Record<string, string | undefined>,
+): ObjectStorageExportReadiness =>
+  createObjectStorageExportReadiness({
+    approvalGranted: Boolean(env.CAMPAIGN_OS_OBJECT_STORAGE_APPROVAL_REF?.trim()),
+    config: createObjectStorageExportRuntimeConfig(env),
+    manifest: {
+      artifacts: [],
+      retentionClass: "review_only",
+      traceId: "backend-readiness-object-storage-export",
+    },
+  });
 
 export const backendAttachMap: BackendAttachPoint[] = [
   {
@@ -2351,6 +2380,7 @@ export const createBackendServiceReadinessReport = ({
     env,
     profileId: config.profileId,
   });
+  const objectStorageExportRuntime = createBackendObjectStorageExportReadiness(env);
   const workerLeaseStoreFoundation = createBackendWorkerLeaseStoreReadinessSummary({
     env,
     profileId: config.profileId,
@@ -2409,6 +2439,7 @@ export const createBackendServiceReadinessReport = ({
     databaseReadiness,
     entrypoint,
     migration,
+    objectStorageExportRuntime,
     observabilityExporterFoundation,
     persistenceFoundation,
     providerIndexerFoundation,

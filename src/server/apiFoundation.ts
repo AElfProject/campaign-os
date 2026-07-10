@@ -201,6 +201,10 @@ const routeFoundationMetadata = {
     operationId: "getCampaignExportReadiness",
     serviceId: "export-service",
   },
+  "campaigns.export.storage.readiness": {
+    operationId: "getCampaignObjectStorageExportReadiness",
+    serviceId: "export-service",
+  },
   "campaigns.export.artifacts.detail": {
     operationId: "getCampaignExportArtifact",
     serviceId: "export-service",
@@ -852,6 +856,15 @@ const requestFieldContracts = [
   }),
   field({
     description: "Campaign identifier path parameter.",
+    id: "campaigns.export.storage.readiness.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.export.storage.readiness",
+    valueType: "string",
+  }),
+  field({
+    description: "Campaign identifier path parameter.",
     id: "campaigns.export.artifacts.list.path.campaignId",
     location: "path",
     name: "campaignId",
@@ -1168,10 +1181,11 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["object_storage_export", "contract_writer", "scheduler", "worker_queue"],
     label: "Export",
-    notes: "Local export preview, export readiness inspection, export artifact audit read metadata, and participant-backed export projection read the campaign participant repository/read model and campaign referral binding read model; no production DB migration, contract transaction, or reward distribution runs are enabled while object storage adapter fulfillment, export preparation scheduler runtime, queue runtime handoff, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, worker idempotency store readiness metadata, dead-letter queue, observability exporter, and contract root writes are deferred.",
+    notes: "Local export preview, export readiness inspection, object storage export readiness inspection, export artifact audit read metadata, and participant-backed export projection read the campaign participant repository/read model and campaign referral binding read model; no production DB migration, contract transaction, storage upload, signed URL, download, or reward distribution runs are enabled while object storage adapter fulfillment, export preparation scheduler runtime, queue runtime handoff, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, worker idempotency store readiness metadata, dead-letter queue, observability exporter, and contract root writes are deferred.",
     routeIds: [
       "campaigns.export.preview",
       "campaigns.export.readiness",
+      "campaigns.export.storage.readiness",
       "campaigns.export.artifacts.list",
       "campaigns.export.artifacts.detail",
       "campaigns.export.artifacts.file",
