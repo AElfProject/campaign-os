@@ -27,6 +27,12 @@ import {
   type ObjectStorageExportRuntimeApiBridgeState,
 } from "../../../api/objectStorageExportRuntimeApiBridge";
 import {
+  createRepositoryCampaignWorkflowSeededFallbackState,
+  loadRepositoryCampaignWorkflowBridgeState,
+  repositoryCampaignWorkflowApiBoundary,
+  type RepositoryCampaignWorkflowBridgeState,
+} from "../../../api/repositoryCampaignWorkflowApiBridge";
+import {
   createAnalyticsIngestionRuntimeApiSeededFallbackState,
   loadAnalyticsIngestionRuntimeApiBridgeState,
   type AnalyticsIngestionRuntimeApiBridgeState,
@@ -83,6 +89,15 @@ vi.mock("../../../api/objectStorageExportRuntimeApiBridge", async (importOrigina
   return {
     ...actual,
     loadObjectStorageExportRuntimeApiBridgeState: vi.fn(actual.loadObjectStorageExportRuntimeApiBridgeState),
+  };
+});
+
+vi.mock("../../../api/repositoryCampaignWorkflowApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/repositoryCampaignWorkflowApiBridge")>();
+
+  return {
+    ...actual,
+    loadRepositoryCampaignWorkflowBridgeState: vi.fn(actual.loadRepositoryCampaignWorkflowBridgeState),
   };
 });
 
@@ -582,6 +597,227 @@ const objectStorageExportRuntimeApiState = (): ObjectStorageExportRuntimeApiBrid
   };
 };
 
+const repositoryCampaignWorkflowNoLiveSideEffects = {
+  contractWriteExecuted: false,
+  objectKeyCreated: false,
+  providerCallExecuted: false,
+  rawProviderPayloadExposed: false,
+  rewardCustodyExecuted: false,
+  rewardDistributionExecuted: false,
+  signedUrlCreated: false,
+  storageWriteExecuted: false,
+  walletSignatureExecuted: false,
+} as const;
+
+const repositoryCampaignWorkflowApiState = (): RepositoryCampaignWorkflowBridgeState => ({
+  boundary: repositoryCampaignWorkflowApiBoundary,
+  campaign: {
+    contractMode: "OFF_CHAIN_MVP",
+    createdDraftId: "repo-workflow-draft-api",
+    defaultLocale: "en-US",
+    listCampaignCount: 1,
+    listContainsCreatedDraft: true,
+    ownerAddress: "ELF_project_console_review_owner",
+    persistence: { kind: "campaign_draft", recordId: "repo-workflow-record-api" },
+    projectId: "repo-workflow-review",
+    repository: {
+      createdViaRepository: true,
+      repositoryId: "repo-workflow-runtime-repository",
+      storeId: "campaign-db",
+    },
+    status: "draft",
+    supportedLocales: ["en-US", "zh-CN", "zh-TW"],
+    walletPolicy: "ANY",
+  },
+  configured: true,
+  diagnostics: [],
+  eligibility: {
+    afterOptional: {
+      accountType: "EOA",
+      eligible: false,
+      evidenceHashes: ["hash-optional-share"],
+      missingTasks: ["bridge_ebridge"],
+      riskFlags: ["required_task_missing"],
+      score: 50,
+      status: "not_eligible",
+      walletAddress: "2F4RepositoryWorkflowWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
+    },
+    afterRequired: {
+      accountType: "EOA",
+      eligible: true,
+      evidenceHashes: ["hash-required-bridge", "hash-optional-share"],
+      missingTasks: [],
+      riskFlags: [],
+      score: 170,
+      status: "eligible",
+      walletAddress: "2F4RepositoryWorkflowWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
+    },
+    beforeRequired: {
+      accountType: "EOA",
+      eligible: false,
+      evidenceHashes: [],
+      missingTasks: ["bridge_ebridge"],
+      riskFlags: ["required_task_missing"],
+      score: 0,
+      status: "not_eligible",
+      walletAddress: "2F4RepositoryWorkflowWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
+    },
+  },
+  exportReview: {
+    audit: {
+      detailFound: true,
+      recordCount: 1,
+      safety: {
+        downloadUrlEnabled: false,
+        localReviewOnly: true,
+        storageWriteEnabled: false,
+      },
+    },
+    blockedPreview: {
+      blockedRows: 1,
+      contractRootMode: "none",
+      readyRows: 0,
+      reviewRequiredRows: 0,
+      rowStatuses: ["blocked"],
+      totalRows: 1,
+    },
+    readiness: {
+      blockedRows: 0,
+      contractRootModes: ["none", "contract_claim"],
+      previewModes: ["json", "csv"],
+      readyRows: 1,
+      reviewRequiredRows: 0,
+      totalRows: 1,
+    },
+    readyPreview: {
+      artifactChecksum: "repo-workflow-export-checksum",
+      artifactId: "repo-workflow-export-artifact",
+      blockedRows: 0,
+      contractRootMode: "none",
+      readyRows: 1,
+      reviewRequiredRows: 0,
+      rowStatuses: ["ready"],
+      totalRows: 1,
+    },
+  },
+  health: {
+    routeCount: 34,
+    status: "ready",
+    traceId: "trace-repository-workflow-health",
+  },
+  liveSideEffects: repositoryCampaignWorkflowNoLiveSideEffects,
+  loading: false,
+  source: "api_runtime",
+  status: "ready",
+  tasks: {
+    optional: {
+      evidenceRule: { action: "share" },
+      points: 50,
+      required: false,
+      taskId: "repo-workflow-optional-task",
+      templateCode: "share_campaign",
+      verificationType: "SOCIAL",
+      walletCompatibility: "ANY",
+    },
+    required: {
+      evidenceRule: { minAmount: 1, source: "AELFSCAN" },
+      points: 120,
+      required: true,
+      taskId: "repo-workflow-required-task",
+      templateCode: "bridge_ebridge",
+      verificationType: "ON_CHAIN",
+      walletCompatibility: "ANY",
+    },
+  },
+  traceId: "trace-repository-workflow-ready",
+  traceIds: [
+    "trace-repository-workflow-health",
+    "trace-repository-workflow-create",
+    "trace-repository-workflow-ready",
+  ],
+  verification: {
+    optional: {
+      evidenceHash: "hash-optional-share",
+      evidenceSource: "SOCIAL_API",
+      liveContractExecuted: false,
+      liveProviderExecuted: false,
+      liveRewardExecuted: false,
+      liveStorageExecuted: false,
+      pointsAwarded: 50,
+      pointsAvailable: 50,
+      status: "completed",
+      taskId: "repo-workflow-optional-task",
+      walletAddress: "2F4RepositoryWorkflowWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    },
+    required: {
+      evidenceHash: "hash-required-bridge",
+      evidenceSource: "AELFSCAN",
+      liveContractExecuted: false,
+      liveProviderExecuted: false,
+      liveRewardExecuted: false,
+      liveStorageExecuted: false,
+      pointsAwarded: 120,
+      pointsAvailable: 120,
+      status: "completed",
+      taskId: "repo-workflow-required-task",
+      walletAddress: "2F4RepositoryWorkflowWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    },
+  },
+  workflowStepCount: 15,
+  workflowSteps: [
+    {
+      endpoint: "/api/health",
+      method: "GET",
+      status: "completed",
+      stepId: "health",
+      traceId: "trace-repository-workflow-health",
+    },
+    {
+      endpoint: "/api/campaigns",
+      method: "POST",
+      status: "completed",
+      stepId: "campaign-create",
+      traceId: "trace-repository-workflow-create",
+    },
+    {
+      endpoint: "/api/campaigns/:campaignId/export",
+      method: "POST",
+      status: "completed",
+      stepId: "ready-export",
+      traceId: "trace-repository-workflow-ready",
+    },
+  ],
+});
+
+const repositoryCampaignWorkflowErrorState = (): RepositoryCampaignWorkflowBridgeState => ({
+  ...createRepositoryCampaignWorkflowSeededFallbackState({
+    diagnostics: [
+      {
+        code: "API_BASE_URL_INVALID",
+        message: {
+          "en-US":
+            "Request failed with private key, bearer token, signed URL, object key, provider payload, stack trace, and /Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/raw?token=secret.",
+          "zh-CN": "Request failed with private key.",
+          "zh-TW": "Request failed with private key.",
+        },
+        severity: "error",
+      },
+    ],
+  }),
+  configured: true,
+  source: "error_fallback",
+  status: "error",
+  traceId: "trace-repository-workflow-error-visible",
+});
+
 const analyticsIngestionRuntimeApiState = (): AnalyticsIngestionRuntimeApiBridgeState => {
   const state = createAnalyticsIngestionRuntimeApiSeededFallbackState(
     campaignDetail.id,
@@ -635,6 +871,7 @@ describe("Project Console shell", () => {
   const mockedLoadPublishDeliveryReviewApiBridgeState = vi.mocked(loadPublishDeliveryReviewApiBridgeState);
   const mockedLoadPointsRankingLedgerRuntimeApiBridgeState = vi.mocked(loadPointsRankingLedgerRuntimeApiBridgeState);
   const mockedLoadObjectStorageExportRuntimeApiBridgeState = vi.mocked(loadObjectStorageExportRuntimeApiBridgeState);
+  const mockedLoadRepositoryCampaignWorkflowBridgeState = vi.mocked(loadRepositoryCampaignWorkflowBridgeState);
   const mockedLoadAnalyticsIngestionRuntimeApiBridgeState = vi.mocked(loadAnalyticsIngestionRuntimeApiBridgeState);
   const mockedLoadContractWriterRuntimeApiBridgeState = vi.mocked(loadContractWriterRuntimeApiBridgeState);
 
@@ -645,12 +882,14 @@ describe("Project Console shell", () => {
     mockedLoadPublishDeliveryReviewApiBridgeState.mockReset();
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockReset();
     mockedLoadObjectStorageExportRuntimeApiBridgeState.mockReset();
+    mockedLoadRepositoryCampaignWorkflowBridgeState.mockReset();
     mockedLoadAnalyticsIngestionRuntimeApiBridgeState.mockReset();
     mockedLoadContractWriterRuntimeApiBridgeState.mockReset();
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockResolvedValue(backendReadinessApiState());
     mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValue(publishDeliveryReviewApiState());
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockResolvedValue(pointsRankingLedgerRuntimeApiState());
     mockedLoadObjectStorageExportRuntimeApiBridgeState.mockResolvedValue(objectStorageExportRuntimeApiState());
+    mockedLoadRepositoryCampaignWorkflowBridgeState.mockResolvedValue(repositoryCampaignWorkflowApiState());
     mockedLoadAnalyticsIngestionRuntimeApiBridgeState.mockResolvedValue(analyticsIngestionRuntimeApiState());
     mockedLoadContractWriterRuntimeApiBridgeState.mockResolvedValue(contractWriterRuntimeApiState());
   });
@@ -2355,6 +2594,73 @@ describe("Project Console shell", () => {
       expect(within(objectStorageExportRuntime).queryByRole("button", { name })).not.toBeInTheDocument();
       expect(within(objectStorageExportRuntime).queryByRole("link", { name })).not.toBeInTheDocument();
     }
+  });
+
+  it("loads Repository Campaign Workflow bridge automatically and renders API-backed workflow evidence", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedLoadRepositoryCampaignWorkflowBridgeState.mockResolvedValueOnce(repositoryCampaignWorkflowApiState());
+
+    render(<ProjectConsole activeWorkspace="export" campaign={campaignDetail} locale="en-US" />);
+
+    const repositoryWorkflow = screen.getByLabelText("Repository Campaign Workflow Review");
+
+    await waitFor(() => expect(mockedLoadRepositoryCampaignWorkflowBridgeState).toHaveBeenCalledWith({
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        tracePrefix: "project-console-repository-workflow-review",
+      },
+    }));
+
+    await waitFor(() => expect(within(repositoryWorkflow).getByText("API runtime")).toBeInTheDocument());
+    expect(within(repositoryWorkflow).getAllByText("repo-workflow-draft-api").length).toBeGreaterThan(0);
+    expect(within(repositoryWorkflow).getByText("repo-workflow-runtime-repository")).toBeInTheDocument();
+    expect(within(repositoryWorkflow).getAllByText("repo-workflow-required-task").length).toBeGreaterThan(0);
+    expect(within(repositoryWorkflow).getAllByText("repo-workflow-optional-task").length).toBeGreaterThan(0);
+    expect(within(repositoryWorkflow).getByText("hash-required-bridge")).toBeInTheDocument();
+    expect(within(repositoryWorkflow).getByText("repo-workflow-export-artifact")).toBeInTheDocument();
+    expect(within(repositoryWorkflow).getByText("repo-workflow-export-checksum")).toBeInTheDocument();
+    expect(within(repositoryWorkflow).getAllByText("trace-repository-workflow-ready").length).toBeGreaterThan(0);
+    expect(within(repositoryWorkflow).getAllByText("After required: eligible / 170").length).toBeGreaterThan(0);
+    expect(within(repositoryWorkflow).getByRole("button", { name: "Review workflow bridge" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Publish Delivery Review Bridge")).toBeInTheDocument();
+    expect(screen.getByLabelText("Object Storage Export Runtime review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Backend Runtime Readiness review")).toBeInTheDocument();
+    for (const name of [/provider/i, /contract write/i, /storage write/i, /signed url/i, /object key/i, /reward custody/i, /reward distribution/i]) {
+      expect(within(repositoryWorkflow).queryByRole("button", { name })).not.toBeInTheDocument();
+      expect(within(repositoryWorkflow).queryByRole("link", { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it("keeps Repository Campaign Workflow fallback sanitized while existing export surfaces remain usable", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedLoadRepositoryCampaignWorkflowBridgeState.mockResolvedValueOnce(repositoryCampaignWorkflowErrorState());
+
+    render(<ProjectConsole activeWorkspace="export" campaign={campaignDetail} locale="en-US" />);
+
+    const repositoryWorkflow = screen.getByLabelText("Repository Campaign Workflow Review");
+
+    await waitFor(() => expect(within(repositoryWorkflow).getByText("Error fallback")).toBeInTheDocument());
+
+    const diagnostics = within(repositoryWorkflow).getByLabelText("Repository workflow diagnostics");
+    const workflowText = diagnostics.textContent?.toLowerCase() ?? "";
+    for (const unsafe of [
+      "private key",
+      "bearer token",
+      "signed url",
+      "object key",
+      "provider payload",
+      "stack trace",
+      "campaign-os-kitty",
+      "token=secret",
+    ]) {
+      expect(workflowText).not.toContain(unsafe);
+    }
+    expect(workflowText).toContain("redacted key");
+    expect(within(repositoryWorkflow).getByRole("button", { name: "Review workflow bridge" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Publish Delivery Review Bridge")).toBeInTheDocument();
+    expect(screen.getByLabelText("Export Delivery API review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Backend Runtime Readiness review")).toBeInTheDocument();
+    expect(screen.queryByText(/docs\/current/i)).not.toBeInTheDocument();
   });
 
   it("loads Analytics Ingestion Runtime automatically and keeps live telemetry controls absent", async () => {
