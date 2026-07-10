@@ -2323,8 +2323,13 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
     }
 
     const supportedContractRootModes: readonly ExportWinnersResponse["contractRootMode"][] = ["none", "eligibility_root"];
+    const contractRootMode = supportedContractRootModes.includes(
+      request.contractRootMode as ExportWinnersResponse["contractRootMode"],
+    )
+      ? request.contractRootMode as ExportWinnersResponse["contractRootMode"]
+      : undefined;
 
-    if (!["csv", "json"].includes(request.format) || !supportedContractRootModes.includes(request.contractRootMode as ExportWinnersResponse["contractRootMode"])) {
+    if (!["csv", "json"].includes(request.format) || !contractRootMode) {
       return failure(
         "UNSUPPORTED_EXPORT_MODE",
         !["csv", "json"].includes(request.format) ? "format" : "contractRootMode",
@@ -2368,7 +2373,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
     );
     const rows = preview.rows;
     const artifact = createExportArtifact(preview, request.format);
-    const eligibilityRootPacket = request.contractRootMode === "eligibility_root"
+    const eligibilityRootPacket = contractRootMode === "eligibility_root"
       ? createEligibilityRootExportReviewPacket(preview)
       : undefined;
 
@@ -2378,7 +2383,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
       campaignId: campaign.id,
       columns: EXPORT_CSV_COLUMNS,
       confirmation: preview.confirmation,
-      contractRootMode: request.contractRootMode,
+      contractRootMode,
       disclaimer: preview.disclaimer,
       exportFulfillmentReadiness: createExportFulfillmentReadiness(campaign),
       exportReadiness: createExportConfirmationReadinessGate(campaign),
