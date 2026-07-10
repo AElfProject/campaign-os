@@ -174,6 +174,9 @@ import type {
   PortfolioCampaignHistoryState,
   ExportAcknowledgement,
   ExportArtifact,
+  EligibilityRootExportReviewPacket,
+  EligibilityRootExportReviewRow,
+  EligibilityRootExportSafety,
   ExportConfirmation,
   ExportConfirmationReadinessGate,
   ExportContractRootReadiness,
@@ -5854,6 +5857,92 @@ export const createExportArtifact = (
       noRewardDistribution: true,
       boundary: exportArtifactBoundary,
     },
+  };
+};
+
+const eligibilityRootExportBoundary: LocalizedText = localized(
+  "Local eligibility root packet review only. No contract write, wallet signature, storage write, signed URL, provider call, reward custody, reward distribution, or claim execution is performed.",
+  "仅用于本地 eligibility root packet 审核。不会执行合约写入、钱包签名、存储写入、签名 URL、provider 调用、奖励托管、发奖或 claim 执行。",
+  "Local eligibility root packet review only. No contract write, wallet signature, storage write, signed URL, provider call, reward custody, reward distribution, or claim execution is performed.",
+);
+
+const eligibilityRootExportNextAction: LocalizedText = localized(
+  "Review this deterministic packet before any future P1 contract publication workflow.",
+  "在任何未来 P1 合约发布流程前，先审核这个确定性的 packet。",
+  "Review this deterministic packet before any future P1 contract publication workflow.",
+);
+
+const eligibilityRootExportSafety: EligibilityRootExportSafety = {
+  claimExecutionEnabled: false,
+  contractWriteExecuted: false,
+  providerCallExecuted: false,
+  rewardCustodyEnabled: false,
+  rewardDistributionEnabled: false,
+  signedUrlGenerated: false,
+  storageWriteExecuted: false,
+  walletSignatureRequested: false,
+};
+
+const eligibilityRootReviewRow = (row: ExportPreviewRow): EligibilityRootExportReviewRow => ({
+  walletAddress: row.walletAddress,
+  accountType: row.accountType,
+  walletSource: row.walletSource,
+  localePreference: row.localePreference,
+  totalPoints: row.totalPoints,
+  ...(row.rank !== undefined ? { rank: row.rank } : {}),
+  eligible: row.eligible,
+  missingTasks: [...row.missingTasks].sort(),
+  riskFlags: [...row.riskFlags].sort(),
+  evidenceHashes: [...new Set(row.evidenceHashes)].sort(),
+});
+
+const rootHashInputFor = (
+  campaignId: string,
+  exportBatchIdValue: string,
+  rows: readonly EligibilityRootExportReviewRow[],
+): string =>
+  JSON.stringify({
+    campaignId,
+    exportBatchId: exportBatchIdValue,
+    rows: rows.map((row) => ({
+      accountType: row.accountType,
+      eligible: row.eligible,
+      evidenceHashes: row.evidenceHashes,
+      localePreference: row.localePreference,
+      missingTasks: row.missingTasks,
+      rank: row.rank ?? null,
+      riskFlags: row.riskFlags,
+      totalPoints: row.totalPoints,
+      walletAddress: row.walletAddress,
+      walletSource: row.walletSource,
+    })),
+  });
+
+export const createEligibilityRootExportReviewPacket = (
+  preview: ExportPreview,
+): EligibilityRootExportReviewPacket => {
+  const exportBatchIdValue = preview.rows[0]?.exportBatchId ?? exportBatchId;
+  const rows = preview.rows.map(eligibilityRootReviewRow);
+  const evidenceHashes = [...new Set(rows.flatMap((row) => row.evidenceHashes))].sort();
+  const rootHash = createLocalReviewChecksum(rootHashInputFor(preview.campaignId, exportBatchIdValue, rows))
+    .replace(/^local-/, "local-root-");
+
+  return {
+    mode: "eligibility_root",
+    publicationStatus: "not_published",
+    contractWriteEnabled: false,
+    rootId: `${preview.campaignId}-${exportBatchIdValue}-eligibility-root-v1`,
+    rootVersion: 1,
+    rootHash,
+    exportBatchId: exportBatchIdValue,
+    generatedMode: "local_review_only",
+    totalRows: rows.length,
+    eligibleWalletCount: rows.filter((row) => row.eligible).length,
+    evidenceHashes,
+    rows,
+    safety: eligibilityRootExportSafety,
+    nextAction: eligibilityRootExportNextAction,
+    boundary: eligibilityRootExportBoundary,
   };
 };
 

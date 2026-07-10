@@ -5147,6 +5147,48 @@ export interface ExportArtifact {
   safety: ExportArtifactSafety;
 }
 
+export interface EligibilityRootExportSafety {
+  claimExecutionEnabled: false;
+  contractWriteExecuted: false;
+  providerCallExecuted: false;
+  rewardCustodyEnabled: false;
+  rewardDistributionEnabled: false;
+  signedUrlGenerated: false;
+  storageWriteExecuted: false;
+  walletSignatureRequested: false;
+}
+
+export interface EligibilityRootExportReviewRow {
+  walletAddress: string;
+  accountType: AccountType;
+  walletSource: WalletSource;
+  localePreference: SupportedLocale;
+  totalPoints: number;
+  rank?: number;
+  eligible: boolean;
+  missingTasks: string[];
+  riskFlags: string[];
+  evidenceHashes: string[];
+}
+
+export interface EligibilityRootExportReviewPacket {
+  mode: "eligibility_root";
+  publicationStatus: "not_published";
+  contractWriteEnabled: false;
+  rootId: string;
+  rootVersion: number;
+  rootHash: string;
+  exportBatchId: string;
+  generatedMode: "local_review_only";
+  totalRows: number;
+  eligibleWalletCount: number;
+  evidenceHashes: string[];
+  rows: EligibilityRootExportReviewRow[];
+  safety: EligibilityRootExportSafety;
+  nextAction: LocalizedText;
+  boundary: LocalizedText;
+}
+
 export interface ExportFulfillmentSummary {
   status: ExportReadinessState;
   packageCount: number;

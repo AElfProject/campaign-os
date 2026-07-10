@@ -218,6 +218,41 @@ interface ExportPreviewPayload {
   blockedRows?: number;
   campaignId: string;
   contractRootMode: string;
+  eligibilityRootPacket?: {
+    contractWriteEnabled: false;
+    eligibleWalletCount: number;
+    evidenceHashes: string[];
+    exportBatchId: string;
+    generatedMode: "local_review_only";
+    mode: "eligibility_root";
+    publicationStatus: "not_published";
+    rootHash: string;
+    rootId: string;
+    rootVersion: number;
+    rows: Array<{
+      accountType: string;
+      eligible: boolean;
+      evidenceHashes: string[];
+      localePreference: string;
+      missingTasks: string[];
+      rank?: number;
+      riskFlags: string[];
+      totalPoints: number;
+      walletAddress: string;
+      walletSource: string;
+    }>;
+    safety: {
+      claimExecutionEnabled: false;
+      contractWriteExecuted: false;
+      providerCallExecuted: false;
+      rewardCustodyEnabled: false;
+      rewardDistributionEnabled: false;
+      signedUrlGenerated: false;
+      storageWriteExecuted: false;
+      walletSignatureRequested: false;
+    };
+    totalRows: number;
+  };
   exportBatchId?: string;
   format: string;
   readyRows: number;
@@ -1664,6 +1699,62 @@ describe("Campaign OS API runtime", () => {
       format: "json",
     });
     expect(readinessCallCount).toBe(0);
+  });
+
+  it("serves deterministic local eligibility root export packets without live side effects", async () => {
+    const runtime = createCampaignOsApiRuntime();
+    const requestBody = {
+      contractRootMode: "eligibility_root",
+      format: "json",
+      includeLocalePreference: true,
+      includeRiskFlags: true,
+      includeWalletType: true,
+    };
+    const first = await runtime.handle({
+      method: "POST",
+      path: `/api/campaigns/${campaignDetail.id}/export`,
+      headers: { "x-campaign-os-trace-id": "trace-eligibility-root-preview" },
+      body: JSON.stringify(requestBody),
+    });
+    const second = await runtime.handle({
+      method: "POST",
+      path: `/api/campaigns/${campaignDetail.id}/export`,
+      headers: { "x-campaign-os-trace-id": "trace-eligibility-root-preview-repeat" },
+      body: JSON.stringify(requestBody),
+    });
+    const payload = expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload>>(first).payload;
+    const repeatedPayload = expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload>>(second).payload;
+
+    expect(payload).toMatchObject({
+      campaignId: campaignDetail.id,
+      contractRootMode: "eligibility_root",
+      eligibilityRootPacket: {
+        contractWriteEnabled: false,
+        exportBatchId: expect.any(String),
+        generatedMode: "local_review_only",
+        mode: "eligibility_root",
+        publicationStatus: "not_published",
+        rootHash: expect.stringMatching(/^local-root-/),
+        rootVersion: 1,
+        safety: {
+          claimExecutionEnabled: false,
+          contractWriteExecuted: false,
+          providerCallExecuted: false,
+          rewardCustodyEnabled: false,
+          rewardDistributionEnabled: false,
+          signedUrlGenerated: false,
+          storageWriteExecuted: false,
+          walletSignatureRequested: false,
+        },
+      },
+    });
+    expect(payload.eligibilityRootPacket?.rootHash).toBe(repeatedPayload.eligibilityRootPacket?.rootHash);
+    expect(payload.eligibilityRootPacket?.rows.length).toBe(payload.rows?.length);
+    expect(payload.eligibilityRootPacket?.eligibleWalletCount).toBe(
+      payload.eligibilityRootPacket?.rows.filter((row) => row.eligible).length,
+    );
+    expectNoForbiddenResponseKeys(first.body);
+    expectNoForbiddenOwnKeys(first.body, ["privateKey", "signedPayload", "storageKey", "transactionId"]);
   });
 
   it("queries local export artifact audit records after seeded preview registration", async () => {

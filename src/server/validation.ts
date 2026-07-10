@@ -57,7 +57,7 @@ const campaignPostContentKeys = [
 ] as const satisfies readonly GeneratedCampaignPostContentKey[];
 const summaryPeriods = ["daily", "weekly"] as const;
 const exportFormats = ["csv", "json"] as const;
-const exportContractRootModes = ["none"] as const;
+const exportContractRootModes = ["none", "eligibility_root"] as const;
 
 export const isJsonRecord = (value: unknown): value is JsonRecord =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -263,9 +263,9 @@ export const exportContractRootMode = (value: unknown) =>
   value === undefined
     ? "none"
     : (() => {
-        if (typeof value !== "string" || !exportContractRootModes.includes(value as "none")) {
+        if (typeof value !== "string" || !exportContractRootModes.includes(value as (typeof exportContractRootModes)[number])) {
           throw unsupportedExportMode(typeof value === "string" ? value : "unknown-export-mode");
         }
 
-        return value as "none";
+        return value as (typeof exportContractRootModes)[number];
       })();

@@ -9,6 +9,7 @@ import {
   createExportArtifact,
   createExportConfirmationReadinessGate,
   createExportFulfillmentReadiness,
+  createEligibilityRootExportReviewPacket,
   createExportPreview,
   createLaunchConsoleCampaignBundles,
   createParticipationReadModel,
@@ -78,6 +79,7 @@ import {
   type ExportArtifact,
   type ExportContractRootMode,
   type ExportCsvColumn,
+  type EligibilityRootExportReviewPacket,
   type ExportFulfillmentReadiness,
   type ExportPreviewMode,
   type ExportPreviewRow,
@@ -446,7 +448,8 @@ export interface ExportWinnersResponse {
   readyRows: number;
   reviewRequiredRows: number;
   blockedRows: number;
-  contractRootMode: "none";
+  contractRootMode: "none" | "eligibility_root";
+  eligibilityRootPacket?: EligibilityRootExportReviewPacket;
 }
 
 export interface LocalServiceCoverageSummary {
@@ -2319,12 +2322,19 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
       );
     }
 
-    if (!["csv", "json"].includes(request.format) || request.contractRootMode !== "none") {
+    const supportedContractRootModes: readonly ExportWinnersResponse["contractRootMode"][] = ["none", "eligibility_root"];
+    const contractRootMode = supportedContractRootModes.includes(
+      request.contractRootMode as ExportWinnersResponse["contractRootMode"],
+    )
+      ? request.contractRootMode as ExportWinnersResponse["contractRootMode"]
+      : undefined;
+
+    if (!["csv", "json"].includes(request.format) || !contractRootMode) {
       return failure(
         "UNSUPPORTED_EXPORT_MODE",
         !["csv", "json"].includes(request.format) ? "format" : "contractRootMode",
-        "Only local CSV or JSON preview with contractRootMode none is supported.",
-        "当前仅支持 contractRootMode 为 none 的本地 CSV 或 JSON 预览。",
+        "Only local CSV or JSON preview with contractRootMode none or eligibility_root review metadata is supported.",
+        "当前仅支持 contractRootMode 为 none 或 eligibility_root review metadata 的本地 CSV 或 JSON 预览。",
       );
     }
 
@@ -2363,6 +2373,9 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
     );
     const rows = preview.rows;
     const artifact = createExportArtifact(preview, request.format);
+    const eligibilityRootPacket = contractRootMode === "eligibility_root"
+      ? createEligibilityRootExportReviewPacket(preview)
+      : undefined;
 
     return success({
       artifact,
@@ -2370,7 +2383,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
       campaignId: campaign.id,
       columns: EXPORT_CSV_COLUMNS,
       confirmation: preview.confirmation,
-      contractRootMode: request.contractRootMode,
+      contractRootMode,
       disclaimer: preview.disclaimer,
       exportFulfillmentReadiness: createExportFulfillmentReadiness(campaign),
       exportReadiness: createExportConfirmationReadinessGate(campaign),
@@ -2378,6 +2391,7 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
       readyRows: rows.filter((row) => row.rowStatus === "ready").length,
       reviewRequiredRows: rows.filter((row) => row.rowStatus === "review_required").length,
       rows,
+      ...(eligibilityRootPacket ? { eligibilityRootPacket } : {}),
     });
   },
 

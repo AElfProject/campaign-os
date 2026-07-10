@@ -968,7 +968,7 @@ const requestFieldContracts = [
   }),
   field({
     description: "Contract root publication mode for export preview.",
-    enumValues: ["none"],
+    enumValues: ["none", "eligibility_root"],
     id: "campaigns.export.preview.body.contractRootMode",
     location: "body",
     name: "contractRootMode",
