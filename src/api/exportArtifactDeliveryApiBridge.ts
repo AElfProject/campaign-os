@@ -1,4 +1,11 @@
-import type { ExportContractRootMode, ExportPreviewMode, LocalizedText } from "../domain/types";
+import type {
+  EligibilityRootExportReviewPacket,
+  EligibilityRootExportReviewRow,
+  EligibilityRootExportSafety,
+  ExportContractRootMode,
+  ExportPreviewMode,
+  LocalizedText,
+} from "../domain/types";
 
 export type ExportArtifactDeliveryApiSource =
   | "api_runtime"
@@ -140,10 +147,18 @@ export interface ExportArtifactDeliveryPreviewResult {
   columns: readonly string[];
   contractRootMode?: string;
   disclaimer?: string;
+  eligibilityRootPacket?: EligibilityRootExportReviewPacket;
   exportBatchId: string;
   format: string;
   readyRows: number;
   reviewRequiredRows: number;
+}
+
+export interface ExportArtifactDeliveryContractRootReview {
+  blockedReason?: string;
+  publicationStatus: string;
+  requestedMode: string;
+  supported: boolean;
 }
 
 export interface ExportArtifactDeliveryAuditSummary {
@@ -185,7 +200,9 @@ export interface ExportArtifactDeliveryApiBridgeState {
   auditList?: ExportArtifactDeliveryAuditListResult;
   boundary: LocalizedText;
   configured: boolean;
+  contractRootReview?: ExportArtifactDeliveryContractRootReview;
   diagnostics: readonly ExportArtifactDeliveryApiDiagnostic[];
+  eligibilityRootPacket?: EligibilityRootExportReviewPacket;
   loading: boolean;
   persistence?: ExportArtifactDeliveryPersistenceMetadata;
   preview?: ExportArtifactDeliveryPreviewResult;
@@ -576,6 +593,8 @@ const numberValue = (value: unknown) =>
 const booleanValue = (value: unknown) =>
   typeof value === "boolean" ? value : undefined;
 
+const falseValue = (value: unknown) => value === false ? false : undefined;
+
 const localizedText = (value: unknown): LocalizedText | undefined => {
   if (!isRecord(value)) {
     return undefined;
@@ -593,6 +612,187 @@ const localizedText = (value: unknown): LocalizedText | undefined => {
     "en-US": enUS ?? zhCN ?? zhTW ?? "",
     "zh-CN": zhCN ?? enUS ?? zhTW ?? "",
     "zh-TW": zhTW ?? enUS ?? zhCN ?? "",
+  };
+};
+
+const unsafePacketKeys = new Set([
+  "apikey",
+  "api_key",
+  "contracttransactionhash",
+  "contracttransactionid",
+  "downloadurl",
+  "objectkey",
+  "privatekey",
+  "providerpayload",
+  "rawsignature",
+  "secret",
+  "signature",
+  "signedpayload",
+  "signedurl",
+  "storagekey",
+  "token",
+  "transactionhash",
+  "transactionid",
+  "txid",
+  "walletsignature",
+]);
+
+const hasUnsafePacketKey = (value: unknown): boolean => {
+  if (Array.isArray(value)) {
+    return value.some(hasUnsafePacketKey);
+  }
+
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return Object.entries(value).some(([key, nested]) => (
+    unsafePacketKeys.has(key.replace(/[-_\s]/g, "").toLowerCase()) || hasUnsafePacketKey(nested)
+  ));
+};
+
+const requiredText = (value: unknown): string | undefined => {
+  const text = optionalText(value);
+
+  return text && text.trim() ? text : undefined;
+};
+
+const requiredNumber = (value: unknown) => numberValue(value);
+
+const requiredBoolean = (value: unknown) => booleanValue(value);
+
+const normalizeEligibilityRootSafety = (payload: unknown): EligibilityRootExportSafety | undefined => {
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+
+  const safety = {
+    claimExecutionEnabled: falseValue(payload.claimExecutionEnabled),
+    contractWriteExecuted: falseValue(payload.contractWriteExecuted),
+    providerCallExecuted: falseValue(payload.providerCallExecuted),
+    rewardCustodyEnabled: falseValue(payload.rewardCustodyEnabled),
+    rewardDistributionEnabled: falseValue(payload.rewardDistributionEnabled),
+    signedUrlGenerated: falseValue(payload.signedUrlGenerated),
+    storageWriteExecuted: falseValue(payload.storageWriteExecuted),
+    walletSignatureRequested: falseValue(payload.walletSignatureRequested),
+  };
+
+  return Object.values(safety).every((value) => value === false)
+    ? safety as EligibilityRootExportSafety
+    : undefined;
+};
+
+const normalizeEligibilityRootRow = (payload: unknown): EligibilityRootExportReviewRow | undefined => {
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+
+  const walletAddress = requiredText(payload.walletAddress);
+  const accountType = requiredText(payload.accountType);
+  const walletSource = requiredText(payload.walletSource);
+  const localePreference = requiredText(payload.localePreference);
+  const totalPoints = requiredNumber(payload.totalPoints);
+  const rank = numberValue(payload.rank);
+  const eligible = requiredBoolean(payload.eligible);
+  const missingTasks = textArray(payload.missingTasks);
+  const riskFlags = textArray(payload.riskFlags);
+  const evidenceHashes = textArray(payload.evidenceHashes);
+
+  if (
+    !walletAddress ||
+    !accountType ||
+    !walletSource ||
+    !localePreference ||
+    totalPoints === undefined ||
+    eligible === undefined ||
+    !Array.isArray(payload.missingTasks) ||
+    !Array.isArray(payload.riskFlags) ||
+    evidenceHashes.length === 0
+  ) {
+    return undefined;
+  }
+
+  return {
+    accountType: accountType as EligibilityRootExportReviewRow["accountType"],
+    eligible,
+    evidenceHashes,
+    localePreference: localePreference as EligibilityRootExportReviewRow["localePreference"],
+    missingTasks,
+    ...(rank !== undefined ? { rank } : {}),
+    riskFlags,
+    totalPoints,
+    walletAddress,
+    walletSource: walletSource as EligibilityRootExportReviewRow["walletSource"],
+  };
+};
+
+const normalizeEligibilityRootPacket = (payload: unknown): EligibilityRootExportReviewPacket | undefined => {
+  if (!isRecord(payload) || hasUnsafePacketKey(payload)) {
+    return undefined;
+  }
+
+  const mode = requiredText(payload.mode);
+  const publicationStatus = requiredText(payload.publicationStatus);
+  const contractWriteEnabled = falseValue(payload.contractWriteEnabled);
+  const rootId = requiredText(payload.rootId);
+  const rootVersion = requiredNumber(payload.rootVersion);
+  const rootHash = requiredText(payload.rootHash);
+  const exportBatchId = requiredText(payload.exportBatchId);
+  const generatedMode = requiredText(payload.generatedMode);
+  const totalRows = requiredNumber(payload.totalRows);
+  const eligibleWalletCount = requiredNumber(payload.eligibleWalletCount);
+  const evidenceHashes = textArray(payload.evidenceHashes);
+  const rows = Array.isArray(payload.rows)
+    ? payload.rows.map(normalizeEligibilityRootRow)
+    : [];
+  const safety = normalizeEligibilityRootSafety(payload.safety);
+  const nextAction = localizedText(payload.nextAction);
+  const boundary = localizedText(payload.boundary);
+
+  if (
+    mode !== "eligibility_root" ||
+    publicationStatus !== "not_published" ||
+    contractWriteEnabled !== false ||
+    !rootId ||
+    rootVersion === undefined ||
+    !rootHash ||
+    !exportBatchId ||
+    generatedMode !== "local_review_only" ||
+    totalRows === undefined ||
+    eligibleWalletCount === undefined ||
+    evidenceHashes.length === 0 ||
+    rows.length === 0 ||
+    rows.some((row) => !row) ||
+    !safety ||
+    !nextAction ||
+    !boundary
+  ) {
+    return undefined;
+  }
+
+  const normalizedRows = rows as EligibilityRootExportReviewRow[];
+  const normalizedEligibleWalletCount = normalizedRows.filter((row) => row.eligible).length;
+
+  if (totalRows !== normalizedRows.length || eligibleWalletCount !== normalizedEligibleWalletCount) {
+    return undefined;
+  }
+
+  return {
+    boundary,
+    contractWriteEnabled,
+    eligibleWalletCount,
+    evidenceHashes,
+    exportBatchId,
+    generatedMode: "local_review_only",
+    mode: "eligibility_root",
+    nextAction,
+    publicationStatus: "not_published",
+    rootHash,
+    rootId,
+    rootVersion,
+    rows: normalizedRows,
+    safety,
+    totalRows,
   };
 };
 
@@ -799,6 +999,18 @@ const normalizePreview = (payload: unknown): ExportArtifactDeliveryPreviewResult
 
   const contractRootMode = optionalText(payload.contractRootMode);
   const disclaimer = optionalText(payload.disclaimer);
+  const eligibilityRootPacket = normalizeEligibilityRootPacket(payload.eligibilityRootPacket);
+
+  if (contractRootMode && !["none", "eligibility_root"].includes(contractRootMode)) {
+    return undefined;
+  }
+
+  if (
+    (contractRootMode === "eligibility_root" && !eligibilityRootPacket) ||
+    (contractRootMode === "none" && eligibilityRootPacket)
+  ) {
+    return undefined;
+  }
 
   return {
     ...(artifact ? { artifact } : {}),
@@ -808,10 +1020,38 @@ const normalizePreview = (payload: unknown): ExportArtifactDeliveryPreviewResult
     columns,
     ...(contractRootMode ? { contractRootMode } : {}),
     ...(disclaimer ? { disclaimer } : {}),
+    ...(eligibilityRootPacket ? { eligibilityRootPacket } : {}),
     exportBatchId,
     format,
     readyRows,
     reviewRequiredRows,
+  };
+};
+
+const contractRootReviewFor = (
+  request: NormalizedRequest,
+  preview: ExportArtifactDeliveryPreviewResult,
+): ExportArtifactDeliveryContractRootReview => {
+  if (request.contractRootMode === "eligibility_root") {
+    return preview.eligibilityRootPacket
+      ? {
+        publicationStatus: preview.eligibilityRootPacket.publicationStatus,
+        requestedMode: request.contractRootMode,
+        supported: true,
+      }
+      : {
+        blockedReason: "eligibility_root_packet_missing",
+        publicationStatus: "not_published",
+        requestedMode: request.contractRootMode,
+        supported: false,
+      };
+  }
+
+  return {
+    publicationStatus: "not_requested",
+    requestedMode: request.contractRootMode,
+    supported: request.contractRootMode === "none",
+    ...(request.contractRootMode === "none" ? {} : { blockedReason: "unsupported_contract_root_mode" }),
   };
 };
 
@@ -1067,6 +1307,8 @@ export const submitExportArtifactDeliveryApiReview = async ({
   const persistence = normalizePersistence(metadataPayload(preview.body, "persistence"));
   const repository = normalizeRepository(metadataPayload(preview.body, "campaignDb"));
   const artifactId = registry?.artifactId;
+  const contractRootReview = contractRootReviewFor(normalizedRequest, normalizedPreview);
+  const eligibilityRootPacket = normalizedPreview.eligibilityRootPacket;
   const auditListEndpoint = `/api/campaigns/${encodeURIComponent(normalizedRequest.campaignId)}/export-artifacts`;
   const auditList = await safeFetchJson(
     fetchImpl,
@@ -1089,12 +1331,14 @@ export const submitExportArtifactDeliveryApiReview = async ({
       artifactId,
       boundary: exportArtifactDeliveryApiBoundary,
       configured: true,
+      contractRootReview,
       diagnostics: [
         auditList.diagnostic ?? diagnostic("API_AUDIT_LIST_FAILED", "error", {
           endpoint: auditListEndpoint,
           status: auditList.status,
         }),
       ],
+      ...(eligibilityRootPacket ? { eligibilityRootPacket } : {}),
       loading: false,
       ...(persistence ? { persistence } : {}),
       preview: normalizedPreview,
@@ -1114,7 +1358,9 @@ export const submitExportArtifactDeliveryApiReview = async ({
       artifactId,
       boundary: exportArtifactDeliveryApiBoundary,
       configured: true,
+      contractRootReview,
       diagnostics: [diagnostic("API_RESPONSE_INVALID", "error", { endpoint: auditListEndpoint })],
+      ...(eligibilityRootPacket ? { eligibilityRootPacket } : {}),
       loading: false,
       ...(persistence ? { persistence } : {}),
       preview: normalizedPreview,
@@ -1131,8 +1377,10 @@ export const submitExportArtifactDeliveryApiReview = async ({
     return {
       boundary: exportArtifactDeliveryApiBoundary,
       configured: true,
+      contractRootReview,
       diagnostics: [],
       auditList: normalizedAuditList,
+      ...(eligibilityRootPacket ? { eligibilityRootPacket } : {}),
       loading: false,
       ...(persistence ? { persistence } : {}),
       preview: normalizedPreview,
@@ -1164,12 +1412,14 @@ export const submitExportArtifactDeliveryApiReview = async ({
       auditList: normalizedAuditList,
       boundary: exportArtifactDeliveryApiBoundary,
       configured: true,
+      contractRootReview,
       diagnostics: [
         auditDetail.diagnostic ?? diagnostic("API_AUDIT_DETAIL_FAILED", "error", {
           endpoint: auditDetailEndpoint,
           status: auditDetail.status,
         }),
       ],
+      ...(eligibilityRootPacket ? { eligibilityRootPacket } : {}),
       loading: false,
       ...(persistence ? { persistence } : {}),
       preview: normalizedPreview,
@@ -1190,7 +1440,9 @@ export const submitExportArtifactDeliveryApiReview = async ({
       auditList: normalizedAuditList,
       boundary: exportArtifactDeliveryApiBoundary,
       configured: true,
+      contractRootReview,
       diagnostics: [diagnostic("API_RESPONSE_INVALID", "error", { endpoint: auditDetailEndpoint })],
+      ...(eligibilityRootPacket ? { eligibilityRootPacket } : {}),
       loading: false,
       ...(persistence ? { persistence } : {}),
       preview: normalizedPreview,
@@ -1209,7 +1461,9 @@ export const submitExportArtifactDeliveryApiReview = async ({
     auditList: normalizedAuditList,
     boundary: exportArtifactDeliveryApiBoundary,
     configured: true,
+    contractRootReview,
     diagnostics: [],
+    ...(eligibilityRootPacket ? { eligibilityRootPacket } : {}),
     loading: false,
     ...(persistence ? { persistence } : {}),
     preview: normalizedPreview,

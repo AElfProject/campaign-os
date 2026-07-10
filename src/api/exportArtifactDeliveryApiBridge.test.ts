@@ -111,6 +111,60 @@ const previewPayload = {
   reviewRequiredRows: 1,
 };
 
+const eligibilityRootPacketPayload = {
+  boundary: {
+    "en-US": "Local eligibility root packet review only. No contract write or wallet signature is performed.",
+    "zh-CN": "仅用于本地 eligibility root packet 审核。不会执行合约写入或钱包签名。",
+    "zh-TW": "Local eligibility root packet review only. No contract write or wallet signature is performed.",
+  },
+  contractWriteEnabled: false,
+  eligibleWalletCount: 1,
+  evidenceHashes: ["demo-task-bridge-2F4", "demo-task-connect-wallet-2F4"],
+  exportBatchId: "export-awaken-sprint-preview",
+  generatedMode: "local_review_only",
+  mode: "eligibility_root",
+  nextAction: {
+    "en-US": "Review this deterministic packet before publication.",
+    "zh-CN": "发布前先审核这个确定性 packet。",
+    "zh-TW": "Review this deterministic packet before publication.",
+  },
+  publicationStatus: "not_published",
+  rootHash: "local-root-ab568e06",
+  rootId: "camp-awaken-sprint-export-awaken-sprint-preview-eligibility-root-v1",
+  rootVersion: 1,
+  rows: [
+    {
+      accountType: "AA",
+      eligible: true,
+      evidenceHashes: ["demo-task-bridge-2F4", "demo-task-connect-wallet-2F4"],
+      localePreference: "en-US",
+      missingTasks: [],
+      rank: 12,
+      riskFlags: [],
+      totalPoints: 270,
+      walletAddress: "2F4...9aB",
+      walletSource: "PORTKEY_AA",
+    },
+  ],
+  safety: {
+    claimExecutionEnabled: false,
+    contractWriteExecuted: false,
+    providerCallExecuted: false,
+    rewardCustodyEnabled: false,
+    rewardDistributionEnabled: false,
+    signedUrlGenerated: false,
+    storageWriteExecuted: false,
+    walletSignatureRequested: false,
+  },
+  totalRows: 1,
+};
+
+const eligibilityRootPreviewPayload = {
+  ...previewPayload,
+  contractRootMode: "eligibility_root",
+  eligibilityRootPacket: eligibilityRootPacketPayload,
+};
+
 const auditListPayload = {
   boundary: {
     "en-US": "Local export artifact registry only.",
@@ -406,6 +460,94 @@ describe("export artifact delivery API bridge", () => {
     );
   });
 
+  it("normalizes eligibility root export packets and request review metadata", async () => {
+    const eligibilityRootRequest: ExportArtifactDeliveryRequest = {
+      ...request,
+      contractRootMode: "eligibility_root",
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: eligibilityRootPreviewPayload,
+        },
+        ok: true,
+        traceId: "trace-export-preview-envelope",
+      }, { traceId: "trace-export-preview-header" }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: auditListPayload,
+        },
+        ok: true,
+        traceId: "trace-export-audit-list-envelope",
+      }))
+      .mockResolvedValueOnce(response({
+        data: {
+          payload: auditDetailPayload,
+        },
+        ok: true,
+        traceId: "trace-export-audit-detail-envelope",
+      })) as unknown as ExportArtifactDeliveryApiFetch;
+
+    const state = await submitExportArtifactDeliveryApiReview({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl,
+      request: eligibilityRootRequest,
+    });
+
+    expect(state).toMatchObject({
+      contractRootReview: {
+        publicationStatus: "not_published",
+        requestedMode: "eligibility_root",
+        supported: true,
+      },
+      eligibilityRootPacket: {
+        contractWriteEnabled: false,
+        mode: "eligibility_root",
+        publicationStatus: "not_published",
+        rootHash: "local-root-ab568e06",
+        safety: {
+          claimExecutionEnabled: false,
+          contractWriteExecuted: false,
+          providerCallExecuted: false,
+          rewardCustodyEnabled: false,
+          rewardDistributionEnabled: false,
+          signedUrlGenerated: false,
+          storageWriteExecuted: false,
+          walletSignatureRequested: false,
+        },
+      },
+      preview: {
+        contractRootMode: "eligibility_root",
+        eligibilityRootPacket: {
+          eligibleWalletCount: 1,
+          totalRows: 1,
+        },
+      },
+      source: "api_runtime",
+      status: "delivered",
+    });
+    expect(state.eligibilityRootPacket?.rows[0]).toMatchObject({
+      accountType: "AA",
+      eligible: true,
+      evidenceHashes: ["demo-task-bridge-2F4", "demo-task-connect-wallet-2F4"],
+      walletAddress: "2F4...9aB",
+    });
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:5184/api/campaigns/camp-awaken-sprint/export",
+      expect.objectContaining({
+        body: JSON.stringify({
+          contractRootMode: "eligibility_root",
+          format: "json",
+          includeLocalePreference: true,
+          includeRiskFlags: true,
+          includeWalletType: true,
+        }),
+      }),
+    );
+  });
+
   it("accepts the current seeded runtime preview shape when the batch id only exists on artifact metadata", async () => {
     const { exportBatchId: _unused, ...seededRuntimePreviewPayload } = previewPayload;
     const fetchImpl = vi
@@ -480,6 +622,43 @@ describe("export artifact delivery API bridge", () => {
     });
     for (const unsafe of ["provider payload", "raw signature", "private key", "signed url", "object key", "campaign-os-kitty"]) {
       expect(serialized).not.toContain(unsafe);
+    }
+  });
+
+  it("keeps unsupported contract root mode failures sanitized", async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(response({
+      error: {
+        message:
+          "contract claim rejected with private key, raw signature, signed URL, object key, and /Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/raw",
+      },
+      ok: false,
+      traceId: "trace-export-preview-failed",
+    }, { ok: false, status: 400, traceId: "trace-export-preview-failed" })) as unknown as ExportArtifactDeliveryApiFetch;
+
+    const state = await submitExportArtifactDeliveryApiReview({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl,
+      request: {
+        ...request,
+        contractRootMode: "contract_claim",
+      },
+    });
+    const serializedDiagnostics = JSON.stringify(state.diagnostics).toLowerCase();
+
+    expect(state).toMatchObject({
+      diagnostics: [{ code: "API_EXPORT_PREVIEW_FAILED" }],
+      source: "error_fallback",
+      status: "error",
+    });
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:5184/api/campaigns/camp-awaken-sprint/export",
+      expect.objectContaining({
+        body: expect.stringContaining("\"contractRootMode\":\"contract_claim\""),
+      }),
+    );
+    for (const unsafe of ["private key", "raw signature", "signed url", "object key", "campaign-os-kitty"]) {
+      expect(serializedDiagnostics).not.toContain(unsafe);
     }
   });
 
@@ -620,6 +799,48 @@ describe("export artifact delivery API bridge", () => {
       status: "error",
       traceId: "trace-invalid-preview",
     });
+  });
+
+  it("rejects malformed or unsafe eligibility root packet shapes", async () => {
+    const unsafePreviewPayload = {
+      ...eligibilityRootPreviewPayload,
+      eligibilityRootPacket: {
+        ...eligibilityRootPacketPayload,
+        downloadUrl: "https://storage.invalid/export.csv?token=secret",
+        safety: {
+          ...eligibilityRootPacketPayload.safety,
+          contractWriteExecuted: true,
+        },
+      },
+    };
+    const fetchImpl = vi.fn().mockResolvedValueOnce(response({
+      data: {
+        payload: unsafePreviewPayload,
+      },
+      ok: true,
+      traceId: "trace-invalid-root-packet",
+    })) as unknown as ExportArtifactDeliveryApiFetch;
+
+    const state = await submitExportArtifactDeliveryApiReview({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl,
+      request: {
+        ...request,
+        contractRootMode: "eligibility_root",
+      },
+    });
+    const serialized = JSON.stringify(state).toLowerCase();
+
+    expect(state).toMatchObject({
+      diagnostics: [{ code: "API_RESPONSE_INVALID" }],
+      source: "error_fallback",
+      status: "error",
+      traceId: "trace-invalid-root-packet",
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    for (const unsafe of ["downloadurl", "token=secret", "contractwriteexecuted\":true"]) {
+      expect(serialized).not.toContain(unsafe);
+    }
   });
 
   it("redacts unsafe diagnostic fragments directly", () => {
