@@ -80,6 +80,55 @@ const clickWorkspace = (name: string) => {
   fireEvent.click(within(getProjectWorkspaceNav()).getByRole("button", { name }));
 };
 
+const exportDeliveryEligibilityRootPacket: NonNullable<ExportArtifactDeliveryApiBridgeState["eligibilityRootPacket"]> = {
+  boundary: {
+    "en-US":
+      "Local eligibility root packet review only. No contract write, wallet signature, storage write, signed URL, provider call, reward custody, reward distribution, or claim execution is performed.",
+    "zh-CN": "Local eligibility root packet review only.",
+    "zh-TW": "Local eligibility root packet review only.",
+  },
+  contractWriteEnabled: false,
+  eligibleWalletCount: 1,
+  evidenceHashes: ["demo-task-bridge-2F4", "demo-task-connect-wallet-2F4"],
+  exportBatchId: "export-awaken-sprint-preview",
+  generatedMode: "local_review_only",
+  mode: "eligibility_root" as const,
+  nextAction: {
+    "en-US": "Review this deterministic packet before any future P1 contract publication workflow.",
+    "zh-CN": "Review this deterministic packet before any future P1 contract publication workflow.",
+    "zh-TW": "Review this deterministic packet before any future P1 contract publication workflow.",
+  },
+  publicationStatus: "not_published",
+  rootHash: "local-root-ab568e06",
+  rootId: "camp-awaken-sprint-export-awaken-sprint-preview-eligibility-root-v1",
+  rootVersion: 1,
+  rows: [
+    {
+      accountType: "AA" as const,
+      eligible: true,
+      evidenceHashes: ["demo-task-bridge-2F4", "demo-task-connect-wallet-2F4"],
+      localePreference: "en-US" as const,
+      missingTasks: [],
+      rank: 12,
+      riskFlags: [],
+      totalPoints: 270,
+      walletAddress: "2F4...9aB",
+      walletSource: "PORTKEY_AA" as const,
+    },
+  ],
+  safety: {
+    claimExecutionEnabled: false,
+    contractWriteExecuted: false,
+    providerCallExecuted: false,
+    rewardCustodyEnabled: false,
+    rewardDistributionEnabled: false,
+    signedUrlGenerated: false,
+    storageWriteExecuted: false,
+    walletSignatureRequested: false,
+  },
+  totalRows: 1,
+};
+
 const apiDeliveredState = (): ExportArtifactDeliveryApiBridgeState => ({
   artifactId: "export-artifact-local-camp-awaken-sprint",
   auditDetail: {
@@ -174,7 +223,13 @@ const apiDeliveredState = (): ExportArtifactDeliveryApiBridgeState => ({
     "zh-TW": "Local export artifact delivery API review only.",
   },
   configured: true,
+  contractRootReview: {
+    publicationStatus: "not_published",
+    requestedMode: "eligibility_root",
+    supported: true,
+  },
   diagnostics: [],
+  eligibilityRootPacket: exportDeliveryEligibilityRootPacket,
   loading: false,
   preview: {
     artifact: {
@@ -228,7 +283,8 @@ const apiDeliveredState = (): ExportArtifactDeliveryApiBridgeState => ({
     blockedRows: 0,
     campaignId: campaignDetail.id,
     columns: ["wallet_address", "wallet_type", "locale_preference"],
-    contractRootMode: "none",
+    contractRootMode: "eligibility_root",
+    eligibilityRootPacket: exportDeliveryEligibilityRootPacket,
     exportBatchId: "export-awaken-sprint-preview",
     format: "csv",
     readyRows: 1,
@@ -260,7 +316,7 @@ const apiDeliveredState = (): ExportArtifactDeliveryApiBridgeState => ({
   },
   request: {
     campaignId: campaignDetail.id,
-    contractRootMode: "none",
+    contractRootMode: "eligibility_root",
     format: "csv",
     includeLocalePreference: true,
     includeRiskFlags: true,
@@ -1764,7 +1820,7 @@ describe("Project Console shell", () => {
       },
       request: {
         campaignId: campaignDetail.id,
-        contractRootMode: "none",
+        contractRootMode: "eligibility_root",
         format: "csv",
         includeLocalePreference: true,
         includeRiskFlags: true,
@@ -1774,10 +1830,17 @@ describe("Project Console shell", () => {
 
     await waitFor(() => expect(within(exportDeliveryApi).getByText("API runtime")).toBeInTheDocument());
     expect(within(exportDeliveryApi).getByText("Delivered")).toBeInTheDocument();
-    expect(within(exportDeliveryApi).getByText("trace-export-api-visible")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getAllByText("trace-export-api-visible").length).toBeGreaterThan(0);
     expect(within(exportDeliveryApi).getAllByText("export-artifact-local-camp-awaken-sprint").length).toBeGreaterThan(0);
     expect(within(exportDeliveryApi).getByText("camp-awaken-sprint-export-awaken-sprint-preview-api-review.csv")).toBeInTheDocument();
     expect(within(exportDeliveryApi).getByText("sha256-api-artifact")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByLabelText("Eligibility root review packet")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("local-root-ab568e06")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("camp-awaken-sprint-export-awaken-sprint-preview-eligibility-root-v1")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("Root not published on-chain")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("No contract write")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("No wallet signature")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getByText("No claim execution")).toBeInTheDocument();
     expect(within(exportDeliveryApi).getByText("Audit list: API audit ready")).toBeInTheDocument();
     expect(within(exportDeliveryApi).getByText("campaigns.export.preview")).toBeInTheDocument();
     expect(within(exportDeliveryApi).getByText("registered local artifact")).toBeInTheDocument();
@@ -1904,7 +1967,7 @@ describe("Project Console shell", () => {
     fireEvent.click(within(exportDeliveryApi).getByRole("button", { name: "Review local API delivery" }));
 
     await waitFor(() => expect(within(exportDeliveryApi).getByText("Partial API result")).toBeInTheDocument());
-    expect(within(exportDeliveryApi).getByText("trace-export-audit-detail-failed")).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getAllByText("trace-export-audit-detail-failed").length).toBeGreaterThan(0);
     expect(within(exportDeliveryApi).getByText(/API_AUDIT_DETAIL_FAILED/)).toBeInTheDocument();
     expect(within(exportDeliveryApi).getByText("camp-awaken-sprint-export-awaken-sprint-preview-api-review.csv")).toBeInTheDocument();
     expect(screen.getByLabelText("Local export artifact")).toBeInTheDocument();

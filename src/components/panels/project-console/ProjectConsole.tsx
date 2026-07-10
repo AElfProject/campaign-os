@@ -1925,7 +1925,7 @@ export const ProjectConsole = ({
   const pointsRankingLedgerRuntimeApiBase = pointsRankingLedgerRuntimeApiBaseUrl();
   const exportDeliveryApiRequest: ExportArtifactDeliveryRequest = {
     campaignId: campaign.id,
-    contractRootMode: "none",
+    contractRootMode: "eligibility_root",
     format: "csv",
     includeLocalePreference: true,
     includeRiskFlags: true,
@@ -1995,6 +1995,9 @@ export const ProjectConsole = ({
   const topVerificationRule = verificationRulesWorkspace.pipeline.paths.find(
     (path) => path.id === verificationRulesWorkspace.topRulePathId,
   );
+  const exportDeliveryRootPacket =
+    exportDeliveryApiState.eligibilityRootPacket ?? exportDeliveryApiState.preview?.eligibilityRootPacket;
+  const exportDeliveryRootReview = exportDeliveryApiState.contractRootReview;
 
   const selectWorkspace = (workspace: ProjectWorkspaceKey) => {
     if (!controlledActiveWorkspace) {
@@ -5589,6 +5592,95 @@ export const ProjectConsole = ({
                   {copy.exportDeliveryApiTtl}: {exportDeliveryApiState.registry?.retention?.ttlHours ?? 0}h
                 </p>
               </article>
+            </div>
+          )}
+
+          {(exportDeliveryRootPacket || exportDeliveryRootReview) && (
+            <div aria-label={copy.exportDeliveryApiRootReview} style={{ display: "grid", gap: 12 }}>
+              <div style={headingRowStyle}>
+                <div>
+                  <p style={statLabelStyle}>{copy.exportDeliveryApiRootReview}</p>
+                  <h5 style={{ color: "#071426", fontSize: 16, lineHeight: 1.25, margin: "4px 0" }}>
+                    {exportDeliveryRootPacket?.rootId ?? copy.exportDeliveryApiRootNoPacket}
+                  </h5>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0, ...wrapTextStyle }}>
+                    {copy.exportDeliveryApiRootReviewSubtitle}
+                  </p>
+                </div>
+                <span style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge
+                    label={readableCode(exportDeliveryRootReview?.publicationStatus ?? exportDeliveryRootPacket?.publicationStatus ?? "not_published")}
+                    state="warning"
+                  />
+                  <PublishStateBadge
+                    label={exportDeliveryRootReview?.supported ? copy.exportDeliveryApiRootSupported : copy.exportDeliveryApiRootReviewOnly}
+                    state={exportDeliveryRootReview?.supported ? "ready" : "warning"}
+                  />
+                </span>
+              </div>
+
+              <div style={sectionGridStyle}>
+                <article style={{ ...cardStyle, minHeight: 0 }}>
+                  <p style={statLabelStyle}>{copy.exportDeliveryApiRootHash}</p>
+                  <strong style={{ ...wrapTextStyle }}>
+                    {exportDeliveryRootPacket?.rootHash ?? copy.exportDeliveryApiRootNoPacket}
+                  </strong>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {copy.exportDeliveryApiRootVersion}: {exportDeliveryRootPacket?.rootVersion ?? 0}
+                  </p>
+                </article>
+                <article style={{ ...cardStyle, minHeight: 0 }}>
+                  <p style={statLabelStyle}>{copy.exportDeliveryApiRootRows}</p>
+                  <p style={{ ...statValueStyle, fontSize: 20 }}>
+                    {exportDeliveryRootPacket?.eligibleWalletCount ?? 0} / {exportDeliveryRootPacket?.totalRows ?? 0}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {copy.exportDeliveryApiRootEvidenceHashes}: {exportDeliveryRootPacket?.evidenceHashes.length ?? 0}
+                  </p>
+                </article>
+                <article style={{ ...cardStyle, minHeight: 0 }}>
+                  <p style={statLabelStyle}>{copy.exportDeliveryApiRootMode}</p>
+                  <strong style={{ ...wrapTextStyle }}>
+                    {readableCode(exportDeliveryRootReview?.requestedMode ?? exportDeliveryRootPacket?.mode ?? "eligibility_root")}
+                  </strong>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0, ...wrapTextStyle }}>
+                    {copy.exportDeliveryApiRootGeneratedMode}: {readableCode(exportDeliveryRootPacket?.generatedMode ?? "local_review_only")}
+                  </p>
+                </article>
+                <article style={{ ...cardStyle, minHeight: 0 }}>
+                  <p style={statLabelStyle}>{copy.exportDeliveryApiTraceId}</p>
+                  <strong style={{ ...wrapTextStyle }}>{exportDeliveryApiState.traceId ?? copy.exportDeliveryApiNoTrace}</strong>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {copy.exportDeliveryApiStatus}: {exportDeliveryApiSourceLabel(exportDeliveryApiState.source, copy)}
+                  </p>
+                </article>
+              </div>
+
+              <ul style={compactListStyle}>
+                <li style={chipStyle}>{copy.exportDeliveryApiRootNotPublished}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiRootNoContractWrite}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiRootNoWalletSignature}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiRootNoStorageWrite}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiRootNoRewardCustody}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiRootNoRewardDistribution}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiRootNoClaimExecution}</li>
+              </ul>
+
+              {exportDeliveryRootReview?.blockedReason && (
+                <p style={{ ...boundaryStyle, ...wrapTextStyle }}>
+                  {copy.exportDeliveryApiRootBlockedReason}: {readableCode(exportDeliveryRootReview.blockedReason)}
+                </p>
+              )}
+              {exportDeliveryRootPacket?.nextAction && (
+                <p style={{ ...boundaryStyle, ...wrapTextStyle }}>
+                  {copy.exportDeliveryApiRootNextAction}: {getLocalizedText(exportDeliveryRootPacket.nextAction, locale)}
+                </p>
+              )}
+              {exportDeliveryRootPacket?.boundary && (
+                <p style={{ ...boundaryStyle, ...wrapTextStyle }}>
+                  {copy.exportDeliveryApiRootBoundary}: {getLocalizedText(exportDeliveryRootPacket.boundary, locale)}
+                </p>
+              )}
             </div>
           )}
 
