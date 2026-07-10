@@ -160,6 +160,14 @@ describe("API runtime route catalog", () => {
       readiness: "review_required",
       serviceGroup: "export",
     });
+    expect(apiRuntimeRouteById["campaigns.export.artifacts.file"]).toMatchObject({
+      apiGroup: "export",
+      method: "GET",
+      path: "/api/campaigns/:campaignId/export-artifacts/:artifactId/file",
+      readiness: "review_required",
+      serviceGroup: "export",
+      supportMode: "local_seeded",
+    });
 
     for (const runtimeRoute of apiRuntimeRoutes) {
       expect(runtimeRoute.id.trim()).not.toHaveLength(0);
@@ -246,6 +254,7 @@ describe("API runtime route catalog", () => {
       expect.arrayContaining([
         "agent.wallet.action.review",
         "campaigns.export.artifacts.detail",
+        "campaigns.export.artifacts.file",
         "campaigns.export.artifacts.list",
         "campaigns.delivery.readiness",
         "campaigns.publish.delivery.review",

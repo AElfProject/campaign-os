@@ -3,6 +3,7 @@ import {
   EXPORT_CSV_COLUMNS,
   campaignDetail,
   createCampaignOsLocalService,
+  createLocalExportFileHandoff,
   requiredApiSkillIds,
   serviceBoundary,
   walletAdapterFixtures,
@@ -1888,6 +1889,55 @@ describe("Campaign OS local API service facade", () => {
     expect(exportPreview.payload?.artifact.payload.split("\n")[0]).toBe(EXPORT_CSV_COLUMNS.join(","));
     expect(exportPreview.payload?.artifact.payload).toContain("task-bridge:pending:aelfscan");
     expect(exportPreview.payload?.artifact.payload).toContain("demo-task-bridge-3E9");
+    const csvLocalFileHandoff = createLocalExportFileHandoff(exportPreview.payload!.artifact);
+
+    expect(csvLocalFileHandoff).toMatchObject({
+      artifactId: "export-artifact-preview-camp-awaken-sprint-export-awaken-sprint-preview-csv",
+      batchId: "export-awaken-sprint-preview",
+      campaignId: campaignDetail.id,
+      checksum: exportPreview.payload?.artifact.metadata.checksum,
+      checksumAlgorithm: "fnv1a32-local-review",
+      columns: EXPORT_CSV_COLUMNS,
+      fileName: "camp-awaken-sprint-export-awaken-sprint-preview-local-review.csv",
+      format: "csv",
+      handoffId: "camp-awaken-sprint-export-awaken-sprint-preview-csv-local-file-handoff",
+      mimeType: "text/csv;charset=utf-8",
+      payload: exportPreview.payload?.artifact.payload,
+      payloadBytes: exportPreview.payload?.artifact.metadata.payloadBytes,
+      retention: {
+        mode: "local_review_ttl",
+        productionStorageBacked: false,
+        purgeRequired: true,
+        state: "active",
+        ttlHours: 24,
+      },
+      rowCounts: {
+        blockedRows: 0,
+        readyRows: 1,
+        reviewRequiredRows: 3,
+        totalRows: 4,
+      },
+      safety: {
+        contractRootWriteEnabled: false,
+        downloadUrlEnabled: false,
+        forbiddenFieldsAbsent: true,
+        localOnly: true,
+        localReviewOnly: true,
+        objectKeyEnabled: false,
+        providerCallEnabled: false,
+        queueExecutionEnabled: false,
+        rewardCustodyEnabled: false,
+        rewardDistributionEnabled: false,
+        schedulerExecutionEnabled: false,
+        signedUrlEnabled: false,
+        storageWriteEnabled: false,
+        walletSigningEnabled: false,
+      },
+      traceId: "local-export-file-handoff-preview",
+    });
+    expect(csvLocalFileHandoff.payloadBytes).toBe(
+      new TextEncoder().encode(csvLocalFileHandoff.payload).length,
+    );
     expect(exportPreview.payload?.rows[1]).toMatchObject({
       evidenceHashes: expect.arrayContaining(["demo-task-bridge-3E9"]),
       localePreference: "zh-CN",
@@ -1962,6 +2012,31 @@ describe("Campaign OS local API service facade", () => {
     expect(repeatedJsonExportPreview.payload?.artifact.metadata.checksum).toBe(
       jsonExportPreview.payload?.artifact.metadata.checksum,
     );
+    const jsonLocalFileHandoff = createLocalExportFileHandoff(jsonExportPreview.payload!.artifact);
+    const repeatedJsonLocalFileHandoff = createLocalExportFileHandoff(repeatedJsonExportPreview.payload!.artifact);
+
+    expect(jsonLocalFileHandoff).toMatchObject({
+      checksum: jsonExportPreview.payload?.artifact.metadata.checksum,
+      columns: EXPORT_CSV_COLUMNS,
+      fileName: "camp-awaken-sprint-export-awaken-sprint-preview-local-review.json",
+      format: "json",
+      mimeType: "application/json;charset=utf-8",
+      payload: jsonExportPreview.payload?.artifact.payload,
+      payloadBytes: jsonExportPreview.payload?.artifact.metadata.payloadBytes,
+      rowCounts: {
+        blockedRows: 0,
+        readyRows: 1,
+        reviewRequiredRows: 3,
+        totalRows: 4,
+      },
+      safety: {
+        forbiddenFieldsAbsent: true,
+        storageWriteEnabled: false,
+        rewardDistributionEnabled: false,
+      },
+    });
+    expect(repeatedJsonLocalFileHandoff.payload).toBe(jsonLocalFileHandoff.payload);
+    expect(repeatedJsonLocalFileHandoff.checksum).toBe(jsonLocalFileHandoff.checksum);
     expect(eligibilityRootExport).toMatchObject({
       ok: true,
       payload: {
@@ -2015,6 +2090,9 @@ describe("Campaign OS local API service facade", () => {
     expect(hasOwnKeyDeep(eligibilityRootExport.payload, "signedPayload")).toBe(false);
     expect(hasOwnKeyDeep(eligibilityRootExport.payload, "downloadUrl")).toBe(false);
     expect(hasOwnKeyDeep(eligibilityRootExport.payload, "storageKey")).toBe(false);
+    const eligibilityRootFileHandoff = createLocalExportFileHandoff(eligibilityRootExport.payload!.artifact);
+    expect(eligibilityRootFileHandoff.safety.contractRootWriteEnabled).toBe(false);
+    expect(eligibilityRootFileHandoff.payload.split("\n")[0]).toBe(EXPORT_CSV_COLUMNS.join(","));
     expect(jsonExportPreview.payload?.exportReadiness.previewModes.find((mode) => mode.mode === "json")).toMatchObject({
       downloadAvailable: false,
       generatesFile: false,
@@ -2037,6 +2115,10 @@ describe("Campaign OS local API service facade", () => {
     expect(hasOwnKeyDeep(jsonExportPreview.payload, "transactionId")).toBe(false);
     expect(hasOwnKeyDeep(jsonExportPreview.payload, "privateKey")).toBe(false);
     expect(hasOwnKeyDeep(jsonExportPreview.payload, "signedPayload")).toBe(false);
+    expect(hasOwnKeyDeep(jsonExportPreview.payload, "signedUrl")).toBe(false);
+    expect(hasOwnKeyDeep(jsonExportPreview.payload, "objectKey")).toBe(false);
+    expect(hasOwnKeyDeep(jsonExportPreview.payload, "providerPayload")).toBe(false);
+    expect(hasOwnKeyDeep(jsonExportPreview.payload, "walletSignature")).toBe(false);
     expect(hasOwnKeyDeep(jsonExportPreview.payload, "ipAddress")).toBe(false);
     expect(hasOwnKeyDeep(jsonExportPreview.payload, "deviceFingerprint")).toBe(false);
     expect(missingWalletTypeExport).toMatchObject({

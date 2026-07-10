@@ -174,7 +174,11 @@ interface ExportPreviewPayload {
     localPreviewMode: boolean;
     metadata?: {
       checksum: string;
+      checksumAlgorithm?: string;
+      payloadBytes?: number;
     };
+    mimeType?: string;
+    payload?: string;
     safety: {
       noDownloadUrl: true;
       noStorageWrite: true;
@@ -636,6 +640,62 @@ interface ExportArtifactAuditPayload {
     reviewRequiredRows: number;
     totalRecords: number;
     totalRows: number;
+  };
+}
+
+interface LocalExportFileHandoffPayload {
+  artifactId: string;
+  auditDetail: {
+    batchId: string;
+    checksum: string;
+    checksumAlgorithm: string;
+    fileName: string;
+    payloadBytes: number;
+    previewRouteId: string;
+    previewTraceId: string;
+    retentionState: "active" | "expired";
+    source: "deterministic_local_export";
+  };
+  campaignId: string;
+  handoff: {
+    artifactId: string;
+    batchId: string;
+    campaignId: string;
+    checksum: string;
+    checksumAlgorithm: string;
+    fileName: string;
+    format: "csv" | "json";
+    mimeType: string;
+    payload: string;
+    payloadBytes: number;
+    retention: {
+      createdAt: string;
+      expiresAt: string;
+      mode: "local_review_ttl";
+      productionStorageBacked: false;
+      purgeRequired: boolean;
+      state: "active" | "expired";
+      ttlHours: number;
+    };
+    rowCounts: {
+      blockedRows: number;
+      readyRows: number;
+      reviewRequiredRows: number;
+      totalRows: number;
+    };
+    safety: {
+      downloadUrlEnabled: false;
+      localReviewOnly: true;
+      signedUrlEnabled: false;
+      storageWriteEnabled: false;
+    };
+    traceId: string;
+  };
+  safety: {
+    downloadUrlEnabled: false;
+    localReviewOnly: true;
+    signedUrlEnabled: false;
+    storageWriteEnabled: false;
   };
 }
 
@@ -1800,6 +1860,46 @@ describe("Campaign OS API runtime", () => {
 
     expect(repeatedPreviewPayload.artifactRegistry?.artifactId).toBe(artifactId);
 
+    const csvPreview = await runtime.handle({
+      method: "POST",
+      path: `/api/campaigns/${campaignDetail.id}/export`,
+      headers: { "x-campaign-os-trace-id": "trace-seeded-export-audit-preview-csv" },
+      body: JSON.stringify({
+        contractRootMode: "none",
+        format: "csv",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      }),
+    });
+    const csvPreviewPayload = expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload>>(csvPreview).payload;
+    const csvArtifactId = csvPreviewPayload.artifactRegistry?.artifactId;
+
+    if (!csvArtifactId) {
+      throw new Error("Expected seeded CSV export preview to register an artifact id.");
+    }
+
+    const jsonArtifact = previewPayload.artifact;
+    const csvArtifact = csvPreviewPayload.artifact;
+    const jsonArtifactChecksum = jsonArtifact?.metadata?.checksum ?? jsonArtifact?.checksum;
+    const jsonArtifactChecksumAlgorithm = jsonArtifact?.metadata?.checksumAlgorithm ?? "fnv1a32-local-review";
+    const jsonArtifactPayload = jsonArtifact?.payload;
+    const csvArtifactChecksum = csvArtifact?.metadata?.checksum ?? csvArtifact?.checksum;
+    const csvArtifactPayload = csvArtifact?.payload;
+    const jsonPreviewRowCount = previewPayload.rows?.length;
+
+    if (
+      !jsonArtifact
+      || !csvArtifact
+      || !jsonArtifactChecksum
+      || !jsonArtifactPayload
+      || !csvArtifactChecksum
+      || !csvArtifactPayload
+      || jsonPreviewRowCount === undefined
+    ) {
+      throw new Error("Expected export preview artifacts to include checksum and payload for file handoff.");
+    }
+
     const list = await runtime.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/export-artifacts?format=json&traceId=trace-seeded-export-audit-preview`,
@@ -1808,6 +1908,36 @@ describe("Campaign OS API runtime", () => {
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/export-artifacts/${encodeURIComponent(artifactId)}`,
     });
+    const jsonFile = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts/${encodeURIComponent(artifactId)}/file?format=json`,
+      headers: { "x-campaign-os-trace-id": "trace-seeded-export-json-file" },
+    });
+    const csvFile = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts/${encodeURIComponent(csvArtifactId)}/file?format=csv`,
+      headers: { "x-campaign-os-trace-id": "trace-seeded-export-csv-file" },
+    });
+    const expiredFile = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts/${encodeURIComponent(artifactId)}/file?format=json&now=2026-07-10T00%3A00%3A00.001Z`,
+    });
+    const mismatchedFormatFile = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts/${encodeURIComponent(artifactId)}/file?format=csv`,
+    });
+    const unsupportedFormatFile = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts/${encodeURIComponent(artifactId)}/file?format=xlsx`,
+    });
+    const unsupportedModeFile = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts/${encodeURIComponent(artifactId)}/file?format=json&mode=contract_claim`,
+    });
+    const unsafeFile = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts/${encodeURIComponent(artifactId)}/file?format=json&signedUrl=https%3A%2F%2Funsafe.example%2Ffile`,
+    });
     const invalidFilter = await runtime.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/export-artifacts?format=xml`,
@@ -1815,6 +1945,10 @@ describe("Campaign OS API runtime", () => {
     const missingDetail = await runtime.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/export-artifacts/export-artifact-local-missing`,
+    });
+    const missingFile = await runtime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export-artifacts/export-artifact-local-missing/file?format=json`,
     });
 
     expect(expectSuccessData<LocalServiceEnvelope<ExportArtifactAuditPayload>>(emptyList).payload).toMatchObject({
@@ -1863,12 +1997,104 @@ describe("Campaign OS API runtime", () => {
         traceId: "trace-seeded-export-audit-preview",
       }),
     });
+    expect(expectSuccessData<LocalServiceEnvelope<LocalExportFileHandoffPayload>>(jsonFile).payload)
+      .toMatchObject({
+        artifactId,
+        auditDetail: {
+          batchId: jsonArtifact.batchId,
+          checksum: jsonArtifactChecksum,
+          checksumAlgorithm: jsonArtifactChecksumAlgorithm,
+          fileName: expect.any(String),
+          previewRouteId: "campaigns.export.preview",
+          previewTraceId: "trace-seeded-export-audit-preview",
+          retentionState: "active",
+          source: "deterministic_local_export",
+        },
+        campaignId: campaignDetail.id,
+        handoff: {
+          artifactId,
+          batchId: jsonArtifact.batchId,
+          campaignId: campaignDetail.id,
+          checksum: jsonArtifactChecksum,
+          checksumAlgorithm: jsonArtifactChecksumAlgorithm,
+          fileName: expect.any(String),
+          format: "json",
+          mimeType: "application/json;charset=utf-8",
+          payload: jsonArtifactPayload,
+          retention: expect.objectContaining({
+            mode: "local_review_ttl",
+            productionStorageBacked: false,
+            purgeRequired: true,
+            state: "active",
+            ttlHours: 24,
+          }),
+          rowCounts: expect.objectContaining({
+            totalRows: jsonPreviewRowCount,
+          }),
+          safety: expect.objectContaining({
+            downloadUrlEnabled: false,
+            localReviewOnly: true,
+            signedUrlEnabled: false,
+            storageWriteEnabled: false,
+          }),
+          traceId: "trace-seeded-export-json-file",
+        },
+        safety: expect.objectContaining({
+          downloadUrlEnabled: false,
+          localReviewOnly: true,
+          signedUrlEnabled: false,
+          storageWriteEnabled: false,
+        }),
+      });
+    expect(expectSuccessData<LocalServiceEnvelope<LocalExportFileHandoffPayload>>(csvFile).payload)
+      .toMatchObject({
+        artifactId: csvArtifactId,
+        campaignId: campaignDetail.id,
+        handoff: {
+          artifactId: csvArtifactId,
+          checksum: csvArtifactChecksum,
+          fileName: expect.any(String),
+          format: "csv",
+          mimeType: "text/csv;charset=utf-8",
+          payload: csvArtifactPayload,
+          traceId: "trace-seeded-export-csv-file",
+        },
+      });
     expect(invalidFilter.status).toBe(400);
     expect(invalidFilter.body.ok).toBe(false);
     expect(missingDetail.status).toBe(400);
     expect(missingDetail.body.ok).toBe(false);
+    expect(expiredFile.status).toBe(400);
+    expect(expiredFile.body.ok).toBe(false);
+    expect(JSON.stringify(expiredFile.body)).toContain("LOCAL_EXPORT_FILE_EXPIRED");
+    expect(mismatchedFormatFile.status).toBe(400);
+    expect(mismatchedFormatFile.body.ok).toBe(false);
+    expect(unsupportedFormatFile.status).toBe(400);
+    expect(unsupportedFormatFile.body.ok).toBe(false);
+    expect(unsupportedModeFile.status).toBe(400);
+    expect(unsupportedModeFile.body.ok).toBe(false);
+    expect(unsafeFile.status).toBe(400);
+    expect(unsafeFile.body.ok).toBe(false);
+    expectNoForbiddenFragments(unsafeFile.body, ["https://unsafe.example/file"]);
+    expect(missingFile.status).toBe(400);
+    expect(missingFile.body.ok).toBe(false);
 
-    for (const response of [emptyList, preview, repeatedPreview, list, detail, invalidFilter, missingDetail]) {
+    for (const response of [
+      emptyList,
+      preview,
+      repeatedPreview,
+      csvPreview,
+      list,
+      detail,
+      invalidFilter,
+      missingDetail,
+      expiredFile,
+      mismatchedFormatFile,
+      unsupportedFormatFile,
+      unsupportedModeFile,
+      unsafeFile,
+      missingFile,
+    ]) {
       expectNoForbiddenResponseKeys(response.body);
       expectNoForbiddenOwnKeys(response.body, [
         "downloadUrl",
@@ -1880,6 +2106,19 @@ describe("Campaign OS API runtime", () => {
         "rewardDistribution",
       ]);
       expectNoForbiddenFragments(response.body, ["2F4Wallet", "csvPreview", "jsonPreview", "https://", "X-Amz-Signature"]);
+    }
+    for (const response of [jsonFile, csvFile]) {
+      expectNoForbiddenResponseKeys(response.body);
+      expectNoForbiddenOwnKeys(response.body, [
+        "downloadUrl",
+        "signedUrl",
+        "storageKey",
+        "objectKey",
+        "providerPayload",
+        "walletSignature",
+        "rewardDistribution",
+      ]);
+      expectNoForbiddenFragments(response.body, ["csvPreview", "jsonPreview", "https://", "X-Amz-Signature"]);
     }
   });
 

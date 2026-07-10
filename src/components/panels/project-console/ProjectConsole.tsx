@@ -1356,8 +1356,10 @@ const exportDeliveryApiStatusLabel = (
   copy: typeof projectConsoleCopy["en-US"],
 ) => {
   const labels: Record<ExportArtifactDeliveryApiStatus, string> = {
+    blocked: copy.exportDeliveryApiStatusBlocked,
     delivered: copy.exportDeliveryApiStatusDelivered,
     error: copy.exportDeliveryApiStatusError,
+    expired: copy.exportDeliveryApiStatusExpired,
     fallback: copy.exportDeliveryApiStatusFallback,
     loading: copy.exportDeliveryApiStatusLoading,
     partial: copy.exportDeliveryApiStatusPartial,
@@ -1369,7 +1371,7 @@ const exportDeliveryApiStatusLabel = (
 const exportDeliveryApiBadgeState = (
   status: ExportArtifactDeliveryApiStatus,
 ): "blocker" | "ready" | "warning" =>
-  status === "delivered" ? "ready" : status === "error" ? "blocker" : "warning";
+  status === "delivered" ? "ready" : status === "error" || status === "blocked" ? "blocker" : "warning";
 
 const exportReadinessBadgeState = (readiness: ExportReadinessState) =>
   readiness === "blocked" ? "blocker" : readiness === "review_required" ? "warning" : "ready";
@@ -1998,6 +2000,10 @@ export const ProjectConsole = ({
   const exportDeliveryRootPacket =
     exportDeliveryApiState.eligibilityRootPacket ?? exportDeliveryApiState.preview?.eligibilityRootPacket;
   const exportDeliveryRootReview = exportDeliveryApiState.contractRootReview;
+  const exportDeliveryFileHandoff = exportDeliveryApiState.fileHandoff?.handoff;
+  const exportDeliveryFileHandoffRetentionState = exportDeliveryFileHandoff
+    ? readableCode(exportDeliveryFileHandoff.retention.state ?? exportDeliveryFileHandoff.retention.mode ?? "local_review_ttl")
+    : copy.exportDeliveryApiNoPreview;
 
   const selectWorkspace = (workspace: ProjectWorkspaceKey) => {
     if (!controlledActiveWorkspace) {
@@ -5592,6 +5598,119 @@ export const ProjectConsole = ({
                   {copy.exportDeliveryApiTtl}: {exportDeliveryApiState.registry?.retention?.ttlHours ?? 0}h
                 </p>
               </article>
+            </div>
+          )}
+
+          {exportDeliveryFileHandoff && (
+            <div aria-label={copy.exportDeliveryApiFileHandoff} style={{ display: "grid", gap: 12 }}>
+              <div style={headingRowStyle}>
+                <div>
+                  <p style={statLabelStyle}>{copy.exportDeliveryApiFileHandoff}</p>
+                  <h5 style={{ color: "#071426", fontSize: 16, lineHeight: 1.25, margin: "4px 0", ...wrapTextStyle }}>
+                    {exportDeliveryFileHandoff.handoffId}
+                  </h5>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0, ...wrapTextStyle }}>
+                    {copy.exportDeliveryApiFileHandoffRetentionBoundary}
+                  </p>
+                </div>
+                <span style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <PublishStateBadge
+                    label={exportDeliveryFileHandoff.format.toUpperCase()}
+                    state="ready"
+                  />
+                  <PublishStateBadge
+                    label={exportDeliveryFileHandoffRetentionState}
+                    state={exportDeliveryFileHandoff.retention.state === "active" ? "ready" : "warning"}
+                  />
+                </span>
+              </div>
+
+              <div style={sectionGridStyle}>
+                <article style={{ ...cardStyle, minHeight: 0 }}>
+                  <p style={statLabelStyle}>{copy.exportDeliveryApiFileHandoffFormat}</p>
+                  <strong style={{ ...wrapTextStyle }}>
+                    {exportDeliveryFileHandoff.format.toUpperCase()} / {exportDeliveryFileHandoff.mimeType}
+                  </strong>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0, ...wrapTextStyle }}>
+                    {exportDeliveryFileHandoff.fileName}
+                  </p>
+                </article>
+
+                <article style={{ ...cardStyle, minHeight: 0 }}>
+                  <p style={statLabelStyle}>{copy.exportDeliveryApiChecksum}</p>
+                  <strong style={{ ...wrapTextStyle }}>{exportDeliveryFileHandoff.checksum}</strong>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {exportDeliveryFileHandoff.checksumAlgorithm}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {copy.exportDeliveryApiPayloadBytes}: {formatNumber(exportDeliveryFileHandoff.payloadBytes)}
+                  </p>
+                </article>
+
+                <article style={{ ...cardStyle, minHeight: 0 }}>
+                  <p style={statLabelStyle}>{copy.exportDeliveryApiRows}</p>
+                  <strong style={{ ...wrapTextStyle }}>
+                    {exportDeliveryFileHandoff.rowCounts.readyRows} / {exportDeliveryFileHandoff.rowCounts.reviewRequiredRows} / {exportDeliveryFileHandoff.rowCounts.blockedRows}
+                  </strong>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {copy.exportDeliveryApiRows}: {exportDeliveryFileHandoff.rowCounts.readyRows} / {exportDeliveryFileHandoff.rowCounts.reviewRequiredRows} / {exportDeliveryFileHandoff.rowCounts.blockedRows}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {copy.exportTotalRows}: {formatNumber(exportDeliveryFileHandoff.rowCounts.totalRows)}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {copy.exportDeliveryApiFileHandoffColumns}: {formatNumber(exportDeliveryFileHandoff.columns.length)}
+                  </p>
+                </article>
+
+                <article style={{ ...cardStyle, minHeight: 0 }}>
+                  <p style={statLabelStyle}>{copy.exportDeliveryApiRetention}</p>
+                  <strong style={{ ...wrapTextStyle }}>
+                    {exportDeliveryFileHandoffRetentionState}
+                  </strong>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {copy.exportDeliveryApiRetention}: {exportDeliveryFileHandoffRetentionState}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {copy.exportDeliveryApiExpiry}: {exportDeliveryFileHandoff.retention.expiresAt ?? copy.exportDeliveryApiNoPreview}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0 }}>
+                    {copy.exportDeliveryApiTtl}: {exportDeliveryFileHandoff.retention.ttlHours ?? 0}h
+                  </p>
+                </article>
+
+                <article style={{ ...cardStyle, minHeight: 0 }}>
+                  <p style={statLabelStyle}>{copy.exportDeliveryApiTraceId}</p>
+                  <strong style={{ ...wrapTextStyle }}>{exportDeliveryFileHandoff.traceId}</strong>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0, ...wrapTextStyle }}>
+                    {copy.exportDeliveryApiTraceId}: {exportDeliveryFileHandoff.traceId}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0, ...wrapTextStyle }}>
+                    {copy.exportDeliveryApiArtifactId}: {exportDeliveryFileHandoff.artifactId}
+                  </p>
+                  <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.45, margin: 0, ...wrapTextStyle }}>
+                    {copy.exportDeliveryApiExportBatchId}: {exportDeliveryFileHandoff.batchId}
+                  </p>
+                </article>
+              </div>
+
+              <ul aria-label={copy.exportDeliveryApiFileHandoffSafety} style={compactListStyle}>
+                <li style={chipStyle}>{copy.exportDeliveryApiNoDownloadUrl}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiNoSignedUrl}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiNoObjectKey}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiNoStorageWrite}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiNoProviderCall}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiNoWalletSigning}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiNoContractRoot}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiNoQueueScheduler}</li>
+                <li style={chipStyle}>{copy.exportDeliveryApiNoRewardDistribution}</li>
+              </ul>
+
+              {exportDeliveryFileHandoff.boundary && (
+                <p style={{ ...boundaryStyle, ...wrapTextStyle }}>
+                  {getLocalizedText(exportDeliveryFileHandoff.boundary, locale)}
+                </p>
+              )}
             </div>
           )}
 

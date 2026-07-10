@@ -230,6 +230,88 @@ const apiDeliveredState = (): ExportArtifactDeliveryApiBridgeState => ({
   },
   diagnostics: [],
   eligibilityRootPacket: exportDeliveryEligibilityRootPacket,
+  fileHandoff: {
+    artifactId: "export-artifact-local-camp-awaken-sprint",
+    auditDetail: {
+      batchId: "export-awaken-sprint-preview",
+      checksum: "sha256-file-handoff",
+      checksumAlgorithm: "sha256",
+      fileName: "camp-awaken-sprint-export-awaken-sprint-preview-api-runtime.csv",
+      payloadBytes: 912,
+      previewRouteId: "campaigns.export.preview",
+      previewTraceId: "trace-export-api-visible",
+      retentionState: "active",
+      source: "local_api_runtime",
+    },
+    campaignId: campaignDetail.id,
+    handoff: {
+      artifactId: "export-artifact-local-camp-awaken-sprint",
+      batchId: "export-awaken-sprint-preview",
+      boundary: {
+        "en-US":
+          "Local API payload handoff only. Production object storage is disabled and no signed URL, object key, storage key, provider call, wallet signing, contract write, queue execution, scheduler execution, reward custody, or reward distribution is produced.",
+        "zh-CN": "Local API payload handoff only.",
+        "zh-TW": "Local API payload handoff only.",
+      },
+      campaignId: campaignDetail.id,
+      checksum: "sha256-file-handoff",
+      checksumAlgorithm: "sha256",
+      columns: ["wallet_address", "wallet_type", "locale_preference", "points"],
+      fileName: "camp-awaken-sprint-export-awaken-sprint-preview-api-runtime.csv",
+      format: "csv",
+      handoffId: "local-file-handoff-camp-awaken-sprint-csv",
+      mimeType: "text/csv",
+      payloadBytes: 912,
+      payloadText: "wallet_address,wallet_type,locale_preference,points\n2F4...9aB,AA,en-US,270\n",
+      retention: {
+        expiresAt: "2026-07-10T00:00:00.000Z",
+        mode: "local_review_ttl",
+        productionStorageBacked: false,
+        purgeRequired: true,
+        state: "active",
+        ttlHours: 24,
+      },
+      rowCounts: {
+        blockedRows: 0,
+        readyRows: 1,
+        reviewRequiredRows: 3,
+        totalRows: 4,
+      },
+      safety: {
+        contractRootWriteEnabled: false,
+        downloadUrlEnabled: false,
+        forbiddenFieldsAbsent: true,
+        localOnly: true,
+        localReviewOnly: true,
+        objectKeyEnabled: false,
+        providerCallEnabled: false,
+        queueExecutionEnabled: false,
+        rewardCustodyEnabled: false,
+        rewardDistributionEnabled: false,
+        schedulerExecutionEnabled: false,
+        signedUrlEnabled: false,
+        storageWriteEnabled: false,
+        walletSigningEnabled: false,
+      },
+      traceId: "trace-file-handoff-visible",
+    },
+    safety: {
+      contractRootWriteEnabled: false,
+      downloadUrlEnabled: false,
+      forbiddenFieldsAbsent: true,
+      localOnly: true,
+      localReviewOnly: true,
+      objectKeyEnabled: false,
+      providerCallEnabled: false,
+      queueExecutionEnabled: false,
+      rewardCustodyEnabled: false,
+      rewardDistributionEnabled: false,
+      schedulerExecutionEnabled: false,
+      signedUrlEnabled: false,
+      storageWriteEnabled: false,
+      walletSigningEnabled: false,
+    },
+  },
   loading: false,
   preview: {
     artifact: {
@@ -1834,6 +1916,27 @@ describe("Project Console shell", () => {
     expect(within(exportDeliveryApi).getAllByText("export-artifact-local-camp-awaken-sprint").length).toBeGreaterThan(0);
     expect(within(exportDeliveryApi).getByText("camp-awaken-sprint-export-awaken-sprint-preview-api-review.csv")).toBeInTheDocument();
     expect(within(exportDeliveryApi).getByText("sha256-api-artifact")).toBeInTheDocument();
+    const fileHandoff = within(exportDeliveryApi).getByLabelText("Local file handoff package");
+    expect(within(fileHandoff).getByText("local-file-handoff-camp-awaken-sprint-csv")).toBeInTheDocument();
+    expect(within(fileHandoff).getByText("camp-awaken-sprint-export-awaken-sprint-preview-api-runtime.csv")).toBeInTheDocument();
+    expect(within(fileHandoff).getByText("CSV / text/csv")).toBeInTheDocument();
+    expect(within(fileHandoff).getByText("sha256-file-handoff")).toBeInTheDocument();
+    expect(within(fileHandoff).getByText("Payload bytes: 912")).toBeInTheDocument();
+    expect(within(fileHandoff).getByText("Columns: 4")).toBeInTheDocument();
+    expect(within(fileHandoff).getByText("Rows ready / review / blocked: 1 / 3 / 0")).toBeInTheDocument();
+    expect(within(fileHandoff).getByText("Retention: active")).toBeInTheDocument();
+    expect(within(fileHandoff).getByText("Expires: 2026-07-10T00:00:00.000Z")).toBeInTheDocument();
+    expect(within(fileHandoff).getByText("Trace ID: trace-file-handoff-visible")).toBeInTheDocument();
+    expect(within(fileHandoff).getAllByText(/Local API payload handoff only/).length).toBeGreaterThan(0);
+    expect(within(fileHandoff).getByText("No signed URL")).toBeInTheDocument();
+    expect(within(fileHandoff).getByText("No object key")).toBeInTheDocument();
+    expect(within(fileHandoff).getByText("No provider call")).toBeInTheDocument();
+    expect(within(fileHandoff).getByText("No queue or scheduler")).toBeInTheDocument();
+    expect(
+      within(fileHandoff).queryByRole("button", {
+        name: /download|signed URL|store|provider|contract|wallet|custody|distribute|reward/i,
+      }),
+    ).not.toBeInTheDocument();
     expect(within(exportDeliveryApi).getByLabelText("Eligibility root review packet")).toBeInTheDocument();
     expect(within(exportDeliveryApi).getByText("local-root-ab568e06")).toBeInTheDocument();
     expect(within(exportDeliveryApi).getByText("camp-awaken-sprint-export-awaken-sprint-preview-eligibility-root-v1")).toBeInTheDocument();
@@ -1974,6 +2077,95 @@ describe("Project Console shell", () => {
     expect(screen.getByLabelText("Storage provider approval summary")).toBeInTheDocument();
     expect(screen.getByLabelText("Export fulfillment readiness")).toBeInTheDocument();
     expect(screen.getByLabelText("Export confirmation readiness")).toBeInTheDocument();
+  });
+
+  it("shows expired Export Delivery API file handoff diagnostics without payload controls", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    const expiredState = apiDeliveredState();
+    mockedSubmitExportArtifactDeliveryApiReview.mockResolvedValueOnce({
+      ...expiredState,
+      diagnostics: [{
+        code: "API_FILE_HANDOFF_EXPIRED",
+        message: {
+          "en-US": "The local export file handoff has expired, but preview and audit context remain available.",
+          "zh-CN": "The local export file handoff has expired, but preview and audit context remain available.",
+          "zh-TW": "The local export file handoff has expired, but preview and audit context remain available.",
+        },
+        safeDetails: {
+          endpoint: "/api/campaigns/camp-awaken-sprint/export-artifacts/export-artifact-local-camp-awaken-sprint/file",
+          status: 410,
+        },
+        severity: "error",
+      }],
+      fileHandoff: undefined,
+      status: "expired",
+      traceId: "trace-file-handoff-expired",
+    });
+
+    render(<App />);
+
+    clickWorkspace("Export");
+
+    const exportDeliveryApi = screen.getByLabelText("Export Delivery API review");
+
+    fireEvent.click(within(exportDeliveryApi).getByRole("button", { name: "Review local API delivery" }));
+
+    await waitFor(() => expect(within(exportDeliveryApi).getByText("Expired file handoff")).toBeInTheDocument());
+    expect(within(exportDeliveryApi).getByText(/API_FILE_HANDOFF_EXPIRED/)).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getAllByText("trace-file-handoff-expired").length).toBeGreaterThan(0);
+    expect(within(exportDeliveryApi).queryByLabelText("Local file handoff package")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Local export artifact")).toBeInTheDocument();
+    expect(screen.getByLabelText("Storage provider approval summary")).toBeInTheDocument();
+    expect(
+      within(exportDeliveryApi).queryByRole("button", {
+        name: /download|signed URL|store|provider|contract|wallet|custody|distribute|reward/i,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows blocked Export Delivery API file handoff diagnostics and keeps seeded export sections", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    const blockedState = apiDeliveredState();
+    mockedSubmitExportArtifactDeliveryApiReview.mockResolvedValueOnce({
+      ...blockedState,
+      diagnostics: [{
+        code: "API_FILE_HANDOFF_BLOCKED",
+        message: {
+          "en-US": "The local export file handoff route rejected an unsupported or unsafe request.",
+          "zh-CN": "The local export file handoff route rejected an unsupported or unsafe request.",
+          "zh-TW": "The local export file handoff route rejected an unsupported or unsafe request.",
+        },
+        safeDetails: {
+          endpoint: "/api/campaigns/camp-awaken-sprint/export-artifacts/export-artifact-local-camp-awaken-sprint/file",
+          status: 400,
+        },
+        severity: "error",
+      }],
+      fileHandoff: undefined,
+      status: "blocked",
+      traceId: "trace-file-handoff-blocked",
+    });
+
+    render(<App />);
+
+    clickWorkspace("Export");
+
+    const exportDeliveryApi = screen.getByLabelText("Export Delivery API review");
+
+    fireEvent.click(within(exportDeliveryApi).getByRole("button", { name: "Review local API delivery" }));
+
+    await waitFor(() => expect(within(exportDeliveryApi).getByText("Blocked file handoff")).toBeInTheDocument());
+    expect(within(exportDeliveryApi).getByText(/API_FILE_HANDOFF_BLOCKED/)).toBeInTheDocument();
+    expect(within(exportDeliveryApi).getAllByText("trace-file-handoff-blocked").length).toBeGreaterThan(0);
+    expect(within(exportDeliveryApi).queryByLabelText("Local file handoff package")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Local export artifact")).toBeInTheDocument();
+    expect(screen.getByLabelText("Export fulfillment readiness")).toBeInTheDocument();
+    expect(screen.getByLabelText("Export confirmation readiness")).toBeInTheDocument();
+    expect(
+      within(exportDeliveryApi).queryByRole("button", {
+        name: /download|signed URL|store|provider|contract|wallet|custody|distribute|reward/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("sanitizes unsafe Export Delivery API diagnostics and avoids live side-effect controls", async () => {

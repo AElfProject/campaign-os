@@ -174,6 +174,7 @@ import type {
   PortfolioCampaignHistoryState,
   ExportAcknowledgement,
   ExportArtifact,
+  LocalExportFileHandoff,
   EligibilityRootExportReviewPacket,
   EligibilityRootExportReviewRow,
   EligibilityRootExportSafety,
@@ -5813,6 +5814,27 @@ const exportArtifactMimeTypes: Record<ExportPreviewMode, string> = {
   json: "application/json;charset=utf-8",
 };
 
+const localExportFileHandoffBoundary = localized(
+  "Local export file handoff is returned as an API review payload only. No download URL, object key, storage write, signed URL, provider call, wallet signing, contract root write, queue, scheduler, reward custody, or reward distribution is executed.",
+  "本地导出文件交接仅作为 API 审核 payload 返回。不会执行下载 URL、object key、存储写入、signed URL、provider 调用、钱包签名、合约 root 写入、队列、调度器、奖励托管或发奖。",
+  "本地匯出檔案交接僅作為 API 審核 payload 返回。未執行下載 URL、object key、儲存寫入、signed URL、provider 調用、錢包簽名、合約 root 寫入、佇列、排程器、獎勵託管或發獎。",
+);
+
+const localExportFileForbiddenFields = [
+  "downloadUrl",
+  "fileUrl",
+  "signedUrl",
+  "objectKey",
+  "storageKey",
+  "providerPayload",
+  "walletSignature",
+  "rawSignature",
+  "transactionId",
+  "privateKey",
+  "custodyInstruction",
+  "payoutInstruction",
+] as const;
+
 const serializeExportArtifactPayload = (preview: ExportPreview, format: ExportPreviewMode): string =>
   format === "csv" ? serializeExportRowsToCsv(preview.rows) : serializeExportRowsToJson(preview);
 
@@ -5857,6 +5879,77 @@ export const createExportArtifact = (
       noRewardDistribution: true,
       boundary: exportArtifactBoundary,
     },
+  };
+};
+
+const defaultLocalExportFileRetention = () => ({
+  createdAt: "2026-07-09T00:00:00.000Z",
+  expiresAt: "2026-07-10T00:00:00.000Z",
+  mode: "local_review_ttl" as const,
+  productionStorageBacked: false as const,
+  purgeRequired: true,
+  state: "active" as const,
+  ttlHours: 24,
+});
+
+interface CreateLocalExportFileHandoffOptions {
+  artifactId?: string;
+  retention?: Partial<LocalExportFileHandoff["retention"]>;
+  traceId?: string;
+}
+
+export const createLocalExportFileHandoff = (
+  artifact: ExportArtifact,
+  options: CreateLocalExportFileHandoffOptions = {},
+): LocalExportFileHandoff => {
+  const retention = {
+    ...defaultLocalExportFileRetention(),
+    ...options.retention,
+    productionStorageBacked: false as const,
+  };
+  const artifactId = options.artifactId ?? `export-artifact-preview-${artifact.campaignId}-${artifact.batchId}-${artifact.format}`;
+  const safetyPayload = JSON.stringify({ artifact, artifactId, retention });
+  const forbiddenFieldsAbsent = localExportFileForbiddenFields.every((field) => !safetyPayload.includes(field));
+
+  return {
+    artifactId,
+    batchId: artifact.batchId,
+    boundary: localExportFileHandoffBoundary,
+    campaignId: artifact.campaignId,
+    checksum: artifact.metadata.checksum,
+    checksumAlgorithm: artifact.metadata.checksumAlgorithm,
+    columns: artifact.metadata.columns,
+    fileName: artifact.fileName,
+    format: artifact.format,
+    handoffId: `${artifact.campaignId}-${artifact.batchId}-${artifact.format}-local-file-handoff`,
+    mimeType: artifact.mimeType,
+    payload: artifact.payload,
+    payloadBytes: artifact.metadata.payloadBytes,
+    retention,
+    rowCounts: {
+      blockedRows: artifact.metadata.blockedRows,
+      readyRows: artifact.metadata.readyRows,
+      reviewRequiredRows: artifact.metadata.reviewRequiredRows,
+      totalRows: artifact.metadata.totalRows,
+    },
+    safety: {
+      boundary: localExportFileHandoffBoundary,
+      contractRootWriteEnabled: false,
+      downloadUrlEnabled: false,
+      forbiddenFieldsAbsent,
+      localOnly: true,
+      localReviewOnly: true,
+      objectKeyEnabled: false,
+      providerCallEnabled: false,
+      queueExecutionEnabled: false,
+      rewardCustodyEnabled: false,
+      rewardDistributionEnabled: false,
+      schedulerExecutionEnabled: false,
+      signedUrlEnabled: false,
+      storageWriteEnabled: false,
+      walletSigningEnabled: false,
+    },
+    traceId: options.traceId ?? "local-export-file-handoff-preview",
   };
 };
 
