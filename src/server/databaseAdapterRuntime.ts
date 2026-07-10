@@ -8,6 +8,12 @@ import {
   type DatabaseProviderRegistryReport,
 } from "./databaseProviderRegistry";
 import type { BackendStoreId } from "./persistenceAdapterPort";
+import type {
+  ProductionDbPackageBindingSummary,
+  ProductionDbPackageDiagnostic,
+  ProductionDbPackageDiagnosticCode,
+  ProductionDbPackageNoLiveFlags,
+} from "./productionDbPackageBinding";
 import {
   productionDatabaseStoreRegistry,
   type ProductionDatabaseStoreRegistryEntry,
@@ -26,6 +32,7 @@ export type ConnectionPoolState =
 export type DatabaseAdapterDiagnosticSeverity = "error" | "warning" | "info";
 export type DatabaseAdapterDiagnosticCode =
   | DatabaseProviderDiagnostic["code"]
+  | ProductionDbPackageDiagnosticCode
   | "DATABASE_ADAPTER_CONFIG_REQUIRED"
   | "DATABASE_ADAPTER_SECRET_REDACTED"
   | "DATABASE_ADAPTER_PRECONDITION_DEFERRED"
@@ -128,6 +135,33 @@ export interface DatabaseAdapterDeferredDependency {
   status: DatabaseAdapterDeferredDependencyStatus;
 }
 
+export interface DatabaseAdapterPackageBindingSummary {
+  bindingId: string;
+  blockerCount: number;
+  diagnosticCodes: ProductionDbPackageDiagnosticCode[];
+  driverId: string;
+  liveConnectionAttempted: false;
+  liveContractWritesEnabled: false;
+  liveMigrationExecutionEnabled: false;
+  liveProductionMutationEnabled: false;
+  liveProviderCallsEnabled: false;
+  liveQueryExecutionEnabled: false;
+  liveRewardCustodyEnabled: false;
+  liveRewardDistributionEnabled: false;
+  liveStorageWritesEnabled: false;
+  liveTransactionExecutionEnabled: false;
+  noLiveFlags: ProductionDbPackageNoLiveFlags;
+  packageName: "pg";
+  packageRef: "npm:pg";
+  productionReady: false;
+  providerId: string;
+  requiredConfigKeys: string[];
+  requiredStoreIds: BackendStoreId[];
+  status: ProductionDbPackageBindingSummary["status"];
+  storeCoverage: ProductionDbPackageBindingSummary["storeCoverage"];
+  valid: boolean;
+}
+
 export interface ProductionDatabaseAdapterRuntimeContract {
   connectionPool: ConnectionPoolSummary;
   deferredDependencies: DatabaseAdapterDeferredDependency[];
@@ -137,6 +171,7 @@ export interface ProductionDatabaseAdapterRuntimeContract {
   liveConnectionAttempted: false;
   liveQueryExecutionEnabled: false;
   migrationExecutor: MigrationExecutorHandoffSummary;
+  packageBinding: DatabaseAdapterPackageBindingSummary;
   profileId: BackendRuntimeProfileId;
   productionDbRuntime: ProductionDbRuntimeReadinessProjection;
   providerId: string;
@@ -254,6 +289,15 @@ const diagnostic = (
 
 const mapRegistryDiagnostic = (
   issue: DatabaseProviderDiagnostic,
+): DatabaseAdapterRuntimeDiagnostic => ({
+  code: issue.code,
+  field: issue.field,
+  message: issue.message,
+  severity: issue.severity,
+});
+
+const mapPackageBindingDiagnostic = (
+  issue: ProductionDbPackageDiagnostic,
 ): DatabaseAdapterRuntimeDiagnostic => ({
   code: issue.code,
   field: issue.field,
@@ -492,6 +536,35 @@ const createProductionDbRuntimeReadinessProjection = (
   ownerStoreCount: contract.ownerStores.length,
 });
 
+const createPackageBindingSummary = (
+  packageBinding: ProductionDbPackageBindingSummary,
+): DatabaseAdapterPackageBindingSummary => ({
+  bindingId: packageBinding.bindingId,
+  blockerCount: packageBinding.blockerCount,
+  diagnosticCodes: [...packageBinding.diagnosticCodes],
+  driverId: packageBinding.driverId,
+  liveConnectionAttempted: false,
+  liveContractWritesEnabled: false,
+  liveMigrationExecutionEnabled: false,
+  liveProductionMutationEnabled: false,
+  liveProviderCallsEnabled: false,
+  liveQueryExecutionEnabled: false,
+  liveRewardCustodyEnabled: false,
+  liveRewardDistributionEnabled: false,
+  liveStorageWritesEnabled: false,
+  liveTransactionExecutionEnabled: false,
+  noLiveFlags: { ...packageBinding.noLiveFlags },
+  packageName: packageBinding.definition.packageName,
+  packageRef: packageBinding.definition.packageRef,
+  productionReady: false,
+  providerId: packageBinding.providerId,
+  requiredConfigKeys: [...packageBinding.requiredConfigKeys],
+  requiredStoreIds: [...packageBinding.requiredStoreIds],
+  status: packageBinding.status,
+  storeCoverage: packageBinding.storeCoverage.map((store) => ({ ...store })),
+  valid: packageBinding.valid,
+});
+
 const serviceLabelByOwnerServiceId: Record<string, string> = {
   "campaign-service": "Campaign Service",
   "i18n-content-service": "i18n Content Service",
@@ -580,6 +653,7 @@ export const createProductionDatabaseAdapterRuntimeContract = ({
       providerId: providerId ?? env.CAMPAIGN_OS_DATABASE_PROVIDER,
     }),
   );
+  const packageBinding = createPackageBindingSummary(productionDbRuntime.packageBinding);
   const deterministicTestMode = registry.activeProvider?.kind === "deterministic_test";
   const diagnostics: DatabaseAdapterRuntimeDiagnostic[] = [
     ...profileResolution.diagnostics.map((item) =>
@@ -591,6 +665,7 @@ export const createProductionDatabaseAdapterRuntimeContract = ({
       ),
     ),
     ...registry.validation.issues.map(mapRegistryDiagnostic),
+    ...productionDbRuntime.packageBinding.diagnostics.map(mapPackageBindingDiagnostic),
     ...connectionPool.diagnostics,
     ...createProductionPreconditionDiagnostics(profileResolution.profile.id),
   ];
@@ -614,6 +689,7 @@ export const createProductionDatabaseAdapterRuntimeContract = ({
       diagnostics,
       profileId: profileResolution.profile.id,
     }),
+    packageBinding,
     profileId: profileResolution.profile.id,
     productionDbRuntime,
     providerId: registry.selectedProviderId,

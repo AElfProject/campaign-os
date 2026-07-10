@@ -37,6 +37,14 @@ describe("database provider registry", () => {
       status: "available",
     });
     expect(report.activeDriver).toMatchObject({
+      packageBinding: expect.objectContaining({
+        bindingId: "campaign-os-postgresql-package-binding-local",
+        packageName: "pg",
+        packageRef: "npm:pg",
+        productionReady: false,
+        status: "local_ready",
+        valid: true,
+      }),
       status: "available",
       supportedStoreIds: productionDatabaseRequiredStoreIds,
       supportsTransactions: true,
@@ -63,6 +71,21 @@ describe("database provider registry", () => {
       status: "blocked",
     });
     expect(report.activeDriver).toMatchObject({
+      packageBinding: expect.objectContaining({
+        bindingId: "campaign-os-postgresql-package-binding-production",
+        blockerCount: 11,
+        diagnosticCodes: expect.arrayContaining([
+          "PRODUCTION_DB_PACKAGE_REFERENCE_MISSING",
+          "PRODUCTION_DB_PROVIDER_SELECTION_MISSING",
+          "PRODUCTION_DB_CONNECTION_REFERENCE_MISSING",
+          "PRODUCTION_DB_LIVE_ENABLEMENT_MISSING",
+        ]),
+        packageName: "pg",
+        packageRef: "npm:pg",
+        productionReady: false,
+        status: "blocked",
+        valid: false,
+      }),
       status: "blocked",
     });
     expect(report.validation.issues).toEqual(
@@ -130,6 +153,15 @@ describe("database provider registry", () => {
   it("keeps every registered driver scoped to v0.2 production database stores", () => {
     for (const driver of databaseDriverDescriptors) {
       expect(driver.supportedStoreIds).toEqual(productionDatabaseRequiredStoreIds);
+      expect(driver.packageBinding.requiredStoreIds).toEqual(productionDatabaseRequiredStoreIds);
+      expect(driver.packageBinding.noLiveFlags).toMatchObject({
+        dbClientConstructed: false,
+        liveConnectionAttempted: false,
+        liveMigrationExecutionEnabled: false,
+        liveQueryExecutionEnabled: false,
+        liveTransactionExecutionEnabled: false,
+        secretValueExposed: false,
+      });
       expect(driver.supportedStoreIds).not.toContain("export-store");
       expect(driver.supportedStoreIds).not.toContain("analytics-warehouse");
       expect(driver.supportedStoreIds).not.toContain("contract-index");

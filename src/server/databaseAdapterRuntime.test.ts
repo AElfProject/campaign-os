@@ -57,6 +57,20 @@ describe("production database adapter runtime", () => {
       liveQueryExecutionEnabled: false,
       supportedStoreIds: productionDatabaseRequiredStoreIds,
     });
+    expect(contract.packageBinding).toMatchObject({
+      bindingId: "campaign-os-postgresql-package-binding-local",
+      blockerCount: 0,
+      liveConnectionAttempted: false,
+      liveMigrationExecutionEnabled: false,
+      liveQueryExecutionEnabled: false,
+      liveTransactionExecutionEnabled: false,
+      packageName: "pg",
+      packageRef: "npm:pg",
+      productionReady: false,
+      status: "local_ready",
+      valid: true,
+    });
+    expect(contract.packageBinding.requiredStoreIds).toEqual(productionDatabaseRequiredStoreIds);
     expect(contract.transaction).toMatchObject({
       eventCaptureSupported: true,
       liveCommitEnabled: false,
@@ -111,6 +125,24 @@ describe("production database adapter runtime", () => {
       status: "blocked",
       valid: false,
     });
+    expect(contract.packageBinding).toMatchObject({
+      bindingId: "campaign-os-postgresql-package-binding-production",
+      blockerCount: 11,
+      diagnosticCodes: expect.arrayContaining([
+        "PRODUCTION_DB_PACKAGE_REFERENCE_MISSING",
+        "PRODUCTION_DB_PROVIDER_SELECTION_MISSING",
+        "PRODUCTION_DB_CONNECTION_REFERENCE_MISSING",
+        "PRODUCTION_DB_LIVE_ENABLEMENT_MISSING",
+      ]),
+      liveConnectionAttempted: false,
+      liveProviderCallsEnabled: false,
+      liveQueryExecutionEnabled: false,
+      packageName: "pg",
+      packageRef: "npm:pg",
+      productionReady: false,
+      status: "blocked",
+      valid: false,
+    });
     expect(contract.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -125,6 +157,11 @@ describe("production database adapter runtime", () => {
         expect.objectContaining({
           code: "DATABASE_ADAPTER_PRECONDITION_DEFERRED",
           field: "secret-manager",
+          severity: "error",
+        }),
+        expect.objectContaining({
+          code: "PRODUCTION_DB_PACKAGE_REFERENCE_MISSING",
+          field: "CAMPAIGN_OS_DATABASE_PACKAGE",
           severity: "error",
         }),
       ]),
@@ -162,6 +199,7 @@ describe("production database adapter runtime", () => {
     );
     expect(serialized).toContain("CAMPAIGN_OS_DATABASE_URL");
     expect(serialized).toContain("[redacted]");
+    expect(contract.packageBinding.diagnosticCodes).toContain("UNSAFE_PRODUCTION_DB_PACKAGE_BINDING_CONFIG");
 
     for (const secretValue of Object.values(secretValues)) {
       expect(serialized).not.toContain(secretValue);
@@ -204,6 +242,9 @@ describe("production database adapter runtime", () => {
     const contract = createProductionDatabaseAdapterRuntimeContract({ env: {} });
 
     expect(contract.stores.map((store) => store.id)).toEqual(productionDatabaseRequiredStoreIds);
+    expect(contract.packageBinding.storeCoverage.map((store) => store.storeId)).toEqual(
+      productionDatabaseRequiredStoreIds,
+    );
     expect(contract.stores.every((store) => store.ownerServiceId && store.schemaVersion)).toBe(true);
     expect(contract.stores.every((store) => store.adapterStatus === "mapped")).toBe(true);
     expect(contract.deferredDependencies.map((dependency) => dependency.id)).toEqual(
