@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runBackendRuntimeSmoke } from "./backendRuntimeSmoke";
 
@@ -616,6 +619,25 @@ describe("backend runtime smoke command", () => {
         },
       },
       host: "127.0.0.1",
+      durableLocalPersistence: {
+        adapterLabel: expect.stringMatching(/^local_json:/),
+        countsByKind: expect.objectContaining({
+          export_preview: 1,
+          verification_attempt: 1,
+          wallet_session: 1,
+        }),
+        durable: true,
+        latestRecordKinds: expect.arrayContaining(["wallet_session", "verification_attempt", "export_preview"]),
+        localOnly: true,
+        mode: "local_json",
+        noMigrationRunner: true,
+        noProductionDatabase: true,
+        noSecretHandling: true,
+        recordCount: 3,
+        restartedRecordCount: 3,
+        status: "passed",
+        wroteRecordKinds: expect.arrayContaining(["wallet_session", "verification_attempt", "export_preview"]),
+      },
       liveSideEffectsEnabled: false,
       persistenceFoundation: {
         blockerCount: 11,
@@ -732,6 +754,30 @@ describe("backend runtime smoke command", () => {
       ]),
     );
     expectNoSecretLeak(summary);
+  });
+
+  it("keeps durable local smoke output free of persistence paths", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-smoke-path-redaction-"));
+
+    try {
+      const summary = await runBackendRuntimeSmoke({
+        env: {
+          CAMPAIGN_OS_PERSISTENCE_DIR: tempDir,
+          CAMPAIGN_OS_PERSISTENCE_MODE: "local_json",
+        },
+      });
+
+      expect(summary.durableLocalPersistence).toMatchObject({
+        mode: "local_json",
+        recordCount: 3,
+        restartedRecordCount: 3,
+        status: "passed",
+      });
+      expect(JSON.stringify(summary)).not.toContain(tempDir);
+      expectNoSecretLeak(summary);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
   });
 
   it("fails closed when production backend readiness metadata is missing from smoke payloads", async () => {

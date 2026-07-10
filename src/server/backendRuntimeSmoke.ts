@@ -1,4 +1,8 @@
-import { startCampaignOsApiServer } from "./server";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { campaignDetail } from "../domain/fixtures";
+import { startCampaignOsApiServer, type CampaignOsApiServerHandle } from "./server";
 
 type SmokePayload = {
   data?: unknown;
@@ -33,6 +37,29 @@ export interface BackendRuntimeSmokeCheck {
   workerIdempotencyStoreFoundation?: BackendRuntimeSmokeWorkerIdempotencyStoreFoundationSummary;
   workerLeaseStoreFoundation?: BackendRuntimeSmokeWorkerLeaseStoreFoundationSummary;
   workerSchedulerFoundation?: BackendRuntimeSmokeWorkerSchedulerFoundationSummary;
+}
+
+export interface BackendRuntimeSmokeDurableLocalPersistenceSummary {
+  adapterLabel?: string;
+  countsByKind: Record<string, number>;
+  durable: true;
+  latestRecordKinds: string[];
+  localOnly: true;
+  mode: "local_json";
+  noMigrationRunner: true;
+  noProductionDatabase: true;
+  noSecretHandling: true;
+  recordCount: number;
+  restartedRecordCount: number;
+  status: "passed";
+  traceIds: {
+    exportPreview: string;
+    firstHealth: string;
+    restartedHealth: string;
+    verification: string;
+    walletSession: string;
+  };
+  wroteRecordKinds: string[];
 }
 
 export interface BackendRuntimeSmokePersistenceFoundationSummary {
@@ -400,6 +427,7 @@ export interface BackendRuntimeSmokeSummary {
     health: BackendRuntimeSmokeCheck;
   };
   host: string;
+  durableLocalPersistence: BackendRuntimeSmokeDurableLocalPersistenceSummary;
   liveSideEffectsEnabled: boolean;
   observabilityExporterFoundation: BackendRuntimeSmokeObservabilityExporterFoundationSummary;
   persistenceFoundation: BackendRuntimeSmokePersistenceFoundationSummary;
@@ -1406,6 +1434,258 @@ const getStringArray = (
   ? record[key].filter((item): item is string => typeof item === "string")
   : [];
 
+const durableLocalSmokeTraceIds = {
+  exportPreview: "campaign-os-smoke-durable-export-preview",
+  firstHealth: "campaign-os-smoke-durable-health-first",
+  restartedHealth: "campaign-os-smoke-durable-health-restarted",
+  verification: "campaign-os-smoke-durable-verification",
+  walletSession: "campaign-os-smoke-durable-wallet-session",
+} as const;
+
+const withDurableLocalPersistenceEnv = async (
+  env: Record<string, string | undefined> | undefined,
+): Promise<{
+  cleanupDir?: string;
+  env: Record<string, string | undefined>;
+}> => {
+  if (env?.CAMPAIGN_OS_PERSISTENCE_DIR) {
+    return {
+      env: {
+        ...env,
+        CAMPAIGN_OS_PERSISTENCE_MODE: "local_json",
+      },
+    };
+  }
+
+  const cleanupDir = await mkdtemp(join(tmpdir(), "campaign-os-smoke-local-json-"));
+
+  return {
+    cleanupDir,
+    env: {
+      ...env,
+      CAMPAIGN_OS_PERSISTENCE_DIR: cleanupDir,
+      CAMPAIGN_OS_PERSISTENCE_MODE: "local_json",
+    },
+  };
+};
+
+const readPersistenceHealth = (payload: SmokePayload): Record<string, unknown> | undefined =>
+  readNestedRecord(payload.data, ["persistence"]);
+
+const requirePersistenceHealth = (
+  payload: SmokePayload,
+  traceId: string,
+): Record<string, unknown> => {
+  if (payload.ok !== true || payload.traceId !== traceId) {
+    throw new Error("Campaign OS durable local persistence smoke check failed.");
+  }
+
+  const persistence = readPersistenceHealth(payload);
+
+  if (!persistence) {
+    throw new Error("Campaign OS durable local persistence health metadata is missing.");
+  }
+
+  return persistence;
+};
+
+const postDurableLocalSmokeRecord = async ({
+  baseUrl,
+  body,
+  fetchImpl,
+  path,
+  traceId,
+}: {
+  baseUrl: string;
+  body: Record<string, unknown>;
+  fetchImpl: typeof fetch;
+  path: string;
+  traceId: string;
+}): Promise<string> => {
+  const response = await fetchImpl(`${baseUrl}${path}`, {
+    body: JSON.stringify(body),
+    headers: {
+      "content-type": "application/json",
+      "x-campaign-os-trace-id": traceId,
+    },
+    method: "POST",
+  });
+  const payload = await readJson(response);
+  const persistence = readNestedRecord(payload.data, ["persistence"]);
+  const kind = getString(persistence, "kind");
+
+  if (response.status !== 200 || payload.ok !== true || payload.traceId !== traceId || !kind) {
+    throw new Error("Campaign OS durable local persistence write smoke check failed.");
+  }
+
+  return kind;
+};
+
+const readDurableHealth = async (
+  baseUrl: string,
+  fetchImpl: typeof fetch,
+  traceId: string,
+): Promise<Record<string, unknown>> => {
+  const response = await fetchImpl(`${baseUrl}/api/health`, {
+    headers: { "x-campaign-os-trace-id": traceId },
+  });
+  const payload = await readJson(response);
+
+  if (response.status !== 200) {
+    throw new Error("Campaign OS durable local persistence health smoke check failed.");
+  }
+
+  return requirePersistenceHealth(payload, traceId);
+};
+
+const latestRecordKinds = (
+  persistence: Record<string, unknown>,
+): string[] => Array.isArray(persistence.latestRecords)
+  ? persistence.latestRecords
+    .filter(isRecord)
+    .map((record) => getString(record, "kind"))
+    .filter((kind): kind is string => typeof kind === "string")
+  : [];
+
+const countsByKind = (
+  persistence: Record<string, unknown>,
+): Record<string, number> => {
+  const counts = readNestedRecord(persistence, ["countsByKind"]) ?? {};
+
+  return Object.fromEntries(
+    Object.entries(counts)
+      .filter((entry): entry is [string, number] => typeof entry[1] === "number"),
+  );
+};
+
+const assertDurableLocalPersistenceHealth = (
+  persistence: Record<string, unknown>,
+  expectedRecordCount: number,
+) => {
+  const expectedKinds = ["wallet_session", "verification_attempt", "export_preview"];
+
+  if (
+    getString(persistence, "mode") !== "local_json"
+    || persistence.durable !== true
+    || persistence.localOnly !== true
+    || persistence.noMigrationRunner !== true
+    || persistence.noProductionDatabase !== true
+    || persistence.noSecretHandling !== true
+    || getNumber(persistence, "recordCount") < expectedRecordCount
+  ) {
+    throw new Error("Campaign OS durable local persistence health smoke check failed.");
+  }
+
+  const currentCounts = countsByKind(persistence);
+  const currentLatestKinds = latestRecordKinds(persistence);
+  const hasExpectedKinds = expectedKinds.every(
+    (kind) => (currentCounts[kind] ?? 0) >= 1 && currentLatestKinds.includes(kind),
+  );
+
+  if (!hasExpectedKinds) {
+    throw new Error("Campaign OS durable local persistence restart records are incomplete.");
+  }
+};
+
+const runDurableLocalPersistenceSmoke = async ({
+  env,
+  fetchImpl,
+  host,
+  logger,
+  server,
+  shutdownTimeoutMs,
+}: {
+  env: Record<string, string | undefined>;
+  fetchImpl: typeof fetch;
+  host: string;
+  logger: BackendRuntimeSmokeOptions["logger"];
+  server: CampaignOsApiServerHandle;
+  shutdownTimeoutMs?: number;
+}): Promise<BackendRuntimeSmokeDurableLocalPersistenceSummary> => {
+  const wroteRecordKinds = [
+    await postDurableLocalSmokeRecord({
+      baseUrl: server.url,
+      body: {
+        adapterName: "PortkeyDiscoverWallet",
+        fixtureId: "sess-eoa-app-001",
+      },
+      fetchImpl,
+      path: "/api/wallet/session",
+      traceId: durableLocalSmokeTraceIds.walletSession,
+    }),
+    await postDurableLocalSmokeRecord({
+      baseUrl: server.url,
+      body: {
+        accountType: "AA",
+        campaignId: campaignDetail.id,
+        walletAddress: "2F4...9aB",
+        walletSource: "PORTKEY_AA",
+      },
+      fetchImpl,
+      path: "/api/tasks/task-bridge/verify",
+      traceId: durableLocalSmokeTraceIds.verification,
+    }),
+    await postDurableLocalSmokeRecord({
+      baseUrl: server.url,
+      body: {
+        contractRootMode: "none",
+        format: "json",
+        includeLocalePreference: true,
+        includeRiskFlags: true,
+        includeWalletType: true,
+      },
+      fetchImpl,
+      path: `/api/campaigns/${campaignDetail.id}/export`,
+      traceId: durableLocalSmokeTraceIds.exportPreview,
+    }),
+  ];
+  const firstPersistence = await readDurableHealth(
+    server.url,
+    fetchImpl,
+    durableLocalSmokeTraceIds.firstHealth,
+  );
+
+  assertDurableLocalPersistenceHealth(firstPersistence, 3);
+  await server.stop();
+
+  const restartedServer = await startCampaignOsApiServer({
+    env,
+    host,
+    logger,
+    port: 0,
+    shutdownTimeoutMs,
+  });
+
+  try {
+    const restartedPersistence = await readDurableHealth(
+      restartedServer.url,
+      fetchImpl,
+      durableLocalSmokeTraceIds.restartedHealth,
+    );
+
+    assertDurableLocalPersistenceHealth(restartedPersistence, getNumber(firstPersistence, "recordCount"));
+
+    return {
+      adapterLabel: getString(restartedPersistence, "adapterLabel"),
+      countsByKind: countsByKind(restartedPersistence),
+      durable: true,
+      latestRecordKinds: latestRecordKinds(restartedPersistence),
+      localOnly: true,
+      mode: "local_json",
+      noMigrationRunner: true,
+      noProductionDatabase: true,
+      noSecretHandling: true,
+      recordCount: getNumber(firstPersistence, "recordCount"),
+      restartedRecordCount: getNumber(restartedPersistence, "recordCount"),
+      status: "passed",
+      traceIds: durableLocalSmokeTraceIds,
+      wroteRecordKinds,
+    };
+  } finally {
+    await restartedServer.stop();
+  }
+};
+
 const isPersistenceFoundationSmokeReady = (
   summary: BackendRuntimeSmokePersistenceFoundationSummary | undefined,
 ): summary is BackendRuntimeSmokePersistenceFoundationSummary => {
@@ -1823,8 +2103,9 @@ export const runBackendRuntimeSmoke = async ({
   port = 0,
   shutdownTimeoutMs,
 }: BackendRuntimeSmokeOptions = {}): Promise<BackendRuntimeSmokeSummary> => {
+  const durableEnv = await withDurableLocalPersistenceEnv(env);
   const server = await startCampaignOsApiServer({
-    env,
+    env: durableEnv.env,
     host,
     logger,
     port,
@@ -1895,6 +2176,15 @@ export const runBackendRuntimeSmoke = async ({
       throw new Error("Campaign OS backend runtime smoke check failed.");
     }
 
+    const durableLocalPersistence = await runDurableLocalPersistenceSmoke({
+      env: durableEnv.env,
+      fetchImpl,
+      host,
+      logger,
+      server,
+      shutdownTimeoutMs,
+    });
+
     summaryDraft = {
       activationId: typeof activation?.id === "string" ? activation.id : undefined,
       authSessionFoundation,
@@ -1902,6 +2192,7 @@ export const runBackendRuntimeSmoke = async ({
         contracts: contracts.check,
         health: health.check,
       },
+      durableLocalPersistence,
       host,
       liveSideEffectsEnabled: getBoolean(activation, "liveSideEffectsEnabled"),
       observabilityExporterFoundation,
@@ -1926,6 +2217,9 @@ export const runBackendRuntimeSmoke = async ({
     };
   } finally {
     await server.stop();
+    if (durableEnv.cleanupDir) {
+      await rm(durableEnv.cleanupDir, { force: true, recursive: true });
+    }
   }
 
   if (!summaryDraft) {

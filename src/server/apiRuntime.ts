@@ -7,6 +7,7 @@ import {
 import type { ApiRuntimeEnvelope } from "./envelope";
 import { createFailureEnvelope, createSuccessEnvelope } from "./envelope";
 import {
+  ApiRuntimeError,
   authForbidden,
   authSessionInvalid,
   authSessionRequired,
@@ -221,6 +222,44 @@ const parseBody = (request: ApiRuntimeRequest, method: string) => {
   } catch {
     throw malformedJson();
   }
+};
+
+const createRuntimeConfigBlockedError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : "";
+  const missingLocalJsonDir = message.includes("local_json persistence requires");
+  const unsupportedPersistenceMode = message.includes("Unsupported Campaign OS persistence mode");
+  const diagnosticCode = missingLocalJsonDir
+    ? "MISSING_LOCAL_PERSISTENCE_DIR"
+    : unsupportedPersistenceMode
+      ? "UNSUPPORTED_PERSISTENCE_MODE"
+      : "RUNTIME_CONFIG_INVALID";
+  const field = missingLocalJsonDir
+    ? "runtimeConfig.persistence.localDataDir"
+    : unsupportedPersistenceMode
+      ? "runtimeConfig.persistence.mode"
+      : "runtimeConfig";
+
+  return new ApiRuntimeError({
+    code: "INVALID_REQUEST",
+    details: {
+      diagnosticCodes: [diagnosticCode],
+      fallbackUsed: false,
+      field,
+      persistenceMode: missingLocalJsonDir ? "local_json" : "unknown",
+      reason: missingLocalJsonDir
+        ? "local_json persistence requires CAMPAIGN_OS_PERSISTENCE_DIR or persistence.localDataDir."
+        : unsupportedPersistenceMode
+          ? "Unsupported Campaign OS persistence mode."
+          : "Invalid local Campaign OS runtime configuration.",
+      status: "blocked",
+    },
+    message: {
+      "en-US": "The local Campaign OS runtime configuration is blocked.",
+      "zh-CN": "本地 Campaign OS runtime 配置被阻断。",
+      "zh-TW": "本地 Campaign OS runtime 設定被阻斷。",
+    },
+    status: 400,
+  });
 };
 
 const createBackendServiceReadinessFactory = ({
@@ -759,7 +798,7 @@ export const createCampaignOsApiRuntime = ({
 
       try {
         if (configError) {
-          throw invalidRequest("runtimeConfig.persistence.mode", "Unsupported local runtime configuration.");
+          throw createRuntimeConfigBlockedError(configError);
         }
 
         const method = normalizeMethod(request.method);
