@@ -67,6 +67,7 @@ import {
 } from "./providerHttpRuntimeRegistry";
 import type { ProviderHttpPreconditionArea } from "./providerHttpRuntimeTypes";
 import { objectStorageExportRequiredConfigKeys } from "./objectStorageExportRuntime";
+import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyticsIngestionRuntime";
 
 export type RuntimeActivationConfigCategory =
   | "server"
@@ -966,8 +967,8 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
   },
   {
     area: "analytics",
-    attachPoint: "src/server/persistenceAdapterPort.ts",
-    blockedBy: ["analytics warehouse adapter", "event ingestion contract"],
+    attachPoint: "src/server/analyticsIngestionRuntime.ts",
+    blockedBy: [...analyticsIngestionWarehouseRequiredConfigKeys],
     id: "analytics-ingestion",
     requiredBeforeProduction: true,
     status: "deferred",

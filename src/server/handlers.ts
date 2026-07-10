@@ -46,6 +46,7 @@ import {
   type PublishDeliveryReviewRepositoryEvidenceInput,
 } from "../domain/publishDeliveryReview";
 import { createPointsRankingLedgerRuntime } from "../domain/pointsRankingLedgerRuntime";
+import { createServerAnalyticsIngestionRuntimeReadiness } from "./analyticsIngestionRuntime";
 import {
   createServiceDegradationGovernance,
   createServiceRegistry,
@@ -1507,6 +1508,26 @@ const createObjectStorageExportReadinessPayload = (
   };
 };
 
+const createAnalyticsIngestionRuntimeReadinessPayload = (
+  context: ApiRuntimeHandlerContext,
+) => {
+  const campaignId = requiredRouteParam(context.params, "campaignId");
+  const detailResult = context.service.getCampaignDetail({ campaignId });
+
+  if (!detailResult.ok) {
+    unwrapLocalResult(detailResult, context);
+    throw invalidCampaign(campaignId);
+  }
+
+  return {
+    boundary: context.route.boundary,
+    payload: createServerAnalyticsIngestionRuntimeReadiness({
+      campaign: campaignDetail,
+      traceId: context.traceId,
+    }),
+  };
+};
+
 const createProviderReadinessResult = (
   pipeline: LocalServiceResult<VerificationPipelineReadinessGate>,
   providerEvidenceRegistry: LocalServiceResult<ProviderEvidenceRegistry>,
@@ -1742,6 +1763,7 @@ const createBackendServiceHealthMetadata = (
 ) => ({
   adapterStatus: report.persistenceAdapters.activeAdapter.status,
   apiFoundationValidationIssueCount: report.apiFoundation.validation.issues.length,
+  analyticsIngestionRuntime: report.analyticsIngestionRuntime,
   authSessionFoundation: report.authSessionFoundation,
   backendRuntimeBootstrap: createBackendRuntimeBootstrapMetadata(report),
   entrypoint: backendServiceEntrypointMetadata(report),
@@ -1773,6 +1795,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
   })),
   backendRuntimeBootstrap: createBackendRuntimeBootstrapMetadata(report),
   configContract: backendConfigContractSummary(report),
+  analyticsIngestionRuntime: report.analyticsIngestionRuntime,
   authSessionFoundation: report.authSessionFoundation,
   databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime),
   deferredProductionCapabilities: report.profile.deferredCapabilities,
@@ -2076,6 +2099,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     ),
   "campaigns.publish.delivery.review": (context) => createPublishDeliveryReviewPayload(context),
   "campaigns.points.ranking.ledger.runtime": (context) => createPointsRankingLedgerRuntimePayload(context),
+  "campaigns.analytics.ingestion.readiness": (context) => createAnalyticsIngestionRuntimeReadinessPayload(context),
   "campaigns.export.storage.readiness": (context) => createObjectStorageExportReadinessPayload(context),
   "campaigns.companion.contract.readiness": (context) =>
     unwrapLocalResult(

@@ -118,6 +118,13 @@ import {
   type ObjectStorageExportReadiness,
   type ObjectStorageExportRuntimeConfig,
 } from "./objectStorageExportRuntime";
+import {
+  createServerAnalyticsIngestionRuntimeReadiness,
+} from "./analyticsIngestionRuntime";
+import {
+  analyticsIngestionWarehouseRequiredConfigKeys,
+  type AnalyticsIngestionRuntimeReadiness,
+} from "../domain/analyticsIngestionRuntime";
 
 export type BackendAttachPointArea =
   | "production-persistence"
@@ -211,6 +218,7 @@ export interface BackendServiceReadinessReport {
     validation: ApiFoundationReport["validation"];
   };
   apiService: BackendApiServiceBootstrapSummary;
+  analyticsIngestionRuntime: AnalyticsIngestionRuntimeReadiness;
   attachMap: BackendAttachPoint[];
   authEnforcement: BackendAuthEnforcementReadinessSummary;
   authSession: AuthSessionReadinessReport;
@@ -943,6 +951,21 @@ const createBackendObjectStorageExportReadiness = (
     },
   });
 
+const createBackendAnalyticsIngestionRuntimeReadiness = (
+  env: Record<string, string | undefined>,
+): AnalyticsIngestionRuntimeReadiness =>
+  createServerAnalyticsIngestionRuntimeReadiness({
+    traceId: "backend-readiness-analytics-ingestion",
+    warehouseHandoff: {
+      approvalRef: env.CAMPAIGN_OS_ANALYTICS_APPROVAL_REF,
+      eventEnvelopeSchemaRef: env.CAMPAIGN_OS_ANALYTICS_EVENT_ENVELOPE_SCHEMA_REF,
+      ingestionJobRef: env.CAMPAIGN_OS_ANALYTICS_INGESTION_JOB_REF,
+      operatorRunbookRef: env.CAMPAIGN_OS_ANALYTICS_OPERATOR_RUNBOOK_REF,
+      redactionPolicyRef: env.CAMPAIGN_OS_ANALYTICS_REDACTION_POLICY_REF,
+      warehouseRef: env.CAMPAIGN_OS_ANALYTICS_WAREHOUSE_REF,
+    },
+  });
+
 export const backendAttachMap: BackendAttachPoint[] = [
   {
     area: "production-persistence",
@@ -1090,10 +1113,10 @@ export const backendAttachMap: BackendAttachPoint[] = [
   },
   {
     area: "analytics-warehouse",
-    attachPoint: "src/server/persistenceAdapterPort.ts",
-    blockedBy: ["analytics warehouse adapter mission", "event ingestion contract"],
+    attachPoint: "src/server/analyticsIngestionRuntime.ts",
+    blockedBy: [...analyticsIngestionWarehouseRequiredConfigKeys],
     currentStatus: "deferred",
-    note: "Current analytics are local/read-model only; warehouse ingestion is deferred.",
+    note: "Analytics ingestion readiness is local review only; live warehouse writes stay deferred.",
     requiredBeforeProduction: true,
   },
 ];
@@ -2381,6 +2404,7 @@ export const createBackendServiceReadinessReport = ({
     profileId: config.profileId,
   });
   const objectStorageExportRuntime = createBackendObjectStorageExportReadiness(env);
+  const analyticsIngestionRuntime = createBackendAnalyticsIngestionRuntimeReadiness(env);
   const workerLeaseStoreFoundation = createBackendWorkerLeaseStoreReadinessSummary({
     env,
     profileId: config.profileId,
@@ -2429,6 +2453,7 @@ export const createBackendServiceReadinessReport = ({
       servicePorts,
       validation: apiFoundation.validation,
     },
+    analyticsIngestionRuntime,
     attachMap: backendAttachMap,
     authEnforcement,
     authSession,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyticsIngestionRuntime";
 import {
   backendAttachMap,
   createBackendServiceReadinessReport,
@@ -246,6 +247,35 @@ describe("backend service readiness report", () => {
     expect(report.apiService.blockedDependencyIds).not.toEqual(
       expect.arrayContaining(["wallet-proof-verifier", "session-issuer"]),
     );
+    expect(report.analyticsIngestionRuntime).toMatchObject({
+      campaignId: "camp-awaken-sprint",
+      diagnosticCodes: expect.arrayContaining([
+        "ANALYTICS_EVENT_ENVELOPE_REVIEW_REQUIRED",
+        "ANALYTICS_LIVE_EXECUTION_DISABLED",
+        "ANALYTICS_WAREHOUSE_HANDOFF_MISSING",
+      ]),
+      noLiveSideEffects: expect.objectContaining({
+        liveAnalyticsSdkExecuted: false,
+        liveEventIngestionEnabled: false,
+        liveEventWarehouseWrite: false,
+        liveProviderCallExecuted: false,
+      }),
+      productionReady: false,
+      source: "server_runtime",
+      status: "blocked",
+      summary: {
+        eventGroupCount: 9,
+        metricLineageCount: 9,
+        totalEvents: expect.any(Number),
+      },
+      warehouseHandoff: expect.objectContaining({
+        eventWarehouseWriteAttempted: false,
+        liveWarehouseWriteEnabled: false,
+        productionReady: false,
+        requiredConfigKeys: expect.arrayContaining([...analyticsIngestionWarehouseRequiredConfigKeys]),
+        status: "missing",
+      }),
+    });
     expect(report.providerIndexerFoundation).toMatchObject({
       blockerCount: 0,
       diagnosticCodes: [],
@@ -2392,6 +2422,7 @@ describe("backend service readiness report", () => {
     const serialized = JSON.stringify(report);
 
     expect(serialized).toContain("Campaign OS Backend Service");
+    expect(serialized).toContain("Local analytics ingestion runtime readiness");
     expect(serialized).not.toContain("kitty-specs");
     expect(serialized).not.toContain("docs/current");
     expect(serialized).not.toContain("evidence/");

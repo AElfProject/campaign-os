@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import packageJson from "../../package.json";
+import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyticsIngestionRuntime";
 import {
   createBackendRuntimeActivationContract,
   productionRuntimeDependencyBlockerIds,
@@ -806,7 +807,13 @@ describe("backend runtime activation contract", () => {
           status: "deferred",
         }),
         expect.objectContaining({ area: "observability", id: "observability-exporter", status: "deferred" }),
-        expect.objectContaining({ area: "analytics", id: "analytics-ingestion", status: "deferred" }),
+        expect.objectContaining({
+          area: "analytics",
+          attachPoint: "src/server/analyticsIngestionRuntime.ts",
+          blockedBy: expect.arrayContaining([...analyticsIngestionWarehouseRequiredConfigKeys]),
+          id: "analytics-ingestion",
+          status: "deferred",
+        }),
         expect.objectContaining({ area: "reward", id: "reward-custody", status: "blocked" }),
         expect.objectContaining({ area: "reward", id: "reward-distribution", status: "blocked" }),
       ]),

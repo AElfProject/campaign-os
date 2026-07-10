@@ -492,7 +492,7 @@ export const backendServiceBoundaries = [
     adapterGroups: [],
     dataStores: [],
     deploymentUnit: "observability-runtime",
-    description: "Runtime health, route contracts, safety flags, and topology observability.",
+    description: "Runtime health, route contracts, safety flags, analytics readiness, and topology observability.",
     domainArea: "runtime",
     futureRouteGroups: ["runtime"],
     id: "runtime-observability",
@@ -503,7 +503,13 @@ export const backendServiceBoundaries = [
       "Production observability exporter, metrics sink, trace collector, structured log sink, alert routing, redaction policy, and runbook are not selected yet.",
       "Analytics ingestion and contract sync handoffs require deferred queue runtime, scheduler runtime, idempotency store, dead-letter queue, and observability exporter before production.",
     ],
-    routeIds: ["runtime.health", "runtime.contracts", "campaigns.analytics", "campaigns.summary"],
+    routeIds: [
+      "runtime.health",
+      "runtime.contracts",
+      "campaigns.analytics",
+      "campaigns.analytics.ingestion.readiness",
+      "campaigns.summary",
+    ],
     runtimeProfiles: productionProfiles,
   }),
 ] as const satisfies readonly BackendServiceBoundary[];

@@ -541,6 +541,39 @@ interface PointsRankingLedgerRuntimePayload {
   traceId?: string;
 }
 
+interface AnalyticsIngestionRuntimePayload {
+  campaignId: string;
+  diagnosticCodes: string[];
+  eventCatalog: Array<{
+    eventCount: number;
+    id: string;
+    localOnly: true;
+    schemaState: "local_review";
+  }>;
+  metricLineage: Array<{
+    id: string;
+    inputCount: number;
+    outputMetric: string;
+  }>;
+  noLiveSideEffects: Record<string, false>;
+  productionReady: false;
+  source: "server_runtime";
+  status: string;
+  summary: {
+    eventGroupCount: number;
+    metricLineageCount: number;
+    totalEvents: number;
+  };
+  traceId?: string;
+  warehouseHandoff: {
+    eventWarehouseWriteAttempted: false;
+    liveWarehouseWriteEnabled: false;
+    productionReady: false;
+    requiredConfigKeys: string[];
+    status: string;
+  };
+}
+
 interface CampaignDbLimitedLifecyclePayload {
   campaignId: string;
   code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED";
@@ -999,6 +1032,12 @@ describe("Campaign OS API runtime", () => {
           id: "campaigns.points.ranking.ledger.runtime",
           method: "GET",
           path: "/api/campaigns/:campaignId/points-ranking-ledger-runtime",
+          readiness: "review_required",
+        }),
+        expect.objectContaining({
+          id: "campaigns.analytics.ingestion.readiness",
+          method: "GET",
+          path: "/api/campaigns/:campaignId/analytics/ingestion-readiness",
           readiness: "review_required",
         }),
         expect.objectContaining({
@@ -2670,6 +2709,11 @@ describe("Campaign OS API runtime", () => {
       path: `/api/campaigns/${campaignDetail.id}/export/storage-readiness`,
       headers: { "x-campaign-os-trace-id": "trace-object-storage-export-readiness" },
     });
+    const analyticsIngestionReadiness = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/analytics/ingestion-readiness`,
+      headers: { "x-campaign-os-trace-id": "trace-analytics-ingestion-readiness" },
+    });
     const providerReadiness = await runtimeWithPersistence.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/provider-readiness`,
@@ -2918,6 +2962,62 @@ describe("Campaign OS API runtime", () => {
     });
     expect(JSON.stringify(expectSuccessData(objectStorageExportReadiness))).not.toContain("signed-url");
     expect(JSON.stringify(expectSuccessData(objectStorageExportReadiness))).not.toContain("object-key");
+    expect(expectSuccessData<LocalServiceEnvelope<AnalyticsIngestionRuntimePayload>>(
+      analyticsIngestionReadiness,
+    )).toMatchObject({
+      boundary: expect.objectContaining({
+        "en-US": expect.stringContaining("Local analytics ingestion readiness"),
+      }),
+      payload: {
+        campaignId: campaignDetail.id,
+        diagnosticCodes: expect.arrayContaining([
+          "ANALYTICS_EVENT_ENVELOPE_REVIEW_REQUIRED",
+          "ANALYTICS_LIVE_EXECUTION_DISABLED",
+          "ANALYTICS_WAREHOUSE_HANDOFF_MISSING",
+        ]),
+        eventCatalog: expect.arrayContaining([
+          expect.objectContaining({ id: "campaign_lifecycle", localOnly: true, schemaState: "local_review" }),
+          expect.objectContaining({ id: "wallet_session", localOnly: true, schemaState: "local_review" }),
+          expect.objectContaining({ id: "task_verification", localOnly: true, schemaState: "local_review" }),
+        ]),
+        metricLineage: expect.arrayContaining([
+          expect.objectContaining({ id: "participants" }),
+          expect.objectContaining({ id: "verified_actions" }),
+          expect.objectContaining({ id: "eligible_winners" }),
+        ]),
+        noLiveSideEffects: expect.objectContaining({
+          liveAnalyticsSdkExecuted: false,
+          liveEventIngestionEnabled: false,
+          liveEventWarehouseWrite: false,
+          liveProviderCallExecuted: false,
+        }),
+        productionReady: false,
+        source: "server_runtime",
+        status: "blocked",
+        summary: expect.objectContaining({
+          eventGroupCount: 9,
+          metricLineageCount: 9,
+          totalEvents: expect.any(Number),
+        }),
+        traceId: "trace-analytics-ingestion-readiness",
+        warehouseHandoff: expect.objectContaining({
+          eventWarehouseWriteAttempted: false,
+          liveWarehouseWriteEnabled: false,
+          productionReady: false,
+          requiredConfigKeys: expect.arrayContaining([
+            "CAMPAIGN_OS_ANALYTICS_WAREHOUSE_REF",
+            "CAMPAIGN_OS_ANALYTICS_APPROVAL_REF",
+          ]),
+          status: "missing",
+        }),
+      },
+    });
+    expect(Object.values(
+      expectSuccessData<LocalServiceEnvelope<AnalyticsIngestionRuntimePayload>>(analyticsIngestionReadiness)
+        .payload.noLiveSideEffects,
+    ).every((value) => value === false)).toBe(true);
+    expect(JSON.stringify(expectSuccessData(analyticsIngestionReadiness))).not.toContain("campaign-os-kitty");
+    expect(JSON.stringify(expectSuccessData(analyticsIngestionReadiness))).not.toContain("bearer");
     expect(expectSuccessData<LocalServiceEnvelope<CompanionContractReadinessPayload>>(
       companionContractReadiness,
     ).payload).toMatchObject({
@@ -3014,6 +3114,7 @@ describe("Campaign OS API runtime", () => {
       deliveryReadiness,
       publishDeliveryReview,
       pointsRankingLedgerRuntime,
+      analyticsIngestionReadiness,
       companionContractReadiness,
       contractTransparency,
       exportReadiness,
@@ -3054,6 +3155,10 @@ describe("Campaign OS API runtime", () => {
       runtime.handle({
         method: "GET",
         path: "/api/campaigns/missing-campaign/points-ranking-ledger-runtime",
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/analytics/ingestion-readiness",
       }),
       runtime.handle({
         method: "GET",
