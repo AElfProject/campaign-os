@@ -183,6 +183,16 @@ describe("API foundation registry", () => {
     expect(requestFieldsByRoute.get("campaigns.export.artifacts.detail")?.map((field) => field?.name)).toEqual(
       expect.arrayContaining(["artifactId", "campaignId"]),
     );
+    expect(
+      requestFieldsByRoute
+        .get("campaigns.export.preview")
+        ?.find((field) => field?.name === "contractRootMode"),
+    ).toMatchObject({
+      enumValues: ["none", "eligibility_root"],
+      location: "body",
+      required: false,
+      valueType: "enum",
+    });
 
     for (const field of registry.requestFields.filter((item) => item.valueType === "enum")) {
       expect(field.enumValues?.length).toBeGreaterThan(0);
