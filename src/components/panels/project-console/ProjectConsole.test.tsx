@@ -26,6 +26,11 @@ import {
   loadObjectStorageExportRuntimeApiBridgeState,
   type ObjectStorageExportRuntimeApiBridgeState,
 } from "../../../api/objectStorageExportRuntimeApiBridge";
+import {
+  createAnalyticsIngestionRuntimeApiSeededFallbackState,
+  loadAnalyticsIngestionRuntimeApiBridgeState,
+  type AnalyticsIngestionRuntimeApiBridgeState,
+} from "../../../api/analyticsIngestionRuntimeApiBridge";
 import { App } from "../../../app/App";
 import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
 import { projectConsoleCopy } from "./copy";
@@ -73,6 +78,15 @@ vi.mock("../../../api/objectStorageExportRuntimeApiBridge", async (importOrigina
   return {
     ...actual,
     loadObjectStorageExportRuntimeApiBridgeState: vi.fn(actual.loadObjectStorageExportRuntimeApiBridgeState),
+  };
+});
+
+vi.mock("../../../api/analyticsIngestionRuntimeApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/analyticsIngestionRuntimeApiBridge")>();
+
+  return {
+    ...actual,
+    loadAnalyticsIngestionRuntimeApiBridgeState: vi.fn(actual.loadAnalyticsIngestionRuntimeApiBridgeState),
   };
 });
 
@@ -554,6 +568,29 @@ const objectStorageExportRuntimeApiState = (): ObjectStorageExportRuntimeApiBrid
   };
 };
 
+const analyticsIngestionRuntimeApiState = (): AnalyticsIngestionRuntimeApiBridgeState => {
+  const state = createAnalyticsIngestionRuntimeApiSeededFallbackState(
+    campaignDetail.id,
+    "trace-analytics-api-visible",
+  );
+
+  return {
+    ...state,
+    configured: true,
+    diagnostics: [],
+    routeCount: 35,
+    source: "api_runtime",
+    status: "blocked",
+    traceId: "trace-analytics-api-visible",
+    readiness: {
+      ...state.readiness,
+      source: "server_runtime",
+      status: "blocked",
+      traceId: "trace-analytics-api-visible",
+    },
+  };
+};
+
 describe("Project Console shell", () => {
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
   const mockedSubmitExportArtifactDeliveryApiReview = vi.mocked(submitExportArtifactDeliveryApiReview);
@@ -561,6 +598,7 @@ describe("Project Console shell", () => {
   const mockedLoadPublishDeliveryReviewApiBridgeState = vi.mocked(loadPublishDeliveryReviewApiBridgeState);
   const mockedLoadPointsRankingLedgerRuntimeApiBridgeState = vi.mocked(loadPointsRankingLedgerRuntimeApiBridgeState);
   const mockedLoadObjectStorageExportRuntimeApiBridgeState = vi.mocked(loadObjectStorageExportRuntimeApiBridgeState);
+  const mockedLoadAnalyticsIngestionRuntimeApiBridgeState = vi.mocked(loadAnalyticsIngestionRuntimeApiBridgeState);
 
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
@@ -569,10 +607,12 @@ describe("Project Console shell", () => {
     mockedLoadPublishDeliveryReviewApiBridgeState.mockReset();
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockReset();
     mockedLoadObjectStorageExportRuntimeApiBridgeState.mockReset();
+    mockedLoadAnalyticsIngestionRuntimeApiBridgeState.mockReset();
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockResolvedValue(backendReadinessApiState());
     mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValue(publishDeliveryReviewApiState());
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockResolvedValue(pointsRankingLedgerRuntimeApiState());
     mockedLoadObjectStorageExportRuntimeApiBridgeState.mockResolvedValue(objectStorageExportRuntimeApiState());
+    mockedLoadAnalyticsIngestionRuntimeApiBridgeState.mockResolvedValue(analyticsIngestionRuntimeApiState());
   });
 
   afterEach(() => {
@@ -2169,6 +2209,7 @@ describe("Project Console shell", () => {
     expect(within(pointsRankingLedgerRuntime).getByText("No reward custody")).toBeInTheDocument();
     expect(within(pointsRankingLedgerRuntime).getByText("No reward distribution")).toBeInTheDocument();
     expect(screen.getByLabelText("Publish Delivery Review Bridge")).toBeInTheDocument();
+    expect(screen.getByLabelText("Analytics Ingestion Runtime review")).toBeInTheDocument();
     expect(screen.getByLabelText("Backend Runtime Readiness review")).toBeInTheDocument();
     expect(screen.getByLabelText("Export Delivery API review")).toBeInTheDocument();
     expect(
@@ -2207,11 +2248,51 @@ describe("Project Console shell", () => {
     expect(within(objectStorageExportRuntime).getByText("No provider call")).toBeInTheDocument();
     expect(screen.getByLabelText("Publish Delivery Review Bridge")).toBeInTheDocument();
     expect(screen.getByLabelText("Points Ranking Ledger Runtime review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Analytics Ingestion Runtime review")).toBeInTheDocument();
     expect(screen.getByLabelText("Backend Runtime Readiness review")).toBeInTheDocument();
     expect(screen.getByLabelText("Export Delivery API review")).toBeInTheDocument();
     for (const name of [/upload/i, /download/i, /signed URL/i, /provider execution/i, /contract write/i]) {
       expect(within(objectStorageExportRuntime).queryByRole("button", { name })).not.toBeInTheDocument();
       expect(within(objectStorageExportRuntime).queryByRole("link", { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it("loads Analytics Ingestion Runtime automatically and keeps live telemetry controls absent", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedLoadAnalyticsIngestionRuntimeApiBridgeState.mockResolvedValueOnce(analyticsIngestionRuntimeApiState());
+
+    render(<ProjectConsole activeWorkspace="export" campaign={campaignDetail} locale="en-US" />);
+
+    const analyticsIngestionRuntime = screen.getByLabelText("Analytics Ingestion Runtime review");
+
+    await waitFor(() => expect(mockedLoadAnalyticsIngestionRuntimeApiBridgeState).toHaveBeenCalledWith({
+      campaignId: campaignDetail.id,
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        tracePrefix: "project-console-analytics-ingestion-runtime",
+      },
+    }));
+
+    await waitFor(() => expect(within(analyticsIngestionRuntime).getByText("API runtime")).toBeInTheDocument());
+    expect(within(analyticsIngestionRuntime).getByText("trace-analytics-api-visible")).toBeInTheDocument();
+    expect(within(analyticsIngestionRuntime).getByRole("button", { name: "Review analytics ingestion" }))
+      .toBeInTheDocument();
+    expect(within(analyticsIngestionRuntime).getByText("Campaign lifecycle: 1")).toBeInTheDocument();
+    expect(within(analyticsIngestionRuntime).getByText("Participants: participants")).toBeInTheDocument();
+    expect(within(analyticsIngestionRuntime).getByText("CAMPAIGN_OS_ANALYTICS_WAREHOUSE_REF"))
+      .toBeInTheDocument();
+    expect(within(analyticsIngestionRuntime).getByText("No live analytics SDK")).toBeInTheDocument();
+    expect(within(analyticsIngestionRuntime).getByText("No warehouse write")).toBeInTheDocument();
+    expect(within(analyticsIngestionRuntime).getByText("No browser tracking")).toBeInTheDocument();
+    expect(within(analyticsIngestionRuntime).getByText("No reward custody")).toBeInTheDocument();
+    expect(within(analyticsIngestionRuntime).getByText("No reward distribution")).toBeInTheDocument();
+    expect(screen.getByLabelText("Publish Delivery Review Bridge")).toBeInTheDocument();
+    expect(screen.getByLabelText("Points Ranking Ledger Runtime review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Object Storage Export Runtime review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Backend Runtime Readiness review")).toBeInTheDocument();
+    for (const name of [/send/i, /track/i, /warehouse write/i, /profile/i, /fingerprint/i, /reward custody/i, /reward distribution/i]) {
+      expect(within(analyticsIngestionRuntime).queryByRole("button", { name })).not.toBeInTheDocument();
+      expect(within(analyticsIngestionRuntime).queryByRole("link", { name })).not.toBeInTheDocument();
     }
   });
 

@@ -21,6 +21,7 @@ export interface BackendRuntimeSmokeOptions {
 
 export interface BackendRuntimeSmokeCheck {
   activationPresent: boolean;
+  analyticsIngestionRuntime?: BackendRuntimeSmokeAnalyticsIngestionRuntimeSummary;
   authSessionFoundation?: BackendRuntimeSmokeAuthSessionFoundationSummary;
   deploymentHandoff?: unknown;
   endpoint: "/api/health" | "/api/contracts";
@@ -101,6 +102,21 @@ export interface BackendRuntimeSmokeObjectStorageExportRuntimeSummary {
   signedUrlCreated: false;
   status?: string;
   valid: boolean;
+}
+
+export interface BackendRuntimeSmokeAnalyticsIngestionRuntimeSummary {
+  diagnosticCodes: string[];
+  eventCatalogCount: number;
+  liveAnalyticsSdkExecuted: false;
+  liveEventIngestionEnabled: false;
+  liveEventWarehouseWrite: false;
+  metricLineageCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  status?: string;
+  traceId?: string;
+  valid: boolean;
+  warehouseStatus?: string;
 }
 
 export interface BackendRuntimeSmokeProviderIndexerFoundationSummary {
@@ -446,6 +462,7 @@ export interface BackendRuntimeSmokeSummary {
   host: string;
   durableLocalPersistence: BackendRuntimeSmokeDurableLocalPersistenceSummary;
   liveSideEffectsEnabled: boolean;
+  analyticsIngestionRuntime: BackendRuntimeSmokeAnalyticsIngestionRuntimeSummary;
   objectStorageExportRuntime: BackendRuntimeSmokeObjectStorageExportRuntimeSummary;
   observabilityExporterFoundation: BackendRuntimeSmokeObservabilityExporterFoundationSummary;
   persistenceFoundation: BackendRuntimeSmokePersistenceFoundationSummary;
@@ -561,6 +578,12 @@ const readObjectStorageExportRuntime = (
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["backendService", "objectStorageExportRuntime"])
   ?? readNestedRecord(value, ["serverRuntime", "readiness", "objectStorageExportRuntime"]);
+
+const readAnalyticsIngestionRuntime = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["backendService", "analyticsIngestionRuntime"])
+  ?? readNestedRecord(value, ["serverRuntime", "readiness", "analyticsIngestionRuntime"]);
 
 const readProductionBackendReadiness = (
   value: unknown,
@@ -706,6 +729,45 @@ const summarizeObjectStorageExportRuntime = (
     signedUrlCreated: false,
     status: getString(record, "status"),
     valid: getBoolean(record, "valid"),
+  };
+};
+
+const summarizeAnalyticsIngestionRuntime = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeAnalyticsIngestionRuntimeSummary | undefined => {
+  if (!record || !isExplicitFalse(record, "productionReady")) {
+    return undefined;
+  }
+
+  const noLiveSideEffects = readNestedRecord(record, ["noLiveSideEffects"]);
+  const summary = readNestedRecord(record, ["summary"]);
+  const warehouseHandoff = readNestedRecord(record, ["warehouseHandoff"]);
+  const explicitNoLive =
+    noLiveSideEffects !== undefined
+    && isExplicitFalse(noLiveSideEffects, "liveAnalyticsSdkExecuted")
+    && isExplicitFalse(noLiveSideEffects, "liveEventIngestionEnabled")
+    && isExplicitFalse(noLiveSideEffects, "liveEventWarehouseWrite")
+    && isExplicitFalse(warehouseHandoff, "eventWarehouseWriteAttempted")
+    && isExplicitFalse(warehouseHandoff, "liveWarehouseWriteEnabled")
+    && isExplicitFalse(warehouseHandoff, "productionReady");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    eventCatalogCount: getNumber(summary, "eventGroupCount"),
+    liveAnalyticsSdkExecuted: false,
+    liveEventIngestionEnabled: false,
+    liveEventWarehouseWrite: false,
+    metricLineageCount: getNumber(summary, "metricLineageCount"),
+    productionReady: false,
+    requiredConfigKeys: getStringArray(warehouseHandoff, "requiredConfigKeys"),
+    status: getString(record, "status"),
+    traceId: getString(record, "traceId"),
+    valid: getBoolean(record, "valid"),
+    warehouseStatus: getString(warehouseHandoff, "status"),
   };
 };
 
@@ -1455,6 +1517,9 @@ const createSmokeCheck = async ({
   const objectStorageExportRuntime = summarizeObjectStorageExportRuntime(
     readObjectStorageExportRuntime(payload.data),
   );
+  const analyticsIngestionRuntime = summarizeAnalyticsIngestionRuntime(
+    readAnalyticsIngestionRuntime(payload.data),
+  );
   const productionBackendReadiness = summarizeProductionBackendReadiness(
     readProductionBackendReadiness(payload.data),
   );
@@ -1463,6 +1528,7 @@ const createSmokeCheck = async ({
     activation,
     check: {
       activationPresent: Boolean(activation),
+      analyticsIngestionRuntime,
       authSessionFoundation,
       deploymentHandoff,
       endpoint,
@@ -1481,6 +1547,35 @@ const createSmokeCheck = async ({
       workerLeaseStoreFoundation,
       workerSchedulerFoundation,
     },
+  };
+};
+
+const createAnalyticsIngestionRuntimeSmokeSample = async ({
+  baseUrl,
+  fetchImpl,
+  traceId,
+}: {
+  baseUrl: string;
+  fetchImpl: typeof fetch;
+  traceId: string;
+}): Promise<BackendRuntimeSmokeAnalyticsIngestionRuntimeSummary | undefined> => {
+  const response = await fetchImpl(
+    `${baseUrl}/api/campaigns/${campaignDetail.id}/analytics/ingestion-readiness`,
+    {
+      headers: { "x-campaign-os-trace-id": traceId },
+    },
+  );
+  const payload = await readJson(response);
+  const readiness = readNestedRecord(payload.data, ["payload"]);
+  const summary = summarizeAnalyticsIngestionRuntime(readiness);
+
+  if (response.status !== 200 || payload.ok !== true || payload.traceId !== traceId || !summary) {
+    return undefined;
+  }
+
+  return {
+    ...summary,
+    traceId: payload.traceId,
   };
 };
 
@@ -1803,6 +1898,27 @@ const isObjectStorageExportRuntimeSmokeReady = (
     && summary.diagnosticCodes.includes("OBJECT_STORAGE_LIVE_EXECUTION_DISABLED")
     && summary.status === "blocked"
     && summary.valid === true;
+};
+
+const isAnalyticsIngestionRuntimeSmokeReady = (
+  summary: BackendRuntimeSmokeAnalyticsIngestionRuntimeSummary | undefined,
+): summary is BackendRuntimeSmokeAnalyticsIngestionRuntimeSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveAnalyticsSdkExecuted === false
+    && summary.liveEventIngestionEnabled === false
+    && summary.liveEventWarehouseWrite === false
+    && summary.eventCatalogCount >= 9
+    && summary.metricLineageCount >= 9
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_ANALYTICS_WAREHOUSE_REF")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_ANALYTICS_APPROVAL_REF")
+    && summary.diagnosticCodes.includes("ANALYTICS_LIVE_EXECUTION_DISABLED")
+    && summary.status === "blocked"
+    && summary.valid === true
+    && summary.warehouseStatus === "missing";
 };
 
 const isProviderIndexerFoundationSmokeReady = (
@@ -2228,7 +2344,13 @@ export const runBackendRuntimeSmoke = async ({
     const workerSchedulerFoundation = contracts.check.workerSchedulerFoundation;
     const observabilityExporterFoundation = contracts.check.observabilityExporterFoundation;
     const objectStorageExportRuntime = contracts.check.objectStorageExportRuntime;
+    const analyticsIngestionRuntime = contracts.check.analyticsIngestionRuntime;
     const productionBackendReadiness = contracts.check.productionBackendReadiness;
+    const analyticsIngestionRuntimeSample = await createAnalyticsIngestionRuntimeSmokeSample({
+      baseUrl: server.url,
+      fetchImpl,
+      traceId: "campaign-os-smoke-analytics-ingestion-readiness",
+    });
 
     if (
       health.check.status !== 200
@@ -2255,6 +2377,9 @@ export const runBackendRuntimeSmoke = async ({
       || !isObservabilityExporterFoundationSmokeReady(observabilityExporterFoundation)
       || !isObjectStorageExportRuntimeSmokeReady(health.check.objectStorageExportRuntime)
       || !isObjectStorageExportRuntimeSmokeReady(objectStorageExportRuntime)
+      || !isAnalyticsIngestionRuntimeSmokeReady(health.check.analyticsIngestionRuntime)
+      || !isAnalyticsIngestionRuntimeSmokeReady(analyticsIngestionRuntime)
+      || !isAnalyticsIngestionRuntimeSmokeReady(analyticsIngestionRuntimeSample)
       || !isProductionBackendReadinessSmokeReady(health.check.productionBackendReadiness)
       || !isProductionBackendReadinessSmokeReady(productionBackendReadiness)
       || !isWorkerIdempotencyStoreFoundationSmokeReady(health.check.workerIdempotencyStoreFoundation)
@@ -2286,6 +2411,7 @@ export const runBackendRuntimeSmoke = async ({
       durableLocalPersistence,
       host,
       liveSideEffectsEnabled: getBoolean(activation, "liveSideEffectsEnabled"),
+      analyticsIngestionRuntime: analyticsIngestionRuntimeSample,
       objectStorageExportRuntime,
       observabilityExporterFoundation,
       persistenceFoundation,

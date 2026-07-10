@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyticsIngestionRuntime";
 import { runBackendRuntimeSmoke } from "./backendRuntimeSmoke";
 
 const secretFragments = [
@@ -446,6 +447,24 @@ const expectedProviderClientReadiness = {
   valid: true,
 };
 
+const expectedAnalyticsIngestionRuntimeMetadata = {
+  diagnosticCodes: expect.arrayContaining([
+    "ANALYTICS_EVENT_ENVELOPE_REVIEW_REQUIRED",
+    "ANALYTICS_LIVE_EXECUTION_DISABLED",
+    "ANALYTICS_WAREHOUSE_HANDOFF_MISSING",
+  ]),
+  eventCatalogCount: 9,
+  liveAnalyticsSdkExecuted: false,
+  liveEventIngestionEnabled: false,
+  liveEventWarehouseWrite: false,
+  metricLineageCount: 9,
+  productionReady: false,
+  requiredConfigKeys: expect.arrayContaining([...analyticsIngestionWarehouseRequiredConfigKeys]),
+  status: "blocked",
+  valid: true,
+  warehouseStatus: "missing",
+};
+
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
     const summary = await runBackendRuntimeSmoke({
@@ -484,6 +503,7 @@ describe("backend runtime smoke command", () => {
             status: "local_ready",
             valid: true,
           },
+          analyticsIngestionRuntime: expectedAnalyticsIngestionRuntimeMetadata,
           endpoint: "/api/contracts",
           ok: true,
           productionBackendReadiness: {
@@ -555,6 +575,7 @@ describe("backend runtime smoke command", () => {
             status: "local_ready",
             valid: true,
           },
+          analyticsIngestionRuntime: expectedAnalyticsIngestionRuntimeMetadata,
           endpoint: "/api/health",
           ok: true,
           productionBackendReadiness: {
@@ -639,6 +660,10 @@ describe("backend runtime smoke command", () => {
         wroteRecordKinds: expect.arrayContaining(["wallet_session", "verification_attempt", "export_preview"]),
       },
       liveSideEffectsEnabled: false,
+      analyticsIngestionRuntime: {
+        ...expectedAnalyticsIngestionRuntimeMetadata,
+        traceId: "campaign-os-smoke-analytics-ingestion-readiness",
+      },
       persistenceFoundation: {
         blockerCount: 11,
         diagnosticCodes: expect.arrayContaining([
@@ -851,6 +876,36 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutObjectStorageExportRuntime })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when analytics ingestion readiness metadata is missing from smoke payloads", async () => {
+    const fetchWithoutAnalyticsIngestionRuntime: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          backendService?: {
+            analyticsIngestionRuntime?: Record<string, unknown>;
+          };
+          serverRuntime?: {
+            readiness?: {
+              analyticsIngestionRuntime?: Record<string, unknown>;
+            };
+          };
+        };
+      };
+
+      delete payload.data?.backendService?.analyticsIngestionRuntime;
+      delete payload.data?.serverRuntime?.readiness?.analyticsIngestionRuntime;
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutAnalyticsIngestionRuntime })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });

@@ -310,6 +310,22 @@ export const apiRuntimeRoutes = [
     supportMode: "local_seeded",
   }),
   route({
+    apiGroup: "analytics",
+    boundary: text(
+      "Local analytics ingestion readiness review route. No live API, analytics SDK, event warehouse write, browser tracking, profiling, fingerprinting, provider call, production database mutation, export write, contract write, wallet signature, reward custody, or reward distribution is performed.",
+      "本地 analytics ingestion readiness review route。不会执行实时 API、analytics SDK、事件仓库写入、浏览器追踪、画像、指纹识别、provider 调用、生产数据库变更、导出写入、合约写入、钱包签名、奖励托管或发奖。",
+    ),
+    id: "campaigns.analytics.ingestion.readiness",
+    method: "GET",
+    path: "/api/campaigns/:campaignId/analytics/ingestion-readiness",
+    productionDependencies: dependenciesFor("analytics"),
+    readiness: "review_required",
+    riskLevel: "medium",
+    serviceGroup: "analytics",
+    summary: text("Inspect local analytics ingestion runtime readiness.", "检查本地 analytics ingestion runtime readiness。"),
+    supportMode: "local_seeded",
+  }),
+  route({
     apiGroup: "campaign_summary",
     apiSkillId: "summarize_campaign",
     boundary,

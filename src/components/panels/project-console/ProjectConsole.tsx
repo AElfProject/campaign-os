@@ -27,6 +27,12 @@ import {
   type ObjectStorageExportRuntimeApiBridgeState,
 } from "../../../api/objectStorageExportRuntimeApiBridge";
 import {
+  createAnalyticsIngestionRuntimeApiLoadingState,
+  createAnalyticsIngestionRuntimeApiSeededFallbackState,
+  loadAnalyticsIngestionRuntimeApiBridgeState,
+  type AnalyticsIngestionRuntimeApiBridgeState,
+} from "../../../api/analyticsIngestionRuntimeApiBridge";
+import {
   createExportArtifactDeliveryApiLoadingState,
   createExportArtifactDeliverySeededFallbackState,
   sanitizeExportArtifactDeliveryApiText,
@@ -149,6 +155,7 @@ import { PublishReadinessPanel } from "./builder/PublishReadinessPanel";
 import { RewardsEligibilityBuilder } from "./builder/RewardsEligibilityBuilder";
 import { TaskTemplateLibrary } from "./builder/TaskTemplateLibrary";
 import { BackendRuntimeReadinessPanel } from "./BackendRuntimeReadinessPanel";
+import { AnalyticsIngestionRuntimePanel } from "./AnalyticsIngestionRuntimePanel";
 import { ObjectStorageExportRuntimePanel } from "./ObjectStorageExportRuntimePanel";
 import { PointsRankingLedgerRuntimePanel } from "./PointsRankingLedgerRuntimePanel";
 import { projectConsoleCopy } from "./copy";
@@ -1295,6 +1302,9 @@ const pointsRankingLedgerRuntimeApiBaseUrl = () =>
 const objectStorageExportRuntimeApiBaseUrl = () =>
   import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
+const analyticsIngestionRuntimeApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
 const createPublishDeliveryReviewSeededFallbackState = (
   campaignId: string,
 ): PublishDeliveryReviewApiBridgeState => ({
@@ -1340,6 +1350,23 @@ const createObjectStorageExportRuntimeSeededFallbackState = (
         "en-US": "No local object storage export readiness API base URL is configured, so seeded review data is shown.",
         "zh-CN": "未配置本地 object storage export readiness API base URL，因此显示 seeded review 数据。",
         "zh-TW": "未設定本地 object storage export readiness API base URL，因此顯示 seeded review 資料。",
+      },
+      severity: "info",
+    },
+  ],
+});
+
+const createAnalyticsIngestionRuntimeSeededFallbackState = (
+  campaignId: string,
+): AnalyticsIngestionRuntimeApiBridgeState => ({
+  ...createAnalyticsIngestionRuntimeApiSeededFallbackState(campaignId),
+  diagnostics: [
+    {
+      code: "API_BASE_URL_MISSING",
+      message: {
+        "en-US": "No local analytics ingestion readiness API base URL is configured, so seeded review data is shown.",
+        "zh-CN": "未配置本地 analytics ingestion readiness API base URL，因此显示 seeded review 数据。",
+        "zh-TW": "未設定本地 analytics ingestion readiness API base URL，因此顯示 seeded review 資料。",
       },
       severity: "info",
     },
@@ -1996,6 +2023,7 @@ export const ProjectConsole = ({
   const publishDeliveryApiRequestSeq = useRef(0);
   const pointsRankingLedgerRuntimeApiRequestSeq = useRef(0);
   const objectStorageExportRuntimeApiRequestSeq = useRef(0);
+  const analyticsIngestionRuntimeApiRequestSeq = useRef(0);
   const exportDeliveryApiRequestSeq = useRef(0);
   const backendReadinessApiRequestSeq = useRef(0);
   const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
@@ -2079,6 +2107,7 @@ export const ProjectConsole = ({
   const publishDeliveryApiBaseUrl = publishDeliveryReviewApiBaseUrl();
   const pointsRankingLedgerRuntimeApiBase = pointsRankingLedgerRuntimeApiBaseUrl();
   const objectStorageExportRuntimeApiBase = objectStorageExportRuntimeApiBaseUrl();
+  const analyticsIngestionRuntimeApiBase = analyticsIngestionRuntimeApiBaseUrl();
   const exportDeliveryApiRequest: ExportArtifactDeliveryRequest = {
     campaignId: campaign.id,
     contractRootMode: "eligibility_root",
@@ -2114,6 +2143,13 @@ export const ProjectConsole = ({
         : createObjectStorageExportRuntimeSeededFallbackState(campaign.id),
     );
   const [objectStorageExportRuntimeApiReviewInFlight, setObjectStorageExportRuntimeApiReviewInFlight] = useState(false);
+  const [analyticsIngestionRuntimeApiState, setAnalyticsIngestionRuntimeApiState] =
+    useState<AnalyticsIngestionRuntimeApiBridgeState>(() =>
+      analyticsIngestionRuntimeApiBase?.trim()
+        ? createAnalyticsIngestionRuntimeApiLoadingState(campaign.id)
+        : createAnalyticsIngestionRuntimeSeededFallbackState(campaign.id),
+    );
+  const [analyticsIngestionRuntimeApiReviewInFlight, setAnalyticsIngestionRuntimeApiReviewInFlight] = useState(false);
   const backendReadinessApiBaseUrl = backendRuntimeReadinessApiBaseUrl();
   const [backendReadinessApiState, setBackendReadinessApiState] =
     useState<BackendRuntimeReadinessApiBridgeState>(() =>
@@ -2305,6 +2341,40 @@ export const ProjectConsole = ({
     loadObjectStorageExportRuntimeApiReview();
   };
 
+  const loadAnalyticsIngestionRuntimeApiReview = useCallback(() => {
+    if (!analyticsIngestionRuntimeApiBase?.trim()) {
+      setAnalyticsIngestionRuntimeApiState(createAnalyticsIngestionRuntimeSeededFallbackState(campaign.id));
+      setAnalyticsIngestionRuntimeApiReviewInFlight(false);
+      return;
+    }
+
+    setAnalyticsIngestionRuntimeApiReviewInFlight(true);
+    setAnalyticsIngestionRuntimeApiState(createAnalyticsIngestionRuntimeApiLoadingState(campaign.id));
+
+    const requestSeq = analyticsIngestionRuntimeApiRequestSeq.current + 1;
+    analyticsIngestionRuntimeApiRequestSeq.current = requestSeq;
+
+    void loadAnalyticsIngestionRuntimeApiBridgeState({
+      campaignId: campaign.id,
+      config: {
+        baseUrl: analyticsIngestionRuntimeApiBase,
+        tracePrefix: "project-console-analytics-ingestion-runtime",
+      },
+    }).then((state) => {
+      if (analyticsIngestionRuntimeApiRequestSeq.current === requestSeq) {
+        setAnalyticsIngestionRuntimeApiState(state);
+      }
+    }).finally(() => {
+      if (analyticsIngestionRuntimeApiRequestSeq.current === requestSeq) {
+        setAnalyticsIngestionRuntimeApiReviewInFlight(false);
+      }
+    });
+  }, [analyticsIngestionRuntimeApiBase, campaign.id]);
+
+  const runAnalyticsIngestionRuntimeApiReview = () => {
+    loadAnalyticsIngestionRuntimeApiReview();
+  };
+
   const loadBackendReadinessApiReview = useCallback(() => {
     if (!backendReadinessApiBaseUrl?.trim()) {
       setBackendReadinessApiState(createBackendRuntimeReadinessSeededFallbackState());
@@ -2343,10 +2413,12 @@ export const ProjectConsole = ({
       loadPublishDeliveryApiReview();
       loadPointsRankingLedgerRuntimeApiReview();
       loadObjectStorageExportRuntimeApiReview();
+      loadAnalyticsIngestionRuntimeApiReview();
       loadBackendReadinessApiReview();
     }
   }, [
     activeWorkspace,
+    loadAnalyticsIngestionRuntimeApiReview,
     loadBackendReadinessApiReview,
     loadObjectStorageExportRuntimeApiReview,
     loadPointsRankingLedgerRuntimeApiReview,
@@ -6863,6 +6935,15 @@ export const ProjectConsole = ({
         onReview={runPointsRankingLedgerRuntimeApiReview}
         reviewInFlight={pointsRankingLedgerRuntimeApiReviewInFlight}
         state={pointsRankingLedgerRuntimeApiState}
+      />
+
+      <AnalyticsIngestionRuntimePanel
+        apiConfigured={Boolean(analyticsIngestionRuntimeApiBase?.trim())}
+        copy={copy}
+        locale={locale}
+        onReview={runAnalyticsIngestionRuntimeApiReview}
+        reviewInFlight={analyticsIngestionRuntimeApiReviewInFlight}
+        state={analyticsIngestionRuntimeApiState}
       />
 
       <ObjectStorageExportRuntimePanel

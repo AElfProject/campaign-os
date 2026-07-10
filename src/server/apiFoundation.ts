@@ -165,6 +165,10 @@ const routeFoundationMetadata = {
     operationId: "getCampaignAnalytics",
     serviceId: "runtime-observability",
   },
+  "campaigns.analytics.ingestion.readiness": {
+    operationId: "getCampaignAnalyticsIngestionReadiness",
+    serviceId: "runtime-observability",
+  },
   "campaigns.create": {
     operationId: "createCampaign",
     serviceId: "campaign-service",
@@ -728,6 +732,15 @@ const requestFieldContracts = [
     valueType: "string",
   }),
   field({
+    description: "Campaign identifier path parameter for the analytics ingestion readiness review route.",
+    id: "campaigns.analytics.ingestion.readiness.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.analytics.ingestion.readiness",
+    valueType: "string",
+  }),
+  field({
     description: "Campaign identifier path parameter.",
     id: "campaigns.summary.path.campaignId",
     location: "path",
@@ -1163,8 +1176,8 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["production_database", "scheduler", "worker_queue"],
     label: "Analytics",
-    notes: "Local analytics summary exists; warehouse-backed analytics ingestion, scheduler runtime, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, dead-letter queue, worker idempotency store readiness metadata, and observability exporter are deferred.",
-    routeIds: ["campaigns.analytics"],
+    notes: "Local analytics summary and analytics ingestion readiness inspection exist; live analytics SDK, warehouse-backed analytics ingestion, scheduler runtime, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, dead-letter queue, worker idempotency store readiness metadata, and observability exporter are deferred.",
+    routeIds: ["campaigns.analytics", "campaigns.analytics.ingestion.readiness"],
     serviceId: "runtime-observability",
     state: "implemented_local",
     surfaceId: "analytics",
