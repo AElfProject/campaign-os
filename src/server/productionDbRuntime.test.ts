@@ -49,6 +49,26 @@ describe("production DB runtime v1", () => {
       deterministicFixture: true,
       productionReady: false,
     });
+    expect(contract.packageBinding).toMatchObject({
+      bindingId: "campaign-os-postgresql-package-binding-local",
+      blockerCount: 0,
+      definition: expect.objectContaining({
+        packageRef: "npm:pg",
+      }),
+      productionReady: false,
+      status: "local_ready",
+      valid: true,
+    });
+    expect(contract.packageBinding.noLiveFlags).toMatchObject({
+      dbClientConstructed: false,
+      liveConnectionAttempted: false,
+      liveMigrationExecutionEnabled: false,
+      liveQueryExecutionEnabled: false,
+      liveTransactionExecutionEnabled: false,
+      secretValueExposed: false,
+    });
+    expect(contract.packageBindingStatus).toBe("local_ready");
+    expect(contract.packageBindingProductionReady).toBe(false);
     expect(contract.ownerStores).toEqual(productionDatabaseRequiredStoreIds);
     expect(contract.queryCapability).toMatchObject({
       adHocRawSqlEnabled: false,
@@ -69,6 +89,21 @@ describe("production DB runtime v1", () => {
     expect(contract.valid).toBe(false);
     expect(contract.status).toBe("blocked");
     expect(contract.driver.productionReady).toBe(false);
+    expect(contract.packageBinding).toMatchObject({
+      bindingId: "campaign-os-postgresql-package-binding-production",
+      blockerCount: 11,
+      diagnosticCodes: expect.arrayContaining([
+        "PRODUCTION_DB_PACKAGE_REFERENCE_MISSING",
+        "PRODUCTION_DB_PROVIDER_SELECTION_MISSING",
+        "PRODUCTION_DB_CONNECTION_REFERENCE_MISSING",
+        "PRODUCTION_DB_LIVE_ENABLEMENT_MISSING",
+      ]),
+      productionReady: false,
+      status: "blocked",
+      valid: false,
+    });
+    expect(contract.packageBindingStatus).toBe("blocked");
+    expect(contract.packageBindingProductionReady).toBe(false);
     expect(contract.connection).toMatchObject({
       liveConnectionAttempted: false,
       missingConfigKeys: ["CAMPAIGN_OS_DATABASE_URL"],

@@ -1,6 +1,12 @@
 import type { BackendRuntimeProfileId } from "./backendProfiles";
 import type { BackendStoreId } from "./persistenceAdapterPort";
 import { productionDatabaseRequiredStoreIds } from "./productionDatabase";
+import {
+  createProductionDbPackageBinding,
+  type ProductionDbPackageBindingStatus,
+  type ProductionDbPackageDiagnosticCode,
+  type ProductionDbPackageNoLiveFlags,
+} from "./productionDbPackageBinding";
 
 export type DatabaseProviderKind =
   | "deterministic_test"
@@ -45,11 +51,28 @@ export interface DatabaseDriverCapabilityDescriptor {
   transactions: boolean;
 }
 
+export interface DatabaseDriverPackageBindingDescriptor {
+  bindingId: string;
+  blockerCount: number;
+  diagnosticCodes: ProductionDbPackageDiagnosticCode[];
+  driverId: string;
+  noLiveFlags: ProductionDbPackageNoLiveFlags;
+  packageName: "pg";
+  packageRef: "npm:pg";
+  productionReady: false;
+  providerId: string;
+  requiredConfigKeys: string[];
+  requiredStoreIds: BackendStoreId[];
+  status: ProductionDbPackageBindingStatus;
+  valid: boolean;
+}
+
 export interface DatabaseDriverDescriptor {
   capability: DatabaseDriverCapabilityDescriptor;
   deferredBy: string[];
   id: string;
   label: string;
+  packageBinding: DatabaseDriverPackageBindingDescriptor;
   providerId: string;
   requiredConfigKeys: string[];
   status: DatabaseDriverStatus;
@@ -153,6 +176,7 @@ export const databaseDriverDescriptors: DatabaseDriverDescriptor[] = [
     deferredBy: [],
     id: defaultLocalDriverId,
     label: "Campaign OS deterministic database driver",
+    packageBinding: createDatabaseDriverPackageBindingDescriptor("local-review"),
     providerId: defaultLocalProviderId,
     requiredConfigKeys: [],
     status: "available",
@@ -173,6 +197,7 @@ export const databaseDriverDescriptors: DatabaseDriverDescriptor[] = [
     deferredBy: [...productionDriverDeferredBy],
     id: defaultProductionDriverId,
     label: "Campaign OS production database driver placeholder",
+    packageBinding: createDatabaseDriverPackageBindingDescriptor("production-required"),
     providerId: defaultProductionProviderId,
     requiredConfigKeys: ["CAMPAIGN_OS_DATABASE_URL"],
     status: "deferred",
@@ -193,6 +218,7 @@ export const databaseDriverDescriptors: DatabaseDriverDescriptor[] = [
     deferredBy: [...productionDriverDeferredBy],
     id: "campaign-os-managed-postgres-driver-deferred",
     label: "Managed PostgreSQL driver candidate",
+    packageBinding: createDatabaseDriverPackageBindingDescriptor("production-required"),
     providerId: "campaign-os-managed-postgres-deferred",
     requiredConfigKeys: ["CAMPAIGN_OS_DATABASE_URL"],
     status: "deferred",
@@ -213,6 +239,7 @@ export const databaseDriverDescriptors: DatabaseDriverDescriptor[] = [
     deferredBy: [...productionDriverDeferredBy],
     id: "campaign-os-self-hosted-relational-driver-deferred",
     label: "Self-hosted relational driver candidate",
+    packageBinding: createDatabaseDriverPackageBindingDescriptor("production-required"),
     providerId: "campaign-os-self-hosted-relational-deferred",
     requiredConfigKeys: ["CAMPAIGN_OS_DATABASE_URL"],
     status: "deferred",
@@ -237,14 +264,38 @@ const cloneProvider = (
 const cloneDriver = (
   driver: DatabaseDriverDescriptor,
   status = driver.status,
+  profileId: BackendRuntimeProfileId = "local-review",
 ): DatabaseDriverDescriptor => ({
   ...driver,
   capability: { ...driver.capability },
   deferredBy: [...driver.deferredBy],
+  packageBinding: createDatabaseDriverPackageBindingDescriptor(profileId),
   requiredConfigKeys: [...driver.requiredConfigKeys],
   status,
   supportedStoreIds: [...driver.supportedStoreIds],
 });
+
+function createDatabaseDriverPackageBindingDescriptor(
+  profileId: BackendRuntimeProfileId,
+): DatabaseDriverPackageBindingDescriptor {
+  const packageBinding = createProductionDbPackageBinding({ profileId });
+
+  return {
+    bindingId: packageBinding.bindingId,
+    blockerCount: packageBinding.blockerCount,
+    diagnosticCodes: [...packageBinding.diagnosticCodes],
+    driverId: packageBinding.driverId,
+    noLiveFlags: { ...packageBinding.noLiveFlags },
+    packageName: packageBinding.definition.packageName,
+    packageRef: packageBinding.definition.packageRef,
+    productionReady: false,
+    providerId: packageBinding.providerId,
+    requiredConfigKeys: [...packageBinding.requiredConfigKeys],
+    requiredStoreIds: [...packageBinding.requiredStoreIds],
+    status: packageBinding.status,
+    valid: packageBinding.valid,
+  };
+}
 
 const safeRegistryValue = (value: string) =>
   /^[a-z0-9-]+$/i.test(value) ? value : REDACTED_VALUE;
@@ -391,10 +442,12 @@ export const createDatabaseProviderRegistryReport = ({
       ? "blocked"
       : item.status;
   const reportProviders = providers.map((item) => cloneProvider(item, reportProviderStatus(item)));
-  const reportDrivers = drivers.map((item) => cloneDriver(item, reportDriverStatus(item)));
+  const reportDrivers = drivers.map((item) =>
+    cloneDriver(item, reportDriverStatus(item), profileId)
+  );
 
   return {
-    activeDriver: driver ? cloneDriver(driver, reportDriverStatus(driver)) : undefined,
+    activeDriver: driver ? cloneDriver(driver, reportDriverStatus(driver), profileId) : undefined,
     activeProvider: provider ? cloneProvider(provider, reportProviderStatus(provider)) : undefined,
     drivers: reportDrivers,
     providers: reportProviders,

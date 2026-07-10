@@ -102,6 +102,20 @@ export interface BackendRuntimeReadinessProjection {
     diagnosticCodes: string[];
     liveConnectionAttempted: false;
     liveQueryExecutionEnabled: false;
+    packageBindingBlockerCount: number;
+    packageBindingDiagnosticCodes: string[];
+    packageBindingId: string;
+    packageBindingLiveConnectionAttempted: false;
+    packageBindingLiveMigrationExecutionEnabled: false;
+    packageBindingLiveProductionMutationEnabled: false;
+    packageBindingLiveProviderCallsEnabled: false;
+    packageBindingLiveQueryExecutionEnabled: false;
+    packageBindingLiveTransactionExecutionEnabled: false;
+    packageBindingNoLiveFlags: BackendServiceReadinessReport["databaseAdapterRuntime"]["packageBinding"]["noLiveFlags"];
+    packageBindingProductionReady: false;
+    packageBindingRequiredConfigKeys: string[];
+    packageBindingStatus: BackendServiceReadinessReport["databaseAdapterRuntime"]["packageBinding"]["status"];
+    packageBindingValid: boolean;
     status: BackendServiceReadinessReport["databaseAdapterRuntime"]["status"];
     valid: boolean;
   };
@@ -590,6 +604,23 @@ const createReadinessProjection = (
     diagnosticCodes: backendReadiness.databaseAdapterRuntime.diagnostics.map((item) => item.code),
     liveConnectionAttempted: backendReadiness.databaseAdapterRuntime.liveConnectionAttempted,
     liveQueryExecutionEnabled: backendReadiness.databaseAdapterRuntime.liveQueryExecutionEnabled,
+    packageBindingBlockerCount: backendReadiness.databaseAdapterRuntime.packageBinding.blockerCount,
+    packageBindingDiagnosticCodes: backendReadiness.databaseAdapterRuntime.packageBinding.diagnosticCodes,
+    packageBindingId: backendReadiness.databaseAdapterRuntime.packageBinding.bindingId,
+    packageBindingLiveConnectionAttempted: backendReadiness.databaseAdapterRuntime.packageBinding.liveConnectionAttempted,
+    packageBindingLiveMigrationExecutionEnabled:
+      backendReadiness.databaseAdapterRuntime.packageBinding.liveMigrationExecutionEnabled,
+    packageBindingLiveProductionMutationEnabled:
+      backendReadiness.databaseAdapterRuntime.packageBinding.liveProductionMutationEnabled,
+    packageBindingLiveProviderCallsEnabled: backendReadiness.databaseAdapterRuntime.packageBinding.liveProviderCallsEnabled,
+    packageBindingLiveQueryExecutionEnabled: backendReadiness.databaseAdapterRuntime.packageBinding.liveQueryExecutionEnabled,
+    packageBindingLiveTransactionExecutionEnabled:
+      backendReadiness.databaseAdapterRuntime.packageBinding.liveTransactionExecutionEnabled,
+    packageBindingNoLiveFlags: { ...backendReadiness.databaseAdapterRuntime.packageBinding.noLiveFlags },
+    packageBindingProductionReady: backendReadiness.databaseAdapterRuntime.packageBinding.productionReady,
+    packageBindingRequiredConfigKeys: [...backendReadiness.databaseAdapterRuntime.packageBinding.requiredConfigKeys],
+    packageBindingStatus: backendReadiness.databaseAdapterRuntime.packageBinding.status,
+    packageBindingValid: backendReadiness.databaseAdapterRuntime.packageBinding.valid,
     status: backendReadiness.databaseAdapterRuntime.status,
     valid: backendReadiness.databaseAdapterRuntime.valid
       && backendReadiness.databaseAdapterRuntime.migrationHandoff.valid,

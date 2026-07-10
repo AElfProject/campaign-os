@@ -91,6 +91,55 @@ const readinessSummary = {
   },
 };
 
+const databasePackageBinding = {
+  bindingId: "campaign-os-postgresql-package-binding-local",
+  blockerCount: 0,
+  diagnosticCodes: [],
+  liveConnectionAttempted: false,
+  liveContractWritesEnabled: false,
+  liveMigrationExecutionEnabled: false,
+  liveProductionMutationEnabled: false,
+  liveProviderCallsEnabled: false,
+  liveQueryExecutionEnabled: false,
+  liveRewardCustodyEnabled: false,
+  liveRewardDistributionEnabled: false,
+  liveStorageWritesEnabled: false,
+  liveTransactionExecutionEnabled: false,
+  noLiveFlags: {
+    browserBundleAllowed: false,
+    dbClientConstructed: false,
+    liveConnectionAttempted: false,
+    liveContractWritesEnabled: false,
+    liveMigrationExecutionEnabled: false,
+    liveProductionMutationEnabled: false,
+    liveProviderCallsEnabled: false,
+    liveQueryExecutionEnabled: false,
+    liveRewardCustodyEnabled: false,
+    liveRewardDistributionEnabled: false,
+    liveStorageWritesEnabled: false,
+    liveTransactionExecutionEnabled: false,
+    secretValueExposed: false,
+  },
+  packageName: "pg",
+  packageRef: "npm:pg",
+  productionReady: false,
+  requiredConfigKeys: [
+    "CAMPAIGN_OS_DATABASE_PACKAGE",
+    "CAMPAIGN_OS_DATABASE_PACKAGE_BINDING",
+    "CAMPAIGN_OS_DATABASE_PROVIDER",
+    "CAMPAIGN_OS_DATABASE_URL",
+    "CAMPAIGN_OS_DATABASE_SECRET_REF",
+    "CAMPAIGN_OS_DATABASE_POOL_POLICY",
+    "CAMPAIGN_OS_DATABASE_MIGRATION_APPROVAL",
+    "CAMPAIGN_OS_DATABASE_ROLLBACK_BACKUP_PLAN",
+    "CAMPAIGN_OS_DATABASE_OBSERVABILITY_REF",
+    "CAMPAIGN_OS_DATABASE_RUNBOOK_URL",
+    "CAMPAIGN_OS_DATABASE_LIVE_ENABLEMENT",
+  ],
+  status: "local_ready",
+  valid: true,
+};
+
 const response = (
   body: unknown,
   options: { ok?: boolean; status?: number; traceId?: string } = {},
@@ -103,6 +152,11 @@ const response = (
 
 const envelope = (summary: unknown, traceId: string, data: Record<string, unknown> = {}) => ({
   data: {
+    backendService: {
+      databaseAdapterRuntime: {
+        packageBinding: databasePackageBinding,
+      },
+    },
     productionBackendReadiness: summary,
     ...data,
   },
@@ -146,6 +200,13 @@ describe("backend runtime readiness API bridge", () => {
       summary: seededBackendRuntimeReadinessSummary,
     });
     expect(state.summary.noLiveSideEffects.contractWriteExecuted).toBe(false);
+    expect(state.summary.databasePackageBinding).toMatchObject({
+      bindingId: "campaign-os-postgresql-package-binding-local",
+      liveConnectionAttempted: false,
+      packageName: "pg",
+      packageRef: "npm:pg",
+      status: "local_ready",
+    });
     expect(state.summary.productionDependencyBlockers.find((blocker) => blocker.id === "contract-writer")).toMatchObject({
       blockedBy: expect.arrayContaining([...contractWriterRequiredConfigKeys]),
       status: "blocked",
@@ -202,6 +263,19 @@ describe("backend runtime readiness API bridge", () => {
       source: "api_runtime",
       status: "ready",
       summary: expect.objectContaining({
+        databasePackageBinding: expect.objectContaining({
+          bindingId: "campaign-os-postgresql-package-binding-local",
+          liveConnectionAttempted: false,
+          liveMigrationExecutionEnabled: false,
+          liveProductionMutationEnabled: false,
+          liveProviderCallsEnabled: false,
+          liveQueryExecutionEnabled: false,
+          liveTransactionExecutionEnabled: false,
+          packageName: "pg",
+          packageRef: "npm:pg",
+          requiredConfigKeys: expect.arrayContaining(["CAMPAIGN_OS_DATABASE_PACKAGE_BINDING"]),
+          status: "local_ready",
+        }),
         routeCoverage: expect.objectContaining({
           routeIds: expect.arrayContaining(["campaigns.export.preview"]),
         }),
@@ -231,6 +305,95 @@ describe("backend runtime readiness API bridge", () => {
       }),
     );
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("normalizes DB package binding metadata without exposing unsafe payloads", async () => {
+    const unsafePackageBinding = {
+      ...databasePackageBinding,
+      bindingId: "campaign-os-postgresql-package-binding-local private-key-sample",
+      diagnosticCodes: [
+        "PRODUCTION_DB_PACKAGE_BINDING_MISSING",
+        "token=sample-token",
+      ],
+      providerPayload: {
+        password: "super-secret",
+        signedUrl: "https://storage.invalid/object-key-sample?token=sample-token",
+      },
+      requiredConfigKeys: [
+        "CAMPAIGN_OS_DATABASE_URL",
+        "CAMPAIGN_OS_DATABASE_URL",
+        "CAMPAIGN_OS_DATABASE_PACKAGE_BINDING",
+      ],
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response(envelope(readinessSummary, "trace-health", {
+        backendService: {
+          databaseAdapterRuntime: {
+            packageBinding: unsafePackageBinding,
+          },
+        },
+      })))
+      .mockResolvedValueOnce(response(envelope(readinessSummary, "trace-contracts", {
+        backendService: {
+          databaseAdapterRuntime: {
+            packageBinding: unsafePackageBinding,
+          },
+        },
+      }))) as unknown as BackendRuntimeReadinessApiFetch;
+
+    const state = await loadBackendRuntimeReadinessApiBridgeState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl,
+    });
+    const serialized = JSON.stringify(state.summary.databasePackageBinding).toLowerCase();
+
+    expect(state.summary.databasePackageBinding).toMatchObject({
+      bindingId: expect.stringContaining("redacted key"),
+      blockerCount: 0,
+      diagnosticCodes: expect.arrayContaining(["PRODUCTION_DB_PACKAGE_BINDING_MISSING"]),
+      liveConnectionAttempted: false,
+      packageName: "pg",
+      packageRef: "npm:pg",
+      requiredConfigKeys: ["CAMPAIGN_OS_DATABASE_URL", "CAMPAIGN_OS_DATABASE_PACKAGE_BINDING"],
+      status: "local_ready",
+    });
+    for (const unsafe of ["sample-token", "super-secret", "object-key-sample", "campaign-os-kitty"]) {
+      expect(serialized).not.toContain(unsafe);
+    }
+  });
+
+  it("fails closed when DB package binding required config keys are not database env names", async () => {
+    const invalidPackageBinding = {
+      ...databasePackageBinding,
+      requiredConfigKeys: [
+        "CAMPAIGN_OS_DATABASE_URL",
+        "/Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/evidence/raw.json",
+      ],
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response(envelope(readinessSummary, "trace-health", {
+        backendService: {
+          databaseAdapterRuntime: {
+            packageBinding: invalidPackageBinding,
+          },
+        },
+      }))) as unknown as BackendRuntimeReadinessApiFetch;
+
+    const state = await loadBackendRuntimeReadinessApiBridgeState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl,
+    });
+
+    expect(state).toMatchObject({
+      diagnostics: [{ code: "API_RESPONSE_INVALID", severity: "error" }],
+      source: "error_fallback",
+      status: "error",
+      summary: seededBackendRuntimeReadinessSummary,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(state).toLowerCase()).not.toContain("campaign-os-kitty");
   });
 
   it("deduplicates API runtime readiness labels before exposing UI summary", async () => {

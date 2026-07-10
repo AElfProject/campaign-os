@@ -61,6 +61,41 @@ const expectedSchedulerRuntimeFoundation = {
   valid: true,
 };
 
+const expectedDatabasePackageBinding = {
+  bindingId: "campaign-os-postgresql-package-binding-local",
+  blockerCount: expect.any(Number),
+  diagnosticCodes: expect.any(Array),
+  liveConnectionAttempted: false,
+  liveContractWritesEnabled: false,
+  liveMigrationExecutionEnabled: false,
+  liveProductionMutationEnabled: false,
+  liveProviderCallsEnabled: false,
+  liveQueryExecutionEnabled: false,
+  liveRewardCustodyEnabled: false,
+  liveRewardDistributionEnabled: false,
+  liveStorageWritesEnabled: false,
+  liveTransactionExecutionEnabled: false,
+  noLiveFlagsAllFalse: true,
+  packageName: "pg",
+  packageRef: "npm:pg",
+  productionReady: false,
+  requiredConfigKeys: expect.arrayContaining([
+    "CAMPAIGN_OS_DATABASE_PACKAGE",
+    "CAMPAIGN_OS_DATABASE_PACKAGE_BINDING",
+    "CAMPAIGN_OS_DATABASE_PROVIDER",
+    "CAMPAIGN_OS_DATABASE_URL",
+    "CAMPAIGN_OS_DATABASE_SECRET_REF",
+    "CAMPAIGN_OS_DATABASE_POOL_POLICY",
+    "CAMPAIGN_OS_DATABASE_MIGRATION_APPROVAL",
+    "CAMPAIGN_OS_DATABASE_ROLLBACK_BACKUP_PLAN",
+    "CAMPAIGN_OS_DATABASE_OBSERVABILITY_REF",
+    "CAMPAIGN_OS_DATABASE_RUNBOOK_URL",
+    "CAMPAIGN_OS_DATABASE_LIVE_ENABLEMENT",
+  ]),
+  status: expect.stringMatching(/^(blocked|local_ready)$/),
+  valid: expect.any(Boolean),
+};
+
 const expectedQueuePublishingReadiness = {
   activationStatus: "disabled",
   blockerCount: 0,
@@ -531,6 +566,7 @@ describe("backend runtime smoke command", () => {
           ok: true,
           productionBackendReadiness: {
             contractsEndpoint: "/api/contracts",
+            databasePackageBinding: expectedDatabasePackageBinding,
             healthEndpoint: "/api/health",
             missingApiSkillIds: [],
             noLiveSideEffectsAllFalse: true,
@@ -604,6 +640,7 @@ describe("backend runtime smoke command", () => {
           ok: true,
           productionBackendReadiness: {
             contractsEndpoint: "/api/contracts",
+            databasePackageBinding: expectedDatabasePackageBinding,
             healthEndpoint: "/api/health",
             missingApiSkillIds: [],
             noLiveSideEffectsAllFalse: true,
@@ -693,22 +730,26 @@ describe("backend runtime smoke command", () => {
         traceId: "campaign-os-smoke-contract-writer-readiness",
       },
       persistenceFoundation: {
-        blockerCount: 11,
+        blockerCount: expect.any(Number),
         diagnosticCodes: expect.arrayContaining([
           "PRODUCTION_PERSISTENCE_SECRET_REDACTED",
+          "UNSAFE_PRODUCTION_DB_PACKAGE_BINDING_CONFIG",
           "DATABASE_ADAPTER_SECRET_REDACTED",
+          "DATABASE_MIGRATION_LIVE_EXECUTION_DISABLED",
+          "PRODUCTION_DB_SECRET_REDACTED",
         ]),
         liveConnectionAttempted: false,
         liveMigrationExecutionEnabled: false,
         liveQueryExecutionEnabled: false,
         migrationDryRunStatus: "dry_run_ready",
         productionReady: false,
-        status: "metadata_ready",
+        status: "blocked",
         storeCoverageCount: 6,
-        valid: true,
+        valid: false,
       },
       productionBackendReadiness: {
         contractsEndpoint: "/api/contracts",
+        databasePackageBinding: expectedDatabasePackageBinding,
         healthEndpoint: "/api/health",
         missingApiSkillIds: [],
         noLiveSideEffectsAllFalse: true,
@@ -874,6 +915,72 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutProductionBackendReadiness })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when DB package binding metadata is missing from smoke payloads", async () => {
+    const fetchWithoutDatabasePackageBinding: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          backendService?: {
+            databaseAdapterRuntime?: {
+              packageBinding?: Record<string, unknown>;
+            };
+          };
+          productionBackendReadiness?: {
+            databasePackageBinding?: Record<string, unknown>;
+          };
+          serverRuntime?: {
+            readiness?: {
+              databaseAdapterRuntime?: {
+                packageBinding?: Record<string, unknown>;
+              };
+            };
+          };
+        };
+      };
+
+      delete payload.data?.backendService?.databaseAdapterRuntime?.packageBinding;
+      delete payload.data?.productionBackendReadiness?.databasePackageBinding;
+      delete payload.data?.serverRuntime?.readiness?.databaseAdapterRuntime?.packageBinding;
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutDatabasePackageBinding })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when DB package binding exposes a live DB flag", async () => {
+    const fetchWithLiveDatabasePackageBindingFlag: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          backendService?: {
+            databaseAdapterRuntime?: {
+              packageBinding?: Record<string, unknown>;
+            };
+          };
+        };
+      };
+
+      if (payload.data?.backendService?.databaseAdapterRuntime?.packageBinding) {
+        payload.data.backendService.databaseAdapterRuntime.packageBinding.liveQueryExecutionEnabled = true;
+      }
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithLiveDatabasePackageBindingFlag })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });

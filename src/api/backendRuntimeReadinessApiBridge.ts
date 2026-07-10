@@ -110,7 +110,33 @@ export interface BackendRuntimeReadinessNoLiveSideEffects {
   walletSdkExecuted: false;
 }
 
+export interface BackendRuntimeReadinessDbPackageBindingSummary {
+  bindingId: string;
+  blockerCount: number;
+  browserBundleAllowed: false;
+  dbClientConstructed: false;
+  diagnosticCodes: readonly string[];
+  liveConnectionAttempted: false;
+  liveContractWritesEnabled: false;
+  liveMigrationExecutionEnabled: false;
+  liveProductionMutationEnabled: false;
+  liveProviderCallsEnabled: false;
+  liveQueryExecutionEnabled: false;
+  liveRewardCustodyEnabled: false;
+  liveRewardDistributionEnabled: false;
+  liveStorageWritesEnabled: false;
+  liveTransactionExecutionEnabled: false;
+  packageName: "pg";
+  packageRef: "npm:pg";
+  productionReady: false;
+  requiredConfigKeys: readonly string[];
+  secretValueExposed: false;
+  status: string;
+  valid: boolean;
+}
+
 export interface BackendRuntimeReadinessSummary {
+  databasePackageBinding: BackendRuntimeReadinessDbPackageBindingSummary;
   deployHandoff: BackendRuntimeReadinessDeployHandoff;
   diagnostics: readonly BackendRuntimeReadinessDiagnosticSummary[];
   generatedAt: string;
@@ -275,7 +301,45 @@ const unsafePatterns: Array<[RegExp, string]> = [
   [/\bwallet[-_\s]*signature\b/gi, "redacted wallet action"],
 ];
 
+const seededDatabasePackageBindingRequiredConfigKeys = [
+  "CAMPAIGN_OS_DATABASE_PACKAGE",
+  "CAMPAIGN_OS_DATABASE_PACKAGE_BINDING",
+  "CAMPAIGN_OS_DATABASE_PROVIDER",
+  "CAMPAIGN_OS_DATABASE_URL",
+  "CAMPAIGN_OS_DATABASE_SECRET_REF",
+  "CAMPAIGN_OS_DATABASE_POOL_POLICY",
+  "CAMPAIGN_OS_DATABASE_MIGRATION_APPROVAL",
+  "CAMPAIGN_OS_DATABASE_ROLLBACK_BACKUP_PLAN",
+  "CAMPAIGN_OS_DATABASE_OBSERVABILITY_REF",
+  "CAMPAIGN_OS_DATABASE_RUNBOOK_URL",
+  "CAMPAIGN_OS_DATABASE_LIVE_ENABLEMENT",
+] as const;
+
 export const seededBackendRuntimeReadinessSummary: BackendRuntimeReadinessSummary = {
+  databasePackageBinding: {
+    bindingId: "campaign-os-postgresql-package-binding-local",
+    blockerCount: 0,
+    browserBundleAllowed: false,
+    dbClientConstructed: false,
+    diagnosticCodes: [],
+    liveConnectionAttempted: false,
+    liveContractWritesEnabled: false,
+    liveMigrationExecutionEnabled: false,
+    liveProductionMutationEnabled: false,
+    liveProviderCallsEnabled: false,
+    liveQueryExecutionEnabled: false,
+    liveRewardCustodyEnabled: false,
+    liveRewardDistributionEnabled: false,
+    liveStorageWritesEnabled: false,
+    liveTransactionExecutionEnabled: false,
+    packageName: "pg",
+    packageRef: "npm:pg",
+    productionReady: false,
+    requiredConfigKeys: [...seededDatabasePackageBindingRequiredConfigKeys],
+    secretValueExposed: false,
+    status: "local_ready",
+    valid: true,
+  },
   deployHandoff: {
     contractsEndpoint: "/api/contracts",
     healthEndpoint: "/api/health",
@@ -394,6 +458,23 @@ export const seededBackendRuntimePersistencePosture: BackendRuntimePersistencePo
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const readNestedRecord = (
+  value: unknown,
+  path: string[],
+): Record<string, unknown> | undefined => {
+  let current: unknown = value;
+
+  for (const segment of path) {
+    if (!isRecord(current)) {
+      return undefined;
+    }
+
+    current = current[segment];
+  }
+
+  return isRecord(current) ? current : undefined;
+};
 
 export const sanitizeBackendRuntimeReadinessApiText = (value: unknown): string => {
   const raw = typeof value === "string" ? value : JSON.stringify(value ?? "");
@@ -591,6 +672,9 @@ const isApiEnvelope = (value: unknown): value is ApiRuntimeEnvelope =>
 const stringArray = (value: unknown): string[] | undefined =>
   Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined;
 
+const isDatabasePackageConfigKey = (value: string): boolean =>
+  /^CAMPAIGN_OS_DATABASE_[A-Z0-9_]+$/.test(value);
+
 const isValidSummaryStatus = (value: unknown): value is BackendRuntimeReadinessSummaryStatus =>
   value === "blocked" || value === "ready" || value === "scaffold";
 
@@ -633,6 +717,83 @@ const recordArray = (value: unknown): Record<string, unknown>[] =>
 
 const diagnosticCodesFrom = (value: unknown): string[] =>
   stringArray(value)?.map(sanitizeBackendRuntimeReadinessApiText) ?? [];
+
+const explicitFalseFrom = (
+  record: Record<string, unknown>,
+  fallback: Record<string, unknown> | undefined,
+  key: string,
+): boolean =>
+  record[key] === false || (record[key] === undefined && fallback?.[key] === false);
+
+const normalizeDatabasePackageBinding = (
+  value: unknown,
+): BackendRuntimeReadinessDbPackageBindingSummary | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const noLiveFlags = readNestedRecord(value, ["noLiveFlags"]);
+  const bindingId = safeString(value.bindingId);
+  const status = safeString(value.status);
+  const requiredConfigKeys = stringArray(value.requiredConfigKeys);
+  const liveFlagKeys = [
+    "browserBundleAllowed",
+    "dbClientConstructed",
+    "liveConnectionAttempted",
+    "liveContractWritesEnabled",
+    "liveMigrationExecutionEnabled",
+    "liveProductionMutationEnabled",
+    "liveProviderCallsEnabled",
+    "liveQueryExecutionEnabled",
+    "liveRewardCustodyEnabled",
+    "liveRewardDistributionEnabled",
+    "liveStorageWritesEnabled",
+    "liveTransactionExecutionEnabled",
+    "secretValueExposed",
+  ];
+
+  if (
+    !bindingId
+    || !status
+    || value.packageName !== "pg"
+    || value.packageRef !== "npm:pg"
+    || value.productionReady !== false
+    || typeof value.blockerCount !== "number"
+    || !Number.isFinite(value.blockerCount)
+    || requiredConfigKeys === undefined
+    || !requiredConfigKeys.every(isDatabasePackageConfigKey)
+    || stringArray(value.diagnosticCodes) === undefined
+    || typeof value.valid !== "boolean"
+    || !liveFlagKeys.every((key) => explicitFalseFrom(value, noLiveFlags, key))
+  ) {
+    return undefined;
+  }
+
+  return {
+    bindingId,
+    blockerCount: numberValue(value.blockerCount),
+    browserBundleAllowed: false,
+    dbClientConstructed: false,
+    diagnosticCodes: diagnosticCodesFrom(value.diagnosticCodes),
+    liveConnectionAttempted: false,
+    liveContractWritesEnabled: false,
+    liveMigrationExecutionEnabled: false,
+    liveProductionMutationEnabled: false,
+    liveProviderCallsEnabled: false,
+    liveQueryExecutionEnabled: false,
+    liveRewardCustodyEnabled: false,
+    liveRewardDistributionEnabled: false,
+    liveStorageWritesEnabled: false,
+    liveTransactionExecutionEnabled: false,
+    packageName: "pg",
+    packageRef: "npm:pg",
+    productionReady: false,
+    requiredConfigKeys: uniqueSafeStrings(requiredConfigKeys),
+    secretValueExposed: false,
+    status,
+    valid: value.valid === true,
+  };
+};
 
 const persistenceStatusLabel = (
   status: BackendRuntimePersistencePostureStatus,
@@ -942,6 +1103,13 @@ const normalizeReadinessSummary = (
   summary: BackendRuntimeReadinessSummary,
 ): BackendRuntimeReadinessSummary => ({
   ...summary,
+  databasePackageBinding: {
+    ...summary.databasePackageBinding,
+    bindingId: sanitizeBackendRuntimeReadinessApiText(summary.databasePackageBinding.bindingId),
+    diagnosticCodes: uniqueSafeStrings(summary.databasePackageBinding.diagnosticCodes),
+    requiredConfigKeys: uniqueSafeStrings(summary.databasePackageBinding.requiredConfigKeys),
+    status: sanitizeBackendRuntimeReadinessApiText(summary.databasePackageBinding.status),
+  },
   diagnostics: summary.diagnostics.map((diagnostic) => ({
     ...diagnostic,
     code: sanitizeBackendRuntimeReadinessApiText(diagnostic.code),
@@ -970,9 +1138,15 @@ const readinessSummaryFromEnvelope = (body: unknown): BackendRuntimeReadinessSum
   }
 
   const summary = body.data.productionBackendReadiness;
+  const databasePackageBinding = normalizeDatabasePackageBinding(
+    readNestedRecord(summary, ["databasePackageBinding"])
+    ?? readNestedRecord(body.data, ["backendService", "databaseAdapterRuntime", "packageBinding"])
+    ?? readNestedRecord(body.data, ["serverRuntime", "readiness", "databaseAdapterRuntime", "packageBinding"]),
+  );
 
   if (
     !isRecord(summary)
+    || databasePackageBinding === undefined
     || summary.id !== "production-backend-runtime-readiness"
     || !isValidSummaryStatus(summary.status)
     || summary.productionReady !== false
@@ -990,7 +1164,10 @@ const readinessSummaryFromEnvelope = (body: unknown): BackendRuntimeReadinessSum
     return undefined;
   }
 
-  return normalizeReadinessSummary(summary as unknown as BackendRuntimeReadinessSummary);
+  return normalizeReadinessSummary({
+    ...summary,
+    databasePackageBinding,
+  } as unknown as BackendRuntimeReadinessSummary);
 };
 
 const fallbackState = ({

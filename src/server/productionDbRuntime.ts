@@ -13,6 +13,10 @@ import {
   productionDatabaseRequiredStoreIds,
   productionDatabaseStoreRegistry,
 } from "./productionDatabase";
+import {
+  createProductionDbPackageBinding,
+  type ProductionDbPackageBindingSummary,
+} from "./productionDbPackageBinding";
 import type { BackendStoreId } from "./persistenceAdapterPort";
 
 export type ProductionDbRuntimeStatus = "ready" | "blocked" | "closed" | "failed";
@@ -103,6 +107,11 @@ export interface ProductionDbRuntimeContract {
   liveQueryExecutionEnabled: false;
   migrationGate: ProductionDbMigrationGateSummary;
   ownerStores: BackendStoreId[];
+  packageBinding: ProductionDbPackageBindingSummary;
+  packageBindingBlockerCount: number;
+  packageBindingDiagnosticCodes: ProductionDbPackageBindingSummary["diagnosticCodes"];
+  packageBindingProductionReady: false;
+  packageBindingStatus: ProductionDbPackageBindingSummary["status"];
   profileId: BackendRuntimeProfileId;
   providerId: string;
   queryCapability: ProductionDbQueryCapability;
@@ -363,6 +372,10 @@ export const createProductionDbRuntimeContract = ({
     failureReason,
     profileId: profileResolution.profile.id,
   });
+  const packageBinding = createProductionDbPackageBinding({
+    env,
+    profileId: profileResolution.profile.id,
+  });
   const preGateDiagnostics: ProductionDbDiagnostic[] = [
     ...profileResolution.diagnostics.map((item) =>
       diagnostic("PRODUCTION_DB_PROFILE_UNSUPPORTED", item.field, item.message, item.severity),
@@ -428,6 +441,11 @@ export const createProductionDbRuntimeContract = ({
       diagnosticCodes: diagnostics.map((item) => item.code),
     },
     ownerStores: productionDatabaseStoreRegistry.map((store) => store.id),
+    packageBinding,
+    packageBindingBlockerCount: packageBinding.blockerCount,
+    packageBindingDiagnosticCodes: [...packageBinding.diagnosticCodes],
+    packageBindingProductionReady: false,
+    packageBindingStatus: packageBinding.status,
     profileId: profileResolution.profile.id,
     providerId: registry.selectedProviderId,
     queryCapability: createQueryCapability(driver),

@@ -459,6 +459,7 @@ export interface BackendRuntimeSmokeObservabilityExporterFoundationSummary {
 }
 
 export interface BackendRuntimeSmokeProductionBackendReadinessSummary {
+  databasePackageBinding?: BackendRuntimeSmokeDatabasePackageBindingSummary;
   contractsEndpoint?: string;
   healthEndpoint?: string;
   missingApiSkillIds: string[];
@@ -470,6 +471,29 @@ export interface BackendRuntimeSmokeProductionBackendReadinessSummary {
   startCommand?: string;
   status?: string;
   traceHeaderName?: string;
+}
+
+export interface BackendRuntimeSmokeDatabasePackageBindingSummary {
+  bindingId?: string;
+  blockerCount: number;
+  diagnosticCodes: string[];
+  liveConnectionAttempted: false;
+  liveContractWritesEnabled: false;
+  liveMigrationExecutionEnabled: false;
+  liveProductionMutationEnabled: false;
+  liveProviderCallsEnabled: false;
+  liveQueryExecutionEnabled: false;
+  liveRewardCustodyEnabled: false;
+  liveRewardDistributionEnabled: false;
+  liveStorageWritesEnabled: false;
+  liveTransactionExecutionEnabled: false;
+  noLiveFlagsAllFalse: boolean;
+  packageName?: string;
+  packageRef?: string;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  status?: string;
+  valid: boolean;
 }
 
 export interface BackendRuntimeSmokeSummary {
@@ -614,8 +638,23 @@ const readContractWriterRuntime = (
 
 const readProductionBackendReadiness = (
   value: unknown,
-): Record<string, unknown> | undefined =>
-  readNestedRecord(value, ["productionBackendReadiness"]);
+): Record<string, unknown> | undefined => {
+  const readiness = readNestedRecord(value, ["productionBackendReadiness"]);
+
+  if (!readiness) {
+    return undefined;
+  }
+
+  const databasePackageBinding =
+    readNestedRecord(readiness, ["databasePackageBinding"])
+    ?? readNestedRecord(value, ["backendService", "databaseAdapterRuntime", "packageBinding"])
+    ?? readNestedRecord(value, ["serverRuntime", "readiness", "databaseAdapterRuntime", "packageBinding"]);
+
+  return {
+    ...readiness,
+    ...(databasePackageBinding ? { databasePackageBinding } : {}),
+  };
+};
 
 const getNumber = (
   record: Record<string, unknown> | undefined,
@@ -639,6 +678,9 @@ const summarizeProductionBackendReadiness = (
   const profile = readNestedRecord(record, ["profile"]);
   const routeCoverage = readNestedRecord(record, ["routeCoverage"]);
   const tracePolicy = readNestedRecord(record, ["tracePolicy"]);
+  const databasePackageBinding = summarizeDatabasePackageBinding(
+    readNestedRecord(record, ["databasePackageBinding"]),
+  );
   const noLiveSideEffectsAllFalse =
     noLiveSideEffects !== undefined
     && Object.values(noLiveSideEffects).length > 0
@@ -646,6 +688,7 @@ const summarizeProductionBackendReadiness = (
 
   return {
     contractsEndpoint: getString(deployHandoff, "contractsEndpoint"),
+    databasePackageBinding,
     healthEndpoint: getString(deployHandoff, "healthEndpoint"),
     missingApiSkillIds: getStringArray(routeCoverage, "missingApiSkillIds"),
     noLiveSideEffectsAllFalse,
@@ -656,6 +699,88 @@ const summarizeProductionBackendReadiness = (
     startCommand: getString(deployHandoff, "startCommand"),
     status: getString(record, "status"),
     traceHeaderName: getString(tracePolicy, "traceHeaderName"),
+  };
+};
+
+const summarizeDatabasePackageBinding = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeDatabasePackageBindingSummary | undefined => {
+  if (!record || !isExplicitFalse(record, "productionReady")) {
+    return undefined;
+  }
+
+  const noLiveFlags = readNestedRecord(record, ["noLiveFlags"]);
+  const noLiveFlagsAllFalse =
+    noLiveFlags !== undefined
+    && Object.values(noLiveFlags).length > 0
+    && Object.values(noLiveFlags).every((value) => value === false);
+  const liveConnectionAttempted =
+    record.liveConnectionAttempted === false || (record.liveConnectionAttempted === undefined
+      && noLiveFlags?.liveConnectionAttempted === false);
+  const liveContractWritesEnabled =
+    record.liveContractWritesEnabled === false || (record.liveContractWritesEnabled === undefined
+      && noLiveFlags?.liveContractWritesEnabled === false);
+  const liveMigrationExecutionEnabled =
+    record.liveMigrationExecutionEnabled === false || (record.liveMigrationExecutionEnabled === undefined
+      && noLiveFlags?.liveMigrationExecutionEnabled === false);
+  const liveProductionMutationEnabled =
+    record.liveProductionMutationEnabled === false || (record.liveProductionMutationEnabled === undefined
+      && noLiveFlags?.liveProductionMutationEnabled === false);
+  const liveProviderCallsEnabled =
+    record.liveProviderCallsEnabled === false || (record.liveProviderCallsEnabled === undefined
+      && noLiveFlags?.liveProviderCallsEnabled === false);
+  const liveQueryExecutionEnabled =
+    record.liveQueryExecutionEnabled === false || (record.liveQueryExecutionEnabled === undefined
+      && noLiveFlags?.liveQueryExecutionEnabled === false);
+  const liveRewardCustodyEnabled =
+    record.liveRewardCustodyEnabled === false || (record.liveRewardCustodyEnabled === undefined
+      && noLiveFlags?.liveRewardCustodyEnabled === false);
+  const liveRewardDistributionEnabled =
+    record.liveRewardDistributionEnabled === false || (record.liveRewardDistributionEnabled === undefined
+      && noLiveFlags?.liveRewardDistributionEnabled === false);
+  const liveStorageWritesEnabled =
+    record.liveStorageWritesEnabled === false || (record.liveStorageWritesEnabled === undefined
+      && noLiveFlags?.liveStorageWritesEnabled === false);
+  const liveTransactionExecutionEnabled =
+    record.liveTransactionExecutionEnabled === false || (record.liveTransactionExecutionEnabled === undefined
+      && noLiveFlags?.liveTransactionExecutionEnabled === false);
+
+  if (
+    !liveConnectionAttempted
+    || !liveContractWritesEnabled
+    || !liveMigrationExecutionEnabled
+    || !liveProductionMutationEnabled
+    || !liveProviderCallsEnabled
+    || !liveQueryExecutionEnabled
+    || !liveRewardCustodyEnabled
+    || !liveRewardDistributionEnabled
+    || !liveStorageWritesEnabled
+    || !liveTransactionExecutionEnabled
+  ) {
+    return undefined;
+  }
+
+  return {
+    bindingId: getString(record, "bindingId"),
+    blockerCount: getNumber(record, "blockerCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    liveConnectionAttempted: false,
+    liveContractWritesEnabled: false,
+    liveMigrationExecutionEnabled: false,
+    liveProductionMutationEnabled: false,
+    liveProviderCallsEnabled: false,
+    liveQueryExecutionEnabled: false,
+    liveRewardCustodyEnabled: false,
+    liveRewardDistributionEnabled: false,
+    liveStorageWritesEnabled: false,
+    liveTransactionExecutionEnabled: false,
+    noLiveFlagsAllFalse,
+    packageName: getString(record, "packageName"),
+    packageRef: getString(record, "packageRef"),
+    productionReady: false,
+    requiredConfigKeys: getStringArray(record, "requiredConfigKeys"),
+    status: getString(record, "status"),
+    valid: getBoolean(record, "valid"),
   };
 };
 
@@ -2416,6 +2541,7 @@ const isProductionBackendReadinessSmokeReady = (
 ): summary is BackendRuntimeSmokeProductionBackendReadinessSummary =>
   summary !== undefined
   && summary.contractsEndpoint === "/api/contracts"
+  && isDatabasePackageBindingSmokeReady(summary.databasePackageBinding)
   && summary.healthEndpoint === "/api/health"
   && summary.missingApiSkillIds.length === 0
   && summary.noLiveSideEffectsAllFalse === true
@@ -2424,6 +2550,43 @@ const isProductionBackendReadinessSmokeReady = (
   && summary.smokeCommand === "npm run server:smoke"
   && summary.startCommand === "npm run server:start"
   && summary.traceHeaderName === "x-campaign-os-trace-id";
+
+const isDatabasePackageBindingSmokeReady = (
+  summary: BackendRuntimeSmokeDatabasePackageBindingSummary | undefined,
+): summary is BackendRuntimeSmokeDatabasePackageBindingSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.bindingId === "campaign-os-postgresql-package-binding-local"
+    && Number.isFinite(summary.blockerCount)
+    && summary.liveConnectionAttempted === false
+    && summary.liveContractWritesEnabled === false
+    && summary.liveMigrationExecutionEnabled === false
+    && summary.liveProductionMutationEnabled === false
+    && summary.liveProviderCallsEnabled === false
+    && summary.liveQueryExecutionEnabled === false
+    && summary.liveRewardCustodyEnabled === false
+    && summary.liveRewardDistributionEnabled === false
+    && summary.liveStorageWritesEnabled === false
+    && summary.liveTransactionExecutionEnabled === false
+    && summary.noLiveFlagsAllFalse === true
+    && summary.packageName === "pg"
+    && summary.packageRef === "npm:pg"
+    && summary.productionReady === false
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_DATABASE_PACKAGE")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_DATABASE_PACKAGE_BINDING")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_DATABASE_PROVIDER")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_DATABASE_URL")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_DATABASE_SECRET_REF")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_DATABASE_POOL_POLICY")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_DATABASE_MIGRATION_APPROVAL")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_DATABASE_ROLLBACK_BACKUP_PLAN")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_DATABASE_OBSERVABILITY_REF")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_DATABASE_RUNBOOK_URL")
+    && summary.requiredConfigKeys.includes("CAMPAIGN_OS_DATABASE_LIVE_ENABLEMENT")
+    && (summary.status === "local_ready" || summary.status === "blocked");
+};
 
 export const runBackendRuntimeSmoke = async ({
   env,

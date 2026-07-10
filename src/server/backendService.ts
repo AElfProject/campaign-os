@@ -30,6 +30,7 @@ import {
   createProductionDatabaseAdapterRuntimeContract,
   type ConnectionPoolState,
   type DatabaseAdapterDeferredDependency,
+  type DatabaseAdapterPackageBindingSummary,
   type DatabaseAdapterRuntimeDiagnostic,
   type DatabaseAdapterRuntimeStatus,
   type DatabaseAdapterRuntimeStore,
@@ -771,6 +772,7 @@ export interface BackendDatabaseAdapterRuntimeSummary {
     handoffValid: boolean;
     migrationGateStatus: DatabaseMigrationExecutorHandoffSummary["migrationGateStatus"];
   };
+  packageBinding: DatabaseAdapterPackageBindingSummary;
   profileId: BackendConfigContract["profileId"];
   productionDbRuntime: BackendProductionDbRuntimeSummary;
   providerId: string;
@@ -792,6 +794,10 @@ export interface BackendProductionDbRuntimeSummary {
   liveQueryExecutionEnabled: false;
   migrationGateStatus: ProductionDbRuntimeReadinessProjection["migrationGateStatus"];
   ownerStoreCount: number;
+  packageBindingBlockerCount: ProductionDbRuntimeReadinessProjection["packageBindingBlockerCount"];
+  packageBindingDiagnosticCodes: ProductionDbRuntimeReadinessProjection["packageBindingDiagnosticCodes"];
+  packageBindingProductionReady: false;
+  packageBindingStatus: ProductionDbRuntimeReadinessProjection["packageBindingStatus"];
   profileId: ProductionDbRuntimeReadinessProjection["profileId"];
   providerId: ProductionDbRuntimeReadinessProjection["providerId"];
   schemaManifestId: ProductionDbRuntimeReadinessProjection["schemaManifestId"];
@@ -1751,7 +1757,9 @@ export const createBackendPersistenceFoundationSummary = ({
     ...databaseAdapterRuntime.connectionPool.diagnosticCodes,
     ...databaseAdapterRuntime.migrationExecutor.diagnosticCodes,
     ...databaseAdapterRuntime.migrationHandoff.diagnosticCodes,
+    ...databaseAdapterRuntime.packageBinding.diagnosticCodes,
     ...databaseAdapterRuntime.productionDbRuntime.diagnosticCodes,
+    ...databaseAdapterRuntime.productionDbRuntime.packageBindingDiagnosticCodes,
     ...migration.runnerPlan.diagnostics.map((diagnostic) => diagnostic.code),
     ...migration.executionGate.diagnostics.map((diagnostic) => diagnostic.code),
     ...migration.validation.issues.map((issue) => issue.code),
@@ -2304,6 +2312,14 @@ export const createBackendDatabaseAdapterRuntimeSummary = (
     handoffValid: runtime.migrationHandoff.valid,
     migrationGateStatus: runtime.migrationHandoff.migrationGateStatus,
   },
+  packageBinding: {
+    ...runtime.packageBinding,
+    diagnosticCodes: [...runtime.packageBinding.diagnosticCodes],
+    noLiveFlags: { ...runtime.packageBinding.noLiveFlags },
+    requiredConfigKeys: [...runtime.packageBinding.requiredConfigKeys],
+    requiredStoreIds: [...runtime.packageBinding.requiredStoreIds],
+    storeCoverage: runtime.packageBinding.storeCoverage.map((store) => ({ ...store })),
+  },
   profileId: runtime.profileId,
   productionDbRuntime: {
     connectionState: runtime.productionDbRuntime.connectionState,
@@ -2315,6 +2331,10 @@ export const createBackendDatabaseAdapterRuntimeSummary = (
     liveQueryExecutionEnabled: runtime.productionDbRuntime.liveQueryExecutionEnabled,
     migrationGateStatus: runtime.productionDbRuntime.migrationGateStatus,
     ownerStoreCount: runtime.productionDbRuntime.ownerStoreCount,
+    packageBindingBlockerCount: runtime.productionDbRuntime.packageBindingBlockerCount,
+    packageBindingDiagnosticCodes: [...runtime.productionDbRuntime.packageBindingDiagnosticCodes],
+    packageBindingProductionReady: runtime.productionDbRuntime.packageBindingProductionReady,
+    packageBindingStatus: runtime.productionDbRuntime.packageBindingStatus,
     profileId: runtime.productionDbRuntime.profileId,
     providerId: runtime.productionDbRuntime.providerId,
     schemaManifestId: runtime.productionDbRuntime.schemaManifestId,
