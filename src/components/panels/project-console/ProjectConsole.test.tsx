@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   loadBackendRuntimeReadinessApiBridgeState,
+  seededBackendRuntimePersistencePosture,
   seededBackendRuntimeReadinessSummary,
   type BackendRuntimeReadinessApiBridgeState,
 } from "../../../api/backendRuntimeReadinessApiBridge";
@@ -418,6 +419,37 @@ const backendReadinessApiState = (): BackendRuntimeReadinessApiBridgeState => ({
   configured: true,
   diagnostics: [],
   loading: false,
+  persistencePosture: {
+    ...seededBackendRuntimePersistencePosture,
+    adapterLabel: "local_json:campaign-os-review-state",
+    latestRecords: [
+      {
+        kind: "export_preview",
+        routeId: "campaigns.export.preview",
+        traceId: "trace-safe-export-preview",
+      },
+      {
+        kind: "wallet_session",
+        routeId: "wallet.session.create",
+        traceId: "trace-safe-wallet-session",
+      },
+    ],
+    mode: "local_json",
+    recordCount: 3,
+    safety: {
+      durable: true,
+      localOnly: true,
+      noMigrationRunner: true,
+      noProductionDatabase: true,
+      noSecretHandling: true,
+    },
+    status: "durable_local",
+    statusLabel: {
+      "en-US": "Durable local review persistence",
+      "zh-CN": "Durable local review persistence",
+      "zh-TW": "Durable local review persistence",
+    },
+  },
   source: "api_runtime",
   status: "ready",
   summary: {
@@ -498,6 +530,7 @@ describe("Project Console shell", () => {
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockReset();
     mockedLoadPublishDeliveryReviewApiBridgeState.mockReset();
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockReset();
+    mockedLoadBackendRuntimeReadinessApiBridgeState.mockResolvedValue(backendReadinessApiState());
     mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValue(publishDeliveryReviewApiState());
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockResolvedValue(pointsRankingLedgerRuntimeApiState());
   });
@@ -1950,7 +1983,7 @@ describe("Project Console shell", () => {
     expect(within(exportDeliveryApi).getByText("storage disabled")).toBeInTheDocument();
   });
 
-  it("clicks Backend Runtime Readiness review action and renders API-backed metadata", async () => {
+  it("loads Backend Runtime Readiness automatically and renders API-backed persistence metadata", async () => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockResolvedValueOnce(backendReadinessApiState());
 
@@ -1959,8 +1992,6 @@ describe("Project Console shell", () => {
     clickWorkspace("Export");
 
     const backendReadiness = screen.getByLabelText("Backend Runtime Readiness review");
-
-    fireEvent.click(within(backendReadiness).getByRole("button", { name: "Review backend runtime" }));
 
     await waitFor(() => expect(mockedLoadBackendRuntimeReadinessApiBridgeState).toHaveBeenCalledWith({
       config: {
@@ -1974,6 +2005,72 @@ describe("Project Console shell", () => {
     expect(within(backendReadiness).getByText("staging-scaffold")).toBeInTheDocument();
     expect(within(backendReadiness).getByText("17 / 18 API skills")).toBeInTheDocument();
     expect(within(backendReadiness).getByText("runtime.production.database")).toBeInTheDocument();
+
+    const persistence = screen.getByLabelText("Backend Runtime Persistence review");
+
+    expect(within(persistence).getAllByText("Durable local review persistence")[0]).toBeInTheDocument();
+    expect(within(persistence).getByText("local_json")).toBeInTheDocument();
+    expect(within(persistence).getByText("3")).toBeInTheDocument();
+    expect(within(persistence).getByText("local_json:campaign-os-review-state")).toBeInTheDocument();
+    expect(within(persistence).getByText("export_preview / campaigns.export.preview / trace-safe-export-preview"))
+      .toBeInTheDocument();
+    expect(within(persistence).getByText("No production database")).toBeInTheDocument();
+    expect(within(persistence).getByText("No migration runner")).toBeInTheDocument();
+    expect(within(persistence).getByText("No queues or schedulers")).toBeInTheDocument();
+    expect(within(persistence).getByText("No reward distribution")).toBeInTheDocument();
+  });
+
+  it("renders blocked durable persistence setup without unsafe values", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedLoadBackendRuntimeReadinessApiBridgeState.mockResolvedValueOnce({
+      ...backendReadinessApiState(),
+      persistencePosture: {
+        ...seededBackendRuntimePersistencePosture,
+        adapterLabel: "redacted local path",
+        diagnosticCodes: ["MISSING_LOCAL_PERSISTENCE_DIR"],
+        latestRecords: [{
+          kind: "wallet_session",
+          routeId: "redacted provider data",
+          traceId: "redacted signature",
+        }],
+        mode: "local_json",
+        nextAction: {
+          "en-US": "Set CAMPAIGN_OS_PERSISTENCE_DIR for local_json review or switch back to memory review.",
+          "zh-CN": "Set CAMPAIGN_OS_PERSISTENCE_DIR for local_json review or switch back to memory review.",
+          "zh-TW": "Set CAMPAIGN_OS_PERSISTENCE_DIR for local_json review or switch back to memory review.",
+        },
+        recordCount: 0,
+        safety: {
+          durable: true,
+          localOnly: true,
+          noMigrationRunner: true,
+          noProductionDatabase: true,
+          noSecretHandling: true,
+        },
+        status: "unavailable",
+        statusLabel: {
+          "en-US": "Durable local persistence unavailable",
+          "zh-CN": "Durable local persistence unavailable",
+          "zh-TW": "Durable local persistence unavailable",
+        },
+      },
+    });
+
+    render(<App />);
+
+    clickWorkspace("Export");
+
+    const persistence = await screen.findByLabelText("Backend Runtime Persistence review");
+
+    expect(within(persistence).getAllByText("Durable local persistence unavailable")[0]).toBeInTheDocument();
+    expect(within(persistence).getByText(/MISSING_LOCAL_PERSISTENCE_DIR/)).toBeInTheDocument();
+    expect(within(persistence).getByText("redacted local path")).toBeInTheDocument();
+    expect(within(persistence).getByText("wallet_session / redacted provider data / redacted signature"))
+      .toBeInTheDocument();
+    expect(screen.queryByText(/campaign-os-kitty/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/docs\/current/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/raw-signature/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/token=sample/i)).not.toBeInTheDocument();
   });
 
   it("loads Publish Delivery Review Bridge automatically and renders API-backed joint MVP state", async () => {

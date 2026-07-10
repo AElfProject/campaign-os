@@ -3,8 +3,10 @@ import {
   backendRuntimeReadinessApiBoundary,
   createBackendRuntimeReadinessApiLoadingState,
   loadBackendRuntimeReadinessApiBridgeState,
+  seededBackendRuntimePersistencePosture,
   seededBackendRuntimeReadinessSummary,
   type BackendRuntimeReadinessApiBridgeState,
+  type BackendRuntimePersistencePostureStatus,
 } from "../../../api/backendRuntimeReadinessApiBridge";
 import {
   createPublishDeliveryReviewApiLoadingState,
@@ -1332,10 +1334,133 @@ const createBackendRuntimeReadinessSeededFallbackState = (): BackendRuntimeReadi
     },
   ],
   loading: false,
+  persistencePosture: seededBackendRuntimePersistencePosture,
   source: "seeded_fallback",
   status: "fallback",
   summary: seededBackendRuntimeReadinessSummary,
 });
+
+const persistencePostureBadgeState = (
+  status: BackendRuntimePersistencePostureStatus,
+): "blocker" | "ready" | "warning" => {
+  if (status === "durable_local") {
+    return "ready";
+  }
+
+  return status === "unavailable" ? "blocker" : "warning";
+};
+
+const BackendRuntimePersistencePostureSurface = ({
+  locale,
+  state,
+}: {
+  locale: BusinessContentLocale;
+  state: BackendRuntimeReadinessApiBridgeState;
+}) => {
+  const posture = state.persistencePosture ?? seededBackendRuntimePersistencePosture;
+  const latestRecords = posture.latestRecords.length > 0
+    ? posture.latestRecords
+    : [{ kind: "No persisted review records" }];
+  const disabledBoundaries = [
+    "No production database",
+    "No migration runner",
+    "No object storage",
+    "No wallet signing",
+    "No contract write",
+    "No queues or schedulers",
+    "No reward custody",
+    "No reward distribution",
+  ];
+
+  return (
+    <section aria-label="Backend Runtime Persistence review" style={panelStyle}>
+      <div style={headingRowStyle}>
+        <div style={{ minWidth: 0 }}>
+          <p style={statLabelStyle}>Persistence posture</p>
+          <h3 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+            Backend Runtime Persistence
+          </h3>
+          <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+            {getLocalizedText(posture.statusLabel, locale)}
+          </p>
+        </div>
+        <PublishStateBadge
+          label={getLocalizedText(posture.statusLabel, locale)}
+          state={persistencePostureBadgeState(posture.status)}
+        />
+      </div>
+
+      <div aria-label="Backend Runtime Persistence summary" style={gridStyle}>
+        {[
+          {
+            detail: posture.status === "durable_local"
+              ? "Records survive local API runtime restart"
+              : getLocalizedText(posture.nextAction, locale),
+            label: "Mode",
+            value: posture.mode,
+          },
+          {
+            detail: "Local review records visible through /api/health",
+            label: "Review records",
+            value: String(posture.recordCount),
+          },
+          {
+            detail: "Adapter label is path-redacted before rendering",
+            label: "Adapter",
+            value: posture.adapterLabel ?? "not configured",
+          },
+          {
+            detail: `API source: ${state.source}`,
+            label: "Durability",
+            value: posture.safety.durable ? "durable local" : "memory only",
+          },
+        ].map((stat) => (
+          <article key={stat.label} style={{ ...cardStyle, minHeight: 0 }}>
+            <p style={statLabelStyle}>{stat.label}</p>
+            <p style={{ ...statValueStyle, fontSize: 20, overflowWrap: "anywhere" }}>{stat.value}</p>
+            <p style={{ color: "#475569", fontSize: 13, lineHeight: 1.4, margin: 0 }}>
+              {stat.detail}
+            </p>
+          </article>
+        ))}
+      </div>
+
+      <div style={sectionGridStyle}>
+        <article style={{ ...workflowStyle, minHeight: 0 }}>
+          <h4 style={{ fontSize: 18, margin: 0 }}>Latest safe records</h4>
+          <ul style={compactListStyle}>
+            {latestRecords.map((record, index) => (
+              <li
+                key={`${record.kind}-${record.routeId ?? "none"}-${record.traceId ?? index}`}
+                style={chipStyle}
+              >
+                {[record.kind, record.routeId, record.traceId].filter(Boolean).join(" / ")}
+              </li>
+            ))}
+          </ul>
+        </article>
+
+        <article style={{ ...workflowStyle, minHeight: 0 }}>
+          <h4 style={{ fontSize: 18, margin: 0 }}>Disabled production boundaries</h4>
+          <ul style={compactListStyle}>
+            {disabledBoundaries.map((boundary) => (
+              <li key={boundary} style={chipStyle}>
+                {boundary}
+              </li>
+            ))}
+          </ul>
+        </article>
+      </div>
+
+      <div style={boundaryStyle}>
+        <p style={{ margin: 0 }}>{getLocalizedText(posture.nextAction, locale)}</p>
+        <p style={{ margin: "8px 0 0" }}>
+          Diagnostic codes: {posture.diagnosticCodes.length > 0 ? posture.diagnosticCodes.join(", ") : "none"}
+        </p>
+      </div>
+    </section>
+  );
+};
 
 const exportDeliveryApiSourceLabel = (
   source: ExportArtifactDeliveryApiSource,
@@ -2110,17 +2235,10 @@ export const ProjectConsole = ({
     loadPointsRankingLedgerRuntimeApiReview();
   };
 
-  useEffect(() => {
-    if (activeWorkspace === "export") {
-      loadPublishDeliveryApiReview();
-      loadPointsRankingLedgerRuntimeApiReview();
-    }
-  }, [activeWorkspace, loadPointsRankingLedgerRuntimeApiReview, loadPublishDeliveryApiReview]);
-
-
-  const runBackendReadinessApiReview = () => {
+  const loadBackendReadinessApiReview = useCallback(() => {
     if (!backendReadinessApiBaseUrl?.trim()) {
       setBackendReadinessApiState(createBackendRuntimeReadinessSeededFallbackState());
+      setBackendReadinessApiReviewInFlight(false);
       return;
     }
 
@@ -2144,7 +2262,24 @@ export const ProjectConsole = ({
         setBackendReadinessApiReviewInFlight(false);
       }
     });
+  }, [backendReadinessApiBaseUrl]);
+
+  const runBackendReadinessApiReview = () => {
+    loadBackendReadinessApiReview();
   };
+
+  useEffect(() => {
+    if (activeWorkspace === "export") {
+      loadPublishDeliveryApiReview();
+      loadPointsRankingLedgerRuntimeApiReview();
+      loadBackendReadinessApiReview();
+    }
+  }, [
+    activeWorkspace,
+    loadBackendReadinessApiReview,
+    loadPointsRankingLedgerRuntimeApiReview,
+    loadPublishDeliveryApiReview,
+  ]);
 
   const stats = [
     {
@@ -6656,6 +6791,11 @@ export const ProjectConsole = ({
         onReview={runPointsRankingLedgerRuntimeApiReview}
         reviewInFlight={pointsRankingLedgerRuntimeApiReviewInFlight}
         state={pointsRankingLedgerRuntimeApiState}
+      />
+
+      <BackendRuntimePersistencePostureSurface
+        locale={locale}
+        state={backendReadinessApiState}
       />
 
       <BackendRuntimeReadinessPanel

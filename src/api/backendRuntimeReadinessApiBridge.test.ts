@@ -100,9 +100,10 @@ const response = (
   status: options.status ?? 200,
 } as unknown as Response);
 
-const envelope = (summary: unknown, traceId: string) => ({
+const envelope = (summary: unknown, traceId: string, data: Record<string, unknown> = {}) => ({
   data: {
     productionBackendReadiness: summary,
+    ...data,
   },
   ok: true,
   runtime,
@@ -222,6 +223,283 @@ describe("backend runtime readiness API bridge", () => {
       }),
     );
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("deduplicates API runtime readiness labels before exposing UI summary", async () => {
+    const duplicateSummary = {
+      ...readinessSummary,
+      productionDependencyBlockers: [
+        {
+          area: "provider",
+          attachPoint: "src/server/providerIndexerClientReadiness.ts",
+          blockedBy: ["provider", "CAMPAIGN_OS_PROVIDER_REGISTRY_URL"],
+          id: "provider-registry",
+          requiredBeforeProduction: true,
+          status: "blocked",
+        },
+        {
+          area: "provider",
+          attachPoint: "src/server/providerHttpRuntime.ts",
+          blockedBy: ["CAMPAIGN_OS_PROVIDER_REGISTRY_URL", "CAMPAIGN_OS_PROVIDER_TIMEOUT_POLICY"],
+          id: "provider-http",
+          requiredBeforeProduction: true,
+          status: "blocked",
+        },
+        {
+          area: "queue",
+          attachPoint: "src/server/queueRuntime.ts",
+          blockedBy: ["provider", "queue", "CAMPAIGN_OS_PROVIDER_TIMEOUT_POLICY", "CAMPAIGN_OS_QUEUE_PROVIDER"],
+          id: "queue-provider",
+          requiredBeforeProduction: true,
+          status: "blocked",
+        },
+      ],
+      profile: {
+        ...readinessSummary.profile,
+        configuredRequiredConfigKeys: ["CAMPAIGN_OS_PROVIDER_REGISTRY_URL", "CAMPAIGN_OS_PROVIDER_REGISTRY_URL"],
+        missingRequiredConfigKeys: ["CAMPAIGN_OS_PROVIDER_REGISTRY_URL", "CAMPAIGN_OS_PROVIDER_REGISTRY_URL"],
+        requiredConfigKeys: ["CAMPAIGN_OS_PROVIDER_REGISTRY_URL", "CAMPAIGN_OS_PROVIDER_REGISTRY_URL"],
+      },
+      routeCoverage: {
+        ...readinessSummary.routeCoverage,
+        missingApiSkillIds: ["provider.http", "provider.http"],
+        routeIds: ["runtime.health", "runtime.health", "campaigns.provider.readiness"],
+      },
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response(envelope(duplicateSummary, "trace-health")))
+      .mockResolvedValueOnce(response(envelope(duplicateSummary, "trace-contracts"))) as unknown as BackendRuntimeReadinessApiFetch;
+
+    const state = await loadBackendRuntimeReadinessApiBridgeState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl,
+    });
+    const blockedDependencyLabels = state.summary.productionDependencyBlockers.flatMap((blocker) => [
+      blocker.area,
+      ...blocker.blockedBy,
+    ]);
+
+    expect(state.summary.profile.requiredConfigKeys).toEqual(["CAMPAIGN_OS_PROVIDER_REGISTRY_URL"]);
+    expect(state.summary.profile.missingRequiredConfigKeys).toEqual(["CAMPAIGN_OS_PROVIDER_REGISTRY_URL"]);
+    expect(state.summary.routeCoverage.missingApiSkillIds).toEqual(["provider.http"]);
+    expect(state.summary.routeCoverage.routeIds).toEqual(["runtime.health", "campaigns.provider.readiness"]);
+    expect(state.summary.productionDependencyBlockers.map((blocker) => blocker.area)).toEqual(["provider", "queue"]);
+    expect(new Set(blockedDependencyLabels).size).toBe(blockedDependencyLabels.length);
+    expect(blockedDependencyLabels).toEqual([
+      "provider",
+      "CAMPAIGN_OS_PROVIDER_REGISTRY_URL",
+      "CAMPAIGN_OS_PROVIDER_TIMEOUT_POLICY",
+      "queue",
+      "CAMPAIGN_OS_QUEUE_PROVIDER",
+    ]);
+  });
+
+  it("normalizes durable local persistence posture from health metadata", async () => {
+    const durablePersistence = {
+      adapterLabel: "local_json:campaign-os-review-state",
+      adapterPortId: "campaign-os-local-json-adapter",
+      countsByKind: {
+        export_preview: 1,
+        verification_attempt: 1,
+        wallet_session: 1,
+      },
+      durable: true,
+      latestRecords: [
+        {
+          createdAt: "2026-07-10T12:00:00.000Z",
+          kind: "export_preview",
+          routeId: "campaigns.export.preview",
+          summary: { signedUrl: "signed-url-sample" },
+          traceId: "trace-export-preview",
+        },
+        {
+          kind: "wallet_session",
+          routeId: "wallet.session.create",
+          traceId: "trace-wallet-session",
+          walletAddress: "2F4...9aB",
+        },
+      ],
+      localOnly: true,
+      mode: "local_json",
+      noMigrationRunner: true,
+      noProductionDatabase: true,
+      noSecretHandling: true,
+      recordCount: 3,
+      status: "ok",
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response(envelope(readinessSummary, "trace-health", {
+        persistence: durablePersistence,
+      })))
+      .mockResolvedValueOnce(response(envelope(readinessSummary, "trace-contracts"))) as unknown as BackendRuntimeReadinessApiFetch;
+
+    const state = await loadBackendRuntimeReadinessApiBridgeState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl,
+    });
+
+    expect(state.persistencePosture).toMatchObject({
+      adapterLabel: "local_json:campaign-os-review-state",
+      diagnosticCodes: [],
+      latestRecords: [
+        {
+          kind: "export_preview",
+          routeId: "campaigns.export.preview",
+          traceId: "trace-export-preview",
+        },
+        {
+          kind: "wallet_session",
+          routeId: "wallet.session.create",
+          traceId: "trace-wallet-session",
+        },
+      ],
+      mode: "local_json",
+      recordCount: 3,
+      safety: {
+        durable: true,
+        localOnly: true,
+        noMigrationRunner: true,
+        noProductionDatabase: true,
+        noSecretHandling: true,
+      },
+      status: "durable_local",
+    });
+    expect(JSON.stringify(state.persistencePosture).toLowerCase()).not.toContain("signed-url-sample");
+  });
+
+  it("normalizes blocked durable local setup without downgrading to memory", async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(response({
+      error: {
+        code: "INVALID_REQUEST",
+        details: {
+          diagnosticCodes: ["MISSING_LOCAL_PERSISTENCE_DIR"],
+          fallbackUsed: false,
+          field: "runtimeConfig.persistence.localDataDir",
+          persistenceMode: "local_json",
+          reason:
+            "local_json persistence requires /Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/docs/current token=sample",
+          status: "blocked",
+        },
+      },
+      ok: false,
+      traceId: "trace-durable-blocked",
+    }, {
+      ok: false,
+      status: 400,
+      traceId: "trace-durable-blocked",
+    })) as unknown as BackendRuntimeReadinessApiFetch;
+
+    const state = await loadBackendRuntimeReadinessApiBridgeState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl,
+    });
+
+    expect(state).toMatchObject({
+      source: "error_fallback",
+      status: "error",
+      traceId: "trace-durable-blocked",
+      persistencePosture: {
+        diagnosticCodes: ["MISSING_LOCAL_PERSISTENCE_DIR"],
+        mode: "local_json",
+        recordCount: 0,
+        status: "unavailable",
+      },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const serialized = JSON.stringify(state).toLowerCase();
+
+    for (const unsafe of ["campaign-os-kitty", "docs/current", "token=sample", "memory only"]) {
+      expect(serialized).not.toContain(unsafe);
+    }
+  });
+
+  it("normalizes production-deferred persistence posture from blocked backend readiness", async () => {
+    const blockedSummary = {
+      ...readinessSummary,
+      profile: {
+        ...readinessSummary.profile,
+        configuredRequiredConfigKeys: ["CAMPAIGN_OS_DATABASE_URL"],
+        id: "production-required",
+        label: "Production required backend profile",
+        missingRequiredConfigKeys: ["CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT"],
+        requiredConfigKeys: ["CAMPAIGN_OS_DATABASE_URL", "CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT"],
+        requiresSecrets: true,
+        status: "blocked",
+      },
+      status: "blocked",
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response(envelope(blockedSummary, "trace-health")))
+      .mockResolvedValueOnce(response(envelope(blockedSummary, "trace-contracts"))) as unknown as BackendRuntimeReadinessApiFetch;
+
+    const state = await loadBackendRuntimeReadinessApiBridgeState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl,
+    });
+
+    expect(state).toMatchObject({
+      status: "blocked",
+      persistencePosture: {
+        diagnosticCodes: ["PRODUCTION_PERSISTENCE_DEFERRED"],
+        mode: "production_deferred",
+        status: "production_deferred",
+      },
+    });
+  });
+
+  it("redacts unsafe persistence metadata before exposing UI posture", async () => {
+    const unsafePersistence = {
+      adapterLabel:
+        "local_json:/Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/docs/current/token=sample",
+      durable: true,
+      latestRecords: [
+        {
+          kind: "wallet_session",
+          routeId: "provider payload token=abc123",
+          traceId: "trace-raw-signature",
+          walletSignature: "raw-signature-sample",
+        },
+      ],
+      localOnly: true,
+      mode: "local_json",
+      noMigrationRunner: true,
+      noProductionDatabase: true,
+      noSecretHandling: true,
+      recordCount: 1,
+      status: "ok",
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response(envelope(readinessSummary, "trace-health", {
+        persistence: unsafePersistence,
+      })))
+      .mockResolvedValueOnce(response(envelope(readinessSummary, "trace-contracts"))) as unknown as BackendRuntimeReadinessApiFetch;
+
+    const state = await loadBackendRuntimeReadinessApiBridgeState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl,
+    });
+    const posture = state.persistencePosture;
+    const serialized = JSON.stringify(posture).toLowerCase();
+
+    expect(posture).toMatchObject({
+      recordCount: 1,
+      status: "durable_local",
+    });
+    expect(posture?.latestRecords[0].routeId).toContain("redacted");
+    for (const unsafe of [
+      "campaign-os-kitty",
+      "docs/current",
+      "token=sample",
+      "token=abc123",
+      "raw-signature",
+      "raw-signature-sample",
+    ]) {
+      expect(serialized).not.toContain(unsafe);
+    }
   });
 
   it("falls back when health is unreachable and redacts unsafe diagnostics", async () => {
