@@ -26,6 +26,8 @@ const secretFragments = [
   "signed-url",
 ];
 
+const genericContractWriterMissionCopy = ["contract", "writer", "mission"].join(" ");
+
 const expectNoSecretLeak = (value: unknown) => {
   const serialized = JSON.stringify(value).toLowerCase();
 
@@ -737,11 +739,17 @@ describe("backend runtime bootstrap contract", () => {
           status: "blocked",
         }),
         expect.objectContaining({
+          blockedBy: expect.arrayContaining(["reward distribution mission", ...contractWriterRequiredConfigKeys]),
+          id: "reward-distribution",
+          status: "blocked",
+        }),
+        expect.objectContaining({
           id: "analytics-warehouse",
           status: "deferred",
         }),
       ]),
     );
+    expect(JSON.stringify(bootstrap.deferredDependencies)).not.toContain(genericContractWriterMissionCopy);
     expectNoSecretLeak(bootstrap);
   });
 

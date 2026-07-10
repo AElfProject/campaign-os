@@ -46,6 +46,8 @@ const secretFragments = [
   "super-secret",
 ];
 
+const genericContractWriterMissionCopy = ["contract", "writer", "mission"].join(" ");
+
 const expectNoSecretLeak = (value: unknown) => {
   const serialized = JSON.stringify(value).toLowerCase();
 
@@ -821,9 +823,15 @@ describe("backend runtime activation contract", () => {
           status: "deferred",
         }),
         expect.objectContaining({ area: "reward", id: "reward-custody", status: "blocked" }),
-        expect.objectContaining({ area: "reward", id: "reward-distribution", status: "blocked" }),
+        expect.objectContaining({
+          area: "reward",
+          blockedBy: expect.arrayContaining(["reward distribution mission", ...contractWriterRequiredConfigKeys]),
+          id: "reward-distribution",
+          status: "blocked",
+        }),
       ]),
     );
+    expect(JSON.stringify(activation.productionDependencyBlockers)).not.toContain(genericContractWriterMissionCopy);
     expect(activation.productionDependencyBlockers).toEqual(
       expect.arrayContaining(
         schedulerRuntimeProductionPreconditions.map((precondition) =>

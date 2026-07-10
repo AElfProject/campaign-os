@@ -11,6 +11,7 @@ import {
   type ApiServerRuntimeContract,
   type ResolveApiServerRuntimeContractOptions,
 } from "./serverRuntime";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 
 export type CampaignOsApiServiceStatus = "ready" | "blocked" | "deferred" | "stopped";
 export type CampaignOsApiServiceDiagnosticSeverity = "error" | "warning" | "info";
@@ -236,7 +237,7 @@ export const campaignOsApiServiceAttachMap: CampaignOsApiServiceAttachPoint[] = 
   {
     area: "contract",
     attachPoint: "src/server/servicePorts.ts",
-    blockedBy: ["contract writer mission", "signer policy", "contract ops review"],
+    blockedBy: [...contractWriterRequiredConfigKeys],
     id: "contract-writer",
     requiredBeforeProduction: true,
     status: "blocked",
@@ -268,7 +269,7 @@ export const campaignOsApiServiceAttachMap: CampaignOsApiServiceAttachPoint[] = 
   {
     area: "reward",
     attachPoint: "src/server/servicePorts.ts",
-    blockedBy: ["reward distribution mission", "contract writer mission"],
+    blockedBy: ["reward distribution mission", ...contractWriterRequiredConfigKeys],
     id: "reward-distribution",
     requiredBeforeProduction: true,
     status: "blocked",

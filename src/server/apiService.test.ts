@@ -3,6 +3,7 @@ import {
   campaignOsApiServiceAttachMap,
   createCampaignOsApiServiceContract,
 } from "./apiService";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 
 const secretFragments = [
   "bearer sample-token",
@@ -33,6 +34,8 @@ const requiredAttachPointIds = [
   "deployment-config",
   "observability-exporter",
 ];
+
+const genericContractWriterMissionCopy = ["contract", "writer", "mission"].join(" ");
 
 const expectNoSecretLeak = (value: unknown) => {
   const serialized = JSON.stringify(value).toLowerCase();
@@ -120,6 +123,15 @@ describe("Campaign OS API service bootstrap contract", () => {
       },
     });
     expect(service.composition.apiRuntime.routeCount).toBeGreaterThanOrEqual(10);
+    expect(service.attachMap.find((attachPoint) => attachPoint.id === "contract-writer")).toMatchObject({
+      blockedBy: expect.arrayContaining([...contractWriterRequiredConfigKeys]),
+      status: "blocked",
+    });
+    expect(service.attachMap.find((attachPoint) => attachPoint.id === "reward-distribution")).toMatchObject({
+      blockedBy: expect.arrayContaining(["reward distribution mission", ...contractWriterRequiredConfigKeys]),
+      status: "blocked",
+    });
+    expect(JSON.stringify(service.attachMap)).not.toContain(genericContractWriterMissionCopy);
   });
 
   it("allows explicit host, port, version, and profile overrides", () => {

@@ -529,7 +529,7 @@ export const backendRuntimeBootstrapDeferredDependencies: BackendRuntimeDeferred
   },
   {
     area: "reward",
-    blockedBy: ["reward distribution mission", "contract writer mission"],
+    blockedBy: ["reward distribution mission", ...contractWriterRequiredConfigKeys],
     id: "reward-distribution",
     label: "Reward distribution",
     requiredBeforeProduction: true,

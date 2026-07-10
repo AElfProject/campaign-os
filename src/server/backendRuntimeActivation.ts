@@ -985,7 +985,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
   {
     area: "reward",
     attachPoint: "src/server/servicePorts.ts",
-    blockedBy: ["reward distribution mission", "contract writer mission"],
+    blockedBy: ["reward distribution mission", ...contractWriterRequiredConfigKeys],
     id: "reward-distribution",
     requiredBeforeProduction: true,
     status: "blocked",

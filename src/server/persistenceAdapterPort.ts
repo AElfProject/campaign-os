@@ -16,6 +16,7 @@ import {
   createProductionDatabaseAdapterContract,
   productionDatabaseStoreRegistry,
 } from "./productionDatabase";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 
 export type PersistenceAdapterKind = "memory" | "local_json" | "deterministic_test" | "production_deferred";
 export type PersistenceAdapterStatus = "active" | "local_only" | "deferred" | "blocked";
@@ -208,7 +209,7 @@ export const backendStorePorts: BackendStorePort[] = [
   {
     adapterOwnerId: "campaign-os-contract-index-adapter",
     attachPoint: "src/server/persistence.ts",
-    blockedBy: ["contract writer mission", "contract indexer mission"],
+    blockedBy: [...contractWriterRequiredConfigKeys, "contract indexer mission"],
     currentMode: "deferred",
     futureProductionMode: "contract_index",
     id: "contract-index",

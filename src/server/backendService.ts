@@ -1130,7 +1130,7 @@ export const backendAttachMap: BackendAttachPoint[] = [
   {
     area: "reward-distribution",
     attachPoint: "src/server/servicePorts.ts",
-    blockedBy: ["reward distribution mission", "contract writer mission"],
+    blockedBy: ["reward distribution mission", ...contractWriterRequiredConfigKeys],
     currentStatus: "blocked",
     note: "No payout, claim, or reward distribution flow is active.",
     requiredBeforeProduction: true,

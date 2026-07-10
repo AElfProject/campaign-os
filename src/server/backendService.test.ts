@@ -22,6 +22,8 @@ const productionAreas = [
   "analytics-warehouse",
 ];
 
+const genericContractWriterMissionCopy = ["contract", "writer", "mission"].join(" ");
+
 const queueSecretFragments = [
   "queue-user",
   "queue-pass",
@@ -1103,6 +1105,15 @@ describe("backend service readiness report", () => {
       note: expect.stringContaining("no live telemetry"),
       requiredBeforeProduction: true,
     });
+    expect(report.attachMap.find((item) => item.area === "contract-writer")).toMatchObject({
+      blockedBy: expect.arrayContaining([...contractWriterRequiredConfigKeys]),
+      currentStatus: "blocked",
+    });
+    expect(report.attachMap.find((item) => item.area === "reward-distribution")).toMatchObject({
+      blockedBy: expect.arrayContaining(["reward distribution mission", ...contractWriterRequiredConfigKeys]),
+      currentStatus: "blocked",
+    });
+    expect(JSON.stringify(report.attachMap)).not.toContain(genericContractWriterMissionCopy);
   });
 
   it("keeps production persistence and migration runner inactive in local review", () => {
