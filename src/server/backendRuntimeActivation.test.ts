@@ -6,6 +6,7 @@ import {
   runtimeActivationEnvironmentKeys,
   runtimeActivationConfigKeys,
 } from "./backendRuntimeActivation";
+import { objectStorageExportRequiredConfigKeys } from "./objectStorageExportRuntime";
 import { bullmqConstructionProductionPreconditions } from "./bullmqConstructionReadiness";
 import { liveQueueConsumeProductionPreconditions } from "./liveQueueConsumeLoop";
 import { liveQueuePublishingProductionPreconditions } from "./liveQueuePublishingReadiness";
@@ -197,6 +198,9 @@ describe("backend runtime activation contract", () => {
     );
     expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
       expect.arrayContaining(providerHttpRuntimeConfigKeys),
+    );
+    expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
+      expect.arrayContaining([...objectStorageExportRequiredConfigKeys]),
     );
     expect(runtimeActivationConfigKeys.map((item) => item.key)).toEqual(
       expect.arrayContaining([
@@ -794,6 +798,13 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "queue", id: "live-queue-consume-live-queue-consume-redaction-policy", status: "blocked" }),
         expect.objectContaining({ area: "contract", id: "contract-writer", status: "blocked" }),
         expect.objectContaining({ area: "storage", id: "object-storage", status: "deferred" }),
+        expect.objectContaining({
+          area: "storage",
+          attachPoint: "src/server/objectStorageExportRuntime.ts",
+          blockedBy: expect.arrayContaining([...objectStorageExportRequiredConfigKeys]),
+          id: "object-storage-export",
+          status: "deferred",
+        }),
         expect.objectContaining({ area: "observability", id: "observability-exporter", status: "deferred" }),
         expect.objectContaining({ area: "analytics", id: "analytics-ingestion", status: "deferred" }),
         expect.objectContaining({ area: "reward", id: "reward-custody", status: "blocked" }),

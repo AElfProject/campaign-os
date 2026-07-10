@@ -66,6 +66,7 @@ import {
   providerHttpRuntimeProductionPreconditions,
 } from "./providerHttpRuntimeRegistry";
 import type { ProviderHttpPreconditionArea } from "./providerHttpRuntimeTypes";
+import { objectStorageExportRequiredConfigKeys } from "./objectStorageExportRuntime";
 
 export type RuntimeActivationConfigCategory =
   | "server"
@@ -700,6 +701,9 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
   ),
   configKey("CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT", "contract", "blocked", "production-required"),
   configKey("CAMPAIGN_OS_OBJECT_STORAGE_BUCKET", "storage", "deferred"),
+  ...objectStorageExportRequiredConfigKeys.map((key) =>
+    configKey(key, "storage", key === "CAMPAIGN_OS_OBJECT_STORAGE_APPROVAL_REF" ? "blocked" : "deferred"),
+  ),
   configKey("CAMPAIGN_OS_ANALYTICS_WAREHOUSE_URL", "analytics", "deferred"),
   configKey("CAMPAIGN_OS_REWARD_CUSTODY_ACCOUNT", "reward", "blocked"),
   configKey("CAMPAIGN_OS_REWARD_DISTRIBUTION_QUEUE", "reward", "blocked"),
@@ -928,6 +932,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     attachPoint: "src/server/persistenceAdapterPort.ts",
     blockedBy: ["object storage adapter", "signed URL safety review"],
     id: "object-storage",
+    requiredBeforeProduction: true,
+    status: "deferred",
+  },
+  {
+    area: "storage",
+    attachPoint: "src/server/objectStorageExportRuntime.ts",
+    blockedBy: [...objectStorageExportRequiredConfigKeys],
+    id: "object-storage-export",
     requiredBeforeProduction: true,
     status: "deferred",
   },

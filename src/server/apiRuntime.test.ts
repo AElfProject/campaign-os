@@ -971,6 +971,7 @@ describe("Campaign OS API runtime", () => {
           "runtime.contracts",
           "campaigns.publish.delivery.review",
           "campaigns.points.ranking.ledger.runtime",
+          "campaigns.export.storage.readiness",
         ]),
         runtimeRouteCount: expect.any(Number),
       }),
@@ -998,6 +999,12 @@ describe("Campaign OS API runtime", () => {
           id: "campaigns.points.ranking.ledger.runtime",
           method: "GET",
           path: "/api/campaigns/:campaignId/points-ranking-ledger-runtime",
+          readiness: "review_required",
+        }),
+        expect.objectContaining({
+          id: "campaigns.export.storage.readiness",
+          method: "GET",
+          path: "/api/campaigns/:campaignId/export/storage-readiness",
           readiness: "review_required",
         }),
       ]),
@@ -2658,6 +2665,11 @@ describe("Campaign OS API runtime", () => {
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/export-readiness`,
     });
+    const objectStorageExportReadiness = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/export/storage-readiness`,
+      headers: { "x-campaign-os-trace-id": "trace-object-storage-export-readiness" },
+    });
     const providerReadiness = await runtimeWithPersistence.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/provider-readiness`,
@@ -2848,6 +2860,64 @@ describe("Campaign OS API runtime", () => {
       expectSuccessData<LocalServiceEnvelope<PointsRankingLedgerRuntimePayload>>(pointsRankingLedgerRuntime)
         .payload.noLiveSideEffects,
     ).every((value) => value === false)).toBe(true);
+    expect(expectSuccessData<LocalServiceEnvelope<{
+      blockerCount: number;
+      campaignId: string;
+      diagnosticCodes: string[];
+      manifestSummary: {
+        artifactCount: number;
+        containsDownloadUrl: false;
+        containsObjectKey: false;
+        containsSignedUrl: false;
+        exportBatchId: string;
+        formats: string[];
+      };
+      productionReady: false;
+      providerStatus: string;
+      requiredConfigKeys: string[];
+      safety: Record<string, boolean>;
+      source: string;
+      status: string;
+      traceId: string;
+    }>>(objectStorageExportReadiness)).toMatchObject({
+      boundary: expect.objectContaining({
+        "en-US": expect.stringContaining("Local object storage export readiness review route"),
+      }),
+      payload: {
+        blockerCount: expect.any(Number),
+        campaignId: campaignDetail.id,
+        diagnosticCodes: expect.arrayContaining([
+          "OBJECT_STORAGE_APPROVAL_REQUIRED",
+          "OBJECT_STORAGE_LIVE_EXECUTION_DISABLED",
+        ]),
+        manifestSummary: {
+          artifactCount: 1,
+          containsDownloadUrl: false,
+          containsObjectKey: false,
+          containsSignedUrl: false,
+          exportBatchId: "export-awaken-sprint-preview",
+          formats: ["csv"],
+        },
+        productionReady: false,
+        providerStatus: "not_configured",
+        requiredConfigKeys: expect.arrayContaining([
+          "CAMPAIGN_OS_OBJECT_STORAGE_PROVIDER_REF",
+          "CAMPAIGN_OS_OBJECT_STORAGE_APPROVAL_REF",
+        ]),
+        safety: expect.objectContaining({
+          downloadEnabled: false,
+          liveUploadEnabled: false,
+          objectKeyCreated: false,
+          providerCallAttempted: false,
+          signedUrlCreated: false,
+        }),
+        source: "api_runtime",
+        status: "blocked",
+        traceId: "trace-object-storage-export-readiness",
+      },
+    });
+    expect(JSON.stringify(expectSuccessData(objectStorageExportReadiness))).not.toContain("signed-url");
+    expect(JSON.stringify(expectSuccessData(objectStorageExportReadiness))).not.toContain("object-key");
     expect(expectSuccessData<LocalServiceEnvelope<CompanionContractReadinessPayload>>(
       companionContractReadiness,
     ).payload).toMatchObject({
@@ -2996,6 +3066,10 @@ describe("Campaign OS API runtime", () => {
       runtime.handle({
         method: "GET",
         path: "/api/campaigns/missing-campaign/export-readiness",
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/export/storage-readiness",
       }),
       runtime.handle({
         method: "GET",

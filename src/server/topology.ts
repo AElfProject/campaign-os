@@ -401,7 +401,7 @@ export const backendServiceBoundaries = [
     adapterGroups: ["object-storage-adapter", "contract-writer-adapter"],
     dataStores: ["campaign-db", "export-artifact-store"],
     deploymentUnit: "api-runtime",
-    description: "Winner export, participant-backed export projection, export readiness, artifact audit read metadata, artifact storage, and optional root publication boundary.",
+    description: "Winner export, participant-backed export projection, export readiness, object storage export readiness, artifact audit read metadata, artifact storage, and optional root publication boundary.",
     domainArea: "export",
     futureRouteGroups: ["exports"],
     id: "export-service",
@@ -416,6 +416,7 @@ export const backendServiceBoundaries = [
     routeIds: [
       "campaigns.export.preview",
       "campaigns.export.readiness",
+      "campaigns.export.storage.readiness",
       "campaigns.export.artifacts.list",
       "campaigns.export.artifacts.detail",
       "campaigns.export.artifacts.file",
