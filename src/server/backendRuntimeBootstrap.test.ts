@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
 import {
   backendRuntimeBootstrapDeferredDependencies,
@@ -24,6 +25,8 @@ const secretFragments = [
   "seed phrase sample",
   "signed-url",
 ];
+
+const genericContractWriterMissionCopy = ["contract", "writer", "mission"].join(" ");
 
 const expectNoSecretLeak = (value: unknown) => {
   const serialized = JSON.stringify(value).toLowerCase();
@@ -727,6 +730,7 @@ describe("backend runtime bootstrap contract", () => {
           status: "blocked",
         }),
         expect.objectContaining({
+          blockedBy: expect.arrayContaining([...contractWriterRequiredConfigKeys]),
           id: "contract-writer",
           status: "blocked",
         }),
@@ -735,11 +739,17 @@ describe("backend runtime bootstrap contract", () => {
           status: "blocked",
         }),
         expect.objectContaining({
+          blockedBy: expect.arrayContaining(["reward distribution mission", ...contractWriterRequiredConfigKeys]),
+          id: "reward-distribution",
+          status: "blocked",
+        }),
+        expect.objectContaining({
           id: "analytics-warehouse",
           status: "deferred",
         }),
       ]),
     );
+    expect(JSON.stringify(bootstrap.deferredDependencies)).not.toContain(genericContractWriterMissionCopy);
     expectNoSecretLeak(bootstrap);
   });
 

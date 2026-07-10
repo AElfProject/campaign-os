@@ -1,4 +1,5 @@
 import type { LocalizedText } from "../domain/types";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 
 export type BackendRuntimeReadinessApiSource =
   | "api_runtime"
@@ -318,7 +319,7 @@ export const seededBackendRuntimeReadinessSummary: BackendRuntimeReadinessSummar
     {
       area: "contract",
       attachPoint: "src/server/servicePorts.ts",
-      blockedBy: ["contract writer mission"],
+      blockedBy: [...contractWriterRequiredConfigKeys],
       id: "contract-writer",
       requiredBeforeProduction: true,
       status: "blocked",

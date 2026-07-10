@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import packageJson from "../../package.json";
 import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyticsIngestionRuntime";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 import {
   createBackendRuntimeActivationContract,
   productionRuntimeDependencyBlockerIds,
@@ -44,6 +45,8 @@ const secretFragments = [
   "signed-url",
   "super-secret",
 ];
+
+const genericContractWriterMissionCopy = ["contract", "writer", "mission"].join(" ");
 
 const expectNoSecretLeak = (value: unknown) => {
   const serialized = JSON.stringify(value).toLowerCase();
@@ -797,7 +800,12 @@ describe("backend runtime activation contract", () => {
         expect.objectContaining({ area: "worker", id: "live-queue-consume-live-queue-handler-registry", status: "blocked" }),
         expect.objectContaining({ area: "queue", id: "live-queue-consume-live-queue-consume-payload-reference-policy", status: "blocked" }),
         expect.objectContaining({ area: "queue", id: "live-queue-consume-live-queue-consume-redaction-policy", status: "blocked" }),
-        expect.objectContaining({ area: "contract", id: "contract-writer", status: "blocked" }),
+        expect.objectContaining({
+          area: "contract",
+          blockedBy: expect.arrayContaining([...contractWriterRequiredConfigKeys]),
+          id: "contract-writer",
+          status: "blocked",
+        }),
         expect.objectContaining({ area: "storage", id: "object-storage", status: "deferred" }),
         expect.objectContaining({
           area: "storage",
@@ -815,9 +823,15 @@ describe("backend runtime activation contract", () => {
           status: "deferred",
         }),
         expect.objectContaining({ area: "reward", id: "reward-custody", status: "blocked" }),
-        expect.objectContaining({ area: "reward", id: "reward-distribution", status: "blocked" }),
+        expect.objectContaining({
+          area: "reward",
+          blockedBy: expect.arrayContaining(["reward distribution mission", ...contractWriterRequiredConfigKeys]),
+          id: "reward-distribution",
+          status: "blocked",
+        }),
       ]),
     );
+    expect(JSON.stringify(activation.productionDependencyBlockers)).not.toContain(genericContractWriterMissionCopy);
     expect(activation.productionDependencyBlockers).toEqual(
       expect.arrayContaining(
         schedulerRuntimeProductionPreconditions.map((precondition) =>

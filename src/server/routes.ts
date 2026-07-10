@@ -214,6 +214,22 @@ export const apiRuntimeRoutes = [
   }),
   route({
     apiGroup: "campaign_discovery",
+    boundary: text(
+      "Local contract writer runtime readiness review route. No live API, signer, wallet signature, ABI generation, contract write, root write, queue publishing, scheduler execution, storage write, export write, reward custody, or reward distribution is performed.",
+      "本地 contract writer runtime readiness review route。不会执行实时 API、真实 signer、钱包签名、ABI 生成、合约写入、root 写入、队列发布、调度执行、storage 写入、导出写入、奖励托管或发奖。",
+    ),
+    id: "campaigns.contract.writer.readiness",
+    method: "GET",
+    path: "/api/campaigns/:campaignId/contract-writer/readiness",
+    productionDependencies: dependenciesFor("campaign"),
+    readiness: "review_required",
+    riskLevel: "high",
+    serviceGroup: "campaign",
+    summary: text("Inspect local contract writer runtime readiness.", "检查本地 contract writer runtime readiness。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "campaign_discovery",
     boundary,
     id: "campaigns.contract.transparency",
     method: "GET",

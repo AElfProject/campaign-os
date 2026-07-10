@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyticsIngestionRuntime";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 import {
   backendAttachMap,
   createBackendServiceReadinessReport,
@@ -20,6 +21,8 @@ const productionAreas = [
   "reward-distribution",
   "analytics-warehouse",
 ];
+
+const genericContractWriterMissionCopy = ["contract", "writer", "mission"].join(" ");
 
 const queueSecretFragments = [
   "queue-user",
@@ -276,6 +279,42 @@ describe("backend service readiness report", () => {
         status: "missing",
       }),
     });
+    expect(report.contractWriterRuntime).toMatchObject({
+      campaignId: "camp-awaken-sprint",
+      configHandoff: expect.objectContaining({
+        productionReady: false,
+        requiredConfigKeys: expect.arrayContaining([...contractWriterRequiredConfigKeys]),
+        status: "missing",
+      }),
+      diagnosticCodes: expect.arrayContaining([
+        "CONTRACT_WRITER_CONFIG_MISSING",
+        "CONTRACT_WRITER_LIVE_EXECUTION_DISABLED",
+        "CONTRACT_WRITER_OPERATION_REVIEW_REQUIRED",
+      ]),
+      noLiveSideEffects: expect.objectContaining({
+        liveAbiGeneration: false,
+        liveContractWrite: false,
+        liveQueuePublishing: false,
+        liveRewardCustody: false,
+        liveRewardDistribution: false,
+        liveSignerExecution: false,
+        liveWalletSignature: false,
+      }),
+      productionReady: false,
+      source: "server_runtime",
+      status: "blocked",
+      summary: expect.objectContaining({
+        contractGroupCount: 4,
+        operationCount: 20,
+        requiredConfigCount: contractWriterRequiredConfigKeys.length,
+      }),
+    });
+    expect(report.contractWriterRuntime.operationCatalog.map((group) => group.contractName)).toEqual([
+      "CampaignPointsLedgerV2",
+      "CampaignRegistryV2",
+      "EligibilityRootRegistryV2",
+      "ReferralRegistryV2",
+    ]);
     expect(report.providerIndexerFoundation).toMatchObject({
       blockerCount: 0,
       diagnosticCodes: [],
@@ -1066,6 +1105,15 @@ describe("backend service readiness report", () => {
       note: expect.stringContaining("no live telemetry"),
       requiredBeforeProduction: true,
     });
+    expect(report.attachMap.find((item) => item.area === "contract-writer")).toMatchObject({
+      blockedBy: expect.arrayContaining([...contractWriterRequiredConfigKeys]),
+      currentStatus: "blocked",
+    });
+    expect(report.attachMap.find((item) => item.area === "reward-distribution")).toMatchObject({
+      blockedBy: expect.arrayContaining(["reward distribution mission", ...contractWriterRequiredConfigKeys]),
+      currentStatus: "blocked",
+    });
+    expect(JSON.stringify(report.attachMap)).not.toContain(genericContractWriterMissionCopy);
   });
 
   it("keeps production persistence and migration runner inactive in local review", () => {
@@ -2423,6 +2471,7 @@ describe("backend service readiness report", () => {
 
     expect(serialized).toContain("Campaign OS Backend Service");
     expect(serialized).toContain("Local analytics ingestion runtime readiness");
+    expect(serialized).toContain("Local contract writer runtime readiness");
     expect(serialized).not.toContain("kitty-specs");
     expect(serialized).not.toContain("docs/current");
     expect(serialized).not.toContain("evidence/");

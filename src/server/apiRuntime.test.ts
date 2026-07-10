@@ -574,6 +574,42 @@ interface AnalyticsIngestionRuntimePayload {
   };
 }
 
+interface ContractWriterRuntimePayload {
+  approvalGates: Array<{
+    id: string;
+    requiredBeforeProduction: true;
+    status: string;
+  }>;
+  campaignId: string;
+  configHandoff: {
+    missingConfigKeys: string[];
+    productionReady: false;
+    requiredConfigKeys: string[];
+    status: string;
+  };
+  diagnosticCodes: string[];
+  noLiveSideEffects: Record<string, false>;
+  operationCatalog: Array<{
+    contractName: string;
+    operations: Array<{
+      liveWriteEnabled: false;
+      methodName: string;
+      requiresIdempotency: true;
+      requiresOperatorApproval: true;
+      requiresSignerPolicy: true;
+    }>;
+  }>;
+  productionReady: false;
+  source: "server_runtime";
+  status: string;
+  summary: {
+    contractGroupCount: number;
+    operationCount: number;
+    requiredConfigCount: number;
+  };
+  traceId?: string;
+}
+
 interface CampaignDbLimitedLifecyclePayload {
   campaignId: string;
   code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED";
@@ -1038,6 +1074,12 @@ describe("Campaign OS API runtime", () => {
           id: "campaigns.analytics.ingestion.readiness",
           method: "GET",
           path: "/api/campaigns/:campaignId/analytics/ingestion-readiness",
+          readiness: "review_required",
+        }),
+        expect.objectContaining({
+          id: "campaigns.contract.writer.readiness",
+          method: "GET",
+          path: "/api/campaigns/:campaignId/contract-writer/readiness",
           readiness: "review_required",
         }),
         expect.objectContaining({
@@ -2714,6 +2756,11 @@ describe("Campaign OS API runtime", () => {
       path: `/api/campaigns/${campaignDetail.id}/analytics/ingestion-readiness`,
       headers: { "x-campaign-os-trace-id": "trace-analytics-ingestion-readiness" },
     });
+    const contractWriterReadiness = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/contract-writer/readiness`,
+      headers: { "x-campaign-os-trace-id": "trace-contract-writer-readiness" },
+    });
     const providerReadiness = await runtimeWithPersistence.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/provider-readiness`,
@@ -3018,6 +3065,71 @@ describe("Campaign OS API runtime", () => {
     ).every((value) => value === false)).toBe(true);
     expect(JSON.stringify(expectSuccessData(analyticsIngestionReadiness))).not.toContain("campaign-os-kitty");
     expect(JSON.stringify(expectSuccessData(analyticsIngestionReadiness))).not.toContain("bearer");
+    expect(expectSuccessData<LocalServiceEnvelope<ContractWriterRuntimePayload>>(
+      contractWriterReadiness,
+    )).toMatchObject({
+      boundary: expect.objectContaining({
+        "en-US": expect.stringContaining("Local contract writer runtime readiness"),
+      }),
+      payload: {
+        campaignId: campaignDetail.id,
+        configHandoff: expect.objectContaining({
+          productionReady: false,
+          requiredConfigKeys: expect.arrayContaining([
+            "CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT_REF",
+            "CAMPAIGN_OS_CONTRACT_WRITER_SIGNER_POLICY_REF",
+            "CAMPAIGN_OS_CONTRACT_WRITER_OPERATOR_APPROVAL_REF",
+          ]),
+          status: "missing",
+        }),
+        diagnosticCodes: expect.arrayContaining([
+          "CONTRACT_WRITER_CONFIG_MISSING",
+          "CONTRACT_WRITER_LIVE_EXECUTION_DISABLED",
+          "CONTRACT_WRITER_OPERATION_REVIEW_REQUIRED",
+        ]),
+        noLiveSideEffects: expect.objectContaining({
+          liveAbiGeneration: false,
+          liveContractWrite: false,
+          liveQueuePublishing: false,
+          liveRewardCustody: false,
+          liveRewardDistribution: false,
+          liveSignerExecution: false,
+          liveWalletSignature: false,
+        }),
+        operationCatalog: expect.arrayContaining([
+          expect.objectContaining({
+            contractName: "CampaignRegistryV2",
+            operations: expect.arrayContaining([
+              expect.objectContaining({
+                liveWriteEnabled: false,
+                methodName: "CreateCampaign",
+                requiresIdempotency: true,
+                requiresOperatorApproval: true,
+                requiresSignerPolicy: true,
+              }),
+            ]),
+          }),
+          expect.objectContaining({ contractName: "CampaignPointsLedgerV2" }),
+          expect.objectContaining({ contractName: "ReferralRegistryV2" }),
+          expect.objectContaining({ contractName: "EligibilityRootRegistryV2" }),
+        ]),
+        productionReady: false,
+        source: "server_runtime",
+        status: "blocked",
+        summary: expect.objectContaining({
+          contractGroupCount: 4,
+          operationCount: 20,
+          requiredConfigCount: 9,
+        }),
+        traceId: "trace-contract-writer-readiness",
+      },
+    });
+    expect(Object.values(
+      expectSuccessData<LocalServiceEnvelope<ContractWriterRuntimePayload>>(contractWriterReadiness)
+        .payload.noLiveSideEffects,
+    ).every((value) => value === false)).toBe(true);
+    expect(JSON.stringify(expectSuccessData(contractWriterReadiness))).not.toContain("campaign-os-kitty");
+    expect(JSON.stringify(expectSuccessData(contractWriterReadiness))).not.toContain("bearer");
     expect(expectSuccessData<LocalServiceEnvelope<CompanionContractReadinessPayload>>(
       companionContractReadiness,
     ).payload).toMatchObject({
@@ -3159,6 +3271,10 @@ describe("Campaign OS API runtime", () => {
       runtime.handle({
         method: "GET",
         path: "/api/campaigns/missing-campaign/analytics/ingestion-readiness",
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/contract-writer/readiness",
       }),
       runtime.handle({
         method: "GET",

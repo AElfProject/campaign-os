@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { campaignDetail } from "../domain/fixtures";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 import { startCampaignOsApiServer, type CampaignOsApiServerHandle } from "./server";
 
 type SmokePayload = {
@@ -23,6 +24,7 @@ export interface BackendRuntimeSmokeCheck {
   activationPresent: boolean;
   analyticsIngestionRuntime?: BackendRuntimeSmokeAnalyticsIngestionRuntimeSummary;
   authSessionFoundation?: BackendRuntimeSmokeAuthSessionFoundationSummary;
+  contractWriterRuntime?: BackendRuntimeSmokeContractWriterRuntimeSummary;
   deploymentHandoff?: unknown;
   endpoint: "/api/health" | "/api/contracts";
   ok: boolean;
@@ -117,6 +119,24 @@ export interface BackendRuntimeSmokeAnalyticsIngestionRuntimeSummary {
   traceId?: string;
   valid: boolean;
   warehouseStatus?: string;
+}
+
+export interface BackendRuntimeSmokeContractWriterRuntimeSummary {
+  configStatus?: string;
+  diagnosticCodes: string[];
+  liveContractWrite: false;
+  liveQueuePublishing: false;
+  liveRewardCustody: false;
+  liveRewardDistribution: false;
+  liveSignerExecution: false;
+  liveWalletSignature: false;
+  operationCount: number;
+  operationGroupCount: number;
+  productionReady: false;
+  requiredConfigKeys: string[];
+  status?: string;
+  traceId?: string;
+  valid: boolean;
 }
 
 export interface BackendRuntimeSmokeProviderIndexerFoundationSummary {
@@ -463,6 +483,7 @@ export interface BackendRuntimeSmokeSummary {
   durableLocalPersistence: BackendRuntimeSmokeDurableLocalPersistenceSummary;
   liveSideEffectsEnabled: boolean;
   analyticsIngestionRuntime: BackendRuntimeSmokeAnalyticsIngestionRuntimeSummary;
+  contractWriterRuntime: BackendRuntimeSmokeContractWriterRuntimeSummary;
   objectStorageExportRuntime: BackendRuntimeSmokeObjectStorageExportRuntimeSummary;
   observabilityExporterFoundation: BackendRuntimeSmokeObservabilityExporterFoundationSummary;
   persistenceFoundation: BackendRuntimeSmokePersistenceFoundationSummary;
@@ -584,6 +605,12 @@ const readAnalyticsIngestionRuntime = (
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["backendService", "analyticsIngestionRuntime"])
   ?? readNestedRecord(value, ["serverRuntime", "readiness", "analyticsIngestionRuntime"]);
+
+const readContractWriterRuntime = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["backendService", "contractWriterRuntime"])
+  ?? readNestedRecord(value, ["serverRuntime", "readiness", "contractWriterRuntime"]);
 
 const readProductionBackendReadiness = (
   value: unknown,
@@ -768,6 +795,49 @@ const summarizeAnalyticsIngestionRuntime = (
     traceId: getString(record, "traceId"),
     valid: getBoolean(record, "valid"),
     warehouseStatus: getString(warehouseHandoff, "status"),
+  };
+};
+
+const summarizeContractWriterRuntime = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeContractWriterRuntimeSummary | undefined => {
+  if (!record || !isExplicitFalse(record, "productionReady")) {
+    return undefined;
+  }
+
+  const noLiveSideEffects = readNestedRecord(record, ["noLiveSideEffects"]);
+  const summary = readNestedRecord(record, ["summary"]);
+  const configHandoff = readNestedRecord(record, ["configHandoff"]);
+  const explicitNoLive =
+    noLiveSideEffects !== undefined
+    && isExplicitFalse(noLiveSideEffects, "liveContractWrite")
+    && isExplicitFalse(noLiveSideEffects, "liveQueuePublishing")
+    && isExplicitFalse(noLiveSideEffects, "liveRewardCustody")
+    && isExplicitFalse(noLiveSideEffects, "liveRewardDistribution")
+    && isExplicitFalse(noLiveSideEffects, "liveSignerExecution")
+    && isExplicitFalse(noLiveSideEffects, "liveWalletSignature")
+    && isExplicitFalse(configHandoff, "productionReady");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    configStatus: getString(configHandoff, "status"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    liveContractWrite: false,
+    liveQueuePublishing: false,
+    liveRewardCustody: false,
+    liveRewardDistribution: false,
+    liveSignerExecution: false,
+    liveWalletSignature: false,
+    operationCount: getNumber(summary, "operationCount"),
+    operationGroupCount: getNumber(summary, "contractGroupCount"),
+    productionReady: false,
+    requiredConfigKeys: getStringArray(configHandoff, "requiredConfigKeys"),
+    status: getString(record, "status"),
+    traceId: getString(record, "traceId"),
+    valid: getBoolean(record, "valid"),
   };
 };
 
@@ -1520,6 +1590,9 @@ const createSmokeCheck = async ({
   const analyticsIngestionRuntime = summarizeAnalyticsIngestionRuntime(
     readAnalyticsIngestionRuntime(payload.data),
   );
+  const contractWriterRuntime = summarizeContractWriterRuntime(
+    readContractWriterRuntime(payload.data),
+  );
   const productionBackendReadiness = summarizeProductionBackendReadiness(
     readProductionBackendReadiness(payload.data),
   );
@@ -1530,6 +1603,7 @@ const createSmokeCheck = async ({
       activationPresent: Boolean(activation),
       analyticsIngestionRuntime,
       authSessionFoundation,
+      contractWriterRuntime,
       deploymentHandoff,
       endpoint,
       ok: payload.ok === true && payload.traceId === traceId,
@@ -1568,6 +1642,35 @@ const createAnalyticsIngestionRuntimeSmokeSample = async ({
   const payload = await readJson(response);
   const readiness = readNestedRecord(payload.data, ["payload"]);
   const summary = summarizeAnalyticsIngestionRuntime(readiness);
+
+  if (response.status !== 200 || payload.ok !== true || payload.traceId !== traceId || !summary) {
+    return undefined;
+  }
+
+  return {
+    ...summary,
+    traceId: payload.traceId,
+  };
+};
+
+const createContractWriterRuntimeSmokeSample = async ({
+  baseUrl,
+  fetchImpl,
+  traceId,
+}: {
+  baseUrl: string;
+  fetchImpl: typeof fetch;
+  traceId: string;
+}): Promise<BackendRuntimeSmokeContractWriterRuntimeSummary | undefined> => {
+  const response = await fetchImpl(
+    `${baseUrl}/api/campaigns/${campaignDetail.id}/contract-writer/readiness`,
+    {
+      headers: { "x-campaign-os-trace-id": traceId },
+    },
+  );
+  const payload = await readJson(response);
+  const readiness = readNestedRecord(payload.data, ["payload"]);
+  const summary = summarizeContractWriterRuntime(readiness);
 
   if (response.status !== 200 || payload.ok !== true || payload.traceId !== traceId || !summary) {
     return undefined;
@@ -1919,6 +2022,29 @@ const isAnalyticsIngestionRuntimeSmokeReady = (
     && summary.status === "blocked"
     && summary.valid === true
     && summary.warehouseStatus === "missing";
+};
+
+const isContractWriterRuntimeSmokeReady = (
+  summary: BackendRuntimeSmokeContractWriterRuntimeSummary | undefined,
+): summary is BackendRuntimeSmokeContractWriterRuntimeSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveSignerExecution === false
+    && summary.liveWalletSignature === false
+    && summary.liveContractWrite === false
+    && summary.liveQueuePublishing === false
+    && summary.liveRewardCustody === false
+    && summary.liveRewardDistribution === false
+    && summary.operationGroupCount >= 4
+    && summary.operationCount >= 20
+    && contractWriterRequiredConfigKeys.every((key) => summary.requiredConfigKeys.includes(key))
+    && summary.diagnosticCodes.includes("CONTRACT_WRITER_LIVE_EXECUTION_DISABLED")
+    && summary.status === "blocked"
+    && summary.configStatus === "missing"
+    && summary.valid === true;
 };
 
 const isProviderIndexerFoundationSmokeReady = (
@@ -2345,11 +2471,17 @@ export const runBackendRuntimeSmoke = async ({
     const observabilityExporterFoundation = contracts.check.observabilityExporterFoundation;
     const objectStorageExportRuntime = contracts.check.objectStorageExportRuntime;
     const analyticsIngestionRuntime = contracts.check.analyticsIngestionRuntime;
+    const contractWriterRuntime = contracts.check.contractWriterRuntime;
     const productionBackendReadiness = contracts.check.productionBackendReadiness;
     const analyticsIngestionRuntimeSample = await createAnalyticsIngestionRuntimeSmokeSample({
       baseUrl: server.url,
       fetchImpl,
       traceId: "campaign-os-smoke-analytics-ingestion-readiness",
+    });
+    const contractWriterRuntimeSample = await createContractWriterRuntimeSmokeSample({
+      baseUrl: server.url,
+      fetchImpl,
+      traceId: "campaign-os-smoke-contract-writer-readiness",
     });
 
     if (
@@ -2380,6 +2512,9 @@ export const runBackendRuntimeSmoke = async ({
       || !isAnalyticsIngestionRuntimeSmokeReady(health.check.analyticsIngestionRuntime)
       || !isAnalyticsIngestionRuntimeSmokeReady(analyticsIngestionRuntime)
       || !isAnalyticsIngestionRuntimeSmokeReady(analyticsIngestionRuntimeSample)
+      || !isContractWriterRuntimeSmokeReady(health.check.contractWriterRuntime)
+      || !isContractWriterRuntimeSmokeReady(contractWriterRuntime)
+      || !isContractWriterRuntimeSmokeReady(contractWriterRuntimeSample)
       || !isProductionBackendReadinessSmokeReady(health.check.productionBackendReadiness)
       || !isProductionBackendReadinessSmokeReady(productionBackendReadiness)
       || !isWorkerIdempotencyStoreFoundationSmokeReady(health.check.workerIdempotencyStoreFoundation)
@@ -2412,6 +2547,7 @@ export const runBackendRuntimeSmoke = async ({
       host,
       liveSideEffectsEnabled: getBoolean(activation, "liveSideEffectsEnabled"),
       analyticsIngestionRuntime: analyticsIngestionRuntimeSample,
+      contractWriterRuntime: contractWriterRuntimeSample,
       objectStorageExportRuntime,
       observabilityExporterFoundation,
       persistenceFoundation,

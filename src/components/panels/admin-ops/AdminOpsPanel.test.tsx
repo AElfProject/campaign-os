@@ -748,6 +748,32 @@ describe("Admin/Ops shell", () => {
     expectVisibleText("BindReferral");
     expectVisibleText("SetEligibilityRoot");
     expectVisibleText("VerifyEligibilityProof");
+    const contractWriterRuntime = screen.getByLabelText("Contract Writer Runtime review");
+    expect(within(contractWriterRuntime).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getByText("admin-ops-contract-writer-runtime-review")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT_REF"))
+      .toBeInTheDocument();
+    expect(within(contractWriterRuntime).getAllByText("CampaignRegistryV2").length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getAllByText("CampaignPointsLedgerV2").length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getAllByText("ReferralRegistryV2").length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getAllByText("EligibilityRootRegistryV2").length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getByText("CreateCampaign")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("CommitPointsBatch")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("BindReferral")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("SetEligibilityRoot")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getAllByText(/CONTRACT_WRITER_CONFIG_MISSING/).length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getAllByText(/CONTRACT_WRITER_LIVE_EXECUTION_DISABLED/).length)
+      .toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getByText("No signer execution")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("No wallet signature")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("No contract write")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("No queue publishing")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("No reward custody")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("No reward distribution")).toBeInTheDocument();
+    for (const name of [/sign/i, /write/i, /publish/i, /claim/i, /distribute/i, /reward/i, /custody/i, /contract/i]) {
+      expect(within(contractWriterRuntime).queryByRole("button", { name })).not.toBeInTheDocument();
+      expect(within(contractWriterRuntime).queryByRole("link", { name })).not.toBeInTheDocument();
+    }
     expectVisibleText("Rewards");
     expectVisibleText("Multilingual content");
     expectVisibleText("Wallet type");

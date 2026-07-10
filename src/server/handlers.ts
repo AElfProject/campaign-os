@@ -47,6 +47,7 @@ import {
 } from "../domain/publishDeliveryReview";
 import { createPointsRankingLedgerRuntime } from "../domain/pointsRankingLedgerRuntime";
 import { createServerAnalyticsIngestionRuntimeReadiness } from "./analyticsIngestionRuntime";
+import { createServerContractWriterRuntimeReadiness } from "./contractWriterRuntime";
 import {
   createServiceDegradationGovernance,
   createServiceRegistry,
@@ -1528,6 +1529,26 @@ const createAnalyticsIngestionRuntimeReadinessPayload = (
   };
 };
 
+const createContractWriterRuntimeReadinessPayload = (
+  context: ApiRuntimeHandlerContext,
+) => {
+  const campaignId = requiredRouteParam(context.params, "campaignId");
+  const detailResult = context.service.getCampaignDetail({ campaignId });
+
+  if (!detailResult.ok) {
+    unwrapLocalResult(detailResult, context);
+    throw invalidCampaign(campaignId);
+  }
+
+  return {
+    boundary: context.route.boundary,
+    payload: createServerContractWriterRuntimeReadiness({
+      campaign: campaignDetail,
+      traceId: context.traceId,
+    }),
+  };
+};
+
 const createProviderReadinessResult = (
   pipeline: LocalServiceResult<VerificationPipelineReadinessGate>,
   providerEvidenceRegistry: LocalServiceResult<ProviderEvidenceRegistry>,
@@ -1766,6 +1787,7 @@ const createBackendServiceHealthMetadata = (
   analyticsIngestionRuntime: report.analyticsIngestionRuntime,
   authSessionFoundation: report.authSessionFoundation,
   backendRuntimeBootstrap: createBackendRuntimeBootstrapMetadata(report),
+  contractWriterRuntime: report.contractWriterRuntime,
   entrypoint: backendServiceEntrypointMetadata(report),
   entrypointId: report.entrypoint.id,
   databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime),
@@ -1797,6 +1819,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
   configContract: backendConfigContractSummary(report),
   analyticsIngestionRuntime: report.analyticsIngestionRuntime,
   authSessionFoundation: report.authSessionFoundation,
+  contractWriterRuntime: report.contractWriterRuntime,
   databaseAdapterRuntime: createBackendDatabaseAdapterRuntimeSummary(report.databaseAdapterRuntime),
   deferredProductionCapabilities: report.profile.deferredCapabilities,
   entrypoint: backendServiceEntrypointMetadata(report),
@@ -2100,6 +2123,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
   "campaigns.publish.delivery.review": (context) => createPublishDeliveryReviewPayload(context),
   "campaigns.points.ranking.ledger.runtime": (context) => createPointsRankingLedgerRuntimePayload(context),
   "campaigns.analytics.ingestion.readiness": (context) => createAnalyticsIngestionRuntimeReadinessPayload(context),
+  "campaigns.contract.writer.readiness": (context) => createContractWriterRuntimeReadinessPayload(context),
   "campaigns.export.storage.readiness": (context) => createObjectStorageExportReadinessPayload(context),
   "campaigns.companion.contract.readiness": (context) =>
     unwrapLocalResult(

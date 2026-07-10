@@ -6,6 +6,7 @@ import {
   seededBackendRuntimeReadinessSummary,
   type BackendRuntimeReadinessApiFetch,
 } from "./backendRuntimeReadinessApiBridge";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 
 const runtime = {
   mode: "local_seeded",
@@ -112,6 +113,8 @@ const envelope = (summary: unknown, traceId: string, data: Record<string, unknow
   traceId,
 });
 
+const genericContractWriterMissionCopy = ["contract", "writer", "mission"].join(" ");
+
 describe("backend runtime readiness API bridge", () => {
   it("creates a loading state without touching the network", () => {
     const state = createBackendRuntimeReadinessApiLoadingState();
@@ -143,6 +146,11 @@ describe("backend runtime readiness API bridge", () => {
       summary: seededBackendRuntimeReadinessSummary,
     });
     expect(state.summary.noLiveSideEffects.contractWriteExecuted).toBe(false);
+    expect(state.summary.productionDependencyBlockers.find((blocker) => blocker.id === "contract-writer")).toMatchObject({
+      blockedBy: expect.arrayContaining([...contractWriterRequiredConfigKeys]),
+      status: "blocked",
+    });
+    expect(JSON.stringify(state.summary.productionDependencyBlockers)).not.toContain(genericContractWriterMissionCopy);
   });
 
   it("returns sanitized seeded fallback when the API base URL is invalid", async () => {

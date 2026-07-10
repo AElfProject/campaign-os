@@ -5,7 +5,10 @@ import {
   validatePersistenceAdapterPorts,
   type PersistenceAdapterPort,
 } from "./persistenceAdapterPort";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 import { productionDatabaseRequiredStoreIds } from "./productionDatabase";
+
+const genericContractWriterMissionCopy = ["contract", "writer", "mission"].join(" ");
 
 describe("persistence adapter port", () => {
   it("reports memory as the default active local adapter", () => {
@@ -118,6 +121,10 @@ describe("persistence adapter port", () => {
         ]),
       );
     }
+    expect(backendStorePorts.find((store) => store.id === "contract-index")).toMatchObject({
+      blockedBy: expect.arrayContaining([...contractWriterRequiredConfigKeys, "contract indexer mission"]),
+    });
+    expect(JSON.stringify(backendStorePorts)).not.toContain(genericContractWriterMissionCopy);
   });
 
   it("keeps production adapter metadata aligned with registry decisions", () => {

@@ -260,7 +260,7 @@ export const backendServiceBoundaries = [
     adapterGroups: [],
     dataStores: ["campaign-db"],
     deploymentUnit: "api-runtime",
-    description: "Campaign lifecycle, publish checklist, launch readiness, delivery readiness, publish delivery joint review, wallet policy, locale, contract mode, companion contract readiness, and contract transparency boundary.",
+    description: "Campaign lifecycle, publish checklist, launch readiness, delivery readiness, publish delivery joint review, wallet policy, locale, contract mode, companion contract readiness, contract writer runtime readiness, and contract transparency boundary.",
     domainArea: "campaign",
     futureRouteGroups: ["campaigns", "publish-checks"],
     id: "campaign-service",
@@ -270,7 +270,7 @@ export const backendServiceBoundaries = [
     risks: [
       "Production persistence and auth/session are deferred.",
       "Campaign lifecycle transitions require the deferred scheduler runtime, worker queue, and worker lease before production.",
-      "Delivery readiness, publish delivery joint review, and contract transparency routes are read-only local review metadata and do not enable wallet SDK, contract writer, storage, reward custody, or reward distribution capabilities.",
+      "Delivery readiness, publish delivery joint review, contract writer readiness, and contract transparency routes are read-only local review metadata and do not enable wallet SDK, signer execution, contract writes, storage, reward custody, or reward distribution capabilities.",
     ],
     routeIds: [
       "campaigns.list",
@@ -281,6 +281,7 @@ export const backendServiceBoundaries = [
       "campaigns.delivery.readiness",
       "campaigns.publish.delivery.review",
       "campaigns.companion.contract.readiness",
+      "campaigns.contract.writer.readiness",
       "campaigns.contract.transparency",
     ],
     runtimeProfiles: productionProfiles,
