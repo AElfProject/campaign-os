@@ -27,6 +27,12 @@ import {
   type ObjectStorageExportRuntimeApiBridgeState,
 } from "../../../api/objectStorageExportRuntimeApiBridge";
 import {
+  createRepositoryCampaignWorkflowLoadingState,
+  createRepositoryCampaignWorkflowSeededFallbackState,
+  loadRepositoryCampaignWorkflowBridgeState,
+  type RepositoryCampaignWorkflowBridgeState,
+} from "../../../api/repositoryCampaignWorkflowApiBridge";
+import {
   createAnalyticsIngestionRuntimeApiLoadingState,
   createAnalyticsIngestionRuntimeApiSeededFallbackState,
   loadAnalyticsIngestionRuntimeApiBridgeState,
@@ -165,6 +171,7 @@ import { AnalyticsIngestionRuntimePanel } from "./AnalyticsIngestionRuntimePanel
 import { ContractWriterRuntimePanel } from "./ContractWriterRuntimePanel";
 import { ObjectStorageExportRuntimePanel } from "./ObjectStorageExportRuntimePanel";
 import { PointsRankingLedgerRuntimePanel } from "./PointsRankingLedgerRuntimePanel";
+import { RepositoryCampaignWorkflowPanel } from "./RepositoryCampaignWorkflowPanel";
 import { projectConsoleCopy } from "./copy";
 import { PublishDeliveryReviewPanel } from "./PublishDeliveryReviewPanel";
 
@@ -1309,6 +1316,9 @@ const pointsRankingLedgerRuntimeApiBaseUrl = () =>
 const objectStorageExportRuntimeApiBaseUrl = () =>
   import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
+const repositoryCampaignWorkflowApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
 const analyticsIngestionRuntimeApiBaseUrl = () =>
   import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
@@ -2050,6 +2060,7 @@ export const ProjectConsole = ({
   const publishDeliveryApiRequestSeq = useRef(0);
   const pointsRankingLedgerRuntimeApiRequestSeq = useRef(0);
   const objectStorageExportRuntimeApiRequestSeq = useRef(0);
+  const repositoryCampaignWorkflowApiRequestSeq = useRef(0);
   const analyticsIngestionRuntimeApiRequestSeq = useRef(0);
   const contractWriterRuntimeApiRequestSeq = useRef(0);
   const exportDeliveryApiRequestSeq = useRef(0);
@@ -2135,6 +2146,7 @@ export const ProjectConsole = ({
   const publishDeliveryApiBaseUrl = publishDeliveryReviewApiBaseUrl();
   const pointsRankingLedgerRuntimeApiBase = pointsRankingLedgerRuntimeApiBaseUrl();
   const objectStorageExportRuntimeApiBase = objectStorageExportRuntimeApiBaseUrl();
+  const repositoryCampaignWorkflowApiBase = repositoryCampaignWorkflowApiBaseUrl();
   const analyticsIngestionRuntimeApiBase = analyticsIngestionRuntimeApiBaseUrl();
   const contractWriterRuntimeApiBase = contractWriterRuntimeApiBaseUrl();
   const exportDeliveryApiRequest: ExportArtifactDeliveryRequest = {
@@ -2172,6 +2184,13 @@ export const ProjectConsole = ({
         : createObjectStorageExportRuntimeSeededFallbackState(campaign.id),
     );
   const [objectStorageExportRuntimeApiReviewInFlight, setObjectStorageExportRuntimeApiReviewInFlight] = useState(false);
+  const [repositoryCampaignWorkflowApiState, setRepositoryCampaignWorkflowApiState] =
+    useState<RepositoryCampaignWorkflowBridgeState>(() =>
+      repositoryCampaignWorkflowApiBase?.trim()
+        ? createRepositoryCampaignWorkflowLoadingState()
+        : createRepositoryCampaignWorkflowSeededFallbackState(),
+    );
+  const [repositoryCampaignWorkflowApiReviewInFlight, setRepositoryCampaignWorkflowApiReviewInFlight] = useState(false);
   const [analyticsIngestionRuntimeApiState, setAnalyticsIngestionRuntimeApiState] =
     useState<AnalyticsIngestionRuntimeApiBridgeState>(() =>
       analyticsIngestionRuntimeApiBase?.trim()
@@ -2377,6 +2396,41 @@ export const ProjectConsole = ({
     loadObjectStorageExportRuntimeApiReview();
   };
 
+  const loadRepositoryCampaignWorkflowApiReview = useCallback(() => {
+    const baseUrl = repositoryCampaignWorkflowApiBase?.trim();
+
+    if (!baseUrl) {
+      setRepositoryCampaignWorkflowApiState(createRepositoryCampaignWorkflowSeededFallbackState());
+      setRepositoryCampaignWorkflowApiReviewInFlight(false);
+      return;
+    }
+
+    setRepositoryCampaignWorkflowApiReviewInFlight(true);
+    setRepositoryCampaignWorkflowApiState(createRepositoryCampaignWorkflowLoadingState());
+
+    const requestSeq = repositoryCampaignWorkflowApiRequestSeq.current + 1;
+    repositoryCampaignWorkflowApiRequestSeq.current = requestSeq;
+
+    void loadRepositoryCampaignWorkflowBridgeState({
+      config: {
+        baseUrl,
+        tracePrefix: "project-console-repository-workflow-review",
+      },
+    }).then((state) => {
+      if (repositoryCampaignWorkflowApiRequestSeq.current === requestSeq) {
+        setRepositoryCampaignWorkflowApiState(state);
+      }
+    }).finally(() => {
+      if (repositoryCampaignWorkflowApiRequestSeq.current === requestSeq) {
+        setRepositoryCampaignWorkflowApiReviewInFlight(false);
+      }
+    });
+  }, [repositoryCampaignWorkflowApiBase]);
+
+  const runRepositoryCampaignWorkflowApiReview = () => {
+    loadRepositoryCampaignWorkflowApiReview();
+  };
+
   const loadAnalyticsIngestionRuntimeApiReview = useCallback(() => {
     if (!analyticsIngestionRuntimeApiBase?.trim()) {
       setAnalyticsIngestionRuntimeApiState(createAnalyticsIngestionRuntimeSeededFallbackState(campaign.id));
@@ -2483,6 +2537,7 @@ export const ProjectConsole = ({
       loadPublishDeliveryApiReview();
       loadPointsRankingLedgerRuntimeApiReview();
       loadObjectStorageExportRuntimeApiReview();
+      loadRepositoryCampaignWorkflowApiReview();
       loadAnalyticsIngestionRuntimeApiReview();
       loadContractWriterRuntimeApiReview();
       loadBackendReadinessApiReview();
@@ -2495,6 +2550,7 @@ export const ProjectConsole = ({
     loadObjectStorageExportRuntimeApiReview,
     loadPointsRankingLedgerRuntimeApiReview,
     loadPublishDeliveryApiReview,
+    loadRepositoryCampaignWorkflowApiReview,
   ]);
 
   const stats = [
@@ -7033,6 +7089,15 @@ export const ProjectConsole = ({
         onReview={runObjectStorageExportRuntimeApiReview}
         reviewInFlight={objectStorageExportRuntimeApiReviewInFlight}
         state={objectStorageExportRuntimeApiState}
+      />
+
+      <RepositoryCampaignWorkflowPanel
+        apiConfigured={Boolean(repositoryCampaignWorkflowApiBase?.trim())}
+        copy={copy}
+        locale={locale}
+        onReview={runRepositoryCampaignWorkflowApiReview}
+        reviewInFlight={repositoryCampaignWorkflowApiReviewInFlight}
+        state={repositoryCampaignWorkflowApiState}
       />
 
       <BackendRuntimePersistencePostureSurface
