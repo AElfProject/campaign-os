@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  createWalletSessionApiLoadingState,
+  createWalletSessionApiSeededFallbackState,
+  submitWalletSessionApiPreview,
+  type WalletSessionApiBridgeState,
+  type WalletSessionPreviewRequest,
+} from "../api/walletSessionApiBridge";
+import {
   campaignDetail,
   createCampaignShareCardReadiness,
   parseCampaignRoutePath,
@@ -195,6 +202,13 @@ const workspaceProductDestinationMap: Partial<Record<ProjectWorkspaceKey, Produc
   export: "export",
 };
 
+const walletSessionApiBaseUrl = () => import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
+const headerWalletPreviewRequest: WalletSessionPreviewRequest = {
+  adapterName: "PortkeyAAWallet",
+  fixtureId: "sess-aa-001",
+};
+
 const readBrowserPathname = () => {
   if (typeof window === "undefined") {
     return "/";
@@ -253,13 +267,16 @@ export const App = () => {
     useState<ProjectWorkspaceKey>("campaigns");
   const [activeSurface, setActiveSurface] = useState<SurfaceKey>("project");
   const [headerWalletModalOpen, setHeaderWalletModalOpen] = useState(false);
+  const [headerWalletSessionBridgeState, setHeaderWalletSessionBridgeState] =
+    useState<WalletSessionApiBridgeState>(() => createWalletSessionApiSeededFallbackState(
+      headerWalletPreviewRequest,
+    ));
   const [headerWalletSession, setHeaderWalletSession] =
     useState<NormalizedWalletSession | null>(null);
   const copy = surfaceCopy[locale];
   const contentLocale: BusinessContentLocale = locale === "zh-CN" ? "zh-CN" : "en-US";
   const walletModalLocale: BusinessContentLocale =
     locale === "zh-CN" || locale === "zh-TW" ? locale : "en-US";
-  const previewWalletSession = walletSessions[0];
   const shareCard = useMemo(
     () => createCampaignShareCardReadiness(campaignDetail, locale),
     [locale],
@@ -297,9 +314,23 @@ export const App = () => {
     }
   };
 
-  const connectHeaderPreviewWallet = () => {
-    setHeaderWalletSession(previewWalletSession);
-    setHeaderWalletModalOpen(false);
+  const connectHeaderPreviewWallet = async () => {
+    setHeaderWalletSessionBridgeState(createWalletSessionApiLoadingState(headerWalletPreviewRequest));
+
+    const nextState = await submitWalletSessionApiPreview({
+      config: {
+        baseUrl: walletSessionApiBaseUrl(),
+        tracePrefix: "header-wallet-session",
+      },
+      request: headerWalletPreviewRequest,
+    });
+
+    setHeaderWalletSessionBridgeState(nextState);
+
+    if (nextState.session) {
+      setHeaderWalletSession(nextState.session);
+      setHeaderWalletModalOpen(false);
+    }
   };
 
   return (
@@ -350,6 +381,7 @@ export const App = () => {
           onClose={() => setHeaderWalletModalOpen(false)}
           onPreviewConnect={connectHeaderPreviewWallet}
           options={walletOptions}
+          walletSessionBridgeState={headerWalletSessionBridgeState}
         />
       ) : null}
     </>

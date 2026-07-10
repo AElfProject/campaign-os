@@ -1,5 +1,6 @@
 import { useEffect, type CSSProperties } from "react";
 import { X } from "lucide-react";
+import type { WalletSessionApiBridgeState } from "../../api/walletSessionApiBridge";
 import {
   createAelfWebLoginAdapterReadiness,
   createLiveWalletConnectorBoundary,
@@ -23,6 +24,7 @@ interface WalletConnectModalProps {
   onClose: () => void;
   onPreviewConnect?: () => void;
   options: WalletOption[];
+  walletSessionBridgeState?: WalletSessionApiBridgeState;
 }
 
 const modalCopy = {
@@ -39,13 +41,20 @@ const modalCopy = {
     connectorCandidates: "Connector candidates",
     connectorDisabled: "Disabled/review-required",
     connectorPackage: "Candidate package",
+    diagnosticCount: "Diagnostic count",
+    diagnostics: "Diagnostics",
     degradedGroup: "Unavailable / maintenance",
     eoaGroup: "EOA Wallets",
+    errorFallback: "Error fallback",
     extensionNotInstalled: "Extension not installed: Install or open your EOA wallet extension.",
     featureGate: "Feature gate",
+    issuerMode: "Issuer mode",
     liveEvidence: "Live evidence",
+    liveSigning: "Live signing executed",
+    loadingPreview: "Loading wallet session preview",
     missingSignature:
       "Missing signature: sign the seeded verification message only after confirming the prompt; this preview does not request a real signature.",
+    noTrace: "No API trace",
     nonLiveBoundary:
       "Seeded preview only: no live wallet SDK, no real signature, no transaction, and no contract read/write is executed.",
     nextAction: "Next action",
@@ -53,12 +62,23 @@ const modalCopy = {
       "Campaign OS never asks for private keys, seed phrases, recovery phrases, or password exports.",
     privateKeyFooter: "Campaign OS never asks for your private key.",
     previewConnect: "Use seeded wallet preview",
+    proofStatus: "Proof status",
+    recordId: "Record ID",
     recommended: "Recommended",
     recommendedGroup: "Recommended",
+    repository: "Repository",
+    seededFallback: "Seeded fallback",
+    sessionId: "Session ID",
+    source: "Source",
     subtitle: "Choose how you want to join this campaign.",
     title: "Connect Wallet",
+    traceId: "Trace ID",
+    trustLevel: "Trust level",
     unsupportedWallet:
       "Unsupported wallet: choose Portkey AA, Portkey EOA App, Portkey EOA Extension, or NightElf for this seeded campaign flow.",
+    upserted: "Upserted",
+    apiRuntime: "API runtime",
+    walletSessionApiReview: "Wallet session API review",
     verificationOnlyFooter: "By connecting, you agree to sign messages only for verification.",
     wrongChain:
       "Wrong chain: switch to AELF mainnet before continuing with campaign verification.",
@@ -76,13 +96,20 @@ const modalCopy = {
     connectorCandidates: "Connector candidates",
     connectorDisabled: "已关闭/待审核",
     connectorPackage: "候选 package",
+    diagnosticCount: "诊断数量",
+    diagnostics: "诊断",
     degradedGroup: "不可用 / 维护中",
     eoaGroup: "EOA 钱包",
+    errorFallback: "错误回退",
     extensionNotInstalled: "插件未安装：请安装或打开你的 EOA 钱包插件。",
     featureGate: "功能门禁",
+    issuerMode: "Issuer mode",
     liveEvidence: "真实证据",
+    liveSigning: "是否执行 live signing",
+    loadingPreview: "正在加载钱包会话预览",
     missingSignature:
       "缺少签名：确认提示内容后只签署 seeded 验证消息；此预览不会请求真实签名。",
+    noTrace: "无 API trace",
     nonLiveBoundary:
       "仅 seeded 预览：不会连接实时钱包 SDK，不会请求真实签名，不会发起交易，也不会读写合约。",
     nextAction: "下一步",
@@ -90,12 +117,23 @@ const modalCopy = {
       "Campaign OS 永远不会索要私钥、助记词、恢复短语或密码导出。",
     privateKeyFooter: "Campaign OS 永远不会索要你的私钥。",
     previewConnect: "使用 seeded 钱包预览",
+    proofStatus: "Proof status",
+    recordId: "Record ID",
     recommended: "推荐",
     recommendedGroup: "推荐",
+    repository: "Repository",
+    seededFallback: "Seeded fallback",
+    sessionId: "Session ID",
+    source: "来源",
     subtitle: "选择你想如何加入这个活动。",
     title: "连接钱包",
+    traceId: "Trace ID",
+    trustLevel: "Trust level",
     unsupportedWallet:
       "不支持的钱包：请为该 seeded 活动流程选择 Portkey AA、Portkey EOA App、Portkey EOA Extension 或 NightElf。",
+    upserted: "Upserted",
+    apiRuntime: "API runtime",
+    walletSessionApiReview: "Wallet session API review",
     verificationOnlyFooter: "连接即表示你同意仅为验证签署消息。",
     wrongChain:
       "链不匹配：请切换到 AELF mainnet 后再继续活动验证。",
@@ -113,13 +151,20 @@ const modalCopy = {
     connectorCandidates: "Connector candidates",
     connectorDisabled: "已關閉/待審核",
     connectorPackage: "候選 package",
+    diagnosticCount: "診斷數量",
+    diagnostics: "診斷",
     degradedGroup: "不可用 / 維護中",
     eoaGroup: "EOA 錢包",
+    errorFallback: "錯誤回退",
     extensionNotInstalled: "擴充套件未安裝：請安裝或開啟你的 EOA 錢包擴充套件。",
     featureGate: "功能門禁",
+    issuerMode: "Issuer mode",
     liveEvidence: "真實證據",
+    liveSigning: "是否執行 live signing",
+    loadingPreview: "正在載入錢包會話預覽",
     missingSignature:
       "缺少簽名：確認提示內容後只簽署 seeded 驗證訊息；此預覽不會請求真實簽名。",
+    noTrace: "無 API trace",
     nonLiveBoundary:
       "僅 seeded 預覽：不會連接即時錢包 SDK，不會請求真實簽名，不會發起交易，也不會讀寫合約。",
     nextAction: "下一步",
@@ -127,12 +172,23 @@ const modalCopy = {
       "Campaign OS 永遠不會索要私鑰、助記詞、恢復短語或密碼匯出。",
     privateKeyFooter: "Campaign OS 永遠不會索要你的私鑰。",
     previewConnect: "使用 seeded 錢包預覽",
+    proofStatus: "Proof status",
+    recordId: "Record ID",
     recommended: "推薦",
     recommendedGroup: "推薦",
+    repository: "Repository",
+    seededFallback: "Seeded fallback",
+    sessionId: "Session ID",
+    source: "來源",
     subtitle: "選擇你想如何加入這個活動。",
     title: "連接錢包",
+    traceId: "Trace ID",
+    trustLevel: "Trust level",
     unsupportedWallet:
       "不支援的錢包：請為該 seeded 活動流程選擇 Portkey AA、Portkey EOA App、Portkey EOA Extension 或 NightElf。",
+    upserted: "Upserted",
+    apiRuntime: "API runtime",
+    walletSessionApiReview: "Wallet session API review",
     verificationOnlyFooter: "連接即表示你同意僅為驗證簽署訊息。",
     wrongChain:
       "鏈不匹配：請切換到 AELF mainnet 後再繼續活動驗證。",
@@ -262,6 +318,37 @@ const issueListStyle: CSSProperties = {
   gap: 8,
   margin: 0,
   paddingInlineStart: 18,
+};
+
+const bridgeMetaGridStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
+};
+
+const bridgeMetaItemStyle: CSSProperties = {
+  background: "#ffffff",
+  border: "1px solid #dbe6f4",
+  borderRadius: 8,
+  display: "grid",
+  gap: 4,
+  minWidth: 0,
+  padding: 10,
+};
+
+const bridgeMetaLabelStyle: CSSProperties = {
+  color: "#64748b",
+  fontSize: 11,
+  fontWeight: 800,
+  textTransform: "uppercase",
+};
+
+const bridgeMetaValueStyle: CSSProperties = {
+  color: "#071426",
+  fontSize: 13,
+  fontWeight: 800,
+  lineHeight: 1.35,
+  overflowWrap: "anywhere",
 };
 
 const groupWalletOptions = (options: WalletOption[]) => ({
@@ -465,6 +552,102 @@ const ConnectorBoundarySection = ({
   );
 };
 
+const walletSessionBridgeSourceLabel = (
+  state: WalletSessionApiBridgeState,
+  copy: (typeof modalCopy)["en-US"],
+) => {
+  if (state.source === "api_runtime") {
+    return copy.apiRuntime;
+  }
+
+  if (state.source === "seeded_fallback") {
+    return copy.seededFallback;
+  }
+
+  if (state.source === "error_fallback") {
+    return copy.errorFallback;
+  }
+
+  return copy.loadingPreview;
+};
+
+const BridgeMetaItem = ({
+  label,
+  value,
+}: {
+  label: string;
+  value: boolean | number | string;
+}) => (
+  <div style={bridgeMetaItemStyle}>
+    <span style={bridgeMetaLabelStyle}>{label}</span>
+    <span style={bridgeMetaValueStyle}>{String(value)}</span>
+  </div>
+);
+
+const WalletSessionBridgeSection = ({
+  copy,
+  locale,
+  state,
+}: {
+  copy: (typeof modalCopy)["en-US"];
+  locale: BusinessContentLocale;
+  state: WalletSessionApiBridgeState;
+}) => (
+  <section aria-label={copy.walletSessionApiReview} data-testid="wallet-modal-api-review" style={cardStyle}>
+    <div style={rowStyle}>
+      <h3 style={{ color: "#071426", fontSize: 18, margin: 0 }}>{copy.walletSessionApiReview}</h3>
+      <span style={state.source === "api_runtime" ? tagStyle : advancedStyle}>
+        {walletSessionBridgeSourceLabel(state, copy)}
+      </span>
+    </div>
+    {state.loading ? (
+      <p style={{ color: "#1c64f2", fontSize: 13, fontWeight: 800, lineHeight: 1.4, margin: 0 }}>
+        {copy.loadingPreview}
+      </p>
+    ) : null}
+    <div style={bridgeMetaGridStyle}>
+      <BridgeMetaItem label={copy.source} value={walletSessionBridgeSourceLabel(state, copy)} />
+      <BridgeMetaItem label={copy.diagnosticCount} value={state.diagnostics.length} />
+      <BridgeMetaItem label={copy.traceId} value={state.traceId ?? copy.noTrace} />
+      {state.session?.proof ? (
+        <>
+          <BridgeMetaItem label={copy.proofStatus} value={state.session.proof.status} />
+          <BridgeMetaItem label={copy.trustLevel} value={state.session.proof.trustLevel} />
+        </>
+      ) : null}
+      {state.session?.issuer ? (
+        <>
+          <BridgeMetaItem label={copy.issuerMode} value={state.session.issuer.issuerMode} />
+          <BridgeMetaItem label={copy.liveSigning} value={state.session.issuer.liveSigningExecuted} />
+        </>
+      ) : null}
+      {state.repository ? (
+        <>
+          <BridgeMetaItem label={copy.repository} value={state.repository.repositoryId ?? "local"} />
+          <BridgeMetaItem label={copy.recordId} value={state.repository.recordId ?? "local"} />
+          <BridgeMetaItem label={copy.sessionId} value={state.repository.sessionId ?? state.session?.sessionId ?? "local"} />
+          <BridgeMetaItem label={copy.upserted} value={state.repository.upserted ?? false} />
+        </>
+      ) : null}
+    </div>
+    {state.diagnostics.length > 0 ? (
+      <div style={{ display: "grid", gap: 8 }}>
+        <strong style={{ color: "#92400e", fontSize: 13 }}>{copy.diagnostics}</strong>
+        <ul style={issueListStyle}>
+          {state.diagnostics.map((item) => (
+            <li key={`${item.code}-${getLocalizedText(item.message, locale)}`}>
+              {item.code}: {getLocalizedText(item.message, locale)}
+            </li>
+          ))}
+        </ul>
+      </div>
+    ) : null}
+    <p style={{ color: "#475569", fontSize: 13, fontWeight: 700, lineHeight: 1.45, margin: 0 }}>
+      {getLocalizedText(state.boundary, locale)}
+    </p>
+  </section>
+);
+
 export const WalletConnectModal = ({
   adapterReadiness = createAelfWebLoginAdapterReadiness(walletSessions),
   connectorBoundary = createLiveWalletConnectorBoundary(),
@@ -472,6 +655,7 @@ export const WalletConnectModal = ({
   onClose,
   onPreviewConnect,
   options,
+  walletSessionBridgeState,
 }: WalletConnectModalProps) => {
   const copy = modalCopy[locale];
   const groupedOptions = groupWalletOptions(options);
@@ -530,6 +714,10 @@ export const WalletConnectModal = ({
 
         <ConnectorBoundarySection boundary={connectorBoundary} copy={copy} locale={locale} />
 
+        {walletSessionBridgeState ? (
+          <WalletSessionBridgeSection copy={copy} locale={locale} state={walletSessionBridgeState} />
+        ) : null}
+
         <AdapterEntryGroup
           copy={copy}
           entries={groupedAdapters.recommended}
@@ -579,8 +767,16 @@ export const WalletConnectModal = ({
         />
 
         {onPreviewConnect ? (
-          <button onClick={onPreviewConnect} style={previewConnectButtonStyle} type="button">
-            {copy.previewConnect}
+          <button
+            disabled={walletSessionBridgeState?.loading}
+            onClick={onPreviewConnect}
+            style={{
+              ...previewConnectButtonStyle,
+              ...(walletSessionBridgeState?.loading ? { cursor: "progress", opacity: 0.72 } : {}),
+            }}
+            type="button"
+          >
+            {walletSessionBridgeState?.loading ? copy.loadingPreview : copy.previewConnect}
           </button>
         ) : null}
 

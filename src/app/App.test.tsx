@@ -1,16 +1,29 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
-import { EXPORT_CSV_COLUMNS } from "../domain";
+import { act } from "react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { submitWalletSessionApiPreview, type WalletSessionApiBridgeState } from "../api/walletSessionApiBridge";
+import { EXPORT_CSV_COLUMNS, walletSessions } from "../domain";
 import {
   browserLocalePromptDismissedStorageKey,
   localePreferenceStorageKey,
 } from "../i18n/useLocale";
 import { App } from "./App";
 
+vi.mock("../api/walletSessionApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/walletSessionApiBridge")>();
+
+  return {
+    ...actual,
+    submitWalletSessionApiPreview: vi.fn(actual.submitWalletSessionApiPreview),
+  };
+});
+
 describe("Campaign OS app shell", () => {
   const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
   const defaultDocumentTitle = "aelf Campaign OS";
+  const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
+  const mockedSubmitWalletSessionApiPreview = vi.mocked(submitWalletSessionApiPreview);
   const getProductNavigation = () =>
     screen.getByRole("navigation", { name: "Campaign OS product navigation" });
   const getProjectWorkspaceNavigation = () =>
@@ -64,11 +77,50 @@ describe("Campaign OS app shell", () => {
     }
   };
 
+  const walletSessionBridgeState = (overrides: Partial<WalletSessionApiBridgeState> = {}): WalletSessionApiBridgeState => ({
+    boundary: {
+      "en-US": "Local wallet session API bridge only. No live wallet SDK connection is executed.",
+      "zh-CN": "仅用于本地 wallet session API bridge。",
+      "zh-TW": "僅用於本地 wallet session API bridge。",
+    },
+    configured: true,
+    diagnostics: [],
+    loading: false,
+    repository: {
+      recordId: "wallet-session:sess-aa-001",
+      repositoryId: "wallet-session-repository-runtime",
+      sessionId: "sess-aa-001",
+      upserted: true,
+    },
+    request: {
+      adapterName: "PortkeyAAWallet",
+      fixtureId: "sess-aa-001",
+    },
+    session: walletSessions[0],
+    source: "api_runtime",
+    status: "connected",
+    traceId: "trace-header-wallet",
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
+    mockedSubmitWalletSessionApiPreview.mockReset();
+    mockedSubmitWalletSessionApiPreview.mockImplementation(async (input) => {
+      const actual = await vi.importActual<typeof import("../api/walletSessionApiBridge")>(
+        "../api/walletSessionApiBridge",
+      );
+
+      return actual.submitWalletSessionApiPreview(input);
+    });
+  });
+
   afterEach(() => {
     window.localStorage.clear();
     setNavigatorLanguages(["en-US"]);
     pushRoute("/");
     removeDynamicMetadata();
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = originalApiBaseUrl;
   });
 
   it("renders the default English shell with all surfaces exposed", () => {
@@ -110,7 +162,7 @@ describe("Campaign OS app shell", () => {
     expect(within(getHeader()).queryByText("AA · Portkey")).not.toBeInTheDocument();
   });
 
-  it("opens the Header wallet modal and connects the local seeded preview wallet", () => {
+  it("opens the Header wallet modal and connects the local seeded preview wallet", async () => {
     render(<App />);
 
     fireEvent.click(getHeaderConnectWalletButton());
@@ -121,19 +173,103 @@ describe("Campaign OS app shell", () => {
     expect(within(dialog).getByTestId("wallet-modal-group-eoa")).toBeInTheDocument();
     expect(within(dialog).getByTestId("wallet-modal-group-advanced")).toBeInTheDocument();
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Use seeded wallet preview" }));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Use seeded wallet preview" }));
+    });
 
+    await waitFor(() => expect(within(getHeader()).getByRole("button", {
+      name: "Manage wallet connection: AA · Portkey 2F4...9aB",
+    })).toBeInTheDocument());
     const connectedWallet = within(getHeader()).getByRole("button", {
       name: "Manage wallet connection: AA · Portkey 2F4...9aB",
     });
 
     expect(connectedWallet).toHaveTextContent("AA · Portkey");
     expect(connectedWallet).toHaveTextContent("2F4...9aB");
+    expect(mockedSubmitWalletSessionApiPreview).toHaveBeenCalledWith(expect.objectContaining({
+      config: expect.objectContaining({
+        baseUrl: "",
+        tracePrefix: "header-wallet-session",
+      }),
+      request: {
+        adapterName: "PortkeyAAWallet",
+        fixtureId: "sess-aa-001",
+      },
+    }));
     expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
 
     fireEvent.click(connectedWallet);
 
     expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
+  });
+
+  it("connects the Header wallet through the local API runtime and renders review metadata", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedSubmitWalletSessionApiPreview.mockResolvedValueOnce(walletSessionBridgeState());
+
+    render(<App />);
+
+    fireEvent.click(getHeaderConnectWalletButton());
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+
+    expect(within(dialog).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Use seeded wallet preview" }));
+    });
+
+    await waitFor(() => expect(mockedSubmitWalletSessionApiPreview).toHaveBeenCalledWith(expect.objectContaining({
+      config: expect.objectContaining({
+        baseUrl: "http://127.0.0.1:5184",
+        tracePrefix: "header-wallet-session",
+      }),
+      request: {
+        adapterName: "PortkeyAAWallet",
+        fixtureId: "sess-aa-001",
+      },
+    })));
+    expect(within(getHeader()).getByRole("button", {
+      name: "Manage wallet connection: AA · Portkey 2F4...9aB",
+    })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the Header wallet modal open and does not update the badge when the API result is invalid", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedSubmitWalletSessionApiPreview.mockResolvedValueOnce(walletSessionBridgeState({
+      diagnostics: [{
+        code: "API_RESPONSE_INVALID",
+        message: {
+          "en-US": "The local wallet session API response shape was not recognized.",
+          "zh-CN": "本地 wallet session API 响应结构无法识别。",
+          "zh-TW": "本地 wallet session API 回應結構無法識別。",
+        },
+        severity: "error",
+      }],
+      repository: undefined,
+      session: undefined,
+      source: "error_fallback",
+      status: "error",
+      traceId: "trace-invalid-wallet",
+    }));
+
+    render(<App />);
+
+    fireEvent.click(getHeaderConnectWalletButton());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Use seeded wallet preview" }));
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Connect Wallet" });
+    const review = within(dialog).getByRole("region", { name: "Wallet session API review" });
+
+    expect(within(getHeader()).queryByRole("button", {
+      name: /Manage wallet connection/,
+    })).not.toBeInTheDocument();
+    expect(within(getHeader()).getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
+    expect(within(review).getAllByText("Error fallback").length).toBeGreaterThan(0);
+    expect(within(review).getByText(/API_RESPONSE_INVALID/)).toBeInTheDocument();
   });
 
   it("routes product navigation to seeded Project Console destinations", () => {
