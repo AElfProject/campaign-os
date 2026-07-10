@@ -21,6 +21,12 @@ import {
   type PointsRankingLedgerRuntimeApiBridgeState,
 } from "../../../api/pointsRankingLedgerRuntimeApiBridge";
 import {
+  createObjectStorageExportRuntimeApiLoadingState,
+  createObjectStorageExportRuntimeApiSeededFallbackState,
+  loadObjectStorageExportRuntimeApiBridgeState,
+  type ObjectStorageExportRuntimeApiBridgeState,
+} from "../../../api/objectStorageExportRuntimeApiBridge";
+import {
   createExportArtifactDeliveryApiLoadingState,
   createExportArtifactDeliverySeededFallbackState,
   sanitizeExportArtifactDeliveryApiText,
@@ -143,6 +149,7 @@ import { PublishReadinessPanel } from "./builder/PublishReadinessPanel";
 import { RewardsEligibilityBuilder } from "./builder/RewardsEligibilityBuilder";
 import { TaskTemplateLibrary } from "./builder/TaskTemplateLibrary";
 import { BackendRuntimeReadinessPanel } from "./BackendRuntimeReadinessPanel";
+import { ObjectStorageExportRuntimePanel } from "./ObjectStorageExportRuntimePanel";
 import { PointsRankingLedgerRuntimePanel } from "./PointsRankingLedgerRuntimePanel";
 import { projectConsoleCopy } from "./copy";
 import { PublishDeliveryReviewPanel } from "./PublishDeliveryReviewPanel";
@@ -1285,6 +1292,9 @@ const publishDeliveryReviewApiBaseUrl = () =>
 const pointsRankingLedgerRuntimeApiBaseUrl = () =>
   import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
+const objectStorageExportRuntimeApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
 const createPublishDeliveryReviewSeededFallbackState = (
   campaignId: string,
 ): PublishDeliveryReviewApiBridgeState => ({
@@ -1313,6 +1323,23 @@ const createPointsRankingLedgerRuntimeSeededFallbackState = (
         "en-US": "No local points ranking ledger runtime API base URL is configured, so seeded review data is shown.",
         "zh-CN": "未配置本地 points ranking ledger runtime API base URL，因此显示 seeded review 数据。",
         "zh-TW": "未設定本地 points ranking ledger runtime API base URL，因此顯示 seeded review 資料。",
+      },
+      severity: "info",
+    },
+  ],
+});
+
+const createObjectStorageExportRuntimeSeededFallbackState = (
+  campaignId: string,
+): ObjectStorageExportRuntimeApiBridgeState => ({
+  ...createObjectStorageExportRuntimeApiSeededFallbackState(campaignId),
+  diagnostics: [
+    {
+      code: "API_BASE_URL_MISSING",
+      message: {
+        "en-US": "No local object storage export readiness API base URL is configured, so seeded review data is shown.",
+        "zh-CN": "未配置本地 object storage export readiness API base URL，因此显示 seeded review 数据。",
+        "zh-TW": "未設定本地 object storage export readiness API base URL，因此顯示 seeded review 資料。",
       },
       severity: "info",
     },
@@ -1968,6 +1995,7 @@ export const ProjectConsole = ({
   );
   const publishDeliveryApiRequestSeq = useRef(0);
   const pointsRankingLedgerRuntimeApiRequestSeq = useRef(0);
+  const objectStorageExportRuntimeApiRequestSeq = useRef(0);
   const exportDeliveryApiRequestSeq = useRef(0);
   const backendReadinessApiRequestSeq = useRef(0);
   const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
@@ -2050,6 +2078,7 @@ export const ProjectConsole = ({
   const exportDeliveryApiBaseUrl = exportArtifactDeliveryApiBaseUrl();
   const publishDeliveryApiBaseUrl = publishDeliveryReviewApiBaseUrl();
   const pointsRankingLedgerRuntimeApiBase = pointsRankingLedgerRuntimeApiBaseUrl();
+  const objectStorageExportRuntimeApiBase = objectStorageExportRuntimeApiBaseUrl();
   const exportDeliveryApiRequest: ExportArtifactDeliveryRequest = {
     campaignId: campaign.id,
     contractRootMode: "eligibility_root",
@@ -2078,6 +2107,13 @@ export const ProjectConsole = ({
         : createPointsRankingLedgerRuntimeSeededFallbackState(campaign.id),
     );
   const [pointsRankingLedgerRuntimeApiReviewInFlight, setPointsRankingLedgerRuntimeApiReviewInFlight] = useState(false);
+  const [objectStorageExportRuntimeApiState, setObjectStorageExportRuntimeApiState] =
+    useState<ObjectStorageExportRuntimeApiBridgeState>(() =>
+      objectStorageExportRuntimeApiBase?.trim()
+        ? createObjectStorageExportRuntimeApiLoadingState(campaign.id)
+        : createObjectStorageExportRuntimeSeededFallbackState(campaign.id),
+    );
+  const [objectStorageExportRuntimeApiReviewInFlight, setObjectStorageExportRuntimeApiReviewInFlight] = useState(false);
   const backendReadinessApiBaseUrl = backendRuntimeReadinessApiBaseUrl();
   const [backendReadinessApiState, setBackendReadinessApiState] =
     useState<BackendRuntimeReadinessApiBridgeState>(() =>
@@ -2235,6 +2271,40 @@ export const ProjectConsole = ({
     loadPointsRankingLedgerRuntimeApiReview();
   };
 
+  const loadObjectStorageExportRuntimeApiReview = useCallback(() => {
+    if (!objectStorageExportRuntimeApiBase?.trim()) {
+      setObjectStorageExportRuntimeApiState(createObjectStorageExportRuntimeSeededFallbackState(campaign.id));
+      setObjectStorageExportRuntimeApiReviewInFlight(false);
+      return;
+    }
+
+    setObjectStorageExportRuntimeApiReviewInFlight(true);
+    setObjectStorageExportRuntimeApiState(createObjectStorageExportRuntimeApiLoadingState(campaign.id));
+
+    const requestSeq = objectStorageExportRuntimeApiRequestSeq.current + 1;
+    objectStorageExportRuntimeApiRequestSeq.current = requestSeq;
+
+    void loadObjectStorageExportRuntimeApiBridgeState({
+      campaignId: campaign.id,
+      config: {
+        baseUrl: objectStorageExportRuntimeApiBase,
+        tracePrefix: "project-console-object-storage-export-runtime",
+      },
+    }).then((state) => {
+      if (objectStorageExportRuntimeApiRequestSeq.current === requestSeq) {
+        setObjectStorageExportRuntimeApiState(state);
+      }
+    }).finally(() => {
+      if (objectStorageExportRuntimeApiRequestSeq.current === requestSeq) {
+        setObjectStorageExportRuntimeApiReviewInFlight(false);
+      }
+    });
+  }, [campaign.id, objectStorageExportRuntimeApiBase]);
+
+  const runObjectStorageExportRuntimeApiReview = () => {
+    loadObjectStorageExportRuntimeApiReview();
+  };
+
   const loadBackendReadinessApiReview = useCallback(() => {
     if (!backendReadinessApiBaseUrl?.trim()) {
       setBackendReadinessApiState(createBackendRuntimeReadinessSeededFallbackState());
@@ -2272,11 +2342,13 @@ export const ProjectConsole = ({
     if (activeWorkspace === "export") {
       loadPublishDeliveryApiReview();
       loadPointsRankingLedgerRuntimeApiReview();
+      loadObjectStorageExportRuntimeApiReview();
       loadBackendReadinessApiReview();
     }
   }, [
     activeWorkspace,
     loadBackendReadinessApiReview,
+    loadObjectStorageExportRuntimeApiReview,
     loadPointsRankingLedgerRuntimeApiReview,
     loadPublishDeliveryApiReview,
   ]);
@@ -6791,6 +6863,15 @@ export const ProjectConsole = ({
         onReview={runPointsRankingLedgerRuntimeApiReview}
         reviewInFlight={pointsRankingLedgerRuntimeApiReviewInFlight}
         state={pointsRankingLedgerRuntimeApiState}
+      />
+
+      <ObjectStorageExportRuntimePanel
+        apiConfigured={Boolean(objectStorageExportRuntimeApiBase?.trim())}
+        copy={copy}
+        locale={locale}
+        onReview={runObjectStorageExportRuntimeApiReview}
+        reviewInFlight={objectStorageExportRuntimeApiReviewInFlight}
+        state={objectStorageExportRuntimeApiState}
       />
 
       <BackendRuntimePersistencePostureSurface

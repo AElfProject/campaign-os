@@ -21,6 +21,11 @@ import {
   loadPointsRankingLedgerRuntimeApiBridgeState,
   type PointsRankingLedgerRuntimeApiBridgeState,
 } from "../../../api/pointsRankingLedgerRuntimeApiBridge";
+import {
+  createObjectStorageExportRuntimeApiSeededFallbackState,
+  loadObjectStorageExportRuntimeApiBridgeState,
+  type ObjectStorageExportRuntimeApiBridgeState,
+} from "../../../api/objectStorageExportRuntimeApiBridge";
 import { App } from "../../../app/App";
 import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
 import { projectConsoleCopy } from "./copy";
@@ -59,6 +64,15 @@ vi.mock("../../../api/pointsRankingLedgerRuntimeApiBridge", async (importOrigina
   return {
     ...actual,
     loadPointsRankingLedgerRuntimeApiBridgeState: vi.fn(actual.loadPointsRankingLedgerRuntimeApiBridgeState),
+  };
+});
+
+vi.mock("../../../api/objectStorageExportRuntimeApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/objectStorageExportRuntimeApiBridge")>();
+
+  return {
+    ...actual,
+    loadObjectStorageExportRuntimeApiBridgeState: vi.fn(actual.loadObjectStorageExportRuntimeApiBridgeState),
   };
 });
 
@@ -517,12 +531,36 @@ const pointsRankingLedgerRuntimeApiState = (): PointsRankingLedgerRuntimeApiBrid
   };
 };
 
+const objectStorageExportRuntimeApiState = (): ObjectStorageExportRuntimeApiBridgeState => {
+  const state = createObjectStorageExportRuntimeApiSeededFallbackState(
+    campaignDetail.id,
+    "trace-storage-api-visible",
+  );
+
+  return {
+    ...state,
+    configured: true,
+    diagnostics: [],
+    routeCount: 34,
+    source: "api_runtime",
+    status: "blocked",
+    traceId: "trace-storage-api-visible",
+    readiness: {
+      ...state.readiness,
+      source: "api_runtime",
+      status: "blocked",
+      traceId: "trace-storage-api-visible",
+    },
+  };
+};
+
 describe("Project Console shell", () => {
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
   const mockedSubmitExportArtifactDeliveryApiReview = vi.mocked(submitExportArtifactDeliveryApiReview);
   const mockedLoadBackendRuntimeReadinessApiBridgeState = vi.mocked(loadBackendRuntimeReadinessApiBridgeState);
   const mockedLoadPublishDeliveryReviewApiBridgeState = vi.mocked(loadPublishDeliveryReviewApiBridgeState);
   const mockedLoadPointsRankingLedgerRuntimeApiBridgeState = vi.mocked(loadPointsRankingLedgerRuntimeApiBridgeState);
+  const mockedLoadObjectStorageExportRuntimeApiBridgeState = vi.mocked(loadObjectStorageExportRuntimeApiBridgeState);
 
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
@@ -530,9 +568,11 @@ describe("Project Console shell", () => {
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockReset();
     mockedLoadPublishDeliveryReviewApiBridgeState.mockReset();
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockReset();
+    mockedLoadObjectStorageExportRuntimeApiBridgeState.mockReset();
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockResolvedValue(backendReadinessApiState());
     mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValue(publishDeliveryReviewApiState());
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockResolvedValue(pointsRankingLedgerRuntimeApiState());
+    mockedLoadObjectStorageExportRuntimeApiBridgeState.mockResolvedValue(objectStorageExportRuntimeApiState());
   });
 
   afterEach(() => {
@@ -2136,6 +2176,43 @@ describe("Project Console shell", () => {
         name: /write|contract|reward|distribute|custody|provider|signature/i,
       }),
     ).not.toBeInTheDocument();
+  });
+
+  it("loads Object Storage Export Runtime automatically without live storage controls", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedLoadObjectStorageExportRuntimeApiBridgeState.mockResolvedValueOnce(objectStorageExportRuntimeApiState());
+
+    render(<ProjectConsole activeWorkspace="export" campaign={campaignDetail} locale="en-US" />);
+
+    const objectStorageExportRuntime = screen.getByLabelText("Object Storage Export Runtime review");
+
+    await waitFor(() => expect(mockedLoadObjectStorageExportRuntimeApiBridgeState).toHaveBeenCalledWith({
+      campaignId: campaignDetail.id,
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        tracePrefix: "project-console-object-storage-export-runtime",
+      },
+    }));
+
+    await waitFor(() => expect(within(objectStorageExportRuntime).getByText("API runtime")).toBeInTheDocument());
+    expect(within(objectStorageExportRuntime).getByText("trace-storage-api-visible")).toBeInTheDocument();
+    expect(within(objectStorageExportRuntime).getByRole("button", { name: "Review storage readiness" }))
+      .toBeInTheDocument();
+    expect(within(objectStorageExportRuntime).getByText("export-awaken-sprint-preview")).toBeInTheDocument();
+    expect(within(objectStorageExportRuntime).getByText("CAMPAIGN_OS_OBJECT_STORAGE_PROVIDER_REF"))
+      .toBeInTheDocument();
+    expect(within(objectStorageExportRuntime).getByText("No upload")).toBeInTheDocument();
+    expect(within(objectStorageExportRuntime).getByText("No download")).toBeInTheDocument();
+    expect(within(objectStorageExportRuntime).getByText("No signed URL")).toBeInTheDocument();
+    expect(within(objectStorageExportRuntime).getByText("No provider call")).toBeInTheDocument();
+    expect(screen.getByLabelText("Publish Delivery Review Bridge")).toBeInTheDocument();
+    expect(screen.getByLabelText("Points Ranking Ledger Runtime review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Backend Runtime Readiness review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Export Delivery API review")).toBeInTheDocument();
+    for (const name of [/upload/i, /download/i, /signed URL/i, /provider execution/i, /contract write/i]) {
+      expect(within(objectStorageExportRuntime).queryByRole("button", { name })).not.toBeInTheDocument();
+      expect(within(objectStorageExportRuntime).queryByRole("link", { name })).not.toBeInTheDocument();
+    }
   });
 
   it("shows partial Export Delivery API state while preserving seeded export panels", async () => {
