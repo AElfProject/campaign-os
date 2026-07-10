@@ -405,6 +405,19 @@ export const apiRuntimeRoutes = [
     summary: text("Get a local export artifact audit record.", "获取本地导出 artifact 审计记录。"),
     supportMode: "local_seeded",
   }),
+  route({
+    apiGroup: "export",
+    boundary,
+    id: "campaigns.export.artifacts.file",
+    method: "GET",
+    path: "/api/campaigns/:campaignId/export-artifacts/:artifactId/file",
+    productionDependencies: dependenciesFor("export"),
+    readiness: "review_required",
+    riskLevel: "high",
+    serviceGroup: "export",
+    summary: text("Return a local export artifact file handoff payload.", "返回本地导出 artifact 文件交接 payload。"),
+    supportMode: "local_seeded",
+  }),
 ] as const satisfies readonly ApiRuntimeRouteContract[];
 
 export type ApiRuntimeRouteId = (typeof apiRuntimeRoutes)[number]["id"];

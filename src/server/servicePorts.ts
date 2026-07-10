@@ -280,6 +280,7 @@ export const apiServicePorts = [
       "campaigns.export.readiness",
       "campaigns.export.artifacts.list",
       "campaigns.export.artifacts.detail",
+      "campaigns.export.artifacts.file",
     ],
     serviceId: "export-service",
   }),

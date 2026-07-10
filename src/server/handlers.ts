@@ -29,9 +29,17 @@ import {
   type VerifyTaskRequest,
   type VerifyTaskResponse,
 } from "../domain/campaignService";
-import { createDeliveryChecklistReadinessConsole, createLaunchConsoleCampaignBundles } from "../domain/campaign";
+import {
+  createDeliveryChecklistReadinessConsole,
+  createLaunchConsoleCampaignBundles,
+  createLocalExportFileHandoff,
+} from "../domain/campaign";
 import { createPublishGateDecisionCenter, seededCampaignDraft } from "../domain/builder";
 import { campaignDetail } from "../domain/fixtures";
+import {
+  exportArtifactRegistryForbiddenFields,
+  type ExportArtifactRegistryRecord,
+} from "./exportArtifactRegistry";
 import {
   createPublishDeliveryReview,
   type PublishDeliveryReviewBackendRuntimeInput,
@@ -60,6 +68,8 @@ import type {
   VerificationProviderId,
   PointsRankingLedgerRuntime,
   PublishDeliveryReview,
+  ExportPreviewMode,
+  LocalExportFileHandoff,
 } from "../domain/types";
 import type { ApiRuntimeRouteId } from "./routes";
 import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
@@ -812,6 +822,234 @@ const withExportArtifactRegistry = (
     payload: {
       ...response.payload,
       artifactRegistry: registration.record,
+    },
+  };
+};
+
+interface LocalExportFileHandoffPayload {
+  artifactId: string;
+  auditDetail: {
+    batchId: string;
+    checksum: string;
+    checksumAlgorithm: string;
+    fileName: string;
+    payloadBytes: number;
+    previewRouteId: string;
+    previewTraceId: string;
+    retentionState: LocalExportFileHandoff["retention"]["state"];
+    source: "deterministic_local_export";
+  };
+  campaignId: string;
+  handoff: LocalExportFileHandoff;
+  safety: LocalExportFileHandoff["safety"];
+}
+
+const localExportFileAllowedQueryFields = new Set(["format", "now"]);
+const localExportFileModeFields = new Set(["mode", "exportMode", "contractRootMode"]);
+const localExportFileForbiddenQueryFields = new Map(
+  exportArtifactRegistryForbiddenFields.map((field) => [field.toLowerCase(), field]),
+);
+
+const validateLocalExportFileQuery = (context: ApiRuntimeHandlerContext) => {
+  for (const field of Object.keys(context.query)) {
+    const forbiddenField = localExportFileForbiddenQueryFields.get(field.toLowerCase());
+
+    if (forbiddenField) {
+      throw invalidRequest(
+        forbiddenField,
+        "Unsafe local export file handoff request fields are not accepted.",
+      );
+    }
+
+    if (localExportFileModeFields.has(field)) {
+      throw unsupportedExportMode("local-file-handoff-mode-override");
+    }
+
+    if (!localExportFileAllowedQueryFields.has(field)) {
+      throw invalidRequest(
+        field,
+        "Unsupported local export file handoff query field.",
+      );
+    }
+  }
+};
+
+const localExportFileReferenceNow = (
+  record: ExportArtifactRegistryRecord,
+  now: string | undefined,
+) => {
+  if (now === undefined) {
+    return Date.parse(record.createdAt);
+  }
+
+  const parsed = Date.parse(now);
+
+  if (!Number.isFinite(parsed)) {
+    throw invalidRequest("now", "now must be an ISO timestamp for local export file handoff review.");
+  }
+
+  return parsed;
+};
+
+const localExportFileRetentionState = (
+  record: ExportArtifactRegistryRecord,
+  now: string | undefined,
+): LocalExportFileHandoff["retention"]["state"] => {
+  const expiresAt = Date.parse(record.expiresAt);
+  const referenceNow = localExportFileReferenceNow(record, now);
+
+  return Number.isFinite(expiresAt) && expiresAt <= referenceNow ? "expired" : "active";
+};
+
+const localExportFileFormat = (
+  record: ExportArtifactRegistryRecord,
+  context: ApiRuntimeHandlerContext,
+): ExportPreviewMode => {
+  if (context.query.format === undefined) {
+    return record.format;
+  }
+
+  const requestedFormat = exportFormat(context.query.format);
+
+  if (requestedFormat !== record.format) {
+    throw invalidRequest(
+      "format",
+      "Requested local export file format must match the registered artifact format.",
+    );
+  }
+
+  return requestedFormat;
+};
+
+const deterministicExportArtifactForRecord = async (
+  record: ExportArtifactRegistryRecord,
+  format: ExportPreviewMode,
+  context: ApiRuntimeHandlerContext,
+): Promise<ExportArtifact> => {
+  const request: ExportWinnersRequest = {
+    campaignId: record.campaignId,
+    contractRootMode: "none",
+    format,
+    includeLocalePreference: true,
+    includeRiskFlags: true,
+    includeWalletType: true,
+  };
+  const localResult = context.service.exportWinners(request);
+
+  if (localResult.ok) {
+    return localResult.payload.artifact;
+  }
+
+  if (localResult.error.code === "CAMPAIGN_NOT_FOUND" && context.campaignDbRepository.projectExport) {
+    const campaignDbDraft = await context.campaignDbRepository.getById(record.campaignId, {
+      traceId: context.traceId,
+    });
+
+    if (campaignDbDraft) {
+      const projection = await context.campaignDbRepository.projectExport(request, {
+        traceId: context.traceId,
+      });
+      const payload = createRepositoryExportPreviewResponse(projection);
+
+      return repositoryArtifactForRegistry(projection.artifact, payload);
+    }
+  }
+
+  throw localErrorToRuntimeError(localResult.error, context);
+};
+
+const assertLocalExportFileArtifactMatchesRecord = (
+  artifact: ExportArtifact,
+  record: ExportArtifactRegistryRecord,
+) => {
+  const matchesRecord = artifact.campaignId === record.campaignId
+    && artifact.batchId === record.batchId
+    && artifact.format === record.format
+    && artifact.fileName === record.fileName
+    && artifact.mimeType === record.mimeType
+    && artifact.metadata.checksum === record.checksum
+    && artifact.metadata.checksumAlgorithm === record.checksumAlgorithm
+    && artifact.metadata.payloadBytes === record.payloadBytes
+    && artifact.metadata.totalRows === record.totalRows
+    && artifact.metadata.readyRows === record.readyRows
+    && artifact.metadata.reviewRequiredRows === record.reviewRequiredRows
+    && artifact.metadata.blockedRows === record.blockedRows;
+
+  if (!matchesRecord) {
+    throw invalidRequest(
+      "artifactId",
+      "Local export file handoff record does not match the deterministic export artifact.",
+    );
+  }
+};
+
+const localExportFileHandoffPayload = async (
+  context: ApiRuntimeHandlerContext,
+): Promise<{
+  boundary: LocalExportFileHandoff["boundary"];
+  payload: LocalExportFileHandoffPayload;
+}> => {
+  validateLocalExportFileQuery(context);
+
+  const result = context.exportArtifactRegistry.get({
+    artifactId: requiredRouteParam(context.params, "artifactId"),
+    campaignId: requiredRouteParam(context.params, "campaignId"),
+  });
+
+  if (!result.ok) {
+    throw invalidRequest(
+      result.diagnostics[0]?.field ?? "artifactId",
+      result.diagnostics[0]?.message ?? "Export artifact audit record was not found.",
+    );
+  }
+
+  const record = result.payload.record;
+  const requestedFormat = localExportFileFormat(record, context);
+  const retentionState = localExportFileRetentionState(record, optionalString(context.query.now));
+
+  if (retentionState === "expired") {
+    throw invalidRequest(
+      "retention",
+      "LOCAL_EXPORT_FILE_EXPIRED: local export file handoff retention has expired.",
+    );
+  }
+
+  const artifact = await deterministicExportArtifactForRecord(record, requestedFormat, context);
+
+  assertLocalExportFileArtifactMatchesRecord(artifact, record);
+
+  const handoff = createLocalExportFileHandoff(artifact, {
+    artifactId: record.artifactId,
+    retention: {
+      createdAt: record.createdAt,
+      expiresAt: record.expiresAt,
+      mode: record.retention.mode,
+      productionStorageBacked: false,
+      purgeRequired: record.retention.purgeRequired,
+      state: retentionState,
+      ttlHours: record.retention.ttlHours,
+    },
+    traceId: context.traceId,
+  });
+
+  return {
+    boundary: handoff.boundary,
+    payload: {
+      artifactId: record.artifactId,
+      auditDetail: {
+        batchId: record.batchId,
+        checksum: record.checksum,
+        checksumAlgorithm: record.checksumAlgorithm,
+        fileName: record.fileName,
+        payloadBytes: record.payloadBytes,
+        previewRouteId: record.routeId,
+        previewTraceId: record.traceId,
+        retentionState,
+        source: "deterministic_local_export",
+      },
+      campaignId: record.campaignId,
+      handoff,
+      safety: handoff.safety,
     },
   };
 };
@@ -2137,4 +2375,5 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       payload: result.payload,
     };
   },
+  "campaigns.export.artifacts.file": (context) => localExportFileHandoffPayload(context),
 });
