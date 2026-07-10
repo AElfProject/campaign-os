@@ -1,5 +1,6 @@
 import { useState, type CSSProperties } from "react";
 import { CheckCircle2, FileCheck2, FolderOpen, RotateCcw, Save, XCircle, type LucideIcon } from "lucide-react";
+import { createContractWriterRuntimeApiSeededFallbackState } from "../../../api/contractWriterRuntimeApiBridge";
 import {
   campaignDetail,
   computePublishReadiness,
@@ -118,6 +119,7 @@ import {
   ReviewSeverityBadge,
   WalletBadge,
 } from "../../badges/Badges";
+import { ContractWriterRuntimePanel } from "../project-console/ContractWriterRuntimePanel";
 import { adminOpsCopy } from "./copy";
 
 interface AdminOpsPanelProps {
@@ -2176,6 +2178,10 @@ export const AdminOpsPanel = ({
   const contractInterfaceMatrix = adminOps.contractInterfaceMatrix;
   const contractTransparencyMonitor = adminOps.contractTransparencyMonitor;
   const companionContractReadiness = adminOps.companionContractReadiness;
+  const contractWriterRuntimeState = createContractWriterRuntimeApiSeededFallbackState(
+    campaign.id,
+    "admin-ops-contract-writer-runtime-review",
+  );
   const columnContract = adminOps.exportBatch.columns.join(",");
   const verificationRows = campaign.participants.flatMap((participant) =>
     createParticipationReadModel(campaign, participant).taskStates.map((state) => ({
@@ -8265,6 +8271,12 @@ export const AdminOpsPanel = ({
           ))}
         </div>
       </section>
+
+      <ContractWriterRuntimePanel
+        apiConfigured={false}
+        locale={locale}
+        state={contractWriterRuntimeState}
+      />
 
       {companionContractReadinessSection}
 

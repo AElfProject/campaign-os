@@ -31,6 +31,11 @@ import {
   loadAnalyticsIngestionRuntimeApiBridgeState,
   type AnalyticsIngestionRuntimeApiBridgeState,
 } from "../../../api/analyticsIngestionRuntimeApiBridge";
+import {
+  createContractWriterRuntimeApiSeededFallbackState,
+  loadContractWriterRuntimeApiBridgeState,
+  type ContractWriterRuntimeApiBridgeState,
+} from "../../../api/contractWriterRuntimeApiBridge";
 import { App } from "../../../app/App";
 import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
 import { projectConsoleCopy } from "./copy";
@@ -87,6 +92,15 @@ vi.mock("../../../api/analyticsIngestionRuntimeApiBridge", async (importOriginal
   return {
     ...actual,
     loadAnalyticsIngestionRuntimeApiBridgeState: vi.fn(actual.loadAnalyticsIngestionRuntimeApiBridgeState),
+  };
+});
+
+vi.mock("../../../api/contractWriterRuntimeApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/contractWriterRuntimeApiBridge")>();
+
+  return {
+    ...actual,
+    loadContractWriterRuntimeApiBridgeState: vi.fn(actual.loadContractWriterRuntimeApiBridgeState),
   };
 });
 
@@ -591,6 +605,29 @@ const analyticsIngestionRuntimeApiState = (): AnalyticsIngestionRuntimeApiBridge
   };
 };
 
+const contractWriterRuntimeApiState = (): ContractWriterRuntimeApiBridgeState => {
+  const state = createContractWriterRuntimeApiSeededFallbackState(
+    campaignDetail.id,
+    "trace-contract-writer-api-visible",
+  );
+
+  return {
+    ...state,
+    configured: true,
+    diagnostics: [],
+    routeCount: 36,
+    source: "api_runtime",
+    status: "blocked",
+    traceId: "trace-contract-writer-api-visible",
+    readiness: {
+      ...state.readiness,
+      source: "server_runtime",
+      status: "blocked",
+      traceId: "trace-contract-writer-api-visible",
+    },
+  };
+};
+
 describe("Project Console shell", () => {
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
   const mockedSubmitExportArtifactDeliveryApiReview = vi.mocked(submitExportArtifactDeliveryApiReview);
@@ -599,6 +636,7 @@ describe("Project Console shell", () => {
   const mockedLoadPointsRankingLedgerRuntimeApiBridgeState = vi.mocked(loadPointsRankingLedgerRuntimeApiBridgeState);
   const mockedLoadObjectStorageExportRuntimeApiBridgeState = vi.mocked(loadObjectStorageExportRuntimeApiBridgeState);
   const mockedLoadAnalyticsIngestionRuntimeApiBridgeState = vi.mocked(loadAnalyticsIngestionRuntimeApiBridgeState);
+  const mockedLoadContractWriterRuntimeApiBridgeState = vi.mocked(loadContractWriterRuntimeApiBridgeState);
 
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
@@ -608,11 +646,13 @@ describe("Project Console shell", () => {
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockReset();
     mockedLoadObjectStorageExportRuntimeApiBridgeState.mockReset();
     mockedLoadAnalyticsIngestionRuntimeApiBridgeState.mockReset();
+    mockedLoadContractWriterRuntimeApiBridgeState.mockReset();
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockResolvedValue(backendReadinessApiState());
     mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValue(publishDeliveryReviewApiState());
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockResolvedValue(pointsRankingLedgerRuntimeApiState());
     mockedLoadObjectStorageExportRuntimeApiBridgeState.mockResolvedValue(objectStorageExportRuntimeApiState());
     mockedLoadAnalyticsIngestionRuntimeApiBridgeState.mockResolvedValue(analyticsIngestionRuntimeApiState());
+    mockedLoadContractWriterRuntimeApiBridgeState.mockResolvedValue(contractWriterRuntimeApiState());
   });
 
   afterEach(() => {
@@ -1907,6 +1947,17 @@ describe("Project Console shell", () => {
     expect(within(pointsRankingLedgerRuntime).getByText("No Pixiepoints ledger write")).toBeInTheDocument();
     expect(within(pointsRankingLedgerRuntime).getByText("No reward distribution")).toBeInTheDocument();
 
+    const contractWriterRuntime = screen.getByLabelText("Contract Writer Runtime review");
+    expect(mockedLoadContractWriterRuntimeApiBridgeState).not.toHaveBeenCalled();
+    expect(within(contractWriterRuntime).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getByText("No API trace yet")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText(/No local API base URL configured/)).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT_REF")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getAllByText("CampaignRegistryV2").length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getByText("No signer execution")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("No contract write")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("No reward distribution")).toBeInTheDocument();
+
     const walletAdapterReadiness = screen.getByLabelText("aelf-web-login adapter readiness");
     expect(
       within(walletAdapterReadiness).getByRole("heading", {
@@ -2217,6 +2268,55 @@ describe("Project Console shell", () => {
         name: /write|contract|reward|distribute|custody|provider|signature/i,
       }),
     ).not.toBeInTheDocument();
+  });
+
+  it("loads Contract Writer Runtime automatically and keeps live contract controls absent", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedLoadContractWriterRuntimeApiBridgeState.mockResolvedValueOnce(contractWriterRuntimeApiState());
+
+    render(<ProjectConsole activeWorkspace="export" campaign={campaignDetail} locale="en-US" />);
+
+    const contractWriterRuntime = screen.getByLabelText("Contract Writer Runtime review");
+
+    await waitFor(() => expect(mockedLoadContractWriterRuntimeApiBridgeState).toHaveBeenCalledWith({
+      campaignId: campaignDetail.id,
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        tracePrefix: "project-console-contract-writer-runtime",
+      },
+    }));
+
+    await waitFor(() => expect(within(contractWriterRuntime).getByText("API runtime")).toBeInTheDocument());
+    expect(within(contractWriterRuntime).getByText("trace-contract-writer-api-visible")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByRole("button", { name: "Refresh readiness" }))
+      .toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT_REF"))
+      .toBeInTheDocument();
+    expect(within(contractWriterRuntime).getAllByText("CampaignRegistryV2").length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getAllByText("CampaignPointsLedgerV2").length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getAllByText("ReferralRegistryV2").length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getAllByText("EligibilityRootRegistryV2").length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getByText("CreateCampaign")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("CommitPointsBatch")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("BindReferral")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("SetEligibilityRoot")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getAllByText(/CONTRACT_WRITER_CONFIG_MISSING/).length).toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getAllByText(/CONTRACT_WRITER_LIVE_EXECUTION_DISABLED/).length)
+      .toBeGreaterThan(0);
+    expect(within(contractWriterRuntime).getByText("No signer execution")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("No wallet signature")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("No contract write")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("No queue publishing")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("No reward custody")).toBeInTheDocument();
+    expect(within(contractWriterRuntime).getByText("No reward distribution")).toBeInTheDocument();
+    expect(screen.getByLabelText("Publish Delivery Review Bridge")).toBeInTheDocument();
+    expect(screen.getByLabelText("Points Ranking Ledger Runtime review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Analytics Ingestion Runtime review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Backend Runtime Readiness review")).toBeInTheDocument();
+    for (const name of [/sign/i, /write/i, /publish/i, /claim/i, /distribute/i, /reward/i, /custody/i, /contract/i]) {
+      expect(within(contractWriterRuntime).queryByRole("button", { name })).not.toBeInTheDocument();
+      expect(within(contractWriterRuntime).queryByRole("link", { name })).not.toBeInTheDocument();
+    }
   });
 
   it("loads Object Storage Export Runtime automatically without live storage controls", async () => {

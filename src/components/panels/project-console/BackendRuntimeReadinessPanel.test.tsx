@@ -55,7 +55,7 @@ describe("BackendRuntimeReadinessPanel", () => {
     expect(within(panel).getByText("/api/health")).toBeInTheDocument();
     expect(within(panel).getByText("/api/contracts")).toBeInTheDocument();
     expect(within(panel).getByText("database")).toBeInTheDocument();
-    expect(within(panel).getByText("contract writer mission")).toBeInTheDocument();
+    expect(within(panel).getByText("CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT_REF")).toBeInTheDocument();
     expect(within(panel).getByText("No contract write")).toBeInTheDocument();
     expect(within(panel).getByText(/No live provider call/)).toBeInTheDocument();
   });

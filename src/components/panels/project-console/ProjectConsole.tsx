@@ -33,6 +33,12 @@ import {
   type AnalyticsIngestionRuntimeApiBridgeState,
 } from "../../../api/analyticsIngestionRuntimeApiBridge";
 import {
+  createContractWriterRuntimeApiLoadingState,
+  createContractWriterRuntimeApiSeededFallbackState,
+  loadContractWriterRuntimeApiBridgeState,
+  type ContractWriterRuntimeApiBridgeState,
+} from "../../../api/contractWriterRuntimeApiBridge";
+import {
   createExportArtifactDeliveryApiLoadingState,
   createExportArtifactDeliverySeededFallbackState,
   sanitizeExportArtifactDeliveryApiText,
@@ -156,6 +162,7 @@ import { RewardsEligibilityBuilder } from "./builder/RewardsEligibilityBuilder";
 import { TaskTemplateLibrary } from "./builder/TaskTemplateLibrary";
 import { BackendRuntimeReadinessPanel } from "./BackendRuntimeReadinessPanel";
 import { AnalyticsIngestionRuntimePanel } from "./AnalyticsIngestionRuntimePanel";
+import { ContractWriterRuntimePanel } from "./ContractWriterRuntimePanel";
 import { ObjectStorageExportRuntimePanel } from "./ObjectStorageExportRuntimePanel";
 import { PointsRankingLedgerRuntimePanel } from "./PointsRankingLedgerRuntimePanel";
 import { projectConsoleCopy } from "./copy";
@@ -1305,6 +1312,9 @@ const objectStorageExportRuntimeApiBaseUrl = () =>
 const analyticsIngestionRuntimeApiBaseUrl = () =>
   import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
+const contractWriterRuntimeApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
 const createPublishDeliveryReviewSeededFallbackState = (
   campaignId: string,
 ): PublishDeliveryReviewApiBridgeState => ({
@@ -1367,6 +1377,23 @@ const createAnalyticsIngestionRuntimeSeededFallbackState = (
         "en-US": "No local analytics ingestion readiness API base URL is configured, so seeded review data is shown.",
         "zh-CN": "未配置本地 analytics ingestion readiness API base URL，因此显示 seeded review 数据。",
         "zh-TW": "未設定本地 analytics ingestion readiness API base URL，因此顯示 seeded review 資料。",
+      },
+      severity: "info",
+    },
+  ],
+});
+
+const createContractWriterRuntimeSeededFallbackState = (
+  campaignId: string,
+): ContractWriterRuntimeApiBridgeState => ({
+  ...createContractWriterRuntimeApiSeededFallbackState(campaignId),
+  diagnostics: [
+    {
+      code: "API_BASE_URL_MISSING",
+      message: {
+        "en-US": "No local contract writer readiness API base URL is configured, so seeded review data is shown.",
+        "zh-CN": "未配置本地 contract writer readiness API base URL，因此显示 seeded review 数据。",
+        "zh-TW": "未設定本地 contract writer readiness API base URL，因此顯示 seeded review 資料。",
       },
       severity: "info",
     },
@@ -2024,6 +2051,7 @@ export const ProjectConsole = ({
   const pointsRankingLedgerRuntimeApiRequestSeq = useRef(0);
   const objectStorageExportRuntimeApiRequestSeq = useRef(0);
   const analyticsIngestionRuntimeApiRequestSeq = useRef(0);
+  const contractWriterRuntimeApiRequestSeq = useRef(0);
   const exportDeliveryApiRequestSeq = useRef(0);
   const backendReadinessApiRequestSeq = useRef(0);
   const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
@@ -2108,6 +2136,7 @@ export const ProjectConsole = ({
   const pointsRankingLedgerRuntimeApiBase = pointsRankingLedgerRuntimeApiBaseUrl();
   const objectStorageExportRuntimeApiBase = objectStorageExportRuntimeApiBaseUrl();
   const analyticsIngestionRuntimeApiBase = analyticsIngestionRuntimeApiBaseUrl();
+  const contractWriterRuntimeApiBase = contractWriterRuntimeApiBaseUrl();
   const exportDeliveryApiRequest: ExportArtifactDeliveryRequest = {
     campaignId: campaign.id,
     contractRootMode: "eligibility_root",
@@ -2150,6 +2179,13 @@ export const ProjectConsole = ({
         : createAnalyticsIngestionRuntimeSeededFallbackState(campaign.id),
     );
   const [analyticsIngestionRuntimeApiReviewInFlight, setAnalyticsIngestionRuntimeApiReviewInFlight] = useState(false);
+  const [contractWriterRuntimeApiState, setContractWriterRuntimeApiState] =
+    useState<ContractWriterRuntimeApiBridgeState>(() =>
+      contractWriterRuntimeApiBase?.trim()
+        ? createContractWriterRuntimeApiLoadingState(campaign.id)
+        : createContractWriterRuntimeSeededFallbackState(campaign.id),
+    );
+  const [contractWriterRuntimeApiReviewInFlight, setContractWriterRuntimeApiReviewInFlight] = useState(false);
   const backendReadinessApiBaseUrl = backendRuntimeReadinessApiBaseUrl();
   const [backendReadinessApiState, setBackendReadinessApiState] =
     useState<BackendRuntimeReadinessApiBridgeState>(() =>
@@ -2375,6 +2411,40 @@ export const ProjectConsole = ({
     loadAnalyticsIngestionRuntimeApiReview();
   };
 
+  const loadContractWriterRuntimeApiReview = useCallback(() => {
+    if (!contractWriterRuntimeApiBase?.trim()) {
+      setContractWriterRuntimeApiState(createContractWriterRuntimeSeededFallbackState(campaign.id));
+      setContractWriterRuntimeApiReviewInFlight(false);
+      return;
+    }
+
+    setContractWriterRuntimeApiReviewInFlight(true);
+    setContractWriterRuntimeApiState(createContractWriterRuntimeApiLoadingState(campaign.id));
+
+    const requestSeq = contractWriterRuntimeApiRequestSeq.current + 1;
+    contractWriterRuntimeApiRequestSeq.current = requestSeq;
+
+    void loadContractWriterRuntimeApiBridgeState({
+      campaignId: campaign.id,
+      config: {
+        baseUrl: contractWriterRuntimeApiBase,
+        tracePrefix: "project-console-contract-writer-runtime",
+      },
+    }).then((state) => {
+      if (contractWriterRuntimeApiRequestSeq.current === requestSeq) {
+        setContractWriterRuntimeApiState(state);
+      }
+    }).finally(() => {
+      if (contractWriterRuntimeApiRequestSeq.current === requestSeq) {
+        setContractWriterRuntimeApiReviewInFlight(false);
+      }
+    });
+  }, [campaign.id, contractWriterRuntimeApiBase]);
+
+  const runContractWriterRuntimeApiReview = () => {
+    loadContractWriterRuntimeApiReview();
+  };
+
   const loadBackendReadinessApiReview = useCallback(() => {
     if (!backendReadinessApiBaseUrl?.trim()) {
       setBackendReadinessApiState(createBackendRuntimeReadinessSeededFallbackState());
@@ -2414,12 +2484,14 @@ export const ProjectConsole = ({
       loadPointsRankingLedgerRuntimeApiReview();
       loadObjectStorageExportRuntimeApiReview();
       loadAnalyticsIngestionRuntimeApiReview();
+      loadContractWriterRuntimeApiReview();
       loadBackendReadinessApiReview();
     }
   }, [
     activeWorkspace,
     loadAnalyticsIngestionRuntimeApiReview,
     loadBackendReadinessApiReview,
+    loadContractWriterRuntimeApiReview,
     loadObjectStorageExportRuntimeApiReview,
     loadPointsRankingLedgerRuntimeApiReview,
     loadPublishDeliveryApiReview,
@@ -6935,6 +7007,14 @@ export const ProjectConsole = ({
         onReview={runPointsRankingLedgerRuntimeApiReview}
         reviewInFlight={pointsRankingLedgerRuntimeApiReviewInFlight}
         state={pointsRankingLedgerRuntimeApiState}
+      />
+
+      <ContractWriterRuntimePanel
+        apiConfigured={Boolean(contractWriterRuntimeApiBase?.trim())}
+        locale={locale}
+        onReview={runContractWriterRuntimeApiReview}
+        reviewInFlight={contractWriterRuntimeApiReviewInFlight}
+        state={contractWriterRuntimeApiState}
       />
 
       <AnalyticsIngestionRuntimePanel
