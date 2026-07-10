@@ -615,6 +615,49 @@ const localizedText = (value: unknown): LocalizedText | undefined => {
   };
 };
 
+const packetDisplayUnsafePatterns: Array<[RegExp, string]> = [
+  [/\braw[-_\s]*signature\b/gi, "redacted signature"],
+  [/\bprivate[-_\s]*key\b/gi, "redacted key"],
+  [/\bseed[-_\s]*phrase\b/gi, "redacted seed"],
+  [/\bbearer[-_\s]*token\b/gi, "redacted bearer credential"],
+  [/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, "redacted bearer credential"],
+  [/\bpassword\s*[=:]\s*[^&\s"'<>]+/gi, "password=redacted"],
+  [/\bapi[-_\s]*key\b/gi, "redacted credential"],
+  [/\b(token|access_token|refresh_token|api_key|apikey)=([^&\s"'<>]+)/gi, "redacted query credential"],
+  [/\/Users\/[^"'\s<>]*campaign-os-kitty[^"'\s<>]*/gi, "redacted private path"],
+  [/\bstack\s*trace\b/gi, "redacted stack"],
+];
+
+const sanitizePacketDisplayText = (value: unknown): string => {
+  const raw = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  const strippedUrlQuery = raw.replace(/\?[^"'\s<>]*/g, "?redacted-query");
+
+  return packetDisplayUnsafePatterns.reduce(
+    (current, [pattern, replacement]) => current.replace(pattern, replacement),
+    strippedUrlQuery,
+  );
+};
+
+const localizedPacketText = (value: unknown): LocalizedText | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const enUS = typeof value["en-US"] === "string" ? sanitizePacketDisplayText(value["en-US"]) : undefined;
+  const zhCN = typeof value["zh-CN"] === "string" ? sanitizePacketDisplayText(value["zh-CN"]) : undefined;
+  const zhTW = typeof value["zh-TW"] === "string" ? sanitizePacketDisplayText(value["zh-TW"]) : undefined;
+
+  if (!enUS && !zhCN && !zhTW) {
+    return undefined;
+  }
+
+  return {
+    "en-US": enUS ?? zhCN ?? zhTW ?? "",
+    "zh-CN": zhCN ?? enUS ?? zhTW ?? "",
+    "zh-TW": zhTW ?? enUS ?? zhCN ?? "",
+  };
+};
+
 const unsafePacketKeys = new Set([
   "apikey",
   "api_key",
@@ -746,8 +789,8 @@ const normalizeEligibilityRootPacket = (payload: unknown): EligibilityRootExport
     ? payload.rows.map(normalizeEligibilityRootRow)
     : [];
   const safety = normalizeEligibilityRootSafety(payload.safety);
-  const nextAction = localizedText(payload.nextAction);
-  const boundary = localizedText(payload.boundary);
+  const nextAction = localizedPacketText(payload.nextAction);
+  const boundary = localizedPacketText(payload.boundary);
 
   if (
     mode !== "eligibility_root" ||

@@ -533,6 +533,7 @@ describe("export artifact delivery API bridge", () => {
       evidenceHashes: ["demo-task-bridge-2F4", "demo-task-connect-wallet-2F4"],
       walletAddress: "2F4...9aB",
     });
+    expect(state.eligibilityRootPacket?.boundary["en-US"]).toContain("wallet signature");
     expect(fetchImpl).toHaveBeenNthCalledWith(
       1,
       "http://127.0.0.1:5184/api/campaigns/camp-awaken-sprint/export",
