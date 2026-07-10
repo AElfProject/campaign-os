@@ -82,13 +82,16 @@ describe("API service ports", () => {
       serviceId: "wallet-session-service",
     });
     expect(apiServicePorts.find((port) => port.id === "campaign-port")).toMatchObject({
+      deferredCapabilities: expect.arrayContaining(["contract_writer"]),
       futureAttachPoints: expect.arrayContaining([
         "src/server/campaignDbRepository.ts campaign participant repository/read model",
         "src/server/campaignDbRepository.ts campaign referral binding read model",
+        "contract writer runtime readiness handoff",
         "future Campaign DB participant table service",
         "future Campaign DB referral binding table service",
       ]),
-      notes: expect.stringContaining("campaign participant repository/read model"),
+      localAdapter: expect.stringContaining("src/server/contractWriterRuntime.ts"),
+      notes: expect.stringContaining("contract writer runtime readiness inspection"),
       productionAdapterStatus: "local_seeded",
       requiresExternalNetwork: false,
       requiresSecret: false,
@@ -98,6 +101,7 @@ describe("API service ports", () => {
         "campaigns.delivery.readiness",
         "campaigns.publish.delivery.review",
         "campaigns.companion.contract.readiness",
+        "campaigns.contract.writer.readiness",
         "campaigns.contract.transparency",
       ]),
       serviceId: "campaign-service",

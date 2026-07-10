@@ -5,6 +5,7 @@ import {
 } from "./backendRuntimeActivation";
 import type { BackendServiceReadinessReport } from "./backendService";
 import type { ApiServerRuntimeContract } from "./serverRuntime";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 
 export type BackendRuntimeBootstrapStatus = "ready" | "blocked" | "deferred";
 export type BackendRuntimeBootstrapDiagnosticSeverity = "error" | "warning" | "info";
@@ -488,7 +489,7 @@ export const backendRuntimeBootstrapDeferredDependencies: BackendRuntimeDeferred
   },
   {
     area: "contract",
-    blockedBy: ["contract writer mission", "signer policy", "contract ops review"],
+    blockedBy: [...contractWriterRequiredConfigKeys],
     id: "contract-writer",
     label: "Contract writer",
     requiredBeforeProduction: true,

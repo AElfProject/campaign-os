@@ -9,6 +9,7 @@ import {
   runtimeActivationConfigKeys,
   type RuntimeActivationConfigKey,
 } from "./backendRuntimeActivation";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 
 export type ServerRuntimeDiagnosticSeverity = "error" | "warning" | "info";
 export type ServerRuntimeAttachPointStatus = "deferred" | "blocked";
@@ -189,9 +190,9 @@ export const serverRuntimeAttachMap: ServerRuntimeAttachPoint[] = [
     status: "deferred",
   },
   {
-    blockedBy: ["contract writer mission", "signer policy", "contract ops review"],
+    blockedBy: [...contractWriterRequiredConfigKeys],
     id: "contract-writer",
-    note: "Contract mutations remain disabled.",
+    note: "Contract mutations remain disabled until endpoint, signer policy, approvals, ABI, idempotency, queue, observability, runbook, and live enablement refs exist.",
     requiredBeforeProduction: true,
     status: "blocked",
   },

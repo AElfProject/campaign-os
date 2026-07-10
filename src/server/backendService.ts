@@ -121,10 +121,15 @@ import {
 import {
   createServerAnalyticsIngestionRuntimeReadiness,
 } from "./analyticsIngestionRuntime";
+import { createServerContractWriterRuntimeReadiness } from "./contractWriterRuntime";
 import {
   analyticsIngestionWarehouseRequiredConfigKeys,
   type AnalyticsIngestionRuntimeReadiness,
 } from "../domain/analyticsIngestionRuntime";
+import {
+  contractWriterRequiredConfigKeys,
+  type ContractWriterRuntimeReadiness,
+} from "../domain/contractWriterRuntime";
 
 export type BackendAttachPointArea =
   | "production-persistence"
@@ -226,6 +231,7 @@ export interface BackendServiceReadinessReport {
   backendRuntimeBootstrap: BackendRuntimeBootstrapContract;
   campaignDbVerticalSlice: CampaignDbVerticalSliceReadinessSummary;
   config: BackendConfigContract;
+  contractWriterRuntime: ContractWriterRuntimeReadiness;
   databaseAdapterRuntime: BackendDatabaseAdapterRuntimeReadinessReport;
   databaseReadiness: BackendDatabaseReadinessReport;
   entrypoint: BackendServiceEntrypoint;
@@ -966,6 +972,24 @@ const createBackendAnalyticsIngestionRuntimeReadiness = (
     },
   });
 
+const createBackendContractWriterRuntimeReadiness = (
+  env: Record<string, string | undefined>,
+): ContractWriterRuntimeReadiness =>
+  createServerContractWriterRuntimeReadiness({
+    configHandoff: {
+      abiPackageRef: env.CAMPAIGN_OS_CONTRACT_WRITER_ABI_PACKAGE_REF,
+      endpointRef: env.CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT_REF,
+      idempotencyStoreRef: env.CAMPAIGN_OS_CONTRACT_WRITER_IDEMPOTENCY_STORE_REF,
+      liveEnablementRef: env.CAMPAIGN_OS_CONTRACT_WRITER_LIVE_ENABLEMENT_REF,
+      observabilityRef: env.CAMPAIGN_OS_CONTRACT_WRITER_OBSERVABILITY_REF,
+      operatorApprovalRef: env.CAMPAIGN_OS_CONTRACT_WRITER_OPERATOR_APPROVAL_REF,
+      queueHandoffRef: env.CAMPAIGN_OS_CONTRACT_WRITER_QUEUE_HANDOFF_REF,
+      runbookRef: env.CAMPAIGN_OS_CONTRACT_WRITER_RUNBOOK_REF,
+      signerPolicyRef: env.CAMPAIGN_OS_CONTRACT_WRITER_SIGNER_POLICY_REF,
+    },
+    traceId: "backend-readiness-contract-writer",
+  });
+
 export const backendAttachMap: BackendAttachPoint[] = [
   {
     area: "production-persistence",
@@ -1081,10 +1105,10 @@ export const backendAttachMap: BackendAttachPoint[] = [
   },
   {
     area: "contract-writer",
-    attachPoint: "src/server/servicePorts.ts",
-    blockedBy: ["contract writer mission", "wallet signer policy", "contract ops review"],
+    attachPoint: "src/server/contractWriterRuntime.ts",
+    blockedBy: [...contractWriterRequiredConfigKeys],
     currentStatus: "blocked",
-    note: "Contract writes, reward roots, and on-chain mutation are explicitly disabled.",
+    note: "Contract writer readiness is local review only; live signer execution and contract writes stay disabled.",
     requiredBeforeProduction: true,
   },
   {
@@ -2405,6 +2429,7 @@ export const createBackendServiceReadinessReport = ({
   });
   const objectStorageExportRuntime = createBackendObjectStorageExportReadiness(env);
   const analyticsIngestionRuntime = createBackendAnalyticsIngestionRuntimeReadiness(env);
+  const contractWriterRuntime = createBackendContractWriterRuntimeReadiness(env);
   const workerLeaseStoreFoundation = createBackendWorkerLeaseStoreReadinessSummary({
     env,
     profileId: config.profileId,
@@ -2460,6 +2485,7 @@ export const createBackendServiceReadinessReport = ({
     authSessionFoundation,
     campaignDbVerticalSlice,
     config,
+    contractWriterRuntime,
     databaseAdapterRuntime,
     databaseReadiness,
     entrypoint,

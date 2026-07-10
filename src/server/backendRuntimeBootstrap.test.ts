@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
 import {
   backendRuntimeBootstrapDeferredDependencies,
@@ -727,6 +728,7 @@ describe("backend runtime bootstrap contract", () => {
           status: "blocked",
         }),
         expect.objectContaining({
+          blockedBy: expect.arrayContaining([...contractWriterRequiredConfigKeys]),
           id: "contract-writer",
           status: "blocked",
         }),

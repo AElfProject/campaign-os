@@ -405,7 +405,8 @@ const topConfigBlocker = (status: ContractWriterConfigHandoffStatus): LocalizedT
 
 const createApprovalGates = (
   handoff: ContractWriterConfigHandoff,
-): ContractWriterApprovalGate[] => [
+): ContractWriterApprovalGate[] => {
+  const gateRefs: Array<[string, string, string | undefined]> = [
   ["signer-policy", "Signer policy", handoff.signerPolicyRef],
   ["operator-approval", "Operator approval", handoff.operatorApprovalRef],
   ["abi-package", "ABI/package reference", handoff.abiPackageRef],
@@ -414,12 +415,15 @@ const createApprovalGates = (
   ["observability", "Observability exporter", handoff.observabilityRef],
   ["runbook", "Contract ops runbook", handoff.runbookRef],
   ["live-enablement", "Live enablement gate", handoff.liveEnablementRef],
-].map(([id, label, ref]) => ({
-  id,
-  label: text(label, label),
-  requiredBeforeProduction: true,
-  status: ref ? "review_required" : "missing",
-}));
+  ];
+
+  return gateRefs.map(([id, label, ref]) => ({
+    id,
+    label: text(label, label),
+    requiredBeforeProduction: true,
+    status: ref ? "review_required" : "missing",
+  }));
+};
 
 const createDiagnosticCodes = (
   handoff: ContractWriterConfigHandoff,

@@ -68,6 +68,7 @@ import {
 import type { ProviderHttpPreconditionArea } from "./providerHttpRuntimeTypes";
 import { objectStorageExportRequiredConfigKeys } from "./objectStorageExportRuntime";
 import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyticsIngestionRuntime";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 
 export type RuntimeActivationConfigCategory =
   | "server"
@@ -923,7 +924,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
   {
     area: "contract",
     attachPoint: "src/server/servicePorts.ts",
-    blockedBy: ["contract writer mission", "signer policy", "contract ops review"],
+    blockedBy: [...contractWriterRequiredConfigKeys],
     id: "contract-writer",
     requiredBeforeProduction: true,
     status: "blocked",

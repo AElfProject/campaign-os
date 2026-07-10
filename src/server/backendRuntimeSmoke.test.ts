@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyticsIngestionRuntime";
+import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 import { runBackendRuntimeSmoke } from "./backendRuntimeSmoke";
 
 const secretFragments = [
@@ -465,6 +466,27 @@ const expectedAnalyticsIngestionRuntimeMetadata = {
   warehouseStatus: "missing",
 };
 
+const expectedContractWriterRuntimeMetadata = {
+  configStatus: "missing",
+  diagnosticCodes: expect.arrayContaining([
+    "CONTRACT_WRITER_CONFIG_MISSING",
+    "CONTRACT_WRITER_LIVE_EXECUTION_DISABLED",
+    "CONTRACT_WRITER_OPERATION_REVIEW_REQUIRED",
+  ]),
+  liveContractWrite: false,
+  liveQueuePublishing: false,
+  liveRewardCustody: false,
+  liveRewardDistribution: false,
+  liveSignerExecution: false,
+  liveWalletSignature: false,
+  operationCount: 20,
+  operationGroupCount: 4,
+  productionReady: false,
+  requiredConfigKeys: expect.arrayContaining([...contractWriterRequiredConfigKeys]),
+  status: "blocked",
+  valid: true,
+};
+
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
     const summary = await runBackendRuntimeSmoke({
@@ -504,6 +526,7 @@ describe("backend runtime smoke command", () => {
             valid: true,
           },
           analyticsIngestionRuntime: expectedAnalyticsIngestionRuntimeMetadata,
+          contractWriterRuntime: expectedContractWriterRuntimeMetadata,
           endpoint: "/api/contracts",
           ok: true,
           productionBackendReadiness: {
@@ -576,6 +599,7 @@ describe("backend runtime smoke command", () => {
             valid: true,
           },
           analyticsIngestionRuntime: expectedAnalyticsIngestionRuntimeMetadata,
+          contractWriterRuntime: expectedContractWriterRuntimeMetadata,
           endpoint: "/api/health",
           ok: true,
           productionBackendReadiness: {
@@ -663,6 +687,10 @@ describe("backend runtime smoke command", () => {
       analyticsIngestionRuntime: {
         ...expectedAnalyticsIngestionRuntimeMetadata,
         traceId: "campaign-os-smoke-analytics-ingestion-readiness",
+      },
+      contractWriterRuntime: {
+        ...expectedContractWriterRuntimeMetadata,
+        traceId: "campaign-os-smoke-contract-writer-readiness",
       },
       persistenceFoundation: {
         blockerCount: 11,
@@ -906,6 +934,36 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutAnalyticsIngestionRuntime })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when contract writer readiness metadata is missing from smoke payloads", async () => {
+    const fetchWithoutContractWriterRuntime: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          backendService?: {
+            contractWriterRuntime?: Record<string, unknown>;
+          };
+          serverRuntime?: {
+            readiness?: {
+              contractWriterRuntime?: Record<string, unknown>;
+            };
+          };
+        };
+      };
+
+      delete payload.data?.backendService?.contractWriterRuntime;
+      delete payload.data?.serverRuntime?.readiness?.contractWriterRuntime;
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutContractWriterRuntime })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });

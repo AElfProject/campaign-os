@@ -193,6 +193,10 @@ const routeFoundationMetadata = {
     operationId: "getCampaignCompanionContractReadiness",
     serviceId: "campaign-service",
   },
+  "campaigns.contract.writer.readiness": {
+    operationId: "getCampaignContractWriterReadiness",
+    serviceId: "campaign-service",
+  },
   "campaigns.contract.transparency": {
     operationId: "getCampaignContractTransparency",
     serviceId: "campaign-service",
@@ -492,6 +496,15 @@ const requestFieldContracts = [
     name: "campaignId",
     required: true,
     routeId: "campaigns.companion.contract.readiness",
+    valueType: "string",
+  }),
+  field({
+    description: "Campaign identifier path parameter for the contract writer runtime readiness review payload.",
+    id: "campaigns.contract.writer.readiness.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.contract.writer.readiness",
     valueType: "string",
   }),
   field({
@@ -1128,9 +1141,9 @@ const backendSurfaceReadiness = [
     surfaceId: "wallet-session",
   },
   {
-    deferredDependencies: ["auth_session", "production_database", "scheduler", "worker_queue"],
+    deferredDependencies: ["auth_session", "contract_writer", "production_database", "scheduler", "worker_queue"],
     label: "Campaign",
-    notes: "Local campaign discovery, draft creation, lifecycle operation inspection, launch readiness inspection, delivery readiness inspection, publish delivery joint review bridge inspection, companion contract readiness inspection, contract transparency inspection, campaign participant repository/read model metadata, and campaign referral binding read model metadata exist in deterministic and durable-test modes; durable storage, owner auth, production DB migration to the future Campaign DB participant table service and future Campaign DB referral binding table service, scheduler runtime, queue runtime lifecycle handoff, contract writer, wallet SDK, storage write, reward custody, reward distribution, and queue provider adapter activation are deferred.",
+    notes: "Local campaign discovery, draft creation, lifecycle operation inspection, launch readiness inspection, delivery readiness inspection, publish delivery joint review bridge inspection, companion contract readiness inspection, contract writer runtime readiness inspection, contract transparency inspection, campaign participant repository/read model metadata, and campaign referral binding read model metadata exist in deterministic and durable-test modes; durable storage, owner auth, production DB migration to the future Campaign DB participant table service and future Campaign DB referral binding table service, scheduler runtime, queue runtime lifecycle handoff, contract writer, wallet SDK, storage write, reward custody, reward distribution, and queue provider adapter activation are deferred.",
     routeIds: [
       "campaigns.list",
       "campaigns.create",
@@ -1140,6 +1153,7 @@ const backendSurfaceReadiness = [
       "campaigns.delivery.readiness",
       "campaigns.publish.delivery.review",
       "campaigns.companion.contract.readiness",
+      "campaigns.contract.writer.readiness",
       "campaigns.contract.transparency",
     ],
     serviceId: "campaign-service",
