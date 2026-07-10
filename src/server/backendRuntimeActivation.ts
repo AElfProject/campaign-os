@@ -66,6 +66,10 @@ import {
   providerHttpRuntimeProductionPreconditions,
 } from "./providerHttpRuntimeRegistry";
 import type { ProviderHttpPreconditionArea } from "./providerHttpRuntimeTypes";
+import {
+  productionDbPackageProductionPreconditions,
+  type ProductionDbPackagePreconditionArea,
+} from "./productionDbPackageBinding";
 import { objectStorageExportRequiredConfigKeys } from "./objectStorageExportRuntime";
 import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyticsIngestionRuntime";
 import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
@@ -522,6 +526,16 @@ const providerHttpDependencyArea = (
 ): ProductionRuntimeDependencyArea =>
   providerHttpConfigCategory(area) as ProductionRuntimeDependencyArea;
 
+const productionDbPackageConfigCategory = (
+  area: ProductionDbPackagePreconditionArea,
+): RuntimeActivationConfigCategory =>
+  area === "observability" ? "observability" : "database";
+
+const productionDbPackageDependencyArea = (
+  area: ProductionDbPackagePreconditionArea,
+): ProductionRuntimeDependencyArea =>
+  productionDbPackageConfigCategory(area) as ProductionRuntimeDependencyArea;
+
 export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
   configKey("CAMPAIGN_OS_API_HOST", "server", "supported", "local-review"),
   configKey("CAMPAIGN_OS_API_PORT", "server", "supported", "local-review"),
@@ -532,6 +546,16 @@ export const runtimeActivationConfigKeys: RuntimeActivationConfigKey[] = [
   configKey("CAMPAIGN_OS_API_CORS_ORIGINS", "cors", "supported", "local-review"),
   configKey("CAMPAIGN_OS_BACKEND_PROFILE", "profile", "supported", "local-review"),
   configKey("CAMPAIGN_OS_DATABASE_URL", "database", "blocked", "production-required"),
+  ...productionDbPackageProductionPreconditions.flatMap((precondition) =>
+    precondition.requiredConfigKeys.map((key) =>
+      configKey(
+        key,
+        productionDbPackageConfigCategory(precondition.area),
+        precondition.status,
+        "production-required",
+      ),
+    ),
+  ),
   configKey("CAMPAIGN_OS_AUTH_SECRET", "auth", "blocked", "production-required"),
   configKey("CAMPAIGN_OS_PROVIDER_REGISTRY_URL", "provider", "deferred", "production-required"),
   ...providerClientProductionPreconditions.flatMap((precondition) =>
@@ -750,6 +774,14 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: "blocked",
   },
+  ...productionDbPackageProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+    area: productionDbPackageDependencyArea(precondition.area),
+    attachPoint: "src/server/productionDbPackageBinding.ts",
+    blockedBy: [...precondition.requiredConfigKeys],
+    id: `production-db-package-${precondition.id}`,
+    requiredBeforeProduction: true,
+    status: precondition.status,
+  })),
   {
     area: "database",
     attachPoint: "src/server/databaseMigrationHandoff.ts",
