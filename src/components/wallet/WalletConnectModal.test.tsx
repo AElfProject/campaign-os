@@ -1,10 +1,68 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { WalletSessionApiBridgeState } from "../../api/walletSessionApiBridge";
 import { createAelfWebLoginAdapterReadiness, walletOptions, walletSessions } from "../../domain";
 import { WalletConnectModal } from "./WalletConnectModal";
 
 describe("WalletConnectModal locale coverage", () => {
+  const apiBridgeState = (overrides: Partial<WalletSessionApiBridgeState> = {}): WalletSessionApiBridgeState => ({
+    boundary: {
+      "en-US":
+        "Local wallet session API bridge only. No live wallet SDK connection, real signature prompt, transaction, contract read/write, production auth token, reward custody, or reward distribution is executed.",
+      "zh-CN": "仅用于本地 wallet session API bridge。",
+      "zh-TW": "僅用於本地 wallet session API bridge。",
+    },
+    configured: true,
+    diagnostics: [],
+    loading: false,
+    repository: {
+      recordId: "wallet-session:sess-aa-001",
+      repositoryId: "wallet-session-repository-runtime",
+      sessionId: "sess-aa-001",
+      upserted: true,
+    },
+    request: {
+      adapterName: "PortkeyAAWallet",
+      fixtureId: "sess-aa-001",
+    },
+    session: {
+      ...walletSessions[0],
+      issuer: {
+        artifactType: "local_session_reference",
+        cookieIssued: false,
+        diagnosticCodes: ["AUTH_ISSUER_LOCAL_ONLY"],
+        issuerMode: "local_opaque",
+        jwtIssued: false,
+        liveSigningExecuted: false,
+        referenceId: "session-ref:sess-aa-001",
+        ttlSeconds: 1800,
+        valid: true,
+      },
+      productionReadiness: {
+        blockedDependencyIds: ["live_wallet_proof_verifier"],
+        liveSigningReady: false,
+        liveVerifierReady: false,
+        productionReady: false,
+        productionRequired: true,
+        productionSessionStoreReady: false,
+        secretManagerReady: false,
+        signingKeyReady: false,
+      },
+      proof: {
+        diagnosticCodes: ["AUTH_PROOF_LOCAL_ONLY"],
+        liveVerificationExecuted: false,
+        proofType: "wallet_signature",
+        status: "verified",
+        trustLevel: "verified_local",
+      },
+    },
+    source: "api_runtime",
+    status: "connected",
+    traceId: "trace-wallet-modal",
+    ...overrides,
+  });
+
   it("renders Traditional Chinese wallet safety and recovery copy", () => {
     const onClose = vi.fn();
 
@@ -120,5 +178,69 @@ describe("WalletConnectModal locale coverage", () => {
     expect(within(recommendedOptions).getByText(/Capabilities: .*EBRIDGE/)).toBeInTheDocument();
     expect(within(eoaOptions).getAllByText(/Capabilities: .*EBRIDGE/)).toHaveLength(2);
     expect(within(dialog).getByTestId("wallet-modal-group-advanced")).not.toHaveTextContent("EBRIDGE");
+  });
+
+  it("renders wallet session API review metadata without live wallet actions", () => {
+    render(
+      <WalletConnectModal
+        locale="en-US"
+        onClose={vi.fn()}
+        onPreviewConnect={vi.fn()}
+        options={walletOptions}
+        walletSessionBridgeState={apiBridgeState()}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    const review = within(dialog).getByRole("region", { name: "Wallet session API review" });
+
+    expect(within(review).getAllByText("API runtime").length).toBeGreaterThan(0);
+    expect(within(review).getByText("trace-wallet-modal")).toBeInTheDocument();
+    expect(within(review).getByText("verified")).toBeInTheDocument();
+    expect(within(review).getByText("verified_local")).toBeInTheDocument();
+    expect(within(review).getByText("local_opaque")).toBeInTheDocument();
+    expect(within(review).getByText("wallet-session:sess-aa-001")).toBeInTheDocument();
+    expect(within(review).getAllByText("sess-aa-001").length).toBeGreaterThan(0);
+    expect(within(review).getByText(/No live wallet SDK connection/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /connectWallet|getSignature|sendTransaction/i })).not.toBeInTheDocument();
+  });
+
+  it("renders wallet session API loading and sanitized diagnostics", () => {
+    render(
+      <WalletConnectModal
+        locale="en-US"
+        onClose={vi.fn()}
+        onPreviewConnect={vi.fn()}
+        options={walletOptions}
+        walletSessionBridgeState={apiBridgeState({
+          diagnostics: [{
+            code: "API_REQUEST_FAILED",
+            message: {
+              "en-US": "The local wallet session API request failed, so no API-backed wallet session was applied.",
+              "zh-CN": "本地 wallet session API 请求失败，因此未应用 API-backed 钱包会话。",
+              "zh-TW": "本地 wallet session API 請求失敗，因此未套用 API-backed 錢包會話。",
+            },
+            safeDetails: { reason: "redacted provider data" },
+            severity: "error",
+          }],
+          loading: true,
+          repository: undefined,
+          session: undefined,
+          source: "error_fallback",
+          status: "error",
+          traceId: "trace-error",
+        })}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    const review = within(dialog).getByRole("region", { name: "Wallet session API review" });
+
+    expect(within(review).getAllByText("Error fallback").length).toBeGreaterThan(0);
+    expect(within(review).getAllByText("Loading wallet session preview").length).toBeGreaterThan(0);
+    expect(within(review).getByText(/API_REQUEST_FAILED/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Loading wallet session preview" })).toBeDisabled();
+    expect(dialog.textContent?.toLowerCase()).not.toContain("raw signature");
+    expect(dialog.textContent?.toLowerCase()).not.toContain("private key in");
   });
 });
