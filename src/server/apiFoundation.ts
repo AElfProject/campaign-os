@@ -181,6 +181,10 @@ const routeFoundationMetadata = {
     operationId: "getCampaignPublishDeliveryReview",
     serviceId: "campaign-service",
   },
+  "campaigns.points.ranking.ledger.runtime": {
+    operationId: "getCampaignPointsRankingLedgerRuntime",
+    serviceId: "points-ranking-service",
+  },
   "campaigns.companion.contract.readiness": {
     operationId: "getCampaignCompanionContractReadiness",
     serviceId: "campaign-service",
@@ -458,6 +462,15 @@ const requestFieldContracts = [
     name: "campaignId",
     required: true,
     routeId: "campaigns.publish.delivery.review",
+    valueType: "string",
+  }),
+  field({
+    description: "Campaign identifier path parameter for the points ranking ledger runtime review payload.",
+    id: "campaigns.points.ranking.ledger.runtime.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.points.ranking.ledger.runtime",
     valueType: "string",
   }),
   field({
@@ -1128,10 +1141,10 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["production_database", "contract_writer", "scheduler", "worker_queue"],
     label: "Points / Ranking",
-    notes: "Topology exists; production ledger, ranking persistence, reward handoff scheduler runtime, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, worker idempotency store readiness metadata, dead-letter queue, observability exporter, and optional root publication are deferred.",
-    routeIds: [],
+    notes: "Local points ranking ledger runtime review route exposes seeded ledger events, ranking snapshots, and eligibility root preview; production ledger, ranking persistence, reward handoff scheduler runtime, queue runtime, queue provider adapter activation, BullMQ Redis-compatible package binding, Redis broker readiness metadata, queue provider SDK binding, worker idempotency store readiness metadata, dead-letter queue, observability exporter, and optional root publication are deferred.",
+    routeIds: ["campaigns.points.ranking.ledger.runtime"],
     serviceId: "points-ranking-service",
-    state: "production_shaped_deferred",
+    state: "implemented_local",
     surfaceId: "points-ranking",
   },
   {

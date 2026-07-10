@@ -448,6 +448,60 @@ interface PublishDeliveryReviewPayload {
   traceId?: string;
 }
 
+interface PointsRankingLedgerRuntimePayload {
+  campaignId: string;
+  diagnostics: Array<{ code: string; source: string }>;
+  eligibilityRoot: {
+    contractRootMode: "none";
+    eligibleWalletCount: number;
+    generationMode: "local_preview";
+    rootHash: string;
+    rootId: string;
+    totalRows: number;
+  };
+  ledger: {
+    events: Array<{
+      accountType: string;
+      evidenceHash: string;
+      evidenceSource: string;
+      localePreference: string;
+      pointsAwarded: number;
+      riskFlags: string[];
+      status: string;
+      taskId: string;
+      templateCode: string;
+      verificationType: string;
+      walletAddress: string;
+      walletSource: string;
+    }>;
+    totalEvents: number;
+  };
+  noLiveSideEffects: Record<string, false>;
+  ranking: {
+    rows: Array<{
+      accountType: string;
+      eligible: boolean;
+      evidenceHashes: string[];
+      localePreference: string;
+      missingTasks: string[];
+      rank: number;
+      riskFlags: string[];
+      totalPoints: number;
+      walletAddress: string;
+      walletSource: string;
+    }>;
+  };
+  source: "api_runtime" | "seeded_runtime" | "fallback";
+  status: string;
+  summary: {
+    eligibleWallets: number;
+    rankedWallets: number;
+    totalLedgerEvents: number;
+    totalPoints: number;
+  };
+  traceId?: string;
+}
+
 interface CampaignDbLimitedLifecyclePayload {
   campaignId: string;
   code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED";
@@ -821,6 +875,7 @@ describe("Campaign OS API runtime", () => {
           "runtime.health",
           "runtime.contracts",
           "campaigns.publish.delivery.review",
+          "campaigns.points.ranking.ledger.runtime",
         ]),
         runtimeRouteCount: expect.any(Number),
       }),
@@ -844,14 +899,20 @@ describe("Campaign OS API runtime", () => {
           path: "/api/campaigns/:campaignId/publish-delivery-review",
           readiness: "review_required",
         }),
+        expect.objectContaining({
+          id: "campaigns.points.ranking.ledger.runtime",
+          method: "GET",
+          path: "/api/campaigns/:campaignId/points-ranking-ledger-runtime",
+          readiness: "review_required",
+        }),
       ]),
     });
     expect(healthData).toMatchObject({
       apiFoundation: expect.objectContaining({
         coverage: expect.objectContaining({
-          implementedLocalCount: 11,
+          implementedLocalCount: 12,
           notYetImplementedCount: 0,
-          productionShapedDeferredCount: 3,
+          productionShapedDeferredCount: 2,
           routeCount: expect.any(Number),
           surfaceCount: 14,
           validationIssueCount: 0,
@@ -893,8 +954,9 @@ describe("Campaign OS API runtime", () => {
         }),
         surfaces: expect.arrayContaining([
           expect.objectContaining({
+            routeIds: ["campaigns.points.ranking.ledger.runtime"],
             serviceId: "points-ranking-service",
-            state: "production_shaped_deferred",
+            state: "implemented_local",
             surfaceId: "points-ranking",
           }),
           expect.objectContaining({
@@ -2249,6 +2311,11 @@ describe("Campaign OS API runtime", () => {
       path: `/api/campaigns/${campaignDetail.id}/publish-delivery-review`,
       headers: { "x-campaign-os-trace-id": "trace-publish-delivery-review-seeded" },
     });
+    const pointsRankingLedgerRuntime = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/points-ranking-ledger-runtime`,
+      headers: { "x-campaign-os-trace-id": "trace-points-ranking-ledger-runtime" },
+    });
     const companionContractReadiness = await runtimeWithPersistence.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/companion-contract-readiness`,
@@ -2395,6 +2462,62 @@ describe("Campaign OS API runtime", () => {
       expectSuccessData<LocalServiceEnvelope<PublishDeliveryReviewPayload>>(publishDeliveryReview)
         .payload.backendRuntime.noLiveSideEffects,
     ).every((value) => value === false)).toBe(true);
+    expect(expectSuccessData<LocalServiceEnvelope<PointsRankingLedgerRuntimePayload>>(
+      pointsRankingLedgerRuntime,
+    )).toMatchObject({
+      boundary: expect.objectContaining({
+        "en-US": expect.stringContaining("Local points/ranking ledger runtime review route"),
+      }),
+      payload: {
+        campaignId: campaignDetail.id,
+        eligibilityRoot: expect.objectContaining({
+          contractRootMode: "none",
+          generationMode: "local_preview",
+          totalRows: 4,
+        }),
+        ledger: expect.objectContaining({
+          events: expect.arrayContaining([
+            expect.objectContaining({
+              accountType: "EOA",
+              evidenceHash: expect.any(String),
+              evidenceSource: "SOCIAL_API",
+              localePreference: "zh-CN",
+              riskFlags: ["referral_velocity_review"],
+              status: "failed",
+              taskId: "task-social",
+              verificationType: "SOCIAL",
+              walletAddress: "3E9...7cD",
+              walletSource: "PORTKEY_EOA_EXTENSION",
+            }),
+          ]),
+          totalEvents: 20,
+        }),
+        ranking: expect.objectContaining({
+          rows: expect.arrayContaining([
+            expect.objectContaining({
+              accountType: "AA",
+              eligible: true,
+              localePreference: "en-US",
+              rank: 1,
+              totalPoints: 270,
+              walletSource: "PORTKEY_AA",
+            }),
+          ]),
+        }),
+        source: "api_runtime",
+        summary: expect.objectContaining({
+          eligibleWallets: 1,
+          rankedWallets: 4,
+          totalLedgerEvents: 20,
+          totalPoints: 740,
+        }),
+        traceId: "trace-points-ranking-ledger-runtime",
+      },
+    });
+    expect(Object.values(
+      expectSuccessData<LocalServiceEnvelope<PointsRankingLedgerRuntimePayload>>(pointsRankingLedgerRuntime)
+        .payload.noLiveSideEffects,
+    ).every((value) => value === false)).toBe(true);
     expect(expectSuccessData<LocalServiceEnvelope<CompanionContractReadinessPayload>>(
       companionContractReadiness,
     ).payload).toMatchObject({
@@ -2490,6 +2613,7 @@ describe("Campaign OS API runtime", () => {
       launchReadiness,
       deliveryReadiness,
       publishDeliveryReview,
+      pointsRankingLedgerRuntime,
       companionContractReadiness,
       contractTransparency,
       exportReadiness,
@@ -2526,6 +2650,10 @@ describe("Campaign OS API runtime", () => {
       runtime.handle({
         method: "GET",
         path: "/api/campaigns/missing-campaign/publish-delivery-review",
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/points-ranking-ledger-runtime",
       }),
       runtime.handle({
         method: "GET",

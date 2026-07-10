@@ -95,6 +95,11 @@ describe("API foundation registry", () => {
       operationId: "getCampaignPublishDeliveryReview",
       serviceId: "campaign-service",
     });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.points.ranking.ledger.runtime"))
+      .toMatchObject({
+        operationId: "getCampaignPointsRankingLedgerRuntime",
+        serviceId: "points-ranking-service",
+      });
     expect(
       registry.routes.find((route) => route.routeId === "campaigns.companion.contract.readiness"),
     ).toMatchObject({
@@ -152,6 +157,7 @@ describe("API foundation registry", () => {
     for (const routeId of [
       "campaigns.delivery.readiness",
       "campaigns.publish.delivery.review",
+      "campaigns.points.ranking.ledger.runtime",
       "campaigns.companion.contract.readiness",
       "campaigns.contract.transparency",
     ]) {
@@ -188,17 +194,18 @@ describe("API foundation registry", () => {
 
     expect(report.surfaces.map((surface) => surface.surfaceId)).toEqual(expectedSurfaceIds);
     expect(report.coverage).toMatchObject({
-      implementedLocalCount: 11,
+      implementedLocalCount: 12,
       notYetImplementedCount: 0,
-      productionShapedDeferredCount: 3,
+      productionShapedDeferredCount: 2,
       routeCount: apiRuntimeRoutes.length,
       surfaceCount: expectedSurfaceIds.length,
       validationIssueCount: 0,
     });
     expect(report.validation.valid).toBe(true);
     expect(report.surfaces.find((surface) => surface.surfaceId === "points-ranking")).toMatchObject({
-      state: "production_shaped_deferred",
+      routeIds: ["campaigns.points.ranking.ledger.runtime"],
       serviceId: "points-ranking-service",
+      state: "implemented_local",
     });
     expect(report.surfaces.find((surface) => surface.surfaceId === "runtime-observability")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue", "sensitive_material_boundary"]),

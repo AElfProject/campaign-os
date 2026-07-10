@@ -666,6 +666,126 @@ export interface PublishDeliveryReview {
   lastReviewedAt: string;
 }
 
+export type PointsRankingLedgerRuntimeSource = "seeded_runtime" | "api_runtime" | "fallback";
+export type PointsRankingLedgerRuntimeStatus = "ready" | "review_required" | "blocked";
+export type PointsRankingLedgerRuntimeGenerationMode = "local_preview";
+export type PointsRankingLedgerRuntimeContractRootMode = "none";
+export type PointsRankingLedgerRuntimeDiagnosticSeverity = "info" | "warning" | "error";
+export type PointsRankingLedgerRuntimeDiagnosticSource =
+  | "domain"
+  | "ledger"
+  | "ranking"
+  | "eligibilityRoot"
+  | "runtime";
+
+export interface PointsLedgerRuntimeDiagnostic {
+  code: string;
+  field?: string;
+  message: LocalizedText;
+  severity: PointsRankingLedgerRuntimeDiagnosticSeverity;
+  source: PointsRankingLedgerRuntimeDiagnosticSource;
+}
+
+export interface PointsLedgerRuntimeEvent {
+  accountType: AccountType;
+  campaignId: string;
+  eventId: string;
+  evidenceHash: string;
+  evidenceSource: string;
+  localePreference: SupportedLocale;
+  pointsAwarded: number;
+  pointsAvailable: number;
+  riskFlags: string[];
+  status: TaskVerificationStatus;
+  taskId: string;
+  templateCode: string;
+  verificationType: VerificationType;
+  walletAddress: string;
+  walletSource: WalletSource;
+}
+
+export interface PointsLedgerRuntimeSection {
+  boundary: LocalizedText;
+  completedEvents: number;
+  events: PointsLedgerRuntimeEvent[];
+  failedEvents: number;
+  manualReviewEvents: number;
+  pendingEvents: number;
+  totalEvents: number;
+}
+
+export interface PointsRankingSnapshotRow {
+  accountType: AccountType;
+  eligible: boolean;
+  evidenceHashes: string[];
+  localePreference: SupportedLocale;
+  missingTasks: string[];
+  rank: number;
+  riskFlags: string[];
+  totalPoints: number;
+  walletAddress: string;
+  walletSource: WalletSource;
+}
+
+export interface PointsRankingSnapshotSection {
+  boundary: LocalizedText;
+  generatedFromLedgerEventCount: number;
+  rows: PointsRankingSnapshotRow[];
+}
+
+export interface EligibilityRootPreview {
+  contractRootMode: PointsRankingLedgerRuntimeContractRootMode;
+  eligibleWalletCount: number;
+  evidenceHashes: string[];
+  generationMode: PointsRankingLedgerRuntimeGenerationMode;
+  nextAction: LocalizedText;
+  pointsTotal: number;
+  rootHash: string;
+  rootId: string;
+  schemaVersion: "local-v1";
+  totalRows: number;
+}
+
+export interface PointsRankingLedgerRuntimeSummary {
+  completedEvents: number;
+  eligibleWallets: number;
+  failedEvents: number;
+  manualReviewEvents: number;
+  pendingEvents: number;
+  rankedWallets: number;
+  riskFlaggedWallets: number;
+  topNextAction: LocalizedText;
+  totalLedgerEvents: number;
+  totalPoints: number;
+}
+
+export interface PointsLedgerNoLiveSideEffects {
+  liveBackendLedgerWrite: false;
+  liveContractWrite: false;
+  liveEligibilityRootPublished: false;
+  liveExportFileWritten: false;
+  liveIndexerExecuted: false;
+  livePixiepointsLedgerWrite: false;
+  liveProviderExecuted: false;
+  liveRewardCustody: false;
+  liveRewardDistribution: false;
+  liveWalletSignature: false;
+}
+
+export interface PointsRankingLedgerRuntime {
+  boundary: LocalizedText;
+  campaignId: string;
+  diagnostics: PointsLedgerRuntimeDiagnostic[];
+  eligibilityRoot: EligibilityRootPreview;
+  ledger: PointsLedgerRuntimeSection;
+  noLiveSideEffects: PointsLedgerNoLiveSideEffects;
+  ranking: PointsRankingSnapshotSection;
+  source: PointsRankingLedgerRuntimeSource;
+  status: PointsRankingLedgerRuntimeStatus;
+  summary: PointsRankingLedgerRuntimeSummary;
+  traceId?: string;
+}
+
 export type ExternalServiceId =
   | "wallet-connector"
   | "wallet-signing"

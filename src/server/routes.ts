@@ -185,6 +185,22 @@ export const apiRuntimeRoutes = [
   }),
   route({
     apiGroup: "campaign_discovery",
+    boundary: text(
+      "Local points/ranking ledger runtime review route. No live API, Pixiepoints write, backend ledger write, provider/indexer call, wallet signature, contract write, export file, reward custody, or reward distribution is performed.",
+      "本地 points/ranking ledger runtime review route。不会执行实时 API、Pixiepoints 写入、后端账本写入、provider/indexer 调用、钱包签名、合约写入、导出文件、奖励托管或发奖。",
+    ),
+    id: "campaigns.points.ranking.ledger.runtime",
+    method: "GET",
+    path: "/api/campaigns/:campaignId/points-ranking-ledger-runtime",
+    productionDependencies: dependenciesFor("campaign"),
+    readiness: "review_required",
+    riskLevel: "medium",
+    serviceGroup: "campaign",
+    summary: text("Inspect the local points ranking ledger runtime payload.", "检查本地 points ranking ledger runtime payload。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "campaign_discovery",
     boundary,
     id: "campaigns.companion.contract.readiness",
     method: "GET",

@@ -114,6 +114,12 @@ describe("API runtime route catalog", () => {
       readiness: "review_required",
       serviceGroup: "campaign",
     });
+    expect(apiRuntimeRouteById["campaigns.points.ranking.ledger.runtime"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns/:campaignId/points-ranking-ledger-runtime",
+      readiness: "review_required",
+      serviceGroup: "campaign",
+    });
     expect(apiRuntimeRouteById["campaigns.companion.contract.readiness"]).toMatchObject({
       method: "GET",
       path: "/api/campaigns/:campaignId/companion-contract-readiness",
@@ -243,6 +249,7 @@ describe("API runtime route catalog", () => {
         "campaigns.export.artifacts.list",
         "campaigns.delivery.readiness",
         "campaigns.publish.delivery.review",
+        "campaigns.points.ranking.ledger.runtime",
         "campaigns.companion.contract.readiness",
         "campaigns.contract.transparency",
         "campaigns.export.readiness",
@@ -344,9 +351,9 @@ describe("API runtime route catalog", () => {
       valid: true,
     });
     expect(foundation.coverage).toMatchObject({
-      implementedLocalCount: 11,
+      implementedLocalCount: 12,
       notYetImplementedCount: 0,
-      productionShapedDeferredCount: 3,
+      productionShapedDeferredCount: 2,
       routeCount: apiRuntimeRoutes.length,
       validationIssueCount: 0,
     });

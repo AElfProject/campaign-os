@@ -35,6 +35,7 @@ describe("API service ports", () => {
       "eligibility-port",
       "i18n-content-port",
       "export-port",
+      "points-ranking-port",
       "referral-port",
       "ai-ops-port",
     ];
@@ -154,6 +155,21 @@ describe("API service ports", () => {
     expect(apiServicePorts.find((port) => port.id === "export-port")?.notes).toContain("production DB migration");
     expect(apiServicePorts.find((port) => port.id === "export-port")?.notes).toContain("contract transaction");
     expect(apiServicePorts.find((port) => port.id === "export-port")?.notes).toContain("reward distribution");
+    expect(apiServicePorts.find((port) => port.id === "points-ranking-port")).toMatchObject({
+      deferredCapabilities: expect.arrayContaining(["production_database", "contract_writer"]),
+      localAdapter: expect.stringContaining("src/domain/pointsRankingLedgerRuntime.ts"),
+      productionAdapterStatus: "local_seeded",
+      requiresExternalNetwork: false,
+      requiresSecret: false,
+      routeIds: ["campaigns.points.ranking.ledger.runtime"],
+      serviceId: "points-ranking-service",
+    });
+    expect(apiServicePorts.find((port) => port.id === "points-ranking-port")?.notes).toContain(
+      "production Pixiepoints writes",
+    );
+    expect(apiServicePorts.find((port) => port.id === "points-ranking-port")?.notes).toContain(
+      "reward distribution",
+    );
     expect(apiServicePorts.find((port) => port.id === "eligibility-port")).toMatchObject({
       futureAttachPoints: expect.arrayContaining([
         "src/server/campaignDbRepository.ts campaign participant repository/read model",
@@ -221,7 +237,7 @@ describe("API service ports", () => {
     expect(report.coverage).toMatchObject({
       deferredPortCount: 0,
       localMetadataOnlyPortCount: 3,
-      localSeededPortCount: 8,
+      localSeededPortCount: 9,
       portCount: apiServicePorts.length,
       validationIssueCount: 0,
     });

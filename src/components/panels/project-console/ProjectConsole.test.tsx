@@ -15,6 +15,11 @@ import {
   loadPublishDeliveryReviewApiBridgeState,
   type PublishDeliveryReviewApiBridgeState,
 } from "../../../api/publishDeliveryReviewApiBridge";
+import {
+  createPointsRankingLedgerRuntimeApiSeededFallbackState,
+  loadPointsRankingLedgerRuntimeApiBridgeState,
+  type PointsRankingLedgerRuntimeApiBridgeState,
+} from "../../../api/pointsRankingLedgerRuntimeApiBridge";
 import { App } from "../../../app/App";
 import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
 import { projectConsoleCopy } from "./copy";
@@ -44,6 +49,15 @@ vi.mock("../../../api/publishDeliveryReviewApiBridge", async (importOriginal) =>
   return {
     ...actual,
     loadPublishDeliveryReviewApiBridgeState: vi.fn(actual.loadPublishDeliveryReviewApiBridgeState),
+  };
+});
+
+vi.mock("../../../api/pointsRankingLedgerRuntimeApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/pointsRankingLedgerRuntimeApiBridge")>();
+
+  return {
+    ...actual,
+    loadPointsRankingLedgerRuntimeApiBridgeState: vi.fn(actual.loadPointsRankingLedgerRuntimeApiBridgeState),
   };
 });
 
@@ -307,18 +321,47 @@ const publishDeliveryReviewApiState = (): PublishDeliveryReviewApiBridgeState =>
   };
 };
 
+const pointsRankingLedgerRuntimeApiState = (): PointsRankingLedgerRuntimeApiBridgeState => {
+  const state = createPointsRankingLedgerRuntimeApiSeededFallbackState(campaignDetail.id, "trace-ledger-api-visible");
+
+  return {
+    ...state,
+    configured: true,
+    diagnostics: [],
+    routeCount: 33,
+    source: "api_runtime",
+    status: "review_required",
+    traceId: "trace-ledger-api-visible",
+    runtime: {
+      ...state.runtime,
+      source: "api_runtime",
+      status: "review_required",
+      traceId: "trace-ledger-api-visible",
+    },
+    review: {
+      ...state.review,
+      source: "api_runtime",
+      status: "review_required",
+      traceId: "trace-ledger-api-visible",
+    },
+  };
+};
+
 describe("Project Console shell", () => {
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
   const mockedSubmitExportArtifactDeliveryApiReview = vi.mocked(submitExportArtifactDeliveryApiReview);
   const mockedLoadBackendRuntimeReadinessApiBridgeState = vi.mocked(loadBackendRuntimeReadinessApiBridgeState);
   const mockedLoadPublishDeliveryReviewApiBridgeState = vi.mocked(loadPublishDeliveryReviewApiBridgeState);
+  const mockedLoadPointsRankingLedgerRuntimeApiBridgeState = vi.mocked(loadPointsRankingLedgerRuntimeApiBridgeState);
 
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
     mockedSubmitExportArtifactDeliveryApiReview.mockReset();
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockReset();
     mockedLoadPublishDeliveryReviewApiBridgeState.mockReset();
+    mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockReset();
     mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValue(publishDeliveryReviewApiState());
+    mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockResolvedValue(pointsRankingLedgerRuntimeApiState());
   });
 
   afterEach(() => {
@@ -1602,6 +1645,17 @@ describe("Project Console shell", () => {
     expect(within(publishDeliveryReview).getByText("No production publish")).toBeInTheDocument();
     expect(within(publishDeliveryReview).getByText("No reward distribution")).toBeInTheDocument();
 
+    const pointsRankingLedgerRuntime = screen.getByLabelText("Points Ranking Ledger Runtime review");
+    expect(mockedLoadPointsRankingLedgerRuntimeApiBridgeState).not.toHaveBeenCalled();
+    expect(within(pointsRankingLedgerRuntime).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+    expect(within(pointsRankingLedgerRuntime).getByText("No API trace yet")).toBeInTheDocument();
+    expect(within(pointsRankingLedgerRuntime).getByText(/No local API base URL configured/)).toBeInTheDocument();
+    expect(within(pointsRankingLedgerRuntime).getByText("Ledger events")).toBeInTheDocument();
+    expect(within(pointsRankingLedgerRuntime).getAllByText("Ranking snapshot").length).toBeGreaterThan(0);
+    expect(within(pointsRankingLedgerRuntime).getAllByText("Eligibility root preview").length).toBeGreaterThan(0);
+    expect(within(pointsRankingLedgerRuntime).getByText("No Pixiepoints ledger write")).toBeInTheDocument();
+    expect(within(pointsRankingLedgerRuntime).getByText("No reward distribution")).toBeInTheDocument();
+
     const walletAdapterReadiness = screen.getByLabelText("aelf-web-login adapter readiness");
     expect(
       within(walletAdapterReadiness).getByRole("heading", {
@@ -1781,6 +1835,42 @@ describe("Project Console shell", () => {
     expect(
       within(publishDeliveryReview).queryByRole("button", {
         name: /publish|contract|reward|distribute|custody|provider/i,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("loads Points Ranking Ledger Runtime automatically and preserves existing review sections", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockResolvedValueOnce(pointsRankingLedgerRuntimeApiState());
+
+    render(<ProjectConsole activeWorkspace="export" campaign={campaignDetail} locale="en-US" />);
+
+    const pointsRankingLedgerRuntime = screen.getByLabelText("Points Ranking Ledger Runtime review");
+
+    await waitFor(() => expect(mockedLoadPointsRankingLedgerRuntimeApiBridgeState).toHaveBeenCalledWith({
+      campaignId: campaignDetail.id,
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        tracePrefix: "project-console-points-ranking-ledger-runtime",
+      },
+    }));
+
+    await waitFor(() => expect(within(pointsRankingLedgerRuntime).getByText("API runtime")).toBeInTheDocument());
+    expect(within(pointsRankingLedgerRuntime).getByText("trace-ledger-api-visible")).toBeInTheDocument();
+    expect(within(pointsRankingLedgerRuntime).getByRole("button", { name: "Review ledger runtime" })).toBeInTheDocument();
+    expect(within(pointsRankingLedgerRuntime).getByText("Ledger events")).toBeInTheDocument();
+    expect(within(pointsRankingLedgerRuntime).getAllByText("Ranking snapshot").length).toBeGreaterThan(0);
+    expect(within(pointsRankingLedgerRuntime).getAllByText("Eligibility root preview").length).toBeGreaterThan(0);
+    expect(within(pointsRankingLedgerRuntime).getAllByText(/local-root-/).length).toBeGreaterThan(0);
+    expect(within(pointsRankingLedgerRuntime).getByText("No backend ledger write")).toBeInTheDocument();
+    expect(within(pointsRankingLedgerRuntime).getByText("No reward custody")).toBeInTheDocument();
+    expect(within(pointsRankingLedgerRuntime).getByText("No reward distribution")).toBeInTheDocument();
+    expect(screen.getByLabelText("Publish Delivery Review Bridge")).toBeInTheDocument();
+    expect(screen.getByLabelText("Backend Runtime Readiness review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Export Delivery API review")).toBeInTheDocument();
+    expect(
+      within(pointsRankingLedgerRuntime).queryByRole("button", {
+        name: /write|contract|reward|distribute|custody|provider|signature/i,
       }),
     ).not.toBeInTheDocument();
   });

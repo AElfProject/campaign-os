@@ -118,10 +118,11 @@ const DEFAULT_VERSION = "0.2.0-local";
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 const DEFAULT_CORS_MAX_AGE_SECONDS = 600;
-const DEFAULT_CORS_ORIGINS = [
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-] as const;
+const DEFAULT_VITE_DEV_PORTS = [5173, 5174, 5175, 5176, 5177, 5178, 5179, 5180, 5181, 5182, 5183, 5184] as const;
+const DEFAULT_CORS_ORIGINS = DEFAULT_VITE_DEV_PORTS.flatMap((port) => [
+  `http://localhost:${port}`,
+  `http://127.0.0.1:${port}`,
+]);
 const DEFAULT_ALLOWED_METHODS = ["GET", "POST", "OPTIONS"] as const;
 const DEFAULT_ALLOWED_HEADERS = [
   "authorization",
