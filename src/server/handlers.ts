@@ -37,6 +37,7 @@ import {
   type PublishDeliveryReviewBackendRuntimeInput,
   type PublishDeliveryReviewRepositoryEvidenceInput,
 } from "../domain/publishDeliveryReview";
+import { createPointsRankingLedgerRuntime } from "../domain/pointsRankingLedgerRuntime";
 import {
   createServiceDegradationGovernance,
   createServiceRegistry,
@@ -57,6 +58,7 @@ import type {
   VerificationPipelineReadinessGate,
   VerificationEvidenceSource,
   VerificationProviderId,
+  PointsRankingLedgerRuntime,
   PublishDeliveryReview,
 } from "../domain/types";
 import type { ApiRuntimeRouteId } from "./routes";
@@ -1199,6 +1201,26 @@ const createPublishDeliveryReviewPayload = async (
   };
 };
 
+const createPointsRankingLedgerRuntimePayload = (
+  context: ApiRuntimeHandlerContext,
+): { boundary: LocalizedText; payload: PointsRankingLedgerRuntime } => {
+  const campaignId = requiredRouteParam(context.params, "campaignId");
+  const detailResult = context.service.getCampaignDetail({ campaignId });
+
+  if (!detailResult.ok) {
+    unwrapLocalResult(detailResult, context);
+    throw invalidCampaign(campaignId);
+  }
+
+  return {
+    boundary: context.route.boundary,
+    payload: createPointsRankingLedgerRuntime(campaignDetail, {
+      source: "api_runtime",
+      traceId: context.traceId,
+    }),
+  };
+};
+
 const createProviderReadinessResult = (
   pipeline: LocalServiceResult<VerificationPipelineReadinessGate>,
   providerEvidenceRegistry: LocalServiceResult<ProviderEvidenceRegistry>,
@@ -1765,6 +1787,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       context,
     ),
   "campaigns.publish.delivery.review": (context) => createPublishDeliveryReviewPayload(context),
+  "campaigns.points.ranking.ledger.runtime": (context) => createPointsRankingLedgerRuntimePayload(context),
   "campaigns.companion.contract.readiness": (context) =>
     unwrapLocalResult(
       context.service.getCompanionContractReadiness(companionContractReadinessRequest(context)),

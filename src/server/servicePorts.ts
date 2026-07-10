@@ -14,6 +14,7 @@ export type ApiServicePortId =
   | "eligibility-port"
   | "export-port"
   | "i18n-content-port"
+  | "points-ranking-port"
   | "referral-port"
   | "runtime-observability-port"
   | "service-registry-port"
@@ -281,6 +282,25 @@ export const apiServicePorts = [
       "campaigns.export.artifacts.detail",
     ],
     serviceId: "export-service",
+  }),
+  servicePort({
+    deferredCapabilities: ["contract_writer", "production_database", "scheduler", "worker_queue"],
+    futureAttachPoints: [
+      "Pixiepoints backend ledger adapter",
+      "points ledger repository",
+      "ranking snapshot repository",
+      "eligibility root publisher",
+      "CampaignPointsLedgerV2 batch root writer",
+      "reward distribution handoff",
+    ],
+    id: "points-ranking-port",
+    localAdapter: "src/domain/pointsRankingLedgerRuntime.ts local review read model",
+    notes: "Points ranking ledger runtime is local seeded review only; production Pixiepoints writes, backend ledger writes, contract root writes, export file writes, reward custody, and reward distribution are deferred or disabled.",
+    productionAdapterStatus: "local_seeded",
+    requiresExternalNetwork: false,
+    requiresSecret: false,
+    routeIds: ["campaigns.points.ranking.ledger.runtime"],
+    serviceId: "points-ranking-service",
   }),
   servicePort({
     deferredCapabilities: ["production_database", "provider_adapters", "scheduler", "worker_queue"],

@@ -350,13 +350,14 @@ export const backendServiceBoundaries = [
     id: "points-ranking-service",
     name: "Points / Ranking Service",
     productionRequired: true,
-    readiness: "deferred",
+    readiness: "review_required",
     risks: [
+      "Local ledger runtime route is review-only and does not write Pixiepoints, backend ledger records, contract roots, exports, custody, or distribution state.",
       "Production ledger and optional contract transparency are deferred.",
       "Reward distribution handoff requires the deferred worker queue, idempotency store, observability exporter, and contract writer before production.",
     ],
-    routeIds: [],
-    runtimeProfiles: productionRequiredProfiles,
+    routeIds: ["campaigns.points.ranking.ledger.runtime"],
+    runtimeProfiles: productionProfiles,
   }),
   service({
     adapterGroups: [],

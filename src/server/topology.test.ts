@@ -152,6 +152,16 @@ describe("backend service topology", () => {
         expect.stringContaining("live wallet verification"),
       ]),
     });
+    expect(backendServiceBoundaries.find((service) => service.id === "points-ranking-service")).toMatchObject({
+      readiness: "review_required",
+      risks: expect.arrayContaining([
+        expect.stringContaining("review-only"),
+        expect.stringContaining("contract roots"),
+        expect.stringContaining("Reward distribution"),
+      ]),
+      routeIds: ["campaigns.points.ranking.ledger.runtime"],
+      runtimeProfiles: expect.arrayContaining(["local-review"]),
+    });
     expect(backendServiceBoundaries.find((service) => service.id === "referral-service")).toMatchObject({
       description: expect.stringContaining("local Campaign DB referral binding read model"),
       readiness: "local_only",
