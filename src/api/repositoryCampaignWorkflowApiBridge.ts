@@ -726,8 +726,66 @@ const optionalBooleanField = (value: Record<string, unknown>, key: string): bool
   return typeof raw === "boolean" ? raw : undefined;
 };
 
-const optionalFalseField = (value: Record<string, unknown>, key: string): false =>
-  optionalBooleanField(value, key) === false ? false : false;
+const verificationNoLiveFlagKeys = [
+  "liveContractExecuted",
+  "liveProviderExecuted",
+  "liveRewardExecuted",
+  "liveStorageExecuted",
+] as const;
+
+type VerificationNoLiveFlagKey = typeof verificationNoLiveFlagKeys[number];
+type VerificationNoLiveFlags = Pick<RepositoryCampaignWorkflowVerificationState, VerificationNoLiveFlagKey>;
+
+const explicitFalseField = (value: Record<string, unknown>, key: VerificationNoLiveFlagKey): false | undefined =>
+  value[key] === false ? false : undefined;
+
+const normalizeVerificationNoLiveFlags = (
+  payload: Record<string, unknown>,
+): VerificationNoLiveFlags | undefined => {
+  const flags = {
+    liveContractExecuted: explicitFalseField(payload, "liveContractExecuted"),
+    liveProviderExecuted: explicitFalseField(payload, "liveProviderExecuted"),
+    liveRewardExecuted: explicitFalseField(payload, "liveRewardExecuted"),
+    liveStorageExecuted: explicitFalseField(payload, "liveStorageExecuted"),
+  };
+
+  return Object.values(flags).every((value) => value === false) ? flags as VerificationNoLiveFlags : undefined;
+};
+
+const invalidVerificationNoLiveFields = (body: unknown): readonly VerificationNoLiveFlagKey[] => {
+  const payload = getPayloadRecord(body);
+
+  if (!payload) {
+    return [];
+  }
+
+  return verificationNoLiveFlagKeys.filter((key) => payload[key] !== false);
+};
+
+const verificationNoLiveDiagnostic = (
+  body: unknown,
+  endpoint: string,
+): RepositoryCampaignWorkflowApiDiagnostic | undefined => {
+  const invalidFields = invalidVerificationNoLiveFields(body);
+
+  return invalidFields.length > 0
+    ? diagnostic("API_RESPONSE_INVALID", "error", {
+      endpoint,
+      invalidNoLiveFieldCount: invalidFields.length,
+      invalidNoLiveFields: invalidFields.join(","),
+      reason: "unsafe_no_live_verification_flag",
+    })
+    : undefined;
+};
+
+const withVerificationNoLiveDiagnostic = (
+  result: FetchJsonResult,
+  endpoint: string,
+): FetchJsonResult => {
+  const noLiveDiagnostic = verificationNoLiveDiagnostic(result.body, endpoint);
+
+  return noLiveDiagnostic ? { ...result, diagnostic: noLiveDiagnostic } : result;
+};
 
 const stringArrayFromValue = (value: unknown): readonly string[] =>
   Array.isArray(value)
@@ -910,8 +968,9 @@ const normalizeVerification = (
   const taskId = optionalStringField(payload, "taskId");
   const status = optionalStringField(payload, "status");
   const pointsAwarded = optionalNumberField(payload, "pointsAwarded");
+  const noLiveFlags = normalizeVerificationNoLiveFlags(payload);
 
-  if (!taskId || !status || pointsAwarded === undefined) {
+  if (!taskId || !status || pointsAwarded === undefined || !noLiveFlags) {
     return undefined;
   }
 
@@ -920,10 +979,7 @@ const normalizeVerification = (
     ...(optionalStringField(payload, "evidenceHash") ? { evidenceHash: optionalStringField(payload, "evidenceHash") } : {}),
     ...(optionalStringField(payload, "evidenceId") ? { evidenceId: optionalStringField(payload, "evidenceId") } : {}),
     ...(optionalStringField(payload, "evidenceSource") ? { evidenceSource: optionalStringField(payload, "evidenceSource") } : {}),
-    liveContractExecuted: optionalFalseField(payload, "liveContractExecuted"),
-    liveProviderExecuted: optionalFalseField(payload, "liveProviderExecuted"),
-    liveRewardExecuted: optionalFalseField(payload, "liveRewardExecuted"),
-    liveStorageExecuted: optionalFalseField(payload, "liveStorageExecuted"),
+    ...noLiveFlags,
     ...(persistenceMetadataFromValue(data.persistence) ? { persistence: persistenceMetadataFromValue(data.persistence) } : {}),
     pointsAwarded,
     ...(optionalNumberField(payload, "pointsAvailable") !== undefined
@@ -1489,6 +1545,7 @@ export const loadRepositoryCampaignWorkflowBridgeState = async ({
     });
   }
 
+  const optionalVerificationEndpoint = `/api/tasks/${encodeURIComponent(optionalTask.taskId)}/verify`;
   const optionalVerificationResponse = await request({
     body: {
       accountType: review.accountType,
@@ -1496,7 +1553,7 @@ export const loadRepositoryCampaignWorkflowBridgeState = async ({
       walletAddress: review.walletAddress,
       walletSource: review.walletSource,
     },
-    endpoint: `/api/tasks/${encodeURIComponent(optionalTask.taskId)}/verify`,
+    endpoint: optionalVerificationEndpoint,
     failureCode: "API_VERIFICATION_FAILED",
     method: "POST",
     stepId: "optional-verification",
@@ -1509,7 +1566,7 @@ export const loadRepositoryCampaignWorkflowBridgeState = async ({
       code: "API_VERIFICATION_FAILED",
       fallbackCode: "API_VERIFICATION_FAILED",
       health,
-      result: optionalVerificationResponse,
+      result: withVerificationNoLiveDiagnostic(optionalVerificationResponse, optionalVerificationEndpoint),
       tasks,
     });
   }
@@ -1562,6 +1619,7 @@ export const loadRepositoryCampaignWorkflowBridgeState = async ({
     });
   }
 
+  const requiredVerificationEndpoint = `/api/tasks/${encodeURIComponent(requiredTask.taskId)}/verify`;
   const requiredVerificationResponse = await request({
     body: {
       accountType: review.accountType,
@@ -1569,7 +1627,7 @@ export const loadRepositoryCampaignWorkflowBridgeState = async ({
       walletAddress: review.walletAddress,
       walletSource: review.walletSource,
     },
-    endpoint: `/api/tasks/${encodeURIComponent(requiredTask.taskId)}/verify`,
+    endpoint: requiredVerificationEndpoint,
     failureCode: "API_VERIFICATION_FAILED",
     method: "POST",
     stepId: "required-verification",
@@ -1583,7 +1641,7 @@ export const loadRepositoryCampaignWorkflowBridgeState = async ({
       code: "API_VERIFICATION_FAILED",
       fallbackCode: "API_VERIFICATION_FAILED",
       health,
-      result: requiredVerificationResponse,
+      result: withVerificationNoLiveDiagnostic(requiredVerificationResponse, requiredVerificationEndpoint),
       tasks,
       verification: { optional: optionalVerification },
     });

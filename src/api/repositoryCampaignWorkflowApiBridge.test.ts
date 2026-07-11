@@ -399,6 +399,32 @@ const fetchFromBodies = (bodies: unknown[]): RepositoryCampaignWorkflowApiFetch 
     return response(body, { traceId: typeof body === "object" && body && "traceId" in body ? String(body.traceId) : undefined });
   }) as unknown as RepositoryCampaignWorkflowApiFetch;
 
+const noLiveFlagKeys = [
+  "liveContractExecuted",
+  "liveProviderExecuted",
+  "liveRewardExecuted",
+  "liveStorageExecuted",
+] as const;
+
+type NoLiveFlagKey = typeof noLiveFlagKeys[number];
+
+const mutateVerificationPayload = (
+  bodies: unknown[],
+  verification: "optional" | "required",
+  mutate: (payload: Record<string, unknown>) => void,
+) => {
+  const body = bodies[verification === "optional" ? 6 : 9];
+  const data = typeof body === "object" && body && "data" in body
+    ? (body as { data?: { payload?: Record<string, unknown> } }).data
+    : undefined;
+
+  if (!data?.payload) {
+    throw new Error(`Missing ${verification} verification payload fixture`);
+  }
+
+  mutate(data.payload);
+};
+
 describe("repository campaign workflow API bridge", () => {
   it("creates loading and explicit error fallback states without network calls", () => {
     expect(createRepositoryCampaignWorkflowLoadingState()).toMatchObject({
@@ -606,6 +632,103 @@ describe("repository campaign workflow API bridge", () => {
       walletAddress,
       walletSource: "PORTKEY_EOA_EXTENSION",
     });
+  });
+
+  it.each(noLiveFlagKeys)("fails closed when required verification %s is true", async (flag) => {
+    const bodies = workflowResponses();
+    mutateVerificationPayload(bodies, "required", (payload) => {
+      payload[flag] = true;
+    });
+
+    const state = await loadRepositoryCampaignWorkflowBridgeState({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl: fetchFromBodies(bodies),
+    });
+    const serialized = JSON.stringify(state).toLowerCase();
+
+    expect(state.source).toBe("error_fallback");
+    expect(state.status).not.toBe("ready");
+    expect(state.verification?.required).toBeUndefined();
+    expect(state.verification?.optional).toMatchObject({ taskId: optionalTaskId });
+    expect(state.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "API_RESPONSE_INVALID",
+        safeDetails: expect.objectContaining({
+          invalidNoLiveFields: flag,
+          reason: "unsafe_no_live_verification_flag",
+        }),
+        severity: "error",
+      }),
+    ]);
+    expect(serialized).not.toContain("\"livecontractexecuted\":true");
+    expect(serialized).not.toContain("\"liveproviderexecuted\":true");
+    expect(serialized).not.toContain("\"liverewardexecuted\":true");
+    expect(serialized).not.toContain("\"livestorageexecuted\":true");
+  });
+
+  it("fails closed and sanitizes malformed or missing no-live verification flags", async () => {
+    const bodies = workflowResponses();
+    mutateVerificationPayload(bodies, "optional", (payload) => {
+      payload.liveContractExecuted = "true";
+      payload.liveProviderExecuted = 1;
+      payload.liveRewardExecuted = null;
+      payload.liveStorageExecuted = {
+        providerPayload: "rawSignature=abc signedUrl=https://storage.example/file?token=abc",
+      };
+    });
+
+    const state = await loadRepositoryCampaignWorkflowBridgeState({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl: fetchFromBodies(bodies),
+    });
+    const serialized = JSON.stringify(state).toLowerCase();
+
+    expect(state.source).toBe("error_fallback");
+    expect(state.status).not.toBe("ready");
+    expect(state.verification).toBeUndefined();
+    expect(state.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "API_RESPONSE_INVALID",
+        safeDetails: expect.objectContaining({
+          invalidNoLiveFields: noLiveFlagKeys.join(","),
+          reason: "unsafe_no_live_verification_flag",
+        }),
+        severity: "error",
+      }),
+    ]);
+    for (const unsafe of [
+      "rawsignature=abc",
+      "signedurl=https://storage.example",
+      "token=abc",
+      "\"livecontractexecuted\":\"true\"",
+      "\"liveproviderexecuted\":1",
+      "\"liverewardexecuted\":null",
+    ]) {
+      expect(serialized).not.toContain(unsafe);
+    }
+
+    const missingBodies = workflowResponses();
+    mutateVerificationPayload(missingBodies, "optional", (payload) => {
+      delete payload.liveStorageExecuted;
+    });
+
+    const missingState = await loadRepositoryCampaignWorkflowBridgeState({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl: fetchFromBodies(missingBodies),
+    });
+
+    expect(missingState.source).toBe("error_fallback");
+    expect(missingState.status).not.toBe("ready");
+    expect(missingState.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "API_RESPONSE_INVALID",
+        safeDetails: expect.objectContaining({
+          invalidNoLiveFields: "liveStorageExecuted",
+          reason: "unsafe_no_live_verification_flag",
+        }),
+        severity: "error",
+      }),
+    ]);
   });
 
   it("keeps list refresh miss as a warning and does not mark the workflow ready", async () => {
