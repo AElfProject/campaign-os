@@ -87,6 +87,10 @@ describe("publish delivery review API bridge", () => {
       configured: false,
       diagnostics: [{ code: "API_BASE_URL_MISSING", severity: "info" }],
       loading: false,
+      releaseScopeSummary: {
+        mvpReleaseBlockerIds: ["publish-delivery-review-api-unavailable"],
+        mvpReleaseReady: false,
+      },
       source: "seeded_fallback",
       status: "fallback",
     });
@@ -135,6 +139,10 @@ describe("publish delivery review API bridge", () => {
       configured: true,
       diagnostics: [],
       loading: false,
+      releaseScopeSummary: {
+        mvpReleaseReady: false,
+        productionBlockerCount: expect.any(Number),
+      },
       review: expect.objectContaining({
         campaignId,
         source: "api_runtime",
@@ -155,6 +163,58 @@ describe("publish delivery review API bridge", () => {
         method: "GET",
       }),
     );
+  });
+
+  it("extracts release-scope summary from API runtime payload", async () => {
+    const reviewPayload = validReviewPayload({ status: "blocked" }) as PublishDeliveryReview & {
+      backendRuntime: PublishDeliveryReview["backendRuntime"] & {
+        futureProductionBlockerIds: string[];
+        mvpReleaseBlockerIds: string[];
+        mvpReleaseReady: boolean;
+      };
+      summary: PublishDeliveryReview["summary"] & {
+        futureProductionBlockerCount: number;
+        futureProductionBlockerIds: string[];
+        mvpReleaseBlockerCount: number;
+        mvpReleaseBlockerIds: string[];
+        mvpReleaseReady: boolean;
+      };
+    };
+    reviewPayload.backendRuntime = {
+      ...reviewPayload.backendRuntime,
+      futureProductionBlockerIds: ["reward-custody", "reward-distribution"],
+      mvpReleaseBlockerIds: [],
+      mvpReleaseReady: true,
+    };
+    reviewPayload.summary = {
+      ...reviewPayload.summary,
+      futureProductionBlockerCount: 2,
+      futureProductionBlockerIds: ["reward-custody", "reward-distribution"],
+      mvpReleaseBlockerCount: 0,
+      mvpReleaseBlockerIds: [],
+      mvpReleaseReady: true,
+    };
+    const fetchImpl = vi.fn().mockResolvedValueOnce(response(
+      envelope(reviewPayload, "trace-release-scope"),
+    )) as unknown as PublishDeliveryReviewApiFetch;
+
+    const state = await loadPublishDeliveryReviewApiBridgeState({
+      campaignId,
+      config: { baseUrl: "http://127.0.0.1:5174/" },
+      fetchImpl,
+    });
+
+    expect(state).toMatchObject({
+      releaseScopeSummary: {
+        futureProductionBlockerCount: 2,
+        futureProductionBlockerIds: expect.arrayContaining(["reward-custody", "reward-distribution"]),
+        mvpReleaseBlockerCount: 0,
+        mvpReleaseBlockerIds: [],
+        mvpReleaseReady: true,
+      },
+      source: "api_runtime",
+      status: "blocked",
+    });
   });
 
   it("returns error fallback when the request fails", async () => {

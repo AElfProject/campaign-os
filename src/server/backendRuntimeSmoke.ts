@@ -514,9 +514,14 @@ export interface BackendRuntimeSmokeSummary {
   productionBackendReadiness: BackendRuntimeSmokeProductionBackendReadinessSummary;
   providerClientReadiness: BackendRuntimeSmokeProviderClientReadinessSummary;
   port: number;
+  futureProduction: string[];
+  futureProductionBlockerIds: string[];
+  mvpReleaseBlockerIds: string[];
+  mvpReleaseReady: boolean;
   productionReady: boolean;
   providerIndexerFoundation: BackendRuntimeSmokeProviderIndexerFoundationSummary;
   queueRuntimeFoundation: BackendRuntimeSmokeQueueRuntimeFoundationSummary;
+  requiredBeforeMvpRelease: string[];
   requiredBeforeProduction: string[];
   schedulerRuntimeFoundation: BackendRuntimeSmokeSchedulerRuntimeFoundationSummary;
   shutdownState: "running" | "stopping" | "stopped";
@@ -1824,6 +1829,30 @@ const getStringArray = (
   ? record[key].filter((item): item is string => typeof item === "string")
   : [];
 
+const rewardReleaseScopeBlockerIds = ["reward-custody", "reward-distribution"];
+
+const includesAllRewardReleaseScopeBlockers = (ids: readonly string[]) =>
+  rewardReleaseScopeBlockerIds.every((id) => ids.includes(id));
+
+const excludesRewardReleaseScopeBlockers = (ids: readonly string[]) =>
+  rewardReleaseScopeBlockerIds.every((id) => !ids.includes(id));
+
+const isReleaseScopeSmokeReady = (
+  activation: Record<string, unknown> | undefined,
+  deploymentHandoff: Record<string, unknown> | undefined,
+): boolean => {
+  const mvpReleaseBlockerIds = getStringArray(activation, "mvpReleaseBlockerIds");
+  const futureProductionBlockerIds = getStringArray(activation, "futureProductionBlockerIds");
+  const requiredBeforeMvpRelease = getStringArray(deploymentHandoff, "requiredBeforeMvpRelease");
+  const futureProduction = getStringArray(deploymentHandoff, "futureProduction");
+
+  return getBoolean(activation, "mvpReleaseReady")
+    && excludesRewardReleaseScopeBlockers(mvpReleaseBlockerIds)
+    && excludesRewardReleaseScopeBlockers(requiredBeforeMvpRelease)
+    && includesAllRewardReleaseScopeBlockers(futureProductionBlockerIds)
+    && includesAllRewardReleaseScopeBlockers(futureProduction);
+};
+
 const durableLocalSmokeTraceIds = {
   exportPreview: "campaign-os-smoke-durable-export-preview",
   firstHealth: "campaign-os-smoke-durable-health-first",
@@ -2656,6 +2685,7 @@ export const runBackendRuntimeSmoke = async ({
       || !contracts.check.activationPresent
       || !isExplicitFalse(activation, "productionReady")
       || !isExplicitFalse(activation, "liveSideEffectsEnabled")
+      || !isReleaseScopeSmokeReady(activation, deploymentHandoff)
       || !isAuthSessionFoundationSmokeReady(health.check.authSessionFoundation)
       || !isAuthSessionFoundationSmokeReady(authSessionFoundation)
       || !isPersistenceFoundationSmokeReady(health.check.persistenceFoundation)
@@ -2717,9 +2747,14 @@ export const runBackendRuntimeSmoke = async ({
       productionBackendReadiness,
       providerClientReadiness,
       port: new URL(server.url).port ? Number(new URL(server.url).port) : 0,
+      futureProduction: getStringArray(deploymentHandoff, "futureProduction"),
+      futureProductionBlockerIds: getStringArray(activation, "futureProductionBlockerIds"),
+      mvpReleaseBlockerIds: getStringArray(activation, "mvpReleaseBlockerIds"),
+      mvpReleaseReady: getBoolean(activation, "mvpReleaseReady"),
       productionReady: getBoolean(activation, "productionReady"),
       providerIndexerFoundation,
       queueRuntimeFoundation,
+      requiredBeforeMvpRelease: getStringArray(deploymentHandoff, "requiredBeforeMvpRelease"),
       requiredBeforeProduction: getStringArray(deploymentHandoff, "requiredBeforeProduction"),
       schedulerRuntimeFoundation,
       status: "passed",

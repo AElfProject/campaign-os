@@ -91,6 +91,51 @@ const readinessSummary = {
   },
 };
 
+const releaseScopeActivation = {
+  deploymentHandoff: {
+    futureProduction: ["reward-custody", "reward-distribution"],
+    requiredBeforeMvpRelease: [],
+  },
+  futureProductionBlockerIds: ["reward-custody", "reward-distribution"],
+  mvpReleaseBlockerIds: [],
+  mvpReleaseReady: true,
+  productionDependencyBlockers: [
+    {
+      area: "database",
+      attachPoint: "src/server/productionDatabase.ts",
+      blockedBy: ["production DB adapter"],
+      futureProductionOnly: false,
+      id: "live-database-driver",
+      mvpReleaseRequired: false,
+      releaseScope: "production_required",
+      requiredBeforeProduction: true,
+      status: "blocked",
+    },
+    {
+      area: "reward",
+      attachPoint: "src/server/servicePorts.ts",
+      blockedBy: ["reward custody mission", "finance/security review"],
+      futureProductionOnly: true,
+      id: "reward-custody",
+      mvpReleaseRequired: false,
+      releaseScope: "excluded_from_mvp",
+      requiredBeforeProduction: true,
+      status: "blocked",
+    },
+    {
+      area: "reward",
+      attachPoint: "src/server/servicePorts.ts",
+      blockedBy: ["reward distribution mission", ...contractWriterRequiredConfigKeys],
+      futureProductionOnly: true,
+      id: "reward-distribution",
+      mvpReleaseRequired: false,
+      releaseScope: "excluded_from_mvp",
+      requiredBeforeProduction: true,
+      status: "blocked",
+    },
+  ],
+};
+
 const databasePackageBinding = {
   bindingId: "campaign-os-postgresql-package-binding-local",
   blockerCount: 0,
@@ -200,6 +245,11 @@ describe("backend runtime readiness API bridge", () => {
       summary: seededBackendRuntimeReadinessSummary,
     });
     expect(state.summary.noLiveSideEffects.contractWriteExecuted).toBe(false);
+    expect(state.summary.mvpReleaseReady).toBe(false);
+    expect(state.summary.mvpReleaseBlockerIds).toEqual(["backend-readiness-api-unavailable"]);
+    expect(state.summary.futureProductionBlockerIds).toEqual(
+      expect.arrayContaining(["reward-custody", "reward-distribution"]),
+    );
     expect(state.summary.databasePackageBinding).toMatchObject({
       bindingId: "campaign-os-postgresql-package-binding-local",
       liveConnectionAttempted: false,
@@ -209,6 +259,12 @@ describe("backend runtime readiness API bridge", () => {
     });
     expect(state.summary.productionDependencyBlockers.find((blocker) => blocker.id === "contract-writer")).toMatchObject({
       blockedBy: expect.arrayContaining([...contractWriterRequiredConfigKeys]),
+      status: "blocked",
+    });
+    expect(state.summary.productionDependencyBlockers.find((blocker) => blocker.id === "reward-custody")).toMatchObject({
+      futureProductionOnly: true,
+      mvpReleaseRequired: false,
+      releaseScope: "excluded_from_mvp",
       status: "blocked",
     });
     expect(JSON.stringify(state.summary.productionDependencyBlockers)).not.toContain(genericContractWriterMissionCopy);
@@ -305,6 +361,39 @@ describe("backend runtime readiness API bridge", () => {
       }),
     );
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("normalizes API runtime release scope metadata from activation", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response(envelope(readinessSummary, "trace-health", {
+        activation: releaseScopeActivation,
+      })))
+      .mockResolvedValueOnce(response(envelope(readinessSummary, "trace-contracts", {
+        activation: releaseScopeActivation,
+      }))) as unknown as BackendRuntimeReadinessApiFetch;
+
+    const state = await loadBackendRuntimeReadinessApiBridgeState({
+      config: { baseUrl: "http://127.0.0.1:5174/" },
+      fetchImpl,
+    });
+
+    expect(state).toMatchObject({
+      source: "api_runtime",
+      status: "ready",
+      summary: {
+        futureProductionBlockerIds: expect.arrayContaining(["reward-custody", "reward-distribution"]),
+        mvpReleaseBlockerIds: [],
+        mvpReleaseReady: true,
+        productionReady: false,
+      },
+    });
+    expect(state.summary.productionDependencyBlockers.find((blocker) => blocker.area === "reward")).toMatchObject({
+      futureProductionOnly: true,
+      mvpReleaseRequired: false,
+      releaseScope: "excluded_from_mvp",
+      status: "blocked",
+    });
   });
 
   it("normalizes DB package binding metadata without exposing unsafe payloads", async () => {
