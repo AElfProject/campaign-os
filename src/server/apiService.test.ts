@@ -65,8 +65,11 @@ describe("Campaign OS API service bootstrap contract", () => {
       readiness: {
         contractWriteEnabled: false,
         deployableBoundaryReady: true,
+        futureProductionBlockerIds: expect.arrayContaining(["reward-custody", "reward-distribution"]),
         liveConnectionAttempted: false,
         liveSideEffectsEnabled: false,
+        mvpReleaseBlockerIds: [],
+        mvpReleaseReady: true,
         productionReady: false,
         workerExecutionEnabled: false,
       },
@@ -129,6 +132,9 @@ describe("Campaign OS API service bootstrap contract", () => {
     });
     expect(service.attachMap.find((attachPoint) => attachPoint.id === "reward-distribution")).toMatchObject({
       blockedBy: expect.arrayContaining(["reward distribution mission", ...contractWriterRequiredConfigKeys]),
+      futureProductionOnly: true,
+      mvpReleaseRequired: false,
+      releaseScope: "excluded_from_mvp",
       status: "blocked",
     });
     expect(JSON.stringify(service.attachMap)).not.toContain(genericContractWriterMissionCopy);
@@ -257,6 +263,13 @@ describe("Campaign OS API service bootstrap contract", () => {
         "reward-distribution",
       ]),
     );
+    expect(service.readiness.mvpReleaseBlockerIds).not.toEqual(
+      expect.arrayContaining(["reward-custody", "reward-distribution"]),
+    );
+    expect(service.readiness.futureProductionBlockerIds).toEqual(
+      expect.arrayContaining(["reward-custody", "reward-distribution"]),
+    );
+    expect(service.readiness.mvpReleaseReady).toBe(true);
     expect(service.readiness.blockedDependencyIds).not.toEqual(
       expect.arrayContaining(["wallet-proof-verifier", "session-issuer"]),
     );
@@ -292,6 +305,7 @@ describe("Campaign OS API service bootstrap contract", () => {
       ]),
     );
     expect(campaignOsApiServiceAttachMap.every((attachPoint) => attachPoint.blockedBy.length > 0)).toBe(true);
+    expect(campaignOsApiServiceAttachMap.every((attachPoint) => attachPoint.releaseScope)).toBe(true);
   });
 
   it("projects shutdown lifecycle without throwing away safe diagnostics", () => {

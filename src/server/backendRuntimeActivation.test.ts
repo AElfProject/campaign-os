@@ -4,6 +4,8 @@ import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyti
 import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 import {
   createBackendRuntimeActivationContract,
+  futureProductionRuntimeDependencyBlockerIds,
+  mvpReleaseRuntimeDependencyBlockerIds,
   productionRuntimeDependencyBlockerIds,
   runtimeActivationEnvironmentKeys,
   runtimeActivationConfigKeys,
@@ -116,8 +118,15 @@ describe("backend runtime activation contract", () => {
       contractsEndpoint: "/api/contracts",
       healthEndpoint: "/api/health",
       runtimeTarget: "api_service",
+      requiredBeforeMvpRelease: [],
       startCommand: "npm run server:start",
       smokeCommand: "npm run server:smoke",
+    });
+    expect(activation).toMatchObject({
+      futureProductionBlockerIds: expect.arrayContaining(["reward-custody", "reward-distribution"]),
+      mvpReleaseBlockerIds: [],
+      mvpReleaseReady: true,
+      productionReady: false,
     });
     expect(activation.tracePolicy).toEqual({
       failureEnvelopeTraceId: true,
@@ -125,6 +134,49 @@ describe("backend runtime activation contract", () => {
       successEnvelopeTraceId: true,
       traceHeaderName: "x-campaign-os-trace-id",
     });
+  });
+
+  it("separates v0.2 MVP release blockers from future reward production blockers", () => {
+    const runtime = resolveApiServerRuntimeContract({
+      env: {},
+      startedAt: "2026-07-07T05:54:00.000Z",
+    });
+    const activation = createBackendRuntimeActivationContract({ runtime });
+    const rewardCustody = activation.productionDependencyBlockers.find((blocker) => blocker.id === "reward-custody");
+    const rewardDistribution = activation.productionDependencyBlockers.find(
+      (blocker) => blocker.id === "reward-distribution",
+    );
+
+    expect(mvpReleaseRuntimeDependencyBlockerIds).not.toEqual(
+      expect.arrayContaining(["reward-custody", "reward-distribution"]),
+    );
+    expect(futureProductionRuntimeDependencyBlockerIds).toEqual(
+      expect.arrayContaining(["reward-custody", "reward-distribution"]),
+    );
+    expect(activation.deploymentHandoff.requiredBeforeMvpRelease).not.toEqual(
+      expect.arrayContaining(["reward-custody", "reward-distribution"]),
+    );
+    expect(activation.deploymentHandoff.futureProduction).toEqual(
+      expect.arrayContaining(["reward-custody", "reward-distribution"]),
+    );
+    expect(rewardCustody).toMatchObject({
+      futureProductionOnly: true,
+      mvpReleaseRequired: false,
+      releaseScope: "excluded_from_mvp",
+      requiredBeforeProduction: true,
+      status: "blocked",
+    });
+    expect(rewardDistribution).toMatchObject({
+      futureProductionOnly: true,
+      mvpReleaseRequired: false,
+      releaseScope: "excluded_from_mvp",
+      requiredBeforeProduction: true,
+      status: "blocked",
+    });
+    expect(activation.mvpReleaseBlockerIds).toEqual([]);
+    expect(activation.mvpReleaseReady).toBe(true);
+    expect(activation.productionReady).toBe(false);
+    expect(activation.productionDependencyBlockers.every((blocker) => blocker.releaseScope)).toBe(true);
   });
 
   it("keeps package scripts discoverable without removing server:dev", () => {
