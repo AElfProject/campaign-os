@@ -197,6 +197,10 @@ const routeFoundationMetadata = {
     operationId: "getCampaignContractWriterReadiness",
     serviceId: "campaign-service",
   },
+  "campaigns.reward.distribution.handoff.readiness": {
+    operationId: "getCampaignRewardDistributionHandoffReadiness",
+    serviceId: "campaign-service",
+  },
   "campaigns.contract.transparency": {
     operationId: "getCampaignContractTransparency",
     serviceId: "campaign-service",
@@ -505,6 +509,15 @@ const requestFieldContracts = [
     name: "campaignId",
     required: true,
     routeId: "campaigns.contract.writer.readiness",
+    valueType: "string",
+  }),
+  field({
+    description: "Campaign identifier path parameter for the reward distribution handoff readiness review payload.",
+    id: "campaigns.reward.distribution.handoff.readiness.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.reward.distribution.handoff.readiness",
     valueType: "string",
   }),
   field({
@@ -1154,6 +1167,7 @@ const backendSurfaceReadiness = [
       "campaigns.publish.delivery.review",
       "campaigns.companion.contract.readiness",
       "campaigns.contract.writer.readiness",
+      "campaigns.reward.distribution.handoff.readiness",
       "campaigns.contract.transparency",
     ],
     serviceId: "campaign-service",

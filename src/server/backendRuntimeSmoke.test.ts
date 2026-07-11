@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyticsIngestionRuntime";
 import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
+import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
 import { runBackendRuntimeSmoke } from "./backendRuntimeSmoke";
 
 const secretFragments = [
@@ -522,6 +523,33 @@ const expectedContractWriterRuntimeMetadata = {
   valid: true,
 };
 
+const expectedRewardDistributionHandoffRuntimeMetadata = {
+  diagnosticCodes: expect.arrayContaining([
+    "REWARD_DISTRIBUTION_FUNDING_PROOF_MISSING",
+    "REWARD_DISTRIBUTION_LIVE_EXECUTION_DISABLED",
+    "REWARD_DISTRIBUTION_OPERATOR_APPROVAL_MISSING",
+    "REWARD_DISTRIBUTION_QUEUE_HANDOFF_MISSING",
+  ]),
+  evidenceStatus: "missing",
+  itemCount: 11,
+  liveClaim: false,
+  liveContractWrite: false,
+  livePayout: false,
+  liveProviderCall: false,
+  liveQueuePublishing: false,
+  liveRewardCustody: false,
+  liveRewardDistribution: false,
+  liveSchedulerExecution: false,
+  liveWalletSignature: false,
+  liveWorkerExecution: false,
+  missingEvidenceCount: rewardDistributionHandoffRequiredEvidenceKeys.length,
+  productionReady: false,
+  recipientCount: 4,
+  requiredEvidenceKeys: expect.arrayContaining([...rewardDistributionHandoffRequiredEvidenceKeys]),
+  status: "blocked",
+  valid: true,
+};
+
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
     const summary = await runBackendRuntimeSmoke({
@@ -589,6 +617,7 @@ describe("backend runtime smoke command", () => {
             workerExecutionEnabled: false,
           },
           providerClientReadiness: expectedProviderClientReadiness,
+          rewardDistributionHandoffRuntime: expectedRewardDistributionHandoffRuntimeMetadata,
           queueRuntimeFoundation: {
             blockerCount: 0,
             diagnosticCodes: [],
@@ -663,6 +692,7 @@ describe("backend runtime smoke command", () => {
             workerExecutionEnabled: false,
           },
           providerClientReadiness: expectedProviderClientReadiness,
+          rewardDistributionHandoffRuntime: expectedRewardDistributionHandoffRuntimeMetadata,
           queueRuntimeFoundation: {
             blockerCount: 0,
             diagnosticCodes: [],
@@ -732,6 +762,10 @@ describe("backend runtime smoke command", () => {
       contractWriterRuntime: {
         ...expectedContractWriterRuntimeMetadata,
         traceId: "campaign-os-smoke-contract-writer-readiness",
+      },
+      rewardDistributionHandoffRuntime: {
+        ...expectedRewardDistributionHandoffRuntimeMetadata,
+        traceId: "campaign-os-smoke-reward-distribution-handoff-readiness",
       },
       persistenceFoundation: {
         blockerCount: expect.any(Number),
@@ -1082,6 +1116,36 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutContractWriterRuntime })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when reward distribution handoff readiness metadata is missing from smoke payloads", async () => {
+    const fetchWithoutRewardDistributionHandoffRuntime: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          backendService?: {
+            rewardDistributionHandoffRuntime?: Record<string, unknown>;
+          };
+          serverRuntime?: {
+            readiness?: {
+              rewardDistributionHandoffRuntime?: Record<string, unknown>;
+            };
+          };
+        };
+      };
+
+      delete payload.data?.backendService?.rewardDistributionHandoffRuntime;
+      delete payload.data?.serverRuntime?.readiness?.rewardDistributionHandoffRuntime;
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutRewardDistributionHandoffRuntime })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });

@@ -45,6 +45,12 @@ import {
   type ContractWriterRuntimeApiBridgeState,
 } from "../../../api/contractWriterRuntimeApiBridge";
 import {
+  createRewardDistributionHandoffRuntimeApiLoadingState,
+  createRewardDistributionHandoffRuntimeApiSeededFallbackState,
+  loadRewardDistributionHandoffRuntimeApiBridgeState,
+  type RewardDistributionHandoffRuntimeApiBridgeState,
+} from "../../../api/rewardDistributionHandoffRuntimeApiBridge";
+import {
   createExportArtifactDeliveryApiLoadingState,
   createExportArtifactDeliverySeededFallbackState,
   sanitizeExportArtifactDeliveryApiText,
@@ -171,6 +177,7 @@ import { AnalyticsIngestionRuntimePanel } from "./AnalyticsIngestionRuntimePanel
 import { ContractWriterRuntimePanel } from "./ContractWriterRuntimePanel";
 import { ObjectStorageExportRuntimePanel } from "./ObjectStorageExportRuntimePanel";
 import { PointsRankingLedgerRuntimePanel } from "./PointsRankingLedgerRuntimePanel";
+import { RewardDistributionHandoffRuntimePanel } from "./RewardDistributionHandoffRuntimePanel";
 import { RepositoryCampaignWorkflowPanel } from "./RepositoryCampaignWorkflowPanel";
 import { projectConsoleCopy } from "./copy";
 import { PublishDeliveryReviewPanel } from "./PublishDeliveryReviewPanel";
@@ -1325,6 +1332,9 @@ const analyticsIngestionRuntimeApiBaseUrl = () =>
 const contractWriterRuntimeApiBaseUrl = () =>
   import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
+const rewardDistributionHandoffRuntimeApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
 const createPublishDeliveryReviewSeededFallbackState = (
   campaignId: string,
 ): PublishDeliveryReviewApiBridgeState => ({
@@ -1404,6 +1414,23 @@ const createContractWriterRuntimeSeededFallbackState = (
         "en-US": "No local contract writer readiness API base URL is configured, so seeded review data is shown.",
         "zh-CN": "未配置本地 contract writer readiness API base URL，因此显示 seeded review 数据。",
         "zh-TW": "未設定本地 contract writer readiness API base URL，因此顯示 seeded review 資料。",
+      },
+      severity: "info",
+    },
+  ],
+});
+
+const createRewardDistributionHandoffRuntimeSeededFallbackState = (
+  campaignId: string,
+): RewardDistributionHandoffRuntimeApiBridgeState => ({
+  ...createRewardDistributionHandoffRuntimeApiSeededFallbackState(campaignId),
+  diagnostics: [
+    {
+      code: "API_BASE_URL_MISSING",
+      message: {
+        "en-US": "No local reward distribution handoff readiness API base URL is configured, so seeded review data is shown.",
+        "zh-CN": "未配置本地 reward distribution handoff readiness API base URL，因此显示 seeded review 数据。",
+        "zh-TW": "未設定本地 reward distribution handoff readiness API base URL，因此顯示 seeded review 資料。",
       },
       severity: "info",
     },
@@ -2109,6 +2136,7 @@ export const ProjectConsole = ({
   const repositoryCampaignWorkflowApiRequestSeq = useRef(0);
   const analyticsIngestionRuntimeApiRequestSeq = useRef(0);
   const contractWriterRuntimeApiRequestSeq = useRef(0);
+  const rewardDistributionHandoffRuntimeApiRequestSeq = useRef(0);
   const exportDeliveryApiRequestSeq = useRef(0);
   const backendReadinessApiRequestSeq = useRef(0);
   const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
@@ -2195,6 +2223,7 @@ export const ProjectConsole = ({
   const repositoryCampaignWorkflowApiBase = repositoryCampaignWorkflowApiBaseUrl();
   const analyticsIngestionRuntimeApiBase = analyticsIngestionRuntimeApiBaseUrl();
   const contractWriterRuntimeApiBase = contractWriterRuntimeApiBaseUrl();
+  const rewardDistributionHandoffRuntimeApiBase = rewardDistributionHandoffRuntimeApiBaseUrl();
   const exportDeliveryApiRequest: ExportArtifactDeliveryRequest = {
     campaignId: campaign.id,
     contractRootMode: "eligibility_root",
@@ -2251,6 +2280,14 @@ export const ProjectConsole = ({
         : createContractWriterRuntimeSeededFallbackState(campaign.id),
     );
   const [contractWriterRuntimeApiReviewInFlight, setContractWriterRuntimeApiReviewInFlight] = useState(false);
+  const [rewardDistributionHandoffRuntimeApiState, setRewardDistributionHandoffRuntimeApiState] =
+    useState<RewardDistributionHandoffRuntimeApiBridgeState>(() =>
+      rewardDistributionHandoffRuntimeApiBase?.trim()
+        ? createRewardDistributionHandoffRuntimeApiLoadingState(campaign.id)
+        : createRewardDistributionHandoffRuntimeSeededFallbackState(campaign.id),
+    );
+  const [rewardDistributionHandoffRuntimeApiReviewInFlight, setRewardDistributionHandoffRuntimeApiReviewInFlight] =
+    useState(false);
   const backendReadinessApiBaseUrl = backendRuntimeReadinessApiBaseUrl();
   const [backendReadinessApiState, setBackendReadinessApiState] =
     useState<BackendRuntimeReadinessApiBridgeState>(() =>
@@ -2549,6 +2586,40 @@ export const ProjectConsole = ({
     loadContractWriterRuntimeApiReview();
   };
 
+  const loadRewardDistributionHandoffRuntimeApiReview = useCallback(() => {
+    if (!rewardDistributionHandoffRuntimeApiBase?.trim()) {
+      setRewardDistributionHandoffRuntimeApiState(createRewardDistributionHandoffRuntimeSeededFallbackState(campaign.id));
+      setRewardDistributionHandoffRuntimeApiReviewInFlight(false);
+      return;
+    }
+
+    setRewardDistributionHandoffRuntimeApiReviewInFlight(true);
+    setRewardDistributionHandoffRuntimeApiState(createRewardDistributionHandoffRuntimeApiLoadingState(campaign.id));
+
+    const requestSeq = rewardDistributionHandoffRuntimeApiRequestSeq.current + 1;
+    rewardDistributionHandoffRuntimeApiRequestSeq.current = requestSeq;
+
+    void loadRewardDistributionHandoffRuntimeApiBridgeState({
+      campaignId: campaign.id,
+      config: {
+        baseUrl: rewardDistributionHandoffRuntimeApiBase,
+        tracePrefix: "project-console-reward-distribution-handoff-runtime",
+      },
+    }).then((state) => {
+      if (rewardDistributionHandoffRuntimeApiRequestSeq.current === requestSeq) {
+        setRewardDistributionHandoffRuntimeApiState(state);
+      }
+    }).finally(() => {
+      if (rewardDistributionHandoffRuntimeApiRequestSeq.current === requestSeq) {
+        setRewardDistributionHandoffRuntimeApiReviewInFlight(false);
+      }
+    });
+  }, [campaign.id, rewardDistributionHandoffRuntimeApiBase]);
+
+  const runRewardDistributionHandoffRuntimeApiReview = () => {
+    loadRewardDistributionHandoffRuntimeApiReview();
+  };
+
   const loadBackendReadinessApiReview = useCallback(() => {
     if (!backendReadinessApiBaseUrl?.trim()) {
       setBackendReadinessApiState(createBackendRuntimeReadinessSeededFallbackState());
@@ -2590,6 +2661,7 @@ export const ProjectConsole = ({
       loadRepositoryCampaignWorkflowApiReview();
       loadAnalyticsIngestionRuntimeApiReview();
       loadContractWriterRuntimeApiReview();
+      loadRewardDistributionHandoffRuntimeApiReview();
       loadBackendReadinessApiReview();
     }
   }, [
@@ -2601,6 +2673,7 @@ export const ProjectConsole = ({
     loadPointsRankingLedgerRuntimeApiReview,
     loadPublishDeliveryApiReview,
     loadRepositoryCampaignWorkflowApiReview,
+    loadRewardDistributionHandoffRuntimeApiReview,
   ]);
 
   const stats = [
@@ -7121,6 +7194,15 @@ export const ProjectConsole = ({
         onReview={runContractWriterRuntimeApiReview}
         reviewInFlight={contractWriterRuntimeApiReviewInFlight}
         state={contractWriterRuntimeApiState}
+      />
+
+      <RewardDistributionHandoffRuntimePanel
+        apiConfigured={Boolean(rewardDistributionHandoffRuntimeApiBase?.trim())}
+        copy={copy}
+        locale={locale}
+        onReview={runRewardDistributionHandoffRuntimeApiReview}
+        reviewInFlight={rewardDistributionHandoffRuntimeApiReviewInFlight}
+        state={rewardDistributionHandoffRuntimeApiState}
       />
 
       <AnalyticsIngestionRuntimePanel

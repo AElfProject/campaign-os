@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { campaignDetail } from "../domain/fixtures";
 import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
+import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
 import { startCampaignOsApiServer, type CampaignOsApiServerHandle } from "./server";
 
 type SmokePayload = {
@@ -35,6 +36,7 @@ export interface BackendRuntimeSmokeCheck {
   providerClientReadiness?: BackendRuntimeSmokeProviderClientReadinessSummary;
   providerIndexerFoundation?: BackendRuntimeSmokeProviderIndexerFoundationSummary;
   queueRuntimeFoundation?: BackendRuntimeSmokeQueueRuntimeFoundationSummary;
+  rewardDistributionHandoffRuntime?: BackendRuntimeSmokeRewardDistributionHandoffRuntimeSummary;
   schedulerRuntimeFoundation?: BackendRuntimeSmokeSchedulerRuntimeFoundationSummary;
   status: number;
   traceId: string;
@@ -134,6 +136,29 @@ export interface BackendRuntimeSmokeContractWriterRuntimeSummary {
   operationGroupCount: number;
   productionReady: false;
   requiredConfigKeys: string[];
+  status?: string;
+  traceId?: string;
+  valid: boolean;
+}
+
+export interface BackendRuntimeSmokeRewardDistributionHandoffRuntimeSummary {
+  diagnosticCodes: string[];
+  evidenceStatus?: string;
+  itemCount: number;
+  liveClaim: false;
+  liveContractWrite: false;
+  livePayout: false;
+  liveProviderCall: false;
+  liveQueuePublishing: false;
+  liveRewardCustody: false;
+  liveRewardDistribution: false;
+  liveSchedulerExecution: false;
+  liveWalletSignature: false;
+  liveWorkerExecution: false;
+  missingEvidenceCount: number;
+  productionReady: false;
+  recipientCount: number;
+  requiredEvidenceKeys: string[];
   status?: string;
   traceId?: string;
   valid: boolean;
@@ -514,6 +539,7 @@ export interface BackendRuntimeSmokeSummary {
   productionBackendReadiness: BackendRuntimeSmokeProductionBackendReadinessSummary;
   providerClientReadiness: BackendRuntimeSmokeProviderClientReadinessSummary;
   port: number;
+  rewardDistributionHandoffRuntime: BackendRuntimeSmokeRewardDistributionHandoffRuntimeSummary;
   futureProduction: string[];
   futureProductionBlockerIds: string[];
   mvpReleaseBlockerIds: string[];
@@ -640,6 +666,12 @@ const readContractWriterRuntime = (
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["backendService", "contractWriterRuntime"])
   ?? readNestedRecord(value, ["serverRuntime", "readiness", "contractWriterRuntime"]);
+
+const readRewardDistributionHandoffRuntime = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["backendService", "rewardDistributionHandoffRuntime"])
+  ?? readNestedRecord(value, ["serverRuntime", "readiness", "rewardDistributionHandoffRuntime"]);
 
 const readProductionBackendReadiness = (
   value: unknown,
@@ -1662,6 +1694,58 @@ const summarizeObservabilityExporterFoundation = (
   };
 };
 
+const summarizeRewardDistributionHandoffRuntime = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeRewardDistributionHandoffRuntimeSummary | undefined => {
+  if (!record || !isExplicitFalse(record, "productionReady")) {
+    return undefined;
+  }
+
+  const noLiveSideEffects = readNestedRecord(record, ["noLiveSideEffects"]);
+  const summary = readNestedRecord(record, ["summary"]);
+  const evidenceHandoff = readNestedRecord(record, ["evidenceHandoff"]);
+  const explicitNoLive =
+    noLiveSideEffects !== undefined
+    && isExplicitFalse(noLiveSideEffects, "liveClaim")
+    && isExplicitFalse(noLiveSideEffects, "liveContractWrite")
+    && isExplicitFalse(noLiveSideEffects, "livePayout")
+    && isExplicitFalse(noLiveSideEffects, "liveProviderCall")
+    && isExplicitFalse(noLiveSideEffects, "liveQueuePublishing")
+    && isExplicitFalse(noLiveSideEffects, "liveRewardCustody")
+    && isExplicitFalse(noLiveSideEffects, "liveRewardDistribution")
+    && isExplicitFalse(noLiveSideEffects, "liveSchedulerExecution")
+    && isExplicitFalse(noLiveSideEffects, "liveWalletSignature")
+    && isExplicitFalse(noLiveSideEffects, "liveWorkerExecution")
+    && isExplicitFalse(evidenceHandoff, "productionReady");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    evidenceStatus: getString(evidenceHandoff, "status"),
+    itemCount: getNumber(summary, "itemCount"),
+    liveClaim: false,
+    liveContractWrite: false,
+    livePayout: false,
+    liveProviderCall: false,
+    liveQueuePublishing: false,
+    liveRewardCustody: false,
+    liveRewardDistribution: false,
+    liveSchedulerExecution: false,
+    liveWalletSignature: false,
+    liveWorkerExecution: false,
+    missingEvidenceCount: getNumber(summary, "missingEvidenceCount"),
+    productionReady: false,
+    recipientCount: getNumber(summary, "recipientCount"),
+    requiredEvidenceKeys: getStringArray(evidenceHandoff, "requiredEvidenceKeys"),
+    status: getString(record, "status"),
+    traceId: getString(record, "traceId"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
 const createSmokeCheck = async ({
   baseUrl,
   endpoint,
@@ -1723,6 +1807,9 @@ const createSmokeCheck = async ({
   const contractWriterRuntime = summarizeContractWriterRuntime(
     readContractWriterRuntime(payload.data),
   );
+  const rewardDistributionHandoffRuntime = summarizeRewardDistributionHandoffRuntime(
+    readRewardDistributionHandoffRuntime(payload.data),
+  );
   const productionBackendReadiness = summarizeProductionBackendReadiness(
     readProductionBackendReadiness(payload.data),
   );
@@ -1744,6 +1831,7 @@ const createSmokeCheck = async ({
       providerClientReadiness,
       providerIndexerFoundation,
       queueRuntimeFoundation,
+      rewardDistributionHandoffRuntime,
       schedulerRuntimeFoundation,
       status: response.status,
       traceId: payload.traceId ?? "",
@@ -1801,6 +1889,35 @@ const createContractWriterRuntimeSmokeSample = async ({
   const payload = await readJson(response);
   const readiness = readNestedRecord(payload.data, ["payload"]);
   const summary = summarizeContractWriterRuntime(readiness);
+
+  if (response.status !== 200 || payload.ok !== true || payload.traceId !== traceId || !summary) {
+    return undefined;
+  }
+
+  return {
+    ...summary,
+    traceId: payload.traceId,
+  };
+};
+
+const createRewardDistributionHandoffRuntimeSmokeSample = async ({
+  baseUrl,
+  fetchImpl,
+  traceId,
+}: {
+  baseUrl: string;
+  fetchImpl: typeof fetch;
+  traceId: string;
+}): Promise<BackendRuntimeSmokeRewardDistributionHandoffRuntimeSummary | undefined> => {
+  const response = await fetchImpl(
+    `${baseUrl}/api/campaigns/${campaignDetail.id}/reward-distribution/handoff-readiness`,
+    {
+      headers: { "x-campaign-os-trace-id": traceId },
+    },
+  );
+  const payload = await readJson(response);
+  const readiness = readNestedRecord(payload.data, ["payload"]);
+  const summary = summarizeRewardDistributionHandoffRuntime(readiness);
 
   if (response.status !== 200 || payload.ok !== true || payload.traceId !== traceId || !summary) {
     return undefined;
@@ -2198,6 +2315,33 @@ const isContractWriterRuntimeSmokeReady = (
     && summary.diagnosticCodes.includes("CONTRACT_WRITER_LIVE_EXECUTION_DISABLED")
     && summary.status === "blocked"
     && summary.configStatus === "missing"
+    && summary.valid === true;
+};
+
+const isRewardDistributionHandoffRuntimeSmokeReady = (
+  summary: BackendRuntimeSmokeRewardDistributionHandoffRuntimeSummary | undefined,
+): summary is BackendRuntimeSmokeRewardDistributionHandoffRuntimeSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveClaim === false
+    && summary.liveContractWrite === false
+    && summary.livePayout === false
+    && summary.liveProviderCall === false
+    && summary.liveQueuePublishing === false
+    && summary.liveRewardCustody === false
+    && summary.liveRewardDistribution === false
+    && summary.liveSchedulerExecution === false
+    && summary.liveWalletSignature === false
+    && summary.liveWorkerExecution === false
+    && summary.itemCount >= 11
+    && summary.recipientCount >= 1
+    && rewardDistributionHandoffRequiredEvidenceKeys.every((key) => summary.requiredEvidenceKeys.includes(key))
+    && summary.diagnosticCodes.includes("REWARD_DISTRIBUTION_LIVE_EXECUTION_DISABLED")
+    && summary.status === "blocked"
+    && summary.evidenceStatus === "missing"
     && summary.valid === true;
 };
 
@@ -2664,6 +2808,7 @@ export const runBackendRuntimeSmoke = async ({
     const objectStorageExportRuntime = contracts.check.objectStorageExportRuntime;
     const analyticsIngestionRuntime = contracts.check.analyticsIngestionRuntime;
     const contractWriterRuntime = contracts.check.contractWriterRuntime;
+    const rewardDistributionHandoffRuntime = contracts.check.rewardDistributionHandoffRuntime;
     const productionBackendReadiness = contracts.check.productionBackendReadiness;
     const analyticsIngestionRuntimeSample = await createAnalyticsIngestionRuntimeSmokeSample({
       baseUrl: server.url,
@@ -2674,6 +2819,11 @@ export const runBackendRuntimeSmoke = async ({
       baseUrl: server.url,
       fetchImpl,
       traceId: "campaign-os-smoke-contract-writer-readiness",
+    });
+    const rewardDistributionHandoffRuntimeSample = await createRewardDistributionHandoffRuntimeSmokeSample({
+      baseUrl: server.url,
+      fetchImpl,
+      traceId: "campaign-os-smoke-reward-distribution-handoff-readiness",
     });
 
     if (
@@ -2708,6 +2858,9 @@ export const runBackendRuntimeSmoke = async ({
       || !isContractWriterRuntimeSmokeReady(health.check.contractWriterRuntime)
       || !isContractWriterRuntimeSmokeReady(contractWriterRuntime)
       || !isContractWriterRuntimeSmokeReady(contractWriterRuntimeSample)
+      || !isRewardDistributionHandoffRuntimeSmokeReady(health.check.rewardDistributionHandoffRuntime)
+      || !isRewardDistributionHandoffRuntimeSmokeReady(rewardDistributionHandoffRuntime)
+      || !isRewardDistributionHandoffRuntimeSmokeReady(rewardDistributionHandoffRuntimeSample)
       || !isProductionBackendReadinessSmokeReady(health.check.productionBackendReadiness)
       || !isProductionBackendReadinessSmokeReady(productionBackendReadiness)
       || !isWorkerIdempotencyStoreFoundationSmokeReady(health.check.workerIdempotencyStoreFoundation)
@@ -2747,6 +2900,7 @@ export const runBackendRuntimeSmoke = async ({
       productionBackendReadiness,
       providerClientReadiness,
       port: new URL(server.url).port ? Number(new URL(server.url).port) : 0,
+      rewardDistributionHandoffRuntime: rewardDistributionHandoffRuntimeSample,
       futureProduction: getStringArray(deploymentHandoff, "futureProduction"),
       futureProductionBlockerIds: getStringArray(activation, "futureProductionBlockerIds"),
       mvpReleaseBlockerIds: getStringArray(activation, "mvpReleaseBlockerIds"),

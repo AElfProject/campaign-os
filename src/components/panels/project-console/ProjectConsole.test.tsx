@@ -42,6 +42,11 @@ import {
   loadContractWriterRuntimeApiBridgeState,
   type ContractWriterRuntimeApiBridgeState,
 } from "../../../api/contractWriterRuntimeApiBridge";
+import {
+  createRewardDistributionHandoffRuntimeApiSeededFallbackState,
+  loadRewardDistributionHandoffRuntimeApiBridgeState,
+  type RewardDistributionHandoffRuntimeApiBridgeState,
+} from "../../../api/rewardDistributionHandoffRuntimeApiBridge";
 import { App } from "../../../app/App";
 import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
 import { projectConsoleCopy } from "./copy";
@@ -116,6 +121,15 @@ vi.mock("../../../api/contractWriterRuntimeApiBridge", async (importOriginal) =>
   return {
     ...actual,
     loadContractWriterRuntimeApiBridgeState: vi.fn(actual.loadContractWriterRuntimeApiBridgeState),
+  };
+});
+
+vi.mock("../../../api/rewardDistributionHandoffRuntimeApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/rewardDistributionHandoffRuntimeApiBridge")>();
+
+  return {
+    ...actual,
+    loadRewardDistributionHandoffRuntimeApiBridgeState: vi.fn(actual.loadRewardDistributionHandoffRuntimeApiBridgeState),
   };
 });
 
@@ -875,6 +889,29 @@ const contractWriterRuntimeApiState = (): ContractWriterRuntimeApiBridgeState =>
   };
 };
 
+const rewardDistributionHandoffRuntimeApiState = (): RewardDistributionHandoffRuntimeApiBridgeState => {
+  const state = createRewardDistributionHandoffRuntimeApiSeededFallbackState(
+    campaignDetail.id,
+    "trace-reward-handoff-api-visible",
+  );
+
+  return {
+    ...state,
+    configured: true,
+    diagnostics: [],
+    routeCount: 37,
+    source: "api_runtime",
+    status: "blocked",
+    traceId: "trace-reward-handoff-api-visible",
+    readiness: {
+      ...state.readiness,
+      source: "server_runtime",
+      status: "blocked",
+      traceId: "trace-reward-handoff-api-visible",
+    },
+  };
+};
+
 describe("Project Console shell", () => {
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
   const mockedSubmitExportArtifactDeliveryApiReview = vi.mocked(submitExportArtifactDeliveryApiReview);
@@ -885,6 +922,8 @@ describe("Project Console shell", () => {
   const mockedLoadRepositoryCampaignWorkflowBridgeState = vi.mocked(loadRepositoryCampaignWorkflowBridgeState);
   const mockedLoadAnalyticsIngestionRuntimeApiBridgeState = vi.mocked(loadAnalyticsIngestionRuntimeApiBridgeState);
   const mockedLoadContractWriterRuntimeApiBridgeState = vi.mocked(loadContractWriterRuntimeApiBridgeState);
+  const mockedLoadRewardDistributionHandoffRuntimeApiBridgeState =
+    vi.mocked(loadRewardDistributionHandoffRuntimeApiBridgeState);
 
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
@@ -896,6 +935,7 @@ describe("Project Console shell", () => {
     mockedLoadRepositoryCampaignWorkflowBridgeState.mockReset();
     mockedLoadAnalyticsIngestionRuntimeApiBridgeState.mockReset();
     mockedLoadContractWriterRuntimeApiBridgeState.mockReset();
+    mockedLoadRewardDistributionHandoffRuntimeApiBridgeState.mockReset();
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockResolvedValue(backendReadinessApiState());
     mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValue(publishDeliveryReviewApiState());
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockResolvedValue(pointsRankingLedgerRuntimeApiState());
@@ -903,6 +943,9 @@ describe("Project Console shell", () => {
     mockedLoadRepositoryCampaignWorkflowBridgeState.mockResolvedValue(repositoryCampaignWorkflowApiState());
     mockedLoadAnalyticsIngestionRuntimeApiBridgeState.mockResolvedValue(analyticsIngestionRuntimeApiState());
     mockedLoadContractWriterRuntimeApiBridgeState.mockResolvedValue(contractWriterRuntimeApiState());
+    mockedLoadRewardDistributionHandoffRuntimeApiBridgeState.mockResolvedValue(
+      rewardDistributionHandoffRuntimeApiState(),
+    );
   });
 
   afterEach(() => {
@@ -2208,6 +2251,17 @@ describe("Project Console shell", () => {
     expect(within(contractWriterRuntime).getByText("No contract write")).toBeInTheDocument();
     expect(within(contractWriterRuntime).getByText("No reward distribution")).toBeInTheDocument();
 
+    const rewardDistributionHandoffRuntime = screen.getByLabelText("Reward Distribution Handoff Runtime review");
+    expect(mockedLoadRewardDistributionHandoffRuntimeApiBridgeState).not.toHaveBeenCalled();
+    expect(within(rewardDistributionHandoffRuntime).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+    expect(within(rewardDistributionHandoffRuntime).getByText("No API trace yet")).toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText(/No local API base URL configured/)).toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("CAMPAIGN_OS_REWARD_DISTRIBUTION_FUNDING_PROOF_REF"))
+      .toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("Project owner funding proof")).toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("No payout")).toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("No reward distribution")).toBeInTheDocument();
+
     const walletAdapterReadiness = screen.getByLabelText("aelf-web-login adapter readiness");
     expect(
       within(walletAdapterReadiness).getByRole("heading", {
@@ -2578,6 +2632,61 @@ describe("Project Console shell", () => {
     for (const name of [/sign/i, /write/i, /publish/i, /claim/i, /distribute/i, /reward/i, /custody/i, /contract/i]) {
       expect(within(contractWriterRuntime).queryByRole("button", { name })).not.toBeInTheDocument();
       expect(within(contractWriterRuntime).queryByRole("link", { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it("loads Reward Distribution Handoff Runtime automatically without live reward controls", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedLoadRewardDistributionHandoffRuntimeApiBridgeState.mockResolvedValueOnce(
+      rewardDistributionHandoffRuntimeApiState(),
+    );
+
+    render(<ProjectConsole activeWorkspace="export" campaign={campaignDetail} locale="en-US" />);
+
+    const rewardDistributionHandoffRuntime = screen.getByLabelText("Reward Distribution Handoff Runtime review");
+
+    await waitFor(() => expect(mockedLoadRewardDistributionHandoffRuntimeApiBridgeState).toHaveBeenCalledWith({
+      campaignId: campaignDetail.id,
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        tracePrefix: "project-console-reward-distribution-handoff-runtime",
+      },
+    }));
+
+    await waitFor(() => expect(within(rewardDistributionHandoffRuntime).getByText("API runtime")).toBeInTheDocument());
+    expect(within(rewardDistributionHandoffRuntime).getByText("trace-reward-handoff-api-visible"))
+      .toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByRole("button", { name: "Review handoff readiness" }))
+      .toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("CAMPAIGN_OS_REWARD_DISTRIBUTION_FUNDING_PROOF_REF"))
+      .toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("Project owner funding proof")).toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("Winner export linkage")).toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("No custody and no distribution boundary"))
+      .toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("No payout")).toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("No claim")).toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("No provider call")).toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("No reward custody")).toBeInTheDocument();
+    expect(within(rewardDistributionHandoffRuntime).getByText("No reward distribution")).toBeInTheDocument();
+    expect(screen.getByLabelText("Publish Delivery Review Bridge")).toBeInTheDocument();
+    expect(screen.getByLabelText("Contract Writer Runtime review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Object Storage Export Runtime review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Backend Runtime Readiness review")).toBeInTheDocument();
+    for (const name of [
+      /payout/i,
+      /claim/i,
+      /custody/i,
+      /sign/i,
+      /contract write/i,
+      /provider call/i,
+      /queue publish/i,
+      /scheduler/i,
+      /worker/i,
+      /distribute/i,
+    ]) {
+      expect(within(rewardDistributionHandoffRuntime).queryByRole("button", { name })).not.toBeInTheDocument();
+      expect(within(rewardDistributionHandoffRuntime).queryByRole("link", { name })).not.toBeInTheDocument();
     }
   });
 

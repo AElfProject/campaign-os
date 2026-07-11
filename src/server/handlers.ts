@@ -48,6 +48,7 @@ import {
 import { createPointsRankingLedgerRuntime } from "../domain/pointsRankingLedgerRuntime";
 import { createServerAnalyticsIngestionRuntimeReadiness } from "./analyticsIngestionRuntime";
 import { createServerContractWriterRuntimeReadiness } from "./contractWriterRuntime";
+import { createServerRewardDistributionHandoffReadiness } from "./rewardDistributionHandoffRuntime";
 import {
   createServiceDegradationGovernance,
   createServiceRegistry,
@@ -1549,6 +1550,26 @@ const createContractWriterRuntimeReadinessPayload = (
   };
 };
 
+const createRewardDistributionHandoffReadinessPayload = (
+  context: ApiRuntimeHandlerContext,
+) => {
+  const campaignId = requiredRouteParam(context.params, "campaignId");
+  const detailResult = context.service.getCampaignDetail({ campaignId });
+
+  if (!detailResult.ok) {
+    unwrapLocalResult(detailResult, context);
+    throw invalidCampaign(campaignId);
+  }
+
+  return {
+    boundary: context.route.boundary,
+    payload: createServerRewardDistributionHandoffReadiness({
+      campaign: campaignDetail,
+      traceId: context.traceId,
+    }),
+  };
+};
+
 const createProviderReadinessResult = (
   pipeline: LocalServiceResult<VerificationPipelineReadinessGate>,
   providerEvidenceRegistry: LocalServiceResult<ProviderEvidenceRegistry>,
@@ -1795,6 +1816,7 @@ const createBackendServiceHealthMetadata = (
   objectStorageExportRuntime: report.objectStorageExportRuntime,
   persistenceFoundation: report.persistenceFoundation,
   persistenceRuntime: createBackendPersistenceRuntimeSummary(report.persistenceRuntime),
+  rewardDistributionHandoffRuntime: report.rewardDistributionHandoffRuntime,
   profile: {
     id: report.profile.id,
     status: report.profile.status,
@@ -1828,6 +1850,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
   persistenceAdapterPort: backendPersistenceAdapterSummary(report),
   persistenceFoundation: report.persistenceFoundation,
   persistenceRuntime: createBackendPersistenceRuntimeSummary(report.persistenceRuntime),
+  rewardDistributionHandoffRuntime: report.rewardDistributionHandoffRuntime,
   profile: {
     allowedCapabilities: report.profile.allowedCapabilities,
     deferredCapabilities: report.profile.deferredCapabilities,
@@ -1846,6 +1869,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
       "persistenceAdapters",
       "persistenceFoundation",
       "persistenceRuntime",
+      "rewardDistributionHandoffRuntime",
       "migration",
       "apiFoundation",
       "topology",
@@ -2124,6 +2148,8 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
   "campaigns.points.ranking.ledger.runtime": (context) => createPointsRankingLedgerRuntimePayload(context),
   "campaigns.analytics.ingestion.readiness": (context) => createAnalyticsIngestionRuntimeReadinessPayload(context),
   "campaigns.contract.writer.readiness": (context) => createContractWriterRuntimeReadinessPayload(context),
+  "campaigns.reward.distribution.handoff.readiness": (context) =>
+    createRewardDistributionHandoffReadinessPayload(context),
   "campaigns.export.storage.readiness": (context) => createObjectStorageExportReadinessPayload(context),
   "campaigns.companion.contract.readiness": (context) =>
     unwrapLocalResult(

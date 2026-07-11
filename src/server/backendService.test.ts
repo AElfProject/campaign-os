@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyticsIngestionRuntime";
 import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
+import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
 import {
   backendAttachMap,
   createBackendServiceReadinessReport,
@@ -315,6 +316,49 @@ describe("backend service readiness report", () => {
       "EligibilityRootRegistryV2",
       "ReferralRegistryV2",
     ]);
+    expect(report.rewardDistributionHandoffRuntime).toMatchObject({
+      campaignId: "camp-awaken-sprint",
+      diagnosticCodes: expect.arrayContaining([
+        "REWARD_DISTRIBUTION_FUNDING_PROOF_MISSING",
+        "REWARD_DISTRIBUTION_LIVE_EXECUTION_DISABLED",
+        "REWARD_DISTRIBUTION_OPERATOR_APPROVAL_MISSING",
+        "REWARD_DISTRIBUTION_QUEUE_HANDOFF_MISSING",
+      ]),
+      evidenceHandoff: expect.objectContaining({
+        productionReady: false,
+        requiredEvidenceKeys: expect.arrayContaining([...rewardDistributionHandoffRequiredEvidenceKeys]),
+        status: "missing",
+      }),
+      exportLinkage: expect.objectContaining({
+        derivedFrom: "seeded_export_preview",
+        localPreviewOnly: true,
+        recipientCount: 4,
+      }),
+      noLiveSideEffects: expect.objectContaining({
+        liveClaim: false,
+        liveContractWrite: false,
+        livePayout: false,
+        liveProviderCall: false,
+        liveQueuePublishing: false,
+        liveRewardCustody: false,
+        liveRewardDistribution: false,
+        liveSchedulerExecution: false,
+        liveWalletSignature: false,
+        liveWorkerExecution: false,
+      }),
+      productionReady: false,
+      source: "server_runtime",
+      status: "blocked",
+      summary: expect.objectContaining({
+        itemCount: 11,
+        missingEvidenceCount: rewardDistributionHandoffRequiredEvidenceKeys.length,
+        recipientCount: 4,
+      }),
+    });
+    expect(Object.values(report.rewardDistributionHandoffRuntime.noLiveSideEffects).every((value) => value === false))
+      .toBe(true);
+    expect(JSON.stringify(report.rewardDistributionHandoffRuntime)).not.toContain("providerPayload");
+    expect(JSON.stringify(report.rewardDistributionHandoffRuntime)).not.toContain("transactionId");
     expect(report.providerIndexerFoundation).toMatchObject({
       blockerCount: 0,
       diagnosticCodes: [],
