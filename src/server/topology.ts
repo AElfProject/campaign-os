@@ -505,11 +505,13 @@ export const backendServiceBoundaries = [
     readiness: "ready",
     risks: [
       "Production observability exporter, metrics sink, trace collector, structured log sink, alert routing, redaction policy, and runbook are not selected yet.",
-      "Analytics ingestion and contract sync handoffs require deferred queue runtime, scheduler runtime, idempotency store, dead-letter queue, and observability exporter before production.",
+      "Analytics ingestion, contract sync handoffs, and production database handoff review routes require deferred queue runtime, scheduler runtime, idempotency store, dead-letter queue, observability exporter, and future production DB activation before production.",
+      "The production database handoff readiness route is local review metadata only; it does not open a database connection, construct a DB client, run queries, write transactions, execute migrations, reveal secrets, or perform live API work.",
     ],
     routeIds: [
       "runtime.health",
       "runtime.contracts",
+      "backend.production-database.handoff-readiness",
       "campaigns.analytics",
       "campaigns.analytics.ingestion.readiness",
       "campaigns.summary",

@@ -161,6 +161,10 @@ const routeFoundationMetadata = {
     operationId: "reviewAgentWalletAction",
     serviceId: "ai-ops-service",
   },
+  "backend.production-database.handoff-readiness": {
+    operationId: "getProductionDatabaseHandoffReadiness",
+    serviceId: "runtime-observability",
+  },
   "campaigns.analytics": {
     operationId: "getCampaignAnalytics",
     serviceId: "runtime-observability",
@@ -1311,8 +1315,8 @@ const backendSurfaceReadiness = [
   {
     deferredDependencies: ["scheduler", "worker_queue", "sensitive_material_boundary"],
     label: "Runtime Observability",
-    notes: "Local health, contracts, route coverage, topology reporting, BullMQ Redis-compatible package binding readiness metadata, Redis broker readiness metadata, queue provider SDK binding readiness metadata, worker idempotency store readiness metadata, worker lease readiness metadata, and observability exporter readiness metadata exist; live broker health-check, live broker connection, worker execution, live telemetry export, metrics sink writes, structured logs, traces, alerts, and retry/dead-letter delivery remain disabled while contract sync handoff depends on deferred scheduler runtime, queue runtime, queue provider adapter readiness, queue provider package binding, queue provider SDK binding, worker idempotency store activation, worker lease store activation, dead-letter queue, and observability exporter.",
-    routeIds: ["runtime.health", "runtime.contracts", "campaigns.summary"],
+    notes: "Local health, contracts, production database handoff readiness, route coverage, topology reporting, BullMQ Redis-compatible package binding readiness metadata, Redis broker readiness metadata, queue provider SDK binding readiness metadata, worker idempotency store readiness metadata, worker lease readiness metadata, and observability exporter readiness metadata exist; live broker health-check, live broker connection, worker execution, live telemetry export, metrics sink writes, structured logs, traces, alerts, live database connection, DB client construction, query, write, transaction, migration execution, secret reveal, and retry/dead-letter delivery remain disabled while contract sync handoff depends on deferred scheduler runtime, queue runtime, queue provider adapter readiness, queue provider package binding, queue provider SDK binding, worker idempotency store activation, worker lease store activation, dead-letter queue, observability exporter, and future production database activation.",
+    routeIds: ["runtime.health", "runtime.contracts", "backend.production-database.handoff-readiness", "campaigns.summary"],
     serviceId: "runtime-observability",
     state: "implemented_local",
     surfaceId: "runtime-observability",

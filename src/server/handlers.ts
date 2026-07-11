@@ -52,6 +52,7 @@ import {
   createServerProjectOwnerFundingProofReviewBridge,
   type ProjectOwnerFundingProofPackageInput,
 } from "./projectOwnerFundingProofReviewBridge";
+import { createServerProductionDatabaseHandoffReadiness } from "./productionDatabaseHandoffReadiness";
 import { createServerRewardDistributionHandoffReadiness } from "./rewardDistributionHandoffRuntime";
 import {
   createServiceDegradationGovernance,
@@ -2017,6 +2018,12 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       topology,
     };
   },
+  "backend.production-database.handoff-readiness": (context) => ({
+    boundary: context.route.boundary,
+    payload: createServerProductionDatabaseHandoffReadiness({
+      traceId: context.traceId,
+    }),
+  }),
   "runtime.services": () => {
     const registry = createServiceRegistry();
     const governance = createServiceDegradationGovernance();

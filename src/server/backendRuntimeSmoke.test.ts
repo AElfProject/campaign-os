@@ -8,6 +8,20 @@ import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectO
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
 import { runBackendRuntimeSmoke } from "./backendRuntimeSmoke";
 
+const productionDatabaseRequiredReferenceKeys = [
+  "CAMPAIGN_OS_DATABASE_PACKAGE",
+  "CAMPAIGN_OS_DATABASE_PACKAGE_BINDING",
+  "CAMPAIGN_OS_DATABASE_PROVIDER",
+  "CAMPAIGN_OS_DATABASE_URL",
+  "CAMPAIGN_OS_DATABASE_SECRET_REF",
+  "CAMPAIGN_OS_DATABASE_POOL_POLICY",
+  "CAMPAIGN_OS_DATABASE_MIGRATION_APPROVAL",
+  "CAMPAIGN_OS_DATABASE_ROLLBACK_BACKUP_PLAN",
+  "CAMPAIGN_OS_DATABASE_OBSERVABILITY_REF",
+  "CAMPAIGN_OS_DATABASE_RUNBOOK_URL",
+  "CAMPAIGN_OS_DATABASE_LIVE_ENABLEMENT",
+] as const;
+
 const secretFragments = [
   "bearer sample-token",
   "mnemonic sample",
@@ -580,6 +594,38 @@ const expectedProjectOwnerFundingProofReviewBridgeMetadata = {
   valid: true,
 };
 
+const expectedProductionDatabaseHandoffReadinessMetadata = {
+  dbClientConstructed: false,
+  diagnosticCodes: expect.arrayContaining([
+    "PRODUCTION_DB_PACKAGE_REFERENCE_MISSING",
+    "PRODUCTION_DB_CONNECTION_REFERENCE_MISSING",
+    "PRODUCTION_DB_LIVE_ENABLEMENT_MISSING",
+  ]),
+  liveConnectionAttempted: false,
+  liveContractWritesEnabled: false,
+  liveMigrationExecutionEnabled: false,
+  liveProductionMutationEnabled: false,
+  liveProviderCallsEnabled: false,
+  liveQueryExecutionEnabled: false,
+  liveRewardCustodyEnabled: false,
+  liveRewardDistributionEnabled: false,
+  liveStorageWritesEnabled: false,
+  liveTransactionExecutionEnabled: false,
+  localMvpReady: true,
+  migrationGateLiveExecutionEnabled: false,
+  migrationGateStatus: "blocked",
+  noLiveFlagsAllFalse: true,
+  packageBindingId: expect.any(String),
+  packageName: "pg",
+  packageRef: "npm:pg",
+  productionReady: false,
+  requiredReferenceCount: productionDatabaseRequiredReferenceKeys.length,
+  requiredReferenceKeys: expect.arrayContaining([...productionDatabaseRequiredReferenceKeys]),
+  status: "blocked",
+  storeCoverageCount: expect.any(Number),
+  valid: true,
+};
+
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
     const summary = await runBackendRuntimeSmoke({
@@ -798,6 +844,10 @@ describe("backend runtime smoke command", () => {
       projectOwnerFundingProofReviewBridge: {
         ...expectedProjectOwnerFundingProofReviewBridgeMetadata,
         traceId: "campaign-os-smoke-funding-proof-review",
+      },
+      productionDatabaseHandoffReadiness: {
+        ...expectedProductionDatabaseHandoffReadinessMetadata,
+        traceId: "campaign-os-smoke-production-database-handoff-readiness",
       },
       rewardDistributionHandoffRuntime: {
         ...expectedRewardDistributionHandoffRuntimeMetadata,

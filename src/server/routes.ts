@@ -44,6 +44,23 @@ export const apiRuntimeRoutes = [
     supportMode: "local_seeded",
   }),
   route({
+    apiGroup: "runtime",
+    boundary: text(
+      "Local production database handoff readiness review route. No live API, database connection, DB client construction, query, write, transaction, migration execution, secret reveal, provider call, contract write, storage write, reward custody, or reward distribution is performed.",
+      "本地 production database handoff readiness review route。不会执行实时 API、数据库连接、DB client 构造、查询、写入、事务、migration 执行、secret 暴露、provider 调用、合约写入、storage 写入、奖励托管或发奖。",
+      "本地 production database handoff readiness review route。不會執行即時 API、資料庫連線、DB client 建構、查詢、寫入、交易、migration 執行、secret 暴露、provider 呼叫、合約寫入、storage 寫入、獎勵託管或發獎。",
+    ),
+    id: "backend.production-database.handoff-readiness",
+    method: "GET",
+    path: "/api/backend/production-database/handoff-readiness",
+    productionDependencies: dependenciesFor("runtime"),
+    readiness: "review_required",
+    riskLevel: "high",
+    serviceGroup: "runtime",
+    summary: text("Inspect local production database handoff readiness.", "检查本地 production database handoff readiness。"),
+    supportMode: "local_seeded",
+  }),
+  route({
     apiGroup: "service_registry",
     boundary,
     id: "runtime.services",

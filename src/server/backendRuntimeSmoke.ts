@@ -191,6 +191,35 @@ export interface BackendRuntimeSmokeProjectOwnerFundingProofReviewBridgeSummary 
   valid: boolean;
 }
 
+export interface BackendRuntimeSmokeProductionDatabaseHandoffReadinessSummary {
+  dbClientConstructed: false;
+  diagnosticCodes: string[];
+  liveConnectionAttempted: false;
+  liveContractWritesEnabled: false;
+  liveMigrationExecutionEnabled: false;
+  liveProductionMutationEnabled: false;
+  liveProviderCallsEnabled: false;
+  liveQueryExecutionEnabled: false;
+  liveRewardCustodyEnabled: false;
+  liveRewardDistributionEnabled: false;
+  liveStorageWritesEnabled: false;
+  liveTransactionExecutionEnabled: false;
+  localMvpReady: true;
+  migrationGateLiveExecutionEnabled: false;
+  migrationGateStatus?: string;
+  noLiveFlagsAllFalse: boolean;
+  packageBindingId?: string;
+  packageName?: string;
+  packageRef?: string;
+  productionReady: false;
+  requiredReferenceCount: number;
+  requiredReferenceKeys: string[];
+  status?: string;
+  storeCoverageCount: number;
+  traceId?: string;
+  valid: boolean;
+}
+
 export interface BackendRuntimeSmokeProviderIndexerFoundationSummary {
   blockerCount: number;
   diagnosticCodes: string[];
@@ -567,6 +596,7 @@ export interface BackendRuntimeSmokeSummary {
   providerClientReadiness: BackendRuntimeSmokeProviderClientReadinessSummary;
   port: number;
   projectOwnerFundingProofReviewBridge: BackendRuntimeSmokeProjectOwnerFundingProofReviewBridgeSummary;
+  productionDatabaseHandoffReadiness: BackendRuntimeSmokeProductionDatabaseHandoffReadinessSummary;
   rewardDistributionHandoffRuntime: BackendRuntimeSmokeRewardDistributionHandoffRuntimeSummary;
   futureProduction: string[];
   futureProductionBlockerIds: string[];
@@ -1834,6 +1864,82 @@ const summarizeProjectOwnerFundingProofReviewBridge = (
   };
 };
 
+const getRequiredReferenceKeys = (record: Record<string, unknown> | undefined) => {
+  const references = Array.isArray(record?.requiredReferences)
+    ? record.requiredReferences
+    : [];
+
+  return references
+    .map((reference) =>
+      isRecord(reference) && typeof reference.key === "string" ? reference.key : undefined)
+    .filter((key): key is string => Boolean(key));
+};
+
+const summarizeProductionDatabaseHandoffReadiness = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeProductionDatabaseHandoffReadinessSummary | undefined => {
+  if (!record || !isExplicitFalse(record, "productionReady") || record.localMvpReady !== true) {
+    return undefined;
+  }
+
+  const migrationGate = readNestedRecord(record, ["migrationGate"]);
+  const packageBinding = readNestedRecord(record, ["packageBinding"]);
+  const safety = readNestedRecord(record, ["safety"]);
+  const summary = readNestedRecord(record, ["summary"]);
+  const requiredReferenceKeys = getRequiredReferenceKeys(record);
+  const noLiveFlagsAllFalse =
+    safety !== undefined
+    && Object.values(safety).length > 0
+    && Object.values(safety).every((value) => value === false);
+  const explicitNoLive =
+    noLiveFlagsAllFalse
+    && isExplicitFalse(safety, "dbClientConstructed")
+    && isExplicitFalse(safety, "liveConnectionAttempted")
+    && isExplicitFalse(safety, "liveContractWritesEnabled")
+    && isExplicitFalse(safety, "liveMigrationExecutionEnabled")
+    && isExplicitFalse(safety, "liveProductionMutationEnabled")
+    && isExplicitFalse(safety, "liveProviderCallsEnabled")
+    && isExplicitFalse(safety, "liveQueryExecutionEnabled")
+    && isExplicitFalse(safety, "liveRewardCustodyEnabled")
+    && isExplicitFalse(safety, "liveRewardDistributionEnabled")
+    && isExplicitFalse(safety, "liveStorageWritesEnabled")
+    && isExplicitFalse(safety, "liveTransactionExecutionEnabled")
+    && isExplicitFalse(migrationGate, "liveExecutionEnabled");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    dbClientConstructed: false,
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    liveConnectionAttempted: false,
+    liveContractWritesEnabled: false,
+    liveMigrationExecutionEnabled: false,
+    liveProductionMutationEnabled: false,
+    liveProviderCallsEnabled: false,
+    liveQueryExecutionEnabled: false,
+    liveRewardCustodyEnabled: false,
+    liveRewardDistributionEnabled: false,
+    liveStorageWritesEnabled: false,
+    liveTransactionExecutionEnabled: false,
+    localMvpReady: true,
+    migrationGateLiveExecutionEnabled: false,
+    migrationGateStatus: getString(migrationGate, "status"),
+    noLiveFlagsAllFalse,
+    packageBindingId: getString(packageBinding, "bindingId"),
+    packageName: getString(packageBinding, "packageName"),
+    packageRef: getString(packageBinding, "packageRef"),
+    productionReady: false,
+    requiredReferenceCount: getNumber(summary, "requiredReferenceCount"),
+    requiredReferenceKeys,
+    status: getString(record, "status"),
+    storeCoverageCount: getNumber(summary, "storeCoverageCount"),
+    traceId: getString(record, "traceId"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
 const createSmokeCheck = async ({
   baseUrl,
   endpoint,
@@ -2050,6 +2156,45 @@ const createProjectOwnerFundingProofReviewBridgeSmokeSample = async ({
   };
 };
 
+const productionDatabaseHandoffUnsafePattern =
+  /postgres(?:ql)?:\/\/|mysql:\/\/|mongodb(?:\+srv)?:\/\/|bearer\s+\S+|token=|password=|private[-_\s]?key|seed phrase|signed[-_\s]?url|object[-_\s]?key|\/Users\/|\/private\/|campaign-os-kitty|kitty-specs|\.kittify|stack trace/i;
+
+const createProductionDatabaseHandoffReadinessSmokeSample = async ({
+  baseUrl,
+  fetchImpl,
+  traceId,
+}: {
+  baseUrl: string;
+  fetchImpl: typeof fetch;
+  traceId: string;
+}): Promise<BackendRuntimeSmokeProductionDatabaseHandoffReadinessSummary | undefined> => {
+  const response = await fetchImpl(
+    `${baseUrl}/api/backend/production-database/handoff-readiness`,
+    {
+      headers: { "x-campaign-os-trace-id": traceId },
+    },
+  );
+  const payload = await readJson(response);
+  const readiness = readNestedRecord(payload.data, ["payload"]);
+  const summary = summarizeProductionDatabaseHandoffReadiness(readiness);
+  const serializedPayload = JSON.stringify(payload);
+
+  if (
+    response.status !== 200
+    || payload.ok !== true
+    || payload.traceId !== traceId
+    || !summary
+    || productionDatabaseHandoffUnsafePattern.test(serializedPayload)
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...summary,
+    traceId: payload.traceId,
+  };
+};
+
 const getBoolean = (
   record: Record<string, unknown> | undefined,
   key: string,
@@ -2066,6 +2211,20 @@ const getStringArray = (
 ): string[] => Array.isArray(record?.[key])
   ? record[key].filter((item): item is string => typeof item === "string")
   : [];
+
+const productionDatabaseRequiredReferenceKeys = [
+  "CAMPAIGN_OS_DATABASE_PACKAGE",
+  "CAMPAIGN_OS_DATABASE_PACKAGE_BINDING",
+  "CAMPAIGN_OS_DATABASE_PROVIDER",
+  "CAMPAIGN_OS_DATABASE_URL",
+  "CAMPAIGN_OS_DATABASE_SECRET_REF",
+  "CAMPAIGN_OS_DATABASE_POOL_POLICY",
+  "CAMPAIGN_OS_DATABASE_MIGRATION_APPROVAL",
+  "CAMPAIGN_OS_DATABASE_ROLLBACK_BACKUP_PLAN",
+  "CAMPAIGN_OS_DATABASE_OBSERVABILITY_REF",
+  "CAMPAIGN_OS_DATABASE_RUNBOOK_URL",
+  "CAMPAIGN_OS_DATABASE_LIVE_ENABLEMENT",
+] as const;
 
 const rewardReleaseScopeBlockerIds = ["reward-custody", "reward-distribution"];
 
@@ -2493,6 +2652,39 @@ const isProjectOwnerFundingProofReviewBridgeSmokeReady = (
     && summary.diagnosticCodes.includes("PROJECT_OWNER_FUNDING_PROOF_LIVE_EXECUTION_DISABLED")
     && summary.status === "blocked"
     && summary.proofPackageStatus === "missing"
+    && summary.valid === true;
+};
+
+const isProductionDatabaseHandoffReadinessSmokeReady = (
+  summary: BackendRuntimeSmokeProductionDatabaseHandoffReadinessSummary | undefined,
+): summary is BackendRuntimeSmokeProductionDatabaseHandoffReadinessSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.localMvpReady === true
+    && summary.dbClientConstructed === false
+    && summary.liveConnectionAttempted === false
+    && summary.liveContractWritesEnabled === false
+    && summary.liveMigrationExecutionEnabled === false
+    && summary.liveProductionMutationEnabled === false
+    && summary.liveProviderCallsEnabled === false
+    && summary.liveQueryExecutionEnabled === false
+    && summary.liveRewardCustodyEnabled === false
+    && summary.liveRewardDistributionEnabled === false
+    && summary.liveStorageWritesEnabled === false
+    && summary.liveTransactionExecutionEnabled === false
+    && summary.migrationGateLiveExecutionEnabled === false
+    && summary.noLiveFlagsAllFalse === true
+    && summary.requiredReferenceCount >= productionDatabaseRequiredReferenceKeys.length
+    && productionDatabaseRequiredReferenceKeys.every((key) => summary.requiredReferenceKeys.includes(key))
+    && summary.storeCoverageCount > 0
+    && summary.packageName === "pg"
+    && summary.packageRef === "npm:pg"
+    && summary.status !== "production_ready"
+    && (summary.status === "blocked" || summary.status === "review_required" || summary.status === "local_ready")
+    && summary.migrationGateStatus !== "production_ready"
     && summary.valid === true;
 };
 
@@ -2982,6 +3174,11 @@ export const runBackendRuntimeSmoke = async ({
       fetchImpl,
       traceId: "campaign-os-smoke-funding-proof-review",
     });
+    const productionDatabaseHandoffReadinessSample = await createProductionDatabaseHandoffReadinessSmokeSample({
+      baseUrl: server.url,
+      fetchImpl,
+      traceId: "campaign-os-smoke-production-database-handoff-readiness",
+    });
 
     if (
       health.check.status !== 200
@@ -3021,6 +3218,7 @@ export const runBackendRuntimeSmoke = async ({
       || !isProjectOwnerFundingProofReviewBridgeSmokeReady(health.check.projectOwnerFundingProofReviewBridge)
       || !isProjectOwnerFundingProofReviewBridgeSmokeReady(projectOwnerFundingProofReviewBridge)
       || !isProjectOwnerFundingProofReviewBridgeSmokeReady(projectOwnerFundingProofReviewBridgeSample)
+      || !isProductionDatabaseHandoffReadinessSmokeReady(productionDatabaseHandoffReadinessSample)
       || !isProductionBackendReadinessSmokeReady(health.check.productionBackendReadiness)
       || !isProductionBackendReadinessSmokeReady(productionBackendReadiness)
       || !isWorkerIdempotencyStoreFoundationSmokeReady(health.check.workerIdempotencyStoreFoundation)
@@ -3060,8 +3258,9 @@ export const runBackendRuntimeSmoke = async ({
       productionBackendReadiness,
       providerClientReadiness,
       port: new URL(server.url).port ? Number(new URL(server.url).port) : 0,
-      projectOwnerFundingProofReviewBridge: projectOwnerFundingProofReviewBridgeSample,
-      rewardDistributionHandoffRuntime: rewardDistributionHandoffRuntimeSample,
+          projectOwnerFundingProofReviewBridge: projectOwnerFundingProofReviewBridgeSample,
+          productionDatabaseHandoffReadiness: productionDatabaseHandoffReadinessSample,
+          rewardDistributionHandoffRuntime: rewardDistributionHandoffRuntimeSample,
       futureProduction: getStringArray(deploymentHandoff, "futureProduction"),
       futureProductionBlockerIds: getStringArray(activation, "futureProductionBlockerIds"),
       mvpReleaseBlockerIds: getStringArray(activation, "mvpReleaseBlockerIds"),

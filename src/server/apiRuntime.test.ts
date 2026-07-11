@@ -17,6 +17,20 @@ import {
 } from "./persistence";
 import { startCampaignOsApiServer } from "./server";
 
+const productionDatabaseRequiredReferenceKeys = [
+  "CAMPAIGN_OS_DATABASE_PACKAGE",
+  "CAMPAIGN_OS_DATABASE_PACKAGE_BINDING",
+  "CAMPAIGN_OS_DATABASE_PROVIDER",
+  "CAMPAIGN_OS_DATABASE_URL",
+  "CAMPAIGN_OS_DATABASE_SECRET_REF",
+  "CAMPAIGN_OS_DATABASE_POOL_POLICY",
+  "CAMPAIGN_OS_DATABASE_MIGRATION_APPROVAL",
+  "CAMPAIGN_OS_DATABASE_ROLLBACK_BACKUP_PLAN",
+  "CAMPAIGN_OS_DATABASE_OBSERVABILITY_REF",
+  "CAMPAIGN_OS_DATABASE_RUNBOOK_URL",
+  "CAMPAIGN_OS_DATABASE_LIVE_ENABLEMENT",
+] as const;
+
 interface LocalServiceEnvelope<TPayload> {
   boundary: unknown;
   payload: TPayload;
@@ -680,6 +694,44 @@ interface ProjectOwnerFundingProofReviewPayload {
   valid: true;
 }
 
+interface ProductionDatabaseHandoffReadinessPayload {
+  diagnosticCodes: string[];
+  id: "campaign-os-production-database-handoff-readiness";
+  localMvpReady: true;
+  migrationGate: {
+    liveExecutionEnabled: false;
+    status: string;
+  };
+  packageBinding: {
+    bindingId: string;
+    importPosture: "metadata_only_no_import";
+    packageName: "pg";
+    packageRef: "npm:pg";
+  };
+  productionReady: false;
+  requiredReferences: Array<{
+    key: string;
+    redacted: true;
+    requiredBeforeProduction: true;
+    status: string;
+  }>;
+  safety: Record<string, false>;
+  source: "server_runtime";
+  status: string;
+  storeCoverage: Array<{
+    coverageStatus: string;
+    migrationRequired: boolean;
+    storeId: string;
+  }>;
+  summary: {
+    requiredReferenceCount: number;
+    status: string;
+    storeCoverageCount: number;
+  };
+  traceId?: string;
+  valid: true;
+}
+
 interface CampaignDbLimitedLifecyclePayload {
   campaignId: string;
   code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED";
@@ -1114,6 +1166,7 @@ describe("Campaign OS API runtime", () => {
           "campaigns.reward.funding-proof.review",
           "campaigns.reward.funding-proof.review.submit",
           "campaigns.export.storage.readiness",
+          "backend.production-database.handoff-readiness",
         ]),
         runtimeRouteCount: expect.any(Number),
       }),
@@ -1178,6 +1231,18 @@ describe("Campaign OS API runtime", () => {
           method: "GET",
           path: "/api/campaigns/:campaignId/export/storage-readiness",
           readiness: "review_required",
+        }),
+        expect.objectContaining({
+          boundary: expect.objectContaining({
+            "en-US": expect.stringContaining("No live API"),
+          }),
+          id: "backend.production-database.handoff-readiness",
+          method: "GET",
+          path: "/api/backend/production-database/handoff-readiness",
+          readiness: "review_required",
+          riskLevel: "high",
+          serviceGroup: "runtime",
+          supportMode: "local_seeded",
         }),
       ]),
     });
@@ -2862,6 +2927,11 @@ describe("Campaign OS API runtime", () => {
       path: `/api/campaigns/${campaignDetail.id}/reward-distribution/funding-proof-review`,
       headers: { "x-campaign-os-trace-id": "trace-funding-proof-review" },
     });
+    const productionDatabaseHandoffReadiness = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: "/api/backend/production-database/handoff-readiness",
+      headers: { "x-campaign-os-trace-id": "trace-production-db-handoff-runtime" },
+    });
     const providerReadiness = await runtimeWithPersistence.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/provider-readiness`,
@@ -3376,6 +3446,56 @@ describe("Campaign OS API runtime", () => {
     expect(JSON.stringify(expectSuccessData(fundingProofReview))).not.toContain("transactionId");
     expect(JSON.stringify(expectSuccessData(fundingProofReview))).not.toContain("campaign-os-kitty");
     expect(JSON.stringify(expectSuccessData(fundingProofReview))).not.toContain("bearer");
+    expect(expectSuccessData<LocalServiceEnvelope<ProductionDatabaseHandoffReadinessPayload>>(
+      productionDatabaseHandoffReadiness,
+    )).toMatchObject({
+      boundary: expect.objectContaining({
+        "en-US": expect.stringContaining("No live API"),
+      }),
+      payload: {
+        id: "campaign-os-production-database-handoff-readiness",
+        localMvpReady: true,
+        migrationGate: expect.objectContaining({
+          liveExecutionEnabled: false,
+        }),
+        packageBinding: expect.objectContaining({
+          bindingId: expect.any(String),
+          importPosture: "metadata_only_no_import",
+          packageName: "pg",
+          packageRef: "npm:pg",
+        }),
+        productionReady: false,
+        requiredReferences: expect.arrayContaining(
+          productionDatabaseRequiredReferenceKeys.map((key) => expect.objectContaining({
+            key,
+            redacted: true,
+            requiredBeforeProduction: true,
+          })),
+        ),
+        source: "server_runtime",
+        status: expect.stringMatching(/^(blocked|review_required|local_ready)$/),
+        storeCoverage: expect.arrayContaining([
+          expect.objectContaining({
+            migrationRequired: expect.any(Boolean),
+            storeId: expect.any(String),
+          }),
+        ]),
+        summary: expect.objectContaining({
+          requiredReferenceCount: productionDatabaseRequiredReferenceKeys.length,
+          storeCoverageCount: expect.any(Number),
+        }),
+        traceId: "trace-production-db-handoff-runtime",
+        valid: true,
+      },
+    });
+    expect(Object.values(
+      expectSuccessData<LocalServiceEnvelope<ProductionDatabaseHandoffReadinessPayload>>(
+        productionDatabaseHandoffReadiness,
+      ).payload.safety,
+    ).every((value) => value === false)).toBe(true);
+    expect(JSON.stringify(expectSuccessData(productionDatabaseHandoffReadiness))).not.toContain("postgres://");
+    expect(JSON.stringify(expectSuccessData(productionDatabaseHandoffReadiness))).not.toContain("campaign-os-kitty");
+    expect(JSON.stringify(expectSuccessData(productionDatabaseHandoffReadiness))).not.toContain("bearer");
     expect(expectSuccessData<LocalServiceEnvelope<CompanionContractReadinessPayload>>(
       companionContractReadiness,
     ).payload).toMatchObject({
@@ -3475,6 +3595,7 @@ describe("Campaign OS API runtime", () => {
       analyticsIngestionReadiness,
       rewardDistributionHandoffReadiness,
       fundingProofReview,
+      productionDatabaseHandoffReadiness,
       companionContractReadiness,
       contractTransparency,
       exportReadiness,
