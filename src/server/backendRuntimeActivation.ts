@@ -790,6 +790,10 @@ const withReleaseScope = (
   };
 };
 
+export const isMvpReleaseDependencyBlocker = (
+  blocker: Pick<ProductionRuntimeDependencyBlocker, "mvpReleaseRequired" | "status">,
+) => blocker.mvpReleaseRequired;
+
 const productionRuntimeDependencyBlockerDefinitions: ProductionRuntimeDependencyBlockerInput[] = [
   {
     area: "deployment",
@@ -1065,7 +1069,7 @@ export const productionRuntimeDependencyBlockerIds = productionRuntimeDependency
   (blocker) => blocker.id,
 );
 export const mvpReleaseRuntimeDependencyBlockerIds = productionRuntimeDependencyBlockers
-  .filter((blocker) => blocker.mvpReleaseRequired && blocker.status !== "deferred")
+  .filter(isMvpReleaseDependencyBlocker)
   .map((blocker) => blocker.id);
 export const futureProductionRuntimeDependencyBlockerIds = productionRuntimeDependencyBlockers
   .filter((blocker) => blocker.futureProductionOnly)

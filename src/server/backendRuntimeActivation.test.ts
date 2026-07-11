@@ -5,6 +5,7 @@ import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntim
 import {
   createBackendRuntimeActivationContract,
   futureProductionRuntimeDependencyBlockerIds,
+  isMvpReleaseDependencyBlocker,
   mvpReleaseRuntimeDependencyBlockerIds,
   productionRuntimeDependencyBlockerIds,
   runtimeActivationEnvironmentKeys,
@@ -177,6 +178,12 @@ describe("backend runtime activation contract", () => {
     expect(activation.mvpReleaseReady).toBe(true);
     expect(activation.productionReady).toBe(false);
     expect(activation.productionDependencyBlockers.every((blocker) => blocker.releaseScope)).toBe(true);
+  });
+
+  it("counts deferred MVP-required dependencies as MVP release blockers", () => {
+    expect(isMvpReleaseDependencyBlocker({ mvpReleaseRequired: true, status: "deferred" })).toBe(true);
+    expect(isMvpReleaseDependencyBlocker({ mvpReleaseRequired: true, status: "blocked" })).toBe(true);
+    expect(isMvpReleaseDependencyBlocker({ mvpReleaseRequired: false, status: "blocked" })).toBe(false);
   });
 
   it("keeps package scripts discoverable without removing server:dev", () => {
