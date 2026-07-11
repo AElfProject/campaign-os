@@ -47,6 +47,11 @@ import {
   loadRewardDistributionHandoffRuntimeApiBridgeState,
   type RewardDistributionHandoffRuntimeApiBridgeState,
 } from "../../../api/rewardDistributionHandoffRuntimeApiBridge";
+import {
+  createProjectOwnerFundingProofReviewBridgeApiSeededFallbackState,
+  loadProjectOwnerFundingProofReviewBridgeApiState,
+  type ProjectOwnerFundingProofReviewBridgeApiState,
+} from "../../../api/projectOwnerFundingProofReviewBridgeApiBridge";
 import { App } from "../../../app/App";
 import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
 import { projectConsoleCopy } from "./copy";
@@ -130,6 +135,15 @@ vi.mock("../../../api/rewardDistributionHandoffRuntimeApiBridge", async (importO
   return {
     ...actual,
     loadRewardDistributionHandoffRuntimeApiBridgeState: vi.fn(actual.loadRewardDistributionHandoffRuntimeApiBridgeState),
+  };
+});
+
+vi.mock("../../../api/projectOwnerFundingProofReviewBridgeApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/projectOwnerFundingProofReviewBridgeApiBridge")>();
+
+  return {
+    ...actual,
+    loadProjectOwnerFundingProofReviewBridgeApiState: vi.fn(actual.loadProjectOwnerFundingProofReviewBridgeApiState),
   };
 });
 
@@ -912,6 +926,29 @@ const rewardDistributionHandoffRuntimeApiState = (): RewardDistributionHandoffRu
   };
 };
 
+const projectOwnerFundingProofReviewApiState = (): ProjectOwnerFundingProofReviewBridgeApiState => {
+  const state = createProjectOwnerFundingProofReviewBridgeApiSeededFallbackState(
+    campaignDetail.id,
+    "trace-funding-proof-api-visible",
+  );
+
+  return {
+    ...state,
+    configured: true,
+    diagnostics: [],
+    routeCount: 39,
+    source: "api_runtime",
+    status: "blocked",
+    traceId: "trace-funding-proof-api-visible",
+    review: {
+      ...state.review,
+      source: "server_runtime",
+      status: "blocked",
+      traceId: "trace-funding-proof-api-visible",
+    },
+  };
+};
+
 describe("Project Console shell", () => {
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
   const mockedSubmitExportArtifactDeliveryApiReview = vi.mocked(submitExportArtifactDeliveryApiReview);
@@ -924,6 +961,8 @@ describe("Project Console shell", () => {
   const mockedLoadContractWriterRuntimeApiBridgeState = vi.mocked(loadContractWriterRuntimeApiBridgeState);
   const mockedLoadRewardDistributionHandoffRuntimeApiBridgeState =
     vi.mocked(loadRewardDistributionHandoffRuntimeApiBridgeState);
+  const mockedLoadProjectOwnerFundingProofReviewBridgeApiState =
+    vi.mocked(loadProjectOwnerFundingProofReviewBridgeApiState);
 
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
@@ -936,6 +975,7 @@ describe("Project Console shell", () => {
     mockedLoadAnalyticsIngestionRuntimeApiBridgeState.mockReset();
     mockedLoadContractWriterRuntimeApiBridgeState.mockReset();
     mockedLoadRewardDistributionHandoffRuntimeApiBridgeState.mockReset();
+    mockedLoadProjectOwnerFundingProofReviewBridgeApiState.mockReset();
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockResolvedValue(backendReadinessApiState());
     mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValue(publishDeliveryReviewApiState());
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockResolvedValue(pointsRankingLedgerRuntimeApiState());
@@ -945,6 +985,9 @@ describe("Project Console shell", () => {
     mockedLoadContractWriterRuntimeApiBridgeState.mockResolvedValue(contractWriterRuntimeApiState());
     mockedLoadRewardDistributionHandoffRuntimeApiBridgeState.mockResolvedValue(
       rewardDistributionHandoffRuntimeApiState(),
+    );
+    mockedLoadProjectOwnerFundingProofReviewBridgeApiState.mockResolvedValue(
+      projectOwnerFundingProofReviewApiState(),
     );
   });
 
@@ -2262,6 +2305,19 @@ describe("Project Console shell", () => {
     expect(within(rewardDistributionHandoffRuntime).getByText("No payout")).toBeInTheDocument();
     expect(within(rewardDistributionHandoffRuntime).getByText("No reward distribution")).toBeInTheDocument();
 
+    const projectOwnerFundingProofReview = screen.getByLabelText("Project Owner Funding Proof Review Bridge review");
+    expect(mockedLoadProjectOwnerFundingProofReviewBridgeApiState).not.toHaveBeenCalled();
+    expect(within(projectOwnerFundingProofReview).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+    expect(within(projectOwnerFundingProofReview).getByText("No API trace yet")).toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getByText(/No local API base URL configured/)).toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getByText("CAMPAIGN_OS_REWARD_FUNDING_PROOF_REF"))
+      .toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getAllByText("Funding proof reference").length).toBeGreaterThan(0);
+    expect(within(projectOwnerFundingProofReview).getByText("Operator review")).toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getByText("No funding transfer")).toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getByText("No object storage write")).toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getByText("No reward distribution")).toBeInTheDocument();
+
     const walletAdapterReadiness = screen.getByLabelText("aelf-web-login adapter readiness");
     expect(
       within(walletAdapterReadiness).getByRole("heading", {
@@ -2687,6 +2743,59 @@ describe("Project Console shell", () => {
     ]) {
       expect(within(rewardDistributionHandoffRuntime).queryByRole("button", { name })).not.toBeInTheDocument();
       expect(within(rewardDistributionHandoffRuntime).queryByRole("link", { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it("loads Project Owner Funding Proof Review automatically without live funding controls", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedLoadProjectOwnerFundingProofReviewBridgeApiState.mockResolvedValueOnce(
+      projectOwnerFundingProofReviewApiState(),
+    );
+
+    render(<ProjectConsole activeWorkspace="export" campaign={campaignDetail} locale="en-US" />);
+
+    const projectOwnerFundingProofReview = screen.getByLabelText("Project Owner Funding Proof Review Bridge review");
+
+    await waitFor(() => expect(mockedLoadProjectOwnerFundingProofReviewBridgeApiState).toHaveBeenCalledWith({
+      campaignId: campaignDetail.id,
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        tracePrefix: "project-console-project-owner-funding-proof-review",
+      },
+    }));
+
+    await waitFor(() => expect(within(projectOwnerFundingProofReview).getByText("API runtime")).toBeInTheDocument());
+    expect(within(projectOwnerFundingProofReview).getByText("trace-funding-proof-api-visible"))
+      .toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getByRole("button", { name: "Review funding proof" }))
+      .toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getByText("CAMPAIGN_OS_REWARD_FUNDING_PROOF_REF"))
+      .toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getAllByText("Funding proof reference").length).toBeGreaterThan(0);
+    expect(within(projectOwnerFundingProofReview).getByText("Operator review")).toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getByText("No funding transfer")).toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getByText("No object storage write")).toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getByText("No provider call")).toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getByText("No reward custody")).toBeInTheDocument();
+    expect(within(projectOwnerFundingProofReview).getByText("No reward distribution")).toBeInTheDocument();
+    expect(screen.getByLabelText("Reward Distribution Handoff Runtime review")).toBeInTheDocument();
+    expect(screen.getByLabelText("Backend Runtime Readiness review")).toBeInTheDocument();
+    for (const name of [
+      /upload/i,
+      /storage/i,
+      /payout/i,
+      /claim/i,
+      /custody/i,
+      /sign/i,
+      /contract/i,
+      /provider/i,
+      /queue/i,
+      /scheduler/i,
+      /worker/i,
+      /distribute/i,
+    ]) {
+      expect(within(projectOwnerFundingProofReview).queryByRole("button", { name })).not.toBeInTheDocument();
+      expect(within(projectOwnerFundingProofReview).queryByRole("link", { name })).not.toBeInTheDocument();
     }
   });
 
