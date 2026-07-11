@@ -119,6 +119,7 @@ import {
   type ObjectStorageExportReadiness,
   type ObjectStorageExportRuntimeConfig,
 } from "./objectStorageExportRuntime";
+import { createServerProjectOwnerFundingProofReviewBridge } from "./projectOwnerFundingProofReviewBridge";
 import {
   createServerAnalyticsIngestionRuntimeReadiness,
 } from "./analyticsIngestionRuntime";
@@ -132,6 +133,7 @@ import {
   contractWriterRequiredConfigKeys,
   type ContractWriterRuntimeReadiness,
 } from "../domain/contractWriterRuntime";
+import type { ProjectOwnerFundingProofReviewBridge } from "../domain/projectOwnerFundingProofReviewBridge";
 import type { RewardDistributionHandoffReadiness } from "../domain/rewardDistributionHandoffRuntime";
 
 export type BackendAttachPointArea =
@@ -244,6 +246,7 @@ export interface BackendServiceReadinessReport {
   persistenceFoundation: BackendPersistenceFoundationSummary;
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
   providerClientReadiness: BackendProviderClientReadinessSummary;
+  projectOwnerFundingProofReviewBridge: ProjectOwnerFundingProofReviewBridge;
   queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
   rewardDistributionHandoffRuntime: RewardDistributionHandoffReadiness;
   workerIdempotencyStoreFoundation: BackendWorkerIdempotencyStoreReadinessSummary;
@@ -1014,6 +1017,23 @@ const createBackendRewardDistributionHandoffReadiness = (
       rollbackRunbookRef: env.CAMPAIGN_OS_REWARD_DISTRIBUTION_ROLLBACK_RUNBOOK_REF,
     },
     traceId: "backend-readiness-reward-distribution-handoff",
+  });
+
+const createBackendProjectOwnerFundingProofReviewBridge = (
+  env: Record<string, string | undefined>,
+): ProjectOwnerFundingProofReviewBridge =>
+  createServerProjectOwnerFundingProofReviewBridge({
+    proofPackage: {
+      amountSummaryRef: env.CAMPAIGN_OS_REWARD_AMOUNT_SUMMARY_REF,
+      disclaimerSignoffRef: env.CAMPAIGN_OS_REWARD_DISCLAIMER_SIGNOFF_REF,
+      exportBatchId: env.CAMPAIGN_OS_REWARD_EXPORT_BATCH_REF,
+      financeReviewRef: env.CAMPAIGN_OS_REWARD_FINANCE_REVIEW_REF,
+      operatorReviewRef: env.CAMPAIGN_OS_REWARD_OPERATOR_REVIEW_REF,
+      proofReference: env.CAMPAIGN_OS_REWARD_FUNDING_PROOF_REF,
+      recipientListHashRef: env.CAMPAIGN_OS_REWARD_RECIPIENT_LIST_HASH_REF,
+      rewardProviderStatementRef: env.CAMPAIGN_OS_REWARD_PROVIDER_STATEMENT_REF,
+    },
+    traceId: "backend-readiness-funding-proof-review",
   });
 
 export const backendAttachMap: BackendAttachPoint[] = [
@@ -2471,6 +2491,7 @@ export const createBackendServiceReadinessReport = ({
   const analyticsIngestionRuntime = createBackendAnalyticsIngestionRuntimeReadiness(env);
   const contractWriterRuntime = createBackendContractWriterRuntimeReadiness(env);
   const rewardDistributionHandoffRuntime = createBackendRewardDistributionHandoffReadiness(env);
+  const projectOwnerFundingProofReviewBridge = createBackendProjectOwnerFundingProofReviewBridge(env);
   const workerLeaseStoreFoundation = createBackendWorkerLeaseStoreReadinessSummary({
     env,
     profileId: config.profileId,
@@ -2536,6 +2557,7 @@ export const createBackendServiceReadinessReport = ({
     persistenceFoundation,
     providerIndexerFoundation,
     providerClientReadiness,
+    projectOwnerFundingProofReviewBridge,
     queueRuntimeFoundation,
     rewardDistributionHandoffRuntime,
     workerIdempotencyStoreFoundation,

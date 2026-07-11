@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyticsIngestionRuntime";
 import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
+import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectOwnerFundingProofReviewBridge";
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
 import { runBackendRuntimeSmoke } from "./backendRuntimeSmoke";
 
@@ -550,6 +551,35 @@ const expectedRewardDistributionHandoffRuntimeMetadata = {
   valid: true,
 };
 
+const expectedProjectOwnerFundingProofReviewBridgeMetadata = {
+  blockedItemCount: 8,
+  diagnosticCodes: expect.arrayContaining([
+    "PROJECT_OWNER_FUNDING_PROOF_REFERENCE_MISSING",
+    "PROJECT_OWNER_FUNDING_PROOF_EXPORT_LINKAGE_MISSING",
+    "PROJECT_OWNER_FUNDING_PROOF_OPERATOR_REVIEW_MISSING",
+    "PROJECT_OWNER_FUNDING_PROOF_LIVE_EXECUTION_DISABLED",
+  ]),
+  liveContractWrite: false,
+  liveFundingTransfer: false,
+  liveObjectStorageWrite: false,
+  liveProviderCall: false,
+  liveQueuePublishing: false,
+  liveRewardCustody: false,
+  liveRewardDistribution: false,
+  liveSchedulerExecution: false,
+  liveWalletSignature: false,
+  liveWorkerExecution: false,
+  missingEvidenceCount: projectOwnerFundingProofRequiredEvidenceKeys.length,
+  productionReady: false,
+  proofPackageStatus: "missing",
+  readyItemCount: 0,
+  requiredEvidenceKeys: expect.arrayContaining([...projectOwnerFundingProofRequiredEvidenceKeys]),
+  requiredItemCount: 8,
+  reviewRequiredItemCount: 0,
+  status: "blocked",
+  valid: true,
+};
+
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
     const summary = await runBackendRuntimeSmoke({
@@ -617,6 +647,7 @@ describe("backend runtime smoke command", () => {
             workerExecutionEnabled: false,
           },
           providerClientReadiness: expectedProviderClientReadiness,
+          projectOwnerFundingProofReviewBridge: expectedProjectOwnerFundingProofReviewBridgeMetadata,
           rewardDistributionHandoffRuntime: expectedRewardDistributionHandoffRuntimeMetadata,
           queueRuntimeFoundation: {
             blockerCount: 0,
@@ -692,6 +723,7 @@ describe("backend runtime smoke command", () => {
             workerExecutionEnabled: false,
           },
           providerClientReadiness: expectedProviderClientReadiness,
+          projectOwnerFundingProofReviewBridge: expectedProjectOwnerFundingProofReviewBridgeMetadata,
           rewardDistributionHandoffRuntime: expectedRewardDistributionHandoffRuntimeMetadata,
           queueRuntimeFoundation: {
             blockerCount: 0,
@@ -762,6 +794,10 @@ describe("backend runtime smoke command", () => {
       contractWriterRuntime: {
         ...expectedContractWriterRuntimeMetadata,
         traceId: "campaign-os-smoke-contract-writer-readiness",
+      },
+      projectOwnerFundingProofReviewBridge: {
+        ...expectedProjectOwnerFundingProofReviewBridgeMetadata,
+        traceId: "campaign-os-smoke-funding-proof-review",
       },
       rewardDistributionHandoffRuntime: {
         ...expectedRewardDistributionHandoffRuntimeMetadata,
@@ -1146,6 +1182,36 @@ describe("backend runtime smoke command", () => {
     };
 
     await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutRewardDistributionHandoffRuntime })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
+  });
+
+  it("fails closed when funding proof review metadata is missing from smoke payloads", async () => {
+    const fetchWithoutFundingProofReview: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const payload = await response.clone().json() as {
+        data?: {
+          backendService?: {
+            projectOwnerFundingProofReviewBridge?: Record<string, unknown>;
+          };
+          serverRuntime?: {
+            readiness?: {
+              projectOwnerFundingProofReviewBridge?: Record<string, unknown>;
+            };
+          };
+        };
+      };
+
+      delete payload.data?.backendService?.projectOwnerFundingProofReviewBridge;
+      delete payload.data?.serverRuntime?.readiness?.projectOwnerFundingProofReviewBridge;
+
+      return new Response(JSON.stringify(payload), {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithoutFundingProofReview })).rejects.toThrow(
       "Campaign OS backend runtime smoke check failed.",
     );
   });

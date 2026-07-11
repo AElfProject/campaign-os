@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { campaignDetail } from "../domain/fixtures";
+import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectOwnerFundingProofReviewBridge";
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
 import { createCampaignOsApiRuntime, type ApiRuntimeResponse } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
@@ -646,6 +647,39 @@ interface RewardDistributionHandoffRuntimePayload {
   traceId?: string;
 }
 
+interface ProjectOwnerFundingProofReviewPayload {
+  campaignId: string;
+  diagnosticCodes: string[];
+  items: Array<{
+    id: string;
+    liveExecutionEnabled: false;
+    requiredBeforeProduction: true;
+    state: string;
+  }>;
+  productionReady: false;
+  proofPackage: {
+    missingEvidenceKeys: string[];
+    productionReady: false;
+    requiredEvidenceKeys: string[];
+    reviewState: string;
+    status: string;
+    submittedByRole: string;
+  };
+  requiredEvidenceKeys: string[];
+  safety: Record<string, false>;
+  source: "server_runtime";
+  status: string;
+  summary: {
+    blockedItemCount: number;
+    readyItemCount: number;
+    requiredItemCount: number;
+    reviewRequiredItemCount: number;
+    status: string;
+  };
+  traceId?: string;
+  valid: true;
+}
+
 interface CampaignDbLimitedLifecyclePayload {
   campaignId: string;
   code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED";
@@ -1077,6 +1111,8 @@ describe("Campaign OS API runtime", () => {
           "campaigns.publish.delivery.review",
           "campaigns.points.ranking.ledger.runtime",
           "campaigns.reward.distribution.handoff.readiness",
+          "campaigns.reward.funding-proof.review",
+          "campaigns.reward.funding-proof.review.submit",
           "campaigns.export.storage.readiness",
         ]),
         runtimeRouteCount: expect.any(Number),
@@ -1123,6 +1159,18 @@ describe("Campaign OS API runtime", () => {
           id: "campaigns.reward.distribution.handoff.readiness",
           method: "GET",
           path: "/api/campaigns/:campaignId/reward-distribution/handoff-readiness",
+          readiness: "review_required",
+        }),
+        expect.objectContaining({
+          id: "campaigns.reward.funding-proof.review",
+          method: "GET",
+          path: "/api/campaigns/:campaignId/reward-distribution/funding-proof-review",
+          readiness: "review_required",
+        }),
+        expect.objectContaining({
+          id: "campaigns.reward.funding-proof.review.submit",
+          method: "POST",
+          path: "/api/campaigns/:campaignId/reward-distribution/funding-proof-review",
           readiness: "review_required",
         }),
         expect.objectContaining({
@@ -2809,6 +2857,11 @@ describe("Campaign OS API runtime", () => {
       path: `/api/campaigns/${campaignDetail.id}/reward-distribution/handoff-readiness`,
       headers: { "x-campaign-os-trace-id": "trace-reward-distribution-handoff-readiness" },
     });
+    const fundingProofReview = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/reward-distribution/funding-proof-review`,
+      headers: { "x-campaign-os-trace-id": "trace-funding-proof-review" },
+    });
     const providerReadiness = await runtimeWithPersistence.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/provider-readiness`,
@@ -3253,6 +3306,76 @@ describe("Campaign OS API runtime", () => {
     expect(JSON.stringify(expectSuccessData(rewardDistributionHandoffReadiness))).not.toContain("transactionId");
     expect(JSON.stringify(expectSuccessData(rewardDistributionHandoffReadiness))).not.toContain("campaign-os-kitty");
     expect(JSON.stringify(expectSuccessData(rewardDistributionHandoffReadiness))).not.toContain("bearer");
+    expect(expectSuccessData<LocalServiceEnvelope<ProjectOwnerFundingProofReviewPayload>>(
+      fundingProofReview,
+    )).toMatchObject({
+      boundary: expect.objectContaining({
+        "en-US": expect.stringContaining("Local review-only project owner funding proof bridge"),
+      }),
+      payload: {
+        campaignId: campaignDetail.id,
+        diagnosticCodes: expect.arrayContaining([
+          "PROJECT_OWNER_FUNDING_PROOF_REFERENCE_MISSING",
+          "PROJECT_OWNER_FUNDING_PROOF_EXPORT_LINKAGE_MISSING",
+          "PROJECT_OWNER_FUNDING_PROOF_OPERATOR_REVIEW_MISSING",
+          "PROJECT_OWNER_FUNDING_PROOF_LIVE_EXECUTION_DISABLED",
+        ]),
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: "funding-proof-reference",
+            liveExecutionEnabled: false,
+            requiredBeforeProduction: true,
+            state: "blocked",
+          }),
+          expect.objectContaining({
+            id: "operator-review",
+            liveExecutionEnabled: false,
+            requiredBeforeProduction: true,
+            state: "blocked",
+          }),
+        ]),
+        productionReady: false,
+        proofPackage: expect.objectContaining({
+          missingEvidenceKeys: expect.arrayContaining([...projectOwnerFundingProofRequiredEvidenceKeys]),
+          productionReady: false,
+          requiredEvidenceKeys: expect.arrayContaining([...projectOwnerFundingProofRequiredEvidenceKeys]),
+          status: "missing",
+        }),
+        requiredEvidenceKeys: expect.arrayContaining([...projectOwnerFundingProofRequiredEvidenceKeys]),
+        safety: expect.objectContaining({
+          liveContractWrite: false,
+          liveFundingTransfer: false,
+          liveObjectStorageWrite: false,
+          liveProviderCall: false,
+          liveQueuePublishing: false,
+          liveRewardCustody: false,
+          liveRewardDistribution: false,
+          liveSchedulerExecution: false,
+          liveWalletSignature: false,
+          liveWorkerExecution: false,
+        }),
+        source: "server_runtime",
+        status: "blocked",
+        summary: expect.objectContaining({
+          blockedItemCount: 8,
+          readyItemCount: 0,
+          requiredItemCount: 8,
+          reviewRequiredItemCount: 0,
+          status: "blocked",
+        }),
+        traceId: "trace-funding-proof-review",
+        valid: true,
+      },
+    });
+    expect(Object.values(
+      expectSuccessData<LocalServiceEnvelope<ProjectOwnerFundingProofReviewPayload>>(fundingProofReview)
+        .payload.safety,
+    ).every((value) => value === false)).toBe(true);
+    expect(JSON.stringify(expectSuccessData(fundingProofReview))).not.toContain("providerPayload");
+    expect(JSON.stringify(expectSuccessData(fundingProofReview))).not.toContain("signedUrl");
+    expect(JSON.stringify(expectSuccessData(fundingProofReview))).not.toContain("transactionId");
+    expect(JSON.stringify(expectSuccessData(fundingProofReview))).not.toContain("campaign-os-kitty");
+    expect(JSON.stringify(expectSuccessData(fundingProofReview))).not.toContain("bearer");
     expect(expectSuccessData<LocalServiceEnvelope<CompanionContractReadinessPayload>>(
       companionContractReadiness,
     ).payload).toMatchObject({
@@ -3351,6 +3474,7 @@ describe("Campaign OS API runtime", () => {
       pointsRankingLedgerRuntime,
       analyticsIngestionReadiness,
       rewardDistributionHandoffReadiness,
+      fundingProofReview,
       companionContractReadiness,
       contractTransparency,
       exportReadiness,
@@ -3367,6 +3491,73 @@ describe("Campaign OS API runtime", () => {
         "transactionId",
       ]);
     }
+  });
+
+  it("normalizes funding proof review metadata through a local-only POST route", async () => {
+    const response = await runtime.handle({
+      method: "POST",
+      path: `/api/campaigns/${campaignDetail.id}/reward-distribution/funding-proof-review`,
+      headers: { "x-campaign-os-trace-id": "trace-funding-proof-review-submit" },
+      body: {
+        amountSummaryRef: "amount-summary-ref:awaken-sprint-reward-budget",
+        disclaimerSignoffRef: "disclaimer-signoff-ref:en-us-reviewed",
+        exportBatchId: "export-batch-awaken-sprint-preview",
+        financeReviewRef: "finance-review-ref:pending",
+        operatorReviewRef: "operator-review-ref:pending",
+        proofReference: "proof-ref:project-owner-budget-ticket",
+        recipientListHashRef: "recipient-list-hash-ref:preview",
+        rewardProviderStatementRef: "provider-statement-ref:project-owned",
+        signedUrl: "https://proof.invalid/file?signedUrl=unsafe",
+        submittedByRole: "project_owner",
+        transactionId: "funding-transfer-transaction-123",
+        walletSignature: "raw-signature-sample",
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(expectSuccessData<LocalServiceEnvelope<ProjectOwnerFundingProofReviewPayload>>(response)).toMatchObject({
+      boundary: expect.objectContaining({
+        "en-US": expect.stringContaining("Local review-only project owner funding proof"),
+      }),
+      payload: {
+        campaignId: campaignDetail.id,
+        diagnosticCodes: ["PROJECT_OWNER_FUNDING_PROOF_LIVE_EXECUTION_DISABLED"],
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: "funding-proof-reference",
+            state: "ready",
+          }),
+          expect.objectContaining({
+            id: "operator-review",
+            state: "review_required",
+          }),
+        ]),
+        productionReady: false,
+        proofPackage: expect.objectContaining({
+          missingEvidenceKeys: [],
+          productionReady: false,
+          reviewState: "in_review",
+          status: "ready_disabled",
+          submittedByRole: "project_owner",
+        }),
+        status: "local_ready",
+        summary: expect.objectContaining({
+          blockedItemCount: 0,
+          readyItemCount: 7,
+          requiredItemCount: 8,
+          reviewRequiredItemCount: 1,
+          status: "local_ready",
+        }),
+        traceId: "trace-funding-proof-review-submit",
+        valid: true,
+      },
+    });
+    expect(Object.values(
+      expectSuccessData<LocalServiceEnvelope<ProjectOwnerFundingProofReviewPayload>>(response).payload.safety,
+    ).every((value) => value === false)).toBe(true);
+    expect(JSON.stringify(expectSuccessData(response))).not.toContain("proof.invalid");
+    expect(JSON.stringify(expectSuccessData(response))).not.toContain("transaction-123");
+    expect(JSON.stringify(expectSuccessData(response))).not.toContain("raw-signature-sample");
   });
 
   it("keeps lifecycle and readiness routes fail-closed for unknown campaign ids", async () => {
@@ -3403,6 +3594,17 @@ describe("Campaign OS API runtime", () => {
       runtime.handle({
         method: "GET",
         path: "/api/campaigns/missing-campaign/reward-distribution/handoff-readiness",
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/reward-distribution/funding-proof-review",
+      }),
+      runtime.handle({
+        method: "POST",
+        path: "/api/campaigns/missing-campaign/reward-distribution/funding-proof-review",
+        body: {
+          proofReference: "proof-ref:missing-campaign",
+        },
       }),
       runtime.handle({
         method: "GET",

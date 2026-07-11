@@ -48,6 +48,10 @@ import {
 import { createPointsRankingLedgerRuntime } from "../domain/pointsRankingLedgerRuntime";
 import { createServerAnalyticsIngestionRuntimeReadiness } from "./analyticsIngestionRuntime";
 import { createServerContractWriterRuntimeReadiness } from "./contractWriterRuntime";
+import {
+  createServerProjectOwnerFundingProofReviewBridge,
+  type ProjectOwnerFundingProofPackageInput,
+} from "./projectOwnerFundingProofReviewBridge";
 import { createServerRewardDistributionHandoffReadiness } from "./rewardDistributionHandoffRuntime";
 import {
   createServiceDegradationGovernance,
@@ -1570,6 +1574,34 @@ const createRewardDistributionHandoffReadinessPayload = (
   };
 };
 
+const createProjectOwnerFundingProofReviewBridgePayload = (
+  context: ApiRuntimeHandlerContext,
+  proofPackage?: ProjectOwnerFundingProofPackageInput,
+) => {
+  const campaignId = requiredRouteParam(context.params, "campaignId");
+  const detailResult = context.service.getCampaignDetail({ campaignId });
+
+  if (!detailResult.ok) {
+    unwrapLocalResult(detailResult, context);
+    throw invalidCampaign(campaignId);
+  }
+
+  return {
+    boundary: context.route.boundary,
+    payload: createServerProjectOwnerFundingProofReviewBridge({
+      campaign: campaignDetail,
+      proofPackage,
+      traceId: context.traceId,
+    }),
+  };
+};
+
+const projectOwnerFundingProofPackageInput = (
+  context: ApiRuntimeHandlerContext,
+): ProjectOwnerFundingProofPackageInput => (
+  bodyRecord(context.body) as ProjectOwnerFundingProofPackageInput
+);
+
 const createProviderReadinessResult = (
   pipeline: LocalServiceResult<VerificationPipelineReadinessGate>,
   providerEvidenceRegistry: LocalServiceResult<ProviderEvidenceRegistry>,
@@ -1816,6 +1848,7 @@ const createBackendServiceHealthMetadata = (
   objectStorageExportRuntime: report.objectStorageExportRuntime,
   persistenceFoundation: report.persistenceFoundation,
   persistenceRuntime: createBackendPersistenceRuntimeSummary(report.persistenceRuntime),
+  projectOwnerFundingProofReviewBridge: report.projectOwnerFundingProofReviewBridge,
   rewardDistributionHandoffRuntime: report.rewardDistributionHandoffRuntime,
   profile: {
     id: report.profile.id,
@@ -1850,6 +1883,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
   persistenceAdapterPort: backendPersistenceAdapterSummary(report),
   persistenceFoundation: report.persistenceFoundation,
   persistenceRuntime: createBackendPersistenceRuntimeSummary(report.persistenceRuntime),
+  projectOwnerFundingProofReviewBridge: report.projectOwnerFundingProofReviewBridge,
   rewardDistributionHandoffRuntime: report.rewardDistributionHandoffRuntime,
   profile: {
     allowedCapabilities: report.profile.allowedCapabilities,
@@ -1869,6 +1903,7 @@ const createBackendServiceContractMetadata = (report: BackendServiceReadinessRep
       "persistenceAdapters",
       "persistenceFoundation",
       "persistenceRuntime",
+      "projectOwnerFundingProofReviewBridge",
       "rewardDistributionHandoffRuntime",
       "migration",
       "apiFoundation",
@@ -2150,6 +2185,13 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
   "campaigns.contract.writer.readiness": (context) => createContractWriterRuntimeReadinessPayload(context),
   "campaigns.reward.distribution.handoff.readiness": (context) =>
     createRewardDistributionHandoffReadinessPayload(context),
+  "campaigns.reward.funding-proof.review": (context) =>
+    createProjectOwnerFundingProofReviewBridgePayload(context),
+  "campaigns.reward.funding-proof.review.submit": (context) =>
+    createProjectOwnerFundingProofReviewBridgePayload(
+      context,
+      projectOwnerFundingProofPackageInput(context),
+    ),
   "campaigns.export.storage.readiness": (context) => createObjectStorageExportReadinessPayload(context),
   "campaigns.companion.contract.readiness": (context) =>
     unwrapLocalResult(

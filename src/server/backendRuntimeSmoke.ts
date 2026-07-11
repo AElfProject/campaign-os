@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { campaignDetail } from "../domain/fixtures";
 import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
+import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectOwnerFundingProofReviewBridge";
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
 import { startCampaignOsApiServer, type CampaignOsApiServerHandle } from "./server";
 
@@ -35,6 +36,7 @@ export interface BackendRuntimeSmokeCheck {
   productionBackendReadiness?: BackendRuntimeSmokeProductionBackendReadinessSummary;
   providerClientReadiness?: BackendRuntimeSmokeProviderClientReadinessSummary;
   providerIndexerFoundation?: BackendRuntimeSmokeProviderIndexerFoundationSummary;
+  projectOwnerFundingProofReviewBridge?: BackendRuntimeSmokeProjectOwnerFundingProofReviewBridgeSummary;
   queueRuntimeFoundation?: BackendRuntimeSmokeQueueRuntimeFoundationSummary;
   rewardDistributionHandoffRuntime?: BackendRuntimeSmokeRewardDistributionHandoffRuntimeSummary;
   schedulerRuntimeFoundation?: BackendRuntimeSmokeSchedulerRuntimeFoundationSummary;
@@ -159,6 +161,31 @@ export interface BackendRuntimeSmokeRewardDistributionHandoffRuntimeSummary {
   productionReady: false;
   recipientCount: number;
   requiredEvidenceKeys: string[];
+  status?: string;
+  traceId?: string;
+  valid: boolean;
+}
+
+export interface BackendRuntimeSmokeProjectOwnerFundingProofReviewBridgeSummary {
+  blockedItemCount: number;
+  diagnosticCodes: string[];
+  liveContractWrite: false;
+  liveFundingTransfer: false;
+  liveObjectStorageWrite: false;
+  liveProviderCall: false;
+  liveQueuePublishing: false;
+  liveRewardCustody: false;
+  liveRewardDistribution: false;
+  liveSchedulerExecution: false;
+  liveWalletSignature: false;
+  liveWorkerExecution: false;
+  missingEvidenceCount: number;
+  productionReady: false;
+  proofPackageStatus?: string;
+  readyItemCount: number;
+  requiredEvidenceKeys: string[];
+  requiredItemCount: number;
+  reviewRequiredItemCount: number;
   status?: string;
   traceId?: string;
   valid: boolean;
@@ -539,6 +566,7 @@ export interface BackendRuntimeSmokeSummary {
   productionBackendReadiness: BackendRuntimeSmokeProductionBackendReadinessSummary;
   providerClientReadiness: BackendRuntimeSmokeProviderClientReadinessSummary;
   port: number;
+  projectOwnerFundingProofReviewBridge: BackendRuntimeSmokeProjectOwnerFundingProofReviewBridgeSummary;
   rewardDistributionHandoffRuntime: BackendRuntimeSmokeRewardDistributionHandoffRuntimeSummary;
   futureProduction: string[];
   futureProductionBlockerIds: string[];
@@ -672,6 +700,12 @@ const readRewardDistributionHandoffRuntime = (
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["backendService", "rewardDistributionHandoffRuntime"])
   ?? readNestedRecord(value, ["serverRuntime", "readiness", "rewardDistributionHandoffRuntime"]);
+
+const readProjectOwnerFundingProofReviewBridge = (
+  value: unknown,
+): Record<string, unknown> | undefined =>
+  readNestedRecord(value, ["backendService", "projectOwnerFundingProofReviewBridge"])
+  ?? readNestedRecord(value, ["serverRuntime", "readiness", "projectOwnerFundingProofReviewBridge"]);
 
 const readProductionBackendReadiness = (
   value: unknown,
@@ -1746,6 +1780,60 @@ const summarizeRewardDistributionHandoffRuntime = (
   };
 };
 
+const summarizeProjectOwnerFundingProofReviewBridge = (
+  record: Record<string, unknown> | undefined,
+): BackendRuntimeSmokeProjectOwnerFundingProofReviewBridgeSummary | undefined => {
+  if (!record || !isExplicitFalse(record, "productionReady")) {
+    return undefined;
+  }
+
+  const safety = readNestedRecord(record, ["safety"]);
+  const summary = readNestedRecord(record, ["summary"]);
+  const proofPackage = readNestedRecord(record, ["proofPackage"]);
+  const explicitNoLive =
+    safety !== undefined
+    && isExplicitFalse(safety, "liveContractWrite")
+    && isExplicitFalse(safety, "liveFundingTransfer")
+    && isExplicitFalse(safety, "liveObjectStorageWrite")
+    && isExplicitFalse(safety, "liveProviderCall")
+    && isExplicitFalse(safety, "liveQueuePublishing")
+    && isExplicitFalse(safety, "liveRewardCustody")
+    && isExplicitFalse(safety, "liveRewardDistribution")
+    && isExplicitFalse(safety, "liveSchedulerExecution")
+    && isExplicitFalse(safety, "liveWalletSignature")
+    && isExplicitFalse(safety, "liveWorkerExecution")
+    && isExplicitFalse(proofPackage, "productionReady");
+
+  if (!explicitNoLive) {
+    return undefined;
+  }
+
+  return {
+    blockedItemCount: getNumber(summary, "blockedItemCount"),
+    diagnosticCodes: getStringArray(record, "diagnosticCodes"),
+    liveContractWrite: false,
+    liveFundingTransfer: false,
+    liveObjectStorageWrite: false,
+    liveProviderCall: false,
+    liveQueuePublishing: false,
+    liveRewardCustody: false,
+    liveRewardDistribution: false,
+    liveSchedulerExecution: false,
+    liveWalletSignature: false,
+    liveWorkerExecution: false,
+    missingEvidenceCount: getStringArray(proofPackage, "missingEvidenceKeys").length,
+    productionReady: false,
+    proofPackageStatus: getString(proofPackage, "status"),
+    readyItemCount: getNumber(summary, "readyItemCount"),
+    requiredEvidenceKeys: getStringArray(record, "requiredEvidenceKeys"),
+    requiredItemCount: getNumber(summary, "requiredItemCount"),
+    reviewRequiredItemCount: getNumber(summary, "reviewRequiredItemCount"),
+    status: getString(record, "status"),
+    traceId: getString(record, "traceId"),
+    valid: getBoolean(record, "valid"),
+  };
+};
+
 const createSmokeCheck = async ({
   baseUrl,
   endpoint,
@@ -1810,6 +1898,9 @@ const createSmokeCheck = async ({
   const rewardDistributionHandoffRuntime = summarizeRewardDistributionHandoffRuntime(
     readRewardDistributionHandoffRuntime(payload.data),
   );
+  const projectOwnerFundingProofReviewBridge = summarizeProjectOwnerFundingProofReviewBridge(
+    readProjectOwnerFundingProofReviewBridge(payload.data),
+  );
   const productionBackendReadiness = summarizeProductionBackendReadiness(
     readProductionBackendReadiness(payload.data),
   );
@@ -1830,6 +1921,7 @@ const createSmokeCheck = async ({
       productionBackendReadiness,
       providerClientReadiness,
       providerIndexerFoundation,
+      projectOwnerFundingProofReviewBridge,
       queueRuntimeFoundation,
       rewardDistributionHandoffRuntime,
       schedulerRuntimeFoundation,
@@ -1918,6 +2010,35 @@ const createRewardDistributionHandoffRuntimeSmokeSample = async ({
   const payload = await readJson(response);
   const readiness = readNestedRecord(payload.data, ["payload"]);
   const summary = summarizeRewardDistributionHandoffRuntime(readiness);
+
+  if (response.status !== 200 || payload.ok !== true || payload.traceId !== traceId || !summary) {
+    return undefined;
+  }
+
+  return {
+    ...summary,
+    traceId: payload.traceId,
+  };
+};
+
+const createProjectOwnerFundingProofReviewBridgeSmokeSample = async ({
+  baseUrl,
+  fetchImpl,
+  traceId,
+}: {
+  baseUrl: string;
+  fetchImpl: typeof fetch;
+  traceId: string;
+}): Promise<BackendRuntimeSmokeProjectOwnerFundingProofReviewBridgeSummary | undefined> => {
+  const response = await fetchImpl(
+    `${baseUrl}/api/campaigns/${campaignDetail.id}/reward-distribution/funding-proof-review`,
+    {
+      headers: { "x-campaign-os-trace-id": traceId },
+    },
+  );
+  const payload = await readJson(response);
+  const readiness = readNestedRecord(payload.data, ["payload"]);
+  const summary = summarizeProjectOwnerFundingProofReviewBridge(readiness);
 
   if (response.status !== 200 || payload.ok !== true || payload.traceId !== traceId || !summary) {
     return undefined;
@@ -2342,6 +2463,36 @@ const isRewardDistributionHandoffRuntimeSmokeReady = (
     && summary.diagnosticCodes.includes("REWARD_DISTRIBUTION_LIVE_EXECUTION_DISABLED")
     && summary.status === "blocked"
     && summary.evidenceStatus === "missing"
+    && summary.valid === true;
+};
+
+const isProjectOwnerFundingProofReviewBridgeSmokeReady = (
+  summary: BackendRuntimeSmokeProjectOwnerFundingProofReviewBridgeSummary | undefined,
+): summary is BackendRuntimeSmokeProjectOwnerFundingProofReviewBridgeSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.productionReady === false
+    && summary.liveContractWrite === false
+    && summary.liveFundingTransfer === false
+    && summary.liveObjectStorageWrite === false
+    && summary.liveProviderCall === false
+    && summary.liveQueuePublishing === false
+    && summary.liveRewardCustody === false
+    && summary.liveRewardDistribution === false
+    && summary.liveSchedulerExecution === false
+    && summary.liveWalletSignature === false
+    && summary.liveWorkerExecution === false
+    && summary.requiredItemCount >= 8
+    && summary.blockedItemCount >= 1
+    && summary.readyItemCount === 0
+    && summary.reviewRequiredItemCount === 0
+    && summary.missingEvidenceCount === projectOwnerFundingProofRequiredEvidenceKeys.length
+    && projectOwnerFundingProofRequiredEvidenceKeys.every((key) => summary.requiredEvidenceKeys.includes(key))
+    && summary.diagnosticCodes.includes("PROJECT_OWNER_FUNDING_PROOF_LIVE_EXECUTION_DISABLED")
+    && summary.status === "blocked"
+    && summary.proofPackageStatus === "missing"
     && summary.valid === true;
 };
 
@@ -2809,6 +2960,7 @@ export const runBackendRuntimeSmoke = async ({
     const analyticsIngestionRuntime = contracts.check.analyticsIngestionRuntime;
     const contractWriterRuntime = contracts.check.contractWriterRuntime;
     const rewardDistributionHandoffRuntime = contracts.check.rewardDistributionHandoffRuntime;
+    const projectOwnerFundingProofReviewBridge = contracts.check.projectOwnerFundingProofReviewBridge;
     const productionBackendReadiness = contracts.check.productionBackendReadiness;
     const analyticsIngestionRuntimeSample = await createAnalyticsIngestionRuntimeSmokeSample({
       baseUrl: server.url,
@@ -2824,6 +2976,11 @@ export const runBackendRuntimeSmoke = async ({
       baseUrl: server.url,
       fetchImpl,
       traceId: "campaign-os-smoke-reward-distribution-handoff-readiness",
+    });
+    const projectOwnerFundingProofReviewBridgeSample = await createProjectOwnerFundingProofReviewBridgeSmokeSample({
+      baseUrl: server.url,
+      fetchImpl,
+      traceId: "campaign-os-smoke-funding-proof-review",
     });
 
     if (
@@ -2861,6 +3018,9 @@ export const runBackendRuntimeSmoke = async ({
       || !isRewardDistributionHandoffRuntimeSmokeReady(health.check.rewardDistributionHandoffRuntime)
       || !isRewardDistributionHandoffRuntimeSmokeReady(rewardDistributionHandoffRuntime)
       || !isRewardDistributionHandoffRuntimeSmokeReady(rewardDistributionHandoffRuntimeSample)
+      || !isProjectOwnerFundingProofReviewBridgeSmokeReady(health.check.projectOwnerFundingProofReviewBridge)
+      || !isProjectOwnerFundingProofReviewBridgeSmokeReady(projectOwnerFundingProofReviewBridge)
+      || !isProjectOwnerFundingProofReviewBridgeSmokeReady(projectOwnerFundingProofReviewBridgeSample)
       || !isProductionBackendReadinessSmokeReady(health.check.productionBackendReadiness)
       || !isProductionBackendReadinessSmokeReady(productionBackendReadiness)
       || !isWorkerIdempotencyStoreFoundationSmokeReady(health.check.workerIdempotencyStoreFoundation)
@@ -2900,6 +3060,7 @@ export const runBackendRuntimeSmoke = async ({
       productionBackendReadiness,
       providerClientReadiness,
       port: new URL(server.url).port ? Number(new URL(server.url).port) : 0,
+      projectOwnerFundingProofReviewBridge: projectOwnerFundingProofReviewBridgeSample,
       rewardDistributionHandoffRuntime: rewardDistributionHandoffRuntimeSample,
       futureProduction: getStringArray(deploymentHandoff, "futureProduction"),
       futureProductionBlockerIds: getStringArray(activation, "futureProductionBlockerIds"),

@@ -201,6 +201,14 @@ const routeFoundationMetadata = {
     operationId: "getCampaignRewardDistributionHandoffReadiness",
     serviceId: "campaign-service",
   },
+  "campaigns.reward.funding-proof.review": {
+    operationId: "getCampaignRewardFundingProofReview",
+    serviceId: "campaign-service",
+  },
+  "campaigns.reward.funding-proof.review.submit": {
+    operationId: "submitCampaignRewardFundingProofReview",
+    serviceId: "campaign-service",
+  },
   "campaigns.contract.transparency": {
     operationId: "getCampaignContractTransparency",
     serviceId: "campaign-service",
@@ -518,6 +526,24 @@ const requestFieldContracts = [
     name: "campaignId",
     required: true,
     routeId: "campaigns.reward.distribution.handoff.readiness",
+    valueType: "string",
+  }),
+  field({
+    description: "Campaign identifier path parameter for the project owner funding proof review bridge.",
+    id: "campaigns.reward.funding-proof.review.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.reward.funding-proof.review",
+    valueType: "string",
+  }),
+  field({
+    description: "Campaign identifier path parameter for the project owner funding proof review metadata normalization route.",
+    id: "campaigns.reward.funding-proof.review.submit.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.reward.funding-proof.review.submit",
     valueType: "string",
   }),
   field({
@@ -1168,6 +1194,8 @@ const backendSurfaceReadiness = [
       "campaigns.companion.contract.readiness",
       "campaigns.contract.writer.readiness",
       "campaigns.reward.distribution.handoff.readiness",
+      "campaigns.reward.funding-proof.review",
+      "campaigns.reward.funding-proof.review.submit",
       "campaigns.contract.transparency",
     ],
     serviceId: "campaign-service",
