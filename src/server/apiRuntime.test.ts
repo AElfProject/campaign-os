@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { campaignDetail } from "../domain/fixtures";
+import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
 import { createCampaignOsApiRuntime, type ApiRuntimeResponse } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
 import type { CampaignDbRepository } from "./campaignDbRepository";
@@ -610,6 +611,41 @@ interface ContractWriterRuntimePayload {
   traceId?: string;
 }
 
+interface RewardDistributionHandoffRuntimePayload {
+  campaignId: string;
+  diagnosticCodes: string[];
+  evidenceHandoff: {
+    missingEvidenceKeys: string[];
+    productionReady: false;
+    requiredEvidenceKeys: string[];
+    status: string;
+  };
+  exportLinkage: {
+    derivedFrom: "seeded_export_preview";
+    exportBatchIds: string[];
+    localPreviewOnly: true;
+    recipientCount: number;
+  };
+  items: Array<{
+    id: string;
+    liveExecutionEnabled: false;
+    ownerRole: string;
+    requiredBeforeProduction: true;
+    state: string;
+  }>;
+  noLiveSideEffects: Record<string, false>;
+  productionReady: false;
+  requiredEvidenceKeys: string[];
+  source: "server_runtime";
+  status: string;
+  summary: {
+    itemCount: number;
+    missingEvidenceCount: number;
+    recipientCount: number;
+  };
+  traceId?: string;
+}
+
 interface CampaignDbLimitedLifecyclePayload {
   campaignId: string;
   code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED";
@@ -1040,6 +1076,7 @@ describe("Campaign OS API runtime", () => {
           "runtime.contracts",
           "campaigns.publish.delivery.review",
           "campaigns.points.ranking.ledger.runtime",
+          "campaigns.reward.distribution.handoff.readiness",
           "campaigns.export.storage.readiness",
         ]),
         runtimeRouteCount: expect.any(Number),
@@ -1080,6 +1117,12 @@ describe("Campaign OS API runtime", () => {
           id: "campaigns.contract.writer.readiness",
           method: "GET",
           path: "/api/campaigns/:campaignId/contract-writer/readiness",
+          readiness: "review_required",
+        }),
+        expect.objectContaining({
+          id: "campaigns.reward.distribution.handoff.readiness",
+          method: "GET",
+          path: "/api/campaigns/:campaignId/reward-distribution/handoff-readiness",
           readiness: "review_required",
         }),
         expect.objectContaining({
@@ -2761,6 +2804,11 @@ describe("Campaign OS API runtime", () => {
       path: `/api/campaigns/${campaignDetail.id}/contract-writer/readiness`,
       headers: { "x-campaign-os-trace-id": "trace-contract-writer-readiness" },
     });
+    const rewardDistributionHandoffReadiness = await runtimeWithPersistence.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/reward-distribution/handoff-readiness`,
+      headers: { "x-campaign-os-trace-id": "trace-reward-distribution-handoff-readiness" },
+    });
     const providerReadiness = await runtimeWithPersistence.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/provider-readiness`,
@@ -3130,6 +3178,81 @@ describe("Campaign OS API runtime", () => {
     ).every((value) => value === false)).toBe(true);
     expect(JSON.stringify(expectSuccessData(contractWriterReadiness))).not.toContain("campaign-os-kitty");
     expect(JSON.stringify(expectSuccessData(contractWriterReadiness))).not.toContain("bearer");
+    expect(expectSuccessData<LocalServiceEnvelope<RewardDistributionHandoffRuntimePayload>>(
+      rewardDistributionHandoffReadiness,
+    )).toMatchObject({
+      boundary: expect.objectContaining({
+        "en-US": expect.stringContaining("Local reward distribution handoff readiness"),
+      }),
+      payload: {
+        campaignId: campaignDetail.id,
+        diagnosticCodes: expect.arrayContaining([
+          "REWARD_DISTRIBUTION_FUNDING_PROOF_MISSING",
+          "REWARD_DISTRIBUTION_LIVE_EXECUTION_DISABLED",
+          "REWARD_DISTRIBUTION_OPERATOR_APPROVAL_MISSING",
+          "REWARD_DISTRIBUTION_QUEUE_HANDOFF_MISSING",
+        ]),
+        evidenceHandoff: expect.objectContaining({
+          productionReady: false,
+          requiredEvidenceKeys: expect.arrayContaining([...rewardDistributionHandoffRequiredEvidenceKeys]),
+          status: "missing",
+        }),
+        exportLinkage: expect.objectContaining({
+          derivedFrom: "seeded_export_preview",
+          localPreviewOnly: true,
+          recipientCount: 4,
+        }),
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: "project-owner-funding-proof",
+            liveExecutionEnabled: false,
+            ownerRole: "project_owner",
+            requiredBeforeProduction: true,
+            state: "blocked",
+          }),
+          expect.objectContaining({
+            id: "winner-export-linkage",
+            liveExecutionEnabled: false,
+            state: "ready",
+          }),
+          expect.objectContaining({
+            id: "no-custody-no-distribution-boundary",
+            liveExecutionEnabled: false,
+            state: "review_required",
+          }),
+        ]),
+        noLiveSideEffects: expect.objectContaining({
+          liveClaim: false,
+          liveContractWrite: false,
+          livePayout: false,
+          liveProviderCall: false,
+          liveQueuePublishing: false,
+          liveRewardCustody: false,
+          liveRewardDistribution: false,
+          liveSchedulerExecution: false,
+          liveWalletSignature: false,
+          liveWorkerExecution: false,
+        }),
+        productionReady: false,
+        requiredEvidenceKeys: expect.arrayContaining([...rewardDistributionHandoffRequiredEvidenceKeys]),
+        source: "server_runtime",
+        status: "blocked",
+        summary: expect.objectContaining({
+          itemCount: 11,
+          missingEvidenceCount: rewardDistributionHandoffRequiredEvidenceKeys.length,
+          recipientCount: 4,
+        }),
+        traceId: "trace-reward-distribution-handoff-readiness",
+      },
+    });
+    expect(Object.values(
+      expectSuccessData<LocalServiceEnvelope<RewardDistributionHandoffRuntimePayload>>(rewardDistributionHandoffReadiness)
+        .payload.noLiveSideEffects,
+    ).every((value) => value === false)).toBe(true);
+    expect(JSON.stringify(expectSuccessData(rewardDistributionHandoffReadiness))).not.toContain("providerPayload");
+    expect(JSON.stringify(expectSuccessData(rewardDistributionHandoffReadiness))).not.toContain("transactionId");
+    expect(JSON.stringify(expectSuccessData(rewardDistributionHandoffReadiness))).not.toContain("campaign-os-kitty");
+    expect(JSON.stringify(expectSuccessData(rewardDistributionHandoffReadiness))).not.toContain("bearer");
     expect(expectSuccessData<LocalServiceEnvelope<CompanionContractReadinessPayload>>(
       companionContractReadiness,
     ).payload).toMatchObject({
@@ -3227,6 +3350,7 @@ describe("Campaign OS API runtime", () => {
       publishDeliveryReview,
       pointsRankingLedgerRuntime,
       analyticsIngestionReadiness,
+      rewardDistributionHandoffReadiness,
       companionContractReadiness,
       contractTransparency,
       exportReadiness,
@@ -3275,6 +3399,10 @@ describe("Campaign OS API runtime", () => {
       runtime.handle({
         method: "GET",
         path: "/api/campaigns/missing-campaign/contract-writer/readiness",
+      }),
+      runtime.handle({
+        method: "GET",
+        path: "/api/campaigns/missing-campaign/reward-distribution/handoff-readiness",
       }),
       runtime.handle({
         method: "GET",

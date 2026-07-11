@@ -230,6 +230,23 @@ export const apiRuntimeRoutes = [
   }),
   route({
     apiGroup: "campaign_discovery",
+    boundary: text(
+      "Local reward distribution handoff readiness review route. No live API, payout, reward custody, reward distribution, provider call, wallet signing, contract write, queue publishing, scheduler execution, or worker execution is performed.",
+      "本地 reward distribution handoff readiness review route。不会执行实时 API、payout、奖励托管、发奖、provider 调用、钱包签名、合约写入、队列发布、调度执行或 worker 执行。",
+      "本地 reward distribution handoff readiness review route。不會執行即時 API、payout、獎勵託管、發獎、provider 呼叫、錢包簽名、合約寫入、隊列發布、排程執行或 worker 執行。",
+    ),
+    id: "campaigns.reward.distribution.handoff.readiness",
+    method: "GET",
+    path: "/api/campaigns/:campaignId/reward-distribution/handoff-readiness",
+    productionDependencies: dependenciesFor("campaign"),
+    readiness: "review_required",
+    riskLevel: "high",
+    serviceGroup: "campaign",
+    summary: text("Inspect local reward distribution handoff readiness.", "检查本地 reward distribution handoff readiness。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "campaign_discovery",
     boundary,
     id: "campaigns.contract.transparency",
     method: "GET",

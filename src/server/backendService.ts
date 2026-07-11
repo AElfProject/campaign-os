@@ -123,6 +123,7 @@ import {
   createServerAnalyticsIngestionRuntimeReadiness,
 } from "./analyticsIngestionRuntime";
 import { createServerContractWriterRuntimeReadiness } from "./contractWriterRuntime";
+import { createServerRewardDistributionHandoffReadiness } from "./rewardDistributionHandoffRuntime";
 import {
   analyticsIngestionWarehouseRequiredConfigKeys,
   type AnalyticsIngestionRuntimeReadiness,
@@ -131,6 +132,7 @@ import {
   contractWriterRequiredConfigKeys,
   type ContractWriterRuntimeReadiness,
 } from "../domain/contractWriterRuntime";
+import type { RewardDistributionHandoffReadiness } from "../domain/rewardDistributionHandoffRuntime";
 
 export type BackendAttachPointArea =
   | "production-persistence"
@@ -243,6 +245,7 @@ export interface BackendServiceReadinessReport {
   providerIndexerFoundation: BackendProviderIndexerReadinessSummary;
   providerClientReadiness: BackendProviderClientReadinessSummary;
   queueRuntimeFoundation: BackendQueueRuntimeReadinessSummary;
+  rewardDistributionHandoffRuntime: RewardDistributionHandoffReadiness;
   workerIdempotencyStoreFoundation: BackendWorkerIdempotencyStoreReadinessSummary;
   workerLeaseStoreFoundation: BackendWorkerLeaseStoreReadinessSummary;
   persistenceRuntime: BackendPersistenceRuntimeReadinessReport;
@@ -994,6 +997,23 @@ const createBackendContractWriterRuntimeReadiness = (
       signerPolicyRef: env.CAMPAIGN_OS_CONTRACT_WRITER_SIGNER_POLICY_REF,
     },
     traceId: "backend-readiness-contract-writer",
+  });
+
+const createBackendRewardDistributionHandoffReadiness = (
+  env: Record<string, string | undefined>,
+): RewardDistributionHandoffReadiness =>
+  createServerRewardDistributionHandoffReadiness({
+    evidence: {
+      deadLetterPolicyRef: env.CAMPAIGN_OS_REWARD_DISTRIBUTION_DEAD_LETTER_POLICY_REF,
+      fundingProofRef: env.CAMPAIGN_OS_REWARD_DISTRIBUTION_FUNDING_PROOF_REF,
+      idempotencyPolicyRef: env.CAMPAIGN_OS_REWARD_DISTRIBUTION_IDEMPOTENCY_POLICY_REF,
+      offSwitchRef: env.CAMPAIGN_OS_REWARD_DISTRIBUTION_OFF_SWITCH_REF,
+      operatorApprovalRef: env.CAMPAIGN_OS_REWARD_DISTRIBUTION_OPERATOR_APPROVAL_REF,
+      queueHandoffRef: env.CAMPAIGN_OS_REWARD_DISTRIBUTION_QUEUE_HANDOFF_REF,
+      reconciliationReportRef: env.CAMPAIGN_OS_REWARD_DISTRIBUTION_RECONCILIATION_REF,
+      rollbackRunbookRef: env.CAMPAIGN_OS_REWARD_DISTRIBUTION_ROLLBACK_RUNBOOK_REF,
+    },
+    traceId: "backend-readiness-reward-distribution-handoff",
   });
 
 export const backendAttachMap: BackendAttachPoint[] = [
@@ -2450,6 +2470,7 @@ export const createBackendServiceReadinessReport = ({
   const objectStorageExportRuntime = createBackendObjectStorageExportReadiness(env);
   const analyticsIngestionRuntime = createBackendAnalyticsIngestionRuntimeReadiness(env);
   const contractWriterRuntime = createBackendContractWriterRuntimeReadiness(env);
+  const rewardDistributionHandoffRuntime = createBackendRewardDistributionHandoffReadiness(env);
   const workerLeaseStoreFoundation = createBackendWorkerLeaseStoreReadinessSummary({
     env,
     profileId: config.profileId,
@@ -2516,6 +2537,7 @@ export const createBackendServiceReadinessReport = ({
     providerIndexerFoundation,
     providerClientReadiness,
     queueRuntimeFoundation,
+    rewardDistributionHandoffRuntime,
     workerIdempotencyStoreFoundation,
     workerLeaseStoreFoundation,
     persistenceRuntime,
