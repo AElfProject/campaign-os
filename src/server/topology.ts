@@ -283,6 +283,8 @@ export const backendServiceBoundaries = [
       "campaigns.companion.contract.readiness",
       "campaigns.contract.writer.readiness",
       "campaigns.reward.distribution.handoff.readiness",
+      "campaigns.reward.funding-proof.review",
+      "campaigns.reward.funding-proof.review.submit",
       "campaigns.contract.transparency",
     ],
     runtimeProfiles: productionProfiles,

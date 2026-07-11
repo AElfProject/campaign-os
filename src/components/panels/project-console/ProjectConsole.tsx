@@ -51,6 +51,12 @@ import {
   type RewardDistributionHandoffRuntimeApiBridgeState,
 } from "../../../api/rewardDistributionHandoffRuntimeApiBridge";
 import {
+  createProjectOwnerFundingProofReviewBridgeApiLoadingState,
+  createProjectOwnerFundingProofReviewBridgeApiSeededFallbackState,
+  loadProjectOwnerFundingProofReviewBridgeApiState,
+  type ProjectOwnerFundingProofReviewBridgeApiState,
+} from "../../../api/projectOwnerFundingProofReviewBridgeApiBridge";
+import {
   createExportArtifactDeliveryApiLoadingState,
   createExportArtifactDeliverySeededFallbackState,
   sanitizeExportArtifactDeliveryApiText,
@@ -178,6 +184,7 @@ import { ContractWriterRuntimePanel } from "./ContractWriterRuntimePanel";
 import { ObjectStorageExportRuntimePanel } from "./ObjectStorageExportRuntimePanel";
 import { PointsRankingLedgerRuntimePanel } from "./PointsRankingLedgerRuntimePanel";
 import { RewardDistributionHandoffRuntimePanel } from "./RewardDistributionHandoffRuntimePanel";
+import { ProjectOwnerFundingProofReviewPanel } from "./ProjectOwnerFundingProofReviewPanel";
 import { RepositoryCampaignWorkflowPanel } from "./RepositoryCampaignWorkflowPanel";
 import { projectConsoleCopy } from "./copy";
 import { PublishDeliveryReviewPanel } from "./PublishDeliveryReviewPanel";
@@ -1335,6 +1342,9 @@ const contractWriterRuntimeApiBaseUrl = () =>
 const rewardDistributionHandoffRuntimeApiBaseUrl = () =>
   import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
+const projectOwnerFundingProofReviewApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
 const createPublishDeliveryReviewSeededFallbackState = (
   campaignId: string,
 ): PublishDeliveryReviewApiBridgeState => ({
@@ -1431,6 +1441,23 @@ const createRewardDistributionHandoffRuntimeSeededFallbackState = (
         "en-US": "No local reward distribution handoff readiness API base URL is configured, so seeded review data is shown.",
         "zh-CN": "未配置本地 reward distribution handoff readiness API base URL，因此显示 seeded review 数据。",
         "zh-TW": "未設定本地 reward distribution handoff readiness API base URL，因此顯示 seeded review 資料。",
+      },
+      severity: "info",
+    },
+  ],
+});
+
+const createProjectOwnerFundingProofReviewSeededFallbackState = (
+  campaignId: string,
+): ProjectOwnerFundingProofReviewBridgeApiState => ({
+  ...createProjectOwnerFundingProofReviewBridgeApiSeededFallbackState(campaignId),
+  diagnostics: [
+    {
+      code: "API_BASE_URL_MISSING",
+      message: {
+        "en-US": "No local project owner funding proof review API base URL is configured, so seeded review data is shown.",
+        "zh-CN": "未配置本地项目方资金证明 review API base URL，因此显示 seeded review 数据。",
+        "zh-TW": "未設定本地專案方資金證明 review API base URL，因此顯示 seeded review 資料。",
       },
       severity: "info",
     },
@@ -2137,6 +2164,7 @@ export const ProjectConsole = ({
   const analyticsIngestionRuntimeApiRequestSeq = useRef(0);
   const contractWriterRuntimeApiRequestSeq = useRef(0);
   const rewardDistributionHandoffRuntimeApiRequestSeq = useRef(0);
+  const projectOwnerFundingProofReviewApiRequestSeq = useRef(0);
   const exportDeliveryApiRequestSeq = useRef(0);
   const backendReadinessApiRequestSeq = useRef(0);
   const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
@@ -2224,6 +2252,7 @@ export const ProjectConsole = ({
   const analyticsIngestionRuntimeApiBase = analyticsIngestionRuntimeApiBaseUrl();
   const contractWriterRuntimeApiBase = contractWriterRuntimeApiBaseUrl();
   const rewardDistributionHandoffRuntimeApiBase = rewardDistributionHandoffRuntimeApiBaseUrl();
+  const projectOwnerFundingProofReviewApiBase = projectOwnerFundingProofReviewApiBaseUrl();
   const exportDeliveryApiRequest: ExportArtifactDeliveryRequest = {
     campaignId: campaign.id,
     contractRootMode: "eligibility_root",
@@ -2287,6 +2316,14 @@ export const ProjectConsole = ({
         : createRewardDistributionHandoffRuntimeSeededFallbackState(campaign.id),
     );
   const [rewardDistributionHandoffRuntimeApiReviewInFlight, setRewardDistributionHandoffRuntimeApiReviewInFlight] =
+    useState(false);
+  const [projectOwnerFundingProofReviewApiState, setProjectOwnerFundingProofReviewApiState] =
+    useState<ProjectOwnerFundingProofReviewBridgeApiState>(() =>
+      projectOwnerFundingProofReviewApiBase?.trim()
+        ? createProjectOwnerFundingProofReviewBridgeApiLoadingState(campaign.id)
+        : createProjectOwnerFundingProofReviewSeededFallbackState(campaign.id),
+    );
+  const [projectOwnerFundingProofReviewApiReviewInFlight, setProjectOwnerFundingProofReviewApiReviewInFlight] =
     useState(false);
   const backendReadinessApiBaseUrl = backendRuntimeReadinessApiBaseUrl();
   const [backendReadinessApiState, setBackendReadinessApiState] =
@@ -2620,6 +2657,40 @@ export const ProjectConsole = ({
     loadRewardDistributionHandoffRuntimeApiReview();
   };
 
+  const loadProjectOwnerFundingProofReviewApiReview = useCallback(() => {
+    if (!projectOwnerFundingProofReviewApiBase?.trim()) {
+      setProjectOwnerFundingProofReviewApiState(createProjectOwnerFundingProofReviewSeededFallbackState(campaign.id));
+      setProjectOwnerFundingProofReviewApiReviewInFlight(false);
+      return;
+    }
+
+    setProjectOwnerFundingProofReviewApiReviewInFlight(true);
+    setProjectOwnerFundingProofReviewApiState(createProjectOwnerFundingProofReviewBridgeApiLoadingState(campaign.id));
+
+    const requestSeq = projectOwnerFundingProofReviewApiRequestSeq.current + 1;
+    projectOwnerFundingProofReviewApiRequestSeq.current = requestSeq;
+
+    void loadProjectOwnerFundingProofReviewBridgeApiState({
+      campaignId: campaign.id,
+      config: {
+        baseUrl: projectOwnerFundingProofReviewApiBase,
+        tracePrefix: "project-console-project-owner-funding-proof-review",
+      },
+    }).then((state) => {
+      if (projectOwnerFundingProofReviewApiRequestSeq.current === requestSeq) {
+        setProjectOwnerFundingProofReviewApiState(state);
+      }
+    }).finally(() => {
+      if (projectOwnerFundingProofReviewApiRequestSeq.current === requestSeq) {
+        setProjectOwnerFundingProofReviewApiReviewInFlight(false);
+      }
+    });
+  }, [campaign.id, projectOwnerFundingProofReviewApiBase]);
+
+  const runProjectOwnerFundingProofReviewApiReview = () => {
+    loadProjectOwnerFundingProofReviewApiReview();
+  };
+
   const loadBackendReadinessApiReview = useCallback(() => {
     if (!backendReadinessApiBaseUrl?.trim()) {
       setBackendReadinessApiState(createBackendRuntimeReadinessSeededFallbackState());
@@ -2662,6 +2733,7 @@ export const ProjectConsole = ({
       loadAnalyticsIngestionRuntimeApiReview();
       loadContractWriterRuntimeApiReview();
       loadRewardDistributionHandoffRuntimeApiReview();
+      loadProjectOwnerFundingProofReviewApiReview();
       loadBackendReadinessApiReview();
     }
   }, [
@@ -2672,6 +2744,7 @@ export const ProjectConsole = ({
     loadObjectStorageExportRuntimeApiReview,
     loadPointsRankingLedgerRuntimeApiReview,
     loadPublishDeliveryApiReview,
+    loadProjectOwnerFundingProofReviewApiReview,
     loadRepositoryCampaignWorkflowApiReview,
     loadRewardDistributionHandoffRuntimeApiReview,
   ]);
@@ -7203,6 +7276,15 @@ export const ProjectConsole = ({
         onReview={runRewardDistributionHandoffRuntimeApiReview}
         reviewInFlight={rewardDistributionHandoffRuntimeApiReviewInFlight}
         state={rewardDistributionHandoffRuntimeApiState}
+      />
+
+      <ProjectOwnerFundingProofReviewPanel
+        apiConfigured={Boolean(projectOwnerFundingProofReviewApiBase?.trim())}
+        copy={copy}
+        locale={locale}
+        onReview={runProjectOwnerFundingProofReviewApiReview}
+        reviewInFlight={projectOwnerFundingProofReviewApiReviewInFlight}
+        state={projectOwnerFundingProofReviewApiState}
       />
 
       <AnalyticsIngestionRuntimePanel
