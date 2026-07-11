@@ -173,6 +173,8 @@ const backendReadinessBadgeState = (
 
 const listOrFallback = (items: readonly string[], fallback: string) => (items.length > 0 ? items : [fallback]);
 
+const uniqueStrings = (items: readonly string[]) => [...new Set(items)];
+
 const sanitizePanelDiagnosticText = (value: unknown) =>
   sanitizeBackendRuntimeReadinessApiText(value)
     .replace(
@@ -189,9 +191,20 @@ export function BackendRuntimeReadinessPanel({
   reviewInFlight,
   state,
 }: BackendRuntimeReadinessPanelProps) {
-  const { deployHandoff, noLiveSideEffects, productionDependencyBlockers, profile, routeCoverage } =
-    state.summary;
+  const {
+    deployHandoff,
+    futureProductionBlockerIds,
+    mvpReleaseBlockerIds,
+    mvpReleaseReady,
+    noLiveSideEffects,
+    productionDependencyBlockers,
+    profile,
+    routeCoverage,
+  } = state.summary;
   const noLiveDisabledCount = Object.values(noLiveSideEffects).filter((value) => value === false).length;
+  const blockedDependencyLabels = uniqueStrings(
+    productionDependencyBlockers.flatMap((blocker) => [blocker.area, ...blocker.blockedBy]),
+  );
 
   return (
     <article aria-label={copy.backendReadinessRegionLabel} style={panelStyle}>
@@ -242,6 +255,39 @@ export function BackendRuntimeReadinessPanel({
           <p style={bodyTextStyle}>
             {routeCoverage.coveredApiSkillCount} / {routeCoverage.requiredApiSkillCount} {copy.backendReadinessApiSkills}
           </p>
+        </article>
+
+        <article style={cardStyle}>
+          <p style={statLabelStyle}>{copy.backendReadinessMvpReleaseGate}</p>
+          <p style={{ ...statValueStyle, fontSize: 18 }}>
+            {mvpReleaseReady ? copy.backendReadinessMvpReleaseReady : copy.backendReadinessMvpReleaseBlocked}
+          </p>
+          <p style={bodyTextStyle}>
+            {mvpReleaseBlockerIds.length} {copy.backendReadinessMvpReleaseBlockersSuffix}
+          </p>
+          <ul style={compactListStyle}>
+            {listOrFallback(mvpReleaseBlockerIds, copy.backendReadinessNone).map((blockerId) => (
+              <li key={blockerId} style={chipStyle}>
+                {blockerId}
+              </li>
+            ))}
+          </ul>
+        </article>
+
+        <article style={cardStyle}>
+          <p style={statLabelStyle}>{copy.backendReadinessFutureProductionBlockers}</p>
+          <p style={statValueStyle}>{futureProductionBlockerIds.length}</p>
+          <p style={bodyTextStyle}>
+            {futureProductionBlockerIds.length} {copy.backendReadinessFutureProductionSuffix}
+          </p>
+          <p style={bodyTextStyle}>{copy.backendReadinessFutureProductionNote}</p>
+          <ul style={compactListStyle}>
+            {listOrFallback(futureProductionBlockerIds, copy.backendReadinessNone).map((blockerId) => (
+              <li key={blockerId} style={chipStyle}>
+                {blockerId}
+              </li>
+            ))}
+          </ul>
         </article>
 
         <article style={cardStyle}>
@@ -333,7 +379,7 @@ export function BackendRuntimeReadinessPanel({
           <p style={statLabelStyle}>{copy.backendReadinessBlockedDependencies}</p>
           <ul style={compactListStyle}>
             {listOrFallback(
-              productionDependencyBlockers.flatMap((blocker) => [blocker.area, ...blocker.blockedBy]),
+              blockedDependencyLabels,
               copy.backendReadinessNone,
             ).map((blocker) => (
               <li key={blocker} style={chipStyle}>
@@ -363,6 +409,7 @@ export function BackendRuntimeReadinessPanel({
           copy.backendReadinessNoWalletSdk,
           copy.backendReadinessNoContractWrite,
           copy.backendReadinessNoScheduler,
+          copy.backendReadinessNoRewardCustody,
           copy.backendReadinessNoRewardDistribution,
         ].map((label) => (
           <li key={label} style={chipStyle}>

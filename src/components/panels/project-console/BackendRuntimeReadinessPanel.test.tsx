@@ -18,7 +18,12 @@ const baseState = (): BackendRuntimeReadinessApiBridgeState => ({
   loading: false,
   source: "api_runtime",
   status: "ready",
-  summary: seededBackendRuntimeReadinessSummary,
+  summary: {
+    ...seededBackendRuntimeReadinessSummary,
+    futureProductionBlockerIds: ["reward-custody", "reward-distribution"],
+    mvpReleaseBlockerIds: [],
+    mvpReleaseReady: true,
+  },
   traceId: "trace-backend-runtime-visible",
 });
 
@@ -58,6 +63,23 @@ describe("BackendRuntimeReadinessPanel", () => {
     expect(within(panel).getByText("CAMPAIGN_OS_CONTRACT_WRITER_ENDPOINT_REF")).toBeInTheDocument();
     expect(within(panel).getByText("No contract write")).toBeInTheDocument();
     expect(within(panel).getByText(/No live provider call/)).toBeInTheDocument();
+  });
+
+  it("renders MVP release gate separately from future production blockers", () => {
+    renderPanel(baseState());
+
+    const panel = screen.getByLabelText("Backend Runtime Readiness review");
+
+    expect(within(panel).getByText("MVP/local review gate")).toBeInTheDocument();
+    expect(within(panel).getByText("Ready for local MVP review")).toBeInTheDocument();
+    expect(within(panel).getByText("0 MVP blockers")).toBeInTheDocument();
+    expect(within(panel).getByText("Future/full production blockers")).toBeInTheDocument();
+    expect(within(panel).getByText("2 future blockers")).toBeInTheDocument();
+    expect(within(panel).getAllByText("reward-custody").length).toBeGreaterThan(0);
+    expect(within(panel).getAllByText("reward-distribution").length).toBeGreaterThan(0);
+    expect(within(panel).queryByText("0 future blockers")).not.toBeInTheDocument();
+    expect(within(panel).getByText("No reward custody")).toBeInTheDocument();
+    expect(within(panel).getByText("No reward distribution")).toBeInTheDocument();
   });
 
   it("renders seeded fallback and missing API diagnostic without fetching", () => {

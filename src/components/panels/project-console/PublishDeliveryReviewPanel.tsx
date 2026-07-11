@@ -30,6 +30,9 @@ const labels = {
     errorFallback: "Error fallback",
     evidenceHashCoverage: "Evidence hash coverage",
     fallback: "Fallback",
+    futureProduction: "Future/full production blockers",
+    futureProductionNote: "Future production only; v0.2 local review still has no reward custody or distribution.",
+    futureProductionSuffix: "future blockers",
     handoffs: "handoffs",
     launchBundles: "Launch bundles",
     launchState: "Launch state",
@@ -37,6 +40,7 @@ const labels = {
     noContractWrite: "No contract write",
     noDiagnostics: "No diagnostics",
     noLiveExecution: "No live provider execution",
+    none: "None",
     noProductionPublish: "No production publish",
     noRewardCustody: "No reward custody",
     noRewardDistribution: "No reward distribution",
@@ -44,6 +48,10 @@ const labels = {
     notConfigured: "No local API base URL configured; seeded joint review remains visible and no fetch is sent.",
     panelTitle: "Publish Delivery Review Bridge",
     productionReady: "productionReady=false",
+    mvpReleaseBlocked: "Blocked for local MVP review",
+    mvpReleaseBlockersSuffix: "MVP blockers",
+    mvpReleaseGate: "MVP/local review gate",
+    mvpReleaseReady: "Ready for local MVP review",
     repositoryEvidence: "Repository evidence",
     reviewAction: "Review local bridge",
     reviewing: "Reviewing local bridge...",
@@ -63,6 +71,9 @@ const labels = {
     errorFallback: "错误回退",
     evidenceHashCoverage: "证据 hash 覆盖",
     fallback: "回退",
+    futureProduction: "Future/full production 阻断项",
+    futureProductionNote: "仅用于后续生产；v0.2 本地 review 仍不托管奖励也不发奖。",
+    futureProductionSuffix: "个 future 阻断",
     handoffs: "handoffs",
     launchBundles: "Launch bundles",
     launchState: "Launch state",
@@ -70,6 +81,7 @@ const labels = {
     noContractWrite: "不写合约",
     noDiagnostics: "无诊断",
     noLiveExecution: "不执行实时 provider",
+    none: "无",
     noProductionPublish: "不执行生产发布",
     noRewardCustody: "不托管奖励",
     noRewardDistribution: "不发奖",
@@ -77,6 +89,10 @@ const labels = {
     notConfigured: "未配置本地 API base URL；seeded 联合 review 保持可见，且不会发送 fetch。",
     panelTitle: "Publish Delivery Review Bridge",
     productionReady: "productionReady=false",
+    mvpReleaseBlocked: "本地 MVP review 仍阻断",
+    mvpReleaseBlockersSuffix: "个 MVP 阻断",
+    mvpReleaseGate: "MVP/local review gate",
+    mvpReleaseReady: "本地 MVP review 就绪",
     repositoryEvidence: "Repository evidence",
     reviewAction: "评审本地 bridge",
     reviewing: "正在评审本地 bridge...",
@@ -96,6 +112,9 @@ const labels = {
     errorFallback: "錯誤回退",
     evidenceHashCoverage: "證據 hash 覆蓋",
     fallback: "回退",
+    futureProduction: "Future/full production 阻斷項",
+    futureProductionNote: "僅用於後續生產；v0.2 本地 review 仍不託管獎勵也不發獎。",
+    futureProductionSuffix: "個 future 阻斷",
     handoffs: "handoffs",
     launchBundles: "Launch bundles",
     launchState: "Launch state",
@@ -103,6 +122,7 @@ const labels = {
     noContractWrite: "不寫合約",
     noDiagnostics: "無診斷",
     noLiveExecution: "不執行即時 provider",
+    none: "無",
     noProductionPublish: "不執行生產發布",
     noRewardCustody: "不託管獎勵",
     noRewardDistribution: "不發獎",
@@ -110,6 +130,10 @@ const labels = {
     notConfigured: "未設定本地 API base URL；seeded 聯合 review 保持可見，且不會送出 fetch。",
     panelTitle: "Publish Delivery Review Bridge",
     productionReady: "productionReady=false",
+    mvpReleaseBlocked: "本地 MVP review 仍阻斷",
+    mvpReleaseBlockersSuffix: "個 MVP 阻斷",
+    mvpReleaseGate: "MVP/local review gate",
+    mvpReleaseReady: "本地 MVP review 就緒",
     repositoryEvidence: "Repository evidence",
     reviewAction: "評審本地 bridge",
     reviewing: "正在評審本地 bridge...",
@@ -270,6 +294,8 @@ const badgeState = (status: PublishDeliveryReviewApiStatus): PublishDeliveryBadg
 
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
 
+const listOrFallback = (items: readonly string[], fallback: string) => (items.length > 0 ? items : [fallback]);
+
 const sanitizePanelDiagnosticText = (value: unknown) =>
   sanitizePublishDeliveryReviewApiText(value)
     .replace(
@@ -287,6 +313,7 @@ export function PublishDeliveryReviewPanel({
 }: PublishDeliveryReviewPanelProps) {
   const copy = localeLabels(locale);
   const { review } = state;
+  const { releaseScopeSummary } = state;
   const diagnostics = [
     ...state.diagnostics.map((diagnostic) => ({
       code: diagnostic.code,
@@ -351,6 +378,39 @@ export function PublishDeliveryReviewPanel({
         </article>
 
         <article style={cardStyle}>
+          <p style={statLabelStyle}>{copy.mvpReleaseGate}</p>
+          <p style={{ ...statValueStyle, fontSize: 18 }}>
+            {releaseScopeSummary.mvpReleaseReady ? copy.mvpReleaseReady : copy.mvpReleaseBlocked}
+          </p>
+          <p style={bodyTextStyle}>
+            {releaseScopeSummary.mvpReleaseBlockerCount} {copy.mvpReleaseBlockersSuffix}
+          </p>
+          <ul style={compactListStyle}>
+            {listOrFallback(releaseScopeSummary.mvpReleaseBlockerIds, copy.none).map((blockerId) => (
+              <li key={blockerId} style={chipStyle}>
+                {blockerId}
+              </li>
+            ))}
+          </ul>
+        </article>
+
+        <article style={cardStyle}>
+          <p style={statLabelStyle}>{copy.futureProduction}</p>
+          <p style={statValueStyle}>{releaseScopeSummary.futureProductionBlockerCount}</p>
+          <p style={bodyTextStyle}>
+            {releaseScopeSummary.futureProductionBlockerCount} {copy.futureProductionSuffix}
+          </p>
+          <p style={bodyTextStyle}>{copy.futureProductionNote}</p>
+          <ul style={compactListStyle}>
+            {listOrFallback(releaseScopeSummary.futureProductionBlockerIds, copy.none).map((blockerId) => (
+              <li key={blockerId} style={chipStyle}>
+                {blockerId}
+              </li>
+            ))}
+          </ul>
+        </article>
+
+        <article style={cardStyle}>
           <p style={statLabelStyle}>{copy.launchBundles}</p>
           <p style={statValueStyle}>{review.summary.launchBundleCount}</p>
           <p style={bodyTextStyle}>
@@ -370,7 +430,7 @@ export function PublishDeliveryReviewPanel({
           <p style={statLabelStyle}>{copy.backend}</p>
           <p style={{ ...statValueStyle, fontSize: 18 }}>{copy.productionReady}</p>
           <p style={bodyTextStyle}>
-            {review.summary.productionBlockerCount} blockers / {review.backendRuntime.status}
+            {releaseScopeSummary.productionBlockerCount} blockers / {review.backendRuntime.status}
           </p>
         </article>
 
