@@ -4,7 +4,7 @@ import {
   type BackendServiceReadinessReport,
 } from "./backendService";
 import type { BackendRuntimeBootstrapContract } from "./backendRuntimeBootstrap";
-import type { BackendRuntimeActivationContract } from "./backendRuntimeActivation";
+import type { BackendRuntimeActivationContract, RuntimeReleaseScope } from "./backendRuntimeActivation";
 import { apiRuntimeRoutes } from "./routes";
 import {
   resolveApiServerRuntimeContract,
@@ -63,12 +63,19 @@ export interface CampaignOsApiServiceAttachPoint {
   area: CampaignOsApiServiceAttachPointArea;
   attachPoint: string;
   blockedBy: string[];
+  futureProductionOnly: boolean;
   id: CampaignOsApiServiceAttachPointId;
   localContractReady?: boolean;
+  mvpReleaseRequired: boolean;
+  releaseScope: RuntimeReleaseScope;
   requiredBeforeProduction: boolean;
   productionReady?: false;
   status: CampaignOsApiServiceAttachPointStatus;
 }
+
+type CampaignOsApiServiceAttachPointInput =
+  & Omit<CampaignOsApiServiceAttachPoint, "futureProductionOnly" | "mvpReleaseRequired" | "releaseScope">
+  & Partial<Pick<CampaignOsApiServiceAttachPoint, "futureProductionOnly" | "mvpReleaseRequired" | "releaseScope">>;
 
 export interface CampaignOsApiServiceComposition {
   activation: BackendRuntimeActivationContract;
@@ -127,8 +134,11 @@ export interface CampaignOsApiServiceReadiness {
   contractWriteEnabled: false;
   deferredDependencyIds: CampaignOsApiServiceAttachPointId[];
   deployableBoundaryReady: boolean;
+  futureProductionBlockerIds: CampaignOsApiServiceAttachPointId[];
   liveConnectionAttempted: false;
   liveSideEffectsEnabled: false;
+  mvpReleaseBlockerIds: CampaignOsApiServiceAttachPointId[];
+  mvpReleaseReady: boolean;
   productionReady: false;
   workerExecutionEnabled: false;
 }
@@ -165,7 +175,23 @@ export interface CampaignOsApiServiceConfig extends ResolveApiServerRuntimeContr
   shutdownState?: Partial<Omit<CampaignOsApiServiceShutdown, "shutdownTimeoutMs">>;
 }
 
-export const campaignOsApiServiceAttachMap: CampaignOsApiServiceAttachPoint[] = [
+const isFutureProductionOnlyScope = (releaseScope: RuntimeReleaseScope) =>
+  releaseScope === "excluded_from_mvp" || releaseScope === "future_production";
+
+const createAttachPoint = (
+  attachPoint: CampaignOsApiServiceAttachPointInput,
+): CampaignOsApiServiceAttachPoint => {
+  const releaseScope = attachPoint.releaseScope ?? "production_required";
+
+  return {
+    ...attachPoint,
+    futureProductionOnly: attachPoint.futureProductionOnly ?? isFutureProductionOnlyScope(releaseScope),
+    mvpReleaseRequired: attachPoint.mvpReleaseRequired ?? releaseScope === "mvp_release_required",
+    releaseScope,
+  };
+};
+
+const campaignOsApiServiceAttachMapDefinitions: CampaignOsApiServiceAttachPointInput[] = [
   {
     area: "database",
     attachPoint: "src/server/databaseAdapterRuntime.ts",
@@ -263,6 +289,7 @@ export const campaignOsApiServiceAttachMap: CampaignOsApiServiceAttachPoint[] = 
     attachPoint: "src/server/servicePorts.ts",
     blockedBy: ["reward custody mission", "finance/security review"],
     id: "reward-custody",
+    releaseScope: "excluded_from_mvp",
     requiredBeforeProduction: true,
     status: "blocked",
   },
@@ -271,6 +298,7 @@ export const campaignOsApiServiceAttachMap: CampaignOsApiServiceAttachPoint[] = 
     attachPoint: "src/server/servicePorts.ts",
     blockedBy: ["reward distribution mission", ...contractWriterRequiredConfigKeys],
     id: "reward-distribution",
+    releaseScope: "excluded_from_mvp",
     requiredBeforeProduction: true,
     status: "blocked",
   },
@@ -291,6 +319,8 @@ export const campaignOsApiServiceAttachMap: CampaignOsApiServiceAttachPoint[] = 
     status: "deferred",
   },
 ];
+
+export const campaignOsApiServiceAttachMap = campaignOsApiServiceAttachMapDefinitions.map(createAttachPoint);
 
 const diagnostic = (
   code: CampaignOsApiServiceDiagnosticCode,
@@ -436,6 +466,12 @@ const createReadiness = (
   const deferredDependencyIds = campaignOsApiServiceAttachMap
     .filter((attachPoint) => attachPoint.status === "deferred")
     .map((attachPoint) => attachPoint.id);
+  const mvpReleaseBlockerIds = campaignOsApiServiceAttachMap
+    .filter((attachPoint) => attachPoint.mvpReleaseRequired && attachPoint.status !== "ready")
+    .map((attachPoint) => attachPoint.id);
+  const futureProductionBlockerIds = campaignOsApiServiceAttachMap
+    .filter((attachPoint) => attachPoint.futureProductionOnly)
+    .map((attachPoint) => attachPoint.id);
   const blocked = diagnostics.some((item) => item.severity === "error");
 
   return {
@@ -444,8 +480,11 @@ const createReadiness = (
     contractWriteEnabled: false,
     deferredDependencyIds,
     deployableBoundaryReady: !blocked,
+    futureProductionBlockerIds,
     liveConnectionAttempted: false,
     liveSideEffectsEnabled: false,
+    mvpReleaseBlockerIds,
+    mvpReleaseReady: !blocked && mvpReleaseBlockerIds.length === 0,
     productionReady: false,
     workerExecutionEnabled: false,
   };

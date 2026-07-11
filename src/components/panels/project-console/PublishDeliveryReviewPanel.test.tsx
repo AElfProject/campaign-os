@@ -17,6 +17,14 @@ const apiBackedState = (): PublishDeliveryReviewApiBridgeState => {
     boundary: publishDeliveryReviewApiBoundary,
     configured: true,
     diagnostics: [],
+    releaseScopeSummary: {
+      futureProductionBlockerCount: 2,
+      futureProductionBlockerIds: ["reward-custody", "reward-distribution"],
+      mvpReleaseBlockerCount: 0,
+      mvpReleaseBlockerIds: [],
+      mvpReleaseReady: true,
+      productionBlockerCount: state.releaseScopeSummary.productionBlockerCount,
+    },
     routeCount: 32,
     source: "api_runtime",
     status: "blocked",
@@ -65,6 +73,21 @@ describe("PublishDeliveryReviewPanel", () => {
     expect(within(panel).getByText("No contract write")).toBeInTheDocument();
     expect(within(panel).getByText("No reward custody")).toBeInTheDocument();
     expect(within(panel).getByText("No reward distribution")).toBeInTheDocument();
+  });
+
+  it("renders MVP blockers separately from future production blockers", () => {
+    renderPanel(apiBackedState());
+
+    const panel = screen.getByLabelText("Publish Delivery Review Bridge");
+
+    expect(within(panel).getByText("MVP/local review gate")).toBeInTheDocument();
+    expect(within(panel).getByText("Ready for local MVP review")).toBeInTheDocument();
+    expect(within(panel).getByText("0 MVP blockers")).toBeInTheDocument();
+    expect(within(panel).getByText("Future/full production blockers")).toBeInTheDocument();
+    expect(within(panel).getByText("2 future blockers")).toBeInTheDocument();
+    expect(within(panel).getByText("reward-custody")).toBeInTheDocument();
+    expect(within(panel).getByText("reward-distribution")).toBeInTheDocument();
+    expect(within(panel).queryByText("productionReady=true")).not.toBeInTheDocument();
   });
 
   it("renders seeded fallback with local-review boundary and diagnostic", () => {

@@ -16,6 +16,11 @@ export type BackendRuntimeReadinessApiStatus =
   | "scaffold";
 
 export type BackendRuntimeReadinessSummaryStatus = "blocked" | "ready" | "scaffold";
+export type BackendRuntimeReleaseScope =
+  | "excluded_from_mvp"
+  | "future_production"
+  | "mvp_release_required"
+  | "production_required";
 
 export interface BackendRuntimeReadinessApiConfig {
   baseUrl?: string;
@@ -84,10 +89,17 @@ export interface BackendRuntimeReadinessDependencyBlocker {
   area: string;
   attachPoint: string;
   blockedBy: readonly string[];
+  futureProductionOnly: boolean;
   id: string;
+  mvpReleaseRequired: boolean;
+  releaseScope: BackendRuntimeReleaseScope;
   requiredBeforeProduction: true;
   status: "blocked" | "deferred";
 }
+
+type BackendRuntimeReadinessDependencyBlockerInput =
+  & Omit<BackendRuntimeReadinessDependencyBlocker, "futureProductionOnly" | "mvpReleaseRequired" | "releaseScope">
+  & Partial<Pick<BackendRuntimeReadinessDependencyBlocker, "futureProductionOnly" | "mvpReleaseRequired" | "releaseScope">>;
 
 export interface BackendRuntimeReadinessDiagnosticSummary {
   code: string;
@@ -142,6 +154,9 @@ export interface BackendRuntimeReadinessSummary {
   generatedAt: string;
   id: "production-backend-runtime-readiness";
   noLiveSideEffects: BackendRuntimeReadinessNoLiveSideEffects;
+  futureProductionBlockerIds: readonly string[];
+  mvpReleaseBlockerIds: readonly string[];
+  mvpReleaseReady: boolean;
   productionDependencyBlockers: readonly BackendRuntimeReadinessDependencyBlocker[];
   productionReady: false;
   profile: BackendRuntimeReadinessProfile;
@@ -371,12 +386,18 @@ export const seededBackendRuntimeReadinessSummary: BackendRuntimeReadinessSummar
     schedulerExecuted: false,
     walletSdkExecuted: false,
   },
+  futureProductionBlockerIds: ["reward-custody", "reward-distribution"],
+  mvpReleaseBlockerIds: ["backend-readiness-api-unavailable"],
+  mvpReleaseReady: false,
   productionDependencyBlockers: [
     {
       area: "database",
       attachPoint: "src/server/productionDatabase.ts",
       blockedBy: ["production database driver"],
+      futureProductionOnly: false,
       id: "live-database-driver",
+      mvpReleaseRequired: false,
+      releaseScope: "production_required",
       requiredBeforeProduction: true,
       status: "blocked",
     },
@@ -384,7 +405,21 @@ export const seededBackendRuntimeReadinessSummary: BackendRuntimeReadinessSummar
       area: "contract",
       attachPoint: "src/server/servicePorts.ts",
       blockedBy: [...contractWriterRequiredConfigKeys],
+      futureProductionOnly: false,
       id: "contract-writer",
+      mvpReleaseRequired: false,
+      releaseScope: "production_required",
+      requiredBeforeProduction: true,
+      status: "blocked",
+    },
+    {
+      area: "reward",
+      attachPoint: "src/server/servicePorts.ts",
+      blockedBy: ["reward custody mission", "finance/security review"],
+      futureProductionOnly: true,
+      id: "reward-custody",
+      mvpReleaseRequired: false,
+      releaseScope: "excluded_from_mvp",
       requiredBeforeProduction: true,
       status: "blocked",
     },
@@ -392,7 +427,10 @@ export const seededBackendRuntimeReadinessSummary: BackendRuntimeReadinessSummar
       area: "reward",
       attachPoint: "src/server/servicePorts.ts",
       blockedBy: ["reward distribution mission"],
+      futureProductionOnly: true,
       id: "reward-distribution",
+      mvpReleaseRequired: false,
+      releaseScope: "excluded_from_mvp",
       requiredBeforeProduction: true,
       status: "blocked",
     },
@@ -685,6 +723,29 @@ const isValidBlockerStatus = (
   value: unknown,
 ): value is BackendRuntimeReadinessDependencyBlocker["status"] =>
   value === "blocked" || value === "deferred";
+
+const isReleaseScope = (value: unknown): value is BackendRuntimeReleaseScope =>
+  value === "excluded_from_mvp"
+  || value === "future_production"
+  || value === "mvp_release_required"
+  || value === "production_required";
+
+const releaseScopeFrom = (value: unknown): BackendRuntimeReleaseScope =>
+  isReleaseScope(value) ? value : "production_required";
+
+const futureProductionOnlyFrom = (
+  value: unknown,
+  releaseScope: BackendRuntimeReleaseScope,
+): boolean =>
+  typeof value === "boolean"
+    ? value
+    : releaseScope === "excluded_from_mvp" || releaseScope === "future_production";
+
+const mvpReleaseRequiredFrom = (
+  value: unknown,
+  releaseScope: BackendRuntimeReleaseScope,
+): boolean =>
+  typeof value === "boolean" ? value : releaseScope === "mvp_release_required";
 
 const noLiveSideEffectsValid = (
   value: unknown,
@@ -1013,7 +1074,7 @@ const isTracePolicy = (value: unknown): value is BackendRuntimeReadinessTracePol
   && value.successEnvelopeTraceId === true
   && value.traceHeaderName === "x-campaign-os-trace-id";
 
-const isDependencyBlocker = (value: unknown): value is BackendRuntimeReadinessDependencyBlocker =>
+const isDependencyBlocker = (value: unknown): value is BackendRuntimeReadinessDependencyBlockerInput =>
   isRecord(value)
   && typeof value.area === "string"
   && typeof value.attachPoint === "string"
@@ -1045,7 +1106,7 @@ const uniqueSafeStrings = (values: readonly string[]): string[] => {
 };
 
 const normalizeDependencyBlockers = (
-  blockers: readonly BackendRuntimeReadinessDependencyBlocker[],
+  blockers: readonly BackendRuntimeReadinessDependencyBlockerInput[],
 ): BackendRuntimeReadinessDependencyBlocker[] => {
   const areaLabels = uniqueSafeStrings(blockers.map((blocker) => blocker.area));
   const reservedLabels = new Set(areaLabels);
@@ -1059,11 +1120,16 @@ const normalizeDependencyBlockers = (
       continue;
     }
 
+    const releaseScope = releaseScopeFrom(firstBlocker.releaseScope);
+
     grouped.set(area, {
       area,
       attachPoint: safeString(firstBlocker.attachPoint) ?? "runtime readiness",
       blockedBy: [],
+      futureProductionOnly: futureProductionOnlyFrom(firstBlocker.futureProductionOnly, releaseScope),
       id: safeString(firstBlocker.id) ?? area,
+      mvpReleaseRequired: mvpReleaseRequiredFrom(firstBlocker.mvpReleaseRequired, releaseScope),
+      releaseScope,
       requiredBeforeProduction: true,
       status: firstBlocker.status,
     });
@@ -1079,6 +1145,15 @@ const normalizeDependencyBlockers = (
 
     if (blocker.status === "blocked") {
       groupedBlocker.status = "blocked";
+    }
+
+    const releaseScope = releaseScopeFrom(blocker.releaseScope);
+    groupedBlocker.futureProductionOnly = groupedBlocker.futureProductionOnly
+      || futureProductionOnlyFrom(blocker.futureProductionOnly, releaseScope);
+    groupedBlocker.mvpReleaseRequired = groupedBlocker.mvpReleaseRequired
+      || mvpReleaseRequiredFrom(blocker.mvpReleaseRequired, releaseScope);
+    if (groupedBlocker.releaseScope === "production_required" && releaseScope !== "production_required") {
+      groupedBlocker.releaseScope = releaseScope;
     }
 
     const nextBlockedBy = uniqueSafeStrings(blocker.blockedBy).filter((label) => {
@@ -1099,38 +1174,82 @@ const normalizeDependencyBlockers = (
   return Array.from(grouped.values());
 };
 
+const uniqueStringArrayFrom = (value: unknown): string[] | undefined => {
+  const values = stringArray(value);
+
+  return values ? uniqueSafeStrings(values) : undefined;
+};
+
+const releaseScopeIdsFrom = (
+  summary: Record<string, unknown>,
+  activation: Record<string, unknown> | undefined,
+  summaryKey: "futureProductionBlockerIds" | "mvpReleaseBlockerIds",
+  activationKey: "futureProductionBlockerIds" | "mvpReleaseBlockerIds",
+  deploymentHandoffKey: "futureProduction" | "requiredBeforeMvpRelease",
+): string[] => {
+  const deploymentHandoff = readNestedRecord(activation, ["deploymentHandoff"]);
+
+  return uniqueStringArrayFrom(summary[summaryKey])
+    ?? uniqueStringArrayFrom(activation?.[activationKey])
+    ?? uniqueStringArrayFrom(deploymentHandoff?.[deploymentHandoffKey])
+    ?? [];
+};
+
 const normalizeReadinessSummary = (
   summary: BackendRuntimeReadinessSummary,
-): BackendRuntimeReadinessSummary => ({
-  ...summary,
-  databasePackageBinding: {
-    ...summary.databasePackageBinding,
-    bindingId: sanitizeBackendRuntimeReadinessApiText(summary.databasePackageBinding.bindingId),
-    diagnosticCodes: uniqueSafeStrings(summary.databasePackageBinding.diagnosticCodes),
-    requiredConfigKeys: uniqueSafeStrings(summary.databasePackageBinding.requiredConfigKeys),
-    status: sanitizeBackendRuntimeReadinessApiText(summary.databasePackageBinding.status),
-  },
-  diagnostics: summary.diagnostics.map((diagnostic) => ({
-    ...diagnostic,
-    code: sanitizeBackendRuntimeReadinessApiText(diagnostic.code),
-    message: sanitizeBackendRuntimeReadinessApiText(diagnostic.message),
-  })),
-  productionDependencyBlockers: normalizeDependencyBlockers(summary.productionDependencyBlockers),
-  profile: {
-    ...summary.profile,
-    configuredRequiredConfigKeys: uniqueSafeStrings(summary.profile.configuredRequiredConfigKeys),
-    label: sanitizeBackendRuntimeReadinessApiText(summary.profile.label),
-    missingRequiredConfigKeys: uniqueSafeStrings(summary.profile.missingRequiredConfigKeys),
-    requiredConfigKeys: uniqueSafeStrings(summary.profile.requiredConfigKeys),
-    status: sanitizeBackendRuntimeReadinessApiText(summary.profile.status),
-    supportMode: sanitizeBackendRuntimeReadinessApiText(summary.profile.supportMode),
-  },
-  routeCoverage: {
-    ...summary.routeCoverage,
-    missingApiSkillIds: uniqueSafeStrings(summary.routeCoverage.missingApiSkillIds),
-    routeIds: uniqueSafeStrings(summary.routeCoverage.routeIds),
-  },
-});
+  activation?: Record<string, unknown>,
+): BackendRuntimeReadinessSummary => {
+  const summaryRecord = summary as unknown as Record<string, unknown>;
+  const mvpReleaseBlockerIds = releaseScopeIdsFrom(
+    summaryRecord,
+    activation,
+    "mvpReleaseBlockerIds",
+    "mvpReleaseBlockerIds",
+    "requiredBeforeMvpRelease",
+  );
+  const futureProductionBlockerIds = releaseScopeIdsFrom(
+    summaryRecord,
+    activation,
+    "futureProductionBlockerIds",
+    "futureProductionBlockerIds",
+    "futureProduction",
+  );
+  const runtimeMvpReleaseReady = summaryRecord.mvpReleaseReady === true || activation?.mvpReleaseReady === true;
+
+  return {
+    ...summary,
+    databasePackageBinding: {
+      ...summary.databasePackageBinding,
+      bindingId: sanitizeBackendRuntimeReadinessApiText(summary.databasePackageBinding.bindingId),
+      diagnosticCodes: uniqueSafeStrings(summary.databasePackageBinding.diagnosticCodes),
+      requiredConfigKeys: uniqueSafeStrings(summary.databasePackageBinding.requiredConfigKeys),
+      status: sanitizeBackendRuntimeReadinessApiText(summary.databasePackageBinding.status),
+    },
+    diagnostics: summary.diagnostics.map((diagnostic) => ({
+      ...diagnostic,
+      code: sanitizeBackendRuntimeReadinessApiText(diagnostic.code),
+      message: sanitizeBackendRuntimeReadinessApiText(diagnostic.message),
+    })),
+    futureProductionBlockerIds,
+    mvpReleaseBlockerIds,
+    mvpReleaseReady: runtimeMvpReleaseReady && mvpReleaseBlockerIds.length === 0,
+    productionDependencyBlockers: normalizeDependencyBlockers(summary.productionDependencyBlockers),
+    profile: {
+      ...summary.profile,
+      configuredRequiredConfigKeys: uniqueSafeStrings(summary.profile.configuredRequiredConfigKeys),
+      label: sanitizeBackendRuntimeReadinessApiText(summary.profile.label),
+      missingRequiredConfigKeys: uniqueSafeStrings(summary.profile.missingRequiredConfigKeys),
+      requiredConfigKeys: uniqueSafeStrings(summary.profile.requiredConfigKeys),
+      status: sanitizeBackendRuntimeReadinessApiText(summary.profile.status),
+      supportMode: sanitizeBackendRuntimeReadinessApiText(summary.profile.supportMode),
+    },
+    routeCoverage: {
+      ...summary.routeCoverage,
+      missingApiSkillIds: uniqueSafeStrings(summary.routeCoverage.missingApiSkillIds),
+      routeIds: uniqueSafeStrings(summary.routeCoverage.routeIds),
+    },
+  };
+};
 
 const readinessSummaryFromEnvelope = (body: unknown): BackendRuntimeReadinessSummary | undefined => {
   if (!isApiEnvelope(body) || !body.ok || !isRecord(body.data)) {
@@ -1138,6 +1257,12 @@ const readinessSummaryFromEnvelope = (body: unknown): BackendRuntimeReadinessSum
   }
 
   const summary = body.data.productionBackendReadiness;
+  const activation = readNestedRecord(body.data, ["activation"])
+    ?? readNestedRecord(body.data, ["backendService", "activation"]);
+  const activationDependencyBlockers = recordArray(activation?.productionDependencyBlockers);
+  const productionDependencyBlockers = activationDependencyBlockers.length > 0
+    ? activationDependencyBlockers
+    : recordArray(isRecord(summary) ? summary.productionDependencyBlockers : undefined);
   const databasePackageBinding = normalizeDatabasePackageBinding(
     readNestedRecord(summary, ["databasePackageBinding"])
     ?? readNestedRecord(body.data, ["backendService", "databaseAdapterRuntime", "packageBinding"])
@@ -1156,8 +1281,8 @@ const readinessSummaryFromEnvelope = (body: unknown): BackendRuntimeReadinessSum
     || !isDeployHandoff(summary.deployHandoff)
     || !isTracePolicy(summary.tracePolicy)
     || !noLiveSideEffectsValid(summary.noLiveSideEffects)
-    || !Array.isArray(summary.productionDependencyBlockers)
-    || !summary.productionDependencyBlockers.every(isDependencyBlocker)
+    || productionDependencyBlockers.length === 0
+    || !productionDependencyBlockers.every(isDependencyBlocker)
     || !Array.isArray(summary.diagnostics)
     || !summary.diagnostics.every(isDiagnosticSummary)
   ) {
@@ -1167,7 +1292,8 @@ const readinessSummaryFromEnvelope = (body: unknown): BackendRuntimeReadinessSum
   return normalizeReadinessSummary({
     ...summary,
     databasePackageBinding,
-  } as unknown as BackendRuntimeReadinessSummary);
+    productionDependencyBlockers,
+  } as unknown as BackendRuntimeReadinessSummary, activation);
 };
 
 const fallbackState = ({

@@ -90,6 +90,11 @@ export type RuntimeActivationConfigCategory =
   | "analytics"
   | "reward";
 export type RuntimeActivationConfigStatus = "supported" | "deferred" | "blocked";
+export type RuntimeReleaseScope =
+  | "excluded_from_mvp"
+  | "future_production"
+  | "mvp_release_required"
+  | "production_required";
 export type ProductionRuntimeDependencyStatus = "blocked" | "deferred";
 export type ProductionRuntimeDependencyArea =
   | "database"
@@ -118,10 +123,17 @@ export interface ProductionRuntimeDependencyBlocker {
   area: ProductionRuntimeDependencyArea;
   attachPoint: string;
   blockedBy: string[];
+  futureProductionOnly: boolean;
   id: string;
+  mvpReleaseRequired: boolean;
+  releaseScope: RuntimeReleaseScope;
   requiredBeforeProduction: true;
   status: ProductionRuntimeDependencyStatus;
 }
+
+type ProductionRuntimeDependencyBlockerInput =
+  & Omit<ProductionRuntimeDependencyBlocker, "futureProductionOnly" | "mvpReleaseRequired" | "releaseScope">
+  & Partial<Pick<ProductionRuntimeDependencyBlocker, "futureProductionOnly" | "mvpReleaseRequired" | "releaseScope">>;
 
 export interface BackendRuntimeTracePolicy {
   failureEnvelopeTraceId: true;
@@ -138,7 +150,9 @@ export interface BackendRuntimeShutdownHandoff {
 export interface BackendDeploymentHandoff {
   contractsEndpoint: "/api/contracts";
   environmentKeys: RuntimeActivationConfigKey[];
+  futureProduction: string[];
   healthEndpoint: "/api/health";
+  requiredBeforeMvpRelease: string[];
   requiredBeforeProduction: string[];
   runtimeTarget: "api_service";
   shutdown: BackendRuntimeShutdownHandoff;
@@ -158,6 +172,9 @@ export interface BackendRuntimeActivationContract {
     smoke: "npm run server:smoke";
     start: "npm run server:start";
   };
+  futureProductionBlockerIds: string[];
+  mvpReleaseBlockerIds: string[];
+  mvpReleaseReady: boolean;
   productionDependencyBlockers: ProductionRuntimeDependencyBlocker[];
   productionReady: false;
   profileId: BackendRuntimeProfileId;
@@ -757,7 +774,27 @@ for (const activationConfigKey of runtimeActivationConfigKeys) {
 
 export const runtimeActivationEnvironmentKeys = [...uniqueConfigKeys.values()];
 
-export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlocker[] = [
+const isFutureProductionOnlyScope = (releaseScope: RuntimeReleaseScope) =>
+  releaseScope === "excluded_from_mvp" || releaseScope === "future_production";
+
+const withReleaseScope = (
+  blocker: ProductionRuntimeDependencyBlockerInput,
+): ProductionRuntimeDependencyBlocker => {
+  const releaseScope = blocker.releaseScope ?? "production_required";
+
+  return {
+    ...blocker,
+    futureProductionOnly: blocker.futureProductionOnly ?? isFutureProductionOnlyScope(releaseScope),
+    mvpReleaseRequired: blocker.mvpReleaseRequired ?? releaseScope === "mvp_release_required",
+    releaseScope,
+  };
+};
+
+export const isMvpReleaseDependencyBlocker = (
+  blocker: Pick<ProductionRuntimeDependencyBlocker, "mvpReleaseRequired" | "status">,
+) => blocker.mvpReleaseRequired;
+
+const productionRuntimeDependencyBlockerDefinitions: ProductionRuntimeDependencyBlockerInput[] = [
   {
     area: "deployment",
     attachPoint: "deployment/runtime-config",
@@ -774,7 +811,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: "blocked",
   },
-  ...productionDbPackageProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...productionDbPackageProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: productionDbPackageDependencyArea(precondition.area),
     attachPoint: "src/server/productionDbPackageBinding.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -822,7 +859,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: "deferred",
   },
-  ...providerClientProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...providerClientProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: providerClientDependencyArea(precondition.area),
     attachPoint: "src/server/providerIndexerClientReadiness.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -830,7 +867,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...providerHttpRuntimeProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...providerHttpRuntimeProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: providerHttpDependencyArea(precondition.area),
     attachPoint: "src/server/providerHttpRuntimeRegistry.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -838,7 +875,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...schedulerRuntimeProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...schedulerRuntimeProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: schedulerRuntimeDependencyArea(precondition.area),
     attachPoint: "src/server/schedulerRuntime.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -846,7 +883,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...workerSchedulerProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...workerSchedulerProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area:
       precondition.area === "idempotency" || precondition.area === "lease"
         ? "worker"
@@ -857,7 +894,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...workerLeaseStoreProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...workerLeaseStoreProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: workerLeaseStoreConfigCategory(precondition.area) as ProductionRuntimeDependencyArea,
     attachPoint: "src/server/workerLeaseStore.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -865,7 +902,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...workerIdempotencyStoreProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...workerIdempotencyStoreProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: workerIdempotencyStoreConfigCategory(precondition.area) as ProductionRuntimeDependencyArea,
     attachPoint: "src/server/workerIdempotencyStore.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -873,7 +910,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...queueRuntimeProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...queueRuntimeProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: queueRuntimeConfigCategory(precondition.area) as ProductionRuntimeDependencyArea,
     attachPoint: "src/server/queueRuntime.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -881,7 +918,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...queueProviderAdapterProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...queueProviderAdapterProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: queueProviderAdapterConfigCategory(precondition.area) as ProductionRuntimeDependencyArea,
     attachPoint: "src/server/queueProviderAdapter.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -889,7 +926,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...queueProviderDriverProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...queueProviderDriverProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: queueProviderDriverConfigCategory(precondition.area) as ProductionRuntimeDependencyArea,
     attachPoint: "src/server/queueProviderDriver.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -897,7 +934,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...queueProviderSdkBindingProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...queueProviderSdkBindingProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: queueProviderSdkBindingConfigCategory(precondition.area) as ProductionRuntimeDependencyArea,
     attachPoint: "src/server/queueProviderSdkBinding.ts",
     blockedBy: precondition.requiredConfigKeys.map(normalizeQueueProviderSdkBindingConfigKey),
@@ -905,7 +942,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...queueProviderPackageProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...queueProviderPackageProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: queueProviderPackageConfigCategory(precondition.area) as ProductionRuntimeDependencyArea,
     attachPoint: "src/server/queueProviderPackageBinding.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -913,7 +950,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...bullmqConstructionProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...bullmqConstructionProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: bullmqConstructionDependencyArea(precondition.area),
     attachPoint: "src/server/bullmqConstructionReadiness.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -921,7 +958,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...liveQueuePublishingProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...liveQueuePublishingProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: liveQueuePublishingDependencyArea(precondition.area),
     attachPoint: "src/server/liveQueuePublishingReadiness.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -929,7 +966,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...liveQueueConsumeProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...liveQueueConsumeProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: liveQueueConsumeDependencyArea(precondition.area),
     attachPoint: "src/server/liveQueueConsumeLoop.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -937,7 +974,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...redisBrokerConnectionProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...redisBrokerConnectionProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: redisBrokerConnectionDependencyArea(precondition.area),
     attachPoint: "src/server/redisBrokerConnectionReadiness.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -945,7 +982,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     requiredBeforeProduction: true,
     status: precondition.status,
   })),
-  ...observabilityExporterProductionPreconditions.map<ProductionRuntimeDependencyBlocker>((precondition) => ({
+  ...observabilityExporterProductionPreconditions.map<ProductionRuntimeDependencyBlockerInput>((precondition) => ({
     area: "observability",
     attachPoint: "src/server/observabilityExporter.ts",
     blockedBy: [...precondition.requiredConfigKeys],
@@ -1011,6 +1048,7 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     attachPoint: "src/server/servicePorts.ts",
     blockedBy: ["reward custody mission", "finance/security review"],
     id: "reward-custody",
+    releaseScope: "excluded_from_mvp",
     requiredBeforeProduction: true,
     status: "blocked",
   },
@@ -1019,14 +1057,23 @@ export const productionRuntimeDependencyBlockers: ProductionRuntimeDependencyBlo
     attachPoint: "src/server/servicePorts.ts",
     blockedBy: ["reward distribution mission", ...contractWriterRequiredConfigKeys],
     id: "reward-distribution",
+    releaseScope: "excluded_from_mvp",
     requiredBeforeProduction: true,
     status: "blocked",
   },
 ];
 
+export const productionRuntimeDependencyBlockers = productionRuntimeDependencyBlockerDefinitions.map(withReleaseScope);
+
 export const productionRuntimeDependencyBlockerIds = productionRuntimeDependencyBlockers.map(
   (blocker) => blocker.id,
 );
+export const mvpReleaseRuntimeDependencyBlockerIds = productionRuntimeDependencyBlockers
+  .filter(isMvpReleaseDependencyBlocker)
+  .map((blocker) => blocker.id);
+export const futureProductionRuntimeDependencyBlockerIds = productionRuntimeDependencyBlockers
+  .filter((blocker) => blocker.futureProductionOnly)
+  .map((blocker) => blocker.id);
 
 export const backendRuntimeTracePolicy: BackendRuntimeTracePolicy = {
   failureEnvelopeTraceId: true,
@@ -1045,7 +1092,9 @@ export const createBackendRuntimeActivationContract = ({
   const deploymentHandoff: BackendDeploymentHandoff = {
     contractsEndpoint: "/api/contracts",
     environmentKeys: runtimeActivationEnvironmentKeys.map((item) => ({ ...item })),
+    futureProduction: [...futureProductionRuntimeDependencyBlockerIds],
     healthEndpoint: "/api/health",
+    requiredBeforeMvpRelease: [...mvpReleaseRuntimeDependencyBlockerIds],
     requiredBeforeProduction: [...productionRuntimeDependencyBlockerIds],
     runtimeTarget: "api_service",
     shutdown,
@@ -1065,6 +1114,9 @@ export const createBackendRuntimeActivationContract = ({
       smoke: "npm run server:smoke",
       start: "npm run server:start",
     },
+    futureProductionBlockerIds: [...futureProductionRuntimeDependencyBlockerIds],
+    mvpReleaseBlockerIds: [...mvpReleaseRuntimeDependencyBlockerIds],
+    mvpReleaseReady: mvpReleaseRuntimeDependencyBlockerIds.length === 0,
     productionDependencyBlockers: productionRuntimeDependencyBlockers.map((item) => ({
       ...item,
       blockedBy: [...item.blockedBy],

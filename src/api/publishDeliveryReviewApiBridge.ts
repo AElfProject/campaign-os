@@ -32,12 +32,22 @@ export interface PublishDeliveryReviewApiConfig {
   tracePrefix?: string;
 }
 
+export interface PublishDeliveryReviewReleaseScopeSummary {
+  futureProductionBlockerCount: number;
+  futureProductionBlockerIds: readonly string[];
+  mvpReleaseBlockerCount: number;
+  mvpReleaseBlockerIds: readonly string[];
+  mvpReleaseReady: boolean;
+  productionBlockerCount: number;
+}
+
 export interface PublishDeliveryReviewApiBridgeState {
   boundary: LocalizedText;
   campaignId: string;
   configured: boolean;
   diagnostics: readonly PublishDeliveryReviewApiDiagnostic[];
   loading: boolean;
+  releaseScopeSummary: PublishDeliveryReviewReleaseScopeSummary;
   review: PublishDeliveryReview;
   routeCount?: number;
   source: PublishDeliveryReviewApiSource;
@@ -160,6 +170,9 @@ const unsafePatterns: Array<[RegExp, string]> = [
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const stringArray = (value: unknown): string[] | undefined =>
+  Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined;
 
 export const sanitizePublishDeliveryReviewApiText = (value: unknown): string => {
   const raw = typeof value === "string" ? value : JSON.stringify(value ?? "");
@@ -405,20 +418,25 @@ const createSeededReview = (
 
 export const createPublishDeliveryReviewApiLoadingState = (
   campaignId: string,
-): PublishDeliveryReviewApiBridgeState => ({
-  boundary: publishDeliveryReviewApiBoundary,
-  campaignId,
-  configured: true,
-  diagnostics: [],
-  loading: true,
-  review: {
+): PublishDeliveryReviewApiBridgeState => {
+  const review = {
     ...createSeededReview(campaignId, "loading"),
     source: "loading",
     status: "loading",
-  },
-  source: "loading",
-  status: "loading",
-});
+  } as PublishDeliveryReview;
+
+  return {
+    boundary: publishDeliveryReviewApiBoundary,
+    campaignId,
+    configured: true,
+    diagnostics: [],
+    loading: true,
+    releaseScopeSummary: releaseScopeSummaryFromReview(review, ["publish-delivery-review-loading"]),
+    review,
+    source: "loading",
+    status: "loading",
+  };
+};
 
 export const createPublishDeliveryReviewApiSeededFallbackState = (
   campaignId: string,
@@ -432,6 +450,7 @@ export const createPublishDeliveryReviewApiSeededFallbackState = (
     configured: false,
     diagnostics: [],
     loading: false,
+    releaseScopeSummary: releaseScopeSummaryFromReview(review, ["publish-delivery-review-api-unavailable"]),
     review,
     source: "seeded_fallback",
     status: "fallback",
@@ -455,6 +474,7 @@ const createFallbackState = (
     configured: normalizedConfig.configured,
     diagnostics,
     loading: false,
+    releaseScopeSummary: releaseScopeSummaryFromReview(review, ["publish-delivery-review-api-unavailable"]),
     review: {
       ...review,
       status,
@@ -483,6 +503,9 @@ const localizedText = (value: unknown): value is LocalizedText =>
 
 const numberField = (record: Record<string, unknown>, key: string) =>
   typeof record[key] === "number" && Number.isFinite(record[key]);
+
+const numberValue = (record: Record<string, unknown>, key: string): number | undefined =>
+  numberField(record, key) ? record[key] as number : undefined;
 
 const stringField = (record: Record<string, unknown>, key: string) =>
   typeof record[key] === "string" && record[key].trim().length > 0;
@@ -602,6 +625,32 @@ const isPublishDeliveryReview = (value: unknown, campaignId: string): value is P
   && localizedText(value.boundary)
   && stringField(value, "lastReviewedAt");
 
+const releaseScopeSummaryFromReview = (
+  review: PublishDeliveryReview,
+  fallbackMvpBlockerIds: readonly string[] = [],
+): PublishDeliveryReviewReleaseScopeSummary => {
+  const reviewRecord = review as unknown as Record<string, unknown>;
+  const summary = isRecord(reviewRecord.summary) ? reviewRecord.summary : {};
+  const backendRuntime = isRecord(reviewRecord.backendRuntime) ? reviewRecord.backendRuntime : {};
+  const mvpReleaseBlockerIds = stringArray(summary.mvpReleaseBlockerIds)
+    ?? stringArray(backendRuntime.mvpReleaseBlockerIds)
+    ?? [...fallbackMvpBlockerIds];
+  const futureProductionBlockerIds = stringArray(summary.futureProductionBlockerIds)
+    ?? stringArray(backendRuntime.futureProductionBlockerIds)
+    ?? [];
+  const explicitMvpReady = summary.mvpReleaseReady === true || backendRuntime.mvpReleaseReady === true;
+
+  return {
+    futureProductionBlockerCount:
+      numberValue(summary, "futureProductionBlockerCount") ?? futureProductionBlockerIds.length,
+    futureProductionBlockerIds,
+    mvpReleaseBlockerCount: numberValue(summary, "mvpReleaseBlockerCount") ?? mvpReleaseBlockerIds.length,
+    mvpReleaseBlockerIds,
+    mvpReleaseReady: explicitMvpReady && mvpReleaseBlockerIds.length === 0,
+    productionBlockerCount: review.summary.productionBlockerCount,
+  };
+};
+
 const payloadFromEnvelope = (body: unknown) => {
   if (!isRecord(body)) {
     return undefined;
@@ -709,6 +758,7 @@ export const loadPublishDeliveryReviewApiBridgeState = async ({
     configured: true,
     diagnostics: [],
     loading: false,
+    releaseScopeSummary: releaseScopeSummaryFromReview(payload),
     review: payload,
     routeCount: runtimeMetadata.routeCount,
     source: "api_runtime",

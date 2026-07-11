@@ -1431,6 +1431,52 @@ const createBackendRuntimeReadinessSeededFallbackState = (): BackendRuntimeReadi
   summary: seededBackendRuntimeReadinessSummary,
 });
 
+const publishDeliveryReviewStateWithBackendReleaseScope = (
+  publishState: PublishDeliveryReviewApiBridgeState,
+  backendState: BackendRuntimeReadinessApiBridgeState,
+): PublishDeliveryReviewApiBridgeState => {
+  if (publishState.source !== "api_runtime" || backendState.source !== "api_runtime") {
+    return publishState;
+  }
+
+  const backendSummary = backendState.summary;
+  const publishReleaseScope = publishState.releaseScopeSummary;
+  const shouldUseBackendFutureScope = publishReleaseScope.futureProductionBlockerIds.length === 0
+    && backendSummary.futureProductionBlockerIds.length > 0;
+  const shouldUseBackendMvpScope = publishReleaseScope.mvpReleaseBlockerIds.length === 0
+    && publishReleaseScope.mvpReleaseReady !== backendSummary.mvpReleaseReady;
+
+  if (!shouldUseBackendFutureScope && !shouldUseBackendMvpScope) {
+    return publishState;
+  }
+
+  return {
+    ...publishState,
+    releaseScopeSummary: {
+      ...publishReleaseScope,
+      futureProductionBlockerCount: shouldUseBackendFutureScope
+        ? backendSummary.futureProductionBlockerIds.length
+        : publishReleaseScope.futureProductionBlockerCount,
+      futureProductionBlockerIds: shouldUseBackendFutureScope
+        ? [...backendSummary.futureProductionBlockerIds]
+        : publishReleaseScope.futureProductionBlockerIds,
+      mvpReleaseBlockerCount: shouldUseBackendMvpScope
+        ? backendSummary.mvpReleaseBlockerIds.length
+        : publishReleaseScope.mvpReleaseBlockerCount,
+      mvpReleaseBlockerIds: shouldUseBackendMvpScope
+        ? [...backendSummary.mvpReleaseBlockerIds]
+        : publishReleaseScope.mvpReleaseBlockerIds,
+      mvpReleaseReady: shouldUseBackendMvpScope
+        ? backendSummary.mvpReleaseReady && backendSummary.mvpReleaseBlockerIds.length === 0
+        : publishReleaseScope.mvpReleaseReady,
+      productionBlockerCount: Math.max(
+        publishReleaseScope.productionBlockerCount,
+        backendSummary.productionDependencyBlockers.length,
+      ),
+    },
+  };
+};
+
 const persistencePostureBadgeState = (
   status: BackendRuntimePersistencePostureStatus,
 ): "blocker" | "ready" | "warning" => {
@@ -2213,6 +2259,10 @@ export const ProjectConsole = ({
         : createBackendRuntimeReadinessSeededFallbackState(),
     );
   const [backendReadinessApiReviewInFlight, setBackendReadinessApiReviewInFlight] = useState(false);
+  const publishDeliveryReviewPanelState = publishDeliveryReviewStateWithBackendReleaseScope(
+    publishDeliveryApiState,
+    backendReadinessApiState,
+  );
   const advancedAnalytics = commandCenter.advancedAnalytics;
   const aiOptimizationSummary = commandCenter.aiOptimization.projectOwnerSummary;
   const aiOpsKpiAdoption = commandCenter.aiOpsKpiAdoption;
@@ -7053,7 +7103,7 @@ export const ProjectConsole = ({
         locale={locale}
         onReview={runPublishDeliveryApiReview}
         reviewInFlight={publishDeliveryApiReviewInFlight}
-        state={publishDeliveryApiState}
+        state={publishDeliveryReviewPanelState}
       />
 
       <PointsRankingLedgerRuntimePanel

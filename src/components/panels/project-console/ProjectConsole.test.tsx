@@ -524,6 +524,9 @@ const backendReadinessApiState = (): BackendRuntimeReadinessApiBridgeState => ({
       missingApiSkillIds: ["runtime.production.database"],
       requiredApiSkillCount: 18,
     },
+    futureProductionBlockerIds: ["reward-custody", "reward-distribution"],
+    mvpReleaseBlockerIds: [],
+    mvpReleaseReady: true,
   },
   traceId: "trace-backend-api-visible",
 });
@@ -535,6 +538,14 @@ const publishDeliveryReviewApiState = (): PublishDeliveryReviewApiBridgeState =>
     ...state,
     configured: true,
     diagnostics: [],
+    releaseScopeSummary: {
+      futureProductionBlockerCount: 0,
+      futureProductionBlockerIds: [],
+      mvpReleaseBlockerCount: 0,
+      mvpReleaseBlockerIds: [],
+      mvpReleaseReady: false,
+      productionBlockerCount: state.releaseScopeSummary.productionBlockerCount,
+    },
     routeCount: 32,
     source: "api_runtime",
     status: "blocked",
@@ -2375,6 +2386,12 @@ describe("Project Console shell", () => {
     expect(within(backendReadiness).getByText("staging-scaffold")).toBeInTheDocument();
     expect(within(backendReadiness).getByText("17 / 18 API skills")).toBeInTheDocument();
     expect(within(backendReadiness).getByText("runtime.production.database")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText("MVP/local review gate")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText("Ready for local MVP review")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText("0 MVP blockers")).toBeInTheDocument();
+    expect(within(backendReadiness).getByText("2 future blockers")).toBeInTheDocument();
+    expect(within(backendReadiness).getAllByText("reward-custody").length).toBeGreaterThan(0);
+    expect(within(backendReadiness).getAllByText("reward-distribution").length).toBeGreaterThan(0);
 
     const persistence = screen.getByLabelText("Backend Runtime Persistence review");
 
@@ -2463,6 +2480,12 @@ describe("Project Console shell", () => {
     expect(within(publishDeliveryReview).getByText("trace-publish-api-visible")).toBeInTheDocument();
     expect(within(publishDeliveryReview).getByRole("button", { name: "Review local bridge" })).toBeInTheDocument();
     expect(within(publishDeliveryReview).getByText("productionReady=false")).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText("MVP/local review gate")).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText("Ready for local MVP review")).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText("0 MVP blockers")).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText("2 future blockers")).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText("reward-custody")).toBeInTheDocument();
+    expect(within(publishDeliveryReview).getByText("reward-distribution")).toBeInTheDocument();
     expect(within(publishDeliveryReview).getByText("Delivery checklist")).toBeInTheDocument();
     expect(within(publishDeliveryReview).getByText("Repository evidence")).toBeInTheDocument();
     expect(

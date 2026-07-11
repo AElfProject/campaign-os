@@ -721,6 +721,10 @@ describe("backend runtime smoke command", () => {
         wroteRecordKinds: expect.arrayContaining(["wallet_session", "verification_attempt", "export_preview"]),
       },
       liveSideEffectsEnabled: false,
+      futureProduction: expect.arrayContaining(["reward-custody", "reward-distribution"]),
+      futureProductionBlockerIds: expect.arrayContaining(["reward-custody", "reward-distribution"]),
+      mvpReleaseBlockerIds: [],
+      mvpReleaseReady: true,
       analyticsIngestionRuntime: {
         ...expectedAnalyticsIngestionRuntimeMetadata,
         traceId: "campaign-os-smoke-analytics-ingestion-readiness",
@@ -798,6 +802,7 @@ describe("backend runtime smoke command", () => {
         status: "local_ready",
         valid: true,
       },
+      requiredBeforeMvpRelease: [],
       observabilityExporterFoundation: expectedObservabilityExporterFoundation,
       objectStorageExportRuntime: {
         blockerCount: expect.any(Number),
@@ -857,6 +862,12 @@ describe("backend runtime smoke command", () => {
       startCommand: "npm run server:start",
       smokeCommand: "npm run server:smoke",
     });
+    expect(summary.mvpReleaseBlockerIds).not.toEqual(
+      expect.arrayContaining(["reward-custody", "reward-distribution"]),
+    );
+    expect(summary.requiredBeforeMvpRelease).not.toEqual(
+      expect.arrayContaining(["reward-custody", "reward-distribution"]),
+    );
     expect(summary.requiredBeforeProduction).toEqual(
       expect.arrayContaining([
         "live-database-driver",
