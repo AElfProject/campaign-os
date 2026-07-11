@@ -671,6 +671,15 @@ export const loadRewardDistributionHandoffRuntimeApiBridgeState = async ({
     );
   }
 
+  if (!normalizedConfig.baseUrl) {
+    return createFallbackState(
+      campaignId,
+      normalizedConfig,
+      "error_fallback",
+      [diagnostic("API_BASE_URL_INVALID", "warning")],
+    );
+  }
+
   const traceId = createRewardDistributionHandoffRuntimeApiTraceId(normalizedConfig.normalizedTracePrefix);
   const url = buildRewardDistributionHandoffRuntimeApiUrl(normalizedConfig.baseUrl, campaignId);
   const result = await safeFetchJson(fetchImpl, url, {
@@ -725,10 +734,11 @@ export const loadRewardDistributionHandoffRuntimeApiBridgeState = async ({
   }
 
   const readiness = sanitizeReadiness(payload);
+  const responseData = isRecord(result.body.data) ? result.body.data : undefined;
 
   return {
-    boundary: localizedText(isRecord(result.body.data) ? result.body.data.boundary : undefined)
-      ? result.body.data.boundary
+    boundary: localizedText(responseData?.boundary)
+      ? responseData.boundary
       : rewardDistributionHandoffRuntimeApiBoundary,
     campaignId,
     configured: true,
