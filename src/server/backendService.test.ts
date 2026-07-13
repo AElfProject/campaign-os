@@ -5,7 +5,9 @@ import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardD
 import {
   backendAttachMap,
   createBackendServiceReadinessReport,
+  ownerRouteDurableEffectById,
 } from "./backendService";
+import { apiRuntimeRoutes } from "./routes";
 
 const productionAreas = [
   "production-persistence",
@@ -109,6 +111,19 @@ const expectNoSchedulerSecretLeak = (value: unknown) => {
 };
 
 describe("backend service readiness report", () => {
+  it("classifies Campaign mutations by durable effect instead of HTTP method", () => {
+    expect(apiRuntimeRoutes.find((route) => route.id === "campaigns.tasks.generate")).toMatchObject({
+      method: "POST",
+    });
+    expect(ownerRouteDurableEffectById).toEqual({
+      "campaigns.create": "campaign_create",
+      "campaigns.owner.list": "none",
+      "campaigns.tasks.add": "task_create",
+      "campaigns.tasks.generate": "none",
+    });
+    expect(createBackendServiceReadinessReport().authEnforcement.campaignMutationRouteCount).toBe(1);
+  });
+
   it("aggregates local backend scaffold readiness without duplicating route ownership", () => {
     const report = createBackendServiceReadinessReport();
 

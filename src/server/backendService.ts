@@ -9,7 +9,7 @@ import {
 } from "./backendRuntimeBootstrap";
 import { createApiFoundationReport, type ApiFoundationReport } from "./apiFoundation";
 import { createApiServicePortReport, type ApiServicePortReport } from "./servicePorts";
-import { apiRuntimeRoutes } from "./routes";
+import { apiRuntimeRoutes, type ApiRuntimeRouteId } from "./routes";
 import { createBackendTopologyReport, type BackendTopologyReport } from "./topology";
 import {
   createMigrationManifest,
@@ -612,6 +612,15 @@ export interface BackendObservabilityExporterReadinessSummary {
 
 export type BackendAuthEnforcementMode = "blocked" | "local_enforced" | "metadata_only";
 
+export type OwnerRouteDurableEffect = "campaign_create" | "none" | "task_create";
+
+export const ownerRouteDurableEffectById = {
+  "campaigns.create": "campaign_create",
+  "campaigns.owner.list": "none",
+  "campaigns.tasks.add": "task_create",
+  "campaigns.tasks.generate": "none",
+} as const satisfies Partial<Record<ApiRuntimeRouteId, OwnerRouteDurableEffect>>;
+
 export interface BackendAuthEnforcementReadinessSummary {
   agentCredentialSubstitutionDisabled: boolean;
   campaignMutationRouteCount: number;
@@ -1208,13 +1217,13 @@ const createBackendAuthEnforcementReadinessSummary = (
   const locallyEnforcedRoutes = authSession.protectedRoutes.filter(
     (route) => route.enforcementStatus === "local_enforced",
   );
-  const runtimeMutationRouteIds = new Set(
-    apiRuntimeRoutes
-      .filter((route) => route.method !== "GET")
-      .map((route) => route.id),
+  const campaignMutationRouteIds = new Set<string>(
+    Object.entries(ownerRouteDurableEffectById)
+      .filter(([, effect]) => effect === "campaign_create")
+      .map(([routeId]) => routeId),
   );
   const campaignMutationRoutes = authSession.protectedRoutes.filter(
-    (route) => route.routeGroup === "campaign_write" && runtimeMutationRouteIds.has(route.routeId),
+    (route) => campaignMutationRouteIds.has(route.routeId),
   );
   const runtimeMetadataRoutes = authSession.protectedRoutes.filter(
     (route) => route.routeGroup === "runtime_metadata",
