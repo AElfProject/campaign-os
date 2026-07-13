@@ -289,6 +289,227 @@ describe("production database handoff readiness API bridge", () => {
     }
   });
 
+  it("sanitizes JSON-hostile primitives with deterministic non-empty markers", () => {
+    const cases: Array<[unknown, string]> = [
+      ["plain diagnostic", "plain diagnostic"],
+      [42, "42"],
+      [true, "true"],
+      [false, "false"],
+      [null, "null"],
+      [undefined, "[undefined]"],
+      [Symbol("token=do-not-render"), "[symbol]"],
+      [123n, "[bigint]"],
+      [() => "private", "[function]"],
+    ];
+
+    for (const [input, expected] of cases) {
+      expect(() => sanitizeProductionDatabaseHandoffReadinessApiText(input)).not.toThrow();
+      expect(sanitizeProductionDatabaseHandoffReadinessApiText(input)).toBe(expected);
+    }
+
+    expect(sanitizeProductionDatabaseHandoffReadinessApiText("[REDACTED:CREDENTIAL]"))
+      .toBe("[REDACTED:CREDENTIAL]");
+
+    expect(sanitizeProductionDatabaseHandoffReadinessApiText({
+      zeta: Symbol("nested-secret"),
+      alpha: 99n,
+      nested: [true, null],
+    })).toBe('{"alpha":"[bigint]","nested":[true,null],"zeta":"[symbol]"}');
+  });
+
+  it("projects Error values without stack or secret-bearing custom fields", () => {
+    const cause = new Error("provider unavailable");
+    const failure = new Error("database connection failed") as Error & Record<string, unknown>;
+
+    Object.defineProperty(failure, "cause", { configurable: true, value: cause });
+    failure.retryable = true;
+    failure.password = "raw-password-value";
+    failure.stack = "Error: database connection failed\n at privateCall (/Users/aelf/private/runtime.ts:1:1)";
+
+    const sanitized = sanitizeProductionDatabaseHandoffReadinessApiText(failure);
+
+    expect(sanitized).toContain('"name":"Error"');
+    expect(sanitized).toContain('"message":"database connection failed"');
+    expect(sanitized).toContain('"cause"');
+    expect(sanitized).toContain('"retryable":true');
+    expect(sanitized).toContain("[REDACTED:CREDENTIAL]");
+    expect(sanitized).not.toContain("raw-password-value");
+    expect(sanitized).not.toContain("privateCall");
+    expect(sanitized).not.toContain("/Users/");
+
+    const driverFailure = sanitizeProductionDatabaseHandoffReadinessApiText(
+      new Error("driver failed host=db.internal user=runtime-user SELECT secret_value FROM private_table"),
+    );
+
+    expect(driverFailure).toContain("[REDACTED:DATABASE_METADATA]");
+    expect(driverFailure).toContain("[REDACTED:QUERY]");
+    expect(driverFailure).not.toContain("db.internal");
+    expect(driverFailure).not.toContain("runtime-user");
+    expect(driverFailure).not.toContain("secret_value");
+    expect(driverFailure).not.toContain("private_table");
+  });
+
+  it("bounds cyclic, deeply nested, and oversized collections deterministically", () => {
+    const selfCycle: Record<string, unknown> = { id: "self" };
+    selfCycle.self = selfCycle;
+    const mutualLeft: Record<string, unknown> = { id: "left" };
+    const mutualRight: Record<string, unknown> = { id: "right", left: mutualLeft };
+    mutualLeft.right = mutualRight;
+    const deepRoot: Record<string, unknown> = {};
+    let cursor = deepRoot;
+
+    for (let index = 0; index < 20; index += 1) {
+      const next: Record<string, unknown> = { index };
+      cursor.next = next;
+      cursor = next;
+    }
+
+    const values = [
+      selfCycle,
+      mutualLeft,
+      deepRoot,
+      Array.from({ length: 200 }, (_, index) => ({ index })),
+      Object.fromEntries(Array.from({ length: 200 }, (_, index) => [`key-${index.toString().padStart(3, "0")}`, index])),
+      "x".repeat(20_000),
+    ];
+    const outputs = values.map((value) => sanitizeProductionDatabaseHandoffReadinessApiText(value));
+
+    expect(outputs[0]).toContain("[circular]");
+    expect(outputs[1]).toContain("[circular]");
+    expect(outputs[2]).toContain("[max-depth]");
+    expect(outputs[3]).toContain("[truncated:");
+    expect(outputs[4]).toContain("[truncated:");
+    expect(outputs[5]).toContain("[truncated]");
+
+    for (const [index, output] of outputs.entries()) {
+      expect(output.length).toBeLessThanOrEqual(4_096);
+      expect(output).toBe(sanitizeProductionDatabaseHandoffReadinessApiText(values[index]));
+    }
+  });
+
+  it("handles throwing getters and redacts sensitive object fields", () => {
+    const input: Record<string, unknown> = {
+      authorization: "Bearer raw-bearer-value",
+      databaseUrl: "postgres://runtime-user:runtime-password@db.internal/campaign_os",
+      host: "db.internal",
+      password: "runtime-password",
+      privatePath: "/Users/aelf/private/campaign-os-kitty/runtime.log",
+      query: "SELECT secret_value FROM private_table",
+      stack: "Error: private\n at runtime (/private/runtime.ts:1:1)",
+      user: "runtime-user",
+    };
+    Object.defineProperty(input, "throwingGetter", {
+      enumerable: true,
+      get: () => {
+        throw new Error("getter leaked postgres://getter:password@db.internal/app");
+      },
+    });
+
+    const sanitized = sanitizeProductionDatabaseHandoffReadinessApiText(input);
+
+    expect(sanitized).toContain("[unreadable]");
+    expect(sanitized).toContain("[REDACTED:");
+    for (const unsafe of [
+      "raw-bearer-value",
+      "runtime-password",
+      "db.internal",
+      "runtime-user",
+      "SELECT secret_value",
+      "private_table",
+      "/Users/",
+      "/private/",
+      "getter leaked",
+    ]) {
+      expect(sanitized).not.toContain(unsafe);
+    }
+  });
+
+  it("keeps fetch failures safe when resolved or rejected values are not JSON-compatible", async () => {
+    const cyclicError: Record<string, unknown> = {
+      attempt: 7n,
+      databaseUrl: "postgres://runtime-user:runtime-password@db.internal/campaign_os",
+      symbol: Symbol("private"),
+    };
+    cyclicError.self = cyclicError;
+    const failedBody = {
+      error: cyclicError,
+      ok: false,
+      traceId: "trace-hostile-response",
+    };
+    const resolvedFetch = vi.fn().mockResolvedValueOnce(response(failedBody, {
+      ok: false,
+      status: 503,
+      traceId: "trace-hostile-header",
+    })) as unknown as ProductionDatabaseHandoffReadinessApiFetch;
+
+    const resolvedState = await loadProductionDatabaseHandoffReadinessApiState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl: resolvedFetch,
+    });
+    const resolvedSerialized = JSON.stringify(resolvedState);
+
+    expect(resolvedState).toMatchObject({
+      diagnostics: [{
+        code: "API_REQUEST_FAILED",
+        safeDetails: { status: 503 },
+        severity: "error",
+      }],
+      source: "seeded_fallback",
+      traceId: "trace-hostile-response",
+    });
+    expect(resolvedSerialized).toContain("[circular]");
+    expect(resolvedSerialized).toContain("[bigint]");
+    expect(resolvedSerialized).not.toContain("runtime-password");
+    expect(resolvedSerialized).not.toContain("db.internal");
+
+    const rejectedFetch = vi.fn(async () => Promise.reject(Symbol("token=raw-rejection"))) as unknown as
+      ProductionDatabaseHandoffReadinessApiFetch;
+    const rejectedState = await loadProductionDatabaseHandoffReadinessApiState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl: rejectedFetch,
+    });
+
+    expect(rejectedState).toMatchObject({
+      diagnostics: [{
+        code: "API_REQUEST_FAILED",
+        safeDetails: { error: "[symbol]" },
+        severity: "error",
+      }],
+      source: "seeded_fallback",
+    });
+  });
+
+  it("returns a JSON-safe API state when a valid payload contains hostile diagnostic details", async () => {
+    const hostileDetails: Record<string, unknown> = {
+      attempt: 11n,
+      symbol: Symbol("nested"),
+    };
+    hostileDetails.self = hostileDetails;
+    const payload = validHandoffPayload({
+      diagnostics: [{
+        code: "PRODUCTION_DATABASE_HANDOFF_BLOCKED",
+        field: "database",
+        message: "Database handoff remains blocked.",
+        safeDetails: hostileDetails,
+        severity: "warning",
+      }],
+    });
+    const fetchImpl = vi.fn().mockResolvedValueOnce(response(
+      envelope(payload, "trace-hostile-success"),
+    )) as unknown as ProductionDatabaseHandoffReadinessApiFetch;
+
+    const state = await loadProductionDatabaseHandoffReadinessApiState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl,
+    });
+    const serialized = JSON.stringify(state);
+
+    expect(state.source).toBe("api_runtime");
+    expect(serialized).toContain("[bigint]");
+    expect(serialized).toContain("[symbol]");
+    expect(serialized).toContain("[circular]");
+  });
+
   it("creates an explicit seeded fallback state for disabled Project Console reviews", () => {
     const state = createProductionDatabaseHandoffReadinessApiSeededFallbackState("trace-seeded");
 

@@ -181,6 +181,8 @@ const unsafeApiPatterns: Array<[RegExp, string]> = [
   [/\bobject[-_\s]*key\b/gi, "__PDB_API_RED_5__"],
   [/\bobjectkey\b/gi, "__PDB_API_RED_5__"],
   [/https?:\/\/[^"'\s<>]+/gi, "__PDB_API_RED_6__"],
+  [/\b(?:host(?:name)?|user(?:name)?|database[-_]?(?:host|user))\s*[=:]\s*[^,\s"'<>]+/gi, "__PDB_API_RED_7__"],
+  [/\b(?:select|insert|update|delete|alter|create|drop|truncate)\b[^"'<>\r\n]*/gi, "__PDB_API_RED_8__"],
 ];
 
 const unsafeApiReplacementLabels: Record<string, string> = {
@@ -191,24 +193,338 @@ const unsafeApiReplacementLabels: Record<string, string> = {
   __PDB_API_RED_4__: "[REDACTED:PRIVATE_PATH]",
   __PDB_API_RED_5__: "[REDACTED:STORAGE_REFERENCE]",
   __PDB_API_RED_6__: "[REDACTED:ENDPOINT]",
+  __PDB_API_RED_7__: "[REDACTED:DATABASE_METADATA]",
+  __PDB_API_RED_8__: "[REDACTED:QUERY]",
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+type SanitizedApiValue =
+  | boolean
+  | number
+  | string
+  | null
+  | SanitizedApiValue[]
+  | { [key: string]: SanitizedApiValue };
 
-export const sanitizeProductionDatabaseHandoffReadinessApiText = (value: unknown): string => {
-  const raw = typeof value === "string" ? value : JSON.stringify(value ?? "");
-  const strippedUrlQuery = raw.replace(/\?[^"'\s<>]*/g, "?redacted-query");
+interface SanitizerContext {
+  activeObjects: WeakSet<object>;
+  remainingNodes: number;
+}
+
+const sanitizerMaxDepth = 6;
+const sanitizerMaxCollectionEntries = 32;
+const sanitizerMaxNodes = 1_024;
+const sanitizerMaxStringLength = 1_024;
+const sanitizerMaxOutputLength = 4_096;
+const sanitizerTruncatedMarker = "[truncated]";
+const sanitizerUnreadableMarker = "[unreadable]";
+const compareSanitizerKeys = (left: string, right: string) =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+const truncateSanitizerText = (value: string, maximum: number) => {
+  if (value.length <= maximum) {
+    return value;
+  }
+
+  const prefixLength = Math.max(0, maximum - sanitizerTruncatedMarker.length);
+  return `${value.slice(0, prefixLength)}${sanitizerTruncatedMarker}`;
+};
+
+const redactApiText = (value: string) => {
+  const bounded = truncateSanitizerText(value, sanitizerMaxOutputLength);
+  const protectedMarkers: string[] = [];
+  const markerProtected = bounded.replace(/\[REDACTED:[A-Z_]+\]/gi, (marker) => {
+    const index = protectedMarkers.push(marker) - 1;
+    return `__PDB_API_SAFE_${index}__`;
+  });
+  const strippedUrlQuery = markerProtected.replace(/\?[^"'\s<>]*/g, "?redacted-query");
   const domainSanitized = sanitizeProductionDatabaseHandoffText(strippedUrlQuery) || strippedUrlQuery;
   const apiSanitized = unsafeApiPatterns.reduce(
     (current, [pattern, replacement]) => current.replace(pattern, replacement),
     domainSanitized,
   );
-
-  return Object.entries(unsafeApiReplacementLabels).reduce(
+  const restoredLabels = Object.entries(unsafeApiReplacementLabels).reduce(
     (current, [placeholder, replacement]) => current.split(placeholder).join(replacement),
     apiSanitized,
   );
+  const restoredMarkers = protectedMarkers.reduce(
+    (current, marker, index) => current.split(`__PDB_API_SAFE_${index}__`).join(marker),
+    restoredLabels,
+  );
+
+  return truncateSanitizerText(restoredMarkers, sanitizerMaxOutputLength);
+};
+
+const sensitiveFieldReplacement = (key: string): string | undefined => {
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+
+  if (/stack(?:trace)?/.test(normalized)) {
+    return "[REDACTED:STACK]";
+  }
+
+  if (/privatepath|filepath|absolutepath|localpath/.test(normalized)) {
+    return "[REDACTED:PRIVATE_PATH]";
+  }
+
+  if (/databaseurl|connectionurl|connectionstring|dsn|endpoint/.test(normalized)) {
+    return "[REDACTED:DATABASE_URL]";
+  }
+
+  if (/^(?:host|hostname|user|username|databasehost|databaseuser|query|sql|rawsql)$/.test(normalized)) {
+    return "[REDACTED:DATABASE_METADATA]";
+  }
+
+  if (
+    /authorization|bearer|credential|password|passphrase|privatekey|secret|token|apikey|accesskey|seedphrase|mnemonic/.test(
+      normalized,
+    )
+  ) {
+    return "[REDACTED:CREDENTIAL]";
+  }
+
+  return undefined;
+};
+
+const sanitizeApiKey = (key: string) => {
+  const sanitized = redactApiText(truncateSanitizerText(key, 128));
+  return sanitized || "[empty-key]";
+};
+
+const createSanitizerContext = (): SanitizerContext => ({
+  activeObjects: new WeakSet<object>(),
+  remainingNodes: sanitizerMaxNodes,
+});
+
+const safePropertyValue = (
+  key: string,
+  descriptor: PropertyDescriptor | undefined,
+  depth: number,
+  context: SanitizerContext,
+): SanitizedApiValue => {
+  if (descriptor && "value" in descriptor && typeof descriptor.value === "boolean") {
+    return descriptor.value;
+  }
+
+  const replacement = sensitiveFieldReplacement(key);
+
+  if (replacement) {
+    return replacement;
+  }
+
+  if (!descriptor || !("value" in descriptor)) {
+    return sanitizerUnreadableMarker;
+  }
+
+  return sanitizeApiValue(descriptor.value, depth, context);
+};
+
+const safeObjectDescriptors = (value: object): PropertyDescriptorMap | undefined => {
+  try {
+    return Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return undefined;
+  }
+};
+
+const sanitizeErrorValue = (
+  error: Error,
+  depth: number,
+  context: SanitizerContext,
+): SanitizedApiValue => {
+  const descriptors = safeObjectDescriptors(error);
+
+  if (!descriptors) {
+    return sanitizerUnreadableMarker;
+  }
+
+  const entries: Array<[string, SanitizedApiValue]> = [];
+  entries.push([
+    "name",
+    descriptors.name
+      ? safePropertyValue("name", descriptors.name, depth + 1, context)
+      : "Error",
+  ]);
+  entries.push([
+    "message",
+    safePropertyValue("message", descriptors.message, depth + 1, context),
+  ]);
+
+  if (descriptors.cause) {
+    entries.push([
+      "cause",
+      safePropertyValue("cause", descriptors.cause, depth + 1, context),
+    ]);
+  }
+
+  const customKeys = Object.keys(descriptors)
+    .filter((key) => !["cause", "message", "name", "stack"].includes(key) && descriptors[key]?.enumerable)
+    .sort(compareSanitizerKeys)
+    .slice(0, sanitizerMaxCollectionEntries);
+
+  for (const key of customKeys) {
+    entries.push([
+      sanitizeApiKey(key),
+      safePropertyValue(key, descriptors[key], depth + 1, context),
+    ]);
+  }
+
+  const customCount = Object.keys(descriptors)
+    .filter((key) => !["cause", "message", "name", "stack"].includes(key) && descriptors[key]?.enumerable)
+    .length;
+
+  if (customCount > customKeys.length) {
+    entries.push(["__truncated__", `[truncated:${customCount - customKeys.length}]`]);
+  }
+
+  return Object.fromEntries(entries.sort(([left], [right]) => compareSanitizerKeys(left, right)));
+};
+
+const sanitizeArrayValue = (
+  value: unknown[],
+  depth: number,
+  context: SanitizerContext,
+): SanitizedApiValue[] => {
+  let length = 0;
+
+  try {
+    length = value.length;
+  } catch {
+    return [sanitizerUnreadableMarker];
+  }
+
+  const entryCount = Math.min(length, sanitizerMaxCollectionEntries);
+  const result: SanitizedApiValue[] = [];
+
+  for (let index = 0; index < entryCount; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, index.toString());
+    } catch {
+      descriptor = undefined;
+    }
+
+    result.push(safePropertyValue(index.toString(), descriptor, depth + 1, context));
+  }
+
+  if (length > entryCount) {
+    result.push(`[truncated:${length - entryCount}]`);
+  }
+
+  return result;
+};
+
+const sanitizeObjectValue = (
+  value: object,
+  depth: number,
+  context: SanitizerContext,
+): SanitizedApiValue => {
+  const descriptors = safeObjectDescriptors(value);
+
+  if (!descriptors) {
+    return sanitizerUnreadableMarker;
+  }
+
+  const enumerableKeys = Object.keys(descriptors)
+    .filter((key) => descriptors[key]?.enumerable)
+    .sort(compareSanitizerKeys);
+  const selectedKeys = enumerableKeys.slice(0, sanitizerMaxCollectionEntries);
+  const entries = selectedKeys.map((key): [string, SanitizedApiValue] => [
+    sanitizeApiKey(key),
+    safePropertyValue(key, descriptors[key], depth + 1, context),
+  ]);
+
+  if (enumerableKeys.length > selectedKeys.length) {
+    entries.push(["__truncated__", `[truncated:${enumerableKeys.length - selectedKeys.length}]`]);
+  }
+
+  return Object.fromEntries(entries);
+};
+
+function sanitizeApiValue(
+  value: unknown,
+  depth: number,
+  context: SanitizerContext,
+): SanitizedApiValue {
+  if (context.remainingNodes <= 0) {
+    return "[truncated:node-budget]";
+  }
+
+  context.remainingNodes -= 1;
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    return redactApiText(truncateSanitizerText(value, sanitizerMaxStringLength));
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : `[number:${Number.isNaN(value) ? "NaN" : value > 0 ? "Infinity" : "-Infinity"}]`;
+  }
+
+  if (typeof value === "undefined") {
+    return "[undefined]";
+  }
+
+  if (typeof value === "symbol") {
+    return "[symbol]";
+  }
+
+  if (typeof value === "function") {
+    return "[function]";
+  }
+
+  if (typeof value === "bigint") {
+    return "[bigint]";
+  }
+
+  if (depth >= sanitizerMaxDepth) {
+    return "[max-depth]";
+  }
+
+  if (context.activeObjects.has(value)) {
+    return "[circular]";
+  }
+
+  context.activeObjects.add(value);
+
+  try {
+    if (Array.isArray(value)) {
+      return sanitizeArrayValue(value, depth, context);
+    }
+
+    if (value instanceof Error) {
+      return sanitizeErrorValue(value, depth, context);
+    }
+
+    return sanitizeObjectValue(value, depth, context);
+  } catch {
+    return sanitizerUnreadableMarker;
+  } finally {
+    context.activeObjects.delete(value);
+  }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+export const sanitizeProductionDatabaseHandoffReadinessApiText = (value: unknown): string => {
+  const sanitized = sanitizeApiValue(value, 0, createSanitizerContext());
+
+  if (typeof sanitized === "string") {
+    return redactApiText(sanitized);
+  }
+
+  try {
+    return redactApiText(JSON.stringify(sanitized));
+  } catch {
+    return sanitizerUnreadableMarker;
+  }
 };
 
 const sanitizeDetailValue = (value: unknown): boolean | number | string => {
@@ -539,26 +855,8 @@ const isProductionDatabaseHandoffReadiness = (
   && typeof value.summary.requiredReferenceCount === "number"
   && typeof value.summary.storeCoverageCount === "number";
 
-const sanitizeJsonValue = (value: unknown): unknown => {
-  if (typeof value === "string") {
-    return sanitizeProductionDatabaseHandoffReadinessApiText(value);
-  }
-
-  if (Array.isArray(value)) {
-    return value.map(sanitizeJsonValue);
-  }
-
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  return Object.fromEntries(
-    Object.entries(value).map(([key, nestedValue]) => [
-      sanitizeProductionDatabaseHandoffReadinessApiText(key),
-      sanitizeJsonValue(nestedValue),
-    ]),
-  );
-};
+const sanitizeJsonValue = (value: unknown): SanitizedApiValue =>
+  sanitizeApiValue(value, 0, createSanitizerContext());
 
 const dataPayloadFromEnvelope = (body: unknown) => {
   if (!isApiEnvelope(body) || body.ok !== true || !isRecord(body.data)) {
@@ -619,7 +917,7 @@ export const loadProductionDatabaseHandoffReadinessApiState = async ({
     );
   }
 
-  const handoff = sanitizeJsonValue(payload) as ProductionDatabaseHandoffReadiness;
+  const handoff = sanitizeJsonValue(payload) as unknown as ProductionDatabaseHandoffReadiness;
 
   return {
     configured: normalizedConfig.configured,
