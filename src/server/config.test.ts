@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  CampaignOsCampaignDbConfigError,
   resolveBackendConfigContract,
+  resolveCampaignOsCampaignDbConfig,
   resolveCampaignOsRuntimeConfig,
   sanitizeBackendConfigDiagnosticValue,
 } from "./config";
@@ -698,5 +700,117 @@ describe("backend config contract", () => {
         },
       }),
     ).toThrow("local_json persistence requires CAMPAIGN_OS_PERSISTENCE_DIR");
+  });
+});
+
+describe("Campaign DB runtime config", () => {
+  it("keeps the default Campaign DB local without a connection secret", () => {
+    const config = resolveCampaignOsCampaignDbConfig({ env: {} });
+
+    expect(config).toEqual({
+      adapterLabel: "campaign-db-deterministic-adapter",
+      mode: "local",
+    });
+    expect(collectStringValues(config)).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("postgres://")]),
+    );
+  });
+
+  it("resolves an explicit loopback PostgreSQL pool with bounded defaults", () => {
+    const config = resolveCampaignOsCampaignDbConfig({
+      env: {
+        CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+        CAMPAIGN_OS_DATABASE_URL: "postgres://local-user:local-password@127.0.0.1:5432/campaign_os_test",
+        CAMPAIGN_OS_DATABASE_SSL_MODE: "disable",
+      },
+    });
+
+    expect(config).toMatchObject({
+      adapterLabel: "campaign-db-postgresql-adapter",
+      mode: "postgres",
+      pool: {
+        connectionTimeoutMillis: 5_000,
+        idleTimeoutMillis: 10_000,
+        max: 10,
+        ssl: false,
+      },
+    });
+  });
+
+  it("defaults non-loopback PostgreSQL connections to certificate verification", () => {
+    const config = resolveCampaignOsCampaignDbConfig({
+      env: {
+        CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+        CAMPAIGN_OS_DATABASE_URL: "postgres://runtime-user:runtime-password@db.internal/campaign_os",
+      },
+    });
+
+    expect(config.mode).toBe("postgres");
+    if (config.mode !== "postgres") {
+      throw new Error("Expected PostgreSQL Campaign DB config.");
+    }
+    expect(config.pool.ssl).toEqual({ rejectUnauthorized: true });
+  });
+
+  it.each([
+    [
+      "missing URL",
+      { CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres" },
+      "CAMPAIGN_DB_DATABASE_URL_REQUIRED",
+      "CAMPAIGN_OS_DATABASE_URL",
+    ],
+    [
+      "remote TLS disable",
+      {
+        CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+        CAMPAIGN_OS_DATABASE_SSL_MODE: "disable",
+        CAMPAIGN_OS_DATABASE_URL: "postgres://runtime-user:runtime-password@db.internal/campaign_os",
+      },
+      "CAMPAIGN_DB_SSL_MODE_INVALID",
+      "CAMPAIGN_OS_DATABASE_SSL_MODE",
+    ],
+    [
+      "invalid IPv4 loopback lookalike",
+      {
+        CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+        CAMPAIGN_OS_DATABASE_SSL_MODE: "disable",
+        CAMPAIGN_OS_DATABASE_URL: "postgres://runtime-user:runtime-password@127.999.1.1/campaign_os",
+      },
+      "CAMPAIGN_DB_SSL_MODE_INVALID",
+      "CAMPAIGN_OS_DATABASE_SSL_MODE",
+    ],
+    [
+      "invalid SSL mode",
+      {
+        CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+        CAMPAIGN_OS_DATABASE_SSL_MODE: "unsafe",
+        CAMPAIGN_OS_DATABASE_URL: "postgres://runtime-user:runtime-password@127.0.0.1/campaign_os",
+      },
+      "CAMPAIGN_DB_SSL_MODE_INVALID",
+      "CAMPAIGN_OS_DATABASE_SSL_MODE",
+    ],
+    [
+      "oversized pool",
+      {
+        CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+        CAMPAIGN_OS_DATABASE_POOL_MAX: "21",
+        CAMPAIGN_OS_DATABASE_URL: "postgres://runtime-user:runtime-password@127.0.0.1/campaign_os",
+      },
+      "CAMPAIGN_DB_POOL_SETTING_INVALID",
+      "CAMPAIGN_OS_DATABASE_POOL_MAX",
+    ],
+  ])("fails closed for %s without echoing config values", (_case, env, code, field) => {
+    let thrown: unknown;
+
+    try {
+      resolveCampaignOsCampaignDbConfig({ env });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(CampaignOsCampaignDbConfigError);
+    expect(thrown).toMatchObject({ code, field });
+    expect(JSON.stringify(thrown)).not.toContain("runtime-password");
+    expect(JSON.stringify(thrown)).not.toContain("db.internal");
   });
 });

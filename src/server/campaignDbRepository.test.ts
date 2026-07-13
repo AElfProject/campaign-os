@@ -2,13 +2,17 @@ import { mkdir, readFile } from "node:fs/promises";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { supportedLocales } from "../domain/types";
 import {
   CampaignDbRepositoryError,
   createCampaignDbRepository,
   sanitizeCampaignDbDiagnosticValue,
 } from "./campaignDbRepository";
+import {
+  createCampaignDurableStore,
+  type CampaignDurableStore,
+} from "./campaignDurableStore";
 
 const validDraftInput = () => ({
   duration: "2026-07-07 to 2026-07-14",
@@ -455,7 +459,15 @@ describe("Campaign DB repository", () => {
     expect(listedEvidence).toHaveLength(1);
     await expect(repository.health()).resolves.toMatchObject({
       completionRecordCount: 1,
+      participantRecordCount: 1,
       taskEvidenceRecordCount: 1,
+    });
+    await expect(repository.getParticipant!(campaign.id, "2F4CompletionWallet")).resolves.toMatchObject({
+      accountType: "EOA",
+      totalPoints: 120,
+      walletAddress: "2F4CompletionWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+      walletTypeVerified: true,
     });
     await expect(repository.checkEligibility!({
       accountType: "EOA",
@@ -2021,5 +2033,293 @@ describe("Campaign DB repository", () => {
     expect(source).not.toContain("awaken");
     expect(source).not.toMatch(/service\s*===/);
     expect(source).not.toMatch(/provider\s*===/);
+  });
+
+  it("routes PostgreSQL mode through the supplied store with opaque IDs and returned rows", async () => {
+    const backingStore = createCampaignDurableStore({ mode: "local_seeded" });
+    const close = vi.fn(async () => backingStore.close());
+    const create = vi.fn(async (...args: Parameters<CampaignDurableStore["create"]>) => {
+      const persisted = await backingStore.create(...args);
+
+      return { ...persisted, goal: "Persisted by PostgreSQL RETURNING" };
+    });
+    const createTaskDraft = vi.fn(
+      async (...args: Parameters<CampaignDurableStore["createTaskDraft"]>) => {
+        const persisted = await backingStore.createTaskDraft(...args);
+
+        return { ...persisted, points: persisted.points + 1 };
+      },
+    );
+    const listParticipantsByCampaignId = vi.fn(
+      (...args: Parameters<CampaignDurableStore["listParticipantsByCampaignId"]>) =>
+        backingStore.listParticipantsByCampaignId(...args),
+    );
+    const manifest = async (...args: Parameters<CampaignDurableStore["manifest"]>) => ({
+      ...(await backingStore.manifest(...args)),
+      appliedMigrationIds: ["0001_campaign_runtime"],
+      migrationStatus: "ready" as const,
+      mode: "postgres" as const,
+    });
+    const durableStore: CampaignDurableStore = {
+      ...backingStore,
+      close,
+      create,
+      createTaskDraft,
+      listParticipantsByCampaignId,
+      manifest,
+    };
+    const repository = createCampaignDbRepository({
+      durableStore,
+      mode: "postgres",
+      now: () => "2026-07-13T00:00:00.000Z",
+    });
+
+    const campaign = await repository.createDraft(validDraftInput(), { traceId: "trace-pg-create" });
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id), { traceId: "trace-pg-task" });
+    const participant = await repository.upsertParticipant!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      walletAddress: "2F4PostgresParticipant",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    }, { traceId: "trace-pg-participant" });
+    const completion = await repository.upsertTaskCompletion!({
+      ...validCompletionInput(campaign.id, task.id),
+      walletAddress: participant.walletAddress,
+    }, { traceId: "trace-pg-completion" });
+    const evidence = await repository.upsertTaskEvidence!({
+      ...validEvidenceInput(campaign.id, task.id),
+      completionId: completion.id,
+      walletAddress: participant.walletAddress,
+    }, { traceId: "trace-pg-evidence" });
+    const referral = await repository.bindReferral!({
+      ...validReferralBindingInput(campaign.id),
+      inviteeWalletAddress: participant.walletAddress,
+    }, { traceId: "trace-pg-referral" });
+
+    expect(campaign.goal).toBe("Persisted by PostgreSQL RETURNING");
+    expect(task.points).toBe(121);
+    for (const id of [campaign.id, task.id, participant.id, completion.id, evidence.id, referral.id]) {
+      expect(id).toMatch(/^[a-z-]+-[0-9a-f]{8}-[0-9a-f-]{27}$/);
+      expect(id).not.toMatch(/-0001$/);
+    }
+    await repository.listParticipants!({
+      campaignId: campaign.id,
+      limit: 1,
+      walletAddress: participant.walletAddress,
+    }, { traceId: "trace-pg-list" });
+    expect(listParticipantsByCampaignId).toHaveBeenLastCalledWith(
+      campaign.id,
+      { limit: 1, walletAddress: participant.walletAddress },
+      { traceId: "trace-pg-list" },
+    );
+    await expect(repository.health()).resolves.toMatchObject({
+      adapterId: "campaign-db-postgresql-adapter",
+      liveConnectionAttempted: true,
+      liveQueryExecutionEnabled: true,
+      liveStorageExecutionEnabled: true,
+      selectedMode: "postgres",
+      status: "ready",
+    });
+    const firstClose = repository.close!();
+    const secondClose = repository.close!();
+
+    expect(firstClose).toBe(secondClose);
+    await firstClose;
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ id: campaign.id }), {
+      traceId: "trace-pg-create",
+    });
+    expect(createTaskDraft).toHaveBeenCalledWith(expect.objectContaining({ id: task.id }), {
+      traceId: "trace-pg-task",
+    });
+  });
+
+  it("uses one atomic store call for PostgreSQL task verification", async () => {
+    const backingStore = createCampaignDurableStore({ mode: "local_seeded" });
+    const manifest = async (...args: Parameters<CampaignDurableStore["manifest"]>) => ({
+      ...(await backingStore.manifest(...args)),
+      appliedMigrationIds: ["0001_campaign_runtime"],
+      migrationStatus: "ready" as const,
+      mode: "postgres" as const,
+    });
+    const upsertTaskCompletion = vi.fn(backingStore.upsertTaskCompletion);
+    const upsertTaskEvidence = vi.fn(backingStore.upsertTaskEvidence);
+    const upsertParticipant = vi.fn(backingStore.upsertParticipant);
+    const upsertTaskVerification = vi.fn(async (
+      input: Parameters<NonNullable<CampaignDurableStore["upsertTaskVerification"]>>[0],
+    ) => ({
+      completion: {
+        ...input.completion,
+        evidenceId: "task-evidence-canonical",
+        id: "task-completion-canonical",
+      },
+      evidence: {
+        ...input.evidence,
+        completionId: "task-completion-canonical",
+        id: "task-evidence-canonical",
+      },
+      participant: {
+        ...input.participant,
+        id: "campaign-participant-canonical",
+        totalPoints: 120,
+      },
+    }));
+    const repository = createCampaignDbRepository({
+      durableStore: {
+        ...backingStore,
+        manifest,
+        upsertParticipant,
+        upsertTaskCompletion,
+        upsertTaskEvidence,
+        upsertTaskVerification,
+      },
+      mode: "postgres",
+      now: () => "2026-07-13T00:00:00.000Z",
+    });
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    const result = await repository.upsertTaskVerification!(
+      validCompletionInput(campaign.id, task.id),
+      { traceId: "trace-pg-atomic-verification" },
+    );
+
+    expect(result).toMatchObject({
+      completion: {
+        evidenceId: "task-evidence-canonical",
+        id: "task-completion-canonical",
+      },
+      evidence: {
+        completionId: "task-completion-canonical",
+        id: "task-evidence-canonical",
+      },
+    });
+    expect(upsertTaskVerification).toHaveBeenCalledTimes(1);
+    expect(upsertTaskVerification).toHaveBeenCalledWith({
+      completion: expect.objectContaining({
+        evidenceId: expect.stringMatching(/^task-evidence-[0-9a-f-]{36}$/),
+        pointsAwarded: 120,
+      }),
+      evidence: expect.objectContaining({
+        id: expect.stringMatching(/^task-evidence-[0-9a-f-]{36}$/),
+        pointsAwarded: 120,
+      }),
+      participant: expect.objectContaining({
+        id: expect.stringMatching(/^campaign-participant-[0-9a-f-]{36}$/),
+        totalPoints: 0,
+        walletTypeVerified: true,
+      }),
+    }, { traceId: "trace-pg-atomic-verification" });
+    expect(upsertTaskCompletion).not.toHaveBeenCalled();
+    expect(upsertTaskEvidence).not.toHaveBeenCalled();
+    expect(upsertParticipant).not.toHaveBeenCalled();
+  });
+
+  it("fails closed instead of splitting PostgreSQL task verification writes", async () => {
+    const backingStore = createCampaignDurableStore({ mode: "local_seeded" });
+    const manifest = async (...args: Parameters<CampaignDurableStore["manifest"]>) => ({
+      ...(await backingStore.manifest(...args)),
+      appliedMigrationIds: ["0001_campaign_runtime"],
+      migrationStatus: "ready" as const,
+      mode: "postgres" as const,
+    });
+    const upsertTaskCompletion = vi.fn(backingStore.upsertTaskCompletion);
+    const upsertTaskEvidence = vi.fn(backingStore.upsertTaskEvidence);
+    const upsertParticipant = vi.fn(backingStore.upsertParticipant);
+    const repository = createCampaignDbRepository({
+      durableStore: {
+        ...backingStore,
+        manifest,
+        upsertParticipant,
+        upsertTaskCompletion,
+        upsertTaskEvidence,
+      },
+      mode: "postgres",
+    });
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    await expect(repository.upsertTaskVerification!(
+      validCompletionInput(campaign.id, task.id),
+      { traceId: "trace-pg-atomic-required" },
+    )).rejects.toMatchObject({
+      diagnostics: [expect.objectContaining({
+        code: "CAMPAIGN_DURABLE_STORE_PRODUCTION_REQUIRED",
+        field: "upsertTaskVerification",
+      })],
+    });
+    expect(upsertTaskCompletion).not.toHaveBeenCalled();
+    expect(upsertTaskEvidence).not.toHaveBeenCalled();
+    expect(upsertParticipant).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when PostgreSQL mode has no durable store", () => {
+    expect(() => createCampaignDbRepository({ mode: "postgres" })).toThrow(CampaignDbRepositoryError);
+  });
+
+  it("retries PostgreSQL manifest readiness after a transient failure", async () => {
+    const backingStore = createCampaignDurableStore({ mode: "local_seeded" });
+    const create = vi.fn((...args: Parameters<CampaignDurableStore["create"]>) =>
+      backingStore.create(...args));
+    const manifest = vi.fn(async (...args: Parameters<CampaignDurableStore["manifest"]>) => {
+      if (manifest.mock.calls.length === 1) {
+        throw new Error("temporary manifest failure");
+      }
+
+      return {
+        ...(await backingStore.manifest(...args)),
+        appliedMigrationIds: ["0001_campaign_runtime"],
+        migrationStatus: "ready" as const,
+        mode: "postgres" as const,
+      };
+    });
+    const repository = createCampaignDbRepository({
+      durableStore: { ...backingStore, create, manifest },
+      mode: "postgres",
+    });
+
+    await expect(repository.createDraft(validDraftInput(), {
+      traceId: "trace-postgres-manifest-transient-1",
+    })).rejects.toThrow("temporary manifest failure");
+    const campaign = await repository.createDraft(validDraftInput(), {
+      traceId: "trace-postgres-manifest-transient-2",
+    });
+
+    expect(campaign.id).toMatch(/^campaign-[0-9a-f-]{36}$/);
+    expect(manifest).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks PostgreSQL writes when the migration manifest is not ready", async () => {
+    const backingStore = createCampaignDurableStore({ mode: "local_seeded" });
+    const create = vi.fn((...args: Parameters<CampaignDurableStore["create"]>) =>
+      backingStore.create(...args));
+    const manifest = vi.fn(async () => ({
+      ...(await backingStore.manifest()),
+      diagnosticCodes: ["POSTGRES_CAMPAIGN_STORE_SCHEMA_NOT_READY" as const],
+      diagnostics: [{
+        code: "POSTGRES_CAMPAIGN_STORE_SCHEMA_NOT_READY" as const,
+        field: "schemaVersion",
+        message: "PostgreSQL Campaign store schema is not ready.",
+        severity: "error" as const,
+      }],
+      migrationStatus: "blocked" as const,
+      mode: "postgres" as const,
+      status: "blocked" as const,
+    }));
+    const repository = createCampaignDbRepository({
+      durableStore: { ...backingStore, create, manifest },
+      mode: "postgres",
+    });
+
+    await expect(repository.createDraft(validDraftInput(), {
+      traceId: "trace-postgres-schema-blocked",
+    })).rejects.toMatchObject({
+      diagnostics: [expect.objectContaining({
+        code: "POSTGRES_CAMPAIGN_STORE_SCHEMA_NOT_READY",
+      })],
+    });
+    expect(manifest).toHaveBeenCalledWith({ traceId: "trace-postgres-schema-blocked" });
+    expect(create).not.toHaveBeenCalled();
   });
 });
