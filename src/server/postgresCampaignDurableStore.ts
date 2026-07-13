@@ -1169,8 +1169,12 @@ export const createPostgresCampaignDurableStore = ({
       await queryWith(
         client,
         operation,
-        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-        [`${input.completion.campaignId}\u0000${input.completion.walletAddress}`],
+        `
+          SELECT pg_advisory_xact_lock(
+            hashtextextended(jsonb_build_array($1::text, $2::text)::text, 0)
+          )
+        `,
+        [input.completion.campaignId, input.completion.walletAddress],
         { traceId },
       );
       const initialEvidence = await upsertTaskEvidenceWith(

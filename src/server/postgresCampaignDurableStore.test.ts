@@ -550,8 +550,10 @@ describe("PostgreSQL Campaign durable store", () => {
       "COMMIT",
     ]);
     expect(pool.calls[1]?.values).toEqual([
-      "campaign-postgres-0001\u00002F4ParticipantWallet",
+      "campaign-postgres-0001",
+      "2F4ParticipantWallet",
     ]);
+    expect(pool.calls[1]?.text).toContain("jsonb_build_array($1::text, $2::text)");
     expect(pool.calls.some((call) => call.text === "ROLLBACK")).toBe(false);
     expect(pool.connect).toHaveBeenCalledTimes(1);
     expect(pool.release).toHaveBeenCalledTimes(1);
