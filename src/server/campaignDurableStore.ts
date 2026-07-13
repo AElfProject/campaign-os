@@ -103,6 +103,18 @@ export interface CampaignDurableStoreReferralListOptions
   referrerWalletAddress?: string;
 }
 
+export interface CampaignDurableStoreTaskVerificationWrite {
+  completion: CampaignDbTaskCompletion;
+  evidence: CampaignDbTaskEvidenceRecord;
+  participant: CampaignDbParticipantRecord;
+}
+
+export interface CampaignDurableStoreTaskVerificationResult {
+  completion: CampaignDbTaskCompletion;
+  evidence: CampaignDbTaskEvidenceRecord;
+  participant: CampaignDbParticipantRecord;
+}
+
 export interface CampaignDurableStore {
   close(): Promise<void>;
   create(
@@ -173,6 +185,10 @@ export interface CampaignDurableStore {
     completion: CampaignDbTaskCompletion,
     context?: CampaignDurableStoreOperationContext,
   ): Promise<CampaignDbTaskCompletion>;
+  upsertTaskVerification?(
+    input: CampaignDurableStoreTaskVerificationWrite,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDurableStoreTaskVerificationResult>;
 }
 
 export interface CreateCampaignDurableStoreOptions {

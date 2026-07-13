@@ -28,6 +28,11 @@ const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
 
 class TranscriptPool implements PostgresCampaignStorePool {
   readonly calls: QueryCall[] = [];
+  readonly release = vi.fn();
+  readonly connect = vi.fn(async () => ({
+    query: (text: string, values: readonly unknown[] = []) => this.query(text, values),
+    release: this.release,
+  }));
   readonly end = vi.fn(async () => {
     if (this.endError) {
       throw this.endError;
@@ -476,6 +481,150 @@ describe("PostgreSQL Campaign durable store", () => {
       input.createdAt,
       input.updatedAt,
     ]);
+  });
+
+  it("atomically persists verification records under a Campaign-wallet lock", async () => {
+    const pool = new TranscriptPool((call) => {
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_evidence")) {
+        const completionId = call.values[4];
+
+        return {
+          rows: [evidenceRow({
+            completion_id: completionId,
+            id: "evidence-persisted-id",
+          })],
+        };
+      }
+
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_completions")) {
+        return {
+          rows: [completionRow({
+            evidence_id: "evidence-persisted-id",
+            id: "completion-persisted-id",
+          })],
+        };
+      }
+
+      if (call.text.includes("SUM(points_awarded)")) {
+        return { rows: [{ total_points: "120" }] };
+      }
+
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_participants")) {
+        return { rows: [participantRow({ total_points: 120 })] };
+      }
+
+      return { rows: [] };
+    });
+    const store = createPostgresCampaignDurableStore({ pool }) as ReturnType<
+      typeof createPostgresCampaignDurableStore
+    > & {
+      upsertTaskVerification(input: {
+        completion: CampaignDbTaskCompletion;
+        evidence: CampaignDbTaskEvidenceRecord;
+        participant: CampaignDbParticipantRecord;
+      }, context?: { traceId?: string }): Promise<{
+        completion: CampaignDbTaskCompletion;
+        evidence: CampaignDbTaskEvidenceRecord;
+        participant: CampaignDbParticipantRecord;
+      }>;
+    };
+
+    await expect(store.upsertTaskVerification({
+      completion: completion({ evidenceId: "evidence-request-id" }),
+      evidence: evidence({ completionId: undefined }),
+      participant: participant({ totalPoints: 0 }),
+    }, { traceId: "trace-atomic-verification" })).resolves.toMatchObject({
+      completion: { id: "completion-persisted-id" },
+      evidence: { completionId: "completion-persisted-id", id: "evidence-persisted-id" },
+      participant: { id: "participant-persisted-id", totalPoints: 120 },
+    });
+
+    expect(pool.calls.map((call) => call.text)).toEqual([
+      "BEGIN",
+      expect.stringContaining("pg_advisory_xact_lock"),
+      expect.stringMatching(/^INSERT INTO campaign_os\.campaign_task_evidence/),
+      expect.stringMatching(/^INSERT INTO campaign_os\.campaign_task_completions/),
+      expect.stringMatching(/^INSERT INTO campaign_os\.campaign_task_evidence/),
+      expect.stringContaining("SUM(points_awarded)"),
+      expect.stringMatching(/^INSERT INTO campaign_os\.campaign_participants/),
+      "COMMIT",
+    ]);
+    expect(pool.calls[1]?.values).toEqual([
+      "campaign-postgres-0001\u00002F4ParticipantWallet",
+    ]);
+    expect(pool.calls.some((call) => call.text === "ROLLBACK")).toBe(false);
+    expect(pool.connect).toHaveBeenCalledTimes(1);
+    expect(pool.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls back atomic verification when an intermediate write fails", async () => {
+    const pool = new TranscriptPool((call) => {
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_evidence")) {
+        return { rows: [evidenceRow({ completion_id: null })] };
+      }
+
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_completions")) {
+        throw new Error("postgres://runtime-user:runtime-password@db.internal/campaign_os");
+      }
+
+      return { rows: [] };
+    });
+    const store = createPostgresCampaignDurableStore({ pool }) as ReturnType<
+      typeof createPostgresCampaignDurableStore
+    > & {
+      upsertTaskVerification(input: {
+        completion: CampaignDbTaskCompletion;
+        evidence: CampaignDbTaskEvidenceRecord;
+        participant: CampaignDbParticipantRecord;
+      }, context?: { traceId?: string }): Promise<unknown>;
+    };
+
+    await expect(store.upsertTaskVerification({
+      completion: completion(),
+      evidence: evidence({ completionId: undefined }),
+      participant: participant({ totalPoints: 0 }),
+    }, { traceId: "trace-atomic-rollback" })).rejects.toMatchObject({
+      code: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+      operation: "upsertTaskVerification",
+      traceId: "trace-atomic-rollback",
+    });
+    expect(pool.calls[pool.calls.length - 1]?.text).toBe("ROLLBACK");
+    expect(pool.calls.some((call) => call.text === "COMMIT")).toBe(false);
+    expect(pool.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a safe cleanup failure when atomic verification rollback fails", async () => {
+    const pool = new TranscriptPool((call) => {
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_evidence")) {
+        throw new Error("raw insert failure");
+      }
+
+      if (call.text === "ROLLBACK") {
+        throw new Error("raw rollback failure");
+      }
+
+      return { rows: [] };
+    });
+    const store = createPostgresCampaignDurableStore({ pool }) as ReturnType<
+      typeof createPostgresCampaignDurableStore
+    > & {
+      upsertTaskVerification(input: {
+        completion: CampaignDbTaskCompletion;
+        evidence: CampaignDbTaskEvidenceRecord;
+        participant: CampaignDbParticipantRecord;
+      }, context?: { traceId?: string }): Promise<unknown>;
+    };
+
+    await expect(store.upsertTaskVerification({
+      completion: completion(),
+      evidence: evidence({ completionId: undefined }),
+      participant: participant({ totalPoints: 0 }),
+    }, { traceId: "trace-atomic-cleanup" })).rejects.toMatchObject({
+      code: "POSTGRES_CAMPAIGN_STORE_CLEANUP_FAILED",
+      operation: "upsertTaskVerification",
+      traceId: "trace-atomic-cleanup",
+    });
+    expect(pool.release).toHaveBeenCalledTimes(1);
   });
 
   it("filters and atomically upserts Task Evidence without application-side reads", async () => {

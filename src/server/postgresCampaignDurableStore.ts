@@ -33,6 +33,8 @@ import type {
   CampaignDurableStoreOperationContext,
   CampaignDurableStoreParticipantListOptions,
   CampaignDurableStoreReferralListOptions,
+  CampaignDurableStoreTaskVerificationResult,
+  CampaignDurableStoreTaskVerificationWrite,
 } from "./campaignDurableStore";
 
 const DEFAULT_BOUNDED_LIST_LIMIT = 100;
@@ -203,7 +205,16 @@ export interface PostgresCampaignStoreQueryResult {
   rows: Array<Record<string, unknown>>;
 }
 
+export interface PostgresCampaignStoreClient {
+  query(
+    text: string,
+    values?: unknown[],
+  ): Promise<PostgresCampaignStoreQueryResult>;
+  release(): void;
+}
+
 export interface PostgresCampaignStorePool {
+  connect?(): Promise<PostgresCampaignStoreClient>;
   end(): Promise<void>;
   query(
     text: string,
@@ -229,7 +240,8 @@ export type PostgresCampaignStoreOperation =
   | "upsertParticipant"
   | "upsertReferralBinding"
   | "upsertTaskCompletion"
-  | "upsertTaskEvidence";
+  | "upsertTaskEvidence"
+  | "upsertTaskVerification";
 
 export type PostgresCampaignStoreErrorCode = Extract<
   CampaignDurableStoreDiagnosticCode,
@@ -885,7 +897,8 @@ export const createPostgresCampaignDurableStore = ({
     }
   };
 
-  const query = async (
+  const queryWith = async (
+    queryable: Pick<PostgresCampaignStorePool, "query">,
     operation: PostgresCampaignStoreOperation,
     sql: string,
     values: unknown[],
@@ -895,7 +908,7 @@ export const createPostgresCampaignDurableStore = ({
     ensureOpen(operation, traceId);
 
     try {
-      const result = await pool.query(sql, values);
+      const result = await queryable.query(sql, values);
 
       if (!result || !Array.isArray(result.rows)) {
         throw new RowDecodeError("rows");
@@ -925,6 +938,13 @@ export const createPostgresCampaignDurableStore = ({
     }
   };
 
+  const query = (
+    operation: PostgresCampaignStoreOperation,
+    sql: string,
+    values: unknown[],
+    context?: CampaignDurableStoreOperationContext,
+  ) => queryWith(pool, operation, sql, values, context);
+
   const close = (): Promise<void> => {
     if (closePromise) {
       return closePromise;
@@ -949,6 +969,278 @@ export const createPostgresCampaignDurableStore = ({
     })();
 
     return closePromise;
+  };
+
+  const upsertParticipantWith = async (
+    queryable: Pick<PostgresCampaignStorePool, "query">,
+    participant: CampaignDbParticipantRecord,
+    context?: CampaignDurableStoreOperationContext,
+    operation: PostgresCampaignStoreOperation = "upsertParticipant",
+  ) => {
+    const result = await queryWith(
+      queryable,
+      operation,
+      `
+        INSERT INTO campaign_os.campaign_participants (${PARTICIPANT_COLUMNS})
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
+        ON CONFLICT (campaign_id, wallet_address) DO UPDATE SET
+          account_type = EXCLUDED.account_type,
+          wallet_source = EXCLUDED.wallet_source,
+          wallet_type_verified = EXCLUDED.wallet_type_verified,
+          wallet_signature_status = EXCLUDED.wallet_signature_status,
+          wallet_verified_at = EXCLUDED.wallet_verified_at,
+          locale_preference = EXCLUDED.locale_preference,
+          total_points = EXCLUDED.total_points,
+          rank = EXCLUDED.rank,
+          risk_flags = EXCLUDED.risk_flags,
+          updated_at = EXCLUDED.updated_at
+        RETURNING ${PARTICIPANT_COLUMNS}
+      `,
+      [
+        participant.id,
+        participant.campaignId,
+        participant.walletAddress,
+        participant.accountType,
+        participant.walletSource,
+        participant.walletTypeVerified,
+        participant.walletSignatureStatus,
+        participant.walletVerifiedAt ?? null,
+        participant.localePreference,
+        participant.totalPoints,
+        participant.rank ?? null,
+        encodeJsonb(participant.riskFlags, "riskFlags", operation, context),
+        participant.createdAt,
+        participant.updatedAt,
+      ],
+      context,
+    );
+
+    return requiredOne(result.rows, mapParticipantRow, operation, result.traceId);
+  };
+
+  const upsertTaskCompletionWith = async (
+    queryable: Pick<PostgresCampaignStorePool, "query">,
+    completion: CampaignDbTaskCompletion,
+    context?: CampaignDurableStoreOperationContext,
+    operation: PostgresCampaignStoreOperation = "upsertTaskCompletion",
+  ) => {
+    const result = await queryWith(
+      queryable,
+      operation,
+      `
+        INSERT INTO campaign_os.campaign_task_completions (${COMPLETION_COLUMNS})
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        ON CONFLICT (campaign_id, task_id, wallet_address) DO UPDATE SET
+          account_type = EXCLUDED.account_type,
+          wallet_source = EXCLUDED.wallet_source,
+          status = EXCLUDED.status,
+          evidence_source = EXCLUDED.evidence_source,
+          evidence_id = EXCLUDED.evidence_id,
+          evidence_hash = EXCLUDED.evidence_hash,
+          points_awarded = EXCLUDED.points_awarded,
+          completed_at = EXCLUDED.completed_at,
+          updated_at = EXCLUDED.updated_at
+        RETURNING ${COMPLETION_COLUMNS}
+      `,
+      [
+        completion.id,
+        completion.campaignId,
+        completion.taskId,
+        completion.walletAddress,
+        completion.accountType,
+        completion.walletSource,
+        completion.status,
+        completion.evidenceSource,
+        completion.evidenceId ?? null,
+        completion.evidenceHash ?? null,
+        completion.pointsAwarded,
+        completion.completedAt ?? null,
+        completion.createdAt,
+        completion.updatedAt,
+      ],
+      context,
+    );
+
+    return requiredOne(result.rows, mapCompletionRow, operation, result.traceId);
+  };
+
+  const upsertTaskEvidenceWith = async (
+    queryable: Pick<PostgresCampaignStorePool, "query">,
+    evidence: CampaignDbTaskEvidenceRecord,
+    context?: CampaignDurableStoreOperationContext,
+    operation: PostgresCampaignStoreOperation = "upsertTaskEvidence",
+  ) => {
+    const result = await queryWith(
+      queryable,
+      operation,
+      `
+        INSERT INTO campaign_os.campaign_task_evidence (${EVIDENCE_COLUMNS})
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+          $11, $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20
+        )
+        ON CONFLICT (campaign_id, task_id, wallet_address) DO UPDATE SET
+          completion_id = EXCLUDED.completion_id,
+          account_type = EXCLUDED.account_type,
+          wallet_source = EXCLUDED.wallet_source,
+          status = EXCLUDED.status,
+          evidence_source = EXCLUDED.evidence_source,
+          evidence_hash = EXCLUDED.evidence_hash,
+          evidence_ref = EXCLUDED.evidence_ref,
+          diagnostic_codes = EXCLUDED.diagnostic_codes,
+          points_awarded = EXCLUDED.points_awarded,
+          captured_at = EXCLUDED.captured_at,
+          live_contract_executed = EXCLUDED.live_contract_executed,
+          live_provider_executed = EXCLUDED.live_provider_executed,
+          live_reward_executed = EXCLUDED.live_reward_executed,
+          live_storage_executed = EXCLUDED.live_storage_executed,
+          updated_at = EXCLUDED.updated_at
+        RETURNING ${EVIDENCE_COLUMNS}
+      `,
+      [
+        evidence.id,
+        evidence.campaignId,
+        evidence.taskId,
+        evidence.walletAddress,
+        evidence.completionId ?? null,
+        evidence.accountType,
+        evidence.walletSource,
+        evidence.status,
+        evidence.evidenceSource,
+        evidence.evidenceHash,
+        evidence.evidenceRef ?? null,
+        encodeJsonb(evidence.diagnosticCodes, "diagnosticCodes", operation, context),
+        evidence.pointsAwarded,
+        evidence.capturedAt,
+        evidence.liveContractExecuted,
+        evidence.liveProviderExecuted,
+        evidence.liveRewardExecuted,
+        evidence.liveStorageExecuted,
+        evidence.createdAt,
+        evidence.updatedAt,
+      ],
+      context,
+    );
+
+    return requiredOne(result.rows, mapEvidenceRow, operation, result.traceId);
+  };
+
+  const cleanupError = (
+    traceId: string,
+  ) => new PostgresCampaignStoreError({
+    code: "POSTGRES_CAMPAIGN_STORE_CLEANUP_FAILED",
+    field: "transaction",
+    operation: "upsertTaskVerification",
+    traceId,
+  });
+
+  const upsertTaskVerification = async (
+    input: CampaignDurableStoreTaskVerificationWrite,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDurableStoreTaskVerificationResult> => {
+    const operation = "upsertTaskVerification" as const;
+    const traceId = resolveTraceId(context, operation);
+    ensureOpen(operation, traceId);
+
+    if (!pool.connect) {
+      throw new PostgresCampaignStoreError({
+        code: "POSTGRES_CAMPAIGN_STORE_ARGUMENT_INVALID",
+        field: "pool.connect",
+        operation,
+        traceId,
+      });
+    }
+
+    let client: PostgresCampaignStoreClient;
+
+    try {
+      client = await pool.connect();
+    } catch {
+      throw new PostgresCampaignStoreError({
+        code: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+        field: "database",
+        operation,
+        traceId,
+      });
+    }
+
+    try {
+      await queryWith(client, operation, "BEGIN", [], { traceId });
+      await queryWith(
+        client,
+        operation,
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`${input.completion.campaignId}\u0000${input.completion.walletAddress}`],
+        { traceId },
+      );
+      const initialEvidence = await upsertTaskEvidenceWith(
+        client,
+        { ...input.evidence, completionId: undefined },
+        { traceId },
+        operation,
+      );
+      const completion = await upsertTaskCompletionWith(
+        client,
+        {
+          ...input.completion,
+          evidenceHash: initialEvidence.evidenceHash,
+          evidenceId: initialEvidence.id,
+        },
+        { traceId },
+        operation,
+      );
+      const evidence = await upsertTaskEvidenceWith(
+        client,
+        {
+          ...initialEvidence,
+          completionId: completion.id,
+          pointsAwarded: completion.pointsAwarded,
+        },
+        { traceId },
+        operation,
+      );
+      const pointsResult = await queryWith(
+        client,
+        operation,
+        `
+          SELECT COALESCE(SUM(points_awarded), 0)::text AS total_points
+          FROM campaign_os.campaign_task_completions
+          WHERE campaign_id = $1
+            AND wallet_address = $2
+            AND status = 'completed'
+        `,
+        [completion.campaignId, completion.walletAddress],
+        { traceId },
+      );
+      const pointsRow = requiredOne(pointsResult.rows, decodeRow, operation, traceId);
+      const participant = await upsertParticipantWith(
+        client,
+        {
+          ...input.participant,
+          totalPoints: decodeCount(pointsRow, "total_points"),
+        },
+        { traceId },
+        operation,
+      );
+
+      await queryWith(client, operation, "COMMIT", [], { traceId });
+
+      return { completion, evidence, participant };
+    } catch (error) {
+      try {
+        await queryWith(client, operation, "ROLLBACK", [], { traceId });
+      } catch {
+        throw cleanupError(traceId);
+      }
+
+      throw error;
+    } finally {
+      try {
+        client.release();
+      } catch {
+        throw cleanupError(traceId);
+      }
+    }
   };
 
   return {
@@ -1367,46 +1659,8 @@ export const createPostgresCampaignDurableStore = ({
         { traceId },
       );
     },
-    upsertParticipant: async (participant, context) => {
-      const result = await query(
-        "upsertParticipant",
-        `
-          INSERT INTO campaign_os.campaign_participants (${PARTICIPANT_COLUMNS})
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
-          ON CONFLICT (campaign_id, wallet_address) DO UPDATE SET
-            account_type = EXCLUDED.account_type,
-            wallet_source = EXCLUDED.wallet_source,
-            wallet_type_verified = EXCLUDED.wallet_type_verified,
-            wallet_signature_status = EXCLUDED.wallet_signature_status,
-            wallet_verified_at = EXCLUDED.wallet_verified_at,
-            locale_preference = EXCLUDED.locale_preference,
-            total_points = EXCLUDED.total_points,
-            rank = EXCLUDED.rank,
-            risk_flags = EXCLUDED.risk_flags,
-            updated_at = EXCLUDED.updated_at
-          RETURNING ${PARTICIPANT_COLUMNS}
-        `,
-        [
-          participant.id,
-          participant.campaignId,
-          participant.walletAddress,
-          participant.accountType,
-          participant.walletSource,
-          participant.walletTypeVerified,
-          participant.walletSignatureStatus,
-          participant.walletVerifiedAt ?? null,
-          participant.localePreference,
-          participant.totalPoints,
-          participant.rank ?? null,
-          encodeJsonb(participant.riskFlags, "riskFlags", "upsertParticipant", context),
-          participant.createdAt,
-          participant.updatedAt,
-        ],
-        context,
-      );
-
-      return requiredOne(result.rows, mapParticipantRow, "upsertParticipant", result.traceId);
-    },
+    upsertParticipant: (participant, context) =>
+      upsertParticipantWith(pool, participant, context),
     upsertReferralBinding: async (binding, context) => {
       const result = await query(
         "upsertReferralBinding",
@@ -1447,98 +1701,10 @@ export const createPostgresCampaignDurableStore = ({
 
       return requiredOne(result.rows, mapReferralRow, "upsertReferralBinding", result.traceId);
     },
-    upsertTaskCompletion: async (completion, context) => {
-      const result = await query(
-        "upsertTaskCompletion",
-        `
-          INSERT INTO campaign_os.campaign_task_completions (${COMPLETION_COLUMNS})
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-          ON CONFLICT (campaign_id, task_id, wallet_address) DO UPDATE SET
-            account_type = EXCLUDED.account_type,
-            wallet_source = EXCLUDED.wallet_source,
-            status = EXCLUDED.status,
-            evidence_source = EXCLUDED.evidence_source,
-            evidence_id = EXCLUDED.evidence_id,
-            evidence_hash = EXCLUDED.evidence_hash,
-            points_awarded = EXCLUDED.points_awarded,
-            completed_at = EXCLUDED.completed_at,
-            updated_at = EXCLUDED.updated_at
-          RETURNING ${COMPLETION_COLUMNS}
-        `,
-        [
-          completion.id,
-          completion.campaignId,
-          completion.taskId,
-          completion.walletAddress,
-          completion.accountType,
-          completion.walletSource,
-          completion.status,
-          completion.evidenceSource,
-          completion.evidenceId ?? null,
-          completion.evidenceHash ?? null,
-          completion.pointsAwarded,
-          completion.completedAt ?? null,
-          completion.createdAt,
-          completion.updatedAt,
-        ],
-        context,
-      );
-
-      return requiredOne(result.rows, mapCompletionRow, "upsertTaskCompletion", result.traceId);
-    },
-    upsertTaskEvidence: async (evidence, context) => {
-      const result = await query(
-        "upsertTaskEvidence",
-        `
-          INSERT INTO campaign_os.campaign_task_evidence (${EVIDENCE_COLUMNS})
-          VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-            $11, $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20
-          )
-          ON CONFLICT (campaign_id, task_id, wallet_address) DO UPDATE SET
-            completion_id = EXCLUDED.completion_id,
-            account_type = EXCLUDED.account_type,
-            wallet_source = EXCLUDED.wallet_source,
-            status = EXCLUDED.status,
-            evidence_source = EXCLUDED.evidence_source,
-            evidence_hash = EXCLUDED.evidence_hash,
-            evidence_ref = EXCLUDED.evidence_ref,
-            diagnostic_codes = EXCLUDED.diagnostic_codes,
-            points_awarded = EXCLUDED.points_awarded,
-            captured_at = EXCLUDED.captured_at,
-            live_contract_executed = EXCLUDED.live_contract_executed,
-            live_provider_executed = EXCLUDED.live_provider_executed,
-            live_reward_executed = EXCLUDED.live_reward_executed,
-            live_storage_executed = EXCLUDED.live_storage_executed,
-            updated_at = EXCLUDED.updated_at
-          RETURNING ${EVIDENCE_COLUMNS}
-        `,
-        [
-          evidence.id,
-          evidence.campaignId,
-          evidence.taskId,
-          evidence.walletAddress,
-          evidence.completionId ?? null,
-          evidence.accountType,
-          evidence.walletSource,
-          evidence.status,
-          evidence.evidenceSource,
-          evidence.evidenceHash,
-          evidence.evidenceRef ?? null,
-          encodeJsonb(evidence.diagnosticCodes, "diagnosticCodes", "upsertTaskEvidence", context),
-          evidence.pointsAwarded,
-          evidence.capturedAt,
-          evidence.liveContractExecuted,
-          evidence.liveProviderExecuted,
-          evidence.liveRewardExecuted,
-          evidence.liveStorageExecuted,
-          evidence.createdAt,
-          evidence.updatedAt,
-        ],
-        context,
-      );
-
-      return requiredOne(result.rows, mapEvidenceRow, "upsertTaskEvidence", result.traceId);
-    },
+    upsertTaskCompletion: (completion, context) =>
+      upsertTaskCompletionWith(pool, completion, context),
+    upsertTaskEvidence: (evidence, context) =>
+      upsertTaskEvidenceWith(pool, evidence, context),
+    upsertTaskVerification,
   };
 };
