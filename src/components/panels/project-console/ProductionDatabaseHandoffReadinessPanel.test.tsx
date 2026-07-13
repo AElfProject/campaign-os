@@ -202,4 +202,22 @@ describe("ProductionDatabaseHandoffReadinessPanel", () => {
       expect(within(panel).queryByRole("link", { name })).not.toBeInTheDocument();
     }
   });
+
+  it("keeps internal review groups unframed inside the single panel card", () => {
+    renderPanel(apiBackedState());
+
+    const panel = screen.getByLabelText("Production Database Handoff Readiness review");
+    const internalGroups = panel.querySelectorAll("section");
+
+    expect(panel.tagName).toBe("ARTICLE");
+    expect(panel.style.border).not.toBe("");
+    expect(panel.querySelector("article")).toBeNull();
+    expect(internalGroups.length).toBeGreaterThan(0);
+
+    for (const group of internalGroups) {
+      expect((group as HTMLElement).style.background).toBe("");
+      expect((group as HTMLElement).style.border).toBe("");
+      expect((group as HTMLElement).style.borderRadius).toBe("");
+    }
+  });
 });

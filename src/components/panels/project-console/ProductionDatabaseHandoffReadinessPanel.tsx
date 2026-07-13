@@ -47,16 +47,26 @@ const gridStyle: CSSProperties = {
   minWidth: 0,
 };
 
-const cardStyle: CSSProperties = {
-  background: "#f8fbff",
-  border: "1px solid #dbe6f4",
-  borderRadius: 8,
-  boxSizing: "border-box",
+const sectionGridStyle: CSSProperties = {
+  ...gridStyle,
+  borderTop: "1px solid #dbe6f4",
+  paddingTop: 14,
+};
+
+const groupStyle: CSSProperties = {
+  alignContent: "start",
   display: "grid",
   gap: 6,
   minHeight: 100,
   minWidth: 0,
-  padding: 14,
+};
+
+const sectionStyle: CSSProperties = {
+  display: "grid",
+  gap: 10,
+  minWidth: 0,
+  borderTop: "1px solid #dbe6f4",
+  paddingTop: 14,
 };
 
 const statLabelStyle: CSSProperties = {
@@ -129,15 +139,13 @@ const keyValueRowStyle: CSSProperties = {
 };
 
 const boundaryStyle: CSSProperties = {
-  background: "#fff7ed",
-  border: "1px solid #fed7aa",
-  borderRadius: 8,
+  borderLeft: "3px solid #c2410c",
   color: "#9a3412",
   fontSize: 13,
   fontWeight: 800,
   lineHeight: 1.45,
   margin: 0,
-  padding: 12,
+  padding: "8px 12px",
   ...wrapTextStyle,
 };
 
@@ -263,16 +271,16 @@ export function ProductionDatabaseHandoffReadinessPanel({
         </span>
       </div>
 
-      <div style={gridStyle}>
-        <article style={cardStyle}>
+      <div style={sectionGridStyle}>
+        <section style={groupStyle}>
           <p style={statLabelStyle}>{copy.productionDatabaseHandoffTraceId}</p>
           <p style={{ ...statValueStyle, fontSize: 15, ...wrapTextStyle }}>
             {state.traceId ?? (state.source === "api_runtime" ? handoff.traceId : copy.productionDatabaseHandoffNoTrace)}
           </p>
           <p style={bodyTextStyle}>x-campaign-os-trace-id</p>
-        </article>
+        </section>
 
-        <article style={cardStyle}>
+        <section style={groupStyle}>
           <p style={statLabelStyle}>{copy.productionDatabaseHandoffLocalMvpGate}</p>
           <p style={{ ...statValueStyle, fontSize: 18, ...wrapTextStyle }}>
             {handoff.localMvpReady
@@ -280,9 +288,9 @@ export function ProductionDatabaseHandoffReadinessPanel({
               : copy.productionDatabaseHandoffLocalMvpBlocked}
           </p>
           <p style={bodyTextStyle}>{copy.productionDatabaseHandoffProductionDisabled}</p>
-        </article>
+        </section>
 
-        <article style={cardStyle}>
+        <section style={groupStyle}>
           <p style={statLabelStyle}>{copy.productionDatabaseHandoffProductionBlockers}</p>
           <p style={{ ...statValueStyle, fontSize: 18 }}>
             {handoff.summary.blockedCount} {copy.countBlockers}
@@ -290,18 +298,18 @@ export function ProductionDatabaseHandoffReadinessPanel({
           <p style={bodyTextStyle}>
             {handoff.summary.deferredCount} {copy.productionDatabaseHandoffDeferredReferences}
           </p>
-        </article>
+        </section>
 
-        <article style={cardStyle}>
+        <section style={groupStyle}>
           <p style={statLabelStyle}>{copy.productionDatabaseHandoffTopBlocker}</p>
           <p style={{ ...statValueStyle, fontSize: 15, ...wrapTextStyle }}>
             {sanitizePanelText(getLocalizedText(handoff.summary.topBlocker, locale))}
           </p>
-        </article>
+        </section>
       </div>
 
-      <div style={gridStyle}>
-        <article style={cardStyle}>
+      <div style={sectionGridStyle}>
+        <section style={groupStyle}>
           <p style={statLabelStyle}>{copy.productionDatabaseHandoffPackageBinding}</p>
           {[
             [copy.productionDatabaseHandoffPackageName, `${packageBinding.packageName} (${packageBinding.packageRef})`],
@@ -318,9 +326,9 @@ export function ProductionDatabaseHandoffReadinessPanel({
               </p>
             </div>
           ))}
-        </article>
+        </section>
 
-        <article style={cardStyle}>
+        <section style={groupStyle}>
           <p style={statLabelStyle}>{copy.productionDatabaseHandoffMigrationGate}</p>
           {[
             [copy.productionDatabaseHandoffMigrationApproval, migrationGate.approvalStatus],
@@ -341,9 +349,9 @@ export function ProductionDatabaseHandoffReadinessPanel({
               </p>
             </div>
           ))}
-        </article>
+        </section>
 
-        <article style={cardStyle}>
+        <section style={groupStyle}>
           <p style={statLabelStyle}>{copy.productionDatabaseHandoffSafety}</p>
           <ul style={compactListStyle}>
             {safetyItems(copy).map(([key, label]) => (
@@ -352,10 +360,10 @@ export function ProductionDatabaseHandoffReadinessPanel({
               </li>
             ))}
           </ul>
-        </article>
+        </section>
       </div>
 
-      <section aria-label={copy.productionDatabaseHandoffRequiredReferences} style={cardStyle}>
+      <section aria-label={copy.productionDatabaseHandoffRequiredReferences} style={sectionStyle}>
         <p style={statLabelStyle}>{copy.productionDatabaseHandoffRequiredReferences}</p>
         <div style={{ display: "grid", gap: 10 }}>
           {handoff.requiredReferences.map((reference) => (
@@ -377,7 +385,7 @@ export function ProductionDatabaseHandoffReadinessPanel({
         </div>
       </section>
 
-      <section aria-label={copy.productionDatabaseHandoffStoreCoverage} style={cardStyle}>
+      <section aria-label={copy.productionDatabaseHandoffStoreCoverage} style={sectionStyle}>
         <p style={statLabelStyle}>{copy.productionDatabaseHandoffStoreCoverage}</p>
         <div style={{ display: "grid", gap: 10 }}>
           {handoff.storeCoverage.map((store) => (
@@ -405,14 +413,14 @@ export function ProductionDatabaseHandoffReadinessPanel({
         </div>
       </section>
 
-      <section aria-label={copy.productionDatabaseHandoffNextAction} style={cardStyle}>
+      <section aria-label={copy.productionDatabaseHandoffNextAction} style={sectionStyle}>
         <p style={statLabelStyle}>{copy.productionDatabaseHandoffNextAction}</p>
         <p style={{ ...bodyTextStyle, ...wrapTextStyle }}>
           {sanitizePanelText(getLocalizedText(handoff.summary.topNextAction, locale))}
         </p>
       </section>
 
-      <section aria-label={copy.productionDatabaseHandoffSanitizedDiagnostics} style={cardStyle}>
+      <section aria-label={copy.productionDatabaseHandoffSanitizedDiagnostics} style={sectionStyle}>
         <p style={statLabelStyle}>{copy.productionDatabaseHandoffDiagnostics}</p>
         {diagnostics.length > 0 ? (
           <ul style={{ display: "grid", gap: 8, margin: 0, padding: 0 }}>
