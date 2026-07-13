@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { createCampaignOsLocalService, type CampaignOsLocalService } from "../domain/campaignService";
@@ -114,9 +115,13 @@ class ApiRuntimeResourceCloseError extends Error {
   }
 }
 
+export interface CampaignDbRuntimePool extends PostgresCampaignStorePool {
+  onError(listener: (error: unknown) => void): void;
+}
+
 export type CampaignDbPoolFactory = (
   config: CampaignOsCampaignDbPoolConfig,
-) => PostgresCampaignStorePool;
+) => CampaignDbRuntimePool;
 
 const campaignDbRequire = createRequire(
   import.meta.url.startsWith("file:") ? import.meta.url : join(process.cwd(), "package.json"),
@@ -192,6 +197,7 @@ export interface CreateCampaignOsApiRuntimeOptions {
   campaignDbRepository?: CampaignDbRepository;
   campaignDbRepositoryOptions?: CreateCampaignDbRepositoryOptions;
   exportArtifactRegistry?: ExportArtifactRegistry;
+  logger?: Pick<Console, "error"> | false;
   repository?: CampaignOsRepository;
   runtimeConfig?: CampaignOsRuntimeConfig;
   runtimeConfigOptions?: CampaignOsRuntimeConfigOptions;
@@ -219,6 +225,9 @@ const createPgCampaignPool: CampaignDbPoolFactory = (config) => {
       };
     },
     end: async () => pool.end(),
+    onError: (listener) => {
+      pool.on("error", listener);
+    },
     query: async (text, values = []) => {
       const result = await pool.query(text, values);
 
@@ -805,11 +814,23 @@ const createSafeCampaignDbRepository = (
       return await run();
     } catch (error) {
       if (error instanceof CampaignDbRepositoryError) {
-        if (operation === "campaignDb.generateI18nDraft") {
-          throw error;
-        }
-
         const firstDiagnostic = error.diagnostics[0];
+
+        if (operation === "campaignDb.generateI18nDraft") {
+          if (
+            firstDiagnostic
+            && [
+              "CAMPAIGN_DB_I18N_CAMPAIGN_NOT_FOUND",
+              "CAMPAIGN_DB_I18N_REQUIRED_FIELD_MISSING",
+              "CAMPAIGN_DB_I18N_UNSUPPORTED_SOURCE_LOCALE",
+              "CAMPAIGN_DB_I18N_UNSUPPORTED_TARGET_LOCALE",
+            ].includes(firstDiagnostic.code)
+          ) {
+            throw error;
+          }
+
+          throw unavailable(operation, firstDiagnostic?.code);
+        }
 
         if (
           firstDiagnostic?.code !== "CAMPAIGN_DB_PRODUCTION_DEFERRED"
@@ -936,6 +957,7 @@ export const createCampaignOsApiRuntime = ({
   campaignDbRepository,
   campaignDbRepositoryOptions,
   exportArtifactRegistry = createExportArtifactRegistry(),
+  logger = console,
   repository,
   runtimeConfig,
   runtimeConfigOptions,
@@ -990,6 +1012,13 @@ export const createCampaignOsApiRuntime = ({
     }
 
     const pool = campaignDbPoolFactory(resolvedCampaignDbConfig.pool);
+    pool.onError(() => {
+      if (logger) {
+        logger.error(
+          `[campaign-os-api-runtime] campaign_db_pool_error code=CAMPAIGN_DB_POOL_BACKGROUND_ERROR traceId=${randomUUID()}`,
+        );
+      }
+    });
     const durableStore = createPostgresCampaignDurableStore({
       boundedListLimit: campaignDbRepositoryOptions?.boundedListLimit,
       ownsPool: true,
@@ -1000,6 +1029,7 @@ export const createCampaignOsApiRuntime = ({
       ...campaignDbRepositoryOptions,
       durableStore,
       mode: "postgres",
+      now: campaignDbRepositoryOptions?.now ?? (() => new Date().toISOString()),
     });
   })();
   const safeCampaignDbRepository = createSafeCampaignDbRepository(

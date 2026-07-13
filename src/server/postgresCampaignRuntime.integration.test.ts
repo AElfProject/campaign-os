@@ -104,6 +104,9 @@ const percentile95 = (samples: readonly number[]) => {
   return sorted[index] ?? Number.POSITIVE_INFINITY;
 };
 
+const timestampMillis = (value: unknown) =>
+  value instanceof Date ? value.getTime() : Date.parse(String(value));
+
 integrationSuite("PostgreSQL Campaign API runtime", () => {
   const databaseName = `campaign_os_m239_${process.pid}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
   const timings: number[] = [];
@@ -351,6 +354,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
   }, 60_000);
 
   it("survives restart and preserves concurrent Campaign workflows", async () => {
+    const runtimeWriteWindowStartedAt = Date.now();
     const firstServer = await startServer();
     const ownerAddress = "2F4PostgresRuntimeOwner";
     const created = await requestJson<CampaignCreateData>(firstServer, "/api/campaigns", {
@@ -471,6 +475,25 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       referrals: [expect.objectContaining({ id: referralId })],
       tasks: [expect.objectContaining({ id: taskId })],
     });
+    const runtimeWriteRows = [
+      beforeRestartSnapshot.campaigns[0],
+      beforeRestartSnapshot.tasks[0],
+      beforeRestartSnapshot.participants[0],
+      beforeRestartSnapshot.completions[0],
+      beforeRestartSnapshot.evidence[0],
+    ];
+    const runtimeWriteWindowEndedAt = Date.now();
+
+    for (const row of runtimeWriteRows) {
+      const createdAt = timestampMillis(row?.created_at);
+      const updatedAt = timestampMillis(row?.updated_at);
+
+      expect(Number.isFinite(createdAt)).toBe(true);
+      expect(Number.isFinite(updatedAt)).toBe(true);
+      expect(createdAt).toBeGreaterThanOrEqual(runtimeWriteWindowStartedAt - 1_000);
+      expect(createdAt).toBeLessThanOrEqual(runtimeWriteWindowEndedAt + 1_000);
+      expect(updatedAt).toBeGreaterThanOrEqual(createdAt);
+    }
     await stopServer(firstServer);
 
     const secondServer = await startServer();

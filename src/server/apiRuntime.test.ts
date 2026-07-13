@@ -9,6 +9,7 @@ import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardD
 import { createCampaignOsApiRuntime, type ApiRuntimeResponse } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
 import {
+  CampaignDbRepositoryError,
   createCampaignDbRepository,
   type CampaignDbRepository,
 } from "./campaignDbRepository";
@@ -6819,15 +6820,22 @@ describe("Campaign OS API runtime", () => {
   });
 
   it("composes one PostgreSQL Campaign pool and closes runtime resources once", async () => {
+    let backgroundErrorListener: ((error: unknown) => void) | undefined;
+    const onError = vi.fn((listener: (error: unknown) => void) => {
+      backgroundErrorListener = listener;
+    });
     const pool = {
       end: vi.fn(async () => undefined),
+      onError,
       query: vi.fn(async () => ({ rows: [] })),
     };
     const poolFactory = vi.fn(() => pool);
+    const errorLog = vi.fn();
     const walletSessionRepository = createWalletSessionRepository();
     const walletClose = vi.spyOn(walletSessionRepository, "close");
     const composedRuntime = createCampaignOsApiRuntime({
       campaignDbPoolFactory: poolFactory,
+      logger: { error: errorLog },
       runtimeConfigOptions: {
         env: {
           CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
@@ -6845,6 +6853,17 @@ describe("Campaign OS API runtime", () => {
       max: 10,
       ssl: false,
     }));
+    expect(onError).toHaveBeenCalledTimes(1);
+    backgroundErrorListener?.(new Error(
+      "postgres://runtime-user:runtime-password@db.internal/campaign_os private query value",
+    ));
+    const backgroundErrorLog = errorLog.mock.calls.flat().join("\n");
+
+    expect(backgroundErrorLog).toContain("code=CAMPAIGN_DB_POOL_BACKGROUND_ERROR");
+    expect(backgroundErrorLog).toMatch(/traceId=[0-9a-f-]{36}/);
+    expect(backgroundErrorLog).not.toContain("runtime-password");
+    expect(backgroundErrorLog).not.toContain("db.internal");
+    expect(backgroundErrorLog).not.toContain("private query value");
     const firstClose = composedRuntime.close();
     const secondClose = composedRuntime.close();
 
@@ -6852,6 +6871,64 @@ describe("Campaign OS API runtime", () => {
     await firstClose;
     expect(pool.end).toHaveBeenCalledTimes(1);
     expect(walletClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps repository i18n infrastructure diagnostics to a safe 503", async () => {
+    const baseRepository = createCampaignDbRepository();
+    const campaign = await baseRepository.createDraft({
+      duration: "2026-08-01/2026-08-14",
+      endTime: "2026-08-14T23:59:59Z",
+      goal: "Classify repository i18n infrastructure failure",
+      ownerAddress: "repo-owner-i18n-infrastructure",
+      projectId: "repo-project-i18n-infrastructure",
+      rewardDescription: "Repository-backed i18n infrastructure review.",
+      startTime: "2026-08-01T00:00:00Z",
+      supportedLocales: ["en-US", "zh-CN"],
+    });
+    const generateI18nDraft = vi.fn(async () => {
+      throw new CampaignDbRepositoryError(
+        "PostgreSQL Campaign store schema is not ready.",
+        [{
+          code: "POSTGRES_CAMPAIGN_STORE_SCHEMA_NOT_READY",
+          field: "schemaVersion",
+          message: "PostgreSQL Campaign store schema is not ready.",
+          severity: "error",
+        }],
+      );
+    });
+    const i18nRuntime = createCampaignOsApiRuntime({
+      campaignDbRepository: {
+        ...baseRepository,
+        generateI18nDraft,
+      },
+    });
+    const response = await i18nRuntime.handle({
+      body: JSON.stringify({
+        contentKeys: ["title"],
+        sourceLocale: "en-US",
+        targetLocale: "zh-CN",
+      }),
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-i18n-infrastructure" },
+      method: "POST",
+      path: `/api/campaigns/${campaign.id}/i18n/generate`,
+    });
+
+    expect(generateI18nDraft).toHaveBeenCalledTimes(1);
+    expect(response).toMatchObject({
+      status: 503,
+      body: {
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: {
+            diagnosticCode: "POSTGRES_CAMPAIGN_STORE_SCHEMA_NOT_READY",
+            operation: "campaignDb.generateI18nDraft",
+          },
+        },
+        ok: false,
+        traceId: "trace-campaign-db-i18n-infrastructure",
+      },
+    });
+    await i18nRuntime.close();
   });
 
   it("keeps the default local runtime from constructing a PostgreSQL pool", async () => {

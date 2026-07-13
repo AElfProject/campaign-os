@@ -181,6 +181,7 @@ export const startCampaignOsApiServer = async ({
   });
   const runtime = runtimeFactory({
     backendServiceReadiness: () => backendServiceReadiness,
+    logger,
     runtimeConfigOptions: {
       env,
       version: runtimeContract.runtimeVersion,
