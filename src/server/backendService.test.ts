@@ -6,7 +6,9 @@ import {
   backendAttachMap,
   createBackendServiceReadinessReport,
   ownerRouteDurableEffectById,
+  validateOwnerRouteDurableEffectRegistry,
 } from "./backendService";
+import { protectedRouteAuthMap } from "./authSession";
 import { apiRuntimeRoutes } from "./routes";
 
 const productionAreas = [
@@ -115,13 +117,34 @@ describe("backend service readiness report", () => {
     expect(apiRuntimeRoutes.find((route) => route.id === "campaigns.tasks.generate")).toMatchObject({
       method: "POST",
     });
-    expect(ownerRouteDurableEffectById).toEqual({
-      "campaigns.create": "campaign_create",
-      "campaigns.owner.list": "none",
-      "campaigns.tasks.add": "task_create",
-      "campaigns.tasks.generate": "none",
-    });
+    expect(ownerRouteDurableEffectById["campaigns.create"]).toBe("campaign_create");
+    expect(ownerRouteDurableEffectById["campaigns.owner.list"]).toBe("none");
+    expect(ownerRouteDurableEffectById["campaigns.tasks.add"]).toBe("task_create");
+    expect(ownerRouteDurableEffectById["campaigns.tasks.generate"]).toBe("none");
     expect(createBackendServiceReadinessReport().authEnforcement.campaignMutationRouteCount).toBe(1);
+  });
+
+  it("rejects a durable-effect registry missing a canonical Owner auth route", () => {
+    const incompleteRegistry = { ...ownerRouteDurableEffectById };
+
+    delete (incompleteRegistry as Record<string, string>)["campaigns.tasks.generate"];
+
+    expect(() => validateOwnerRouteDurableEffectRegistry({
+      durableEffectByRouteId: incompleteRegistry,
+      protectedRoutes: protectedRouteAuthMap,
+    })).toThrowError(/missing \[campaigns\.tasks\.generate\]/);
+  });
+
+  it("rejects a durable-effect registry entry outside canonical Owner auth routes", () => {
+    const registryWithExtraRoute = {
+      ...ownerRouteDurableEffectById,
+      "runtime.health": "none",
+    } as const;
+
+    expect(() => validateOwnerRouteDurableEffectRegistry({
+      durableEffectByRouteId: registryWithExtraRoute,
+      protectedRoutes: protectedRouteAuthMap,
+    })).toThrowError(/extra \[runtime\.health\]/);
   });
 
   it("aggregates local backend scaffold readiness without duplicating route ownership", () => {
