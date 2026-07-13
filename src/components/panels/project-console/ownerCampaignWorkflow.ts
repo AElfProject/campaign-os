@@ -159,25 +159,37 @@ const ownerCampaignDisplayLimits: Record<ProjectOwnerCampaignDisplayField, numbe
   traceId: 128,
 };
 
+const ownerCampaignDisplayScanLimit = 4_096;
+
 const unsafeOwnerCampaignDisplayPatterns: readonly RegExp[] = [
   /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----|-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----/i,
+  /\bredacted\s+(?:signature|wallet action|key|seed|recovery phrase|bearer credential|credential|query credential|service url|private path|provider data|stack)\b|\bpassword\s*=\s*redacted\b|\?redacted-query/i,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/i,
   /[?#&](?:access[-_]?token|refresh[-_]?token|token|api[-_]?key|apikey|authorization|auth|secret|password|credential|signature|x-amz-signature)\s*=/i,
   /\bauthorization\s*[:=]\s*\S+/i,
   /\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+/i,
-  /\b(?:access[-_]?token|refresh[-_]?token|token|api[-_\s]?key|apikey|private[-_\s]?key|password|secret|credential)\s*[:=]\s*[^\s,;]+/i,
-  /(?:^|[\s("'=])(?:file:\/\/)?(?:\/(?:Users|home|root|private|tmp|var|opt|srv|etc|mnt|workspace|app)\/|\/usr\/src\/)/i,
+  /\b(?:access[-_ ]?token|refresh[-_ ]?token|token|api[-_ ]?key|apikey|private[-_ ]?key|password|secret|credential|authorization|auth|signature|x-amz-signature)\b\s*["']?\s*[:=]/i,
   /(?:^|[\s("'=])[A-Za-z]:\\[^\r\n"'<>]+/i,
   /(?:^|[\s("'=])\\\\[^\\\s]+\\[^\r\n"'<>]+/i,
   /(?:^|\n)\s*at\s+\S+/i,
   /\bstack\s*trace\b/i,
 ];
 
-const ownerCampaignDisplayText = (value: unknown): string => {
+const toBoundedOwnerCampaignDisplayText = (value: unknown): string => {
   try {
-    return typeof value === "string"
-      ? value
-      : sanitizeProjectOwnerCampaignApiText(value);
+    if (typeof value === "string") {
+      return value.slice(0, ownerCampaignDisplayScanLimit);
+    }
+
+    if (typeof value === "boolean") {
+      return value ? "true" : "false";
+    }
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value).slice(0, ownerCampaignDisplayScanLimit);
+    }
+
+    return "";
   } catch {
     return "";
   }
@@ -189,8 +201,53 @@ const normalizeOwnerCampaignDisplayText = (value: string): string => value
   .replace(/[\u200b-\u200d\u2060\ufeff]/gi, "")
   .trim();
 
+const isOwnerCampaignPathBoundary = (value: string | undefined): boolean =>
+  value === undefined || /\s/.test(value) || `"'([{=,:;@`.includes(value);
+
+const containsPosixAbsoluteFilesystemPath = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== "/") {
+      continue;
+    }
+
+    const next = value[index + 1];
+    if (
+      isOwnerCampaignPathBoundary(value[index - 1])
+      && next !== undefined
+      && !/[\s"'<>()[\]{}]/.test(next)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const ownerCampaignBrowserStackLocationPattern = /:\d{1,7}:\d{1,7}$/;
+
+const containsBrowserStackFrame = (value: string): boolean => value
+  .split("\n")
+  .some((line) => {
+    const frame = line.trim();
+    const separatorIndex = frame.indexOf("@");
+
+    if (separatorIndex <= 0) {
+      return false;
+    }
+
+    const functionName = frame.slice(0, separatorIndex);
+    const sourceLocation = frame.slice(separatorIndex + 1);
+    const sourcePosition = ownerCampaignBrowserStackLocationPattern.exec(sourceLocation);
+
+    return functionName.trim().length > 0
+      && sourcePosition !== null
+      && sourcePosition.index > 0;
+  });
+
 const containsUnsafeOwnerCampaignDisplayText = (value: string): boolean =>
-  unsafeOwnerCampaignDisplayPatterns.some((pattern) => pattern.test(value));
+  containsPosixAbsoluteFilesystemPath(value)
+  || containsBrowserStackFrame(value)
+  || unsafeOwnerCampaignDisplayPatterns.some((pattern) => pattern.test(value));
 
 const boundOwnerCampaignDisplayText = (value: string, limit: number): string => {
   if (value.length <= limit) {
@@ -207,16 +264,13 @@ export const sanitizeProjectOwnerCampaignDisplayText = (
   const fallback = ownerCampaignDisplayFallbacks[field] ?? ownerCampaignDisplayFallbacks.message;
 
   try {
-    const raw = normalizeOwnerCampaignDisplayText(ownerCampaignDisplayText(value));
+    const raw = normalizeOwnerCampaignDisplayText(toBoundedOwnerCampaignDisplayText(value));
 
     if (!raw || containsUnsafeOwnerCampaignDisplayText(raw)) {
       return fallback;
     }
 
-    // Keep the approved bridge redactions, then enforce the narrower display boundary.
-    const sanitized = normalizeOwnerCampaignDisplayText(
-      sanitizeProjectOwnerCampaignApiText(raw),
-    ).replace(/\s+/g, " ");
+    const sanitized = raw.replace(/\s+/g, " ");
 
     if (!sanitized || containsUnsafeOwnerCampaignDisplayText(sanitized)) {
       return fallback;

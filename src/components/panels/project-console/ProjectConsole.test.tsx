@@ -3652,6 +3652,75 @@ const getOwnerWorkflow = () =>
 
 type UnsafeOwnerDisplayField = "code" | "message" | "traceId";
 
+const unsafeOwnerDisplayFields = ["message", "code", "traceId"] as const;
+
+const cycle3QuotedSecretAssignmentKeys = [
+  "token",
+  "access_token",
+  "refresh_token",
+  "api-key",
+  "password",
+  "secret",
+  "credential",
+  "private-key",
+] as const;
+
+const cycle3UnsafeOwnerDisplayValues: ReadonlyArray<{
+  fragments: readonly string[];
+  name: string;
+  value: string;
+}> = [
+  ...cycle3QuotedSecretAssignmentKeys.flatMap((key) => ([":", "="] as const).map((separator) => {
+    const marker = `display-boundary-marker-${key.replace(/[_-]/g, "-")}-${separator === ":" ? "colon" : "equals"}`;
+
+    return {
+      fragments: [marker],
+      name: `quoted ${key} ${separator === ":" ? "colon" : "equals"} assignment`,
+      value: separator === ":"
+        ? `{"${key}":"${marker}"}`
+        : `"${key}"="${marker}"`,
+    };
+  })),
+  {
+    fragments: ["/data", "display-boundary-data-path", "runtime.log"],
+    name: "POSIX data path",
+    value: "Read failed at /data/display-boundary-data-path/runtime.log",
+  },
+  {
+    fragments: ["/volumes", "display-boundary-volume-path", "runtime.log"],
+    name: "POSIX mounted-volume path",
+    value: "Read failed at /Volumes/display-boundary-volume-path/runtime.log",
+  },
+  {
+    fragments: ["runowner", "src/display-boundary-stack-source.ts"],
+    name: "Firefox or Safari stack frame",
+    value: "TypeError: failed\nrunOwner@src/display-boundary-stack-source.ts:12:4",
+  },
+  {
+    fragments: ["<anonymous>", "assets/display-boundary-anonymous-source.js"],
+    name: "anonymous browser stack frame",
+    value: "TypeError: failed\n<anonymous>@assets/display-boundary-anonymous-source.js:8:2",
+  },
+  {
+    fragments: ["display-boundary-residual-marker"],
+    name: "upstream partially redacted assignment",
+    value: "{\"redacted credential\":\"display-boundary-residual-marker\"}",
+  },
+  {
+    fragments: ["display-boundary-residual-key-marker"],
+    name: "upstream partially redacted key assignment",
+    value: "{\"redacted key\":\"display-boundary-residual-key-marker\"}",
+  },
+  {
+    fragments: ["display-boundary-residual-pem-marker"],
+    name: "upstream partially redacted PEM block",
+    value: "-----BEGIN redacted key-----\nDISPLAY-BOUNDARY-RESIDUAL-PEM-MARKER\n-----END redacted key-----",
+  },
+];
+
+const cycle3UnsafeOwnerDisplayCases = cycle3UnsafeOwnerDisplayValues.flatMap((displayValue) =>
+  unsafeOwnerDisplayFields.map((field) => ({ ...displayValue, field })));
+
 const unsafeOwnerDisplayCases: ReadonlyArray<{
   field: UnsafeOwnerDisplayField;
   fragments: readonly string[];
@@ -3771,6 +3840,44 @@ describe("Project Console Owner campaign orchestration", () => {
       }
     },
   );
+
+  it.each(cycle3UnsafeOwnerDisplayCases)(
+    "Cycle 3 boundary probe projects $name from $field without rendering source fragments",
+    async ({ field, fragments, value }) => {
+      const bridge = createOwnerBridge({
+        recoverCampaigns: vi.fn(async () => ownerFailureWithUnsafeDisplayField(field, value)),
+      });
+
+      render(<OwnerConsoleHarness bridge={bridge} />);
+
+      const alert = await within(getOwnerWorkflow()).findByRole("alert");
+      const alertText = alert.textContent?.toLowerCase() ?? "";
+      const expectedFallback = field === "message"
+        ? "owner campaign request failed. unsafe diagnostic details were redacted."
+        : field === "code"
+          ? "owner_campaign_error_redacted"
+          : "trace-redacted";
+
+      expect(alertText).not.toBe("");
+      expect(alertText).toContain(expectedFallback);
+      for (const fragment of fragments) {
+        expect(alertText).not.toContain(fragment);
+      }
+    },
+  );
+
+  it("keeps safe Owner diagnostics visible in the real alert", async () => {
+    const bridge = createOwnerBridge({
+      recoverCampaigns: vi.fn(async () => ownerFailure()),
+    });
+
+    render(<OwnerConsoleHarness bridge={bridge} />);
+
+    const alert = await within(getOwnerWorkflow()).findByRole("alert");
+    expect(alert).toHaveTextContent("Campaign data is temporarily unavailable.");
+    expect(alert).toHaveTextContent("PERSISTENCE_UNAVAILABLE");
+    expect(alert).toHaveTextContent("trace-owner-503");
+  });
 
   it("handles zero, one, and multiple recovery candidates deterministically", async () => {
     const zeroBridge = createOwnerBridge();

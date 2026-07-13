@@ -137,6 +137,92 @@ const unsafeDisplayMessageCases = [
   },
 ] as const;
 
+const ownerDisplayFields = ["message", "code", "traceId"] as const;
+type OwnerDisplayField = (typeof ownerDisplayFields)[number];
+
+const quotedSecretAssignmentKeys = [
+  "token",
+  "access_token",
+  "refresh_token",
+  "api-key",
+  "password",
+  "secret",
+  "credential",
+  "private-key",
+] as const;
+
+const cycle3UnsafeDisplayValues: ReadonlyArray<{
+  fragments: readonly string[];
+  name: string;
+  value: string;
+}> = [
+  ...quotedSecretAssignmentKeys.flatMap((key) => ([":", "="] as const).map((separator) => {
+    const marker = `display-boundary-marker-${key.replace(/[_-]/g, "-")}-${separator === ":" ? "colon" : "equals"}`;
+
+    return {
+      fragments: [marker],
+      name: `quoted ${key} ${separator === ":" ? "colon" : "equals"} assignment`,
+      value: separator === ":"
+        ? `{"${key}":"${marker}"}`
+        : `"${key}"="${marker}"`,
+    };
+  })),
+  {
+    fragments: ["/data", "display-boundary-data-path", "runtime.log"],
+    name: "POSIX data path",
+    value: "Read failed at /data/display-boundary-data-path/runtime.log",
+  },
+  {
+    fragments: ["/volumes", "display-boundary-volume-path", "runtime.log"],
+    name: "POSIX mounted-volume path",
+    value: "Read failed at /Volumes/display-boundary-volume-path/runtime.log",
+  },
+  {
+    fragments: ["runowner", "src/display-boundary-stack-source.ts"],
+    name: "Firefox or Safari stack frame",
+    value: "TypeError: failed\nrunOwner@src/display-boundary-stack-source.ts:12:4",
+  },
+  {
+    fragments: ["<anonymous>", "assets/display-boundary-anonymous-source.js"],
+    name: "anonymous browser stack frame",
+    value: "TypeError: failed\n<anonymous>@assets/display-boundary-anonymous-source.js:8:2",
+  },
+  {
+    fragments: ["display-boundary-residual-marker"],
+    name: "upstream partially redacted assignment",
+    value: "{\"redacted credential\":\"display-boundary-residual-marker\"}",
+  },
+  {
+    fragments: ["display-boundary-residual-key-marker"],
+    name: "upstream partially redacted key assignment",
+    value: "{\"redacted key\":\"display-boundary-residual-key-marker\"}",
+  },
+  {
+    fragments: ["display-boundary-residual-pem-marker"],
+    name: "upstream partially redacted PEM block",
+    value: "-----BEGIN redacted key-----\nDISPLAY-BOUNDARY-RESIDUAL-PEM-MARKER\n-----END redacted key-----",
+  },
+];
+
+const cycle3UnsafeDisplayCases = cycle3UnsafeDisplayValues.flatMap((displayValue) =>
+  ownerDisplayFields.map((field) => ({ ...displayValue, field })));
+
+const failureWithDisplayField = (
+  field: OwnerDisplayField,
+  value: string,
+): OwnerCampaignFailure => {
+  if (field === "message") {
+    return failure("PERSISTENCE_UNAVAILABLE", {
+      diagnostic: {
+        code: "PERSISTENCE_UNAVAILABLE",
+        message: value,
+      },
+    });
+  }
+
+  return failure("PERSISTENCE_UNAVAILABLE", { [field]: value });
+};
+
 describe("Owner campaign display sanitizer", () => {
   it.each(unsafeDisplayMessageCases)("redacts $name without leaking adjacent material", ({ fragments, value }) => {
     const sanitized = sanitizeProjectOwnerCampaignDisplayText(value, "message");
@@ -162,7 +248,7 @@ describe("Owner campaign display sanitizer", () => {
       "traceId",
     )).toBe("trace-owner-503");
 
-    const bounded = sanitizeProjectOwnerCampaignDisplayText("A".repeat(1_000), "message");
+    const bounded = sanitizeProjectOwnerCampaignDisplayText("A".repeat(1_000_000), "message");
     expect(bounded.length).toBeLessThanOrEqual(240);
     expect(bounded).not.toBe("");
   });
@@ -177,7 +263,34 @@ describe("Owner campaign display sanitizer", () => {
       },
     };
 
-    expect(() => sanitizeProjectOwnerCampaignDisplayText(hostileValue, "message")).not.toThrow();
+    const hostileProxy = new Proxy({}, {
+      get: () => {
+        throw new Error("property access failed");
+      },
+      getPrototypeOf: () => {
+        throw new Error("prototype access failed");
+      },
+      ownKeys: () => {
+        throw new Error("key enumeration failed");
+      },
+    });
+    const circularValue: { self?: unknown } = {};
+    circularValue.self = circularValue;
+    const fieldLimits: Record<OwnerDisplayField, number> = {
+      code: 64,
+      message: 240,
+      traceId: 128,
+    };
+
+    for (const value of [hostileValue, hostileProxy, circularValue, 1n, Symbol("marker"), new Error("safe failure")]) {
+      for (const field of ownerDisplayFields) {
+        expect(() => sanitizeProjectOwnerCampaignDisplayText(value, field)).not.toThrow();
+        const sanitized = sanitizeProjectOwnerCampaignDisplayText(value, field);
+        expect(sanitized).not.toBe("");
+        expect(sanitized.length).toBeLessThanOrEqual(fieldLimits[field]);
+      }
+    }
+
     expect(sanitizeProjectOwnerCampaignDisplayText(undefined, "message")).not.toBe("");
     expect(sanitizeProjectOwnerCampaignDisplayText(undefined, "code"))
       .toBe("OWNER_CAMPAIGN_ERROR_REDACTED");
@@ -212,6 +325,27 @@ describe("Owner campaign display sanitizer", () => {
       expect(serialized).not.toContain(fragment);
     }
   });
+
+  it.each(cycle3UnsafeDisplayCases)(
+    "fails closed for Cycle 3 $name in $field",
+    ({ field, fragments, value }) => {
+      const projected = projectOwnerCampaignErrorFromFailure(
+        failureWithDisplayField(field, value),
+        "recover",
+      );
+      const expectedFallback: Record<OwnerDisplayField, string> = {
+        code: "OWNER_CAMPAIGN_ERROR_REDACTED",
+        message: "Owner campaign request failed. Unsafe diagnostic details were redacted.",
+        traceId: "trace-redacted",
+      };
+      const serialized = JSON.stringify(projected).toLowerCase();
+
+      expect(projected[field]).toBe(expectedFallback[field]);
+      for (const fragment of fragments) {
+        expect(serialized).not.toContain(fragment);
+      }
+    },
+  );
 });
 
 describe("owner campaign workflow", () => {
