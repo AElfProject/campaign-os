@@ -103,8 +103,9 @@ describe("ProductionDatabaseHandoffReadinessPanel", () => {
   });
 
   it("sanitizes unsafe diagnostics before display", () => {
+    const baseState = apiBackedState();
     const state: ProductionDatabaseHandoffReadinessApiState = {
-      ...apiBackedState(),
+      ...baseState,
       diagnostics: [
         {
           code: "API_REQUEST_FAILED",
@@ -119,6 +120,17 @@ describe("ProductionDatabaseHandoffReadinessPanel", () => {
           severity: "error",
         },
       ],
+      handoff: {
+        ...baseState.handoff,
+        summary: {
+          ...baseState.handoff.summary,
+          topBlocker: {
+            "en-US": "Production DB [REDACTED:CREDENTIAL] reference is missing.",
+            "zh-CN": "Production DB [REDACTED:CREDENTIAL] 引用缺失。",
+            "zh-TW": "Production DB [REDACTED:CREDENTIAL] 引用缺失。",
+          },
+        },
+      },
     };
 
     renderPanel(state);
@@ -142,6 +154,11 @@ describe("ProductionDatabaseHandoffReadinessPanel", () => {
     expect(diagnosticsText).toContain("redacted-production-database-handoff-value");
     expect(diagnosticsText).toContain("redacted:endpoint");
     expect(diagnosticsText).toContain("redacted:private_path");
+    const panelText = screen.getByLabelText("Production Database Handoff Readiness review")
+      .textContent?.toLowerCase() ?? "";
+
+    expect(panelText).toContain("[redacted:credential]");
+    expect(panelText).not.toContain("[redacted:[redacted:credential]");
   });
 
   it("keeps long reference keys reviewable and avoids live database operation controls", () => {

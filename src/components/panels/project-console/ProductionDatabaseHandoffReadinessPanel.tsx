@@ -182,10 +182,24 @@ const statusLabel = (
 const badgeState = (status: ProductionDatabaseHandoffStatus): ProductionDatabaseBadgeState =>
   status === "local_ready" ? "ready" : status === "blocked" ? "blocker" : "warning";
 
-const sanitizePanelText = (value: unknown) =>
-  sanitizeProductionDatabaseHandoffReadinessApiText(value)
+const sanitizePanelText = (value: unknown) => {
+  const raw = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  const redactionMarkers: string[] = [];
+  const protectedValue = raw.replace(/\[REDACTED:[A-Z0-9_]+\]/g, (marker) => {
+    const token = `__PDB_PANEL_REDACTION_${redactionMarkers.length}__`;
+
+    redactionMarkers.push(marker);
+    return token;
+  });
+  const sanitized = sanitizeProductionDatabaseHandoffReadinessApiText(protectedValue)
     .replace(/\/Users\/[^"'\s<>]+/gi, "redacted local path")
     .replace(/\/private\/[^"'\s<>]+/gi, "redacted private path");
+
+  return redactionMarkers.reduce(
+    (current, marker, index) => current.split(`__PDB_PANEL_REDACTION_${index}__`).join(marker),
+    sanitized,
+  );
+};
 
 const safetyItems = (copy: ProjectConsoleCopy) => [
   ["dbClientConstructed", copy.productionDatabaseHandoffNoDbClient],
