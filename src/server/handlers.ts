@@ -113,6 +113,7 @@ import type {
 import { createBackendTopologyReport } from "./topology";
 import { createRuntimeSafety } from "./envelope";
 import {
+  ApiRuntimeError,
   invalidCampaign,
   invalidRequest,
   invalidTask,
@@ -224,21 +225,47 @@ const persistLocalResult = async <TPayload>(
     kind: PersistenceRecordKind;
     summary?: PersistenceSummary;
   },
+  options: {
+    tolerateAuditFailureAfterCommit?: boolean;
+  } = {},
 ) => {
   const response = unwrapLocalResult(result, context);
-  const record = await context.repository.record({
+  const recordInput = {
     ...createRecordInput(response.payload),
     routeId: context.route.id,
     traceId: context.traceId,
-  });
-
-  return {
-    ...response,
-    persistence: {
-      kind: record.kind,
-      recordId: record.id,
-    },
   };
+
+  try {
+    const record = await context.repository.record(recordInput);
+
+    return {
+      ...response,
+      persistence: {
+        kind: record.kind,
+        recordId: record.id,
+      },
+    };
+  } catch (error) {
+    if (
+      !options.tolerateAuditFailureAfterCommit
+      || !(error instanceof ApiRuntimeError)
+      || error.body.code !== "PERSISTENCE_UNAVAILABLE"
+    ) {
+      throw error;
+    }
+
+    return {
+      ...response,
+      persistence: {
+        code: "PERSISTENCE_UNAVAILABLE" as const,
+        kind: recordInput.kind,
+        operation: "record" as const,
+        status: "unavailable" as const,
+        traceId: context.traceId,
+      },
+    };
+  }
 };
 
 const campaignDbI18nDiagnosticToRuntimeError = (
@@ -2113,24 +2140,28 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         : campaignDbCreateDraftInputFromRequest(request),
       { traceId: context.traceId },
     );
-    const response = localResult.ok
-      ? unwrapLocalResult(localResult, context)
-      : {
-        boundary: campaignDbBoundary,
-        payload: campaignDbDraftToLocalCampaignDraft(campaignDbDraft),
-      };
-    const record = await context.repository.record({
+    const payload = {
+      ...(localResult.ok
+        ? localResult.payload
+        : campaignDbDraftToLocalCampaignDraft(campaignDbDraft)),
+      id: campaignDbDraft.id,
+    };
+    const response = await persistLocalResult({
+      boundary: localResult.ok ? localResult.boundary : campaignDbBoundary,
+      ok: true,
+      payload,
+    }, context, (persistedPayload) => ({
       campaignId: campaignDbDraft.id,
       kind: "campaign_draft",
-      routeId: context.route.id,
       summary: {
-        contractMode: response.payload.contractMode,
-        projectId: response.payload.projectId,
-        status: response.payload.status,
-        walletPolicy: response.payload.walletPolicy,
+        contractMode: persistedPayload.contractMode,
+        projectId: persistedPayload.projectId,
+        status: persistedPayload.status,
+        walletPolicy: persistedPayload.walletPolicy,
       },
-      traceId: context.traceId,
-      walletAddress: response.payload.ownerAddress,
+      walletAddress: persistedPayload.ownerAddress,
+    }), {
+      tolerateAuditFailureAfterCommit: true,
     });
 
     return {
@@ -2139,14 +2170,6 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         createdViaRepository: true,
         draftId: campaignDbDraft.id,
         storeId: "campaign-db",
-      },
-      payload: {
-        ...response.payload,
-        id: campaignDbDraft.id,
-      },
-      persistence: {
-        kind: record.kind,
-        recordId: record.id,
       },
     };
   },
@@ -2247,6 +2270,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         },
         taskId: payload.id,
       }),
+      { tolerateAuditFailureAfterCommit: Boolean(campaignDbTask) },
     );
 
     return campaignDbTask
@@ -2313,6 +2337,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
         walletAddress: payload.walletAddress,
         walletSource: payload.walletSource,
       }),
+      { tolerateAuditFailureAfterCommit: Boolean(campaignDbCompletion) },
     );
 
     return campaignDbCompletion
@@ -2420,6 +2445,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
           targetLocale: payload.targetLocale,
         },
       }),
+      { tolerateAuditFailureAfterCommit: Boolean(campaignDb) },
     );
 
     return campaignDb

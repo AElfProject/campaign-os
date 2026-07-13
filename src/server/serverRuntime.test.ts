@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { createServer as createHttpServer } from "node:http";
+import { connect, type AddressInfo } from "node:net";
+import { describe, expect, it, vi } from "vitest";
+import type { ApiRuntimeResponse, CampaignOsApiRuntime } from "./apiRuntime";
+import { createSuccessEnvelope } from "./envelope";
+import { startCampaignOsApiServer } from "./server";
 import {
   createServerStartupDiagnostics,
   formatServerStartupLog,
@@ -225,5 +230,314 @@ describe("API server runtime contract", () => {
     expect(log).toContain("no live operations");
     expectNoSecretLeak(diagnostics);
     expectNoSecretLeak(log);
+  });
+});
+
+describe("API server resource shutdown", () => {
+  const response = {
+    body: createSuccessEnvelope({
+      data: { status: "ok" },
+      routeCount: 0,
+      traceId: "trace-server-runtime-test",
+      version: "test",
+    }),
+    headers: { "content-type": "application/json" },
+    status: 200,
+  } satisfies ApiRuntimeResponse;
+
+  it("closes the runtime when HTTP listen fails", async () => {
+    const blocker = createHttpServer();
+    await new Promise<void>((resolve, reject) => {
+      blocker.once("error", reject);
+      blocker.listen(0, "127.0.0.1", () => {
+        blocker.off("error", reject);
+        resolve();
+      });
+    });
+    const port = (blocker.address() as AddressInfo).port;
+    const close = vi.fn(async () => undefined);
+    const runtime: CampaignOsApiRuntime = {
+      close,
+      handle: async () => response,
+    };
+
+    try {
+      await expect(startCampaignOsApiServer({
+        logger: false,
+        port,
+        runtimeFactory: () => runtime,
+      })).rejects.toMatchObject({ code: "EADDRINUSE" });
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        blocker.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
+  it("consumes delayed runtime cleanup rejection after HTTP listen failure timeout", async () => {
+    const blocker = createHttpServer();
+    await new Promise<void>((resolve, reject) => {
+      blocker.once("error", reject);
+      blocker.listen(0, "127.0.0.1", () => {
+        blocker.off("error", reject);
+        resolve();
+      });
+    });
+    const port = (blocker.address() as AddressInfo).port;
+    const logs: string[] = [];
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (error: unknown) => unhandledRejections.push(error);
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(() => new Promise<void>((_resolve, reject) => {
+        setTimeout(() => reject(new Error("postgres://unsafe-cleanup-value")), 20);
+      })),
+      handle: async () => response,
+    };
+
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      await expect(startCampaignOsApiServer({
+        logger: {
+          error: (message?: unknown) => logs.push(String(message)),
+          log: () => undefined,
+        },
+        port,
+        runtimeFactory: () => runtime,
+        shutdownTimeoutMs: 5,
+      })).rejects.toMatchObject({ code: "EADDRINUSE" });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(unhandledRejections).toEqual([]);
+      expect(logs.join("\n")).toContain("startup_cleanup_failed");
+      expect(logs.join("\n")).not.toContain("unsafe-cleanup-value");
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+      await new Promise<void>((resolve, reject) => {
+        blocker.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
+  it("stops HTTP intake, drains an active request, then closes runtime once", async () => {
+    const order: string[] = [];
+    let releaseRequest: (() => void) | undefined;
+    let markEntered: (() => void) | undefined;
+    const requestEntered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    const requestReleased = new Promise<void>((resolve) => {
+      releaseRequest = resolve;
+    });
+    const close = vi.fn(async () => {
+      order.push("runtime.close");
+    });
+    const runtime: CampaignOsApiRuntime = {
+      close,
+      handle: async () => {
+        order.push("request.start");
+        markEntered?.();
+        await requestReleased;
+        order.push("request.end");
+        return response;
+      },
+    };
+    const server = await startCampaignOsApiServer({
+      logger: false,
+      port: 0,
+      runtimeFactory: () => runtime,
+      shutdownTimeoutMs: 1_000,
+    });
+    server.server.once("close", () => order.push("http.close"));
+    const request = fetch(`${server.url}/api/health`);
+    await requestEntered;
+
+    const firstStop = server.stop();
+    const secondStop = server.stop();
+    expect(firstStop).toBe(secondStop);
+    expect(close).not.toHaveBeenCalled();
+
+    releaseRequest?.();
+    await request;
+    await firstStop;
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(order).toEqual([
+      "request.start",
+      "request.end",
+      "http.close",
+      "runtime.close",
+    ]);
+  });
+
+  it("rejects pipelined requests that arrive on an existing connection after stop starts", async () => {
+    let releaseRequest: (() => void) | undefined;
+    let markEntered: (() => void) | undefined;
+    const requestEntered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    const requestReleased = new Promise<void>((resolve) => {
+      releaseRequest = resolve;
+    });
+    const handle = vi.fn(async () => {
+      markEntered?.();
+      await requestReleased;
+      return response;
+    });
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle,
+    };
+    const server = await startCampaignOsApiServer({
+      logger: false,
+      port: 0,
+      runtimeFactory: () => runtime,
+      shutdownTimeoutMs: 1_000,
+    });
+    const address = server.server.address() as AddressInfo;
+    const socket = connect(address.port, "127.0.0.1");
+    const socketErrors: string[] = [];
+    let received = "";
+
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      received += chunk;
+    });
+    socket.on("error", (error) => socketErrors.push(error.message));
+    await new Promise<void>((resolve) => socket.once("connect", resolve));
+    socket.write([
+      "GET /api/health HTTP/1.1",
+      `Host: 127.0.0.1:${address.port}`,
+      "Connection: keep-alive",
+      "",
+      "",
+    ].join("\r\n"));
+    await requestEntered;
+
+    const stopping = server.stop();
+    socket.write([
+      "GET /api/contracts HTTP/1.1",
+      `Host: 127.0.0.1:${address.port}`,
+      "Connection: close",
+      "",
+      "",
+    ].join("\r\n"));
+    releaseRequest?.();
+
+    await stopping;
+    await new Promise<void>((resolve) => {
+      if (socket.closed) {
+        resolve();
+        return;
+      }
+
+      socket.once("close", () => resolve());
+    });
+
+    expect(handle).toHaveBeenCalledTimes(1);
+    expect(received).toContain("HTTP/1.1 503 Service Unavailable");
+    expect(received).toContain("PERSISTENCE_UNAVAILABLE");
+    expect(socketErrors).toEqual([]);
+  });
+
+  it("returns a safe 500 when runtime response serialization fails", async () => {
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: async () => ({
+        ...response,
+        body: { value: 1n } as unknown as ApiRuntimeResponse["body"],
+      }),
+    };
+    const server = await startCampaignOsApiServer({
+      logger: false,
+      port: 0,
+      runtimeFactory: () => runtime,
+    });
+
+    try {
+      const result = await fetch(`${server.url}/api/campaigns`);
+      const body = await result.json() as { error?: { code?: string }; ok?: boolean };
+
+      expect(result.status).toBe(500);
+      expect(body).toMatchObject({
+        error: { code: "INTERNAL_RUNTIME_ERROR" },
+        ok: false,
+      });
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("handles an aborted partial request during shutdown without an unhandled rejection", async () => {
+    const errors: string[] = [];
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: async () => response,
+    };
+    const server = await startCampaignOsApiServer({
+      logger: {
+        error: (message?: unknown) => errors.push(String(message)),
+        log: () => undefined,
+      },
+      port: 0,
+      runtimeFactory: () => runtime,
+      shutdownTimeoutMs: 25,
+    });
+    const address = server.server.address() as AddressInfo;
+    const socket = connect(address.port, "127.0.0.1");
+    await new Promise<void>((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("error", reject);
+    });
+    socket.write([
+      "POST /api/campaigns HTTP/1.1",
+      `Host: 127.0.0.1:${address.port}`,
+      "Content-Type: application/json",
+      "Content-Length: 100",
+      "Connection: keep-alive",
+      "",
+      "{",
+    ].join("\r\n"));
+
+    for (let attempt = 0; attempt < 20 && server.getReadiness().shutdownState.activeRequestCount === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    expect(server.getReadiness().shutdownState.activeRequestCount).toBe(1);
+    await expect(server.stop()).rejects.toMatchObject({ code: "API_SERVER_SHUTDOWN_TIMEOUT" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(errors.join("\n")).toContain("code=API_SERVER_REQUEST_FAILED");
+    expect(errors.join("\n")).not.toContain("Content-Length");
+    socket.destroy();
+  });
+
+  it("returns and logs a safe deterministic shutdown error", async () => {
+    const logs: string[] = [];
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => {
+        throw new Error("postgres://runtime-user:runtime-password@db.internal/campaign_os");
+      }),
+      handle: async () => response,
+    };
+    const server = await startCampaignOsApiServer({
+      logger: {
+        error: (message?: unknown) => logs.push(String(message)),
+        log: () => undefined,
+      },
+      port: 0,
+      runtimeFactory: () => runtime,
+    });
+
+    const firstStop = server.stop();
+    const secondStop = server.stop();
+
+    expect(firstStop).toBe(secondStop);
+    await expect(firstStop).rejects.toMatchObject({
+      code: "API_SERVER_RUNTIME_CLOSE_FAILED",
+      traceId: expect.any(String),
+    });
+    expect(logs.join("\n")).toContain("API_SERVER_RUNTIME_CLOSE_FAILED");
+    expect(logs.join("\n")).not.toContain("runtime-password");
+    expect(logs.join("\n")).not.toContain("db.internal");
   });
 });

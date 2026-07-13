@@ -278,6 +278,23 @@ describe("Campaign durable store", () => {
     await expect(store.listTaskDraftsByCampaignId("campaign-db-draft-local")).resolves.toEqual([]);
   });
 
+  it("preserves unbounded local projection reads unless a new explicit limit is requested", async () => {
+    const store = createCampaignDurableStore({ boundedListLimit: 100 });
+
+    for (let index = 0; index < 101; index += 1) {
+      await store.createTaskDraft(taskDraft(
+        `campaign-db-task-${index.toString().padStart(4, "0")}`,
+        "campaign-db-draft-local",
+      ));
+    }
+
+    await expect(store.listTaskDraftsByCampaignId("campaign-db-draft-local")).resolves.toHaveLength(101);
+    await expect(store.listTaskDraftsByCampaignId(
+      "campaign-db-draft-local",
+      { limit: 100 },
+    )).resolves.toHaveLength(100);
+  });
+
   it("throws instead of silently accepting failed durable writes", async () => {
     const store = createCampaignDurableStore({
       filePath: "/dev/null/campaign-drafts.json",

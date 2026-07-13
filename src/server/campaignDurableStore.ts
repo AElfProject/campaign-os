@@ -11,13 +11,26 @@ import type {
   CampaignDbTaskDraft,
 } from "./campaignDbRepository";
 
-export type CampaignDurableStoreMode = "local_seeded" | "durable_test" | "production_required";
+export type CampaignDurableStoreMode =
+  | "local_seeded"
+  | "durable_test"
+  | "production_required"
+  | "postgres";
 export type CampaignDurableStoreStatus = "ready" | "blocked";
 export type CampaignDurableStoreDiagnosticCode =
   | "CAMPAIGN_DURABLE_STORE_PATH_REQUIRED"
   | "CAMPAIGN_DURABLE_STORE_READ_FAILED"
   | "CAMPAIGN_DURABLE_STORE_WRITE_FAILED"
-  | "CAMPAIGN_DURABLE_STORE_PRODUCTION_REQUIRED";
+  | "CAMPAIGN_DURABLE_STORE_PRODUCTION_REQUIRED"
+  | "POSTGRES_CAMPAIGN_STORE_ARGUMENT_INVALID"
+  | "POSTGRES_CAMPAIGN_STORE_CLEANUP_FAILED"
+  | "POSTGRES_CAMPAIGN_STORE_CLOSED"
+  | "POSTGRES_CAMPAIGN_STORE_CONFLICT"
+  | "POSTGRES_CAMPAIGN_STORE_CONSTRAINT_FAILED"
+  | "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED"
+  | "POSTGRES_CAMPAIGN_STORE_RESET_FORBIDDEN"
+  | "POSTGRES_CAMPAIGN_STORE_ROW_INVALID"
+  | "POSTGRES_CAMPAIGN_STORE_SCHEMA_NOT_READY";
 
 export interface CampaignDurableStoreDiagnostic {
   code: CampaignDurableStoreDiagnosticCode;
@@ -37,16 +50,21 @@ export class CampaignDurableStoreError extends Error {
 }
 
 export interface CampaignDurableStoreManifest {
+  adapterId?: "campaign-db-local-adapter" | "campaign-db-postgresql-adapter";
+  appliedMigrationIds?: string[];
   boundedListLimit: number;
   diagnosticCodes: CampaignDurableStoreDiagnosticCode[];
   diagnostics: CampaignDurableStoreDiagnostic[];
   durable: boolean;
   fallbackUsed: false;
+  migrationStatus?: "ready" | "blocked";
   mode: CampaignDurableStoreMode;
   completionRecordCount: number;
   participantRecordCount: number;
   referralBindingRecordCount: number;
   recordCount: number;
+  schemaId?: "campaign_os";
+  schemaVersion?: string;
   status: CampaignDurableStoreStatus;
   storeId: "campaign-db";
   taskEvidenceRecordCount: number;
@@ -60,31 +78,123 @@ export interface CampaignDurableStoreListOptions {
   status?: string;
 }
 
+export interface CampaignDurableStoreOperationContext {
+  traceId?: string;
+}
+
+export interface CampaignDurableStoreEntityListOptions {
+  limit?: number;
+}
+
+export interface CampaignDurableStoreParticipantListOptions
+  extends CampaignDurableStoreEntityListOptions {
+  walletAddress?: string;
+}
+
+export interface CampaignDurableStoreCompletionListOptions
+  extends CampaignDurableStoreEntityListOptions {
+  taskId?: string;
+  walletAddress?: string;
+}
+
+export interface CampaignDurableStoreReferralListOptions
+  extends CampaignDurableStoreEntityListOptions {
+  inviteeWalletAddress?: string;
+  referrerWalletAddress?: string;
+}
+
+export interface CampaignDurableStoreTaskVerificationWrite {
+  completion: CampaignDbTaskCompletion;
+  evidence: CampaignDbTaskEvidenceRecord;
+  participant: CampaignDbParticipantRecord;
+}
+
+export interface CampaignDurableStoreTaskVerificationResult {
+  completion: CampaignDbTaskCompletion;
+  evidence: CampaignDbTaskEvidenceRecord;
+  participant: CampaignDbParticipantRecord;
+}
+
 export interface CampaignDurableStore {
   close(): Promise<void>;
-  create(draft: CampaignDbDraft): Promise<CampaignDbDraft>;
-  createTaskDraft(taskDraft: CampaignDbTaskDraft): Promise<CampaignDbTaskDraft>;
-  getById(campaignId: string): Promise<CampaignDbDraft | undefined>;
-  getParticipant(campaignId: string, walletAddress: string): Promise<CampaignDbParticipantRecord | undefined>;
-  getReferralBinding(campaignId: string, inviteeWalletAddress: string): Promise<CampaignDbReferralBindingRecord | undefined>;
-  list(filter?: CampaignDurableStoreListOptions): Promise<CampaignDbDraft[]>;
-  listParticipantsByCampaignId(campaignId: string): Promise<CampaignDbParticipantRecord[]>;
-  listReferralBindingsByCampaignId(campaignId: string): Promise<CampaignDbReferralBindingRecord[]>;
-  listTaskCompletionsByCampaignId(campaignId: string): Promise<CampaignDbTaskCompletion[]>;
-  listTaskEvidence(filter: CampaignDbTaskEvidenceListFilter): Promise<CampaignDbTaskEvidenceRecord[]>;
-  listTaskDraftsByCampaignId(campaignId: string): Promise<CampaignDbTaskDraft[]>;
-  manifest(): Promise<CampaignDurableStoreManifest>;
+  create(
+    draft: CampaignDbDraft,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbDraft>;
+  createTaskDraft(
+    taskDraft: CampaignDbTaskDraft,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbTaskDraft>;
+  getById(
+    campaignId: string,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbDraft | undefined>;
+  getParticipant(
+    campaignId: string,
+    walletAddress: string,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbParticipantRecord | undefined>;
+  getReferralBinding(
+    campaignId: string,
+    inviteeWalletAddress: string,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbReferralBindingRecord | undefined>;
+  list(
+    filter?: CampaignDurableStoreListOptions,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbDraft[]>;
+  listParticipantsByCampaignId(
+    campaignId: string,
+    filter?: CampaignDurableStoreParticipantListOptions,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbParticipantRecord[]>;
+  listReferralBindingsByCampaignId(
+    campaignId: string,
+    filter?: CampaignDurableStoreReferralListOptions,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbReferralBindingRecord[]>;
+  listTaskCompletionsByCampaignId(
+    campaignId: string,
+    filter?: CampaignDurableStoreCompletionListOptions,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbTaskCompletion[]>;
+  listTaskEvidence(
+    filter: CampaignDbTaskEvidenceListFilter,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbTaskEvidenceRecord[]>;
+  listTaskDraftsByCampaignId(
+    campaignId: string,
+    filter?: CampaignDurableStoreEntityListOptions,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbTaskDraft[]>;
+  manifest(context?: CampaignDurableStoreOperationContext): Promise<CampaignDurableStoreManifest>;
   reset(): Promise<void>;
-  upsertReferralBinding(binding: CampaignDbReferralBindingRecord): Promise<CampaignDbReferralBindingRecord>;
-  upsertParticipant(participant: CampaignDbParticipantRecord): Promise<CampaignDbParticipantRecord>;
-  upsertTaskEvidence(evidence: CampaignDbTaskEvidenceRecord): Promise<CampaignDbTaskEvidenceRecord>;
-  upsertTaskCompletion(completion: CampaignDbTaskCompletion): Promise<CampaignDbTaskCompletion>;
+  upsertReferralBinding(
+    binding: CampaignDbReferralBindingRecord,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbReferralBindingRecord>;
+  upsertParticipant(
+    participant: CampaignDbParticipantRecord,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbParticipantRecord>;
+  upsertTaskEvidence(
+    evidence: CampaignDbTaskEvidenceRecord,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbTaskEvidenceRecord>;
+  upsertTaskCompletion(
+    completion: CampaignDbTaskCompletion,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDbTaskCompletion>;
+  upsertTaskVerification?(
+    input: CampaignDurableStoreTaskVerificationWrite,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDurableStoreTaskVerificationResult>;
 }
 
 export interface CreateCampaignDurableStoreOptions {
   boundedListLimit?: number;
   filePath?: string;
-  mode?: CampaignDurableStoreMode;
+  mode?: Exclude<CampaignDurableStoreMode, "postgres">;
 }
 
 interface CampaignDurableStoreDocument {
@@ -138,6 +248,12 @@ const clampLimit = (limit: number | undefined, max: number) => {
 
   return Math.max(1, Math.min(Math.trunc(limit ?? max), max));
 };
+
+const applyOptionalLimit = <T>(
+  records: T[],
+  limit: number | undefined,
+  maximum: number,
+) => limit === undefined ? records : records.slice(0, clampLimit(limit, maximum));
 
 const sortDrafts = (records: readonly CampaignDbDraft[]) =>
   [...records].sort((left, right) => {
@@ -400,17 +516,27 @@ export const createCampaignDurableStore = ({
         })
         .slice(0, limit);
     },
-    listTaskDraftsByCampaignId: async (campaignId) => {
+    listTaskDraftsByCampaignId: async (campaignId, filter = {}) => {
       await ensureInitialized();
 
-      return sortTaskDrafts(Array.from(taskRecordsById.values()))
-        .filter((taskDraft) => taskDraft.campaignId === campaignId);
+      return applyOptionalLimit(
+        sortTaskDrafts(Array.from(taskRecordsById.values()))
+          .filter((taskDraft) => taskDraft.campaignId === campaignId),
+        filter.limit,
+        boundedListLimit,
+      );
     },
-    listTaskCompletionsByCampaignId: async (campaignId) => {
+    listTaskCompletionsByCampaignId: async (campaignId, filter = {}) => {
       await ensureInitialized();
 
-      return sortTaskCompletions(Array.from(taskCompletionsById.values()))
-        .filter((completion) => completion.campaignId === campaignId);
+      return applyOptionalLimit(
+        sortTaskCompletions(Array.from(taskCompletionsById.values()))
+          .filter((completion) => completion.campaignId === campaignId)
+          .filter((completion) => !filter.taskId || completion.taskId === filter.taskId)
+          .filter((completion) => !filter.walletAddress || completion.walletAddress === filter.walletAddress),
+        filter.limit,
+        boundedListLimit,
+      );
     },
     listTaskEvidence: async (filter) => {
       await ensureInitialized();
@@ -423,23 +549,37 @@ export const createCampaignDurableStore = ({
         .filter((evidence) => !filter.walletAddress || evidence.walletAddress === filter.walletAddress)
         .slice(0, limit);
     },
-    listParticipantsByCampaignId: async (campaignId) => {
+    listParticipantsByCampaignId: async (campaignId, filter = {}) => {
       await ensureInitialized();
 
-      return sortParticipants(Array.from(participantRecordsById.values()))
-        .filter((participant) => participant.campaignId === campaignId);
+      return applyOptionalLimit(
+        sortParticipants(Array.from(participantRecordsById.values()))
+          .filter((participant) => participant.campaignId === campaignId)
+          .filter((participant) => !filter.walletAddress || participant.walletAddress === filter.walletAddress),
+        filter.limit,
+        boundedListLimit,
+      );
     },
-    listReferralBindingsByCampaignId: async (campaignId) => {
+    listReferralBindingsByCampaignId: async (campaignId, filter = {}) => {
       await ensureInitialized();
 
-      return sortReferralBindings(Array.from(referralBindingRecordsById.values()))
-        .filter((binding) => binding.campaignId === campaignId);
+      return applyOptionalLimit(
+        sortReferralBindings(Array.from(referralBindingRecordsById.values()))
+          .filter((binding) => binding.campaignId === campaignId)
+          .filter((binding) =>
+            !filter.inviteeWalletAddress || binding.inviteeWalletAddress === filter.inviteeWalletAddress)
+          .filter((binding) =>
+            !filter.referrerWalletAddress || binding.referrerWalletAddress === filter.referrerWalletAddress),
+        filter.limit,
+        boundedListLimit,
+      );
     },
     manifest: async () => {
       await ensureInitialized();
       const diagnostics = currentDiagnostics();
 
       return {
+        adapterId: "campaign-db-local-adapter",
         boundedListLimit,
         completionRecordCount: taskCompletionsById.size,
         diagnosticCodes: diagnostics.map((issue) => issue.code),

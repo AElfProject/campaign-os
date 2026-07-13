@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   EXPORT_CSV_COLUMNS,
   campaignLifecycleStatuses,
@@ -23,10 +24,15 @@ import {
 import {
   createCampaignDurableStore,
   type CampaignDurableStore,
+  type CampaignDurableStoreDiagnosticCode,
   type CampaignDurableStoreManifest,
 } from "./campaignDurableStore";
 
-export type CampaignDbRepositoryMode = "deterministic_test" | "durable_test" | "production_deferred";
+export type CampaignDbRepositoryMode =
+  | "deterministic_test"
+  | "durable_test"
+  | "postgres"
+  | "production_deferred";
 export type CampaignDbRepositoryStatus = "ready" | "blocked";
 export type CampaignDbRepositoryEventType =
   | "transaction.begin"
@@ -39,10 +45,7 @@ export type CampaignDbRepositoryEventType =
   | "diagnostic";
 export type CampaignDbDiagnosticSeverity = "error" | "warning" | "info";
 export type CampaignDbDiagnosticCode =
-  | "CAMPAIGN_DURABLE_STORE_PATH_REQUIRED"
-  | "CAMPAIGN_DURABLE_STORE_READ_FAILED"
-  | "CAMPAIGN_DURABLE_STORE_WRITE_FAILED"
-  | "CAMPAIGN_DURABLE_STORE_PRODUCTION_REQUIRED"
+  | CampaignDurableStoreDiagnosticCode
   | "CAMPAIGN_DB_REQUIRED_FIELD_MISSING"
   | "CAMPAIGN_DB_UNSUPPORTED_DEFAULT_LOCALE"
   | "CAMPAIGN_DB_UNSUPPORTED_LOCALE"
@@ -644,14 +647,14 @@ export interface CampaignDbRepositoryHealth {
   completionRecordCount: number;
   id: "campaign-db-repository-runtime";
   i18nDraftRecordCount: number;
-  liveConnectionAttempted: false;
+  liveConnectionAttempted: boolean;
   liveContractExecutionEnabled: false;
   liveMigrationExecutionEnabled: false;
   liveProviderExecutionEnabled: false;
-  liveQueryExecutionEnabled: false;
+  liveQueryExecutionEnabled: boolean;
   liveRewardExecutionEnabled: false;
-  liveStorageExecutionEnabled: false;
-  productionReady: false;
+  liveStorageExecutionEnabled: boolean;
+  productionReady: boolean;
   participantRecordCount: number;
   referralBindingRecordCount: number;
   recordCount: number;
@@ -675,6 +678,7 @@ export interface CampaignDbRepository {
     input: CampaignDbEligibilityInput,
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbEligibilityProjection>;
+  close?(): Promise<void>;
   createDraft(
     input: CampaignDbCreateDraftInput,
     context?: CampaignDbOperationContext,
@@ -693,7 +697,7 @@ export interface CampaignDbRepository {
     walletAddress: string,
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbParticipantRecord | undefined>;
-  health(): Promise<CampaignDbRepositoryHealth>;
+  health(context?: CampaignDbOperationContext): Promise<CampaignDbRepositoryHealth>;
   list(
     filter?: CampaignDbListFilter,
     context?: CampaignDbOperationContext,
@@ -2849,18 +2853,33 @@ export const createCampaignDbRepository = ({
   const adapterId =
     mode === "production_deferred"
       ? "campaign-db-production-adapter-deferred"
+      : mode === "postgres"
+        ? "campaign-db-postgresql-adapter"
       : mode === "durable_test"
         ? "campaign-db-durable-test-adapter"
       : "campaign-db-deterministic-adapter";
   const activeDurableStore =
-    mode === "durable_test"
-      ? durableStore ??
+    mode === "postgres"
+      ? durableStore
+      : mode === "durable_test"
+        ? durableStore ??
         createCampaignDurableStore({
           boundedListLimit,
           filePath: durableStoreFilePath,
           mode: "durable_test",
         })
-      : undefined;
+        : undefined;
+
+  if (mode === "postgres" && !activeDurableStore) {
+    throw new CampaignDbRepositoryError(
+      "Campaign DB PostgreSQL repository requires a durable store.",
+      [diagnostic(
+        "CAMPAIGN_DURABLE_STORE_PRODUCTION_REQUIRED",
+        "durableStore",
+        "Campaign DB PostgreSQL mode requires an active durable store.",
+      )],
+    );
+  }
   let idSequence = 0;
   let completionIdSequence = 0;
   let i18nDraftIdSequence = 0;
@@ -2870,26 +2889,70 @@ export const createCampaignDbRepository = ({
   let taskIdSequence = 0;
   let eventSequence = 0;
   let transactionSequence = 0;
+  let closePromise: Promise<void> | undefined;
+  let postgresWriteReadinessPromise: Promise<void> | undefined;
 
   const productionDiagnostics =
     mode === "production_deferred" ? [createProductionDeferredDiagnostic(requestedDriverId)] : [];
 
-  const assertWritable = () => {
+  const assertWritable = async (context: CampaignDbOperationContext = {}) => {
     if (mode === "production_deferred") {
       throw new CampaignDbRepositoryError(
         "Campaign DB production repository is deferred.",
         productionDiagnostics,
       );
     }
+
+    if (mode !== "postgres" || !activeDurableStore) {
+      return;
+    }
+
+    const readinessPromise = postgresWriteReadinessPromise ??= activeDurableStore.manifest(context).then((manifest) => {
+      if (manifest.status === "ready" && manifest.migrationStatus === "ready") {
+        return;
+      }
+
+      const diagnostics = manifest.diagnostics.length > 0
+        ? manifest.diagnostics
+        : [{
+          code: "POSTGRES_CAMPAIGN_STORE_SCHEMA_NOT_READY" as const,
+          field: "schemaVersion",
+          message: "PostgreSQL Campaign store schema is not ready.",
+          severity: "error" as const,
+        }];
+
+      throw new CampaignDbRepositoryError(
+        "Campaign DB PostgreSQL schema is not ready.",
+        diagnostics,
+      );
+    });
+
+    try {
+      await readinessPromise;
+    } catch (error) {
+      if (postgresWriteReadinessPromise === readinessPromise) {
+        postgresWriteReadinessPromise = undefined;
+      }
+
+      throw error;
+    }
   };
 
   const nextCampaignId = () => {
+    if (mode === "postgres") {
+      return `campaign-${randomUUID()}`;
+    }
+
     idSequence += 1;
 
     return `campaign-db-draft-${idSequence.toString().padStart(4, "0")}`;
   };
 
   const nextTaskId = () => {
+    if (mode === "postgres") {
+      return `campaign-task-${randomUUID()}`;
+    }
+
     taskIdSequence += 1;
 
     return `campaign-db-task-draft-${taskIdSequence.toString().padStart(4, "0")}`;
@@ -2926,6 +2989,10 @@ export const createCampaignDbRepository = ({
   };
 
   const nextCompletionIdForStore = async () => {
+    if (mode === "postgres") {
+      return `task-completion-${randomUUID()}`;
+    }
+
     if (!activeDurableStore) {
       return nextCompletionId();
     }
@@ -2936,6 +3003,10 @@ export const createCampaignDbRepository = ({
   };
 
   const nextTaskEvidenceIdForStore = async () => {
+    if (mode === "postgres") {
+      return `task-evidence-${randomUUID()}`;
+    }
+
     if (!activeDurableStore) {
       return nextTaskEvidenceId();
     }
@@ -2946,6 +3017,10 @@ export const createCampaignDbRepository = ({
   };
 
   const nextParticipantIdForStore = async () => {
+    if (mode === "postgres") {
+      return `campaign-participant-${randomUUID()}`;
+    }
+
     if (!activeDurableStore) {
       return nextParticipantId();
     }
@@ -2956,6 +3031,10 @@ export const createCampaignDbRepository = ({
   };
 
   const nextReferralBindingIdForStore = async () => {
+    if (mode === "postgres") {
+      return `referral-binding-${randomUUID()}`;
+    }
+
     if (!activeDurableStore) {
       return nextReferralBindingId();
     }
@@ -2998,27 +3077,44 @@ export const createCampaignDbRepository = ({
     });
   };
 
-  const listTaskDraftsByCampaignId = async (campaignId: string) =>
+  const listTaskDraftsByCampaignId = async (
+    campaignId: string,
+    context: CampaignDbOperationContext = {},
+  ) =>
     activeDurableStore
-      ? await activeDurableStore.listTaskDraftsByCampaignId(campaignId)
+      ? await activeDurableStore.listTaskDraftsByCampaignId(campaignId, undefined, context)
       : Array.from(taskRecordsById.values())
         .filter((task) => task.campaignId === campaignId)
         .sort((left, right) => left.id.localeCompare(right.id));
 
-  const listTaskCompletionsByCampaignId = async (campaignId: string) =>
-    activeDurableStore
-      ? await activeDurableStore.listTaskCompletionsByCampaignId(campaignId)
-      : Array.from(taskCompletionsById.values())
+  const listTaskCompletionsByCampaignId = async (
+    campaignId: string,
+    filter: { limit?: number; taskId?: string; walletAddress?: string } = {},
+    context: CampaignDbOperationContext = {},
+  ) => {
+    if (activeDurableStore) {
+      return activeDurableStore.listTaskCompletionsByCampaignId(campaignId, filter, context);
+    }
+
+    const records = Array.from(taskCompletionsById.values())
         .filter((completion) => completion.campaignId === campaignId)
+        .filter((completion) => !filter.taskId || completion.taskId === filter.taskId)
+        .filter((completion) => !filter.walletAddress || completion.walletAddress === filter.walletAddress)
         .sort((left, right) => {
           const walletComparison = left.walletAddress.localeCompare(right.walletAddress);
 
           return walletComparison === 0 ? left.taskId.localeCompare(right.taskId) : walletComparison;
         });
 
-  const listTaskEvidenceByCampaignId = async (campaignId: string) =>
+    return filter.limit === undefined ? records : records.slice(0, filter.limit);
+  };
+
+  const listTaskEvidenceByCampaignId = async (
+    campaignId: string,
+    context: CampaignDbOperationContext = {},
+  ) =>
     activeDurableStore
-      ? await activeDurableStore.listTaskEvidence({ campaignId })
+      ? await activeDurableStore.listTaskEvidence({ campaignId }, context)
       : Array.from(taskEvidenceById.values())
         .filter((evidence) => evidence.campaignId === campaignId)
         .sort((left, right) => {
@@ -3027,45 +3123,107 @@ export const createCampaignDbRepository = ({
           return walletComparison === 0 ? left.taskId.localeCompare(right.taskId) : walletComparison;
         });
 
-  const listParticipantsByCampaignId = async (campaignId: string) =>
-    activeDurableStore
-      ? await activeDurableStore.listParticipantsByCampaignId(campaignId)
-      : Array.from(participantRecordsById.values())
+  const listParticipantsByCampaignId = async (
+    campaignId: string,
+    filter: { limit?: number; walletAddress?: string } = {},
+    context: CampaignDbOperationContext = {},
+  ) => {
+    if (activeDurableStore) {
+      return activeDurableStore.listParticipantsByCampaignId(campaignId, filter, context);
+    }
+
+    const records = Array.from(participantRecordsById.values())
         .filter((participant) => participant.campaignId === campaignId)
+        .filter((participant) => !filter.walletAddress || participant.walletAddress === filter.walletAddress)
         .sort((left, right) => left.walletAddress.localeCompare(right.walletAddress));
 
-  const listReferralBindingsByCampaignId = async (campaignId: string) =>
-    activeDurableStore
-      ? await activeDurableStore.listReferralBindingsByCampaignId(campaignId)
-      : Array.from(referralBindingRecordsById.values())
+    return filter.limit === undefined ? records : records.slice(0, filter.limit);
+  };
+
+  const listReferralBindingsByCampaignId = async (
+    campaignId: string,
+    filter: {
+      inviteeWalletAddress?: string;
+      limit?: number;
+      referrerWalletAddress?: string;
+    } = {},
+    context: CampaignDbOperationContext = {},
+  ) => {
+    if (activeDurableStore) {
+      return activeDurableStore.listReferralBindingsByCampaignId(campaignId, filter, context);
+    }
+
+    const records = Array.from(referralBindingRecordsById.values())
         .filter((binding) => binding.campaignId === campaignId)
+        .filter((binding) => !filter.inviteeWalletAddress || binding.inviteeWalletAddress === filter.inviteeWalletAddress)
+        .filter((binding) => !filter.referrerWalletAddress || binding.referrerWalletAddress === filter.referrerWalletAddress)
         .sort((left, right) => left.inviteeWalletAddress.localeCompare(right.inviteeWalletAddress));
 
-  const getParticipantRecord = async (campaignId: string, walletAddress: string) =>
+    return filter.limit === undefined ? records : records.slice(0, filter.limit);
+  };
+
+  const getParticipantRecord = async (
+    campaignId: string,
+    walletAddress: string,
+    context: CampaignDbOperationContext = {},
+  ) =>
     activeDurableStore
-      ? await activeDurableStore.getParticipant(campaignId, walletAddress)
+      ? await activeDurableStore.getParticipant(campaignId, walletAddress, context)
       : participantRecordsById.get(participantKey(campaignId, walletAddress));
 
-  const getReferralBindingRecord = async (campaignId: string, inviteeWalletAddress: string) =>
+  const getReferralBindingRecord = async (
+    campaignId: string,
+    inviteeWalletAddress: string,
+    context: CampaignDbOperationContext = {},
+  ) =>
     activeDurableStore
-      ? await activeDurableStore.getReferralBinding(campaignId, inviteeWalletAddress)
+      ? await activeDurableStore.getReferralBinding(campaignId, inviteeWalletAddress, context)
       : referralBindingRecordsById.get(referralBindingKey(campaignId, inviteeWalletAddress));
 
-  const listTaskCompletionsByWallet = async (campaignId: string, walletAddress: string) =>
-    (await listTaskCompletionsByCampaignId(campaignId))
-      .filter((completion) => completion.walletAddress === walletAddress);
+  const listTaskCompletionsByWallet = async (
+    campaignId: string,
+    walletAddress: string,
+    context: CampaignDbOperationContext = {},
+  ) => listTaskCompletionsByCampaignId(campaignId, { walletAddress }, context);
 
-  const listTaskEvidenceByWallet = async (campaignId: string, walletAddress: string) =>
-    (await listTaskEvidenceByCampaignId(campaignId))
+  const listTaskEvidenceByWallet = async (
+    campaignId: string,
+    walletAddress: string,
+    context: CampaignDbOperationContext = {},
+  ) => activeDurableStore
+    ? activeDurableStore.listTaskEvidence({ campaignId, walletAddress }, context)
+    : (await listTaskEvidenceByCampaignId(campaignId, context))
       .filter((evidence) => evidence.walletAddress === walletAddress);
 
-  const findTaskCompletion = async (campaignId: string, taskId: string, walletAddress: string) =>
-    (await listTaskCompletionsByCampaignId(campaignId))
-      .find((completion) => completion.taskId === taskId && completion.walletAddress === walletAddress);
+  const findTaskCompletion = async (
+    campaignId: string,
+    taskId: string,
+    walletAddress: string,
+    context: CampaignDbOperationContext = {},
+  ) => (await listTaskCompletionsByCampaignId(
+    campaignId,
+    { limit: 1, taskId, walletAddress },
+    context,
+  ))[0];
 
-  const findTaskEvidence = async (campaignId: string, taskId: string, walletAddress: string) =>
-    (await listTaskEvidenceByCampaignId(campaignId))
+  const findTaskEvidence = async (
+    campaignId: string,
+    taskId: string,
+    walletAddress: string,
+    context: CampaignDbOperationContext = {},
+  ) => {
+    if (activeDurableStore) {
+      return (await activeDurableStore.listTaskEvidence({
+        campaignId,
+        limit: 1,
+        taskId,
+        walletAddress,
+      }, context))[0];
+    }
+
+    return (await listTaskEvidenceByCampaignId(campaignId, context))
       .find((evidence) => evidence.taskId === taskId && evidence.walletAddress === walletAddress);
+  };
 
   const repositoryMetadata = () => ({
     adapterId,
@@ -3074,21 +3232,24 @@ export const createCampaignDbRepository = ({
     storeId: "campaign-db" as const,
   });
 
-  const toProjection = async (draft: CampaignDbDraft): Promise<CampaignDbReadProjection> => ({
+  const toProjection = async (
+    draft: CampaignDbDraft,
+    context: CampaignDbOperationContext = {},
+  ): Promise<CampaignDbReadProjection> => ({
     ...draft,
     repository: repositoryMetadata(),
-    completions: await listTaskCompletionsByCampaignId(draft.id),
-    participants: await listParticipantsByCampaignId(draft.id),
-    referralBindings: await listReferralBindingsByCampaignId(draft.id),
-    taskEvidence: await listTaskEvidenceByCampaignId(draft.id),
-    tasks: await listTaskDraftsByCampaignId(draft.id),
+    completions: await listTaskCompletionsByCampaignId(draft.id, {}, context),
+    participants: await listParticipantsByCampaignId(draft.id, {}, context),
+    referralBindings: await listReferralBindingsByCampaignId(draft.id, {}, context),
+    taskEvidence: await listTaskEvidenceByCampaignId(draft.id, context),
+    tasks: await listTaskDraftsByCampaignId(draft.id, context),
   });
 
   const createExportState = async (
     input: CampaignDbExportProjectionInput,
     context: CampaignDbOperationContext,
   ) => {
-    assertWritable();
+    await assertWritable(context);
     appendEvent({
       operation: "lookup_campaign_export_projection",
       traceId: context.traceId,
@@ -3096,7 +3257,7 @@ export const createCampaignDbRepository = ({
     });
 
     const campaign = activeDurableStore
-      ? await activeDurableStore.getById(input.campaignId)
+      ? await activeDurableStore.getById(input.campaignId, context)
       : recordsById.get(input.campaignId);
     const normalized = validateExportProjectionInput(input, Boolean(campaign));
 
@@ -3110,11 +3271,11 @@ export const createCampaignDbRepository = ({
       ]);
     }
 
-    const tasks = await listTaskDraftsByCampaignId(normalized.campaignId);
-    const completions = await listTaskCompletionsByCampaignId(normalized.campaignId);
-    const evidenceRecords = await listTaskEvidenceByCampaignId(normalized.campaignId);
-    const participants = await listParticipantsByCampaignId(normalized.campaignId);
-    const referralBindings = await listReferralBindingsByCampaignId(normalized.campaignId);
+    const tasks = await listTaskDraftsByCampaignId(normalized.campaignId, context);
+    const completions = await listTaskCompletionsByCampaignId(normalized.campaignId, {}, context);
+    const evidenceRecords = await listTaskEvidenceByCampaignId(normalized.campaignId, context);
+    const participants = await listParticipantsByCampaignId(normalized.campaignId, {}, context);
+    const referralBindings = await listReferralBindingsByCampaignId(normalized.campaignId, {}, context);
     const exportBatchId = exportBatchIdFor(normalized.campaignId);
     const rows = createExportRows(campaign, tasks, completions, evidenceRecords, participants, referralBindings, exportBatchId);
     const repository = repositoryMetadata();
@@ -3156,20 +3317,23 @@ export const createCampaignDbRepository = ({
       ? (await activeDurableStore.manifest()).referralBindingRecordCount
       : referralBindingRecordsById.size;
 
-  const durableDiagnostics = async () =>
-    activeDurableStore
-      ? (await activeDurableStore.manifest()).diagnostics.map((issue) => ({
-        code: issue.code as CampaignDbDiagnosticCode,
-        field: issue.field,
-        message: issue.message,
-        severity: issue.severity,
-      }))
-      : [];
-
-  const health = async (): Promise<CampaignDbRepositoryHealth> => {
-    const campaignStore = activeDurableStore ? await activeDurableStore.manifest() : undefined;
-    const storeDiagnostics = await durableDiagnostics();
+  const health = async (
+    context: CampaignDbOperationContext = {},
+  ): Promise<CampaignDbRepositoryHealth> => {
+    const campaignStore = activeDurableStore
+      ? await activeDurableStore.manifest(context)
+      : undefined;
+    const storeDiagnostics = campaignStore?.diagnostics.map((issue) => ({
+      code: issue.code,
+      field: issue.field,
+      message: issue.message,
+      severity: issue.severity,
+    })) ?? [];
     const diagnostics = [...productionDiagnostics, ...storeDiagnostics];
+    const postgresActive = mode === "postgres";
+    const status = mode === "production_deferred" || diagnostics.some((issue) => issue.severity === "error")
+      ? "blocked"
+      : "ready";
 
     return {
       adapterId,
@@ -3178,27 +3342,27 @@ export const createCampaignDbRepository = ({
       diagnostics,
       eventCount: events.length,
       fallbackUsed: false,
-      completionRecordCount: await resolveCompletionRecordCount(),
+      completionRecordCount: campaignStore?.completionRecordCount ?? await resolveCompletionRecordCount(),
       id: "campaign-db-repository-runtime",
       i18nDraftRecordCount: await resolveI18nDraftRecordCount(),
-      liveConnectionAttempted: false,
+      liveConnectionAttempted: postgresActive,
       liveContractExecutionEnabled: false,
       liveMigrationExecutionEnabled: false,
       liveProviderExecutionEnabled: false,
-      liveQueryExecutionEnabled: false,
+      liveQueryExecutionEnabled: postgresActive && status === "ready",
       liveRewardExecutionEnabled: false,
-      liveStorageExecutionEnabled: false,
-      participantRecordCount: await resolveParticipantRecordCount(),
-      productionReady: false,
-      referralBindingRecordCount: await resolveReferralBindingRecordCount(),
-      recordCount: await resolveRecordCount(),
+      liveStorageExecutionEnabled: postgresActive && status === "ready",
+      participantRecordCount: campaignStore?.participantRecordCount ?? await resolveParticipantRecordCount(),
+      productionReady: postgresActive
+        && status === "ready"
+        && campaignStore?.migrationStatus === "ready",
+      referralBindingRecordCount: campaignStore?.referralBindingRecordCount ?? await resolveReferralBindingRecordCount(),
+      recordCount: campaignStore?.recordCount ?? await resolveRecordCount(),
       selectedMode: mode,
-      status: mode === "production_deferred" || diagnostics.some((issue) => issue.severity === "error")
-        ? "blocked"
-        : "ready",
+      status,
       storeId: "campaign-db",
-      taskEvidenceRecordCount: await resolveTaskEvidenceRecordCount(),
-      taskRecordCount: await resolveTaskRecordCount(),
+      taskEvidenceRecordCount: campaignStore?.taskEvidenceRecordCount ?? await resolveTaskEvidenceRecordCount(),
+      taskRecordCount: campaignStore?.taskRecordCount ?? await resolveTaskRecordCount(),
       validation: {
         issues: diagnostics,
         valid: diagnostics.length === 0,
@@ -3206,9 +3370,16 @@ export const createCampaignDbRepository = ({
     };
   };
 
+  const close = (): Promise<void> => {
+    closePromise ??= activeDurableStore?.close() ?? Promise.resolve();
+
+    return closePromise;
+  };
+
   const normalizeEligibilityInput = async (
     input: CampaignDbEligibilityInput,
     campaignExists: boolean,
+    context: CampaignDbOperationContext,
   ) => {
     const issues: CampaignDbDiagnostic[] = [];
     const campaignId = requireCompletionString(input, "campaignId", issues);
@@ -3216,7 +3387,7 @@ export const createCampaignDbRepository = ({
     const accountType = normalizeCompletionAccountType(input.accountType, issues, true);
     const walletSource = normalizeCompletionWalletSource(input.walletSource, issues, true);
     const participant = campaignExists
-      ? await getParticipantRecord(campaignId, walletAddress)
+      ? await getParticipantRecord(campaignId, walletAddress, context)
       : undefined;
 
     if (campaignId && !campaignExists) {
@@ -3246,10 +3417,10 @@ export const createCampaignDbRepository = ({
 
   const repositoryApi: CampaignDbRepository = {
     addTaskDraft: async (input, context = {}) => {
-      assertWritable();
+      await assertWritable(context);
 
       const campaign = activeDurableStore
-        ? await activeDurableStore.getById(input.campaignId)
+        ? await activeDurableStore.getById(input.campaignId, context)
         : recordsById.get(input.campaignId);
       const validated = validateAddTaskDraftInput(input, Boolean(campaign));
       const transactionId = nextTransactionId();
@@ -3276,8 +3447,9 @@ export const createCampaignDbRepository = ({
         updatedAt: createdAt,
       };
 
+      let persistedTask = task;
       if (activeDurableStore) {
-        await activeDurableStore.createTaskDraft(task);
+        persistedTask = await activeDurableStore.createTaskDraft(task, context);
       } else {
         taskRecordsById.set(task.id, task);
       }
@@ -3297,15 +3469,15 @@ export const createCampaignDbRepository = ({
         type: "transaction.commit",
       });
 
-      return task;
+      return persistedTask;
     },
     bindReferral: async (input, context = {}) => {
-      assertWritable();
+      await assertWritable(context);
 
       const campaign = activeDurableStore
-        ? await activeDurableStore.getById(input.campaignId)
+        ? await activeDurableStore.getById(input.campaignId, context)
         : recordsById.get(input.campaignId);
-      const existing = await getReferralBindingRecord(input.campaignId, input.inviteeWalletAddress);
+      const existing = await getReferralBindingRecord(input.campaignId, input.inviteeWalletAddress, context);
       const validated = validateBindReferralInput(input, campaign, existing);
       const transactionId = nextTransactionId();
       appendEvent({
@@ -3332,8 +3504,9 @@ export const createCampaignDbRepository = ({
         updatedAt: timestamp,
       };
 
+      let persistedBinding = binding;
       if (activeDurableStore) {
-        await activeDurableStore.upsertReferralBinding(binding);
+        persistedBinding = await activeDurableStore.upsertReferralBinding(binding, context);
       } else {
         referralBindingRecordsById.set(referralBindingKey(binding.campaignId, binding.inviteeWalletAddress), binding);
       }
@@ -3353,10 +3526,10 @@ export const createCampaignDbRepository = ({
         type: "transaction.commit",
       });
 
-      return binding;
+      return persistedBinding;
     },
     checkEligibility: async (input, context = {}) => {
-      assertWritable();
+      await assertWritable(context);
       appendEvent({
         operation: "lookup_campaign_eligibility",
         traceId: context.traceId,
@@ -3364,12 +3537,20 @@ export const createCampaignDbRepository = ({
       });
 
       const campaign = activeDurableStore
-        ? await activeDurableStore.getById(input.campaignId)
+        ? await activeDurableStore.getById(input.campaignId, context)
         : recordsById.get(input.campaignId);
-      const normalized = await normalizeEligibilityInput(input, Boolean(campaign));
-      const tasks = await listTaskDraftsByCampaignId(normalized.campaignId);
-      const completions = await listTaskCompletionsByWallet(normalized.campaignId, normalized.walletAddress);
-      const evidence = await listTaskEvidenceByWallet(normalized.campaignId, normalized.walletAddress);
+      const normalized = await normalizeEligibilityInput(input, Boolean(campaign), context);
+      const tasks = await listTaskDraftsByCampaignId(normalized.campaignId, context);
+      const completions = await listTaskCompletionsByWallet(
+        normalized.campaignId,
+        normalized.walletAddress,
+        context,
+      );
+      const evidence = await listTaskEvidenceByWallet(
+        normalized.campaignId,
+        normalized.walletAddress,
+        context,
+      );
       const completedTaskIds = new Set(
         completions
           .filter((completion) => completion.status === "completed")
@@ -3419,8 +3600,9 @@ export const createCampaignDbRepository = ({
         walletTypeVerified: normalized.walletTypeVerified,
       };
     },
+    close,
     createDraft: async (input, context = {}) => {
-      assertWritable();
+      await assertWritable(context);
 
       const transactionId = nextTransactionId();
       appendEvent({
@@ -3445,8 +3627,9 @@ export const createCampaignDbRepository = ({
         updatedAt: createdAt,
       };
 
+      let persistedDraft = draft;
       if (activeDurableStore) {
-        await activeDurableStore.create(draft);
+        persistedDraft = await activeDurableStore.create(draft, context);
       } else {
         recordsById.set(draft.id, draft);
       }
@@ -3464,7 +3647,7 @@ export const createCampaignDbRepository = ({
         type: "transaction.commit",
       });
 
-      return draft;
+      return persistedDraft;
     },
     getById: async (campaignId, context = {}) => {
       appendEvent({
@@ -3474,17 +3657,17 @@ export const createCampaignDbRepository = ({
       });
 
       const draft = activeDurableStore
-        ? await activeDurableStore.getById(campaignId)
+        ? await activeDurableStore.getById(campaignId, context)
         : recordsById.get(campaignId);
 
-      return draft ? await toProjection(draft) : undefined;
+      return draft ? await toProjection(draft, context) : undefined;
     },
     getEvents: () => [...events],
     generateI18nDraft: async (input, context = {}) => {
-      assertWritable();
+      await assertWritable(context);
 
       const campaign = activeDurableStore
-        ? await activeDurableStore.getById(input.campaignId)
+        ? await activeDurableStore.getById(input.campaignId, context)
         : recordsById.get(input.campaignId);
       const validated = validateI18nDraftInput(input, campaign);
       const transactionId = nextTransactionId();
@@ -3550,7 +3733,7 @@ export const createCampaignDbRepository = ({
         type: "query.lookup",
       });
 
-      return await getParticipantRecord(campaignId, walletAddress);
+      return await getParticipantRecord(campaignId, walletAddress, context);
     },
     getReferralBinding: async (campaignId, inviteeWalletAddress, context = {}) => {
       appendEvent({
@@ -3560,7 +3743,7 @@ export const createCampaignDbRepository = ({
         type: "query.lookup",
       });
 
-      return await getReferralBindingRecord(campaignId, inviteeWalletAddress);
+      return await getReferralBindingRecord(campaignId, inviteeWalletAddress, context);
     },
     health,
     list: async (filter = {}, context = {}) => {
@@ -3571,7 +3754,7 @@ export const createCampaignDbRepository = ({
       });
 
       const records = activeDurableStore
-        ? await activeDurableStore.list(filter)
+        ? await activeDurableStore.list(filter, context)
         : Array.from(recordsById.values());
 
       const filteredRecords = records
@@ -3592,7 +3775,7 @@ export const createCampaignDbRepository = ({
         })
         .sort((left, right) => left.id.localeCompare(right.id));
 
-      return Promise.all(filteredRecords.map(toProjection));
+      return Promise.all(filteredRecords.map((draft) => toProjection(draft, context)));
     },
     listTaskEvidence: async (filter, context = {}) => {
       appendEvent({
@@ -3603,8 +3786,8 @@ export const createCampaignDbRepository = ({
       });
 
       const evidenceRecords = activeDurableStore
-        ? await activeDurableStore.listTaskEvidence(filter)
-        : await listTaskEvidenceByCampaignId(filter.campaignId);
+        ? await activeDurableStore.listTaskEvidence(filter, context)
+        : await listTaskEvidenceByCampaignId(filter.campaignId, context);
       const maxLimit = evidenceRecords.length || 1;
       const limit = Math.max(1, Math.min(Math.trunc(filter.limit ?? maxLimit), maxLimit));
 
@@ -3620,13 +3803,10 @@ export const createCampaignDbRepository = ({
         traceId: context.traceId,
         type: "query.list",
       });
-      const participants = await listParticipantsByCampaignId(filter.campaignId);
-      const maxLimit = participants.length || 1;
-      const limit = Math.max(1, Math.min(Math.trunc(filter.limit ?? maxLimit), maxLimit));
-
-      return participants
-        .filter((participant) => !filter.walletAddress || participant.walletAddress === filter.walletAddress)
-        .slice(0, limit);
+      return listParticipantsByCampaignId(filter.campaignId, {
+        ...(filter.limit === undefined ? {} : { limit: filter.limit }),
+        ...(filter.walletAddress ? { walletAddress: filter.walletAddress } : {}),
+      }, context);
     },
     listReferralBindings: async (filter, context = {}) => {
       appendEvent({
@@ -3635,14 +3815,15 @@ export const createCampaignDbRepository = ({
         traceId: context.traceId,
         type: "query.list",
       });
-      const bindings = await listReferralBindingsByCampaignId(filter.campaignId);
-      const maxLimit = bindings.length || 1;
-      const limit = Math.max(1, Math.min(Math.trunc(filter.limit ?? maxLimit), maxLimit));
-
-      return bindings
-        .filter((binding) => !filter.inviteeWalletAddress || binding.inviteeWalletAddress === filter.inviteeWalletAddress)
-        .filter((binding) => !filter.referrerWalletAddress || binding.referrerWalletAddress === filter.referrerWalletAddress)
-        .slice(0, limit);
+      return listReferralBindingsByCampaignId(filter.campaignId, {
+        ...(filter.inviteeWalletAddress
+          ? { inviteeWalletAddress: filter.inviteeWalletAddress }
+          : {}),
+        ...(filter.limit === undefined ? {} : { limit: filter.limit }),
+        ...(filter.referrerWalletAddress
+          ? { referrerWalletAddress: filter.referrerWalletAddress }
+          : {}),
+      }, context);
     },
     getExportReadiness: async (input, context = {}) => {
       const { exportReadiness } = await createExportState(input, context);
@@ -3650,12 +3831,12 @@ export const createCampaignDbRepository = ({
       return exportReadiness;
     },
     markReferralQualified: async (input, context = {}) => {
-      assertWritable();
+      await assertWritable(context);
 
       const campaign = activeDurableStore
-        ? await activeDurableStore.getById(input.campaignId)
+        ? await activeDurableStore.getById(input.campaignId, context)
         : recordsById.get(input.campaignId);
-      const existing = await getReferralBindingRecord(input.campaignId, input.inviteeWalletAddress);
+      const existing = await getReferralBindingRecord(input.campaignId, input.inviteeWalletAddress, context);
       const validated = validateMarkReferralQualifiedInput(input, campaign, existing);
       const transactionId = nextTransactionId();
       appendEvent({
@@ -3684,8 +3865,9 @@ export const createCampaignDbRepository = ({
         updatedAt: timestamp,
       };
 
+      let persistedBinding = binding;
       if (activeDurableStore) {
-        await activeDurableStore.upsertReferralBinding(binding);
+        persistedBinding = await activeDurableStore.upsertReferralBinding(binding, context);
       } else {
         referralBindingRecordsById.set(referralBindingKey(binding.campaignId, binding.inviteeWalletAddress), binding);
       }
@@ -3705,7 +3887,7 @@ export const createCampaignDbRepository = ({
         type: "transaction.commit",
       });
 
-      return binding;
+      return persistedBinding;
     },
     projectExport: async (input, context = {}) => {
       const {
@@ -3740,6 +3922,7 @@ export const createCampaignDbRepository = ({
       };
     },
     reset: async () => {
+      await activeDurableStore?.reset();
       recordsById.clear();
       i18nDraftRecordsById.clear();
       taskCompletionsById.clear();
@@ -3747,7 +3930,6 @@ export const createCampaignDbRepository = ({
       taskRecordsById.clear();
       participantRecordsById.clear();
       referralBindingRecordsById.clear();
-      await activeDurableStore?.reset();
       events.length = 0;
       idSequence = 0;
       completionIdSequence = 0;
@@ -3760,13 +3942,13 @@ export const createCampaignDbRepository = ({
       transactionSequence = 0;
     },
     upsertParticipant: async (input, context = {}) => {
-      assertWritable();
+      await assertWritable(context);
 
       const campaign = activeDurableStore
-        ? await activeDurableStore.getById(input.campaignId)
+        ? await activeDurableStore.getById(input.campaignId, context)
         : recordsById.get(input.campaignId);
       const validated = validateUpsertParticipantInput(input, campaign);
-      const existing = await getParticipantRecord(validated.campaignId, validated.walletAddress);
+      const existing = await getParticipantRecord(validated.campaignId, validated.walletAddress, context);
       const transactionId = nextTransactionId();
       appendEvent({
         entity: "CampaignParticipant",
@@ -3791,8 +3973,9 @@ export const createCampaignDbRepository = ({
         updatedAt: timestamp,
       };
 
+      let persistedParticipant = participant;
       if (activeDurableStore) {
-        await activeDurableStore.upsertParticipant(participant);
+        persistedParticipant = await activeDurableStore.upsertParticipant(participant, context);
       } else {
         participantRecordsById.set(participantKey(participant.campaignId, participant.walletAddress), participant);
       }
@@ -3812,18 +3995,23 @@ export const createCampaignDbRepository = ({
         type: "transaction.commit",
       });
 
-      return participant;
+      return persistedParticipant;
     },
     upsertTaskCompletion: async (input, context = {}) => {
-      assertWritable();
+      await assertWritable(context);
 
       const campaign = activeDurableStore
-        ? await activeDurableStore.getById(input.campaignId)
+        ? await activeDurableStore.getById(input.campaignId, context)
         : recordsById.get(input.campaignId);
-      const task = (await listTaskDraftsByCampaignId(input.campaignId))
+      const task = (await listTaskDraftsByCampaignId(input.campaignId, context))
         .find((candidate) => candidate.id === input.taskId);
       const validated = validateUpsertTaskCompletionInput(input, campaign, task);
-      const existing = await findTaskCompletion(validated.campaignId, validated.taskId, validated.walletAddress);
+      const existing = await findTaskCompletion(
+        validated.campaignId,
+        validated.taskId,
+        validated.walletAddress,
+        context,
+      );
       const transactionId = nextTransactionId();
       appendEvent({
         entity: "TaskCompletion",
@@ -3849,8 +4037,9 @@ export const createCampaignDbRepository = ({
         updatedAt: timestamp,
       };
 
+      let persistedCompletion = completion;
       if (activeDurableStore) {
-        await activeDurableStore.upsertTaskCompletion(completion);
+        persistedCompletion = await activeDurableStore.upsertTaskCompletion(completion, context);
       } else {
         taskCompletionsById.set(completion.id, completion);
       }
@@ -3870,18 +4059,23 @@ export const createCampaignDbRepository = ({
         type: "transaction.commit",
       });
 
-      return completion;
+      return persistedCompletion;
     },
     upsertTaskEvidence: async (input, context = {}) => {
-      assertWritable();
+      await assertWritable(context);
 
       const campaign = activeDurableStore
-        ? await activeDurableStore.getById(input.campaignId)
+        ? await activeDurableStore.getById(input.campaignId, context)
         : recordsById.get(input.campaignId);
-      const task = (await listTaskDraftsByCampaignId(input.campaignId))
+      const task = (await listTaskDraftsByCampaignId(input.campaignId, context))
         .find((candidate) => candidate.id === input.taskId);
       const validated = validateUpsertTaskEvidenceInput(input, campaign, task);
-      const existing = await findTaskEvidence(validated.campaignId, validated.taskId, validated.walletAddress);
+      const existing = await findTaskEvidence(
+        validated.campaignId,
+        validated.taskId,
+        validated.walletAddress,
+        context,
+      );
       const transactionId = nextTransactionId();
       appendEvent({
         entity: "TaskEvidence",
@@ -3907,8 +4101,9 @@ export const createCampaignDbRepository = ({
         updatedAt: timestamp,
       };
 
+      let persistedEvidence = evidence;
       if (activeDurableStore) {
-        await activeDurableStore.upsertTaskEvidence(evidence);
+        persistedEvidence = await activeDurableStore.upsertTaskEvidence(evidence, context);
       } else {
         taskEvidenceById.set(evidence.id, evidence);
       }
@@ -3928,10 +4123,155 @@ export const createCampaignDbRepository = ({
         type: "transaction.commit",
       });
 
-      return evidence;
+      return persistedEvidence;
     },
     upsertTaskVerification: async (input, context = {}) => {
-      assertWritable();
+      await assertWritable(context);
+
+      if (mode === "postgres" && activeDurableStore) {
+        if (!activeDurableStore.upsertTaskVerification) {
+          throw new CampaignDbRepositoryError(
+            "Campaign DB PostgreSQL store does not support atomic task verification.",
+            [diagnostic(
+              "CAMPAIGN_DURABLE_STORE_PRODUCTION_REQUIRED",
+              "upsertTaskVerification",
+              "Campaign DB PostgreSQL mode requires atomic task verification persistence.",
+            )],
+          );
+        }
+
+        const campaign = await activeDurableStore.getById(input.campaignId, context);
+        const task = (await listTaskDraftsByCampaignId(input.campaignId, context))
+          .find((candidate) => candidate.id === input.taskId);
+        const validatedEvidence = validateUpsertTaskEvidenceInput({
+          accountType: input.accountType,
+          campaignId: input.campaignId,
+          evidenceHash: input.evidenceHash,
+          evidenceSource: input.evidenceSource,
+          status: input.status,
+          taskId: input.taskId,
+          walletAddress: input.walletAddress,
+          walletSource: input.walletSource,
+        }, campaign, task);
+        const validatedCompletion = validateUpsertTaskCompletionInput({
+          ...input,
+          evidenceHash: validatedEvidence.evidenceHash,
+          evidenceSource: validatedEvidence.evidenceSource,
+          status: validatedEvidence.status,
+        }, campaign, task);
+        const [existingCompletion, existingEvidence, existingParticipant] = await Promise.all([
+          findTaskCompletion(
+            validatedCompletion.campaignId,
+            validatedCompletion.taskId,
+            validatedCompletion.walletAddress,
+            context,
+          ),
+          findTaskEvidence(
+            validatedEvidence.campaignId,
+            validatedEvidence.taskId,
+            validatedEvidence.walletAddress,
+            context,
+          ),
+          getParticipantRecord(
+            validatedCompletion.campaignId,
+            validatedCompletion.walletAddress,
+            context,
+          ),
+        ]);
+        const validatedParticipant = validateUpsertParticipantInput({
+          accountType: validatedCompletion.accountType,
+          campaignId: validatedCompletion.campaignId,
+          localePreference: existingParticipant?.localePreference,
+          rank: existingParticipant?.rank,
+          riskFlags: existingParticipant?.riskFlags,
+          totalPoints: existingParticipant?.totalPoints ?? 0,
+          walletAddress: validatedCompletion.walletAddress,
+          walletSignatureStatus: existingParticipant?.walletSignatureStatus ?? "not_available",
+          walletSource: validatedCompletion.walletSource,
+          walletTypeVerified: true,
+          walletVerifiedAt: existingParticipant?.walletVerifiedAt,
+        }, campaign);
+        const timestamp = now();
+        const evidence: CampaignDbTaskEvidenceRecord = {
+          ...validatedEvidence,
+          capturedAt: timestamp,
+          createdAt: existingEvidence?.createdAt ?? timestamp,
+          id: existingEvidence?.id ?? await nextTaskEvidenceIdForStore(),
+          updatedAt: timestamp,
+        };
+        const completion: CampaignDbTaskCompletion = {
+          ...validatedCompletion,
+          evidenceHash: evidence.evidenceHash,
+          evidenceId: evidence.id,
+          ...(validatedCompletion.status === "completed" ? { completedAt: timestamp } : {}),
+          createdAt: existingCompletion?.createdAt ?? timestamp,
+          id: existingCompletion?.id ?? await nextCompletionIdForStore(),
+          updatedAt: timestamp,
+        };
+        const participant: CampaignDbParticipantRecord = {
+          ...validatedParticipant,
+          createdAt: existingParticipant?.createdAt ?? timestamp,
+          id: existingParticipant?.id ?? await nextParticipantIdForStore(),
+          updatedAt: timestamp,
+        };
+        const transactionId = nextTransactionId();
+
+        appendEvent({
+          entity: "TaskCompletion",
+          operation: "begin_upsert_task_verification",
+          traceId: context.traceId,
+          transactionId,
+          type: "transaction.begin",
+        });
+        appendEvent({
+          entity: "TaskCompletion",
+          operation: "plan_upsert_task_verification",
+          traceId: context.traceId,
+          transactionId,
+          type: "command.planned",
+        });
+
+        const persisted = await activeDurableStore.upsertTaskVerification({
+          completion,
+          evidence,
+          participant,
+        }, context);
+
+        appendEvent({
+          entity: "TaskEvidence",
+          operation: existingEvidence ? "update_task_evidence" : "insert_task_evidence",
+          traceId: context.traceId,
+          transactionId,
+          type: existingEvidence ? "command.update" : "command.insert",
+        });
+        appendEvent({
+          entity: "TaskCompletion",
+          operation: existingCompletion ? "update_task_completion" : "insert_task_completion",
+          traceId: context.traceId,
+          transactionId,
+          type: existingCompletion ? "command.update" : "command.insert",
+        });
+        appendEvent({
+          entity: "CampaignParticipant",
+          operation: existingParticipant ? "update_campaign_participant" : "insert_campaign_participant",
+          traceId: context.traceId,
+          transactionId,
+          type: existingParticipant ? "command.update" : "command.insert",
+        });
+        appendEvent({
+          entity: "TaskCompletion",
+          operation: "commit_upsert_task_verification",
+          traceId: context.traceId,
+          transactionId,
+          type: "transaction.commit",
+        });
+
+        return {
+          completion: persisted.completion,
+          evidence: persisted.evidence,
+          repository: repositoryMetadata(),
+        };
+      }
 
       const evidence = await repositoryApi.upsertTaskEvidence?.({
         accountType: input.accountType,
@@ -3976,6 +4316,23 @@ export const createCampaignDbRepository = ({
         ...evidence,
         completionId: completion.id,
         pointsAwarded: completion.pointsAwarded,
+      }, context);
+
+      const completedPoints = (await listTaskCompletionsByWallet(
+        input.campaignId,
+        input.walletAddress,
+        context,
+      ))
+        .filter((record) => record.status === "completed")
+        .reduce((total, record) => total + record.pointsAwarded, 0);
+      await repositoryApi.upsertParticipant?.({
+        accountType: input.accountType,
+        campaignId: input.campaignId,
+        totalPoints: completedPoints,
+        walletAddress: input.walletAddress,
+        walletSignatureStatus: "not_available",
+        walletSource: input.walletSource,
+        walletTypeVerified: true,
       }, context);
 
       return {

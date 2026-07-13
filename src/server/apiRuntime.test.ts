@@ -1,13 +1,19 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
+import ts from "typescript";
+import { describe, expect, it, vi } from "vitest";
 import { campaignDetail } from "../domain/fixtures";
 import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectOwnerFundingProofReviewBridge";
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
 import { createCampaignOsApiRuntime, type ApiRuntimeResponse } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
-import type { CampaignDbRepository } from "./campaignDbRepository";
+import {
+  CampaignDbRepositoryError,
+  createCampaignDbRepository,
+  type CampaignDbRepository,
+} from "./campaignDbRepository";
+import { PostgresCampaignStoreError } from "./postgresCampaignDurableStore";
 import { createWalletSessionRepository } from "./walletSessionRepository";
 import {
   createCampaignOsJsonRepository,
@@ -6290,6 +6296,101 @@ describe("Campaign OS API runtime", () => {
     expectNoForbiddenResponseKeys(walletSession.body);
   });
 
+  it("keeps committed Campaign DB writes successful when the independent audit repository is unavailable", async () => {
+    const runtimeWithFailingAudit = createCampaignOsApiRuntime({
+      repository: createFailingRepository(),
+    });
+    const create = await runtimeWithFailingAudit.handle({
+      method: "POST",
+      path: "/api/campaigns",
+      headers: projectOwnerAuthHeaders("audit-owner-001", {
+        "x-campaign-os-trace-id": "trace-audit-create-unavailable",
+      }),
+      body: JSON.stringify({
+        duration: "2026-08-01/2026-08-14",
+        endTime: "2026-08-14T23:59:59Z",
+        goal: "Keep the durable Campaign result authoritative",
+        ownerAddress: "audit-owner-001",
+        projectId: "audit-project-001",
+        rewardDescription: "Audit failure must not reverse the business write.",
+        startTime: "2026-08-01T00:00:00Z",
+      }),
+    });
+    const created = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload> & {
+      persistence: {
+        code: string;
+        kind: string;
+        operation: string;
+        status: string;
+        traceId: string;
+      };
+    }>(create);
+    const task = await runtimeWithFailingAudit.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.payload.id}/tasks`,
+      headers: { "x-campaign-os-trace-id": "trace-audit-task-unavailable" },
+      body: JSON.stringify({
+        evidenceRule: { minAmount: 1, source: "AELFSCAN" },
+        points: 25,
+        required: true,
+        templateCode: "bridge_ebridge",
+        verificationType: "ON_CHAIN",
+        walletCompatibility: "ANY",
+      }),
+    });
+    const taskResult = expectSuccessData<LocalServiceEnvelope<TaskDraftPayload> & {
+      campaignDbTask: { taskId: string };
+      persistence: { code: string; kind: string; status: string; traceId: string };
+    }>(task);
+    const verification = await runtimeWithFailingAudit.handle({
+      method: "POST",
+      path: `/api/tasks/${taskResult.campaignDbTask.taskId}/verify`,
+      headers: { "x-campaign-os-trace-id": "trace-audit-verification-unavailable" },
+      body: JSON.stringify({
+        accountType: "EOA",
+        campaignId: created.payload.id,
+        walletAddress: "2F4AuditWallet",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      }),
+    });
+    const detail = await runtimeWithFailingAudit.handle({
+      method: "GET",
+      path: `/api/campaigns/${created.payload.id}`,
+      headers: { "x-campaign-os-trace-id": "trace-audit-detail" },
+    });
+
+    expect(created.persistence).toEqual({
+      code: "PERSISTENCE_UNAVAILABLE",
+      kind: "campaign_draft",
+      operation: "record",
+      status: "unavailable",
+      traceId: "trace-audit-create-unavailable",
+    });
+    expect(taskResult.persistence).toMatchObject({
+      code: "PERSISTENCE_UNAVAILABLE",
+      kind: "task_draft",
+      status: "unavailable",
+      traceId: "trace-audit-task-unavailable",
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
+      campaignDbCompletion: { completionId: string };
+      persistence: { code: string; kind: string; status: string; traceId: string };
+    }>(verification)).toMatchObject({
+      campaignDbCompletion: { completionId: expect.any(String) },
+      persistence: {
+        code: "PERSISTENCE_UNAVAILABLE",
+        kind: "verification_attempt",
+        status: "unavailable",
+        traceId: "trace-audit-verification-unavailable",
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload>>(detail).payload).toMatchObject({
+      item: { id: created.payload.id },
+      tasks: [expect.objectContaining({ taskId: taskResult.campaignDbTask.taskId })],
+    });
+    await runtimeWithFailingAudit.close();
+  });
+
   it("fails closed with trace IDs when the Campaign DB repository is unavailable", async () => {
     const failingRuntime = createCampaignOsApiRuntime({
       campaignDbRepository: createFailingCampaignDbRepository(),
@@ -6716,5 +6817,345 @@ describe("Campaign OS API runtime", () => {
     } finally {
       await server.stop();
     }
+  });
+
+  it("composes one PostgreSQL Campaign pool and closes runtime resources once", async () => {
+    let backgroundErrorListener: ((error: unknown) => void) | undefined;
+    const onError = vi.fn((listener: (error: unknown) => void) => {
+      backgroundErrorListener = listener;
+    });
+    const pool = {
+      end: vi.fn(async () => undefined),
+      onError,
+      query: vi.fn(async () => ({ rows: [] })),
+    };
+    const poolFactory = vi.fn(() => pool);
+    const errorLog = vi.fn();
+    const walletSessionRepository = createWalletSessionRepository();
+    const walletClose = vi.spyOn(walletSessionRepository, "close");
+    const composedRuntime = createCampaignOsApiRuntime({
+      campaignDbPoolFactory: poolFactory,
+      logger: { error: errorLog },
+      runtimeConfigOptions: {
+        env: {
+          CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+          CAMPAIGN_OS_DATABASE_SSL_MODE: "disable",
+          CAMPAIGN_OS_DATABASE_URL: "postgres://local-user:local-password@127.0.0.1/campaign_os_test",
+        },
+      },
+      walletSessionRepository,
+    });
+
+    expect(poolFactory).toHaveBeenCalledTimes(1);
+    expect(poolFactory).toHaveBeenCalledWith(expect.objectContaining({
+      connectionTimeoutMillis: 5_000,
+      idleTimeoutMillis: 10_000,
+      max: 10,
+      ssl: false,
+    }));
+    expect(onError).toHaveBeenCalledTimes(1);
+    backgroundErrorListener?.(new Error(
+      "postgres://runtime-user:runtime-password@db.internal/campaign_os private query value",
+    ));
+    const backgroundErrorLog = errorLog.mock.calls.flat().join("\n");
+
+    expect(backgroundErrorLog).toContain("code=CAMPAIGN_DB_POOL_BACKGROUND_ERROR");
+    expect(backgroundErrorLog).toMatch(/traceId=[0-9a-f-]{36}/);
+    expect(backgroundErrorLog).not.toContain("runtime-password");
+    expect(backgroundErrorLog).not.toContain("db.internal");
+    expect(backgroundErrorLog).not.toContain("private query value");
+    const firstClose = composedRuntime.close();
+    const secondClose = composedRuntime.close();
+
+    expect(firstClose).toBe(secondClose);
+    await firstClose;
+    expect(pool.end).toHaveBeenCalledTimes(1);
+    expect(walletClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps repository i18n infrastructure diagnostics to a safe 503", async () => {
+    const baseRepository = createCampaignDbRepository();
+    const campaign = await baseRepository.createDraft({
+      duration: "2026-08-01/2026-08-14",
+      endTime: "2026-08-14T23:59:59Z",
+      goal: "Classify repository i18n infrastructure failure",
+      ownerAddress: "repo-owner-i18n-infrastructure",
+      projectId: "repo-project-i18n-infrastructure",
+      rewardDescription: "Repository-backed i18n infrastructure review.",
+      startTime: "2026-08-01T00:00:00Z",
+      supportedLocales: ["en-US", "zh-CN"],
+    });
+    const generateI18nDraft = vi.fn(async () => {
+      throw new CampaignDbRepositoryError(
+        "PostgreSQL Campaign store schema is not ready.",
+        [{
+          code: "POSTGRES_CAMPAIGN_STORE_SCHEMA_NOT_READY",
+          field: "schemaVersion",
+          message: "PostgreSQL Campaign store schema is not ready.",
+          severity: "error",
+        }],
+      );
+    });
+    const i18nRuntime = createCampaignOsApiRuntime({
+      campaignDbRepository: {
+        ...baseRepository,
+        generateI18nDraft,
+      },
+    });
+    const response = await i18nRuntime.handle({
+      body: JSON.stringify({
+        contentKeys: ["title"],
+        sourceLocale: "en-US",
+        targetLocale: "zh-CN",
+      }),
+      headers: { "x-campaign-os-trace-id": "trace-campaign-db-i18n-infrastructure" },
+      method: "POST",
+      path: `/api/campaigns/${campaign.id}/i18n/generate`,
+    });
+
+    expect(generateI18nDraft).toHaveBeenCalledTimes(1);
+    expect(response).toMatchObject({
+      status: 503,
+      body: {
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: {
+            diagnosticCode: "POSTGRES_CAMPAIGN_STORE_SCHEMA_NOT_READY",
+            operation: "campaignDb.generateI18nDraft",
+          },
+        },
+        ok: false,
+        traceId: "trace-campaign-db-i18n-infrastructure",
+      },
+    });
+    await i18nRuntime.close();
+  });
+
+  it("keeps the default local runtime from constructing a PostgreSQL pool", async () => {
+    const poolFactory = vi.fn();
+    const localRuntime = createCampaignOsApiRuntime({
+      campaignDbPoolFactory: poolFactory,
+      runtimeConfigOptions: { env: {} },
+    });
+
+    const response = await localRuntime.handle({
+      headers: { "x-campaign-os-trace-id": "trace-default-local-campaign-db" },
+      method: "GET",
+      path: "/api/health",
+    });
+
+    expect(response.status).toBe(200);
+    expect(poolFactory).not.toHaveBeenCalled();
+    await localRuntime.close();
+  });
+
+  it("keeps PostgreSQL Campaign reads authoritative without seeded shadow records", async () => {
+    const authoritativeRuntime = createCampaignOsApiRuntime({
+      campaignDbRepository: createCampaignDbRepository(),
+      runtimeConfigOptions: {
+        env: {
+          CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+          CAMPAIGN_OS_DATABASE_SSL_MODE: "disable",
+          CAMPAIGN_OS_DATABASE_URL: "postgres://local-user:local-password@127.0.0.1/campaign_os_test",
+        },
+      },
+    });
+
+    const list = await authoritativeRuntime.handle({
+      headers: { "x-campaign-os-trace-id": "trace-postgres-authoritative-list" },
+      method: "GET",
+      path: "/api/campaigns",
+    });
+    const detail = await authoritativeRuntime.handle({
+      headers: { "x-campaign-os-trace-id": "trace-postgres-authoritative-detail" },
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}`,
+    });
+    const addTask = await authoritativeRuntime.handle({
+      body: JSON.stringify({
+        evidenceRule: { minAmount: 1, source: "AELFSCAN" },
+        points: 10,
+        required: true,
+        templateCode: "bridge_ebridge",
+        verificationType: "ON_CHAIN",
+        walletCompatibility: "ANY",
+      }),
+      headers: {
+        "content-type": "application/json",
+        "x-campaign-os-trace-id": "trace-postgres-authoritative-task",
+      },
+      method: "POST",
+      path: `/api/campaigns/${campaignDetail.id}/tasks`,
+    });
+    const eligibility = await authoritativeRuntime.handle({
+      headers: { "x-campaign-os-trace-id": "trace-postgres-authoritative-eligibility" },
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/eligibility?address=${encodeURIComponent("2F4SeededShadow")}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
+    });
+    const exportPreview = await authoritativeRuntime.handle({
+      body: JSON.stringify({
+        contractRootMode: "none",
+        format: "json",
+      }),
+      headers: { "x-campaign-os-trace-id": "trace-postgres-authoritative-export" },
+      method: "POST",
+      path: `/api/campaigns/${campaignDetail.id}/export`,
+    });
+
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignListPayload>>(list).payload.items).toEqual([]);
+    expect(detail.status).toBe(404);
+    expect(addTask.status).toBe(404);
+    expect(eligibility.status).toBe(404);
+    expect(exportPreview.status).toBe(404);
+    await authoritativeRuntime.close();
+  });
+
+  it("preserves safe PostgreSQL health classification and the request Trace ID", async () => {
+    const repository = createCampaignDbRepository();
+    const health = vi.fn(async () => {
+      throw new PostgresCampaignStoreError({
+        code: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+        field: "database",
+        operation: "manifest",
+        traceId: "trace-postgres-health",
+      });
+    });
+    const healthRuntime = createCampaignOsApiRuntime({
+      campaignDbRepository: { ...repository, health },
+    });
+    const response = await healthRuntime.handle({
+      headers: { "x-campaign-os-trace-id": "trace-postgres-health" },
+      method: "GET",
+      path: "/api/health",
+    });
+
+    expect(health).toHaveBeenCalledWith({ traceId: "trace-postgres-health" });
+    expect(response).toMatchObject({
+      status: 503,
+      body: {
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: {
+            diagnosticCode: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+            operation: "campaignDb.health",
+          },
+        },
+        ok: false,
+        traceId: "trace-postgres-health",
+      },
+    });
+    await healthRuntime.close();
+  });
+
+  it("loads the PostgreSQL driver lazily instead of through a static runtime import", async () => {
+    const source = await readFile(join(process.cwd(), "src/server/apiRuntime.ts"), "utf8");
+    const sourceFile = ts.createSourceFile(
+      "apiRuntime.ts",
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    const prohibitedLoads: string[] = [];
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isImportDeclaration(node)
+        && ts.isStringLiteral(node.moduleSpecifier)
+        && node.moduleSpecifier.text === "pg"
+      ) {
+        prohibitedLoads.push("static import");
+      }
+      if (
+        ts.isCallExpression(node)
+        && ts.isIdentifier(node.expression)
+        && node.expression.text === "require"
+        && node.arguments.length === 1
+        && ts.isStringLiteral(node.arguments[0])
+        && node.arguments[0].text === "pg"
+      ) {
+        prohibitedLoads.push("require");
+      }
+
+      ts.forEachChild(node, visit);
+    };
+
+    visit(sourceFile);
+    expect(prohibitedLoads).toEqual([]);
+  });
+
+  it("waits for every runtime resource to close even when one close rejects", async () => {
+    let releaseCampaignClose: (() => void) | undefined;
+    const campaignClose = vi.fn(() => new Promise<void>((resolve) => {
+      releaseCampaignClose = resolve;
+    }));
+    const walletClose = vi.fn(async () => {
+      throw new Error("wallet close failed");
+    });
+    const closeRuntime = createCampaignOsApiRuntime({
+      campaignDbRepository: {
+        ...createCampaignDbRepository(),
+        close: campaignClose,
+      },
+      walletSessionRepository: {
+        ...createWalletSessionRepository(),
+        close: walletClose,
+      },
+    });
+    let settled = false;
+    const closePromise = closeRuntime.close().finally(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(campaignClose).toHaveBeenCalledTimes(1);
+    expect(walletClose).toHaveBeenCalledTimes(1);
+
+    releaseCampaignClose?.();
+    await expect(closePromise).rejects.toMatchObject({
+      body: {
+        code: "PERSISTENCE_UNAVAILABLE",
+        details: { operation: "walletSessionRepository.close" },
+      },
+    });
+    expect(settled).toBe(true);
+  });
+
+  it("blocks invalid explicit PostgreSQL config without constructing a pool", async () => {
+    const poolFactory = vi.fn();
+    const blockedRuntime = createCampaignOsApiRuntime({
+      campaignDbPoolFactory: poolFactory,
+      runtimeConfigOptions: {
+        env: {
+          CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+        },
+      },
+    });
+    const response = await blockedRuntime.handle({
+      headers: { "x-campaign-os-trace-id": "trace-postgres-config-blocked" },
+      method: "GET",
+      path: "/api/health",
+    });
+
+    expect(poolFactory).not.toHaveBeenCalled();
+    expect(response).toMatchObject({
+      status: 400,
+      body: {
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            diagnosticCodes: ["CAMPAIGN_DB_DATABASE_URL_REQUIRED"],
+            fallbackUsed: false,
+            field: "CAMPAIGN_OS_DATABASE_URL",
+            persistenceMode: "postgres",
+            status: "blocked",
+          },
+        },
+        ok: false,
+        traceId: "trace-postgres-config-blocked",
+      },
+    });
+    await blockedRuntime.close();
   });
 });

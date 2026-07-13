@@ -289,6 +289,411 @@ describe("production database handoff readiness API bridge", () => {
     }
   });
 
+  it("sanitizes JSON-hostile primitives with deterministic non-empty markers", () => {
+    const cases: Array<[unknown, string]> = [
+      ["plain diagnostic", "plain diagnostic"],
+      [42, "42"],
+      [true, "true"],
+      [false, "false"],
+      [null, "null"],
+      [undefined, "[undefined]"],
+      [Symbol("token=do-not-render"), "[symbol]"],
+      [123n, "[bigint]"],
+      [() => "private", "[function]"],
+    ];
+
+    for (const [input, expected] of cases) {
+      expect(() => sanitizeProductionDatabaseHandoffReadinessApiText(input)).not.toThrow();
+      expect(sanitizeProductionDatabaseHandoffReadinessApiText(input)).toBe(expected);
+    }
+
+    expect(sanitizeProductionDatabaseHandoffReadinessApiText("[REDACTED:CREDENTIAL]"))
+      .toBe("[REDACTED:CREDENTIAL]");
+
+    expect(sanitizeProductionDatabaseHandoffReadinessApiText({
+      zeta: Symbol("nested-secret"),
+      alpha: 99n,
+      nested: [true, null],
+    })).toBe('{"alpha":"[bigint]","nested":[true,null],"zeta":"[symbol]"}');
+
+    expect(sanitizeProductionDatabaseHandoffReadinessApiText({
+      retryable: true,
+      table: "summary",
+      values: [1, 2],
+    })).toBe('{"retryable":true,"table":"summary","values":[1,2]}');
+  });
+
+  it("projects Error values without stack or secret-bearing custom fields", () => {
+    const cause = new Error("provider unavailable");
+    const failure = new Error("database connection failed") as Error & Record<string, unknown>;
+
+    Object.defineProperty(failure, "cause", { configurable: true, value: cause });
+    failure.retryable = true;
+    failure.password = "raw-password-value";
+    failure.stack = "Error: database connection failed\n at privateCall (/Users/aelf/private/runtime.ts:1:1)";
+
+    const sanitized = sanitizeProductionDatabaseHandoffReadinessApiText(failure);
+
+    expect(sanitized).toContain('"name":"Error"');
+    expect(sanitized).toContain('"message":"database connection failed"');
+    expect(sanitized).toContain('"cause"');
+    expect(sanitized).toContain('"retryable":true');
+    expect(sanitized).toContain("[REDACTED:CREDENTIAL]");
+    expect(sanitized).not.toContain("raw-password-value");
+    expect(sanitized).not.toContain("privateCall");
+    expect(sanitized).not.toContain("/Users/");
+
+    const driverFailure = sanitizeProductionDatabaseHandoffReadinessApiText(
+      new Error("driver failed host=db.internal user=runtime-user SELECT secret_value FROM private_table"),
+    );
+
+    expect(driverFailure).toContain("[REDACTED:DATABASE_METADATA]");
+    expect(driverFailure).toContain("[REDACTED:QUERY]");
+    expect(driverFailure).not.toContain("db.internal");
+    expect(driverFailure).not.toContain("runtime-user");
+    expect(driverFailure).not.toContain("secret_value");
+    expect(driverFailure).not.toContain("private_table");
+  });
+
+  it("redacts delimiter variants, bind values, private artifact paths, and CTE SQL", () => {
+    const sentinels = {
+      bind: "q7x9m2v4n6a",
+      credential: "r8y1k3p5w7b",
+      host: "s9z2l4q6x8c",
+      password: "t1a3m5r7y9d",
+      path: "u2b4n6s8z1e",
+      privateKey: "v3c5p7t9a2f",
+      query: "w4d6q8u1b3g",
+      secret: "x5e7r9v2c4h",
+      seedPhrase: "y6f8s1w3d5j",
+      sql: "z7g9t2x4e6k",
+      user: "a8h1u3y5f7m",
+    };
+    const failure = new Error([
+      `password: ${sentinels.password}`,
+      `credential=${sentinels.credential}`,
+      `secret: '${sentinels.secret}'`,
+      `"host": "${sentinels.host}"`,
+      `'user': '${sentinels.user}'`,
+      `/home/runner/campaign-os-kitty/evidence/${sentinels.path}.log`,
+      `WITH private_rows AS (SELECT '${sentinels.sql}' AS secret_value) SELECT * FROM private_rows`,
+    ].join(" | ")) as Error & Record<string, unknown>;
+    failure.queryValues = [sentinels.query];
+    failure.bindParameters = { first: sentinels.bind };
+
+    const sanitized = sanitizeProductionDatabaseHandoffReadinessApiText(failure);
+
+    expect(sanitized).toContain("[REDACTED:CREDENTIAL]");
+    expect(sanitized).toContain("[REDACTED:DATABASE_METADATA]");
+    expect(sanitized).toContain("[REDACTED:PRIVATE_PATH]");
+    expect(sanitized).toContain("[REDACTED:QUERY]");
+    for (const sentinel of Object.values(sentinels).filter(
+      (value) => ![sentinels.privateKey, sentinels.seedPhrase].includes(value),
+    )) {
+      expect(sanitized).not.toContain(sentinel);
+    }
+
+    const domainCredentialVariants = [
+      [`private key = "${sentinels.privateKey}"`, sentinels.privateKey],
+      [`seed_phrase: ${sentinels.seedPhrase}`, sentinels.seedPhrase],
+    ] as const;
+    for (const [input, sentinel] of domainCredentialVariants) {
+      expect(sanitizeProductionDatabaseHandoffReadinessApiText(input)).not.toContain(sentinel);
+    }
+
+    const opaqueAdversarialCases = [
+      ["[REDACTED:CREDENTIAL]", 'password is "b9j2v4z6g8n"', "b9j2v4z6g8n"],
+      ["[REDACTED:CREDENTIAL]", "secret -> c1k3w5a7h9p", "c1k3w5a7h9p"],
+      ["[REDACTED:CREDENTIAL]", "credential => d2m4x6b8j1q", "d2m4x6b8j1q"],
+      ["[REDACTED:PRIVATE_PATH]", "evidence/e3n5y7c9k2r.log", "e3n5y7c9k2r"],
+      [
+        "[REDACTED:QUERY]",
+        'WITH "runtime_rows" AS (VALUES (\'f4p6z8d1m3s\')) TABLE "runtime_rows"',
+        "f4p6z8d1m3s",
+      ],
+      ["[REDACTED:QUERY]", "SET application_name = 'g5q7a9e2n4t'", "g5q7a9e2n4t"],
+      ["[REDACTED:QUERY]", "BEGIN; SELECT 'h6r8b1f3p5u'", "h6r8b1f3p5u"],
+      ["[REDACTED:QUERY]", "COMMIT /* i7s9c2g4q6v */", "i7s9c2g4q6v"],
+      ["[REDACTED:QUERY]", "ROLLBACK TO SAVEPOINT j8t1d3h5r7w", "j8t1d3h5r7w"],
+      ["[REDACTED:QUERY]", "VALUES ('k9u2e4j6s8x')", "k9u2e4j6s8x"],
+      ["[REDACTED:QUERY]", 'TABLE "l1v3f5k7t9z"', "l1v3f5k7t9z"],
+    ] as const;
+    for (const [marker, input, sentinel] of opaqueAdversarialCases) {
+      const output = sanitizeProductionDatabaseHandoffReadinessApiText(input);
+      expect(output).toContain(marker);
+      expect(output).not.toContain(sentinel);
+    }
+    for (const statement of ["BEGIN", "COMMIT", "ROLLBACK"]) {
+      expect(sanitizeProductionDatabaseHandoffReadinessApiText(statement))
+        .toBe("[REDACTED:QUERY]");
+    }
+    expect(sanitizeProductionDatabaseHandoffReadinessApiText("Rollback plan not ready"))
+      .toBe("Rollback plan not ready");
+  });
+
+  it("keeps adversarial database failures sanitized through the fetch fallback", async () => {
+    const sentinels = [
+      "m1v3f5k7t9z",
+      "n2w4g6m8u1a",
+      "p3x5h7n9v2b",
+      "q4y6j8p1w3c",
+      "r5z7k9q2x4d",
+      "s6a8m1r3y5e",
+      "t7b9n2s4z6f",
+      "u8c1p3t5a7g",
+      "v9d2q4u6b8h",
+      "w1e3r5v7c9j",
+      "x2f4s6w8d1k",
+      "y3g5t7x9e2m",
+    ];
+    const failure = new Error([
+      `password is "${sentinels[0]}"`,
+      `"host": "${sentinels[1]}"`,
+      `'user': '${sentinels[2]}'`,
+      `secret -> ${sentinels[3]}`,
+      `credential => ${sentinels[4]}`,
+      `evidence/${sentinels[5]}.log`,
+      `WITH "runtime_rows" AS (VALUES ('${sentinels[6]}')) TABLE "runtime_rows"`,
+      `SET application_name = '${sentinels[7]}'`,
+      `BEGIN; SELECT '${sentinels[8]}'`,
+      `COMMIT /* ${sentinels[9]} */`,
+      `ROLLBACK TO SAVEPOINT ${sentinels[10]}`,
+      `VALUES ('${sentinels[11]}')`,
+    ].join(" | ")) as Error & Record<string, unknown>;
+    failure.queryValues = ["z4h6u8y1f3n"];
+    failure.bindParameters = { first: "a5j7v9z2g4p" };
+    const fetchImpl = vi.fn().mockResolvedValueOnce(response({
+      error: failure,
+      ok: false,
+      traceId: "trace-adversarial-database-fallback",
+    }, {
+      ok: false,
+      status: 502,
+      traceId: "trace-adversarial-header",
+    })) as unknown as ProductionDatabaseHandoffReadinessApiFetch;
+
+    const state = await loadProductionDatabaseHandoffReadinessApiState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl,
+    });
+    const serialized = JSON.stringify(state);
+
+    expect(state).toMatchObject({
+      diagnostics: [{
+        code: "API_REQUEST_FAILED",
+        safeDetails: { status: 502 },
+        severity: "error",
+      }],
+      source: "seeded_fallback",
+      traceId: "trace-adversarial-database-fallback",
+    });
+    for (const sentinel of sentinels) {
+      expect(serialized).not.toContain(sentinel);
+    }
+  });
+
+  it("bounds cyclic, deeply nested, and oversized collections deterministically", () => {
+    const selfCycle: Record<string, unknown> = { id: "self" };
+    selfCycle.self = selfCycle;
+    const mutualLeft: Record<string, unknown> = { id: "left" };
+    const mutualRight: Record<string, unknown> = { id: "right", left: mutualLeft };
+    mutualLeft.right = mutualRight;
+    const deepRoot: Record<string, unknown> = {};
+    let cursor = deepRoot;
+
+    for (let index = 0; index < 20; index += 1) {
+      const next: Record<string, unknown> = { index };
+      cursor.next = next;
+      cursor = next;
+    }
+
+    const values = [
+      selfCycle,
+      mutualLeft,
+      deepRoot,
+      Array.from({ length: 200 }, (_, index) => ({ index })),
+      Object.fromEntries(Array.from({ length: 200 }, (_, index) => [`key-${index.toString().padStart(3, "0")}`, index])),
+      "x".repeat(20_000),
+    ];
+    const outputs = values.map((value) => sanitizeProductionDatabaseHandoffReadinessApiText(value));
+
+    expect(outputs[0]).toContain("[circular]");
+    expect(outputs[1]).toContain("[circular]");
+    expect(outputs[2]).toContain("[max-depth]");
+    expect(outputs[3]).toContain("[truncated:");
+    expect(outputs[4]).toContain("[truncated:");
+    expect(outputs[5]).toContain("[truncated]");
+
+    for (const [index, output] of outputs.entries()) {
+      expect(output.length).toBeLessThanOrEqual(4_096);
+      expect(output).toBe(sanitizeProductionDatabaseHandoffReadinessApiText(values[index]));
+    }
+  });
+
+  it("bounds descriptor and value inspection for large object and typed-array inputs", () => {
+    const target = Object.fromEntries(
+      Array.from({ length: 5_000 }, (_, index) => [
+        `key-${index.toString().padStart(5, "0")}`,
+        index,
+      ]),
+    );
+    let descriptorReads = 0;
+    let valueReads = 0;
+    const proxy = new Proxy(target, {
+      get: (object, key, receiver) => {
+        valueReads += 1;
+        return Reflect.get(object, key, receiver);
+      },
+      getOwnPropertyDescriptor: (object, key) => {
+        descriptorReads += 1;
+        return Reflect.getOwnPropertyDescriptor(object, key);
+      },
+    });
+
+    const first = sanitizeProductionDatabaseHandoffReadinessApiText(proxy);
+
+    expect(first).toContain("[truncated:entry-budget]");
+    expect(descriptorReads).toBeLessThanOrEqual(33);
+    expect(valueReads).toBe(0);
+
+    descriptorReads = 0;
+    valueReads = 0;
+    expect(sanitizeProductionDatabaseHandoffReadinessApiText(proxy)).toBe(first);
+    expect(descriptorReads).toBeLessThanOrEqual(33);
+    expect(valueReads).toBe(0);
+
+    const typedArray = new Uint32Array(5_000);
+    typedArray.fill(7);
+    const typedArrayOutput = sanitizeProductionDatabaseHandoffReadinessApiText(typedArray);
+
+    expect(typedArrayOutput).toContain("[truncated:");
+    expect(typedArrayOutput.length).toBeLessThanOrEqual(4_096);
+    expect(typedArrayOutput).toBe(sanitizeProductionDatabaseHandoffReadinessApiText(typedArray));
+  });
+
+  it("handles throwing getters and redacts sensitive object fields", () => {
+    const input: Record<string, unknown> = {
+      authorization: "Bearer raw-bearer-value",
+      databaseUrl: "postgres://runtime-user:runtime-password@db.internal/campaign_os",
+      host: "db.internal",
+      password: "runtime-password",
+      privatePath: "/Users/aelf/private/campaign-os-kitty/runtime.log",
+      query: "SELECT secret_value FROM private_table",
+      stack: "Error: private\n at runtime (/private/runtime.ts:1:1)",
+      user: "runtime-user",
+    };
+    Object.defineProperty(input, "throwingGetter", {
+      enumerable: true,
+      get: () => {
+        throw new Error("getter leaked postgres://getter:password@db.internal/app");
+      },
+    });
+
+    const sanitized = sanitizeProductionDatabaseHandoffReadinessApiText(input);
+
+    expect(sanitized).toContain("[unreadable]");
+    expect(sanitized).toContain("[REDACTED:");
+    for (const unsafe of [
+      "raw-bearer-value",
+      "runtime-password",
+      "db.internal",
+      "runtime-user",
+      "SELECT secret_value",
+      "private_table",
+      "/Users/",
+      "/private/",
+      "getter leaked",
+    ]) {
+      expect(sanitized).not.toContain(unsafe);
+    }
+  });
+
+  it("keeps fetch failures safe when resolved or rejected values are not JSON-compatible", async () => {
+    const cyclicError: Record<string, unknown> = {
+      attempt: 7n,
+      databaseUrl: "postgres://runtime-user:runtime-password@db.internal/campaign_os",
+      symbol: Symbol("private"),
+    };
+    cyclicError.self = cyclicError;
+    const failedBody = {
+      error: cyclicError,
+      ok: false,
+      traceId: "trace-hostile-response",
+    };
+    const resolvedFetch = vi.fn().mockResolvedValueOnce(response(failedBody, {
+      ok: false,
+      status: 503,
+      traceId: "trace-hostile-header",
+    })) as unknown as ProductionDatabaseHandoffReadinessApiFetch;
+
+    const resolvedState = await loadProductionDatabaseHandoffReadinessApiState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl: resolvedFetch,
+    });
+    const resolvedSerialized = JSON.stringify(resolvedState);
+
+    expect(resolvedState).toMatchObject({
+      diagnostics: [{
+        code: "API_REQUEST_FAILED",
+        safeDetails: { status: 503 },
+        severity: "error",
+      }],
+      source: "seeded_fallback",
+      traceId: "trace-hostile-response",
+    });
+    expect(resolvedSerialized).toContain("[circular]");
+    expect(resolvedSerialized).toContain("[bigint]");
+    expect(resolvedSerialized).not.toContain("runtime-password");
+    expect(resolvedSerialized).not.toContain("db.internal");
+
+    const rejectedFetch = vi.fn(async () => Promise.reject(Symbol("token=raw-rejection"))) as unknown as
+      ProductionDatabaseHandoffReadinessApiFetch;
+    const rejectedState = await loadProductionDatabaseHandoffReadinessApiState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl: rejectedFetch,
+    });
+
+    expect(rejectedState).toMatchObject({
+      diagnostics: [{
+        code: "API_REQUEST_FAILED",
+        safeDetails: { error: "[symbol]" },
+        severity: "error",
+      }],
+      source: "seeded_fallback",
+    });
+  });
+
+  it("returns a JSON-safe API state when a valid payload contains hostile diagnostic details", async () => {
+    const hostileDetails: Record<string, unknown> = {
+      attempt: 11n,
+      symbol: Symbol("nested"),
+    };
+    hostileDetails.self = hostileDetails;
+    const payload = validHandoffPayload({
+      diagnostics: [{
+        code: "PRODUCTION_DATABASE_HANDOFF_BLOCKED",
+        field: "database",
+        message: "Database handoff remains blocked.",
+        safeDetails: hostileDetails,
+        severity: "warning",
+      }],
+    });
+    const fetchImpl = vi.fn().mockResolvedValueOnce(response(
+      envelope(payload, "trace-hostile-success"),
+    )) as unknown as ProductionDatabaseHandoffReadinessApiFetch;
+
+    const state = await loadProductionDatabaseHandoffReadinessApiState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl,
+    });
+    const serialized = JSON.stringify(state);
+
+    expect(state.source).toBe("api_runtime");
+    expect(serialized).toContain("[bigint]");
+    expect(serialized).toContain("[symbol]");
+    expect(serialized).toContain("[circular]");
+  });
+
   it("creates an explicit seeded fallback state for disabled Project Console reviews", () => {
     const state = createProductionDatabaseHandoffReadinessApiSeededFallbackState("trace-seeded");
 

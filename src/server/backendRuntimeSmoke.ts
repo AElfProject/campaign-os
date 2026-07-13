@@ -19,13 +19,26 @@ export interface BackendRuntimeSmokeOptions {
   host?: string;
   logger?: Pick<Console, "error" | "log"> | false;
   port?: number;
+  serverFactory?: typeof startCampaignOsApiServer;
   shutdownTimeoutMs?: number;
+}
+
+class BackendRuntimeSmokeCleanupError extends Error {
+  readonly code = "BACKEND_RUNTIME_SMOKE_CLEANUP_FAILED";
+  readonly failureCount: number;
+
+  constructor(failureCount: number) {
+    super("Campaign OS smoke cleanup failed.");
+    this.name = "BackendRuntimeSmokeCleanupError";
+    this.failureCount = failureCount;
+  }
 }
 
 export interface BackendRuntimeSmokeCheck {
   activationPresent: boolean;
   analyticsIngestionRuntime?: BackendRuntimeSmokeAnalyticsIngestionRuntimeSummary;
   authSessionFoundation?: BackendRuntimeSmokeAuthSessionFoundationSummary;
+  campaignDatabase?: BackendRuntimeSmokeCampaignDatabaseSummary;
   contractWriterRuntime?: BackendRuntimeSmokeContractWriterRuntimeSummary;
   deploymentHandoff?: unknown;
   endpoint: "/api/health" | "/api/contracts";
@@ -45,6 +58,16 @@ export interface BackendRuntimeSmokeCheck {
   workerIdempotencyStoreFoundation?: BackendRuntimeSmokeWorkerIdempotencyStoreFoundationSummary;
   workerLeaseStoreFoundation?: BackendRuntimeSmokeWorkerLeaseStoreFoundationSummary;
   workerSchedulerFoundation?: BackendRuntimeSmokeWorkerSchedulerFoundationSummary;
+}
+
+export interface BackendRuntimeSmokeCampaignDatabaseSummary {
+  adapterId?: string;
+  fallbackUsed: boolean;
+  liveConnectionAttempted: boolean;
+  liveQueryExecutionEnabled: boolean;
+  liveStorageExecutionEnabled: boolean;
+  selectedMode?: string;
+  status?: string;
 }
 
 export interface BackendRuntimeSmokeDurableLocalPersistenceSummary {
@@ -580,6 +603,7 @@ export interface BackendRuntimeSmokeDatabasePackageBindingSummary {
 export interface BackendRuntimeSmokeSummary {
   activationId?: string;
   authSessionFoundation: BackendRuntimeSmokeAuthSessionFoundationSummary;
+  campaignDatabase: BackendRuntimeSmokeCampaignDatabaseSummary;
   checks: {
     contracts: BackendRuntimeSmokeCheck;
     health: BackendRuntimeSmokeCheck;
@@ -650,6 +674,26 @@ const readPersistenceFoundation = (
   value: unknown,
 ): Record<string, unknown> | undefined =>
   readNestedRecord(value, ["backendService", "persistenceFoundation"]);
+
+const summarizeCampaignDatabase = (
+  value: unknown,
+): BackendRuntimeSmokeCampaignDatabaseSummary | undefined => {
+  const record = readNestedRecord(value, ["campaignDatabase"]);
+
+  if (!record) {
+    return undefined;
+  }
+
+  return {
+    adapterId: getString(record, "adapterId"),
+    fallbackUsed: getBoolean(record, "fallbackUsed"),
+    liveConnectionAttempted: getBoolean(record, "liveConnectionAttempted"),
+    liveQueryExecutionEnabled: getBoolean(record, "liveQueryExecutionEnabled"),
+    liveStorageExecutionEnabled: getBoolean(record, "liveStorageExecutionEnabled"),
+    selectedMode: getString(record, "selectedMode"),
+    status: getString(record, "status"),
+  };
+};
 
 const readAuthSessionFoundation = (
   value: unknown,
@@ -1965,6 +2009,7 @@ const createSmokeCheck = async ({
   const authSessionFoundation = summarizeAuthSessionFoundation(
     readAuthSessionFoundation(payload.data),
   );
+  const campaignDatabase = summarizeCampaignDatabase(payload.data);
   const persistenceFoundation = summarizePersistenceFoundation(
     readPersistenceFoundation(payload.data),
   );
@@ -2017,6 +2062,7 @@ const createSmokeCheck = async ({
       activationPresent: Boolean(activation),
       analyticsIngestionRuntime,
       authSessionFoundation,
+      campaignDatabase,
       contractWriterRuntime,
       deploymentHandoff,
       endpoint,
@@ -3104,16 +3150,33 @@ const isDatabasePackageBindingSmokeReady = (
     && (summary.status === "local_ready" || summary.status === "blocked");
 };
 
+const isDefaultCampaignDatabaseSmokeReady = (
+  summary: BackendRuntimeSmokeCampaignDatabaseSummary | undefined,
+): summary is BackendRuntimeSmokeCampaignDatabaseSummary => {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.adapterId === "campaign-db-deterministic-adapter"
+    && summary.fallbackUsed === false
+    && summary.liveConnectionAttempted === false
+    && summary.liveQueryExecutionEnabled === false
+    && summary.liveStorageExecutionEnabled === false
+    && summary.selectedMode === "deterministic_test"
+    && summary.status === "ready";
+};
+
 export const runBackendRuntimeSmoke = async ({
   env,
   fetchImpl = fetch,
   host = "127.0.0.1",
   logger = false,
   port = 0,
+  serverFactory = startCampaignOsApiServer,
   shutdownTimeoutMs,
 }: BackendRuntimeSmokeOptions = {}): Promise<BackendRuntimeSmokeSummary> => {
   const durableEnv = await withDurableLocalPersistenceEnv(env);
-  const server = await startCampaignOsApiServer({
+  const server = await serverFactory({
     env: durableEnv.env,
     host,
     logger,
@@ -3139,6 +3202,7 @@ export const runBackendRuntimeSmoke = async ({
     const activation = contracts.activation ?? health.activation;
     const deploymentHandoff = readNestedRecord(activation, ["deploymentHandoff"]);
     const authSessionFoundation = contracts.check.authSessionFoundation;
+    const campaignDatabase = contracts.check.campaignDatabase;
     const persistenceFoundation = contracts.check.persistenceFoundation;
     const providerIndexerFoundation = contracts.check.providerIndexerFoundation;
     const providerClientReadiness = contracts.check.providerClientReadiness;
@@ -3192,6 +3256,8 @@ export const runBackendRuntimeSmoke = async ({
       || !isReleaseScopeSmokeReady(activation, deploymentHandoff)
       || !isAuthSessionFoundationSmokeReady(health.check.authSessionFoundation)
       || !isAuthSessionFoundationSmokeReady(authSessionFoundation)
+      || !isDefaultCampaignDatabaseSmokeReady(health.check.campaignDatabase)
+      || !isDefaultCampaignDatabaseSmokeReady(campaignDatabase)
       || !isPersistenceFoundationSmokeReady(health.check.persistenceFoundation)
       || !isPersistenceFoundationSmokeReady(persistenceFoundation)
       || !isProviderIndexerFoundationSmokeReady(health.check.providerIndexerFoundation)
@@ -3243,6 +3309,7 @@ export const runBackendRuntimeSmoke = async ({
     summaryDraft = {
       activationId: typeof activation?.id === "string" ? activation.id : undefined,
       authSessionFoundation,
+      campaignDatabase,
       checks: {
         contracts: contracts.check,
         health: health.check,
@@ -3282,9 +3349,33 @@ export const runBackendRuntimeSmoke = async ({
       workerSchedulerFoundation,
     };
   } finally {
-    await server.stop();
+    let stopError: unknown;
+    let cleanupError: unknown;
+
+    try {
+      await server.stop();
+    } catch (error) {
+      stopError = error;
+    }
+
     if (durableEnv.cleanupDir) {
-      await rm(durableEnv.cleanupDir, { force: true, recursive: true });
+      try {
+        await rm(durableEnv.cleanupDir, { force: true, recursive: true });
+      } catch (error) {
+        cleanupError = error;
+      }
+    }
+
+    if (stopError && cleanupError) {
+      throw new BackendRuntimeSmokeCleanupError(2);
+    }
+
+    if (stopError) {
+      throw stopError;
+    }
+
+    if (cleanupError) {
+      throw new BackendRuntimeSmokeCleanupError(1);
     }
   }
 

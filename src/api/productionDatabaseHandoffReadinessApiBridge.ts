@@ -165,22 +165,77 @@ const unsafeApiPatterns: Array<[RegExp, string]> = [
   [/postgres(?:ql)?:\/\/[^"'\s<>]+/gi, "__PDB_API_RED_0__"],
   [/mysql:\/\/[^"'\s<>]+/gi, "__PDB_API_RED_0__"],
   [/mongodb(?:\+srv)?:\/\/[^"'\s<>]+/gi, "__PDB_API_RED_0__"],
+  [
+    /\b(?:authorization|token|access[-_ \t]*token|refresh[-_ \t]*token|api[-_ \t]*key|(?:database|db|connection)[-_ \t]*password|password|passphrase|secret|plain[-_ \t]*secret|credential|private[-_ \t]*key|seed[-_ \t]*phrase|mnemonic|bearer[-_ \t]*token)\b["']?\s*(?::|=|->|=>|\bis\b|\bwas\b)\s*(?:"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|[^,\s"'<>|}\]]+)/gi,
+    "__PDB_API_RED_2__",
+  ],
   [/\bprivate[-_\s]*key\b/gi, "__PDB_API_RED_1__"],
   [/\bprivatekey\b/gi, "__PDB_API_RED_1__"],
   [/\bseed[-_\s]*phrase\b/gi, "__PDB_API_RED_1__"],
   [/\bbearer[-_\s]*token\b/gi, "__PDB_API_RED_2__"],
   [/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, "__PDB_API_RED_2__"],
-  [/\b(token|access_token|refresh_token|api_key|apikey|password)=([^&\s"'<>]+)/gi, "__PDB_API_RED_2__"],
   [/\b(secret|plain[-_\s]*secret|credential)\b[^\s,."'<>]*/gi, "__PDB_API_RED_2__"],
   [/\bstack\s*trace\b/gi, "__PDB_API_RED_3__"],
   [/at\s+[A-Za-z0-9_$.[\]<>]+\s+\([^)]*\)/g, "__PDB_API_RED_3__"],
-  [/\/Users\/[^"'\s<>]+/gi, "__PDB_API_RED_4__"],
-  [/\/private\/[^"'\s<>]*/gi, "__PDB_API_RED_4__"],
+  [/\/(?:Users|home|private|var\/folders)\/[^"'\s<>]*/gi, "__PDB_API_RED_4__"],
+  [/(?:[A-Za-z]:)?\\(?:Users|home|private)\\[^"'\s<>]*/gi, "__PDB_API_RED_4__"],
+  [
+    /(?:[A-Za-z]:)?[\\/][^"'\r\n<>]*?(?:campaign-os-kitty|docs[\\/]current|kitty-specs|evidence|sync|\.kittify|\.agents)(?:[\\/][^"'\s<>]*)?/gi,
+    "__PDB_API_RED_4__",
+  ],
+  [
+    /(^|[^A-Za-z0-9_.-])(?:campaign-os-kitty|docs[\\/]current|kitty-specs|evidence|sync|\.kittify|\.agents)(?:[\\/][^"'\s<>|,;)\]}]*)+/gi,
+    "$1__PDB_API_RED_4__",
+  ],
   [/\bsigned[-_\s]*url\b/gi, "__PDB_API_RED_5__"],
   [/\bsignedurl\b/gi, "__PDB_API_RED_5__"],
   [/\bobject[-_\s]*key\b/gi, "__PDB_API_RED_5__"],
   [/\bobjectkey\b/gi, "__PDB_API_RED_5__"],
   [/https?:\/\/[^"'\s<>]+/gi, "__PDB_API_RED_6__"],
+  [
+    /\b(?:host(?:name)?|user(?:name)?|database[-_ \t]*(?:host|user|name)|db[-_ \t]*name)\b["']?\s*(?::|=|->|=>|\bis\b|\bwas\b)\s*(?:"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|[^,\s"'<>|}\]]+)/gi,
+    "__PDB_API_RED_7__",
+  ],
+  [
+    /\b(?:query[-_ \t]*(?:values?|parameters?|params?|bindings?)|bind[-_ \t]*(?:values?|parameters?|params?|bindings?)|sql[-_ \t]*(?:values?|parameters?|params?|bindings?))\b["']?\s*(?::|=|->|=>|\bis\b|\bwas\b)\s*(?:\[[^\]\r\n]*\]|\{[^}\r\n]*\}|"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|[^,\s"'<>|}\]]+)/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\bwith\s+(?:recursive\s+)?(?:"(?:""|[^"\r\n])+"|[A-Za-z_][A-Za-z0-9_$]*)(?:\s*\([^\r\n)]*\))?\s+as\s*\([^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\bvalues\s*\([^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\btable\s+"(?:""|[^"\r\n])+"[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\bset\s+(?:(?:local|session)\s+)?(?:"(?:""|[^"\r\n])+"|[A-Za-z_][A-Za-z0-9_.$-]*)\s*(?:=|\bto\b)\s*[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\bbegin\b(?:\s+(?:work|transaction)\b|\s*;|\s*\/\*|\s*$)[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\bcommit\b(?:\s+(?:work|transaction)\b|\s*;|\s*\/\*|\s*$)[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\brollback\b(?:\s+(?:work|transaction)\b|\s+to(?:\s+savepoint)?\s+(?:"(?:""|[^"\r\n])+"|[A-Za-z_][A-Za-z0-9_$-]*)|\s*;|\s*\/\*|\s*$)[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\b(?:start\s+transaction|release\s+savepoint|savepoint\s+(?:"(?:""|[^"\r\n])+"|[A-Za-z_][A-Za-z0-9_$-]*))\b[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\b(?:select|insert|update|delete|merge|replace|alter|create|drop|truncate|grant|revoke|explain|analyze|vacuum|copy|call|execute)\b[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
 ];
 
 const unsafeApiReplacementLabels: Record<string, string> = {
@@ -191,24 +246,421 @@ const unsafeApiReplacementLabels: Record<string, string> = {
   __PDB_API_RED_4__: "[REDACTED:PRIVATE_PATH]",
   __PDB_API_RED_5__: "[REDACTED:STORAGE_REFERENCE]",
   __PDB_API_RED_6__: "[REDACTED:ENDPOINT]",
+  __PDB_API_RED_7__: "[REDACTED:DATABASE_METADATA]",
+  __PDB_API_RED_8__: "[REDACTED:QUERY]",
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+type SanitizedApiValue =
+  | boolean
+  | number
+  | string
+  | null
+  | SanitizedApiValue[]
+  | { [key: string]: SanitizedApiValue };
 
-export const sanitizeProductionDatabaseHandoffReadinessApiText = (value: unknown): string => {
-  const raw = typeof value === "string" ? value : JSON.stringify(value ?? "");
-  const strippedUrlQuery = raw.replace(/\?[^"'\s<>]*/g, "?redacted-query");
+interface SanitizerContext {
+  activeObjects: WeakSet<object>;
+  remainingNodes: number;
+}
+
+const sanitizerMaxDepth = 6;
+const sanitizerMaxCollectionEntries = 32;
+const sanitizerMaxNodes = 1_024;
+const sanitizerMaxStringLength = 1_024;
+const sanitizerMaxOutputLength = 4_096;
+const sanitizerTruncatedMarker = "[truncated]";
+const sanitizerUnreadableMarker = "[unreadable]";
+const compareSanitizerKeys = (left: string, right: string) =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+const truncateSanitizerText = (value: string, maximum: number) => {
+  if (value.length <= maximum) {
+    return value;
+  }
+
+  const prefixLength = Math.max(0, maximum - sanitizerTruncatedMarker.length);
+  return `${value.slice(0, prefixLength)}${sanitizerTruncatedMarker}`;
+};
+
+const redactApiText = (value: string) => {
+  const bounded = truncateSanitizerText(value, sanitizerMaxOutputLength);
+  const protectedMarkers: string[] = [];
+  const markerProtected = bounded.replace(/\[REDACTED:[A-Z_]+\]/gi, (marker) => {
+    const index = protectedMarkers.push(marker) - 1;
+    return `__PDB_API_SAFE_${index}__`;
+  });
+  const strippedUrlQuery = markerProtected.replace(/\?[^"'\s<>]*/g, "?redacted-query");
   const domainSanitized = sanitizeProductionDatabaseHandoffText(strippedUrlQuery) || strippedUrlQuery;
   const apiSanitized = unsafeApiPatterns.reduce(
     (current, [pattern, replacement]) => current.replace(pattern, replacement),
     domainSanitized,
   );
-
-  return Object.entries(unsafeApiReplacementLabels).reduce(
+  const restoredLabels = Object.entries(unsafeApiReplacementLabels).reduce(
     (current, [placeholder, replacement]) => current.split(placeholder).join(replacement),
     apiSanitized,
   );
+  const restoredMarkers = protectedMarkers.reduce(
+    (current, marker, index) => current.split(`__PDB_API_SAFE_${index}__`).join(marker),
+    restoredLabels,
+  );
+
+  return truncateSanitizerText(restoredMarkers, sanitizerMaxOutputLength);
+};
+
+const sensitiveFieldReplacement = (key: string): string | undefined => {
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+
+  if (/stack(?:trace)?/.test(normalized)) {
+    return "[REDACTED:STACK]";
+  }
+
+  if (/privatepath|filepath|absolutepath|localpath/.test(normalized)) {
+    return "[REDACTED:PRIVATE_PATH]";
+  }
+
+  if (/databaseurl|connectionurl|connectionstring|dsn|endpoint/.test(normalized)) {
+    return "[REDACTED:DATABASE_URL]";
+  }
+
+  if (/^(?:host|hostname|user|username|databasehost|databaseuser)$/.test(normalized)) {
+    return "[REDACTED:DATABASE_METADATA]";
+  }
+
+  if (
+    /^(?:query|querytext|queryvalues?|queryparameters?|queryparams?|querybindings?|sql|sqltext|rawsql|sqlvalues?|sqlparameters?|sqlparams?|sqlbindings?|statement|bindvalues?|bindparameters?|bindparams?|bindings?)$/.test(
+      normalized,
+    )
+  ) {
+    return "[REDACTED:QUERY]";
+  }
+
+  if (
+    /authorization|bearer|credential|password|passphrase|privatekey|secret|token|apikey|accesskey|seedphrase|mnemonic/.test(
+      normalized,
+    )
+  ) {
+    return "[REDACTED:CREDENTIAL]";
+  }
+
+  return undefined;
+};
+
+const sanitizeApiKey = (key: string) => {
+  const bounded = truncateSanitizerText(key, 128);
+  const sensitiveReplacement = sensitiveFieldReplacement(bounded);
+
+  if (sensitiveReplacement) {
+    return sensitiveReplacement;
+  }
+
+  if (/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(bounded)) {
+    return bounded;
+  }
+
+  const sanitized = redactApiText(bounded);
+  return sanitized || "[empty-key]";
+};
+
+const createSanitizerContext = (): SanitizerContext => ({
+  activeObjects: new WeakSet<object>(),
+  remainingNodes: sanitizerMaxNodes,
+});
+
+const safePropertyValue = (
+  key: string,
+  descriptor: PropertyDescriptor | undefined,
+  depth: number,
+  context: SanitizerContext,
+): SanitizedApiValue => {
+  if (descriptor && "value" in descriptor && typeof descriptor.value === "boolean") {
+    return descriptor.value;
+  }
+
+  const replacement = sensitiveFieldReplacement(key);
+
+  if (replacement) {
+    return replacement;
+  }
+
+  if (!descriptor || !("value" in descriptor)) {
+    return sanitizerUnreadableMarker;
+  }
+
+  return sanitizeApiValue(descriptor.value, depth, context);
+};
+
+const safeOwnPropertyDescriptor = (
+  value: object,
+  key: PropertyKey,
+): PropertyDescriptor | undefined => {
+  try {
+    return Object.getOwnPropertyDescriptor(value, key);
+  } catch {
+    return undefined;
+  }
+};
+
+interface BoundedPropertyDescriptors {
+  entries: Array<[string, PropertyDescriptor | undefined]>;
+  truncated: boolean;
+  unreadable: boolean;
+}
+
+const boundedEnumerableOwnDescriptors = (
+  value: object,
+  excludedKeys: ReadonlySet<string> = new Set<string>(),
+): BoundedPropertyDescriptors => {
+  let keys: readonly PropertyKey[];
+
+  try {
+    keys = Reflect.ownKeys(value);
+  } catch {
+    return { entries: [], truncated: false, unreadable: true };
+  }
+
+  const entries: Array<[string, PropertyDescriptor | undefined]> = [];
+  let descriptorInspections = 0;
+  let truncated = false;
+
+  for (const key of keys) {
+    if (typeof key !== "string" || excludedKeys.has(key)) {
+      continue;
+    }
+
+    if (descriptorInspections >= sanitizerMaxCollectionEntries + 1) {
+      truncated = true;
+      break;
+    }
+
+    descriptorInspections += 1;
+    const descriptor = safeOwnPropertyDescriptor(value, key);
+
+    if (!descriptor) {
+      if (entries.length >= sanitizerMaxCollectionEntries) {
+        truncated = true;
+        break;
+      }
+
+      entries.push([key, undefined]);
+      continue;
+    }
+
+    if (!descriptor.enumerable) {
+      continue;
+    }
+
+    if (entries.length >= sanitizerMaxCollectionEntries) {
+      truncated = true;
+      break;
+    }
+
+    entries.push([key, descriptor]);
+  }
+
+  return {
+    entries: entries.sort(([left], [right]) => compareSanitizerKeys(left, right)),
+    truncated,
+    unreadable: false,
+  };
+};
+
+const sanitizeErrorValue = (
+  error: Error,
+  depth: number,
+  context: SanitizerContext,
+): SanitizedApiValue => {
+  const entries: Array<[string, SanitizedApiValue]> = [];
+  const nameDescriptor = safeOwnPropertyDescriptor(error, "name");
+  const messageDescriptor = safeOwnPropertyDescriptor(error, "message");
+  const causeDescriptor = safeOwnPropertyDescriptor(error, "cause");
+  entries.push([
+    "name",
+    nameDescriptor
+      ? safePropertyValue("name", nameDescriptor, depth + 1, context)
+      : "Error",
+  ]);
+  entries.push([
+    "message",
+    safePropertyValue("message", messageDescriptor, depth + 1, context),
+  ]);
+
+  if (causeDescriptor) {
+    entries.push([
+      "cause",
+      safePropertyValue("cause", causeDescriptor, depth + 1, context),
+    ]);
+  }
+
+  const customDescriptors = boundedEnumerableOwnDescriptors(
+    error,
+    new Set(["cause", "message", "name", "stack"]),
+  );
+
+  if (customDescriptors.unreadable) {
+    entries.push(["__properties__", sanitizerUnreadableMarker]);
+  }
+
+  for (const [key, descriptor] of customDescriptors.entries) {
+    entries.push([
+      sanitizeApiKey(key),
+      safePropertyValue(key, descriptor, depth + 1, context),
+    ]);
+  }
+
+  if (customDescriptors.truncated) {
+    entries.push(["__truncated__", "[truncated:entry-budget]"]);
+  }
+
+  return Object.fromEntries(entries.sort(([left], [right]) => compareSanitizerKeys(left, right)));
+};
+
+const sanitizeIndexedCollectionValue = (
+  value: ArrayLike<unknown>,
+  depth: number,
+  context: SanitizerContext,
+): SanitizedApiValue[] => {
+  let length = 0;
+
+  try {
+    length = value.length;
+  } catch {
+    return [sanitizerUnreadableMarker];
+  }
+
+  const entryCount = Math.min(length, sanitizerMaxCollectionEntries);
+  const result: SanitizedApiValue[] = [];
+
+  for (let index = 0; index < entryCount; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, index.toString());
+    } catch {
+      descriptor = undefined;
+    }
+
+    result.push(safePropertyValue(index.toString(), descriptor, depth + 1, context));
+  }
+
+  if (length > entryCount) {
+    result.push(`[truncated:${length - entryCount}]`);
+  }
+
+  return result;
+};
+
+const sanitizeObjectValue = (
+  value: object,
+  depth: number,
+  context: SanitizerContext,
+): SanitizedApiValue => {
+  const descriptors = boundedEnumerableOwnDescriptors(value);
+
+  if (descriptors.unreadable) {
+    return sanitizerUnreadableMarker;
+  }
+
+  const entries = descriptors.entries.map(([key, descriptor]): [string, SanitizedApiValue] => [
+    sanitizeApiKey(key),
+    safePropertyValue(key, descriptor, depth + 1, context),
+  ]);
+
+  if (descriptors.truncated) {
+    entries.push(["__truncated__", "[truncated:entry-budget]"]);
+  }
+
+  return Object.fromEntries(entries);
+};
+
+function sanitizeApiValue(
+  value: unknown,
+  depth: number,
+  context: SanitizerContext,
+): SanitizedApiValue {
+  if (context.remainingNodes <= 0) {
+    return "[truncated:node-budget]";
+  }
+
+  context.remainingNodes -= 1;
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    return redactApiText(truncateSanitizerText(value, sanitizerMaxStringLength));
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : `[number:${Number.isNaN(value) ? "NaN" : value > 0 ? "Infinity" : "-Infinity"}]`;
+  }
+
+  if (typeof value === "undefined") {
+    return "[undefined]";
+  }
+
+  if (typeof value === "symbol") {
+    return "[symbol]";
+  }
+
+  if (typeof value === "function") {
+    return "[function]";
+  }
+
+  if (typeof value === "bigint") {
+    return "[bigint]";
+  }
+
+  if (depth >= sanitizerMaxDepth) {
+    return "[max-depth]";
+  }
+
+  if (context.activeObjects.has(value)) {
+    return "[circular]";
+  }
+
+  context.activeObjects.add(value);
+
+  try {
+    if (Array.isArray(value)) {
+      return sanitizeIndexedCollectionValue(value, depth, context);
+    }
+
+    if (value instanceof Error) {
+      return sanitizeErrorValue(value, depth, context);
+    }
+
+    if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+      return sanitizeIndexedCollectionValue(value as unknown as ArrayLike<unknown>, depth, context);
+    }
+
+    return sanitizeObjectValue(value, depth, context);
+  } catch {
+    return sanitizerUnreadableMarker;
+  } finally {
+    context.activeObjects.delete(value);
+  }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+export const sanitizeProductionDatabaseHandoffReadinessApiText = (value: unknown): string => {
+  const sanitized = sanitizeApiValue(value, 0, createSanitizerContext());
+
+  if (typeof sanitized === "string") {
+    return redactApiText(sanitized);
+  }
+
+  try {
+    return redactApiText(JSON.stringify(sanitized));
+  } catch {
+    return sanitizerUnreadableMarker;
+  }
 };
 
 const sanitizeDetailValue = (value: unknown): boolean | number | string => {
@@ -539,26 +991,8 @@ const isProductionDatabaseHandoffReadiness = (
   && typeof value.summary.requiredReferenceCount === "number"
   && typeof value.summary.storeCoverageCount === "number";
 
-const sanitizeJsonValue = (value: unknown): unknown => {
-  if (typeof value === "string") {
-    return sanitizeProductionDatabaseHandoffReadinessApiText(value);
-  }
-
-  if (Array.isArray(value)) {
-    return value.map(sanitizeJsonValue);
-  }
-
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  return Object.fromEntries(
-    Object.entries(value).map(([key, nestedValue]) => [
-      sanitizeProductionDatabaseHandoffReadinessApiText(key),
-      sanitizeJsonValue(nestedValue),
-    ]),
-  );
-};
+const sanitizeJsonValue = (value: unknown): SanitizedApiValue =>
+  sanitizeApiValue(value, 0, createSanitizerContext());
 
 const dataPayloadFromEnvelope = (body: unknown) => {
   if (!isApiEnvelope(body) || body.ok !== true || !isRecord(body.data)) {
@@ -619,7 +1053,7 @@ export const loadProductionDatabaseHandoffReadinessApiState = async ({
     );
   }
 
-  const handoff = sanitizeJsonValue(payload) as ProductionDatabaseHandoffReadiness;
+  const handoff = sanitizeJsonValue(payload) as unknown as ProductionDatabaseHandoffReadiness;
 
   return {
     configured: normalizedConfig.configured,

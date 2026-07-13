@@ -1,10 +1,18 @@
+import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
   createCampaignOsApiServiceContract,
   type CampaignOsApiServiceContract,
 } from "./apiService";
-import { createCampaignOsApiRuntime, type ApiRuntimeHeaders } from "./apiRuntime";
+import {
+  createCampaignOsApiRuntime,
+  type ApiRuntimeHeaders,
+  type CampaignOsApiRuntime,
+  type CreateCampaignOsApiRuntimeOptions,
+} from "./apiRuntime";
+import { createFailureEnvelope } from "./envelope";
+import { internalRuntimeError, persistenceUnavailable } from "./errors";
 import { createBackendServiceReadinessReport } from "./backendService";
 import { apiRuntimeRoutes } from "./routes";
 import { evaluateServerRequestGuard } from "./serverRequestGuard";
@@ -39,8 +47,26 @@ export interface StartCampaignOsApiServerOptions {
   maxBodyBytes?: number;
   port?: number;
   profileId?: string;
+  runtimeFactory?: (options: CreateCampaignOsApiRuntimeOptions) => CampaignOsApiRuntime;
   shutdownTimeoutMs?: number;
   version?: string;
+}
+
+export type ApiServerShutdownErrorCode =
+  | "API_SERVER_HTTP_CLOSE_FAILED"
+  | "API_SERVER_SHUTDOWN_TIMEOUT"
+  | "API_SERVER_RUNTIME_CLOSE_FAILED";
+
+export class ApiServerShutdownError extends Error {
+  readonly code: ApiServerShutdownErrorCode;
+  readonly traceId: string;
+
+  constructor(code: ApiServerShutdownErrorCode, traceId: string) {
+    super("Campaign OS API server shutdown failed.");
+    this.name = "ApiServerShutdownError";
+    this.code = code;
+    this.traceId = traceId;
+  }
 }
 
 interface RequestBodyReadResult {
@@ -79,6 +105,7 @@ const readRequestBody = (
 
       resolve({ body: Buffer.concat(chunks).toString("utf8"), bodyBytes });
     });
+    request.on("aborted", () => reject(new Error("Request aborted.")));
     request.on("error", reject);
   });
 
@@ -88,8 +115,10 @@ const writeJsonResponse = (
   headers: Record<string, string>,
   body: unknown,
 ) => {
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+
   response.writeHead(status, headers);
-  response.end(body === undefined ? undefined : JSON.stringify(body));
+  response.end(payload);
 };
 
 const isRuntimeMetadataPath = (path: string | undefined) => {
@@ -103,6 +132,22 @@ const wait = (delayMs: number) =>
     setTimeout(resolve, delayMs);
   });
 
+const settleWithin = <T>(promise: Promise<T>, timeoutMs: number) =>
+  new Promise<"fulfilled" | "rejected" | "timeout">((resolve) => {
+    const timer = setTimeout(() => resolve("timeout"), Math.max(0, timeoutMs));
+
+    promise.then(
+      () => {
+        clearTimeout(timer);
+        resolve("fulfilled");
+      },
+      () => {
+        clearTimeout(timer);
+        resolve("rejected");
+      },
+    );
+  });
+
 export const startCampaignOsApiServer = async ({
   allowedCorsOrigins,
   env,
@@ -111,6 +156,7 @@ export const startCampaignOsApiServer = async ({
   maxBodyBytes,
   port,
   profileId,
+  runtimeFactory = createCampaignOsApiRuntime,
   shutdownTimeoutMs,
   version,
 }: StartCampaignOsApiServerOptions = {}): Promise<CampaignOsApiServerHandle> => {
@@ -133,8 +179,9 @@ export const startCampaignOsApiServer = async ({
       version: runtimeContract.runtimeVersion,
     },
   });
-  const runtime = createCampaignOsApiRuntime({
+  const runtime = runtimeFactory({
     backendServiceReadiness: () => backendServiceReadiness,
+    logger,
     runtimeConfigOptions: {
       env,
       version: runtimeContract.runtimeVersion,
@@ -165,63 +212,143 @@ export const startCampaignOsApiServer = async ({
   });
   const getServiceReadiness = () => getServiceContract().readiness;
 
-  const server = createServer(async (request, response) => {
+  const server = createServer((request, response) => {
+    if (shutdownState.state !== "running") {
+      const traceId = randomUUID();
+
+      request.resume();
+      try {
+        writeJsonResponse(
+          response,
+          503,
+          {
+            connection: "close",
+            "content-type": "application/json",
+            "x-campaign-os-trace-id": traceId,
+          },
+          createFailureEnvelope({
+            error: persistenceUnavailable("server.shutdown").body,
+            routeCount: apiRuntimeRoutes.length,
+            traceId,
+            version: runtimeContract.runtimeVersion,
+          }),
+        );
+      } catch {
+        response.destroy();
+      }
+
+      return;
+    }
+
     shutdownState.activeRequestCount += 1;
 
-    try {
-      const requestBody = await readRequestBody(request, runtimeContract.requestGuard.maxBodyBytes);
-      const guardDecision = evaluateServerRequestGuard({
-        body: requestBody.body,
-        bodyBytes: requestBody.bodyBytes,
-        headers: request.headers,
-        method: request.method ?? "GET",
-        path: request.url ?? "/",
-      }, runtimeContract, apiRuntimeRoutes.length);
+    void (async () => {
+      try {
+        const requestBody = await readRequestBody(request, runtimeContract.requestGuard.maxBodyBytes);
+        const guardDecision = evaluateServerRequestGuard({
+          body: requestBody.body,
+          bodyBytes: requestBody.bodyBytes,
+          headers: request.headers,
+          method: request.method ?? "GET",
+          path: request.url ?? "/",
+        }, runtimeContract, apiRuntimeRoutes.length);
 
-      if (guardDecision.kind === "preflight") {
-        writeJsonResponse(response, guardDecision.status, guardDecision.headers, guardDecision.body);
-        return;
+        if (guardDecision.kind === "preflight") {
+          writeJsonResponse(response, guardDecision.status, guardDecision.headers, guardDecision.body);
+          return;
+        }
+
+        if (guardDecision.kind === "rejected") {
+          writeJsonResponse(response, guardDecision.status, guardDecision.headers, guardDecision.body);
+          return;
+        }
+
+        const runtimeResponse = await runtime.handle({
+          body: guardDecision.body,
+          headers: toRuntimeHeaders(request),
+          method: request.method ?? "GET",
+          path: request.url ?? "/",
+        });
+        const responseBody = isRuntimeMetadataPath(request.url)
+          ? withServerRuntimeReadiness(
+            runtimeResponse.body,
+            getReadiness(),
+          )
+          : runtimeResponse.body;
+
+        writeJsonResponse(
+          response,
+          runtimeResponse.status,
+          {
+            ...guardDecision.headers,
+            ...runtimeResponse.headers,
+          },
+          responseBody,
+        );
+      } catch {
+        const traceId = randomUUID();
+
+        if (logger) {
+          logger.error(
+            `[campaign-os-api-runtime] request_failed code=API_SERVER_REQUEST_FAILED traceId=${traceId}`,
+          );
+        }
+
+        if (!response.destroyed && !response.headersSent && !response.writableEnded) {
+          try {
+            writeJsonResponse(
+              response,
+              500,
+              {
+                "content-type": "application/json",
+                "x-campaign-os-trace-id": traceId,
+              },
+              createFailureEnvelope({
+                error: internalRuntimeError().body,
+                routeCount: apiRuntimeRoutes.length,
+                traceId,
+                version: runtimeContract.runtimeVersion,
+              }),
+            );
+          } catch {
+            response.destroy();
+          }
+        } else if (!response.destroyed && !response.writableEnded) {
+          response.destroy();
+        }
+      } finally {
+        shutdownState.activeRequestCount = Math.max(0, shutdownState.activeRequestCount - 1);
       }
-
-      if (guardDecision.kind === "rejected") {
-        writeJsonResponse(response, guardDecision.status, guardDecision.headers, guardDecision.body);
-        return;
+    })().catch(() => {
+      if (!response.destroyed) {
+        response.destroy();
       }
-
-      const runtimeResponse = await runtime.handle({
-        body: guardDecision.body,
-        headers: toRuntimeHeaders(request),
-        method: request.method ?? "GET",
-        path: request.url ?? "/",
-      });
-      const responseBody = isRuntimeMetadataPath(request.url)
-        ? withServerRuntimeReadiness(
-          runtimeResponse.body,
-          getReadiness(),
-        )
-        : runtimeResponse.body;
-
-      writeJsonResponse(
-        response,
-        runtimeResponse.status,
-        {
-          ...guardDecision.headers,
-          ...runtimeResponse.headers,
-        },
-        responseBody,
-      );
-    } finally {
-      shutdownState.activeRequestCount = Math.max(0, shutdownState.activeRequestCount - 1);
-    }
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(runtimeContract.port, runtimeContract.host, () => {
-      server.off("error", reject);
-      resolve();
     });
   });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(runtimeContract.port, runtimeContract.host, () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
+  } catch (error) {
+    const cleanupTraceId = randomUUID();
+    const cleanupResult = await settleWithin(
+      runtime.close(),
+      runtimeContract.shutdown.shutdownTimeoutMs,
+    );
+
+    if (cleanupResult !== "fulfilled" && logger) {
+      logger.error(
+        `[campaign-os-api-runtime] startup_cleanup_failed code=API_SERVER_RUNTIME_CLOSE_FAILED traceId=${cleanupTraceId}`,
+      );
+    }
+
+    throw error;
+  }
 
   const address = server.address() as AddressInfo;
   const url = `http://${runtimeContract.host}:${address.port}`;
@@ -236,16 +363,19 @@ export const startCampaignOsApiServer = async ({
     );
   }
 
-  const stop = async () => {
-    if (shutdownState.state === "stopped") {
-      return;
+  const stop = (): Promise<void> => {
+    if (stopPromise) {
+      return stopPromise;
     }
 
-    stopPromise ??= (async () => {
+    stopPromise = (async () => {
       shutdownState.state = "stopping";
       shutdownState.stopStartedAt = new Date().toISOString();
+      const shutdownTraceId = randomUUID();
+      const deadline = Date.now() + runtimeContract.shutdown.shutdownTimeoutMs;
+      let failureCode: ApiServerShutdownErrorCode | undefined;
 
-      const closePromise = new Promise<void>((resolve, reject) => {
+      const httpClosePromise = new Promise<void>((resolve, reject) => {
         server.close((error) => {
           if (error) {
             reject(error);
@@ -255,28 +385,54 @@ export const startCampaignOsApiServer = async ({
           resolve();
         });
       });
-      const inFlightPromise = (async () => {
-        const startedAt = Date.now();
 
-        while (
-          shutdownState.activeRequestCount > 0
-          && Date.now() - startedAt < runtimeContract.shutdown.shutdownTimeoutMs
-        ) {
-          await wait(5);
-        }
-      })();
+      while (shutdownState.activeRequestCount > 0 && Date.now() < deadline) {
+        await wait(5);
+      }
 
-      await Promise.race([
-        Promise.all([closePromise, inFlightPromise]),
-        wait(runtimeContract.shutdown.shutdownTimeoutMs),
-      ]);
+      if (shutdownState.activeRequestCount > 0) {
+        failureCode = "API_SERVER_SHUTDOWN_TIMEOUT";
+        server.closeAllConnections();
+      } else {
+        server.closeIdleConnections();
+      }
+
+      const httpCloseResult = await settleWithin(
+        httpClosePromise,
+        Math.max(0, deadline - Date.now()),
+      );
+      if (httpCloseResult === "rejected") {
+        failureCode ??= "API_SERVER_HTTP_CLOSE_FAILED";
+      } else if (httpCloseResult === "timeout") {
+        failureCode ??= "API_SERVER_SHUTDOWN_TIMEOUT";
+        server.closeAllConnections();
+      }
+
+      const runtimeCloseResult = await settleWithin(
+        runtime.close(),
+        Math.max(0, deadline - Date.now()),
+      );
+      if (runtimeCloseResult === "rejected") {
+        failureCode ??= "API_SERVER_RUNTIME_CLOSE_FAILED";
+      } else if (runtimeCloseResult === "timeout") {
+        failureCode ??= "API_SERVER_SHUTDOWN_TIMEOUT";
+      }
 
       shutdownState.activeRequestCount = 0;
       shutdownState.closedAt = new Date().toISOString();
       shutdownState.state = "stopped";
+
+      if (failureCode) {
+        if (logger) {
+          logger.error(
+            `[campaign-os-api-runtime] shutdown_failed code=${failureCode} traceId=${shutdownTraceId}`,
+          );
+        }
+        throw new ApiServerShutdownError(failureCode, shutdownTraceId);
+      }
     })();
 
-    await stopPromise;
+    return stopPromise;
   };
 
   return {

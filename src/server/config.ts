@@ -20,6 +20,59 @@ import { observabilityExporterProductionPreconditions } from "./observabilityExp
 
 export type CampaignOsPersistenceMode = "memory" | "local_json";
 
+export type CampaignOsCampaignDbMode = "local" | "postgres";
+export type CampaignOsDatabaseSslMode = "disable" | "require" | "verify-ca" | "verify-full";
+export type CampaignOsCampaignDbConfigErrorCode =
+  | "CAMPAIGN_DB_MODE_UNSUPPORTED"
+  | "CAMPAIGN_DB_DATABASE_URL_REQUIRED"
+  | "CAMPAIGN_DB_DATABASE_URL_INVALID"
+  | "CAMPAIGN_DB_SSL_MODE_INVALID"
+  | "CAMPAIGN_DB_POOL_SETTING_INVALID";
+
+export interface CampaignOsCampaignDbPoolConfig {
+  connectionString: string;
+  connectionTimeoutMillis: number;
+  idleTimeoutMillis: number;
+  max: number;
+  ssl: false | {
+    checkServerIdentity?: () => undefined;
+    rejectUnauthorized: boolean;
+  };
+}
+
+export type CampaignOsCampaignDbConfig =
+  | {
+    adapterLabel: "campaign-db-deterministic-adapter";
+    mode: "local";
+  }
+  | {
+    adapterLabel: "campaign-db-postgresql-adapter";
+    mode: "postgres";
+    pool: CampaignOsCampaignDbPoolConfig;
+  };
+
+export interface CampaignOsCampaignDbConfigOptions {
+  connectTimeoutMs?: number;
+  databaseUrl?: string;
+  env?: Readonly<Record<string, string | undefined>>;
+  idleTimeoutMs?: number;
+  mode?: string;
+  poolMax?: number;
+  sslMode?: string;
+}
+
+export class CampaignOsCampaignDbConfigError extends Error {
+  readonly code: CampaignOsCampaignDbConfigErrorCode;
+  readonly field: string;
+
+  constructor(code: CampaignOsCampaignDbConfigErrorCode, field: string) {
+    super("Campaign DB runtime configuration is invalid.");
+    this.name = "CampaignOsCampaignDbConfigError";
+    this.code = code;
+    this.field = field;
+  }
+}
+
 export type BackendConfigContractStatus = "ready" | "scaffold" | "blocked";
 export type BackendConfigDiagnosticSeverity = "error" | "warning" | "info";
 export type BackendConfigDiagnosticCode =
@@ -93,6 +146,7 @@ const DEFAULT_VERSION = "0.2.0-local";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 5174;
 const REDACTED_VALUE = "[redacted]";
+const LOOPBACK_DATABASE_HOSTS = new Set(["::1", "localhost"]);
 const forbiddenConfigKeyFragments = [
   "apikey",
   "bearer",
@@ -118,6 +172,199 @@ const forbiddenConfigKeyFragments = [
 
 const isPersistenceMode = (value: string | undefined): value is CampaignOsPersistenceMode =>
   value === "memory" || value === "local_json";
+
+const campaignDbConfigError = (
+  code: CampaignOsCampaignDbConfigErrorCode,
+  field: string,
+) => new CampaignOsCampaignDbConfigError(code, field);
+
+const parseCampaignDbBoundedInteger = ({
+  defaultValue,
+  envValue,
+  explicitValue,
+  field,
+  maximum,
+  minimum,
+}: {
+  defaultValue: number;
+  envValue: string | undefined;
+  explicitValue: number | undefined;
+  field: string;
+  maximum: number;
+  minimum: number;
+}) => {
+  if (explicitValue !== undefined) {
+    if (!Number.isSafeInteger(explicitValue) || explicitValue < minimum || explicitValue > maximum) {
+      throw campaignDbConfigError("CAMPAIGN_DB_POOL_SETTING_INVALID", field);
+    }
+
+    return explicitValue;
+  }
+
+  if (envValue === undefined) {
+    return defaultValue;
+  }
+
+  if (!/^\d+$/.test(envValue)) {
+    throw campaignDbConfigError("CAMPAIGN_DB_POOL_SETTING_INVALID", field);
+  }
+
+  const parsed = Number(envValue);
+
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw campaignDbConfigError("CAMPAIGN_DB_POOL_SETTING_INVALID", field);
+  }
+
+  return parsed;
+};
+
+const isLoopbackDatabaseHost = (hostname: string) => {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+
+  if (LOOPBACK_DATABASE_HOSTS.has(normalized)) {
+    return true;
+  }
+
+  const octets = normalized.split(".");
+
+  return octets.length === 4
+    && octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255)
+    && Number(octets[0]) === 127;
+};
+
+const parseCampaignDbUrl = (value: string | undefined) => {
+  const connectionString = value?.trim();
+
+  if (!connectionString) {
+    throw campaignDbConfigError(
+      "CAMPAIGN_DB_DATABASE_URL_REQUIRED",
+      "CAMPAIGN_OS_DATABASE_URL",
+    );
+  }
+
+  let parsed: URL;
+
+  try {
+    parsed = new URL(connectionString);
+  } catch {
+    throw campaignDbConfigError(
+      "CAMPAIGN_DB_DATABASE_URL_INVALID",
+      "CAMPAIGN_OS_DATABASE_URL",
+    );
+  }
+
+  if (
+    !["postgres:", "postgresql:"].includes(parsed.protocol)
+    || !parsed.hostname
+    || parsed.pathname.length <= 1
+    || [...parsed.searchParams.keys()].some((key) =>
+      ["sslcert", "sslkey", "sslmode", "sslrootcert"].includes(key.toLowerCase()))
+  ) {
+    throw campaignDbConfigError(
+      "CAMPAIGN_DB_DATABASE_URL_INVALID",
+      "CAMPAIGN_OS_DATABASE_URL",
+    );
+  }
+
+  return {
+    connectionString,
+    loopback: isLoopbackDatabaseHost(parsed.hostname),
+  };
+};
+
+const resolveCampaignDbSsl = (
+  requestedMode: string | undefined,
+  loopback: boolean,
+): CampaignOsCampaignDbPoolConfig["ssl"] => {
+  const sslMode = requestedMode?.trim().toLowerCase() ?? (loopback ? "disable" : "verify-full");
+
+  if (!["disable", "require", "verify-ca", "verify-full"].includes(sslMode)) {
+    throw campaignDbConfigError(
+      "CAMPAIGN_DB_SSL_MODE_INVALID",
+      "CAMPAIGN_OS_DATABASE_SSL_MODE",
+    );
+  }
+
+  if (sslMode === "disable") {
+    if (!loopback) {
+      throw campaignDbConfigError(
+        "CAMPAIGN_DB_SSL_MODE_INVALID",
+        "CAMPAIGN_OS_DATABASE_SSL_MODE",
+      );
+    }
+
+    return false;
+  }
+
+  return {
+    ...(sslMode === "verify-ca" ? { checkServerIdentity: () => undefined } : {}),
+    rejectUnauthorized: sslMode !== "require",
+  };
+};
+
+export const resolveCampaignOsCampaignDbConfig = ({
+  connectTimeoutMs,
+  databaseUrl,
+  env = typeof process === "undefined" ? {} : process.env,
+  idleTimeoutMs,
+  mode,
+  poolMax,
+  sslMode,
+}: CampaignOsCampaignDbConfigOptions = {}): CampaignOsCampaignDbConfig => {
+  const requestedMode = mode ?? env.CAMPAIGN_OS_CAMPAIGN_DB_MODE;
+
+  if (requestedMode === undefined || requestedMode === "local") {
+    return {
+      adapterLabel: "campaign-db-deterministic-adapter",
+      mode: "local",
+    };
+  }
+
+  if (requestedMode !== "postgres") {
+    throw campaignDbConfigError(
+      "CAMPAIGN_DB_MODE_UNSUPPORTED",
+      "CAMPAIGN_OS_CAMPAIGN_DB_MODE",
+    );
+  }
+
+  const parsedUrl = parseCampaignDbUrl(databaseUrl ?? env.CAMPAIGN_OS_DATABASE_URL);
+
+  return {
+    adapterLabel: "campaign-db-postgresql-adapter",
+    mode: "postgres",
+    pool: {
+      connectionString: parsedUrl.connectionString,
+      connectionTimeoutMillis: parseCampaignDbBoundedInteger({
+        defaultValue: 5_000,
+        envValue: env.CAMPAIGN_OS_DATABASE_CONNECT_TIMEOUT_MS,
+        explicitValue: connectTimeoutMs,
+        field: "CAMPAIGN_OS_DATABASE_CONNECT_TIMEOUT_MS",
+        maximum: 30_000,
+        minimum: 100,
+      }),
+      idleTimeoutMillis: parseCampaignDbBoundedInteger({
+        defaultValue: 10_000,
+        envValue: env.CAMPAIGN_OS_DATABASE_IDLE_TIMEOUT_MS,
+        explicitValue: idleTimeoutMs,
+        field: "CAMPAIGN_OS_DATABASE_IDLE_TIMEOUT_MS",
+        maximum: 60_000,
+        minimum: 1_000,
+      }),
+      max: parseCampaignDbBoundedInteger({
+        defaultValue: 10,
+        envValue: env.CAMPAIGN_OS_DATABASE_POOL_MAX,
+        explicitValue: poolMax,
+        field: "CAMPAIGN_OS_DATABASE_POOL_MAX",
+        maximum: 20,
+        minimum: 1,
+      }),
+      ssl: resolveCampaignDbSsl(
+        sslMode ?? env.CAMPAIGN_OS_DATABASE_SSL_MODE,
+        parsedUrl.loopback,
+      ),
+    },
+  };
+};
 
 const normalizeSecretKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, "");
 

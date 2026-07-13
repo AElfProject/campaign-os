@@ -1,6 +1,13 @@
+import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
+import { join } from "node:path";
 import { createCampaignOsLocalService, type CampaignOsLocalService } from "../domain/campaignService";
 import {
+  CampaignOsCampaignDbConfigError,
+  resolveCampaignOsCampaignDbConfig,
   resolveCampaignOsRuntimeConfig,
+  type CampaignOsCampaignDbConfig,
+  type CampaignOsCampaignDbPoolConfig,
   type CampaignOsRuntimeConfig,
   type CampaignOsRuntimeConfigOptions,
 } from "./config";
@@ -32,8 +39,14 @@ import {
   CampaignDbRepositoryError,
   createCampaignDbRepository,
   type CampaignDbRepository,
+  type CampaignDbRepositoryHealth,
   type CreateCampaignDbRepositoryOptions,
 } from "./campaignDbRepository";
+import {
+  createPostgresCampaignDurableStore,
+  PostgresCampaignStoreError,
+  type PostgresCampaignStorePool,
+} from "./postgresCampaignDurableStore";
 import {
   WalletSessionRepositoryError,
   createWalletSessionRepository,
@@ -88,8 +101,89 @@ export type ApiRuntimeHandler = (context: ApiRuntimeHandlerContext) => unknown |
 export type BackendServiceReadinessFactory = () => BackendServiceReadinessReport;
 
 export interface CampaignOsApiRuntime {
+  close(): Promise<void>;
   handle(request: ApiRuntimeRequest): Promise<ApiRuntimeResponse>;
 }
+
+class ApiRuntimeResourceCloseError extends Error {
+  readonly failureCount: number;
+
+  constructor(failures: readonly unknown[]) {
+    super("Campaign OS API runtime resource shutdown failed.");
+    this.name = "ApiRuntimeResourceCloseError";
+    this.failureCount = failures.length;
+  }
+}
+
+export interface CampaignDbRuntimePool extends PostgresCampaignStorePool {
+  onError(listener: (error: unknown) => void): void;
+}
+
+export type CampaignDbPoolFactory = (
+  config: CampaignOsCampaignDbPoolConfig,
+) => CampaignDbRuntimePool;
+
+const campaignDbRequire = createRequire(
+  import.meta.url.startsWith("file:") ? import.meta.url : join(process.cwd(), "package.json"),
+);
+
+const createCampaignDbAuthoritativeService = (
+  service: CampaignOsLocalService,
+): CampaignOsLocalService => {
+  const authoritativeMissId = "__campaign_db_authoritative_miss__";
+
+  return {
+    ...service,
+    addTask: (request) => service.addTask({ ...request, campaignId: authoritativeMissId }),
+    checkEligibility: (request) => service.checkEligibility({
+      ...request,
+      campaignId: authoritativeMissId,
+    }),
+    exportWinners: (request) => service.exportWinners({
+      ...request,
+      campaignId: authoritativeMissId,
+    }),
+    getCampaignDetail: (request) => service.getCampaignDetail({
+      ...request,
+      campaignId: authoritativeMissId,
+    }),
+    getExportConfirmationReadiness: (request) => service.getExportConfirmationReadiness({
+      ...request,
+      campaignId: authoritativeMissId,
+    }),
+    listCampaigns: (request) => {
+      const result = service.listCampaigns(request);
+
+      if (!result.ok) {
+        return result;
+      }
+
+      return {
+        ...result,
+        payload: {
+          ...result.payload,
+          campaignId: "campaign-db",
+          details: [],
+          items: [],
+          summary: {
+            appHubReadyCount: 0,
+            endedCount: 0,
+            forecastReadyCount: 0,
+            liveCount: 0,
+            portfolioReadyCount: 0,
+            scheduledCount: 0,
+            topCampaignId: "",
+            totalCampaigns: 0,
+          },
+        },
+      };
+    },
+    verifyTask: (request) => service.verifyTask({
+      ...request,
+      campaignId: authoritativeMissId,
+    }),
+  };
+};
 
 interface ApiRuntimeRouteMatcher {
   match(pathname: string): Record<string, string> | undefined;
@@ -98,9 +192,12 @@ interface ApiRuntimeRouteMatcher {
 
 export interface CreateCampaignOsApiRuntimeOptions {
   backendServiceReadiness?: BackendServiceReadinessFactory;
+  campaignDbConfig?: CampaignOsCampaignDbConfig;
+  campaignDbPoolFactory?: CampaignDbPoolFactory;
   campaignDbRepository?: CampaignDbRepository;
   campaignDbRepositoryOptions?: CreateCampaignDbRepositoryOptions;
   exportArtifactRegistry?: ExportArtifactRegistry;
+  logger?: Pick<Console, "error"> | false;
   repository?: CampaignOsRepository;
   runtimeConfig?: CampaignOsRuntimeConfig;
   runtimeConfigOptions?: CampaignOsRuntimeConfigOptions;
@@ -109,6 +206,35 @@ export interface CreateCampaignOsApiRuntimeOptions {
   walletSessionRepository?: WalletSessionRepository;
   walletSessionRepositoryOptions?: CreateWalletSessionRepositoryOptions;
 }
+
+const createPgCampaignPool: CampaignDbPoolFactory = (config) => {
+  const { Pool } = campaignDbRequire("pg") as typeof import("pg");
+  const pool = new Pool(config);
+
+  return {
+    connect: async () => {
+      const client = await pool.connect();
+
+      return {
+        query: async (text, values = []) => {
+          const result = await client.query(text, values);
+
+          return { rows: result.rows as Array<Record<string, unknown>> };
+        },
+        release: () => client.release(),
+      };
+    },
+    end: async () => pool.end(),
+    onError: (listener) => {
+      pool.on("error", listener);
+    },
+    query: async (text, values = []) => {
+      const result = await pool.query(text, values);
+
+      return { rows: result.rows as Array<Record<string, unknown>> };
+    },
+  };
+};
 
 let generatedTraceSequence = 0;
 
@@ -225,6 +351,26 @@ const parseBody = (request: ApiRuntimeRequest, method: string) => {
 };
 
 const createRuntimeConfigBlockedError = (error: unknown) => {
+  if (error instanceof CampaignOsCampaignDbConfigError) {
+    return new ApiRuntimeError({
+      code: "INVALID_REQUEST",
+      details: {
+        diagnosticCodes: [error.code],
+        fallbackUsed: false,
+        field: error.field,
+        persistenceMode: "postgres",
+        reason: "Invalid Campaign DB runtime configuration.",
+        status: "blocked",
+      },
+      message: {
+        "en-US": "The Campaign DB runtime configuration is blocked.",
+        "zh-CN": "Campaign DB runtime 配置被阻断。",
+        "zh-TW": "Campaign DB runtime 設定被阻斷。",
+      },
+      status: 400,
+    });
+  }
+
   const message = error instanceof Error ? error.message : "";
   const missingLocalJsonDir = message.includes("local_json persistence requires");
   const unsupportedPersistenceMode = message.includes("Unsupported Campaign OS persistence mode");
@@ -513,10 +659,12 @@ const appendReportShapeSections = (sections: unknown, sectionIds: string[]) => {
 };
 
 const withBackendServiceReadinessMetadata = ({
+  campaignDatabase,
   data,
   readiness,
   routeId,
 }: {
+  campaignDatabase: CampaignDbRepositoryHealth;
   data: unknown;
   readiness: BackendServiceReadinessReport;
   routeId: ApiRuntimeRouteContract["id"];
@@ -529,6 +677,7 @@ const withBackendServiceReadinessMetadata = ({
     return {
       ...data,
       apiService: createApiServiceMetadata(readiness),
+      campaignDatabase,
       backendService: {
         ...data.backendService,
         activation: createHealthActivationMetadata(readiness.backendRuntimeBootstrap.activation),
@@ -546,6 +695,7 @@ const withBackendServiceReadinessMetadata = ({
     return {
       ...data,
       activation: readiness.backendRuntimeBootstrap.activation,
+      campaignDatabase,
       apiService: {
         ...createApiServiceMetadata(readiness),
         attachMap: readiness.apiService.blockedDependencyIds
@@ -646,34 +796,75 @@ const createSafeRepository = (repository: CampaignOsRepository): CampaignOsRepos
 const createSafeCampaignDbRepository = (
   repository: CampaignDbRepository,
 ): CampaignDbRepository => {
+  const unavailable = (operation: string, diagnosticCode?: string) => {
+    const error = persistenceUnavailable(operation);
+
+    return diagnosticCode
+      ? new ApiRuntimeError({
+        ...error.body,
+        details: {
+          ...error.body.details,
+          diagnosticCode,
+        },
+      })
+      : error;
+  };
   const wrap = async <TResult>(operation: string, run: () => Promise<TResult>) => {
     try {
       return await run();
     } catch (error) {
       if (error instanceof CampaignDbRepositoryError) {
-        if (operation === "campaignDb.generateI18nDraft") {
-          throw error;
-        }
-
         const firstDiagnostic = error.diagnostics[0];
 
-        if (firstDiagnostic?.code !== "CAMPAIGN_DB_PRODUCTION_DEFERRED") {
+        if (operation === "campaignDb.generateI18nDraft") {
+          if (
+            firstDiagnostic
+            && [
+              "CAMPAIGN_DB_I18N_CAMPAIGN_NOT_FOUND",
+              "CAMPAIGN_DB_I18N_REQUIRED_FIELD_MISSING",
+              "CAMPAIGN_DB_I18N_UNSUPPORTED_SOURCE_LOCALE",
+              "CAMPAIGN_DB_I18N_UNSUPPORTED_TARGET_LOCALE",
+            ].includes(firstDiagnostic.code)
+          ) {
+            throw error;
+          }
+
+          throw unavailable(operation, firstDiagnostic?.code);
+        }
+
+        if (
+          firstDiagnostic?.code !== "CAMPAIGN_DB_PRODUCTION_DEFERRED"
+          && !firstDiagnostic?.code.startsWith("CAMPAIGN_DURABLE_STORE_")
+          && !firstDiagnostic?.code.startsWith("POSTGRES_CAMPAIGN_STORE_")
+        ) {
           throw invalidRequest(
             firstDiagnostic?.field ?? "campaignDb",
             firstDiagnostic?.message ?? "Campaign DB repository rejected the request.",
           );
         }
+
+        throw unavailable(operation, firstDiagnostic?.code);
       }
 
-      throw persistenceUnavailable(operation);
+      if (error instanceof PostgresCampaignStoreError) {
+        throw unavailable(operation, error.code);
+      }
+
+      throw unavailable(operation);
     }
   };
 
   return {
     addTaskDraft: (input, context) =>
       wrap("campaignDb.addTaskDraft", () => repository.addTaskDraft(input, context)),
+    bindReferral: (input, context) =>
+      wrap("campaignDb.bindReferral", () => repository.bindReferral!(input, context)),
     checkEligibility: (input, context) =>
       wrap("campaignDb.checkEligibility", () => repository.checkEligibility!(input, context)),
+    close: () => wrap(
+      "campaignDb.close",
+      () => repository.close?.() ?? Promise.resolve(),
+    ),
     createDraft: (input, context) =>
       wrap("campaignDb.createDraft", () => repository.createDraft(input, context)),
     getById: (campaignId, context) =>
@@ -683,16 +874,40 @@ const createSafeCampaignDbRepository = (
       wrap("campaignDb.generateI18nDraft", () => repository.generateI18nDraft!(input, context)),
     getExportReadiness: (input, context) =>
       wrap("campaignDb.getExportReadiness", () => repository.getExportReadiness!(input, context)),
-    health: () => wrap("campaignDb.health", () => repository.health()),
+    getParticipant: (campaignId, walletAddress, context) =>
+      wrap(
+        "campaignDb.getParticipant",
+        () => repository.getParticipant!(campaignId, walletAddress, context),
+      ),
+    getReferralBinding: (campaignId, inviteeWalletAddress, context) =>
+      wrap(
+        "campaignDb.getReferralBinding",
+        () => repository.getReferralBinding!(campaignId, inviteeWalletAddress, context),
+      ),
+    health: (context) => wrap("campaignDb.health", () => repository.health(context)),
     list: (filter, context) =>
       wrap("campaignDb.list", () => repository.list(filter, context)),
     listTaskEvidence: (filter, context) =>
       wrap("campaignDb.listTaskEvidence", () => repository.listTaskEvidence!(filter, context)),
+    listParticipants: (filter, context) =>
+      wrap("campaignDb.listParticipants", () => repository.listParticipants!(filter, context)),
+    listReferralBindings: (filter, context) =>
+      wrap(
+        "campaignDb.listReferralBindings",
+        () => repository.listReferralBindings!(filter, context),
+      ),
+    markReferralQualified: (input, context) =>
+      wrap(
+        "campaignDb.markReferralQualified",
+        () => repository.markReferralQualified!(input, context),
+      ),
     projectExport: (input, context) =>
       wrap("campaignDb.projectExport", () => repository.projectExport!(input, context)),
     reset: () => wrap("campaignDb.reset", () => repository.reset()),
     upsertTaskCompletion: (input, context) =>
       wrap("campaignDb.upsertTaskCompletion", () => repository.upsertTaskCompletion!(input, context)),
+    upsertParticipant: (input, context) =>
+      wrap("campaignDb.upsertParticipant", () => repository.upsertParticipant!(input, context)),
     upsertTaskEvidence: (input, context) =>
       wrap("campaignDb.upsertTaskEvidence", () => repository.upsertTaskEvidence!(input, context)),
     upsertTaskVerification: (input, context) =>
@@ -737,9 +952,12 @@ const createSafeWalletSessionRepository = (
 
 export const createCampaignOsApiRuntime = ({
   backendServiceReadiness,
+  campaignDbConfig,
+  campaignDbPoolFactory = createPgCampaignPool,
   campaignDbRepository,
   campaignDbRepositoryOptions,
   exportArtifactRegistry = createExportArtifactRegistry(),
+  logger = console,
   repository,
   runtimeConfig,
   runtimeConfigOptions,
@@ -770,11 +988,52 @@ export const createCampaignOsApiRuntime = ({
       });
     }
   })();
+  const resolvedCampaignDbConfig = (() => {
+    if (campaignDbConfig) {
+      return campaignDbConfig;
+    }
+
+    try {
+      return resolveCampaignOsCampaignDbConfig({
+        env: runtimeConfigOptions?.env,
+      });
+    } catch (error) {
+      configError ??= error;
+
+      return resolveCampaignOsCampaignDbConfig({ env: {} });
+    }
+  })();
   const safeRepository = createSafeRepository(
     repository ?? createCampaignOsRepository(resolvedConfig.persistence),
   );
+  const composedCampaignDbRepository = campaignDbRepository ?? (() => {
+    if (resolvedCampaignDbConfig.mode !== "postgres") {
+      return createCampaignDbRepository(campaignDbRepositoryOptions);
+    }
+
+    const pool = campaignDbPoolFactory(resolvedCampaignDbConfig.pool);
+    pool.onError(() => {
+      if (logger) {
+        logger.error(
+          `[campaign-os-api-runtime] campaign_db_pool_error code=CAMPAIGN_DB_POOL_BACKGROUND_ERROR traceId=${randomUUID()}`,
+        );
+      }
+    });
+    const durableStore = createPostgresCampaignDurableStore({
+      boundedListLimit: campaignDbRepositoryOptions?.boundedListLimit,
+      ownsPool: true,
+      pool,
+    });
+
+    return createCampaignDbRepository({
+      ...campaignDbRepositoryOptions,
+      durableStore,
+      mode: "postgres",
+      now: campaignDbRepositoryOptions?.now ?? (() => new Date().toISOString()),
+    });
+  })();
   const safeCampaignDbRepository = createSafeCampaignDbRepository(
-    campaignDbRepository ?? createCampaignDbRepository(campaignDbRepositoryOptions),
+    composedCampaignDbRepository,
   );
   const safeWalletSessionRepository = createSafeWalletSessionRepository(
     walletSessionRepository ?? createWalletSessionRepository(walletSessionRepositoryOptions),
@@ -791,8 +1050,33 @@ export const createCampaignOsApiRuntime = ({
     });
   const shouldAttachDatabaseReadiness = (routeId: ApiRuntimeRouteContract["id"]) =>
     routeId === "runtime.health" || routeId === "runtime.contracts";
+  const activeService = resolvedCampaignDbConfig.mode === "postgres"
+    ? createCampaignDbAuthoritativeService(service)
+    : service;
+  let closePromise: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closePromise ??= Promise.allSettled([
+      safeCampaignDbRepository.close?.() ?? Promise.resolve(),
+      safeWalletSessionRepository.close(),
+    ]).then((results) => {
+      const failures = results
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map((result) => result.reason as unknown);
+
+      if (failures.length === 1) {
+        throw failures[0];
+      }
+
+      if (failures.length > 1) {
+        throw new ApiRuntimeResourceCloseError(failures);
+      }
+    });
+
+    return closePromise;
+  };
 
   return {
+    close,
     handle: async (request) => {
       const traceId = createTraceId(request.headers);
 
@@ -833,13 +1117,18 @@ export const createCampaignOsApiRuntime = ({
           repository: safeRepository,
           query,
           route: matcher.route,
-          service,
+          service: activeService,
           traceId,
           version: runtimeVersion,
           walletSessionRepository: safeWalletSessionRepository,
         });
-        const responseData = shouldAttachDatabaseReadiness(matcher.route.id)
+        const attachDatabaseReadiness = shouldAttachDatabaseReadiness(matcher.route.id);
+        const campaignDatabase = attachDatabaseReadiness
+          ? await safeCampaignDbRepository.health({ traceId })
+          : undefined;
+        const responseData = attachDatabaseReadiness && campaignDatabase
           ? withBackendServiceReadinessMetadata({
+            campaignDatabase,
             data,
             readiness: requestBackendServiceReadiness(),
             routeId: matcher.route.id,

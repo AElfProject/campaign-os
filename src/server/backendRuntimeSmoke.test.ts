@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntim
 import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectOwnerFundingProofReviewBridge";
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
 import { runBackendRuntimeSmoke } from "./backendRuntimeSmoke";
+import { startCampaignOsApiServer } from "./server";
 
 const productionDatabaseRequiredReferenceKeys = [
   "CAMPAIGN_OS_DATABASE_PACKAGE",
@@ -1026,6 +1027,32 @@ describe("backend runtime smoke command", () => {
     } finally {
       await rm(tempDir, { force: true, recursive: true });
     }
+  });
+
+  it("removes the generated persistence directory when server shutdown fails", async () => {
+    const stopFailure = new Error("Injected smoke server stop failure.");
+    let generatedPersistenceDir: string | undefined;
+
+    await expect(runBackendRuntimeSmoke({
+      serverFactory: async (options) => {
+        generatedPersistenceDir = options?.env?.CAMPAIGN_OS_PERSISTENCE_DIR;
+        const server = await startCampaignOsApiServer(options);
+
+        return {
+          ...server,
+          stop: async () => {
+            await server.stop();
+            throw stopFailure;
+          },
+        };
+      },
+    })).rejects.toBe(stopFailure);
+
+    if (!generatedPersistenceDir) {
+      throw new Error("Smoke server did not receive an automatically generated persistence directory.");
+    }
+
+    await expect(access(generatedPersistenceDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("fails closed when production backend readiness metadata is missing from smoke payloads", async () => {
