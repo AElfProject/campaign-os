@@ -35,12 +35,18 @@ export type OwnerCampaignRequestOperation =
   | "add"
   | "adopt";
 
+export type OwnerCampaignTaskPendingTargetKey =
+  | `add:${string}`
+  | `adopt:${string}`
+  | "generate";
+
 export interface OwnerCampaignRequestToken {
   campaignId: string | null;
   epoch: number;
   operation: OwnerCampaignRequestOperation;
   sequence: number;
   sessionKey: string;
+  targetKey: OwnerCampaignTaskPendingTargetKey | null;
 }
 
 export interface OwnerCampaignWorkflowError {
@@ -129,22 +135,43 @@ export interface OwnerCampaignBuilderIntentContract {
   activeCampaignId: string | null;
   createPending: boolean;
   createResult: OwnerCampaignProjection | null;
+  error: OwnerCampaignWorkflowError | null;
+  issuedSessionReady: boolean;
   onCreate: (input: CreateOwnerCampaignInput) => void;
+  onReconnect: (() => void) | null;
   onRetryDetail: () => void;
   ownerContext: OwnerCampaignOwnerContext | null;
+  status: OwnerCampaignWorkflowStatus;
 }
 
 export interface OwnerCampaignTaskIntentContract {
   activeCampaignId: string | null;
   commandsDisabled: boolean;
   detail: OwnerCampaignDetailSuccess | null;
+  error: OwnerCampaignWorkflowError | null;
+  issuedSessionReady: boolean;
   onAdd: (input: AddOwnerCampaignTaskInput) => void;
   onAdopt: (suggestion: OwnerTaskPreviewSuggestion) => void;
   onGenerate: (input: GenerateOwnerTaskPreviewInput) => void;
+  onReconnect: (() => void) | null;
+  onRetryDetail: () => void;
+  ownerContext: OwnerCampaignOwnerContext | null;
   pendingCommand: OwnerCampaignRequestOperation | null;
+  pendingTargetKey: OwnerCampaignTaskPendingTargetKey | null;
   preview: OwnerTaskPreview | null;
+  status: OwnerCampaignWorkflowStatus;
   tasks: OwnerCampaignDetailSuccess["tasks"];
 }
+
+export const createOwnerCampaignAddPendingTargetKey = (
+  input: AddOwnerCampaignTaskInput,
+): OwnerCampaignTaskPendingTargetKey => `add:${input.templateCode}`;
+
+export const createOwnerCampaignAdoptPendingTargetKey = (
+  suggestion: OwnerTaskPreviewSuggestion,
+): OwnerCampaignTaskPendingTargetKey => `adopt:${suggestion.id}`;
+
+export const ownerCampaignGeneratePendingTargetKey = "generate" as const;
 
 export type ProjectOwnerCampaignDisplayField = "code" | "message" | "traceId";
 
@@ -254,7 +281,8 @@ const sameToken = (
   && left.epoch === right.epoch
   && left.operation === right.operation
   && left.sequence === right.sequence
-  && left.sessionKey === right.sessionKey;
+  && left.sessionKey === right.sessionKey
+  && left.targetKey === right.targetKey;
 
 const identityMismatchError = (
   operation: OwnerCampaignRequestOperation,
@@ -396,12 +424,14 @@ export const createOwnerCampaignRequestToken = (
   state: OwnerCampaignWorkflowState,
   operation: OwnerCampaignRequestOperation,
   campaignId: string | null = state.activeCampaignId,
+  targetKey: OwnerCampaignTaskPendingTargetKey | null = null,
 ): OwnerCampaignRequestToken => ({
   campaignId,
   epoch: state.epoch,
   operation,
   sequence: nextCounter(state.sequence),
   sessionKey: state.sessionKey ?? "",
+  targetKey,
 });
 
 export const ownerCampaignRequestTokenMatches = (

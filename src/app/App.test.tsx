@@ -1034,7 +1034,20 @@ describe("Campaign OS app shell", () => {
   });
 });
 
-const appOwnerSessionA = walletSessions[0];
+const appOwnerSessionA: NormalizedWalletSession = {
+  ...walletSessions[0],
+  issuer: {
+    artifactType: "local_session_reference",
+    cookieIssued: false,
+    diagnosticCodes: [],
+    issuerMode: "local_opaque",
+    jwtIssued: false,
+    liveSigningExecuted: false,
+    referenceId: "issued-app-owner-session-a",
+    ttlSeconds: 900,
+    valid: true,
+  },
+};
 const appOwnerSessionB: NormalizedWalletSession = {
   ...appOwnerSessionA,
   address: "ELF_APP_OWNER_B",
@@ -1152,6 +1165,27 @@ describe("App Owner campaign authority", () => {
       "awaken",
       expect.objectContaining({ session: appOwnerSessionA }),
     );
+  });
+
+  it("does not grant Owner workflow authority to an invalid issued-session projection", async () => {
+    const invalidIssuedSession: NormalizedWalletSession = {
+      ...appOwnerSessionA,
+      issuer: {
+        ...appOwnerSessionA.issuer!,
+        referenceId: "invalid-app-owner-session",
+        valid: false,
+      },
+      sessionId: "invalid-app-owner-session",
+    };
+    submitWalletSession.mockResolvedValueOnce(appWalletSessionState(invalidIssuedSession));
+    const bridge = appOwnerBridge();
+
+    render(<App ownerCampaignBridge={bridge} />);
+    await connectHeaderWallet();
+
+    const workflow = await screen.findByRole("region", { name: "Owner campaign workflow" });
+    expect(within(workflow).getByText("Wallet session required")).toBeInTheDocument();
+    expect(bridge.recoverCampaigns).not.toHaveBeenCalled();
   });
 
   it("clears session A active Campaign before starting session B recovery", async () => {

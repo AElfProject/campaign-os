@@ -1,18 +1,23 @@
 import { describe, expect, it } from "vitest";
 import type {
+  AddOwnerCampaignTaskInput,
   OwnerCampaignCreateSuccess,
   OwnerCampaignDetailSuccess,
   OwnerCampaignFailure,
   OwnerCampaignId,
   OwnerCampaignProjection,
   OwnerTaskId,
+  OwnerTaskPreviewSuggestion,
   OwnerTaskPreviewSuccess,
   OwnerTaskSuccess,
 } from "../../../api/projectOwnerCampaignApiBridge";
 import {
   canCreateOwnerCampaign,
+  createOwnerCampaignAddPendingTargetKey,
+  createOwnerCampaignAdoptPendingTargetKey,
   createOwnerCampaignRequestToken,
   createOwnerCampaignWorkflowState,
+  ownerCampaignGeneratePendingTargetKey,
   ownerCampaignCommandsDisabled,
   ownerCampaignRequestTokenMatches,
   ownerCampaignWorkflowReducer,
@@ -533,6 +538,79 @@ describe("Owner campaign display sanitizer", () => {
 });
 
 describe("owner campaign workflow", () => {
+  it("carries command-input target keys through pending Add, Generate, and Adopt tokens", () => {
+    const initial = createOwnerCampaignWorkflowState("session-a", "campaign-a");
+    const detailRequest = begin(initial, "detail", "campaign-a");
+    const ready = ownerCampaignWorkflowReducer(detailRequest.state, {
+      type: "detail_succeeded",
+      result: detail("campaign-a"),
+      token: detailRequest.token,
+    });
+    const addInput: AddOwnerCampaignTaskInput = {
+      evidenceRule: {},
+      points: 40,
+      required: true,
+      templateCode: "connect_wallet",
+      verificationType: "WALLET",
+      walletCompatibility: "ANY",
+    };
+    const suggestion: OwnerTaskPreviewSuggestion = {
+      adoptable: true,
+      campaignId: "campaign-a" as OwnerCampaignId,
+      evidenceRule: {},
+      id: "suggestion-social" as OwnerTaskPreviewSuggestion["id"],
+      points: 25,
+      required: false,
+      templateCode: "share_campaign",
+      verificationType: "SOCIAL",
+      walletCompatibility: "ANY",
+    };
+
+    const addTargetKey = createOwnerCampaignAddPendingTargetKey(addInput);
+    const addToken = createOwnerCampaignRequestToken(
+      ready,
+      "add",
+      "campaign-a",
+      addTargetKey,
+    );
+    const addPending = ownerCampaignWorkflowReducer(ready, {
+      type: "request_started",
+      token: addToken,
+    });
+
+    expect(addTargetKey).toBe("add:connect_wallet");
+    expect(addPending.pending?.targetKey).toBe("add:connect_wallet");
+
+    const generateTargetKey = ownerCampaignGeneratePendingTargetKey;
+    const generateToken = createOwnerCampaignRequestToken(
+      ready,
+      "preview",
+      "campaign-a",
+      generateTargetKey,
+    );
+    const generatePending = ownerCampaignWorkflowReducer(ready, {
+      type: "request_started",
+      token: generateToken,
+    });
+
+    expect(generatePending.pending?.targetKey).toBe("generate");
+
+    const adoptTargetKey = createOwnerCampaignAdoptPendingTargetKey(suggestion);
+    const adoptToken = createOwnerCampaignRequestToken(
+      ready,
+      "adopt",
+      "campaign-a",
+      adoptTargetKey,
+    );
+    const adoptPending = ownerCampaignWorkflowReducer(ready, {
+      type: "request_started",
+      token: adoptToken,
+    });
+
+    expect(adoptTargetKey).toBe("adopt:suggestion-social");
+    expect(adoptPending.pending?.targetKey).toBe("adopt:suggestion-social");
+  });
+
   it("models no-session and session-ready contexts without enabling commands", () => {
     const initial = createOwnerCampaignWorkflowState();
 

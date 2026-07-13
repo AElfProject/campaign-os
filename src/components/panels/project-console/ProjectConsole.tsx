@@ -220,10 +220,13 @@ import { ProductionDatabaseHandoffReadinessPanel } from "./ProductionDatabaseHan
 import { RepositoryCampaignWorkflowPanel } from "./RepositoryCampaignWorkflowPanel";
 import {
   canCreateOwnerCampaign,
+  createOwnerCampaignAddPendingTargetKey,
+  createOwnerCampaignAdoptPendingTargetKey,
   createOwnerCampaignRequestToken,
   createOwnerCampaignWorkflowState,
   createOwnerSessionKey,
   createUnexpectedOwnerCampaignFailure,
+  ownerCampaignGeneratePendingTargetKey,
   ownerCampaignCommandsDisabled,
   ownerCampaignRequestTokenMatches,
   ownerCampaignWorkflowReducer,
@@ -231,6 +234,7 @@ import {
   type OwnerCampaignRequestOperation,
   type OwnerCampaignRequestToken,
   type OwnerCampaignTaskIntentContract,
+  type OwnerCampaignTaskPendingTargetKey,
   type OwnerCampaignWorkflowEvent,
   type OwnerCampaignWorkflowState,
 } from "./ownerCampaignWorkflow";
@@ -265,6 +269,7 @@ export interface ProjectConsoleProps {
   onWorkspaceChange?: (workspace: ProjectWorkspaceKey) => void;
   ownerCampaignBridge?: ProjectOwnerCampaignApiBridge;
   ownerSession?: NormalizedWalletSession | null;
+  ownerSessionReady?: boolean;
   projectId?: string;
 }
 
@@ -2442,6 +2447,7 @@ const useOwnerCampaignOrchestrator = ({
       result: Extract<TResult, { ok: true }>,
       token: OwnerCampaignRequestToken,
     ) => void,
+    targetKey: OwnerCampaignTaskPendingTargetKey | null = null,
   ) => {
     const session = sessionRef.current;
     const current = stateRef.current;
@@ -2450,7 +2456,12 @@ const useOwnerCampaignOrchestrator = ({
       return;
     }
 
-    const token = createOwnerCampaignRequestToken(current, operation, campaignId);
+    const token = createOwnerCampaignRequestToken(
+      current,
+      operation,
+      campaignId,
+      targetKey,
+    );
 
     if (!transition({ type: "request_started", token })) {
       return;
@@ -2559,12 +2570,14 @@ const useOwnerCampaignOrchestrator = ({
       (result, token) => {
         transition({ type: "preview_succeeded", result, token });
       },
+      ownerCampaignGeneratePendingTargetKey,
     );
   }, [bridge, runRequest, transition]);
 
   const mutateTask = useCallback((
     operation: Extract<OwnerCampaignRequestOperation, "add" | "adopt">,
     input: AddOwnerCampaignTaskInput,
+    targetKey: OwnerCampaignTaskPendingTargetKey,
   ) => {
     const campaignId = stateRef.current.activeCampaignId;
 
@@ -2585,11 +2598,12 @@ const useOwnerCampaignOrchestrator = ({
           refreshCampaignDetail(campaignId);
         }
       },
+      targetKey,
     );
   }, [bridge, refreshCampaignDetail, runRequest, transition]);
 
   const addTask = useCallback((input: AddOwnerCampaignTaskInput) => {
-    mutateTask("add", input);
+    mutateTask("add", input, createOwnerCampaignAddPendingTargetKey(input));
   }, [mutateTask]);
 
   const adoptTask = useCallback((suggestion: OwnerTaskPreviewSuggestion) => {
@@ -2600,7 +2614,7 @@ const useOwnerCampaignOrchestrator = ({
       templateCode: suggestion.templateCode,
       verificationType: suggestion.verificationType,
       walletCompatibility: suggestion.walletCompatibility,
-    });
+    }, createOwnerCampaignAdoptPendingTargetKey(suggestion));
   }, [mutateTask]);
 
   const selectCampaign = useCallback((campaignId: string) => {
@@ -2672,6 +2686,7 @@ export const ProjectConsole = ({
   onWorkspaceChange,
   ownerCampaignBridge,
   ownerSession = null,
+  ownerSessionReady = false,
   projectId: configuredProjectId,
 }: ProjectConsoleProps) => {
   const copy = projectConsoleCopy[locale];
@@ -2745,7 +2760,7 @@ export const ProjectConsole = ({
     activeCampaignId,
     bridge: resolvedOwnerCampaignBridge,
     onActiveCampaignIdChange,
-    ownerSession,
+    ownerSession: ownerSessionReady ? ownerSession : null,
     projectId: resolvedOwnerProjectId,
   });
   const ownerWorkflowState = ownerCampaignOrchestrator.state;
@@ -2754,7 +2769,7 @@ export const ProjectConsole = ({
     locale,
     resolvedOwnerProjectId,
   );
-  const ownerContext = ownerSession && createOwnerSessionKey(ownerSession)
+  const ownerContext = ownerSessionReady && ownerSession && createOwnerSessionKey(ownerSession)
     ? {
         accountType: ownerSession.accountType,
         address: ownerSession.address,
@@ -2763,27 +2778,39 @@ export const ProjectConsole = ({
         walletSource: ownerSession.walletSource,
       }
     : null;
+  const retryOwnerCampaignDetail = () => {
+    if (ownerWorkflowState.activeCampaignId) {
+      ownerCampaignOrchestrator.refreshCampaignDetail(ownerWorkflowState.activeCampaignId);
+    }
+  };
   const ownerBuilderIntents: OwnerCampaignBuilderIntentContract = {
     activeCampaignId: ownerWorkflowState.activeCampaignId,
     createPending: ownerWorkflowState.pending?.operation === "create",
     createResult: ownerWorkflowState.createdCampaign,
+    error: ownerWorkflowState.error,
+    issuedSessionReady: Boolean(ownerContext),
     onCreate: ownerCampaignOrchestrator.createCampaign,
-    onRetryDetail: () => {
-      if (ownerWorkflowState.activeCampaignId) {
-        ownerCampaignOrchestrator.refreshCampaignDetail(ownerWorkflowState.activeCampaignId);
-      }
-    },
+    onReconnect: onOwnerReconnect ?? null,
+    onRetryDetail: retryOwnerCampaignDetail,
     ownerContext,
+    status: ownerWorkflowState.status,
   };
   const ownerTaskIntents: OwnerCampaignTaskIntentContract = {
     activeCampaignId: ownerWorkflowState.activeCampaignId,
     commandsDisabled: ownerCampaignCommandsDisabled(ownerWorkflowState),
     detail: ownerWorkflowState.detail,
+    error: ownerWorkflowState.error,
+    issuedSessionReady: Boolean(ownerContext),
     onAdd: ownerCampaignOrchestrator.addTask,
     onAdopt: ownerCampaignOrchestrator.adoptTask,
     onGenerate: ownerCampaignOrchestrator.generateTaskPreview,
+    onReconnect: onOwnerReconnect ?? null,
+    onRetryDetail: retryOwnerCampaignDetail,
+    ownerContext,
     pendingCommand: ownerWorkflowState.pending?.operation ?? null,
+    pendingTargetKey: ownerWorkflowState.pending?.targetKey ?? null,
     preview: ownerWorkflowState.preview,
+    status: ownerWorkflowState.status,
     tasks: ownerWorkflowState.detail?.tasks ?? [],
   };
   const localAiOutline = generateLocalAiDraftOutline(draftComposer.aiPrompt);
@@ -3562,9 +3589,9 @@ export const ProjectConsole = ({
             <h2 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
               {ownerLabels.region}
             </h2>
-            {ownerSession ? (
+            {ownerContext ? (
               <p style={{ color: "#475569", lineHeight: 1.45, margin: 0, overflowWrap: "anywhere" }}>
-                {ownerSession.address}
+                {ownerContext.address}
               </p>
             ) : null}
           </div>
@@ -3589,7 +3616,7 @@ export const ProjectConsole = ({
           </button>
           <button
             disabled={
-              !ownerSession
+              !ownerSessionReady
               || !ownerWorkflowState.activeCampaignId
               || Boolean(ownerWorkflowState.pending)
             }
@@ -3615,7 +3642,7 @@ export const ProjectConsole = ({
           </button>
           {ownerWorkflowState.error?.operation === "recover" ? (
             <button
-              disabled={!ownerSession || Boolean(ownerWorkflowState.pending)}
+              disabled={!ownerSessionReady || Boolean(ownerWorkflowState.pending)}
               onClick={ownerCampaignOrchestrator.recoverCampaigns}
               style={ghostButtonStyle}
               type="button"

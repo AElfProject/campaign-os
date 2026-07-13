@@ -211,6 +211,17 @@ const headerWalletPreviewRequest: WalletSessionPreviewRequest = {
   fixtureId: "sess-aa-001",
 };
 
+const isIssuedOwnerSessionReady = (
+  state: WalletSessionApiBridgeState,
+  session: NormalizedWalletSession | null,
+) => Boolean(
+  session
+  && state.source === "api_runtime"
+  && state.status === "connected"
+  && state.repository?.sessionId === session.sessionId
+  && session.issuer?.valid === true,
+);
+
 const readBrowserPathname = () => {
   if (typeof window === "undefined") {
     return "/";
@@ -281,7 +292,13 @@ export const App = ({ ownerCampaignBridge }: AppProps = {}) => {
     useState<NormalizedWalletSession | null>(null);
   const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
   const [activeCampaignSessionKey, setActiveCampaignSessionKey] = useState<string | null>(null);
-  const ownerSessionKey = createOwnerSessionKey(headerWalletSession);
+  const ownerSessionReady = isIssuedOwnerSessionReady(
+    headerWalletSessionBridgeState,
+    headerWalletSession,
+  );
+  const ownerSessionKey = createOwnerSessionKey(
+    ownerSessionReady ? headerWalletSession : null,
+  );
   const controlledActiveCampaignId = activeCampaignSessionKey === ownerSessionKey
     ? activeCampaignId
     : null;
@@ -401,6 +418,7 @@ export const App = ({ ownerCampaignBridge }: AppProps = {}) => {
             onWorkspaceChange={selectProjectWorkspace}
             ownerCampaignBridge={ownerCampaignBridge}
             ownerSession={headerWalletSession}
+            ownerSessionReady={ownerSessionReady}
           />
         ) : activeSurface === "user" ? (
           <UserAppPanel locale={contentLocale} shareLocale={locale} walletModalLocale={walletModalLocale} />

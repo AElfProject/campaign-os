@@ -59,7 +59,9 @@ import {
   type ProductionDatabaseHandoffReadinessApiState,
 } from "../../../api/productionDatabaseHandoffReadinessApiBridge";
 import type {
+  AddOwnerCampaignTaskInput,
   CreateOwnerCampaignInput,
+  GenerateOwnerTaskPreviewInput,
   OwnerCampaignDetailResult,
   OwnerCampaignFailure,
   OwnerCampaignId,
@@ -68,6 +70,7 @@ import type {
   OwnerCampaignResult,
   OwnerSessionContext,
   OwnerTaskId,
+  OwnerTaskPreviewSuggestion,
   OwnerTaskPreviewResult,
   OwnerTaskResult,
   ProjectOwnerCampaignApiBridge,
@@ -80,7 +83,52 @@ import {
   type NormalizedWalletSession,
 } from "../../../domain";
 import { projectConsoleCopy } from "./copy";
-import { ProjectConsole } from "./ProjectConsole";
+import { ProjectConsole, type ProjectWorkspaceKey } from "./ProjectConsole";
+import type {
+  OwnerCampaignBuilderIntentContract,
+  OwnerCampaignTaskIntentContract,
+} from "./ownerCampaignWorkflow";
+
+const ownerWorkflowCapture = vi.hoisted(() => ({
+  builder: [] as unknown[],
+  task: [] as unknown[],
+}));
+
+vi.mock("./builder/CampaignBuilderPanel", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./builder/CampaignBuilderPanel")>();
+  const { createElement } = await import("react");
+
+  return {
+    ...actual,
+    CampaignBuilderPanel: (
+      props: Parameters<typeof actual.CampaignBuilderPanel>[0] & { ownerWorkflow?: unknown },
+    ) => {
+      if (props.ownerWorkflow) {
+        ownerWorkflowCapture.builder.push(props.ownerWorkflow);
+      }
+
+      return createElement(actual.CampaignBuilderPanel, props);
+    },
+  };
+});
+
+vi.mock("./builder/TaskTemplateLibrary", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./builder/TaskTemplateLibrary")>();
+  const { createElement } = await import("react");
+
+  return {
+    ...actual,
+    TaskTemplateLibrary: (
+      props: Parameters<typeof actual.TaskTemplateLibrary>[0] & { ownerWorkflow?: unknown },
+    ) => {
+      if (props.ownerWorkflow) {
+        ownerWorkflowCapture.task.push(props.ownerWorkflow);
+      }
+
+      return createElement(actual.TaskTemplateLibrary, props);
+    },
+  };
+});
 
 vi.mock("../../../api/exportArtifactDeliveryApiBridge", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../api/exportArtifactDeliveryApiBridge")>();
@@ -3601,6 +3649,34 @@ const ownerCreateSuccess = (campaignId: string): OwnerCampaignResult => ({
   traceId: "trace-create",
 });
 
+const ownerAddInput: AddOwnerCampaignTaskInput = {
+  evidenceRule: {},
+  points: 40,
+  required: true,
+  templateCode: "connect_wallet",
+  verificationType: "WALLET",
+  walletCompatibility: "ANY",
+};
+
+const ownerGenerateInput: GenerateOwnerTaskPreviewInput = {
+  goal: "Activate wallet users",
+  product: "Campaign OS",
+  targetUsers: ["wallet users"],
+  walletPolicy: "ANY",
+};
+
+const ownerSuggestion: OwnerTaskPreviewSuggestion = {
+  adoptable: true,
+  campaignId: "campaign-a" as OwnerCampaignId,
+  evidenceRule: {},
+  id: "suggestion-social" as OwnerTaskPreviewSuggestion["id"],
+  points: 25,
+  required: false,
+  templateCode: "share_campaign",
+  verificationType: "SOCIAL",
+  walletCompatibility: "ANY",
+};
+
 const createOwnerBridge = (
   overrides: Partial<ProjectOwnerCampaignApiBridge> = {},
 ): ProjectOwnerCampaignApiBridge => ({
@@ -3619,6 +3695,8 @@ interface OwnerConsoleHarnessProps {
   onActiveCampaignIdChange?: (campaignId: string | null) => void;
   onReconnect?: () => void;
   session?: NormalizedWalletSession | null;
+  sessionReady?: boolean;
+  workspace?: ProjectWorkspaceKey;
 }
 
 const OwnerConsoleHarness = ({
@@ -3627,13 +3705,15 @@ const OwnerConsoleHarness = ({
   onActiveCampaignIdChange,
   onReconnect,
   session = ownerSessionA,
+  sessionReady = Boolean(session),
+  workspace = "campaigns",
 }: OwnerConsoleHarnessProps) => {
   const [activeCampaignId, setActiveCampaignId] = useState<string | null>(initialCampaignId);
 
   return (
     <ProjectConsole
       activeCampaignId={activeCampaignId}
-      activeWorkspace="campaigns"
+      activeWorkspace={workspace}
       locale="en-US"
       onActiveCampaignIdChange={(campaignId) => {
         setActiveCampaignId(campaignId);
@@ -3642,6 +3722,7 @@ const OwnerConsoleHarness = ({
       onOwnerReconnect={onReconnect}
       ownerCampaignBridge={bridge}
       ownerSession={session}
+      ownerSessionReady={sessionReady}
       projectId="awaken"
     />
   );
@@ -3649,6 +3730,16 @@ const OwnerConsoleHarness = ({
 
 const getOwnerWorkflow = () =>
   screen.getByRole("region", { name: "Owner campaign workflow" });
+
+const latestOwnerBuilderWorkflow = () =>
+  ownerWorkflowCapture.builder[
+    ownerWorkflowCapture.builder.length - 1
+  ] as OwnerCampaignBuilderIntentContract;
+
+const latestOwnerTaskWorkflow = () =>
+  ownerWorkflowCapture.task[
+    ownerWorkflowCapture.task.length - 1
+  ] as OwnerCampaignTaskIntentContract;
 
 type UnsafeOwnerDisplayField = "code" | "message" | "traceId";
 
@@ -3908,14 +3999,21 @@ describe("Project Console Owner campaign orchestration", () => {
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
     mockedRepositoryWorkflow.mockClear();
+    ownerWorkflowCapture.builder.length = 0;
+    ownerWorkflowCapture.task.length = 0;
   });
 
   it("keeps Owner mutation commands disabled without a normalized session", () => {
     const bridge = createOwnerBridge();
     const reconnect = vi.fn();
 
-    render(
-      <OwnerConsoleHarness bridge={bridge} onReconnect={reconnect} session={null} />,
+    const view = render(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        onReconnect={reconnect}
+        session={null}
+        workspace="create"
+      />,
     );
 
     const workflow = getOwnerWorkflow();
@@ -3923,6 +4021,169 @@ describe("Project Console Owner campaign orchestration", () => {
     expect(within(workflow).getByRole("button", { name: "Refresh campaign detail" })).toBeDisabled();
     expect(within(workflow).getByRole("button", { name: "Reconnect wallet" })).toBeEnabled();
     expect(bridge.recoverCampaigns).not.toHaveBeenCalled();
+    expect(latestOwnerBuilderWorkflow()).toMatchObject({
+      activeCampaignId: null,
+      createPending: false,
+      error: null,
+      issuedSessionReady: false,
+      ownerContext: null,
+      status: "no_session",
+    });
+    expect(latestOwnerBuilderWorkflow().onReconnect).toBe(reconnect);
+
+    view.rerender(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        onReconnect={reconnect}
+        session={null}
+        workspace="templates"
+      />,
+    );
+
+    expect(latestOwnerTaskWorkflow()).toMatchObject({
+      activeCampaignId: null,
+      commandsDisabled: true,
+      detail: null,
+      error: null,
+      issuedSessionReady: false,
+      ownerContext: null,
+      pendingCommand: null,
+      pendingTargetKey: null,
+      status: "no_session",
+      tasks: [],
+    });
+    expect(latestOwnerTaskWorkflow().onReconnect).toBe(reconnect);
+  });
+
+  it("projects issued owner context and ready state into both controlled child contracts", async () => {
+    const bridge = createOwnerBridge();
+    const reconnect = vi.fn();
+    const view = render(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        initialCampaignId="campaign-a"
+        onReconnect={reconnect}
+        workspace="create"
+      />,
+    );
+
+    await waitFor(() => expect(latestOwnerBuilderWorkflow().status).toBe("ready"));
+    expect(latestOwnerBuilderWorkflow()).toMatchObject({
+      activeCampaignId: "campaign-a",
+      error: null,
+      issuedSessionReady: true,
+      ownerContext: {
+        accountType: ownerSessionA.accountType,
+        address: ownerSessionA.address,
+        sessionId: ownerSessionA.sessionId,
+        walletSource: ownerSessionA.walletSource,
+      },
+      status: "ready",
+    });
+
+    view.rerender(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        initialCampaignId="campaign-a"
+        onReconnect={reconnect}
+        workspace="templates"
+      />,
+    );
+
+    await waitFor(() => expect(latestOwnerTaskWorkflow().status).toBe("ready"));
+    expect(latestOwnerTaskWorkflow()).toMatchObject({
+      activeCampaignId: "campaign-a",
+      commandsDisabled: false,
+      error: null,
+      issuedSessionReady: true,
+      ownerContext: {
+        accountType: ownerSessionA.accountType,
+        address: ownerSessionA.address,
+        sessionId: ownerSessionA.sessionId,
+        walletSource: ownerSessionA.walletSource,
+      },
+      pendingCommand: null,
+      pendingTargetKey: null,
+      status: "ready",
+    });
+    expect(latestOwnerTaskWorkflow().onReconnect).toBe(reconnect);
+  });
+
+  it("projects the Add template pending target from the dispatched command input", async () => {
+    const pendingAdd = deferred<OwnerTaskResult>();
+    const addTask = vi.fn(async () => pendingAdd.promise);
+    const bridge = createOwnerBridge({ addTask });
+    const view = render(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        initialCampaignId="campaign-a"
+        workspace="templates"
+      />,
+    );
+
+    await waitFor(() => expect(latestOwnerTaskWorkflow().status).toBe("ready"));
+    act(() => latestOwnerTaskWorkflow().onAdd(ownerAddInput));
+
+    await waitFor(() => expect(addTask).toHaveBeenCalledTimes(1));
+    expect(latestOwnerTaskWorkflow()).toMatchObject({
+      pendingCommand: "add",
+      pendingTargetKey: "add:connect_wallet",
+      status: "mutation_pending",
+    });
+    view.unmount();
+  });
+
+  it("projects the Generate pending target from the dispatched preview command", async () => {
+    const pendingGenerate = deferred<OwnerTaskPreviewResult>();
+    const generateTaskPreview = vi.fn(async () => pendingGenerate.promise);
+    const bridge = createOwnerBridge({ generateTaskPreview });
+    const view = render(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        initialCampaignId="campaign-a"
+        workspace="templates"
+      />,
+    );
+
+    await waitFor(() => expect(latestOwnerTaskWorkflow().status).toBe("ready"));
+    act(() => latestOwnerTaskWorkflow().onGenerate(ownerGenerateInput));
+
+    await waitFor(() => expect(generateTaskPreview).toHaveBeenCalledTimes(1));
+    expect(latestOwnerTaskWorkflow()).toMatchObject({
+      pendingCommand: "preview",
+      pendingTargetKey: "generate",
+      status: "mutation_pending",
+    });
+    view.unmount();
+  });
+
+  it("projects the Adopt suggestion pending target without treating it as Task identity", async () => {
+    const pendingAdopt = deferred<OwnerTaskResult>();
+    const addTask = vi.fn(async () => pendingAdopt.promise);
+    const bridge = createOwnerBridge({ addTask });
+    const view = render(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        initialCampaignId="campaign-a"
+        workspace="templates"
+      />,
+    );
+
+    await waitFor(() => expect(latestOwnerTaskWorkflow().status).toBe("ready"));
+    act(() => latestOwnerTaskWorkflow().onAdopt(ownerSuggestion));
+
+    await waitFor(() => expect(addTask).toHaveBeenCalledTimes(1));
+    expect(addTask).toHaveBeenCalledWith(
+      "campaign-a",
+      expect.not.objectContaining({ id: ownerSuggestion.id }),
+      expect.objectContaining({ session: ownerSessionA }),
+    );
+    expect(latestOwnerTaskWorkflow()).toMatchObject({
+      pendingCommand: "adopt",
+      pendingTargetKey: "adopt:suggestion-social",
+      status: "mutation_pending",
+    });
+    view.unmount();
   });
 
   it.each(opaqueOwnerDisplayCases)(
@@ -3993,6 +4254,111 @@ describe("Project Console Owner campaign orchestration", () => {
     expect(alert).toHaveTextContent("trace.owner-valid_01");
     expect(view.container.innerHTML).not.toContain("safe-unknown-code-marker");
   });
+
+  it.each([
+    {
+      code: "INVALID_REQUEST",
+      httpStatus: 400,
+      message: "Owner campaign request was invalid.",
+      reconnectRequired: false,
+      retryable: false,
+    },
+    {
+      code: "AUTH_SESSION_INVALID",
+      httpStatus: 401,
+      message: "Wallet session is no longer valid. Reconnect and try again.",
+      reconnectRequired: true,
+      retryable: false,
+    },
+    {
+      code: "AUTH_FORBIDDEN",
+      httpStatus: 403,
+      message: "This wallet is not authorized to manage this campaign.",
+      reconnectRequired: true,
+      retryable: false,
+    },
+    {
+      code: "PERSISTENCE_UNAVAILABLE",
+      httpStatus: 503,
+      message: "Campaign data is temporarily unavailable.",
+      reconnectRequired: false,
+      retryable: true,
+    },
+  ])(
+    "projects controlled $httpStatus error state and recovery intents into both children",
+    async ({ code, httpStatus, message, reconnectRequired, retryable }) => {
+      const rawMessageMarker = `raw-child-contract-${httpStatus}`;
+      const reconnect = vi.fn();
+      const bridge = createOwnerBridge({
+        recoverCampaigns: vi.fn(async () => ownerFailure({
+          code,
+          diagnostic: {
+            code,
+            message: rawMessageMarker,
+          },
+          httpStatus,
+          reconnectRequired,
+          retryable,
+          traceId: `trace-owner-${httpStatus}`,
+        })),
+      });
+      const view = render(
+        <OwnerConsoleHarness
+          bridge={bridge}
+          onReconnect={reconnect}
+          workspace="create"
+        />,
+      );
+
+      await within(getOwnerWorkflow()).findByRole("alert");
+      expect(latestOwnerBuilderWorkflow()).toMatchObject({
+        error: {
+          code,
+          httpStatus,
+          message,
+          operation: "recover",
+          reconnectRequired,
+          retryable,
+          traceId: `trace-owner-${httpStatus}`,
+        },
+        issuedSessionReady: true,
+        status: "error",
+      });
+      expect(latestOwnerBuilderWorkflow().onReconnect).toBe(reconnect);
+
+      view.rerender(
+        <OwnerConsoleHarness
+          bridge={bridge}
+          onReconnect={reconnect}
+          workspace="templates"
+        />,
+      );
+
+      expect(latestOwnerTaskWorkflow()).toMatchObject({
+        commandsDisabled: true,
+        detail: null,
+        error: {
+          code,
+          httpStatus,
+          message,
+          operation: "recover",
+          reconnectRequired,
+          retryable,
+          traceId: `trace-owner-${httpStatus}`,
+        },
+        issuedSessionReady: true,
+        status: "error",
+      });
+      expect(latestOwnerTaskWorkflow().onReconnect).toBe(reconnect);
+      expect(typeof latestOwnerTaskWorkflow().onRetryDetail).toBe("function");
+      expect(JSON.stringify(latestOwnerBuilderWorkflow())).not.toContain(rawMessageMarker);
+      expect(JSON.stringify(latestOwnerTaskWorkflow())).not.toContain(rawMessageMarker);
+      expect(view.container.innerHTML).not.toContain(rawMessageMarker);
+
+      latestOwnerTaskWorkflow().onReconnect?.();
+      expect(reconnect).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("handles zero, one, and multiple recovery candidates deterministically", async () => {
     const zeroBridge = createOwnerBridge();
@@ -4175,13 +4541,14 @@ describe("Project Console Owner campaign orchestration", () => {
     const getCampaignDetail = vi
       .fn<(campaignId: string, context: OwnerSessionContext) => Promise<OwnerCampaignDetailResult>>()
       .mockResolvedValueOnce(ownerDetailSuccess("campaign-a", ["task-last-good"]))
-      .mockResolvedValueOnce(ownerFailure());
+      .mockResolvedValueOnce(ownerFailure())
+      .mockResolvedValueOnce(ownerDetailSuccess("campaign-a", ["task-last-good"]));
     const bridge = createOwnerBridge({
       getCampaignDetail,
       recoverCampaigns: vi.fn(async () => ownerListSuccess(["campaign-a"])),
     });
 
-    render(<OwnerConsoleHarness bridge={bridge} />);
+    render(<OwnerConsoleHarness bridge={bridge} workspace="templates" />);
 
     await waitFor(() => expect(within(getOwnerWorkflow()).getByText("task-last-good")).toBeInTheDocument());
     fireEvent.click(within(getOwnerWorkflow()).getByRole("button", { name: "Refresh campaign detail" }));
@@ -4189,6 +4556,28 @@ describe("Project Console Owner campaign orchestration", () => {
     await waitFor(() => expect(within(getOwnerWorkflow()).getByText("Degraded")).toBeInTheDocument());
     expect(within(getOwnerWorkflow()).getByText("task-last-good")).toBeInTheDocument();
     expect(within(getOwnerWorkflow()).getByText(/trace-owner-503/)).toBeInTheDocument();
+    expect(latestOwnerTaskWorkflow()).toMatchObject({
+      commandsDisabled: true,
+      detail: expect.objectContaining({
+        tasks: [expect.objectContaining({ id: "task-last-good" })],
+      }),
+      error: {
+        code: "PERSISTENCE_UNAVAILABLE",
+        httpStatus: 503,
+        message: "Campaign data is temporarily unavailable.",
+        operation: "detail",
+        reconnectRequired: false,
+        retryable: true,
+        traceId: "trace-owner-503",
+      },
+      status: "degraded",
+    });
+
+    act(() => latestOwnerTaskWorkflow().onRetryDetail());
+
+    await waitFor(() => expect(getCampaignDetail).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(latestOwnerTaskWorkflow().status).toBe("ready"));
+    expect(bridge.createCampaign).not.toHaveBeenCalled();
   });
 
   it("drops a late session-A recovery response after session B takes authority", async () => {
@@ -4209,6 +4598,7 @@ describe("Project Console Owner campaign orchestration", () => {
         onActiveCampaignIdChange={activeChange}
         ownerCampaignBridge={bridge}
         ownerSession={ownerSessionA}
+        ownerSessionReady
         projectId="awaken"
       />,
     );
@@ -4222,6 +4612,7 @@ describe("Project Console Owner campaign orchestration", () => {
         onActiveCampaignIdChange={activeChange}
         ownerCampaignBridge={bridge}
         ownerSession={ownerSessionB}
+        ownerSessionReady
         projectId="awaken"
       />,
     );
@@ -4253,6 +4644,7 @@ describe("Project Console Owner campaign orchestration", () => {
         onActiveCampaignIdChange={vi.fn()}
         ownerCampaignBridge={bridge}
         ownerSession={ownerSessionA}
+        ownerSessionReady
         projectId="awaken"
       />,
     );
@@ -4269,6 +4661,7 @@ describe("Project Console Owner campaign orchestration", () => {
         onActiveCampaignIdChange={vi.fn()}
         ownerCampaignBridge={bridge}
         ownerSession={ownerSessionA}
+        ownerSessionReady
         projectId="awaken"
       />,
     );
