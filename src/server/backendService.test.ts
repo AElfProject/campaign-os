@@ -152,7 +152,12 @@ describe("backend service readiness report", () => {
       productionReady: false,
       profileId: "local-review",
       protectedRouteCoverage: {
-        locallyEnforcedRouteIds: ["campaigns.create"],
+        locallyEnforcedRouteIds: [
+          "campaigns.create",
+          "campaigns.owner.list",
+          "campaigns.tasks.add",
+          "campaigns.tasks.generate",
+        ],
         protectedRouteCount: expect.any(Number),
         routeGroupCount: expect.any(Number),
       },
@@ -180,10 +185,15 @@ describe("backend service readiness report", () => {
       campaignMutationRouteCount: 1,
       liveSigningExecuted: false,
       liveVerificationExecuted: false,
-      localEnforcedRouteCount: 1,
+      localEnforcedRouteCount: 4,
       localProofVerifierContractReady: true,
       localSessionIssuerContractReady: true,
-      locallyEnforcedRouteIds: ["campaigns.create"],
+      locallyEnforcedRouteIds: [
+        "campaigns.create",
+        "campaigns.owner.list",
+        "campaigns.tasks.add",
+        "campaigns.tasks.generate",
+      ],
       mode: "local_enforced",
       productionProofVerifierReady: false,
       productionProjectOwnershipSourceReady: false,
@@ -1823,7 +1833,14 @@ describe("backend service readiness report", () => {
     });
     expect(report.authEnforcement).toMatchObject({
       agentCredentialSubstitutionDisabled: true,
-      locallyEnforcedRouteIds: ["campaigns.create"],
+      campaignMutationRouteCount: 1,
+      localEnforcedRouteCount: 4,
+      locallyEnforcedRouteIds: [
+        "campaigns.create",
+        "campaigns.owner.list",
+        "campaigns.tasks.add",
+        "campaigns.tasks.generate",
+      ],
       mode: "blocked",
       productionProofVerifierReady: false,
       productionProjectOwnershipSourceReady: false,

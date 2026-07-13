@@ -94,7 +94,13 @@ describe("server runtime readiness metadata", () => {
         authEnforcement: {
           agentCredentialSubstitutionDisabled: true,
           campaignMutationRouteCount: 1,
-          locallyEnforcedRouteIds: ["campaigns.create"],
+          localEnforcedRouteCount: 4,
+          locallyEnforcedRouteIds: [
+            "campaigns.create",
+            "campaigns.owner.list",
+            "campaigns.tasks.add",
+            "campaigns.tasks.generate",
+          ],
           mode: "local_enforced",
           productionProofVerifierReady: false,
           productionProjectOwnershipSourceReady: false,
@@ -682,7 +688,14 @@ describe("server runtime readiness metadata", () => {
           status: "blocked",
         },
         authEnforcement: {
-          locallyEnforcedRouteIds: ["campaigns.create"],
+          campaignMutationRouteCount: 1,
+          localEnforcedRouteCount: 4,
+          locallyEnforcedRouteIds: [
+            "campaigns.create",
+            "campaigns.owner.list",
+            "campaigns.tasks.add",
+            "campaigns.tasks.generate",
+          ],
           mode: "blocked",
           productionProofVerifierReady: false,
           productionProjectOwnershipSourceReady: false,

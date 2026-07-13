@@ -4,6 +4,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { NormalizedWalletSession } from "../domain/types";
 import { createCampaignOsApiRuntime } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
 import { startCampaignOsApiServer } from "./server";
@@ -43,17 +44,80 @@ const expectSanitizedReadinessPayload = (payload: unknown) => {
   }
 };
 
-const projectOwnerAuthHeaders = (
+interface IssuedWalletAuthSession {
+  accountType: NormalizedWalletSession["accountType"];
+  address: string;
+  proofStatus: "verified";
+  sessionId: string;
+  walletSource: NormalizedWalletSession["walletSource"];
+}
+
+const issueWalletSession = async (
+  baseUrl: string,
   ownerAddress: string,
+  traceId: string,
+): Promise<IssuedWalletAuthSession> => {
+  const response = await fetch(`${baseUrl}/api/wallet/session`, {
+    body: JSON.stringify({
+      address: ownerAddress,
+      adapterName: "PortkeyDiscoverWallet",
+      chainId: "AELF",
+      network: "mainnet",
+      nonce: `nonce-${traceId}`,
+      proofEvaluatedAt: "2026-07-07T04:00:00.000Z",
+      proofIssuedAt: "2026-07-07T03:59:00.000Z",
+      signature: "test-wallet-signature",
+    }),
+    headers: {
+      "content-type": "application/json",
+      "x-campaign-os-trace-id": traceId,
+    },
+    method: "POST",
+  });
+  const envelope = await response.json() as {
+    data?: { payload?: NormalizedWalletSession };
+    ok?: boolean;
+  };
+  const session = envelope.data?.payload;
+
+  expect(response.status).toBe(200);
+  expect(response.headers.get("x-campaign-os-trace-id")).toBe(traceId);
+  expect(envelope).toMatchObject({
+    ok: true,
+    data: {
+      payload: {
+        address: ownerAddress,
+        issuer: { valid: true },
+        proof: { status: "verified" },
+      },
+    },
+  });
+
+  if (!session || session.proof?.status !== "verified") {
+    throw new Error("Expected the wallet session route to return a verified issued session.");
+  }
+
+  return {
+    accountType: session.accountType,
+    address: session.address,
+    proofStatus: "verified",
+    sessionId: session.sessionId,
+    walletSource: session.walletSource,
+  };
+};
+
+const walletAuthHeaders = (
+  session: IssuedWalletAuthSession,
+  roleId = "project_owner",
   extraHeaders: Record<string, string> = {},
 ) => ({
-  "x-campaign-os-account-type": "AA",
+  "x-campaign-os-account-type": session.accountType,
   "x-campaign-os-credential-boundary": "ordinary_user_wallet",
-  "x-campaign-os-proof-status": "verified",
-  "x-campaign-os-roles": "project_owner",
-  "x-campaign-os-session-id": `sess-${ownerAddress}`,
-  "x-campaign-os-wallet-address": ownerAddress,
-  "x-campaign-os-wallet-source": "PORTKEY_AA",
+  "x-campaign-os-proof-status": session.proofStatus,
+  "x-campaign-os-roles": roleId,
+  "x-campaign-os-session-id": session.sessionId,
+  "x-campaign-os-wallet-address": session.address,
+  "x-campaign-os-wallet-source": session.walletSource,
   ...extraHeaders,
 });
 
@@ -682,7 +746,14 @@ describe("backend scaffold HTTP smoke", () => {
               }),
               authEnforcement: expect.objectContaining({
                 agentCredentialSubstitutionDisabled: true,
-                locallyEnforcedRouteIds: ["campaigns.create"],
+                campaignMutationRouteCount: 1,
+                localEnforcedRouteCount: 4,
+                locallyEnforcedRouteIds: [
+                  "campaigns.create",
+                  "campaigns.owner.list",
+                  "campaigns.tasks.add",
+                  "campaigns.tasks.generate",
+                ],
                 mode: "local_enforced",
                 productionProofVerifierReady: false,
                 productionProjectOwnershipSourceReady: false,
@@ -800,6 +871,11 @@ describe("backend scaffold HTTP smoke", () => {
     const server = await startCampaignOsApiServer({ logger: false, port: 0 });
 
     try {
+      const ownerSession = await issueWalletSession(
+        server.url,
+        "smoke-owner-001",
+        "trace-campaign-db-http-session",
+      );
       const create = await fetch(`${server.url}/api/campaigns`, {
         body: JSON.stringify({
           duration: "2026-09-01/2026-09-14",
@@ -812,7 +888,7 @@ describe("backend scaffold HTTP smoke", () => {
         }),
         headers: {
           "content-type": "application/json",
-          ...projectOwnerAuthHeaders("smoke-owner-001", {
+          ...walletAuthHeaders(ownerSession, "project_owner", {
             "x-campaign-os-trace-id": "trace-campaign-db-http-create",
           }),
         },
@@ -907,6 +983,16 @@ describe("backend scaffold HTTP smoke", () => {
     const server = await startTestDurableCampaignServer(join(tempDir, "campaign-drafts.json"));
 
     try {
+      const ownerSession = await issueWalletSession(
+        server.url,
+        "durable-smoke-owner",
+        "trace-durable-smoke-owner-session",
+      );
+      const otherOwnerSession = await issueWalletSession(
+        server.url,
+        "durable-smoke-other",
+        "trace-durable-smoke-other-session",
+      );
       const createBody = {
         contractMode: "OFF_CHAIN_MVP",
         defaultLocale: "en-US",
@@ -932,8 +1018,7 @@ describe("backend scaffold HTTP smoke", () => {
         body: JSON.stringify(createBody),
         headers: {
           "content-type": "application/json",
-          ...projectOwnerAuthHeaders("durable-smoke-owner", {
-            "x-campaign-os-roles": "participant",
+          ...walletAuthHeaders(ownerSession, "participant", {
             "x-campaign-os-trace-id": "trace-durable-smoke-auth-participant",
           }),
         },
@@ -943,7 +1028,7 @@ describe("backend scaffold HTTP smoke", () => {
         body: JSON.stringify(createBody),
         headers: {
           "content-type": "application/json",
-          ...projectOwnerAuthHeaders("durable-smoke-other", {
+          ...walletAuthHeaders(otherOwnerSession, "project_owner", {
             "x-campaign-os-trace-id": "trace-durable-smoke-auth-owner-mismatch",
           }),
         },
@@ -1026,7 +1111,7 @@ describe("backend scaffold HTTP smoke", () => {
           }),
           headers: {
             "content-type": "application/json",
-            ...projectOwnerAuthHeaders("durable-smoke-owner", {
+            ...walletAuthHeaders(ownerSession, "project_owner", {
               "x-campaign-os-trace-id": `trace-durable-smoke-create-${index}`,
             }),
           },

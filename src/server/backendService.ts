@@ -1208,8 +1208,13 @@ const createBackendAuthEnforcementReadinessSummary = (
   const locallyEnforcedRoutes = authSession.protectedRoutes.filter(
     (route) => route.enforcementStatus === "local_enforced",
   );
+  const runtimeMutationRouteIds = new Set(
+    apiRuntimeRoutes
+      .filter((route) => route.method !== "GET")
+      .map((route) => route.id),
+  );
   const campaignMutationRoutes = authSession.protectedRoutes.filter(
-    (route) => route.routeGroup === "campaign_write",
+    (route) => route.routeGroup === "campaign_write" && runtimeMutationRouteIds.has(route.routeId),
   );
   const runtimeMetadataRoutes = authSession.protectedRoutes.filter(
     (route) => route.routeGroup === "runtime_metadata",

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { NormalizedWalletSession } from "../domain/types";
 import { startCampaignOsApiServer } from "./server";
 
 const unsafeLogFragments = [
@@ -16,14 +17,79 @@ const unsafeLogFragments = [
   "token",
 ];
 
-const projectOwnerAuthHeaders = (ownerAddress: string) => ({
-  "x-campaign-os-account-type": "AA",
+interface IssuedWalletAuthSession {
+  accountType: NormalizedWalletSession["accountType"];
+  address: string;
+  proofStatus: "verified";
+  sessionId: string;
+  walletSource: NormalizedWalletSession["walletSource"];
+}
+
+const issueWalletSession = async (
+  baseUrl: string,
+  ownerAddress: string,
+  traceId: string,
+): Promise<IssuedWalletAuthSession> => {
+  const response = await fetch(`${baseUrl}/api/wallet/session`, {
+    body: JSON.stringify({
+      address: ownerAddress,
+      adapterName: "PortkeyDiscoverWallet",
+      chainId: "AELF",
+      network: "mainnet",
+      nonce: `nonce-${traceId}`,
+      proofEvaluatedAt: "2026-07-07T04:00:00.000Z",
+      proofIssuedAt: "2026-07-07T03:59:00.000Z",
+      signature: "test-wallet-signature",
+    }),
+    headers: {
+      "content-type": "application/json",
+      "x-campaign-os-trace-id": traceId,
+    },
+    method: "POST",
+  });
+  const envelope = await response.json() as {
+    data?: { payload?: NormalizedWalletSession };
+    ok?: boolean;
+  };
+  const session = envelope.data?.payload;
+
+  expect(response.status).toBe(200);
+  expect(response.headers.get("x-campaign-os-trace-id")).toBe(traceId);
+  expect(envelope).toMatchObject({
+    ok: true,
+    data: {
+      payload: {
+        address: ownerAddress,
+        issuer: { valid: true },
+        proof: { status: "verified" },
+      },
+    },
+  });
+
+  if (!session || session.proof?.status !== "verified") {
+    throw new Error("Expected the wallet session route to return a verified issued session.");
+  }
+
+  return {
+    accountType: session.accountType,
+    address: session.address,
+    proofStatus: "verified",
+    sessionId: session.sessionId,
+    walletSource: session.walletSource,
+  };
+};
+
+const walletAuthHeaders = (
+  session: IssuedWalletAuthSession,
+  roleId = "project_owner",
+) => ({
+  "x-campaign-os-account-type": session.accountType,
   "x-campaign-os-credential-boundary": "ordinary_user_wallet",
-  "x-campaign-os-proof-status": "verified",
-  "x-campaign-os-roles": "project_owner",
-  "x-campaign-os-session-id": `sess-${ownerAddress}`,
-  "x-campaign-os-wallet-address": ownerAddress,
-  "x-campaign-os-wallet-source": "PORTKEY_AA",
+  "x-campaign-os-proof-status": session.proofStatus,
+  "x-campaign-os-roles": roleId,
+  "x-campaign-os-session-id": session.sessionId,
+  "x-campaign-os-wallet-address": session.address,
+  "x-campaign-os-wallet-source": session.walletSource,
 });
 
 describe("Campaign OS API server entrypoint", () => {
@@ -521,6 +587,39 @@ describe("Campaign OS API server entrypoint", () => {
         method: "POST",
       });
       const payload = await response.json();
+      const unissued = await fetch(`${server.url}/api/campaigns`, {
+        body: JSON.stringify({
+          contractMode: "OFF_CHAIN_MVP",
+          defaultLocale: "en-US",
+          duration: "2026-08-01/2026-08-14",
+          endTime: "2026-08-14T23:59:59Z",
+          goal: "Reject unissued project owner auth over HTTP",
+          ownerAddress: "http-auth-owner",
+          projectId: "http-auth-project",
+          rewardDescription: "Repository-backed rewards remain local-review only.",
+          startTime: "2026-08-01T00:00:00Z",
+          supportedLocales: ["en-US"],
+          walletPolicy: "ANY",
+        }),
+        headers: {
+          "content-type": "application/json",
+          "x-campaign-os-trace-id": "trace-auth-http-unissued",
+          ...walletAuthHeaders({
+            accountType: "AA",
+            address: "http-auth-owner",
+            proofStatus: "verified",
+            sessionId: "unissued-http-auth-owner",
+            walletSource: "PORTKEY_AA",
+          }),
+        },
+        method: "POST",
+      });
+      const unissuedPayload = await unissued.json();
+      const issuedOwnerSession = await issueWalletSession(
+        server.url,
+        "http-auth-owner",
+        "trace-auth-http-session",
+      );
       const authorized = await fetch(`${server.url}/api/campaigns`, {
         body: JSON.stringify({
           contractMode: "OFF_CHAIN_MVP",
@@ -538,7 +637,7 @@ describe("Campaign OS API server entrypoint", () => {
         headers: {
           "content-type": "application/json",
           "x-campaign-os-trace-id": "trace-auth-http-authorized",
-          ...projectOwnerAuthHeaders("http-auth-owner"),
+          ...walletAuthHeaders(issuedOwnerSession),
         },
         method: "POST",
       });
@@ -551,6 +650,18 @@ describe("Campaign OS API server entrypoint", () => {
         traceId: "trace-auth-http-missing",
         error: {
           code: "AUTH_SESSION_REQUIRED",
+          details: {
+            routeId: "campaigns.create",
+          },
+        },
+      });
+      expect(unissued.status).toBe(401);
+      expect(unissued.headers.get("x-campaign-os-trace-id")).toBe("trace-auth-http-unissued");
+      expect(unissuedPayload).toMatchObject({
+        ok: false,
+        traceId: "trace-auth-http-unissued",
+        error: {
+          code: "AUTH_SESSION_INVALID",
           details: {
             routeId: "campaigns.create",
           },
