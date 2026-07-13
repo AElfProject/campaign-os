@@ -3718,64 +3718,173 @@ const cycle3UnsafeOwnerDisplayValues: ReadonlyArray<{
   },
 ];
 
-const cycle3UnsafeOwnerDisplayCases = cycle3UnsafeOwnerDisplayValues.flatMap((displayValue) =>
-  unsafeOwnerDisplayFields.map((field) => ({ ...displayValue, field })));
-
-const unsafeOwnerDisplayCases: ReadonlyArray<{
-  field: UnsafeOwnerDisplayField;
+const cycle2OpaqueOwnerDisplayValues: ReadonlyArray<{
   fragments: readonly string[];
   name: string;
   value: string;
 }> = [
   {
-    field: "message",
-    fragments: ["alice:secret", "internal-data", "query-secret", "fragment-secret"],
-    name: "credentialed URL with query and hash",
-    value: "Request https://alice:secret@internal.example/internal-data?token=query-secret#fragment-secret",
+    fragments: ["alice:secret", "internal-data"],
+    name: "credentialed URL",
+    value: "Request failed at https://alice:secret@internal.example/internal-data.",
   },
   {
-    field: "message",
+    fragments: ["query-secret", "fragment-secret"],
+    name: "query and hash secrets",
+    value: "Request failed with ?token=query-secret#access_token=fragment-secret.",
+  },
+  {
     fragments: ["authorization-secret"],
     name: "Authorization bearer value",
     value: "Authorization: Bearer authorization-secret",
   },
   {
-    field: "code",
     fragments: ["token-secret"],
     name: "colon-delimited token",
-    value: "PERSISTENCE_UNAVAILABLE token: token-secret",
+    value: "token: token-secret",
   },
   {
-    field: "code",
     fragments: ["api-secret"],
     name: "API key assignment",
-    value: "PERSISTENCE_UNAVAILABLE api-key=api-secret",
+    value: "api-key=api-secret",
   },
   {
-    field: "code",
     fragments: ["private-secret"],
     name: "private key assignment",
-    value: "PERSISTENCE_UNAVAILABLE private_key: private-secret",
+    value: "private_key: private-secret",
   },
   {
-    field: "traceId",
     fragments: ["begin private key", "mii-synthetic-secret", "end private key"],
     name: "PEM block",
     value: "-----BEGIN PRIVATE KEY-----\nMII-SYNTHETIC-SECRET\n-----END PRIVATE KEY-----",
   },
   {
-    field: "message",
     fragments: ["hidden-workspace", "runtime.log"],
     name: "private filesystem path",
     value: "Read failed at /home/example/hidden-workspace/runtime.log",
   },
   {
-    field: "traceId",
+    fragments: ["hidden-workspace", "runtime.log"],
+    name: "Windows private filesystem path",
+    value: "Read failed at C:\\Users\\example\\hidden-workspace\\runtime.log",
+  },
+  {
+    fragments: ["internal-host", "private-share", "runtime.log"],
+    name: "UNC private filesystem path",
+    value: "Read failed at \\\\internal-host\\private-share\\runtime.log",
+  },
+  {
     fragments: ["runowner", "stack-secret.ts"],
     name: "stack trace",
     value: "TypeError: failed\n    at runOwner (/opt/service/stack-secret.ts:12:4)",
   },
 ];
+
+const cycle4OpaqueOwnerDisplayValues: ReadonlyArray<{
+  fragments: readonly string[];
+  name: string;
+  value: string;
+}> = [
+  {
+    fragments: ["cycle4-json-escaped-token-marker"],
+    name: "JSON-escaped token assignment",
+    value: String.raw`{\"token\":\"cycle4-json-escaped-token-marker\"}`,
+  },
+  {
+    fragments: ["cycle4-unicode-token-marker"],
+    name: "Unicode-escaped token key",
+    value: String.raw`{\"\u0074oken\":\"cycle4-unicode-token-marker\"}`,
+  },
+  {
+    fragments: ["cycle4-url-password", "cycle4-url-private"],
+    name: "JSON-escaped URL credentials",
+    value: String.raw`{\"endpoint\":\"https:\/\/alice:cycle4-url-password@internal.example\/cycle4-url-private\"}`,
+  },
+  {
+    fragments: ["cycle4-query-secret-marker"],
+    name: "escaped query credential key",
+    value: String.raw`{\"endpoint\":\"https:\/\/internal.example\/owner?access\u005ftoken=cycle4-query-secret-marker\"}`,
+  },
+  {
+    fragments: ["cycle4-hash-secret-marker"],
+    name: "escaped hash credential key",
+    value: String.raw`{\"endpoint\":\"https:\/\/internal.example\/owner#refresh\u005ftoken=cycle4-hash-secret-marker\"}`,
+  },
+  {
+    fragments: ["vault-cycle4", "runtime.log"],
+    name: "JSON-escaped POSIX path",
+    value: String.raw`Read failed at \/vault-cycle4\/private\/runtime.log`,
+  },
+  {
+    fragments: ["cycle4-owner", "runtime.log"],
+    name: "backtick Windows path",
+    value: "Read failed at `C:\\Users\\cycle4-owner\\private\\runtime.log`",
+  },
+  {
+    fragments: ["cycle4-owner", "runtime.log"],
+    name: "JSON-escaped Windows path",
+    value: String.raw`{\"path\":\"C:\\Users\\cycle4-owner\\private\\runtime.log\"}`,
+  },
+  {
+    fragments: ["cycle4-host", "private-share", "runtime.log"],
+    name: "JSON-escaped UNC path",
+    value: String.raw`{\"path\":\"\\\\cycle4-host\\private-share\\runtime.log\"}`,
+  },
+  {
+    fragments: ["runowner", "cycle4-v8-stack.ts"],
+    name: "flattened V8 stack frame",
+    value: "TypeError: failed | at runOwner (src/cycle4-v8-stack.ts:12:4)",
+  },
+  {
+    fragments: ["runowner", "cycle4-firefox-line-only.ts"],
+    name: "escaped Firefox line-only frame",
+    value: String.raw`TypeError: failed\nrunOwner@src/cycle4-firefox-line-only.ts:12`,
+  },
+  {
+    fragments: ["cycle4-safari-optional-frame.ts"],
+    name: "Safari frame without function or column",
+    value: "TypeError: failed\n@src/cycle4-safari-optional-frame.ts:12",
+  },
+  {
+    fragments: ["begin private key", "cycle4-pem-partial-marker"],
+    name: "partial PEM delimiter",
+    value: String.raw`-----BEGIN PRIVATE KEY----\nCYCLE4-PEM-PARTIAL-MARKER`,
+  },
+  {
+    fragments: ["cycle4-redaction-residual-marker"],
+    name: "underscore redaction residual",
+    value: "{\"redacted_private_path\":\"cycle4-redaction-residual-marker\"}",
+  },
+  {
+    fragments: ["cycle4-client-secret-marker"],
+    name: "client secret assignment",
+    value: "client_secret=cycle4-client-secret-marker",
+  },
+];
+
+const opaqueOwnerDisplayCases = [
+  ...cycle2OpaqueOwnerDisplayValues.map((displayValue) => ({
+    ...displayValue,
+    probe: "Cycle 2 trust-boundary replay",
+  })),
+  ...cycle3UnsafeOwnerDisplayValues.map((displayValue) => ({
+    ...displayValue,
+    probe: "Cycle 3 boundary replay",
+  })),
+  ...cycle4OpaqueOwnerDisplayValues.map((displayValue) => ({
+    ...displayValue,
+    probe: "Cycle 4 adversarial probe",
+  })),
+  {
+    fragments: ["safe-upstream-message-marker"],
+    name: "safe arbitrary upstream message",
+    probe: "Opaque safe-message probe",
+    value: "A safe upstream message with safe-upstream-message-marker.",
+  },
+].flatMap((displayValue) => unsafeOwnerDisplayFields.map((field) => ({
+  ...displayValue,
+  field,
+})));
 
 const ownerFailureWithUnsafeDisplayField = (
   field: UnsafeOwnerDisplayField,
@@ -3816,67 +3925,73 @@ describe("Project Console Owner campaign orchestration", () => {
     expect(bridge.recoverCampaigns).not.toHaveBeenCalled();
   });
 
-  it.each(unsafeOwnerDisplayCases)(
-    "projects $name from $field without rendering sensitive fragments",
+  it.each(opaqueOwnerDisplayCases)(
+    "$probe treats $name from $field as opaque in the real alert",
     async ({ field, fragments, value }) => {
       const bridge = createOwnerBridge({
         recoverCampaigns: vi.fn(async () => ownerFailureWithUnsafeDisplayField(field, value)),
       });
 
-      render(<OwnerConsoleHarness bridge={bridge} />);
+      const view = render(<OwnerConsoleHarness bridge={bridge} />);
 
       const alert = await within(getOwnerWorkflow()).findByRole("alert");
       const alertText = alert.textContent?.toLowerCase() ?? "";
-      const expectedFallback = field === "message"
-        ? "owner campaign request failed. unsafe diagnostic details were redacted."
-        : field === "code"
-          ? "owner_campaign_error_redacted"
-          : "trace-redacted";
+      const renderedHtml = view.container.innerHTML.toLowerCase();
 
       expect(alertText).not.toBe("");
-      expect(alertText).toContain(expectedFallback);
+      expect(alert).toHaveTextContent(field === "code"
+        ? "Owner campaign request failed. Unsafe diagnostic details were redacted."
+        : "Campaign data is temporarily unavailable.");
+      expect(alert).toHaveTextContent(field === "code"
+        ? "OWNER_CAMPAIGN_ERROR_REDACTED"
+        : "PERSISTENCE_UNAVAILABLE");
+      expect(alert).toHaveTextContent(field === "traceId"
+        ? "trace-redacted"
+        : "trace-owner-503");
       for (const fragment of fragments) {
-        expect(alertText).not.toContain(fragment);
+        expect(renderedHtml).not.toContain(fragment.toLowerCase());
       }
     },
   );
 
-  it.each(cycle3UnsafeOwnerDisplayCases)(
-    "Cycle 3 boundary probe projects $name from $field without rendering source fragments",
-    async ({ field, fragments, value }) => {
-      const bridge = createOwnerBridge({
-        recoverCampaigns: vi.fn(async () => ownerFailureWithUnsafeDisplayField(field, value)),
-      });
-
-      render(<OwnerConsoleHarness bridge={bridge} />);
-
-      const alert = await within(getOwnerWorkflow()).findByRole("alert");
-      const alertText = alert.textContent?.toLowerCase() ?? "";
-      const expectedFallback = field === "message"
-        ? "owner campaign request failed. unsafe diagnostic details were redacted."
-        : field === "code"
-          ? "owner_campaign_error_redacted"
-          : "trace-redacted";
-
-      expect(alertText).not.toBe("");
-      expect(alertText).toContain(expectedFallback);
-      for (const fragment of fragments) {
-        expect(alertText).not.toContain(fragment);
-      }
-    },
-  );
-
-  it("keeps safe Owner diagnostics visible in the real alert", async () => {
+  it("maps a known code to controlled copy without passing through a safe upstream message", async () => {
     const bridge = createOwnerBridge({
-      recoverCampaigns: vi.fn(async () => ownerFailure()),
+      recoverCampaigns: vi.fn(async () => ownerFailure({
+        diagnostic: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          message: "Safe upstream message safe-known-code-marker.",
+        },
+      })),
     });
 
-    render(<OwnerConsoleHarness bridge={bridge} />);
+    const view = render(<OwnerConsoleHarness bridge={bridge} />);
 
     const alert = await within(getOwnerWorkflow()).findByRole("alert");
     expect(alert).toHaveTextContent("Campaign data is temporarily unavailable.");
     expect(alert).toHaveTextContent("PERSISTENCE_UNAVAILABLE");
     expect(alert).toHaveTextContent("trace-owner-503");
+    expect(view.container.innerHTML).not.toContain("safe-known-code-marker");
+  });
+
+  it("uses generic copy for an unknown narrow code while preserving a valid Trace ID", async () => {
+    const bridge = createOwnerBridge({
+      recoverCampaigns: vi.fn(async () => ownerFailure({
+        code: "NOVEL_OWNER_FAILURE",
+        diagnostic: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          message: "Safe upstream message safe-unknown-code-marker.",
+        },
+        traceId: "trace.owner-valid_01",
+      })),
+    });
+
+    const view = render(<OwnerConsoleHarness bridge={bridge} />);
+
+    const alert = await within(getOwnerWorkflow()).findByRole("alert");
+    expect(alert).toHaveTextContent("Owner campaign request failed. Unsafe diagnostic details were redacted.");
+    expect(alert).toHaveTextContent("NOVEL_OWNER_FAILURE");
+    expect(alert).toHaveTextContent("trace.owner-valid_01");
+    expect(view.container.innerHTML).not.toContain("safe-unknown-code-marker");
   });
 
   it("handles zero, one, and multiple recovery candidates deterministically", async () => {

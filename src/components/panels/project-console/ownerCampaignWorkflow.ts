@@ -3,6 +3,7 @@ import {
   type AddOwnerCampaignTaskInput,
   type CreateOwnerCampaignInput,
   type GenerateOwnerTaskPreviewInput,
+  type OwnerCampaignBridgeCode,
   type OwnerCampaignCreateSuccess,
   type OwnerCampaignDetailSuccess,
   type OwnerCampaignFailure,
@@ -161,32 +162,37 @@ const ownerCampaignDisplayLimits: Record<ProjectOwnerCampaignDisplayField, numbe
 
 const ownerCampaignDisplayScanLimit = 4_096;
 
-const unsafeOwnerCampaignDisplayPatterns: readonly RegExp[] = [
-  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----|-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----/i,
-  /\bredacted\s+(?:signature|wallet action|key|seed|recovery phrase|bearer credential|credential|query credential|service url|private path|provider data|stack)\b|\bpassword\s*=\s*redacted\b|\?redacted-query/i,
-  /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/i,
-  /[?#&](?:access[-_]?token|refresh[-_]?token|token|api[-_]?key|apikey|authorization|auth|secret|password|credential|signature|x-amz-signature)\s*=/i,
-  /\bauthorization\s*[:=]\s*\S+/i,
-  /\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+/i,
-  /\b(?:access[-_ ]?token|refresh[-_ ]?token|token|api[-_ ]?key|apikey|private[-_ ]?key|password|secret|credential|authorization|auth|signature|x-amz-signature)\b\s*["']?\s*[:=]/i,
-  /(?:^|[\s("'=])[A-Za-z]:\\[^\r\n"'<>]+/i,
-  /(?:^|[\s("'=])\\\\[^\\\s]+\\[^\r\n"'<>]+/i,
-  /(?:^|\n)\s*at\s+\S+/i,
-  /\bstack\s*trace\b/i,
-];
+const ownerCampaignBridgeDisplayMessages = {
+  BRIDGE_BASE_URL_INVALID: "Owner campaign service is unavailable.",
+  BRIDGE_BASE_URL_MISSING: "Owner campaign service is unavailable.",
+  BRIDGE_INVALID_INPUT: "Owner campaign request was invalid.",
+  BRIDGE_REQUEST_ABORTED: "Owner campaign request was canceled.",
+  BRIDGE_REQUEST_FAILED: "Campaign data is temporarily unavailable.",
+  BRIDGE_REQUEST_TIMEOUT: "Owner campaign request timed out.",
+  BRIDGE_RESPONSE_INVALID: "Owner campaign service returned an invalid response.",
+  BRIDGE_RESPONSE_NON_JSON: "Owner campaign service returned an invalid response.",
+  BRIDGE_RESPONSE_OVERSIZE: "Owner campaign service returned an invalid response.",
+} satisfies Record<OwnerCampaignBridgeCode, string>;
+
+const ownerCampaignServerDisplayMessages = {
+  AUTH_FORBIDDEN: "This wallet is not authorized to manage this campaign.",
+  AUTH_OWNER_MISMATCH: "This wallet is not authorized to manage this campaign.",
+  AUTH_SESSION_INVALID: "Wallet session is no longer valid. Reconnect and try again.",
+  AUTH_SESSION_REQUIRED: "Wallet session is no longer valid. Reconnect and try again.",
+  INVALID_CAMPAIGN: "Owner campaign was not found.",
+  INVALID_REQUEST: "Owner campaign request was invalid.",
+  PERSISTENCE_UNAVAILABLE: "Campaign data is temporarily unavailable.",
+} as const;
+
+const ownerCampaignDisplayMessageByCode = new Map<string, string>([
+  ...Object.entries(ownerCampaignBridgeDisplayMessages),
+  ...Object.entries(ownerCampaignServerDisplayMessages),
+]);
 
 const toBoundedOwnerCampaignDisplayText = (value: unknown): string => {
   try {
     if (typeof value === "string") {
       return value.slice(0, ownerCampaignDisplayScanLimit);
-    }
-
-    if (typeof value === "boolean") {
-      return value ? "true" : "false";
-    }
-
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return String(value).slice(0, ownerCampaignDisplayScanLimit);
     }
 
     return "";
@@ -195,66 +201,12 @@ const toBoundedOwnerCampaignDisplayText = (value: unknown): string => {
   }
 };
 
-const normalizeOwnerCampaignDisplayText = (value: string): string => value
-  .replace(/\r\n?/g, "\n")
-  .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
-  .replace(/[\u200b-\u200d\u2060\ufeff]/gi, "")
-  .trim();
-
-const isOwnerCampaignPathBoundary = (value: string | undefined): boolean =>
-  value === undefined || /\s/.test(value) || `"'([{=,:;@`.includes(value);
-
-const containsPosixAbsoluteFilesystemPath = (value: string): boolean => {
-  for (let index = 0; index < value.length; index += 1) {
-    if (value[index] !== "/") {
-      continue;
-    }
-
-    const next = value[index + 1];
-    if (
-      isOwnerCampaignPathBoundary(value[index - 1])
-      && next !== undefined
-      && !/[\s"'<>()[\]{}]/.test(next)
-    ) {
-      return true;
-    }
+const controlledOwnerCampaignMessageForCode = (value: unknown): string => {
+  if (typeof value !== "string" || value.length > ownerCampaignDisplayLimits.code) {
+    return ownerCampaignDisplayFallbacks.message;
   }
 
-  return false;
-};
-
-const ownerCampaignBrowserStackLocationPattern = /:\d{1,7}:\d{1,7}$/;
-
-const containsBrowserStackFrame = (value: string): boolean => value
-  .split("\n")
-  .some((line) => {
-    const frame = line.trim();
-    const separatorIndex = frame.indexOf("@");
-
-    if (separatorIndex <= 0) {
-      return false;
-    }
-
-    const functionName = frame.slice(0, separatorIndex);
-    const sourceLocation = frame.slice(separatorIndex + 1);
-    const sourcePosition = ownerCampaignBrowserStackLocationPattern.exec(sourceLocation);
-
-    return functionName.trim().length > 0
-      && sourcePosition !== null
-      && sourcePosition.index > 0;
-  });
-
-const containsUnsafeOwnerCampaignDisplayText = (value: string): boolean =>
-  containsPosixAbsoluteFilesystemPath(value)
-  || containsBrowserStackFrame(value)
-  || unsafeOwnerCampaignDisplayPatterns.some((pattern) => pattern.test(value));
-
-const boundOwnerCampaignDisplayText = (value: string, limit: number): string => {
-  if (value.length <= limit) {
-    return value;
-  }
-
-  return `${value.slice(0, limit - 3).trimEnd()}...`;
+  return ownerCampaignDisplayMessageByCode.get(value) ?? ownerCampaignDisplayFallbacks.message;
 };
 
 export const sanitizeProjectOwnerCampaignDisplayText = (
@@ -264,27 +216,25 @@ export const sanitizeProjectOwnerCampaignDisplayText = (
   const fallback = ownerCampaignDisplayFallbacks[field] ?? ownerCampaignDisplayFallbacks.message;
 
   try {
-    const raw = normalizeOwnerCampaignDisplayText(toBoundedOwnerCampaignDisplayText(value));
+    const raw = toBoundedOwnerCampaignDisplayText(value);
 
-    if (!raw || containsUnsafeOwnerCampaignDisplayText(raw)) {
+    if (field === "message") {
       return fallback;
     }
 
-    const sanitized = raw.replace(/\s+/g, " ");
-
-    if (!sanitized || containsUnsafeOwnerCampaignDisplayText(sanitized)) {
+    if (!raw || raw.length > ownerCampaignDisplayLimits[field]) {
       return fallback;
     }
 
     if (field === "code") {
-      return /^[A-Z][A-Z0-9_]{0,63}$/.test(sanitized) ? sanitized : fallback;
+      return /^[A-Z][A-Z0-9_]*$/.test(raw) ? raw : fallback;
     }
 
     if (field === "traceId") {
-      return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(sanitized) ? sanitized : fallback;
+      return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(raw) ? raw : fallback;
     }
 
-    return boundOwnerCampaignDisplayText(sanitized, ownerCampaignDisplayLimits.message);
+    return fallback;
   } catch {
     return fallback;
   }
@@ -471,10 +421,7 @@ export const projectOwnerCampaignErrorFromFailure = (
 ): OwnerCampaignWorkflowError => ({
   code: sanitizeProjectOwnerCampaignDisplayText(failure.code, "code"),
   ...(failure.httpStatus !== undefined ? { httpStatus: failure.httpStatus } : {}),
-  message: sanitizeProjectOwnerCampaignDisplayText(
-    failure.diagnostic.message ?? failure.diagnostic.code ?? failure.code,
-    "message",
-  ),
+  message: controlledOwnerCampaignMessageForCode(failure.code),
   operation,
   reconnectRequired: failure.reconnectRequired,
   retryable: failure.retryable,

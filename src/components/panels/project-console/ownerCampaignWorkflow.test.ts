@@ -204,7 +204,100 @@ const cycle3UnsafeDisplayValues: ReadonlyArray<{
   },
 ];
 
-const cycle3UnsafeDisplayCases = cycle3UnsafeDisplayValues.flatMap((displayValue) =>
+const cycle4OpaqueDisplayValues: ReadonlyArray<{
+  fragments: readonly string[];
+  name: string;
+  value: string;
+}> = [
+  {
+    fragments: ["cycle4-json-escaped-token-marker"],
+    name: "JSON-escaped token assignment",
+    value: String.raw`{\"token\":\"cycle4-json-escaped-token-marker\"}`,
+  },
+  {
+    fragments: ["cycle4-unicode-token-marker"],
+    name: "Unicode-escaped token key",
+    value: String.raw`{\"\u0074oken\":\"cycle4-unicode-token-marker\"}`,
+  },
+  {
+    fragments: ["cycle4-url-password", "cycle4-url-private"],
+    name: "JSON-escaped URL credentials",
+    value: String.raw`{\"endpoint\":\"https:\/\/alice:cycle4-url-password@internal.example\/cycle4-url-private\"}`,
+  },
+  {
+    fragments: ["cycle4-query-secret-marker"],
+    name: "escaped query credential key",
+    value: String.raw`{\"endpoint\":\"https:\/\/internal.example\/owner?access\u005ftoken=cycle4-query-secret-marker\"}`,
+  },
+  {
+    fragments: ["cycle4-hash-secret-marker"],
+    name: "escaped hash credential key",
+    value: String.raw`{\"endpoint\":\"https:\/\/internal.example\/owner#refresh\u005ftoken=cycle4-hash-secret-marker\"}`,
+  },
+  {
+    fragments: ["vault-cycle4", "runtime.log"],
+    name: "JSON-escaped POSIX path",
+    value: String.raw`Read failed at \/vault-cycle4\/private\/runtime.log`,
+  },
+  {
+    fragments: ["cycle4-owner", "runtime.log"],
+    name: "backtick Windows path",
+    value: "Read failed at `C:\\Users\\cycle4-owner\\private\\runtime.log`",
+  },
+  {
+    fragments: ["cycle4-owner", "runtime.log"],
+    name: "JSON-escaped Windows path",
+    value: String.raw`{\"path\":\"C:\\Users\\cycle4-owner\\private\\runtime.log\"}`,
+  },
+  {
+    fragments: ["cycle4-host", "private-share", "runtime.log"],
+    name: "JSON-escaped UNC path",
+    value: String.raw`{\"path\":\"\\\\cycle4-host\\private-share\\runtime.log\"}`,
+  },
+  {
+    fragments: ["runowner", "cycle4-v8-stack.ts"],
+    name: "flattened V8 stack frame",
+    value: "TypeError: failed | at runOwner (src/cycle4-v8-stack.ts:12:4)",
+  },
+  {
+    fragments: ["runowner", "cycle4-firefox-line-only.ts"],
+    name: "escaped Firefox line-only frame",
+    value: String.raw`TypeError: failed\nrunOwner@src/cycle4-firefox-line-only.ts:12`,
+  },
+  {
+    fragments: ["cycle4-safari-optional-frame.ts"],
+    name: "Safari frame without function or column",
+    value: "TypeError: failed\n@src/cycle4-safari-optional-frame.ts:12",
+  },
+  {
+    fragments: ["begin private key", "cycle4-pem-partial-marker"],
+    name: "partial PEM delimiter",
+    value: String.raw`-----BEGIN PRIVATE KEY----\nCYCLE4-PEM-PARTIAL-MARKER`,
+  },
+  {
+    fragments: ["cycle4-redaction-residual-marker"],
+    name: "underscore redaction residual",
+    value: "{\"redacted_private_path\":\"cycle4-redaction-residual-marker\"}",
+  },
+  {
+    fragments: ["cycle4-client-secret-marker"],
+    name: "client secret assignment",
+    value: "client_secret=cycle4-client-secret-marker",
+  },
+];
+
+const opaqueUpstreamDisplayValues = [
+  ...unsafeDisplayMessageCases,
+  ...cycle3UnsafeDisplayValues,
+  ...cycle4OpaqueDisplayValues,
+  {
+    fragments: ["safe-upstream-message-marker"],
+    name: "safe arbitrary upstream message",
+    value: "A safe upstream message with safe-upstream-message-marker.",
+  },
+];
+
+const opaqueUpstreamDisplayCases = opaqueUpstreamDisplayValues.flatMap((displayValue) =>
   ownerDisplayFields.map((field) => ({ ...displayValue, field })));
 
 const failureWithDisplayField = (
@@ -234,11 +327,11 @@ describe("Owner campaign display sanitizer", () => {
     }
   });
 
-  it("preserves safe diagnostics, applies field formats, and bounds display length", () => {
+  it("never passes arbitrary messages through and applies narrow code and Trace ID formats", () => {
     expect(sanitizeProjectOwnerCampaignDisplayText(
       "Campaign data is temporarily unavailable.",
       "message",
-    )).toBe("Campaign data is temporarily unavailable.");
+    )).toBe("Owner campaign request failed. Unsafe diagnostic details were redacted.");
     expect(sanitizeProjectOwnerCampaignDisplayText(
       "PERSISTENCE_UNAVAILABLE",
       "code",
@@ -247,6 +340,22 @@ describe("Owner campaign display sanitizer", () => {
       "trace-owner-503",
       "traceId",
     )).toBe("trace-owner-503");
+    expect(sanitizeProjectOwnerCampaignDisplayText(
+      " PERSISTENCE_UNAVAILABLE ",
+      "code",
+    )).toBe("OWNER_CAMPAIGN_ERROR_REDACTED");
+    expect(sanitizeProjectOwnerCampaignDisplayText(
+      " trace-owner-503 ",
+      "traceId",
+    )).toBe("trace-redacted");
+    expect(sanitizeProjectOwnerCampaignDisplayText("A".repeat(64), "code"))
+      .toBe("A".repeat(64));
+    expect(sanitizeProjectOwnerCampaignDisplayText("A".repeat(65), "code"))
+      .toBe("OWNER_CAMPAIGN_ERROR_REDACTED");
+    expect(sanitizeProjectOwnerCampaignDisplayText(`t${"a".repeat(127)}`, "traceId"))
+      .toBe(`t${"a".repeat(127)}`);
+    expect(sanitizeProjectOwnerCampaignDisplayText(`t${"a".repeat(128)}`, "traceId"))
+      .toBe("trace-redacted");
 
     const bounded = sanitizeProjectOwnerCampaignDisplayText("A".repeat(1_000_000), "message");
     expect(bounded.length).toBeLessThanOrEqual(240);
@@ -326,23 +435,98 @@ describe("Owner campaign display sanitizer", () => {
     }
   });
 
-  it.each(cycle3UnsafeDisplayCases)(
-    "fails closed for Cycle 3 $name in $field",
+  it.each([
+    ["BRIDGE_BASE_URL_INVALID", "Owner campaign service is unavailable."],
+    ["BRIDGE_BASE_URL_MISSING", "Owner campaign service is unavailable."],
+    ["BRIDGE_INVALID_INPUT", "Owner campaign request was invalid."],
+    ["BRIDGE_REQUEST_ABORTED", "Owner campaign request was canceled."],
+    ["BRIDGE_REQUEST_FAILED", "Campaign data is temporarily unavailable."],
+    ["BRIDGE_REQUEST_TIMEOUT", "Owner campaign request timed out."],
+    ["BRIDGE_RESPONSE_INVALID", "Owner campaign service returned an invalid response."],
+    ["BRIDGE_RESPONSE_NON_JSON", "Owner campaign service returned an invalid response."],
+    ["BRIDGE_RESPONSE_OVERSIZE", "Owner campaign service returned an invalid response."],
+    ["AUTH_FORBIDDEN", "This wallet is not authorized to manage this campaign."],
+    ["AUTH_OWNER_MISMATCH", "This wallet is not authorized to manage this campaign."],
+    ["AUTH_SESSION_INVALID", "Wallet session is no longer valid. Reconnect and try again."],
+    ["AUTH_SESSION_REQUIRED", "Wallet session is no longer valid. Reconnect and try again."],
+    ["INVALID_CAMPAIGN", "Owner campaign was not found."],
+    ["INVALID_REQUEST", "Owner campaign request was invalid."],
+    ["PERSISTENCE_UNAVAILABLE", "Campaign data is temporarily unavailable."],
+  ])("maps exact allowlisted code %s to controlled copy", (code, expectedMessage) => {
+    const rawMessageMarker = `raw-message-for-${code.toLowerCase()}`;
+    const projected = projectOwnerCampaignErrorFromFailure(failure(code, {
+      diagnostic: {
+        code,
+        message: `Safe-looking upstream text ${rawMessageMarker}`,
+      },
+      reconnectRequired: true,
+      retryable: false,
+    }), "recover");
+
+    expect(projected).toMatchObject({
+      code,
+      message: expectedMessage,
+      reconnectRequired: true,
+      retryable: false,
+    });
+    expect(JSON.stringify(projected)).not.toContain(rawMessageMarker);
+  });
+
+  it("does not inspect an upstream diagnostic while projecting controlled copy", () => {
+    const hostileDiagnostic = new Proxy({} as OwnerCampaignFailure["diagnostic"], {
+      get: () => {
+        throw new Error("raw diagnostic must not be read");
+      },
+      ownKeys: () => {
+        throw new Error("raw diagnostic must not be enumerated");
+      },
+    });
+
+    expect(() => projectOwnerCampaignErrorFromFailure(failure("PERSISTENCE_UNAVAILABLE", {
+      diagnostic: hostileDiagnostic,
+    }), "recover")).not.toThrow();
+    expect(projectOwnerCampaignErrorFromFailure(failure("PERSISTENCE_UNAVAILABLE", {
+      diagnostic: hostileDiagnostic,
+    }), "recover").message).toBe("Campaign data is temporarily unavailable.");
+  });
+
+  it.each([
+    ["NOVEL_OWNER_FAILURE", "NOVEL_OWNER_FAILURE"],
+    [" PERSISTENCE_UNAVAILABLE ", "OWNER_CAMPAIGN_ERROR_REDACTED"],
+    ["invalid-owner-code", "OWNER_CAMPAIGN_ERROR_REDACTED"],
+  ])("uses generic copy for unknown or malformed code %j", (code, expectedCode) => {
+    const projected = projectOwnerCampaignErrorFromFailure(failure(code, {
+      diagnostic: {
+        code: "PERSISTENCE_UNAVAILABLE",
+        message: "Safe-looking upstream message safe-unknown-code-marker.",
+      },
+    }), "recover");
+
+    expect(projected).toMatchObject({
+      code: expectedCode,
+      message: "Owner campaign request failed. Unsafe diagnostic details were redacted.",
+    });
+    expect(JSON.stringify(projected)).not.toContain("safe-unknown-code-marker");
+  });
+
+  it.each(opaqueUpstreamDisplayCases)(
+    "treats $name as opaque when supplied through $field",
     ({ field, fragments, value }) => {
       const projected = projectOwnerCampaignErrorFromFailure(
         failureWithDisplayField(field, value),
         "recover",
       );
-      const expectedFallback: Record<OwnerDisplayField, string> = {
-        code: "OWNER_CAMPAIGN_ERROR_REDACTED",
-        message: "Owner campaign request failed. Unsafe diagnostic details were redacted.",
-        traceId: "trace-redacted",
-      };
       const serialized = JSON.stringify(projected).toLowerCase();
 
-      expect(projected[field]).toBe(expectedFallback[field]);
+      expect(projected).toMatchObject({
+        code: field === "code" ? "OWNER_CAMPAIGN_ERROR_REDACTED" : "PERSISTENCE_UNAVAILABLE",
+        message: field === "code"
+          ? "Owner campaign request failed. Unsafe diagnostic details were redacted."
+          : "Campaign data is temporarily unavailable.",
+        traceId: field === "traceId" ? "trace-redacted" : "trace-owner-failure",
+      });
       for (const fragment of fragments) {
-        expect(serialized).not.toContain(fragment);
+        expect(serialized).not.toContain(fragment.toLowerCase());
       }
     },
   );
