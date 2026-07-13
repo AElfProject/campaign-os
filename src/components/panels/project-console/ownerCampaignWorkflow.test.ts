@@ -16,6 +16,8 @@ import {
   ownerCampaignCommandsDisabled,
   ownerCampaignRequestTokenMatches,
   ownerCampaignWorkflowReducer,
+  projectOwnerCampaignErrorFromFailure,
+  sanitizeProjectOwnerCampaignDisplayText,
   type OwnerCampaignRequestOperation,
   type OwnerCampaignWorkflowState,
 } from "./ownerCampaignWorkflow";
@@ -76,6 +78,141 @@ const begin = (
 
   return { state: next, token };
 };
+
+const unsafeDisplayMessageCases = [
+  {
+    fragments: ["alice:secret", "internal-data"],
+    name: "credentialed URL",
+    value: "Request failed at https://alice:secret@internal.example/internal-data.",
+  },
+  {
+    fragments: ["query-secret", "fragment-secret"],
+    name: "query and hash secrets",
+    value: "Request failed with ?token=query-secret#access_token=fragment-secret.",
+  },
+  {
+    fragments: ["authorization-secret"],
+    name: "Authorization bearer value",
+    value: "Authorization: Bearer authorization-secret",
+  },
+  {
+    fragments: ["token-secret"],
+    name: "colon-delimited token",
+    value: "token: token-secret",
+  },
+  {
+    fragments: ["api-secret"],
+    name: "API key assignment",
+    value: "api-key=api-secret",
+  },
+  {
+    fragments: ["private-secret"],
+    name: "private key assignment",
+    value: "private_key: private-secret",
+  },
+  {
+    fragments: ["begin private key", "mii-synthetic-secret", "end private key"],
+    name: "PEM block",
+    value: "-----BEGIN PRIVATE KEY-----\nMII-SYNTHETIC-SECRET\n-----END PRIVATE KEY-----",
+  },
+  {
+    fragments: ["hidden-workspace", "runtime.log"],
+    name: "private filesystem path",
+    value: "Read failed at /home/example/hidden-workspace/runtime.log",
+  },
+  {
+    fragments: ["hidden-workspace", "runtime.log"],
+    name: "Windows private filesystem path",
+    value: "Read failed at C:\\Users\\example\\hidden-workspace\\runtime.log",
+  },
+  {
+    fragments: ["internal-host", "private-share", "runtime.log"],
+    name: "UNC private filesystem path",
+    value: "Read failed at \\\\internal-host\\private-share\\runtime.log",
+  },
+  {
+    fragments: ["runowner", "stack-secret.ts"],
+    name: "stack trace",
+    value: "TypeError: failed\n    at runOwner (/opt/service/stack-secret.ts:12:4)",
+  },
+] as const;
+
+describe("Owner campaign display sanitizer", () => {
+  it.each(unsafeDisplayMessageCases)("redacts $name without leaking adjacent material", ({ fragments, value }) => {
+    const sanitized = sanitizeProjectOwnerCampaignDisplayText(value, "message");
+    const normalized = sanitized.toLowerCase();
+
+    expect(sanitized).toBe("Owner campaign request failed. Unsafe diagnostic details were redacted.");
+    for (const fragment of fragments) {
+      expect(normalized).not.toContain(fragment);
+    }
+  });
+
+  it("preserves safe diagnostics, applies field formats, and bounds display length", () => {
+    expect(sanitizeProjectOwnerCampaignDisplayText(
+      "Campaign data is temporarily unavailable.",
+      "message",
+    )).toBe("Campaign data is temporarily unavailable.");
+    expect(sanitizeProjectOwnerCampaignDisplayText(
+      "PERSISTENCE_UNAVAILABLE",
+      "code",
+    )).toBe("PERSISTENCE_UNAVAILABLE");
+    expect(sanitizeProjectOwnerCampaignDisplayText(
+      "trace-owner-503",
+      "traceId",
+    )).toBe("trace-owner-503");
+
+    const bounded = sanitizeProjectOwnerCampaignDisplayText("A".repeat(1_000), "message");
+    expect(bounded.length).toBeLessThanOrEqual(240);
+    expect(bounded).not.toBe("");
+  });
+
+  it("is total and returns stable non-empty fallbacks", () => {
+    const hostileValue = {
+      toJSON: () => {
+        throw new Error("serialization failed");
+      },
+      toString: () => {
+        throw new Error("string conversion failed");
+      },
+    };
+
+    expect(() => sanitizeProjectOwnerCampaignDisplayText(hostileValue, "message")).not.toThrow();
+    expect(sanitizeProjectOwnerCampaignDisplayText(undefined, "message")).not.toBe("");
+    expect(sanitizeProjectOwnerCampaignDisplayText(undefined, "code"))
+      .toBe("OWNER_CAMPAIGN_ERROR_REDACTED");
+    expect(sanitizeProjectOwnerCampaignDisplayText(undefined, "traceId")).toBe("trace-redacted");
+  });
+
+  it("projects message, code, and trace ID through field-specific guards", () => {
+    const projected = projectOwnerCampaignErrorFromFailure(failure(
+      "PERSISTENCE_UNAVAILABLE token: token-secret",
+      {
+        diagnostic: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          message: "request https://alice:secret@internal.example/internal-data?token=query-secret",
+        },
+        traceId: "-----BEGIN PRIVATE KEY-----\nMII-SYNTHETIC-SECRET\n-----END PRIVATE KEY-----",
+      },
+    ), "recover");
+    const serialized = JSON.stringify(projected).toLowerCase();
+
+    expect(projected).toMatchObject({
+      code: "OWNER_CAMPAIGN_ERROR_REDACTED",
+      message: "Owner campaign request failed. Unsafe diagnostic details were redacted.",
+      traceId: "trace-redacted",
+    });
+    for (const fragment of [
+      "alice:secret",
+      "internal-data",
+      "query-secret",
+      "token-secret",
+      "mii-synthetic-secret",
+    ]) {
+      expect(serialized).not.toContain(fragment);
+    }
+  });
+});
 
 describe("owner campaign workflow", () => {
   it("models no-session and session-ready contexts without enabling commands", () => {

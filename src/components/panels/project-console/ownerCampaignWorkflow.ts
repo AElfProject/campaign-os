@@ -145,6 +145,97 @@ export interface OwnerCampaignTaskIntentContract {
   tasks: OwnerCampaignDetailSuccess["tasks"];
 }
 
+export type ProjectOwnerCampaignDisplayField = "code" | "message" | "traceId";
+
+const ownerCampaignDisplayFallbacks: Record<ProjectOwnerCampaignDisplayField, string> = {
+  code: "OWNER_CAMPAIGN_ERROR_REDACTED",
+  message: "Owner campaign request failed. Unsafe diagnostic details were redacted.",
+  traceId: "trace-redacted",
+};
+
+const ownerCampaignDisplayLimits: Record<ProjectOwnerCampaignDisplayField, number> = {
+  code: 64,
+  message: 240,
+  traceId: 128,
+};
+
+const unsafeOwnerCampaignDisplayPatterns: readonly RegExp[] = [
+  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----|-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----/i,
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/i,
+  /[?#&](?:access[-_]?token|refresh[-_]?token|token|api[-_]?key|apikey|authorization|auth|secret|password|credential|signature|x-amz-signature)\s*=/i,
+  /\bauthorization\s*[:=]\s*\S+/i,
+  /\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+/i,
+  /\b(?:access[-_]?token|refresh[-_]?token|token|api[-_\s]?key|apikey|private[-_\s]?key|password|secret|credential)\s*[:=]\s*[^\s,;]+/i,
+  /(?:^|[\s("'=])(?:file:\/\/)?(?:\/(?:Users|home|root|private|tmp|var|opt|srv|etc|mnt|workspace|app)\/|\/usr\/src\/)/i,
+  /(?:^|[\s("'=])[A-Za-z]:\\[^\r\n"'<>]+/i,
+  /(?:^|[\s("'=])\\\\[^\\\s]+\\[^\r\n"'<>]+/i,
+  /(?:^|\n)\s*at\s+\S+/i,
+  /\bstack\s*trace\b/i,
+];
+
+const ownerCampaignDisplayText = (value: unknown): string => {
+  try {
+    return typeof value === "string"
+      ? value
+      : sanitizeProjectOwnerCampaignApiText(value);
+  } catch {
+    return "";
+  }
+};
+
+const normalizeOwnerCampaignDisplayText = (value: string): string => value
+  .replace(/\r\n?/g, "\n")
+  .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+  .replace(/[\u200b-\u200d\u2060\ufeff]/gi, "")
+  .trim();
+
+const containsUnsafeOwnerCampaignDisplayText = (value: string): boolean =>
+  unsafeOwnerCampaignDisplayPatterns.some((pattern) => pattern.test(value));
+
+const boundOwnerCampaignDisplayText = (value: string, limit: number): string => {
+  if (value.length <= limit) {
+    return value;
+  }
+
+  return `${value.slice(0, limit - 3).trimEnd()}...`;
+};
+
+export const sanitizeProjectOwnerCampaignDisplayText = (
+  value: unknown,
+  field: ProjectOwnerCampaignDisplayField = "message",
+): string => {
+  const fallback = ownerCampaignDisplayFallbacks[field] ?? ownerCampaignDisplayFallbacks.message;
+
+  try {
+    const raw = normalizeOwnerCampaignDisplayText(ownerCampaignDisplayText(value));
+
+    if (!raw || containsUnsafeOwnerCampaignDisplayText(raw)) {
+      return fallback;
+    }
+
+    // Keep the approved bridge redactions, then enforce the narrower display boundary.
+    const sanitized = normalizeOwnerCampaignDisplayText(
+      sanitizeProjectOwnerCampaignApiText(raw),
+    ).replace(/\s+/g, " ");
+
+    if (!sanitized || containsUnsafeOwnerCampaignDisplayText(sanitized)) {
+      return fallback;
+    }
+
+    if (field === "code") {
+      return /^[A-Z][A-Z0-9_]{0,63}$/.test(sanitized) ? sanitized : fallback;
+    }
+
+    if (field === "traceId") {
+      return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(sanitized) ? sanitized : fallback;
+    }
+
+    return boundOwnerCampaignDisplayText(sanitized, ownerCampaignDisplayLimits.message);
+  } catch {
+    return fallback;
+  }
+};
+
 const nextCounter = (value: number) =>
   value < Number.MAX_SAFE_INTEGER ? value + 1 : Number.MAX_SAFE_INTEGER;
 
@@ -324,15 +415,16 @@ export const projectOwnerCampaignErrorFromFailure = (
   failure: OwnerCampaignFailure,
   operation: OwnerCampaignRequestOperation,
 ): OwnerCampaignWorkflowError => ({
-  code: sanitizeProjectOwnerCampaignApiText(failure.code),
+  code: sanitizeProjectOwnerCampaignDisplayText(failure.code, "code"),
   ...(failure.httpStatus !== undefined ? { httpStatus: failure.httpStatus } : {}),
-  message: sanitizeProjectOwnerCampaignApiText(
+  message: sanitizeProjectOwnerCampaignDisplayText(
     failure.diagnostic.message ?? failure.diagnostic.code ?? failure.code,
+    "message",
   ),
   operation,
   reconnectRequired: failure.reconnectRequired,
   retryable: failure.retryable,
-  traceId: sanitizeProjectOwnerCampaignApiText(failure.traceId),
+  traceId: sanitizeProjectOwnerCampaignDisplayText(failure.traceId, "traceId"),
 });
 
 export const createUnexpectedOwnerCampaignFailure = (

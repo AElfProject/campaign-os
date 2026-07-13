@@ -3650,6 +3650,80 @@ const OwnerConsoleHarness = ({
 const getOwnerWorkflow = () =>
   screen.getByRole("region", { name: "Owner campaign workflow" });
 
+type UnsafeOwnerDisplayField = "code" | "message" | "traceId";
+
+const unsafeOwnerDisplayCases: ReadonlyArray<{
+  field: UnsafeOwnerDisplayField;
+  fragments: readonly string[];
+  name: string;
+  value: string;
+}> = [
+  {
+    field: "message",
+    fragments: ["alice:secret", "internal-data", "query-secret", "fragment-secret"],
+    name: "credentialed URL with query and hash",
+    value: "Request https://alice:secret@internal.example/internal-data?token=query-secret#fragment-secret",
+  },
+  {
+    field: "message",
+    fragments: ["authorization-secret"],
+    name: "Authorization bearer value",
+    value: "Authorization: Bearer authorization-secret",
+  },
+  {
+    field: "code",
+    fragments: ["token-secret"],
+    name: "colon-delimited token",
+    value: "PERSISTENCE_UNAVAILABLE token: token-secret",
+  },
+  {
+    field: "code",
+    fragments: ["api-secret"],
+    name: "API key assignment",
+    value: "PERSISTENCE_UNAVAILABLE api-key=api-secret",
+  },
+  {
+    field: "code",
+    fragments: ["private-secret"],
+    name: "private key assignment",
+    value: "PERSISTENCE_UNAVAILABLE private_key: private-secret",
+  },
+  {
+    field: "traceId",
+    fragments: ["begin private key", "mii-synthetic-secret", "end private key"],
+    name: "PEM block",
+    value: "-----BEGIN PRIVATE KEY-----\nMII-SYNTHETIC-SECRET\n-----END PRIVATE KEY-----",
+  },
+  {
+    field: "message",
+    fragments: ["hidden-workspace", "runtime.log"],
+    name: "private filesystem path",
+    value: "Read failed at /home/example/hidden-workspace/runtime.log",
+  },
+  {
+    field: "traceId",
+    fragments: ["runowner", "stack-secret.ts"],
+    name: "stack trace",
+    value: "TypeError: failed\n    at runOwner (/opt/service/stack-secret.ts:12:4)",
+  },
+];
+
+const ownerFailureWithUnsafeDisplayField = (
+  field: UnsafeOwnerDisplayField,
+  value: string,
+): OwnerCampaignFailure => {
+  if (field === "message") {
+    return ownerFailure({
+      diagnostic: {
+        code: "PERSISTENCE_UNAVAILABLE",
+        message: value,
+      },
+    });
+  }
+
+  return ownerFailure({ [field]: value });
+};
+
 describe("Project Console Owner campaign orchestration", () => {
   const mockedRepositoryWorkflow = vi.mocked(loadRepositoryCampaignWorkflowBridgeState);
 
@@ -3673,26 +3747,30 @@ describe("Project Console Owner campaign orchestration", () => {
     expect(bridge.recoverCampaigns).not.toHaveBeenCalled();
   });
 
-  it("projects unsafe Owner failures without rendering private diagnostic values", async () => {
-    const bridge = createOwnerBridge({
-      recoverCampaigns: vi.fn(async () => ownerFailure({
-        diagnostic: {
-          code: "PERSISTENCE_UNAVAILABLE",
-          message: "Request failed with private key at /Users/example/workspace/internal-data/raw?token=secret.",
-        },
-      })),
-    });
+  it.each(unsafeOwnerDisplayCases)(
+    "projects $name from $field without rendering sensitive fragments",
+    async ({ field, fragments, value }) => {
+      const bridge = createOwnerBridge({
+        recoverCampaigns: vi.fn(async () => ownerFailureWithUnsafeDisplayField(field, value)),
+      });
 
-    render(<OwnerConsoleHarness bridge={bridge} />);
+      render(<OwnerConsoleHarness bridge={bridge} />);
 
-    const alert = await within(getOwnerWorkflow()).findByRole("alert");
-    const alertText = alert.textContent?.toLowerCase() ?? "";
+      const alert = await within(getOwnerWorkflow()).findByRole("alert");
+      const alertText = alert.textContent?.toLowerCase() ?? "";
+      const expectedFallback = field === "message"
+        ? "owner campaign request failed. unsafe diagnostic details were redacted."
+        : field === "code"
+          ? "owner_campaign_error_redacted"
+          : "trace-redacted";
 
-    expect(alertText).toContain("redacted private path");
-    expect(alertText).not.toContain("internal-data");
-    expect(alertText).not.toContain("token=secret");
-    expect(alertText).not.toContain("private key");
-  });
+      expect(alertText).not.toBe("");
+      expect(alertText).toContain(expectedFallback);
+      for (const fragment of fragments) {
+        expect(alertText).not.toContain(fragment);
+      }
+    },
+  );
 
   it("handles zero, one, and multiple recovery candidates deterministically", async () => {
     const zeroBridge = createOwnerBridge();
