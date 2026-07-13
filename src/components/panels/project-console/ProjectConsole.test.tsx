@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { act, StrictMode, useState } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -57,8 +58,27 @@ import {
   loadProductionDatabaseHandoffReadinessApiState,
   type ProductionDatabaseHandoffReadinessApiState,
 } from "../../../api/productionDatabaseHandoffReadinessApiBridge";
+import type {
+  CreateOwnerCampaignInput,
+  OwnerCampaignDetailResult,
+  OwnerCampaignFailure,
+  OwnerCampaignId,
+  OwnerCampaignListResult,
+  OwnerCampaignProjection,
+  OwnerCampaignResult,
+  OwnerSessionContext,
+  OwnerTaskId,
+  OwnerTaskPreviewResult,
+  OwnerTaskResult,
+  ProjectOwnerCampaignApiBridge,
+} from "../../../api/projectOwnerCampaignApiBridge";
 import { App } from "../../../app/App";
-import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
+import {
+  campaignDetail,
+  EXPORT_CSV_COLUMNS,
+  walletSessions,
+  type NormalizedWalletSession,
+} from "../../../domain";
 import { projectConsoleCopy } from "./copy";
 import { ProjectConsole } from "./ProjectConsole";
 
@@ -857,7 +877,7 @@ const repositoryCampaignWorkflowErrorState = (): RepositoryCampaignWorkflowBridg
         code: "API_BASE_URL_INVALID",
         message: {
           "en-US":
-            "Request failed with private key, bearer token, signed URL, object key, provider payload, stack trace, and /Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/raw?token=secret.",
+            "Request failed with private key, bearer token, signed URL, object key, provider payload, stack trace, and /Users/example/workspace/internal-data/raw?token=secret.",
           "zh-CN": "Request failed with private key.",
           "zh-TW": "Request failed with private key.",
         },
@@ -2617,8 +2637,6 @@ describe("Project Console shell", () => {
     expect(within(persistence).getByText("redacted local path")).toBeInTheDocument();
     expect(within(persistence).getByText("wallet_session / redacted provider data / redacted signature"))
       .toBeInTheDocument();
-    expect(screen.queryByText(/campaign-os-kitty/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/docs\/current/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/raw-signature/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/token=sample/i)).not.toBeInTheDocument();
   });
@@ -2992,7 +3010,7 @@ describe("Project Console shell", () => {
       "object key",
       "provider payload",
       "stack trace",
-      "campaign-os-kitty",
+      "internal-data",
       "token=secret",
     ]) {
       expect(workflowText).not.toContain(unsafe);
@@ -3184,7 +3202,7 @@ describe("Project Console shell", () => {
       diagnostics: [{
         code: "API_REQUEST_FAILED",
         message: {
-          "en-US": "Request failed with private key, seed phrase, bearer token, signed URL, object key, storage key, raw signature, provider payload, stack trace, and /Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/raw?token=secret.",
+          "en-US": "Request failed with private key, seed phrase, bearer token, signed URL, object key, storage key, raw signature, provider payload, and stack trace.",
           "zh-CN": "Request failed with private key.",
           "zh-TW": "Request failed with private key.",
         },
@@ -3229,7 +3247,6 @@ describe("Project Console shell", () => {
       "raw signature",
       "provider payload",
       "stack trace",
-      "campaign-os-kitty",
       "token=secret",
     ]) {
       expect(diagnosticsText).not.toContain(unsafe);
@@ -3498,5 +3515,489 @@ describe("Project Console shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
     expect(screen.getByRole("heading", { name: "Review queue" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Template Governance" })).toBeInTheDocument();
+  });
+});
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+}
+
+const deferred = <T,>(): Deferred<T> => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return { promise, reject, resolve };
+};
+
+const ownerSessionA = walletSessions[0];
+const ownerSessionB: NormalizedWalletSession = {
+  ...ownerSessionA,
+  address: "ELF_OWNER_B",
+  displayAddress: "ELF...ERB",
+  id: "normalized-owner-session-b",
+  sessionId: "owner-session-b",
+};
+
+const ownerCampaign = (id: string): OwnerCampaignProjection => ({
+  id: id as OwnerCampaignId,
+  ownerAddress: ownerSessionA.address,
+  projectId: "awaken",
+  status: "draft",
+});
+
+const ownerListSuccess = (ids: readonly string[]): OwnerCampaignListResult => ({
+  campaigns: ids.map(ownerCampaign),
+  httpStatus: 200,
+  ok: true,
+  traceId: "trace-recover",
+});
+
+const ownerDetailSuccess = (
+  campaignId: string,
+  taskIds: readonly string[] = [],
+): OwnerCampaignDetailResult => ({
+  campaign: ownerCampaign(campaignId),
+  httpStatus: 200,
+  ok: true,
+  tasks: taskIds.map((taskId) => ({
+    campaignId: campaignId as OwnerCampaignId,
+    id: taskId as OwnerTaskId,
+    points: 40,
+    required: true,
+    templateCode: "connect_wallet",
+    verificationType: "WALLET",
+    walletCompatibility: "ANY",
+  })),
+  traceId: `trace-detail-${campaignId}`,
+});
+
+const ownerFailure = (
+  overrides: Partial<OwnerCampaignFailure> = {},
+): OwnerCampaignFailure => ({
+  code: "PERSISTENCE_UNAVAILABLE",
+  diagnostic: {
+    code: "PERSISTENCE_UNAVAILABLE",
+    message: "Campaign data is temporarily unavailable.",
+  },
+  httpStatus: 503,
+  ok: false,
+  reconnectRequired: false,
+  retryable: true,
+  traceId: "trace-owner-503",
+  ...overrides,
+});
+
+const ownerCreateSuccess = (campaignId: string): OwnerCampaignResult => ({
+  campaign: ownerCampaign(campaignId),
+  campaignId: campaignId as OwnerCampaignId,
+  httpStatus: 201,
+  ok: true,
+  traceId: "trace-create",
+});
+
+const createOwnerBridge = (
+  overrides: Partial<ProjectOwnerCampaignApiBridge> = {},
+): ProjectOwnerCampaignApiBridge => ({
+  addTask: vi.fn(async (): Promise<OwnerTaskResult> => ownerFailure()),
+  createCampaign: vi.fn(async (): Promise<OwnerCampaignResult> => ownerCreateSuccess("campaign-created")),
+  generateTaskPreview: vi.fn(async (): Promise<OwnerTaskPreviewResult> => ownerFailure()),
+  getCampaignDetail: vi.fn(async (campaignId): Promise<OwnerCampaignDetailResult> =>
+    ownerDetailSuccess(campaignId)),
+  recoverCampaigns: vi.fn(async (): Promise<OwnerCampaignListResult> => ownerListSuccess([])),
+  ...overrides,
+});
+
+interface OwnerConsoleHarnessProps {
+  bridge: ProjectOwnerCampaignApiBridge;
+  initialCampaignId?: string | null;
+  onActiveCampaignIdChange?: (campaignId: string | null) => void;
+  onReconnect?: () => void;
+  session?: NormalizedWalletSession | null;
+}
+
+const OwnerConsoleHarness = ({
+  bridge,
+  initialCampaignId = null,
+  onActiveCampaignIdChange,
+  onReconnect,
+  session = ownerSessionA,
+}: OwnerConsoleHarnessProps) => {
+  const [activeCampaignId, setActiveCampaignId] = useState<string | null>(initialCampaignId);
+
+  return (
+    <ProjectConsole
+      activeCampaignId={activeCampaignId}
+      activeWorkspace="campaigns"
+      locale="en-US"
+      onActiveCampaignIdChange={(campaignId) => {
+        setActiveCampaignId(campaignId);
+        onActiveCampaignIdChange?.(campaignId);
+      }}
+      onOwnerReconnect={onReconnect}
+      ownerCampaignBridge={bridge}
+      ownerSession={session}
+      projectId="awaken"
+    />
+  );
+};
+
+const getOwnerWorkflow = () =>
+  screen.getByRole("region", { name: "Owner campaign workflow" });
+
+describe("Project Console Owner campaign orchestration", () => {
+  const mockedRepositoryWorkflow = vi.mocked(loadRepositoryCampaignWorkflowBridgeState);
+
+  beforeEach(() => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
+    mockedRepositoryWorkflow.mockClear();
+  });
+
+  it("keeps Owner mutation commands disabled without a normalized session", () => {
+    const bridge = createOwnerBridge();
+    const reconnect = vi.fn();
+
+    render(
+      <OwnerConsoleHarness bridge={bridge} onReconnect={reconnect} session={null} />,
+    );
+
+    const workflow = getOwnerWorkflow();
+    expect(within(workflow).getByRole("button", { name: "Create campaign" })).toBeDisabled();
+    expect(within(workflow).getByRole("button", { name: "Refresh campaign detail" })).toBeDisabled();
+    expect(within(workflow).getByRole("button", { name: "Reconnect wallet" })).toBeEnabled();
+    expect(bridge.recoverCampaigns).not.toHaveBeenCalled();
+  });
+
+  it("handles zero, one, and multiple recovery candidates deterministically", async () => {
+    const zeroBridge = createOwnerBridge();
+    const zeroView = render(<OwnerConsoleHarness bridge={zeroBridge} />);
+
+    await waitFor(() => expect(zeroBridge.recoverCampaigns).toHaveBeenCalledTimes(1));
+    expect(within(getOwnerWorkflow()).getByRole("button", { name: "Create campaign" })).toBeEnabled();
+    zeroView.unmount();
+
+    const oneBridge = createOwnerBridge({
+      recoverCampaigns: vi.fn(async () => ownerListSuccess(["campaign-one"])),
+    });
+    const oneView = render(<OwnerConsoleHarness bridge={oneBridge} />);
+
+    await waitFor(() => expect(oneBridge.getCampaignDetail).toHaveBeenCalledWith(
+      "campaign-one",
+      expect.objectContaining({ session: ownerSessionA }),
+    ));
+    expect(within(getOwnerWorkflow()).getByText("campaign-one")).toBeInTheDocument();
+    oneView.unmount();
+
+    const multipleBridge = createOwnerBridge({
+      recoverCampaigns: vi.fn(async () => ownerListSuccess(["campaign-a", "campaign-b"])),
+    });
+    render(<OwnerConsoleHarness bridge={multipleBridge} />);
+
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByRole(
+      "button",
+      { name: "Select campaign campaign-b" },
+    )).toBeEnabled());
+    expect(multipleBridge.getCampaignDetail).not.toHaveBeenCalled();
+    expect(within(getOwnerWorkflow()).getByRole("button", { name: "Create campaign" })).toBeDisabled();
+
+    fireEvent.click(within(getOwnerWorkflow()).getByRole(
+      "button",
+      { name: "Select campaign campaign-b" },
+    ));
+
+    await waitFor(() => expect(multipleBridge.getCampaignDetail).toHaveBeenCalledWith(
+      "campaign-b",
+      expect.objectContaining({ session: ownerSessionA }),
+    ));
+    expect(multipleBridge.getCampaignDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts one effective recovery under React StrictMode", async () => {
+    const recoverCampaigns = vi.fn(async (
+      _projectId: string,
+      context: OwnerSessionContext,
+    ): Promise<OwnerCampaignListResult> => {
+      await Promise.resolve();
+
+      return context.signal?.aborted
+        ? ownerFailure({
+            bridgeCode: "BRIDGE_REQUEST_ABORTED",
+            code: "BRIDGE_REQUEST_ABORTED",
+            httpStatus: undefined,
+            retryable: false,
+          })
+        : ownerListSuccess([]);
+    });
+    const bridge = createOwnerBridge({ recoverCampaigns });
+
+    render(
+      <StrictMode>
+        <OwnerConsoleHarness bridge={bridge} />
+      </StrictMode>,
+    );
+
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByRole(
+      "button",
+      { name: "Create campaign" },
+    )).toBeEnabled());
+    expect(recoverCampaigns).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores a canonical create ID before detail and renders only detail tasks", async () => {
+    const order: string[] = [];
+    const activeIds: Array<string | null> = [];
+    const bridge = createOwnerBridge({
+      createCampaign: vi.fn(async (_input: CreateOwnerCampaignInput, context: OwnerSessionContext) => {
+        expect(context.session).toBe(ownerSessionA);
+        order.push("create");
+        return ownerCreateSuccess("campaign-created");
+      }),
+      getCampaignDetail: vi.fn(async (campaignId) => {
+        order.push(`detail:${campaignId}`);
+        return ownerDetailSuccess(campaignId, ["task-from-detail"]);
+      }),
+    });
+
+    render(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        onActiveCampaignIdChange={(campaignId) => {
+          activeIds.push(campaignId);
+          order.push(`active:${campaignId}`);
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByRole(
+      "button",
+      { name: "Create campaign" },
+    )).toBeEnabled());
+    fireEvent.click(within(getOwnerWorkflow()).getByRole("button", { name: "Create campaign" }));
+
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByText("task-from-detail")).toBeInTheDocument());
+    expect(activeIds).toEqual(["campaign-created"]);
+    expect(order).toEqual([
+      "create",
+      "active:campaign-created",
+      "detail:campaign-created",
+    ]);
+    expect(bridge.createCampaign).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not repeat create when detail fails and retries detail explicitly", async () => {
+    const getCampaignDetail = vi
+      .fn<(campaignId: string, context: OwnerSessionContext) => Promise<OwnerCampaignDetailResult>>()
+      .mockResolvedValueOnce(ownerFailure())
+      .mockResolvedValueOnce(ownerDetailSuccess("campaign-created", ["task-after-retry"]));
+    const bridge = createOwnerBridge({ getCampaignDetail });
+
+    render(<OwnerConsoleHarness bridge={bridge} />);
+
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByRole(
+      "button",
+      { name: "Create campaign" },
+    )).toBeEnabled());
+    fireEvent.click(within(getOwnerWorkflow()).getByRole("button", { name: "Create campaign" }));
+
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByRole(
+      "button",
+      { name: "Retry campaign detail" },
+    )).toBeEnabled());
+    expect(within(getOwnerWorkflow()).getByText("campaign-created")).toBeInTheDocument();
+    expect(bridge.createCampaign).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(getOwnerWorkflow()).getByRole("button", { name: "Retry campaign detail" }));
+
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByText("task-after-retry")).toBeInTheDocument());
+    expect(bridge.createCampaign).toHaveBeenCalledTimes(1);
+    expect(getCampaignDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not activate or read detail for conflicting create identities", async () => {
+    const activeChange = vi.fn();
+    const bridge = createOwnerBridge({
+      createCampaign: vi.fn(async () => ({
+        campaign: ownerCampaign("campaign-response"),
+        campaignId: "campaign-payload" as OwnerCampaignId,
+        httpStatus: 201,
+        ok: true as const,
+        traceId: "trace-create-conflict",
+      })),
+    });
+
+    render(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        onActiveCampaignIdChange={activeChange}
+      />,
+    );
+
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByRole(
+      "button",
+      { name: "Create campaign" },
+    )).toBeEnabled());
+    fireEvent.click(within(getOwnerWorkflow()).getByRole("button", { name: "Create campaign" }));
+
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByText(
+      /OWNER_CAMPAIGN_IDENTITY_MISMATCH/,
+    )).toBeInTheDocument());
+    expect(activeChange).not.toHaveBeenCalled();
+    expect(bridge.getCampaignDetail).not.toHaveBeenCalled();
+  });
+
+  it("keeps last-good detail visible after a 503 refresh", async () => {
+    const getCampaignDetail = vi
+      .fn<(campaignId: string, context: OwnerSessionContext) => Promise<OwnerCampaignDetailResult>>()
+      .mockResolvedValueOnce(ownerDetailSuccess("campaign-a", ["task-last-good"]))
+      .mockResolvedValueOnce(ownerFailure());
+    const bridge = createOwnerBridge({
+      getCampaignDetail,
+      recoverCampaigns: vi.fn(async () => ownerListSuccess(["campaign-a"])),
+    });
+
+    render(<OwnerConsoleHarness bridge={bridge} />);
+
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByText("task-last-good")).toBeInTheDocument());
+    fireEvent.click(within(getOwnerWorkflow()).getByRole("button", { name: "Refresh campaign detail" }));
+
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByText("Degraded")).toBeInTheDocument());
+    expect(within(getOwnerWorkflow()).getByText("task-last-good")).toBeInTheDocument();
+    expect(within(getOwnerWorkflow()).getByText(/trace-owner-503/)).toBeInTheDocument();
+  });
+
+  it("drops a late session-A recovery response after session B takes authority", async () => {
+    const sessionARecovery = deferred<OwnerCampaignListResult>();
+    const recoverCampaigns = vi.fn(
+      async (_projectId: string, context: OwnerSessionContext): Promise<OwnerCampaignListResult> =>
+        context.session.sessionId === ownerSessionA.sessionId
+          ? sessionARecovery.promise
+          : ownerListSuccess(["campaign-b"]),
+    );
+    const bridge = createOwnerBridge({ recoverCampaigns });
+    const activeChange = vi.fn();
+    const view = render(
+      <ProjectConsole
+        activeCampaignId={null}
+        activeWorkspace="campaigns"
+        locale="en-US"
+        onActiveCampaignIdChange={activeChange}
+        ownerCampaignBridge={bridge}
+        ownerSession={ownerSessionA}
+        projectId="awaken"
+      />,
+    );
+
+    await waitFor(() => expect(recoverCampaigns).toHaveBeenCalledTimes(1));
+    view.rerender(
+      <ProjectConsole
+        activeCampaignId={null}
+        activeWorkspace="campaigns"
+        locale="en-US"
+        onActiveCampaignIdChange={activeChange}
+        ownerCampaignBridge={bridge}
+        ownerSession={ownerSessionB}
+        projectId="awaken"
+      />,
+    );
+
+    await waitFor(() => expect(activeChange).toHaveBeenCalledWith("campaign-b"));
+    await act(async () => {
+      sessionARecovery.resolve(ownerListSuccess(["campaign-a"]));
+      await sessionARecovery.promise;
+    });
+
+    expect(activeChange).not.toHaveBeenCalledWith("campaign-a");
+    expect(within(getOwnerWorkflow()).queryByText("campaign-a")).not.toBeInTheDocument();
+  });
+
+  it("drops late Campaign X detail after switching to Campaign Y", async () => {
+    const campaignXDetail = deferred<OwnerCampaignDetailResult>();
+    const getCampaignDetail = vi.fn(
+      async (campaignId: string): Promise<OwnerCampaignDetailResult> =>
+        campaignId === "campaign-x"
+          ? campaignXDetail.promise
+          : ownerDetailSuccess("campaign-y", ["task-y"]),
+    );
+    const bridge = createOwnerBridge({ getCampaignDetail });
+    const view = render(
+      <ProjectConsole
+        activeCampaignId="campaign-x"
+        activeWorkspace="campaigns"
+        locale="en-US"
+        onActiveCampaignIdChange={vi.fn()}
+        ownerCampaignBridge={bridge}
+        ownerSession={ownerSessionA}
+        projectId="awaken"
+      />,
+    );
+
+    await waitFor(() => expect(getCampaignDetail).toHaveBeenCalledWith(
+      "campaign-x",
+      expect.objectContaining({ session: ownerSessionA }),
+    ));
+    view.rerender(
+      <ProjectConsole
+        activeCampaignId="campaign-y"
+        activeWorkspace="campaigns"
+        locale="en-US"
+        onActiveCampaignIdChange={vi.fn()}
+        ownerCampaignBridge={bridge}
+        ownerSession={ownerSessionA}
+        projectId="awaken"
+      />,
+    );
+
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByText("task-y")).toBeInTheDocument());
+    await act(async () => {
+      campaignXDetail.resolve(ownerDetailSuccess("campaign-x", ["task-x"]));
+      await campaignXDetail.promise;
+    });
+
+    expect(within(getOwnerWorkflow()).getByText("task-y")).toBeInTheDocument();
+    expect(within(getOwnerWorkflow()).queryByText("task-x")).not.toBeInTheDocument();
+  });
+
+  it("aborts pending work on unmount without committing the late result", async () => {
+    const pendingRecovery = deferred<OwnerCampaignListResult>();
+    let requestSignal: AbortSignal | undefined;
+    const bridge = createOwnerBridge({
+      recoverCampaigns: vi.fn(async (_projectId, context) => {
+        requestSignal = context.signal;
+        return pendingRecovery.promise;
+      }),
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const view = render(<OwnerConsoleHarness bridge={bridge} />);
+
+    await waitFor(() => expect(requestSignal).toBeDefined());
+    view.unmount();
+    expect(requestSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      pendingRecovery.resolve(ownerListSuccess(["campaign-late"]));
+      await pendingRecovery.promise;
+    });
+
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("never invokes the legacy repository workflow for M240 Owner commands", async () => {
+    const bridge = createOwnerBridge();
+
+    render(<OwnerConsoleHarness bridge={bridge} />);
+    await waitFor(() => expect(within(getOwnerWorkflow()).getByRole(
+      "button",
+      { name: "Create campaign" },
+    )).toBeEnabled());
+    fireEvent.click(within(getOwnerWorkflow()).getByRole("button", { name: "Create campaign" }));
+    await waitFor(() => expect(bridge.getCampaignDetail).toHaveBeenCalledTimes(1));
+
+    expect(mockedRepositoryWorkflow).not.toHaveBeenCalled();
   });
 });

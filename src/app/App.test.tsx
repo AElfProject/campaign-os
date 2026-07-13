@@ -3,7 +3,20 @@ import { act } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { submitWalletSessionApiPreview, type WalletSessionApiBridgeState } from "../api/walletSessionApiBridge";
-import { EXPORT_CSV_COLUMNS, walletSessions } from "../domain";
+import type {
+  OwnerCampaignDetailResult,
+  OwnerCampaignId,
+  OwnerCampaignListResult,
+  OwnerCampaignResult,
+  OwnerTaskPreviewResult,
+  OwnerTaskResult,
+  ProjectOwnerCampaignApiBridge,
+} from "../api/projectOwnerCampaignApiBridge";
+import {
+  EXPORT_CSV_COLUMNS,
+  walletSessions,
+  type NormalizedWalletSession,
+} from "../domain";
 import {
   browserLocalePromptDismissedStorageKey,
   localePreferenceStorageKey,
@@ -1018,5 +1031,166 @@ describe("Campaign OS app shell", () => {
     expect(screen.getAllByText("Eligibility checker").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Ecosystem next actions").length).toBeGreaterThan(0);
     expect(screen.getAllByText("No live Pay service, wallet SDK, payment transaction, contract view, or contract send is executed.").length).toBeGreaterThan(0);
+  });
+});
+
+const appOwnerSessionA = walletSessions[0];
+const appOwnerSessionB: NormalizedWalletSession = {
+  ...appOwnerSessionA,
+  address: "ELF_APP_OWNER_B",
+  displayAddress: "ELF...ERB",
+  id: "normalized-app-owner-b",
+  sessionId: "app-owner-session-b",
+};
+
+const appWalletSessionState = (
+  session: NormalizedWalletSession,
+): WalletSessionApiBridgeState => ({
+  boundary: {
+    "en-US": "Local wallet session API bridge only.",
+    "zh-CN": "Local wallet session API bridge only.",
+    "zh-TW": "Local wallet session API bridge only.",
+  },
+  configured: true,
+  diagnostics: [],
+  loading: false,
+  repository: {
+    recordId: `wallet-session:${session.sessionId}`,
+    repositoryId: "wallet-session-repository-runtime",
+    sessionId: session.sessionId,
+    upserted: true,
+  },
+  request: {
+    adapterName: "PortkeyAAWallet",
+    fixtureId: "sess-aa-001",
+  },
+  session,
+  source: "api_runtime",
+  status: "connected",
+  traceId: `trace-${session.sessionId}`,
+});
+
+const appOwnerList = (campaignIds: readonly string[]): OwnerCampaignListResult => ({
+  campaigns: campaignIds.map((campaignId) => ({
+    id: campaignId as OwnerCampaignId,
+    ownerAddress: appOwnerSessionA.address,
+    projectId: "awaken",
+    status: "draft",
+  })),
+  httpStatus: 200,
+  ok: true,
+  traceId: "trace-app-recover",
+});
+
+const appOwnerDetail = (campaignId: string): OwnerCampaignDetailResult => ({
+  campaign: {
+    id: campaignId as OwnerCampaignId,
+    ownerAddress: appOwnerSessionA.address,
+    projectId: "awaken",
+    status: "draft",
+  },
+  httpStatus: 200,
+  ok: true,
+  tasks: [],
+  traceId: `trace-app-detail-${campaignId}`,
+});
+
+const appOwnerFailure = () => ({
+  code: "INVALID_REQUEST",
+  diagnostic: { code: "INVALID_REQUEST", message: "Not used by this test." },
+  httpStatus: 400,
+  ok: false as const,
+  reconnectRequired: false,
+  retryable: false,
+  traceId: "trace-app-unused",
+});
+
+const appOwnerBridge = (
+  overrides: Partial<ProjectOwnerCampaignApiBridge> = {},
+): ProjectOwnerCampaignApiBridge => ({
+  addTask: vi.fn(async (): Promise<OwnerTaskResult> => appOwnerFailure()),
+  createCampaign: vi.fn(async (): Promise<OwnerCampaignResult> => appOwnerFailure()),
+  generateTaskPreview: vi.fn(async (): Promise<OwnerTaskPreviewResult> => appOwnerFailure()),
+  getCampaignDetail: vi.fn(async (campaignId): Promise<OwnerCampaignDetailResult> =>
+    appOwnerDetail(campaignId)),
+  recoverCampaigns: vi.fn(async (): Promise<OwnerCampaignListResult> => appOwnerList([])),
+  ...overrides,
+});
+
+describe("App Owner campaign authority", () => {
+  const submitWalletSession = vi.mocked(submitWalletSessionApiPreview);
+  const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
+
+  beforeEach(() => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    submitWalletSession.mockReset();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = originalApiBaseUrl;
+  });
+
+  const connectHeaderWallet = async () => {
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: "Connect Wallet" }));
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Use seeded wallet preview" }));
+    });
+  };
+
+  it("passes the API-normalized wallet session to Project Console recovery", async () => {
+    submitWalletSession.mockResolvedValueOnce(appWalletSessionState(appOwnerSessionA));
+    const bridge = appOwnerBridge();
+
+    render(<App ownerCampaignBridge={bridge} />);
+    await connectHeaderWallet();
+
+    await waitFor(() => expect(bridge.recoverCampaigns).toHaveBeenCalledTimes(1));
+    expect(bridge.recoverCampaigns).toHaveBeenCalledWith(
+      "awaken",
+      expect.objectContaining({ session: appOwnerSessionA }),
+    );
+  });
+
+  it("clears session A active Campaign before starting session B recovery", async () => {
+    let resolveSessionB!: (result: OwnerCampaignListResult) => void;
+    const sessionBRecovery = new Promise<OwnerCampaignListResult>((resolve) => {
+      resolveSessionB = resolve;
+    });
+    submitWalletSession
+      .mockResolvedValueOnce(appWalletSessionState(appOwnerSessionA))
+      .mockResolvedValueOnce(appWalletSessionState(appOwnerSessionB));
+    const recoverCampaigns = vi.fn(
+      async (_projectId: string, context: { session: NormalizedWalletSession }) =>
+        context.session.sessionId === appOwnerSessionA.sessionId
+          ? appOwnerList(["campaign-session-a"])
+          : sessionBRecovery,
+    );
+    const bridge = appOwnerBridge({ recoverCampaigns });
+
+    render(<App ownerCampaignBridge={bridge} />);
+    await connectHeaderWallet();
+
+    const workflow = await screen.findByRole("region", { name: "Owner campaign workflow" });
+    await waitFor(() => expect(within(workflow).getByText("campaign-session-a")).toBeInTheDocument());
+
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: /Manage wallet connection/,
+    }));
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Use seeded wallet preview" }));
+    });
+
+    await waitFor(() => expect(recoverCampaigns).toHaveBeenCalledTimes(2));
+    expect(within(workflow).queryByText("campaign-session-a")).not.toBeInTheDocument();
+    expect(within(workflow).getByText("Recovering campaigns")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSessionB(appOwnerList([]));
+      await sessionBRecovery;
+    });
   });
 });

@@ -1,4 +1,29 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ComponentType,
+  type CSSProperties,
+} from "react";
+import {
+  createProjectOwnerCampaignApiBridge,
+  type AddOwnerCampaignTaskInput,
+  type CreateOwnerCampaignInput,
+  type GenerateOwnerTaskPreviewInput,
+  type OwnerCampaignDetailResult,
+  type OwnerCampaignFailure,
+  type OwnerCampaignListResult,
+  type OwnerCampaignResult,
+  type OwnerSessionContext,
+  type OwnerTaskPreviewResult,
+  type OwnerTaskPreviewSuggestion,
+  type OwnerTaskResult,
+  type ProjectOwnerCampaignApiBridge,
+} from "../../../api/projectOwnerCampaignApiBridge";
 import {
   backendRuntimeReadinessApiBoundary,
   createBackendRuntimeReadinessApiLoadingState,
@@ -167,6 +192,7 @@ import {
   type VerificationReleaseImpact,
   type VerificationSeededCoverageStatus,
   type WalletPolicy,
+  type NormalizedWalletSession,
   walletPolicyOptions,
 } from "../../../domain";
 import {
@@ -192,6 +218,22 @@ import { RewardDistributionHandoffRuntimePanel } from "./RewardDistributionHando
 import { ProjectOwnerFundingProofReviewPanel } from "./ProjectOwnerFundingProofReviewPanel";
 import { ProductionDatabaseHandoffReadinessPanel } from "./ProductionDatabaseHandoffReadinessPanel";
 import { RepositoryCampaignWorkflowPanel } from "./RepositoryCampaignWorkflowPanel";
+import {
+  canCreateOwnerCampaign,
+  createOwnerCampaignRequestToken,
+  createOwnerCampaignWorkflowState,
+  createOwnerSessionKey,
+  createUnexpectedOwnerCampaignFailure,
+  ownerCampaignCommandsDisabled,
+  ownerCampaignRequestTokenMatches,
+  ownerCampaignWorkflowReducer,
+  type OwnerCampaignBuilderIntentContract,
+  type OwnerCampaignRequestOperation,
+  type OwnerCampaignRequestToken,
+  type OwnerCampaignTaskIntentContract,
+  type OwnerCampaignWorkflowEvent,
+  type OwnerCampaignWorkflowState,
+} from "./ownerCampaignWorkflow";
 import { projectConsoleCopy } from "./copy";
 import { PublishDeliveryReviewPanel } from "./PublishDeliveryReviewPanel";
 
@@ -213,11 +255,17 @@ interface DraftComposerState {
   walletPolicy: WalletPolicy;
 }
 
-interface ProjectConsoleProps {
+export interface ProjectConsoleProps {
   locale: BusinessContentLocale;
   campaign?: CampaignShellDetail;
+  activeCampaignId?: string | null;
   activeWorkspace?: ProjectWorkspaceKey;
+  onActiveCampaignIdChange?: (campaignId: string | null) => void;
+  onOwnerReconnect?: () => void;
   onWorkspaceChange?: (workspace: ProjectWorkspaceKey) => void;
+  ownerCampaignBridge?: ProjectOwnerCampaignApiBridge;
+  ownerSession?: NormalizedWalletSession | null;
+  projectId?: string;
 }
 
 const panelStyle: CSSProperties = {
@@ -2171,13 +2219,473 @@ const stepperStyle: CSSProperties = {
   gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))",
 };
 
+type OwnerApiBridgeResult =
+  | OwnerCampaignResult
+  | OwnerCampaignListResult
+  | OwnerCampaignDetailResult
+  | OwnerTaskResult
+  | OwnerTaskPreviewResult;
+
+type OwnerCampaignBuilderProps = ComponentProps<typeof CampaignBuilderPanel> & {
+  ownerWorkflow: OwnerCampaignBuilderIntentContract;
+};
+
+type OwnerTaskTemplateLibraryProps = ComponentProps<typeof TaskTemplateLibrary> & {
+  ownerWorkflow: OwnerCampaignTaskIntentContract;
+};
+
+const OwnerCampaignBuilderPanel = CampaignBuilderPanel as ComponentType<OwnerCampaignBuilderProps>;
+const OwnerTaskTemplateLibrary = TaskTemplateLibrary as ComponentType<OwnerTaskTemplateLibraryProps>;
+
+const ownerCampaignApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
+const ownerCampaignCopy = {
+  "en-US": {
+    activeCampaign: "Active campaign",
+    canonicalTasks: "Canonical campaign tasks",
+    create: "Create campaign",
+    degraded: "Degraded",
+    empty: "No editable campaign",
+    error: "Campaign workflow error",
+    loadingDetail: "Loading campaign detail",
+    mutationPending: "Campaign command pending",
+    noSession: "Wallet session required",
+    noTasks: "No canonical tasks",
+    owner: "Owner",
+    ready: "Campaign ready",
+    reconnect: "Reconnect wallet",
+    recovering: "Recovering campaigns",
+    refreshDetail: "Refresh campaign detail",
+    region: "Owner campaign workflow",
+    retryCreate: "Retry campaign creation",
+    retryDetail: "Retry campaign detail",
+    retryRecovery: "Retry campaign recovery",
+    selectCampaign: (campaignId: string) => `Select campaign ${campaignId}`,
+    selectionRequired: "Campaign selection required",
+    traceId: "Trace ID",
+  },
+  "zh-CN": {
+    activeCampaign: "当前活动",
+    canonicalTasks: "Canonical 活动任务",
+    create: "创建活动",
+    degraded: "降级",
+    empty: "没有可编辑活动",
+    error: "活动流程错误",
+    loadingDetail: "正在加载活动详情",
+    mutationPending: "活动命令执行中",
+    noSession: "需要钱包 Session",
+    noTasks: "没有 canonical 任务",
+    owner: "Owner",
+    ready: "活动已就绪",
+    reconnect: "重新连接钱包",
+    recovering: "正在恢复活动",
+    refreshDetail: "刷新活动详情",
+    region: "Owner 活动流程",
+    retryCreate: "重试创建活动",
+    retryDetail: "重试活动详情",
+    retryRecovery: "重试活动恢复",
+    selectCampaign: (campaignId: string) => `选择活动 ${campaignId}`,
+    selectionRequired: "需要选择活动",
+    traceId: "Trace ID",
+  },
+  "zh-TW": {
+    activeCampaign: "目前活動",
+    canonicalTasks: "Canonical 活動任務",
+    create: "建立活動",
+    degraded: "降級",
+    empty: "沒有可編輯活動",
+    error: "活動流程錯誤",
+    loadingDetail: "正在載入活動詳情",
+    mutationPending: "活動命令執行中",
+    noSession: "需要錢包 Session",
+    noTasks: "沒有 canonical 任務",
+    owner: "Owner",
+    ready: "活動已就緒",
+    reconnect: "重新連接錢包",
+    recovering: "正在恢復活動",
+    refreshDetail: "重新整理活動詳情",
+    region: "Owner 活動流程",
+    retryCreate: "重試建立活動",
+    retryDetail: "重試活動詳情",
+    retryRecovery: "重試活動恢復",
+    selectCampaign: (campaignId: string) => `選擇活動 ${campaignId}`,
+    selectionRequired: "需要選擇活動",
+    traceId: "Trace ID",
+  },
+} satisfies Record<BusinessContentLocale, Record<string, string | ((campaignId: string) => string)>>;
+
+const ownerCampaignStatusLabel = (
+  state: OwnerCampaignWorkflowState,
+  locale: BusinessContentLocale,
+) => {
+  const labels = ownerCampaignCopy[locale];
+
+  if (state.status === "no_session") {
+    return labels.noSession as string;
+  }
+  if (state.status === "recovering") {
+    return labels.recovering as string;
+  }
+  if (state.status === "empty") {
+    return labels.empty as string;
+  }
+  if (state.status === "selection_required") {
+    return labels.selectionRequired as string;
+  }
+  if (state.status === "creating") {
+    return labels.create as string;
+  }
+  if (state.status === "loading_detail") {
+    return labels.loadingDetail as string;
+  }
+  if (state.status === "ready") {
+    return labels.ready as string;
+  }
+  if (state.status === "mutation_pending") {
+    return labels.mutationPending as string;
+  }
+
+  return state.status === "degraded"
+    ? labels.degraded as string
+    : labels.error as string;
+};
+
+const ownerProjectId = (
+  campaign: CampaignShellDetail,
+  configuredProjectId: string | undefined,
+) =>
+  configuredProjectId?.trim()
+  || campaign.projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+  || campaign.slug;
+
+const ownerCreateInputFromDraft = (
+  draft: ReturnType<typeof createLocalCampaignDraft>,
+  locale: BusinessContentLocale,
+  projectId: string,
+): CreateOwnerCampaignInput => ({
+  contractMode: "OFF_CHAIN_MVP",
+  defaultLocale: draft.defaultLocale,
+  duration: `${draft.timePeriod.startTime}/${draft.timePeriod.endTime}`,
+  endTime: draft.timePeriod.endTime,
+  goal: `${draft.projectName}: ${getLocalizedText(draft.campaignName, locale)} (${draft.objective})`,
+  projectId,
+  rewardDescription: getLocalizedText(draft.rewardPlan.description, locale),
+  startTime: draft.timePeriod.startTime,
+  status: "draft",
+  supportedLocales: draft.supportedLocales,
+  walletPolicy: draft.walletPolicy,
+});
+
+interface OwnerCampaignOrchestratorOptions {
+  activeCampaignId: string | null;
+  bridge: ProjectOwnerCampaignApiBridge;
+  onActiveCampaignIdChange?: (campaignId: string | null) => void;
+  ownerSession: NormalizedWalletSession | null;
+  projectId: string;
+}
+
+const useOwnerCampaignOrchestrator = ({
+  activeCampaignId,
+  bridge,
+  onActiveCampaignIdChange,
+  ownerSession,
+  projectId,
+}: OwnerCampaignOrchestratorOptions) => {
+  const sessionKey = createOwnerSessionKey(ownerSession);
+  const [state, dispatch] = useReducer(
+    ownerCampaignWorkflowReducer,
+    undefined,
+    () => createOwnerCampaignWorkflowState(sessionKey, activeCampaignId),
+  );
+  const stateRef = useRef(state);
+  const sessionRef = useRef(ownerSession);
+  const controlledContextRef = useRef({ activeCampaignId, sessionKey });
+  const onActiveCampaignIdChangeRef = useRef(onActiveCampaignIdChange);
+  const controllersRef = useRef(new Set<AbortController>());
+  const mountedRef = useRef(true);
+
+  stateRef.current = state;
+  sessionRef.current = ownerSession;
+  controlledContextRef.current = { activeCampaignId, sessionKey };
+  onActiveCampaignIdChangeRef.current = onActiveCampaignIdChange;
+
+  const abortRequests = useCallback(() => {
+    for (const controller of controllersRef.current) {
+      controller.abort();
+    }
+    controllersRef.current.clear();
+  }, []);
+
+  const transition = useCallback((event: OwnerCampaignWorkflowEvent) => {
+    if (!mountedRef.current) {
+      return false;
+    }
+
+    const current = stateRef.current;
+    const next = ownerCampaignWorkflowReducer(current, event);
+
+    if (next === current) {
+      return false;
+    }
+
+    stateRef.current = next;
+    dispatch(event);
+    return true;
+  }, []);
+
+  const runRequest = useCallback(async <TResult extends OwnerApiBridgeResult,>(
+    operation: OwnerCampaignRequestOperation,
+    campaignId: string | null,
+    request: (context: OwnerSessionContext) => Promise<TResult>,
+    onSuccess: (
+      result: Extract<TResult, { ok: true }>,
+      token: OwnerCampaignRequestToken,
+    ) => void,
+  ) => {
+    const session = sessionRef.current;
+    const current = stateRef.current;
+
+    if (!session || createOwnerSessionKey(session) !== current.sessionKey) {
+      return;
+    }
+
+    const token = createOwnerCampaignRequestToken(current, operation, campaignId);
+
+    if (!transition({ type: "request_started", token })) {
+      return;
+    }
+
+    const controller = new AbortController();
+    controllersRef.current.add(controller);
+
+    await Promise.resolve();
+
+    const requestHasCurrentAuthority = () =>
+      controlledContextRef.current.sessionKey === token.sessionKey
+      && controlledContextRef.current.activeCampaignId === token.campaignId;
+
+    if (
+      controller.signal.aborted
+      || !requestHasCurrentAuthority()
+      || !ownerCampaignRequestTokenMatches(stateRef.current, token)
+    ) {
+      controllersRef.current.delete(controller);
+      return;
+    }
+
+    let result: TResult | OwnerCampaignFailure;
+
+    try {
+      result = await request({ session, signal: controller.signal });
+    } catch (error) {
+      result = createUnexpectedOwnerCampaignFailure(operation, token, error);
+    } finally {
+      controllersRef.current.delete(controller);
+    }
+
+    if (!mountedRef.current || !requestHasCurrentAuthority()) {
+      return;
+    }
+
+    if (!result.ok) {
+      transition({
+        type: "request_failed",
+        failure: result,
+        token,
+      });
+      return;
+    }
+
+    onSuccess(result as Extract<TResult, { ok: true }>, token);
+  }, [transition]);
+
+  const recoverCampaigns = useCallback(() => {
+    void runRequest<OwnerCampaignListResult>(
+      "recover",
+      null,
+      (context) => bridge.recoverCampaigns(projectId, context),
+      (result, token) => {
+        if (transition({
+          type: "recovery_succeeded",
+          campaigns: result.campaigns,
+          token,
+        }) && result.campaigns.length === 1) {
+          onActiveCampaignIdChangeRef.current?.(result.campaigns[0].id);
+        }
+      },
+    );
+  }, [bridge, projectId, runRequest, transition]);
+
+  const refreshCampaignDetail = useCallback((campaignId: string) => {
+    void runRequest<OwnerCampaignDetailResult>(
+      "detail",
+      campaignId,
+      (context) => bridge.getCampaignDetail(campaignId, context),
+      (result, token) => {
+        transition({ type: "detail_succeeded", result, token });
+      },
+    );
+  }, [bridge, runRequest, transition]);
+
+  const createCampaign = useCallback((input: CreateOwnerCampaignInput) => {
+    void runRequest<OwnerCampaignResult>(
+      "create",
+      null,
+      (context) => bridge.createCampaign(input, context),
+      (result, token) => {
+        if (
+          transition({ type: "create_succeeded", result, token })
+          && stateRef.current.activeCampaignId === result.campaignId
+          && stateRef.current.status === "loading_detail"
+        ) {
+          onActiveCampaignIdChangeRef.current?.(result.campaignId);
+        }
+      },
+    );
+  }, [bridge, runRequest, transition]);
+
+  const generateTaskPreview = useCallback((input: GenerateOwnerTaskPreviewInput) => {
+    const campaignId = stateRef.current.activeCampaignId;
+
+    if (!campaignId) {
+      return;
+    }
+
+    void runRequest<OwnerTaskPreviewResult>(
+      "preview",
+      campaignId,
+      (context) => bridge.generateTaskPreview(campaignId, input, context),
+      (result, token) => {
+        transition({ type: "preview_succeeded", result, token });
+      },
+    );
+  }, [bridge, runRequest, transition]);
+
+  const mutateTask = useCallback((
+    operation: Extract<OwnerCampaignRequestOperation, "add" | "adopt">,
+    input: AddOwnerCampaignTaskInput,
+  ) => {
+    const campaignId = stateRef.current.activeCampaignId;
+
+    if (!campaignId) {
+      return;
+    }
+
+    void runRequest<OwnerTaskResult>(
+      operation,
+      campaignId,
+      (context) => bridge.addTask(campaignId, input, context),
+      (result, token) => {
+        if (
+          transition({ type: "mutation_succeeded", result, token })
+          && stateRef.current.expectedTaskId === result.taskId
+          && stateRef.current.status === "loading_detail"
+        ) {
+          refreshCampaignDetail(campaignId);
+        }
+      },
+    );
+  }, [bridge, refreshCampaignDetail, runRequest, transition]);
+
+  const addTask = useCallback((input: AddOwnerCampaignTaskInput) => {
+    mutateTask("add", input);
+  }, [mutateTask]);
+
+  const adoptTask = useCallback((suggestion: OwnerTaskPreviewSuggestion) => {
+    mutateTask("adopt", {
+      evidenceRule: suggestion.evidenceRule,
+      points: suggestion.points,
+      required: suggestion.required,
+      templateCode: suggestion.templateCode,
+      verificationType: suggestion.verificationType,
+      walletCompatibility: suggestion.walletCompatibility,
+    });
+  }, [mutateTask]);
+
+  const selectCampaign = useCallback((campaignId: string) => {
+    if (transition({ type: "campaign_selected", campaignId })) {
+      onActiveCampaignIdChangeRef.current?.(campaignId);
+    }
+  }, [transition]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      abortRequests();
+    };
+  }, [abortRequests]);
+
+  useEffect(() => {
+    abortRequests();
+    transition({
+      type: "synchronize_context",
+      campaignId: activeCampaignId,
+      sessionKey,
+    });
+
+    if (stateRef.current.pending) {
+      transition({ type: "requests_invalidated" });
+    }
+
+    if (!sessionKey) {
+      return abortRequests;
+    }
+
+    if (activeCampaignId) {
+      refreshCampaignDetail(activeCampaignId);
+    } else {
+      recoverCampaigns();
+    }
+
+    return abortRequests;
+  }, [
+    abortRequests,
+    activeCampaignId,
+    recoverCampaigns,
+    refreshCampaignDetail,
+    sessionKey,
+    transition,
+  ]);
+
+  return {
+    addTask,
+    adoptTask,
+    createCampaign,
+    generateTaskPreview,
+    recoverCampaigns,
+    refreshCampaignDetail,
+    selectCampaign,
+    state,
+  };
+};
+
 export const ProjectConsole = ({
+  activeCampaignId = null,
   activeWorkspace: controlledActiveWorkspace,
   campaign = campaignDetail,
   locale,
+  onActiveCampaignIdChange,
+  onOwnerReconnect,
   onWorkspaceChange,
+  ownerCampaignBridge,
+  ownerSession = null,
+  projectId: configuredProjectId,
 }: ProjectConsoleProps) => {
   const copy = projectConsoleCopy[locale];
+  const defaultOwnerCampaignBridge = useMemo(
+    () => createProjectOwnerCampaignApiBridge({
+      config: {
+        baseUrl: ownerCampaignApiBaseUrl(),
+        tracePrefix: "project-console-owner-campaign",
+      },
+    }),
+    [],
+  );
+  const resolvedOwnerCampaignBridge = ownerCampaignBridge ?? defaultOwnerCampaignBridge;
+  const resolvedOwnerProjectId = ownerProjectId(campaign, configuredProjectId);
   const [internalActiveWorkspace, setInternalActiveWorkspace] = useState<ProjectWorkspaceKey>("campaigns");
   const [draftComposer, setDraftComposer] = useState<DraftComposerState>(
     createSeededDraftComposerState,
@@ -2233,6 +2741,51 @@ export const ProjectConsole = ({
         walletPolicy: draftComposer.walletPolicy,
       })
     : createLocalCampaignDraft();
+  const ownerCampaignOrchestrator = useOwnerCampaignOrchestrator({
+    activeCampaignId,
+    bridge: resolvedOwnerCampaignBridge,
+    onActiveCampaignIdChange,
+    ownerSession,
+    projectId: resolvedOwnerProjectId,
+  });
+  const ownerWorkflowState = ownerCampaignOrchestrator.state;
+  const ownerCreateInput = ownerCreateInputFromDraft(
+    builderDraft,
+    locale,
+    resolvedOwnerProjectId,
+  );
+  const ownerContext = ownerSession && createOwnerSessionKey(ownerSession)
+    ? {
+        accountType: ownerSession.accountType,
+        address: ownerSession.address,
+        sessionId: ownerSession.sessionId,
+        sessionKey: createOwnerSessionKey(ownerSession) as string,
+        walletSource: ownerSession.walletSource,
+      }
+    : null;
+  const ownerBuilderIntents: OwnerCampaignBuilderIntentContract = {
+    activeCampaignId: ownerWorkflowState.activeCampaignId,
+    createPending: ownerWorkflowState.pending?.operation === "create",
+    createResult: ownerWorkflowState.createdCampaign,
+    onCreate: ownerCampaignOrchestrator.createCampaign,
+    onRetryDetail: () => {
+      if (ownerWorkflowState.activeCampaignId) {
+        ownerCampaignOrchestrator.refreshCampaignDetail(ownerWorkflowState.activeCampaignId);
+      }
+    },
+    ownerContext,
+  };
+  const ownerTaskIntents: OwnerCampaignTaskIntentContract = {
+    activeCampaignId: ownerWorkflowState.activeCampaignId,
+    commandsDisabled: ownerCampaignCommandsDisabled(ownerWorkflowState),
+    detail: ownerWorkflowState.detail,
+    onAdd: ownerCampaignOrchestrator.addTask,
+    onAdopt: ownerCampaignOrchestrator.adoptTask,
+    onGenerate: ownerCampaignOrchestrator.generateTaskPreview,
+    pendingCommand: ownerWorkflowState.pending?.operation ?? null,
+    preview: ownerWorkflowState.preview,
+    tasks: ownerWorkflowState.detail?.tasks ?? [],
+  };
   const localAiOutline = generateLocalAiDraftOutline(draftComposer.aiPrompt);
   const apiSkillSurface = createApiSkillContractSurface();
   const localService = createCampaignOsLocalService();
@@ -2948,6 +3501,14 @@ export const ProjectConsole = ({
     { label: copy.createStepContract, state: copy.contractImpactState, status: "warning" as const },
     { label: copy.createStepPublishReadiness, state: copy.builderCompletenessSummary, status: "warning" as const },
   ];
+  const ownerLabels = ownerCampaignCopy[locale];
+  const ownerStatus = ownerCampaignStatusLabel(ownerWorkflowState, locale);
+  const ownerCreateLabel = ownerWorkflowState.error?.operation === "create"
+    ? ownerLabels.retryCreate
+    : ownerLabels.create;
+  const ownerDetailLabel = ownerWorkflowState.error?.operation === "detail"
+    ? ownerLabels.retryDetail
+    : ownerLabels.refreshDetail;
 
   return (
     <div style={{ display: "grid", gap: 18, maxWidth: "100%", minWidth: 0 }}>
@@ -2992,6 +3553,137 @@ export const ProjectConsole = ({
             {workspaceSummaries[activeWorkspace]}
           </p>
         </article>
+      </section>
+
+      <section aria-label={ownerLabels.region} role="region" style={panelStyle}>
+        <div style={headingRowStyle}>
+          <div style={{ minWidth: 0 }}>
+            <p style={statLabelStyle}>{ownerLabels.owner}</p>
+            <h2 style={{ fontSize: 22, lineHeight: 1.2, margin: "4px 0" }}>
+              {ownerLabels.region}
+            </h2>
+            {ownerSession ? (
+              <p style={{ color: "#475569", lineHeight: 1.45, margin: 0, overflowWrap: "anywhere" }}>
+                {ownerSession.address}
+              </p>
+            ) : null}
+          </div>
+          <div
+            aria-atomic="true"
+            aria-live="polite"
+            role="status"
+            style={{ color: "#0f172a", fontSize: 14, fontWeight: 900 }}
+          >
+            {ownerStatus}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <button
+            disabled={!canCreateOwnerCampaign(ownerWorkflowState)}
+            onClick={() => ownerCampaignOrchestrator.createCampaign(ownerCreateInput)}
+            style={actionButtonStyle}
+            type="button"
+          >
+            {ownerCreateLabel}
+          </button>
+          <button
+            disabled={
+              !ownerSession
+              || !ownerWorkflowState.activeCampaignId
+              || Boolean(ownerWorkflowState.pending)
+            }
+            onClick={() => {
+              if (ownerWorkflowState.activeCampaignId) {
+                ownerCampaignOrchestrator.refreshCampaignDetail(
+                  ownerWorkflowState.activeCampaignId,
+                );
+              }
+            }}
+            style={ghostButtonStyle}
+            type="button"
+          >
+            {ownerDetailLabel}
+          </button>
+          <button
+            disabled={!onOwnerReconnect}
+            onClick={onOwnerReconnect}
+            style={ghostButtonStyle}
+            type="button"
+          >
+            {ownerLabels.reconnect}
+          </button>
+          {ownerWorkflowState.error?.operation === "recover" ? (
+            <button
+              disabled={!ownerSession || Boolean(ownerWorkflowState.pending)}
+              onClick={ownerCampaignOrchestrator.recoverCampaigns}
+              style={ghostButtonStyle}
+              type="button"
+            >
+              {ownerLabels.retryRecovery}
+            </button>
+          ) : null}
+        </div>
+
+        {ownerWorkflowState.candidates.length > 1 && !ownerWorkflowState.activeCampaignId ? (
+          <ul style={compactListStyle}>
+            {ownerWorkflowState.candidates.map((candidate) => (
+              <li key={candidate.id} style={listItemStyle}>
+                <span style={{ color: "#334155", fontSize: 13, fontWeight: 800, overflowWrap: "anywhere" }}>
+                  {candidate.id}
+                </span>
+                <button
+                  aria-label={ownerLabels.selectCampaign(candidate.id)}
+                  onClick={() => ownerCampaignOrchestrator.selectCampaign(candidate.id)}
+                  style={ghostButtonStyle}
+                  type="button"
+                >
+                  {ownerLabels.selectCampaign(candidate.id)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {ownerWorkflowState.activeCampaignId ? (
+          <div style={{ display: "grid", gap: 6 }}>
+            <p style={statLabelStyle}>{ownerLabels.activeCampaign}</p>
+            <p style={{ color: "#071426", fontSize: 15, fontWeight: 900, margin: 0, overflowWrap: "anywhere" }}>
+              {ownerWorkflowState.activeCampaignId}
+            </p>
+          </div>
+        ) : null}
+
+        {ownerWorkflowState.detail ? (
+          <div aria-label={ownerLabels.canonicalTasks} style={{ display: "grid", gap: 8 }}>
+            <p style={statLabelStyle}>{ownerLabels.canonicalTasks}</p>
+            {ownerWorkflowState.detail.tasks.length > 0 ? (
+              <ul style={compactListStyle}>
+                {ownerWorkflowState.detail.tasks.map((task) => (
+                  <li key={task.id} style={listItemStyle}>
+                    <span style={{ color: "#071426", fontSize: 13, fontWeight: 900, overflowWrap: "anywhere" }}>
+                      {task.id}
+                    </span>
+                    <span style={{ color: "#475569", fontSize: 13 }}>
+                      {task.templateCode ?? task.verificationType} · {task.points}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p style={{ color: "#475569", fontSize: 13, margin: 0 }}>{ownerLabels.noTasks}</p>
+            )}
+          </div>
+        ) : null}
+
+        {ownerWorkflowState.error ? (
+          <div role="alert" style={{ color: "#92400e", display: "grid", gap: 4 }}>
+            <strong>{ownerWorkflowState.error.message}</strong>
+            <span style={{ fontSize: 13, overflowWrap: "anywhere" }}>
+              {ownerWorkflowState.error.code} · {ownerLabels.traceId}: {ownerWorkflowState.error.traceId}
+            </span>
+          </div>
+        ) : null}
       </section>
 
       {activeWorkspace === "campaigns" && (
@@ -5063,7 +5755,12 @@ export const ProjectConsole = ({
         </div>
       </section>
 
-      <CampaignBuilderPanel copy={copy} draft={builderDraft} locale={locale} />
+      <OwnerCampaignBuilderPanel
+        copy={copy}
+        draft={builderDraft}
+        locale={locale}
+        ownerWorkflow={ownerBuilderIntents}
+      />
 
       <div
         aria-label={
@@ -5197,7 +5894,10 @@ export const ProjectConsole = ({
             </div>
           </section>
 
-          <TaskTemplateLibrary locale={locale} />
+          <OwnerTaskTemplateLibrary
+            locale={locale}
+            ownerWorkflow={ownerTaskIntents}
+          />
 
           <section aria-label={copy.forestTaskReadiness} style={panelStyle}>
             <div style={headingRowStyle}>
