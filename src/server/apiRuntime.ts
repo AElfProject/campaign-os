@@ -11,8 +11,11 @@ import {
   type CampaignOsRuntimeConfig,
   type CampaignOsRuntimeConfigOptions,
 } from "./config";
-import type { ApiRuntimeEnvelope } from "./envelope";
-import { createFailureEnvelope, createSuccessEnvelope } from "./envelope";
+import {
+  createFailureEnvelope,
+  createSuccessEnvelope,
+  type ApiRuntimeEnvelope,
+} from "./envelope";
 import {
   ApiRuntimeError,
   authForbidden,

@@ -274,6 +274,7 @@ export const backendServiceBoundaries = [
     ],
     routeIds: [
       "campaigns.list",
+      "campaigns.owner.list",
       "campaigns.create",
       "campaigns.detail",
       "campaigns.lifecycle",

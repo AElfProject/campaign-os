@@ -3,8 +3,6 @@ import type { ApiSkillId, LocalizedText } from "../domain/types";
 import type { ApiRuntimeContractCoverage, ApiRuntimeRouteContract } from "./contracts";
 import { apiRuntimeServiceGroupById } from "./capabilities";
 import { runtimeBoundary } from "./envelope";
-import { apiServicePorts } from "./servicePorts";
-import { backendServiceBoundaries, backendTopology } from "./topology";
 
 const text = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
   "en-US": enUS,
@@ -17,35 +15,6 @@ const route = (contract: ApiRuntimeRouteContract): ApiRuntimeRouteContract => co
 const boundary = runtimeBoundary;
 const dependenciesFor = (serviceGroup: ApiRuntimeRouteContract["serviceGroup"]) =>
   apiRuntimeServiceGroupById[serviceGroup].deferredDependencies;
-const ownerRecoveryRouteId = "campaigns.owner.list";
-
-const addRouteOwnership = (routeIds: readonly string[], routeId: string) => {
-  const mutableRouteIds = routeIds as unknown as string[];
-
-  if (!mutableRouteIds.includes(routeId)) {
-    mutableRouteIds.push(routeId);
-  }
-};
-
-const registerOwnerRecoveryRouteMetadata = (): void => {
-  const campaignService = backendServiceBoundaries.find((service) => service.id === "campaign-service");
-  const topologyCampaignService = backendTopology.services.find((service) => service.id === "campaign-service");
-  const campaignPort = apiServicePorts.find((port) => port.id === "campaign-port");
-
-  if (campaignService) {
-    addRouteOwnership(campaignService.routeIds, ownerRecoveryRouteId);
-  }
-
-  if (topologyCampaignService && topologyCampaignService !== campaignService) {
-    addRouteOwnership(topologyCampaignService.routeIds, ownerRecoveryRouteId);
-  }
-
-  if (campaignPort) {
-    addRouteOwnership(campaignPort.routeIds, ownerRecoveryRouteId);
-  }
-};
-
-registerOwnerRecoveryRouteMetadata();
 
 export const apiRuntimeRoutes = [
   route({

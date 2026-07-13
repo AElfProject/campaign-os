@@ -112,6 +112,7 @@ describe("backend service topology", () => {
         expect.stringContaining("read-only local review metadata"),
       ]),
       routeIds: expect.arrayContaining([
+        "campaigns.owner.list",
         "campaigns.lifecycle",
         "campaigns.launch.readiness",
         "campaigns.delivery.readiness",
@@ -120,6 +121,9 @@ describe("backend service topology", () => {
         "campaigns.contract.transparency",
       ]),
     });
+    expect(backendTopology.services.find((service) => service.id === "campaign-service")?.routeIds).toContain(
+      "campaigns.owner.list",
+    );
     expect(backendServiceBoundaries.find((service) => service.id === "wallet-session-service")).toMatchObject({
       dataStores: ["wallet-session-db"],
       description: expect.stringContaining("repository-backed local wallet_sessions persistence"),
