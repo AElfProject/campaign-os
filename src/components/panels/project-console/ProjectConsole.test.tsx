@@ -3673,6 +3673,27 @@ describe("Project Console Owner campaign orchestration", () => {
     expect(bridge.recoverCampaigns).not.toHaveBeenCalled();
   });
 
+  it("projects unsafe Owner failures without rendering private diagnostic values", async () => {
+    const bridge = createOwnerBridge({
+      recoverCampaigns: vi.fn(async () => ownerFailure({
+        diagnostic: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          message: "Request failed with private key at /Users/example/workspace/internal-data/raw?token=secret.",
+        },
+      })),
+    });
+
+    render(<OwnerConsoleHarness bridge={bridge} />);
+
+    const alert = await within(getOwnerWorkflow()).findByRole("alert");
+    const alertText = alert.textContent?.toLowerCase() ?? "";
+
+    expect(alertText).toContain("redacted private path");
+    expect(alertText).not.toContain("internal-data");
+    expect(alertText).not.toContain("token=secret");
+    expect(alertText).not.toContain("private key");
+  });
+
   it("handles zero, one, and multiple recovery candidates deterministically", async () => {
     const zeroBridge = createOwnerBridge();
     const zeroView = render(<OwnerConsoleHarness bridge={zeroBridge} />);
