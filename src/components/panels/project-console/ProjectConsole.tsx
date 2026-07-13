@@ -57,6 +57,11 @@ import {
   type ProjectOwnerFundingProofReviewBridgeApiState,
 } from "../../../api/projectOwnerFundingProofReviewBridgeApiBridge";
 import {
+  createProductionDatabaseHandoffReadinessApiSeededFallbackState,
+  loadProductionDatabaseHandoffReadinessApiState,
+  type ProductionDatabaseHandoffReadinessApiState,
+} from "../../../api/productionDatabaseHandoffReadinessApiBridge";
+import {
   createExportArtifactDeliveryApiLoadingState,
   createExportArtifactDeliverySeededFallbackState,
   sanitizeExportArtifactDeliveryApiText,
@@ -185,6 +190,7 @@ import { ObjectStorageExportRuntimePanel } from "./ObjectStorageExportRuntimePan
 import { PointsRankingLedgerRuntimePanel } from "./PointsRankingLedgerRuntimePanel";
 import { RewardDistributionHandoffRuntimePanel } from "./RewardDistributionHandoffRuntimePanel";
 import { ProjectOwnerFundingProofReviewPanel } from "./ProjectOwnerFundingProofReviewPanel";
+import { ProductionDatabaseHandoffReadinessPanel } from "./ProductionDatabaseHandoffReadinessPanel";
 import { RepositoryCampaignWorkflowPanel } from "./RepositoryCampaignWorkflowPanel";
 import { projectConsoleCopy } from "./copy";
 import { PublishDeliveryReviewPanel } from "./PublishDeliveryReviewPanel";
@@ -1345,6 +1351,9 @@ const rewardDistributionHandoffRuntimeApiBaseUrl = () =>
 const projectOwnerFundingProofReviewApiBaseUrl = () =>
   import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
+const productionDatabaseHandoffReadinessApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
 const createPublishDeliveryReviewSeededFallbackState = (
   campaignId: string,
 ): PublishDeliveryReviewApiBridgeState => ({
@@ -1463,6 +1472,22 @@ const createProjectOwnerFundingProofReviewSeededFallbackState = (
     },
   ],
 });
+
+const createProductionDatabaseHandoffReadinessSeededFallbackState =
+  (): ProductionDatabaseHandoffReadinessApiState => ({
+    ...createProductionDatabaseHandoffReadinessApiSeededFallbackState(),
+    diagnostics: [
+      {
+        code: "API_BASE_URL_MISSING",
+        message: {
+          "en-US": "No local production database handoff API base URL is configured, so seeded review data is shown.",
+          "zh-CN": "未配置本地 production database handoff API base URL，因此显示 seeded review 数据。",
+          "zh-TW": "未設定本地 production database handoff API base URL，因此顯示 seeded review 資料。",
+        },
+        severity: "info",
+      },
+    ],
+  });
 
 const createBackendRuntimeReadinessSeededFallbackState = (): BackendRuntimeReadinessApiBridgeState => ({
   boundary: backendRuntimeReadinessApiBoundary,
@@ -2165,6 +2190,7 @@ export const ProjectConsole = ({
   const contractWriterRuntimeApiRequestSeq = useRef(0);
   const rewardDistributionHandoffRuntimeApiRequestSeq = useRef(0);
   const projectOwnerFundingProofReviewApiRequestSeq = useRef(0);
+  const productionDatabaseHandoffReadinessApiRequestSeq = useRef(0);
   const exportDeliveryApiRequestSeq = useRef(0);
   const backendReadinessApiRequestSeq = useRef(0);
   const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
@@ -2253,6 +2279,7 @@ export const ProjectConsole = ({
   const contractWriterRuntimeApiBase = contractWriterRuntimeApiBaseUrl();
   const rewardDistributionHandoffRuntimeApiBase = rewardDistributionHandoffRuntimeApiBaseUrl();
   const projectOwnerFundingProofReviewApiBase = projectOwnerFundingProofReviewApiBaseUrl();
+  const productionDatabaseHandoffReadinessApiBase = productionDatabaseHandoffReadinessApiBaseUrl();
   const exportDeliveryApiRequest: ExportArtifactDeliveryRequest = {
     campaignId: campaign.id,
     contractRootMode: "eligibility_root",
@@ -2324,6 +2351,14 @@ export const ProjectConsole = ({
         : createProjectOwnerFundingProofReviewSeededFallbackState(campaign.id),
     );
   const [projectOwnerFundingProofReviewApiReviewInFlight, setProjectOwnerFundingProofReviewApiReviewInFlight] =
+    useState(false);
+  const [productionDatabaseHandoffReadinessApiState, setProductionDatabaseHandoffReadinessApiState] =
+    useState<ProductionDatabaseHandoffReadinessApiState>(() =>
+      productionDatabaseHandoffReadinessApiBase?.trim()
+        ? createProductionDatabaseHandoffReadinessApiSeededFallbackState("project-console-production-database-handoff-pending")
+        : createProductionDatabaseHandoffReadinessSeededFallbackState(),
+    );
+  const [productionDatabaseHandoffReadinessApiReviewInFlight, setProductionDatabaseHandoffReadinessApiReviewInFlight] =
     useState(false);
   const backendReadinessApiBaseUrl = backendRuntimeReadinessApiBaseUrl();
   const [backendReadinessApiState, setBackendReadinessApiState] =
@@ -2691,6 +2726,38 @@ export const ProjectConsole = ({
     loadProjectOwnerFundingProofReviewApiReview();
   };
 
+  const loadProductionDatabaseHandoffReadinessApiReview = useCallback(() => {
+    if (!productionDatabaseHandoffReadinessApiBase?.trim()) {
+      setProductionDatabaseHandoffReadinessApiState(createProductionDatabaseHandoffReadinessSeededFallbackState());
+      setProductionDatabaseHandoffReadinessApiReviewInFlight(false);
+      return;
+    }
+
+    setProductionDatabaseHandoffReadinessApiReviewInFlight(true);
+
+    const requestSeq = productionDatabaseHandoffReadinessApiRequestSeq.current + 1;
+    productionDatabaseHandoffReadinessApiRequestSeq.current = requestSeq;
+
+    void loadProductionDatabaseHandoffReadinessApiState({
+      config: {
+        baseUrl: productionDatabaseHandoffReadinessApiBase,
+        tracePrefix: "project-console-production-database-handoff-readiness",
+      },
+    }).then((state) => {
+      if (productionDatabaseHandoffReadinessApiRequestSeq.current === requestSeq) {
+        setProductionDatabaseHandoffReadinessApiState(state);
+      }
+    }).finally(() => {
+      if (productionDatabaseHandoffReadinessApiRequestSeq.current === requestSeq) {
+        setProductionDatabaseHandoffReadinessApiReviewInFlight(false);
+      }
+    });
+  }, [productionDatabaseHandoffReadinessApiBase]);
+
+  const runProductionDatabaseHandoffReadinessApiReview = () => {
+    loadProductionDatabaseHandoffReadinessApiReview();
+  };
+
   const loadBackendReadinessApiReview = useCallback(() => {
     if (!backendReadinessApiBaseUrl?.trim()) {
       setBackendReadinessApiState(createBackendRuntimeReadinessSeededFallbackState());
@@ -2734,6 +2801,7 @@ export const ProjectConsole = ({
       loadContractWriterRuntimeApiReview();
       loadRewardDistributionHandoffRuntimeApiReview();
       loadProjectOwnerFundingProofReviewApiReview();
+      loadProductionDatabaseHandoffReadinessApiReview();
       loadBackendReadinessApiReview();
     }
   }, [
@@ -2745,6 +2813,7 @@ export const ProjectConsole = ({
     loadPointsRankingLedgerRuntimeApiReview,
     loadPublishDeliveryApiReview,
     loadProjectOwnerFundingProofReviewApiReview,
+    loadProductionDatabaseHandoffReadinessApiReview,
     loadRepositoryCampaignWorkflowApiReview,
     loadRewardDistributionHandoffRuntimeApiReview,
   ]);
@@ -7312,6 +7381,15 @@ export const ProjectConsole = ({
         onReview={runRepositoryCampaignWorkflowApiReview}
         reviewInFlight={repositoryCampaignWorkflowApiReviewInFlight}
         state={repositoryCampaignWorkflowApiState}
+      />
+
+      <ProductionDatabaseHandoffReadinessPanel
+        apiConfigured={Boolean(productionDatabaseHandoffReadinessApiBase?.trim())}
+        copy={copy}
+        locale={locale}
+        onReview={runProductionDatabaseHandoffReadinessApiReview}
+        reviewInFlight={productionDatabaseHandoffReadinessApiReviewInFlight}
+        state={productionDatabaseHandoffReadinessApiState}
       />
 
       <BackendRuntimePersistencePostureSurface

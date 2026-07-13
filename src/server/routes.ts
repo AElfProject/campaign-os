@@ -44,6 +44,23 @@ export const apiRuntimeRoutes = [
     supportMode: "local_seeded",
   }),
   route({
+    apiGroup: "runtime",
+    boundary: text(
+      "Local production database handoff readiness review route. No live API, database connection, DB client construction, query, write, transaction, migration execution, secret reveal, provider call, contract write, storage write, reward custody, or reward distribution is performed.",
+      "本地 production database handoff readiness review route。不会执行实时 API、数据库连接、DB client 构造、查询、写入、事务、migration 执行、secret 暴露、provider 调用、合约写入、storage 写入、奖励托管或发奖。",
+      "本地 production database handoff readiness review route。不會執行即時 API、資料庫連線、DB client 建構、查詢、寫入、交易、migration 執行、secret 暴露、provider 呼叫、合約寫入、storage 寫入、獎勵託管或發獎。",
+    ),
+    id: "backend.production-database.handoff-readiness",
+    method: "GET",
+    path: "/api/backend/production-database/handoff-readiness",
+    productionDependencies: dependenciesFor("runtime"),
+    readiness: "review_required",
+    riskLevel: "high",
+    serviceGroup: "runtime",
+    summary: text("Inspect local production database handoff readiness.", "检查本地 production database handoff readiness。"),
+    supportMode: "local_seeded",
+  }),
+  route({
     apiGroup: "service_registry",
     boundary,
     id: "runtime.services",
@@ -248,7 +265,7 @@ export const apiRuntimeRoutes = [
   route({
     apiGroup: "campaign_discovery",
     boundary: text(
-      "Local review-only project owner funding proof bridge. No upload, object storage write, signed URL, funding transfer, reward custody, reward distribution, provider call, wallet signing, contract write, queue publishing, scheduler execution, or worker execution is performed.",
+      "Local review-only project owner funding proof bridge. No live API call, upload, object storage write, signed URL, funding transfer, reward custody, reward distribution, provider call, wallet signing, contract write, queue publishing, scheduler execution, or worker execution is performed.",
       "本地、仅审核的项目方资金证明 bridge。不会执行上传、对象存储写入、signed URL、资金转移、奖励托管、发奖、provider 调用、钱包签名、合约写入、队列发布、调度执行或 worker 执行。",
       "本地、僅審核的專案方資金證明 bridge。不會執行上傳、物件儲存寫入、signed URL、資金轉移、獎勵託管、發獎、provider 呼叫、錢包簽名、合約寫入、隊列發布、排程執行或 worker 執行。",
     ),
@@ -265,7 +282,7 @@ export const apiRuntimeRoutes = [
   route({
     apiGroup: "campaign_discovery",
     boundary: text(
-      "Local review-only project owner funding proof metadata normalization route. Request metadata is sanitized and not persisted; no upload, object storage write, signed URL, funding transfer, reward custody, reward distribution, provider call, wallet signing, contract write, queue publishing, scheduler execution, or worker execution is performed.",
+      "Local review-only project owner funding proof metadata normalization route. Request metadata is sanitized and not persisted; No live API call, upload, object storage write, signed URL, funding transfer, reward custody, reward distribution, provider call, wallet signing, contract write, queue publishing, scheduler execution, or worker execution is performed.",
       "本地、仅审核的项目方资金证明 metadata 归一化 route。请求 metadata 会被清洗且不会持久化；不会执行上传、对象存储写入、signed URL、资金转移、奖励托管、发奖、provider 调用、钱包签名、合约写入、队列发布、调度执行或 worker 执行。",
       "本地、僅審核的專案方資金證明 metadata 歸一化 route。請求 metadata 會被清洗且不會持久化；不會執行上傳、物件儲存寫入、signed URL、資金轉移、獎勵託管、發獎、provider 呼叫、錢包簽名、合約寫入、隊列發布、排程執行或 worker 執行。",
     ),

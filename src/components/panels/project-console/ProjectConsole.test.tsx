@@ -52,6 +52,11 @@ import {
   loadProjectOwnerFundingProofReviewBridgeApiState,
   type ProjectOwnerFundingProofReviewBridgeApiState,
 } from "../../../api/projectOwnerFundingProofReviewBridgeApiBridge";
+import {
+  createProductionDatabaseHandoffReadinessApiSeededFallbackState,
+  loadProductionDatabaseHandoffReadinessApiState,
+  type ProductionDatabaseHandoffReadinessApiState,
+} from "../../../api/productionDatabaseHandoffReadinessApiBridge";
 import { App } from "../../../app/App";
 import { campaignDetail, EXPORT_CSV_COLUMNS } from "../../../domain";
 import { projectConsoleCopy } from "./copy";
@@ -144,6 +149,15 @@ vi.mock("../../../api/projectOwnerFundingProofReviewBridgeApiBridge", async (imp
   return {
     ...actual,
     loadProjectOwnerFundingProofReviewBridgeApiState: vi.fn(actual.loadProjectOwnerFundingProofReviewBridgeApiState),
+  };
+});
+
+vi.mock("../../../api/productionDatabaseHandoffReadinessApiBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api/productionDatabaseHandoffReadinessApiBridge")>();
+
+  return {
+    ...actual,
+    loadProductionDatabaseHandoffReadinessApiState: vi.fn(actual.loadProductionDatabaseHandoffReadinessApiState),
   };
 });
 
@@ -949,6 +963,27 @@ const projectOwnerFundingProofReviewApiState = (): ProjectOwnerFundingProofRevie
   };
 };
 
+const productionDatabaseHandoffReadinessApiState = (): ProductionDatabaseHandoffReadinessApiState => {
+  const state = createProductionDatabaseHandoffReadinessApiSeededFallbackState(
+    "trace-production-database-api-visible",
+  );
+
+  return {
+    ...state,
+    configured: true,
+    diagnostics: [],
+    routeCount: 40,
+    source: "api_runtime",
+    traceId: "trace-production-database-api-visible",
+    handoff: {
+      ...state.handoff,
+      source: "server_runtime",
+      status: "blocked",
+      traceId: "trace-production-database-api-visible",
+    },
+  };
+};
+
 describe("Project Console shell", () => {
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
   const mockedSubmitExportArtifactDeliveryApiReview = vi.mocked(submitExportArtifactDeliveryApiReview);
@@ -963,6 +998,8 @@ describe("Project Console shell", () => {
     vi.mocked(loadRewardDistributionHandoffRuntimeApiBridgeState);
   const mockedLoadProjectOwnerFundingProofReviewBridgeApiState =
     vi.mocked(loadProjectOwnerFundingProofReviewBridgeApiState);
+  const mockedLoadProductionDatabaseHandoffReadinessApiState =
+    vi.mocked(loadProductionDatabaseHandoffReadinessApiState);
 
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
@@ -976,6 +1013,7 @@ describe("Project Console shell", () => {
     mockedLoadContractWriterRuntimeApiBridgeState.mockReset();
     mockedLoadRewardDistributionHandoffRuntimeApiBridgeState.mockReset();
     mockedLoadProjectOwnerFundingProofReviewBridgeApiState.mockReset();
+    mockedLoadProductionDatabaseHandoffReadinessApiState.mockReset();
     mockedLoadBackendRuntimeReadinessApiBridgeState.mockResolvedValue(backendReadinessApiState());
     mockedLoadPublishDeliveryReviewApiBridgeState.mockResolvedValue(publishDeliveryReviewApiState());
     mockedLoadPointsRankingLedgerRuntimeApiBridgeState.mockResolvedValue(pointsRankingLedgerRuntimeApiState());
@@ -988,6 +1026,9 @@ describe("Project Console shell", () => {
     );
     mockedLoadProjectOwnerFundingProofReviewBridgeApiState.mockResolvedValue(
       projectOwnerFundingProofReviewApiState(),
+    );
+    mockedLoadProductionDatabaseHandoffReadinessApiState.mockResolvedValue(
+      productionDatabaseHandoffReadinessApiState(),
     );
   });
 
@@ -2318,6 +2359,18 @@ describe("Project Console shell", () => {
     expect(within(projectOwnerFundingProofReview).getByText("No object storage write")).toBeInTheDocument();
     expect(within(projectOwnerFundingProofReview).getByText("No reward distribution")).toBeInTheDocument();
 
+    const productionDatabaseHandoff = screen.getByLabelText("Production Database Handoff Readiness review");
+    expect(mockedLoadProductionDatabaseHandoffReadinessApiState).not.toHaveBeenCalled();
+    expect(within(productionDatabaseHandoff).getAllByText("Seeded fallback").length).toBeGreaterThan(0);
+    expect(within(productionDatabaseHandoff).getByText("No API trace yet")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText(/No local API base URL configured/)).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("CAMPAIGN_OS_DATABASE_PACKAGE")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("CAMPAIGN_OS_DATABASE_SECRET_REF")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("Campaign DB / campaign-db")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("No database client")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("No secret reveal")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("No reward distribution")).toBeInTheDocument();
+
     const walletAdapterReadiness = screen.getByLabelText("aelf-web-login adapter readiness");
     expect(
       within(walletAdapterReadiness).getByRole("heading", {
@@ -2796,6 +2849,54 @@ describe("Project Console shell", () => {
     ]) {
       expect(within(projectOwnerFundingProofReview).queryByRole("button", { name })).not.toBeInTheDocument();
       expect(within(projectOwnerFundingProofReview).queryByRole("link", { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it("loads Production Database Handoff Readiness automatically without live database controls", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedLoadProductionDatabaseHandoffReadinessApiState.mockResolvedValueOnce(
+      productionDatabaseHandoffReadinessApiState(),
+    );
+
+    render(<ProjectConsole activeWorkspace="export" campaign={campaignDetail} locale="en-US" />);
+
+    const productionDatabaseHandoff = screen.getByLabelText("Production Database Handoff Readiness review");
+
+    await waitFor(() => expect(mockedLoadProductionDatabaseHandoffReadinessApiState).toHaveBeenCalledWith({
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        tracePrefix: "project-console-production-database-handoff-readiness",
+      },
+    }));
+
+    await waitFor(() => expect(within(productionDatabaseHandoff).getByText("API runtime")).toBeInTheDocument());
+    expect(within(productionDatabaseHandoff).getByText("trace-production-database-api-visible"))
+      .toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByRole("button", { name: "Review DB handoff metadata" }))
+      .toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("CAMPAIGN_OS_DATABASE_PACKAGE")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("CAMPAIGN_OS_DATABASE_SECRET_REF")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("pg (npm:pg)")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getAllByText("production-db-schema-cutover").length).toBeGreaterThan(0);
+    expect(within(productionDatabaseHandoff).getByText("Rollback plan not ready")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("No database client")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("No database connection")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("No query execution")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("No migration execution")).toBeInTheDocument();
+    expect(within(productionDatabaseHandoff).getByText("No secret reveal")).toBeInTheDocument();
+    expect(screen.getByLabelText("Backend Runtime Readiness review")).toBeInTheDocument();
+    for (const name of [
+      /connect db/i,
+      /run migration/i,
+      /query/i,
+      /write/i,
+      /transaction/i,
+      /reveal secret/i,
+      /enable production/i,
+      /import driver/i,
+    ]) {
+      expect(within(productionDatabaseHandoff).queryByRole("button", { name })).not.toBeInTheDocument();
+      expect(within(productionDatabaseHandoff).queryByRole("link", { name })).not.toBeInTheDocument();
     }
   });
 
