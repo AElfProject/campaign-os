@@ -165,24 +165,45 @@ const unsafeApiPatterns: Array<[RegExp, string]> = [
   [/postgres(?:ql)?:\/\/[^"'\s<>]+/gi, "__PDB_API_RED_0__"],
   [/mysql:\/\/[^"'\s<>]+/gi, "__PDB_API_RED_0__"],
   [/mongodb(?:\+srv)?:\/\/[^"'\s<>]+/gi, "__PDB_API_RED_0__"],
+  [
+    /\b(?:token|access[-_\s]*token|refresh[-_\s]*token|api[-_\s]*key|password|passphrase|secret|credential|private[-_\s]*key|seed[-_\s]*phrase|mnemonic|bearer[-_\s]*token)\b["']?\s*[:=]\s*(?:"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|[^,\s"'<>|}\]]+)/gi,
+    "__PDB_API_RED_2__",
+  ],
   [/\bprivate[-_\s]*key\b/gi, "__PDB_API_RED_1__"],
   [/\bprivatekey\b/gi, "__PDB_API_RED_1__"],
   [/\bseed[-_\s]*phrase\b/gi, "__PDB_API_RED_1__"],
   [/\bbearer[-_\s]*token\b/gi, "__PDB_API_RED_2__"],
   [/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, "__PDB_API_RED_2__"],
-  [/\b(token|access_token|refresh_token|api_key|apikey|password)=([^&\s"'<>]+)/gi, "__PDB_API_RED_2__"],
   [/\b(secret|plain[-_\s]*secret|credential)\b[^\s,."'<>]*/gi, "__PDB_API_RED_2__"],
   [/\bstack\s*trace\b/gi, "__PDB_API_RED_3__"],
   [/at\s+[A-Za-z0-9_$.[\]<>]+\s+\([^)]*\)/g, "__PDB_API_RED_3__"],
-  [/\/Users\/[^"'\s<>]+/gi, "__PDB_API_RED_4__"],
-  [/\/private\/[^"'\s<>]*/gi, "__PDB_API_RED_4__"],
+  [/\/(?:Users|home|private|var\/folders)\/[^"'\s<>]*/gi, "__PDB_API_RED_4__"],
+  [/(?:[A-Za-z]:)?\\(?:Users|home|private)\\[^"'\s<>]*/gi, "__PDB_API_RED_4__"],
+  [
+    /(?:[A-Za-z]:)?[\\/][^"'\r\n<>]*?(?:campaign-os-kitty|docs[\\/]current|kitty-specs|evidence|sync|\.kittify|\.agents)(?:[\\/][^"'\s<>]*)?/gi,
+    "__PDB_API_RED_4__",
+  ],
   [/\bsigned[-_\s]*url\b/gi, "__PDB_API_RED_5__"],
   [/\bsignedurl\b/gi, "__PDB_API_RED_5__"],
   [/\bobject[-_\s]*key\b/gi, "__PDB_API_RED_5__"],
   [/\bobjectkey\b/gi, "__PDB_API_RED_5__"],
   [/https?:\/\/[^"'\s<>]+/gi, "__PDB_API_RED_6__"],
-  [/\b(?:host(?:name)?|user(?:name)?|database[-_]?(?:host|user))\s*[=:]\s*[^,\s"'<>]+/gi, "__PDB_API_RED_7__"],
-  [/\b(?:select|insert|update|delete|alter|create|drop|truncate)\b[^"'<>\r\n]*/gi, "__PDB_API_RED_8__"],
+  [
+    /\b(?:host(?:name)?|user(?:name)?|database[-_]?(?:host|user))\b["']?\s*[:=]\s*(?:"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|[^,\s"'<>|}\]]+)/gi,
+    "__PDB_API_RED_7__",
+  ],
+  [
+    /\b(?:query[-_\s]*(?:values?|parameters?|params?|bindings?)|bind[-_\s]*(?:values?|parameters?|params?|bindings?)|sql[-_\s]*(?:values?|parameters?|params?|bindings?))\b["']?\s*[:=]\s*(?:\[[^\]\r\n]*\]|\{[^}\r\n]*\}|"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|[^,\s"'<>|}\]]+)/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\bwith\s+(?:recursive\s+)?[A-Za-z_][A-Za-z0-9_$]*(?:\s*\([^)]*\))?\s+as\s*\([^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\b(?:select|insert|update|delete|merge|replace|alter|create|drop|truncate|grant|revoke|explain|analyze|vacuum|copy|call|execute)\b[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
 ];
 
 const unsafeApiReplacementLabels: Record<string, string> = {
@@ -269,8 +290,16 @@ const sensitiveFieldReplacement = (key: string): string | undefined => {
     return "[REDACTED:DATABASE_URL]";
   }
 
-  if (/^(?:host|hostname|user|username|databasehost|databaseuser|query|sql|rawsql)$/.test(normalized)) {
+  if (/^(?:host|hostname|user|username|databasehost|databaseuser)$/.test(normalized)) {
     return "[REDACTED:DATABASE_METADATA]";
+  }
+
+  if (
+    /^(?:query|querytext|queryvalues?|queryparameters?|queryparams?|querybindings?|sql|sqltext|rawsql|sqlvalues?|sqlparameters?|sqlparams?|sqlbindings?|statement|bindvalues?|bindparameters?|bindparams?|bindings?)$/.test(
+      normalized,
+    )
+  ) {
+    return "[REDACTED:QUERY]";
   }
 
   if (
@@ -317,12 +346,79 @@ const safePropertyValue = (
   return sanitizeApiValue(descriptor.value, depth, context);
 };
 
-const safeObjectDescriptors = (value: object): PropertyDescriptorMap | undefined => {
+const safeOwnPropertyDescriptor = (
+  value: object,
+  key: PropertyKey,
+): PropertyDescriptor | undefined => {
   try {
-    return Object.getOwnPropertyDescriptors(value);
+    return Object.getOwnPropertyDescriptor(value, key);
   } catch {
     return undefined;
   }
+};
+
+interface BoundedPropertyDescriptors {
+  entries: Array<[string, PropertyDescriptor | undefined]>;
+  truncated: boolean;
+  unreadable: boolean;
+}
+
+const boundedEnumerableOwnDescriptors = (
+  value: object,
+  excludedKeys: ReadonlySet<string> = new Set<string>(),
+): BoundedPropertyDescriptors => {
+  let keys: readonly PropertyKey[];
+
+  try {
+    keys = Reflect.ownKeys(value);
+  } catch {
+    return { entries: [], truncated: false, unreadable: true };
+  }
+
+  const entries: Array<[string, PropertyDescriptor | undefined]> = [];
+  let descriptorInspections = 0;
+  let truncated = false;
+
+  for (const key of keys) {
+    if (typeof key !== "string" || excludedKeys.has(key)) {
+      continue;
+    }
+
+    if (descriptorInspections >= sanitizerMaxCollectionEntries + 1) {
+      truncated = true;
+      break;
+    }
+
+    descriptorInspections += 1;
+    const descriptor = safeOwnPropertyDescriptor(value, key);
+
+    if (!descriptor) {
+      if (entries.length >= sanitizerMaxCollectionEntries) {
+        truncated = true;
+        break;
+      }
+
+      entries.push([key, undefined]);
+      continue;
+    }
+
+    if (!descriptor.enumerable) {
+      continue;
+    }
+
+    if (entries.length >= sanitizerMaxCollectionEntries) {
+      truncated = true;
+      break;
+    }
+
+    entries.push([key, descriptor]);
+  }
+
+  return {
+    entries: entries.sort(([left], [right]) => compareSanitizerKeys(left, right)),
+    truncated,
+    unreadable: false,
+  };
 };
 
 const sanitizeErrorValue = (
@@ -330,56 +426,53 @@ const sanitizeErrorValue = (
   depth: number,
   context: SanitizerContext,
 ): SanitizedApiValue => {
-  const descriptors = safeObjectDescriptors(error);
-
-  if (!descriptors) {
-    return sanitizerUnreadableMarker;
-  }
-
   const entries: Array<[string, SanitizedApiValue]> = [];
+  const nameDescriptor = safeOwnPropertyDescriptor(error, "name");
+  const messageDescriptor = safeOwnPropertyDescriptor(error, "message");
+  const causeDescriptor = safeOwnPropertyDescriptor(error, "cause");
   entries.push([
     "name",
-    descriptors.name
-      ? safePropertyValue("name", descriptors.name, depth + 1, context)
+    nameDescriptor
+      ? safePropertyValue("name", nameDescriptor, depth + 1, context)
       : "Error",
   ]);
   entries.push([
     "message",
-    safePropertyValue("message", descriptors.message, depth + 1, context),
+    safePropertyValue("message", messageDescriptor, depth + 1, context),
   ]);
 
-  if (descriptors.cause) {
+  if (causeDescriptor) {
     entries.push([
       "cause",
-      safePropertyValue("cause", descriptors.cause, depth + 1, context),
+      safePropertyValue("cause", causeDescriptor, depth + 1, context),
     ]);
   }
 
-  const customKeys = Object.keys(descriptors)
-    .filter((key) => !["cause", "message", "name", "stack"].includes(key) && descriptors[key]?.enumerable)
-    .sort(compareSanitizerKeys)
-    .slice(0, sanitizerMaxCollectionEntries);
+  const customDescriptors = boundedEnumerableOwnDescriptors(
+    error,
+    new Set(["cause", "message", "name", "stack"]),
+  );
 
-  for (const key of customKeys) {
+  if (customDescriptors.unreadable) {
+    entries.push(["__properties__", sanitizerUnreadableMarker]);
+  }
+
+  for (const [key, descriptor] of customDescriptors.entries) {
     entries.push([
       sanitizeApiKey(key),
-      safePropertyValue(key, descriptors[key], depth + 1, context),
+      safePropertyValue(key, descriptor, depth + 1, context),
     ]);
   }
 
-  const customCount = Object.keys(descriptors)
-    .filter((key) => !["cause", "message", "name", "stack"].includes(key) && descriptors[key]?.enumerable)
-    .length;
-
-  if (customCount > customKeys.length) {
-    entries.push(["__truncated__", `[truncated:${customCount - customKeys.length}]`]);
+  if (customDescriptors.truncated) {
+    entries.push(["__truncated__", "[truncated:entry-budget]"]);
   }
 
   return Object.fromEntries(entries.sort(([left], [right]) => compareSanitizerKeys(left, right)));
 };
 
-const sanitizeArrayValue = (
-  value: unknown[],
+const sanitizeIndexedCollectionValue = (
+  value: ArrayLike<unknown>,
   depth: number,
   context: SanitizerContext,
 ): SanitizedApiValue[] => {
@@ -418,23 +511,19 @@ const sanitizeObjectValue = (
   depth: number,
   context: SanitizerContext,
 ): SanitizedApiValue => {
-  const descriptors = safeObjectDescriptors(value);
+  const descriptors = boundedEnumerableOwnDescriptors(value);
 
-  if (!descriptors) {
+  if (descriptors.unreadable) {
     return sanitizerUnreadableMarker;
   }
 
-  const enumerableKeys = Object.keys(descriptors)
-    .filter((key) => descriptors[key]?.enumerable)
-    .sort(compareSanitizerKeys);
-  const selectedKeys = enumerableKeys.slice(0, sanitizerMaxCollectionEntries);
-  const entries = selectedKeys.map((key): [string, SanitizedApiValue] => [
+  const entries = descriptors.entries.map(([key, descriptor]): [string, SanitizedApiValue] => [
     sanitizeApiKey(key),
-    safePropertyValue(key, descriptors[key], depth + 1, context),
+    safePropertyValue(key, descriptor, depth + 1, context),
   ]);
 
-  if (enumerableKeys.length > selectedKeys.length) {
-    entries.push(["__truncated__", `[truncated:${enumerableKeys.length - selectedKeys.length}]`]);
+  if (descriptors.truncated) {
+    entries.push(["__truncated__", "[truncated:entry-budget]"]);
   }
 
   return Object.fromEntries(entries);
@@ -495,11 +584,15 @@ function sanitizeApiValue(
 
   try {
     if (Array.isArray(value)) {
-      return sanitizeArrayValue(value, depth, context);
+      return sanitizeIndexedCollectionValue(value, depth, context);
     }
 
     if (value instanceof Error) {
       return sanitizeErrorValue(value, depth, context);
+    }
+
+    if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+      return sanitizeIndexedCollectionValue(value as unknown as ArrayLike<unknown>, depth, context);
     }
 
     return sanitizeObjectValue(value, depth, context);

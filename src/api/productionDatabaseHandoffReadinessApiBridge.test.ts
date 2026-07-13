@@ -349,6 +349,102 @@ describe("production database handoff readiness API bridge", () => {
     expect(driverFailure).not.toContain("private_table");
   });
 
+  it("redacts delimiter variants, bind values, private artifact paths, and CTE SQL", () => {
+    const sentinels = {
+      bind: "bind-sentinel-wp04-cycle2",
+      credential: "credential-sentinel-wp04-cycle2",
+      host: "host-sentinel-wp04-cycle2",
+      password: "password-sentinel-wp04-cycle2",
+      path: "path-sentinel-wp04-cycle2",
+      privateKey: "private-key-sentinel-wp04-cycle2",
+      query: "query-sentinel-wp04-cycle2",
+      secret: "secret-sentinel-wp04-cycle2",
+      seedPhrase: "seed-phrase-sentinel-wp04-cycle2",
+      sql: "sql-sentinel-wp04-cycle2",
+      user: "user-sentinel-wp04-cycle2",
+    };
+    const failure = new Error([
+      `password: ${sentinels.password}`,
+      `credential=${sentinels.credential}`,
+      `secret: '${sentinels.secret}'`,
+      `"host": "${sentinels.host}"`,
+      `'user': '${sentinels.user}'`,
+      `/home/runner/campaign-os-kitty/evidence/${sentinels.path}.log`,
+      `WITH private_rows AS (SELECT '${sentinels.sql}' AS secret_value) SELECT * FROM private_rows`,
+    ].join(" | ")) as Error & Record<string, unknown>;
+    failure.queryValues = [sentinels.query];
+    failure.bindParameters = { first: sentinels.bind };
+
+    const sanitized = sanitizeProductionDatabaseHandoffReadinessApiText(failure);
+
+    expect(sanitized).toContain("[REDACTED:CREDENTIAL]");
+    expect(sanitized).toContain("[REDACTED:DATABASE_METADATA]");
+    expect(sanitized).toContain("[REDACTED:PRIVATE_PATH]");
+    expect(sanitized).toContain("[REDACTED:QUERY]");
+    for (const sentinel of Object.values(sentinels).filter(
+      (value) => ![sentinels.privateKey, sentinels.seedPhrase].includes(value),
+    )) {
+      expect(sanitized).not.toContain(sentinel);
+    }
+
+    const domainCredentialVariants = [
+      [`private key = "${sentinels.privateKey}"`, sentinels.privateKey],
+      [`seed_phrase: ${sentinels.seedPhrase}`, sentinels.seedPhrase],
+    ] as const;
+    for (const [input, sentinel] of domainCredentialVariants) {
+      expect(sanitizeProductionDatabaseHandoffReadinessApiText(input)).not.toContain(sentinel);
+    }
+  });
+
+  it("keeps adversarial database failures sanitized through the fetch fallback", async () => {
+    const sentinels = [
+      "fallback-password-sentinel",
+      "fallback-host-sentinel",
+      "fallback-user-sentinel",
+      "fallback-query-sentinel",
+      "fallback-bind-sentinel",
+      "fallback-path-sentinel",
+      "fallback-sql-sentinel",
+    ];
+    const failure = new Error([
+      `password: ${sentinels[0]}`,
+      `"host": "${sentinels[1]}"`,
+      `'user': '${sentinels[2]}'`,
+      `/home/runner/campaign-os-kitty/evidence/${sentinels[5]}.log`,
+      `WITH private_rows AS (SELECT '${sentinels[6]}' AS secret_value) SELECT * FROM private_rows`,
+    ].join(" | ")) as Error & Record<string, unknown>;
+    failure.queryValues = [sentinels[3]];
+    failure.bindParameters = { first: sentinels[4] };
+    const fetchImpl = vi.fn().mockResolvedValueOnce(response({
+      error: failure,
+      ok: false,
+      traceId: "trace-adversarial-database-fallback",
+    }, {
+      ok: false,
+      status: 502,
+      traceId: "trace-adversarial-header",
+    })) as unknown as ProductionDatabaseHandoffReadinessApiFetch;
+
+    const state = await loadProductionDatabaseHandoffReadinessApiState({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl,
+    });
+    const serialized = JSON.stringify(state);
+
+    expect(state).toMatchObject({
+      diagnostics: [{
+        code: "API_REQUEST_FAILED",
+        safeDetails: { status: 502 },
+        severity: "error",
+      }],
+      source: "seeded_fallback",
+      traceId: "trace-adversarial-database-fallback",
+    });
+    for (const sentinel of sentinels) {
+      expect(serialized).not.toContain(sentinel);
+    }
+  });
+
   it("bounds cyclic, deeply nested, and oversized collections deterministically", () => {
     const selfCycle: Record<string, unknown> = { id: "self" };
     selfCycle.self = selfCycle;
@@ -385,6 +481,47 @@ describe("production database handoff readiness API bridge", () => {
       expect(output.length).toBeLessThanOrEqual(4_096);
       expect(output).toBe(sanitizeProductionDatabaseHandoffReadinessApiText(values[index]));
     }
+  });
+
+  it("bounds descriptor and value inspection for large object and typed-array inputs", () => {
+    const target = Object.fromEntries(
+      Array.from({ length: 5_000 }, (_, index) => [
+        `key-${index.toString().padStart(5, "0")}`,
+        index,
+      ]),
+    );
+    let descriptorReads = 0;
+    let valueReads = 0;
+    const proxy = new Proxy(target, {
+      get: (object, key, receiver) => {
+        valueReads += 1;
+        return Reflect.get(object, key, receiver);
+      },
+      getOwnPropertyDescriptor: (object, key) => {
+        descriptorReads += 1;
+        return Reflect.getOwnPropertyDescriptor(object, key);
+      },
+    });
+
+    const first = sanitizeProductionDatabaseHandoffReadinessApiText(proxy);
+
+    expect(first).toContain("[truncated:entry-budget]");
+    expect(descriptorReads).toBeLessThanOrEqual(33);
+    expect(valueReads).toBe(0);
+
+    descriptorReads = 0;
+    valueReads = 0;
+    expect(sanitizeProductionDatabaseHandoffReadinessApiText(proxy)).toBe(first);
+    expect(descriptorReads).toBeLessThanOrEqual(33);
+    expect(valueReads).toBe(0);
+
+    const typedArray = new Uint32Array(5_000);
+    typedArray.fill(7);
+    const typedArrayOutput = sanitizeProductionDatabaseHandoffReadinessApiText(typedArray);
+
+    expect(typedArrayOutput).toContain("[truncated:");
+    expect(typedArrayOutput.length).toBeLessThanOrEqual(4_096);
+    expect(typedArrayOutput).toBe(sanitizeProductionDatabaseHandoffReadinessApiText(typedArray));
   });
 
   it("handles throwing getters and redacts sensitive object fields", () => {
