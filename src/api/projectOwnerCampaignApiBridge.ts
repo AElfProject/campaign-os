@@ -97,21 +97,21 @@ export interface GenerateOwnerTaskPreviewInput {
 export interface OwnerCampaignProjection {
   createdAt?: string;
   id: OwnerCampaignId;
-  ownerAddress: string;
-  projectId: string;
+  ownerAddress?: string;
+  projectId?: string;
   status: string;
   updatedAt?: string;
 }
 
 export interface OwnerTaskProjection {
-  campaignId: OwnerCampaignId;
-  evidenceRule: Record<string, unknown>;
+  campaignId?: OwnerCampaignId;
+  evidenceRule?: Record<string, unknown>;
   id: OwnerTaskId;
   points: number;
   required: boolean;
-  templateCode: string;
+  templateCode?: string;
   verificationType: string;
-  walletCompatibility: string;
+  walletCompatibility?: string;
 }
 
 export interface OwnerTaskPreviewSuggestion {
@@ -251,7 +251,7 @@ type RequestAdapterResult =
   | RequestAdapterSuccess
   | OwnerCampaignFailure;
 
-type ProofStatusHeader = "blocked" | "local_seeded" | "proof_required" | "signature_unverified" | "verified";
+type ProofStatusHeader = "blocked" | "proof_required" | "signature_unverified" | "verified";
 type CredentialBoundaryHeader = "internal_agent_credential" | "ordinary_user_wallet";
 
 const defaultTimeoutMs = 2_000;
@@ -288,18 +288,59 @@ const unsafePatterns: Array<[RegExp, string]> = [
   [/\bapi[-_\s]*key\b/gi, "redacted credential"],
   [/\b(token|access_token|refresh_token|api_key|apikey)=([^&\s"'<>]+)/gi, "redacted query credential"],
   [/\b(postgres|postgresql|redis):\/\/[^"'\s<>]+/gi, "redacted service URL"],
-  [/\/Users\/[^"'\s<>]*campaign-os-kitty[^"'\s<>]*/gi, "redacted private path"],
-  [/\/private\/[^"'\s<>]*/gi, "redacted private path"],
+  [/(?:\/home\/[^/"'\s<>]+|\/Users\/[^/"'\s<>]+)(?:\/[^"'\s<>]*)?/gi, "redacted private path"],
+  [/(?:\/private\/(?:tmp|var\/folders)|\/tmp|\/var\/folders)(?:\/[^"'\s<>]*)?/gi, "redacted private path"],
+  [/[A-Za-z]:\\(?:Users\\[^\\/"'\s<>]+|Documents and Settings\\[^\\/"'\s<>]+|Windows\\Temp|Temp)(?:\\[^"'\s<>]*)*/gi, "redacted private path"],
   [/\bprovider[-_\s]*payload\b/gi, "redacted provider data"],
   [/\bstack\s*trace\b/gi, "redacted stack"],
 ];
 
+const diagnosticText = (value: unknown): string => {
+  try {
+    if (value instanceof Error) {
+      return `${value.name}: ${value.message}`;
+    }
+
+    if (typeof value === "string") {
+      return value;
+    }
+
+    if (typeof value === "bigint" || typeof value === "symbol" || typeof value === "function") {
+      return String(value);
+    }
+
+    const seen = new WeakSet<object>();
+    const serialized = JSON.stringify(value ?? "", (_key, currentValue: unknown) => {
+      if (
+        typeof currentValue === "bigint"
+        || typeof currentValue === "symbol"
+        || typeof currentValue === "function"
+      ) {
+        return String(currentValue);
+      }
+
+      if (currentValue && typeof currentValue === "object") {
+        if (seen.has(currentValue)) {
+          return "[Circular]";
+        }
+        seen.add(currentValue);
+      }
+
+      return currentValue;
+    });
+
+    return serialized ?? String(value);
+  } catch {
+    try {
+      return String(value);
+    } catch {
+      return "[Unserializable]";
+    }
+  }
+};
+
 export const sanitizeProjectOwnerCampaignApiText = (value: unknown): string => {
-  const raw = value instanceof Error
-    ? `${value.name}: ${value.message}`
-    : typeof value === "string"
-      ? value
-      : JSON.stringify(value ?? "");
+  const raw = diagnosticText(value);
   const strippedUrlQuery = raw.replace(/\?[^"'\s<>]*/g, "?redacted-query");
 
   return unsafePatterns.reduce(
@@ -559,14 +600,10 @@ const sameIdentity = (left: string, right: string) =>
   left.trim().toLowerCase() === right.trim().toLowerCase();
 
 const isCanonicalCampaignId = (value: string | undefined): value is string =>
-  typeof value === "string"
-  && value.trim().length > 0
-  && !/^(local|seeded|synthetic|preview|suggestion)[-_]/i.test(value);
+  typeof value === "string" && value.trim().length > 0;
 
 const isCanonicalTaskId = (value: string | undefined): value is string =>
-  typeof value === "string"
-  && value.trim().length > 0
-  && !/^(local-task|local|seeded|synthetic|preview|suggestion|request)[-_]/i.test(value);
+  typeof value === "string" && value.trim().length > 0;
 
 const invalidInputFailure = (
   traceId: string,
@@ -579,6 +616,163 @@ const invalidInputFailure = (
   safeDetails: { field },
   traceId,
 });
+
+const requiredSessionTextFields = [
+  "accountType",
+  "address",
+  "chainId",
+  "displayAddress",
+  "id",
+  "network",
+  "sessionId",
+  "signatureStatus",
+  "verificationStatus",
+  "walletName",
+  "walletSource",
+] as const;
+
+const hasOptionalText = (record: Record<string, unknown>, key: string) =>
+  record[key] === undefined || Boolean(rawNonEmptyText(record[key]));
+
+const hasOptionalTextList = (record: Record<string, unknown>, key: string) =>
+  record[key] === undefined
+  || Array.isArray(record[key]) && record[key].every((item) => Boolean(rawNonEmptyText(item)));
+
+const normalizedSessionIsUsable = (value: unknown): value is NormalizedWalletSession => {
+  try {
+    if (!isRecord(value) || requiredSessionTextFields.some((field) => !rawNonEmptyText(value[field]))) {
+      return false;
+    }
+
+    if (
+      !Array.isArray(value.capabilities)
+      || !value.capabilities.every((capability) => Boolean(rawNonEmptyText(capability)))
+      || typeof value.normalUserRecommended !== "boolean"
+      || typeof value.walletTypeVerified !== "boolean"
+      || !isRecord(value.statusMessage)
+      || !rawNonEmptyText(value.statusMessage["en-US"])
+      || !rawNonEmptyText(value.statusMessage["zh-CN"])
+    ) {
+      return false;
+    }
+
+    if (
+      !hasOptionalText(value, "connectedAt")
+      || !hasOptionalText(value, "errorReason")
+      || !hasOptionalText(value, "lastSeenAt")
+      || !hasOptionalText(value, "publicKey")
+      || value.accounts !== undefined && (
+        !isRecord(value.accounts)
+        || !Object.values(value.accounts).every((account) => Boolean(rawNonEmptyText(account)))
+      )
+      || value.proof !== undefined && (
+        !isRecord(value.proof)
+        || !rawNonEmptyText(value.proof.status)
+      )
+    ) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const isAbortSignalValue = (value: unknown): value is AbortSignal => {
+  try {
+    return typeof AbortSignal !== "undefined" && value instanceof AbortSignal;
+  } catch {
+    return false;
+  }
+};
+
+const ownerSessionContextIsUsable = (value: unknown): value is OwnerSessionContext => {
+  try {
+    return isRecord(value)
+      && normalizedSessionIsUsable(value.session)
+      && (value.signal === undefined || isAbortSignalValue(value.signal))
+      && (value.traceId === undefined || Boolean(rawNonEmptyText(value.traceId)));
+  } catch {
+    return false;
+  }
+};
+
+const createCampaignInputIsUsable = (value: unknown): value is CreateOwnerCampaignInput => {
+  try {
+    if (!isRecord(value)) {
+      return false;
+    }
+
+    const requiredFields = [
+      "duration",
+      "endTime",
+      "goal",
+      "projectId",
+      "rewardDescription",
+      "startTime",
+    ];
+    const optionalFields = [
+      "contractMode",
+      "defaultLocale",
+      "metadataHash",
+      "metadataUri",
+      "ownerAddress",
+      "rewardDisclaimerHash",
+      "status",
+      "walletPolicy",
+    ];
+
+    return requiredFields.every((field) => Boolean(rawNonEmptyText(value[field])))
+      && optionalFields.every((field) => hasOptionalText(value, field))
+      && hasOptionalTextList(value, "supportedLocales");
+  } catch {
+    return false;
+  }
+};
+
+const recoverCampaignsInputIsUsable = (value: unknown): value is RecoverOwnerCampaignsInput | undefined => {
+  try {
+    return value === undefined
+      || isRecord(value)
+      && (value.limit === undefined || typeof value.limit === "number" && Number.isFinite(value.limit))
+      && (value.status === undefined || Boolean(rawNonEmptyText(value.status)));
+  } catch {
+    return false;
+  }
+};
+
+const addTaskInputIsUsable = (value: unknown): value is AddOwnerCampaignTaskInput => {
+  try {
+    return isRecord(value)
+      && isRecord(value.evidenceRule)
+      && typeof value.points === "number"
+      && Number.isFinite(value.points)
+      && Number.isInteger(value.points)
+      && value.points >= 0
+      && typeof value.required === "boolean"
+      && Boolean(rawNonEmptyText(value.templateCode))
+      && Boolean(rawNonEmptyText(value.verificationType))
+      && Boolean(rawNonEmptyText(value.walletCompatibility));
+  } catch {
+    return false;
+  }
+};
+
+const generateTaskPreviewInputIsUsable = (value: unknown): value is GenerateOwnerTaskPreviewInput => {
+  try {
+    return isRecord(value)
+      && Boolean(rawNonEmptyText(value.goal))
+      && Boolean(rawNonEmptyText(value.product))
+      && Boolean(rawNonEmptyText(value.walletPolicy))
+      && Array.isArray(value.targetUsers)
+      && value.targetUsers.length >= 1
+      && value.targetUsers.length <= 20
+      && value.targetUsers.every((targetUser) => Boolean(rawNonEmptyText(targetUser)));
+  } catch {
+    return false;
+  }
+};
 
 const normalizeProofStatus = (session: NormalizedWalletSession): ProofStatusHeader => {
   const proofStatus = session.proof?.status;
@@ -620,30 +814,32 @@ const sessionAuthHeaders = (session: NormalizedWalletSession): Record<string, st
 
 const makeTraceId = (
   operation: OwnerCampaignOperation,
-  context: OwnerSessionContext,
+  context: unknown,
   config: NormalizedConfig,
   traceIdGenerator?: (operation: OwnerCampaignOperation) => string,
 ) => {
-  if (context.traceId?.trim()) {
-    return sanitizeProjectOwnerCampaignApiText(context.traceId);
+  try {
+    if (isRecord(context) && rawNonEmptyText(context.traceId)) {
+      return sanitizeProjectOwnerCampaignApiText(context.traceId);
+    }
+  } catch {
+    // Fall through to a generated trace ID for malformed runtime input.
   }
 
-  const generated = traceIdGenerator?.(operation);
+  let generated: unknown;
 
-  if (generated?.trim()) {
+  try {
+    generated = traceIdGenerator?.(operation);
+  } catch {
+    generated = undefined;
+  }
+
+  if (rawNonEmptyText(generated)) {
     return sanitizeProjectOwnerCampaignApiText(generated);
   }
 
   return `${config.normalizedTracePrefix}-${operation}-${Date.now().toString(36)}`;
 };
-
-const authSessionIsUsable = (session: NormalizedWalletSession) =>
-  Boolean(
-    session.sessionId.trim()
-    && session.address.trim()
-    && session.accountType.trim()
-    && session.walletSource.trim(),
-  );
 
 const createManagedAbortSignal = (callerSignal: AbortSignal | undefined, timeoutMs: number) => {
   const controller = new AbortController();
@@ -682,10 +878,21 @@ const createManagedAbortSignal = (callerSignal: AbortSignal | undefined, timeout
   };
 };
 
-const isAbortError = (error: unknown) =>
-  error instanceof DOMException && error.name === "AbortError"
-  || isRecord(error) && error.name === "AbortError"
-  || sanitizeProjectOwnerCampaignApiText(error).includes("AbortError");
+const isAbortError = (error: unknown) => {
+  try {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return true;
+    }
+
+    if (isRecord(error) && error.name === "AbortError") {
+      return true;
+    }
+  } catch {
+    // The sanitized fallback below is total for hostile unknown values.
+  }
+
+  return sanitizeProjectOwnerCampaignApiText(error).includes("AbortError");
+};
 
 const mapStatusToCode = (httpStatus: number): OwnerCampaignServerCode => {
   if (httpStatus === 400) {
@@ -778,6 +985,83 @@ const normalizeHttpError = (
   });
 };
 
+const responseHeader = (response: Response, name: string): string | undefined => {
+  try {
+    return response.headers.get(name) ?? undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const responseOversizeFailure = (
+  response: Response,
+  traceId: string,
+  endpoint: string,
+  method: string,
+): OwnerCampaignFailure => failure({
+  bridgeCode: "BRIDGE_RESPONSE_OVERSIZE",
+  code: "BRIDGE_RESPONSE_OVERSIZE",
+  httpStatus: response.status,
+  message: "Project Owner Campaign API response exceeded the configured size limit.",
+  retryable: false,
+  safeDetails: { endpoint, method, status: response.status },
+  traceId,
+});
+
+const cancelResponseBody = async (response: Response) => {
+  try {
+    if (response.body && !response.body.locked) {
+      await response.body.cancel();
+    }
+  } catch {
+    // Cancellation is best-effort after the response has already been rejected.
+  }
+};
+
+const readBoundedResponseText = async (
+  response: Response,
+  maxResponseBytes: number,
+): Promise<{ ok: true; text: string } | { ok: false }> => {
+  if (!response.body) {
+    const text = await response.text();
+
+    return new TextEncoder().encode(text).byteLength > maxResponseBytes
+      ? { ok: false }
+      : { ok: true, text };
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let text = "";
+
+  try {
+    while (true) {
+      const chunk = await reader.read();
+
+      if (chunk.done) {
+        text += decoder.decode();
+        return { ok: true, text };
+      }
+
+      bytesRead += chunk.value.byteLength;
+      if (bytesRead > maxResponseBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The limit failure remains authoritative even if cancellation fails.
+        }
+
+        return { ok: false };
+      }
+
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+};
+
 const parseResponseBody = async (
   response: Response,
   maxResponseBytes: number,
@@ -785,37 +1069,27 @@ const parseResponseBody = async (
   endpoint: string,
   method: string,
 ): Promise<{ body: unknown; ok: true; traceId: string } | OwnerCampaignFailure> => {
-  const contentLength = Number(response.headers.get("content-length") ?? 0);
+  const rawHeaderTraceId = responseHeader(response, "x-campaign-os-trace-id");
+  const headerTraceId = rawNonEmptyText(rawHeaderTraceId)
+    ? sanitizeProjectOwnerCampaignApiText(rawHeaderTraceId)
+    : traceId;
+  const rawContentLength = responseHeader(response, "content-length");
+  const contentLength = rawContentLength === undefined ? undefined : Number(rawContentLength);
 
-  if (Number.isFinite(contentLength) && contentLength > maxResponseBytes) {
-    return failure({
-      bridgeCode: "BRIDGE_RESPONSE_OVERSIZE",
-      code: "BRIDGE_RESPONSE_OVERSIZE",
-      httpStatus: response.status,
-      message: "Project Owner Campaign API response exceeded the configured size limit.",
-      retryable: false,
-      safeDetails: { endpoint, method, status: response.status },
-      traceId,
-    });
+  if (contentLength !== undefined && Number.isFinite(contentLength) && contentLength > maxResponseBytes) {
+    await cancelResponseBody(response);
+    return responseOversizeFailure(response, headerTraceId, endpoint, method);
   }
 
-  const text = await response.text();
+  const bodyText = await readBoundedResponseText(response, maxResponseBytes);
 
-  if (text.length > maxResponseBytes) {
-    return failure({
-      bridgeCode: "BRIDGE_RESPONSE_OVERSIZE",
-      code: "BRIDGE_RESPONSE_OVERSIZE",
-      httpStatus: response.status,
-      message: "Project Owner Campaign API response exceeded the configured size limit.",
-      retryable: false,
-      safeDetails: { endpoint, method, status: response.status },
-      traceId,
-    });
+  if (!bodyText.ok) {
+    return responseOversizeFailure(response, headerTraceId, endpoint, method);
   }
 
   try {
-    const body = JSON.parse(text) as unknown;
-    const responseTraceId = extractTraceId(body) ?? response.headers.get("x-campaign-os-trace-id") ?? traceId;
+    const body = JSON.parse(bodyText.text) as unknown;
+    const responseTraceId = extractTraceId(body) ?? headerTraceId;
 
     return {
       body,
@@ -830,7 +1104,7 @@ const parseResponseBody = async (
       message: "Project Owner Campaign API response was not valid JSON.",
       retryable: false,
       safeDetails: { endpoint, method, status: response.status },
-      traceId,
+      traceId: headerTraceId,
     });
   }
 };
@@ -856,22 +1130,32 @@ const requestAdapter = async (
     };
   }
 
-  if (!authSessionIsUsable(input.context.session)) {
-    return invalidInputFailure(traceId, "session");
+  if (!ownerSessionContextIsUsable(input.context)) {
+    return invalidInputFailure(traceId, "context");
+  }
+
+  let serializedBody: string | undefined;
+  let url: string;
+  let headers: Record<string, string>;
+
+  try {
+    serializedBody = input.body === undefined ? undefined : JSON.stringify(input.body);
+    url = endpointUrl(config.baseUrl, input.path, input.query);
+    headers = {
+      accept: "application/json",
+      ...(serializedBody !== undefined ? { "content-type": "application/json" } : {}),
+      ...(input.requiresAuth ? sessionAuthHeaders(input.context.session) : {}),
+      "x-campaign-os-trace-id": traceId,
+    };
+  } catch {
+    return invalidInputFailure(traceId, "input");
   }
 
   const timeout = createManagedAbortSignal(input.context.signal, config.timeoutMs);
-  const url = endpointUrl(config.baseUrl, input.path, input.query);
-  const headers: Record<string, string> = {
-    accept: "application/json",
-    ...(input.body !== undefined ? { "content-type": "application/json" } : {}),
-    ...(input.requiresAuth ? sessionAuthHeaders(input.context.session) : {}),
-    "x-campaign-os-trace-id": traceId,
-  };
 
   try {
     const response = await fetchImpl(url, {
-      ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
+      ...(serializedBody !== undefined ? { body: serializedBody } : {}),
       headers,
       method: input.method,
       signal: timeout.signal,
@@ -951,6 +1235,9 @@ const campaignProjectionFromValue = (
   expected: {
     campaignId?: string;
     ownerAddress?: string;
+    projectId?: string;
+    requireOwnerAddress?: boolean;
+    requireProjectId?: boolean;
   } = {},
 ): OwnerCampaignProjection | undefined => {
   if (!isRecord(value)) {
@@ -962,7 +1249,12 @@ const campaignProjectionFromValue = (
   const ownerAddress = optionalStringField(value, "ownerAddress");
   const status = optionalStringField(value, "status");
 
-  if (!isCanonicalCampaignId(id) || !projectId || !ownerAddress || !status) {
+  if (
+    !isCanonicalCampaignId(id)
+    || !status
+    || expected.requireProjectId && !projectId
+    || expected.requireOwnerAddress && !ownerAddress
+  ) {
     return undefined;
   }
 
@@ -970,15 +1262,19 @@ const campaignProjectionFromValue = (
     return undefined;
   }
 
-  if (expected.ownerAddress && !sameIdentity(ownerAddress, expected.ownerAddress)) {
+  if (expected.ownerAddress && ownerAddress && !sameIdentity(ownerAddress, expected.ownerAddress)) {
+    return undefined;
+  }
+
+  if (expected.projectId && projectId && projectId !== expected.projectId) {
     return undefined;
   }
 
   return {
     ...(optionalStringField(value, "createdAt") ? { createdAt: optionalStringField(value, "createdAt") } : {}),
     id: toCampaignId(id),
-    ownerAddress,
-    projectId,
+    ...(ownerAddress ? { ownerAddress } : {}),
+    ...(projectId ? { projectId } : {}),
     status,
     ...(optionalStringField(value, "updatedAt") ? { updatedAt: optionalStringField(value, "updatedAt") } : {}),
   };
@@ -990,12 +1286,15 @@ const evidenceRuleFromValue = (value: unknown): Record<string, unknown> | undefi
 const taskProjectionFromValue = (
   value: unknown,
   expectedCampaignId: string,
+  shape: "detail" | "mutation",
 ): OwnerTaskProjection | undefined => {
   if (!isRecord(value)) {
     return undefined;
   }
 
-  const id = optionalRawStringField(value, "id");
+  const idField = optionalRawStringField(value, "id");
+  const taskIdField = optionalRawStringField(value, "taskId");
+  const id = idField ?? taskIdField;
   const campaignId = optionalRawStringField(value, "campaignId");
   const templateCode = optionalStringField(value, "templateCode");
   const verificationType = optionalStringField(value, "verificationType");
@@ -1006,27 +1305,31 @@ const taskProjectionFromValue = (
 
   if (
     !isCanonicalTaskId(id)
-    || campaignId !== expectedCampaignId
-    || !templateCode
+    || idField && taskIdField && idField !== taskIdField
+    || campaignId && campaignId !== expectedCampaignId
     || !verificationType
-    || !walletCompatibility
     || points === undefined
     || points < 0
     || required === undefined
-    || !evidenceRule
+    || shape === "mutation" && (
+      campaignId !== expectedCampaignId
+      || !templateCode
+      || !walletCompatibility
+      || !evidenceRule
+    )
   ) {
     return undefined;
   }
 
   return {
-    campaignId: toCampaignId(campaignId),
-    evidenceRule,
+    ...(campaignId ? { campaignId: toCampaignId(campaignId) } : {}),
+    ...(evidenceRule ? { evidenceRule } : {}),
     id: toTaskId(id),
     points,
     required,
-    templateCode,
+    ...(templateCode ? { templateCode } : {}),
     verificationType,
-    walletCompatibility,
+    ...(walletCompatibility ? { walletCompatibility } : {}),
   };
 };
 
@@ -1039,13 +1342,17 @@ const previewSuggestionFromValue = (
   }
 
   const id = optionalRawStringField(value, "id");
-  const campaignId = optionalRawStringField(value, "campaignId") ?? expectedCampaignId;
+  const campaignId = optionalRawStringField(value, "campaignId");
   const templateCode = optionalStringField(value, "templateCode");
   const verificationType = optionalStringField(value, "verificationType");
   const walletCompatibility = optionalStringField(value, "walletCompatibility");
   const points = optionalNumberField(value, "points");
   const required = optionalBooleanField(value, "required");
   const evidenceRule = evidenceRuleFromValue(value.evidenceRule);
+  const booleanAdoptable = optionalBooleanField(value, "adoptable");
+  const adoptability = optionalStringField(value, "adoptability");
+  const serverAdoptable = booleanAdoptable
+    ?? (adoptability === "adoptable" ? true : adoptability === "unsupported" ? false : undefined);
 
   if (
     !id
@@ -1057,18 +1364,22 @@ const previewSuggestionFromValue = (
     || points < 0
     || required === undefined
     || !evidenceRule
+    || serverAdoptable === undefined
   ) {
     return undefined;
   }
 
   const unsupported = !supportedSuggestionVerificationTypes.has(verificationType);
-  const serverAdoptable = optionalBooleanField(value, "adoptable") === true;
   const adoptable = unsupported ? false : serverAdoptable;
+  const serverReason = optionalStringField(value, "rejectionCode")
+    ?? optionalStringField(value, "unsupportedReason");
   const rejectionCode = unsupported
-    ? "UNSUPPORTED_VERIFICATION_TYPE"
+    ? serverReason ?? (verificationType === "REFERRAL"
+      ? "REFERRAL_TASK_ADD_UNSUPPORTED"
+      : "UNSUPPORTED_VERIFICATION_TYPE")
     : !adoptable
-      ? optionalStringField(value, "rejectionCode") ?? "UNSUPPORTED_SUGGESTION"
-      : optionalStringField(value, "rejectionCode");
+      ? serverReason ?? "UNSUPPORTED_SUGGESTION"
+      : serverReason;
 
   return {
     adoptable,
@@ -1093,7 +1404,11 @@ const normalizeCreateCampaign = (
   }
 
   const payload = payloadRecord(result.body);
-  const campaign = campaignProjectionFromValue(payload, { ownerAddress: session.address });
+  const campaign = campaignProjectionFromValue(payload, {
+    ownerAddress: session.address,
+    requireOwnerAddress: true,
+    requireProjectId: true,
+  });
 
   if (!campaign) {
     return invalidResponseFailure(result.traceId, result.httpStatus, "/api/campaigns", "campaign_payload");
@@ -1118,17 +1433,23 @@ const normalizeRecoverCampaigns = (
   }
 
   const data = dataRecord(result.body);
-  const items = data?.items;
+  const runtimePayload = data && isRecord(data.payload) ? data.payload : undefined;
+  const items = data && Object.prototype.hasOwnProperty.call(data, "items")
+    ? data.items
+    : runtimePayload?.items;
 
   if (!Array.isArray(items) || items.length > 100) {
     return invalidResponseFailure(result.traceId, result.httpStatus, "/api/projects/:projectId/campaigns", "items");
   }
 
   const campaigns = items.map((item) =>
-    campaignProjectionFromValue(item, { ownerAddress: session.address }),
+    campaignProjectionFromValue(item, {
+      ownerAddress: session.address,
+      projectId,
+    }),
   );
 
-  if (campaigns.some((campaign) => !campaign) || campaigns.some((campaign) => campaign?.projectId !== projectId)) {
+  if (campaigns.some((campaign) => !campaign)) {
     return invalidResponseFailure(result.traceId, result.httpStatus, "/api/projects/:projectId/campaigns", "campaign_items");
   }
 
@@ -1151,8 +1472,13 @@ const normalizeCampaignDetail = (
   const payload = payloadRecord(result.body);
   const item = payload?.item;
   const campaign = campaignProjectionFromValue(item, { campaignId });
-  const tasks = isRecord(item) && Array.isArray(item.tasks)
-    ? item.tasks.map((task) => taskProjectionFromValue(task, campaignId))
+  const taskValues = Array.isArray(payload?.tasks)
+    ? payload.tasks
+    : isRecord(item) && Array.isArray(item.tasks)
+      ? item.tasks
+      : undefined;
+  const tasks = taskValues
+    ? taskValues.map((task) => taskProjectionFromValue(task, campaignId, "detail"))
     : undefined;
 
   if (!campaign || !tasks || tasks.some((task) => !task)) {
@@ -1177,7 +1503,7 @@ const normalizeTaskMutation = (
   }
 
   const payload = payloadRecord(result.body);
-  const task = taskProjectionFromValue(payload, campaignId);
+  const task = taskProjectionFromValue(payload, campaignId, "mutation");
 
   if (!task) {
     return invalidResponseFailure(result.traceId, result.httpStatus, "/api/campaigns/:campaignId/tasks", "task_payload");
@@ -1296,12 +1622,18 @@ export const createProjectOwnerCampaignApiBridge = (
 
   return {
     addTask: async (campaignId, input, context) => {
-      const normalizedCampaignId = rawNonEmptyText(campaignId);
-
-      if (!normalizedCampaignId) {
+      if (!ownerSessionContextIsUsable(context)) {
         const traceId = makeTraceId("addTask", context, config, options.traceIdGenerator);
 
-        return invalidInputFailure(traceId, "campaignId");
+        return invalidInputFailure(traceId, "context");
+      }
+
+      const normalizedCampaignId = rawNonEmptyText(campaignId);
+
+      if (!normalizedCampaignId || !addTaskInputIsUsable(input)) {
+        const traceId = makeTraceId("addTask", context, config, options.traceIdGenerator);
+
+        return invalidInputFailure(traceId, normalizedCampaignId ? "input" : "campaignId");
       }
 
       const result = await requestAdapter({
@@ -1317,10 +1649,16 @@ export const createProjectOwnerCampaignApiBridge = (
     },
 
     createCampaign: async (input, context) => {
-      if (!rawNonEmptyText(input.projectId) || !rawNonEmptyText(input.goal)) {
+      if (!ownerSessionContextIsUsable(context)) {
         const traceId = makeTraceId("createCampaign", context, config, options.traceIdGenerator);
 
-        return invalidInputFailure(traceId, "projectId");
+        return invalidInputFailure(traceId, "context");
+      }
+
+      if (!createCampaignInputIsUsable(input)) {
+        const traceId = makeTraceId("createCampaign", context, config, options.traceIdGenerator);
+
+        return invalidInputFailure(traceId, "input");
       }
 
       const result = await requestAdapter({
@@ -1336,12 +1674,18 @@ export const createProjectOwnerCampaignApiBridge = (
     },
 
     generateTaskPreview: async (campaignId, input, context) => {
-      const normalizedCampaignId = rawNonEmptyText(campaignId);
-
-      if (!normalizedCampaignId) {
+      if (!ownerSessionContextIsUsable(context)) {
         const traceId = makeTraceId("generateTaskPreview", context, config, options.traceIdGenerator);
 
-        return invalidInputFailure(traceId, "campaignId");
+        return invalidInputFailure(traceId, "context");
+      }
+
+      const normalizedCampaignId = rawNonEmptyText(campaignId);
+
+      if (!normalizedCampaignId || !generateTaskPreviewInputIsUsable(input)) {
+        const traceId = makeTraceId("generateTaskPreview", context, config, options.traceIdGenerator);
+
+        return invalidInputFailure(traceId, normalizedCampaignId ? "input" : "campaignId");
       }
 
       const result = await requestAdapter({
@@ -1357,6 +1701,12 @@ export const createProjectOwnerCampaignApiBridge = (
     },
 
     getCampaignDetail: async (campaignId, context) => {
+      if (!ownerSessionContextIsUsable(context)) {
+        const traceId = makeTraceId("getCampaignDetail", context, config, options.traceIdGenerator);
+
+        return invalidInputFailure(traceId, "context");
+      }
+
       const normalizedCampaignId = rawNonEmptyText(campaignId);
 
       if (!normalizedCampaignId) {
@@ -1377,12 +1727,18 @@ export const createProjectOwnerCampaignApiBridge = (
     },
 
     recoverCampaigns: async (projectId, context, input) => {
-      const normalizedProjectId = rawNonEmptyText(projectId);
-
-      if (!normalizedProjectId) {
+      if (!ownerSessionContextIsUsable(context)) {
         const traceId = makeTraceId("recoverCampaigns", context, config, options.traceIdGenerator);
 
-        return invalidInputFailure(traceId, "projectId");
+        return invalidInputFailure(traceId, "context");
+      }
+
+      const normalizedProjectId = rawNonEmptyText(projectId);
+
+      if (!normalizedProjectId || !recoverCampaignsInputIsUsable(input)) {
+        const traceId = makeTraceId("recoverCampaigns", context, config, options.traceIdGenerator);
+
+        return invalidInputFailure(traceId, normalizedProjectId ? "input" : "projectId");
       }
 
       const result = await requestAdapter({
