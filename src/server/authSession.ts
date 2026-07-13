@@ -443,7 +443,12 @@ const createAuthSessionContractReadiness = ({
   };
 };
 
-export const locallyEnforcedAuthRouteIds = ["campaigns.create"] as const;
+export const locallyEnforcedAuthRouteIds = [
+  "campaigns.create",
+  "campaigns.owner.list",
+  "campaigns.tasks.add",
+  "campaigns.tasks.generate",
+] as const;
 
 const normalizeSensitiveKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -721,13 +726,35 @@ export const protectedRouteAuthMap = [
     sessionRequired: true,
   }),
   routeAuth({
-    enforcementStatus: "enforcement_deferred",
-    note: "Task builder mutation requires project owner auth in production.",
+    enforcementStatus: "local_enforced",
+    note: "Owner campaign recovery list requires an issued project owner session and derives owner scope from the session.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["project_owner"],
+    routeGroup: "campaign_write",
+    routeId: "campaigns.owner.list",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "local_enforced",
+    note: "Task builder mutation requires an issued project owner session and matching Campaign owner relation.",
     productionDependencyIds: [...authSessionDeferredDependencyIds],
     proofRequired: true,
     requiredRoles: ["project_owner"],
     routeGroup: "task_builder",
     routeId: "campaigns.tasks.add",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "local_enforced",
+    note: "Task generation preview requires an issued project owner session and matching Campaign owner relation.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["project_owner"],
+    routeGroup: "task_builder",
+    routeId: "campaigns.tasks.generate",
     routeSource: "runtime_route",
     sessionRequired: true,
   }),

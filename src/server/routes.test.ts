@@ -95,11 +95,24 @@ describe("API runtime route catalog", () => {
       readiness: "local_only",
       serviceGroup: "campaign",
     });
+    expect(apiRuntimeRouteById["campaigns.owner.list"]).toMatchObject({
+      apiSkillId: "list_campaigns",
+      method: "GET",
+      path: "/api/projects/:projectId/campaigns",
+      readiness: "local_only",
+      serviceGroup: "campaign",
+    });
     expect(apiRuntimeRouteById["campaigns.launch.readiness"]).toMatchObject({
       apiSkillId: "get_campaign_launch_readiness",
       method: "GET",
       path: "/api/campaigns/:campaignId/launch-readiness",
       readiness: "review_required",
+      serviceGroup: "campaign",
+    });
+    expect(apiRuntimeRouteById["campaigns.owner.list"]).toMatchObject({
+      method: "GET",
+      path: "/api/projects/:projectId/campaigns",
+      readiness: "local_only",
       serviceGroup: "campaign",
     });
     expect(apiRuntimeRouteById["campaigns.delivery.readiness"]).toMatchObject({
@@ -256,6 +269,7 @@ describe("API runtime route catalog", () => {
         "campaigns.export.artifacts.detail",
         "campaigns.export.artifacts.file",
         "campaigns.export.artifacts.list",
+        "campaigns.owner.list",
         "campaigns.delivery.readiness",
         "campaigns.publish.delivery.review",
         "campaigns.points.ranking.ledger.runtime",
@@ -264,6 +278,7 @@ describe("API runtime route catalog", () => {
         "campaigns.export.readiness",
         "campaigns.lifecycle",
         "campaigns.launch.readiness",
+        "campaigns.owner.list",
         "campaigns.posts.generate",
         "campaigns.provider.readiness",
         "campaigns.summary",

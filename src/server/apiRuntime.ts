@@ -58,7 +58,7 @@ import {
   type CampaignOsRepository,
 } from "./persistence";
 import {
-  evaluateAuthEnforcement,
+  evaluateIssuedAuthEnforcement,
   type AuthEnforcementDecision,
 } from "./authEnforcement";
 import { getProtectedRouteAuth } from "./authSession";
@@ -95,6 +95,7 @@ export interface ApiRuntimeHandlerContext {
   traceId: string;
   version: string;
   walletSessionRepository: WalletSessionRepository;
+  auth?: AuthEnforcementDecision;
 }
 
 export type ApiRuntimeHandler = (context: ApiRuntimeHandlerContext) => unknown | Promise<unknown>;
@@ -444,6 +445,11 @@ const ownerAddressFromBody = (body: unknown) =>
 const shouldEvaluateLocalAuth = (routeId: string) =>
   getProtectedRouteAuth(routeId)?.enforcementStatus === "local_enforced";
 
+const campaignOwnerRouteIds = new Set([
+  "campaigns.tasks.add",
+  "campaigns.tasks.generate",
+]);
+
 const authErrorFromDecision = (decision: AuthEnforcementDecision) => {
   const details = {
     ...decision.safeDetails,
@@ -459,6 +465,24 @@ const authErrorFromDecision = (decision: AuthEnforcementDecision) => {
   }
 
   return authForbidden(details);
+};
+
+const ownerAddressFromCampaignDb = async ({
+  campaignDbRepository,
+  campaignId,
+  traceId,
+}: {
+  campaignDbRepository: CampaignDbRepository;
+  campaignId: string | undefined;
+  traceId: string;
+}) => {
+  if (!campaignId) {
+    return undefined;
+  }
+
+  const campaign = await campaignDbRepository.getById(campaignId, { traceId });
+
+  return campaign?.ownerAddress;
 };
 
 const createHealthDatabaseReadinessMetadata = (
@@ -1089,15 +1113,40 @@ export const createCampaignOsApiRuntime = ({
         const { pathname, query } = parseRequestTarget(request.path);
         const { matcher, params } = findMatchingRoute(matchers, method, pathname);
         const body = parseBody(request, method);
+        let authDecision: AuthEnforcementDecision | undefined;
         if (shouldEvaluateLocalAuth(matcher.route.id)) {
-          const authDecision = evaluateAuthEnforcement({
+          authDecision = await evaluateIssuedAuthEnforcement({
             headers: request.headers,
+            issuedSessionLookup: safeWalletSessionRepository.getBySessionId,
             ownerAddress: ownerAddressFromBody(body),
             routeId: matcher.route.id,
+            traceId,
           });
 
           if (!authDecision.allowed) {
             throw authErrorFromDecision(authDecision);
+          }
+
+          if (campaignOwnerRouteIds.has(matcher.route.id)) {
+            const ownerAddress = await ownerAddressFromCampaignDb({
+              campaignDbRepository: safeCampaignDbRepository,
+              campaignId: params.campaignId,
+              traceId,
+            });
+
+            if (ownerAddress) {
+              authDecision = await evaluateIssuedAuthEnforcement({
+                headers: request.headers,
+                issuedSessionLookup: safeWalletSessionRepository.getBySessionId,
+                ownerAddress,
+                routeId: matcher.route.id,
+                traceId,
+              });
+
+              if (!authDecision.allowed) {
+                throw authErrorFromDecision(authDecision);
+              }
+            }
           }
         }
 
@@ -1121,6 +1170,7 @@ export const createCampaignOsApiRuntime = ({
           traceId,
           version: runtimeVersion,
           walletSessionRepository: safeWalletSessionRepository,
+          auth: authDecision,
         });
         const attachDatabaseReadiness = shouldAttachDatabaseReadiness(matcher.route.id);
         const campaignDatabase = attachDatabaseReadiness

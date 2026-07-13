@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluateAuthEnforcement,
+  evaluateIssuedAuthEnforcement,
   parseLocalAuthSessionHeaders,
   projectOwnershipReadinessPolicy,
   rbacOwnershipRoutePolicyMatrix,
   sanitizeAuthEnforcementDetails,
   type AuthRuntimeHeaders,
 } from "./authEnforcement";
+import type { WalletSessionRecord } from "./walletSessionRepository";
 
 const sensitiveFragments = [
   "bearer raw-secret-token",
@@ -27,6 +29,62 @@ const projectOwnerHeaders = (overrides: AuthRuntimeHeaders = {}): AuthRuntimeHea
   "x-campaign-os-wallet-source": "PORTKEY_AA",
   ...overrides,
 });
+
+const issuedWalletSession = (overrides: Partial<WalletSessionRecord> = {}): WalletSessionRecord => ({
+  accountType: "AA",
+  capabilities: ["SIGN_MESSAGE", "CONTRACT_VIEW", "VIEW_BALANCE", "EBRIDGE"],
+  chainId: "AELF",
+  connectedAt: "2026-07-09T00:00:00.000Z",
+  displayAddress: "ELF_project_owner_local",
+  issuer: {
+    artifactType: "local_session_reference",
+    cookieIssued: false,
+    diagnosticCodes: [],
+    issuerMode: "local_opaque",
+    jwtIssued: false,
+    liveSigningExecuted: false,
+    referenceId: "issuer:sess-project-owner-local",
+    ttlSeconds: 3600,
+    valid: true,
+  },
+  lastSeenAt: "2026-07-09T00:00:00.000Z",
+  network: "mainnet",
+  productionReadiness: {
+    blockedDependencyIds: [],
+    liveSigningReady: false,
+    liveVerifierReady: false,
+    productionReady: false,
+    productionRequired: false,
+    productionSessionStoreReady: false,
+    secretManagerReady: false,
+    signingKeyReady: false,
+  },
+  proof: {
+    diagnosticCodes: [],
+    liveVerificationExecuted: false,
+    proofType: "wallet_signature",
+    status: "verified",
+    trustLevel: "verified_local",
+  },
+  recordId: "wallet-session:sess-project-owner-local",
+  repository: {
+    adapterId: "wallet-session-test-adapter",
+    repositoryId: "wallet-session-repository-runtime",
+    sequence: 1,
+    storeId: "wallet-sessions",
+  },
+  sessionId: "sess-project-owner-local",
+  signatureStatus: "signed",
+  verificationStatus: "verified",
+  walletAddress: "ELF_project_owner_local",
+  walletName: "Portkey AA Wallet",
+  walletSource: "PORTKEY_AA",
+  walletTypeVerified: true,
+  ...overrides,
+});
+
+const issuedLookup = (record: WalletSessionRecord | undefined = issuedWalletSession()) =>
+  async (sessionId: string) => record?.sessionId === sessionId ? record : undefined;
 
 const expectNoSensitiveFragments = (value: unknown) => {
   const serialized = JSON.stringify(value).toLowerCase();
@@ -56,6 +114,13 @@ describe("auth enforcement", () => {
       locallyEnforced: true,
       ownerMatchRequired: true,
       requiredRoles: ["project_owner"],
+      routeIds: ["campaigns.create", "campaigns.owner.list"],
+    });
+    expect(rbacOwnershipRoutePolicyMatrix.find((entry) => entry.routeGroup === "task_builder")).toMatchObject({
+      locallyEnforced: true,
+      ownerMatchRequired: true,
+      requiredRoles: ["project_owner"],
+      routeIds: ["campaigns.tasks.add", "campaigns.tasks.generate"],
     });
     expect(rbacOwnershipRoutePolicyMatrix.find((entry) => entry.routeGroup === "ai_ops")).toMatchObject({
       forbiddenCredentialBoundaries: ["ordinary_user_wallet"],
@@ -143,6 +208,125 @@ describe("auth enforcement", () => {
       routeGroup: "campaign_write",
       sessionRequired: true,
     });
+  });
+
+  it("requires an issued wallet session before owner route authorization", async () => {
+    const missing = await evaluateIssuedAuthEnforcement({
+      routeId: "campaigns.create",
+      issuedSessionLookup: issuedLookup(),
+    });
+    const unknown = await evaluateIssuedAuthEnforcement({
+      headers: projectOwnerHeaders({
+        "x-campaign-os-session-id": "missing-issued-session",
+      }),
+      ownerAddress: "ELF_project_owner_local",
+      routeId: "campaigns.create",
+      issuedSessionLookup: issuedLookup(),
+    });
+    const identityMismatch = await evaluateIssuedAuthEnforcement({
+      headers: projectOwnerHeaders({
+        "x-campaign-os-wallet-address": "ELF_header_claim_mismatch",
+      }),
+      ownerAddress: "ELF_project_owner_local",
+      routeId: "campaigns.create",
+      issuedSessionLookup: issuedLookup(),
+    });
+    const invalidIssuer = await evaluateIssuedAuthEnforcement({
+      headers: projectOwnerHeaders(),
+      ownerAddress: "ELF_project_owner_local",
+      routeId: "campaigns.create",
+      issuedSessionLookup: issuedLookup(issuedWalletSession({
+        issuer: {
+          ...issuedWalletSession().issuer!,
+          valid: false,
+        },
+      })),
+    });
+
+    expect(missing).toMatchObject({
+      diagnostic: { code: "AUTH_SESSION_REQUIRED" },
+      httpStatus: 401,
+      status: "unauthenticated",
+    });
+    for (const decision of [unknown, identityMismatch, invalidIssuer]) {
+      expect(decision).toMatchObject({
+        diagnostic: { code: "AUTH_SESSION_INVALID" },
+        httpStatus: 401,
+        status: "unauthenticated",
+      });
+      expectNoSensitiveFragments(decision);
+    }
+  });
+
+  it("uses issued proof and existing role and credential policy for owner routes", async () => {
+    const participant = await evaluateIssuedAuthEnforcement({
+      headers: projectOwnerHeaders({ "x-campaign-os-roles": "participant" }),
+      ownerAddress: "ELF_project_owner_local",
+      routeId: "campaigns.create",
+      issuedSessionLookup: issuedLookup(),
+    });
+    const unverifiedProof = await evaluateIssuedAuthEnforcement({
+      headers: projectOwnerHeaders({
+        "x-campaign-os-proof-status": "verified",
+      }),
+      ownerAddress: "ELF_project_owner_local",
+      routeId: "campaigns.create",
+      issuedSessionLookup: issuedLookup(issuedWalletSession({
+        proof: {
+          ...issuedWalletSession().proof!,
+          status: "signature_unverified",
+          trustLevel: "untrusted",
+        },
+      })),
+    });
+    const internalCredential = await evaluateIssuedAuthEnforcement({
+      headers: projectOwnerHeaders({
+        "x-campaign-os-credential-boundary": "internal_agent_credential",
+      }),
+      ownerAddress: "ELF_project_owner_local",
+      routeId: "campaigns.create",
+      issuedSessionLookup: issuedLookup(),
+    });
+    const missingCapability = await evaluateIssuedAuthEnforcement({
+      headers: projectOwnerHeaders(),
+      ownerAddress: "ELF_project_owner_local",
+      routeId: "campaigns.create",
+      issuedSessionLookup: issuedLookup(issuedWalletSession({
+        capabilities: ["CONTRACT_VIEW"],
+      })),
+    });
+
+    expect(participant).toMatchObject({
+      diagnostic: { code: "AUTH_ROLE_FORBIDDEN" },
+      httpStatus: 403,
+      status: "forbidden",
+    });
+    expect(unverifiedProof).toMatchObject({
+      diagnostic: { code: "AUTH_PROOF_FORBIDDEN" },
+      httpStatus: 403,
+      status: "forbidden",
+    });
+    expect(internalCredential).toMatchObject({
+      diagnostic: { code: "AUTH_AGENT_CREDENTIAL_FORBIDDEN" },
+      httpStatus: 403,
+      status: "forbidden",
+    });
+    expect(missingCapability).toMatchObject({
+      diagnostic: { code: "AUTH_FORBIDDEN" },
+      httpStatus: 403,
+      status: "forbidden",
+    });
+  });
+
+  it("lets the runtime persistence wrapper serialize issued session repository failures", async () => {
+    await expect(evaluateIssuedAuthEnforcement({
+      headers: projectOwnerHeaders(),
+      ownerAddress: "ELF_project_owner_local",
+      routeId: "campaigns.create",
+      issuedSessionLookup: async () => {
+        throw new Error("database URL should not leak");
+      },
+    })).rejects.toThrow("database URL should not leak");
   });
 
   it("returns not_required for runtime metadata and read routes without local sessions", () => {

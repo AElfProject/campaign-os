@@ -3,6 +3,8 @@ import type { ApiSkillId, LocalizedText } from "../domain/types";
 import type { ApiRuntimeContractCoverage, ApiRuntimeRouteContract } from "./contracts";
 import { apiRuntimeServiceGroupById } from "./capabilities";
 import { runtimeBoundary } from "./envelope";
+import { apiServicePorts } from "./servicePorts";
+import { backendServiceBoundaries, backendTopology } from "./topology";
 
 const text = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
   "en-US": enUS,
@@ -15,6 +17,35 @@ const route = (contract: ApiRuntimeRouteContract): ApiRuntimeRouteContract => co
 const boundary = runtimeBoundary;
 const dependenciesFor = (serviceGroup: ApiRuntimeRouteContract["serviceGroup"]) =>
   apiRuntimeServiceGroupById[serviceGroup].deferredDependencies;
+const ownerRecoveryRouteId = "campaigns.owner.list";
+
+const addRouteOwnership = (routeIds: readonly string[], routeId: string) => {
+  const mutableRouteIds = routeIds as unknown as string[];
+
+  if (!mutableRouteIds.includes(routeId)) {
+    mutableRouteIds.push(routeId);
+  }
+};
+
+const registerOwnerRecoveryRouteMetadata = (): void => {
+  const campaignService = backendServiceBoundaries.find((service) => service.id === "campaign-service");
+  const topologyCampaignService = backendTopology.services.find((service) => service.id === "campaign-service");
+  const campaignPort = apiServicePorts.find((port) => port.id === "campaign-port");
+
+  if (campaignService) {
+    addRouteOwnership(campaignService.routeIds, ownerRecoveryRouteId);
+  }
+
+  if (topologyCampaignService && topologyCampaignService !== campaignService) {
+    addRouteOwnership(topologyCampaignService.routeIds, ownerRecoveryRouteId);
+  }
+
+  if (campaignPort) {
+    addRouteOwnership(campaignPort.routeIds, ownerRecoveryRouteId);
+  }
+};
+
+registerOwnerRecoveryRouteMetadata();
 
 export const apiRuntimeRoutes = [
   route({
@@ -113,6 +144,20 @@ export const apiRuntimeRoutes = [
     riskLevel: "medium",
     serviceGroup: "campaign",
     summary: text("List seeded Campaign OS campaigns.", "列出 seeded Campaign OS 活动。"),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "campaign_discovery",
+    apiSkillId: "list_campaigns",
+    boundary,
+    id: "campaigns.owner.list",
+    method: "GET",
+    path: "/api/projects/:projectId/campaigns",
+    productionDependencies: dependenciesFor("campaign"),
+    readiness: "local_only",
+    riskLevel: "medium",
+    serviceGroup: "campaign",
+    summary: text("List repository campaign drafts owned by the issued wallet session.", "列出 issued wallet session 拥有的 repository 活动草稿。"),
     supportMode: "local_seeded",
   }),
   route({

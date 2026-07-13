@@ -151,6 +151,55 @@ describe("Campaign DB repository", () => {
     ]);
   });
 
+  it("lists owner recovery drafts with bounded server-side filters and deterministic ordering", async () => {
+    const timestamps = [
+      "2026-07-01T00:00:00.000Z",
+      "2026-07-03T00:00:00.000Z",
+      "2026-07-03T00:00:00.000Z",
+      "2026-07-04T00:00:00.000Z",
+    ];
+    let nowIndex = 0;
+    const repository = createCampaignDbRepository({
+      now: () => timestamps[nowIndex++] ?? timestamps[timestamps.length - 1]!,
+    });
+
+    await repository.createDraft({
+      ...validDraftInput(),
+      goal: "Older owner draft",
+      ownerAddress: "owner-recovery",
+      projectId: "project-recovery",
+    });
+    const firstLatest = await repository.createDraft({
+      ...validDraftInput(),
+      goal: "Latest owner draft A",
+      ownerAddress: "owner-recovery",
+      projectId: "project-recovery",
+    });
+    const secondLatest = await repository.createDraft({
+      ...validDraftInput(),
+      goal: "Latest owner draft B",
+      ownerAddress: "owner-recovery",
+      projectId: "project-recovery",
+    });
+    await repository.createDraft({
+      ...validDraftInput(),
+      goal: "Other owner draft",
+      ownerAddress: "other-owner",
+      projectId: "project-recovery",
+    });
+
+    const result = await repository.list({
+      limit: 2,
+      ownerAddress: "owner-recovery",
+      projectId: "project-recovery",
+      status: "draft",
+    });
+
+    expect(result.map((draft) => draft.id)).toEqual([firstLatest.id, secondLatest.id]);
+    expect(result.every((draft) => draft.ownerAddress === "owner-recovery")).toBe(true);
+    expect(result.every((draft) => draft.projectId === "project-recovery")).toBe(true);
+  });
+
   it("adds task drafts to repository-created campaign projections", async () => {
     const repository = createCampaignDbRepository();
     const campaign = await repository.createDraft(validDraftInput());

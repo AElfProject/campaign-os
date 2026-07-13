@@ -6,7 +6,12 @@ import { describe, expect, it, vi } from "vitest";
 import { campaignDetail } from "../domain/fixtures";
 import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectOwnerFundingProofReviewBridge";
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
-import { createCampaignOsApiRuntime, type ApiRuntimeResponse } from "./apiRuntime";
+import type { NormalizedWalletSession } from "../domain/types";
+import {
+  createCampaignOsApiRuntime as createCampaignOsApiRuntimeBase,
+  type ApiRuntimeResponse,
+  type CreateCampaignOsApiRuntimeOptions,
+} from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
 import {
   CampaignDbRepositoryError,
@@ -14,7 +19,10 @@ import {
   type CampaignDbRepository,
 } from "./campaignDbRepository";
 import { PostgresCampaignStoreError } from "./postgresCampaignDurableStore";
-import { createWalletSessionRepository } from "./walletSessionRepository";
+import {
+  createWalletSessionRepository,
+  type WalletSessionRepository,
+} from "./walletSessionRepository";
 import {
   createCampaignOsJsonRepository,
   createCampaignOsMemoryRepository,
@@ -772,9 +780,16 @@ interface AgentWalletActionPayload {
 }
 
 interface GeneratedCampaignTasksPayload {
+  campaignId: string;
   humanReviewRequired: boolean;
   pointRules: unknown[];
-  taskList: unknown[];
+  taskList: Array<{
+    adoptability?: string;
+    points: number;
+    templateCode: string;
+    unsupportedReason?: string;
+    verificationType: string;
+  }>;
   walletCompatibility: unknown[];
 }
 
@@ -1013,6 +1028,100 @@ const expectedExportArtifactRegistryId = (
   ].join("|"))}`;
 };
 
+const issuedProjectOwnerSessions = new Map<string, NormalizedWalletSession>();
+
+const issuedSessionIdFor = (ownerAddress: string) =>
+  `issued-owner-${stableTestHash(ownerAddress).slice(0, 12)}`;
+
+const issuedProjectOwnerSession = (
+  ownerAddress: string,
+  sessionId = issuedSessionIdFor(ownerAddress),
+  overrides: Partial<NormalizedWalletSession> = {},
+): NormalizedWalletSession => ({
+  accountType: "AA",
+  address: ownerAddress,
+  capabilities: ["SIGN_MESSAGE", "CONTRACT_VIEW", "VIEW_BALANCE", "EBRIDGE"],
+  chainId: "AELF",
+  connectedAt: "2026-07-09T00:00:00.000Z",
+  displayAddress: ownerAddress,
+  id: sessionId,
+  issuer: {
+    artifactType: "local_session_reference",
+    cookieIssued: false,
+    diagnosticCodes: [],
+    issuerMode: "local_opaque",
+    jwtIssued: false,
+    liveSigningExecuted: false,
+    referenceId: `issuer:${sessionId}`,
+    ttlSeconds: 3600,
+    valid: true,
+  },
+  lastSeenAt: "2026-07-09T00:00:00.000Z",
+  network: "mainnet",
+  normalUserRecommended: true,
+  productionReadiness: {
+    blockedDependencyIds: [],
+    liveSigningReady: false,
+    liveVerifierReady: false,
+    productionReady: false,
+    productionRequired: false,
+    productionSessionStoreReady: false,
+    secretManagerReady: false,
+    signingKeyReady: false,
+  },
+  proof: {
+    diagnosticCodes: [],
+    liveVerificationExecuted: false,
+    proofType: "wallet_signature",
+    status: "verified",
+    trustLevel: "verified_local",
+  },
+  sessionId,
+  signatureStatus: "signed",
+  statusMessage: {
+    "en-US": "Issued local test session.",
+    "zh-CN": "已签发本地测试会话。",
+    "zh-TW": "Issued local test session.",
+  },
+  verificationStatus: "verified",
+  walletName: "Portkey AA Wallet",
+  walletSource: "PORTKEY_AA",
+  walletTypeVerified: true,
+  ...overrides,
+});
+
+const createIssuedSessionLookupRepository = (): WalletSessionRepository => {
+  const repository = createWalletSessionRepository();
+
+  return {
+    close: () => repository.close(),
+    getBySessionId: async (sessionId, context) => {
+      const issuedSession = issuedProjectOwnerSessions.get(sessionId);
+
+      if (issuedSession) {
+        await repository.upsertSession(issuedSession, context);
+      }
+
+      return repository.getBySessionId(sessionId, context);
+    },
+    health: () => repository.health(),
+    list: (filter, context) => repository.list(filter, context),
+    reset: async () => {
+      issuedProjectOwnerSessions.clear();
+      await repository.reset();
+    },
+    upsertSession: (session, context) => repository.upsertSession(session, context),
+  };
+};
+
+const createCampaignOsApiRuntime = (options: CreateCampaignOsApiRuntimeOptions = {}) =>
+  createCampaignOsApiRuntimeBase({
+    ...(!options.walletSessionRepository && !options.walletSessionRepositoryOptions
+      ? { walletSessionRepository: createIssuedSessionLookupRepository() }
+      : {}),
+    ...options,
+  });
+
 const expectSuccessData = <TPayload = unknown>(response: ApiRuntimeResponse<unknown>) => {
   expect(response.status).toBe(200);
   expect(response.body.ok).toBe(true);
@@ -1043,12 +1152,21 @@ const expectSuccessData = <TPayload = unknown>(response: ApiRuntimeResponse<unkn
 const projectOwnerAuthHeaders = (
   ownerAddress: string,
   extraHeaders: Record<string, string> = {},
+  issuedSessionOverrides: Partial<NormalizedWalletSession> = {},
 ) => ({
   "x-campaign-os-account-type": "AA",
   "x-campaign-os-credential-boundary": "ordinary_user_wallet",
   "x-campaign-os-proof-status": "verified",
   "x-campaign-os-roles": "project_owner",
-  "x-campaign-os-session-id": `sess-${ownerAddress}`,
+  "x-campaign-os-session-id": (() => {
+    const sessionId = issuedSessionIdFor(ownerAddress);
+    issuedProjectOwnerSessions.set(
+      sessionId,
+      issuedProjectOwnerSession(ownerAddress, sessionId, issuedSessionOverrides),
+    );
+
+    return sessionId;
+  })(),
   "x-campaign-os-wallet-address": ownerAddress,
   "x-campaign-os-wallet-source": "PORTKEY_AA",
   ...extraHeaders,
@@ -1709,7 +1827,12 @@ describe("Campaign OS API runtime", () => {
             liveSideEffectsEnabled: false,
             productionReady: false,
             protectedRouteCoverage: expect.objectContaining({
-              locallyEnforcedRouteIds: ["campaigns.create"],
+              locallyEnforcedRouteIds: [
+                "campaigns.create",
+                "campaigns.owner.list",
+                "campaigns.tasks.add",
+                "campaigns.tasks.generate",
+              ],
             }),
             status: "local_ready",
             valid: true,
@@ -3804,6 +3927,7 @@ describe("Campaign OS API runtime", () => {
     const generatedTasks = await runtime.handle({
       method: "POST",
       path: `/api/campaigns/${campaignDetail.id}/tasks/generate`,
+      headers: projectOwnerAuthHeaders("ai-ops-owner"),
       body: JSON.stringify({
         goal: "Activate Awaken traders",
         product: "Awaken",
@@ -3907,6 +4031,20 @@ describe("Campaign OS API runtime", () => {
       path: "/api/campaigns?projectId=repo-project&ownerAddress=repo-owner-001&status=draft",
       headers: { "x-campaign-os-trace-id": "trace-campaign-db-list" },
     });
+    const ownerRecovery = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: "/api/projects/repo-project/campaigns?status=draft&limit=100",
+      headers: projectOwnerAuthHeaders("repo-owner-001", {
+        "x-campaign-os-trace-id": "trace-campaign-db-owner-recovery",
+      }),
+    });
+    const otherOwnerRecovery = await runtimeWithCampaignDbRepository.handle({
+      method: "GET",
+      path: "/api/projects/repo-project/campaigns?status=draft&limit=100",
+      headers: projectOwnerAuthHeaders("repo-owner-other", {
+        "x-campaign-os-trace-id": "trace-campaign-db-owner-recovery-empty",
+      }),
+    });
 
     expect(create.body.traceId).toBe("trace-campaign-db-create");
     expect(created).toMatchObject({
@@ -3960,6 +4098,41 @@ describe("Campaign OS API runtime", () => {
       ]),
       summary: {
         totalCampaigns: 1,
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignListPayload> & {
+      payload: CampaignListPayload & {
+        campaignDb: {
+          draftCount: number;
+        };
+      };
+    }>(ownerRecovery).payload).toMatchObject({
+      campaignDb: {
+        draftCount: 1,
+      },
+      items: [
+        expect.objectContaining({
+          id: "campaign-db-draft-0001",
+          status: "draft",
+        }),
+      ],
+      summary: {
+        totalCampaigns: 1,
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignListPayload> & {
+      payload: CampaignListPayload & {
+        campaignDb: {
+          draftCount: number;
+        };
+      };
+    }>(otherOwnerRecovery).payload).toMatchObject({
+      campaignDb: {
+        draftCount: 0,
+      },
+      items: [],
+      summary: {
+        totalCampaigns: 0,
       },
     });
     expect(readinessCallCount).toBe(0);
@@ -4282,7 +4455,9 @@ describe("Campaign OS API runtime", () => {
     const taskDraft = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: `/api/campaigns/${created.payload.id}/tasks`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-task-add" },
+      headers: projectOwnerAuthHeaders("repo-owner-task", {
+        "x-campaign-os-trace-id": "trace-campaign-db-task-add",
+      }),
       body: JSON.stringify({
         evidenceRule: { source: "AELFSCAN", minAmount: 1 },
         points: 120,
@@ -4321,7 +4496,7 @@ describe("Campaign OS API runtime", () => {
       },
       payload: {
         campaignId: "campaign-db-draft-0001",
-        id: "local-task-bridge_ebridge",
+        id: "campaign-db-task-draft-0001",
         points: 120,
         required: true,
         templateCode: "bridge_ebridge",
@@ -4333,6 +4508,7 @@ describe("Campaign OS API runtime", () => {
         recordId: expect.any(String),
       },
     });
+    expect(JSON.stringify(taskDraft.body)).not.toContain("local-task-");
     expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload>>(detail).payload).toMatchObject({
       item: {
         id: "campaign-db-draft-0001",
@@ -4380,6 +4556,143 @@ describe("Campaign OS API runtime", () => {
     expectNoForbiddenResponseKeys(taskDraft.body);
   });
 
+  it("generates repository campaign task previews without task, audit, provider, or queue writes", async () => {
+    const repository = createCampaignOsMemoryRepository();
+    const campaignDbRepository = createCampaignDbRepository();
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({
+      campaignDbRepository,
+      repository,
+    });
+    const create = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/campaigns",
+      headers: projectOwnerAuthHeaders("repo-owner-generate", {
+        "x-campaign-os-trace-id": "trace-campaign-db-generate-create",
+      }),
+      body: JSON.stringify({
+        duration: "2026-08-01/2026-08-14",
+        endTime: "2026-08-14T23:59:59Z",
+        goal: "Preview repository task suggestions",
+        ownerAddress: "repo-owner-generate",
+        projectId: "repo-project-generate",
+        rewardDescription: "Repository-backed generated tasks remain previews.",
+        startTime: "2026-08-01T00:00:00Z",
+        walletPolicy: "ANY",
+      }),
+    });
+    const created = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload>>(create);
+    const auditBefore = await repository.snapshot();
+    const campaignDbBefore = await campaignDbRepository.health();
+    const preview = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.payload.id}/tasks/generate`,
+      headers: projectOwnerAuthHeaders("repo-owner-generate", {
+        "x-campaign-os-trace-id": "trace-campaign-db-generate-preview",
+      }),
+      body: JSON.stringify({
+        goal: "Preview repository task suggestions",
+        product: "Campaign DB",
+        targetUsers: ["repository campaign owners"],
+        walletPolicy: "ANY",
+      }),
+    });
+    const wrongOwner = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.payload.id}/tasks/generate`,
+      headers: projectOwnerAuthHeaders("repo-owner-other", {
+        "x-campaign-os-trace-id": "trace-campaign-db-generate-wrong-owner",
+      }),
+      body: JSON.stringify({
+        goal: "Preview repository task suggestions",
+        product: "Campaign DB",
+        targetUsers: ["repository campaign owners"],
+        walletPolicy: "ANY",
+      }),
+    });
+    const unknown = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: "/api/campaigns/campaign-db-draft-missing/tasks/generate",
+      headers: projectOwnerAuthHeaders("repo-owner-generate", {
+        "x-campaign-os-trace-id": "trace-campaign-db-generate-missing",
+      }),
+      body: JSON.stringify({
+        goal: "Preview repository task suggestions",
+        product: "Campaign DB",
+        targetUsers: ["repository campaign owners"],
+        walletPolicy: "ANY",
+      }),
+    });
+    const previewPayload = expectSuccessData<LocalServiceEnvelope<GeneratedCampaignTasksPayload>>(preview).payload;
+    const referralSuggestion = previewPayload.taskList.find((task) => task.verificationType === "REFERRAL");
+    const unsupportedReferralAdd = await runtimeWithCampaignDbRepository.handle({
+      method: "POST",
+      path: `/api/campaigns/${created.payload.id}/tasks`,
+      headers: projectOwnerAuthHeaders("repo-owner-generate", {
+        "x-campaign-os-trace-id": "trace-campaign-db-referral-task-add",
+      }),
+      body: JSON.stringify({
+        evidenceRule: { source: "REFERRAL" },
+        points: referralSuggestion?.points ?? 25,
+        required: false,
+        templateCode: referralSuggestion?.templateCode ?? "invite_friend",
+        verificationType: "REFERRAL",
+        walletCompatibility: "ANY",
+      }),
+    });
+    const auditAfter = await repository.snapshot();
+    const campaignDbAfter = await campaignDbRepository.health();
+
+    expect(previewPayload).toMatchObject({
+      campaignId: created.payload.id,
+      humanReviewRequired: true,
+      pointRules: expect.any(Array),
+      taskList: expect.any(Array),
+      walletCompatibility: expect.any(Array),
+    });
+    expect(previewPayload.taskList.every((task) => task.adoptability)).toBe(true);
+    expect(referralSuggestion).toMatchObject({
+      adoptability: "unsupported",
+      unsupportedReason: "REFERRAL_TASK_ADD_UNSUPPORTED",
+      verificationType: "REFERRAL",
+    });
+    expect(wrongOwner).toMatchObject({
+      status: 403,
+      body: {
+        ok: false,
+        traceId: "trace-campaign-db-generate-wrong-owner",
+        error: {
+          code: "AUTH_FORBIDDEN",
+          details: {
+            diagnosticCode: "AUTH_OWNER_MISMATCH",
+          },
+        },
+      },
+    });
+    expect(unknown).toMatchObject({
+      status: 404,
+      body: {
+        ok: false,
+        traceId: "trace-campaign-db-generate-missing",
+        error: { code: "INVALID_CAMPAIGN" },
+      },
+    });
+    expect(unsupportedReferralAdd).toMatchObject({
+      status: 400,
+      body: {
+        ok: false,
+        traceId: "trace-campaign-db-referral-task-add",
+        error: {
+          code: "INVALID_REQUEST",
+          details: { field: "verificationType" },
+        },
+      },
+    });
+    expect(campaignDbAfter.taskRecordCount).toBe(campaignDbBefore.taskRecordCount);
+    expect(campaignDbAfter.taskEvidenceRecordCount).toBe(campaignDbBefore.taskEvidenceRecordCount);
+    expect(auditAfter.recordCount).toBe(auditBefore.recordCount);
+    expectNoForbiddenResponseKeys(preview.body);
+  });
+
   it("persists repository task completion and projects eligibility through API runtime", async () => {
     const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime();
     const create = await runtimeWithCampaignDbRepository.handle({
@@ -4402,7 +4715,9 @@ describe("Campaign OS API runtime", () => {
     const requiredTask = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: `/api/campaigns/${created.payload.id}/tasks`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-completion-required-task" },
+      headers: projectOwnerAuthHeaders("repo-owner-completion", {
+        "x-campaign-os-trace-id": "trace-campaign-db-completion-required-task",
+      }),
       body: JSON.stringify({
         evidenceRule: { source: "AELFSCAN", minAmount: 1 },
         points: 120,
@@ -4415,7 +4730,9 @@ describe("Campaign OS API runtime", () => {
     const optionalTask = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: `/api/campaigns/${created.payload.id}/tasks`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-completion-optional-task" },
+      headers: projectOwnerAuthHeaders("repo-owner-completion", {
+        "x-campaign-os-trace-id": "trace-campaign-db-completion-optional-task",
+      }),
       body: JSON.stringify({
         evidenceRule: { action: "share" },
         points: 50,
@@ -4615,7 +4932,9 @@ describe("Campaign OS API runtime", () => {
     const requiredTask = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: `/api/campaigns/${created.payload.id}/tasks`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-required-task" },
+      headers: projectOwnerAuthHeaders("repo-owner-export", {
+        "x-campaign-os-trace-id": "trace-campaign-db-export-required-task",
+      }),
       body: JSON.stringify({
         evidenceRule: { source: "AELFSCAN", minAmount: 1 },
         points: 120,
@@ -4628,7 +4947,9 @@ describe("Campaign OS API runtime", () => {
     const optionalTask = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: `/api/campaigns/${created.payload.id}/tasks`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-optional-task" },
+      headers: projectOwnerAuthHeaders("repo-owner-export", {
+        "x-campaign-os-trace-id": "trace-campaign-db-export-optional-task",
+      }),
       body: JSON.stringify({
         evidenceRule: { action: "share" },
         points: 50,
@@ -5313,6 +5634,70 @@ describe("Campaign OS API runtime", () => {
         }),
         body: JSON.stringify(createBody),
       });
+      const unknownIssuedSession = await runtime.handle({
+        method: "POST",
+        path: "/api/campaigns",
+        headers: {
+          "x-campaign-os-account-type": "AA",
+          "x-campaign-os-credential-boundary": "ordinary_user_wallet",
+          "x-campaign-os-proof-status": "verified",
+          "x-campaign-os-roles": "project_owner",
+          "x-campaign-os-session-id": "missing-issued-session",
+          "x-campaign-os-trace-id": "trace-auth-unknown-session",
+          "x-campaign-os-wallet-address": "auth-owner-001",
+          "x-campaign-os-wallet-source": "PORTKEY_AA",
+        },
+        body: JSON.stringify(createBody),
+      });
+      const identityMismatch = await runtime.handle({
+        method: "POST",
+        path: "/api/campaigns",
+        headers: projectOwnerAuthHeaders("auth-owner-001", {
+          "x-campaign-os-trace-id": "trace-auth-identity-mismatch",
+          "x-campaign-os-wallet-address": "auth-owner-claim-mismatch",
+        }),
+        body: JSON.stringify(createBody),
+      });
+      const invalidIssuerSessionId = "issued-invalid-issuer";
+      issuedProjectOwnerSessions.set(invalidIssuerSessionId, {
+        ...issuedProjectOwnerSession("auth-owner-001", invalidIssuerSessionId),
+        issuer: {
+          ...issuedProjectOwnerSession("auth-owner-001", invalidIssuerSessionId).issuer!,
+          valid: false,
+        },
+      });
+      const invalidIssuer = await runtime.handle({
+        method: "POST",
+        path: "/api/campaigns",
+        headers: {
+          ...projectOwnerAuthHeaders("auth-owner-001", {
+            "x-campaign-os-trace-id": "trace-auth-invalid-issuer",
+          }),
+          "x-campaign-os-session-id": invalidIssuerSessionId,
+        },
+        body: JSON.stringify(createBody),
+      });
+      const unavailableWalletSessionRepository = {
+        ...createWalletSessionRepository(),
+        getBySessionId: async (_sessionId: string) => {
+          throw new Error("wallet session repository unavailable");
+        },
+      };
+      const repositoryUnavailableRuntime = createCampaignOsApiRuntime({
+        campaignDbRepositoryOptions: {
+          durableStoreFilePath,
+          mode: "durable_test",
+        },
+        walletSessionRepository: unavailableWalletSessionRepository,
+      });
+      const repositoryUnavailable = await repositoryUnavailableRuntime.handle({
+        method: "POST",
+        path: "/api/campaigns",
+        headers: projectOwnerAuthHeaders("auth-owner-001", {
+          "x-campaign-os-trace-id": "trace-auth-repository-unavailable",
+        }),
+        body: JSON.stringify(createBody),
+      });
       const malformed = await runtime.handle({
         method: "POST",
         path: "/api/campaigns",
@@ -5334,13 +5719,19 @@ describe("Campaign OS API runtime", () => {
       const aiWorker = await runtime.handle({
         method: "POST",
         path: "/api/campaigns",
-        headers: projectOwnerAuthHeaders("auth-owner-001", {
-          "x-campaign-os-credential-boundary": "internal_agent_credential",
-          "x-campaign-os-proof-status": "local_seeded",
-          "x-campaign-os-roles": "ai_worker",
-          "x-campaign-os-trace-id": "trace-auth-ai-worker",
-          "x-campaign-os-wallet-source": "AGENT_SKILL",
-        }),
+        headers: projectOwnerAuthHeaders(
+          "auth-owner-001",
+          {
+            "x-campaign-os-credential-boundary": "internal_agent_credential",
+            "x-campaign-os-proof-status": "local_seeded",
+            "x-campaign-os-roles": "ai_worker",
+            "x-campaign-os-trace-id": "trace-auth-ai-worker",
+            "x-campaign-os-wallet-source": "AGENT_SKILL",
+          },
+          {
+            walletSource: "AGENT_SKILL",
+          },
+        ),
         body: JSON.stringify(createBody),
       });
       const listAfterFailures = await runtime.handle({
@@ -5441,6 +5832,34 @@ describe("Campaign OS API runtime", () => {
           },
         },
       });
+      for (const response of [unknownIssuedSession, identityMismatch, invalidIssuer]) {
+        expect(response).toMatchObject({
+          status: 401,
+          body: {
+            ok: false,
+            error: {
+              code: "AUTH_SESSION_INVALID",
+              details: {
+                diagnosticCode: "AUTH_SESSION_INVALID",
+                routeId: "campaigns.create",
+              },
+            },
+          },
+        });
+      }
+      expect(repositoryUnavailable).toMatchObject({
+        status: 503,
+        body: {
+          ok: false,
+          traceId: "trace-auth-repository-unavailable",
+          error: {
+            code: "PERSISTENCE_UNAVAILABLE",
+            details: {
+              operation: "walletSessionRepository.getBySessionId",
+            },
+          },
+        },
+      });
       expect(expectSuccessData<LocalServiceEnvelope<CampaignListPayload> & {
         payload: CampaignListPayload & {
           campaignDb: {
@@ -5457,10 +5876,23 @@ describe("Campaign OS API runtime", () => {
         projectId: "auth-project",
       });
 
-      for (const response of [missing, malformed, participant, reviewOperator, aiWorker, ownerMismatch]) {
+      for (const response of [
+        missing,
+        malformed,
+        participant,
+        reviewOperator,
+        aiWorker,
+        ownerMismatch,
+        unknownIssuedSession,
+        identityMismatch,
+        invalidIssuer,
+        repositoryUnavailable,
+      ]) {
         expectNoForbiddenResponseKeys(response.body);
         expect(JSON.stringify(response.body).toLowerCase()).not.toContain("raw-secret-token");
+        expect(JSON.stringify(response.body).toLowerCase()).not.toContain("auth-password");
       }
+      await repositoryUnavailableRuntime.close();
     } finally {
       await rm(tempDir, { force: true, recursive: true });
     }
@@ -5511,6 +5943,7 @@ describe("Campaign OS API runtime", () => {
     const taskDraft = await runtimeWithPersistence.handle({
       method: "POST",
       path: `/api/campaigns/${campaignDetail.id}/tasks`,
+      headers: projectOwnerAuthHeaders("2F4...9aB"),
       body: JSON.stringify({
         evidenceRule: { source: "AELFSCAN", minAmount: 1 },
         points: 120,
@@ -6328,7 +6761,9 @@ describe("Campaign OS API runtime", () => {
     const task = await runtimeWithFailingAudit.handle({
       method: "POST",
       path: `/api/campaigns/${created.payload.id}/tasks`,
-      headers: { "x-campaign-os-trace-id": "trace-audit-task-unavailable" },
+      headers: projectOwnerAuthHeaders("audit-owner-001", {
+        "x-campaign-os-trace-id": "trace-audit-task-unavailable",
+      }),
       body: JSON.stringify({
         evidenceRule: { minAmount: 1, source: "AELFSCAN" },
         points: 25,
@@ -6600,6 +7035,7 @@ describe("Campaign OS API runtime", () => {
     const invalidGeneratedTasks = await runtime.handle({
       method: "POST",
       path: `/api/campaigns/${campaignDetail.id}/tasks/generate`,
+      headers: projectOwnerAuthHeaders("2F4...9aB"),
       body: JSON.stringify({
         goal: "Activate Awaken traders",
         product: "Awaken",
@@ -6980,10 +7416,10 @@ describe("Campaign OS API runtime", () => {
         verificationType: "ON_CHAIN",
         walletCompatibility: "ANY",
       }),
-      headers: {
+      headers: projectOwnerAuthHeaders("postgres-authoritative-owner", {
         "content-type": "application/json",
         "x-campaign-os-trace-id": "trace-postgres-authoritative-task",
-      },
+      }),
       method: "POST",
       path: `/api/campaigns/${campaignDetail.id}/tasks`,
     });
