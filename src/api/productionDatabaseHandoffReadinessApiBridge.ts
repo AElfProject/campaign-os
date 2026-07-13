@@ -166,7 +166,7 @@ const unsafeApiPatterns: Array<[RegExp, string]> = [
   [/mysql:\/\/[^"'\s<>]+/gi, "__PDB_API_RED_0__"],
   [/mongodb(?:\+srv)?:\/\/[^"'\s<>]+/gi, "__PDB_API_RED_0__"],
   [
-    /\b(?:token|access[-_\s]*token|refresh[-_\s]*token|api[-_\s]*key|password|passphrase|secret|credential|private[-_\s]*key|seed[-_\s]*phrase|mnemonic|bearer[-_\s]*token)\b["']?\s*[:=]\s*(?:"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|[^,\s"'<>|}\]]+)/gi,
+    /\b(?:authorization|token|access[-_ \t]*token|refresh[-_ \t]*token|api[-_ \t]*key|(?:database|db|connection)[-_ \t]*password|password|passphrase|secret|plain[-_ \t]*secret|credential|private[-_ \t]*key|seed[-_ \t]*phrase|mnemonic|bearer[-_ \t]*token)\b["']?\s*(?::|=|->|=>|\bis\b|\bwas\b)\s*(?:"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|[^,\s"'<>|}\]]+)/gi,
     "__PDB_API_RED_2__",
   ],
   [/\bprivate[-_\s]*key\b/gi, "__PDB_API_RED_1__"],
@@ -183,21 +183,53 @@ const unsafeApiPatterns: Array<[RegExp, string]> = [
     /(?:[A-Za-z]:)?[\\/][^"'\r\n<>]*?(?:campaign-os-kitty|docs[\\/]current|kitty-specs|evidence|sync|\.kittify|\.agents)(?:[\\/][^"'\s<>]*)?/gi,
     "__PDB_API_RED_4__",
   ],
+  [
+    /(^|[^A-Za-z0-9_.-])(?:campaign-os-kitty|docs[\\/]current|kitty-specs|evidence|sync|\.kittify|\.agents)(?:[\\/][^"'\s<>|,;)\]}]*)+/gi,
+    "$1__PDB_API_RED_4__",
+  ],
   [/\bsigned[-_\s]*url\b/gi, "__PDB_API_RED_5__"],
   [/\bsignedurl\b/gi, "__PDB_API_RED_5__"],
   [/\bobject[-_\s]*key\b/gi, "__PDB_API_RED_5__"],
   [/\bobjectkey\b/gi, "__PDB_API_RED_5__"],
   [/https?:\/\/[^"'\s<>]+/gi, "__PDB_API_RED_6__"],
   [
-    /\b(?:host(?:name)?|user(?:name)?|database[-_]?(?:host|user))\b["']?\s*[:=]\s*(?:"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|[^,\s"'<>|}\]]+)/gi,
+    /\b(?:host(?:name)?|user(?:name)?|database[-_ \t]*(?:host|user|name)|db[-_ \t]*name)\b["']?\s*(?::|=|->|=>|\bis\b|\bwas\b)\s*(?:"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|[^,\s"'<>|}\]]+)/gi,
     "__PDB_API_RED_7__",
   ],
   [
-    /\b(?:query[-_\s]*(?:values?|parameters?|params?|bindings?)|bind[-_\s]*(?:values?|parameters?|params?|bindings?)|sql[-_\s]*(?:values?|parameters?|params?|bindings?))\b["']?\s*[:=]\s*(?:\[[^\]\r\n]*\]|\{[^}\r\n]*\}|"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|[^,\s"'<>|}\]]+)/gi,
+    /\b(?:query[-_ \t]*(?:values?|parameters?|params?|bindings?)|bind[-_ \t]*(?:values?|parameters?|params?|bindings?)|sql[-_ \t]*(?:values?|parameters?|params?|bindings?))\b["']?\s*(?::|=|->|=>|\bis\b|\bwas\b)\s*(?:\[[^\]\r\n]*\]|\{[^}\r\n]*\}|"(?:\\.|[^"\r\n])*"|'(?:\\.|[^'\r\n])*'|[^,\s"'<>|}\]]+)/gi,
     "__PDB_API_RED_8__",
   ],
   [
-    /\bwith\s+(?:recursive\s+)?[A-Za-z_][A-Za-z0-9_$]*(?:\s*\([^)]*\))?\s+as\s*\([^\r\n|]*/gi,
+    /\bwith\s+(?:recursive\s+)?(?:"(?:""|[^"\r\n])+"|[A-Za-z_][A-Za-z0-9_$]*)(?:\s*\([^\r\n)]*\))?\s+as\s*\([^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\bvalues\s*\([^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\btable\s+"(?:""|[^"\r\n])+"[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\bset\s+(?:(?:local|session)\s+)?(?:"(?:""|[^"\r\n])+"|[A-Za-z_][A-Za-z0-9_.$-]*)\s*(?:=|\bto\b)\s*[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\bbegin\b(?:\s+(?:work|transaction)\b|\s*;|\s*\/\*|\s*$)[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\bcommit\b(?:\s+(?:work|transaction)\b|\s*;|\s*\/\*|\s*$)[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\brollback\b(?:\s+(?:work|transaction)\b|\s+to(?:\s+savepoint)?\s+(?:"(?:""|[^"\r\n])+"|[A-Za-z_][A-Za-z0-9_$-]*)|\s*;|\s*\/\*|\s*$)[^\r\n|]*/gi,
+    "__PDB_API_RED_8__",
+  ],
+  [
+    /\b(?:start\s+transaction|release\s+savepoint|savepoint\s+(?:"(?:""|[^"\r\n])+"|[A-Za-z_][A-Za-z0-9_$-]*))\b[^\r\n|]*/gi,
     "__PDB_API_RED_8__",
   ],
   [
@@ -314,7 +346,18 @@ const sensitiveFieldReplacement = (key: string): string | undefined => {
 };
 
 const sanitizeApiKey = (key: string) => {
-  const sanitized = redactApiText(truncateSanitizerText(key, 128));
+  const bounded = truncateSanitizerText(key, 128);
+  const sensitiveReplacement = sensitiveFieldReplacement(bounded);
+
+  if (sensitiveReplacement) {
+    return sensitiveReplacement;
+  }
+
+  if (/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(bounded)) {
+    return bounded;
+  }
+
+  const sanitized = redactApiText(bounded);
   return sanitized || "[empty-key]";
 };
 

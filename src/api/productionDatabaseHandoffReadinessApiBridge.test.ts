@@ -315,6 +315,12 @@ describe("production database handoff readiness API bridge", () => {
       alpha: 99n,
       nested: [true, null],
     })).toBe('{"alpha":"[bigint]","nested":[true,null],"zeta":"[symbol]"}');
+
+    expect(sanitizeProductionDatabaseHandoffReadinessApiText({
+      retryable: true,
+      table: "summary",
+      values: [1, 2],
+    })).toBe('{"retryable":true,"table":"summary","values":[1,2]}');
   });
 
   it("projects Error values without stack or secret-bearing custom fields", () => {
@@ -351,17 +357,17 @@ describe("production database handoff readiness API bridge", () => {
 
   it("redacts delimiter variants, bind values, private artifact paths, and CTE SQL", () => {
     const sentinels = {
-      bind: "bind-sentinel-wp04-cycle2",
-      credential: "credential-sentinel-wp04-cycle2",
-      host: "host-sentinel-wp04-cycle2",
-      password: "password-sentinel-wp04-cycle2",
-      path: "path-sentinel-wp04-cycle2",
-      privateKey: "private-key-sentinel-wp04-cycle2",
-      query: "query-sentinel-wp04-cycle2",
-      secret: "secret-sentinel-wp04-cycle2",
-      seedPhrase: "seed-phrase-sentinel-wp04-cycle2",
-      sql: "sql-sentinel-wp04-cycle2",
-      user: "user-sentinel-wp04-cycle2",
+      bind: "q7x9m2v4n6a",
+      credential: "r8y1k3p5w7b",
+      host: "s9z2l4q6x8c",
+      password: "t1a3m5r7y9d",
+      path: "u2b4n6s8z1e",
+      privateKey: "v3c5p7t9a2f",
+      query: "w4d6q8u1b3g",
+      secret: "x5e7r9v2c4h",
+      seedPhrase: "y6f8s1w3d5j",
+      sql: "z7g9t2x4e6k",
+      user: "a8h1u3y5f7m",
     };
     const failure = new Error([
       `password: ${sentinels.password}`,
@@ -394,27 +400,68 @@ describe("production database handoff readiness API bridge", () => {
     for (const [input, sentinel] of domainCredentialVariants) {
       expect(sanitizeProductionDatabaseHandoffReadinessApiText(input)).not.toContain(sentinel);
     }
+
+    const opaqueAdversarialCases = [
+      ["[REDACTED:CREDENTIAL]", 'password is "b9j2v4z6g8n"', "b9j2v4z6g8n"],
+      ["[REDACTED:CREDENTIAL]", "secret -> c1k3w5a7h9p", "c1k3w5a7h9p"],
+      ["[REDACTED:CREDENTIAL]", "credential => d2m4x6b8j1q", "d2m4x6b8j1q"],
+      ["[REDACTED:PRIVATE_PATH]", "evidence/e3n5y7c9k2r.log", "e3n5y7c9k2r"],
+      [
+        "[REDACTED:QUERY]",
+        'WITH "runtime_rows" AS (VALUES (\'f4p6z8d1m3s\')) TABLE "runtime_rows"',
+        "f4p6z8d1m3s",
+      ],
+      ["[REDACTED:QUERY]", "SET application_name = 'g5q7a9e2n4t'", "g5q7a9e2n4t"],
+      ["[REDACTED:QUERY]", "BEGIN; SELECT 'h6r8b1f3p5u'", "h6r8b1f3p5u"],
+      ["[REDACTED:QUERY]", "COMMIT /* i7s9c2g4q6v */", "i7s9c2g4q6v"],
+      ["[REDACTED:QUERY]", "ROLLBACK TO SAVEPOINT j8t1d3h5r7w", "j8t1d3h5r7w"],
+      ["[REDACTED:QUERY]", "VALUES ('k9u2e4j6s8x')", "k9u2e4j6s8x"],
+      ["[REDACTED:QUERY]", 'TABLE "l1v3f5k7t9z"', "l1v3f5k7t9z"],
+    ] as const;
+    for (const [marker, input, sentinel] of opaqueAdversarialCases) {
+      const output = sanitizeProductionDatabaseHandoffReadinessApiText(input);
+      expect(output).toContain(marker);
+      expect(output).not.toContain(sentinel);
+    }
+    for (const statement of ["BEGIN", "COMMIT", "ROLLBACK"]) {
+      expect(sanitizeProductionDatabaseHandoffReadinessApiText(statement))
+        .toBe("[REDACTED:QUERY]");
+    }
+    expect(sanitizeProductionDatabaseHandoffReadinessApiText("Rollback plan not ready"))
+      .toBe("Rollback plan not ready");
   });
 
   it("keeps adversarial database failures sanitized through the fetch fallback", async () => {
     const sentinels = [
-      "fallback-password-sentinel",
-      "fallback-host-sentinel",
-      "fallback-user-sentinel",
-      "fallback-query-sentinel",
-      "fallback-bind-sentinel",
-      "fallback-path-sentinel",
-      "fallback-sql-sentinel",
+      "m1v3f5k7t9z",
+      "n2w4g6m8u1a",
+      "p3x5h7n9v2b",
+      "q4y6j8p1w3c",
+      "r5z7k9q2x4d",
+      "s6a8m1r3y5e",
+      "t7b9n2s4z6f",
+      "u8c1p3t5a7g",
+      "v9d2q4u6b8h",
+      "w1e3r5v7c9j",
+      "x2f4s6w8d1k",
+      "y3g5t7x9e2m",
     ];
     const failure = new Error([
-      `password: ${sentinels[0]}`,
+      `password is "${sentinels[0]}"`,
       `"host": "${sentinels[1]}"`,
       `'user': '${sentinels[2]}'`,
-      `/home/runner/campaign-os-kitty/evidence/${sentinels[5]}.log`,
-      `WITH private_rows AS (SELECT '${sentinels[6]}' AS secret_value) SELECT * FROM private_rows`,
+      `secret -> ${sentinels[3]}`,
+      `credential => ${sentinels[4]}`,
+      `evidence/${sentinels[5]}.log`,
+      `WITH "runtime_rows" AS (VALUES ('${sentinels[6]}')) TABLE "runtime_rows"`,
+      `SET application_name = '${sentinels[7]}'`,
+      `BEGIN; SELECT '${sentinels[8]}'`,
+      `COMMIT /* ${sentinels[9]} */`,
+      `ROLLBACK TO SAVEPOINT ${sentinels[10]}`,
+      `VALUES ('${sentinels[11]}')`,
     ].join(" | ")) as Error & Record<string, unknown>;
-    failure.queryValues = [sentinels[3]];
-    failure.bindParameters = { first: sentinels[4] };
+    failure.queryValues = ["z4h6u8y1f3n"];
+    failure.bindParameters = { first: "a5j7v9z2g4p" };
     const fetchImpl = vi.fn().mockResolvedValueOnce(response({
       error: failure,
       ok: false,
