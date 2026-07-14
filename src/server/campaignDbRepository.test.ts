@@ -869,6 +869,95 @@ describe("Campaign DB repository", () => {
     }
   });
 
+  it("keeps durable verification identities independent across concurrent wallets", async () => {
+    await withTempStorePath(async (durableStoreFilePath) => {
+      const repository = createCampaignDbRepository({
+        durableStoreFilePath,
+        mode: "durable_test",
+      });
+      const campaign = await repository.createDraft(validDraftInput());
+      const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+      const wallets = ["ELF_2F4DurableWalletA", "ELF_2F4DurableWalletB"];
+
+      const results = await Promise.all(wallets.map((walletAddress, index) =>
+        repository.upsertTaskVerification!({
+          ...validCompletionInput(campaign.id, task.id),
+          evidenceHash: `evidence-hash:durable-wallet-${index}`,
+          walletAddress,
+        }, { traceId: `trace-durable-wallet-${index}` })));
+
+      expect(new Set(results.map((result) => result.completion.id))).toHaveLength(2);
+      expect(new Set(results.map((result) => result.evidence.id))).toHaveLength(2);
+      expect(new Set(results.map((result) => result.participant?.id))).toHaveLength(2);
+      await expect(repository.health()).resolves.toMatchObject({
+        completionRecordCount: 2,
+        participantRecordCount: 2,
+        taskEvidenceRecordCount: 2,
+      });
+      for (const walletAddress of wallets) {
+        await expect(repository.getParticipantJourney!({
+          accountType: "EOA",
+          campaignId: campaign.id,
+          walletAddress,
+          walletSource: "PORTKEY_EOA_EXTENSION",
+        })).resolves.toMatchObject({
+          eligibility: {
+            eligible: true,
+            missingTasks: [],
+            score: 120,
+          },
+          participant: { totalPoints: 120, walletAddress },
+          tasks: [expect.objectContaining({
+            pointsAwarded: 120,
+            status: "completed",
+          })],
+        });
+      }
+    });
+  });
+
+  it("preserves the Trace ID and rolls back local durable verification write failures", async () => {
+    await withTempStorePath(async (durableStoreFilePath) => {
+      const repository = createCampaignDbRepository({
+        durableStoreFilePath,
+        mode: "durable_test",
+      });
+      const campaign = await repository.createDraft(validDraftInput());
+      const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+      await mkdir(`${durableStoreFilePath}.tmp`);
+
+      await expect(repository.upsertTaskVerification!({
+        ...validCompletionInput(campaign.id, task.id),
+        walletAddress: "ELF_2F4DurableFaultWallet",
+      }, { traceId: "trace-local-write-fault" })).rejects.toMatchObject({
+        diagnostics: [expect.objectContaining({
+          code: "CAMPAIGN_DURABLE_STORE_WRITE_FAILED",
+        })],
+        name: "CampaignDbRepositoryError",
+        traceId: "trace-local-write-fault",
+      });
+      await expect(repository.health()).resolves.toMatchObject({
+        completionRecordCount: 0,
+        participantRecordCount: 0,
+        taskEvidenceRecordCount: 0,
+      });
+      await expect(repository.getParticipantJourney!({
+        accountType: "EOA",
+        campaignId: campaign.id,
+        walletAddress: "ELF_2F4DurableFaultWallet",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      })).resolves.toMatchObject({
+        diagnostics: [],
+        participant: { participantId: null, totalPoints: 0 },
+        tasks: [expect.objectContaining({
+          completionId: null,
+          evidenceId: null,
+          status: "not_started",
+        })],
+      });
+    });
+  });
+
   it("keeps unified journey, eligibility, and rank p95 within 500ms for 100 Participants x 10 Tasks", async () => {
     const store = createCampaignDurableStore({ boundedListLimit: 100 });
     const campaignId = "campaign-db-performance";

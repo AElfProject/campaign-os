@@ -361,6 +361,29 @@ export const projectParticipantJourney = (
     evidenceByTaskId.set(evidence.taskId, evidence);
   }
 
+  const scopedParticipant = input.participant?.campaignId === campaignId
+    && input.participant.walletAddress === input.subject.walletAddress
+    ? input.participant
+    : undefined;
+
+  if (input.participant && !scopedParticipant) {
+    addDiagnostic("OUT_OF_SCOPE_RECORD_IGNORED", "snapshot");
+  }
+
+  if (scopedParticipant && (
+    scopedParticipant.accountType !== input.subject.accountType
+    || scopedParticipant.walletSource !== input.subject.walletSource
+  )) {
+    addDiagnostic("SUBJECT_METADATA_MISMATCH", "participant");
+  }
+
+  const participantMissingWithProgress = !scopedParticipant
+    && (completionsByTaskId.size > 0 || evidenceByTaskId.size > 0);
+
+  if (participantMissingWithProgress) {
+    addDiagnostic("PARTICIPANT_MISSING", "participant");
+  }
+
   const progress = canonicalTasks.map((task): ParticipantJourneyTaskProgress => {
     const completion = completionsByTaskId.get(task.id);
     const evidence = evidenceByTaskId.get(task.id);
@@ -396,7 +419,8 @@ export const projectParticipantJourney = (
       };
     }
 
-    let inconsistent = inconsistentDuplicate;
+    let inconsistent = inconsistentDuplicate
+      || (participantMissingWithProgress && Boolean(completion || evidence));
 
     if (completion && !evidence) {
       addDiagnostic("COMPLETION_WITHOUT_EVIDENCE", "task", task.id);
@@ -474,22 +498,6 @@ export const projectParticipantJourney = (
     };
   });
 
-  const scopedParticipant = input.participant?.campaignId === campaignId
-    && input.participant.walletAddress === input.subject.walletAddress
-    ? input.participant
-    : undefined;
-
-  if (input.participant && !scopedParticipant) {
-    addDiagnostic("OUT_OF_SCOPE_RECORD_IGNORED", "snapshot");
-  }
-
-  if (scopedParticipant && (
-    scopedParticipant.accountType !== input.subject.accountType
-    || scopedParticipant.walletSource !== input.subject.walletSource
-  )) {
-    addDiagnostic("SUBJECT_METADATA_MISMATCH", "participant");
-  }
-
   const completedPoints = progress.reduce(
     (total, task) => total + (task.status === "completed" ? task.pointsAwarded : 0),
     0,
@@ -498,8 +506,6 @@ export const projectParticipantJourney = (
 
   if (scopedParticipant && scopedParticipant.totalPoints !== completedPoints) {
     addDiagnostic("PARTICIPANT_POINTS_MISMATCH", "participant");
-  } else if (!scopedParticipant && completedPoints > 0) {
-    addDiagnostic("PARTICIPANT_MISSING", "participant");
   }
 
   const riskFlags = safeRiskFlags(scopedParticipant?.riskFlags ?? []);
@@ -574,7 +580,11 @@ export const projectParticipantJourney = (
       campaignId,
       input.subject.walletAddress,
       totalPoints,
-      input.rankingParticipants,
+      scopedParticipant
+        ? input.rankingParticipants
+        : input.rankingParticipants.filter(
+          (participant) => participant.walletAddress !== input.subject.walletAddress,
+        ),
     ),
     repository: { ...input.repository },
     tasks: progress,

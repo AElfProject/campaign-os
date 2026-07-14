@@ -22,6 +22,7 @@ import {
   type WalletSource,
 } from "../domain/types";
 import {
+  CampaignDurableStoreError,
   createCampaignDurableStore,
   type CampaignDurableStore,
   type CampaignDurableStoreDiagnosticCode,
@@ -4546,6 +4547,14 @@ export const createCampaignDbRepository = ({
             performVerification,
           ));
       } catch (error) {
+        if (error instanceof CampaignDurableStoreError) {
+          throw new CampaignDbRepositoryError(
+            error.message,
+            error.diagnostics,
+            context.traceId,
+          );
+        }
+
         if (
           error instanceof CampaignDbRepositoryError
           && error.traceId === undefined

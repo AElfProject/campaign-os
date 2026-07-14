@@ -363,6 +363,7 @@ export const createCampaignDurableStore = ({
 }: CreateCampaignDurableStoreOptions = {}): CampaignDurableStore => {
   const recordsById = new Map<string, CampaignDbDraft>();
   const participantRecordsById = new Map<string, CampaignDbParticipantRecord>();
+  const participantRecordIds = new Set<string>();
   const referralBindingRecordsById = new Map<string, CampaignDbReferralBindingRecord>();
   const taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
   const taskEvidenceById = new Map<string, CampaignDbTaskEvidenceRecord>();
@@ -411,6 +412,7 @@ export const createCampaignDurableStore = ({
     const document = await readDocument();
     recordsById.clear();
     participantRecordsById.clear();
+    participantRecordIds.clear();
     referralBindingRecordsById.clear();
     taskCompletionsById.clear();
     taskEvidenceById.clear();
@@ -422,6 +424,7 @@ export const createCampaignDurableStore = ({
 
     for (const participant of document.participantRecords) {
       participantRecordsById.set(`${participant.campaignId}::${participant.walletAddress}`, participant);
+      participantRecordIds.add(participant.id);
     }
 
     for (const binding of document.referralBindingRecords) {
@@ -541,6 +544,26 @@ export const createCampaignDurableStore = ({
     );
   };
 
+  const availableVerificationId = (
+    requestedId: string,
+    prefix: string,
+    ids: Pick<Map<string, unknown> | Set<string>, "has" | "size">,
+  ) => {
+    if (!ids.has(requestedId)) {
+      return requestedId;
+    }
+
+    let sequence = ids.size + 1;
+    let candidate = `${prefix}${sequence.toString().padStart(4, "0")}`;
+
+    while (ids.has(candidate)) {
+      sequence += 1;
+      candidate = `${prefix}${sequence.toString().padStart(4, "0")}`;
+    }
+
+    return candidate;
+  };
+
   const upsertTaskVerification = (
     input: CampaignDurableStoreTaskVerificationWrite,
   ): Promise<CampaignDurableStoreTaskVerificationResult> => runJourneyExclusive(async () => {
@@ -548,6 +571,7 @@ export const createCampaignDurableStore = ({
     const previousCompletions = new Map(taskCompletionsById);
     const previousEvidence = new Map(taskEvidenceById);
     const previousParticipants = new Map(participantRecordsById);
+    const previousParticipantIds = new Set(participantRecordIds);
     const existingCompletion = findCompletionByLogicalKey(
       input.completion.campaignId,
       input.completion.taskId,
@@ -560,8 +584,16 @@ export const createCampaignDurableStore = ({
     );
     const participantRecordKey = `${input.participant.campaignId}::${input.participant.walletAddress}`;
     const existingParticipant = participantRecordsById.get(participantRecordKey);
-    const evidenceId = existingEvidence?.id ?? input.evidence.id;
-    const completionId = existingCompletion?.id ?? input.completion.id;
+    const evidenceId = existingEvidence?.id ?? availableVerificationId(
+      input.evidence.id,
+      "campaign-db-task-evidence-",
+      taskEvidenceById,
+    );
+    const completionId = existingCompletion?.id ?? availableVerificationId(
+      input.completion.id,
+      "campaign-db-task-completion-",
+      taskCompletionsById,
+    );
     const completion: CampaignDbTaskCompletion = {
       ...input.completion,
       createdAt: existingCompletion?.createdAt ?? input.completion.createdAt,
@@ -583,7 +615,11 @@ export const createCampaignDurableStore = ({
     const participant: CampaignDbParticipantRecord = {
       ...withoutParticipantRank(input.participant),
       createdAt: existingParticipant?.createdAt ?? input.participant.createdAt,
-      id: existingParticipant?.id ?? input.participant.id,
+      id: existingParticipant?.id ?? availableVerificationId(
+        input.participant.id,
+        "campaign-db-participant-",
+        participantRecordIds,
+      ),
       localePreference: existingParticipant?.localePreference ?? input.participant.localePreference,
       riskFlags: existingParticipant?.riskFlags ?? input.participant.riskFlags,
       totalPoints: completedPointsForWallet(completion.campaignId, completion.walletAddress),
@@ -594,6 +630,7 @@ export const createCampaignDurableStore = ({
         : { walletVerifiedAt: existingParticipant.walletVerifiedAt }),
     };
     participantRecordsById.set(participantRecordKey, participant);
+    participantRecordIds.add(participant.id);
 
     try {
       await writeDocument();
@@ -601,6 +638,7 @@ export const createCampaignDurableStore = ({
       taskCompletionsById.clear();
       taskEvidenceById.clear();
       participantRecordsById.clear();
+      participantRecordIds.clear();
       for (const [id, record] of previousCompletions) {
         taskCompletionsById.set(id, record);
       }
@@ -609,6 +647,9 @@ export const createCampaignDurableStore = ({
       }
       for (const [id, record] of previousParticipants) {
         participantRecordsById.set(id, record);
+      }
+      for (const id of previousParticipantIds) {
+        participantRecordIds.add(id);
       }
       throw error;
     }
@@ -795,6 +836,7 @@ export const createCampaignDurableStore = ({
     reset: async () => {
       recordsById.clear();
       participantRecordsById.clear();
+      participantRecordIds.clear();
       referralBindingRecordsById.clear();
       taskCompletionsById.clear();
       taskEvidenceById.clear();
@@ -830,6 +872,7 @@ export const createCampaignDurableStore = ({
     upsertParticipant: async (participant) => {
       await ensureInitialized();
       participantRecordsById.set(`${participant.campaignId}::${participant.walletAddress}`, participant);
+      participantRecordIds.add(participant.id);
       await writeDocument();
 
       return participant;

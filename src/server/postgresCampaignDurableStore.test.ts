@@ -323,6 +323,395 @@ const expectParameterized = (call: QueryCall, expectedValues: readonly unknown[]
   }
 };
 
+type VerificationFaultPoint =
+  | "BEGIN"
+  | "advisory_lock"
+  | "initial_evidence"
+  | "completion"
+  | "linked_evidence"
+  | "points_sum"
+  | "participant"
+  | "COMMIT";
+
+interface VerificationRows {
+  completions: Map<string, Record<string, unknown>>;
+  evidence: Map<string, Record<string, unknown>>;
+  participants: Map<string, Record<string, unknown>>;
+}
+
+interface VerificationTransaction {
+  active: boolean;
+  evidenceWriteCount: number;
+  pending: VerificationRows;
+  releaseLock?: () => void;
+}
+
+interface StatefulVerificationPoolOptions {
+  faultPoint?: VerificationFaultPoint;
+  loseFirstCommitResponse?: boolean;
+}
+
+const emptyVerificationRows = (): VerificationRows => ({
+  completions: new Map(),
+  evidence: new Map(),
+  participants: new Map(),
+});
+
+const verificationRecordKey = (values: readonly unknown[]) =>
+  JSON.stringify([values[1], values[2], values[3]]);
+const verificationParticipantKey = (values: readonly unknown[]) =>
+  JSON.stringify([values[1], values[2]]);
+const asDatabaseDate = (value: unknown, fallback: string) =>
+  value instanceof Date ? value : timestamp(typeof value === "string" ? value : fallback);
+const asOptionalDatabaseDate = (value: unknown) => value === null || value === undefined
+  ? null
+  : asDatabaseDate(value, "2026-07-07T00:00:00.000Z");
+const asJsonbValue = (value: unknown) => typeof value === "string"
+  ? JSON.parse(value) as unknown
+  : value;
+
+class StatefulVerificationPool implements PostgresCampaignStorePool {
+  readonly calls: QueryCall[] = [];
+  readonly committed = emptyVerificationRows();
+  readonly connect = vi.fn(async () => {
+    const transaction: VerificationTransaction = {
+      active: false,
+      evidenceWriteCount: 0,
+      pending: emptyVerificationRows(),
+    };
+
+    return {
+      query: (text: string, values: readonly unknown[] = []) =>
+        this.queryTransaction(transaction, text, values),
+      release: () => {
+        if (transaction.active) {
+          this.releasedWhileActiveCount += 1;
+        }
+        transaction.releaseLock?.();
+        transaction.releaseLock = undefined;
+        this.release();
+      },
+    };
+  });
+  readonly end = vi.fn(async () => undefined);
+  readonly release = vi.fn(() => undefined);
+  readonly options: StatefulVerificationPoolOptions;
+  commitSucceededCount = 0;
+  lockAcquisitionCount = 0;
+  maxActiveLockHolders = 0;
+  releasedWhileActiveCount = 0;
+  rollbackAttemptCount = 0;
+  private readonly activeLockHolders = new Map<string, number>();
+  private readonly lockTails = new Map<string, Promise<void>>();
+
+  constructor(options: StatefulVerificationPoolOptions = {}) {
+    this.options = options;
+  }
+
+  async query(
+    text: string,
+    values: readonly unknown[] = [],
+  ): Promise<PostgresCampaignStoreQueryResult> {
+    const transaction: VerificationTransaction = {
+      active: false,
+      evidenceWriteCount: 0,
+      pending: emptyVerificationRows(),
+    };
+
+    return await this.queryTransaction(transaction, text, values);
+  }
+
+  private fail(point: VerificationFaultPoint) {
+    if (this.options.faultPoint === point) {
+      throw new Error(`private database failure at ${point}`);
+    }
+  }
+
+  private releaseTransactionLock(transaction: VerificationTransaction) {
+    transaction.releaseLock?.();
+    transaction.releaseLock = undefined;
+  }
+
+  private async acquireTransactionLock(
+    transaction: VerificationTransaction,
+    key: string,
+  ) {
+    const previous = this.lockTails.get(key) ?? Promise.resolve();
+    let releaseCurrent: () => void = () => undefined;
+    const current = new Promise<void>((resolve) => {
+      releaseCurrent = resolve;
+    });
+    const tail = previous.then(() => current);
+    this.lockTails.set(key, tail);
+    await previous;
+    const activeHolderCount = (this.activeLockHolders.get(key) ?? 0) + 1;
+    this.activeLockHolders.set(key, activeHolderCount);
+    this.lockAcquisitionCount += 1;
+    this.maxActiveLockHolders = Math.max(this.maxActiveLockHolders, activeHolderCount);
+    transaction.releaseLock = () => {
+      this.activeLockHolders.set(key, Math.max(0, activeHolderCount - 1));
+      releaseCurrent();
+    };
+  }
+
+  private upsertEvidence(
+    transaction: VerificationTransaction,
+    values: readonly unknown[],
+  ): Record<string, unknown> {
+    const key = verificationRecordKey(values);
+    const existing = transaction.pending.evidence.get(key) ?? this.committed.evidence.get(key);
+    const row = evidenceRow({
+      account_type: values[5],
+      campaign_id: values[1],
+      captured_at: asDatabaseDate(values[13], "2026-07-07T00:00:07.000Z"),
+      completion_id: values[4],
+      created_at: existing?.created_at
+        ?? asDatabaseDate(values[18], "2026-07-07T00:00:04.000Z"),
+      diagnostic_codes: asJsonbValue(values[11]),
+      evidence_hash: values[9],
+      evidence_ref: values[10],
+      evidence_source: values[8],
+      id: existing?.id ?? values[0],
+      live_contract_executed: values[14],
+      live_provider_executed: values[15],
+      live_reward_executed: values[16],
+      live_storage_executed: values[17],
+      points_awarded: values[12],
+      status: values[7],
+      task_id: values[2],
+      updated_at: asDatabaseDate(values[19], "2026-07-07T00:00:07.000Z"),
+      wallet_address: values[3],
+      wallet_source: values[6],
+    });
+    transaction.pending.evidence.set(key, row);
+
+    return row;
+  }
+
+  private upsertCompletion(
+    transaction: VerificationTransaction,
+    values: readonly unknown[],
+  ): Record<string, unknown> {
+    const key = verificationRecordKey(values);
+    const existing = transaction.pending.completions.get(key) ?? this.committed.completions.get(key);
+    const row = completionRow({
+      account_type: values[4],
+      campaign_id: values[1],
+      completed_at: asOptionalDatabaseDate(values[11]),
+      created_at: existing?.created_at
+        ?? asDatabaseDate(values[12], "2026-07-07T00:00:04.000Z"),
+      evidence_hash: values[9],
+      evidence_id: values[8],
+      evidence_source: values[7],
+      id: existing?.id ?? values[0],
+      points_awarded: values[10],
+      status: values[6],
+      task_id: values[2],
+      updated_at: asDatabaseDate(values[13], "2026-07-07T00:00:06.000Z"),
+      wallet_address: values[3],
+      wallet_source: values[5],
+    });
+    transaction.pending.completions.set(key, row);
+
+    return row;
+  }
+
+  private totalPoints(
+    transaction: VerificationTransaction,
+    campaignId: string,
+    walletAddress: string,
+  ) {
+    const rows = new Map(this.committed.completions);
+    for (const [key, row] of transaction.pending.completions) {
+      rows.set(key, row);
+    }
+
+    return Array.from(rows.values())
+      .filter((row) => row.campaign_id === campaignId)
+      .filter((row) => row.wallet_address === walletAddress)
+      .filter((row) => row.status === "completed")
+      .reduce((total, row) => total + Number(row.points_awarded), 0);
+  }
+
+  private upsertParticipant(
+    transaction: VerificationTransaction,
+    values: readonly unknown[],
+  ): Record<string, unknown> {
+    const key = verificationParticipantKey(values);
+    const existing = transaction.pending.participants.get(key) ?? this.committed.participants.get(key);
+    const row = participantRow({
+      account_type: values[3],
+      campaign_id: values[1],
+      created_at: existing?.created_at
+        ?? asDatabaseDate(values[12], "2026-07-07T00:00:04.000Z"),
+      id: existing?.id ?? values[0],
+      locale_preference: existing?.locale_preference ?? values[8],
+      rank: existing?.rank ?? values[10],
+      risk_flags: existing?.risk_flags ?? asJsonbValue(values[11]),
+      total_points: values[9],
+      updated_at: asDatabaseDate(values[13], "2026-07-07T00:00:05.000Z"),
+      wallet_address: values[2],
+      wallet_signature_status: existing?.wallet_signature_status ?? values[6],
+      wallet_source: values[4],
+      wallet_type_verified: values[5],
+      wallet_verified_at: existing?.wallet_verified_at ?? asOptionalDatabaseDate(values[7]),
+    });
+    transaction.pending.participants.set(key, row);
+
+    return row;
+  }
+
+  private commit(transaction: VerificationTransaction) {
+    this.assertPrimaryKeysUnique(
+      this.committed.completions,
+      transaction.pending.completions,
+    );
+    this.assertPrimaryKeysUnique(
+      this.committed.evidence,
+      transaction.pending.evidence,
+    );
+    this.assertPrimaryKeysUnique(
+      this.committed.participants,
+      transaction.pending.participants,
+    );
+    this.assertVerificationLinks(transaction);
+    for (const [key, row] of transaction.pending.completions) {
+      this.committed.completions.set(key, row);
+    }
+    for (const [key, row] of transaction.pending.evidence) {
+      this.committed.evidence.set(key, row);
+    }
+    for (const [key, row] of transaction.pending.participants) {
+      this.committed.participants.set(key, row);
+    }
+    transaction.pending = emptyVerificationRows();
+    transaction.active = false;
+    this.commitSucceededCount += 1;
+    this.releaseTransactionLock(transaction);
+  }
+
+  private assertVerificationLinks(transaction: VerificationTransaction) {
+    const completions = new Map(this.committed.completions);
+    const evidence = new Map(this.committed.evidence);
+    for (const [key, row] of transaction.pending.completions) {
+      completions.set(key, row);
+    }
+    for (const [key, row] of transaction.pending.evidence) {
+      evidence.set(key, row);
+    }
+
+    for (const [key, evidenceRowValue] of evidence) {
+      const completionRowValue = completions.get(key);
+      if (
+        evidenceRowValue.completion_id !== null
+        && evidenceRowValue.completion_id !== undefined
+        && (
+          completionRowValue === undefined
+          || completionRowValue.id !== evidenceRowValue.completion_id
+          || completionRowValue.evidence_id !== evidenceRowValue.id
+        )
+      ) {
+        throw Object.assign(new Error("verification link constraint failed"), { code: "23503" });
+      }
+    }
+  }
+
+  private assertPrimaryKeysUnique(
+    committed: ReadonlyMap<string, Record<string, unknown>>,
+    pending: ReadonlyMap<string, Record<string, unknown>>,
+  ) {
+    const logicalKeyById = new Map<string, string>();
+
+    for (const [key, row] of committed) {
+      logicalKeyById.set(String(row.id), key);
+    }
+    for (const [key, row] of pending) {
+      const id = String(row.id);
+      const existingKey = logicalKeyById.get(id);
+
+      if (existingKey !== undefined && existingKey !== key) {
+        throw Object.assign(new Error("duplicate primary key"), { code: "23505" });
+      }
+      logicalKeyById.set(id, key);
+    }
+  }
+
+  private async queryTransaction(
+    transaction: VerificationTransaction,
+    text: string,
+    values: readonly unknown[],
+  ): Promise<PostgresCampaignStoreQueryResult> {
+    const call = { text: normalizeSql(text), values };
+    this.calls.push(call);
+
+    if (call.text === "BEGIN") {
+      this.fail("BEGIN");
+      transaction.active = true;
+      transaction.evidenceWriteCount = 0;
+      transaction.pending = emptyVerificationRows();
+      return { rows: [] };
+    }
+
+    if (call.text.includes("pg_advisory_xact_lock")) {
+      this.fail("advisory_lock");
+      await this.acquireTransactionLock(
+        transaction,
+        JSON.stringify([values[0], values[1]]),
+      );
+      return { rows: [] };
+    }
+
+    if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_evidence")) {
+      const point = transaction.evidenceWriteCount === 0
+        ? "initial_evidence"
+        : "linked_evidence";
+      this.fail(point);
+      transaction.evidenceWriteCount += 1;
+      return { rows: [this.upsertEvidence(transaction, values)] };
+    }
+
+    if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_completions")) {
+      this.fail("completion");
+      return { rows: [this.upsertCompletion(transaction, values)] };
+    }
+
+    if (call.text.includes("SUM(points_awarded)")) {
+      this.fail("points_sum");
+      return {
+        rows: [{ total_points: String(this.totalPoints(
+          transaction,
+          String(values[0]),
+          String(values[1]),
+        )) }],
+      };
+    }
+
+    if (call.text.startsWith("INSERT INTO campaign_os.campaign_participants")) {
+      this.fail("participant");
+      return { rows: [this.upsertParticipant(transaction, values)] };
+    }
+
+    if (call.text === "COMMIT") {
+      this.fail("COMMIT");
+      this.commit(transaction);
+      if (this.options.loseFirstCommitResponse && this.commitSucceededCount === 1) {
+        throw new Error("commit completed but response was lost");
+      }
+      return { rows: [] };
+    }
+
+    if (call.text === "ROLLBACK") {
+      this.rollbackAttemptCount += 1;
+      transaction.pending = emptyVerificationRows();
+      transaction.active = false;
+      this.releaseTransactionLock(transaction);
+      return { rows: [] };
+    }
+
+    return { rows: [] };
+  }
+}
+
 describe("PostgreSQL Campaign durable store", () => {
   it("does not query or connect while the store is being constructed", () => {
     const pool = new TranscriptPool();
@@ -895,76 +1284,7 @@ describe("PostgreSQL Campaign durable store", () => {
     "participant",
     "COMMIT",
   ] as const)("rolls back every %s verification fault without committed partial rows", async (faultPoint) => {
-    let evidenceWriteCount = 0;
-    let pending = { completion: 0, evidence: 0, participant: 0 };
-    let committed = { completion: 0, evidence: 0, participant: 0 };
-    let commitSucceeded = false;
-    const fail = (point: typeof faultPoint) => {
-      if (faultPoint === point) {
-        throw new Error(`private database failure at ${point}`);
-      }
-    };
-    const pool = new TranscriptPool((call) => {
-      if (call.text === "BEGIN") {
-        fail("BEGIN");
-        pending = { completion: 0, evidence: 0, participant: 0 };
-        return { rows: [] };
-      }
-
-      if (call.text.includes("pg_advisory_xact_lock")) {
-        fail("advisory_lock");
-        return { rows: [] };
-      }
-
-      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_evidence")) {
-        const point = evidenceWriteCount === 0 ? "initial_evidence" : "linked_evidence";
-        fail(point);
-        evidenceWriteCount += 1;
-        pending.evidence = 1;
-        return {
-          rows: [evidenceRow({
-            completion_id: point === "linked_evidence" ? "completion-canonical" : null,
-            id: "evidence-canonical",
-          })],
-        };
-      }
-
-      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_completions")) {
-        fail("completion");
-        pending.completion = 1;
-        return {
-          rows: [completionRow({
-            evidence_id: "evidence-canonical",
-            id: "completion-canonical",
-          })],
-        };
-      }
-
-      if (call.text.includes("SUM(points_awarded)")) {
-        fail("points_sum");
-        return { rows: [{ total_points: "120" }] };
-      }
-
-      if (call.text.startsWith("INSERT INTO campaign_os.campaign_participants")) {
-        fail("participant");
-        pending.participant = 1;
-        return { rows: [participantRow({ id: "participant-canonical", total_points: 120 })] };
-      }
-
-      if (call.text === "COMMIT") {
-        fail("COMMIT");
-        committed = { ...pending };
-        commitSucceeded = true;
-        return { rows: [] };
-      }
-
-      if (call.text === "ROLLBACK") {
-        pending = { completion: 0, evidence: 0, participant: 0 };
-        return { rows: [] };
-      }
-
-      return { rows: [] };
-    });
+    const pool = new StatefulVerificationPool({ faultPoint });
     const store = createPostgresCampaignDurableStore({ pool });
 
     await expect(store.upsertTaskVerification!({
@@ -976,70 +1296,16 @@ describe("PostgreSQL Campaign durable store", () => {
       operation: "upsertTaskVerification",
       traceId: `trace-atomic-fault-${faultPoint}`,
     });
-    expect(pool.calls.some((call) => call.text === "ROLLBACK")).toBe(true);
-    expect(commitSucceeded).toBe(false);
-    expect(committed).toEqual({ completion: 0, evidence: 0, participant: 0 });
+    expect(pool.rollbackAttemptCount).toBe(1);
+    expect(pool.commitSucceededCount).toBe(0);
+    expect(pool.committed.completions.size).toBe(0);
+    expect(pool.committed.evidence.size).toBe(0);
+    expect(pool.committed.participants.size).toBe(0);
     expect(pool.release).toHaveBeenCalledOnce();
   });
 
   it("returns database-canonical identities across twenty concurrent retries", async () => {
-    const completionIds = new Map<string, string>();
-    const evidenceIds = new Map<string, string>();
-    const participantIds = new Map<string, string>();
-    const keyFor = (values: readonly unknown[]) => `${values[1]}::${values[2]}::${values[3]}`;
-    const participantKeyFor = (values: readonly unknown[]) => `${values[1]}::${values[2]}`;
-    const pool = new TranscriptPool((call) => {
-      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_evidence")) {
-        const key = keyFor(call.values);
-        const canonicalId = evidenceIds.get(key) ?? String(call.values[0]);
-        evidenceIds.set(key, canonicalId);
-        return {
-          rows: [evidenceRow({
-            campaign_id: call.values[1],
-            completion_id: call.values[4],
-            id: canonicalId,
-            task_id: call.values[2],
-            wallet_address: call.values[3],
-          })],
-        };
-      }
-
-      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_completions")) {
-        const key = keyFor(call.values);
-        const canonicalId = completionIds.get(key) ?? String(call.values[0]);
-        completionIds.set(key, canonicalId);
-        return {
-          rows: [completionRow({
-            campaign_id: call.values[1],
-            evidence_id: call.values[8],
-            id: canonicalId,
-            task_id: call.values[2],
-            wallet_address: call.values[3],
-          })],
-        };
-      }
-
-      if (call.text.includes("SUM(points_awarded)")) {
-        return { rows: [{ total_points: "120" }] };
-      }
-
-      if (call.text.startsWith("INSERT INTO campaign_os.campaign_participants")) {
-        const key = participantKeyFor(call.values);
-        const canonicalId = participantIds.get(key) ?? String(call.values[0]);
-        participantIds.set(key, canonicalId);
-        return {
-          rows: [participantRow({
-            campaign_id: call.values[1],
-            id: canonicalId,
-            rank: null,
-            total_points: call.values[9],
-            wallet_address: call.values[2],
-          })],
-        };
-      }
-
-      return { rows: [] };
-    });
+    const pool = new StatefulVerificationPool();
     const store = createPostgresCampaignDurableStore({ pool });
 
     const results = await Promise.all(Array.from({ length: 20 }, (_, index) =>
@@ -1053,54 +1319,135 @@ describe("PostgreSQL Campaign durable store", () => {
     expect(new Set(results.map((result) => result.evidence.id)).size).toBe(1);
     expect(new Set(results.map((result) => result.participant.id)).size).toBe(1);
     expect(results.every((result) => result.participant.totalPoints === 120)).toBe(true);
-    expect(completionIds.size).toBe(1);
-    expect(evidenceIds.size).toBe(1);
-    expect(participantIds.size).toBe(1);
+    expect(pool.committed.completions.size).toBe(1);
+    expect(pool.committed.evidence.size).toBe(1);
+    expect(pool.committed.participants.size).toBe(1);
+    expect(pool.commitSucceededCount).toBe(20);
+    expect(pool.lockAcquisitionCount).toBe(20);
+    expect(pool.maxActiveLockHolders).toBe(1);
+    expect(pool.releasedWhileActiveCount).toBe(0);
+    expect(pool.rollbackAttemptCount).toBe(0);
     expect(pool.connect).toHaveBeenCalledTimes(20);
     expect(pool.release).toHaveBeenCalledTimes(20);
   });
 
-  it("reuses committed canonical identities when the first COMMIT response is lost", async () => {
-    const canonicalCompletionId = "completion-first-committed";
-    const canonicalEvidenceId = "evidence-first-committed";
-    const canonicalParticipantId = "participant-first-committed";
-    let commitAttempts = 0;
-    const pool = new TranscriptPool((call) => {
-      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_evidence")) {
-        return { rows: [evidenceRow({
-          completion_id: call.values[4],
-          id: canonicalEvidenceId,
-        })] };
-      }
+  it("derives Participant points from committed and pending completed Tasks", async () => {
+    const pool = new StatefulVerificationPool();
+    const store = createPostgresCampaignDurableStore({ pool });
 
-      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_completions")) {
-        return { rows: [completionRow({
-          evidence_id: canonicalEvidenceId,
-          id: canonicalCompletionId,
-        })] };
-      }
+    const first = await store.upsertTaskVerification!({
+      completion: completion({
+        id: "completion-points-a",
+        pointsAwarded: 31,
+        taskId: "task-points-a",
+      }),
+      evidence: evidence({
+        completionId: undefined,
+        id: "evidence-points-a",
+        pointsAwarded: 31,
+        taskId: "task-points-a",
+      }),
+      participant: participant({ id: "participant-points-a", totalPoints: 0 }),
+    }, { traceId: "trace-points-a" });
+    const second = await store.upsertTaskVerification!({
+      completion: completion({
+        id: "completion-points-b",
+        pointsAwarded: 47,
+        taskId: "task-points-b",
+      }),
+      evidence: evidence({
+        completionId: undefined,
+        id: "evidence-points-b",
+        pointsAwarded: 47,
+        taskId: "task-points-b",
+      }),
+      participant: participant({ id: "participant-points-b", totalPoints: 0 }),
+    }, { traceId: "trace-points-b" });
 
-      if (call.text.includes("SUM(points_awarded)")) {
-        return { rows: [{ total_points: "120" }] };
-      }
+    expect(first.participant.totalPoints).toBe(31);
+    expect(second.participant.totalPoints).toBe(78);
+    expect(second.participant.id).toBe(first.participant.id);
+    expect(pool.committed.completions.size).toBe(2);
+    expect(pool.committed.evidence.size).toBe(2);
+    expect(pool.committed.participants.size).toBe(1);
+    expect([...pool.committed.participants.values()][0]?.total_points).toBe(78);
+  });
 
-      if (call.text.startsWith("INSERT INTO campaign_os.campaign_participants")) {
-        return { rows: [participantRow({
-          id: canonicalParticipantId,
-          rank: null,
-          total_points: 120,
-        })] };
-      }
+  it("keeps canonical verification rows independent across concurrent wallets", async () => {
+    const pool = new StatefulVerificationPool();
+    const store = createPostgresCampaignDurableStore({ pool });
+    const wallets = ["ELF_2F4PostgresWalletA", "ELF_2F4PostgresWalletB"];
 
-      if (call.text === "COMMIT") {
-        commitAttempts += 1;
-        if (commitAttempts === 1) {
-          throw new Error("commit completed but response was lost");
-        }
-      }
+    const results = await Promise.all(wallets.flatMap((walletAddress) =>
+      Array.from({ length: 10 }, (_, index) => store.upsertTaskVerification!({
+        completion: completion({
+          id: `completion-${walletAddress}-${index}`,
+          walletAddress,
+        }),
+        evidence: evidence({
+          completionId: undefined,
+          id: `evidence-${walletAddress}-${index}`,
+          walletAddress,
+        }),
+        participant: participant({
+          id: `participant-${walletAddress}-${index}`,
+          totalPoints: 0,
+          walletAddress,
+        }),
+      }, { traceId: `trace-${walletAddress}-${index}` }))));
 
-      return { rows: [] };
+    for (const walletAddress of wallets) {
+      const walletResults = results.filter(
+        (result) => result.completion.walletAddress === walletAddress,
+      );
+      expect(new Set(walletResults.map((result) => result.completion.id))).toHaveLength(1);
+      expect(new Set(walletResults.map((result) => result.evidence.id))).toHaveLength(1);
+      expect(new Set(walletResults.map((result) => result.participant.id))).toHaveLength(1);
+      expect(walletResults.every((result) => result.participant.totalPoints === 120)).toBe(true);
+    }
+    expect(results[0]?.completion.id).not.toBe(results[10]?.completion.id);
+    expect(pool.committed.completions.size).toBe(2);
+    expect(pool.committed.evidence.size).toBe(2);
+    expect(pool.committed.participants.size).toBe(2);
+    expect(pool.commitSucceededCount).toBe(20);
+    expect(pool.lockAcquisitionCount).toBe(20);
+    expect(pool.maxActiveLockHolders).toBe(1);
+    expect(pool.releasedWhileActiveCount).toBe(0);
+    expect(pool.rollbackAttemptCount).toBe(0);
+    expect(pool.release).toHaveBeenCalledTimes(20);
+  });
+
+  it("rejects cross-wallet primary-key collisions without publishing partial rows", async () => {
+    const pool = new StatefulVerificationPool();
+    const store = createPostgresCampaignDurableStore({ pool });
+    const firstWrite = {
+      completion: completion({ id: "shared-completion-id" }),
+      evidence: evidence({ completionId: undefined, id: "shared-evidence-id" }),
+      participant: participant({ id: "shared-participant-id", totalPoints: 0 }),
+    };
+    await store.upsertTaskVerification!(firstWrite, { traceId: "trace-primary-key-first" });
+
+    const secondWallet = "ELF_2F4PrimaryKeyWalletB";
+    await expect(store.upsertTaskVerification!({
+      completion: { ...firstWrite.completion, walletAddress: secondWallet },
+      evidence: { ...firstWrite.evidence, walletAddress: secondWallet },
+      participant: { ...firstWrite.participant, walletAddress: secondWallet },
+    }, { traceId: "trace-primary-key-collision" })).rejects.toMatchObject({
+      code: "POSTGRES_CAMPAIGN_STORE_CONFLICT",
+      operation: "upsertTaskVerification",
+      traceId: "trace-primary-key-collision",
     });
+    expect(pool.committed.completions.size).toBe(1);
+    expect(pool.committed.evidence.size).toBe(1);
+    expect(pool.committed.participants.size).toBe(1);
+    expect(pool.commitSucceededCount).toBe(1);
+    expect(pool.rollbackAttemptCount).toBe(1);
+    expect(pool.releasedWhileActiveCount).toBe(0);
+    expect(pool.release).toHaveBeenCalledTimes(2);
+  });
+
+  it("reuses committed canonical identities when the first COMMIT response is lost", async () => {
+    const pool = new StatefulVerificationPool({ loseFirstCommitResponse: true });
     const store = createPostgresCampaignDurableStore({ pool });
     const write = {
       completion: completion(),
@@ -1114,6 +1461,15 @@ describe("PostgreSQL Campaign durable store", () => {
       code: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
       traceId: "trace-postgres-lost-response-first",
     });
+    expect(pool.commitSucceededCount).toBe(1);
+    expect(pool.rollbackAttemptCount).toBe(1);
+    expect(pool.committed.completions.size).toBe(1);
+    expect(pool.committed.evidence.size).toBe(1);
+    expect(pool.committed.participants.size).toBe(1);
+    const canonicalCompletionId = String([...pool.committed.completions.values()][0]?.id);
+    const canonicalEvidenceId = String([...pool.committed.evidence.values()][0]?.id);
+    const canonicalParticipantId = String([...pool.committed.participants.values()][0]?.id);
+
     await expect(store.upsertTaskVerification!({
       completion: { ...write.completion, id: "completion-second-request" },
       evidence: { ...write.evidence, id: "evidence-second-request" },
@@ -1123,7 +1479,12 @@ describe("PostgreSQL Campaign durable store", () => {
       evidence: { completionId: canonicalCompletionId, id: canonicalEvidenceId },
       participant: { id: canonicalParticipantId, totalPoints: 120 },
     });
-    expect(commitAttempts).toBe(2);
+    expect(pool.commitSucceededCount).toBe(2);
+    expect(pool.committed.completions.size).toBe(1);
+    expect(pool.committed.evidence.size).toBe(1);
+    expect(pool.committed.participants.size).toBe(1);
+    expect(pool.release).toHaveBeenCalledTimes(2);
+    expect(pool.releasedWhileActiveCount).toBe(0);
   });
 
   it("filters and atomically upserts Task Evidence without application-side reads", async () => {

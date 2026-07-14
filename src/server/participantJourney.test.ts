@@ -259,6 +259,45 @@ describe("Participant journey projector", () => {
     expect(serialized).not.toContain(`/private/evidence/${WALLET_B}`);
   });
 
+  it("fails closed when private progress exists without a canonical Participant", () => {
+    const result = projectParticipantJourney(input({
+      completions: [completion("task-required-a")],
+      evidence: [evidence("task-required-a")],
+    }));
+
+    expect(result.participant).toMatchObject({
+      participantId: null,
+      totalPoints: 0,
+    });
+    expect(result.ranking).toMatchObject({
+      rank: null,
+      totalPoints: 0,
+    });
+    expect(result.eligibility).toMatchObject({
+      eligible: false,
+      missingTasks: ["task-required-a", "task-required-b"],
+      score: 0,
+      status: "not_eligible",
+    });
+    expect(result.tasks[0]).toMatchObject({
+      action: "blocked",
+      blockedReason: "inconsistent_records",
+      completionId: null,
+      evidenceId: null,
+      pointsAwarded: 0,
+      status: "not_started",
+    });
+    expect(result.diagnostics).toContainEqual({
+      code: "PARTICIPANT_MISSING",
+      scope: "participant",
+    });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(`completion-${WALLET_A}-task-required-a`);
+    expect(serialized).not.toContain(`evidence-${WALLET_A}-task-required-a`);
+    expect(serialized).not.toContain(`private-evidence-hash-${WALLET_A}`);
+    expect(serialized).not.toContain(`/private/evidence/${WALLET_A}`);
+  });
+
   it("keeps orphan, duplicate, mismatched, and out-of-scope rows readable but fail-safe", () => {
     const result = projectParticipantJourney(input({
       completions: [
