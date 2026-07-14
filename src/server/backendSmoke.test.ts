@@ -593,7 +593,7 @@ describe("backend scaffold HTTP smoke", () => {
                   routeId: "campaigns.export.preview",
                 }),
                 expect.objectContaining({
-                  enforcementStatus: "enforcement_deferred",
+                  enforcementStatus: "local_enforced",
                   requiredRoles: ["participant"],
                   routeId: "tasks.verify",
                 }),
@@ -747,12 +747,18 @@ describe("backend scaffold HTTP smoke", () => {
               authEnforcement: expect.objectContaining({
                 agentCredentialSubstitutionDisabled: true,
                 campaignMutationRouteCount: 1,
-                localEnforcedRouteCount: 4,
+                localEnforcedRouteCount: 10,
                 locallyEnforcedRouteIds: [
                   "campaigns.create",
                   "campaigns.owner.list",
+                  "campaigns.owner.detail",
                   "campaigns.tasks.add",
                   "campaigns.tasks.generate",
+                  "campaigns.participant.list",
+                  "campaigns.participant.journey",
+                  "campaigns.eligibility",
+                  "campaigns.points.ranking.ledger.runtime",
+                  "tasks.verify",
                 ],
                 mode: "local_enforced",
                 productionProofVerifierReady: false,
