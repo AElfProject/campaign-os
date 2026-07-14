@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -66,6 +66,16 @@ const suggestion = (
   verificationType: "WALLET",
   walletCompatibility: "ANY",
   ...overrides,
+});
+
+const unknownTemplate = (): TaskTemplate => ({
+  ...taskTemplateLibrary[0],
+  id: "tpl-unknown-provider-task",
+  title: {
+    "en-US": "Unknown provider task",
+    "zh-CN": "未知 provider 任务",
+    "zh-TW": "未知 provider 任務",
+  },
 });
 
 const preview = (
@@ -137,6 +147,7 @@ const workflowError = (
 };
 
 interface ControlledHarnessProps {
+  completePending?: boolean;
   onAdd?: OwnerCampaignTaskIntentContract["onAdd"];
   onAdopt?: OwnerCampaignTaskIntentContract["onAdopt"];
   onGenerate?: OwnerCampaignTaskIntentContract["onGenerate"];
@@ -144,6 +155,7 @@ interface ControlledHarnessProps {
 }
 
 const ControlledHarness = ({
+  completePending = false,
   onAdd = vi.fn(),
   onAdopt = vi.fn(),
   onGenerate = vi.fn(),
@@ -153,6 +165,12 @@ const ControlledHarness = ({
     operation: OwnerCampaignRequestOperation;
     targetKey: OwnerCampaignTaskPendingTargetKey;
   } | null>(null);
+
+  useEffect(() => {
+    if (completePending) {
+      setPending(null);
+    }
+  }, [completePending]);
 
   return (
     <TaskTemplateLibrary
@@ -210,6 +228,20 @@ const fillGenerateForm = () => {
   fireEvent.change(screen.getByLabelText("Target users"), {
     target: { value: "AA users, EOA traders" },
   });
+};
+
+const activateNativeButton = (button: HTMLElement, key: "Enter" | " ") => {
+  const code = key === "Enter" ? "Enter" : "Space";
+
+  button.focus();
+  const keyDownAccepted = fireEvent.keyDown(button, { code, key });
+  if (key === "Enter" && keyDownAccepted) {
+    fireEvent.click(button);
+  }
+  const keyUpAccepted = fireEvent.keyUp(button, { code, key });
+  if (key === " " && keyDownAccepted && keyUpAccepted) {
+    fireEvent.click(button);
+  }
 };
 
 describe("TaskTemplateLibrary", () => {
@@ -371,16 +403,7 @@ describe("TaskTemplateLibrary", () => {
   });
 
   it("fails closed for an unknown template mapping", () => {
-    const unknownTemplate: TaskTemplate = {
-      ...taskTemplateLibrary[0],
-      id: "tpl-unknown-provider-task",
-      title: {
-        "en-US": "Unknown provider task",
-        "zh-CN": "未知 provider 任务",
-        "zh-TW": "未知 provider 任務",
-      },
-    };
-    renderLibrary(createWorkflow(), [unknownTemplate]);
+    renderLibrary(createWorkflow(), [unknownTemplate()]);
 
     const button = screen.getByRole("button", { name: "Add Unknown provider task" });
     expect(button).toBeDisabled();
@@ -469,7 +492,7 @@ describe("TaskTemplateLibrary", () => {
     expect(onAdopt).toHaveBeenCalledTimes(1);
   });
 
-  it("guards each command target without blocking unrelated controls in the same render", () => {
+  it("locks all task commands synchronously from the first dispatch", () => {
     const onAdd = vi.fn();
     const onAdopt = vi.fn();
     const onGenerate = vi.fn();
@@ -485,18 +508,63 @@ describe("TaskTemplateLibrary", () => {
     const generateButton = screen.getByRole("button", { name: "Generate task preview" });
     const adoptButton = screen.getByRole("button", { name: "Adopt wallet-connect" });
 
-    for (const button of [connectButton, bridgeButton, generateButton, adoptButton]) {
-      fireEvent.click(button);
-      fireEvent.click(button);
-    }
+    fireEvent.click(connectButton);
 
-    expect(onAdd).toHaveBeenCalledTimes(2);
-    expect(onAdd.mock.calls.map(([input]) => input.templateCode)).toEqual([
-      "wallet-connect",
-      "bridge-ebridge",
-    ]);
+    expect(connectButton).toBeDisabled();
+    expect(bridgeButton).toBeDisabled();
+    expect(generateButton).toBeDisabled();
+    expect(adoptButton).toBeDisabled();
+
+    fireEvent.click(connectButton);
+    fireEvent.click(bridgeButton);
+    fireEvent.click(generateButton);
+    fireEvent.click(adoptButton);
+
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ templateCode: "wallet-connect" }));
+    expect(onGenerate).not.toHaveBeenCalled();
+    expect(onAdopt).not.toHaveBeenCalled();
+  });
+
+  it("keeps global single-flight through controlled pending and unlocks only after completion", () => {
+    const onAdd = vi.fn();
+    const onAdopt = vi.fn();
+    const onGenerate = vi.fn();
+    const harnessProps = {
+      onAdd,
+      onAdopt,
+      onGenerate,
+      previewValue: preview([suggestion()]),
+    };
+    const { rerender } = render(<ControlledHarness {...harnessProps} />);
+    fillGenerateForm();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Connect wallet" }));
+
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Add Connect wallet" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add Connect wallet" }))
+      .toHaveTextContent("Adding Connect wallet");
+    expect(screen.getByRole("button", { name: "Add Bridge with eBridge" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Generate task preview" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Adopt wallet-connect" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate task preview" }));
+    fireEvent.click(screen.getByRole("button", { name: "Adopt wallet-connect" }));
+    expect(onGenerate).not.toHaveBeenCalled();
+    expect(onAdopt).not.toHaveBeenCalled();
+
+    rerender(<ControlledHarness {...harnessProps} completePending />);
+
+    expect(screen.getByRole("button", { name: "Add Connect wallet" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Generate task preview" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Adopt wallet-connect" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate task preview" }));
+
+    expect(onAdd).toHaveBeenCalledTimes(1);
     expect(onGenerate).toHaveBeenCalledTimes(1);
-    expect(onAdopt).toHaveBeenCalledTimes(1);
+    expect(onAdopt).not.toHaveBeenCalled();
   });
 
   it("disables REFERRAL and unknown suggestions with stable reasons", () => {
@@ -520,6 +588,66 @@ describe("TaskTemplateLibrary", () => {
     expect(referralButton).toHaveAccessibleDescription("REFERRAL_TASK_ADD_UNSUPPORTED");
     expect(unknownButton).toBeDisabled();
     expect(unknownButton).toHaveAccessibleDescription("UNSUPPORTED_PERSISTENCE_TYPE");
+  });
+
+  it.each([
+    {
+      expectedGlobalReason: "Reconnect an issued wallet session to manage tasks.",
+      name: "no-session",
+      overrides: {
+        commandsDisabled: true,
+        issuedSessionReady: false,
+        ownerContext: null,
+        status: "no_session" as const,
+      },
+    },
+    {
+      expectedGlobalReason: "Another campaign command is pending.",
+      name: "controlled-pending",
+      overrides: {
+        commandsDisabled: true,
+        pendingCommand: "preview" as const,
+        pendingTargetKey: "generate" as const,
+        status: "mutation_pending" as const,
+      },
+    },
+  ])("associates global and persistence reasons in the $name state", ({
+    expectedGlobalReason,
+    overrides,
+  }) => {
+    const referral = suggestion({
+      adoptable: false,
+      id: "suggestion-referral-combined" as never,
+      rejectionCode: "REFERRAL_TASK_ADD_UNSUPPORTED",
+      templateCode: "invite-friend",
+      verificationType: "REFERRAL",
+    });
+    const unknown = suggestion({
+      id: "suggestion-unknown-combined" as never,
+      templateCode: "unknown-template",
+      verificationType: "UNRECOGNIZED",
+    });
+    renderLibrary(
+      createWorkflow({ ...overrides, preview: preview([referral, unknown]) }),
+      [unknownTemplate()],
+    );
+
+    const referralButton = screen.getByRole("button", { name: "Adopt invite-friend" });
+    const unknownSuggestionButton = screen.getByRole("button", { name: "Adopt unknown-template" });
+    const unknownTemplateButton = screen.getByRole("button", { name: "Add Unknown provider task" });
+
+    expect(referralButton).toHaveAccessibleDescription(
+      `${expectedGlobalReason} REFERRAL_TASK_ADD_UNSUPPORTED`,
+    );
+    expect(unknownSuggestionButton).toHaveAccessibleDescription(
+      `${expectedGlobalReason} UNSUPPORTED_PERSISTENCE_TYPE`,
+    );
+    expect(unknownTemplateButton).toHaveAccessibleDescription(
+      `${expectedGlobalReason} UNSUPPORTED_PERSISTENCE_TYPE`,
+    );
+    expect(referralButton.getAttribute("aria-describedby")?.split(" ")).toHaveLength(2);
+    expect(unknownSuggestionButton.getAttribute("aria-describedby")?.split(" ")).toHaveLength(2);
+    expect(unknownTemplateButton.getAttribute("aria-describedby")?.split(" ")).toHaveLength(2);
   });
 
   it("renders an explicit empty preview without implying Task creation", () => {
@@ -623,38 +751,280 @@ describe("TaskTemplateLibrary", () => {
     },
   );
 
-  it("exposes controlled retry and reconnect commands", () => {
+  it("recovers a corrected 400 through detail refresh before explicit resubmission", () => {
+    const onAdd = vi.fn();
+    const onAdopt = vi.fn();
+    const onGenerate = vi.fn();
     const onReconnect = vi.fn();
     const onRetryDetail = vi.fn();
     const { rerender } = renderLibrary(createWorkflow({
       commandsDisabled: true,
-      error: workflowError(503),
+      error: workflowError(400),
+      onAdd,
+      onAdopt,
+      onGenerate,
       onReconnect,
       onRetryDetail,
       status: "degraded",
     }));
+    fillGenerateForm();
+    fireEvent.change(screen.getByLabelText("Campaign goal"), {
+      target: { value: "Corrected qualified participation goal" },
+    });
+    expect(screen.getByRole("button", { name: "Generate task preview" })).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry campaign detail" }));
+    const retryButton = screen.getByRole("button", { name: "Retry campaign detail" });
+    activateNativeButton(retryButton, "Enter");
+    fireEvent.click(retryButton);
+
+    expect(retryButton).toHaveFocus();
     expect(onRetryDetail).toHaveBeenCalledTimes(1);
+    expect(onReconnect).not.toHaveBeenCalled();
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(onAdopt).not.toHaveBeenCalled();
+    expect(onGenerate).not.toHaveBeenCalled();
+    expect(screen.getByRole("region", { name: "Canonical campaign tasks" }))
+      .toHaveTextContent("task-canonical-001");
 
     rerender(
       <TaskTemplateLibrary
         locale="en-US"
         ownerWorkflow={createWorkflow({
           commandsDisabled: true,
-          error: workflowError(401),
-          issuedSessionReady: false,
+          onAdd,
+          onAdopt,
+          onGenerate,
           onReconnect,
-          ownerContext: null,
-          status: "no_session",
+          onRetryDetail,
+          pendingCommand: "detail",
+          status: "loading_detail",
         })}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Reconnect wallet" }));
+    expect(screen.getByRole("region", { name: "Canonical campaign tasks" }))
+      .toHaveTextContent("task-canonical-001");
+
+    rerender(
+      <TaskTemplateLibrary
+        locale="en-US"
+        ownerWorkflow={createWorkflow({
+          onAdd,
+          onAdopt,
+          onGenerate,
+          onReconnect,
+          onRetryDetail,
+        })}
+      />,
+    );
+    const generateButton = screen.getByRole("button", { name: "Generate task preview" });
+    activateNativeButton(generateButton, " ");
+
+    expect(generateButton).toHaveFocus();
+    expect(onGenerate).toHaveBeenCalledTimes(1);
+    expect(onRetryDetail).toHaveBeenCalledTimes(1);
+    expect(onReconnect).not.toHaveBeenCalled();
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(onAdopt).not.toHaveBeenCalled();
+  });
+
+  it("recovers a 401 through reconnect without replaying a task command", () => {
+    const onAdd = vi.fn();
+    const onAdopt = vi.fn();
+    const onGenerate = vi.fn();
+    const onReconnect = vi.fn();
+    const onRetryDetail = vi.fn();
+    const { rerender } = renderLibrary(createWorkflow({
+      commandsDisabled: true,
+      error: workflowError(401),
+      onAdd,
+      onAdopt,
+      onGenerate,
+      onReconnect,
+      onRetryDetail,
+      status: "degraded",
+    }));
+    const reconnectButton = screen.getByRole("button", { name: "Reconnect wallet" });
+
+    activateNativeButton(reconnectButton, " ");
+
+    expect(reconnectButton).toHaveFocus();
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+    expect(onRetryDetail).not.toHaveBeenCalled();
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(onAdopt).not.toHaveBeenCalled();
+    expect(onGenerate).not.toHaveBeenCalled();
+    expect(screen.getByRole("region", { name: "Canonical campaign tasks" }))
+      .toHaveTextContent("task-canonical-001");
+
+    rerender(
+      <TaskTemplateLibrary
+        locale="en-US"
+        ownerWorkflow={createWorkflow({
+          onAdd,
+          onAdopt,
+          onGenerate,
+          onReconnect,
+          onRetryDetail,
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Add Connect wallet" })).toBeEnabled();
     expect(onReconnect).toHaveBeenCalledTimes(1);
   });
 
-  it("uses native keyboard controls, accessible names, and stable responsive styles", () => {
+  it("recovers a 403 through safe reconnect context without exposing diagnostics", () => {
+    const onAdd = vi.fn();
+    const onAdopt = vi.fn();
+    const onGenerate = vi.fn();
+    const onReconnect = vi.fn();
+    const onRetryDetail = vi.fn();
+    const { rerender } = renderLibrary(createWorkflow({
+      commandsDisabled: true,
+      error: workflowError(403),
+      onAdd,
+      onAdopt,
+      onGenerate,
+      onReconnect,
+      onRetryDetail,
+      status: "degraded",
+    }));
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("AUTH_FORBIDDEN");
+    expect(alert).not.toHaveTextContent(/diagnostic|safeDetails|stack/i);
+    const reconnectButton = screen.getByRole("button", { name: "Reconnect wallet" });
+
+    activateNativeButton(reconnectButton, "Enter");
+
+    expect(reconnectButton).toHaveFocus();
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+    expect(onRetryDetail).not.toHaveBeenCalled();
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(onAdopt).not.toHaveBeenCalled();
+    expect(onGenerate).not.toHaveBeenCalled();
+    expect(screen.getByRole("region", { name: "Canonical campaign tasks" }))
+      .toHaveTextContent("task-canonical-001");
+
+    rerender(
+      <TaskTemplateLibrary
+        locale="en-US"
+        ownerWorkflow={createWorkflow({
+          onAdd,
+          onAdopt,
+          onGenerate,
+          onReconnect,
+          onRetryDetail,
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Add Connect wallet" })).toBeEnabled();
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers a 503 by retrying detail without replaying mutation", () => {
+    const onAdd = vi.fn();
+    const onAdopt = vi.fn();
+    const onGenerate = vi.fn();
+    const onReconnect = vi.fn();
+    const onRetryDetail = vi.fn();
+    const { rerender } = renderLibrary(createWorkflow({
+      commandsDisabled: true,
+      error: workflowError(503),
+      onAdd,
+      onAdopt,
+      onGenerate,
+      onReconnect,
+      onRetryDetail,
+      status: "degraded",
+    }));
+    const retryButton = screen.getByRole("button", { name: "Retry campaign detail" });
+
+    activateNativeButton(retryButton, " ");
+    fireEvent.click(retryButton);
+
+    expect(retryButton).toHaveFocus();
+    expect(onRetryDetail).toHaveBeenCalledTimes(1);
+    expect(onReconnect).not.toHaveBeenCalled();
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(onAdopt).not.toHaveBeenCalled();
+    expect(onGenerate).not.toHaveBeenCalled();
+    expect(screen.getByRole("region", { name: "Canonical campaign tasks" }))
+      .toHaveTextContent("task-canonical-001");
+
+    rerender(
+      <TaskTemplateLibrary
+        locale="en-US"
+        ownerWorkflow={createWorkflow({
+          commandsDisabled: true,
+          onAdd,
+          onAdopt,
+          onGenerate,
+          onReconnect,
+          onRetryDetail,
+          pendingCommand: "detail",
+          status: "loading_detail",
+        })}
+      />,
+    );
+    expect(screen.getByRole("region", { name: "Canonical campaign tasks" }))
+      .toHaveTextContent("task-canonical-001");
+
+    rerender(
+      <TaskTemplateLibrary
+        locale="en-US"
+        ownerWorkflow={createWorkflow({
+          onAdd,
+          onAdopt,
+          onGenerate,
+          onReconnect,
+          onRetryDetail,
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Add Connect wallet" })).toBeEnabled();
+    expect(onRetryDetail).toHaveBeenCalledTimes(1);
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(onAdopt).not.toHaveBeenCalled();
+    expect(onGenerate).not.toHaveBeenCalled();
+  });
+
+  it("adds through native Enter activation with one dispatch and continuous focus", () => {
+    const onAdd = vi.fn();
+    renderLibrary(createWorkflow({ onAdd }));
+    const addButton = screen.getByRole("button", { name: "Add Connect wallet" });
+
+    activateNativeButton(addButton, "Enter");
+
+    expect(addButton).toHaveFocus();
+    expect(onAdd).toHaveBeenCalledTimes(1);
+  });
+
+  it("generates through native Space activation with one dispatch and continuous focus", () => {
+    const onGenerate = vi.fn();
+    renderLibrary(createWorkflow({ onGenerate }));
+    fillGenerateForm();
+    const generateButton = screen.getByRole("button", { name: "Generate task preview" });
+
+    activateNativeButton(generateButton, " ");
+
+    expect(generateButton).toHaveFocus();
+    expect(onGenerate).toHaveBeenCalledTimes(1);
+  });
+
+  it("adopts through native Enter activation with one dispatch and continuous focus", () => {
+    const onAdopt = vi.fn();
+    renderLibrary(createWorkflow({ onAdopt, preview: preview([suggestion()]) }));
+    const adoptButton = screen.getByRole("button", { name: "Adopt wallet-connect" });
+
+    activateNativeButton(adoptButton, "Enter");
+
+    expect(adoptButton).toHaveFocus();
+    expect(onAdopt).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses accessible native controls and stable responsive styles", () => {
     renderLibrary(createWorkflow({ preview: preview([suggestion()]) }));
     fillGenerateForm();
     const addButton = screen.getByRole("button", { name: "Add Connect wallet" });

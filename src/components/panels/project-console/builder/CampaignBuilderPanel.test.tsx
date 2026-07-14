@@ -61,6 +61,20 @@ const renderBuilder = (
   />,
 );
 
+const activateNativeButton = (button: HTMLElement, key: "Enter" | " ") => {
+  const code = key === "Enter" ? "Enter" : "Space";
+
+  button.focus();
+  const keyDownAccepted = fireEvent.keyDown(button, { code, key });
+  if (key === "Enter" && keyDownAccepted) {
+    fireEvent.click(button);
+  }
+  const keyUpAccepted = fireEvent.keyUp(button, { code, key });
+  if (key === " " && keyDownAccepted && keyUpAccepted) {
+    fireEvent.click(button);
+  }
+};
+
 describe("CampaignBuilderPanel", () => {
   it("renders the draft overview and the issued owner supplied by props", () => {
     renderBuilder();
@@ -247,17 +261,16 @@ describe("CampaignBuilderPanel", () => {
     expect(onCreate).not.toHaveBeenCalled();
   });
 
-  it("supports form submission from the keyboard path and exposes live status", () => {
+  it("creates through native Enter activation while retaining focus and live status", () => {
     const onCreate = vi.fn();
     renderBuilder(createWorkflow({ onCreate }));
     const form = screen.getByRole("form", { name: "Owner campaign creation" });
     const button = screen.getByRole("button", { name: "Create campaign" });
 
-    button.focus();
+    activateNativeButton(button, "Enter");
+
     expect(button).toHaveFocus();
     expect(button).toHaveStyle({ outlineOffset: "2px" });
-    fireEvent.submit(form);
-
     expect(onCreate).toHaveBeenCalledTimes(1);
     expect(within(form).getByRole("status")).toHaveTextContent("Ready to create campaign");
   });

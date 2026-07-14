@@ -38,7 +38,6 @@ import {
   createOwnerCampaignAdoptPendingTargetKey,
   ownerCampaignGeneratePendingTargetKey,
   type OwnerCampaignTaskIntentContract,
-  type OwnerCampaignTaskPendingTargetKey,
 } from "../ownerCampaignWorkflow";
 
 type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
@@ -120,6 +119,32 @@ const unsupportedPersistenceReason = "UNSUPPORTED_PERSISTENCE_TYPE";
 const referralPersistenceReason = "REFERRAL_TASK_ADD_UNSUPPORTED";
 const globalDisabledReasonId = "owner-task-command-disabled-reason";
 const generateDisabledReasonId = "owner-task-generate-disabled-reason";
+
+type OwnerTaskRecoveryAction = "correct_then_refresh" | "reconnect" | "retry_detail" | "unavailable";
+
+const ownerTaskRecoveryAction = (
+  error: OwnerCampaignTaskIntentContract["error"],
+): OwnerTaskRecoveryAction => {
+  if (!error) {
+    return "unavailable";
+  }
+  if (error.httpStatus === 400) {
+    return "correct_then_refresh";
+  }
+  if (error.httpStatus === 401 || error.httpStatus === 403 || error.reconnectRequired) {
+    return "reconnect";
+  }
+  if (error.httpStatus === 503 || error.retryable) {
+    return "retry_detail";
+  }
+
+  return "unavailable";
+};
+
+const describedByIds = (...ids: Array<string | null | undefined>) => {
+  const availableIds = ids.filter((id): id is string => Boolean(id));
+  return availableIds.length > 0 ? availableIds.join(" ") : undefined;
+};
 
 const evidenceSourceByVerificationType = {
   DAPP_API: "DAPP_API",
@@ -464,6 +489,7 @@ const workflowStatusText = (
 ) => {
   const labels = projectConsoleCopy[locale];
   const targetKey = ownerWorkflow.pendingTargetKey;
+  const recoveryAction = ownerTaskRecoveryAction(ownerWorkflow.error);
 
   if (!ownerWorkflow.issuedSessionReady || !ownerWorkflow.ownerContext) {
     return labels.ownerTaskNoSession;
@@ -487,6 +513,9 @@ const workflowStatusText = (
       (candidate) => candidate.id === suggestionId,
     );
     return `${labels.ownerTaskAdopting} ${suggestion?.templateCode ?? suggestionId}`;
+  }
+  if (recoveryAction === "reconnect") {
+    return labels.ownerTaskNoSession;
   }
   if (ownerWorkflow.status === "degraded") {
     return labels.ownerTaskDegraded;
@@ -515,6 +544,7 @@ const globalCommandDisabledReason = (
   locale: BusinessContentLocale,
 ) => {
   const labels = projectConsoleCopy[locale];
+  const recoveryAction = ownerTaskRecoveryAction(ownerWorkflow.error);
 
   if (!ownerWorkflow.issuedSessionReady || !ownerWorkflow.ownerContext) {
     return labels.ownerTaskNoSession;
@@ -524,6 +554,9 @@ const globalCommandDisabledReason = (
   }
   if (ownerWorkflow.pendingCommand || ownerWorkflow.pendingTargetKey) {
     return labels.ownerTaskCommandPending;
+  }
+  if (recoveryAction === "reconnect") {
+    return labels.ownerTaskNoSession;
   }
   if (ownerWorkflow.status === "degraded") {
     return labels.ownerTaskDegraded;
@@ -561,10 +594,16 @@ export const TaskTemplateLibrary = ({
     targetUsers: "",
     walletPolicy: "ANY",
   });
+  const controlledCommandPending = Boolean(
+    ownerWorkflow.pendingCommand || ownerWorkflow.pendingTargetKey,
+  );
+  const [commandDispatchLocked, setCommandDispatchLocked] = useState(controlledCommandPending);
   const filteredTemplates = useMemo(() => filterTaskTemplates(templates, filters), [filters, templates]);
   const summary = createTaskTemplateFilterSummary(templates, filteredTemplates, filters);
   const hasChangedFilters = !isSameFilterState(filters, defaultTaskTemplateFilters);
-  const globalDisabledReason = globalCommandDisabledReason(ownerWorkflow, locale);
+  const controlledDisabledReason = globalCommandDisabledReason(ownerWorkflow, locale);
+  const globalDisabledReason = controlledDisabledReason
+    ?? (commandDispatchLocked ? ownerLabels.ownerTaskCommandPending : null);
   const targetUsers = targetUsersFromInput(generateForm.targetUsers);
   const generateFormValid = Boolean(generateForm.goal.trim())
     && Boolean(generateForm.product.trim())
@@ -574,46 +613,48 @@ export const TaskTemplateLibrary = ({
   const visiblePreview = ownerWorkflow.preview?.campaignId === ownerWorkflow.activeCampaignId
     ? ownerWorkflow.preview
     : null;
+  const recoveryAction = ownerTaskRecoveryAction(ownerWorkflow.error);
   const showRetry = Boolean(ownerWorkflow.activeCampaignId)
-    && Boolean(ownerWorkflow.error?.retryable);
+    && (recoveryAction === "correct_then_refresh" || recoveryAction === "retry_detail");
   const showReconnect = !ownerWorkflow.issuedSessionReady
-    || Boolean(ownerWorkflow.error?.reconnectRequired);
-  const commandDispatchGuardsRef = useRef<Set<OwnerCampaignTaskPendingTargetKey>>(
-    new Set(ownerWorkflow.pendingTargetKey ? [ownerWorkflow.pendingTargetKey] : []),
-  );
-  const controlledPendingObservedRef = useRef(Boolean(
-    ownerWorkflow.pendingCommand || ownerWorkflow.pendingTargetKey,
-  ));
+    || recoveryAction === "reconnect";
+  const commandDispatchLockedRef = useRef(controlledCommandPending);
+  const controlledPendingObservedRef = useRef(controlledCommandPending);
 
   useEffect(() => {
-    if (ownerWorkflow.pendingCommand || ownerWorkflow.pendingTargetKey) {
+    if (controlledCommandPending) {
+      commandDispatchLockedRef.current = true;
       controlledPendingObservedRef.current = true;
-      if (ownerWorkflow.pendingTargetKey) {
-        commandDispatchGuardsRef.current.add(ownerWorkflow.pendingTargetKey);
-      }
+      setCommandDispatchLocked(true);
       return;
     }
 
     if (controlledPendingObservedRef.current) {
-      commandDispatchGuardsRef.current.clear();
+      commandDispatchLockedRef.current = false;
       controlledPendingObservedRef.current = false;
+      setCommandDispatchLocked(false);
     }
-  }, [ownerWorkflow.pendingCommand, ownerWorkflow.pendingTargetKey]);
+  }, [controlledCommandPending]);
 
   const dispatchCommandOnce = (
-    targetKey: OwnerCampaignTaskPendingTargetKey,
     dispatch: () => void,
+    allowControlledDisabled = false,
   ) => {
-    if (globalDisabledReason || commandDispatchGuardsRef.current.has(targetKey)) {
+    if (
+      (!allowControlledDisabled && controlledDisabledReason)
+      || commandDispatchLockedRef.current
+    ) {
       return;
     }
 
-    commandDispatchGuardsRef.current.add(targetKey);
+    commandDispatchLockedRef.current = true;
+    setCommandDispatchLocked(true);
 
     try {
       dispatch();
     } catch (error) {
-      commandDispatchGuardsRef.current.delete(targetKey);
+      commandDispatchLockedRef.current = false;
+      setCommandDispatchLocked(false);
       throw error;
     }
   };
@@ -653,7 +694,6 @@ export const TaskTemplateLibrary = ({
       walletPolicy: generateForm.walletPolicy,
     };
     dispatchCommandOnce(
-      ownerCampaignGeneratePendingTargetKey,
       () => ownerWorkflow.onGenerate(input),
     );
   };
@@ -679,8 +719,12 @@ export const TaskTemplateLibrary = ({
           {showRetry ? (
             <button
               aria-label={ownerLabels.ownerTaskRetryDetail}
-              onClick={ownerWorkflow.onRetryDetail}
-              style={secondaryButtonStyle}
+              disabled={commandDispatchLocked}
+              onClick={() => dispatchCommandOnce(ownerWorkflow.onRetryDetail, true)}
+              style={{
+                ...secondaryButtonStyle,
+                ...(commandDispatchLocked ? disabledButtonStyle : {}),
+              }}
               title={ownerLabels.ownerTaskRetryDetail}
               type="button"
             >
@@ -880,11 +924,11 @@ export const TaskTemplateLibrary = ({
           {visiblePreview.suggestions.length > 0 ? (
             <div style={gridStyle}>
               {visiblePreview.suggestions.map((item, index) => {
-                const reason = suggestionDisabledReason(item);
+                const persistenceReason = suggestionDisabledReason(item);
                 const reasonId = `owner-task-suggestion-reason-${index}`;
                 const pendingKey = createOwnerCampaignAdoptPendingTargetKey(item);
                 const pending = ownerWorkflow.pendingTargetKey === pendingKey;
-                const disabledReason = globalDisabledReason ?? reason;
+                const disabledReason = globalDisabledReason ?? persistenceReason;
 
                 return (
                   <article data-suggestion-id={item.id} key={item.id} style={cardStyle}>
@@ -899,13 +943,13 @@ export const TaskTemplateLibrary = ({
                     </div>
                     <p style={bodyStyle} title={item.id}>{item.id}</p>
                     <button
-                      aria-describedby={disabledReason
-                        ? globalDisabledReason ? globalDisabledReasonId : reasonId
-                        : undefined}
+                      aria-describedby={describedByIds(
+                        globalDisabledReason ? globalDisabledReasonId : null,
+                        persistenceReason ? reasonId : null,
+                      )}
                       aria-label={`${ownerLabels.ownerTaskAdopt} ${item.templateCode}`}
                       disabled={Boolean(disabledReason)}
                       onClick={() => dispatchCommandOnce(
-                        pendingKey,
                         () => ownerWorkflow.onAdopt(item),
                       )}
                       style={{
@@ -921,7 +965,9 @@ export const TaskTemplateLibrary = ({
                         ? `${ownerLabels.ownerTaskAdopting} ${item.templateCode}`
                         : `${ownerLabels.ownerTaskAdopt} ${item.templateCode}`}
                     </button>
-                    {reason ? <p id={reasonId} style={bodyStyle}>{reason}</p> : null}
+                    {persistenceReason ? (
+                      <p id={reasonId} style={bodyStyle}>{persistenceReason}</p>
+                    ) : null}
                   </article>
                 );
               })}
@@ -976,7 +1022,8 @@ export const TaskTemplateLibrary = ({
       <div style={gridStyle}>
         {filteredTemplates.map((template, index) => {
           const taskInput = taskInputForTemplate(template);
-          const reason = globalDisabledReason ?? (!taskInput ? unsupportedPersistenceReason : null);
+          const persistenceReason = !taskInput ? unsupportedPersistenceReason : null;
+          const reason = globalDisabledReason ?? persistenceReason;
           const reasonId = `owner-task-template-reason-${index}`;
           const pending = taskInput
             ? ownerWorkflow.pendingTargetKey === createOwnerCampaignAddPendingTargetKey(taskInput)
@@ -1023,13 +1070,13 @@ export const TaskTemplateLibrary = ({
                 ))}
               </span>
               <button
-                aria-describedby={reason
-                  ? globalDisabledReason ? globalDisabledReasonId : reasonId
-                  : undefined}
+                aria-describedby={describedByIds(
+                  globalDisabledReason ? globalDisabledReasonId : null,
+                  persistenceReason ? reasonId : null,
+                )}
                 aria-label={`${ownerLabels.ownerTaskAdd} ${templateTitle}`}
                 disabled={Boolean(reason)}
                 onClick={() => taskInput && dispatchCommandOnce(
-                  createOwnerCampaignAddPendingTargetKey(taskInput),
                   () => ownerWorkflow.onAdd(taskInput),
                 )}
                 style={{
@@ -1045,7 +1092,7 @@ export const TaskTemplateLibrary = ({
                   ? `${ownerLabels.ownerTaskAdding} ${templateTitle}`
                   : `${ownerLabels.ownerTaskAdd} ${templateTitle}`}
               </button>
-              {!globalDisabledReason && !taskInput ? (
+              {persistenceReason ? (
                 <p id={reasonId} style={bodyStyle}>{unsupportedPersistenceReason}</p>
               ) : null}
             </article>
