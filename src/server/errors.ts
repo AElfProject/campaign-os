@@ -7,6 +7,7 @@ export type ApiRuntimeErrorCode =
   | "AUTH_SESSION_REQUIRED"
   | "AUTH_SESSION_INVALID"
   | "AUTH_FORBIDDEN"
+  | "AUTH_SUBJECT_MISMATCH"
   | "INVALID_REQUEST"
   | "INVALID_CAMPAIGN"
   | "INVALID_TASK"
@@ -110,6 +111,15 @@ export const authForbidden = (details?: Record<string, unknown>) =>
     403,
     "The local Campaign OS auth session is not allowed to perform this action.",
     "本地 Campaign OS auth session 无权执行该操作。",
+    details,
+  );
+
+export const authSubjectMismatch = (details?: Record<string, unknown>) =>
+  runtimeError(
+    "AUTH_SUBJECT_MISMATCH",
+    403,
+    "The participant compatibility subject does not match the issued wallet session.",
+    "Participant compatibility subject 与已签发 wallet session 不一致。",
     details,
   );
 

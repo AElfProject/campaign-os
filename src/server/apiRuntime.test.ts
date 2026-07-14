@@ -1113,6 +1113,8 @@ const createCampaignOsApiRuntime = (options: CreateCampaignOsApiRuntimeOptions =
       ? { walletSessionRepository: createIssuedSessionLookupRepository() }
       : {}),
     ...options,
+    walletSessionActivationPolicy:
+      options.walletSessionActivationPolicy ?? "repository_trusted",
   });
 
 const expectSuccessData = <TPayload = unknown>(response: ApiRuntimeResponse<unknown>) => {
@@ -4357,28 +4359,46 @@ describe("Campaign OS API runtime", () => {
       tasks: [{ campaignId: previewCampaign.id, status: "not_started", taskId: task.id }],
       visibility: "participant_preview",
     });
-    expect(substitution).toMatchObject({
-      status: 403,
-      body: { ok: false, error: { code: "AUTH_FORBIDDEN" } },
-    });
-    for (const rejected of [accountMismatch, sourceMismatch, internalCredential]) {
+    for (const rejected of [substitution, accountMismatch, sourceMismatch]) {
       expect(rejected).toMatchObject({
         status: 403,
-        body: { ok: false, error: { code: "AUTH_FORBIDDEN" } },
+        body: {
+          ok: false,
+          error: {
+            code: "AUTH_SUBJECT_MISMATCH",
+            details: { diagnosticCode: "AUTH_SUBJECT_MISMATCH" },
+          },
+        },
       });
       expectNoForbiddenResponseKeys(rejected.body);
     }
+    expect(internalCredential).toMatchObject({
+      status: 403,
+      body: { ok: false, error: { code: "AUTH_FORBIDDEN" } },
+    });
     expect(malformedClaim).toMatchObject({
       status: 400,
       body: { ok: false, error: { code: "INVALID_REQUEST" } },
     });
     expect(conflictingClaims).toMatchObject({
       status: 403,
-      body: { ok: false, error: { code: "AUTH_FORBIDDEN" } },
+      body: {
+        ok: false,
+        error: {
+          code: "AUTH_SUBJECT_MISMATCH",
+          details: { diagnosticCode: "AUTH_SUBJECT_MISMATCH" },
+        },
+      },
     });
     expect(duplicateConflictingQueryClaims).toMatchObject({
       status: 403,
-      body: { ok: false, error: { code: "AUTH_FORBIDDEN" } },
+      body: {
+        ok: false,
+        error: {
+          code: "AUTH_SUBJECT_MISMATCH",
+          details: { diagnosticCode: "AUTH_SUBJECT_MISMATCH" },
+        },
+      },
     });
     expect(duplicateIdenticalQueryClaims).toMatchObject({
       status: 200,
@@ -7015,7 +7035,9 @@ describe("Campaign OS API runtime", () => {
     ]);
   });
 
-  it("does not reactivate a pre-restart session when the same fixture reconnects", async () => {
+  it("keeps durable session audit records without reactivating pre-restart authority", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-active-wallet-session-"));
+    const filePath = join(tempDir, "wallet-sessions.json");
     const issueSession = async (runtimeToUse: CampaignOsApiRuntime) => {
       const response = await runtimeToUse.handle({
         method: "POST",
@@ -7041,15 +7063,39 @@ describe("Campaign OS API runtime", () => {
       "x-campaign-os-wallet-address": session.address,
       "x-campaign-os-wallet-source": session.walletSource,
     });
-    const firstRuntime = createCampaignOsApiRuntime();
-    const oldSession = await issueSession(firstRuntime);
-    await firstRuntime.close();
-
-    const restartedRuntime = createCampaignOsApiRuntime();
+    const firstRepository = createWalletSessionRepository({
+      durableStoreFilePath: filePath,
+      mode: "durable_test",
+    });
+    const firstRuntime = createCampaignOsApiRuntimeBase({
+      walletSessionRepository: firstRepository,
+    });
+    let restartedRuntime: CampaignOsApiRuntime | undefined;
 
     try {
+      const oldSession = await issueSession(firstRuntime);
+      const activeBeforeRestart = await firstRuntime.handle({
+        method: "GET",
+        path: "/api/participant/campaigns",
+        headers: participantHeaders(oldSession, "trace-active-session-before-restart"),
+      });
+      expectSuccessData(activeBeforeRestart);
+      await firstRuntime.close();
+
+      const restartedRepository = createWalletSessionRepository({
+        durableStoreFilePath: filePath,
+        mode: "durable_test",
+      });
+      restartedRuntime = createCampaignOsApiRuntimeBase({
+        walletSessionRepository: restartedRepository,
+      });
+      const staleAccessBeforeFreshIssuance = await restartedRuntime.handle({
+        method: "GET",
+        path: "/api/participant/campaigns",
+        headers: participantHeaders(oldSession, "trace-stale-session-before-fresh-issuance"),
+      });
       const freshSession = await issueSession(restartedRuntime);
-      const staleAccess = await restartedRuntime.handle({
+      const staleAccessAfterFreshIssuance = await restartedRuntime.handle({
         method: "GET",
         path: "/api/participant/campaigns",
         headers: participantHeaders(oldSession, "trace-stale-session-after-restart"),
@@ -7061,17 +7107,30 @@ describe("Campaign OS API runtime", () => {
       });
 
       expect(freshSession.sessionId).not.toBe(oldSession.sessionId);
-      expect(staleAccess).toMatchObject({
-        status: 401,
-        body: {
-          error: { code: "AUTH_SESSION_INVALID" },
-          ok: false,
-          traceId: "trace-stale-session-after-restart",
-        },
-      });
+      for (const [response, traceId] of [
+        [staleAccessBeforeFreshIssuance, "trace-stale-session-before-fresh-issuance"],
+        [staleAccessAfterFreshIssuance, "trace-stale-session-after-restart"],
+      ] as const) {
+        expect(response).toMatchObject({
+          status: 401,
+          body: {
+            error: { code: "AUTH_SESSION_INVALID" },
+            ok: false,
+            traceId,
+          },
+        });
+      }
       expectSuccessData(freshAccess);
+      await expect(restartedRepository.getBySessionId(oldSession.sessionId)).resolves.toMatchObject({
+        sessionId: oldSession.sessionId,
+      });
+      await expect(restartedRepository.health()).resolves.toMatchObject({ recordCount: 2 });
     } finally {
-      await restartedRuntime.close();
+      await Promise.allSettled([
+        firstRuntime.close(),
+        restartedRuntime?.close() ?? Promise.resolve(),
+      ]);
+      await rm(tempDir, { force: true, recursive: true });
     }
   });
 
@@ -8039,8 +8098,9 @@ describe("Campaign OS API runtime", () => {
       body: {
         ok: false,
         error: {
-          code: "AUTH_FORBIDDEN",
+          code: "AUTH_SUBJECT_MISMATCH",
           details: {
+            diagnosticCode: "AUTH_SUBJECT_MISMATCH",
             field: "walletSource",
           },
         },
@@ -8051,8 +8111,9 @@ describe("Campaign OS API runtime", () => {
       body: {
         ok: false,
         error: {
-          code: "AUTH_FORBIDDEN",
+          code: "AUTH_SUBJECT_MISMATCH",
           details: {
+            diagnosticCode: "AUTH_SUBJECT_MISMATCH",
             field: "walletSource",
           },
         },

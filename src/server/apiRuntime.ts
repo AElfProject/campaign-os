@@ -25,6 +25,7 @@ import {
   authForbidden,
   authSessionInvalid,
   authSessionRequired,
+  authSubjectMismatch,
   invalidRequest,
   malformedJson,
   methodNotAllowed,
@@ -215,9 +216,15 @@ export interface CreateCampaignOsApiRuntimeOptions {
   runtimeConfigOptions?: CampaignOsRuntimeConfigOptions;
   service?: CampaignOsLocalService;
   version?: string;
+  walletSessionActivationPolicy?: WalletSessionActivationPolicy;
   walletSessionRepository?: WalletSessionRepository;
   walletSessionRepositoryOptions?: CreateWalletSessionRepositoryOptions;
 }
+
+export type WalletSessionActivationPolicy =
+  | "runtime_issued_only"
+  // Explicit compatibility mode for repositories that provide pre-issued test fixtures.
+  | "repository_trusted";
 
 const createPgCampaignPool: CampaignDbPoolFactory = (config) => {
   const { Pool } = campaignDbRequire("pg") as typeof import("pg");
@@ -353,7 +360,7 @@ const parseQuery = (searchParams: URLSearchParams): Record<string, string> => {
     const compatibilityField = participantCompatibilityQueryClaimFields.get(key);
 
     if (compatibilityField && existingValue !== undefined && existingValue !== value) {
-      throw authForbidden({
+      throw authSubjectMismatch({
         diagnosticCode: "AUTH_SUBJECT_MISMATCH",
         field: compatibilityField,
       });
@@ -512,7 +519,7 @@ const compatibilityClaim = (
   const first = values[0];
 
   if (values.some((value) => value !== first)) {
-    throw authForbidden({
+    throw authSubjectMismatch({
       diagnosticCode: "AUTH_SUBJECT_MISMATCH",
       field,
     });
@@ -576,18 +583,22 @@ const participantCompatibilitySubjectFromRequest = (
 };
 
 const evaluateRuntimeIssuedAuth = async ({
+  activeWalletSessionIds,
   compatibilitySubject,
   headers,
   ownerAddress,
   routeId,
   traceId,
+  walletSessionActivationPolicy,
   walletSessionRepository,
 }: {
+  activeWalletSessionIds: ReadonlySet<string>;
   compatibilitySubject?: ParticipantCompatibilitySubject;
   headers?: ApiRuntimeHeaders;
   ownerAddress?: string;
   routeId: string;
   traceId: string;
+  walletSessionActivationPolicy: WalletSessionActivationPolicy;
   walletSessionRepository: WalletSessionRepository;
 }) => {
   let lookupFailure: unknown;
@@ -595,6 +606,13 @@ const evaluateRuntimeIssuedAuth = async ({
     compatibilitySubject,
     headers,
     issuedSessionLookup: async (sessionId, context) => {
+      if (
+        walletSessionActivationPolicy === "runtime_issued_only"
+        && !activeWalletSessionIds.has(sessionId)
+      ) {
+        return undefined;
+      }
+
       try {
         return await walletSessionRepository.getBySessionId(sessionId, context);
       } catch (error) {
@@ -656,6 +674,10 @@ const authErrorFromDecision = (decision: AuthEnforcementDecision) => {
     return decision.diagnostic?.code === "AUTH_SESSION_REQUIRED"
       ? authSessionRequired(details)
       : authSessionInvalid(details);
+  }
+
+  if (decision.diagnostic?.code === "AUTH_SUBJECT_MISMATCH") {
+    return authSubjectMismatch(details);
   }
 
   return authForbidden(details);
@@ -1155,6 +1177,7 @@ const createSafeCampaignDbRepository = (
 
 const createSafeWalletSessionRepository = (
   repository: WalletSessionRepository,
+  onSessionActivated?: (sessionId: string) => void,
 ): WalletSessionRepository => {
   const wrap = async <TResult>(operation: string, run: () => Promise<TResult>) => {
     try {
@@ -1186,8 +1209,15 @@ const createSafeWalletSessionRepository = (
     list: (filter, context) =>
       wrap("walletSessionRepository.list", () => repository.list(filter, context)),
     reset: () => wrap("walletSessionRepository.reset", () => repository.reset()),
-    upsertSession: (session, context) =>
-      wrap("walletSessionRepository.upsertSession", () => repository.upsertSession(session, context)),
+    upsertSession: async (session, context) => {
+      const result = await wrap(
+        "walletSessionRepository.upsertSession",
+        () => repository.upsertSession(session, context),
+      );
+      onSessionActivated?.(result.record.sessionId);
+
+      return result;
+    },
   };
 };
 
@@ -1205,6 +1235,7 @@ export const createCampaignOsApiRuntime = ({
   runtimeConfigOptions,
   service = createCampaignOsLocalService(),
   version,
+  walletSessionActivationPolicy = "runtime_issued_only",
   walletSessionRepository,
   walletSessionRepositoryOptions,
 }: CreateCampaignOsApiRuntimeOptions = {}): CampaignOsApiRuntime => {
@@ -1277,8 +1308,10 @@ export const createCampaignOsApiRuntime = ({
   const safeCampaignDbRepository = createSafeCampaignDbRepository(
     composedCampaignDbRepository,
   );
+  const activeWalletSessionIds = new Set<string>();
   const safeWalletSessionRepository = createSafeWalletSessionRepository(
     walletSessionRepository ?? createWalletSessionRepository(walletSessionRepositoryOptions),
+    (sessionId) => activeWalletSessionIds.add(sessionId),
   );
   const handlers = createApiRuntimeHandlers();
   const matchers = apiRuntimeContractRoutes.map(compileRouteMatcher);
@@ -1305,6 +1338,7 @@ export const createCampaignOsApiRuntime = ({
       safeCampaignDbRepository.close?.() ?? Promise.resolve(),
       safeWalletSessionRepository.close(),
     ]).then((results) => {
+      activeWalletSessionIds.clear();
       const failures = results
         .filter((result): result is PromiseRejectedResult => result.status === "rejected")
         .map((result) => result.reason as unknown);
@@ -1338,6 +1372,7 @@ export const createCampaignOsApiRuntime = ({
         let authDecision: AuthEnforcementDecision | undefined;
         if (shouldEvaluateLocalAuth(matcher.route.id)) {
           authDecision = await evaluateRuntimeIssuedAuth({
+            activeWalletSessionIds,
             compatibilitySubject: participantCompatibilitySubjectFromRequest(
               matcher.route.id,
               body,
@@ -1347,6 +1382,7 @@ export const createCampaignOsApiRuntime = ({
             ownerAddress: ownerAddressFromBody(body),
             routeId: matcher.route.id,
             traceId,
+            walletSessionActivationPolicy,
             walletSessionRepository: safeWalletSessionRepository,
           });
 
@@ -1363,10 +1399,12 @@ export const createCampaignOsApiRuntime = ({
 
             if (ownerAddress) {
               authDecision = await evaluateRuntimeIssuedAuth({
+                activeWalletSessionIds,
                 headers: request.headers,
                 ownerAddress,
                 routeId: matcher.route.id,
                 traceId,
+                walletSessionActivationPolicy,
                 walletSessionRepository: safeWalletSessionRepository,
               });
 
