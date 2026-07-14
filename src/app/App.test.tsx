@@ -1051,6 +1051,13 @@ const appOwnerSessionA: NormalizedWalletSession = {
     ttlSeconds: 900,
     valid: true,
   },
+  proof: {
+    diagnosticCodes: [],
+    liveVerificationExecuted: false,
+    proofType: "wallet_signature",
+    status: "verified",
+    trustLevel: "verified_local",
+  },
 };
 const appOwnerSessionB: NormalizedWalletSession = {
   ...appOwnerSessionA,
@@ -1225,6 +1232,42 @@ describe("App Owner campaign authority", () => {
     expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Reconnect wallet" }));
     expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "stale proof",
+      (): NormalizedWalletSession => ({
+        ...appOwnerSessionA,
+        proof: { ...appOwnerSessionA.proof!, status: "stale", trustLevel: "untrusted" },
+      }),
+    ],
+    [
+      "internal agent credential",
+      (): NormalizedWalletSession => ({
+        ...appOwnerSessionA,
+        capabilities: ["CONTRACT_VIEW", "INTERNAL_AUTOMATION"],
+        proof: {
+          ...appOwnerSessionA.proof!,
+          proofType: "agent_context",
+          trustLevel: "internal_only",
+        },
+        verificationStatus: "internal_agent",
+        walletSource: "AGENT_SKILL",
+        walletTypeVerified: false,
+      }),
+    ],
+  ])("does not start the protected Participant feed for %s", async (_name, sessionFactory) => {
+    const invalidParticipantSession = sessionFactory();
+    submitWalletSession.mockResolvedValueOnce(appWalletSessionState(invalidParticipantSession));
+    const participantBridge = appParticipantBridge();
+
+    render(<App participantJourneyBridge={participantBridge} />);
+    await connectHeaderWallet();
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    expect(await screen.findByRole("button", { name: "Reconnect wallet" })).toBeInTheDocument();
+    expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
   });
 
   it("does not grant Owner workflow authority to an invalid issued-session projection", async () => {

@@ -1189,6 +1189,11 @@ const durableFeedItem = (
   walletPolicy: "ANY",
 });
 
+const durableCampaignCommandName = (campaignId: string, label: string) =>
+  `Select ${label} (${campaignId})`;
+const campaignAlphaCommandName = durableCampaignCommandName("campaign-alpha", "Campaign Alpha");
+const campaignBetaCommandName = durableCampaignCommandName("campaign-beta", "Campaign Beta");
+
 const durableJourney = ({
   campaignId,
   completionId = null,
@@ -1421,7 +1426,7 @@ describe("Durable Participant User App", () => {
       </StrictMode>,
     );
 
-    expect(await screen.findByRole("button", { name: "Select Campaign Alpha" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: campaignAlphaCommandName })).toBeInTheDocument();
     expect(bridge.listCampaigns).toHaveBeenCalledTimes(1);
   });
 
@@ -1430,12 +1435,12 @@ describe("Durable Participant User App", () => {
 
     renderDurable(bridge);
 
-    expect(await screen.findByRole("button", { name: "Select Campaign Alpha" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Select Campaign Beta" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: campaignAlphaCommandName })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: campaignBetaCommandName })).toBeInTheDocument();
     expect(bridge.getJourney).not.toHaveBeenCalled();
     expect(screen.queryByText("Awaken Sprint")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Select Campaign Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: campaignAlphaCommandName }));
 
     await waitFor(() => expect(bridge.getJourney).toHaveBeenCalledTimes(1));
     expect(bridge.getJourney).toHaveBeenCalledWith(expect.objectContaining({
@@ -1444,7 +1449,7 @@ describe("Durable Participant User App", () => {
       session: expect.objectContaining({ sessionId: durableSession().sessionId }),
       signal: expect.any(AbortSignal),
     }));
-    const selected = screen.getByRole("button", { name: "Select Campaign Alpha" });
+    const selected = screen.getByRole("button", { name: campaignAlphaCommandName });
     expect(selected).toHaveAttribute("aria-current", "true");
     expect(selected).toHaveAttribute("aria-pressed", "true");
     expect(selected).toBeEnabled();
@@ -1452,9 +1457,34 @@ describe("Durable Participant User App", () => {
     expect(screen.getAllByText("draft").length).toBeGreaterThan(0);
     const journey = await screen.findByRole("region", { name: "Participant journey" });
     expect(within(journey).getByText("campaign-alpha")).toBeInTheDocument();
-    expect(within(journey).getByText("0")).toBeInTheDocument();
+    expect(within(journey).getByText("Points").nextElementSibling).toHaveTextContent("0");
     expect(within(journey).getByText("Not ranked")).toBeInTheDocument();
     expect(within(journey).getByRole("button", { name: "Verify Task task-campaign-alpha" })).toBeEnabled();
+  });
+
+  it("gives duplicate Campaign titles unique canonical accessible names", async () => {
+    const bridge = durableBridge({
+      listCampaigns: vi.fn(async () => ({
+        campaigns: [
+          durableFeedItem("campaign-alpha", "Shared Campaign"),
+          durableFeedItem("campaign-beta", "Shared Campaign"),
+        ],
+        httpStatus: 200,
+        ok: true as const,
+        source: "durable" as const,
+        status: "success" as const,
+        traceId: "trace-duplicate-title-feed",
+      })),
+    });
+
+    renderDurable(bridge);
+
+    expect(await screen.findByRole("button", {
+      name: durableCampaignCommandName("campaign-alpha", "Shared Campaign"),
+    })).toBeInTheDocument();
+    expect(screen.getByRole("button", {
+      name: durableCampaignCommandName("campaign-beta", "Shared Campaign"),
+    })).toBeInTheDocument();
   });
 
   it("updates business state only after one authoritative read-after-write refresh", async () => {
@@ -1473,7 +1503,7 @@ describe("Durable Participant User App", () => {
     const bridge = durableBridge({ getJourney });
 
     renderDurable(bridge);
-    fireEvent.click(await screen.findByRole("button", { name: "Select Campaign Alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: campaignAlphaCommandName }));
     const verify = await screen.findByRole("button", { name: "Verify Task task-campaign-alpha" });
     fireEvent.click(verify);
     fireEvent.click(verify);
@@ -1482,6 +1512,7 @@ describe("Durable Participant User App", () => {
     await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("button", { name: "Refreshing journey" })).toBeDisabled();
     expect(screen.getByRole("region", { name: "Participant journey" })).toHaveTextContent("Points0");
+    expect(screen.getByText("Awarded points").nextElementSibling).toHaveTextContent("0");
     expect(screen.queryByText("completion-campaign-alpha")).not.toBeInTheDocument();
 
     await act(async () => {
@@ -1509,6 +1540,7 @@ describe("Durable Participant User App", () => {
     expect(journey).toHaveTextContent("eligible");
     expect(within(journey).getByText("completion-campaign-alpha")).toBeInTheDocument();
     expect(within(journey).getByText("evidence-campaign-alpha")).toBeInTheDocument();
+    expect(within(journey).getByText("Awarded points").nextElementSibling).toHaveTextContent("25");
     expect(getJourney).toHaveBeenCalledTimes(2);
   });
 
@@ -1535,7 +1567,7 @@ describe("Durable Participant User App", () => {
     const bridge = durableBridge({ getJourney });
 
     renderDurable(bridge);
-    fireEvent.click(await screen.findByRole("button", { name: "Select Campaign Alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: campaignAlphaCommandName }));
     fireEvent.click(await screen.findByRole("button", { name: "Verify Task task-campaign-alpha" }));
 
     const retry = await screen.findByRole("button", { name: "Retry journey read" });
@@ -1546,6 +1578,37 @@ describe("Durable Participant User App", () => {
 
     await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(3));
     expect(bridge.verifyTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes last-good journey content when Campaign access is revoked", async () => {
+    const getJourney = vi
+      .fn<ParticipantJourneyApiBridge["getJourney"]>()
+      .mockResolvedValueOnce({
+        httpStatus: 200,
+        journey: durableJourney({ campaignId: "campaign-alpha" }),
+        ok: true,
+        source: "durable",
+        status: "success",
+        traceId: "trace-initial-authorized-journey",
+      })
+      .mockResolvedValueOnce(durableFailure({
+        code: "CAMPAIGN_ACCESS_DENIED",
+        httpStatus: 403,
+        phase: "identity",
+        retryable: false,
+        status: "blocked",
+        traceId: "trace-access-revoked",
+      }));
+    const bridge = durableBridge({ getJourney });
+
+    renderDurable(bridge);
+    fireEvent.click(await screen.findByRole("button", { name: campaignAlphaCommandName }));
+    fireEvent.click(await screen.findByRole("button", { name: "Verify Task task-campaign-alpha" }));
+
+    expect(await screen.findByText("CAMPAIGN_ACCESS_DENIED")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry journey read" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Verify Task task-campaign-alpha" })).not.toBeInTheDocument();
+    expect(screen.queryByText("No completion")).not.toBeInTheDocument();
   });
 
   it("aborts and ignores a late feed response after the issued session changes", async () => {
@@ -1579,7 +1642,7 @@ describe("Durable Participant User App", () => {
     );
 
     expect(sessionASignal?.aborted).toBe(true);
-    expect(await screen.findByRole("button", { name: "Select Campaign Beta" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: campaignBetaCommandName })).toBeInTheDocument();
     await act(async () => {
       sessionAFeed.resolve({
         campaigns: [durableFeedItem("campaign-alpha", "Campaign Alpha")],
@@ -1592,8 +1655,8 @@ describe("Durable Participant User App", () => {
       await sessionAFeed.promise;
     });
 
-    expect(screen.queryByRole("button", { name: "Select Campaign Alpha" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Select Campaign Beta" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: campaignAlphaCommandName })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: campaignBetaCommandName })).toBeInTheDocument();
   });
 
   it("aborts Campaign A journey and rejects its late response when Campaign B is selected", async () => {
@@ -1612,11 +1675,11 @@ describe("Durable Participant User App", () => {
     const bridge = durableBridge({ getJourney });
 
     renderDurable(bridge);
-    fireEvent.click(await screen.findByRole("button", { name: "Select Campaign Alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: campaignAlphaCommandName }));
     await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(1));
     const campaignASignal = vi.mocked(getJourney).mock.calls[0][0].signal;
 
-    fireEvent.click(screen.getByRole("button", { name: "Select Campaign Beta" }));
+    fireEvent.click(screen.getByRole("button", { name: campaignBetaCommandName }));
 
     expect(campaignASignal?.aborted).toBe(true);
     await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(2));
@@ -1676,6 +1739,22 @@ describe("Durable Participant User App", () => {
     expect(await screen.findByText("No Campaigns are available for this wallet.")).toBeInTheDocument();
   });
 
+  it("wraps a long safe diagnostic code without widening the panel", async () => {
+    const longCode = `CAMPAIGN_${"ACCESS_".repeat(20)}DENIED`;
+    const bridge = durableBridge({
+      listCampaigns: vi.fn(async () => durableFailure({
+        code: longCode,
+        retryable: false,
+        status: "blocked",
+        traceId: "trace-long-diagnostic",
+      })),
+    });
+
+    renderDurable(bridge);
+
+    expect(await screen.findByText(longCode)).toHaveStyle({ minWidth: "0", overflowWrap: "anywhere" });
+  });
+
   it("renders one reconnect command when the protected feed rejects the session", async () => {
     const onReconnect = vi.fn();
     const bridge = durableBridge({
@@ -1715,7 +1794,7 @@ describe("Durable Participant User App", () => {
     const bridge = durableBridge({ verifyTask });
 
     renderDurable(bridge);
-    fireEvent.click(await screen.findByRole("button", { name: "Select Campaign Alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: campaignAlphaCommandName }));
     fireEvent.click(await screen.findByRole("button", { name: "Verify Task task-campaign-alpha" }));
 
     expect(await screen.findByText("TASK_VERIFICATION_REJECTED")).toBeInTheDocument();
@@ -1731,7 +1810,7 @@ describe("Durable Participant User App", () => {
     const bridge = durableBridge({ getJourney });
     const { unmount } = renderDurable(bridge);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Select Campaign Alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: campaignAlphaCommandName }));
     await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(1));
     const signal = vi.mocked(getJourney).mock.calls[0][0].signal;
     unmount();
@@ -1756,7 +1835,7 @@ describe("Durable Participant User App", () => {
     const bridge = durableBridge();
 
     renderDurable(bridge);
-    const campaignButton = await screen.findByRole("button", { name: "Select Campaign Alpha" });
+    const campaignButton = await screen.findByRole("button", { name: campaignAlphaCommandName });
     expect(campaignButton.tagName).toBe("BUTTON");
     expect(campaignButton).toHaveAttribute("type", "button");
     expect(campaignButton).toHaveStyle({ minHeight: "42px", overflowWrap: "anywhere" });

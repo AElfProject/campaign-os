@@ -173,7 +173,7 @@ export const createParticipantSessionKey = (
   return [
     session.sessionId,
     session.id,
-    session.address.trim().toLowerCase(),
+    session.address.trim(),
     session.accountType,
     session.walletSource,
     session.chainId,
@@ -336,13 +336,20 @@ const failedRequestState = (
   failure: ParticipantJourneyFailure,
   operation: ParticipantJourneyRequestOperation,
 ): ParticipantJourneyWorkflowState => {
-  const lastGoodJourney = state.lastGoodJourney;
+  const retainLastGoodJourney = Boolean(
+    state.lastGoodJourney
+    && failure.status === "degraded"
+    && !failure.reconnectRequired
+    && (failure.phase === "request" || failure.phase === "response"),
+  );
+  const lastGoodJourney = retainLastGoodJourney ? state.lastGoodJourney : null;
 
   return {
     ...state,
     activeRequests: emptyActiveRequests(),
     diagnostic: failure,
     journey: lastGoodJourney,
+    lastGoodJourney,
     pendingOperation: null,
     pendingTaskId: null,
     reconnectRequired: failure.reconnectRequired,
@@ -359,9 +366,9 @@ const identityFailure = (
   ok: false,
   phase: "identity",
   reconnectRequired: false,
-  retryable: true,
+  retryable: false,
   source: state.mode,
-  status: state.lastGoodJourney ? "degraded" : "blocked",
+  status: "blocked",
   traceId,
 });
 

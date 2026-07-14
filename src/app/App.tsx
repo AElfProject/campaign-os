@@ -227,6 +227,22 @@ const isIssuedOwnerSessionReady = (
   && session.issuer?.valid === true,
 );
 
+const isIssuedParticipantSessionReady = (
+  state: WalletSessionApiBridgeState,
+  session: NormalizedWalletSession | null,
+) => Boolean(
+  isIssuedOwnerSessionReady(state, session)
+  && session
+  && (session.accountType === "AA" || session.accountType === "EOA")
+  && session.verificationStatus === "verified"
+  && session.walletTypeVerified
+  && session.walletSource !== "AGENT_SKILL"
+  && !session.capabilities.includes("INTERNAL_AUTOMATION")
+  && session.proof?.proofType === "wallet_signature"
+  && session.proof.status === "verified"
+  && session.proof.trustLevel === "verified_local",
+);
+
 const readBrowserPathname = () => {
   if (typeof window === "undefined") {
     return "/";
@@ -312,6 +328,10 @@ export const App = ({ ownerCampaignBridge, participantJourneyBridge }: AppProps 
     [apiBaseUrl, participantJourneyBridge],
   );
   const ownerSessionReady = isIssuedOwnerSessionReady(
+    headerWalletSessionBridgeState,
+    headerWalletSession,
+  );
+  const participantSessionReady = isIssuedParticipantSessionReady(
     headerWalletSessionBridgeState,
     headerWalletSession,
   );
@@ -450,7 +470,7 @@ export const App = ({ ownerCampaignBridge, participantJourneyBridge }: AppProps 
             mode={participantJourneyMode}
             onReconnect={openHeaderWalletModal}
             session={headerWalletSession}
-            sessionReady={ownerSessionReady}
+            sessionReady={participantSessionReady}
             shareLocale={locale}
             walletModalLocale={walletModalLocale}
           />

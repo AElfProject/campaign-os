@@ -45,6 +45,7 @@ export interface DurableParticipantJourneyPanelProps {
 
 const durableCopy = {
   "en-US": {
+    awardedPoints: "Awarded points",
     blocked: "Participant journey unavailable",
     campaignFeed: "Campaign feed",
     campaignId: "Campaign ID",
@@ -83,6 +84,7 @@ const durableCopy = {
     verifying: "Verifying Task",
   },
   "zh-CN": {
+    awardedPoints: "已获积分",
     blocked: "参与旅程暂不可用",
     campaignFeed: "活动列表",
     campaignId: "活动 ID",
@@ -121,6 +123,7 @@ const durableCopy = {
     verifying: "正在验证任务",
   },
   "zh-TW": {
+    awardedPoints: "已獲積分",
     blocked: "參與旅程暫不可用",
     campaignFeed: "活動列表",
     campaignId: "活動 ID",
@@ -559,6 +562,7 @@ export const DurableParticipantJourneyPanel = ({
                   <code style={{ color: "#475569", overflowWrap: "anywhere" }}>{campaign.campaignId}</code>
                   <button
                     aria-current={selected ? "true" : undefined}
+                    aria-label={`${copy.selectCampaign} ${title} (${campaign.campaignId})`}
                     aria-pressed={selected}
                     disabled={!selectable && !selected}
                     onClick={() => selectCampaign(campaign.campaignId)}
@@ -578,7 +582,12 @@ export const DurableParticipantJourneyPanel = ({
         <section aria-label={copy.diagnostic} style={bandStyle}>
           <h2 style={{ fontSize: 18, margin: 0 }}>{copy.blocked}</h2>
           <dl style={metricsStyle}>
-            <div style={metricStyle}><dt>Code</dt><dd style={{ margin: 0 }}>{state.diagnostic.code}</dd></div>
+            <div style={metricStyle}>
+              <dt>Code</dt>
+              <dd style={{ margin: 0, minWidth: 0, overflowWrap: "anywhere" }}>
+                {state.diagnostic.code}
+              </dd>
+            </div>
             <div style={metricStyle}><dt>HTTP</dt><dd style={{ margin: 0 }}>{state.diagnostic.httpStatus ?? "-"}</dd></div>
             <div style={metricStyle}><dt>Trace ID</dt><dd style={{ margin: 0, overflowWrap: "anywhere" }}>{state.diagnostic.traceId}</dd></div>
           </dl>
@@ -699,6 +708,10 @@ export const DurableParticipantJourneyPanel = ({
                     <div style={metricStyle}>
                       <dt>{copy.evidence}</dt>
                       <dd style={{ margin: 0, overflowWrap: "anywhere" }}>{task.evidenceId ?? copy.noEvidence}</dd>
+                    </div>
+                    <div style={metricStyle}>
+                      <dt>{copy.awardedPoints}</dt>
+                      <dd style={{ margin: 0 }}>{task.pointsAwarded}</dd>
                     </div>
                   </dl>
                   <button

@@ -245,7 +245,7 @@ const failure = (
   reconnectRequired: false,
   retryable: true,
   source: "durable",
-  status: "blocked",
+  status: "degraded",
   traceId: "trace-read-failure",
   ...overrides,
 });
@@ -363,7 +363,7 @@ describe("Participant journey workflow", () => {
 
     expect(createParticipantSessionKey(null)).toBeNull();
     expect(createParticipantSessionKey(undefined)).toBeNull();
-    expect(createParticipantSessionKey(sameSubjectCaseVariant)).toBe(
+    expect(createParticipantSessionKey(sameSubjectCaseVariant)).not.toBe(
       createParticipantSessionKey(issued),
     );
     expect(createParticipantSessionKey(session({ sessionId: "session-b" }))).not.toBe(
@@ -673,6 +673,30 @@ describe("Participant journey workflow", () => {
     })).toBe(state);
   });
 
+  it("resets identity-owned state for an exact Base58 case variant", () => {
+    const before = degradedAfterRefresh();
+    const exactSessionKey = createParticipantSessionKey(session()) as string;
+    const caseVariantSessionKey = createParticipantSessionKey(session({
+      address: walletAddress.toLowerCase(),
+    })) as string;
+
+    expect(caseVariantSessionKey).not.toBe(exactSessionKey);
+
+    const after = participantJourneyWorkflowReducer(before, {
+      mode: "durable",
+      sessionKey: caseVariantSessionKey,
+      type: "context_changed",
+    });
+
+    expect(after.epoch).toBe(before.epoch + 1);
+    expect(after.sessionKey).toBe(caseVariantSessionKey);
+    expect(after.selectedCampaignId).toBeNull();
+    expect(after.journey).toBeNull();
+    expect(after.lastGoodJourney).toBeNull();
+    expect(after.pendingOperation).toBeNull();
+    expect(after.diagnostic).toBeNull();
+  });
+
   it("removes a selected Campaign that disappears from a refreshed feed", () => {
     const ready = readyState();
     const epoch = ready.epoch;
@@ -810,7 +834,9 @@ describe("Participant journey workflow", () => {
       type: "verify_succeeded",
     });
 
-    expect(rejectedVerify.status).toBe("degraded");
+    expect(rejectedVerify.status).toBe("blocked");
+    expect(rejectedVerify.journey).toBeNull();
+    expect(rejectedVerify.lastGoodJourney).toBeNull();
     expect(rejectedVerify.pendingOperation).toBeNull();
     expect(rejectedVerify.commandTraceId).toBeNull();
     expect(rejectedVerify.diagnostic?.code).toBe("PARTICIPANT_JOURNEY_IDENTITY_MISMATCH");
@@ -852,12 +878,42 @@ describe("Participant journey workflow", () => {
     expect(retrying.activeRequests.verify).toBeNull();
   });
 
+  it("clears last-good data when Campaign authority is revoked", () => {
+    const pending = refreshPendingState();
+    const token = nextParticipantJourneyRequestToken(pending, "journey");
+    const refreshing = participantJourneyWorkflowReducer(pending, {
+      reason: "refresh",
+      token,
+      type: "journey_requested",
+    });
+    const accessRevoked = failure({
+      code: "CAMPAIGN_ACCESS_DENIED",
+      httpStatus: 403,
+      phase: "identity",
+      retryable: false,
+      status: "blocked",
+      traceId: "trace-access-revoked",
+    });
+    const blocked = participantJourneyWorkflowReducer(refreshing, {
+      failure: accessRevoked,
+      token,
+      type: "journey_failed",
+    });
+
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.journey).toBeNull();
+    expect(blocked.lastGoodJourney).toBeNull();
+    expect(blocked.retryOperation).toBeNull();
+    expect(blocked.diagnostic).toBe(accessRevoked);
+  });
+
   it.each([
     failure({
       code: "AUTH_SESSION_INVALID",
       phase: "auth",
       reconnectRequired: true,
       retryable: false,
+      status: "blocked",
       traceId: "trace-auth-blocked",
     }),
     failure({
@@ -865,6 +921,7 @@ describe("Participant journey workflow", () => {
       httpStatus: 403,
       phase: "identity",
       retryable: false,
+      status: "blocked",
       traceId: "trace-access-blocked",
     }),
     failure({
@@ -873,6 +930,7 @@ describe("Participant journey workflow", () => {
       httpStatus: undefined,
       phase: "config",
       retryable: false,
+      status: "blocked",
       traceId: "trace-config-blocked",
     }),
   ])("blocks a journey failure with no last-good snapshot: $code", (blockedFailure) => {
@@ -893,7 +951,7 @@ describe("Participant journey workflow", () => {
     );
   });
 
-  it("fails closed on a mismatched journey projection without losing last-good", () => {
+  it("fails closed on a mismatched journey projection and clears incompatible last-good", () => {
     const pending = refreshPendingState();
     const token = nextParticipantJourneyRequestToken(pending, "journey");
     const refreshing = participantJourneyWorkflowReducer(pending, {
@@ -907,8 +965,10 @@ describe("Participant journey workflow", () => {
       type: "journey_succeeded",
     });
 
-    expect(result.status).toBe("degraded");
-    expect(result.journey).toBe(pending.lastGoodJourney);
+    expect(result.status).toBe("blocked");
+    expect(result.journey).toBeNull();
+    expect(result.lastGoodJourney).toBeNull();
+    expect(result.retryOperation).toBeNull();
     expect(result.diagnostic?.code).toBe("PARTICIPANT_JOURNEY_IDENTITY_MISMATCH");
     expect(result.diagnostic?.traceId).toBe("trace-journey-success");
   });
