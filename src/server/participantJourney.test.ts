@@ -298,6 +298,61 @@ describe("Participant journey projector", () => {
     expect(serialized).not.toContain(`/private/evidence/${WALLET_A}`);
   });
 
+  it("fails closed for optional-only progress without a canonical Participant", () => {
+    const optionalTask = task("task-optional-only", { required: false });
+    const result = projectParticipantJourney(input({
+      completions: [completion(optionalTask.id)],
+      evidence: [evidence(optionalTask.id)],
+      tasks: [optionalTask],
+    }));
+
+    expect(result.tasks).toEqual([
+      expect.objectContaining({
+        action: "blocked",
+        blockedReason: "inconsistent_records",
+        completionId: null,
+        evidenceId: null,
+        pointsAwarded: 0,
+        status: "not_started",
+      }),
+    ]);
+    expect(result.eligibility).toMatchObject({
+      eligible: false,
+      missingTasks: [],
+      score: 0,
+      status: "not_eligible",
+    });
+    expect(result.diagnostics).toContainEqual({
+      code: "PARTICIPANT_MISSING",
+      scope: "participant",
+    });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(`completion-${WALLET_A}-${optionalTask.id}`);
+    expect(serialized).not.toContain(`evidence-${WALLET_A}-${optionalTask.id}`);
+  });
+
+  it("keeps a clean optional-only zero-state eligible", () => {
+    const result = projectParticipantJourney(input({
+      tasks: [task("task-optional-only", { required: false })],
+    }));
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.tasks).toEqual([
+      expect.objectContaining({
+        action: "verify",
+        blockedReason: null,
+        pointsAwarded: 0,
+        status: "not_started",
+      }),
+    ]);
+    expect(result.eligibility).toMatchObject({
+      eligible: true,
+      missingTasks: [],
+      score: 0,
+      status: "eligible",
+    });
+  });
+
   it("keeps orphan, duplicate, mismatched, and out-of-scope rows readable but fail-safe", () => {
     const result = projectParticipantJourney(input({
       completions: [

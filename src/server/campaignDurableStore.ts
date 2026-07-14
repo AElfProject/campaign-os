@@ -361,15 +361,16 @@ export const createCampaignDurableStore = ({
   filePath,
   mode = "local_seeded",
 }: CreateCampaignDurableStoreOptions = {}): CampaignDurableStore => {
-  const recordsById = new Map<string, CampaignDbDraft>();
-  const participantRecordsById = new Map<string, CampaignDbParticipantRecord>();
-  const participantRecordIds = new Set<string>();
-  const referralBindingRecordsById = new Map<string, CampaignDbReferralBindingRecord>();
-  const taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
-  const taskEvidenceById = new Map<string, CampaignDbTaskEvidenceRecord>();
-  const taskRecordsById = new Map<string, CampaignDbTaskDraft>();
+  let recordsById = new Map<string, CampaignDbDraft>();
+  let participantRecordsById = new Map<string, CampaignDbParticipantRecord>();
+  let participantRecordIds = new Set<string>();
+  let referralBindingRecordsById = new Map<string, CampaignDbReferralBindingRecord>();
+  let taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
+  let taskEvidenceById = new Map<string, CampaignDbTaskEvidenceRecord>();
+  let taskRecordsById = new Map<string, CampaignDbTaskDraft>();
   const startupDiagnostics: CampaignDurableStoreDiagnostic[] = [];
   let initialized = false;
+  let initializationPromise: Promise<void> | undefined;
   let journeyOperationTail = Promise.resolve();
   const durable = mode === "durable_test" || mode === "production_required";
 
@@ -403,45 +404,68 @@ export const createCampaignDurableStore = ({
     }
   };
 
+  const hydrateDocument = async () => {
+    const document = await readDocument();
+    const hydratedRecordsById = new Map<string, CampaignDbDraft>();
+    const hydratedParticipantRecordsById = new Map<string, CampaignDbParticipantRecord>();
+    const hydratedParticipantRecordIds = new Set<string>();
+    const hydratedReferralBindingRecordsById = new Map<string, CampaignDbReferralBindingRecord>();
+    const hydratedTaskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
+    const hydratedTaskEvidenceById = new Map<string, CampaignDbTaskEvidenceRecord>();
+    const hydratedTaskRecordsById = new Map<string, CampaignDbTaskDraft>();
+
+    for (const draft of document.records) {
+      hydratedRecordsById.set(draft.id, draft);
+    }
+
+    for (const participant of document.participantRecords) {
+      hydratedParticipantRecordsById.set(`${participant.campaignId}::${participant.walletAddress}`, participant);
+      hydratedParticipantRecordIds.add(participant.id);
+    }
+
+    for (const binding of document.referralBindingRecords) {
+      hydratedReferralBindingRecordsById.set(`${binding.campaignId}::${binding.inviteeWalletAddress}`, binding);
+    }
+
+    for (const taskDraft of document.taskRecords) {
+      hydratedTaskRecordsById.set(taskDraft.id, taskDraft);
+    }
+
+    for (const completion of document.completionRecords) {
+      hydratedTaskCompletionsById.set(completion.id, completion);
+    }
+
+    for (const evidence of document.taskEvidenceRecords) {
+      hydratedTaskEvidenceById.set(evidence.id, evidence);
+    }
+
+    recordsById = hydratedRecordsById;
+    participantRecordsById = hydratedParticipantRecordsById;
+    participantRecordIds = hydratedParticipantRecordIds;
+    referralBindingRecordsById = hydratedReferralBindingRecordsById;
+    taskCompletionsById = hydratedTaskCompletionsById;
+    taskEvidenceById = hydratedTaskEvidenceById;
+    taskRecordsById = hydratedTaskRecordsById;
+  };
+
   const ensureInitialized = async () => {
     if (initialized) {
       return;
     }
 
-    initialized = true;
-    const document = await readDocument();
-    recordsById.clear();
-    participantRecordsById.clear();
-    participantRecordIds.clear();
-    referralBindingRecordsById.clear();
-    taskCompletionsById.clear();
-    taskEvidenceById.clear();
-    taskRecordsById.clear();
+    initializationPromise ??= (async () => {
+      try {
+        await hydrateDocument();
+        initialized = true;
+      } catch (error) {
+        initialized = false;
+        throw error;
+      } finally {
+        initializationPromise = undefined;
+      }
+    })();
 
-    for (const draft of document.records) {
-      recordsById.set(draft.id, draft);
-    }
-
-    for (const participant of document.participantRecords) {
-      participantRecordsById.set(`${participant.campaignId}::${participant.walletAddress}`, participant);
-      participantRecordIds.add(participant.id);
-    }
-
-    for (const binding of document.referralBindingRecords) {
-      referralBindingRecordsById.set(`${binding.campaignId}::${binding.inviteeWalletAddress}`, binding);
-    }
-
-    for (const taskDraft of document.taskRecords) {
-      taskRecordsById.set(taskDraft.id, taskDraft);
-    }
-
-    for (const completion of document.completionRecords) {
-      taskCompletionsById.set(completion.id, completion);
-    }
-
-    for (const evidence of document.taskEvidenceRecords) {
-      taskEvidenceById.set(evidence.id, evidence);
-    }
+    await initializationPromise;
   };
 
   const writeDocument = async () => {
@@ -662,9 +686,10 @@ export const createCampaignDurableStore = ({
   });
 
   return {
-    close: async () => {
+    close: () => runJourneyExclusive(async () => {
+      await ensureInitialized();
       await writeDocument();
-    },
+    }),
     create: async (draft) => {
       await ensureInitialized();
       recordsById.set(draft.id, draft);
@@ -833,7 +858,8 @@ export const createCampaignDurableStore = ({
         taskRecordCount: taskRecordsById.size,
       };
     },
-    reset: async () => {
+    reset: () => runJourneyExclusive(async () => {
+      await ensureInitialized();
       recordsById.clear();
       participantRecordsById.clear();
       participantRecordIds.clear();
@@ -846,7 +872,7 @@ export const createCampaignDurableStore = ({
       if (filePath && durable) {
         await rm(filePath, { force: true });
       }
-    },
+    }),
     upsertTaskCompletion: async (completion) => {
       await ensureInitialized();
       taskCompletionsById.set(completion.id, completion);

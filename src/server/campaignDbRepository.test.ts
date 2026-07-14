@@ -916,6 +916,90 @@ describe("Campaign DB repository", () => {
     });
   });
 
+  it("hydrates one reopened durable snapshot before concurrent wallet retries", async () => {
+    await withTempStorePath(async (durableStoreFilePath) => {
+      const firstRepository = createCampaignDbRepository({
+        durableStoreFilePath,
+        mode: "durable_test",
+      });
+      const campaign = await firstRepository.createDraft(validDraftInput());
+      const task = await firstRepository.addTaskDraft(validTaskDraftInput(campaign.id));
+      const wallets = ["ELF_2F4RestartWalletA", "ELF_2F4RestartWalletB"];
+      const initialResults = [];
+
+      for (const [index, walletAddress] of wallets.entries()) {
+        initialResults.push(await firstRepository.upsertTaskVerification!({
+          ...validCompletionInput(campaign.id, task.id),
+          evidenceHash: `evidence-hash:restart-initial-${index}`,
+          walletAddress,
+        }, { traceId: `trace-restart-initial-${index}` }));
+      }
+      await firstRepository.close?.();
+
+      const reopenedRepository = createCampaignDbRepository({
+        durableStoreFilePath,
+        mode: "durable_test",
+      });
+      const retrySettled = await Promise.allSettled(wallets.map((walletAddress, index) =>
+        reopenedRepository.upsertTaskVerification!({
+          ...validCompletionInput(campaign.id, task.id),
+          evidenceHash: `evidence-hash:restart-retry-${index}`,
+          walletAddress,
+        }, { traceId: `trace-restart-retry-${index}` })));
+      const retryResults = retrySettled.map((result) => {
+        expect(result.status).toBe("fulfilled");
+
+        if (result.status === "rejected") {
+          throw result.reason;
+        }
+
+        return result.value;
+      });
+
+      expect(retryResults.map((result) => result.completion.id)).toEqual(
+        initialResults.map((result) => result.completion.id),
+      );
+      expect(retryResults.map((result) => result.evidence.id)).toEqual(
+        initialResults.map((result) => result.evidence.id),
+      );
+      expect(retryResults.map((result) => result.participant?.id)).toEqual(
+        initialResults.map((result) => result.participant?.id),
+      );
+      await expect(reopenedRepository.health()).resolves.toMatchObject({
+        completionRecordCount: 2,
+        participantRecordCount: 2,
+        taskEvidenceRecordCount: 2,
+      });
+      for (const walletAddress of wallets) {
+        await expect(reopenedRepository.getParticipantJourney!({
+          accountType: "EOA",
+          campaignId: campaign.id,
+          walletAddress,
+          walletSource: "PORTKEY_EOA_EXTENSION",
+        })).resolves.toMatchObject({
+          eligibility: { eligible: true, score: 120 },
+          participant: { totalPoints: 120, walletAddress },
+          tasks: [expect.objectContaining({
+            pointsAwarded: 120,
+            status: "completed",
+          })],
+        });
+      }
+
+      const walletC = await reopenedRepository.upsertTaskVerification!({
+        ...validCompletionInput(campaign.id, task.id),
+        evidenceHash: "evidence-hash:restart-wallet-c",
+        walletAddress: "ELF_2F4RestartWalletC",
+      }, { traceId: "trace-restart-wallet-c" });
+
+      expect(walletC).toMatchObject({
+        completion: { id: "campaign-db-task-completion-0003" },
+        evidence: { id: "campaign-db-task-evidence-0003" },
+        participant: { id: "campaign-db-participant-0003" },
+      });
+    });
+  });
+
   it("preserves the Trace ID and rolls back local durable verification write failures", async () => {
     await withTempStorePath(async (durableStoreFilePath) => {
       const repository = createCampaignDbRepository({

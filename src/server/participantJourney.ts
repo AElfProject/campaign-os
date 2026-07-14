@@ -519,13 +519,17 @@ export const projectParticipantJourney = (
     .map((task) => task.templateCode || task.taskId);
   const hasPendingRequiredTask = progress.some((task) =>
     task.required && (task.status === "pending" || task.status === "manual_review"));
+  const hasUnsafeInconsistentProgress = progress.some((task) =>
+    task.blockedReason === "inconsistent_records");
   const eligibilityStatus: ParticipantJourneyEligibility["status"] = riskFlags.length > 0
     ? "risk_flagged"
-    : missingTasks.length === 0
-      ? "eligible"
-      : hasPendingRequiredTask
-        ? "pending"
-        : "not_eligible";
+    : hasUnsafeInconsistentProgress
+      ? "not_eligible"
+      : missingTasks.length === 0
+        ? "eligible"
+        : hasPendingRequiredTask
+          ? "pending"
+          : "not_eligible";
 
   return {
     campaign: {
