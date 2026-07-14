@@ -73,6 +73,102 @@ export class CampaignOsCampaignDbConfigError extends Error {
   }
 }
 
+export const CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS_ENV =
+  "CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS";
+export const CAMPAIGN_OS_PARTICIPANT_PREVIEW_MAX_CAMPAIGNS = 100;
+export const CAMPAIGN_OS_CAMPAIGN_ID_MAX_LENGTH = 128;
+
+export type CampaignOsParticipantPreviewConfigErrorCode =
+  | "CAMPAIGN_PREVIEW_CONFIG_ID_INVALID"
+  | "CAMPAIGN_PREVIEW_CONFIG_LIMIT_EXCEEDED";
+
+export interface CampaignOsParticipantPreviewConfig {
+  campaignIds: readonly string[];
+}
+
+export interface CampaignOsParticipantPreviewConfigOptions {
+  campaignIds?: string | readonly string[];
+  env?: Readonly<Record<string, string | undefined>>;
+}
+
+export interface CampaignOsParticipantPreviewMetadata {
+  campaignCount: number;
+  enabled: boolean;
+}
+
+export class CampaignOsParticipantPreviewConfigError extends Error {
+  readonly code: CampaignOsParticipantPreviewConfigErrorCode;
+  readonly field: string;
+
+  constructor(code: CampaignOsParticipantPreviewConfigErrorCode, field: string) {
+    super("Participant Campaign preview configuration is invalid.");
+    this.name = "CampaignOsParticipantPreviewConfigError";
+    this.code = code;
+    this.field = field;
+  }
+}
+
+const participantPreviewConfigError = (
+  code: CampaignOsParticipantPreviewConfigErrorCode,
+) => new CampaignOsParticipantPreviewConfigError(
+  code,
+  CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS_ENV,
+);
+
+const isCanonicalCampaignId = (campaignId: string) =>
+  campaignId.length <= CAMPAIGN_OS_CAMPAIGN_ID_MAX_LENGTH
+  && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(campaignId);
+
+const splitParticipantPreviewCampaignIds = (
+  source: string | readonly string[] | undefined,
+): readonly string[] => {
+  if (source === undefined || (typeof source === "string" && source.trim().length === 0)) {
+    return [];
+  }
+
+  return typeof source === "string" ? source.split(",") : [...source];
+};
+
+const parseParticipantPreviewCampaignIds = (
+  source: string | readonly string[] | undefined,
+): readonly string[] => {
+  const uniqueCampaignIds = new Set<string>();
+
+  for (const segment of splitParticipantPreviewCampaignIds(source)) {
+    const campaignId = segment.trim();
+
+    if (!isCanonicalCampaignId(campaignId)) {
+      throw participantPreviewConfigError("CAMPAIGN_PREVIEW_CONFIG_ID_INVALID");
+    }
+
+    uniqueCampaignIds.add(campaignId);
+
+    if (uniqueCampaignIds.size > CAMPAIGN_OS_PARTICIPANT_PREVIEW_MAX_CAMPAIGNS) {
+      throw participantPreviewConfigError("CAMPAIGN_PREVIEW_CONFIG_LIMIT_EXCEEDED");
+    }
+  }
+
+  return Object.freeze([...uniqueCampaignIds]);
+};
+
+export const resolveCampaignOsParticipantPreviewConfig = ({
+  campaignIds,
+  env = typeof process === "undefined" ? {} : process.env,
+}: CampaignOsParticipantPreviewConfigOptions = {}): CampaignOsParticipantPreviewConfig => {
+  const resolvedCampaignIds = parseParticipantPreviewCampaignIds(
+    campaignIds ?? env[CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS_ENV],
+  );
+
+  return Object.freeze({ campaignIds: resolvedCampaignIds });
+};
+
+export const createCampaignOsParticipantPreviewMetadata = (
+  config: CampaignOsParticipantPreviewConfig,
+): CampaignOsParticipantPreviewMetadata => Object.freeze({
+  campaignCount: config.campaignIds.length,
+  enabled: config.campaignIds.length > 0,
+});
+
 export type BackendConfigContractStatus = "ready" | "scaffold" | "blocked";
 export type BackendConfigDiagnosticSeverity = "error" | "warning" | "info";
 export type BackendConfigDiagnosticCode =

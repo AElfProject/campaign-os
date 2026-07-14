@@ -804,8 +804,78 @@ export const protectedRouteAuthMap = [
   }),
 ] as const satisfies readonly ProtectedRouteAuthMapEntry[];
 
+export const participantProtectedRouteAuthMap = [
+  routeAuth({
+    enforcementStatus: "local_enforced",
+    note: "Owner Campaign detail requires an issued project owner session; resource ownership is checked by the handler integration.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["project_owner"],
+    routeGroup: "campaign_write",
+    routeId: "campaigns.owner.detail",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "local_enforced",
+    note: "Participant Campaign feed requires an issued ordinary user wallet session.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["participant"],
+    routeGroup: "campaign_read",
+    routeId: "campaigns.participant.list",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "local_enforced",
+    note: "Participant Campaign journey requires an issued ordinary user wallet session.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["participant"],
+    routeGroup: "campaign_read",
+    routeId: "campaigns.participant.journey",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "local_enforced",
+    note: "Repository eligibility requires an issued Participant subject.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["participant"],
+    routeGroup: "eligibility",
+    routeId: "campaigns.eligibility",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "local_enforced",
+    note: "Repository ranking for preview Campaigns requires an issued Participant subject.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["participant"],
+    routeGroup: "campaign_read",
+    routeId: "campaigns.points.ranking.ledger.runtime",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "local_enforced",
+    note: "Task verification requires an issued Participant subject before Campaign or Task mutation.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["participant"],
+    routeGroup: "task_verify",
+    routeId: "tasks.verify",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+] as const satisfies readonly ProtectedRouteAuthMapEntry[];
+
 export const protectedRouteAuthById = Object.fromEntries(
-  protectedRouteAuthMap.map((entry) => [entry.routeId, entry]),
+  [...protectedRouteAuthMap, ...participantProtectedRouteAuthMap]
+    .map((entry) => [entry.routeId, entry]),
 ) as Record<string, ProtectedRouteAuthMapEntry>;
 
 export const getProtectedRouteAuth = (

@@ -17,6 +17,7 @@ import type {
 } from "./walletSessionRepository";
 import type {
   WalletCapability,
+  WalletNetwork,
 } from "../domain/types";
 
 export type AuthRuntimeHeaders = Record<string, string | readonly string[] | undefined>;
@@ -29,6 +30,7 @@ export type AuthEnforcementDiagnosticCode =
   | "AUTH_SESSION_REQUIRED"
   | "AUTH_SESSION_INVALID"
   | "AUTH_FORBIDDEN"
+  | "AUTH_SUBJECT_MISMATCH"
   | "AUTH_ROLE_FORBIDDEN"
   | "AUTH_OWNER_MISMATCH"
   | "AUTH_AGENT_CREDENTIAL_FORBIDDEN"
@@ -39,8 +41,10 @@ export interface LocalAuthSession {
   accountType: AuthSessionAccountType;
   address: string;
   capabilities?: WalletCapability[];
+  chainId?: string;
   credentialBoundary: AuthSessionCredentialBoundary;
   internalAutomation: boolean;
+  network?: WalletNetwork;
   proofStatus: SessionProofStatus;
   roleIds: AuthSessionRoleId[];
   sessionId: string;
@@ -96,8 +100,22 @@ export interface EvaluateAuthEnforcementOptions {
 export type IssuedSessionLookup = Pick<WalletSessionRepository, "getBySessionId">["getBySessionId"];
 
 export interface EvaluateIssuedAuthEnforcementOptions extends EvaluateAuthEnforcementOptions {
+  compatibilitySubject?: ParticipantCompatibilitySubject;
   issuedSessionLookup: IssuedSessionLookup;
   traceId?: string;
+}
+
+export interface CanonicalWalletSubject {
+  chainId: string;
+  walletAddress: string;
+}
+
+export interface ParticipantCompatibilitySubject {
+  accountType?: AuthSessionAccountType;
+  chainId?: string;
+  network?: WalletNetwork;
+  walletAddress?: string;
+  walletSource?: AuthSessionWalletSource;
 }
 
 export interface AuthEnforcementDecision {
@@ -187,14 +205,21 @@ export const rbacOwnershipRoutePolicyMatrix = [
     routeIds: ["wallet.session.create"],
   }),
   routePolicy({
-    forbiddenCapabilities: [],
-    forbiddenCredentialBoundaries: [],
-    locallyEnforced: false,
+    forbiddenCapabilities: ["wallet:user_substitution"],
+    forbiddenCredentialBoundaries: ["internal_agent_credential"],
+    locallyEnforced: true,
     ownerMatchRequired: false,
     productionDependencyIds: [...authEnforcementProductionDependencyIds],
     requiredRoles: [],
     routeGroup: "campaign_read",
-    routeIds: ["campaigns.list", "campaigns.detail", "campaigns.analytics"],
+    routeIds: [
+      "campaigns.list",
+      "campaigns.detail",
+      "campaigns.analytics",
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
+      "campaigns.points.ranking.ledger.runtime",
+    ],
   }),
   routePolicy({
     forbiddenCapabilities: ["wallet:user_substitution"],
@@ -204,7 +229,7 @@ export const rbacOwnershipRoutePolicyMatrix = [
     productionDependencyIds: [...authEnforcementProductionDependencyIds],
     requiredRoles: ["project_owner"],
     routeGroup: "campaign_write",
-    routeIds: ["campaigns.create", "campaigns.owner.list"],
+    routeIds: ["campaigns.create", "campaigns.owner.list", "campaigns.owner.detail"],
   }),
   routePolicy({
     forbiddenCapabilities: ["wallet:user_substitution"],
@@ -219,7 +244,7 @@ export const rbacOwnershipRoutePolicyMatrix = [
   routePolicy({
     forbiddenCapabilities: ["wallet:user_substitution"],
     forbiddenCredentialBoundaries: ["internal_agent_credential"],
-    locallyEnforced: false,
+    locallyEnforced: true,
     ownerMatchRequired: false,
     productionDependencyIds: [...authEnforcementProductionDependencyIds],
     requiredRoles: ["participant"],
@@ -229,7 +254,7 @@ export const rbacOwnershipRoutePolicyMatrix = [
   routePolicy({
     forbiddenCapabilities: ["wallet:user_substitution"],
     forbiddenCredentialBoundaries: ["internal_agent_credential"],
-    locallyEnforced: false,
+    locallyEnforced: true,
     ownerMatchRequired: false,
     productionDependencyIds: [...authEnforcementProductionDependencyIds],
     requiredRoles: ["participant"],
@@ -468,7 +493,25 @@ const parseRoles = (rolesHeader: string | undefined): AuthSessionRoleId[] | Auth
   return Array.from(new Set(roleIds)) as AuthSessionRoleId[];
 };
 
-const normalizeAuthAddress = (value: string | undefined) => value?.trim().toLowerCase() ?? "";
+const normalizeAuthAddress = (value: string | undefined) => value?.trim() ?? "";
+
+export const canonicalizeWalletSubject = (
+  subject: CanonicalWalletSubject,
+): CanonicalWalletSubject => Object.freeze({
+  chainId: subject.chainId.trim(),
+  walletAddress: normalizeAuthAddress(subject.walletAddress),
+});
+
+export const canonicalWalletSubjectsMatch = (
+  issuedSubject: CanonicalWalletSubject,
+  claimedSubject: CanonicalWalletSubject,
+) => {
+  const issued = canonicalizeWalletSubject(issuedSubject);
+  const claimed = canonicalizeWalletSubject(claimedSubject);
+
+  return issued.chainId === claimed.chainId
+    && issued.walletAddress === claimed.walletAddress;
+};
 
 const proofStatusFromIssuedRecord = (
   issuedRecord: WalletSessionRecord,
@@ -496,6 +539,59 @@ const issuedSessionIdentityDiagnostic = (
   message: "Issued wallet session identity does not match the caller auth headers.",
 });
 
+const credentialBoundaryFromIssuedRecord = (
+  issuedRecord: WalletSessionRecord,
+): AuthSessionCredentialBoundary =>
+  issuedRecord.walletSource === "AGENT_SKILL"
+  || issuedRecord.capabilities.includes("INTERNAL_AUTOMATION")
+    ? "internal_agent_credential"
+    : "ordinary_user_wallet";
+
+const participantSubjectMismatchDiagnostic = (
+  field: keyof ParticipantCompatibilitySubject,
+): AuthEnforcementDiagnostic => ({
+  code: "AUTH_SUBJECT_MISMATCH",
+  field,
+  message: "Participant compatibility subject does not match the issued wallet session.",
+});
+
+export const evaluateParticipantCompatibilitySubject = (
+  issuedSession: LocalAuthSession,
+  compatibilitySubject: ParticipantCompatibilitySubject | undefined,
+): AuthEnforcementDiagnostic | undefined => {
+  if (!compatibilitySubject) {
+    return undefined;
+  }
+
+  if (
+    compatibilitySubject.walletAddress !== undefined
+    && !canonicalWalletSubjectsMatch(
+      {
+        chainId: issuedSession.chainId ?? "",
+        walletAddress: issuedSession.address,
+      },
+      {
+        chainId: issuedSession.chainId ?? "",
+        walletAddress: compatibilitySubject.walletAddress,
+      },
+    )
+  ) {
+    return participantSubjectMismatchDiagnostic("walletAddress");
+  }
+
+  const exactFields = [
+    ["accountType", issuedSession.accountType, compatibilitySubject.accountType],
+    ["walletSource", issuedSession.walletSource, compatibilitySubject.walletSource],
+    ["chainId", issuedSession.chainId, compatibilitySubject.chainId?.trim()],
+    ["network", issuedSession.network, compatibilitySubject.network],
+  ] as const;
+  const mismatch = exactFields.find(([, issuedValue, claimedValue]) =>
+    claimedValue !== undefined && claimedValue !== issuedValue
+  );
+
+  return mismatch ? participantSubjectMismatchDiagnostic(mismatch[0]) : undefined;
+};
+
 const issuedSessionToLocalAuthSession = (
   parsedSession: LocalAuthSession,
   issuedRecord: WalletSessionRecord,
@@ -504,7 +600,20 @@ const issuedSessionToLocalAuthSession = (
     return issuerInvalidDiagnostic();
   }
 
-  if (normalizeAuthAddress(issuedRecord.walletAddress) !== normalizeAuthAddress(parsedSession.address)) {
+  if (issuedRecord.sessionId !== parsedSession.sessionId) {
+    return issuedSessionIdentityDiagnostic(localAuthHeaderNames.sessionId);
+  }
+
+  if (!canonicalWalletSubjectsMatch(
+    {
+      chainId: issuedRecord.chainId,
+      walletAddress: issuedRecord.walletAddress,
+    },
+    {
+      chainId: issuedRecord.chainId,
+      walletAddress: parsedSession.address,
+    },
+  )) {
     return issuedSessionIdentityDiagnostic(localAuthHeaderNames.walletAddress);
   }
 
@@ -516,11 +625,24 @@ const issuedSessionToLocalAuthSession = (
     return issuedSessionIdentityDiagnostic(localAuthHeaderNames.walletSource);
   }
 
+  const credentialBoundary = credentialBoundaryFromIssuedRecord(issuedRecord);
+
+  if (
+    credentialBoundary === "ordinary_user_wallet"
+    && parsedSession.credentialBoundary !== credentialBoundary
+  ) {
+    return issuedSessionIdentityDiagnostic(localAuthHeaderNames.credentialBoundary);
+  }
+
   return {
     ...parsedSession,
     accountType: issuedRecord.accountType,
     address: issuedRecord.walletAddress,
     capabilities: [...issuedRecord.capabilities],
+    chainId: issuedRecord.chainId,
+    credentialBoundary,
+    internalAutomation: credentialBoundary === "internal_agent_credential",
+    network: issuedRecord.network,
     proofStatus: proofStatusFromIssuedRecord(issuedRecord),
     walletSource: issuedRecord.walletSource,
   };
@@ -547,12 +669,13 @@ export const parseLocalAuthSessionHeaders = (
 
   if (!hasValue(sessionId)) {
     return {
-      diagnostic: invalidSessionDiagnostic(
-        localAuthHeaderNames.sessionId,
-        "Local auth session id is required.",
-      ),
+      diagnostic: {
+        code: "AUTH_SESSION_REQUIRED",
+        field: localAuthHeaderNames.sessionId,
+        message: "A local auth session id is required for this route.",
+      },
       ok: false,
-      reason: "invalid",
+      reason: "missing",
     };
   }
 
@@ -632,6 +755,23 @@ const decision = (
   safeDetails: sanitizeAuthEnforcementDetails(input.safeDetails ?? {}).safeDetails,
 });
 
+const withTraceId = (
+  authDecision: AuthEnforcementDecision,
+  traceId: string | undefined,
+): AuthEnforcementDecision => {
+  if (!traceId) {
+    return authDecision;
+  }
+
+  return {
+    ...authDecision,
+    safeDetails: sanitizeAuthEnforcementDetails({
+      ...authDecision.safeDetails,
+      traceId,
+    }).safeDetails,
+  };
+};
+
 const forbiddenDecision = ({
   code,
   extraDetails = {},
@@ -641,7 +781,6 @@ const forbiddenDecision = ({
   requiredRoles,
   routeAuth,
   routeId,
-  session,
 }: {
   code: AuthEnforcementDiagnosticCode;
   extraDetails?: Record<string, unknown>;
@@ -651,7 +790,6 @@ const forbiddenDecision = ({
   requiredRoles: AuthSessionRoleId[];
   routeAuth: ProtectedRouteAuthMapEntry;
   routeId: string;
-  session: LocalAuthSession;
 }) => decision({
   diagnostic: { code, field, message },
   httpStatus: 403,
@@ -665,7 +803,6 @@ const forbiddenDecision = ({
     routeId,
     ...extraDetails,
   },
-  session,
   status: "forbidden",
 });
 
@@ -686,6 +823,7 @@ const evaluateResolvedAuthSession = ({
 }): AuthEnforcementDecision => {
   const requiredRoles = routeAuth.requiredRoles;
   const matchedRoles = session.roleIds.filter((roleId) => requiredRoles.includes(roleId));
+  const participantRoute = requiredRoles.includes("participant");
   const forbidden = (
     code: AuthEnforcementDiagnosticCode,
     field: string,
@@ -700,12 +838,13 @@ const evaluateResolvedAuthSession = ({
     requiredRoles,
     routeAuth,
     routeId,
-    session,
   });
 
   if (routePolicy?.forbiddenCredentialBoundaries.includes(session.credentialBoundary)) {
     return forbidden(
-      session.credentialBoundary === "internal_agent_credential"
+      participantRoute
+        ? "AUTH_FORBIDDEN"
+        : session.credentialBoundary === "internal_agent_credential"
         ? "AUTH_AGENT_CREDENTIAL_FORBIDDEN"
         : "AUTH_ROLE_FORBIDDEN",
       "authSession.credentialBoundary",
@@ -721,7 +860,7 @@ const evaluateResolvedAuthSession = ({
 
   if (routeAuth.proofRequired && !locallyAcceptedProofStatuses.has(session.proofStatus)) {
     return forbidden(
-      "AUTH_PROOF_FORBIDDEN",
+      participantRoute ? "AUTH_FORBIDDEN" : "AUTH_PROOF_FORBIDDEN",
       "authSession.proofStatus",
       "Local auth session proof status is not accepted for this route.",
       { proofStatus: session.proofStatus },
@@ -732,14 +871,14 @@ const evaluateResolvedAuthSession = ({
     return forbidden(
       "AUTH_FORBIDDEN",
       "authSession.capabilities",
-      "Issued wallet session does not include the capability required for owner-protected routes.",
+      "Issued wallet session does not include the capability required for this protected route.",
       { requiredCapability: ownerRouteRequiredCapability },
     );
   }
 
   if (requiredRoles.length > 0 && matchedRoles.length === 0) {
     return forbidden(
-      "AUTH_ROLE_FORBIDDEN",
+      participantRoute ? "AUTH_FORBIDDEN" : "AUTH_ROLE_FORBIDDEN",
       "authSession.roleIds",
       "The local auth session does not include a role allowed for this route.",
       { sessionRoleCount: session.roleIds.length },
@@ -848,6 +987,7 @@ export const evaluateAuthEnforcement = ({
 };
 
 export const evaluateIssuedAuthEnforcement = async ({
+  compatibilitySubject,
   headers,
   issuedSessionLookup,
   ownerAddress,
@@ -857,20 +997,21 @@ export const evaluateIssuedAuthEnforcement = async ({
 }: EvaluateIssuedAuthEnforcementOptions): Promise<AuthEnforcementDecision> => {
   const routeAuth = getProtectedRouteAuth(routeId);
   const routePolicy = routeAuth ? rbacOwnershipRoutePolicyByGroup[routeAuth.routeGroup] : undefined;
+  const complete = (authDecision: AuthEnforcementDecision) => withTraceId(authDecision, traceId);
 
   if (!routeAuth?.sessionRequired) {
-    return decision({
+    return complete(decision({
       routeAuth,
       routeId,
       status: "not_required",
-    });
+    }));
   }
 
   const parsedSession = parseLocalAuthSessionHeaders(headers);
   const requiredRoles = routeAuth.requiredRoles;
 
   if (!parsedSession.ok) {
-    return decision({
+    return complete(decision({
       diagnostic: parsedSession.diagnostic,
       httpStatus: 401,
       requiredRoles,
@@ -881,13 +1022,33 @@ export const evaluateIssuedAuthEnforcement = async ({
         routeId,
       },
       status: "unauthenticated",
-    });
+    }));
   }
 
-  const issuedRecord = await issuedSessionLookup(parsedSession.session.sessionId, { traceId });
+  let issuedRecord: WalletSessionRecord | undefined;
+
+  try {
+    issuedRecord = await issuedSessionLookup(parsedSession.session.sessionId, { traceId });
+  } catch {
+    return complete(decision({
+      diagnostic: invalidSessionDiagnostic(
+        "authSession.repository",
+        "Issued wallet session could not be resolved.",
+      ),
+      httpStatus: 401,
+      requiredRoles,
+      routeAuth,
+      routeId,
+      safeDetails: {
+        reason: "issued_session_lookup_failed",
+        routeId,
+      },
+      status: "unauthenticated",
+    }));
+  }
 
   if (!issuedRecord) {
-    return decision({
+    return complete(decision({
       diagnostic: invalidSessionDiagnostic(
         localAuthHeaderNames.sessionId,
         "Issued wallet session was not found.",
@@ -901,13 +1062,13 @@ export const evaluateIssuedAuthEnforcement = async ({
         routeId,
       },
       status: "unauthenticated",
-    });
+    }));
   }
 
   const issuedSession = issuedSessionToLocalAuthSession(parsedSession.session, issuedRecord);
 
   if (isDiagnostic(issuedSession)) {
-    return decision({
+    return complete(decision({
       diagnostic: issuedSession,
       httpStatus: 401,
       requiredRoles,
@@ -918,15 +1079,36 @@ export const evaluateIssuedAuthEnforcement = async ({
         routeId,
       },
       status: "unauthenticated",
-    });
+    }));
   }
 
-  return evaluateResolvedAuthSession({
+  const subjectMismatch = evaluateParticipantCompatibilitySubject(
+    issuedSession,
+    compatibilitySubject,
+  );
+
+  if (subjectMismatch) {
+    return complete(decision({
+      diagnostic: subjectMismatch,
+      httpStatus: 403,
+      requiredRoles,
+      routeAuth,
+      routeId,
+      safeDetails: {
+        field: subjectMismatch.field,
+        reason: "compatibility_subject_mismatch",
+        routeId,
+      },
+      status: "forbidden",
+    }));
+  }
+
+  return complete(evaluateResolvedAuthSession({
     ownerAddress,
     ownerSources,
     routeAuth,
     routeId,
     routePolicy,
     session: issuedSession,
-  });
+  }));
 };

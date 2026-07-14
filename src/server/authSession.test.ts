@@ -8,6 +8,7 @@ import {
   getProtectedRouteAuth,
   hasAuthRoleRouteAccess,
   isAuthRoleCapabilityForbidden,
+  participantProtectedRouteAuthMap,
   protectedRouteAuthMap,
   summarizeSensitiveAuthSessionInput,
 } from "./authSession";
@@ -224,6 +225,40 @@ describe("auth session boundary", () => {
       );
       expect(routeAuth.enforcementStatus).not.toBe("blocked");
     }
+  });
+
+  it("locally enforces issued Participant routes without weakening public Campaign routes", () => {
+    const participantRouteIds = [
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
+      "campaigns.eligibility",
+      "campaigns.points.ranking.ledger.runtime",
+      "tasks.verify",
+    ];
+
+    expect(participantProtectedRouteAuthMap.map((entry) => entry.routeId)).toEqual(
+      expect.arrayContaining(participantRouteIds),
+    );
+
+    for (const routeId of participantRouteIds) {
+      expect(getProtectedRouteAuth(routeId)).toMatchObject({
+        enforcementStatus: "local_enforced",
+        proofRequired: true,
+        requiredRoles: ["participant"],
+        routeSource: "runtime_route",
+        sessionRequired: true,
+      });
+    }
+
+    expect(getProtectedRouteAuth("campaigns.owner.detail")).toMatchObject({
+      enforcementStatus: "local_enforced",
+      proofRequired: true,
+      requiredRoles: ["project_owner"],
+      routeSource: "runtime_route",
+      sessionRequired: true,
+    });
+    expect(getProtectedRouteAuth("campaigns.list")).toBeUndefined();
+    expect(getProtectedRouteAuth("campaigns.detail")).toBeUndefined();
   });
 
   it("fails closed for production-required readiness and separates agent credentials", () => {

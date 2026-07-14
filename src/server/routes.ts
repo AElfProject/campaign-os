@@ -112,7 +112,7 @@ export const apiRuntimeRoutes = [
     readiness: "local_only",
     riskLevel: "medium",
     serviceGroup: "campaign",
-    summary: text("List seeded Campaign OS campaigns.", "列出 seeded Campaign OS 活动。"),
+    summary: text("List public lifecycle Campaign OS campaigns.", "列出公开 lifecycle Campaign OS 活动。"),
     supportMode: "local_seeded",
   }),
   route({
@@ -154,7 +154,7 @@ export const apiRuntimeRoutes = [
     readiness: "local_only",
     riskLevel: "medium",
     serviceGroup: "campaign",
-    summary: text("Get seeded campaign detail.", "获取 seeded 活动详情。"),
+    summary: text("Get public lifecycle Campaign detail.", "获取公开 lifecycle 活动详情。"),
     supportMode: "local_seeded",
   }),
   route({
@@ -550,11 +550,71 @@ export const apiRuntimeRoutes = [
   }),
 ] as const satisfies readonly ApiRuntimeRouteContract[];
 
+export const participantCampaignRouteContracts = [
+  route({
+    apiGroup: "campaign_discovery",
+    apiSkillId: "get_campaign_detail",
+    boundary,
+    id: "campaigns.owner.detail",
+    method: "GET",
+    path: "/api/owner/campaigns/:campaignId",
+    productionDependencies: dependenciesFor("campaign"),
+    readiness: "blocked",
+    riskLevel: "medium",
+    serviceGroup: "campaign",
+    summary: text(
+      "Get repository Campaign detail through issued Owner authorization.",
+      "通过 issued Owner authorization 获取 repository Campaign 详情。",
+    ),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "campaign_discovery",
+    apiSkillId: "list_campaigns",
+    boundary,
+    id: "campaigns.participant.list",
+    method: "GET",
+    path: "/api/participant/campaigns",
+    productionDependencies: dependenciesFor("campaign"),
+    readiness: "blocked",
+    riskLevel: "medium",
+    serviceGroup: "campaign",
+    summary: text(
+      "List public and server-allowlisted Participant Campaigns.",
+      "列出公开及 server allowlist 授权的 Participant Campaign。",
+    ),
+    supportMode: "local_seeded",
+  }),
+  route({
+    apiGroup: "campaign_discovery",
+    boundary,
+    id: "campaigns.participant.journey",
+    method: "GET",
+    path: "/api/participant/campaigns/:campaignId/journey",
+    productionDependencies: dependenciesFor("campaign"),
+    readiness: "blocked",
+    riskLevel: "medium",
+    serviceGroup: "campaign",
+    summary: text(
+      "Get an issued Participant Campaign journey projection.",
+      "获取 issued Participant Campaign journey projection。",
+    ),
+    supportMode: "local_seeded",
+  }),
+] as const satisfies readonly ApiRuntimeRouteContract[];
+
+export const apiRuntimeContractRoutes = [
+  ...apiRuntimeRoutes,
+  ...participantCampaignRouteContracts,
+] as const satisfies readonly ApiRuntimeRouteContract[];
+
 export type ApiRuntimeRouteId = (typeof apiRuntimeRoutes)[number]["id"];
+export type ParticipantCampaignRouteId = (typeof participantCampaignRouteContracts)[number]["id"];
+export type ApiRuntimeContractRouteId = ApiRuntimeRouteId | ParticipantCampaignRouteId;
 
 export const apiRuntimeRouteById = Object.fromEntries(
-  apiRuntimeRoutes.map((runtimeRoute) => [runtimeRoute.id, runtimeRoute]),
-) as Record<ApiRuntimeRouteId, ApiRuntimeRouteContract>;
+  apiRuntimeContractRoutes.map((runtimeRoute) => [runtimeRoute.id, runtimeRoute]),
+) as Record<ApiRuntimeContractRouteId, ApiRuntimeRouteContract>;
 
 export const createApiRuntimeContractCoverage = (): ApiRuntimeContractCoverage => {
   const coveredSkillIdSet = new Set(

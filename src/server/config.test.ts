@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   CampaignOsCampaignDbConfigError,
+  CampaignOsParticipantPreviewConfigError,
+  createCampaignOsParticipantPreviewMetadata,
   resolveBackendConfigContract,
   resolveCampaignOsCampaignDbConfig,
+  resolveCampaignOsParticipantPreviewConfig,
   resolveCampaignOsRuntimeConfig,
   sanitizeBackendConfigDiagnosticValue,
 } from "./config";
@@ -812,5 +815,112 @@ describe("Campaign DB runtime config", () => {
     expect(thrown).toMatchObject({ code, field });
     expect(JSON.stringify(thrown)).not.toContain("runtime-password");
     expect(JSON.stringify(thrown)).not.toContain("db.internal");
+  });
+});
+
+describe("Participant Campaign preview config", () => {
+  const envKey = "CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS";
+
+  it.each([
+    ["missing", {}],
+    ["undefined", { [envKey]: undefined }],
+    ["blank", { [envKey]: "  \t  " }],
+  ])("keeps preview disabled when the env value is %s", (_case, env) => {
+    const config = resolveCampaignOsParticipantPreviewConfig({ env });
+
+    expect(config.campaignIds).toEqual([]);
+    expect(createCampaignOsParticipantPreviewMetadata(config)).toEqual({
+      campaignCount: 0,
+      enabled: false,
+    });
+  });
+
+  it("trims, exact-deduplicates, and preserves first-seen order", () => {
+    const config = resolveCampaignOsParticipantPreviewConfig({
+      env: {
+        [envKey]: " campaign-preview-A, campaign-preview-b, campaign-preview-A, campaign-preview-a ",
+      },
+    });
+
+    expect(config.campaignIds).toEqual([
+      "campaign-preview-A",
+      "campaign-preview-b",
+      "campaign-preview-a",
+    ]);
+  });
+
+  it.each([
+    ["empty segment", "campaign-preview-a,,campaign-preview-b"],
+    ["embedded whitespace", "campaign preview"],
+    ["oversized ID", "x".repeat(129)],
+    ["control character", "campaign-preview-\u0000hidden"],
+    ["unsafe semicolon", "campaign-preview-a;campaign-preview-b"],
+    ["unsafe path delimiter", "campaign-preview-a/campaign-preview-b"],
+  ])("rejects %s without echoing the raw value", (_case, rawValue) => {
+    let thrown: unknown;
+
+    try {
+      resolveCampaignOsParticipantPreviewConfig({ env: { [envKey]: rawValue } });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(CampaignOsParticipantPreviewConfigError);
+    expect(thrown).toMatchObject({
+      code: "CAMPAIGN_PREVIEW_CONFIG_ID_INVALID",
+      field: envKey,
+    });
+    expect(String(thrown)).not.toContain(rawValue);
+    expect(JSON.stringify(thrown)).not.toContain(rawValue);
+  });
+
+  it("accepts 100 unique IDs, rejects 101, and does not count duplicates", () => {
+    const oneHundredIds = Array.from(
+      { length: 100 },
+      (_, index) => `campaign-preview-${String(index).padStart(3, "0")}`,
+    );
+    const withDuplicates = oneHundredIds.flatMap((campaignId) => [campaignId, campaignId]);
+
+    expect(resolveCampaignOsParticipantPreviewConfig({
+      env: { [envKey]: withDuplicates.join(",") },
+    }).campaignIds).toEqual(oneHundredIds);
+
+    expect(() => resolveCampaignOsParticipantPreviewConfig({
+      env: { [envKey]: [...oneHundredIds, "campaign-preview-100"].join(",") },
+    })).toThrowError(expect.objectContaining({
+      code: "CAMPAIGN_PREVIEW_CONFIG_LIMIT_EXCEEDED",
+      field: envKey,
+    }));
+  });
+
+  it("uses the explicit option instead of merging it with env authority", () => {
+    const config = resolveCampaignOsParticipantPreviewConfig({
+      campaignIds: "campaign-explicit-A,campaign-explicit-B",
+      env: { [envKey]: "campaign-env-only" },
+    });
+
+    expect(config.campaignIds).toEqual(["campaign-explicit-A", "campaign-explicit-B"]);
+  });
+
+  it("returns immutable independent values and exposes count-only runtime metadata", () => {
+    const first = resolveCampaignOsParticipantPreviewConfig({
+      env: { [envKey]: "campaign-private-A,campaign-private-B" },
+    });
+    const metadata = createCampaignOsParticipantPreviewMetadata(first);
+
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(Object.isFrozen(first.campaignIds)).toBe(true);
+    expect(() => (first.campaignIds as string[]).push("campaign-injected")).toThrow(TypeError);
+    expect(metadata).toEqual({ campaignCount: 2, enabled: true });
+    expect(Object.keys(metadata).sort()).toEqual(["campaignCount", "enabled"]);
+    expect(JSON.stringify(metadata)).not.toContain("campaign-private");
+
+    const second = resolveCampaignOsParticipantPreviewConfig({
+      env: { [envKey]: "campaign-private-A,campaign-private-B" },
+    });
+
+    expect(second).not.toBe(first);
+    expect(second.campaignIds).not.toBe(first.campaignIds);
+    expect(second.campaignIds).toEqual(["campaign-private-A", "campaign-private-B"]);
   });
 });

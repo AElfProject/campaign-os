@@ -3,6 +3,7 @@ import { apiSkillContractRegistry, requiredApiSkillIds } from "../domain/apiSkil
 import type { ApiSkillId } from "../domain/types";
 import {
   apiRuntimeRouteById,
+  apiRuntimeContractRoutes,
   apiRuntimeRoutes,
   apiRuntimeServiceGroupById,
   apiRuntimeServiceGroups,
@@ -13,11 +14,13 @@ import {
   createRuntimeSafety,
   createSuccessEnvelope,
   invalidRequest,
+  participantCampaignRouteContracts,
   routeNotFound,
   runtimeBoundary,
   toApiRuntimeErrorBody,
 } from "./index";
 import { createApiFoundationReport } from "./apiFoundation";
+import { getProtectedRouteAuth } from "./authSession";
 import { createApiServicePortReport } from "./servicePorts";
 import { createProductionBackendRouteCoverage } from "./productionBackendReadiness";
 
@@ -196,6 +199,77 @@ describe("API runtime route catalog", () => {
         apiRuntimeServiceGroupById[runtimeRoute.serviceGroup].deferredDependencies,
       );
       expect(runtimeRoute.supportMode).toBe("local_seeded");
+    }
+  });
+
+  it("defines public, Owner, and Participant Campaign route contracts with auth coverage", () => {
+    const contractRouteIds = apiRuntimeContractRoutes.map((route) => route.id);
+
+    expect(new Set(contractRouteIds).size).toBe(apiRuntimeContractRoutes.length);
+    expect(apiRuntimeRouteById["campaigns.list"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns",
+      serviceGroup: "campaign",
+    });
+    expect(apiRuntimeRouteById["campaigns.detail"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns/:campaignId",
+      serviceGroup: "campaign",
+    });
+
+    expect(participantCampaignRouteContracts.map((route) => route.id)).toEqual([
+      "campaigns.owner.detail",
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
+    ]);
+    expect(contractRouteIds).toEqual(expect.arrayContaining([
+      "campaigns.list",
+      "campaigns.detail",
+      "campaigns.owner.detail",
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
+    ]));
+    expect(apiRuntimeRouteById["campaigns.owner.detail"]).toMatchObject({
+      method: "GET",
+      path: "/api/owner/campaigns/:campaignId",
+      readiness: "blocked",
+      serviceGroup: "campaign",
+    });
+    expect(apiRuntimeRouteById["campaigns.participant.list"]).toMatchObject({
+      method: "GET",
+      path: "/api/participant/campaigns",
+      readiness: "blocked",
+      serviceGroup: "campaign",
+    });
+    expect(apiRuntimeRouteById["campaigns.participant.journey"]).toMatchObject({
+      method: "GET",
+      path: "/api/participant/campaigns/:campaignId/journey",
+      readiness: "blocked",
+      serviceGroup: "campaign",
+    });
+
+    for (const routeId of [
+      "campaigns.owner.detail",
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
+    ]) {
+      expect(getProtectedRouteAuth(routeId)).toMatchObject({
+        enforcementStatus: "local_enforced",
+        proofRequired: true,
+        sessionRequired: true,
+      });
+    }
+
+    for (const routeId of [
+      "tasks.verify",
+      "campaigns.eligibility",
+      "campaigns.points.ranking.ledger.runtime",
+    ]) {
+      expect(apiRuntimeRoutes.some((route) => route.id === routeId)).toBe(true);
+      expect(getProtectedRouteAuth(routeId)).toMatchObject({
+        enforcementStatus: "local_enforced",
+        requiredRoles: ["participant"],
+      });
     }
   });
 
