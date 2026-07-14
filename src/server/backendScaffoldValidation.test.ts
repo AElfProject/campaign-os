@@ -242,10 +242,26 @@ describe("backend scaffold public guardrails", () => {
         }),
       ]),
     );
+    expect(
+      report.authSession.protectedRoutes
+        .filter((route) => route.enforcementStatus === "local_enforced")
+        .map((route) => route.routeId),
+    ).toEqual([
+      "campaigns.create",
+      "campaigns.owner.list",
+      "campaigns.tasks.add",
+      "campaigns.tasks.generate",
+    ]);
     expect(report.authEnforcement).toMatchObject({
       agentCredentialSubstitutionDisabled: true,
       campaignMutationRouteCount: 1,
-      locallyEnforcedRouteIds: ["campaigns.create"],
+      localEnforcedRouteCount: 4,
+      locallyEnforcedRouteIds: [
+        "campaigns.create",
+        "campaigns.owner.list",
+        "campaigns.tasks.add",
+        "campaigns.tasks.generate",
+      ],
       mode: "local_enforced",
       productionProofVerifierReady: false,
       productionProjectOwnershipSourceReady: false,

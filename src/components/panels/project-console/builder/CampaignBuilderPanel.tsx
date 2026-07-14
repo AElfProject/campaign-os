@@ -1,11 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import {
-  campaignCreationApiBoundary,
-  createCampaignCreationApiLoadingState,
-  submitCampaignCreationApiBridgeDraft,
-  type CampaignCreationApiBridgeState,
-  type CampaignCreationDraftInput,
-} from "../../../../api/campaignCreationApiBridge";
+import { useEffect, useRef, type CSSProperties, type FormEvent } from "react";
+import { CircleAlert, Plus, RefreshCw, Unplug } from "lucide-react";
+import type { CreateOwnerCampaignInput } from "../../../../api/projectOwnerCampaignApiBridge";
 import {
   computeBuilderPublishReadiness,
   createAiCampaignPlannerDecisionConsole,
@@ -23,21 +18,19 @@ import {
 } from "../../../../domain";
 import { LocaleStatusBadge, PublishStateBadge, WalletCompatibilityBadge } from "../../../badges/Badges";
 import type { ProjectConsoleCopy } from "../copy";
+import type {
+  OwnerCampaignBuilderIntentContract,
+  OwnerCampaignWorkflowStatus,
+} from "../ownerCampaignWorkflow";
 
 type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
 
 interface CampaignBuilderPanelProps {
-  bridgeRunner?: CampaignCreationBridgeRunner;
-  bridgeStateOverride?: CampaignCreationApiBridgeState;
   copy: ProjectConsoleCopy;
   draft?: CampaignDraft;
   locale: BusinessContentLocale;
+  ownerWorkflow: OwnerCampaignBuilderIntentContract;
 }
-
-type CampaignCreationBridgeRunner = (input: {
-  draft: CampaignCreationDraftInput;
-  seededCampaignCount: number;
-}) => Promise<CampaignCreationApiBridgeState>;
 
 const panelStyle: CSSProperties = {
   background: "#ffffff",
@@ -45,6 +38,7 @@ const panelStyle: CSSProperties = {
   borderRadius: 8,
   display: "grid",
   gap: 16,
+  minWidth: 0,
   padding: 18,
 };
 
@@ -76,6 +70,7 @@ const compactGridStyle: CSSProperties = {
   display: "grid",
   gap: 10,
   gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+  minWidth: 0,
 };
 
 const plannerGridStyle: CSSProperties = {
@@ -143,8 +138,12 @@ const ghostButtonStyle: CSSProperties = {
   color: "#071426",
   cursor: "pointer",
   fontWeight: 800,
+  maxWidth: "100%",
   minHeight: 38,
+  outlineOffset: 2,
+  overflowWrap: "anywhere",
   padding: "0 12px",
+  whiteSpace: "normal",
 };
 
 const apiReviewPanelStyle: CSSProperties = {
@@ -270,92 +269,18 @@ const compactLocalizedText = (value: string) => value.replace(/_/g, " ");
 
 const launchDecisionLocales = ["en-US", "zh-CN", "zh-TW"] as const satisfies readonly SupportedLocale[];
 
-const campaignCreationApiBaseUrl = () =>
-  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
-
-const localProjectOwnerHeaders = {
-  "x-campaign-os-account-type": "AA",
-  "x-campaign-os-credential-boundary": "ordinary_user_wallet",
-  "x-campaign-os-proof-status": "verified",
-  "x-campaign-os-roles": "project_owner",
-  "x-campaign-os-session-id": "sess-project-console-local-review",
-  "x-campaign-os-wallet-address": "ELF_local_review_owner",
-  "x-campaign-os-wallet-source": "PORTKEY_AA",
-};
-
-const campaignCreationSourceLabel = (
-  state: CampaignCreationApiBridgeState,
-  copy: ProjectConsoleCopy,
-) => {
-  if (state.loading) {
-    return copy.campaignCreationApiLoading;
-  }
-  if (state.source === "api_runtime") {
-    return copy.campaignCreationApiRuntimeSource;
-  }
-  if (state.source === "error_fallback") {
-    return copy.campaignCreationApiErrorFallback;
-  }
-
-  return copy.campaignCreationApiSeededFallback;
-};
-
-const apiBadgeState = (state: CampaignCreationApiBridgeState) => {
-  if (state.status === "created") {
-    return "ready";
-  }
-  if (state.status === "error") {
-    return "warning";
-  }
-
-  return state.loading ? "warning" : "ready";
-};
-
-const listRefreshLabel = (state: CampaignCreationApiBridgeState, copy: ProjectConsoleCopy) => {
-  if (state.listContainsCreatedDraft === true) {
-    return copy.campaignCreationApiListConfirmed;
-  }
-  if (state.listContainsCreatedDraft === false) {
-    return copy.campaignCreationApiListMissing;
-  }
-
-  return copy.campaignCreationApiListUnknown;
-};
-
-const formatSafeDetails = (
-  safeDetails: Record<string, boolean | number | string> | undefined,
-) =>
-  safeDetails
-    ? Object.entries(safeDetails)
-      .map(([key, value]) => `${key}: ${String(value)}`)
-      .join("; ")
-    : undefined;
-
-const formatRepositoryMetadata = (state: CampaignCreationApiBridgeState) => {
-  const repository = state.repository;
-
-  if (!repository) {
-    return "-";
-  }
-
-  return (
-    repository.repositoryId
-    ?? repository.adapterId
-    ?? (repository.createdViaRepository ? "createdViaRepository: true" : "-")
-  );
-};
-
-const campaignCreationDraftInputFromDraft = (
+const ownerCampaignCreateInput = (
   draft: CampaignDraft,
   locale: BusinessContentLocale,
-): CampaignCreationDraftInput => ({
+  ownerAddress: string,
+): CreateOwnerCampaignInput => ({
   contractMode: "OFF_CHAIN_MVP",
   defaultLocale: draft.defaultLocale,
   duration: `${draft.timePeriod.startTime}/${draft.timePeriod.endTime}`,
   endTime: draft.timePeriod.endTime,
   goal: `${draft.projectName}: ${getLocalizedText(draft.campaignName, locale)} (${draft.objective})`,
-  ownerAddress: "ELF_local_review_owner",
-  projectId: draft.projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "local-project",
+  ownerAddress,
+  projectId: draft.projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
   rewardDescription: getLocalizedText(draft.rewardPlan.description, locale),
   startTime: draft.timePeriod.startTime,
   status: "draft",
@@ -363,49 +288,62 @@ const campaignCreationDraftInputFromDraft = (
   walletPolicy: draft.walletPolicy,
 });
 
-const createInitialBridgeState = (
-  baseUrl: string | undefined,
-  seededCampaignCount: number,
-): CampaignCreationApiBridgeState => {
-  if (baseUrl?.trim()) {
-    return {
-      boundary: campaignCreationApiBoundary,
-      campaignCount: seededCampaignCount,
-      configured: true,
-      diagnostics: [],
-      loading: false,
-      source: "seeded_fallback",
-      status: "fallback",
-    };
-  }
+const campaignDraftIsValid = (
+  draft: CampaignDraft,
+  locale: BusinessContentLocale,
+  missingBasics: number,
+) => {
+  const startTime = Date.parse(draft.timePeriod.startTime);
+  const endTime = Date.parse(draft.timePeriod.endTime);
 
-  return {
-    boundary: campaignCreationApiBoundary,
-    campaignCount: seededCampaignCount,
-    configured: false,
-    diagnostics: [
-      {
-        code: "API_BASE_URL_MISSING",
-        message: {
-          "en-US": "No local API base URL is configured, so the seeded campaign builder remains visible.",
-          "zh-CN": "未配置本地 API base URL，因此继续显示 seeded 活动创建器。",
-          "zh-TW": "未設定本地 API base URL，因此繼續顯示 seeded 活動建立器。",
-        },
-        severity: "info",
-      },
-    ],
-    loading: false,
-    source: "seeded_fallback",
-    status: "fallback",
-  };
+  return missingBasics === 0
+    && Boolean(draft.projectName.trim())
+    && Boolean(getLocalizedText(draft.campaignName, locale).trim())
+    && Boolean(getLocalizedText(draft.rewardPlan.description, locale).trim())
+    && draft.targetUsers.some((targetUser) => Boolean(targetUser.trim()))
+    && draft.supportedLocales.length > 0
+    && Number.isFinite(startTime)
+    && Number.isFinite(endTime)
+    && startTime < endTime;
 };
 
+const ownerCampaignStatusLabel = (
+  status: OwnerCampaignWorkflowStatus,
+  copy: ProjectConsoleCopy,
+) => {
+  if (status === "no_session") {
+    return copy.ownerCampaignNoSession;
+  }
+  if (status === "creating") {
+    return copy.ownerCampaignCreatePending;
+  }
+  if (status === "recovering") {
+    return copy.ownerCampaignRecovering;
+  }
+  if (status === "selection_required") {
+    return copy.ownerCampaignSelectionRequired;
+  }
+  if (status === "loading_detail" || status === "mutation_pending") {
+    return copy.ownerCampaignWaitingDetail;
+  }
+  if (status === "degraded" || status === "error") {
+    return copy.ownerCampaignError;
+  }
+  if (status === "ready") {
+    return copy.ownerCampaignSessionReady;
+  }
+
+  return copy.ownerCampaignReadyToCreate;
+};
+
+const ownerCampaignStatusState = (status: OwnerCampaignWorkflowStatus) =>
+  status === "empty" || status === "ready" ? "ready" as const : "warning" as const;
+
 export const CampaignBuilderPanel = ({
-  bridgeRunner,
-  bridgeStateOverride,
   copy,
   draft = seededCampaignDraft,
   locale,
+  ownerWorkflow,
 }: CampaignBuilderPanelProps) => {
   const readiness = computeBuilderPublishReadiness(draft);
   const planner = createAiCampaignPlannerDecisionConsole(draft);
@@ -414,54 +352,61 @@ export const CampaignBuilderPanel = ({
   const missingBasics = readiness.blockers.filter((check) => check.group === "basics");
   const campaignName = getLocalizedText(draft.campaignName, locale);
   const activePolicy = draft.walletPolicy;
-  const apiBaseUrl = campaignCreationApiBaseUrl();
-  const seededCampaignCount = 1;
-  const initialBridgeState = useMemo(
-    () => bridgeStateOverride ?? createInitialBridgeState(apiBaseUrl, seededCampaignCount),
-    [apiBaseUrl, bridgeStateOverride],
-  );
-  const [bridgeState, setBridgeState] = useState<CampaignCreationApiBridgeState>(initialBridgeState);
-  const isMountedRef = useRef(true);
-  const visibleBridgeState = bridgeStateOverride ?? bridgeState;
-  const runBridge = bridgeRunner ?? ((input) =>
-    submitCampaignCreationApiBridgeDraft({
-      config: {
-        baseUrl: apiBaseUrl,
-        headers: localProjectOwnerHeaders,
-        tracePrefix: "project-console-campaign-creation",
-      },
-      draft: input.draft,
-      seededCampaignCount: input.seededCampaignCount,
-    }));
-  const diagnostics = visibleBridgeState.diagnostics.slice(0, 2);
+  const formValid = campaignDraftIsValid(draft, locale, missingBasics.length);
+  const createAllowedByStatus = ownerWorkflow.status === "empty"
+    || ownerWorkflow.status === "error" && ownerWorkflow.error?.operation === "create";
+  const createDisabled = !ownerWorkflow.issuedSessionReady
+    || !ownerWorkflow.ownerContext
+    || Boolean(ownerWorkflow.activeCampaignId)
+    || ownerWorkflow.createPending
+    || !formValid
+    || !createAllowedByStatus;
+  const createDisabledReason = !ownerWorkflow.issuedSessionReady || !ownerWorkflow.ownerContext
+    ? copy.ownerCampaignNoSession
+    : ownerWorkflow.activeCampaignId
+      ? copy.ownerCampaignCreateDisabledActive
+      : !formValid
+        ? copy.ownerCampaignCreateDisabledFields
+        : ownerCampaignStatusLabel(ownerWorkflow.status, copy);
+  const canonicalCampaignId = ownerWorkflow.activeCampaignId ?? ownerWorkflow.createResult?.id ?? null;
+  const showRetryDetail = Boolean(ownerWorkflow.activeCampaignId)
+    && Boolean(ownerWorkflow.error?.retryable);
+  const showReconnect = !ownerWorkflow.issuedSessionReady
+    || Boolean(ownerWorkflow.error?.reconnectRequired);
+  const createDispatchGuardRef = useRef(ownerWorkflow.createPending);
+  const controlledCreatePendingObservedRef = useRef(ownerWorkflow.createPending);
 
   useEffect(() => {
-    isMountedRef.current = true;
-
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!bridgeStateOverride) {
-      setBridgeState(initialBridgeState);
-    }
-  }, [bridgeStateOverride, initialBridgeState]);
-
-  const submitApiDraft = async () => {
-    if (!visibleBridgeState.configured || visibleBridgeState.loading) {
+    if (ownerWorkflow.createPending) {
+      createDispatchGuardRef.current = true;
+      controlledCreatePendingObservedRef.current = true;
       return;
     }
 
-    setBridgeState(createCampaignCreationApiLoadingState({ campaignCount: visibleBridgeState.campaignCount }));
-    const result = await runBridge({
-      draft: campaignCreationDraftInputFromDraft(draft, locale),
-      seededCampaignCount,
-    });
+    if (controlledCreatePendingObservedRef.current) {
+      createDispatchGuardRef.current = false;
+      controlledCreatePendingObservedRef.current = false;
+    }
+  }, [ownerWorkflow.createPending]);
 
-    if (isMountedRef.current) {
-      setBridgeState(result);
+  const submitCreateIntent = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (createDisabled || !ownerWorkflow.ownerContext || createDispatchGuardRef.current) {
+      return;
+    }
+
+    createDispatchGuardRef.current = true;
+
+    try {
+      ownerWorkflow.onCreate(ownerCampaignCreateInput(
+        draft,
+        locale,
+        ownerWorkflow.ownerContext.address,
+      ));
+    } catch (error) {
+      createDispatchGuardRef.current = false;
+      throw error;
     }
   };
 
@@ -514,79 +459,131 @@ export const CampaignBuilderPanel = ({
           <p style={bodyTextStyle}>{copy.builderCompletenessSummary}</p>
         </article>
 
-        <aside aria-label={copy.campaignCreationApiRegionLabel} style={apiReviewPanelStyle}>
-          <div style={headingRowStyle}>
-            <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
-              <p style={labelStyle}>{copy.campaignCreationApiReview}</p>
-              <p style={{ ...valueStyle, fontSize: 18 }}>
-                {campaignCreationSourceLabel(visibleBridgeState, copy)}
-              </p>
-            </div>
-            <PublishStateBadge
-              label={campaignCreationSourceLabel(visibleBridgeState, copy)}
-              state={apiBadgeState(visibleBridgeState)}
-            />
-          </div>
-
-          <button
-            disabled={!visibleBridgeState.configured || visibleBridgeState.loading}
-            onClick={submitApiDraft}
-            style={{
-              ...selectedButtonStyle,
-              cursor: !visibleBridgeState.configured || visibleBridgeState.loading ? "not-allowed" : "pointer",
-              opacity: !visibleBridgeState.configured || visibleBridgeState.loading ? 0.62 : 1,
-              width: "fit-content",
-            }}
-            type="button"
+        <aside aria-label={copy.ownerCampaignWorkflowRegion} style={apiReviewPanelStyle}>
+          <form
+            aria-label={copy.ownerCampaignWorkflowRegion}
+            onSubmit={submitCreateIntent}
+            style={{ display: "grid", gap: 12, minWidth: 0 }}
           >
-            {visibleBridgeState.loading ? copy.campaignCreationApiLoading : copy.campaignCreationApiCreateDraft}
-          </button>
-
-          <p style={bodyTextStyle}>
-            {visibleBridgeState.configured
-              ? copy.campaignCreationApiConfigured
-              : copy.campaignCreationApiNotConfigured}
-          </p>
-
-          <dl style={apiMetricGridStyle}>
-            {[
-              [copy.campaignCreationApiStatus, visibleBridgeState.status],
-              [copy.campaignCreationApiCreatedDraftId, visibleBridgeState.createdDraftId ?? copy.campaignCreationApiNoDraft],
-              [copy.campaignCreationApiTraceId, visibleBridgeState.traceId ?? copy.campaignCreationApiNoTrace],
-              [copy.campaignCreationApiRepository, formatRepositoryMetadata(visibleBridgeState)],
-              [copy.campaignCreationApiStore, visibleBridgeState.repository?.storeId ?? "-"],
-              [copy.campaignCreationApiPersistence, visibleBridgeState.persistence?.recordId ?? "-"],
-              [copy.campaignCreationApiCampaignCount, String(visibleBridgeState.campaignCount)],
-              [copy.campaignCreationApiListRefresh, listRefreshLabel(visibleBridgeState, copy)],
-            ].map(([label, value]) => (
-              <div key={label} style={{ display: "grid", gap: 3, minWidth: 0 }}>
-                <dt style={labelStyle}>{label}</dt>
-                <dd style={apiValueStyle}>{value}</dd>
+            <div style={headingRowStyle}>
+              <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+                <p style={labelStyle}>{copy.ownerCampaignWorkflowRegion}</p>
+                <p style={{ ...valueStyle, fontSize: 18 }}>
+                  {ownerCampaignStatusLabel(ownerWorkflow.status, copy)}
+                </p>
               </div>
-            ))}
-          </dl>
+              <PublishStateBadge
+                label={ownerCampaignStatusLabel(ownerWorkflow.status, copy)}
+                state={ownerCampaignStatusState(ownerWorkflow.status)}
+              />
+            </div>
 
-          {diagnostics.length > 0 ? (
-            <ul style={listStyle}>
-              {diagnostics.map((item) => (
-                <li key={`${item.code}-${item.severity}`} style={{ ...listItemStyle, alignItems: "start", justifyContent: "start" }}>
-                  <PublishStateBadge
-                    label={copy.campaignCreationApiDiagnostic}
-                    state={item.severity === "error" ? "blocker" : "warning"}
-                  />
-                  <span style={wrapTextStyle}>
-                    {getLocalizedText(item.message, locale)}
-                    {formatSafeDetails(item.safeDetails) ? ` (${formatSafeDetails(item.safeDetails)})` : ""}
-                  </span>
-                </li>
+            <div
+              aria-atomic="true"
+              aria-live="polite"
+              role="status"
+              style={{ ...bodyTextStyle, fontWeight: 800, minHeight: 22 }}
+            >
+              {ownerCampaignStatusLabel(ownerWorkflow.status, copy)}
+            </div>
+
+            <dl style={apiMetricGridStyle}>
+              {[
+                [copy.ownerCampaignOwner, ownerWorkflow.ownerContext?.address ?? "-"],
+                [copy.ownerCampaignStatus, ownerWorkflow.status],
+                [copy.ownerCampaignCreatedCampaign, canonicalCampaignId ?? copy.ownerCampaignNoActive],
+              ].map(([label, value]) => (
+                <div key={label} style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                  <dt style={labelStyle}>{label}</dt>
+                  <dd style={apiValueStyle} title={value}>{value}</dd>
+                </div>
               ))}
-            </ul>
-          ) : null}
+            </dl>
 
-          <p style={{ ...bodyTextStyle, fontWeight: 800 }}>
-            <strong>{copy.campaignCreationApiBoundary}: </strong>
-            {getLocalizedText(visibleBridgeState.boundary, locale)}
-          </p>
+            <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8, minWidth: 0 }}>
+              <button
+                aria-describedby={createDisabled ? "owner-campaign-create-disabled-reason" : undefined}
+                aria-label={copy.ownerCampaignCreate}
+                disabled={createDisabled}
+                style={{
+                  ...selectedButtonStyle,
+                  alignItems: "center",
+                  cursor: createDisabled ? "not-allowed" : "pointer",
+                  display: "inline-flex",
+                  gap: 7,
+                  justifyContent: "center",
+                  minHeight: 40,
+                  minWidth: 148,
+                  opacity: createDisabled ? 0.62 : 1,
+                }}
+                title={createDisabled ? createDisabledReason : copy.ownerCampaignCreate}
+                type="submit"
+              >
+                <Plus aria-hidden="true" size={16} strokeWidth={2.4} />
+                {ownerWorkflow.createPending ? copy.ownerCampaignCreatePending : copy.ownerCampaignCreate}
+              </button>
+
+              {showRetryDetail ? (
+                <button
+                  aria-label={copy.ownerCampaignRetryDetail}
+                  disabled={ownerWorkflow.createPending}
+                  onClick={ownerWorkflow.onRetryDetail}
+                  style={{ ...ghostButtonStyle, alignItems: "center", display: "inline-flex", gap: 7, minHeight: 40 }}
+                  title={copy.ownerCampaignRetryDetail}
+                  type="button"
+                >
+                  <RefreshCw aria-hidden="true" size={16} strokeWidth={2.4} />
+                  {copy.ownerCampaignRetryDetail}
+                </button>
+              ) : null}
+
+              {showReconnect ? (
+                <button
+                  aria-label={copy.ownerCampaignReconnect}
+                  disabled={!ownerWorkflow.onReconnect}
+                  onClick={() => ownerWorkflow.onReconnect?.()}
+                  style={{ ...ghostButtonStyle, alignItems: "center", display: "inline-flex", gap: 7, minHeight: 40 }}
+                  title={copy.ownerCampaignReconnect}
+                  type="button"
+                >
+                  <Unplug aria-hidden="true" size={16} strokeWidth={2.4} />
+                  {copy.ownerCampaignReconnect}
+                </button>
+              ) : null}
+            </div>
+
+            {createDisabled ? (
+              <p id="owner-campaign-create-disabled-reason" style={{ ...wrapTextStyle, margin: 0 }}>
+                {createDisabledReason}
+              </p>
+            ) : null}
+
+            {ownerWorkflow.error ? (
+              <div
+                role="alert"
+                style={{
+                  background: "#fff7ed",
+                  border: "1px solid #fdba74",
+                  borderRadius: 6,
+                  color: "#7c2d12",
+                  display: "grid",
+                  gap: 4,
+                  minWidth: 0,
+                  padding: 10,
+                }}
+              >
+                <strong style={{ alignItems: "center", display: "flex", gap: 7 }}>
+                  <CircleAlert aria-hidden="true" size={16} strokeWidth={2.4} />
+                  {ownerWorkflow.error.message}
+                </strong>
+                <span style={{ fontSize: 13, overflowWrap: "anywhere" }}>
+                  {ownerWorkflow.error.code}
+                  {ownerWorkflow.error.httpStatus ? ` · HTTP ${ownerWorkflow.error.httpStatus}` : ""}
+                  {` · ${copy.ownerCampaignTraceId}: ${ownerWorkflow.error.traceId}`}
+                </span>
+              </div>
+            ) : null}
+          </form>
         </aside>
 
         <article style={cardStyle}>

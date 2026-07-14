@@ -96,6 +96,7 @@ describe("API service ports", () => {
       requiresExternalNetwork: false,
       requiresSecret: false,
       routeIds: expect.arrayContaining([
+        "campaigns.owner.list",
         "campaigns.lifecycle",
         "campaigns.launch.readiness",
         "campaigns.delivery.readiness",
@@ -106,6 +107,9 @@ describe("API service ports", () => {
       ]),
       serviceId: "campaign-service",
     });
+    expect(apiServicePorts.find((port) => port.id === "campaign-port")?.routeIds).toContain(
+      "campaigns.owner.list",
+    );
     expect(apiServicePorts.find((port) => port.id === "campaign-port")?.notes).toContain(
       "local deterministic or durable-test",
     );

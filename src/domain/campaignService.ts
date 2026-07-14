@@ -363,6 +363,7 @@ export interface GenerateCampaignTasksRequest {
 export type GeneratedCampaignTaskVerificationType = VerificationType | "REFERRAL";
 
 export interface GeneratedCampaignTask {
+  adoptability: "adoptable" | "unsupported";
   campaignId: string;
   evidenceRule: Record<string, string | number | boolean>;
   id: string;
@@ -371,6 +372,7 @@ export interface GeneratedCampaignTask {
   required: boolean;
   templateCode: string;
   titleKey: string;
+  unsupportedReason?: "REFERRAL_TASK_ADD_UNSUPPORTED";
   verificationType: GeneratedCampaignTaskVerificationType;
   walletCompatibility: WalletCompatibility;
 }
@@ -1186,8 +1188,10 @@ const createGeneratedCampaignTask = (
 ): GeneratedCampaignTask => {
   const templateCode = taskTemplateCode(template);
   const localeKeyPrefix = taskTemplateLocaleKeyPrefix(template);
+  const referralPreviewOnly = template.verificationType === "REFERRAL";
 
   return {
+    adoptability: referralPreviewOnly ? "unsupported" : "adoptable",
     campaignId,
     evidenceRule: {
       category: template.category,
@@ -1203,6 +1207,7 @@ const createGeneratedCampaignTask = (
     required: template.requiredByDefault,
     templateCode,
     titleKey: `${localeKeyPrefix}.title`,
+    ...(referralPreviewOnly ? { unsupportedReason: "REFERRAL_TASK_ADD_UNSUPPORTED" as const } : {}),
     verificationType: template.verificationType,
     walletCompatibility: template.walletCompatibility,
   };
@@ -1230,6 +1235,52 @@ const createGeneratedCampaignTasksResponse = (
       templateCode: task.templateCode,
       walletCompatibility: task.walletCompatibility,
     })),
+  };
+};
+
+export const generateCampaignTasksPreview = (
+  request: GenerateCampaignTasksRequest,
+): LocalServiceResult<GenerateCampaignTasksResponse> => {
+  if (!request.goal.trim()) {
+    return failure(
+      "INVALID_REQUEST",
+      "goal",
+      "Campaign task generation requires a non-empty goal.",
+      "生成活动任务前必须提供非空活动目标。",
+    );
+  }
+
+  if (!request.product.trim()) {
+    return failure(
+      "INVALID_REQUEST",
+      "product",
+      "Campaign task generation requires a non-empty product.",
+      "生成活动任务前必须提供非空产品上下文。",
+    );
+  }
+
+  if (request.targetUsers.filter((targetUser) => targetUser.trim()).length === 0) {
+    return failure(
+      "INVALID_REQUEST",
+      "targetUsers",
+      "Campaign task generation requires at least one target user segment.",
+      "生成活动任务前必须至少提供一个目标用户分层。",
+    );
+  }
+
+  if (!isSupportedGeneratedCampaignTaskWalletPolicy(request.walletPolicy)) {
+    return failure(
+      "INVALID_REQUEST",
+      "walletPolicy",
+      "Campaign task generation walletPolicy must be ANY, AA_ONLY, or EOA_ONLY.",
+      "生成活动任务的 walletPolicy 必须为 ANY、AA_ONLY 或 EOA_ONLY。",
+    );
+  }
+
+  return {
+    boundary: generatedCampaignTasksBoundary,
+    ok: true,
+    payload: createGeneratedCampaignTasksResponse(request.campaignId, request),
   };
 };
 
@@ -1685,6 +1736,15 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
       );
     }
 
+    if ((request.verificationType as string) === "REFERRAL") {
+      return failure(
+        "INVALID_REQUEST",
+        "verificationType",
+        "Referral task previews cannot be adopted by the local task add contract.",
+        "Referral 任务预览不能通过本地任务添加契约采用。",
+      );
+    }
+
     return success({
       ...request,
       id: `local-task-${request.templateCode}`,
@@ -1703,43 +1763,12 @@ export const createCampaignOsLocalService = (): CampaignOsLocalService => {
       );
     }
 
-    if (!request.goal.trim()) {
-      return failure(
-        "INVALID_REQUEST",
-        "goal",
-        "Campaign task generation requires a non-empty goal.",
-        "生成活动任务前必须提供非空活动目标。",
-      );
-    }
+    const preview = generateCampaignTasksPreview({
+      ...request,
+      campaignId: campaign.id,
+    });
 
-    if (!request.product.trim()) {
-      return failure(
-        "INVALID_REQUEST",
-        "product",
-        "Campaign task generation requires a non-empty product.",
-        "生成活动任务前必须提供非空产品上下文。",
-      );
-    }
-
-    if (request.targetUsers.filter((targetUser) => targetUser.trim()).length === 0) {
-      return failure(
-        "INVALID_REQUEST",
-        "targetUsers",
-        "Campaign task generation requires at least one target user segment.",
-        "生成活动任务前必须至少提供一个目标用户分层。",
-      );
-    }
-
-    if (!isSupportedGeneratedCampaignTaskWalletPolicy(request.walletPolicy)) {
-      return failure(
-        "INVALID_REQUEST",
-        "walletPolicy",
-        "Campaign task generation walletPolicy must be ANY, AA_ONLY, or EOA_ONLY.",
-        "生成活动任务的 walletPolicy 必须为 ANY、AA_ONLY 或 EOA_ONLY。",
-      );
-    }
-
-    return success(createGeneratedCampaignTasksResponse(campaign.id, request));
+    return preview.ok ? success(preview.payload) : preview;
   },
 
   verifyTask: (request) => {

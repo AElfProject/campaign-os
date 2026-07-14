@@ -83,6 +83,10 @@ describe("API foundation registry", () => {
       operationId: "getCampaignLifecycle",
       serviceId: "campaign-service",
     });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.owner.list")).toMatchObject({
+      operationId: "listOwnerCampaigns",
+      serviceId: "campaign-service",
+    });
     expect(registry.routes.find((route) => route.routeId === "campaigns.launch.readiness")).toMatchObject({
       operationId: "getCampaignLaunchReadiness",
       serviceId: "campaign-service",
@@ -151,6 +155,40 @@ describe("API foundation registry", () => {
           location: "path",
           name: "campaignId",
           required: true,
+        }),
+      ]),
+    );
+    expect(requestFieldsByRoute.get("campaigns.owner.list")?.map((field) => field?.name)).toEqual(
+      expect.arrayContaining(["limit", "projectId", "status"]),
+    );
+    expect(
+      requestFieldsByRoute
+        .get("campaigns.owner.list")
+        ?.find((field) => field?.name === "status"),
+    ).toMatchObject({
+      enumValues: ["draft", "ai_draft", "human_review", "scheduled", "paused"],
+      location: "query",
+      required: false,
+      valueType: "enum",
+    });
+    expect(requestFieldsByRoute.get("campaigns.owner.list")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          location: "path",
+          name: "projectId",
+          required: true,
+        }),
+        expect.objectContaining({
+          enumValues: ["draft", "ai_draft", "human_review", "scheduled", "paused"],
+          location: "query",
+          name: "status",
+          required: false,
+        }),
+        expect.objectContaining({
+          location: "query",
+          name: "limit",
+          required: false,
+          valueType: "number",
         }),
       ]),
     );
@@ -225,6 +263,7 @@ describe("API foundation registry", () => {
     expect(report.surfaces.find((surface) => surface.surfaceId === "campaign")).toMatchObject({
       notes: expect.stringContaining("campaign participant repository/read model"),
       routeIds: expect.arrayContaining([
+        "campaigns.owner.list",
         "campaigns.lifecycle",
         "campaigns.launch.readiness",
         "campaigns.delivery.readiness",

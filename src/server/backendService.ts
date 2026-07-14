@@ -59,7 +59,9 @@ import {
 import {
   createAuthSessionReadinessReport,
   createProductionAuthSessionFoundation,
+  locallyEnforcedAuthRouteIds,
   type AuthSessionReadinessReport,
+  type ProtectedRouteAuthMapEntry,
   type ProductionAuthSessionFoundation,
 } from "./authSession";
 import {
@@ -611,6 +613,42 @@ export interface BackendObservabilityExporterReadinessSummary {
 }
 
 export type BackendAuthEnforcementMode = "blocked" | "local_enforced" | "metadata_only";
+
+export type OwnerRouteDurableEffect = "campaign_create" | "none" | "task_create";
+export type LocallyEnforcedOwnerRouteId = (typeof locallyEnforcedAuthRouteIds)[number];
+
+export const ownerRouteDurableEffectById = {
+  "campaigns.create": "campaign_create",
+  "campaigns.owner.list": "none",
+  "campaigns.tasks.add": "task_create",
+  "campaigns.tasks.generate": "none",
+} as const satisfies Record<LocallyEnforcedOwnerRouteId, OwnerRouteDurableEffect>;
+
+export const validateOwnerRouteDurableEffectRegistry = ({
+  durableEffectByRouteId,
+  protectedRoutes,
+}: {
+  durableEffectByRouteId: Readonly<Record<string, OwnerRouteDurableEffect>>;
+  protectedRoutes: readonly ProtectedRouteAuthMapEntry[];
+}): void => {
+  const canonicalRouteIds = Array.from(new Set(
+    protectedRoutes
+      .filter((route) => route.enforcementStatus === "local_enforced")
+      .map((route) => route.routeId),
+  )).sort();
+  const canonicalRouteIdSet = new Set(canonicalRouteIds);
+  const registeredRouteIds = Object.keys(durableEffectByRouteId).sort();
+  const registeredRouteIdSet = new Set(registeredRouteIds);
+  const missingRouteIds = canonicalRouteIds.filter((routeId) => !registeredRouteIdSet.has(routeId));
+  const extraRouteIds = registeredRouteIds.filter((routeId) => !canonicalRouteIdSet.has(routeId));
+
+  if (missingRouteIds.length > 0 || extraRouteIds.length > 0) {
+    throw new Error(
+      "Owner route durable-effect registry must match canonical locally enforced auth routes: "
+      + `missing [${missingRouteIds.join(", ")}]; extra [${extraRouteIds.join(", ")}].`,
+    );
+  }
+};
 
 export interface BackendAuthEnforcementReadinessSummary {
   agentCredentialSubstitutionDisabled: boolean;
@@ -1208,9 +1246,13 @@ const createBackendAuthEnforcementReadinessSummary = (
   const locallyEnforcedRoutes = authSession.protectedRoutes.filter(
     (route) => route.enforcementStatus === "local_enforced",
   );
-  const campaignMutationRoutes = authSession.protectedRoutes.filter(
-    (route) => route.routeGroup === "campaign_write",
-  );
+  validateOwnerRouteDurableEffectRegistry({
+    durableEffectByRouteId: ownerRouteDurableEffectById,
+    protectedRoutes: authSession.protectedRoutes,
+  });
+  const campaignMutationRouteCount = Object.values(ownerRouteDurableEffectById).filter(
+    (effect) => effect === "campaign_create",
+  ).length;
   const runtimeMetadataRoutes = authSession.protectedRoutes.filter(
     (route) => route.routeGroup === "runtime_metadata",
   );
@@ -1222,7 +1264,7 @@ const createBackendAuthEnforcementReadinessSummary = (
     agentCredentialSubstitutionDisabled:
       authSession.agentCredentialBoundary.agentSkillCanSubstituteUserWallet === false
       && authSession.agentCredentialBoundary.separatedFromUserWalletSession,
-    campaignMutationRouteCount: campaignMutationRoutes.length,
+    campaignMutationRouteCount,
     liveSigningExecuted: authSession.authContracts.sessionIssuer.liveSigningExecuted,
     liveVerificationExecuted: authSession.authContracts.proofVerifier.liveVerificationExecuted,
     localEnforcedRouteCount: locallyEnforcedRoutes.length,

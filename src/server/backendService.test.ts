@@ -5,7 +5,11 @@ import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardD
 import {
   backendAttachMap,
   createBackendServiceReadinessReport,
+  ownerRouteDurableEffectById,
+  validateOwnerRouteDurableEffectRegistry,
 } from "./backendService";
+import { protectedRouteAuthMap } from "./authSession";
+import { apiRuntimeRoutes } from "./routes";
 
 const productionAreas = [
   "production-persistence",
@@ -109,6 +113,40 @@ const expectNoSchedulerSecretLeak = (value: unknown) => {
 };
 
 describe("backend service readiness report", () => {
+  it("classifies Campaign mutations by durable effect instead of HTTP method", () => {
+    expect(apiRuntimeRoutes.find((route) => route.id === "campaigns.tasks.generate")).toMatchObject({
+      method: "POST",
+    });
+    expect(ownerRouteDurableEffectById["campaigns.create"]).toBe("campaign_create");
+    expect(ownerRouteDurableEffectById["campaigns.owner.list"]).toBe("none");
+    expect(ownerRouteDurableEffectById["campaigns.tasks.add"]).toBe("task_create");
+    expect(ownerRouteDurableEffectById["campaigns.tasks.generate"]).toBe("none");
+    expect(createBackendServiceReadinessReport().authEnforcement.campaignMutationRouteCount).toBe(1);
+  });
+
+  it("rejects a durable-effect registry missing a canonical Owner auth route", () => {
+    const incompleteRegistry = { ...ownerRouteDurableEffectById };
+
+    delete (incompleteRegistry as Record<string, string>)["campaigns.tasks.generate"];
+
+    expect(() => validateOwnerRouteDurableEffectRegistry({
+      durableEffectByRouteId: incompleteRegistry,
+      protectedRoutes: protectedRouteAuthMap,
+    })).toThrowError(/missing \[campaigns\.tasks\.generate\]/);
+  });
+
+  it("rejects a durable-effect registry entry outside canonical Owner auth routes", () => {
+    const registryWithExtraRoute = {
+      ...ownerRouteDurableEffectById,
+      "runtime.health": "none",
+    } as const;
+
+    expect(() => validateOwnerRouteDurableEffectRegistry({
+      durableEffectByRouteId: registryWithExtraRoute,
+      protectedRoutes: protectedRouteAuthMap,
+    })).toThrowError(/extra \[runtime\.health\]/);
+  });
+
   it("aggregates local backend scaffold readiness without duplicating route ownership", () => {
     const report = createBackendServiceReadinessReport();
 
@@ -152,7 +190,12 @@ describe("backend service readiness report", () => {
       productionReady: false,
       profileId: "local-review",
       protectedRouteCoverage: {
-        locallyEnforcedRouteIds: ["campaigns.create"],
+        locallyEnforcedRouteIds: [
+          "campaigns.create",
+          "campaigns.owner.list",
+          "campaigns.tasks.add",
+          "campaigns.tasks.generate",
+        ],
         protectedRouteCount: expect.any(Number),
         routeGroupCount: expect.any(Number),
       },
@@ -180,10 +223,15 @@ describe("backend service readiness report", () => {
       campaignMutationRouteCount: 1,
       liveSigningExecuted: false,
       liveVerificationExecuted: false,
-      localEnforcedRouteCount: 1,
+      localEnforcedRouteCount: 4,
       localProofVerifierContractReady: true,
       localSessionIssuerContractReady: true,
-      locallyEnforcedRouteIds: ["campaigns.create"],
+      locallyEnforcedRouteIds: [
+        "campaigns.create",
+        "campaigns.owner.list",
+        "campaigns.tasks.add",
+        "campaigns.tasks.generate",
+      ],
       mode: "local_enforced",
       productionProofVerifierReady: false,
       productionProjectOwnershipSourceReady: false,
@@ -1823,7 +1871,14 @@ describe("backend service readiness report", () => {
     });
     expect(report.authEnforcement).toMatchObject({
       agentCredentialSubstitutionDisabled: true,
-      locallyEnforcedRouteIds: ["campaigns.create"],
+      campaignMutationRouteCount: 1,
+      localEnforcedRouteCount: 4,
+      locallyEnforcedRouteIds: [
+        "campaigns.create",
+        "campaigns.owner.list",
+        "campaigns.tasks.add",
+        "campaigns.tasks.generate",
+      ],
       mode: "blocked",
       productionProofVerifierReady: false,
       productionProjectOwnershipSourceReady: false,

@@ -774,6 +774,7 @@ export class CampaignDbRepositoryError extends Error {
 }
 
 const defaultNow = () => "2026-07-06T00:00:00.000Z";
+const DEFAULT_BOUNDED_LIST_LIMIT = 100;
 const walletPolicies = ["ANY", "AA_ONLY", "EOA_ONLY"] as const satisfies readonly WalletPolicy[];
 const verificationTypes = ["WALLET", "ON_CHAIN", "DAPP_API", "SOCIAL", "MANUAL"] as const satisfies readonly VerificationType[];
 const accountTypes = ["AA", "EOA", "UNKNOWN"] as const satisfies readonly AccountType[];
@@ -2834,8 +2835,33 @@ const createProductionDeferredDiagnostic = (
   ) ?? "not_configured"}' is deferred and cannot fallback to local repositories.`,
 );
 
+const clampCampaignListLimit = (limit: number | undefined, max: number) => {
+  if (!Number.isFinite(limit ?? max)) {
+    return max;
+  }
+
+  return Math.max(1, Math.min(Math.trunc(limit ?? max), max));
+};
+
+const sortCampaignDraftsForList = (drafts: readonly CampaignDbDraft[]) =>
+  [...drafts].sort((left, right) => {
+    const updatedComparison = right.updatedAt.localeCompare(left.updatedAt);
+
+    if (updatedComparison !== 0) {
+      return updatedComparison;
+    }
+
+    const createdComparison = right.createdAt.localeCompare(left.createdAt);
+
+    if (createdComparison !== 0) {
+      return createdComparison;
+    }
+
+    return left.id.localeCompare(right.id);
+  });
+
 export const createCampaignDbRepository = ({
-  boundedListLimit,
+  boundedListLimit = DEFAULT_BOUNDED_LIST_LIMIT,
   durableStore,
   durableStoreFilePath,
   mode = "deterministic_test",
@@ -3754,7 +3780,7 @@ export const createCampaignDbRepository = ({
       });
 
       const records = activeDurableStore
-        ? await activeDurableStore.list(filter, context)
+        ? await activeDurableStore.list({ ...filter, limit: undefined }, context)
         : Array.from(recordsById.values());
 
       const filteredRecords = records
@@ -3772,10 +3798,14 @@ export const createCampaignDbRepository = ({
           }
 
           return true;
-        })
-        .sort((left, right) => left.id.localeCompare(right.id));
+        });
+      const limit = clampCampaignListLimit(filter.limit, boundedListLimit);
 
-      return Promise.all(filteredRecords.map((draft) => toProjection(draft, context)));
+      return Promise.all(
+        sortCampaignDraftsForList(filteredRecords)
+          .slice(0, limit)
+          .map((draft) => toProjection(draft, context)),
+      );
     },
     listTaskEvidence: async (filter, context = {}) => {
       appendEvent({

@@ -168,7 +168,9 @@ describe("auth session boundary", () => {
         "runtime.contracts",
         "wallet.session.create",
         "campaigns.create",
+        "campaigns.owner.list",
         "campaigns.tasks.add",
+        "campaigns.tasks.generate",
         "campaigns.export.preview",
         "tasks.verify",
         "admin.review.queue",
@@ -188,6 +190,21 @@ describe("auth session boundary", () => {
       sessionRequired: false,
     });
     expect(getProtectedRouteAuth("campaigns.create")).toMatchObject({
+      enforcementStatus: "local_enforced",
+      requiredRoles: ["project_owner"],
+      sessionRequired: true,
+    });
+    expect(getProtectedRouteAuth("campaigns.owner.list")).toMatchObject({
+      enforcementStatus: "local_enforced",
+      requiredRoles: ["project_owner"],
+      sessionRequired: true,
+    });
+    expect(getProtectedRouteAuth("campaigns.tasks.add")).toMatchObject({
+      enforcementStatus: "local_enforced",
+      requiredRoles: ["project_owner"],
+      sessionRequired: true,
+    });
+    expect(getProtectedRouteAuth("campaigns.tasks.generate")).toMatchObject({
       enforcementStatus: "local_enforced",
       requiredRoles: ["project_owner"],
       sessionRequired: true,

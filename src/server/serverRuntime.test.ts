@@ -370,6 +370,47 @@ describe("API server resource shutdown", () => {
     ]);
   });
 
+  it("releases HTTP connections and runtime resources within the acceptance budget", async () => {
+    const close = vi.fn(async () => undefined);
+    const handle = vi.fn(async () => response);
+    const runtime: CampaignOsApiRuntime = { close, handle };
+    const server = await startCampaignOsApiServer({
+      logger: false,
+      port: 0,
+      runtimeFactory: () => runtime,
+      shutdownTimeoutMs: 10_000,
+    });
+
+    const responses = await Promise.all(
+      Array.from({ length: 32 }, () => fetch(`${server.url}/api/health`)),
+    );
+    await Promise.all(responses.map((result) => result.json()));
+    const startedAt = performance.now();
+
+    await server.stop();
+
+    const shutdownDurationMs = performance.now() - startedAt;
+    const openConnectionCount = await new Promise<number>((resolve, reject) => {
+      server.server.getConnections((error, count) => error ? reject(error) : resolve(count));
+    });
+
+    expect(shutdownDurationMs).toBeLessThanOrEqual(10_000);
+    expect(handle).toHaveBeenCalledTimes(32);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(openConnectionCount).toBe(0);
+    expect(server.server.address()).toBeNull();
+    expect(server.server.listening).toBe(false);
+    expect(server.getReadiness()).toMatchObject({
+      liveness: { live: false },
+      shutdownState: {
+        activeRequestCount: 0,
+        closedAt: expect.any(String),
+        state: "stopped",
+      },
+      status: "stopped",
+    });
+  });
+
   it("rejects pipelined requests that arrive on an existing connection after stop starts", async () => {
     let releaseRequest: (() => void) | undefined;
     let markEntered: (() => void) | undefined;
@@ -397,11 +438,19 @@ describe("API server resource shutdown", () => {
     const address = server.server.address() as AddressInfo;
     const socket = connect(address.port, "127.0.0.1");
     const socketErrors: string[] = [];
+    const socketClosed = new Promise<void>((resolve) => socket.once("close", resolve));
+    let markShutdownResponseReceived: (() => void) | undefined;
+    const shutdownResponseReceived = new Promise<void>((resolve) => {
+      markShutdownResponseReceived = resolve;
+    });
     let received = "";
 
     socket.setEncoding("utf8");
     socket.on("data", (chunk: string) => {
       received += chunk;
+      if (received.includes("PERSISTENCE_UNAVAILABLE")) {
+        markShutdownResponseReceived?.();
+      }
     });
     socket.on("error", (error) => socketErrors.push(error.message));
     await new Promise<void>((resolve) => socket.once("connect", resolve));
@@ -424,21 +473,15 @@ describe("API server resource shutdown", () => {
     ].join("\r\n"));
     releaseRequest?.();
 
-    await stopping;
-    await new Promise<void>((resolve) => {
-      if (socket.closed) {
-        resolve();
-        return;
-      }
-
-      socket.once("close", () => resolve());
-    });
+    await Promise.all([stopping, shutdownResponseReceived]);
+    socket.destroy();
+    await socketClosed;
 
     expect(handle).toHaveBeenCalledTimes(1);
     expect(received).toContain("HTTP/1.1 503 Service Unavailable");
     expect(received).toContain("PERSISTENCE_UNAVAILABLE");
     expect(socketErrors).toEqual([]);
-  });
+  }, 15_000);
 
   it("returns a safe 500 when runtime response serialization fails", async () => {
     const runtime: CampaignOsApiRuntime = {

@@ -19,24 +19,95 @@ interface ApiEnvelope<T> {
   data?: T;
   error?: {
     code?: string;
-    details?: { diagnosticCode?: string; operation?: string };
+    details?: {
+      diagnosticCode?: string;
+      operation?: string;
+      routeId?: string;
+      [key: string]: unknown;
+    };
   };
   ok: boolean;
   traceId?: string;
 }
 
 interface CampaignCreateData {
-  payload: { id: string };
+  payload: {
+    contractMode: string;
+    duration: string;
+    endTime: string;
+    goal: string;
+    id: string;
+    ownerAddress: string;
+    projectId: string;
+    required?: boolean;
+    rewardDescription: string;
+    startTime: string;
+    status: string;
+    supportedLocales: string[];
+    walletPolicy: string;
+  };
 }
 
 interface CampaignListData {
   payload: {
-    items: Array<{ id: string }>;
+    campaignDb?: { draftCount: number };
+    details?: DetailData["payload"][];
+    items: Array<{
+      id: string;
+      tags?: Array<Record<string, string>>;
+    }>;
+    summary?: { totalCampaigns: number };
   };
 }
 
 interface TaskCreateData {
   campaignDbTask: { taskId: string };
+  payload: {
+    campaignId: string;
+    evidenceRule: Record<string, string | number | boolean>;
+    id: string;
+    points: number;
+    required: boolean;
+    templateCode: string;
+    verificationType: string;
+    walletCompatibility: string;
+  };
+}
+
+interface GeneratedTasksData {
+  payload: {
+    campaignId: string;
+    humanReviewRequired: boolean;
+    taskList: Array<{
+      adoptability: "adoptable" | "unsupported";
+      evidenceRule: Record<string, string | number | boolean>;
+      id: string;
+      points: number;
+      required: boolean;
+      templateCode: string;
+      unsupportedReason?: string;
+      verificationType: string;
+      walletCompatibility: string;
+    }>;
+  };
+}
+
+interface WalletSessionData {
+  payload: {
+    accountType: string;
+    address: string;
+    id: string;
+    issuer?: {
+      issuerMode?: string;
+      valid?: boolean;
+    };
+    proof?: {
+      status?: string;
+      trustLevel?: string;
+    };
+    sessionId: string;
+    walletSource: string;
+  };
 }
 
 interface EligibilityData {
@@ -60,17 +131,44 @@ interface ExportData {
 
 interface DetailData {
   payload: {
-    item: { id: string };
-    tasks: Array<{ taskId: string }>;
+    item: {
+      id: string;
+      tags: Array<Record<string, string>>;
+      title: Record<string, string>;
+    };
+    tasks: Array<{
+      points: number;
+      required: boolean;
+      taskId: string;
+      title: Record<string, string>;
+      verificationType: string;
+    }>;
   };
 }
 
 interface HealthData {
+  apiService: {
+    workerExecutionEnabled: boolean;
+  };
+  backendService: {
+    providerClientReadiness: {
+      liveProviderCallsAttempted: boolean;
+      providerClientsEnabled: boolean;
+      providerHttpRuntime: {
+        liveHttpCallsAttempted: boolean;
+      };
+      queueHandoff: unknown;
+    };
+  };
   campaignDatabase: {
     liveConnectionAttempted: boolean;
     liveQueryExecutionEnabled: boolean;
     selectedMode: string;
     status: string;
+  };
+  persistence: {
+    countsByKind: Record<string, number>;
+    recordCount: number;
   };
 }
 
@@ -85,17 +183,18 @@ const isLoopback = (hostname: string) => {
   return normalized === "localhost" || normalized === "::1" || normalized.startsWith("127.");
 };
 
-const projectOwnerHeaders = (ownerAddress: string, traceId: string) => ({
-  "content-type": "application/json",
-  "x-campaign-os-account-type": "AA",
-  "x-campaign-os-credential-boundary": "ordinary_user_wallet",
-  "x-campaign-os-proof-status": "verified",
-  "x-campaign-os-roles": "project_owner",
-  "x-campaign-os-session-id": `sess-${ownerAddress}`,
-  "x-campaign-os-trace-id": traceId,
-  "x-campaign-os-wallet-address": ownerAddress,
-  "x-campaign-os-wallet-source": "PORTKEY_AA",
-});
+interface ApiResult<T> {
+  envelope: ApiEnvelope<T>;
+  status: number;
+}
+
+interface IssuedProjectOwnerSession {
+  data: WalletSessionData;
+  headers: (
+    traceId: string,
+    overrides?: Record<string, string>,
+  ) => Record<string, string>;
+}
 
 const percentile95 = (samples: readonly number[]) => {
   const sorted = [...samples].sort((left, right) => left - right);
@@ -109,6 +208,7 @@ const timestampMillis = (value: unknown) =>
 
 integrationSuite("PostgreSQL Campaign API runtime", () => {
   const databaseName = `campaign_os_m239_${process.pid}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  const shutdownTimings: number[] = [];
   const timings: number[] = [];
   const servers = new Set<CampaignOsApiServerHandle>();
   let adminPool: pg.Pool;
@@ -128,18 +228,29 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     }
   };
 
+  const requestApi = async <T>(
+    server: CampaignOsApiServerHandle,
+    path: string,
+    init: RequestInit = {},
+    timingSamples: number[] = timings,
+  ): Promise<ApiResult<T>> => recordTiming(async () => {
+    const response = await fetch(`${server.url}${path}`, init);
+    const envelope = await response.json() as ApiEnvelope<T>;
+
+    return { envelope, status: response.status };
+  }, timingSamples);
+
   const requestJson = async <T>(
     server: CampaignOsApiServerHandle,
     path: string,
     init: RequestInit = {},
     timingSamples: number[] = timings,
-  ): Promise<T> => recordTiming(async () => {
-    const response = await fetch(`${server.url}${path}`, init);
-    const envelope = await response.json() as ApiEnvelope<T>;
+  ): Promise<T> => {
+    const { envelope, status } = await requestApi<T>(server, path, init, timingSamples);
 
-    if (response.status !== 200 || !envelope.ok || !envelope.data) {
+    if (status !== 200 || !envelope.ok || !envelope.data) {
       throw new Error(
-        `PostgreSQL integration API request failed with status ${response.status}`
+        `PostgreSQL integration API request failed with status ${status}`
         + `, code ${envelope.error?.code ?? "unknown"}`
         + `, diagnostic ${envelope.error?.details?.diagnosticCode ?? "unknown"}`
         + `, and operation ${envelope.error?.details?.operation ?? "unknown"}.`,
@@ -147,17 +258,82 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     }
 
     return envelope.data;
-  }, timingSamples);
+  };
 
-  const startServer = async () => {
+  const issueProjectOwnerSession = async (
+    server: CampaignOsApiServerHandle,
+    input: {
+      adapterName?: "PortkeyAAWallet" | "PortkeyDiscoverWallet" | "PortkeyExtensionWallet";
+      address?: string;
+      fixtureId?: string;
+      productionRequired?: boolean;
+    },
+    traceId: string,
+  ): Promise<IssuedProjectOwnerSession> => {
+    const now = Date.now();
+    const body = input.fixtureId
+      ? {
+          fixtureId: input.fixtureId,
+          productionRequired: input.productionRequired,
+          proofEvaluatedAt: new Date(now).toISOString(),
+          proofIssuedAt: new Date(now - 1_000).toISOString(),
+          signature: randomUUID(),
+        }
+      : {
+          adapterName: input.adapterName ?? "PortkeyAAWallet",
+          address: input.address,
+          chainId: "AELF",
+          network: "mainnet",
+          productionRequired: input.productionRequired,
+          proofEvaluatedAt: new Date(now).toISOString(),
+          proofIssuedAt: new Date(now - 1_000).toISOString(),
+          signature: randomUUID(),
+        };
+    const data = await requestJson<WalletSessionData>(server, "/api/wallet/session", {
+      body: JSON.stringify(body),
+      headers: {
+        "content-type": "application/json",
+        "x-campaign-os-trace-id": traceId,
+      },
+      method: "POST",
+    });
+
+    expect(data.payload.sessionId).toBe(data.payload.id);
+    expect(data.payload.address).not.toHaveLength(0);
+    if (!input.productionRequired) {
+      expect(data.payload.proof).toMatchObject({ status: "verified" });
+      expect(data.payload.issuer).toMatchObject({ valid: true });
+    }
+
+    return {
+      data,
+      headers: (requestTraceId, overrides = {}) => ({
+        "content-type": "application/json",
+        "x-campaign-os-account-type": data.payload.accountType,
+        "x-campaign-os-credential-boundary": "ordinary_user_wallet",
+        "x-campaign-os-proof-status": data.payload.proof?.status ?? "proof_required",
+        "x-campaign-os-roles": "project_owner",
+        "x-campaign-os-session-id": data.payload.sessionId,
+        "x-campaign-os-trace-id": requestTraceId,
+        "x-campaign-os-wallet-address": data.payload.address,
+        "x-campaign-os-wallet-source": data.payload.walletSource,
+        ...overrides,
+      }),
+    };
+  };
+
+  const startServer = async (
+    selectedDatabaseUrl = databaseUrl,
+    connectTimeoutMs = "5000",
+  ) => {
     const server = await startCampaignOsApiServer({
       env: {
         CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
-        CAMPAIGN_OS_DATABASE_CONNECT_TIMEOUT_MS: "5000",
+        CAMPAIGN_OS_DATABASE_CONNECT_TIMEOUT_MS: connectTimeoutMs,
         CAMPAIGN_OS_DATABASE_IDLE_TIMEOUT_MS: "5000",
         CAMPAIGN_OS_DATABASE_POOL_MAX: "10",
         CAMPAIGN_OS_DATABASE_SSL_MODE: sslMode,
-        CAMPAIGN_OS_DATABASE_URL: databaseUrl,
+        CAMPAIGN_OS_DATABASE_URL: selectedDatabaseUrl,
       },
       logger: false,
       port: 0,
@@ -169,8 +345,30 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
   };
 
   const stopServer = async (server: CampaignOsApiServerHandle) => {
-    await server.stop();
+    await recordTiming(() => server.stop(), shutdownTimings);
     servers.delete(server);
+  };
+
+  const waitForRuntimeDatabaseConnectionsToClose = async () => {
+    const startedAt = performance.now();
+    let activeConnectionCount = Number.POSITIVE_INFINITY;
+
+    while (performance.now() - startedAt <= 10_000) {
+      const result = await adminPool.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM pg_stat_activity WHERE datname = $1",
+        [databaseName],
+      );
+      activeConnectionCount = Number(result.rows[0]?.count ?? Number.POSITIVE_INFINITY);
+      if (activeConnectionCount === 0) {
+        return performance.now() - startedAt;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    throw new Error(
+      `PostgreSQL runtime pool did not close within 10000 ms (${activeConnectionCount} connections remain).`,
+    );
   };
 
   const createAuditPool = () => {
@@ -192,7 +390,22 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const [campaigns, tasks, participants, completions, evidence, referrals] = await Promise.all([
       pool.query(
         `
-          SELECT id, project_id, owner_address, status, goal, created_at, updated_at
+          SELECT
+            id,
+            project_id,
+            owner_address,
+            status,
+            default_locale,
+            supported_locales,
+            wallet_policy,
+            contract_mode,
+            goal,
+            duration,
+            reward_description,
+            start_time,
+            end_time,
+            created_at,
+            updated_at
           FROM campaign_os.campaigns
           WHERE id = $1
           ORDER BY id
@@ -201,7 +414,17 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       ),
       pool.query(
         `
-          SELECT id, campaign_id, template_code, points, required, created_at, updated_at
+          SELECT
+            id,
+            campaign_id,
+            template_code,
+            verification_type,
+            wallet_compatibility,
+            points,
+            required,
+            evidence_rule,
+            created_at,
+            updated_at
           FROM campaign_os.campaign_tasks
           WHERE campaign_id = $1
           ORDER BY id
@@ -353,12 +576,19 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     }
   }, 60_000);
 
-  it("survives restart and preserves concurrent Campaign workflows", async () => {
+  it("recovers exact Owner Campaign and Task identities after a full PostgreSQL runtime restart", async () => {
     const runtimeWriteWindowStartedAt = Date.now();
     const firstServer = await startServer();
-    const ownerAddress = "2F4PostgresRuntimeOwner";
+    const sessionA = await issueProjectOwnerSession(
+      firstServer,
+      { fixtureId: "sess-eoa-app-001" },
+      "trace-pg-session-a",
+    );
+    const ownerAddress = sessionA.data.payload.address;
     const created = await requestJson<CampaignCreateData>(firstServer, "/api/campaigns", {
       body: JSON.stringify({
+        contractMode: "OFF_CHAIN_MVP",
+        defaultLocale: "en-US",
         duration: "2026-08-01/2026-08-14",
         endTime: "2026-08-14T23:59:59Z",
         goal: "Review PostgreSQL restart recovery",
@@ -366,8 +596,10 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         projectId: "postgres-restart-project",
         rewardDescription: "PostgreSQL-backed review rewards.",
         startTime: "2026-08-01T00:00:00Z",
+        supportedLocales: ["en-US", "zh-CN"],
+        walletPolicy: "ANY",
       }),
-      headers: projectOwnerHeaders(ownerAddress, "trace-pg-runtime-create"),
+      headers: sessionA.headers("trace-pg-runtime-create"),
       method: "POST",
     });
     const campaignId = created.payload.id;
@@ -380,13 +612,121 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         verificationType: "ON_CHAIN",
         walletCompatibility: "ANY",
       }),
-      headers: {
-        "content-type": "application/json",
-        "x-campaign-os-trace-id": "trace-pg-runtime-task",
-      },
+      headers: sessionA.headers("trace-pg-runtime-task"),
       method: "POST",
     });
     const taskId = task.campaignDbTask.taskId;
+    const previewDbBefore = await (async () => {
+      const pool = createAuditPool();
+
+      try {
+        return await readCampaignSnapshot(pool, campaignId);
+      } finally {
+        await pool.end();
+      }
+    })();
+    const previewHealthBefore = await requestJson<HealthData>(firstServer, "/api/health");
+    const generated = await requestJson<GeneratedTasksData>(
+      firstServer,
+      `/api/campaigns/${campaignId}/tasks/generate`,
+      {
+        body: JSON.stringify({
+          goal: created.payload.goal,
+          product: "Campaign OS",
+          targetUsers: ["project owners"],
+          walletPolicy: created.payload.walletPolicy,
+        }),
+        headers: sessionA.headers("trace-pg-runtime-generate"),
+        method: "POST",
+      },
+    );
+    const supportedSuggestion = generated.payload.taskList.find(
+      (suggestion) => suggestion.adoptability === "adoptable" && !suggestion.required,
+    ) ?? generated.payload.taskList.find((suggestion) => suggestion.adoptability === "adoptable");
+    const referralSuggestion = generated.payload.taskList.find(
+      (suggestion) => suggestion.verificationType === "REFERRAL",
+    );
+
+    expect(supportedSuggestion).toBeDefined();
+    expect(referralSuggestion).toMatchObject({
+      adoptability: "unsupported",
+      unsupportedReason: "REFERRAL_TASK_ADD_UNSUPPORTED",
+    });
+
+    const referralBypass = await requestApi(
+      firstServer,
+      `/api/campaigns/${campaignId}/tasks`,
+      {
+        body: JSON.stringify({
+          evidenceRule: referralSuggestion?.evidenceRule ?? { source: "REFERRAL" },
+          points: referralSuggestion?.points ?? 25,
+          required: referralSuggestion?.required ?? false,
+          templateCode: referralSuggestion?.templateCode ?? "invite_friend",
+          verificationType: "REFERRAL",
+          walletCompatibility: referralSuggestion?.walletCompatibility ?? "ANY",
+        }),
+        headers: sessionA.headers("trace-pg-runtime-referral-bypass"),
+        method: "POST",
+      },
+    );
+    const previewHealthAfter = await requestJson<HealthData>(firstServer, "/api/health");
+    const previewDbAfter = await (async () => {
+      const pool = createAuditPool();
+
+      try {
+        return await readCampaignSnapshot(pool, campaignId);
+      } finally {
+        await pool.end();
+      }
+    })();
+
+    expect(generated.payload).toMatchObject({
+      campaignId,
+      humanReviewRequired: true,
+    });
+    expect(previewDbAfter).toEqual(previewDbBefore);
+    expect(previewHealthAfter.persistence).toEqual(previewHealthBefore.persistence);
+    expect(previewHealthAfter.backendService.providerClientReadiness).toEqual(
+      previewHealthBefore.backendService.providerClientReadiness,
+    );
+    expect(previewHealthAfter.apiService.workerExecutionEnabled).toBe(false);
+    expect(previewHealthAfter.backendService.providerClientReadiness).toMatchObject({
+      liveProviderCallsAttempted: false,
+      providerClientsEnabled: false,
+      providerHttpRuntime: { liveHttpCallsAttempted: false },
+    });
+    expect(referralBypass).toMatchObject({
+      status: 400,
+      envelope: {
+        ok: false,
+        traceId: "trace-pg-runtime-referral-bypass",
+        error: {
+          code: "INVALID_REQUEST",
+          details: { field: "verificationType" },
+        },
+      },
+    });
+
+    if (!supportedSuggestion) {
+      throw new Error("Expected at least one supported generated Task suggestion.");
+    }
+    const adoptedTask = await requestJson<TaskCreateData>(
+      firstServer,
+      `/api/campaigns/${campaignId}/tasks`,
+      {
+        body: JSON.stringify({
+          evidenceRule: supportedSuggestion.evidenceRule,
+          points: supportedSuggestion.points,
+          required: supportedSuggestion.required,
+          templateCode: supportedSuggestion.templateCode,
+          verificationType: supportedSuggestion.verificationType,
+          walletCompatibility: supportedSuggestion.walletCompatibility,
+        }),
+        headers: sessionA.headers("trace-pg-runtime-adopt"),
+        method: "POST",
+      },
+    );
+    const adoptedTaskId = adoptedTask.campaignDbTask.taskId;
     const walletAddress = "2F4PostgresRestartWallet";
 
     await requestJson(firstServer, `/api/tasks/${taskId}/verify`, {
@@ -420,6 +760,10 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
 
     expect(campaignId).toMatch(/^campaign-[0-9a-f-]{36}$/);
     expect(taskId).toMatch(/^campaign-task-[0-9a-f-]{36}$/);
+    expect(adoptedTaskId).toMatch(/^campaign-task-[0-9a-f-]{36}$/);
+    expect(adoptedTaskId).not.toBe(taskId);
+    expect(task.payload.id).toBe(taskId);
+    expect(adoptedTask.payload.id).toBe(adoptedTaskId);
     expect(eligibility.payload).toMatchObject({ eligible: true, missingTasks: [], score: 120 });
     expect(exportPreview.payload).toMatchObject({ campaignId, readyRows: 1 });
     const referralId = `referral-binding-${randomUUID()}`;
@@ -468,16 +812,40 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     })();
 
     expect(beforeRestartSnapshot).toMatchObject({
-      campaigns: [expect.objectContaining({ id: campaignId })],
+      campaigns: [expect.objectContaining({
+        contract_mode: created.payload.contractMode,
+        goal: created.payload.goal,
+        id: campaignId,
+        owner_address: ownerAddress,
+        project_id: created.payload.projectId,
+        wallet_policy: created.payload.walletPolicy,
+      })],
       completions: [expect.objectContaining({ task_id: taskId, wallet_address: walletAddress })],
       evidence: [expect.objectContaining({ task_id: taskId, wallet_address: walletAddress })],
       participants: [expect.objectContaining({ wallet_address: walletAddress })],
       referrals: [expect.objectContaining({ id: referralId })],
-      tasks: [expect.objectContaining({ id: taskId })],
+      tasks: expect.arrayContaining([
+        expect.objectContaining({
+          id: taskId,
+          points: task.payload.points,
+          required: task.payload.required,
+          template_code: task.payload.templateCode,
+          verification_type: task.payload.verificationType,
+        }),
+        expect.objectContaining({
+          id: adoptedTaskId,
+          points: adoptedTask.payload.points,
+          required: adoptedTask.payload.required,
+          template_code: adoptedTask.payload.templateCode,
+          verification_type: adoptedTask.payload.verificationType,
+        }),
+      ]),
     });
+    expect(beforeRestartSnapshot.tasks).toHaveLength(2);
     const runtimeWriteRows = [
       beforeRestartSnapshot.campaigns[0],
       beforeRestartSnapshot.tasks[0],
+      beforeRestartSnapshot.tasks[1],
       beforeRestartSnapshot.participants[0],
       beforeRestartSnapshot.completions[0],
       beforeRestartSnapshot.evidence[0],
@@ -495,14 +863,41 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       expect(updatedAt).toBeGreaterThanOrEqual(createdAt);
     }
     await stopServer(firstServer);
+    expect(shutdownTimings[shutdownTimings.length - 1]).toBeLessThanOrEqual(10_000);
+    expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
 
     const secondServer = await startServer();
+    const sessionB = await issueProjectOwnerSession(
+      secondServer,
+      { adapterName: "PortkeyDiscoverWallet", address: ownerAddress },
+      "trace-pg-session-b",
+    );
+    expect(sessionB.data.payload.sessionId).not.toBe(sessionA.data.payload.sessionId);
+    expect(sessionB.data.payload.address).toBe(ownerAddress);
+    expect(sessionB.data.payload.proof).toMatchObject({
+      status: "verified",
+      trustLevel: "verified_local",
+    });
+    expect(sessionB.data.payload.issuer).toMatchObject({
+      issuerMode: "local_opaque",
+      valid: true,
+    });
+    const oldSessionAfterRestart = await requestApi(
+      secondServer,
+      "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+      { headers: sessionA.headers("trace-pg-old-session-after-restart") },
+    );
     const health = await requestJson<HealthData>(secondServer, "/api/health");
     const list = await requestJson<CampaignListData>(
       secondServer,
-      "/api/campaigns?projectId=postgres-restart-project",
+      "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+      { headers: sessionB.headers("trace-pg-runtime-owner-recovery") },
     );
-    const detail = await requestJson<DetailData>(secondServer, `/api/campaigns/${campaignId}`);
+    const detail = await requestJson<DetailData>(
+      secondServer,
+      `/api/campaigns/${campaignId}`,
+      { headers: sessionB.headers("trace-pg-runtime-detail") },
+    );
     const restartedEligibility = await requestJson<EligibilityData>(
       secondServer,
       `/api/campaigns/${campaignId}/eligibility?address=${walletAddress}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
@@ -513,6 +908,17 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       method: "POST",
     });
 
+    expect(oldSessionAfterRestart).toMatchObject({
+      status: 401,
+      envelope: {
+        ok: false,
+        traceId: "trace-pg-old-session-after-restart",
+        error: {
+          code: "AUTH_SESSION_INVALID",
+          details: { diagnosticCode: "AUTH_SESSION_INVALID" },
+        },
+      },
+    });
     expect(health.campaignDatabase).toMatchObject({
       liveConnectionAttempted: true,
       liveQueryExecutionEnabled: true,
@@ -520,8 +926,28 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       status: "ready",
     });
     expect(list.payload.items.map((item) => item.id)).toEqual([campaignId]);
+    expect(list.payload.campaignDb).toEqual(expect.objectContaining({ draftCount: 1 }));
+    expect(list.payload.summary).toEqual(expect.objectContaining({ totalCampaigns: 1 }));
     expect(detail.payload.item.id).toBe(campaignId);
-    expect(detail.payload.tasks.map((item) => item.taskId)).toContain(taskId);
+    expect(JSON.stringify(detail.payload.item.tags)).toContain(created.payload.projectId);
+    expect(detail.payload.item.title["en-US"]).toBe(created.payload.goal);
+    expect(new Set(detail.payload.tasks.map((item) => item.taskId))).toEqual(
+      new Set([taskId, adoptedTaskId]),
+    );
+    const recoveredManualTask = detail.payload.tasks.find((item) => item.taskId === taskId);
+    const recoveredAdoptedTask = detail.payload.tasks.find((item) => item.taskId === adoptedTaskId);
+    expect(recoveredManualTask).toMatchObject({
+      points: task.payload.points,
+      required: task.payload.required,
+      title: { "en-US": task.payload.templateCode },
+      verificationType: task.payload.verificationType,
+    });
+    expect(recoveredAdoptedTask).toMatchObject({
+      points: adoptedTask.payload.points,
+      required: adoptedTask.payload.required,
+      title: { "en-US": adoptedTask.payload.templateCode },
+      verificationType: adoptedTask.payload.verificationType,
+    });
     expect(restartedEligibility.payload).toEqual(expect.objectContaining({ eligible: true, score: 120 }));
     expect(restartedExport.payload).toEqual(expect.objectContaining({ campaignId, readyRows: 1 }));
     expect(restartedExport.payload.rows).toContainEqual(expect.objectContaining({
@@ -538,9 +964,259 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       }
     })();
     expect(afterRestartSnapshot).toEqual(beforeRestartSnapshot);
+    const canonicalIdentitySurfaces = JSON.stringify({
+      campaign: created.payload,
+      database: afterRestartSnapshot,
+      detail: detail.payload,
+      manualTask: task.payload,
+      adoptedTask: adoptedTask.payload,
+      recovery: list.payload,
+    }).toLowerCase();
+    expect(canonicalIdentitySurfaces).not.toContain("local-task-");
+    expect(canonicalIdentitySurfaces).not.toContain("synthetic");
 
-    const concurrentCampaigns = await Promise.all(Array.from({ length: 20 }, (_, index) => {
-      const concurrentOwner = `2F4ConcurrentOwner${index.toString().padStart(2, "0")}`;
+    const otherWalletSession = await issueProjectOwnerSession(
+      secondServer,
+      { address: "2F4PostgresIsolatedOwner" },
+      "trace-pg-other-wallet-session",
+    );
+    const otherWalletRecovery = await requestJson<CampaignListData>(
+      secondServer,
+      "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+      { headers: otherWalletSession.headers("trace-pg-other-wallet-recovery") },
+    );
+    const otherWalletAdd = await requestApi(
+      secondServer,
+      `/api/campaigns/${campaignId}/tasks`,
+      {
+        body: JSON.stringify({
+          evidenceRule: { source: "MANUAL" },
+          points: 10,
+          required: false,
+          templateCode: "forbidden_other_wallet_add",
+          verificationType: "MANUAL",
+          walletCompatibility: "ANY",
+        }),
+        headers: otherWalletSession.headers("trace-pg-other-wallet-add"),
+        method: "POST",
+      },
+    );
+    const otherWalletGenerate = await requestApi(
+      secondServer,
+      `/api/campaigns/${campaignId}/tasks/generate`,
+      {
+        body: JSON.stringify({
+          goal: created.payload.goal,
+          product: "Campaign OS",
+          targetUsers: ["project owners"],
+          walletPolicy: created.payload.walletPolicy,
+        }),
+        headers: otherWalletSession.headers("trace-pg-other-wallet-generate"),
+        method: "POST",
+      },
+    );
+    const unknownSession = await requestApi(
+      secondServer,
+      "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+      {
+        headers: sessionB.headers("trace-pg-unknown-session", {
+          "x-campaign-os-session-id": "unissued-wp05-session",
+        }),
+      },
+    );
+    const mismatchedSession = await requestApi(
+      secondServer,
+      "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+      {
+        headers: sessionB.headers("trace-pg-mismatched-session", {
+          "x-campaign-os-wallet-address": "2F4MismatchedOwnerClaim",
+        }),
+      },
+    );
+    const invalidIssuerSession = await issueProjectOwnerSession(
+      secondServer,
+      {
+        address: "2F4InvalidIssuerOwner",
+        productionRequired: true,
+      },
+      "trace-pg-invalid-issuer-session",
+    );
+    expect(invalidIssuerSession.data.payload.issuer).toMatchObject({
+      issuerMode: "production_blocked",
+      valid: false,
+    });
+    const invalidIssuer = await requestApi(
+      secondServer,
+      "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+      { headers: invalidIssuerSession.headers("trace-pg-invalid-issuer") },
+    );
+    const forbiddenRole = await requestApi(
+      secondServer,
+      "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+      {
+        headers: sessionB.headers("trace-pg-forbidden-role", {
+          "x-campaign-os-roles": "participant",
+        }),
+      },
+    );
+    const missingCampaign = await requestApi(
+      secondServer,
+      "/api/campaigns/campaign-missing-wp05/tasks/generate",
+      {
+        body: JSON.stringify({
+          goal: "Do not leak missing Campaign ownership",
+          product: "Campaign OS",
+          targetUsers: ["project owners"],
+          walletPolicy: "ANY",
+        }),
+        headers: sessionB.headers("trace-pg-missing-campaign"),
+        method: "POST",
+      },
+    );
+
+    expect(otherWalletRecovery.payload).toMatchObject({
+      campaignDb: { draftCount: 0 },
+      items: [],
+      summary: { totalCampaigns: 0 },
+    });
+    for (const [result, traceId] of [
+      [otherWalletAdd, "trace-pg-other-wallet-add"],
+      [otherWalletGenerate, "trace-pg-other-wallet-generate"],
+    ] as const) {
+      expect(result).toMatchObject({
+        status: 403,
+        envelope: {
+          ok: false,
+          traceId,
+          error: {
+            code: "AUTH_FORBIDDEN",
+            details: { diagnosticCode: "AUTH_OWNER_MISMATCH" },
+          },
+        },
+      });
+    }
+    for (const [result, traceId] of [
+      [unknownSession, "trace-pg-unknown-session"],
+      [mismatchedSession, "trace-pg-mismatched-session"],
+      [invalidIssuer, "trace-pg-invalid-issuer"],
+    ] as const) {
+      expect(result).toMatchObject({
+        status: 401,
+        envelope: {
+          ok: false,
+          traceId,
+          error: {
+            code: "AUTH_SESSION_INVALID",
+            details: { diagnosticCode: "AUTH_SESSION_INVALID" },
+          },
+        },
+      });
+    }
+    expect(forbiddenRole).toMatchObject({
+      status: 403,
+      envelope: {
+        ok: false,
+        traceId: "trace-pg-forbidden-role",
+        error: {
+          code: "AUTH_FORBIDDEN",
+          details: { diagnosticCode: "AUTH_ROLE_FORBIDDEN" },
+        },
+      },
+    });
+    expect(missingCampaign).toMatchObject({
+      status: 404,
+      envelope: {
+        ok: false,
+        traceId: "trace-pg-missing-campaign",
+        error: { code: "INVALID_CAMPAIGN" },
+      },
+    });
+    expect(JSON.stringify(missingCampaign.envelope)).not.toContain(ownerAddress);
+    expect(JSON.stringify(missingCampaign.envelope)).not.toContain(otherWalletSession.data.payload.address);
+    for (const result of [
+      oldSessionAfterRestart,
+      otherWalletAdd,
+      otherWalletGenerate,
+      unknownSession,
+      mismatchedSession,
+      invalidIssuer,
+      forbiddenRole,
+      missingCampaign,
+    ]) {
+      const serialized = JSON.stringify(result.envelope).toLowerCase();
+
+      expect(result.envelope.data).toBeUndefined();
+      expect(result.envelope.traceId).toMatch(/^trace-pg-/);
+      expect(serialized).not.toContain("postgresql://");
+      expect(serialized).not.toContain("stack");
+      expect(serialized).not.toContain("password");
+    }
+    const afterNegativeSnapshot = await (async () => {
+      const pool = createAuditPool();
+
+      try {
+        return await readCampaignSnapshot(pool, campaignId);
+      } finally {
+        await pool.end();
+      }
+    })();
+    expect(afterNegativeSnapshot).toEqual(beforeRestartSnapshot);
+
+    const unavailableUrl = new URL(databaseUrl);
+    unavailableUrl.port = "1";
+    const unavailableServer = await startServer(unavailableUrl.toString(), "100");
+    const unavailableOwnerSession = await issueProjectOwnerSession(
+      unavailableServer,
+      { address: "2F4UnavailableDatabaseOwner" },
+      "trace-pg-unavailable-session",
+    );
+    const unavailableCreate = await requestApi(
+      unavailableServer,
+      "/api/campaigns",
+      {
+        body: JSON.stringify({
+          duration: "2026-09-01/2026-09-14",
+          endTime: "2026-09-14T23:59:59Z",
+          goal: "Fail closed without PostgreSQL",
+          ownerAddress: unavailableOwnerSession.data.payload.address,
+          projectId: "postgres-unavailable-project",
+          rewardDescription: "No fallback write is allowed.",
+          startTime: "2026-09-01T00:00:00Z",
+        }),
+        headers: unavailableOwnerSession.headers("trace-pg-unavailable-create"),
+        method: "POST",
+      },
+    );
+    expect(unavailableCreate).toMatchObject({
+      status: 503,
+      envelope: {
+        ok: false,
+        traceId: "trace-pg-unavailable-create",
+        error: { code: "PERSISTENCE_UNAVAILABLE" },
+      },
+    });
+    expect(unavailableCreate.envelope.data).toBeUndefined();
+    expect(JSON.stringify(unavailableCreate.envelope).toLowerCase()).not.toContain("local-task-");
+    await stopServer(unavailableServer);
+    const afterUnavailableSnapshot = await (async () => {
+      const pool = createAuditPool();
+
+      try {
+        return await readCampaignSnapshot(pool, campaignId);
+      } finally {
+        await pool.end();
+      }
+    })();
+    expect(afterUnavailableSnapshot).toEqual(beforeRestartSnapshot);
+
+    const concurrentSessions = await Promise.all(Array.from({ length: 20 }, (_, index) =>
+      issueProjectOwnerSession(
+        secondServer,
+        { address: `2F4ConcurrentOwner${index.toString().padStart(2, "0")}` },
+        `trace-pg-concurrent-session-${index}`,
+      )));
+    const concurrentCampaigns = await Promise.all(concurrentSessions.map((session, index) => {
+      const concurrentOwner = session.data.payload.address;
 
       return requestJson<CampaignCreateData>(secondServer, "/api/campaigns", {
         body: JSON.stringify({
@@ -552,7 +1228,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
           rewardDescription: "Concurrent PostgreSQL review rewards.",
           startTime: "2026-09-01T00:00:00Z",
         }),
-        headers: projectOwnerHeaders(concurrentOwner, `trace-pg-concurrent-create-${index}`),
+        headers: session.headers(`trace-pg-concurrent-create-${index}`),
         method: "POST",
       });
     }));
@@ -574,7 +1250,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
           verificationType: "ON_CHAIN",
           walletCompatibility: "ANY",
         }),
-        headers: { "content-type": "application/json" },
+        headers: concurrentSessions[0]!.headers("trace-pg-concurrent-task-required"),
         method: "POST",
       },
     );
@@ -591,7 +1267,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
           verificationType: "ON_CHAIN",
           walletCompatibility: "ANY",
         }),
-        headers: { "content-type": "application/json" },
+        headers: concurrentSessions[0]!.headers("trace-pg-concurrent-task-optional"),
         method: "POST",
       },
     );
@@ -826,37 +1502,40 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const nfrTimings = {
       create: [] as number[],
       detail: [] as number[],
-      eligibility: [] as number[],
-      list: [] as number[],
+      generatePreview: [] as number[],
+      recovery: [] as number[],
       taskAdd: [] as number[],
     };
+    const nfrDatasetOwnerSession = await issueProjectOwnerSession(
+      secondServer,
+      { address: "2F4NfrOwner001" },
+      "trace-pg-nfr-dataset-owner-session",
+    );
 
     for (let index = 0; index < 20; index += 1) {
-      const nfrOwner = `2F4NfrCreateOwner${index.toString().padStart(2, "0")}`;
-
       await requestJson<CampaignCreateData>(secondServer, "/api/campaigns", {
         body: JSON.stringify({
           duration: "2026-11-01/2026-11-14",
           endTime: "2026-11-14T23:59:59Z",
           goal: `PostgreSQL NFR create ${index}`,
-          ownerAddress: nfrOwner,
+          ownerAddress,
           projectId: `postgres-nfr-create-${index}`,
           rewardDescription: "PostgreSQL NFR create rewards.",
           startTime: "2026-11-01T00:00:00Z",
         }),
-        headers: projectOwnerHeaders(nfrOwner, `trace-pg-nfr-create-${index}`),
+        headers: sessionB.headers(`trace-pg-nfr-create-${index}`),
         method: "POST",
       }, nfrTimings.create);
-      await requestJson(
+      await requestJson<CampaignListData>(
         secondServer,
-        "/api/campaigns?limit=100",
-        {},
-        nfrTimings.list,
+        "/api/projects/nfr-project-001/campaigns?status=draft&limit=100",
+        { headers: nfrDatasetOwnerSession.headers(`trace-pg-nfr-recovery-${index}`) },
+        nfrTimings.recovery,
       );
-      await requestJson(
+      await requestJson<DetailData>(
         secondServer,
         "/api/campaigns/000-nfr-campaign-001",
-        {},
+        { headers: nfrDatasetOwnerSession.headers(`trace-pg-nfr-detail-${index}`) },
         nfrTimings.detail,
       );
       await requestJson<TaskCreateData>(
@@ -871,19 +1550,25 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
             verificationType: "ON_CHAIN",
             walletCompatibility: "ANY",
           }),
-          headers: {
-            "content-type": "application/json",
-            "x-campaign-os-trace-id": `trace-pg-nfr-task-${index}`,
-          },
+          headers: nfrDatasetOwnerSession.headers(`trace-pg-nfr-task-${index}`),
           method: "POST",
         },
         nfrTimings.taskAdd,
       );
-      await requestJson<EligibilityData>(
+      await requestJson<GeneratedTasksData>(
         secondServer,
-        `/api/campaigns/${campaignId}/eligibility?address=${walletAddress}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
-        {},
-        nfrTimings.eligibility,
+        "/api/campaigns/000-nfr-campaign-001/tasks/generate",
+        {
+          body: JSON.stringify({
+            goal: "Measure PostgreSQL-backed Generate preview",
+            product: "Campaign OS",
+            targetUsers: ["project owners"],
+            walletPolicy: "ANY",
+          }),
+          headers: nfrDatasetOwnerSession.headers(`trace-pg-nfr-generate-${index}`),
+          method: "POST",
+        },
+        nfrTimings.generatePreview,
       );
     }
 
@@ -895,5 +1580,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     expect(timings.length).toBeGreaterThanOrEqual(50);
     expect(percentile95(timings)).toBeLessThanOrEqual(500);
     await stopServer(secondServer);
+    expect(shutdownTimings.every((duration) => duration <= 10_000)).toBe(true);
+    expect(servers.size).toBe(0);
+    expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
   }, 120_000);
 });

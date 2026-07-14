@@ -4,6 +4,7 @@ import {
   campaignDetail,
   createCampaignOsLocalService,
   createLocalExportFileHandoff,
+  generateCampaignTasksPreview,
   requiredApiSkillIds,
   serviceBoundary,
   walletAdapterFixtures,
@@ -358,6 +359,47 @@ describe("Campaign OS local API service facade", () => {
     }
     expect(service.getCoverageSummary().payload?.serviceNames).toContain("generateCampaignTasks");
     expect(typeof service.addTask).toBe("function");
+  });
+
+  it("projects pure campaign task previews without requiring a seeded campaign lookup", () => {
+    const preview = generateCampaignTasksPreview({
+      campaignId: "campaign-db-draft-preview",
+      goal: "Grow referral and bridge activity",
+      product: "Campaign DB",
+      targetUsers: ["project owner draft users"],
+      walletPolicy: "ANY",
+    });
+    const referralSuggestion = preview.payload?.taskList.find((task) => task.verificationType === "REFERRAL");
+    const unsupportedAdd = service.addTask({
+      campaignId: campaignDetail.id,
+      evidenceRule: { source: "REFERRAL" },
+      points: 25,
+      required: false,
+      templateCode: referralSuggestion?.templateCode ?? "invite_friend",
+      verificationType: "REFERRAL" as never,
+      walletCompatibility: "ANY",
+    });
+
+    expect(preview).toMatchObject({
+      ok: true,
+      payload: {
+        campaignId: "campaign-db-draft-preview",
+        humanReviewRequired: true,
+      },
+    });
+    expect(referralSuggestion).toMatchObject({
+      adoptability: "unsupported",
+      unsupportedReason: "REFERRAL_TASK_ADD_UNSUPPORTED",
+      verificationType: "REFERRAL",
+    });
+    expect(preview.payload?.taskList.every((task) => task.adoptability)).toBe(true);
+    expect(unsupportedAdd).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_REQUEST",
+        field: "verificationType",
+      },
+    });
   });
 
   it("lists and reads seeded campaign discovery without live service fields", () => {

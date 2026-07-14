@@ -253,6 +253,10 @@ const routeFoundationMetadata = {
     operationId: "listCampaigns",
     serviceId: "campaign-service",
   },
+  "campaigns.owner.list": {
+    operationId: "listOwnerCampaigns",
+    serviceId: "campaign-service",
+  },
   "campaigns.lifecycle": {
     operationId: "getCampaignLifecycle",
     serviceId: "campaign-service",
@@ -387,6 +391,34 @@ const requestFieldContracts = [
     required: false,
     routeId: "campaigns.list",
     valueType: "string",
+  }),
+  field({
+    description: "Project identifier for issued-owner campaign recovery.",
+    id: "campaigns.owner.list.path.projectId",
+    location: "path",
+    name: "projectId",
+    required: true,
+    routeId: "campaigns.owner.list",
+    valueType: "string",
+  }),
+  field({
+    description: "Optional editable campaign lifecycle status filter.",
+    enumValues: ["draft", "ai_draft", "human_review", "scheduled", "paused"],
+    id: "campaigns.owner.list.query.status",
+    location: "query",
+    name: "status",
+    required: false,
+    routeId: "campaigns.owner.list",
+    valueType: "enum",
+  }),
+  field({
+    description: "Bounded number of owner campaign drafts to return.",
+    id: "campaigns.owner.list.query.limit",
+    location: "query",
+    name: "limit",
+    required: false,
+    routeId: "campaigns.owner.list",
+    valueType: "number",
   }),
   field({
     description: "Project identifier that owns the local campaign draft.",
@@ -1189,6 +1221,7 @@ const backendSurfaceReadiness = [
     notes: "Local campaign discovery, draft creation, lifecycle operation inspection, launch readiness inspection, delivery readiness inspection, publish delivery joint review bridge inspection, companion contract readiness inspection, contract writer runtime readiness inspection, contract transparency inspection, campaign participant repository/read model metadata, and campaign referral binding read model metadata exist in deterministic and durable-test modes; durable storage, owner auth, production DB migration to the future Campaign DB participant table service and future Campaign DB referral binding table service, scheduler runtime, queue runtime lifecycle handoff, contract writer, wallet SDK, storage write, reward custody, reward distribution, and queue provider adapter activation are deferred.",
     routeIds: [
       "campaigns.list",
+      "campaigns.owner.list",
       "campaigns.create",
       "campaigns.detail",
       "campaigns.lifecycle",

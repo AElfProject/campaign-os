@@ -11,6 +11,13 @@ import {
   type ProductionAuthSessionDependencyId,
   type SessionProofStatus,
 } from "./authSession";
+import type {
+  WalletSessionRecord,
+  WalletSessionRepository,
+} from "./walletSessionRepository";
+import type {
+  WalletCapability,
+} from "../domain/types";
 
 export type AuthRuntimeHeaders = Record<string, string | readonly string[] | undefined>;
 export type AuthEnforcementDecisionStatus =
@@ -21,6 +28,7 @@ export type AuthEnforcementDecisionStatus =
 export type AuthEnforcementDiagnosticCode =
   | "AUTH_SESSION_REQUIRED"
   | "AUTH_SESSION_INVALID"
+  | "AUTH_FORBIDDEN"
   | "AUTH_ROLE_FORBIDDEN"
   | "AUTH_OWNER_MISMATCH"
   | "AUTH_AGENT_CREDENTIAL_FORBIDDEN"
@@ -30,6 +38,7 @@ export type AuthEnforcementDiagnosticCode =
 export interface LocalAuthSession {
   accountType: AuthSessionAccountType;
   address: string;
+  capabilities?: WalletCapability[];
   credentialBoundary: AuthSessionCredentialBoundary;
   internalAutomation: boolean;
   proofStatus: SessionProofStatus;
@@ -84,6 +93,13 @@ export interface EvaluateAuthEnforcementOptions {
   routeId: string;
 }
 
+export type IssuedSessionLookup = Pick<WalletSessionRepository, "getBySessionId">["getBySessionId"];
+
+export interface EvaluateIssuedAuthEnforcementOptions extends EvaluateAuthEnforcementOptions {
+  issuedSessionLookup: IssuedSessionLookup;
+  traceId?: string;
+}
+
 export interface AuthEnforcementDecision {
   allowed: boolean;
   diagnostic?: AuthEnforcementDiagnostic;
@@ -128,6 +144,7 @@ const proofStatuses = [
   "blocked",
 ] as const satisfies readonly SessionProofStatus[];
 const locallyAcceptedProofStatuses = new Set<SessionProofStatus>(["local_seeded", "verified"]);
+const ownerRouteRequiredCapability: WalletCapability = "SIGN_MESSAGE";
 
 const authEnforcementProductionDependencyIds = [
   "rbac_enforcement_policy",
@@ -187,17 +204,17 @@ export const rbacOwnershipRoutePolicyMatrix = [
     productionDependencyIds: [...authEnforcementProductionDependencyIds],
     requiredRoles: ["project_owner"],
     routeGroup: "campaign_write",
-    routeIds: ["campaigns.create"],
+    routeIds: ["campaigns.create", "campaigns.owner.list"],
   }),
   routePolicy({
     forbiddenCapabilities: ["wallet:user_substitution"],
     forbiddenCredentialBoundaries: ["internal_agent_credential"],
-    locallyEnforced: false,
+    locallyEnforced: true,
     ownerMatchRequired: true,
     productionDependencyIds: [...authEnforcementProductionDependencyIds],
     requiredRoles: ["project_owner"],
     routeGroup: "task_builder",
-    routeIds: ["campaigns.tasks.add"],
+    routeIds: ["campaigns.tasks.add", "campaigns.tasks.generate"],
   }),
   routePolicy({
     forbiddenCapabilities: ["wallet:user_substitution"],
@@ -451,6 +468,64 @@ const parseRoles = (rolesHeader: string | undefined): AuthSessionRoleId[] | Auth
   return Array.from(new Set(roleIds)) as AuthSessionRoleId[];
 };
 
+const normalizeAuthAddress = (value: string | undefined) => value?.trim().toLowerCase() ?? "";
+
+const proofStatusFromIssuedRecord = (
+  issuedRecord: WalletSessionRecord,
+): SessionProofStatus => {
+  const issuedProofStatus = issuedRecord.proof?.status as SessionProofStatus | undefined;
+
+  if (issuedProofStatus && proofStatuses.includes(issuedProofStatus)) {
+    return issuedProofStatus;
+  }
+
+  return issuedRecord.verificationStatus === "verified" ? "verified" : "signature_unverified";
+};
+
+const issuerInvalidDiagnostic = (): AuthEnforcementDiagnostic => ({
+  code: "AUTH_SESSION_INVALID",
+  field: "authSession.issuer",
+  message: "Issued wallet session issuer metadata is missing or invalid.",
+});
+
+const issuedSessionIdentityDiagnostic = (
+  field: string,
+): AuthEnforcementDiagnostic => ({
+  code: "AUTH_SESSION_INVALID",
+  field,
+  message: "Issued wallet session identity does not match the caller auth headers.",
+});
+
+const issuedSessionToLocalAuthSession = (
+  parsedSession: LocalAuthSession,
+  issuedRecord: WalletSessionRecord,
+): LocalAuthSession | AuthEnforcementDiagnostic => {
+  if (!issuedRecord.issuer?.valid) {
+    return issuerInvalidDiagnostic();
+  }
+
+  if (normalizeAuthAddress(issuedRecord.walletAddress) !== normalizeAuthAddress(parsedSession.address)) {
+    return issuedSessionIdentityDiagnostic(localAuthHeaderNames.walletAddress);
+  }
+
+  if (issuedRecord.accountType !== parsedSession.accountType) {
+    return issuedSessionIdentityDiagnostic(localAuthHeaderNames.accountType);
+  }
+
+  if (issuedRecord.walletSource !== parsedSession.walletSource) {
+    return issuedSessionIdentityDiagnostic(localAuthHeaderNames.walletSource);
+  }
+
+  return {
+    ...parsedSession,
+    accountType: issuedRecord.accountType,
+    address: issuedRecord.walletAddress,
+    capabilities: [...issuedRecord.capabilities],
+    proofStatus: proofStatusFromIssuedRecord(issuedRecord),
+    walletSource: issuedRecord.walletSource,
+  };
+};
+
 export const parseLocalAuthSessionHeaders = (
   headers?: AuthRuntimeHeaders,
 ): ParseLocalAuthSessionResult => {
@@ -557,63 +632,75 @@ const decision = (
   safeDetails: sanitizeAuthEnforcementDetails(input.safeDetails ?? {}).safeDetails,
 });
 
-export const evaluateAuthEnforcement = ({
-  headers,
+const forbiddenDecision = ({
+  code,
+  extraDetails = {},
+  field,
+  message,
+  matchedRoles,
+  requiredRoles,
+  routeAuth,
+  routeId,
+  session,
+}: {
+  code: AuthEnforcementDiagnosticCode;
+  extraDetails?: Record<string, unknown>;
+  field: string;
+  matchedRoles: AuthSessionRoleId[];
+  message: string;
+  requiredRoles: AuthSessionRoleId[];
+  routeAuth: ProtectedRouteAuthMapEntry;
+  routeId: string;
+  session: LocalAuthSession;
+}) => decision({
+  diagnostic: { code, field, message },
+  httpStatus: 403,
+  matchedRoles,
+  requiredRoles,
+  routeAuth,
+  routeId,
+  safeDetails: {
+    matchedRoles,
+    requiredRoles,
+    routeId,
+    ...extraDetails,
+  },
+  session,
+  status: "forbidden",
+});
+
+const evaluateResolvedAuthSession = ({
   ownerAddress,
   ownerSources,
+  routeAuth,
   routeId,
-}: EvaluateAuthEnforcementOptions): AuthEnforcementDecision => {
-  const routeAuth = getProtectedRouteAuth(routeId);
-  const routePolicy = routeAuth ? rbacOwnershipRoutePolicyByGroup[routeAuth.routeGroup] : undefined;
-
-  if (!routeAuth?.sessionRequired) {
-    return decision({
-      routeAuth,
-      routeId,
-      status: "not_required",
-    });
-  }
-
-  const parsedSession = parseLocalAuthSessionHeaders(headers);
+  routePolicy,
+  session,
+}: {
+  ownerAddress?: string;
+  ownerSources?: ProjectOwnershipSources;
+  routeAuth: ProtectedRouteAuthMapEntry;
+  routeId: string;
+  routePolicy?: RbacOwnershipRoutePolicy;
+  session: LocalAuthSession;
+}): AuthEnforcementDecision => {
   const requiredRoles = routeAuth.requiredRoles;
-
-  if (!parsedSession.ok) {
-    return decision({
-      diagnostic: parsedSession.diagnostic,
-      httpStatus: 401,
-      requiredRoles,
-      routeAuth,
-      routeId,
-      safeDetails: {
-        reason: parsedSession.reason,
-        routeId,
-      },
-      status: "unauthenticated",
-    });
-  }
-
-  const session = parsedSession.session;
   const matchedRoles = session.roleIds.filter((roleId) => requiredRoles.includes(roleId));
   const forbidden = (
     code: AuthEnforcementDiagnosticCode,
     field: string,
     message: string,
     extraDetails: Record<string, unknown> = {},
-  ) => decision({
-    diagnostic: { code, field, message },
-    httpStatus: 403,
+  ) => forbiddenDecision({
+    code,
+    extraDetails,
+    field,
     matchedRoles,
+    message,
     requiredRoles,
     routeAuth,
     routeId,
-    safeDetails: {
-      matchedRoles,
-      requiredRoles,
-      routeId,
-      ...extraDetails,
-    },
     session,
-    status: "forbidden",
   });
 
   if (routePolicy?.forbiddenCredentialBoundaries.includes(session.credentialBoundary)) {
@@ -641,6 +728,15 @@ export const evaluateAuthEnforcement = ({
     );
   }
 
+  if (routeAuth.proofRequired && session.capabilities && !session.capabilities.includes(ownerRouteRequiredCapability)) {
+    return forbidden(
+      "AUTH_FORBIDDEN",
+      "authSession.capabilities",
+      "Issued wallet session does not include the capability required for owner-protected routes.",
+      { requiredCapability: ownerRouteRequiredCapability },
+    );
+  }
+
   if (requiredRoles.length > 0 && matchedRoles.length === 0) {
     return forbidden(
       "AUTH_ROLE_FORBIDDEN",
@@ -662,7 +758,7 @@ export const evaluateAuthEnforcement = ({
       );
     }
 
-    if (trimmedOwnerAddress && trimmedOwnerAddress !== session.address) {
+    if (trimmedOwnerAddress && normalizeAuthAddress(trimmedOwnerAddress) !== normalizeAuthAddress(session.address)) {
       return forbidden(
         "AUTH_OWNER_MISMATCH",
         "ownerAddress",
@@ -703,5 +799,134 @@ export const evaluateAuthEnforcement = ({
     },
     session,
     status: "allowed",
+  });
+};
+
+export const evaluateAuthEnforcement = ({
+  headers,
+  ownerAddress,
+  ownerSources,
+  routeId,
+}: EvaluateAuthEnforcementOptions): AuthEnforcementDecision => {
+  const routeAuth = getProtectedRouteAuth(routeId);
+  const routePolicy = routeAuth ? rbacOwnershipRoutePolicyByGroup[routeAuth.routeGroup] : undefined;
+
+  if (!routeAuth?.sessionRequired) {
+    return decision({
+      routeAuth,
+      routeId,
+      status: "not_required",
+    });
+  }
+
+  const parsedSession = parseLocalAuthSessionHeaders(headers);
+  const requiredRoles = routeAuth.requiredRoles;
+
+  if (!parsedSession.ok) {
+    return decision({
+      diagnostic: parsedSession.diagnostic,
+      httpStatus: 401,
+      requiredRoles,
+      routeAuth,
+      routeId,
+      safeDetails: {
+        reason: parsedSession.reason,
+        routeId,
+      },
+      status: "unauthenticated",
+    });
+  }
+
+  return evaluateResolvedAuthSession({
+    ownerAddress,
+    ownerSources,
+    routeAuth,
+    routeId,
+    routePolicy,
+    session: parsedSession.session,
+  });
+};
+
+export const evaluateIssuedAuthEnforcement = async ({
+  headers,
+  issuedSessionLookup,
+  ownerAddress,
+  ownerSources,
+  routeId,
+  traceId,
+}: EvaluateIssuedAuthEnforcementOptions): Promise<AuthEnforcementDecision> => {
+  const routeAuth = getProtectedRouteAuth(routeId);
+  const routePolicy = routeAuth ? rbacOwnershipRoutePolicyByGroup[routeAuth.routeGroup] : undefined;
+
+  if (!routeAuth?.sessionRequired) {
+    return decision({
+      routeAuth,
+      routeId,
+      status: "not_required",
+    });
+  }
+
+  const parsedSession = parseLocalAuthSessionHeaders(headers);
+  const requiredRoles = routeAuth.requiredRoles;
+
+  if (!parsedSession.ok) {
+    return decision({
+      diagnostic: parsedSession.diagnostic,
+      httpStatus: 401,
+      requiredRoles,
+      routeAuth,
+      routeId,
+      safeDetails: {
+        reason: parsedSession.reason,
+        routeId,
+      },
+      status: "unauthenticated",
+    });
+  }
+
+  const issuedRecord = await issuedSessionLookup(parsedSession.session.sessionId, { traceId });
+
+  if (!issuedRecord) {
+    return decision({
+      diagnostic: invalidSessionDiagnostic(
+        localAuthHeaderNames.sessionId,
+        "Issued wallet session was not found.",
+      ),
+      httpStatus: 401,
+      requiredRoles,
+      routeAuth,
+      routeId,
+      safeDetails: {
+        reason: "unknown_issued_session",
+        routeId,
+      },
+      status: "unauthenticated",
+    });
+  }
+
+  const issuedSession = issuedSessionToLocalAuthSession(parsedSession.session, issuedRecord);
+
+  if (isDiagnostic(issuedSession)) {
+    return decision({
+      diagnostic: issuedSession,
+      httpStatus: 401,
+      requiredRoles,
+      routeAuth,
+      routeId,
+      safeDetails: {
+        reason: "issued_session_identity_mismatch",
+        routeId,
+      },
+      status: "unauthenticated",
+    });
+  }
+
+  return evaluateResolvedAuthSession({
+    ownerAddress,
+    ownerSources,
+    routeAuth,
+    routeId,
+    routePolicy,
+    session: issuedSession,
   });
 };

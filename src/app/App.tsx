@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ProjectOwnerCampaignApiBridge } from "../api/projectOwnerCampaignApiBridge";
 import {
   createWalletSessionApiLoadingState,
   createWalletSessionApiSeededFallbackState,
@@ -27,6 +28,7 @@ import {
   ProjectConsole,
   type ProjectWorkspaceKey,
 } from "../components/panels/project-console/ProjectConsole";
+import { createOwnerSessionKey } from "../components/panels/project-console/ownerCampaignWorkflow";
 import { UserAppPanel } from "../components/panels/user-app/UserAppPanel";
 import { WalletConnectModal } from "../components/wallet/WalletConnectModal";
 
@@ -209,6 +211,17 @@ const headerWalletPreviewRequest: WalletSessionPreviewRequest = {
   fixtureId: "sess-aa-001",
 };
 
+const isIssuedOwnerSessionReady = (
+  state: WalletSessionApiBridgeState,
+  session: NormalizedWalletSession | null,
+) => Boolean(
+  session
+  && state.source === "api_runtime"
+  && state.status === "connected"
+  && state.repository?.sessionId === session.sessionId
+  && session.issuer?.valid === true,
+);
+
 const readBrowserPathname = () => {
   if (typeof window === "undefined") {
     return "/";
@@ -249,7 +262,11 @@ const applyCampaignMetadata = (fields: readonly CampaignMetadataField[]) => {
   }
 };
 
-export const App = () => {
+export interface AppProps {
+  ownerCampaignBridge?: ProjectOwnerCampaignApiBridge;
+}
+
+export const App = ({ ownerCampaignBridge }: AppProps = {}) => {
   const routeContext = useMemo(
     () => parseCampaignRoutePath(readBrowserPathname()),
     [],
@@ -273,6 +290,18 @@ export const App = () => {
     ));
   const [headerWalletSession, setHeaderWalletSession] =
     useState<NormalizedWalletSession | null>(null);
+  const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
+  const [activeCampaignSessionKey, setActiveCampaignSessionKey] = useState<string | null>(null);
+  const ownerSessionReady = isIssuedOwnerSessionReady(
+    headerWalletSessionBridgeState,
+    headerWalletSession,
+  );
+  const ownerSessionKey = createOwnerSessionKey(
+    ownerSessionReady ? headerWalletSession : null,
+  );
+  const controlledActiveCampaignId = activeCampaignSessionKey === ownerSessionKey
+    ? activeCampaignId
+    : null;
   const copy = surfaceCopy[locale];
   const contentLocale: BusinessContentLocale = locale === "zh-CN" ? "zh-CN" : "en-US";
   const walletModalLocale: BusinessContentLocale =
@@ -285,6 +314,22 @@ export const App = () => {
   useEffect(() => {
     applyCampaignMetadata(shareCard.metadataFields);
   }, [shareCard]);
+
+  useEffect(() => {
+    setActiveCampaignId(null);
+    setActiveCampaignSessionKey(ownerSessionKey);
+  }, [ownerSessionKey]);
+
+  const changeActiveCampaignId = useCallback((campaignId: string | null) => {
+    if (!ownerSessionKey || !campaignId) {
+      setActiveCampaignId(null);
+      setActiveCampaignSessionKey(ownerSessionKey);
+      return;
+    }
+
+    setActiveCampaignSessionKey(ownerSessionKey);
+    setActiveCampaignId(campaignId);
+  }, [ownerSessionKey]);
 
   const surfaces = [
     { key: "project" as const, label: copy.project },
@@ -365,9 +410,15 @@ export const App = () => {
       >
         {activeSurface === "project" ? (
           <ProjectConsole
+            activeCampaignId={controlledActiveCampaignId}
             activeWorkspace={activeProjectWorkspace}
             locale={contentLocale}
+            onActiveCampaignIdChange={changeActiveCampaignId}
+            onOwnerReconnect={() => setHeaderWalletModalOpen(true)}
             onWorkspaceChange={selectProjectWorkspace}
+            ownerCampaignBridge={ownerCampaignBridge}
+            ownerSession={headerWalletSession}
+            ownerSessionReady={ownerSessionReady}
           />
         ) : activeSurface === "user" ? (
           <UserAppPanel locale={contentLocale} shareLocale={locale} walletModalLocale={walletModalLocale} />

@@ -3,6 +3,7 @@ import {
   createApiSkillContractSurface,
 } from "../domain/apiSkillContracts";
 import {
+  generateCampaignTasksPreview,
   type AddTaskRequest,
   type CheckEligibilityRequest,
   type CreateCampaignRequest,
@@ -25,6 +26,7 @@ import {
   type LocalCampaignDraft,
   type LocalServiceError,
   type LocalServiceResult,
+  type LocalTaskDraft,
   type SummarizeCampaignRequest,
   type VerifyTaskRequest,
   type VerifyTaskResponse,
@@ -79,8 +81,11 @@ import type {
   ExportPreviewMode,
   LocalExportFileHandoff,
 } from "../domain/types";
-import type { ApiRuntimeRouteId } from "./routes";
-import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
+import {
+  apiRuntimeRoutes,
+  createApiRuntimeContractCoverage,
+  type ApiRuntimeRouteId,
+} from "./routes";
 import {
   createBackendDatabaseAdapterRuntimeSummary,
   createBackendPersistenceRuntimeSummary,
@@ -93,22 +98,20 @@ import {
 import { createProductionBackendReadinessSummary } from "./productionBackendReadiness";
 import {
   CampaignDbRepositoryError,
+  type CampaignDbAddTaskDraftInput,
+  type CampaignDbCreateDraftInput,
+  type CampaignDbDraft,
+  type CampaignDbEligibilityProjection,
+  type CampaignDbExportArtifact,
+  type CampaignDbExportProjection,
+  type CampaignDbExportReadinessProjection,
+  type CampaignDbListFilter,
+  type CampaignDbReadProjection,
+  type CampaignDbTaskCompletion,
+  type CampaignDbTaskEvidenceRecord,
+  type CampaignDbTaskDraft,
+  type CampaignDbTaskVerificationProjection,
   type CampaignDbI18nDraftProjection,
-} from "./campaignDbRepository";
-import type {
-  CampaignDbAddTaskDraftInput,
-  CampaignDbCreateDraftInput,
-  CampaignDbDraft,
-  CampaignDbEligibilityProjection,
-  CampaignDbExportArtifact,
-  CampaignDbExportProjection,
-  CampaignDbExportReadinessProjection,
-  CampaignDbListFilter,
-  CampaignDbReadProjection,
-  CampaignDbTaskCompletion,
-  CampaignDbTaskEvidenceRecord,
-  CampaignDbTaskDraft,
-  CampaignDbTaskVerificationProjection,
 } from "./campaignDbRepository";
 import { createBackendTopologyReport } from "./topology";
 import { createRuntimeSafety } from "./envelope";
@@ -292,12 +295,15 @@ const campaignDbI18nDiagnosticToRuntimeError = (
   );
 };
 
-const createTaskDraftResponse = (request: AddTaskRequest): LocalServiceResult<AddTaskRequest & { id: string }> => ({
+const createTaskDraftResponse = (
+  request: AddTaskRequest,
+  id = `local-task-${request.templateCode}`,
+): Extract<LocalServiceResult<LocalTaskDraft>, { ok: true }> => ({
   ok: true,
   boundary: campaignDbBoundary,
   payload: {
     ...request,
-    id: `local-task-${request.templateCode}`,
+    id,
   },
 });
 
@@ -369,6 +375,51 @@ const campaignDbListFilter = (context: ApiRuntimeHandlerContext): CampaignDbList
   ownerAddress: context.query.ownerAddress,
   projectId: context.query.projectId,
   status: context.query.status,
+});
+
+const editableOwnerCampaignStatuses = new Set(["draft", "ai_draft", "human_review", "scheduled", "paused"]);
+
+const ownerCampaignListStatus = (value: string | undefined) => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!editableOwnerCampaignStatuses.has(value)) {
+    throw invalidRequest("status", "Owner campaign recovery status must be an editable lifecycle value.");
+  }
+
+  return value;
+};
+
+const ownerCampaignListLimit = (value: string | undefined) => {
+  if (value === undefined) {
+    return 100;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw invalidRequest("limit", "Owner campaign recovery limit must be an integer from 1 to 100.");
+  }
+
+  return Math.min(parsed, 100);
+};
+
+const issuedOwnerAddress = (context: ApiRuntimeHandlerContext) => {
+  const address = context.auth?.session?.address;
+
+  if (!address) {
+    throw invalidRequest("authSession", "Issued owner session is required for owner campaign recovery.");
+  }
+
+  return address;
+};
+
+const ownerCampaignDbListFilter = (context: ApiRuntimeHandlerContext): CampaignDbListFilter => ({
+  limit: ownerCampaignListLimit(optionalString(context.query.limit)),
+  ownerAddress: issuedOwnerAddress(context),
+  projectId: requiredRouteParam(context.params, "projectId"),
+  status: ownerCampaignListStatus(optionalString(context.query.status)),
 });
 
 const localized = (enUS: string, zhCN = enUS, zhTW = enUS): LocalizedText => ({
@@ -1130,6 +1181,28 @@ const mergeCampaignDbDraftsIntoDiscovery = (
     campaignDb: createCampaignDbSummary(drafts),
     details,
     items,
+    summary: createCampaignDiscoverySummary(items),
+  };
+};
+
+const campaignDbDraftsToOwnerDiscovery = (
+  drafts: readonly CampaignDbReadProjection[],
+): CampaignDiscoveryReadModel & {
+  campaignDb: ReturnType<typeof createCampaignDbSummary>;
+} => {
+  const details = drafts.map(campaignDbDraftToDiscoveryDetail);
+  const items = details.map((detail) => detail.item);
+
+  return {
+    boundary: campaignDbBoundary,
+    campaignDb: createCampaignDbSummary(drafts),
+    campaignId: "campaign-db-owner-recovery",
+    details,
+    items,
+    nextAction: localized(
+      "Continue editing repository-backed campaign drafts.",
+      "继续编辑 repository-backed 活动草稿。",
+    ),
     summary: createCampaignDiscoverySummary(items),
   };
 };
@@ -2126,6 +2199,16 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       payload: mergeCampaignDbDraftsIntoDiscovery(response.payload, drafts),
     };
   },
+  "campaigns.owner.list": async (context) => {
+    const drafts = await context.campaignDbRepository.list(ownerCampaignDbListFilter(context), {
+      traceId: context.traceId,
+    });
+
+    return {
+      boundary: campaignDbBoundary,
+      payload: campaignDbDraftsToOwnerDiscovery(drafts),
+    };
+  },
   "campaigns.create": async (context) => {
     const request = createCampaignRequest(context);
     const localResult = context.service.createCampaign(request);
@@ -2247,14 +2330,14 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       traceId: context.traceId,
     });
     const localResult = context.service.addTask(request);
-    const result = campaignDbDraft && !localResult.ok && localResult.error.code === "CAMPAIGN_NOT_FOUND"
-      ? createTaskDraftResponse(request)
-      : localResult;
     const campaignDbTask = campaignDbDraft
       ? await context.campaignDbRepository.addTaskDraft(campaignDbTaskDraftInput(request), {
         traceId: context.traceId,
       })
       : undefined;
+    const result: LocalServiceResult<LocalTaskDraft> = campaignDbTask
+      ? createTaskDraftResponse(request, campaignDbTask.id)
+      : localResult;
     const response = await persistLocalResult(
       result,
       context,
@@ -2280,8 +2363,30 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       }
       : response;
   },
-  "campaigns.tasks.generate": (context) =>
-    unwrapLocalResult(context.service.generateCampaignTasks(generateCampaignTasksRequest(context)), context),
+  "campaigns.tasks.generate": async (context) => {
+    const request = generateCampaignTasksRequest(context);
+    const localResult = context.service.generateCampaignTasks(request);
+
+    if (localResult.ok || localResult.error.code !== "CAMPAIGN_NOT_FOUND") {
+      return unwrapLocalResult(localResult, context);
+    }
+
+    const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
+      traceId: context.traceId,
+    });
+
+    if (!campaignDbDraft) {
+      return unwrapLocalResult(localResult, context);
+    }
+
+    return unwrapLocalResult(
+      generateCampaignTasksPreview({
+        ...request,
+        campaignId: campaignDbDraft.id,
+      }),
+      context,
+    );
+  },
   "tasks.verify": async (context) => {
     const request = verifyTaskRequest(context);
     const localResult = context.service.verifyTask(request);
