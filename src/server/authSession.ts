@@ -166,6 +166,8 @@ const adminCredentialBoundaryFromIssuedRecord = (
 ): AuthSessionCredentialBoundary =>
   issuedRecord.walletSource === "AGENT_SKILL"
   || issuedRecord.capabilities.includes("INTERNAL_AUTOMATION")
+  || issuedRecord.proof?.proofType === "agent_context"
+  || issuedRecord.proof?.trustLevel === "internal_only"
     ? "internal_agent_credential"
     : "ordinary_user_wallet";
 
@@ -190,20 +192,29 @@ export const resolveTrustedAdminOperatorSession = (
     return trustedAdminSessionFailure("record-invalid");
   }
 
-  if (!issuedRecord.issuer?.valid) {
-    return trustedAdminSessionFailure("issuer-invalid");
-  }
-
   const credentialBoundary = adminCredentialBoundaryFromIssuedRecord(issuedRecord);
 
   if (credentialBoundary === "internal_agent_credential") {
     return trustedAdminSessionFailure("internal-credential");
   }
 
+  if (
+    !issuedRecord.issuer?.valid
+    || issuedRecord.issuer.issuerMode !== "local_opaque"
+  ) {
+    return trustedAdminSessionFailure("issuer-invalid");
+  }
+
   const proofStatus = adminProofStatusFromIssuedRecord(issuedRecord);
 
   if (
-    !issuedRecord.walletTypeVerified
+    !issuedRecord.proof
+    || issuedRecord.proof.proofType !== "wallet_signature"
+    || issuedRecord.proof.trustLevel !== "verified_local"
+    || issuedRecord.proof.status !== "verified"
+    || issuedRecord.signatureStatus !== "signed"
+    || issuedRecord.verificationStatus !== "verified"
+    || !issuedRecord.walletTypeVerified
     || !issuedRecord.capabilities.includes("SIGN_MESSAGE")
     || (proofStatus !== "local_seeded" && proofStatus !== "verified")
   ) {

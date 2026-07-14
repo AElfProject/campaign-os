@@ -18,7 +18,10 @@ import type {
   AdminOperatorMembershipRegistry,
   AuthorizedAdminOperatorMembershipContext,
 } from "./adminOperatorMembership";
-import type { CampaignOsAdminOperatorRoleId } from "./config";
+import {
+  isCanonicalCampaignId,
+  type CampaignOsAdminOperatorRoleId,
+} from "./config";
 import type {
   WalletSessionRecord,
   WalletSessionRepository,
@@ -248,6 +251,8 @@ export const adminOperatorRoutePolicies = Object.freeze([
 const adminOperatorRoutePolicyById = new Map<string, Readonly<AdminOperatorRoutePolicy>>(
   adminOperatorRoutePolicies.map((policy) => [policy.routeId, policy]),
 );
+
+const isAdminOperatorRouteFamily = (routeId: string) => routeId.startsWith("admin.");
 
 export const getAdminOperatorRoutePolicy = (
   routeId: string,
@@ -1036,7 +1041,7 @@ export const evaluateAuthEnforcement = ({
   ownerSources,
   routeId,
 }: EvaluateAuthEnforcementOptions): AuthEnforcementDecision => {
-  if (getAdminOperatorRoutePolicy(routeId)) {
+  if (isAdminOperatorRouteFamily(routeId)) {
     return decision({
       diagnostic: {
         code: "AUTH_FORBIDDEN",
@@ -1106,7 +1111,7 @@ export const evaluateIssuedAuthEnforcement = async ({
   const routePolicy = routeAuth ? rbacOwnershipRoutePolicyByGroup[routeAuth.routeGroup] : undefined;
   const complete = (authDecision: AuthEnforcementDecision) => withTraceId(authDecision, traceId);
 
-  if (getAdminOperatorRoutePolicy(routeId)) {
+  if (isAdminOperatorRouteFamily(routeId)) {
     return decision({
       diagnostic: {
         code: "AUTH_FORBIDDEN",
@@ -1243,16 +1248,16 @@ export const evaluateIssuedAuthEnforcement = async ({
 
 const ADMIN_SESSION_ID_MAX_LENGTH = 160;
 const ADMIN_ROLE_HEADER_MAX_LENGTH = 64;
-const ADMIN_CAMPAIGN_ID_MAX_LENGTH = 160;
 
 const safeAdminTraceId = (traceId: string | undefined) => {
   const candidate = traceId?.trim();
 
-  return candidate
+  const safeCandidate = candidate
     && candidate.length <= 128
     && /^[A-Za-z0-9._:-]+$/.test(candidate)
-    ? candidate
-    : `trace-${randomUUID()}`;
+    && sanitizeAuthEnforcementDetails({ traceId: candidate }).safeDetails.traceId === candidate;
+
+  return safeCandidate ? candidate : `trace-${randomUUID()}`;
 };
 
 type AdminHeaderValue =
@@ -1297,10 +1302,6 @@ const getSingleAdminHeader = (
 
 const isSafeAdminSessionId = (value: string) =>
   value.length <= ADMIN_SESSION_ID_MAX_LENGTH && /^[A-Za-z0-9._:-]+$/.test(value);
-
-const isSafeAdminCampaignId = (value: string) =>
-  value.length <= ADMIN_CAMPAIGN_ID_MAX_LENGTH
-  && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
 
 const adminDecision = ({
   code,
@@ -1417,7 +1418,7 @@ export const evaluateAdminOperatorEnforcement = async ({
 
   if (
     policy.campaignScope === "campaign_path"
-    && (!campaignId || !isSafeAdminCampaignId(campaignId.trim()))
+    && (!campaignId || !isCanonicalCampaignId(campaignId.trim()))
   ) {
     return deny("AUTH_FORBIDDEN", "campaign_scope_forbidden");
   }

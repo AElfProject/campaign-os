@@ -644,6 +644,38 @@ describe("auth session boundary", () => {
   it.each([
     ["invalid issuer", { issuer: { ...issuedAdminWalletSession().issuer!, valid: false } }, "issuer-invalid"],
     ["missing issuer", { issuer: undefined }, "issuer-invalid"],
+    [
+      "contradictory issuer",
+      {
+        issuer: {
+          ...issuedAdminWalletSession().issuer!,
+          issuerMode: "production_blocked",
+          valid: true,
+        },
+      },
+      "issuer-invalid",
+    ],
+    ["missing proof", { proof: undefined }, "proof-invalid"],
+    [
+      "contradictory proof type",
+      {
+        proof: {
+          ...issuedAdminWalletSession().proof!,
+          proofType: "address_only",
+        },
+      },
+      "proof-invalid",
+    ],
+    [
+      "contradictory proof trust",
+      {
+        proof: {
+          ...issuedAdminWalletSession().proof!,
+          trustLevel: "untrusted",
+        },
+      },
+      "proof-invalid",
+    ],
     ["stale proof", { proof: { ...issuedAdminWalletSession().proof!, status: "stale" } }, "proof-invalid"],
     ["unverified proof", { proof: { ...issuedAdminWalletSession().proof!, status: "signature_unverified" } }, "proof-invalid"],
     ["missing capability", { capabilities: ["CONTRACT_VIEW"] }, "proof-invalid"],
@@ -655,12 +687,34 @@ describe("auth session boundary", () => {
     });
   });
 
-  it("separates internal automation credentials from ordinary Admin operators", () => {
-    const result = resolveTrustedAdminOperatorSession(issuedAdminWalletSession({
-      capabilities: ["INTERNAL_AUTOMATION"],
-      walletSource: "AGENT_SKILL",
-    }));
-
-    expect(result).toEqual({ ok: false, reason: "internal-credential" });
-  });
+  it.each([
+    ["wallet source", { walletSource: "AGENT_SKILL" }],
+    ["capability", { capabilities: ["SIGN_MESSAGE", "INTERNAL_AUTOMATION"] }],
+    [
+      "proof type",
+      {
+        proof: {
+          ...issuedAdminWalletSession().proof!,
+          proofType: "agent_context",
+        },
+      },
+    ],
+    [
+      "proof trust",
+      {
+        proof: {
+          ...issuedAdminWalletSession().proof!,
+          trustLevel: "internal_only",
+        },
+      },
+    ],
+  ] satisfies readonly [string, Partial<WalletSessionRecord>][]) (
+    "separates the internal %s marker from ordinary Admin operators",
+    (_case, overrides) => {
+      expect(resolveTrustedAdminOperatorSession(issuedAdminWalletSession(overrides))).toEqual({
+        ok: false,
+        reason: "internal-credential",
+      });
+    },
+  );
 });

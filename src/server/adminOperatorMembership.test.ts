@@ -3,6 +3,7 @@ import {
   createAdminOperatorMembershipRegistry,
   type AdminOperatorMembershipRegistryConfig,
 } from "./adminOperatorMembership";
+import { CAMPAIGN_OS_CAMPAIGN_ID_MAX_LENGTH } from "./config";
 
 const membership = (
   overrides: Partial<AdminOperatorMembershipRegistryConfig["memberships"][number]> = {},
@@ -78,6 +79,37 @@ describe("Admin operator membership registry", () => {
       authorized: true,
       context: { campaignIds: ["campaign-admin-a"] },
     });
+  });
+
+  it("enforces the canonical Campaign ID boundary for scoped and global membership", () => {
+    const atLimit = "c".repeat(CAMPAIGN_OS_CAMPAIGN_ID_MAX_LENGTH);
+    const overLimit = `${atLimit}x`;
+    const request = {
+      requestedRole: "review_operator",
+      subjectAddress: "2YVwAdminOperatorCaseSensitive",
+    };
+
+    expect(registry([membership({ campaignIds: [atLimit] })]).lookup({
+      ...request,
+      campaignId: atLimit,
+    })).toMatchObject({ authorized: true });
+
+    for (const current of [
+      registry([membership({ campaignIds: [atLimit] })]),
+      registry([membership({ campaignIds: null })]),
+    ]) {
+      expect(current.lookup({ ...request, campaignId: overLimit })).toEqual({
+        authorized: false,
+        reason: "out-of-scope",
+      });
+    }
+
+    expect(() => registry([membership({ campaignIds: [overLimit] })])).toThrowError(
+      expect.objectContaining({
+        code: "ADMIN_MEMBERSHIP_REGISTRY_INVALID",
+        field: "memberships",
+      }),
+    );
   });
 
   it("denies revoked entries and applies a new registry revision immediately", () => {

@@ -287,7 +287,7 @@ const normalizeAdminMembership = (
   const unknownField = Object.keys(value).find((field) => !adminMembershipFields.has(field));
 
   if (unknownField) {
-    throw adminConfigError("ADMIN_MEMBERSHIP_UNKNOWN_FIELD", `memberships[].${unknownField}`);
+    throw adminConfigError("ADMIN_MEMBERSHIP_UNKNOWN_FIELD", "memberships[].unknownField");
   }
 
   requireOwnField(value, "active");
@@ -476,7 +476,7 @@ const participantPreviewConfigError = (
   CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS_ENV,
 );
 
-const isCanonicalCampaignId = (campaignId: string) =>
+export const isCanonicalCampaignId = (campaignId: string) =>
   campaignId.length <= CAMPAIGN_OS_CAMPAIGN_ID_MAX_LENGTH
   && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(campaignId);
 

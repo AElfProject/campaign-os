@@ -1,6 +1,7 @@
-import type {
-  CampaignOsAdminOperatorMembershipConfig,
-  CampaignOsAdminOperatorRoleId,
+import {
+  isCanonicalCampaignId,
+  type CampaignOsAdminOperatorMembershipConfig,
+  type CampaignOsAdminOperatorRoleId,
 } from "./config";
 
 export type AdminOperatorMembershipLookupReason =
@@ -80,7 +81,12 @@ const copyMembership = (
 ): IndexedMembership => {
   const campaignIds = membership.campaignIds === null
     ? null
-    : Object.freeze([...membership.campaignIds]);
+    : Object.freeze(membership.campaignIds.map((campaignId) => campaignId.trim()));
+
+  if (campaignIds?.some((campaignId) => !isCanonicalCampaignId(campaignId))) {
+    throw new AdminOperatorMembershipRegistryError();
+  }
+
   const roleIds = Object.freeze([...membership.roleIds]);
 
   return Object.freeze({
@@ -142,6 +148,15 @@ export const createAdminOperatorMembershipRegistry = (
         return denied("disabled");
       }
 
+      const normalizedCampaignId = campaignId?.trim();
+
+      if (
+        campaignId !== undefined
+        && (!normalizedCampaignId || !isCanonicalCampaignId(normalizedCampaignId))
+      ) {
+        return denied("out-of-scope");
+      }
+
       const membership = bySubject.get(subjectAddress.trim());
 
       if (!membership) {
@@ -157,9 +172,9 @@ export const createAdminOperatorMembershipRegistry = (
       }
 
       if (
-        campaignId !== undefined
+        normalizedCampaignId !== undefined
         && membership.campaignIdSet !== null
-        && !membership.campaignIdSet.has(campaignId.trim())
+        && !membership.campaignIdSet.has(normalizedCampaignId)
       ) {
         return denied("out-of-scope");
       }

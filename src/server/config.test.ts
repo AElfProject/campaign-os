@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CAMPAIGN_OS_CAMPAIGN_ID_MAX_LENGTH,
   CAMPAIGN_OS_ADMIN_OPERATOR_MAX_CAMPAIGN_IDS_PER_MEMBERSHIP,
   CAMPAIGN_OS_ADMIN_OPERATOR_MAX_MEMBERSHIPS,
   CAMPAIGN_OS_ADMIN_OPERATOR_MAX_ROLES_PER_MEMBERSHIP,
@@ -1063,7 +1064,7 @@ describe("Admin review operator config", () => {
     ["top-level null", "null", "ADMIN_MEMBERSHIP_SHAPE_INVALID", membershipsKey],
     ["entry primitive", ["operator"], "ADMIN_MEMBERSHIP_SHAPE_INVALID", "memberships[]"],
     ["entry null", [null], "ADMIN_MEMBERSHIP_SHAPE_INVALID", "memberships[]"],
-    ["unknown field", [membership({ token: "raw-token" })], "ADMIN_MEMBERSHIP_UNKNOWN_FIELD", "memberships[].token"],
+    ["unknown field", [membership({ token: "raw-token" })], "ADMIN_MEMBERSHIP_UNKNOWN_FIELD", "memberships[].unknownField"],
     ["missing active", [{ campaignIds: [], roleIds: ["review_operator"], subjectAddress }], "ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].active"],
     ["missing campaigns", [{ active: true, roleIds: ["review_operator"], subjectAddress }], "ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].campaignIds"],
     ["missing roles", [{ active: true, campaignIds: [], subjectAddress }], "ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].roleIds"],
@@ -1082,6 +1083,32 @@ describe("Admin review operator config", () => {
 
     expect(thrown).toBeInstanceOf(CampaignOsAdminReviewConfigError);
     expect(thrown).toMatchObject({ code, field });
+  });
+
+  it.each([
+    ["postgres://runtime:password@db.internal/campaign?token=raw-token", "raw-token"],
+    ["authorizationBearerSecret", "authorizationbearersecret"],
+    ["SELECT * FROM operator_secrets", "operator_secrets"],
+    ["Error at /Users/private/admin.ts:42", "/users/private"],
+    ["/var/private/operator.json", "/var/private"],
+    [`subjectAddress:${subjectAddress}`, subjectAddress.toLowerCase()],
+  ])("does not echo attacker-controlled unknown field %j", (unknownField, forbiddenFragment) => {
+    const entry = membership();
+    entry[unknownField] = "attacker-controlled-value";
+    let thrown: unknown;
+
+    try {
+      resolve("true", [entry]);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(CampaignOsAdminReviewConfigError);
+    expect(thrown).toMatchObject({
+      code: "ADMIN_MEMBERSHIP_UNKNOWN_FIELD",
+      field: "memberships[].unknownField",
+    });
+    expect(JSON.stringify(thrown).toLowerCase()).not.toContain(forbiddenFragment);
   });
 
   it.each([
@@ -1163,6 +1190,19 @@ describe("Admin review operator config", () => {
       code: "ADMIN_MEMBERSHIP_FIELD_INVALID",
       field: "memberships[].campaignIds",
     }));
+  });
+
+  it("uses the canonical Campaign ID length at the exact boundary", () => {
+    const atLimit = "c".repeat(CAMPAIGN_OS_CAMPAIGN_ID_MAX_LENGTH);
+    const overLimit = `${atLimit}x`;
+
+    expect(resolve("true", [membership({ campaignIds: [atLimit] })])
+      .memberships[0]?.campaignIds).toEqual([atLimit]);
+    expect(() => resolve("true", [membership({ campaignIds: [overLimit] })]))
+      .toThrowError(expect.objectContaining({
+        code: "ADMIN_MEMBERSHIP_FIELD_INVALID",
+        field: "memberships[].campaignIds",
+      }));
   });
 
   it("accepts the Campaign scope count limit and rejects limit plus one", () => {
