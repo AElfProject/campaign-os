@@ -616,6 +616,7 @@ describe("Participant journey workflow", () => {
       expectedFeedLength: 0,
       expectedMode: "seeded_preview" as const,
       expectedSelectedId: null,
+      initialState: degradedAfterRefresh,
       name: "mode",
       transition: (state: ParticipantJourneyWorkflowState) =>
         participantJourneyWorkflowReducer(state, {
@@ -628,6 +629,7 @@ describe("Participant journey workflow", () => {
       expectedFeedLength: 0,
       expectedMode: "durable" as const,
       expectedSelectedId: null,
+      initialState: degradedAfterRefresh,
       name: "session",
       transition: (state: ParticipantJourneyWorkflowState) =>
         participantJourneyWorkflowReducer(state, {
@@ -640,6 +642,7 @@ describe("Participant journey workflow", () => {
       expectedFeedLength: 2,
       expectedMode: "durable" as const,
       expectedSelectedId: campaignBId,
+      initialState: readyState,
       name: "Campaign",
       transition: (state: ParticipantJourneyWorkflowState) =>
         participantJourneyWorkflowReducer(state, {
@@ -651,9 +654,10 @@ describe("Participant journey workflow", () => {
     expectedFeedLength,
     expectedMode,
     expectedSelectedId,
+    initialState,
     transition,
   }) => {
-    const before = degradedAfterRefresh();
+    const before = initialState();
     const after = transition(before);
 
     expect(after).not.toBe(before);
@@ -1059,7 +1063,7 @@ describe("Participant journey workflow", () => {
       type: "feed_failed",
     });
     expect(selectParticipantJourneyRetryOperation(blocked)).toBe("feed");
-    expect(canSelectParticipantCampaign(blocked, campaignAId)).toBe(true);
+    expect(canSelectParticipantCampaign(blocked, campaignAId)).toBe(false);
 
     const reconnectToken = nextParticipantJourneyRequestToken(blocked, "feed");
     const retrying = participantJourneyWorkflowReducer(blocked, {
@@ -1116,5 +1120,155 @@ describe("Participant journey workflow", () => {
       expect(selected.diagnostic).toBe(reconnectFailure);
       expect(selected.selectedCampaignId).toBeNull();
     }
+  });
+
+  it("keeps reconnect sticky against matching late journey success until the session context changes", () => {
+    const requested = stateWithJourneyRequest();
+    const reconnectFailure = failure({
+      code: "AUTH_SESSION_INVALID",
+      httpStatus: 401,
+      phase: "auth",
+      reconnectRequired: true,
+      retryable: false,
+      status: "blocked",
+      traceId: "trace-journey-reconnect-required",
+    });
+    const blocked = participantJourneyWorkflowReducer(requested.state, {
+      failure: reconnectFailure,
+      token: requested.token,
+      type: "journey_failed",
+    });
+
+    const lateSuccess = participantJourneyWorkflowReducer(blocked, {
+      result: journeySuccess(journey({ points: 100 })),
+      token: requested.token,
+      type: "journey_succeeded",
+    });
+    const retryToken = nextParticipantJourneyRequestToken(blocked, "journey");
+    const retry = participantJourneyWorkflowReducer(blocked, {
+      reason: "retry",
+      token: retryToken,
+      type: "journey_requested",
+    });
+
+    expect(lateSuccess).toBe(blocked);
+    expect(retry).toBe(blocked);
+    expect(blocked.reconnectRequired).toBe(true);
+    expect(blocked.journey).toBeNull();
+    expect(blocked.lastGoodJourney).toBeNull();
+
+    const sessionBKey = createParticipantSessionKey(session({ sessionId: "session-b" }));
+    const switched = participantJourneyWorkflowReducer(blocked, {
+      mode: "durable",
+      sessionKey: sessionBKey,
+      type: "context_changed",
+    });
+
+    expect(switched).toMatchObject({
+      commandTraceId: null,
+      diagnostic: null,
+      journey: null,
+      lastGoodJourney: null,
+      pendingOperation: null,
+      reconnectRequired: false,
+      selectedCampaignId: null,
+      sessionKey: sessionBKey,
+      status: "feed_ready",
+    });
+    expect(participantJourneyWorkflowReducer(switched, {
+      result: journeySuccess(journey({ points: 100 })),
+      token: requested.token,
+      type: "journey_succeeded",
+    })).toBe(switched);
+  });
+
+  it("keeps reconnect sticky against matching late verify success and new verify requests", () => {
+    const verifying = verifyingState();
+    const blocked = participantJourneyWorkflowReducer(verifying.state, {
+      failure: failure({
+        code: "AUTH_SESSION_INVALID",
+        httpStatus: 401,
+        phase: "auth",
+        reconnectRequired: true,
+        retryable: false,
+        status: "blocked",
+      }),
+      token: verifying.token,
+      type: "verify_failed",
+    });
+    const lateSuccess = participantJourneyWorkflowReducer(blocked, {
+      result: verifySuccess(),
+      token: verifying.token,
+      type: "verify_succeeded",
+    });
+    const nextVerifyToken = nextParticipantJourneyRequestToken(blocked, "verify");
+    const nextVerify = participantJourneyWorkflowReducer(blocked, {
+      taskId: taskAId,
+      token: nextVerifyToken,
+      type: "verify_requested",
+    });
+
+    expect(lateSuccess).toBe(blocked);
+    expect(nextVerify).toBe(blocked);
+    expect(blocked).toMatchObject({
+      commandTraceId: null,
+      journey: null,
+      lastGoodJourney: null,
+      pendingOperation: null,
+      reconnectRequired: true,
+      status: "blocked",
+    });
+  });
+
+  it("keeps reconnect sticky against late refresh and prior verify responses", () => {
+    const verifying = verifyingState();
+    const refreshPending = participantJourneyWorkflowReducer(verifying.state, {
+      result: verifySuccess(),
+      token: verifying.token,
+      type: "verify_succeeded",
+    });
+    const refreshToken = nextParticipantJourneyRequestToken(refreshPending, "journey");
+    const refreshing = participantJourneyWorkflowReducer(refreshPending, {
+      reason: "refresh",
+      token: refreshToken,
+      type: "journey_requested",
+    });
+    const blocked = participantJourneyWorkflowReducer(refreshing, {
+      failure: failure({
+        code: "AUTH_SESSION_INVALID",
+        httpStatus: 401,
+        phase: "auth",
+        reconnectRequired: true,
+        retryable: false,
+        status: "blocked",
+      }),
+      token: refreshToken,
+      type: "journey_failed",
+    });
+
+    expect(participantJourneyWorkflowReducer(blocked, {
+      result: journeySuccess(journey({ points: 100 })),
+      token: refreshToken,
+      type: "journey_succeeded",
+    })).toBe(blocked);
+    expect(participantJourneyWorkflowReducer(blocked, {
+      result: verifySuccess(),
+      token: verifying.token,
+      type: "verify_succeeded",
+    })).toBe(blocked);
+    expect(participantJourneyWorkflowReducer(blocked, {
+      reason: "refresh",
+      token: nextParticipantJourneyRequestToken(blocked, "journey"),
+      type: "journey_requested",
+    })).toBe(blocked);
+    expect(blocked).toMatchObject({
+      diagnostic: expect.objectContaining({ code: "AUTH_SESSION_INVALID" }),
+      journey: null,
+      lastGoodJourney: null,
+      pendingOperation: null,
+      reconnectRequired: true,
+      retryOperation: null,
+      status: "blocked",
+    });
   });
 });

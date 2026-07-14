@@ -1459,7 +1459,8 @@ describe("Durable Participant User App", () => {
     const selected = screen.getByRole("button", { name: campaignAlphaCommandName });
     expect(selected).toHaveAttribute("aria-current", "true");
     expect(selected).toHaveAttribute("aria-pressed", "true");
-    expect(selected).toBeEnabled();
+    expect(selected).toBeDisabled();
+    expect(selected).toHaveStyle({ background: "#dbeafe", borderColor: "#1c64f2" });
     expect(screen.getAllByText("Participant preview")).toHaveLength(2);
     expect(screen.getAllByText("draft").length).toBeGreaterThan(0);
     const journey = await screen.findByRole("region", { name: "Participant journey" });
@@ -1469,7 +1470,7 @@ describe("Durable Participant User App", () => {
     expect(within(journey).getByRole("button", { name: "Verify Task task-campaign-alpha" })).toBeEnabled();
   });
 
-  it("supports Enter Campaign selection and Space Task verification with stable focus", async () => {
+  it("uses native buttons and transfers focus when commands become disabled", async () => {
     const refresh = deferred<ParticipantJourneyResult>();
     const getJourney = vi
       .fn<ParticipantJourneyApiBridge["getJourney"]>()
@@ -1486,23 +1487,32 @@ describe("Durable Participant User App", () => {
 
     renderDurable(bridge);
     const campaign = await screen.findByRole("button", { name: campaignAlphaCommandName });
+    expect(campaign).toHaveAttribute("type", "button");
+    expect(campaign.onkeydown).toBeNull();
     campaign.focus();
     expect(campaign).toHaveFocus();
 
-    fireEvent.keyDown(campaign, { code: "Enter", key: "Enter" });
+    fireEvent.click(campaign);
 
     await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(1));
-    expect(campaign).toHaveFocus();
+    const journeyRegion = await screen.findByRole("region", { name: "Participant journey" });
+    const journeyHeading = within(journeyRegion).getByRole("heading", { name: "Campaign Alpha" });
+    expect(journeyHeading).toHaveFocus();
     const task = await screen.findByRole("button", { name: "Verify Task task-campaign-alpha" });
+    expect(task).toHaveAttribute("type", "button");
+    expect(task.onkeydown).toBeNull();
     task.focus();
     expect(task).toHaveFocus();
 
-    fireEvent.keyDown(task, { code: "Space", key: " " });
+    fireEvent.click(task);
 
     await waitFor(() => expect(bridge.verifyTask).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(2));
-    const refreshing = screen.getByRole("button", { name: "Refreshing journey" });
-    expect(refreshing).toHaveFocus();
+    const refreshing = screen.getByRole("button", {
+      name: "Refreshing journey (task-campaign-alpha)",
+    });
+    expect(refreshing).not.toHaveFocus();
+    expect(journeyHeading).toHaveFocus();
     expect(refreshing).toBeDisabled();
     expect(refreshing).toHaveAttribute("aria-busy", "true");
 
@@ -1544,6 +1554,47 @@ describe("Durable Participant User App", () => {
     })).toBeInTheDocument();
   });
 
+  it("gives completed Task commands unique canonical accessible names", async () => {
+    const completedJourney = durableJourney({
+      campaignId: "campaign-alpha",
+      completionId: "completion-campaign-alpha",
+      evidenceId: "evidence-campaign-alpha",
+      points: 25,
+      rank: 1,
+      status: "completed",
+    });
+    const secondTask = {
+      ...completedJourney.tasks[0],
+      completionId: "completion-campaign-alpha-second",
+      evidenceId: "evidence-campaign-alpha-second",
+      taskId: "task-campaign-alpha-second",
+    };
+    const bridge = durableBridge({
+      getJourney: vi.fn(async () => ({
+        httpStatus: 200,
+        journey: {
+          ...completedJourney,
+          campaign: { ...completedJourney.campaign, taskCount: 2 },
+          tasks: [...completedJourney.tasks, secondTask],
+        },
+        ok: true as const,
+        source: "durable" as const,
+        status: "success" as const,
+        traceId: "trace-completed-task-accessible-names",
+      })),
+    });
+
+    renderDurable(bridge);
+    fireEvent.click(await screen.findByRole("button", { name: campaignAlphaCommandName }));
+
+    expect(await screen.findByRole("button", {
+      name: "Task completed (task-campaign-alpha)",
+    })).toBeDisabled();
+    expect(screen.getByRole("button", {
+      name: "Task completed (task-campaign-alpha-second)",
+    })).toBeDisabled();
+  });
+
   it("updates business state only after one authoritative read-after-write refresh", async () => {
     const refresh = deferred<ParticipantJourneyResult>();
     const getJourney = vi
@@ -1567,7 +1618,9 @@ describe("Durable Participant User App", () => {
 
     await waitFor(() => expect(bridge.verifyTask).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(2));
-    expect(screen.getByRole("button", { name: "Refreshing journey" })).toBeDisabled();
+    expect(screen.getByRole("button", {
+      name: "Refreshing journey (task-campaign-alpha)",
+    })).toBeDisabled();
     expect(screen.getByRole("region", { name: "Participant journey" })).toHaveTextContent("Points0");
     expect(screen.getByText("Awarded points").nextElementSibling).toHaveTextContent("0");
     expect(screen.queryByText("completion-campaign-alpha")).not.toBeInTheDocument();
@@ -1689,6 +1742,8 @@ describe("Durable Participant User App", () => {
       expect(within(staleJourney).getByRole("button", {
         name: "Verify Task task-campaign-alpha",
       })).toBeDisabled();
+      expect(screen.getByRole("button", { name: campaignAlphaCommandName })).toBeDisabled();
+      expect(screen.getByRole("button", { name: campaignBetaCommandName })).toBeDisabled();
       expect(screen.getByText(code)).toBeInTheDocument();
       expect(screen.getAllByText("trace-verify-command").length).toBeGreaterThan(0);
 
@@ -1902,9 +1957,11 @@ describe("Durable Participant User App", () => {
     expect(await screen.findByText("AUTH_SESSION_INVALID")).toBeInTheDocument();
     const reconnectCommands = screen.getAllByRole("button", { name: "Reconnect wallet" });
     expect(reconnectCommands).toHaveLength(1);
+    expect(reconnectCommands[0]).toHaveAttribute("type", "button");
+    expect(reconnectCommands[0].onkeydown).toBeNull();
     reconnectCommands[0].focus();
     expect(reconnectCommands[0]).toHaveFocus();
-    fireEvent.keyDown(reconnectCommands[0], { code: "Space", key: " " });
+    fireEvent.click(reconnectCommands[0]);
     expect(reconnectCommands[0]).toHaveFocus();
     expect(onReconnect).toHaveBeenCalledTimes(1);
   });

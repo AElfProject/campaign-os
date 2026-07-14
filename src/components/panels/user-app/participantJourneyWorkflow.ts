@@ -445,7 +445,7 @@ export const canSelectParticipantCampaign = (
     && (state.pendingOperation === null || state.pendingOperation === "journey");
   const idleSelectionState = !hasActiveRequest(state)
     && state.pendingOperation === null
-    && ["feed_ready", "ready", "degraded", "blocked"].includes(state.status);
+    && ["feed_ready", "ready"].includes(state.status);
 
   return Boolean(state.sessionKey)
     && !state.reconnectRequired

@@ -4,7 +4,6 @@ import {
   useReducer,
   useRef,
   type CSSProperties,
-  type KeyboardEvent,
 } from "react";
 import type {
   ParticipantJourneyApiBridge,
@@ -243,12 +242,6 @@ const secondaryButtonStyle: CSSProperties = {
   color: "#071426",
 };
 
-const selectedButtonStyle: CSSProperties = {
-  ...buttonStyle,
-  background: "#071426",
-  borderColor: "#071426",
-};
-
 const disabledButtonStyle: CSSProperties = {
   ...secondaryButtonStyle,
   background: "#e2e8f0",
@@ -256,17 +249,11 @@ const disabledButtonStyle: CSSProperties = {
   cursor: "not-allowed",
 };
 
-const activateCommandFromKeyboard = (
-  event: KeyboardEvent<HTMLButtonElement>,
-  command: () => void,
-) => {
-  if (
-    !event.repeat
-    && (event.key === "Enter" || event.key === " ")
-  ) {
-    event.preventDefault();
-    command();
-  }
+const selectedDisabledButtonStyle: CSSProperties = {
+  ...disabledButtonStyle,
+  background: "#dbeafe",
+  borderColor: "#1c64f2",
+  color: "#1e3a8a",
 };
 
 const badgeStyle = (tone: "neutral" | "preview" | "status"): CSSProperties => ({
@@ -321,6 +308,8 @@ export const DurableParticipantJourneyPanel = ({
   const stateRef = useRef<ParticipantJourneyWorkflowState>(state);
   const mountedRef = useRef(true);
   const controllersRef = useRef<Partial<Record<ParticipantJourneyRequestOperation, AbortController>>>({});
+  const journeyHeadingRef = useRef<HTMLHeadingElement>(null);
+  const journeyFocusPendingRef = useRef(false);
 
   stateRef.current = state;
 
@@ -448,6 +437,7 @@ export const DurableParticipantJourneyPanel = ({
     }
 
     const token = nextParticipantJourneyRequestToken(baseState, "verify");
+    journeyFocusPendingRef.current = true;
     const requested = commit({ taskId, token, type: "verify_requested" });
     if (requested.activeRequests.verify !== token) {
       return;
@@ -503,6 +493,17 @@ export const DurableParticipantJourneyPanel = ({
     };
   }, [abortRequests, authoritySession, bridge, runFeed, sessionKey]);
 
+  useEffect(() => {
+    if (!journeyFocusPendingRef.current || !state.selectedCampaignId) {
+      return;
+    }
+
+    journeyHeadingRef.current?.focus();
+    if (state.journey || state.diagnostic) {
+      journeyFocusPendingRef.current = false;
+    }
+  }, [state.diagnostic, state.journey, state.pendingOperation, state.selectedCampaignId]);
+
   const selectCampaign = (campaignId: string) => {
     const current = stateRef.current;
     if (!canSelectParticipantCampaign(current, campaignId)) {
@@ -511,6 +512,7 @@ export const DurableParticipantJourneyPanel = ({
 
     controllersRef.current.journey?.abort();
     delete controllersRef.current.journey;
+    journeyFocusPendingRef.current = true;
     const selected = commit({ campaignId, type: "campaign_selected" });
     if (selected !== current && selected.selectedCampaignId === campaignId) {
       void runJourney("selection", selected);
@@ -549,7 +551,6 @@ export const DurableParticipantJourneyPanel = ({
         {sessionMissing ? (
           <button
             onClick={onReconnect}
-            onKeyDown={(event) => activateCommandFromKeyboard(event, onReconnect)}
             style={secondaryButtonStyle}
             type="button"
           >
@@ -570,7 +571,7 @@ export const DurableParticipantJourneyPanel = ({
             {state.feed.map((campaign) => {
               const selected = campaign.campaignId === state.selectedCampaignId;
               const selectable = canSelectParticipantCampaign(state, campaign.campaignId);
-              const commandDisabled = state.reconnectRequired || (!selectable && !selected);
+              const commandDisabled = !selectable;
               const title = localizedCampaignTitle(campaign.title, locale, campaign.campaignId);
 
               return (
@@ -589,15 +590,11 @@ export const DurableParticipantJourneyPanel = ({
                     aria-pressed={selected}
                     disabled={commandDisabled}
                     onClick={() => selectCampaign(campaign.campaignId)}
-                    onKeyDown={(event) => activateCommandFromKeyboard(
-                      event,
-                      () => selectCampaign(campaign.campaignId),
-                    )}
                     style={commandDisabled
-                      ? disabledButtonStyle
-                      : selected
-                        ? selectedButtonStyle
-                        : buttonStyle}
+                      ? selected
+                        ? selectedDisabledButtonStyle
+                        : disabledButtonStyle
+                      : buttonStyle}
                     type="button"
                   >
                     {copy.selectCampaign} {title}
@@ -626,7 +623,6 @@ export const DurableParticipantJourneyPanel = ({
             {retryOperation ? (
               <button
                 onClick={retryRead}
-                onKeyDown={(event) => activateCommandFromKeyboard(event, retryRead)}
                 style={buttonStyle}
                 type="button"
               >
@@ -636,7 +632,6 @@ export const DurableParticipantJourneyPanel = ({
             {canReconnectParticipantJourney(state) ? (
               <button
                 onClick={onReconnect}
-                onKeyDown={(event) => activateCommandFromKeyboard(event, onReconnect)}
                 style={secondaryButtonStyle}
                 type="button"
               >
@@ -654,7 +649,9 @@ export const DurableParticipantJourneyPanel = ({
 
       {state.selectedCampaignId && !journey ? (
         <section aria-label={copy.journey} aria-live="polite" style={bandStyle}>
-          <h2 style={{ fontSize: 20, margin: 0 }}>{copy.journey}</h2>
+          <h2 ref={journeyHeadingRef} style={{ fontSize: 20, margin: 0 }} tabIndex={-1}>
+            {copy.journey}
+          </h2>
           <p style={{ color: "#475569", margin: 0 }}>
             {state.status === "loading_journey" ? copy.journeyLoading : copy.blocked}
           </p>
@@ -668,7 +665,11 @@ export const DurableParticipantJourneyPanel = ({
               <p style={{ color: "#64748b", fontSize: 12, fontWeight: 800, margin: 0 }}>
                 {copy.campaignId}
               </p>
-              <h2 style={{ fontSize: 20, margin: "4px 0 0", overflowWrap: "anywhere" }}>
+              <h2
+                ref={journeyHeadingRef}
+                style={{ fontSize: 20, margin: "4px 0 0", overflowWrap: "anywhere" }}
+                tabIndex={-1}
+              >
                 {selectedFeedItem
                   ? localizedCampaignTitle(selectedFeedItem.title, locale, journey.campaign.campaignId)
                   : journey.campaign.campaignId}
@@ -731,6 +732,9 @@ export const DurableParticipantJourneyPanel = ({
                   : task.action === "completed"
                     ? copy.completed
                     : `${copy.verify} ${task.taskId}`;
+              const commandAccessibleLabel = commandLabel.includes(task.taskId)
+                ? commandLabel
+                : `${commandLabel} (${task.taskId})`;
 
               return (
                 <article key={task.taskId} style={{ ...feedItemStyle, background: "#ffffff" }}>
@@ -757,12 +761,9 @@ export const DurableParticipantJourneyPanel = ({
                   </dl>
                   <button
                     aria-busy={pending || undefined}
+                    aria-label={commandAccessibleLabel}
                     disabled={!verifyEnabled}
                     onClick={() => void runVerify(task.taskId)}
-                    onKeyDown={(event) => activateCommandFromKeyboard(
-                      event,
-                      () => void runVerify(task.taskId),
-                    )}
                     style={verifyEnabled ? buttonStyle : disabledButtonStyle}
                     type="button"
                   >
