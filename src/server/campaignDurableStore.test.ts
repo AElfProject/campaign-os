@@ -163,9 +163,34 @@ describe("Campaign durable store", () => {
   it("does not overwrite failed hydration and retries the same store after repair", async () => {
     await withTempStorePath(async (filePath) => {
       const store = createCampaignDurableStore({ filePath, mode: "durable_test" });
+      const recoveredDraft = draft("campaign-db-draft-recovered");
+      const validDocument = {
+        completionRecords: [],
+        participantRecords: [],
+        records: [recoveredDraft],
+        referralBindingRecords: [],
+        taskEvidenceRecords: [],
+        taskRecords: [],
+        updatedAt: "2026-07-07T00:00:00.000Z",
+        version: 1,
+      };
+      const optionalCollectionNames = [
+        "completionRecords",
+        "participantRecords",
+        "referralBindingRecords",
+        "taskEvidenceRecords",
+        "taskRecords",
+      ] as const;
       const invalidDocuments = [
         "{\"version\":1,\"records\":",
-        `${JSON.stringify({ records: [], version: 2 })}\n`,
+        `${JSON.stringify({ ...validDocument, version: 2 })}\n`,
+        `${JSON.stringify({ ...validDocument, records: {} })}\n`,
+        `${JSON.stringify({ ...validDocument, records: [{}] })}\n`,
+        `${JSON.stringify({ ...validDocument, records: [recoveredDraft, { ...recoveredDraft }] })}\n`,
+        ...optionalCollectionNames.flatMap((collectionName) => [
+          `${JSON.stringify({ ...validDocument, [collectionName]: {} })}\n`,
+          `${JSON.stringify({ ...validDocument, [collectionName]: [{}] })}\n`,
+        ]),
       ];
 
       for (const invalidDocument of invalidDocuments) {
@@ -178,17 +203,7 @@ describe("Campaign durable store", () => {
         await expect(readFile(filePath, "utf8")).resolves.toBe(invalidDocument);
       }
 
-      const recoveredDraft = draft("campaign-db-draft-recovered");
-      await writeFile(filePath, `${JSON.stringify({
-        completionRecords: [],
-        participantRecords: [],
-        records: [recoveredDraft],
-        referralBindingRecords: [],
-        taskEvidenceRecords: [],
-        taskRecords: [],
-        updatedAt: "2026-07-07T00:00:00.000Z",
-        version: 1,
-      }, null, 2)}\n`, "utf8");
+      await writeFile(filePath, `${JSON.stringify(validDocument, null, 2)}\n`, "utf8");
 
       await expect(store.getById(recoveredDraft.id)).resolves.toEqual(recoveredDraft);
       await expect(store.manifest()).resolves.toMatchObject({
