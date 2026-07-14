@@ -1296,6 +1296,13 @@ const durableFailure = (
   ...overrides,
 });
 
+const durableBridgeResponseIntegrityFailures = [
+  { code: "BRIDGE_RESPONSE_INVALID", status: "blocked" },
+  { code: "BRIDGE_RESPONSE_NON_JSON", status: "degraded" },
+  { code: "BRIDGE_RESPONSE_EMPTY", status: "degraded" },
+  { code: "BRIDGE_RESPONSE_OVERSIZE", status: "degraded" },
+] as const;
+
 const durableVerifySuccess = (campaignId: string): ParticipantVerifyResult => {
   const session = durableSession();
   const taskId = `task-${campaignId}`;
@@ -1462,6 +1469,56 @@ describe("Durable Participant User App", () => {
     expect(within(journey).getByRole("button", { name: "Verify Task task-campaign-alpha" })).toBeEnabled();
   });
 
+  it("supports Enter Campaign selection and Space Task verification with stable focus", async () => {
+    const refresh = deferred<ParticipantJourneyResult>();
+    const getJourney = vi
+      .fn<ParticipantJourneyApiBridge["getJourney"]>()
+      .mockResolvedValueOnce({
+        httpStatus: 200,
+        journey: durableJourney({ campaignId: "campaign-alpha" }),
+        ok: true,
+        source: "durable",
+        status: "success",
+        traceId: "trace-keyboard-initial-journey",
+      })
+      .mockImplementationOnce(() => refresh.promise);
+    const bridge = durableBridge({ getJourney });
+
+    renderDurable(bridge);
+    const campaign = await screen.findByRole("button", { name: campaignAlphaCommandName });
+    campaign.focus();
+    expect(campaign).toHaveFocus();
+
+    fireEvent.keyDown(campaign, { code: "Enter", key: "Enter" });
+
+    await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(1));
+    expect(campaign).toHaveFocus();
+    const task = await screen.findByRole("button", { name: "Verify Task task-campaign-alpha" });
+    task.focus();
+    expect(task).toHaveFocus();
+
+    fireEvent.keyDown(task, { code: "Space", key: " " });
+
+    await waitFor(() => expect(bridge.verifyTask).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(2));
+    const refreshing = screen.getByRole("button", { name: "Refreshing journey" });
+    expect(refreshing).toHaveFocus();
+    expect(refreshing).toBeDisabled();
+    expect(refreshing).toHaveAttribute("aria-busy", "true");
+
+    await act(async () => {
+      refresh.resolve({
+        httpStatus: 200,
+        journey: durableJourney({ campaignId: "campaign-alpha" }),
+        ok: true,
+        source: "durable",
+        status: "success",
+        traceId: "trace-keyboard-refreshed-journey",
+      });
+      await refresh.promise;
+    });
+  });
+
   it("gives duplicate Campaign titles unique canonical accessible names", async () => {
     const bridge = durableBridge({
       listCampaigns: vi.fn(async () => ({
@@ -1579,6 +1636,71 @@ describe("Durable Participant User App", () => {
     await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(3));
     expect(bridge.verifyTask).toHaveBeenCalledTimes(1);
   });
+
+  it.each(durableBridgeResponseIntegrityFailures)(
+    "keeps last-good visible without claiming refresh success after $code and retries only the read",
+    async ({ code, status }) => {
+      const getJourney = vi
+        .fn<ParticipantJourneyApiBridge["getJourney"]>()
+        .mockResolvedValueOnce({
+          httpStatus: 200,
+          journey: durableJourney({ campaignId: "campaign-alpha" }),
+          ok: true,
+          source: "durable",
+          status: "success",
+          traceId: "trace-integrity-initial-journey",
+        })
+        .mockResolvedValueOnce(durableFailure({
+          bridgeCode: code,
+          code,
+          httpStatus: 200,
+          phase: "response",
+          retryable: false,
+          status,
+          traceId: `trace-${code.toLowerCase()}`,
+        }))
+        .mockResolvedValueOnce({
+          httpStatus: 200,
+          journey: durableJourney({
+            campaignId: "campaign-alpha",
+            completionId: "completion-after-safe-read",
+            evidenceId: "evidence-after-safe-read",
+            points: 25,
+            rank: 1,
+            status: "completed",
+          }),
+          ok: true,
+          source: "durable",
+          status: "success",
+          traceId: "trace-integrity-safe-read-retry",
+        });
+      const bridge = durableBridge({ getJourney });
+
+      renderDurable(bridge);
+      fireEvent.click(await screen.findByRole("button", { name: campaignAlphaCommandName }));
+      fireEvent.click(await screen.findByRole("button", { name: "Verify Task task-campaign-alpha" }));
+
+      const retry = await screen.findByRole("button", { name: "Retry journey read" });
+      const staleJourney = screen.getByRole("region", { name: "Participant journey" });
+      expect(staleJourney).toHaveTextContent("Points0");
+      expect(within(staleJourney).getByText("Awarded points").nextElementSibling).toHaveTextContent("0");
+      expect(within(staleJourney).getByText("No completion")).toBeInTheDocument();
+      expect(within(staleJourney).queryByText("completion-after-safe-read")).not.toBeInTheDocument();
+      expect(within(staleJourney).getByRole("button", {
+        name: "Verify Task task-campaign-alpha",
+      })).toBeDisabled();
+      expect(screen.getByText(code)).toBeInTheDocument();
+      expect(screen.getAllByText("trace-verify-command").length).toBeGreaterThan(0);
+
+      fireEvent.click(retry);
+
+      await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(3));
+      await waitFor(() => expect(staleJourney).toHaveTextContent("Points25"));
+      expect(within(staleJourney).getByText("completion-after-safe-read")).toBeInTheDocument();
+      expect(bridge.verifyTask).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(submitUserParticipationApiReview)).not.toHaveBeenCalled();
+    },
+  );
 
   it("removes last-good journey content when Campaign access is revoked", async () => {
     const getJourney = vi
@@ -1780,8 +1902,54 @@ describe("Durable Participant User App", () => {
     expect(await screen.findByText("AUTH_SESSION_INVALID")).toBeInTheDocument();
     const reconnectCommands = screen.getAllByRole("button", { name: "Reconnect wallet" });
     expect(reconnectCommands).toHaveLength(1);
-    fireEvent.click(reconnectCommands[0]);
+    reconnectCommands[0].focus();
+    expect(reconnectCommands[0]).toHaveFocus();
+    fireEvent.keyDown(reconnectCommands[0], { code: "Space", key: " " });
+    expect(reconnectCommands[0]).toHaveFocus();
     expect(onReconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps reconnect required and disables every stale-feed Campaign command", async () => {
+    const onReconnect = vi.fn();
+    const verifyTask = vi.fn<ParticipantJourneyApiBridge["verifyTask"]>(async () =>
+      durableFailure({
+        code: "AUTH_SESSION_INVALID",
+        httpStatus: 401,
+        phase: "auth",
+        reconnectRequired: true,
+        retryable: false,
+        status: "blocked",
+        traceId: "trace-stale-feed-reconnect",
+      }));
+    const bridge = durableBridge({ verifyTask });
+
+    render(
+      <UserAppPanel
+        bridge={bridge}
+        locale="en-US"
+        mode="durable"
+        onReconnect={onReconnect}
+        session={durableSession()}
+        sessionReady
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: campaignAlphaCommandName }));
+    fireEvent.click(await screen.findByRole("button", { name: "Verify Task task-campaign-alpha" }));
+
+    expect(await screen.findByText("AUTH_SESSION_INVALID")).toBeInTheDocument();
+    const selectedCampaign = screen.getByRole("button", { name: campaignAlphaCommandName });
+    const staleCampaign = screen.getByRole("button", { name: campaignBetaCommandName });
+    expect(selectedCampaign).toBeDisabled();
+    expect(staleCampaign).toBeDisabled();
+
+    fireEvent.click(staleCampaign);
+
+    expect(bridge.getJourney).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("AUTH_SESSION_INVALID")).toBeInTheDocument();
+    const reconnect = screen.getByRole("button", { name: "Reconnect wallet" });
+    fireEvent.click(reconnect);
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+    expect(verifyTask).toHaveBeenCalledTimes(1);
   });
 
   it("does not refresh or invoke legacy verification after verify failure", async () => {

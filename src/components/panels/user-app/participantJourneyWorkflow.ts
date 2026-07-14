@@ -250,6 +250,7 @@ const requestTokenTargetsState = (
   token: ParticipantJourneyRequestToken,
   operation: ParticipantJourneyRequestOperation,
 ) => token.operation === operation
+  && !state.reconnectRequired
   && token.sessionKey !== null
   && token.sessionKey === state.sessionKey
   && token.campaignId === state.selectedCampaignId
@@ -314,17 +315,31 @@ const selectedCampaignState = (
   lastGoodJourney: null,
   pendingOperation: null,
   pendingTaskId: null,
-  reconnectRequired: false,
   retryOperation: null,
   selectedCampaignId: campaignId,
   status: "loading_journey",
 });
 
+const responseIntegrityFailureCodes = new Set([
+  "BRIDGE_RESPONSE_EMPTY",
+  "BRIDGE_RESPONSE_INVALID",
+  "BRIDGE_RESPONSE_NON_JSON",
+  "BRIDGE_RESPONSE_OVERSIZE",
+]);
+
+const isResponseIntegrityFailure = (
+  failure: ParticipantJourneyFailure,
+) => failure.phase === "response"
+  && responseIntegrityFailureCodes.has(failure.bridgeCode ?? failure.code);
+
 const retryOperationForFailure = (
   failure: ParticipantJourneyFailure,
   operation: ParticipantJourneyRequestOperation,
 ): ParticipantJourneyReadOperation | null => {
-  if (!failure.retryable || failure.reconnectRequired) {
+  if (
+    failure.reconnectRequired
+    || (!failure.retryable && !isResponseIntegrityFailure(failure))
+  ) {
     return null;
   }
 
@@ -336,11 +351,12 @@ const failedRequestState = (
   failure: ParticipantJourneyFailure,
   operation: ParticipantJourneyRequestOperation,
 ): ParticipantJourneyWorkflowState => {
+  const reconnectRequired = state.reconnectRequired || failure.reconnectRequired;
   const retainLastGoodJourney = Boolean(
     state.lastGoodJourney
-    && failure.status === "degraded"
-    && !failure.reconnectRequired
-    && (failure.phase === "request" || failure.phase === "response"),
+    && !reconnectRequired
+    && (failure.phase === "request" || failure.phase === "response")
+    && (failure.status === "degraded" || isResponseIntegrityFailure(failure)),
   );
   const lastGoodJourney = retainLastGoodJourney ? state.lastGoodJourney : null;
 
@@ -352,8 +368,10 @@ const failedRequestState = (
     lastGoodJourney,
     pendingOperation: null,
     pendingTaskId: null,
-    reconnectRequired: failure.reconnectRequired,
-    retryOperation: retryOperationForFailure(failure, operation),
+    reconnectRequired,
+    retryOperation: reconnectRequired
+      ? null
+      : retryOperationForFailure(failure, operation),
     status: lastGoodJourney ? "degraded" : "blocked",
   };
 };
@@ -411,7 +429,6 @@ const clearSelectedCampaignForFeed = (
   lastGoodJourney: null,
   pendingOperation: null,
   pendingTaskId: null,
-  reconnectRequired: false,
   retryOperation: null,
   selectedCampaignId: null,
   status: "feed_ready",
@@ -431,6 +448,7 @@ export const canSelectParticipantCampaign = (
     && ["feed_ready", "ready", "degraded", "blocked"].includes(state.status);
 
   return Boolean(state.sessionKey)
+    && !state.reconnectRequired
     && state.selectedCampaignId !== campaignId
     && state.feed.some((campaign) => campaign.campaignId === campaignId)
     && (idleSelectionState || canSupersedeInitialJourney);
@@ -521,7 +539,6 @@ const startFeed = (
   diagnostic: null,
   pendingOperation: "feed",
   pendingTaskId: null,
-  reconnectRequired: false,
   retryOperation: null,
   sequences: { ...state.sequences, feed: token.sequence },
   status: "loading_feed",
@@ -536,7 +553,6 @@ const startJourney = (
   activeRequests: { ...state.activeRequests, journey: token },
   diagnostic: null,
   pendingOperation: reason === "refresh" ? "refresh_journey" : "journey",
-  reconnectRequired: false,
   retryOperation: null,
   sequences: { ...state.sequences, journey: token.sequence },
   status: reason === "refresh" ? "verifying" : "loading_journey",
@@ -553,7 +569,6 @@ const startVerify = (
   diagnostic: null,
   pendingOperation: "verify",
   pendingTaskId: taskId,
-  reconnectRequired: false,
   retryOperation: null,
   sequences: { ...state.sequences, verify: token.sequence },
   status: "verifying",
@@ -628,7 +643,6 @@ export const participantJourneyWorkflowReducer = (
       feed,
       pendingOperation: null,
       pendingTaskId: null,
-      reconnectRequired: false,
       retryOperation: null,
       status: state.journey
         ? "ready"
@@ -670,7 +684,6 @@ export const participantJourneyWorkflowReducer = (
       lastGoodJourney: event.result.journey,
       pendingOperation: null,
       pendingTaskId: null,
-      reconnectRequired: false,
       retryOperation: null,
       status: "ready",
     };
@@ -710,7 +723,6 @@ export const participantJourneyWorkflowReducer = (
       commandTraceId: event.result.traceId,
       diagnostic: null,
       pendingOperation: "refresh_journey",
-      reconnectRequired: false,
       retryOperation: null,
       status: "verifying",
     };

@@ -13,6 +13,7 @@ import type {
   ProjectOwnerCampaignApiBridge,
 } from "../api/projectOwnerCampaignApiBridge";
 import type {
+  ParticipantCampaignListResult,
   ParticipantJourneyApiBridge,
   ParticipantJourneyFailure,
 } from "../api/participantJourneyApiBridge";
@@ -1182,6 +1183,31 @@ const appParticipantFailure = (): ParticipantJourneyFailure => ({
   traceId: "trace-app-participant-unused",
 });
 
+const appParticipantFeed = (
+  campaignId: string,
+  title: string,
+): ParticipantCampaignListResult => ({
+  campaigns: [{
+    campaignId,
+    projectId: "awaken",
+    repository: {
+      adapterId: "campaign-db-adapter",
+      createdViaRepository: true,
+      repositoryId: "campaign-db-repository-runtime",
+      storeId: "campaign-db",
+    },
+    status: "draft",
+    taskCount: 0,
+    title: { "en-US": title, "zh-CN": title, "zh-TW": title },
+    visibility: "participant_preview",
+  }],
+  httpStatus: 200,
+  ok: true,
+  source: "durable",
+  status: "success",
+  traceId: `trace-app-participant-${campaignId}`,
+});
+
 const appParticipantBridge = (
   overrides: Partial<ParticipantJourneyApiBridge> = {},
 ): ParticipantJourneyApiBridge => ({
@@ -1250,6 +1276,52 @@ describe("App Owner campaign authority", () => {
       session: appOwnerSessionA,
       signal: expect.any(AbortSignal),
     }));
+  });
+
+  it("clears durable session A authority before session B feed resolves", async () => {
+    let resolveSessionBFeed!: (result: ParticipantCampaignListResult) => void;
+    const sessionBFeed = new Promise<ParticipantCampaignListResult>((resolve) => {
+      resolveSessionBFeed = resolve;
+    });
+    submitWalletSession
+      .mockResolvedValueOnce(appWalletSessionState(appOwnerSessionA))
+      .mockResolvedValueOnce(appWalletSessionState(appOwnerSessionB));
+    const listCampaigns = vi.fn<ParticipantJourneyApiBridge["listCampaigns"]>((context) =>
+      context.session?.sessionId === appOwnerSessionA.sessionId
+        ? Promise.resolve(appParticipantFeed("campaign-session-a", "Session A Campaign"))
+        : sessionBFeed);
+    const participantBridge = appParticipantBridge({ listCampaigns });
+
+    render(<App participantJourneyBridge={participantBridge} />);
+    await connectHeaderWallet();
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+    expect(await screen.findByRole("button", {
+      name: "Select Session A Campaign (campaign-session-a)",
+    })).toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: /Manage wallet connection/,
+    }));
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Use seeded wallet preview" }));
+    });
+
+    await waitFor(() => expect(listCampaigns).toHaveBeenCalledTimes(2));
+    expect(listCampaigns.mock.calls[1][0].session).toBe(appOwnerSessionB);
+    expect(screen.queryByRole("button", {
+      name: "Select Session A Campaign (campaign-session-a)",
+    })).not.toBeInTheDocument();
+    expect(screen.getByText("Loading Campaign feed")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSessionBFeed(appParticipantFeed("campaign-session-b", "Session B Campaign"));
+      await sessionBFeed;
+    });
+
+    expect(await screen.findByRole("button", {
+      name: "Select Session B Campaign (campaign-session-b)",
+    })).toBeInTheDocument();
   });
 
   it("keeps protected Participant feed blocked until an issued session is ready", () => {

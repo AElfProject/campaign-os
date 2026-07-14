@@ -4,6 +4,7 @@ import {
   useReducer,
   useRef,
   type CSSProperties,
+  type KeyboardEvent,
 } from "react";
 import type {
   ParticipantJourneyApiBridge,
@@ -255,6 +256,19 @@ const disabledButtonStyle: CSSProperties = {
   cursor: "not-allowed",
 };
 
+const activateCommandFromKeyboard = (
+  event: KeyboardEvent<HTMLButtonElement>,
+  command: () => void,
+) => {
+  if (
+    !event.repeat
+    && (event.key === "Enter" || event.key === " ")
+  ) {
+    event.preventDefault();
+    command();
+  }
+};
+
 const badgeStyle = (tone: "neutral" | "preview" | "status"): CSSProperties => ({
   background: tone === "preview" ? "#fff7ed" : tone === "status" ? "#ecfdf5" : "#eef2ff",
   border: `1px solid ${tone === "preview" ? "#fdba74" : tone === "status" ? "#86efac" : "#c7d2fe"}`,
@@ -490,12 +504,15 @@ export const DurableParticipantJourneyPanel = ({
   }, [abortRequests, authoritySession, bridge, runFeed, sessionKey]);
 
   const selectCampaign = (campaignId: string) => {
-    if (canSelectParticipantCampaign(stateRef.current, campaignId)) {
-      controllersRef.current.journey?.abort();
-      delete controllersRef.current.journey;
+    const current = stateRef.current;
+    if (!canSelectParticipantCampaign(current, campaignId)) {
+      return;
     }
+
+    controllersRef.current.journey?.abort();
+    delete controllersRef.current.journey;
     const selected = commit({ campaignId, type: "campaign_selected" });
-    if (selected.selectedCampaignId === campaignId) {
+    if (selected !== current && selected.selectedCampaignId === campaignId) {
       void runJourney("selection", selected);
     }
   };
@@ -530,7 +547,12 @@ export const DurableParticipantJourneyPanel = ({
         </div>
 
         {sessionMissing ? (
-          <button onClick={onReconnect} style={secondaryButtonStyle} type="button">
+          <button
+            onClick={onReconnect}
+            onKeyDown={(event) => activateCommandFromKeyboard(event, onReconnect)}
+            style={secondaryButtonStyle}
+            type="button"
+          >
             {copy.reconnect}
           </button>
         ) : null}
@@ -548,6 +570,7 @@ export const DurableParticipantJourneyPanel = ({
             {state.feed.map((campaign) => {
               const selected = campaign.campaignId === state.selectedCampaignId;
               const selectable = canSelectParticipantCampaign(state, campaign.campaignId);
+              const commandDisabled = state.reconnectRequired || (!selectable && !selected);
               const title = localizedCampaignTitle(campaign.title, locale, campaign.campaignId);
 
               return (
@@ -564,9 +587,17 @@ export const DurableParticipantJourneyPanel = ({
                     aria-current={selected ? "true" : undefined}
                     aria-label={`${copy.selectCampaign} ${title} (${campaign.campaignId})`}
                     aria-pressed={selected}
-                    disabled={!selectable && !selected}
+                    disabled={commandDisabled}
                     onClick={() => selectCampaign(campaign.campaignId)}
-                    style={selected ? selectedButtonStyle : selectable ? buttonStyle : disabledButtonStyle}
+                    onKeyDown={(event) => activateCommandFromKeyboard(
+                      event,
+                      () => selectCampaign(campaign.campaignId),
+                    )}
+                    style={commandDisabled
+                      ? disabledButtonStyle
+                      : selected
+                        ? selectedButtonStyle
+                        : buttonStyle}
                     type="button"
                   >
                     {copy.selectCampaign} {title}
@@ -593,12 +624,22 @@ export const DurableParticipantJourneyPanel = ({
           </dl>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
             {retryOperation ? (
-              <button onClick={retryRead} style={buttonStyle} type="button">
+              <button
+                onClick={retryRead}
+                onKeyDown={(event) => activateCommandFromKeyboard(event, retryRead)}
+                style={buttonStyle}
+                type="button"
+              >
                 {retryOperation === "feed" ? copy.retryFeed : copy.retryJourney}
               </button>
             ) : null}
             {canReconnectParticipantJourney(state) ? (
-              <button onClick={onReconnect} style={secondaryButtonStyle} type="button">
+              <button
+                onClick={onReconnect}
+                onKeyDown={(event) => activateCommandFromKeyboard(event, onReconnect)}
+                style={secondaryButtonStyle}
+                type="button"
+              >
                 {copy.reconnect}
               </button>
             ) : null}
@@ -718,6 +759,10 @@ export const DurableParticipantJourneyPanel = ({
                     aria-busy={pending || undefined}
                     disabled={!verifyEnabled}
                     onClick={() => void runVerify(task.taskId)}
+                    onKeyDown={(event) => activateCommandFromKeyboard(
+                      event,
+                      () => void runVerify(task.taskId),
+                    )}
                     style={verifyEnabled ? buttonStyle : disabledButtonStyle}
                     type="button"
                   >

@@ -250,6 +250,13 @@ const failure = (
   ...overrides,
 });
 
+const bridgeResponseIntegrityFailures = [
+  { code: "BRIDGE_RESPONSE_INVALID", status: "blocked" },
+  { code: "BRIDGE_RESPONSE_NON_JSON", status: "degraded" },
+  { code: "BRIDGE_RESPONSE_EMPTY", status: "degraded" },
+  { code: "BRIDGE_RESPONSE_OVERSIZE", status: "degraded" },
+] as const;
+
 const sessionKey = createParticipantSessionKey(session()) as string;
 
 const stateWithSession = (): ParticipantJourneyWorkflowState =>
@@ -878,6 +885,56 @@ describe("Participant journey workflow", () => {
     expect(retrying.activeRequests.verify).toBeNull();
   });
 
+  it.each(bridgeResponseIntegrityFailures)(
+    "keeps last-good read-only and allows only a journey retry after $code",
+    ({ code, status }) => {
+      const pending = refreshPendingState();
+      const lastGood = pending.lastGoodJourney;
+      const token = nextParticipantJourneyRequestToken(pending, "journey");
+      const refreshing = participantJourneyWorkflowReducer(pending, {
+        reason: "refresh",
+        token,
+        type: "journey_requested",
+      });
+      const invalidResponse = failure({
+        bridgeCode: code,
+        code,
+        httpStatus: 200,
+        phase: "response",
+        retryable: false,
+        status,
+        traceId: `trace-${code.toLowerCase()}`,
+      });
+      const degraded = participantJourneyWorkflowReducer(refreshing, {
+        failure: invalidResponse,
+        token,
+        type: "journey_failed",
+      });
+
+      expect(degraded.status).toBe("degraded");
+      expect(degraded.journey).toBe(lastGood);
+      expect(degraded.lastGoodJourney).toBe(lastGood);
+      expect(degraded.commandTraceId).toBe("trace-verify-command");
+      expect(degraded.diagnostic).toBe(invalidResponse);
+      expect(degraded.pendingOperation).toBeNull();
+      expect(degraded.pendingTaskId).toBeNull();
+      expect(degraded.reconnectRequired).toBe(false);
+      expect(selectParticipantJourneyRetryOperation(degraded)).toBe("journey");
+      expect(canVerifyParticipantJourneyTask(degraded, taskAId)).toBe(false);
+
+      const retryToken = nextParticipantJourneyRequestToken(degraded, "journey");
+      const retrying = participantJourneyWorkflowReducer(degraded, {
+        reason: "retry",
+        token: retryToken,
+        type: "journey_requested",
+      });
+
+      expect(retrying.activeRequests.journey).toBe(retryToken);
+      expect(retrying.activeRequests.verify).toBeNull();
+      expect(retrying.pendingOperation).toBe("journey");
+    },
+  );
+
   it("clears last-good data when Campaign authority is revoked", () => {
     const pending = refreshPendingState();
     const token = nextParticipantJourneyRequestToken(pending, "journey");
@@ -1016,5 +1073,48 @@ describe("Participant journey workflow", () => {
     });
     expect(selectParticipantJourneyRetryOperation(reconnectBlocked)).toBeNull();
     expect(canReconnectParticipantJourney(reconnectBlocked)).toBe(true);
+  });
+
+  it("keeps reconnect required and rejects every old-feed Campaign selection", () => {
+    const feed = stateWithFeed();
+    const token = nextParticipantJourneyRequestToken(feed, "feed");
+    const loading = participantJourneyWorkflowReducer(feed, {
+      token,
+      type: "feed_requested",
+    });
+    const reconnectFailure = failure({
+      code: "AUTH_SESSION_INVALID",
+      httpStatus: 401,
+      phase: "auth",
+      reconnectRequired: true,
+      retryable: false,
+      status: "blocked",
+      traceId: "trace-reconnect-required",
+    });
+    const blocked = participantJourneyWorkflowReducer(loading, {
+      failure: reconnectFailure,
+      token,
+      type: "feed_failed",
+    });
+
+    expect(blocked.feed.map((campaign) => campaign.campaignId)).toEqual([
+      campaignAId,
+      campaignBId,
+    ]);
+    expect(blocked.reconnectRequired).toBe(true);
+    expect(canSelectParticipantCampaign(blocked, campaignAId)).toBe(false);
+    expect(canSelectParticipantCampaign(blocked, campaignBId)).toBe(false);
+
+    for (const campaignId of [campaignAId, campaignBId]) {
+      const selected = participantJourneyWorkflowReducer(blocked, {
+        campaignId,
+        type: "campaign_selected",
+      });
+
+      expect(selected).toBe(blocked);
+      expect(selected.reconnectRequired).toBe(true);
+      expect(selected.diagnostic).toBe(reconnectFailure);
+      expect(selected.selectedCampaignId).toBeNull();
+    }
   });
 });
