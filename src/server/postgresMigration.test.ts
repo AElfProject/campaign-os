@@ -107,12 +107,17 @@ const migration = async (
 };
 
 describe("PostgreSQL migration runtime", () => {
-  it("loads the committed migration pair with a stable checksum", async () => {
+  it("loads committed additive migrations with stable checksums and owned down contracts", async () => {
     const first = await loadPostgresMigrations();
     const second = await loadPostgresMigrations();
 
-    expect(first).toHaveLength(1);
-    expect(first[0]?.id).toBe("0001_campaign_runtime");
+    expect(first.map(({ id }) => id)).toEqual([
+      "0001_campaign_runtime",
+      "0002_admin_review_export",
+    ]);
+    const campaignRuntime = first[0];
+    const adminReviewExport = first[1];
+
     for (const table of [
       "campaigns",
       "campaign_tasks",
@@ -121,17 +126,90 @@ describe("PostgreSQL migration runtime", () => {
       "campaign_task_evidence",
       "campaign_referral_bindings",
     ]) {
-      expect(first[0]?.upSql).toContain(`CREATE TABLE campaign_os.${table}`);
+      expect(campaignRuntime?.upSql).toContain(`CREATE TABLE campaign_os.${table}`);
     }
-    expect(first[0]?.upSql).toContain("CREATE TABLE IF NOT EXISTS campaign_os.schema_migrations");
-    expect(first[0]?.upSql).toContain("FOREIGN KEY (campaign_id, task_id, wallet_address, completion_id)");
-    expect(first[0]?.upSql).toContain("default_locale = 'en-US'");
-    expect(first[0]?.upSql).toContain("CHECK (start_time < end_time)");
-    expect(first[0]?.upSql).toContain("campaign_os_campaigns_project_updated_idx");
-    expect(first[0]?.upSql).toContain("campaign_os_campaign_task_evidence_campaign_task_idx");
-    expect(first[0]?.upSql).toContain("campaign_os_campaign_referral_bindings_campaign_referrer_idx");
-    expect(first[0]?.downSql).toContain("DROP TABLE IF EXISTS campaign_os.campaigns");
-    expect(first[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
+    expect(campaignRuntime?.upSql).toContain("CREATE TABLE IF NOT EXISTS campaign_os.schema_migrations");
+    expect(campaignRuntime?.upSql).toContain("FOREIGN KEY (campaign_id, task_id, wallet_address, completion_id)");
+    expect(campaignRuntime?.upSql).toContain("default_locale = 'en-US'");
+    expect(campaignRuntime?.upSql).toContain("CHECK (start_time < end_time)");
+    expect(campaignRuntime?.upSql).toContain("campaign_os_campaigns_project_updated_idx");
+    expect(campaignRuntime?.upSql).toContain("campaign_os_campaign_task_evidence_campaign_task_idx");
+    expect(campaignRuntime?.upSql).toContain("campaign_os_campaign_referral_bindings_campaign_referrer_idx");
+    expect(campaignRuntime?.downSql).toContain("DROP TABLE IF EXISTS campaign_os.campaigns");
+    expect(campaignRuntime?.checksum).toBe(
+      "f8987b38a916e3c53d533f6fdcd75bfe95e2ea766346b5786c998529435c75a4",
+    );
+
+    expect(adminReviewExport?.upSql).toContain(
+      "CREATE TABLE campaign_os.campaign_review_decisions",
+    );
+    expect(adminReviewExport?.upSql).toContain(
+      "CREATE TABLE campaign_os.campaign_export_artifacts",
+    );
+    for (const contractFragment of [
+      "campaign_os_campaign_review_decisions_campaign_fk",
+      "campaign_os_campaign_review_decisions_participant_fk",
+      "campaign_os_campaign_review_decisions_version_key",
+      "campaign_os_campaign_review_decisions_idempotency_key",
+      "campaign_os_campaign_review_decisions_current_idx",
+      "campaign_os_campaign_review_decisions_filter_idx",
+      "campaign_os_campaign_export_artifacts_campaign_fk",
+      "campaign_os_campaign_export_artifacts_source_key",
+      "campaign_os_campaign_export_artifacts_list_idx",
+      "snapshot_version = 'review-snapshot-v1'",
+      "source_version = 'artifact-source-v1'",
+      "row_count BETWEEN 0 AND 5000",
+      "content_bytes BETWEEN 0 AND 10485760",
+      "content_bytes = octet_length(content)",
+      "^[a-f0-9]{64}$",
+      "text/csv;charset=utf-8",
+      "application/json;charset=utf-8",
+      "BEFORE UPDATE OR DELETE ON campaign_os.campaign_review_decisions",
+      "BEFORE UPDATE OR DELETE ON campaign_os.campaign_export_artifacts",
+    ]) {
+      expect(adminReviewExport?.upSql).toContain(contractFragment);
+    }
+
+    const factTables = [
+      "campaigns",
+      "campaign_tasks",
+      "campaign_participants",
+      "campaign_task_completions",
+      "campaign_task_evidence",
+      "campaign_referral_bindings",
+    ];
+    for (const factTable of factTables) {
+      expect(adminReviewExport?.upSql).not.toMatch(new RegExp(
+        `(?:ALTER|DROP|TRUNCATE)\\s+(?:TABLE\\s+)?(?:IF\\s+EXISTS\\s+)?campaign_os\\.${factTable}\\b`,
+        "i",
+      ));
+      expect(adminReviewExport?.upSql).not.toMatch(new RegExp(
+        `(?:UPDATE|DELETE\\s+FROM)\\s+campaign_os\\.${factTable}\\b`,
+        "i",
+      ));
+    }
+    expect(adminReviewExport?.upSql).not.toMatch(/\b(?:BACKFILL|TRUNCATE)\b/i);
+
+    const downSql = adminReviewExport?.downSql ?? "";
+    expect(downSql).toContain("DESTRUCTIVE OPERATOR RECOVERY ONLY");
+    expect(downSql).toContain("DROP TRIGGER IF EXISTS campaign_review_decisions_append_only");
+    expect(downSql).toContain("DROP TRIGGER IF EXISTS campaign_export_artifacts_append_only");
+    expect(downSql).toContain("DROP TABLE IF EXISTS campaign_os.campaign_export_artifacts");
+    expect(downSql).toContain("DROP TABLE IF EXISTS campaign_os.campaign_review_decisions");
+    expect(downSql).toContain("DROP FUNCTION IF EXISTS campaign_os.reject_admin_review_export_mutation()");
+    expect(downSql.indexOf("DROP TRIGGER")).toBeLessThan(downSql.indexOf("DROP TABLE"));
+    expect(downSql.lastIndexOf("DROP TABLE")).toBeLessThan(downSql.indexOf("DROP FUNCTION"));
+    for (const forbiddenOwnershipTarget of [
+      ...factTables,
+      "schema_migrations",
+    ]) {
+      expect(downSql).not.toContain(`campaign_os.${forbiddenOwnershipTarget}`);
+    }
+    expect(downSql).not.toMatch(/DROP\s+SCHEMA/i);
+
+    for (const definition of first) {
+      expect(definition.checksum).toMatch(/^[a-f0-9]{64}$/);
+    }
     expect(second).toEqual(first);
   });
 
