@@ -59,7 +59,6 @@ import {
 import {
   createAuthSessionReadinessReport,
   createProductionAuthSessionFoundation,
-  locallyEnforcedAuthRouteIds,
   type AuthSessionReadinessReport,
   type ProtectedRouteAuthMapEntry,
   type ProductionAuthSessionFoundation,
@@ -615,14 +614,16 @@ export interface BackendObservabilityExporterReadinessSummary {
 export type BackendAuthEnforcementMode = "blocked" | "local_enforced" | "metadata_only";
 
 export type OwnerRouteDurableEffect = "campaign_create" | "none" | "task_create";
-export type LocallyEnforcedOwnerRouteId = (typeof locallyEnforcedAuthRouteIds)[number];
 
 export const ownerRouteDurableEffectById = {
   "campaigns.create": "campaign_create",
+  "campaigns.owner.detail": "none",
   "campaigns.owner.list": "none",
   "campaigns.tasks.add": "task_create",
   "campaigns.tasks.generate": "none",
-} as const satisfies Record<LocallyEnforcedOwnerRouteId, OwnerRouteDurableEffect>;
+} as const satisfies Record<string, OwnerRouteDurableEffect>;
+
+export type LocallyEnforcedOwnerRouteId = keyof typeof ownerRouteDurableEffectById;
 
 export const validateOwnerRouteDurableEffectRegistry = ({
   durableEffectByRouteId,
@@ -633,7 +634,10 @@ export const validateOwnerRouteDurableEffectRegistry = ({
 }): void => {
   const canonicalRouteIds = Array.from(new Set(
     protectedRoutes
-      .filter((route) => route.enforcementStatus === "local_enforced")
+      .filter((route) => (
+        route.enforcementStatus === "local_enforced"
+        && route.requiredRoles.includes("project_owner")
+      ))
       .map((route) => route.routeId),
   )).sort();
   const canonicalRouteIdSet = new Set(canonicalRouteIds);

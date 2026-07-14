@@ -158,6 +158,7 @@ const proofStatuses = [
   "local_seeded",
   "proof_required",
   "signature_unverified",
+  "stale",
   "verified",
   "blocked",
 ] as const satisfies readonly SessionProofStatus[];
@@ -516,10 +517,10 @@ export const canonicalWalletSubjectsMatch = (
 const proofStatusFromIssuedRecord = (
   issuedRecord: WalletSessionRecord,
 ): SessionProofStatus => {
-  const issuedProofStatus = issuedRecord.proof?.status as SessionProofStatus | undefined;
+  if (issuedRecord.proof) {
+    const issuedProofStatus = issuedRecord.proof.status as SessionProofStatus;
 
-  if (issuedProofStatus && proofStatuses.includes(issuedProofStatus)) {
-    return issuedProofStatus;
+    return proofStatuses.includes(issuedProofStatus) ? issuedProofStatus : "blocked";
   }
 
   return issuedRecord.verificationStatus === "verified" ? "verified" : "signature_unverified";
@@ -1082,10 +1083,20 @@ export const evaluateIssuedAuthEnforcement = async ({
     }));
   }
 
-  const subjectMismatch = evaluateParticipantCompatibilitySubject(
-    issuedSession,
-    compatibilitySubject,
-  );
+  const routeDecision = evaluateResolvedAuthSession({
+    ownerAddress,
+    ownerSources,
+    routeAuth,
+    routeId,
+    routePolicy,
+    session: issuedSession,
+  });
+
+  if (!routeDecision.allowed) {
+    return complete(routeDecision);
+  }
+
+  const subjectMismatch = evaluateParticipantCompatibilitySubject(issuedSession, compatibilitySubject);
 
   if (subjectMismatch) {
     return complete(decision({
@@ -1103,12 +1114,5 @@ export const evaluateIssuedAuthEnforcement = async ({
     }));
   }
 
-  return complete(evaluateResolvedAuthSession({
-    ownerAddress,
-    ownerSources,
-    routeAuth,
-    routeId,
-    routePolicy,
-    session: issuedSession,
-  }));
+  return complete(routeDecision);
 };

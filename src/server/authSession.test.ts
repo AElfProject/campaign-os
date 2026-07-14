@@ -8,7 +8,7 @@ import {
   getProtectedRouteAuth,
   hasAuthRoleRouteAccess,
   isAuthRoleCapabilityForbidden,
-  participantProtectedRouteAuthMap,
+  locallyEnforcedAuthRouteIds,
   protectedRouteAuthMap,
   summarizeSensitiveAuthSessionInput,
 } from "./authSession";
@@ -100,6 +100,7 @@ describe("auth session boundary", () => {
       "local_seeded",
       "proof_required",
       "signature_unverified",
+      "stale",
       "verified",
       "blocked",
     ] as const;
@@ -228,6 +229,7 @@ describe("auth session boundary", () => {
   });
 
   it("locally enforces issued Participant routes without weakening public Campaign routes", () => {
+    const canonicalRouteIds = protectedRouteAuthMap.map((entry) => entry.routeId);
     const participantRouteIds = [
       "campaigns.participant.list",
       "campaigns.participant.journey",
@@ -235,11 +237,24 @@ describe("auth session boundary", () => {
       "campaigns.points.ranking.ledger.runtime",
       "tasks.verify",
     ];
+    const locallyEnforcedRouteIds = [
+      "campaigns.create",
+      "campaigns.owner.list",
+      "campaigns.owner.detail",
+      "campaigns.tasks.add",
+      "campaigns.tasks.generate",
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
+      "campaigns.eligibility",
+      "campaigns.points.ranking.ledger.runtime",
+      "tasks.verify",
+    ];
 
-    expect(participantProtectedRouteAuthMap.map((entry) => entry.routeId)).toEqual(
-      expect.arrayContaining(participantRouteIds),
-    );
-
+    expect(new Set(canonicalRouteIds).size).toBe(canonicalRouteIds.length);
+    expect(canonicalRouteIds).toEqual(expect.arrayContaining([
+      "campaigns.owner.detail",
+      ...participantRouteIds,
+    ]));
     for (const routeId of participantRouteIds) {
       expect(getProtectedRouteAuth(routeId)).toMatchObject({
         enforcementStatus: "local_enforced",
@@ -259,6 +274,19 @@ describe("auth session boundary", () => {
     });
     expect(getProtectedRouteAuth("campaigns.list")).toBeUndefined();
     expect(getProtectedRouteAuth("campaigns.detail")).toBeUndefined();
+
+    const readiness = createAuthSessionReadinessReport();
+    const foundation = createProductionAuthSessionFoundation();
+
+    expect(locallyEnforcedAuthRouteIds).toEqual(locallyEnforcedRouteIds);
+    expect(readiness.protectedRouteCount).toBe(protectedRouteAuthMap.length);
+    expect(readiness.protectedRoutes
+      .filter((route) => route.enforcementStatus === "local_enforced")
+      .map((route) => route.routeId)).toEqual(locallyEnforcedRouteIds);
+    expect(foundation.protectedRouteCoverage).toMatchObject({
+      locallyEnforcedRouteIds,
+      protectedRouteCount: protectedRouteAuthMap.length,
+    });
   });
 
   it("fails closed for production-required readiness and separates agent credentials", () => {

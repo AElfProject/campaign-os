@@ -719,6 +719,121 @@ describe("auth enforcement", () => {
     }
   });
 
+  it("does not promote an explicit stale issued proof from top-level verification status", async () => {
+    const validRecord = issuedParticipantSession();
+    const result = await enforceThenMutate({
+      headers: participantHeaders(),
+      issuedSessionLookup: issuedLookup(issuedParticipantSession({
+        proof: {
+          ...validRecord.proof!,
+          status: "stale",
+          trustLevel: "untrusted",
+        },
+        verificationStatus: "verified",
+      })),
+      routeId: "tasks.verify",
+      traceId: "trace-participant-stale-proof",
+    });
+
+    expect(result).toMatchObject({
+      decision: {
+        diagnostic: { code: "AUTH_FORBIDDEN" },
+        httpStatus: 403,
+        safeDetails: {
+          proofStatus: "stale",
+          traceId: "trace-participant-stale-proof",
+        },
+        status: "forbidden",
+      },
+      mutationCount: 0,
+    });
+  });
+
+  it.each([
+    [
+      "stale proof",
+      issuedParticipantSession({
+        proof: {
+          ...issuedParticipantSession().proof!,
+          status: "stale",
+          trustLevel: "untrusted",
+        },
+        verificationStatus: "verified",
+      }),
+    ],
+    [
+      "unverified proof",
+      issuedParticipantSession({
+        proof: {
+          ...issuedParticipantSession().proof!,
+          status: "signature_unverified",
+          trustLevel: "untrusted",
+        },
+      }),
+    ],
+    [
+      "internal credential",
+      issuedParticipantSession({
+        capabilities: ["SIGN_MESSAGE", "CONTRACT_VIEW", "INTERNAL_AUTOMATION"],
+      }),
+    ],
+  ])("rejects %s before a compatibility subject mismatch", async (caseName, record) => {
+    const traceId = `trace-combined-${caseName.replace(/ /g, "-")}`;
+    const result = await enforceThenMutate({
+      compatibilitySubject: { walletAddress: "2YVwOtherParticipant" },
+      headers: participantHeaders(),
+      issuedSessionLookup: issuedLookup(record),
+      routeId: "tasks.verify",
+      traceId,
+    });
+
+    expect(result).toMatchObject({
+      decision: {
+        diagnostic: { code: "AUTH_FORBIDDEN" },
+        httpStatus: 403,
+        safeDetails: {
+          traceId,
+        },
+        status: "forbidden",
+      },
+      mutationCount: 0,
+    });
+  });
+
+  it("keeps missing and unknown sessions ahead of compatibility subject checks", async () => {
+    const compatibilitySubject = { walletAddress: "2YVwOtherParticipant" };
+    const missing = await enforceThenMutate({
+      compatibilitySubject,
+      issuedSessionLookup: issuedLookup(issuedParticipantSession()),
+      routeId: "tasks.verify",
+      traceId: "trace-combined-missing-session",
+    });
+    const unknown = await enforceThenMutate({
+      compatibilitySubject,
+      headers: participantHeaders({ "x-campaign-os-session-id": "sess-unknown" }),
+      issuedSessionLookup: issuedLookup(issuedParticipantSession()),
+      routeId: "tasks.verify",
+      traceId: "trace-combined-unknown-session",
+    });
+
+    expect(missing).toMatchObject({
+      decision: {
+        diagnostic: { code: "AUTH_SESSION_REQUIRED" },
+        httpStatus: 401,
+        safeDetails: { traceId: "trace-combined-missing-session" },
+      },
+      mutationCount: 0,
+    });
+    expect(unknown).toMatchObject({
+      decision: {
+        diagnostic: { code: "AUTH_SESSION_INVALID" },
+        httpStatus: 401,
+        safeDetails: { traceId: "trace-combined-unknown-session" },
+      },
+      mutationCount: 0,
+    });
+  });
+
   it.each(["AELF", "tDVV", "tDVW"])(
     "uses trimmed exact Base58 identity for %s",
     async (chainId) => {
