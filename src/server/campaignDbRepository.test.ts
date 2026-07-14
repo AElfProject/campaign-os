@@ -534,6 +534,472 @@ describe("Campaign DB repository", () => {
     });
   });
 
+  it("returns a zero-state Participant journey without creating a Participant", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const requiredTask = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+    const optionalTask = await repository.addTaskDraft({
+      ...validTaskDraftInput(campaign.id),
+      points: 25,
+      required: false,
+      templateCode: "share_campaign",
+      verificationType: "SOCIAL",
+    });
+    const eventsBefore = repository.getEvents().length;
+
+    const journey = await repository.getParticipantJourney!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      walletAddress: "ELF_2F4NewJourneyWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    }, { traceId: "trace-journey-zero-state" });
+
+    expect(journey).toMatchObject({
+      participant: {
+        participantId: null,
+        totalPoints: 0,
+        walletAddress: "ELF_2F4NewJourneyWallet",
+      },
+      ranking: { participantCount: 0, rank: null, totalPoints: 0 },
+      eligibility: {
+        eligible: false,
+        missingTasks: [requiredTask.templateCode],
+        score: 0,
+        status: "not_eligible",
+      },
+      repository: {
+        createdViaRepository: true,
+        storeId: "campaign-db",
+      },
+    });
+    expect(journey.tasks.map((task) => task.taskId)).toEqual([requiredTask.id, optionalTask.id]);
+    expect(journey.tasks.every((task) => task.status === "not_started")).toBe(true);
+    await expect(repository.health()).resolves.toMatchObject({ participantRecordCount: 0 });
+    expect(repository.getEvents().slice(eventsBefore)).toEqual([
+      expect.objectContaining({
+        operation: "lookup_participant_journey",
+        traceId: "trace-journey-zero-state",
+        type: "query.lookup",
+      }),
+    ]);
+  });
+
+  it("fails a missing Campaign journey read with a safe Trace ID and no mutation event", async () => {
+    const repository = createCampaignDbRepository();
+
+    const failure = repository.getParticipantJourney!({
+      accountType: "EOA",
+      campaignId: "missing-campaign",
+      walletAddress: "ELF_2F4MissingJourneyWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    }, { traceId: "trace-journey-missing" });
+
+    await expect(failure).rejects.toMatchObject({
+      diagnostics: [expect.objectContaining({
+        code: "CAMPAIGN_DB_COMPLETION_CAMPAIGN_NOT_FOUND",
+        field: "campaignId",
+      })],
+      traceId: "trace-journey-missing",
+    });
+    expect(repository.getEvents()).toEqual([
+      expect.objectContaining({
+        operation: "lookup_participant_journey",
+        traceId: "trace-journey-missing",
+        type: "query.lookup",
+      }),
+    ]);
+  });
+
+  it("keeps wallet-private Completion and Evidence identities isolated in journey reads", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+    const walletA = "ELF_2F4JourneyWalletA";
+    const walletB = "ELF_2F4JourneyWalletB";
+    const verificationA = await repository.upsertTaskVerification!({
+      ...validCompletionInput(campaign.id, task.id),
+      walletAddress: walletA,
+    });
+    const verificationB = await repository.upsertTaskVerification!({
+      ...validCompletionInput(campaign.id, task.id),
+      evidenceHash: "evidence-hash:wallet-b-private",
+      walletAddress: walletB,
+    });
+
+    const journeyA = await repository.getParticipantJourney!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      walletAddress: walletA,
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
+    const journeyB = await repository.getParticipantJourney!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      walletAddress: walletB,
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
+
+    expect(journeyA.tasks[0]).toMatchObject({
+      completionId: verificationA.completion.id,
+      evidenceId: verificationA.evidence.id,
+      status: "completed",
+    });
+    expect(journeyB.tasks[0]).toMatchObject({
+      completionId: verificationB.completion.id,
+      evidenceId: verificationB.evidence.id,
+      status: "completed",
+    });
+    expect(verificationA.completion.id).not.toBe(verificationB.completion.id);
+    expect(verificationA.evidence.id).not.toBe(verificationB.evidence.id);
+    expect(JSON.stringify(journeyA)).not.toContain(verificationB.completion.id);
+    expect(JSON.stringify(journeyA)).not.toContain(verificationB.evidence.id);
+    expect(JSON.stringify(journeyA)).not.toContain(walletB);
+  });
+
+  it("uses the cohesive snapshot port as the only durable journey read caller", async () => {
+    const backingStore = createCampaignDurableStore();
+    const campaignId = "campaign-db-snapshot-caller";
+    const persistedCampaign = {
+      ...validDraftInput(),
+      contractMode: "OFF_CHAIN_MVP" as const,
+      createdAt: "2026-07-14T00:00:00.000Z",
+      defaultLocale: "en-US" as const,
+      id: campaignId,
+      publishReadiness: { blockers: [], ready: true, warnings: [] },
+      status: "draft" as const,
+      supportedLocales: ["en-US"] as const,
+      updatedAt: "2026-07-14T00:00:00.000Z",
+      walletPolicy: "ANY" as const,
+    };
+    await backingStore.create({ ...persistedCampaign, supportedLocales: [...persistedCampaign.supportedLocales] });
+    await backingStore.createTaskDraft({
+      campaignId,
+      createdAt: "2026-07-14T00:00:00.000Z",
+      evidenceRule: { source: "AELFSCAN" },
+      id: "task-snapshot-caller",
+      points: 120,
+      required: true,
+      templateCode: "bridge_ebridge",
+      updatedAt: "2026-07-14T00:00:00.000Z",
+      verificationType: "ON_CHAIN",
+      walletCompatibility: "ANY",
+    });
+    const getParticipantJourneySnapshot = vi.fn(backingStore.getParticipantJourneySnapshot);
+    const getById = vi.fn(backingStore.getById);
+    const listParticipantsByCampaignId = vi.fn(backingStore.listParticipantsByCampaignId);
+    const listTaskCompletionsByCampaignId = vi.fn(backingStore.listTaskCompletionsByCampaignId);
+    const listTaskDraftsByCampaignId = vi.fn(backingStore.listTaskDraftsByCampaignId);
+    const listTaskEvidence = vi.fn(backingStore.listTaskEvidence);
+    const repository = createCampaignDbRepository({
+      durableStore: {
+        ...backingStore,
+        getById,
+        getParticipantJourneySnapshot,
+        listParticipantsByCampaignId,
+        listTaskCompletionsByCampaignId,
+        listTaskDraftsByCampaignId,
+        listTaskEvidence,
+      },
+      mode: "durable_test",
+    });
+
+    await repository.getParticipantJourney!({
+      accountType: "EOA",
+      campaignId,
+      walletAddress: "ELF_2F4SnapshotCaller",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    }, { traceId: "trace-snapshot-caller" });
+
+    expect(getParticipantJourneySnapshot).toHaveBeenCalledOnce();
+    expect(getParticipantJourneySnapshot).toHaveBeenCalledWith({
+      campaignId,
+      walletAddress: "ELF_2F4SnapshotCaller",
+    }, { traceId: "trace-snapshot-caller" });
+    expect(getById).not.toHaveBeenCalled();
+    expect(listParticipantsByCampaignId).not.toHaveBeenCalled();
+    expect(listTaskCompletionsByCampaignId).not.toHaveBeenCalled();
+    expect(listTaskDraftsByCampaignId).not.toHaveBeenCalled();
+    expect(listTaskEvidence).not.toHaveBeenCalled();
+  });
+
+  it("rejects Campaign, Task ownership, and wallet policy failures before verification writes", async () => {
+    const repository = createCampaignDbRepository();
+    const aaCampaign = await repository.createDraft({
+      ...validDraftInput(),
+      projectId: "project-aa-only",
+      walletPolicy: "AA_ONLY",
+    });
+    const aaTask = await repository.addTaskDraft(validTaskDraftInput(aaCampaign.id));
+    const otherCampaign = await repository.createDraft({
+      ...validDraftInput(),
+      projectId: "project-other",
+    });
+    const otherTask = await repository.addTaskDraft(validTaskDraftInput(otherCampaign.id));
+    const taskPolicyCampaign = await repository.createDraft({
+      ...validDraftInput(),
+      projectId: "project-task-policy",
+    });
+    const aaOnlyTask = await repository.addTaskDraft({
+      ...validTaskDraftInput(taskPolicyCampaign.id),
+      walletCompatibility: "AA_ONLY",
+    });
+    const before = await repository.health();
+    const eventsBefore = repository.getEvents().length;
+
+    const attempts = [
+      {
+        run: () => repository.upsertTaskVerification!({
+          ...validCompletionInput("missing-campaign", aaTask.id),
+        }, { traceId: "trace-verify-missing-campaign" }),
+        traceId: "trace-verify-missing-campaign",
+      },
+      {
+        run: () => repository.upsertTaskVerification!({
+          ...validCompletionInput(aaCampaign.id, otherTask.id),
+        }, { traceId: "trace-verify-cross-campaign-task" }),
+        traceId: "trace-verify-cross-campaign-task",
+      },
+      {
+        run: () => repository.upsertTaskVerification!({
+          ...validCompletionInput(aaCampaign.id, aaTask.id),
+          accountType: "EOA",
+        }, { traceId: "trace-verify-campaign-policy" }),
+        traceId: "trace-verify-campaign-policy",
+      },
+      {
+        run: () => repository.upsertTaskVerification!({
+          ...validCompletionInput(taskPolicyCampaign.id, aaOnlyTask.id),
+          accountType: "EOA",
+        }, { traceId: "trace-verify-task-policy" }),
+        traceId: "trace-verify-task-policy",
+      },
+    ];
+
+    for (const attempt of attempts) {
+      await expect(attempt.run()).rejects.toMatchObject({
+        name: "CampaignDbRepositoryError",
+        traceId: attempt.traceId,
+      });
+    }
+    const after = await repository.health();
+    expect(after).toMatchObject({
+      completionRecordCount: before.completionRecordCount,
+      participantRecordCount: before.participantRecordCount,
+      taskEvidenceRecordCount: before.taskEvidenceRecordCount,
+    });
+    expect(repository.getEvents().slice(eventsBefore)).toEqual([]);
+  });
+
+  it("keeps canonical IDs and awards points once across twenty concurrent verification retries", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+
+    const results = await Promise.all(Array.from({ length: 20 }, (_, index) =>
+      repository.upsertTaskVerification!({
+        ...validCompletionInput(campaign.id, task.id),
+        evidenceHash: `evidence-hash:concurrent-retry-${index}`,
+      }, { traceId: `trace-concurrent-retry-${index}` })));
+
+    expect(new Set(results.map((result) => result.completion.id))).toHaveLength(1);
+    expect(new Set(results.map((result) => result.evidence.id))).toHaveLength(1);
+    expect(new Set(results.map((result) => result.participant?.id))).toHaveLength(1);
+    expect(results.every((result) => result.participant?.totalPoints === 120)).toBe(true);
+    await expect(repository.health()).resolves.toMatchObject({
+      completionRecordCount: 1,
+      participantRecordCount: 1,
+      taskEvidenceRecordCount: 1,
+    });
+    await expect(repository.getParticipantJourney!({
+      accountType: "EOA",
+      campaignId: campaign.id,
+      walletAddress: "2F4CompletionWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    })).resolves.toMatchObject({
+      participant: { totalPoints: 120 },
+      ranking: { participantCount: 1, rank: 1, totalPoints: 120 },
+      tasks: [expect.objectContaining({
+        completionId: results[0]!.completion.id,
+        evidenceId: results[0]!.evidence.id,
+        pointsAwarded: 120,
+        status: "completed",
+      })],
+    });
+  });
+
+  it("keeps concurrent verification identities and points independent across wallets", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft(validDraftInput());
+    const task = await repository.addTaskDraft(validTaskDraftInput(campaign.id));
+    const wallets = ["ELF_2F4ConcurrentWalletA", "ELF_2F4ConcurrentWalletB"];
+
+    const results = await Promise.all(wallets.flatMap((walletAddress) =>
+      Array.from({ length: 10 }, (_, index) => repository.upsertTaskVerification!({
+        ...validCompletionInput(campaign.id, task.id),
+        evidenceHash: `evidence-hash:${walletAddress}:${index}`,
+        walletAddress,
+      }))));
+
+    const completionIdsByWallet = new Map<string, Set<string>>();
+    for (const result of results) {
+      const ids = completionIdsByWallet.get(result.completion.walletAddress) ?? new Set<string>();
+      ids.add(result.completion.id);
+      completionIdsByWallet.set(result.completion.walletAddress, ids);
+    }
+    expect(completionIdsByWallet.get(wallets[0]!)).toHaveLength(1);
+    expect(completionIdsByWallet.get(wallets[1]!)).toHaveLength(1);
+    expect([...completionIdsByWallet.get(wallets[0]!)!][0]).not.toBe(
+      [...completionIdsByWallet.get(wallets[1]!)!][0],
+    );
+    await expect(repository.health()).resolves.toMatchObject({
+      completionRecordCount: 2,
+      participantRecordCount: 2,
+      taskEvidenceRecordCount: 2,
+    });
+    for (const walletAddress of wallets) {
+      await expect(repository.getParticipantJourney!({
+        accountType: "EOA",
+        campaignId: campaign.id,
+        walletAddress,
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      })).resolves.toMatchObject({
+        participant: { totalPoints: 120, walletAddress },
+        ranking: { participantCount: 2, totalPoints: 120, walletAddress },
+      });
+    }
+  });
+
+  it("keeps unified journey, eligibility, and rank p95 within 500ms for 100 Participants x 10 Tasks", async () => {
+    const store = createCampaignDurableStore({ boundedListLimit: 100 });
+    const campaignId = "campaign-db-performance";
+    const taskIds = Array.from({ length: 10 }, (_, index) =>
+      `campaign-db-performance-task-${index.toString().padStart(2, "0")}`);
+    await store.create({
+      contractMode: "OFF_CHAIN_MVP",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      defaultLocale: "en-US",
+      duration: "14 days",
+      endTime: "2026-08-15T00:00:00.000Z",
+      goal: "Measure Participant journey projection",
+      id: campaignId,
+      ownerAddress: "ELF_2F4PerformanceOwner",
+      projectId: "project-performance",
+      publishReadiness: { blockers: [], ready: true, warnings: [] },
+      rewardDescription: "Points only",
+      startTime: "2026-08-01T00:00:00.000Z",
+      status: "draft",
+      supportedLocales: ["en-US"],
+      updatedAt: "2026-07-14T00:00:00.000Z",
+      walletPolicy: "ANY",
+    });
+    for (const taskId of taskIds) {
+      await store.createTaskDraft({
+        campaignId,
+        createdAt: "2026-07-14T00:00:00.000Z",
+        evidenceRule: { source: "AELFSCAN" },
+        id: taskId,
+        points: 100,
+        required: true,
+        templateCode: taskId,
+        updatedAt: "2026-07-14T00:00:00.000Z",
+        verificationType: "ON_CHAIN",
+        walletCompatibility: "ANY",
+      });
+    }
+
+    for (let participantIndex = 0; participantIndex < 100; participantIndex += 1) {
+      const walletAddress = `ELF_2F4PerformanceWallet${participantIndex.toString().padStart(3, "0")}`;
+      await store.upsertParticipant({
+        accountType: "EOA",
+        campaignId,
+        createdAt: "2026-07-14T00:00:00.000Z",
+        id: `participant-performance-${participantIndex.toString().padStart(3, "0")}`,
+        localePreference: "en-US",
+        rank: 999,
+        riskFlags: [],
+        totalPoints: 1_000,
+        updatedAt: "2026-07-14T00:00:00.000Z",
+        walletAddress,
+        walletSignatureStatus: "signed",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+        walletTypeVerified: true,
+      });
+
+      for (let taskIndex = 0; taskIndex < taskIds.length; taskIndex += 1) {
+        const taskId = taskIds[taskIndex]!;
+        const completionId = `completion-performance-${participantIndex}-${taskIndex}`;
+        const evidenceId = `evidence-performance-${participantIndex}-${taskIndex}`;
+        await store.upsertTaskCompletion({
+          accountType: "EOA",
+          campaignId,
+          completedAt: "2026-07-14T00:00:01.000Z",
+          createdAt: "2026-07-14T00:00:00.000Z",
+          evidenceHash: `evidence-hash:performance:${participantIndex}:${taskIndex}`,
+          evidenceId,
+          evidenceSource: "AELFSCAN",
+          id: completionId,
+          pointsAwarded: 100,
+          status: "completed",
+          taskId,
+          updatedAt: "2026-07-14T00:00:01.000Z",
+          walletAddress,
+          walletSource: "PORTKEY_EOA_EXTENSION",
+        });
+        await store.upsertTaskEvidence({
+          accountType: "EOA",
+          campaignId,
+          capturedAt: "2026-07-14T00:00:01.000Z",
+          completionId,
+          createdAt: "2026-07-14T00:00:00.000Z",
+          diagnosticCodes: [],
+          evidenceHash: `evidence-hash:performance:${participantIndex}:${taskIndex}`,
+          evidenceSource: "AELFSCAN",
+          id: evidenceId,
+          liveContractExecuted: false,
+          liveProviderExecuted: false,
+          liveRewardExecuted: false,
+          liveStorageExecuted: false,
+          pointsAwarded: 100,
+          status: "completed",
+          taskId,
+          updatedAt: "2026-07-14T00:00:01.000Z",
+          walletAddress,
+          walletSource: "PORTKEY_EOA_EXTENSION",
+        });
+      }
+    }
+
+    const repository = createCampaignDbRepository({
+      boundedListLimit: 100,
+      durableStore: store,
+      mode: "durable_test",
+    });
+    const samples: number[] = [];
+    const subjectWallet = "ELF_2F4PerformanceWallet000";
+    for (let index = 0; index < 100; index += 1) {
+      const startedAt = performance.now();
+      const journey = await repository.getParticipantJourney!({
+        accountType: "EOA",
+        campaignId,
+        walletAddress: subjectWallet,
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      });
+      samples.push(performance.now() - startedAt);
+      expect(journey.tasks).toHaveLength(10);
+      expect(journey.participant.totalPoints).toBe(1_000);
+      expect(journey.eligibility).toMatchObject({ eligible: true, score: 1_000 });
+      expect(journey.ranking).toMatchObject({ participantCount: 100, rank: 1 });
+    }
+    const sorted = [...samples].sort((left, right) => left - right);
+    const p95 = sorted[Math.ceil(sorted.length * 0.95) - 1]!;
+
+    console.info(`WP02 100x10 unified journey/eligibility/rank p95=${p95.toFixed(3)}ms`);
+    expect(samples).toHaveLength(100);
+    expect(p95, "unified journey p95").toBeLessThanOrEqual(500);
+    expect(p95, "eligibility p95").toBeLessThanOrEqual(500);
+    expect(p95, "rank p95").toBeLessThanOrEqual(500);
+  });
+
   it("projects task evidence metadata into repository export rows", async () => {
     const repository = createCampaignDbRepository();
     const campaign = await repository.createDraft(validDraftInput());
@@ -2281,6 +2747,7 @@ describe("Campaign DB repository", () => {
         upsertParticipant,
         upsertTaskCompletion,
         upsertTaskEvidence,
+        upsertTaskVerification: undefined,
       },
       mode: "postgres",
     });

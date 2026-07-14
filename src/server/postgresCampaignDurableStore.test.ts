@@ -28,7 +28,11 @@ const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
 
 class TranscriptPool implements PostgresCampaignStorePool {
   readonly calls: QueryCall[] = [];
-  readonly release = vi.fn();
+  readonly release = vi.fn(() => {
+    if (this.releaseError) {
+      throw this.releaseError;
+    }
+  });
   readonly connect = vi.fn(async () => ({
     query: (text: string, values: readonly unknown[] = []) => this.query(text, values),
     release: this.release,
@@ -45,6 +49,7 @@ class TranscriptPool implements PostgresCampaignStorePool {
       index: number,
     ) => PostgresCampaignStoreQueryResult | Promise<PostgresCampaignStoreQueryResult> = () => ({ rows: [] }),
     private readonly endError?: Error,
+    private readonly releaseError?: Error,
   ) {}
 
   async query(
@@ -411,6 +416,250 @@ describe("PostgreSQL Campaign durable store", () => {
     expectParameterized(pool.calls[1]!, [input.campaignId, 25]);
   });
 
+  it("reads a coherent exact-wallet journey snapshot in one repeatable-read transaction", async () => {
+    const walletAddress = "ELF_2F4SnapshotWallet";
+    const pool = new TranscriptPool((call) => {
+      if (call.text.includes("FROM campaign_os.campaigns")) {
+        return { rows: [campaignRow()] };
+      }
+
+      if (call.text.includes("FROM campaign_os.campaign_tasks")) {
+        return { rows: [taskRow()] };
+      }
+
+      if (
+        call.text.includes("FROM campaign_os.campaign_participants") &&
+        call.text.includes("ORDER BY total_points DESC")
+      ) {
+        return {
+          rows: [
+            participantRow({
+              created_at: timestamp("2026-07-01T00:00:00.000Z"),
+              id: "participant-rank-first",
+              rank: 999,
+              total_points: 200,
+              wallet_address: "ELF_2F4RankFirst",
+            }),
+            participantRow({
+              created_at: timestamp("2026-07-02T00:00:00.000Z"),
+              id: "participant-subject",
+              rank: 1,
+              total_points: 120,
+              wallet_address: walletAddress,
+            }),
+          ],
+        };
+      }
+
+      if (call.text.includes("FROM campaign_os.campaign_participants")) {
+        return { rows: [participantRow({ wallet_address: walletAddress })] };
+      }
+
+      if (call.text.includes("FROM campaign_os.campaign_task_completions")) {
+        return { rows: [completionRow({ wallet_address: walletAddress })] };
+      }
+
+      if (call.text.includes("FROM campaign_os.campaign_task_evidence")) {
+        return { rows: [evidenceRow({ wallet_address: walletAddress })] };
+      }
+
+      return { rows: [] };
+    });
+    const store = createPostgresCampaignDurableStore({ boundedListLimit: 100, pool });
+
+    const snapshot = await store.getParticipantJourneySnapshot({
+      campaignId: "campaign-postgres-0001",
+      walletAddress,
+    }, { traceId: "trace-postgres-snapshot" });
+
+    expect(snapshot).toMatchObject({
+      campaign: { id: "campaign-postgres-0001" },
+      completions: [{ walletAddress }],
+      evidence: [{ walletAddress }],
+      participant: { walletAddress },
+      tasks: [{ id: "task-postgres-0001" }],
+    });
+    expect(snapshot.rankingParticipants).toEqual([
+      {
+        campaignId: "campaign-postgres-0001",
+        createdAt: "2026-07-01T00:00:00.000Z",
+        id: "participant-rank-first",
+        totalPoints: 200,
+        walletAddress: "ELF_2F4RankFirst",
+      },
+      {
+        campaignId: "campaign-postgres-0001",
+        createdAt: "2026-07-02T00:00:00.000Z",
+        id: "participant-subject",
+        totalPoints: 120,
+        walletAddress,
+      },
+    ]);
+    expect(pool.calls.map((call) => call.text)).toEqual([
+      "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+      expect.stringContaining("FROM campaign_os.campaigns"),
+      expect.stringContaining("FROM campaign_os.campaign_tasks"),
+      expect.stringContaining("FROM campaign_os.campaign_participants"),
+      expect.stringContaining("FROM campaign_os.campaign_task_completions"),
+      expect.stringContaining("FROM campaign_os.campaign_task_evidence"),
+      expect.stringContaining("ORDER BY total_points DESC"),
+      "COMMIT",
+    ]);
+    expectParameterized(pool.calls[1]!, ["campaign-postgres-0001"]);
+    expectParameterized(pool.calls[2]!, ["campaign-postgres-0001", 100, 0]);
+    expectParameterized(pool.calls[3]!, ["campaign-postgres-0001", walletAddress]);
+    expectParameterized(pool.calls[4]!, ["campaign-postgres-0001", walletAddress, 100, 0]);
+    expectParameterized(pool.calls[5]!, ["campaign-postgres-0001", walletAddress, 100, 0]);
+    expectParameterized(pool.calls[6]!, ["campaign-postgres-0001", 100, 0]);
+    expect(pool.calls[6]?.text).toContain("created_at ASC");
+    expect(pool.calls[6]?.text).toContain("id COLLATE \"C\" ASC");
+    expect(pool.calls[6]?.text).toContain("wallet_address COLLATE \"C\" ASC");
+    expect(pool.calls.every((call) => !call.text.match(/UPDATE\s+campaign_os\.campaign_participants/i))).toBe(true);
+    expect(pool.release).toHaveBeenCalledOnce();
+  });
+
+  it("paginates coherent journey records instead of truncating at the generic list bound", async () => {
+    const walletAddress = "ELF_2F4PageSubject";
+    const taskRows = Array.from({ length: 101 }, (_, index) => taskRow({
+      id: `task-page-${index.toString().padStart(4, "0")}`,
+    }));
+    const completionRows = Array.from({ length: 101 }, (_, index) => completionRow({
+      evidence_id: `evidence-page-${index.toString().padStart(4, "0")}`,
+      id: `completion-page-${index.toString().padStart(4, "0")}`,
+      task_id: `task-page-${index.toString().padStart(4, "0")}`,
+      wallet_address: walletAddress,
+    }));
+    const evidenceRows = Array.from({ length: 101 }, (_, index) => evidenceRow({
+      completion_id: `completion-page-${index.toString().padStart(4, "0")}`,
+      id: `evidence-page-${index.toString().padStart(4, "0")}`,
+      task_id: `task-page-${index.toString().padStart(4, "0")}`,
+      wallet_address: walletAddress,
+    }));
+    const rankingRows = Array.from({ length: 101 }, (_, index) => participantRow({
+      id: `participant-page-${index.toString().padStart(4, "0")}`,
+      total_points: 101 - index,
+      wallet_address: `ELF_2F4PageWallet${index.toString().padStart(4, "0")}`,
+    }));
+    const pool = new TranscriptPool((call) => {
+      if (call.text.includes("FROM campaign_os.campaigns")) {
+        return { rows: [campaignRow()] };
+      }
+
+      if (call.text.includes("FROM campaign_os.campaign_tasks")) {
+        const offset = typeof call.values[2] === "number" ? call.values[2] : 0;
+
+        return { rows: taskRows.slice(offset, offset + 100) };
+      }
+
+      if (call.text.includes("FROM campaign_os.campaign_task_completions")) {
+        const offset = typeof call.values[3] === "number" ? call.values[3] : 0;
+
+        return { rows: completionRows.slice(offset, offset + 100) };
+      }
+
+      if (call.text.includes("FROM campaign_os.campaign_task_evidence")) {
+        const offset = typeof call.values[3] === "number" ? call.values[3] : 0;
+
+        return { rows: evidenceRows.slice(offset, offset + 100) };
+      }
+
+      if (
+        call.text.includes("FROM campaign_os.campaign_participants")
+        && call.text.includes("ORDER BY total_points DESC")
+      ) {
+        const offset = typeof call.values[2] === "number" ? call.values[2] : 0;
+
+        return { rows: rankingRows.slice(offset, offset + 100) };
+      }
+
+      return { rows: [] };
+    });
+    const store = createPostgresCampaignDurableStore({ boundedListLimit: 100, pool });
+
+    const snapshot = await store.getParticipantJourneySnapshot({
+      campaignId: "campaign-postgres-0001",
+      walletAddress,
+    });
+
+    expect(snapshot.tasks).toHaveLength(101);
+    expect(snapshot.completions).toHaveLength(101);
+    expect(snapshot.evidence).toHaveLength(101);
+    expect(snapshot.rankingParticipants).toHaveLength(101);
+    expect(pool.calls.filter((call) =>
+      call.text.includes("FROM campaign_os.campaign_tasks"))).toHaveLength(2);
+    expect(pool.calls.filter((call) =>
+      call.text.includes("FROM campaign_os.campaign_task_completions"))).toHaveLength(2);
+    expect(pool.calls.filter((call) =>
+      call.text.includes("FROM campaign_os.campaign_task_evidence"))).toHaveLength(2);
+    expect(pool.calls.filter((call) =>
+      call.text.includes("ORDER BY total_points DESC"))).toHaveLength(2);
+    expect(pool.release).toHaveBeenCalledOnce();
+  });
+
+  it("commits a missing Campaign snapshot as an empty read without creating zero-state rows", async () => {
+    const pool = new TranscriptPool((call) =>
+      call.text.includes("FROM campaign_os.campaigns") ? { rows: [] } : { rows: [] });
+    const store = createPostgresCampaignDurableStore({ pool });
+
+    await expect(store.getParticipantJourneySnapshot({
+      campaignId: "missing-campaign",
+      walletAddress: "ELF_2F4MissingSnapshotWallet",
+    }, { traceId: "trace-postgres-snapshot-missing" })).resolves.toEqual({
+      campaign: undefined,
+      completions: [],
+      evidence: [],
+      participant: undefined,
+      rankingParticipants: [],
+      tasks: [],
+    });
+    expect(pool.calls.map((call) => call.text)).toEqual([
+      "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+      expect.stringContaining("FROM campaign_os.campaigns"),
+      "COMMIT",
+    ]);
+    expect(pool.calls.some((call) => call.text.startsWith("INSERT") || call.text.startsWith("UPDATE"))).toBe(false);
+    expect(pool.release).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back snapshot query failures and maps release failures safely", async () => {
+    const failingPool = new TranscriptPool((call) => {
+      if (call.text.includes("FROM campaign_os.campaign_tasks")) {
+        throw new Error("postgres://private-user:private-password@db.internal/private");
+      }
+
+      return call.text.includes("FROM campaign_os.campaigns")
+        ? { rows: [campaignRow()] }
+        : { rows: [] };
+    });
+    const failingStore = createPostgresCampaignDurableStore({ pool: failingPool });
+
+    await expect(failingStore.getParticipantJourneySnapshot({
+      campaignId: "campaign-postgres-0001",
+      walletAddress: "ELF_2F4SnapshotWallet",
+    }, { traceId: "trace-postgres-snapshot-failure" })).rejects.toMatchObject({
+      code: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+      operation: "getParticipantJourneySnapshot",
+      traceId: "trace-postgres-snapshot-failure",
+    });
+    expect(failingPool.calls[failingPool.calls.length - 1]?.text).toBe("ROLLBACK");
+    expect(failingPool.release).toHaveBeenCalledOnce();
+
+    const releasePool = new TranscriptPool(
+      (call) => call.text.includes("FROM campaign_os.campaigns") ? { rows: [] } : { rows: [] },
+      undefined,
+      new Error("private release detail"),
+    );
+    const releaseStore = createPostgresCampaignDurableStore({ pool: releasePool });
+    await expect(releaseStore.getParticipantJourneySnapshot({
+      campaignId: "missing-campaign",
+      walletAddress: "ELF_2F4SnapshotWallet",
+    }, { traceId: "trace-postgres-snapshot-release" })).rejects.toMatchObject({
+      code: "POSTGRES_CAMPAIGN_STORE_CLEANUP_FAILED",
+      operation: "getParticipantJourneySnapshot",
+      traceId: "trace-postgres-snapshot-release",
+    });
+  });
+
   it("gets, lists, and atomically upserts Participants while preserving immutable fields", async () => {
     const pool = new TranscriptPool(() => ({ rows: [participantRow()] }));
     const store = createPostgresCampaignDurableStore({ pool });
@@ -510,7 +759,7 @@ describe("PostgreSQL Campaign durable store", () => {
       }
 
       if (call.text.startsWith("INSERT INTO campaign_os.campaign_participants")) {
-        return { rows: [participantRow({ total_points: 120 })] };
+        return { rows: [participantRow({ rank: 999, total_points: 120 })] };
       }
 
       return { rows: [] };
@@ -529,15 +778,17 @@ describe("PostgreSQL Campaign durable store", () => {
       }>;
     };
 
-    await expect(store.upsertTaskVerification({
+    const result = await store.upsertTaskVerification({
       completion: completion({ evidenceId: "evidence-request-id" }),
       evidence: evidence({ completionId: undefined }),
       participant: participant({ totalPoints: 0 }),
-    }, { traceId: "trace-atomic-verification" })).resolves.toMatchObject({
+    }, { traceId: "trace-atomic-verification" });
+    expect(result).toMatchObject({
       completion: { id: "completion-persisted-id" },
       evidence: { completionId: "completion-persisted-id", id: "evidence-persisted-id" },
       participant: { id: "participant-persisted-id", totalPoints: 120 },
     });
+    expect(result.participant).not.toHaveProperty("rank");
 
     expect(pool.calls.map((call) => call.text)).toEqual([
       "BEGIN",
@@ -554,6 +805,11 @@ describe("PostgreSQL Campaign durable store", () => {
       "2F4ParticipantWallet",
     ]);
     expect(pool.calls[1]?.text).toContain("jsonb_build_array($1::text, $2::text)");
+    const participantUpsert = pool.calls.find((call) =>
+      call.text.startsWith("INSERT INTO campaign_os.campaign_participants"));
+    expect(participantUpsert?.text).not.toContain("rank = EXCLUDED.rank");
+    expect(participantUpsert?.text).not.toContain("risk_flags = EXCLUDED.risk_flags");
+    expect(participantUpsert?.values[10]).toBeNull();
     expect(pool.calls.some((call) => call.text === "ROLLBACK")).toBe(false);
     expect(pool.connect).toHaveBeenCalledTimes(1);
     expect(pool.release).toHaveBeenCalledTimes(1);
@@ -627,6 +883,247 @@ describe("PostgreSQL Campaign durable store", () => {
       traceId: "trace-atomic-cleanup",
     });
     expect(pool.release).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "BEGIN",
+    "advisory_lock",
+    "initial_evidence",
+    "completion",
+    "linked_evidence",
+    "points_sum",
+    "participant",
+    "COMMIT",
+  ] as const)("rolls back every %s verification fault without committed partial rows", async (faultPoint) => {
+    let evidenceWriteCount = 0;
+    let pending = { completion: 0, evidence: 0, participant: 0 };
+    let committed = { completion: 0, evidence: 0, participant: 0 };
+    let commitSucceeded = false;
+    const fail = (point: typeof faultPoint) => {
+      if (faultPoint === point) {
+        throw new Error(`private database failure at ${point}`);
+      }
+    };
+    const pool = new TranscriptPool((call) => {
+      if (call.text === "BEGIN") {
+        fail("BEGIN");
+        pending = { completion: 0, evidence: 0, participant: 0 };
+        return { rows: [] };
+      }
+
+      if (call.text.includes("pg_advisory_xact_lock")) {
+        fail("advisory_lock");
+        return { rows: [] };
+      }
+
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_evidence")) {
+        const point = evidenceWriteCount === 0 ? "initial_evidence" : "linked_evidence";
+        fail(point);
+        evidenceWriteCount += 1;
+        pending.evidence = 1;
+        return {
+          rows: [evidenceRow({
+            completion_id: point === "linked_evidence" ? "completion-canonical" : null,
+            id: "evidence-canonical",
+          })],
+        };
+      }
+
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_completions")) {
+        fail("completion");
+        pending.completion = 1;
+        return {
+          rows: [completionRow({
+            evidence_id: "evidence-canonical",
+            id: "completion-canonical",
+          })],
+        };
+      }
+
+      if (call.text.includes("SUM(points_awarded)")) {
+        fail("points_sum");
+        return { rows: [{ total_points: "120" }] };
+      }
+
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_participants")) {
+        fail("participant");
+        pending.participant = 1;
+        return { rows: [participantRow({ id: "participant-canonical", total_points: 120 })] };
+      }
+
+      if (call.text === "COMMIT") {
+        fail("COMMIT");
+        committed = { ...pending };
+        commitSucceeded = true;
+        return { rows: [] };
+      }
+
+      if (call.text === "ROLLBACK") {
+        pending = { completion: 0, evidence: 0, participant: 0 };
+        return { rows: [] };
+      }
+
+      return { rows: [] };
+    });
+    const store = createPostgresCampaignDurableStore({ pool });
+
+    await expect(store.upsertTaskVerification!({
+      completion: completion(),
+      evidence: evidence({ completionId: undefined }),
+      participant: participant({ totalPoints: 0 }),
+    }, { traceId: `trace-atomic-fault-${faultPoint}` })).rejects.toMatchObject({
+      code: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+      operation: "upsertTaskVerification",
+      traceId: `trace-atomic-fault-${faultPoint}`,
+    });
+    expect(pool.calls.some((call) => call.text === "ROLLBACK")).toBe(true);
+    expect(commitSucceeded).toBe(false);
+    expect(committed).toEqual({ completion: 0, evidence: 0, participant: 0 });
+    expect(pool.release).toHaveBeenCalledOnce();
+  });
+
+  it("returns database-canonical identities across twenty concurrent retries", async () => {
+    const completionIds = new Map<string, string>();
+    const evidenceIds = new Map<string, string>();
+    const participantIds = new Map<string, string>();
+    const keyFor = (values: readonly unknown[]) => `${values[1]}::${values[2]}::${values[3]}`;
+    const participantKeyFor = (values: readonly unknown[]) => `${values[1]}::${values[2]}`;
+    const pool = new TranscriptPool((call) => {
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_evidence")) {
+        const key = keyFor(call.values);
+        const canonicalId = evidenceIds.get(key) ?? String(call.values[0]);
+        evidenceIds.set(key, canonicalId);
+        return {
+          rows: [evidenceRow({
+            campaign_id: call.values[1],
+            completion_id: call.values[4],
+            id: canonicalId,
+            task_id: call.values[2],
+            wallet_address: call.values[3],
+          })],
+        };
+      }
+
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_completions")) {
+        const key = keyFor(call.values);
+        const canonicalId = completionIds.get(key) ?? String(call.values[0]);
+        completionIds.set(key, canonicalId);
+        return {
+          rows: [completionRow({
+            campaign_id: call.values[1],
+            evidence_id: call.values[8],
+            id: canonicalId,
+            task_id: call.values[2],
+            wallet_address: call.values[3],
+          })],
+        };
+      }
+
+      if (call.text.includes("SUM(points_awarded)")) {
+        return { rows: [{ total_points: "120" }] };
+      }
+
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_participants")) {
+        const key = participantKeyFor(call.values);
+        const canonicalId = participantIds.get(key) ?? String(call.values[0]);
+        participantIds.set(key, canonicalId);
+        return {
+          rows: [participantRow({
+            campaign_id: call.values[1],
+            id: canonicalId,
+            rank: null,
+            total_points: call.values[9],
+            wallet_address: call.values[2],
+          })],
+        };
+      }
+
+      return { rows: [] };
+    });
+    const store = createPostgresCampaignDurableStore({ pool });
+
+    const results = await Promise.all(Array.from({ length: 20 }, (_, index) =>
+      store.upsertTaskVerification!({
+        completion: completion({ id: `completion-request-${index}` }),
+        evidence: evidence({ completionId: undefined, id: `evidence-request-${index}` }),
+        participant: participant({ id: `participant-request-${index}`, totalPoints: 0 }),
+      }, { traceId: `trace-postgres-concurrent-${index}` })));
+
+    expect(new Set(results.map((result) => result.completion.id)).size).toBe(1);
+    expect(new Set(results.map((result) => result.evidence.id)).size).toBe(1);
+    expect(new Set(results.map((result) => result.participant.id)).size).toBe(1);
+    expect(results.every((result) => result.participant.totalPoints === 120)).toBe(true);
+    expect(completionIds.size).toBe(1);
+    expect(evidenceIds.size).toBe(1);
+    expect(participantIds.size).toBe(1);
+    expect(pool.connect).toHaveBeenCalledTimes(20);
+    expect(pool.release).toHaveBeenCalledTimes(20);
+  });
+
+  it("reuses committed canonical identities when the first COMMIT response is lost", async () => {
+    const canonicalCompletionId = "completion-first-committed";
+    const canonicalEvidenceId = "evidence-first-committed";
+    const canonicalParticipantId = "participant-first-committed";
+    let commitAttempts = 0;
+    const pool = new TranscriptPool((call) => {
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_evidence")) {
+        return { rows: [evidenceRow({
+          completion_id: call.values[4],
+          id: canonicalEvidenceId,
+        })] };
+      }
+
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_task_completions")) {
+        return { rows: [completionRow({
+          evidence_id: canonicalEvidenceId,
+          id: canonicalCompletionId,
+        })] };
+      }
+
+      if (call.text.includes("SUM(points_awarded)")) {
+        return { rows: [{ total_points: "120" }] };
+      }
+
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_participants")) {
+        return { rows: [participantRow({
+          id: canonicalParticipantId,
+          rank: null,
+          total_points: 120,
+        })] };
+      }
+
+      if (call.text === "COMMIT") {
+        commitAttempts += 1;
+        if (commitAttempts === 1) {
+          throw new Error("commit completed but response was lost");
+        }
+      }
+
+      return { rows: [] };
+    });
+    const store = createPostgresCampaignDurableStore({ pool });
+    const write = {
+      completion: completion(),
+      evidence: evidence({ completionId: undefined }),
+      participant: participant({ totalPoints: 0 }),
+    };
+
+    await expect(store.upsertTaskVerification!(write, {
+      traceId: "trace-postgres-lost-response-first",
+    })).rejects.toMatchObject({
+      code: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+      traceId: "trace-postgres-lost-response-first",
+    });
+    await expect(store.upsertTaskVerification!({
+      completion: { ...write.completion, id: "completion-second-request" },
+      evidence: { ...write.evidence, id: "evidence-second-request" },
+      participant: { ...write.participant, id: "participant-second-request" },
+    }, { traceId: "trace-postgres-lost-response-retry" })).resolves.toMatchObject({
+      completion: { id: canonicalCompletionId },
+      evidence: { completionId: canonicalCompletionId, id: canonicalEvidenceId },
+      participant: { id: canonicalParticipantId, totalPoints: 120 },
+    });
+    expect(commitAttempts).toBe(2);
   });
 
   it("filters and atomically upserts Task Evidence without application-side reads", async () => {

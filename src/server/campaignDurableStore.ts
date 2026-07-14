@@ -10,6 +10,12 @@ import type {
   CampaignDbTaskEvidenceRecord,
   CampaignDbTaskDraft,
 } from "./campaignDbRepository";
+import {
+  compareParticipantRankRows,
+  toParticipantRankRow,
+  withoutParticipantRank,
+  type ParticipantRankRow,
+} from "./participantJourney";
 
 export type CampaignDurableStoreMode =
   | "local_seeded"
@@ -115,6 +121,20 @@ export interface CampaignDurableStoreTaskVerificationResult {
   participant: CampaignDbParticipantRecord;
 }
 
+export interface CampaignDurableStoreParticipantJourneySnapshotInput {
+  campaignId: string;
+  walletAddress: string;
+}
+
+export interface CampaignDurableStoreParticipantJourneySnapshot {
+  campaign: CampaignDbDraft | undefined;
+  completions: CampaignDbTaskCompletion[];
+  evidence: CampaignDbTaskEvidenceRecord[];
+  participant: CampaignDbParticipantRecord | undefined;
+  rankingParticipants: ParticipantRankRow[];
+  tasks: CampaignDbTaskDraft[];
+}
+
 export interface CampaignDurableStore {
   close(): Promise<void>;
   create(
@@ -134,6 +154,10 @@ export interface CampaignDurableStore {
     walletAddress: string,
     context?: CampaignDurableStoreOperationContext,
   ): Promise<CampaignDbParticipantRecord | undefined>;
+  getParticipantJourneySnapshot(
+    input: CampaignDurableStoreParticipantJourneySnapshotInput,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDurableStoreParticipantJourneySnapshot>;
   getReferralBinding(
     campaignId: string,
     inviteeWalletAddress: string,
@@ -255,6 +279,8 @@ const applyOptionalLimit = <T>(
   maximum: number,
 ) => limit === undefined ? records : records.slice(0, clampLimit(limit, maximum));
 
+const cloneRecord = <T>(value: T): T => structuredClone(value);
+
 const sortDrafts = (records: readonly CampaignDbDraft[]) =>
   [...records].sort((left, right) => {
     const createdAtComparison = left.createdAt.localeCompare(right.createdAt);
@@ -343,6 +369,7 @@ export const createCampaignDurableStore = ({
   const taskRecordsById = new Map<string, CampaignDbTaskDraft>();
   const startupDiagnostics: CampaignDurableStoreDiagnostic[] = [];
   let initialized = false;
+  let journeyOperationTail = Promise.resolve();
   const durable = mode === "durable_test" || mode === "production_required";
 
   if (durable && !filePath) {
@@ -461,6 +488,138 @@ export const createCampaignDurableStore = ({
     ...productionRequiredDiagnostics(),
   ];
 
+  const runJourneyExclusive = async <T>(operation: () => Promise<T>): Promise<T> => {
+    const previous = journeyOperationTail;
+    let release: () => void = () => undefined;
+    journeyOperationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  };
+
+  const findCompletionByLogicalKey = (
+    campaignId: string,
+    taskId: string,
+    walletAddress: string,
+  ) => Array.from(taskCompletionsById.values()).find((completion) =>
+    completion.campaignId === campaignId
+    && completion.taskId === taskId
+    && completion.walletAddress === walletAddress);
+
+  const findEvidenceByLogicalKey = (
+    campaignId: string,
+    taskId: string,
+    walletAddress: string,
+  ) => Array.from(taskEvidenceById.values()).find((evidence) =>
+    evidence.campaignId === campaignId
+    && evidence.taskId === taskId
+    && evidence.walletAddress === walletAddress);
+
+  const completedPointsForWallet = (campaignId: string, walletAddress: string) => {
+    const byTaskId = new Map<string, CampaignDbTaskCompletion>();
+
+    for (const completion of sortTaskCompletions(Array.from(taskCompletionsById.values()))) {
+      if (
+        completion.campaignId === campaignId
+        && completion.walletAddress === walletAddress
+        && completion.status === "completed"
+        && !byTaskId.has(completion.taskId)
+      ) {
+        byTaskId.set(completion.taskId, completion);
+      }
+    }
+
+    return Array.from(byTaskId.values()).reduce(
+      (total, completion) => total + completion.pointsAwarded,
+      0,
+    );
+  };
+
+  const upsertTaskVerification = (
+    input: CampaignDurableStoreTaskVerificationWrite,
+  ): Promise<CampaignDurableStoreTaskVerificationResult> => runJourneyExclusive(async () => {
+    await ensureInitialized();
+    const previousCompletions = new Map(taskCompletionsById);
+    const previousEvidence = new Map(taskEvidenceById);
+    const previousParticipants = new Map(participantRecordsById);
+    const existingCompletion = findCompletionByLogicalKey(
+      input.completion.campaignId,
+      input.completion.taskId,
+      input.completion.walletAddress,
+    );
+    const existingEvidence = findEvidenceByLogicalKey(
+      input.evidence.campaignId,
+      input.evidence.taskId,
+      input.evidence.walletAddress,
+    );
+    const participantRecordKey = `${input.participant.campaignId}::${input.participant.walletAddress}`;
+    const existingParticipant = participantRecordsById.get(participantRecordKey);
+    const evidenceId = existingEvidence?.id ?? input.evidence.id;
+    const completionId = existingCompletion?.id ?? input.completion.id;
+    const completion: CampaignDbTaskCompletion = {
+      ...input.completion,
+      createdAt: existingCompletion?.createdAt ?? input.completion.createdAt,
+      evidenceHash: input.evidence.evidenceHash,
+      evidenceId,
+      id: completionId,
+    };
+    const evidence: CampaignDbTaskEvidenceRecord = {
+      ...input.evidence,
+      completionId,
+      createdAt: existingEvidence?.createdAt ?? input.evidence.createdAt,
+      id: evidenceId,
+      pointsAwarded: completion.pointsAwarded,
+    };
+
+    taskCompletionsById.set(completion.id, completion);
+    taskEvidenceById.set(evidence.id, evidence);
+
+    const participant: CampaignDbParticipantRecord = {
+      ...withoutParticipantRank(input.participant),
+      createdAt: existingParticipant?.createdAt ?? input.participant.createdAt,
+      id: existingParticipant?.id ?? input.participant.id,
+      localePreference: existingParticipant?.localePreference ?? input.participant.localePreference,
+      riskFlags: existingParticipant?.riskFlags ?? input.participant.riskFlags,
+      totalPoints: completedPointsForWallet(completion.campaignId, completion.walletAddress),
+      walletSignatureStatus: existingParticipant?.walletSignatureStatus
+        ?? input.participant.walletSignatureStatus,
+      ...(existingParticipant?.walletVerifiedAt === undefined
+        ? {}
+        : { walletVerifiedAt: existingParticipant.walletVerifiedAt }),
+    };
+    participantRecordsById.set(participantRecordKey, participant);
+
+    try {
+      await writeDocument();
+    } catch (error) {
+      taskCompletionsById.clear();
+      taskEvidenceById.clear();
+      participantRecordsById.clear();
+      for (const [id, record] of previousCompletions) {
+        taskCompletionsById.set(id, record);
+      }
+      for (const [id, record] of previousEvidence) {
+        taskEvidenceById.set(id, record);
+      }
+      for (const [id, record] of previousParticipants) {
+        participantRecordsById.set(id, record);
+      }
+      throw error;
+    }
+
+    return {
+      completion: cloneRecord(completion),
+      evidence: cloneRecord(evidence),
+      participant: cloneRecord(participant),
+    };
+  });
+
   return {
     close: async () => {
       await writeDocument();
@@ -489,6 +648,43 @@ export const createCampaignDurableStore = ({
 
       return participantRecordsById.get(`${campaignId}::${walletAddress}`);
     },
+    getParticipantJourneySnapshot: ({ campaignId, walletAddress }) => runJourneyExclusive(async () => {
+      await ensureInitialized();
+      const campaign = recordsById.get(campaignId);
+
+      if (!campaign) {
+        return {
+          campaign: undefined,
+          completions: [],
+          evidence: [],
+          participant: undefined,
+          rankingParticipants: [],
+          tasks: [],
+        };
+      }
+
+      const tasks = sortTaskDrafts(Array.from(taskRecordsById.values()))
+        .filter((task) => task.campaignId === campaignId);
+      const completions = sortTaskCompletions(Array.from(taskCompletionsById.values()))
+        .filter((completion) => completion.campaignId === campaignId)
+        .filter((completion) => completion.walletAddress === walletAddress);
+      const evidence = sortTaskEvidence(Array.from(taskEvidenceById.values()))
+        .filter((record) => record.campaignId === campaignId)
+        .filter((record) => record.walletAddress === walletAddress);
+      const rankingParticipants = Array.from(participantRecordsById.values())
+        .filter((participant) => participant.campaignId === campaignId)
+        .map(toParticipantRankRow)
+        .sort(compareParticipantRankRows);
+
+      return cloneRecord({
+        campaign,
+        completions,
+        evidence,
+        participant: participantRecordsById.get(`${campaignId}::${walletAddress}`),
+        rankingParticipants,
+        tasks,
+      });
+    }),
     getReferralBinding: async (campaignId, inviteeWalletAddress) => {
       await ensureInitialized();
 
@@ -623,6 +819,7 @@ export const createCampaignDurableStore = ({
 
       return evidence;
     },
+    upsertTaskVerification,
     upsertReferralBinding: async (binding) => {
       await ensureInitialized();
       referralBindingRecordsById.set(`${binding.campaignId}::${binding.inviteeWalletAddress}`, binding);
