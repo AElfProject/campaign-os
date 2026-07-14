@@ -4,6 +4,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    maxWorkers: 8,
+    minWorkers: 1,
     setupFiles: [],
   },
 });
