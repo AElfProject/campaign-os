@@ -11,6 +11,7 @@ import type { NormalizedWalletSession } from "../domain/types";
 import {
   createCampaignOsApiRuntime as createCampaignOsApiRuntimeBase,
   type ApiRuntimeResponse,
+  type CampaignOsApiRuntime,
   type CreateCampaignOsApiRuntimeOptions,
 } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
@@ -109,6 +110,9 @@ interface AnalyticsPayload {
 }
 
 interface WalletSessionPayload {
+  accountType: string;
+  address: string;
+  id: string;
   issuer?: {
     cookieIssued: false;
     issuerMode: string;
