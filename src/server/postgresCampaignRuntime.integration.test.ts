@@ -919,6 +919,15 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       `/api/participant/campaigns/${campaignId}/journey`,
       { headers: participantSessionB1.headers("trace-pg-participant-b-zero") },
     );
+    const exactCompatibilityClaims = await requestJson<EligibilityData>(
+      firstServer,
+      `/api/campaigns/${campaignId}/eligibility`
+        + `?walletAddress=${encodeURIComponent(walletAddress)}`
+        + `&accountType=${encodeURIComponent(participantSessionA1.data.payload.accountType)}`
+        + `&walletSource=${encodeURIComponent(participantSessionA1.data.payload.walletSource)}`
+        + "&chainId=AELF&network=mainnet",
+      { headers: participantSessionA1.headers("trace-pg-participant-exact-compatibility") },
+    );
 
     expect(participantFeed.payload.items).toEqual([
       expect.objectContaining({
@@ -932,6 +941,11 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       }),
     ]);
     expect(participantFeed.payload.participantPreview).toEqual({ campaignCount: 1, enabled: true });
+    expect(exactCompatibilityClaims.payload).toMatchObject({
+      eligible: false,
+      score: 0,
+      walletAddress,
+    });
     for (const [journey, address] of [
       [zeroJourneyA, walletAddress],
       [zeroJourneyB, walletBAddress],
@@ -1030,12 +1044,48 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       },
     );
 
-    for (const rejected of [subjectSubstitution, caseVariantSubstitution, internalParticipantCredential]) {
-      expect(rejected).toMatchObject({
-        status: 403,
-        envelope: { ok: false, error: { code: "AUTH_FORBIDDEN" } },
-      });
-    }
+    expect(subjectSubstitution).toMatchObject({
+      status: 403,
+      envelope: {
+        ok: false,
+        traceId: "trace-pg-participant-substitution",
+        error: {
+          code: "AUTH_FORBIDDEN",
+          details: {
+            diagnosticCode: "AUTH_SUBJECT_MISMATCH",
+            field: "walletAddress",
+          },
+        },
+      },
+    });
+    expect(caseVariantSubstitution).toMatchObject({
+      status: 403,
+      envelope: {
+        ok: false,
+        traceId: "trace-pg-participant-case-variant",
+        error: {
+          code: "AUTH_FORBIDDEN",
+          details: {
+            diagnosticCode: "AUTH_SUBJECT_MISMATCH",
+            field: "walletAddress",
+          },
+        },
+      },
+    });
+    expect(internalParticipantCredential).toMatchObject({
+      status: 403,
+      envelope: {
+        ok: false,
+        traceId: "trace-pg-participant-internal-credential",
+        error: {
+          code: "AUTH_FORBIDDEN",
+          details: {
+            diagnosticCode: "AUTH_FORBIDDEN",
+            field: "authSession.credentialBoundary",
+          },
+        },
+      },
+    });
     expect(missingParticipantSession).toMatchObject({
       status: 401,
       envelope: { ok: false, error: { code: "AUTH_SESSION_REQUIRED" } },
@@ -1327,7 +1377,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const secondServer = await startServer();
     const sessionB = await issueProjectOwnerSession(
       secondServer,
-      { adapterName: "PortkeyAAWallet", address: ownerAddress },
+      { fixtureId: "sess-aa-001" },
       "trace-pg-session-b",
     );
     expect(sessionB.data.payload.sessionId).not.toBe(sessionA.data.payload.sessionId);
@@ -1342,12 +1392,12 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     });
     const participantSessionA2 = await issueParticipantSession(
       secondServer,
-      { adapterName: "PortkeyExtensionWallet", address: walletAddress },
+      { fixtureId: "sess-eoa-001" },
       "trace-pg-participant-a2-session",
     );
     const participantSessionB2 = await issueParticipantSession(
       secondServer,
-      { adapterName: "PortkeyDiscoverWallet", address: walletBAddress },
+      { fixtureId: "sess-eoa-app-001" },
       "trace-pg-participant-b2-session",
     );
     expect(participantSessionA2.data.payload.sessionId).not.toBe(

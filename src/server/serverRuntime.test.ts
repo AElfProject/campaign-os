@@ -468,9 +468,14 @@ describe("API server resource shutdown", () => {
 
     await Promise.all([stopping, socketClosed]);
 
+    const responseStatuses = Array.from(
+      received.matchAll(/(?:^|\r\n)HTTP\/1\.1 (\d{3}) [^\r\n]*\r\n/g),
+      ([, status]) => Number(status),
+    );
+
     expect(handle).toHaveBeenCalledTimes(1);
-    expect(received).toContain("HTTP/1.1 200 OK");
-    if (received.includes("HTTP/1.1 503 Service Unavailable")) {
+    expect([[200], [200, 503]]).toContainEqual(responseStatuses);
+    if (responseStatuses.includes(503)) {
       expect(received).toContain("PERSISTENCE_UNAVAILABLE");
     }
     expect(socketErrors).toEqual([]);
