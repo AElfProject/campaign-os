@@ -1,10 +1,18 @@
 import "@testing-library/jest-dom/vitest";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../../app/App";
-import { campaignDetail } from "../../../domain";
+import { campaignDetail, walletSessions, type NormalizedWalletSession } from "../../../domain";
 import { loadCampaignDiscoveryApiBridgeState } from "../../../api/campaignDiscoveryApiBridge";
+import type {
+  ParticipantCampaignFeedItem,
+  ParticipantJourneyApiBridge,
+  ParticipantJourneyFailure,
+  ParticipantJourneyProjection,
+  ParticipantJourneyResult,
+  ParticipantVerifyResult,
+} from "../../../api/participantJourneyApiBridge";
 import { submitUserParticipationApiReview } from "../../../api/userParticipationApiBridge";
 import { UserAppPanel } from "./UserAppPanel";
 
@@ -1134,5 +1142,633 @@ describe("User App shell", () => {
     expect(within(shareReadiness).getAllByText(/English fallback|英文回退/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Forest NFT 任務").length).toBeGreaterThan(0);
     expect(screen.getAllByText("TMRWDAO 治理連續任務").length).toBeGreaterThan(0);
+  });
+});
+
+const durableRepository = {
+  adapterId: "campaign-db-adapter",
+  createdViaRepository: true as const,
+  repositoryId: "participant-journey-repository",
+  storeId: "campaign-db" as const,
+};
+
+const durableSession = (overrides: Partial<NormalizedWalletSession> = {}): NormalizedWalletSession => ({
+  ...walletSessions[0],
+  issuer: {
+    artifactType: "local_session_reference",
+    cookieIssued: false,
+    diagnosticCodes: [],
+    issuerMode: "local_opaque",
+    jwtIssued: false,
+    liveSigningExecuted: false,
+    referenceId: "issued-participant-session",
+    ttlSeconds: 900,
+    valid: true,
+  },
+  proof: {
+    diagnosticCodes: [],
+    liveVerificationExecuted: false,
+    proofType: "wallet_signature",
+    status: "verified",
+    trustLevel: "verified_local",
+  },
+  ...overrides,
+});
+
+const durableFeedItem = (
+  campaignId: string,
+  label: string,
+): ParticipantCampaignFeedItem => ({
+  campaignId,
+  projectId: "awaken",
+  repository: durableRepository,
+  status: "draft",
+  taskCount: 1,
+  title: { "en-US": label, "zh-CN": label, "zh-TW": label },
+  visibility: "participant_preview",
+  walletPolicy: "ANY",
+});
+
+const durableJourney = ({
+  campaignId,
+  completionId = null,
+  evidenceId = null,
+  points = 0,
+  rank = null,
+  riskFlags = [],
+  status = "not_started",
+}: {
+  campaignId: string;
+  completionId?: string | null;
+  evidenceId?: string | null;
+  points?: number;
+  rank?: number | null;
+  riskFlags?: readonly string[];
+  status?: "completed" | "failed" | "manual_review" | "not_started" | "pending";
+}): ParticipantJourneyProjection => {
+  const session = durableSession();
+  const taskId = `task-${campaignId}`;
+  const completed = status === "completed";
+
+  return {
+    campaign: {
+      campaignId,
+      endTime: "2026-08-31T00:00:00.000Z",
+      goal: "Verify the durable participant path",
+      projectId: "awaken",
+      rewardDescription: "Review points",
+      startTime: "2026-07-01T00:00:00.000Z",
+      status: "draft",
+      taskCount: 1,
+      walletPolicy: "ANY",
+    },
+    diagnostics: riskFlags.map((code) => ({ code, scope: "participant" as const })),
+    eligibility: {
+      accountType: session.accountType,
+      campaignId,
+      eligible: completed,
+      localePreference: "en-US",
+      missingTasks: completed ? [] : [taskId],
+      riskFlags,
+      score: points,
+      status: completed ? "eligible" : "pending",
+      walletAddress: session.address,
+      walletSource: session.walletSource,
+      walletTypeVerified: true,
+    },
+    participant: {
+      accountType: session.accountType,
+      campaignId,
+      localePreference: "en-US",
+      participantId: `participant-${campaignId}`,
+      riskFlags,
+      totalPoints: points,
+      walletAddress: session.address,
+      walletSource: session.walletSource,
+      walletTypeVerified: true,
+    },
+    ranking: {
+      campaignId,
+      participantCount: completed ? 4 : 1,
+      rank,
+      source: "repository_projection",
+      totalPoints: points,
+      walletAddress: session.address,
+    },
+    repository: durableRepository,
+    tasks: [{
+      action: completed ? "completed" : "verify",
+      blockedReason: null,
+      campaignId,
+      completionId,
+      evidenceId,
+      evidenceSource: completed ? "DAPP_API" : null,
+      pointsAvailable: 25,
+      pointsAwarded: completed ? points : 0,
+      required: true,
+      status,
+      taskId,
+      templateCode: "DURABLE_REVIEW",
+      updatedAt: completed ? "2026-07-14T10:00:00.000Z" : null,
+      verificationType: "DAPP_API",
+      walletCompatibility: "ANY",
+    }],
+  };
+};
+
+const durableFailure = (
+  overrides: Partial<ParticipantJourneyFailure> = {},
+): ParticipantJourneyFailure => ({
+  code: "BRIDGE_REQUEST_FAILED",
+  httpStatus: 503,
+  ok: false,
+  phase: "request",
+  reconnectRequired: false,
+  retryable: true,
+  source: "durable",
+  status: "degraded",
+  traceId: "trace-participant-failure",
+  ...overrides,
+});
+
+const durableVerifySuccess = (campaignId: string): ParticipantVerifyResult => {
+  const session = durableSession();
+  const taskId = `task-${campaignId}`;
+
+  return {
+    httpStatus: 200,
+    ok: true,
+    source: "durable",
+    status: "success",
+    traceId: "trace-verify-command",
+    verification: {
+      completion: {
+        accountType: session.accountType,
+        campaignId,
+        evidenceId: `evidence-${campaignId}`,
+        id: `completion-${campaignId}`,
+        pointsAwarded: 25,
+        status: "completed",
+        taskId,
+        walletAddress: session.address,
+        walletSource: session.walletSource,
+      },
+      evidence: {
+        accountType: session.accountType,
+        campaignId,
+        completionId: `completion-${campaignId}`,
+        id: `evidence-${campaignId}`,
+        pointsAwarded: 25,
+        status: "completed",
+        taskId,
+        walletAddress: session.address,
+        walletSource: session.walletSource,
+      },
+      repository: durableRepository,
+    },
+  };
+};
+
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+
+  return { promise, resolve };
+};
+
+const durableBridge = (
+  overrides: Partial<ParticipantJourneyApiBridge> = {},
+): ParticipantJourneyApiBridge => ({
+  getJourney: vi.fn(async (context): Promise<ParticipantJourneyResult> => ({
+    httpStatus: 200,
+    journey: durableJourney({ campaignId: context.selectedCampaignId ?? "missing" }),
+    ok: true,
+    source: "durable",
+    status: "success",
+    traceId: "trace-participant-journey",
+  })),
+  listCampaigns: vi.fn<ParticipantJourneyApiBridge["listCampaigns"]>(async () => ({
+    campaigns: [
+      durableFeedItem("campaign-alpha", "Campaign Alpha"),
+      durableFeedItem("campaign-beta", "Campaign Beta"),
+    ],
+    httpStatus: 200,
+    ok: true,
+    source: "durable",
+    status: "success",
+    traceId: "trace-participant-feed",
+  })),
+  verifyTask: vi.fn(async (_taskId, context) => durableVerifySuccess(context.selectedCampaignId ?? "missing")),
+  ...overrides,
+});
+
+describe("Durable Participant User App", () => {
+  beforeEach(() => {
+    vi.mocked(loadCampaignDiscoveryApiBridgeState).mockClear();
+    vi.mocked(submitUserParticipationApiReview).mockClear();
+  });
+
+  const renderDurable = (
+    bridge: ParticipantJourneyApiBridge,
+    session: NormalizedWalletSession | null = durableSession(),
+  ) => render(
+    <UserAppPanel
+      bridge={bridge}
+      locale="en-US"
+      mode="durable"
+      onReconnect={vi.fn()}
+      session={session}
+      sessionReady={Boolean(session)}
+    />,
+  );
+
+  it("blocks protected feed access until the issued session is ready", () => {
+    const bridge = durableBridge();
+    const onReconnect = vi.fn();
+
+    render(
+      <UserAppPanel
+        bridge={bridge}
+        locale="en-US"
+        mode="durable"
+        onReconnect={onReconnect}
+        session={null}
+        sessionReady={false}
+      />,
+    );
+
+    expect(bridge.listCampaigns).not.toHaveBeenCalled();
+    expect(screen.queryByText("Awaken Sprint")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect wallet" }));
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts one effective protected feed request under React StrictMode", async () => {
+    const bridge = durableBridge();
+
+    render(
+      <StrictMode>
+        <UserAppPanel
+          bridge={bridge}
+          locale="en-US"
+          mode="durable"
+          onReconnect={vi.fn()}
+          session={durableSession()}
+          sessionReady
+        />
+      </StrictMode>,
+    );
+
+    expect(await screen.findByRole("button", { name: "Select Campaign Alpha" })).toBeInTheDocument();
+    expect(bridge.listCampaigns).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires explicit canonical Campaign selection before loading repository journey", async () => {
+    const bridge = durableBridge();
+
+    renderDurable(bridge);
+
+    expect(await screen.findByRole("button", { name: "Select Campaign Alpha" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select Campaign Beta" })).toBeInTheDocument();
+    expect(bridge.getJourney).not.toHaveBeenCalled();
+    expect(screen.queryByText("Awaken Sprint")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Select Campaign Alpha" }));
+
+    await waitFor(() => expect(bridge.getJourney).toHaveBeenCalledTimes(1));
+    expect(bridge.getJourney).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "durable",
+      selectedCampaignId: "campaign-alpha",
+      session: expect.objectContaining({ sessionId: durableSession().sessionId }),
+      signal: expect.any(AbortSignal),
+    }));
+    const selected = screen.getByRole("button", { name: "Select Campaign Alpha" });
+    expect(selected).toHaveAttribute("aria-current", "true");
+    expect(selected).toHaveAttribute("aria-pressed", "true");
+    expect(selected).toBeEnabled();
+    expect(screen.getAllByText("Participant preview")).toHaveLength(2);
+    expect(screen.getAllByText("draft").length).toBeGreaterThan(0);
+    const journey = await screen.findByRole("region", { name: "Participant journey" });
+    expect(within(journey).getByText("campaign-alpha")).toBeInTheDocument();
+    expect(within(journey).getByText("0")).toBeInTheDocument();
+    expect(within(journey).getByText("Not ranked")).toBeInTheDocument();
+    expect(within(journey).getByRole("button", { name: "Verify Task task-campaign-alpha" })).toBeEnabled();
+  });
+
+  it("updates business state only after one authoritative read-after-write refresh", async () => {
+    const refresh = deferred<ParticipantJourneyResult>();
+    const getJourney = vi
+      .fn<ParticipantJourneyApiBridge["getJourney"]>()
+      .mockResolvedValueOnce({
+        httpStatus: 200,
+        journey: durableJourney({ campaignId: "campaign-alpha" }),
+        ok: true,
+        source: "durable",
+        status: "success",
+        traceId: "trace-initial-journey",
+      })
+      .mockImplementationOnce(() => refresh.promise);
+    const bridge = durableBridge({ getJourney });
+
+    renderDurable(bridge);
+    fireEvent.click(await screen.findByRole("button", { name: "Select Campaign Alpha" }));
+    const verify = await screen.findByRole("button", { name: "Verify Task task-campaign-alpha" });
+    fireEvent.click(verify);
+    fireEvent.click(verify);
+
+    await waitFor(() => expect(bridge.verifyTask).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: "Refreshing journey" })).toBeDisabled();
+    expect(screen.getByRole("region", { name: "Participant journey" })).toHaveTextContent("Points0");
+    expect(screen.queryByText("completion-campaign-alpha")).not.toBeInTheDocument();
+
+    await act(async () => {
+      refresh.resolve({
+        httpStatus: 200,
+        journey: durableJourney({
+          campaignId: "campaign-alpha",
+          completionId: "completion-campaign-alpha",
+          evidenceId: "evidence-campaign-alpha",
+          points: 25,
+          rank: 2,
+          status: "completed",
+        }),
+        ok: true,
+        source: "durable",
+        status: "success",
+        traceId: "trace-refreshed-journey",
+      });
+      await refresh.promise;
+    });
+
+    const journey = screen.getByRole("region", { name: "Participant journey" });
+    expect(journey).toHaveTextContent("Points25");
+    expect(journey).toHaveTextContent("Rank#2");
+    expect(journey).toHaveTextContent("eligible");
+    expect(within(journey).getByText("completion-campaign-alpha")).toBeInTheDocument();
+    expect(within(journey).getByText("evidence-campaign-alpha")).toBeInTheDocument();
+    expect(getJourney).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the last-good journey read-only when refresh fails and retries only the read", async () => {
+    const getJourney = vi
+      .fn<ParticipantJourneyApiBridge["getJourney"]>()
+      .mockResolvedValueOnce({
+        httpStatus: 200,
+        journey: durableJourney({ campaignId: "campaign-alpha" }),
+        ok: true,
+        source: "durable",
+        status: "success",
+        traceId: "trace-initial-journey",
+      })
+      .mockResolvedValueOnce(durableFailure({ traceId: "trace-refresh-failed" }))
+      .mockResolvedValueOnce({
+        httpStatus: 200,
+        journey: durableJourney({ campaignId: "campaign-alpha" }),
+        ok: true,
+        source: "durable",
+        status: "success",
+        traceId: "trace-retry-journey",
+      });
+    const bridge = durableBridge({ getJourney });
+
+    renderDurable(bridge);
+    fireEvent.click(await screen.findByRole("button", { name: "Select Campaign Alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Verify Task task-campaign-alpha" }));
+
+    const retry = await screen.findByRole("button", { name: "Retry journey read" });
+    expect(screen.getByRole("region", { name: "Participant journey" })).toHaveTextContent("Points0");
+    expect(screen.getAllByText("trace-verify-command").length).toBeGreaterThan(0);
+    expect(screen.getByText("trace-refresh-failed")).toBeInTheDocument();
+    fireEvent.click(retry);
+
+    await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(3));
+    expect(bridge.verifyTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts and ignores a late feed response after the issued session changes", async () => {
+    const sessionAFeed = deferred<Awaited<ReturnType<ParticipantJourneyApiBridge["listCampaigns"]>>>();
+    const sessionB = durableSession({ address: "ELF_SESSION_B", sessionId: "participant-session-b" });
+    const listCampaigns = vi
+      .fn<ParticipantJourneyApiBridge["listCampaigns"]>()
+      .mockImplementationOnce(() => sessionAFeed.promise)
+      .mockResolvedValueOnce({
+        campaigns: [durableFeedItem("campaign-beta", "Campaign Beta")],
+        httpStatus: 200,
+        ok: true,
+        source: "durable",
+        status: "success",
+        traceId: "trace-session-b-feed",
+      });
+    const bridge = durableBridge({ listCampaigns });
+    const { rerender } = renderDurable(bridge);
+    await waitFor(() => expect(listCampaigns).toHaveBeenCalledTimes(1));
+    const sessionASignal = vi.mocked(listCampaigns).mock.calls[0][0].signal;
+
+    rerender(
+      <UserAppPanel
+        bridge={bridge}
+        locale="en-US"
+        mode="durable"
+        onReconnect={vi.fn()}
+        session={sessionB}
+        sessionReady
+      />,
+    );
+
+    expect(sessionASignal?.aborted).toBe(true);
+    expect(await screen.findByRole("button", { name: "Select Campaign Beta" })).toBeInTheDocument();
+    await act(async () => {
+      sessionAFeed.resolve({
+        campaigns: [durableFeedItem("campaign-alpha", "Campaign Alpha")],
+        httpStatus: 200,
+        ok: true,
+        source: "durable",
+        status: "success",
+        traceId: "trace-late-session-a-feed",
+      });
+      await sessionAFeed.promise;
+    });
+
+    expect(screen.queryByRole("button", { name: "Select Campaign Alpha" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select Campaign Beta" })).toBeInTheDocument();
+  });
+
+  it("aborts Campaign A journey and rejects its late response when Campaign B is selected", async () => {
+    const campaignAJourney = deferred<ParticipantJourneyResult>();
+    const getJourney = vi.fn<ParticipantJourneyApiBridge["getJourney"]>((context) =>
+      context.selectedCampaignId === "campaign-alpha"
+        ? campaignAJourney.promise
+        : Promise.resolve({
+            httpStatus: 200,
+            journey: durableJourney({ campaignId: "campaign-beta" }),
+            ok: true,
+            source: "durable",
+            status: "success",
+            traceId: "trace-campaign-beta-journey",
+          }));
+    const bridge = durableBridge({ getJourney });
+
+    renderDurable(bridge);
+    fireEvent.click(await screen.findByRole("button", { name: "Select Campaign Alpha" }));
+    await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(1));
+    const campaignASignal = vi.mocked(getJourney).mock.calls[0][0].signal;
+
+    fireEvent.click(screen.getByRole("button", { name: "Select Campaign Beta" }));
+
+    expect(campaignASignal?.aborted).toBe(true);
+    await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(2));
+    const journey = await screen.findByRole("region", { name: "Participant journey" });
+    expect(within(journey).getByText("campaign-beta")).toBeInTheDocument();
+
+    await act(async () => {
+      campaignAJourney.resolve({
+        httpStatus: 200,
+        journey: durableJourney({ campaignId: "campaign-alpha", points: 999 }),
+        ok: true,
+        source: "durable",
+        status: "success",
+        traceId: "trace-late-campaign-alpha-journey",
+      });
+      await campaignAJourney.promise;
+    });
+
+    expect(within(journey).queryByText("campaign-alpha")).not.toBeInTheDocument();
+    expect(journey).toHaveTextContent("Points0");
+  });
+
+  it("fails closed without seeded content and retries a protected feed read", async () => {
+    const listCampaigns = vi
+      .fn<ParticipantJourneyApiBridge["listCampaigns"]>()
+      .mockResolvedValueOnce(durableFailure({
+        code: "PERSISTENCE_UNAVAILABLE",
+        safeDetails: {
+          rawSignature: "SECRET_SIGNATURE_MUST_NOT_RENDER",
+          stack: "PRIVATE_RUNTIME_PATH_MUST_NOT_RENDER",
+        },
+        traceId: "trace-feed-unavailable",
+      }))
+      .mockResolvedValueOnce({
+        campaigns: [],
+        httpStatus: 200,
+        ok: true,
+        source: "durable",
+        status: "success",
+        traceId: "trace-feed-retry",
+      });
+    const bridge = durableBridge({ listCampaigns });
+
+    renderDurable(bridge);
+
+    expect(await screen.findByText("PERSISTENCE_UNAVAILABLE")).toBeInTheDocument();
+    expect(screen.getByText("trace-feed-unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Awaken Sprint")).not.toBeInTheDocument();
+    expect(screen.queryByText("SECRET_SIGNATURE_MUST_NOT_RENDER")).not.toBeInTheDocument();
+    expect(screen.queryByText("PRIVATE_RUNTIME_PATH_MUST_NOT_RENDER")).not.toBeInTheDocument();
+    expect(vi.mocked(loadCampaignDiscoveryApiBridgeState)).not.toHaveBeenCalled();
+    expect(vi.mocked(submitUserParticipationApiReview)).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry Campaign feed" }));
+
+    await waitFor(() => expect(listCampaigns).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("No Campaigns are available for this wallet.")).toBeInTheDocument();
+  });
+
+  it("renders one reconnect command when the protected feed rejects the session", async () => {
+    const onReconnect = vi.fn();
+    const bridge = durableBridge({
+      listCampaigns: vi.fn(async () => durableFailure({
+        code: "AUTH_SESSION_INVALID",
+        reconnectRequired: true,
+        retryable: false,
+        traceId: "trace-session-invalid",
+      })),
+    });
+
+    render(
+      <UserAppPanel
+        bridge={bridge}
+        locale="en-US"
+        mode="durable"
+        onReconnect={onReconnect}
+        session={durableSession()}
+        sessionReady
+      />,
+    );
+
+    expect(await screen.findByText("AUTH_SESSION_INVALID")).toBeInTheDocument();
+    const reconnectCommands = screen.getAllByRole("button", { name: "Reconnect wallet" });
+    expect(reconnectCommands).toHaveLength(1);
+    fireEvent.click(reconnectCommands[0]);
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refresh or invoke legacy verification after verify failure", async () => {
+    const verifyTask = vi.fn<ParticipantJourneyApiBridge["verifyTask"]>(async () =>
+      durableFailure({
+        code: "TASK_VERIFICATION_REJECTED",
+        retryable: false,
+        traceId: "trace-verify-rejected",
+      }));
+    const bridge = durableBridge({ verifyTask });
+
+    renderDurable(bridge);
+    fireEvent.click(await screen.findByRole("button", { name: "Select Campaign Alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Verify Task task-campaign-alpha" }));
+
+    expect(await screen.findByText("TASK_VERIFICATION_REJECTED")).toBeInTheDocument();
+    expect(bridge.getJourney).toHaveBeenCalledTimes(1);
+    expect(verifyTask).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("region", { name: "Participant journey" })).toHaveTextContent("Points0");
+    expect(vi.mocked(submitUserParticipationApiReview)).not.toHaveBeenCalled();
+  });
+
+  it("aborts the active journey request when the durable surface unmounts", async () => {
+    const pendingJourney = deferred<ParticipantJourneyResult>();
+    const getJourney = vi.fn<ParticipantJourneyApiBridge["getJourney"]>(() => pendingJourney.promise);
+    const bridge = durableBridge({ getJourney });
+    const { unmount } = renderDurable(bridge);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Select Campaign Alpha" }));
+    await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(1));
+    const signal = vi.mocked(getJourney).mock.calls[0][0].signal;
+    unmount();
+
+    expect(signal?.aborted).toBe(true);
+    await act(async () => {
+      pendingJourney.resolve({
+        httpStatus: 200,
+        journey: durableJourney({ campaignId: "campaign-alpha" }),
+        ok: true,
+        source: "durable",
+        status: "success",
+        traceId: "trace-after-unmount",
+      });
+      await pendingJourney.promise;
+    });
+  });
+
+  it.each([1280, 390])("keeps native Campaign and Task commands operable at %ipx", async (width) => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    window.dispatchEvent(new Event("resize"));
+    const bridge = durableBridge();
+
+    renderDurable(bridge);
+    const campaignButton = await screen.findByRole("button", { name: "Select Campaign Alpha" });
+    expect(campaignButton.tagName).toBe("BUTTON");
+    expect(campaignButton).toHaveAttribute("type", "button");
+    expect(campaignButton).toHaveStyle({ minHeight: "42px", overflowWrap: "anywhere" });
+    campaignButton.focus();
+    expect(campaignButton).toHaveFocus();
+    fireEvent.click(campaignButton);
+
+    const taskButton = await screen.findByRole("button", { name: "Verify Task task-campaign-alpha" });
+    expect(taskButton.tagName).toBe("BUTTON");
+    expect(taskButton).toHaveAttribute("type", "button");
+    expect(taskButton).toHaveStyle({ minHeight: "42px", overflowWrap: "anywhere" });
+    expect(screen.getByText("Not ranked")).toBeInTheDocument();
+    expect(screen.getAllByText("task-campaign-alpha").length).toBeGreaterThan(0);
   });
 });

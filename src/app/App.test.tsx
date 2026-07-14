@@ -12,6 +12,10 @@ import type {
   OwnerTaskResult,
   ProjectOwnerCampaignApiBridge,
 } from "../api/projectOwnerCampaignApiBridge";
+import type {
+  ParticipantJourneyApiBridge,
+  ParticipantJourneyFailure,
+} from "../api/participantJourneyApiBridge";
 import {
   EXPORT_CSV_COLUMNS,
   walletSessions,
@@ -1130,6 +1134,34 @@ const appOwnerBridge = (
   ...overrides,
 });
 
+const appParticipantFailure = (): ParticipantJourneyFailure => ({
+  code: "BRIDGE_INVALID_INPUT",
+  httpStatus: 400,
+  ok: false,
+  phase: "config",
+  reconnectRequired: false,
+  retryable: false,
+  source: "durable",
+  status: "blocked",
+  traceId: "trace-app-participant-unused",
+});
+
+const appParticipantBridge = (
+  overrides: Partial<ParticipantJourneyApiBridge> = {},
+): ParticipantJourneyApiBridge => ({
+  getJourney: vi.fn(async () => appParticipantFailure()),
+  listCampaigns: vi.fn<ParticipantJourneyApiBridge["listCampaigns"]>(async () => ({
+    campaigns: [],
+    httpStatus: 200,
+    ok: true,
+    source: "durable",
+    status: "success",
+    traceId: "trace-app-participant-feed",
+  })),
+  verifyTask: vi.fn(async () => appParticipantFailure()),
+  ...overrides,
+});
+
 describe("App Owner campaign authority", () => {
   const submitWalletSession = vi.mocked(submitWalletSessionApiPreview);
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
@@ -1165,6 +1197,34 @@ describe("App Owner campaign authority", () => {
       "awaken",
       expect.objectContaining({ session: appOwnerSessionA }),
     );
+  });
+
+  it("passes the same API-issued wallet session and durable mode to User App", async () => {
+    submitWalletSession.mockResolvedValueOnce(appWalletSessionState(appOwnerSessionA));
+    const participantBridge = appParticipantBridge();
+
+    render(<App participantJourneyBridge={participantBridge} />);
+    await connectHeaderWallet();
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    await waitFor(() => expect(participantBridge.listCampaigns).toHaveBeenCalledTimes(1));
+    expect(participantBridge.listCampaigns).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "durable",
+      selectedCampaignId: null,
+      session: appOwnerSessionA,
+      signal: expect.any(AbortSignal),
+    }));
+  });
+
+  it("keeps protected Participant feed blocked until an issued session is ready", () => {
+    const participantBridge = appParticipantBridge();
+
+    render(<App participantJourneyBridge={participantBridge} />);
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect wallet" }));
+    expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
   });
 
   it("does not grant Owner workflow authority to an invalid issued-session projection", async () => {
