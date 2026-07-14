@@ -283,13 +283,13 @@ describe("API runtime route catalog", () => {
 
   it("accounts for every runtime route in backend topology metadata", () => {
     const report = createBackendTopologyReport({
-      knownRouteIds: apiRuntimeRoutes.map((runtimeRoute) => runtimeRoute.id),
+      knownRouteIds: apiRuntimeContractRoutes.map((runtimeRoute) => runtimeRoute.id),
     });
 
     expect(report.coverage.unassignedRouteIds).toEqual([]);
     expect(report.validation.valid).toBe(true);
 
-    for (const runtimeRoute of apiRuntimeRoutes) {
+    for (const runtimeRoute of apiRuntimeContractRoutes) {
       const owners = report.services.filter((service) => service.routeIds.includes(runtimeRoute.id));
       expect(owners).toHaveLength(1);
     }
@@ -452,11 +452,11 @@ describe("API runtime route catalog", () => {
       implementedLocalCount: 12,
       notYetImplementedCount: 0,
       productionShapedDeferredCount: 2,
-      routeCount: apiRuntimeRoutes.length,
+      routeCount: apiRuntimeContractRoutes.length,
       validationIssueCount: 0,
     });
-    expect(foundationRouteIds).toEqual(apiRuntimeRoutes.map((route) => route.id));
-    expect(new Set(servicePortRouteIds).size).toBe(apiRuntimeRoutes.length);
+    expect(foundationRouteIds).toEqual(apiRuntimeContractRoutes.map((route) => route.id));
+    expect(new Set(servicePortRouteIds).size).toBe(apiRuntimeContractRoutes.length);
     expect(servicePortRouteIds.sort()).toEqual(foundationRouteIds.sort());
 
     for (const route of foundation.routes) {

@@ -902,13 +902,17 @@ describe("backend scaffold HTTP smoke", () => {
       });
       const createPayload = await create.json();
       const draftId = createPayload.data?.payload?.id;
-      const detail = await fetch(`${server.url}/api/campaigns/${draftId}`, {
-        headers: { "x-campaign-os-trace-id": "trace-campaign-db-http-detail" },
+      const detail = await fetch(`${server.url}/api/owner/campaigns/${draftId}`, {
+        headers: walletAuthHeaders(ownerSession, "project_owner", {
+          "x-campaign-os-trace-id": "trace-campaign-db-http-detail",
+        }),
       });
       const list = await fetch(
-        `${server.url}/api/campaigns?projectId=smoke-project&ownerAddress=smoke-owner-001&status=draft`,
+        `${server.url}/api/projects/smoke-project/campaigns?status=draft&limit=100`,
         {
-          headers: { "x-campaign-os-trace-id": "trace-campaign-db-http-list" },
+          headers: walletAuthHeaders(ownerSession, "project_owner", {
+            "x-campaign-os-trace-id": "trace-campaign-db-http-list",
+          }),
         },
       );
       const detailPayload = await detail.json();
@@ -1150,13 +1154,17 @@ describe("backend scaffold HTTP smoke", () => {
       await createDraft(2);
       await createDraft(3);
 
-      const detail = await fetch(`${server.url}/api/campaigns/${firstDraftId}`, {
-        headers: { "x-campaign-os-trace-id": "trace-durable-smoke-detail" },
+      const detail = await fetch(`${server.url}/api/owner/campaigns/${firstDraftId}`, {
+        headers: walletAuthHeaders(ownerSession, "project_owner", {
+          "x-campaign-os-trace-id": "trace-durable-smoke-detail",
+        }),
       });
       const list = await fetch(
-        `${server.url}/api/campaigns?projectId=durable-smoke-project&ownerAddress=durable-smoke-owner&status=draft&limit=2`,
+        `${server.url}/api/projects/durable-smoke-project/campaigns?status=draft&limit=2`,
         {
-          headers: { "x-campaign-os-trace-id": "trace-durable-smoke-list" },
+          headers: walletAuthHeaders(ownerSession, "project_owner", {
+            "x-campaign-os-trace-id": "trace-durable-smoke-list",
+          }),
         },
       );
       const health = await fetch(`${server.url}/api/health`, {
