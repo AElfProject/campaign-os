@@ -370,10 +370,12 @@ export const projectParticipantJourney = (
     addDiagnostic("OUT_OF_SCOPE_RECORD_IGNORED", "snapshot");
   }
 
-  if (scopedParticipant && (
+  const participantSubjectMismatch = Boolean(scopedParticipant && (
     scopedParticipant.accountType !== input.subject.accountType
     || scopedParticipant.walletSource !== input.subject.walletSource
-  )) {
+  ));
+
+  if (participantSubjectMismatch) {
     addDiagnostic("SUBJECT_METADATA_MISMATCH", "participant");
   }
 
@@ -384,6 +386,7 @@ export const projectParticipantJourney = (
     addDiagnostic("PARTICIPANT_MISSING", "participant");
   }
 
+  let hasIncompatiblePersistedProgress = false;
   const progress = canonicalTasks.map((task): ParticipantJourneyTaskProgress => {
     const completion = completionsByTaskId.get(task.id);
     const evidence = evidenceByTaskId.get(task.id);
@@ -397,6 +400,7 @@ export const projectParticipantJourney = (
 
     if (!compatible) {
       if (completion || evidence) {
+        hasIncompatiblePersistedProgress = true;
         addDiagnostic("WALLET_INCOMPATIBLE_PROGRESS_IGNORED", "task", task.id);
       }
 
@@ -503,8 +507,11 @@ export const projectParticipantJourney = (
     0,
   );
   const totalPoints = scopedParticipant?.totalPoints ?? completedPoints;
+  const participantPointsMismatch = Boolean(
+    scopedParticipant && scopedParticipant.totalPoints !== completedPoints,
+  );
 
-  if (scopedParticipant && scopedParticipant.totalPoints !== completedPoints) {
+  if (participantPointsMismatch) {
     addDiagnostic("PARTICIPANT_POINTS_MISMATCH", "participant");
   }
 
@@ -521,9 +528,14 @@ export const projectParticipantJourney = (
     task.required && (task.status === "pending" || task.status === "manual_review"));
   const hasUnsafeInconsistentProgress = progress.some((task) =>
     task.blockedReason === "inconsistent_records");
+  const hasUnsafeEligibilityState = participantMissingWithProgress
+    || participantSubjectMismatch
+    || participantPointsMismatch
+    || hasIncompatiblePersistedProgress
+    || hasUnsafeInconsistentProgress;
   const eligibilityStatus: ParticipantJourneyEligibility["status"] = riskFlags.length > 0
     ? "risk_flagged"
-    : hasUnsafeInconsistentProgress
+    : hasUnsafeEligibilityState
       ? "not_eligible"
       : missingTasks.length === 0
         ? "eligible"

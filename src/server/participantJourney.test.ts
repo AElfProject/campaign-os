@@ -353,6 +353,83 @@ describe("Participant journey projector", () => {
     });
   });
 
+  it("fails closed for optional-only wallet-incompatible orphan progress", () => {
+    const optionalTask = task("task-optional-aa", {
+      required: false,
+      walletCompatibility: "AA_ONLY",
+    });
+    const result = projectParticipantJourney(input({
+      completions: [completion(optionalTask.id)],
+      evidence: [evidence(optionalTask.id)],
+      tasks: [optionalTask],
+    }));
+
+    expect(result.tasks).toEqual([
+      expect.objectContaining({
+        action: "blocked",
+        blockedReason: "wallet_incompatible",
+        completionId: null,
+        evidenceId: null,
+        pointsAwarded: 0,
+      }),
+    ]);
+    expect(result.eligibility).toMatchObject({
+      eligible: false,
+      missingTasks: [],
+      score: 0,
+      status: "not_eligible",
+    });
+    expect(result.diagnostics.map((entry) => entry.code)).toEqual(expect.arrayContaining([
+      "PARTICIPANT_MISSING",
+      "WALLET_INCOMPATIBLE_PROGRESS_IGNORED",
+    ]));
+  });
+
+  it.each([
+    {
+      diagnosticCode: "SUBJECT_METADATA_MISMATCH",
+      label: "subject metadata mismatch",
+      participant: participant(WALLET_A, { accountType: "AA", totalPoints: 0 }),
+    },
+    {
+      diagnosticCode: "PARTICIPANT_POINTS_MISMATCH",
+      label: "durable points drift",
+      participant: participant(WALLET_A, { totalPoints: 100 }),
+    },
+  ])("fails closed for optional-only Participant $label", ({ diagnosticCode, participant: record }) => {
+    const result = projectParticipantJourney(input({
+      participant: record,
+      tasks: [task("task-optional-only", { required: false })],
+    }));
+
+    expect(result.eligibility).toMatchObject({
+      eligible: false,
+      missingTasks: [],
+      status: "not_eligible",
+    });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: diagnosticCode,
+      scope: "participant",
+    }));
+  });
+
+  it("keeps optional-only eligibility when only out-of-scope rows are ignored", () => {
+    const optionalTask = task("task-optional-only", { required: false });
+    const result = projectParticipantJourney(input({
+      completions: [completion(optionalTask.id, WALLET_B)],
+      evidence: [evidence(optionalTask.id, WALLET_B)],
+      tasks: [optionalTask],
+    }));
+
+    expect(result.eligibility).toMatchObject({
+      eligible: true,
+      missingTasks: [],
+      score: 0,
+      status: "eligible",
+    });
+    expect(JSON.stringify(result)).not.toContain(WALLET_B);
+  });
+
   it("keeps orphan, duplicate, mismatched, and out-of-scope rows readable but fail-safe", () => {
     const result = projectParticipantJourney(input({
       completions: [

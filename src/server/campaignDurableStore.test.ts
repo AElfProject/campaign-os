@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -156,6 +156,45 @@ describe("Campaign durable store", () => {
         recordCount: 1,
         status: "ready",
         taskRecordCount: 0,
+      });
+    });
+  });
+
+  it("does not overwrite failed hydration and retries the same store after repair", async () => {
+    await withTempStorePath(async (filePath) => {
+      const store = createCampaignDurableStore({ filePath, mode: "durable_test" });
+      const invalidDocuments = [
+        "{\"version\":1,\"records\":",
+        `${JSON.stringify({ records: [], version: 2 })}\n`,
+      ];
+
+      for (const invalidDocument of invalidDocuments) {
+        await writeFile(filePath, invalidDocument, "utf8");
+
+        await expect(store.close()).rejects.toMatchObject({
+          diagnostics: [expect.objectContaining({ code: "CAMPAIGN_DURABLE_STORE_READ_FAILED" })],
+          name: "CampaignDurableStoreError",
+        });
+        await expect(readFile(filePath, "utf8")).resolves.toBe(invalidDocument);
+      }
+
+      const recoveredDraft = draft("campaign-db-draft-recovered");
+      await writeFile(filePath, `${JSON.stringify({
+        completionRecords: [],
+        participantRecords: [],
+        records: [recoveredDraft],
+        referralBindingRecords: [],
+        taskEvidenceRecords: [],
+        taskRecords: [],
+        updatedAt: "2026-07-07T00:00:00.000Z",
+        version: 1,
+      }, null, 2)}\n`, "utf8");
+
+      await expect(store.getById(recoveredDraft.id)).resolves.toEqual(recoveredDraft);
+      await expect(store.manifest()).resolves.toMatchObject({
+        diagnosticCodes: [],
+        recordCount: 1,
+        status: "ready",
       });
     });
   });
@@ -504,17 +543,17 @@ describe("Campaign durable store", () => {
   });
 
   it("throws instead of silently accepting failed durable writes", async () => {
-    const store = createCampaignDurableStore({
-      filePath: "/dev/null/campaign-drafts.json",
-      mode: "durable_test",
-    });
+    await withTempStorePath(async (filePath) => {
+      await mkdir(`${filePath}.tmp`);
+      const store = createCampaignDurableStore({ filePath, mode: "durable_test" });
 
-    await expect(store.create(draft("campaign-db-draft-write-fail"))).rejects.toBeInstanceOf(
-      CampaignDurableStoreError,
-    );
-    await expect(store.manifest()).resolves.toMatchObject({
-      diagnosticCodes: expect.arrayContaining(["CAMPAIGN_DURABLE_STORE_WRITE_FAILED"]),
-      status: "blocked",
+      await expect(store.create(draft("campaign-db-draft-write-fail"))).rejects.toBeInstanceOf(
+        CampaignDurableStoreError,
+      );
+      await expect(store.manifest()).resolves.toMatchObject({
+        diagnosticCodes: expect.arrayContaining(["CAMPAIGN_DURABLE_STORE_WRITE_FAILED"]),
+        status: "blocked",
+      });
     });
   });
 });

@@ -341,7 +341,7 @@ const parseDocument = (raw: string): CampaignDurableStoreDocument => {
   const parsed = JSON.parse(raw) as Partial<CampaignDurableStoreDocument>;
 
   if (parsed.version !== 1 || !Array.isArray(parsed.records)) {
-    return { ...EMPTY_DOCUMENT };
+    throw new TypeError("Campaign durable store document is invalid.");
   }
 
   return {
@@ -369,6 +369,7 @@ export const createCampaignDurableStore = ({
   let taskEvidenceById = new Map<string, CampaignDbTaskEvidenceRecord>();
   let taskRecordsById = new Map<string, CampaignDbTaskDraft>();
   const startupDiagnostics: CampaignDurableStoreDiagnostic[] = [];
+  let hydrationDiagnostic: CampaignDurableStoreDiagnostic | undefined;
   let initialized = false;
   let initializationPromise: Promise<void> | undefined;
   let journeyOperationTail = Promise.resolve();
@@ -384,23 +385,29 @@ export const createCampaignDurableStore = ({
 
   const readDocument = async () => {
     if (!filePath || !durable) {
+      hydrationDiagnostic = undefined;
       return { ...EMPTY_DOCUMENT };
     }
 
     try {
-      return parseDocument(await readFile(filePath, "utf8"));
+      const document = parseDocument(await readFile(filePath, "utf8"));
+      hydrationDiagnostic = undefined;
+
+      return document;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        hydrationDiagnostic = undefined;
         return { ...EMPTY_DOCUMENT };
       }
 
-      startupDiagnostics.push(diagnostic(
+      const issue = diagnostic(
         "CAMPAIGN_DURABLE_STORE_READ_FAILED",
         "filePath",
         "Campaign durable store could not read persisted campaign drafts.",
-      ));
+      );
+      hydrationDiagnostic = issue;
 
-      return { ...EMPTY_DOCUMENT };
+      throw new CampaignDurableStoreError("Campaign durable store read failed.", [issue]);
     }
   };
 
@@ -512,6 +519,7 @@ export const createCampaignDurableStore = ({
 
   const currentDiagnostics = () => [
     ...startupDiagnostics,
+    ...(hydrationDiagnostic ? [hydrationDiagnostic] : []),
     ...productionRequiredDiagnostics(),
   ];
 
