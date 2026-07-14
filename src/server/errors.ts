@@ -84,7 +84,7 @@ export const invalidRequest = (field: string, reason: string) =>
     400,
     "The request does not match the local Campaign OS API contract.",
     "请求不符合本地 Campaign OS API contract。",
-    { field, reason },
+    { diagnosticCode: "INVALID_REQUEST", field, reason },
   );
 
 export const authSessionRequired = (details?: Record<string, unknown>) =>
@@ -129,7 +129,7 @@ export const invalidCampaign = (campaignId: string) =>
     404,
     "The requested campaign is not available in the seeded local runtime.",
     "本地 seeded runtime 中不存在请求的活动。",
-    { campaignId },
+    { campaignId, diagnosticCode: "INVALID_CAMPAIGN", field: "campaignId" },
   );
 
 export const invalidTask = (taskId: string) =>
@@ -138,7 +138,7 @@ export const invalidTask = (taskId: string) =>
     404,
     "The requested task is not available in the seeded local runtime.",
     "本地 seeded runtime 中不存在请求的任务。",
-    { taskId },
+    { diagnosticCode: "INVALID_TASK", field: "taskId", taskId },
   );
 
 export const unsupportedLocale = (locale: string) =>

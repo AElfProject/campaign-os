@@ -1058,6 +1058,7 @@ const createSafeCampaignDbRepository = (
         details: {
           ...error.body.details,
           diagnosticCode: normalizedDiagnosticCode,
+          field: "campaignDb",
         },
       })
       : error;
