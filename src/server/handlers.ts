@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   apiSkillContractRegistry,
   createApiSkillContractSurface,
@@ -573,6 +574,18 @@ const createWalletSessionProductionReadinessSummary = (
   secretManagerReady: issuerResult.productionReadiness.secretManagerReady,
   signingKeyReady: issuerResult.productionReadiness.signingKeyReady,
 });
+
+const issueWalletSessionIdentity = (
+  payload: NormalizedWalletSession,
+): NormalizedWalletSession => {
+  const sessionId = randomUUID();
+
+  return {
+    ...payload,
+    id: sessionId,
+    sessionId,
+  };
+};
 
 const enrichWalletSessionWithProofMetadata = (
   request: CreateWalletSessionRequest,
@@ -2286,7 +2299,10 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
       ...result,
       payload: walletSessionRepositoryPayload(
         request,
-        enrichWalletSessionWithProofMetadata(request, result.payload),
+        enrichWalletSessionWithProofMetadata(
+          request,
+          issueWalletSessionIdentity(result.payload),
+        ),
       ),
     };
 
