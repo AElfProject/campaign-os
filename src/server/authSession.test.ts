@@ -10,8 +10,10 @@ import {
   isAuthRoleCapabilityForbidden,
   locallyEnforcedAuthRouteIds,
   protectedRouteAuthMap,
+  resolveTrustedAdminOperatorSession,
   summarizeSensitiveAuthSessionInput,
 } from "./authSession";
+import type { WalletSessionRecord } from "./walletSessionRepository";
 
 const forbiddenRawFragments = [
   "bearer sample-bearer-token",
@@ -34,6 +36,61 @@ const expectNoRawSensitiveFragments = (value: unknown) => {
     expect(serialized).not.toContain(fragment);
   }
 };
+
+const issuedAdminWalletSession = (
+  overrides: Partial<WalletSessionRecord> = {},
+): WalletSessionRecord => ({
+  accountType: "AA",
+  capabilities: ["SIGN_MESSAGE", "CONTRACT_VIEW"],
+  chainId: "AELF",
+  connectedAt: "2026-07-14T00:00:00.000Z",
+  displayAddress: "2YVwAdminOperatorCaseSensitive",
+  issuer: {
+    artifactType: "local_session_reference",
+    cookieIssued: false,
+    diagnosticCodes: [],
+    issuerMode: "local_opaque",
+    jwtIssued: false,
+    liveSigningExecuted: false,
+    referenceId: "issuer:sess-admin-operator",
+    ttlSeconds: 3600,
+    valid: true,
+  },
+  lastSeenAt: "2026-07-14T00:00:00.000Z",
+  network: "mainnet",
+  productionReadiness: {
+    blockedDependencyIds: [],
+    liveSigningReady: false,
+    liveVerifierReady: false,
+    productionReady: false,
+    productionRequired: false,
+    productionSessionStoreReady: false,
+    secretManagerReady: false,
+    signingKeyReady: false,
+  },
+  proof: {
+    diagnosticCodes: [],
+    liveVerificationExecuted: false,
+    proofType: "wallet_signature",
+    status: "verified",
+    trustLevel: "verified_local",
+  },
+  recordId: "wallet-session:sess-admin-operator",
+  repository: {
+    adapterId: "wallet-session-test-adapter",
+    repositoryId: "wallet-session-repository-runtime",
+    sequence: 1,
+    storeId: "wallet-sessions",
+  },
+  sessionId: "sess-admin-operator",
+  signatureStatus: "signed",
+  verificationStatus: "verified",
+  walletAddress: "2YVwAdminOperatorCaseSensitive",
+  walletName: "Portkey AA Wallet",
+  walletSource: "PORTKEY_AA",
+  walletTypeVerified: true,
+  ...overrides,
+});
 
 describe("auth session boundary", () => {
   it("defines seeded normalized wallet sessions for all required wallet sources", () => {
@@ -528,5 +585,82 @@ describe("auth session boundary", () => {
       },
     });
     expectNoRawSensitiveFragments(summary);
+  });
+
+  it("derives a trusted Admin operator session only from the issued record", () => {
+    const result = resolveTrustedAdminOperatorSession(issuedAdminWalletSession());
+
+    expect(result).toEqual({
+      context: {
+        accountType: "AA",
+        chainId: "AELF",
+        credentialBoundary: "ordinary_user_wallet",
+        issuerMode: "local_opaque",
+        network: "mainnet",
+        proofStatus: "verified",
+        sessionId: "sess-admin-operator",
+        subjectAddress: "2YVwAdminOperatorCaseSensitive",
+        walletSource: "PORTKEY_AA",
+      },
+      ok: true,
+    });
+    if (result.ok) {
+      expect(Object.isFrozen(result)).toBe(true);
+      expect(Object.isFrozen(result.context)).toBe(true);
+      expect(JSON.stringify(result)).not.toContain("issuer:sess-admin-operator");
+    }
+  });
+
+  it.each(["AELF", "tDVV", "tDVW"])(
+    "uses trimmed exact Base58 subject compatibility for %s",
+    (chainId) => {
+      const issued = issuedAdminWalletSession({ chainId });
+      const exact = resolveTrustedAdminOperatorSession(issued, {
+        sessionId: " sess-admin-operator ",
+        subjectAddress: " 2YVwAdminOperatorCaseSensitive ",
+      });
+      const caseVariant = resolveTrustedAdminOperatorSession(issued, {
+        subjectAddress: "2yVwAdminOperatorCaseSensitive",
+      });
+
+      expect(exact).toMatchObject({ ok: true, context: { chainId } });
+      expect(caseVariant).toEqual({ ok: false, reason: "subject-mismatch" });
+    },
+  );
+
+  it.each([
+    ["session", { sessionId: "sess-other" }, "session-mismatch"],
+    ["account", { accountType: "EOA" }, "account-type-mismatch"],
+    ["source", { walletSource: "NIGHTELF" }, "wallet-source-mismatch"],
+    ["boundary", { credentialBoundary: "internal_agent_credential" }, "credential-boundary-mismatch"],
+    ["proof", { proofStatus: "local_seeded" }, "proof-status-mismatch"],
+  ] as const)("rejects %s compatibility substitution", (_case, claims, reason) => {
+    expect(resolveTrustedAdminOperatorSession(issuedAdminWalletSession(), claims)).toEqual({
+      ok: false,
+      reason,
+    });
+  });
+
+  it.each([
+    ["invalid issuer", { issuer: { ...issuedAdminWalletSession().issuer!, valid: false } }, "issuer-invalid"],
+    ["missing issuer", { issuer: undefined }, "issuer-invalid"],
+    ["stale proof", { proof: { ...issuedAdminWalletSession().proof!, status: "stale" } }, "proof-invalid"],
+    ["unverified proof", { proof: { ...issuedAdminWalletSession().proof!, status: "signature_unverified" } }, "proof-invalid"],
+    ["missing capability", { capabilities: ["CONTRACT_VIEW"] }, "proof-invalid"],
+    ["unverified wallet type", { walletTypeVerified: false }, "proof-invalid"],
+  ] satisfies readonly [string, Partial<WalletSessionRecord>, string][])("fails closed for %s", (_case, overrides, reason) => {
+    expect(resolveTrustedAdminOperatorSession(issuedAdminWalletSession(overrides))).toEqual({
+      ok: false,
+      reason,
+    });
+  });
+
+  it("separates internal automation credentials from ordinary Admin operators", () => {
+    const result = resolveTrustedAdminOperatorSession(issuedAdminWalletSession({
+      capabilities: ["INTERNAL_AUTOMATION"],
+      walletSource: "AGENT_SKILL",
+    }));
+
+    expect(result).toEqual({ ok: false, reason: "internal-credential" });
   });
 });

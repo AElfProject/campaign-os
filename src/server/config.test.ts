@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  CAMPAIGN_OS_ADMIN_OPERATOR_MAX_CAMPAIGN_IDS_PER_MEMBERSHIP,
+  CAMPAIGN_OS_ADMIN_OPERATOR_MAX_MEMBERSHIPS,
+  CAMPAIGN_OS_ADMIN_OPERATOR_MAX_ROLES_PER_MEMBERSHIP,
+  CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_ENV,
+  CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_MAX_BYTES,
+  CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_NORMALIZED_MAX_BYTES,
+  CAMPAIGN_OS_ADMIN_OPERATOR_ROLE_MAX_LENGTH,
+  CAMPAIGN_OS_ADMIN_OPERATOR_SUBJECT_MAX_LENGTH,
+  CAMPAIGN_OS_ADMIN_REVIEW_ENABLED_ENV,
+  CampaignOsAdminReviewConfigError,
   CampaignOsCampaignDbConfigError,
   CampaignOsParticipantPreviewConfigError,
   createCampaignOsParticipantPreviewMetadata,
+  resolveCampaignOsAdminReviewConfig,
   resolveBackendConfigContract,
   resolveCampaignOsCampaignDbConfig,
   resolveCampaignOsParticipantPreviewConfig,
@@ -922,5 +933,419 @@ describe("Participant Campaign preview config", () => {
     expect(second).not.toBe(first);
     expect(second.campaignIds).not.toBe(first.campaignIds);
     expect(second.campaignIds).toEqual(["campaign-private-A", "campaign-private-B"]);
+  });
+});
+
+describe("Admin review operator config", () => {
+  const enabledKey = CAMPAIGN_OS_ADMIN_REVIEW_ENABLED_ENV;
+  const membershipsKey = CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_ENV;
+  const subjectAddress = "2YVwAdminOperatorCaseSensitive";
+
+  const membership = (
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> => ({
+    active: true,
+    campaignIds: ["campaign-admin-a"],
+    roleIds: ["review_operator"],
+    subjectAddress,
+    ...overrides,
+  });
+
+  const resolve = (
+    enabled: string | undefined,
+    memberships: unknown = undefined,
+  ) => resolveCampaignOsAdminReviewConfig({
+    env: {
+      ...(enabled === undefined ? {} : { [enabledKey]: enabled }),
+      ...(memberships === undefined
+        ? {}
+        : {
+            [membershipsKey]: typeof memberships === "string"
+              ? memberships
+              : JSON.stringify(memberships),
+          }),
+    },
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["blank", " \t "],
+    ["zero", "0"],
+    ["false", "false"],
+    ["trimmed false", " false "],
+  ])("keeps Admin review default-off for %s", (_case, enabled) => {
+    const config = resolve(enabled);
+
+    expect(config).toMatchObject({
+      enabled: false,
+      memberships: [],
+    });
+    expect(config.sourceRevision).toMatch(/^admin-membership-sha256:[a-f0-9]{64}$/);
+  });
+
+  it.each(["1", "true", " 1 ", " true "]) (
+    "enables Admin review only for explicit value %j",
+    (enabled) => {
+      expect(resolve(enabled)).toMatchObject({ enabled: true, memberships: [] });
+    },
+  );
+
+  it.each(["yes", "on", "TRUE", "True", "01", "enabled", "false-ish"]) (
+    "rejects unknown Admin review flag %j",
+    (enabled) => {
+      expect(() => resolve(enabled)).toThrowError(expect.objectContaining({
+        code: "ADMIN_REVIEW_FLAG_INVALID",
+        field: enabledKey,
+      }));
+    },
+  );
+
+  it("ignores membership authority while disabled and remains default-empty", () => {
+    const rawMemberships = JSON.stringify([membership()]);
+    const config = resolve("false", rawMemberships);
+
+    expect(config.enabled).toBe(false);
+    expect(config.memberships).toEqual([]);
+    expect(JSON.stringify(config)).not.toContain(subjectAddress);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["empty", ""],
+    ["blank", " \n\t "],
+  ])("keeps enabled Admin membership default-empty for %s JSON", (_case, raw) => {
+    const config = resolve("true", raw);
+
+    expect(config).toMatchObject({ enabled: true, memberships: [] });
+  });
+
+  it("normalizes valid entries without mutating parsed input", () => {
+    const parsed = [membership({
+      campaignIds: [" campaign-admin-b ", "campaign-admin-a", "campaign-admin-b"],
+      roleIds: [" review_operator ", "internal_operator", "review_operator"],
+      subjectAddress: `  ${subjectAddress}  `,
+    })];
+    const snapshot = structuredClone(parsed);
+    const config = resolveCampaignOsAdminReviewConfig({
+      enabled: true,
+      membershipsJson: JSON.stringify(parsed),
+      jsonParser: () => parsed,
+    });
+
+    expect(parsed).toEqual(snapshot);
+    expect(config.memberships).toEqual([{
+      active: true,
+      campaignIds: ["campaign-admin-a", "campaign-admin-b"],
+      roleIds: ["internal_operator", "review_operator"],
+      subjectAddress,
+    }]);
+    expect(Object.isFrozen(config)).toBe(true);
+    expect(Object.isFrozen(config.memberships)).toBe(true);
+    expect(Object.isFrozen(config.memberships[0])).toBe(true);
+    expect(Object.isFrozen(config.memberships[0]?.campaignIds)).toBe(true);
+    expect(Object.isFrozen(config.memberships[0]?.roleIds)).toBe(true);
+  });
+
+  it("distinguishes explicit global scope from empty scope", () => {
+    const config = resolve("true", [
+      membership({ campaignIds: null, subjectAddress: "2YVwGlobalAdmin" }),
+      membership({ campaignIds: [], subjectAddress: "2YVwNoScopeAdmin" }),
+    ]);
+
+    expect(config.memberships).toEqual([
+      expect.objectContaining({ campaignIds: null, subjectAddress: "2YVwGlobalAdmin" }),
+      expect.objectContaining({ campaignIds: [], subjectAddress: "2YVwNoScopeAdmin" }),
+    ]);
+  });
+
+  it.each([
+    ["top-level object", membership(), "ADMIN_MEMBERSHIP_SHAPE_INVALID", membershipsKey],
+    ["top-level null", "null", "ADMIN_MEMBERSHIP_SHAPE_INVALID", membershipsKey],
+    ["entry primitive", ["operator"], "ADMIN_MEMBERSHIP_SHAPE_INVALID", "memberships[]"],
+    ["entry null", [null], "ADMIN_MEMBERSHIP_SHAPE_INVALID", "memberships[]"],
+    ["unknown field", [membership({ token: "raw-token" })], "ADMIN_MEMBERSHIP_UNKNOWN_FIELD", "memberships[].token"],
+    ["missing active", [{ campaignIds: [], roleIds: ["review_operator"], subjectAddress }], "ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].active"],
+    ["missing campaigns", [{ active: true, roleIds: ["review_operator"], subjectAddress }], "ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].campaignIds"],
+    ["missing roles", [{ active: true, campaignIds: [], subjectAddress }], "ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].roleIds"],
+    ["missing subject", [{ active: true, campaignIds: [], roleIds: ["review_operator"] }], "ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].subjectAddress"],
+    ["coerced active", [membership({ active: "true" })], "ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].active"],
+    ["object roles", [membership({ roleIds: {} })], "ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].roleIds"],
+    ["object campaigns", [membership({ campaignIds: {} })], "ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].campaignIds"],
+  ])("rejects invalid membership shape: %s", (_case, value, code, field) => {
+    let thrown: unknown;
+
+    try {
+      resolve("true", value);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(CampaignOsAdminReviewConfigError);
+    expect(thrown).toMatchObject({ code, field });
+  });
+
+  it.each([
+    ["empty", ""],
+    ["whitespace", " \t "],
+    ["control character", "2YVwAdmin\u0000Hidden"],
+    ["newline", "2YVwAdmin\nHidden"],
+    ["oversize", "A".repeat(CAMPAIGN_OS_ADMIN_OPERATOR_SUBJECT_MAX_LENGTH + 1)],
+    ["non-string", 42],
+  ])("rejects %s subject addresses", (_case, value) => {
+    expect(() => resolve("true", [membership({ subjectAddress: value })])).toThrowError(
+      expect.objectContaining({
+        code: "ADMIN_MEMBERSHIP_FIELD_INVALID",
+        field: "memberships[].subjectAddress",
+      }),
+    );
+  });
+
+  it("accepts subject length at the exact limit and preserves Base58 case", () => {
+    const exactSubject = `A${"b".repeat(CAMPAIGN_OS_ADMIN_OPERATOR_SUBJECT_MAX_LENGTH - 1)}`;
+    const config = resolve("true", [membership({ subjectAddress: ` ${exactSubject} ` })]);
+
+    expect(config.memberships[0]?.subjectAddress).toBe(exactSubject);
+  });
+
+  it.each([
+    ["empty", []],
+    ["unknown", ["project_owner"]],
+    ["non-string", [42]],
+    ["empty string", [""]],
+    ["oversize string", ["r".repeat(CAMPAIGN_OS_ADMIN_OPERATOR_ROLE_MAX_LENGTH + 1)]],
+  ])("rejects %s operator roles", (_case, roleIds) => {
+    expect(() => resolve("true", [membership({ roleIds })])).toThrowError(
+      expect.objectContaining({
+        code: "ADMIN_MEMBERSHIP_FIELD_INVALID",
+        field: "memberships[].roleIds",
+      }),
+    );
+  });
+
+  it("bounds the raw role array before deduplication", () => {
+    expect(resolve("true", [membership({
+      roleIds: Array.from(
+        { length: CAMPAIGN_OS_ADMIN_OPERATOR_MAX_ROLES_PER_MEMBERSHIP },
+        () => "review_operator",
+      ),
+    })]).memberships[0]?.roleIds).toEqual(["review_operator"]);
+
+    expect(() => resolve("true", [membership({
+      roleIds: Array.from(
+        { length: CAMPAIGN_OS_ADMIN_OPERATOR_MAX_ROLES_PER_MEMBERSHIP + 1 },
+        () => "review_operator",
+      ),
+    })])).toThrowError(expect.objectContaining({
+      code: "ADMIN_MEMBERSHIP_LIMIT_EXCEEDED",
+      field: "memberships[].roleIds",
+      limit: CAMPAIGN_OS_ADMIN_OPERATOR_MAX_ROLES_PER_MEMBERSHIP,
+    }));
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["non-string ID", [42]],
+    ["empty ID", [""]],
+    ["embedded whitespace", ["campaign admin"]],
+    ["control character", ["campaign-admin\u0000hidden"]],
+    ["unsafe path", ["campaign/admin"]],
+    ["oversize ID", ["c".repeat(129)]],
+  ])("rejects %s Campaign scope", (_case, campaignIds) => {
+    const entry = membership();
+
+    if (campaignIds === undefined) {
+      delete entry.campaignIds;
+    } else {
+      entry.campaignIds = campaignIds;
+    }
+
+    expect(() => resolve("true", [entry])).toThrowError(expect.objectContaining({
+      code: "ADMIN_MEMBERSHIP_FIELD_INVALID",
+      field: "memberships[].campaignIds",
+    }));
+  });
+
+  it("accepts the Campaign scope count limit and rejects limit plus one", () => {
+    const atLimit = Array.from(
+      { length: CAMPAIGN_OS_ADMIN_OPERATOR_MAX_CAMPAIGN_IDS_PER_MEMBERSHIP },
+      (_, index) => `campaign-admin-${String(index).padStart(3, "0")}`,
+    );
+
+    expect(resolve("true", [membership({ campaignIds: atLimit })])
+      .memberships[0]?.campaignIds).toHaveLength(atLimit.length);
+    expect(() => resolve("true", [membership({
+      campaignIds: [...atLimit, "campaign-admin-over-limit"],
+    })])).toThrowError(expect.objectContaining({
+      code: "ADMIN_MEMBERSHIP_LIMIT_EXCEEDED",
+      field: "memberships[].campaignIds",
+      limit: CAMPAIGN_OS_ADMIN_OPERATOR_MAX_CAMPAIGN_IDS_PER_MEMBERSHIP,
+    }));
+  });
+
+  it("accepts the entry count limit and rejects limit plus one", () => {
+    const atLimit = Array.from(
+      { length: CAMPAIGN_OS_ADMIN_OPERATOR_MAX_MEMBERSHIPS },
+      (_, index) => membership({ subjectAddress: `2YVwAdmin${String(index).padStart(3, "0")}` }),
+    );
+
+    expect(resolve("true", atLimit).memberships).toHaveLength(atLimit.length);
+    expect(() => resolve("true", [
+      ...atLimit,
+      membership({ subjectAddress: "2YVwAdminOverLimit" }),
+    ])).toThrowError(expect.objectContaining({
+      code: "ADMIN_MEMBERSHIP_LIMIT_EXCEEDED",
+      field: membershipsKey,
+      limit: CAMPAIGN_OS_ADMIN_OPERATOR_MAX_MEMBERSHIPS,
+    }));
+  });
+
+  it("accepts the raw JSON byte limit and rejects limit plus one", () => {
+    const exactLimit = `[]${" ".repeat(CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_MAX_BYTES - 2)}`;
+    const overLimit = `${exactLimit} `;
+
+    expect(resolve("true", exactLimit).memberships).toEqual([]);
+    expect(() => resolve("true", overLimit)).toThrowError(expect.objectContaining({
+      code: "ADMIN_MEMBERSHIP_LIMIT_EXCEEDED",
+      field: membershipsKey,
+      limit: CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_MAX_BYTES,
+    }));
+  });
+
+  it("accepts the normalized byte limit and rejects limit plus one", () => {
+    const entries = Array.from(
+      { length: CAMPAIGN_OS_ADMIN_OPERATOR_MAX_MEMBERSHIPS },
+      (_, index) => membership({
+        campaignIds: [`campaign-${String(index).padStart(3, "0")}`],
+        subjectAddress: `2YVwAdmin${String(index).padStart(3, "0")}`,
+      }),
+    );
+    const measure = () => new TextEncoder().encode(JSON.stringify(entries)).byteLength;
+    const growTo = (target: number) => {
+      for (const entry of entries) {
+        while (
+          measure() < target
+          && String(entry.subjectAddress).length < CAMPAIGN_OS_ADMIN_OPERATOR_SUBJECT_MAX_LENGTH
+        ) {
+          entry.subjectAddress = `${entry.subjectAddress}A`;
+        }
+      }
+
+      for (const entry of entries) {
+        const campaignIds = entry.campaignIds as string[];
+
+        while (measure() < target && campaignIds[0]!.length < 128) {
+          campaignIds[0] = `${campaignIds[0]}x`;
+        }
+      }
+    };
+
+    growTo(CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_NORMALIZED_MAX_BYTES);
+    expect(measure()).toBe(CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_NORMALIZED_MAX_BYTES);
+    expect(resolve("true", entries).memberships).toHaveLength(entries.length);
+
+    const expandable = entries.find((entry) =>
+      (entry.campaignIds as string[])[0]!.length < 128
+    );
+    expect(expandable).toBeDefined();
+    const campaignIds = expandable!.campaignIds as string[];
+    campaignIds[0] = `${campaignIds[0]}x`;
+
+    expect(() => resolve("true", entries)).toThrowError(expect.objectContaining({
+      code: "ADMIN_MEMBERSHIP_LIMIT_EXCEEDED",
+      field: "memberships.normalized",
+      limit: CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_NORMALIZED_MAX_BYTES,
+    }));
+  });
+
+  it("deduplicates semantic exact entries and rejects same-subject conflicts independent of order", () => {
+    const first = membership({
+      campaignIds: ["campaign-admin-b", "campaign-admin-a"],
+      roleIds: ["review_operator", "internal_operator"],
+    });
+    const duplicate = membership({
+      campaignIds: ["campaign-admin-a", "campaign-admin-b"],
+      roleIds: ["internal_operator", "review_operator"],
+    });
+    const config = resolve("true", [first, duplicate]);
+
+    expect(config.memberships).toHaveLength(1);
+
+    const conflicting = membership({ active: false });
+    for (const entries of [[first, conflicting], [conflicting, first]]) {
+      expect(() => resolve("true", entries)).toThrowError(expect.objectContaining({
+        code: "ADMIN_MEMBERSHIP_CONFLICT",
+        field: "memberships[].subjectAddress",
+      }));
+    }
+  });
+
+  it("produces deterministic safe revisions from normalized config", () => {
+    const first = resolve("true", [
+      membership({ subjectAddress: "2YVwOperatorB" }),
+      membership({ subjectAddress: "2YVwOperatorA" }),
+    ]);
+    const second = resolve("true", [
+      membership({ subjectAddress: " 2YVwOperatorA " }),
+      membership({ subjectAddress: "2YVwOperatorB" }),
+    ]);
+
+    expect(first.sourceRevision).toBe(second.sourceRevision);
+    expect(first.memberships.map((entry) => entry.subjectAddress)).toEqual([
+      "2YVwOperatorA",
+      "2YVwOperatorB",
+    ]);
+    expect(first.sourceRevision).not.toContain("2YVw");
+  });
+
+  it("returns only safe diagnostics for malformed and opaque parser failures", () => {
+    const rawAddress = "2YVwPrivateOperator";
+    const forbiddenFragments = [
+      rawAddress,
+      "raw-token",
+      "raw-signature",
+      "postgres://runtime:password@db.internal/campaign",
+      "/Users/private/review.json",
+      "stack-private-marker",
+    ];
+    const malformed = `[{"subjectAddress":"${rawAddress}","token":"raw-token"`;
+    const opaque = new Error(forbiddenFragments.slice(2).join(" "));
+    opaque.stack = `stack-private-marker ${opaque.stack}`;
+    const cyclic: { self?: unknown } = {};
+    cyclic.self = cyclic;
+
+    const failures = [
+      () => resolve("true", malformed),
+      () => resolveCampaignOsAdminReviewConfig({
+        enabled: true,
+        jsonParser: () => {
+          throw opaque;
+        },
+        membershipsJson: malformed,
+      }),
+      () => resolveCampaignOsAdminReviewConfig({
+        enabled: true,
+        jsonParser: () => cyclic,
+        membershipsJson: malformed,
+      }),
+    ];
+
+    for (const fail of failures) {
+      let thrown: unknown;
+
+      try {
+        fail();
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(CampaignOsAdminReviewConfigError);
+      const serialized = JSON.stringify(thrown).toLowerCase();
+      const rendered = String(thrown).toLowerCase();
+
+      for (const fragment of forbiddenFragments) {
+        expect(serialized).not.toContain(fragment.toLowerCase());
+        expect(rendered).not.toContain(fragment.toLowerCase());
+      }
+    }
   });
 });

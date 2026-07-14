@@ -1,6 +1,9 @@
+import { randomUUID } from "node:crypto";
 import {
   authSessionRolePolicyById,
   getProtectedRouteAuth,
+  resolveTrustedAdminOperatorSession,
+  type AdminOperatorSessionCompatibilityClaims,
   type AuthRoleCapabilityId,
   type AuthRouteGroupId,
   type AuthSessionAccountType,
@@ -11,6 +14,11 @@ import {
   type ProductionAuthSessionDependencyId,
   type SessionProofStatus,
 } from "./authSession";
+import type {
+  AdminOperatorMembershipRegistry,
+  AuthorizedAdminOperatorMembershipContext,
+} from "./adminOperatorMembership";
+import type { CampaignOsAdminOperatorRoleId } from "./config";
 import type {
   WalletSessionRecord,
   WalletSessionRepository,
@@ -105,6 +113,48 @@ export interface EvaluateIssuedAuthEnforcementOptions extends EvaluateAuthEnforc
   traceId?: string;
 }
 
+export type AdminOperatorRouteId =
+  | "admin.campaigns.list"
+  | "admin.reviews.list"
+  | "admin.reviews.detail"
+  | "admin.reviews.decide"
+  | "admin.winners.list"
+  | "admin.artifacts.generate"
+  | "admin.artifacts.list"
+  | "admin.artifacts.detail"
+  | "admin.artifacts.download";
+
+export interface AdminOperatorRoutePolicy {
+  allowedRoles: readonly CampaignOsAdminOperatorRoleId[];
+  campaignScope: "membership_feed" | "campaign_path";
+  credentialBoundary: "ordinary_user_wallet";
+  enforcementStatus: "local_enforced";
+  membershipRequired: true;
+  routeId: AdminOperatorRouteId;
+  sessionRequired: true;
+}
+
+export interface AuthorizedAdminOperatorContext
+  extends AuthorizedAdminOperatorMembershipContext {
+  accountType: AuthSessionAccountType;
+  chainId: string;
+  credentialBoundary: "ordinary_user_wallet";
+  issuerMode: NonNullable<WalletSessionRecord["issuer"]>["issuerMode"];
+  network: WalletNetwork;
+  proofStatus: "local_seeded" | "verified";
+  sessionId: string;
+  walletSource: AuthSessionWalletSource;
+}
+
+export interface EvaluateAdminOperatorEnforcementOptions {
+  campaignId?: string;
+  headers?: AuthRuntimeHeaders;
+  issuedSessionLookup: IssuedSessionLookup;
+  membershipRegistry: AdminOperatorMembershipRegistry;
+  routeId: string;
+  traceId?: string;
+}
+
 export interface CanonicalWalletSubject {
   chainId: string;
   walletAddress: string;
@@ -119,6 +169,7 @@ export interface ParticipantCompatibilitySubject {
 }
 
 export interface AuthEnforcementDecision {
+  adminOperator?: Readonly<AuthorizedAdminOperatorContext>;
   allowed: boolean;
   diagnostic?: AuthEnforcementDiagnostic;
   httpStatus?: 401 | 403;
@@ -164,6 +215,43 @@ const proofStatuses = [
 ] as const satisfies readonly SessionProofStatus[];
 const locallyAcceptedProofStatuses = new Set<SessionProofStatus>(["local_seeded", "verified"]);
 const ownerRouteRequiredCapability: WalletCapability = "SIGN_MESSAGE";
+const adminOperatorRoles = Object.freeze([
+  "internal_operator",
+  "review_operator",
+] satisfies CampaignOsAdminOperatorRoleId[]);
+
+const adminOperatorPolicy = (
+  routeId: AdminOperatorRouteId,
+  campaignScope: AdminOperatorRoutePolicy["campaignScope"],
+): Readonly<AdminOperatorRoutePolicy> => Object.freeze({
+  allowedRoles: adminOperatorRoles,
+  campaignScope,
+  credentialBoundary: "ordinary_user_wallet",
+  enforcementStatus: "local_enforced",
+  membershipRequired: true,
+  routeId,
+  sessionRequired: true,
+});
+
+export const adminOperatorRoutePolicies = Object.freeze([
+  adminOperatorPolicy("admin.campaigns.list", "membership_feed"),
+  adminOperatorPolicy("admin.reviews.list", "campaign_path"),
+  adminOperatorPolicy("admin.reviews.detail", "campaign_path"),
+  adminOperatorPolicy("admin.reviews.decide", "campaign_path"),
+  adminOperatorPolicy("admin.winners.list", "campaign_path"),
+  adminOperatorPolicy("admin.artifacts.generate", "campaign_path"),
+  adminOperatorPolicy("admin.artifacts.list", "campaign_path"),
+  adminOperatorPolicy("admin.artifacts.detail", "campaign_path"),
+  adminOperatorPolicy("admin.artifacts.download", "campaign_path"),
+]);
+
+const adminOperatorRoutePolicyById = new Map<string, Readonly<AdminOperatorRoutePolicy>>(
+  adminOperatorRoutePolicies.map((policy) => [policy.routeId, policy]),
+);
+
+export const getAdminOperatorRoutePolicy = (
+  routeId: string,
+): Readonly<AdminOperatorRoutePolicy> | undefined => adminOperatorRoutePolicyById.get(routeId);
 
 const authEnforcementProductionDependencyIds = [
   "rbac_enforcement_policy",
@@ -948,6 +1036,24 @@ export const evaluateAuthEnforcement = ({
   ownerSources,
   routeId,
 }: EvaluateAuthEnforcementOptions): AuthEnforcementDecision => {
+  if (getAdminOperatorRoutePolicy(routeId)) {
+    return decision({
+      diagnostic: {
+        code: "AUTH_FORBIDDEN",
+        field: "authSession.membership",
+        message: "Admin operator routes require issued-session membership enforcement.",
+      },
+      httpStatus: 403,
+      routeId,
+      safeDetails: {
+        reason: "admin_membership_required",
+        routeId,
+        traceId: safeAdminTraceId(undefined),
+      },
+      status: "forbidden",
+    });
+  }
+
   const routeAuth = getProtectedRouteAuth(routeId);
   const routePolicy = routeAuth ? rbacOwnershipRoutePolicyByGroup[routeAuth.routeGroup] : undefined;
 
@@ -999,6 +1105,24 @@ export const evaluateIssuedAuthEnforcement = async ({
   const routeAuth = getProtectedRouteAuth(routeId);
   const routePolicy = routeAuth ? rbacOwnershipRoutePolicyByGroup[routeAuth.routeGroup] : undefined;
   const complete = (authDecision: AuthEnforcementDecision) => withTraceId(authDecision, traceId);
+
+  if (getAdminOperatorRoutePolicy(routeId)) {
+    return decision({
+      diagnostic: {
+        code: "AUTH_FORBIDDEN",
+        field: "authSession.membership",
+        message: "Admin operator routes require server-side membership enforcement.",
+      },
+      httpStatus: 403,
+      routeId,
+      safeDetails: {
+        reason: "admin_membership_required",
+        routeId,
+        traceId: safeAdminTraceId(traceId),
+      },
+      status: "forbidden",
+    });
+  }
 
   if (!routeAuth?.sessionRequired) {
     return complete(decision({
@@ -1115,4 +1239,262 @@ export const evaluateIssuedAuthEnforcement = async ({
   }
 
   return complete(routeDecision);
+};
+
+const ADMIN_SESSION_ID_MAX_LENGTH = 160;
+const ADMIN_ROLE_HEADER_MAX_LENGTH = 64;
+const ADMIN_CAMPAIGN_ID_MAX_LENGTH = 160;
+
+const safeAdminTraceId = (traceId: string | undefined) => {
+  const candidate = traceId?.trim();
+
+  return candidate
+    && candidate.length <= 128
+    && /^[A-Za-z0-9._:-]+$/.test(candidate)
+    ? candidate
+    : `trace-${randomUUID()}`;
+};
+
+type AdminHeaderValue =
+  | { kind: "missing" }
+  | { kind: "invalid" }
+  | { kind: "value"; value: string };
+
+const getSingleAdminHeader = (
+  headers: AuthRuntimeHeaders | undefined,
+  name: string,
+): AdminHeaderValue => {
+  const matches = headers
+    ? Object.entries(headers).filter(([key]) => key.toLowerCase() === name)
+    : [];
+
+  if (matches.length > 1) {
+    return { kind: "invalid" };
+  }
+
+  const raw = matches[0]?.[1];
+
+  if (raw === undefined) {
+    return { kind: "missing" };
+  }
+
+  if (Array.isArray(raw)) {
+    if (raw.length !== 1 || typeof raw[0] !== "string") {
+      return { kind: "invalid" };
+    }
+
+    const value = raw[0].trim();
+    return value ? { kind: "value", value } : { kind: "missing" };
+  }
+
+  if (typeof raw !== "string") {
+    return { kind: "invalid" };
+  }
+
+  const value = raw.trim();
+  return value ? { kind: "value", value } : { kind: "missing" };
+};
+
+const isSafeAdminSessionId = (value: string) =>
+  value.length <= ADMIN_SESSION_ID_MAX_LENGTH && /^[A-Za-z0-9._:-]+$/.test(value);
+
+const isSafeAdminCampaignId = (value: string) =>
+  value.length <= ADMIN_CAMPAIGN_ID_MAX_LENGTH
+  && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
+
+const adminDecision = ({
+  code,
+  httpStatus,
+  policy,
+  reason,
+  routeId,
+  status,
+  traceId,
+}: {
+  code: "AUTH_SESSION_REQUIRED" | "AUTH_SESSION_INVALID" | "AUTH_FORBIDDEN";
+  httpStatus: 401 | 403;
+  policy?: Readonly<AdminOperatorRoutePolicy>;
+  reason: string;
+  routeId: string;
+  status: "unauthenticated" | "forbidden";
+  traceId: string;
+}) => decision({
+  diagnostic: {
+    code,
+    field: code === "AUTH_FORBIDDEN" ? "authSession.membership" : localAuthHeaderNames.sessionId,
+    message: code === "AUTH_SESSION_REQUIRED"
+      ? "An issued Admin operator session is required."
+      : code === "AUTH_SESSION_INVALID"
+      ? "The issued Admin operator session is invalid."
+      : "Admin operator authority is forbidden.",
+  },
+  httpStatus,
+  requiredRoles: policy ? [...policy.allowedRoles] : [],
+  routeId,
+  safeDetails: { reason, routeId, traceId },
+  status,
+});
+
+const adminCompatibilityClaims = (
+  headers: AuthRuntimeHeaders | undefined,
+): { claims?: AdminOperatorSessionCompatibilityClaims; invalid: boolean } => {
+  const mappings = [
+    [localAuthHeaderNames.walletAddress, "subjectAddress"],
+    [localAuthHeaderNames.accountType, "accountType"],
+    [localAuthHeaderNames.walletSource, "walletSource"],
+    [localAuthHeaderNames.credentialBoundary, "credentialBoundary"],
+    [localAuthHeaderNames.proofStatus, "proofStatus"],
+  ] as const;
+  const claims: Record<string, string> = {};
+
+  for (const [headerName, claimName] of mappings) {
+    const header = getSingleAdminHeader(headers, headerName);
+
+    if (header.kind === "invalid") {
+      return { invalid: true };
+    }
+
+    if (header.kind === "value") {
+      claims[claimName] = header.value;
+    }
+  }
+
+  return {
+    claims: claims as unknown as AdminOperatorSessionCompatibilityClaims,
+    invalid: false,
+  };
+};
+
+export const evaluateAdminOperatorEnforcement = async ({
+  campaignId,
+  headers,
+  issuedSessionLookup,
+  membershipRegistry,
+  routeId,
+  traceId,
+}: EvaluateAdminOperatorEnforcementOptions): Promise<AuthEnforcementDecision> => {
+  const resolvedTraceId = safeAdminTraceId(traceId);
+  const policy = getAdminOperatorRoutePolicy(routeId);
+  const deny = (
+    code: "AUTH_SESSION_REQUIRED" | "AUTH_SESSION_INVALID" | "AUTH_FORBIDDEN",
+    reason: string,
+  ) => adminDecision({
+    code,
+    httpStatus: code === "AUTH_FORBIDDEN" ? 403 : 401,
+    policy,
+    reason,
+    routeId,
+    status: code === "AUTH_FORBIDDEN" ? "forbidden" : "unauthenticated",
+    traceId: resolvedTraceId,
+  });
+
+  if (!policy) {
+    return deny("AUTH_FORBIDDEN", "unknown_admin_route");
+  }
+
+  const sessionHeader = getSingleAdminHeader(headers, localAuthHeaderNames.sessionId);
+
+  if (sessionHeader.kind === "missing") {
+    return deny("AUTH_SESSION_REQUIRED", "missing_session");
+  }
+
+  if (sessionHeader.kind === "invalid" || !isSafeAdminSessionId(sessionHeader.value)) {
+    return deny("AUTH_SESSION_INVALID", "invalid_session");
+  }
+
+  const roleHeader = getSingleAdminHeader(headers, localAuthHeaderNames.roles);
+
+  if (
+    roleHeader.kind !== "value"
+    || roleHeader.value.length > ADMIN_ROLE_HEADER_MAX_LENGTH
+    || roleHeader.value.includes(",")
+    || !policy.allowedRoles.includes(roleHeader.value as CampaignOsAdminOperatorRoleId)
+  ) {
+    return deny("AUTH_FORBIDDEN", "requested_role_forbidden");
+  }
+
+  const requestedRole = roleHeader.value as CampaignOsAdminOperatorRoleId;
+
+  if (
+    policy.campaignScope === "campaign_path"
+    && (!campaignId || !isSafeAdminCampaignId(campaignId.trim()))
+  ) {
+    return deny("AUTH_FORBIDDEN", "campaign_scope_forbidden");
+  }
+
+  const compatibility = adminCompatibilityClaims(headers);
+
+  if (compatibility.invalid) {
+    return deny("AUTH_SESSION_INVALID", "invalid_compatibility_claim");
+  }
+
+  let issuedRecord: WalletSessionRecord | undefined;
+
+  try {
+    issuedRecord = await issuedSessionLookup(sessionHeader.value, { traceId: resolvedTraceId });
+  } catch {
+    return deny("AUTH_SESSION_INVALID", "issued_session_lookup_failed");
+  }
+
+  if (!issuedRecord) {
+    return deny("AUTH_SESSION_INVALID", "unknown_issued_session");
+  }
+
+  let trustedSession: ReturnType<typeof resolveTrustedAdminOperatorSession>;
+
+  try {
+    trustedSession = resolveTrustedAdminOperatorSession(issuedRecord, {
+      ...compatibility.claims,
+      sessionId: sessionHeader.value,
+    });
+  } catch {
+    return deny("AUTH_SESSION_INVALID", "issued_session_invalid");
+  }
+
+  if (!trustedSession.ok) {
+    return trustedSession.reason === "internal-credential"
+      ? deny("AUTH_FORBIDDEN", "credential_forbidden")
+      : deny("AUTH_SESSION_INVALID", "issued_session_invalid");
+  }
+
+  let membershipDecision;
+
+  try {
+    membershipDecision = membershipRegistry.lookup({
+      campaignId: policy.campaignScope === "campaign_path" ? campaignId?.trim() : undefined,
+      requestedRole,
+      subjectAddress: trustedSession.context.subjectAddress,
+    });
+  } catch {
+    return deny("AUTH_FORBIDDEN", "membership_unavailable");
+  }
+
+  if (!membershipDecision.authorized) {
+    return deny("AUTH_FORBIDDEN", "membership_forbidden");
+  }
+
+  const adminOperator = Object.freeze({
+    ...membershipDecision.context,
+    accountType: trustedSession.context.accountType,
+    chainId: trustedSession.context.chainId,
+    credentialBoundary: trustedSession.context.credentialBoundary,
+    issuerMode: trustedSession.context.issuerMode,
+    network: trustedSession.context.network,
+    proofStatus: trustedSession.context.proofStatus,
+    sessionId: trustedSession.context.sessionId,
+    walletSource: trustedSession.context.walletSource,
+  });
+
+  return decision({
+    adminOperator,
+    matchedRoles: [requestedRole],
+    requiredRoles: [...policy.allowedRoles],
+    routeId,
+    safeDetails: {
+      requestedRole,
+      routeId,
+      traceId: resolvedTraceId,
+    },
+    status: "allowed",
+  });
 };
