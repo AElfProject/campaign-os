@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type {
   CampaignDbDraft,
   CampaignDbParticipantRecord,
+  CampaignDbReferralBindingRecord,
   CampaignDbTaskCompletion,
   CampaignDbTaskDraft,
   CampaignDbTaskEvidenceRecord,
@@ -126,6 +127,27 @@ const participant = (
   walletTypeVerified: true,
 });
 
+const referralBinding = (
+  id: string,
+  campaignId: string,
+): CampaignDbReferralBindingRecord => ({
+  campaignId,
+  createdAt: "2026-07-07T00:00:00.000Z",
+  id,
+  inviteeAccountType: "EOA",
+  inviteeWalletAddress: "2F4InviteeWallet",
+  inviteeWalletSource: "PORTKEY_EOA_EXTENSION",
+  qualifiedActionCompleted: true,
+  qualifiedActionCompletedAt: "2026-07-07T00:00:00.000Z",
+  qualifiedActionEvidenceHash: "evidence-hash:qualified-referral",
+  referrerAccountType: "AA",
+  referrerWalletAddress: "2F4ReferrerWallet",
+  referrerWalletSource: "PORTKEY_AA",
+  riskFlags: [],
+  status: "qualified",
+  updatedAt: "2026-07-07T00:00:00.000Z",
+});
+
 const withTempStorePath = async <T>(operation: (filePath: string) => Promise<T>) => {
   const directory = await mkdtemp(join(tmpdir(), "campaign-os-store-"));
 
@@ -164,13 +186,36 @@ describe("Campaign durable store", () => {
     await withTempStorePath(async (filePath) => {
       const store = createCampaignDurableStore({ filePath, mode: "durable_test" });
       const recoveredDraft = draft("campaign-db-draft-recovered");
+      const recoveredTask = taskDraft("campaign-db-task-recovered", recoveredDraft.id);
+      const recoveredCompletion = taskCompletion(
+        "campaign-db-completion-recovered",
+        recoveredDraft.id,
+        recoveredTask.id,
+        "2F4RecoveredWallet",
+        "campaign-db-evidence-recovered",
+      );
+      const recoveredEvidence = {
+        ...taskEvidence(
+          "campaign-db-evidence-recovered",
+          recoveredDraft.id,
+          recoveredTask.id,
+          "2F4RecoveredWallet",
+        ),
+        completionId: recoveredCompletion.id,
+      };
+      const recoveredParticipant = participant(
+        "campaign-db-participant-recovered",
+        recoveredDraft.id,
+        "2F4RecoveredWallet",
+      );
+      const recoveredReferral = referralBinding("campaign-db-referral-recovered", recoveredDraft.id);
       const validDocument = {
-        completionRecords: [],
-        participantRecords: [],
+        completionRecords: [recoveredCompletion],
+        participantRecords: [recoveredParticipant],
         records: [recoveredDraft],
-        referralBindingRecords: [],
-        taskEvidenceRecords: [],
-        taskRecords: [],
+        referralBindingRecords: [recoveredReferral],
+        taskEvidenceRecords: [recoveredEvidence],
+        taskRecords: [recoveredTask],
         updatedAt: "2026-07-07T00:00:00.000Z",
         version: 1,
       };
@@ -187,6 +232,126 @@ describe("Campaign durable store", () => {
         `${JSON.stringify({ ...validDocument, records: {} })}\n`,
         `${JSON.stringify({ ...validDocument, records: [{}] })}\n`,
         `${JSON.stringify({ ...validDocument, records: [recoveredDraft, { ...recoveredDraft }] })}\n`,
+        `${JSON.stringify({ ...validDocument, updatedAt: "not-a-timestamp" })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          records: [{ ...recoveredDraft, goal: " " }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          records: [{ ...recoveredDraft, metadataHash: " " }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          records: [{ ...recoveredDraft, createdAt: "not-a-timestamp" }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          records: [{ ...recoveredDraft, supportedLocales: [] }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          records: [{ ...recoveredDraft, supportedLocales: ["zh-CN"] }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          records: [{ ...recoveredDraft, supportedLocales: ["en-US", "en-US"] }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          records: [{
+            ...recoveredDraft,
+            publishReadiness: { ...recoveredDraft.publishReadiness, unexpected: true },
+          }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          records: [{
+            ...recoveredDraft,
+            publishReadiness: { blockers: ["duplicate", "duplicate"], ready: false, warnings: [] },
+          }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          taskRecords: [{ ...recoveredTask, evidenceRule: { " ": true } }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          taskRecords: [{
+            ...recoveredTask,
+            evidenceRule: Object.fromEntries(Array.from({ length: 101 }, (_, index) => [`key-${index}`, index])),
+          }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          taskRecords: [{ ...recoveredTask, points: Number.MAX_SAFE_INTEGER + 1 }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          completionRecords: [{ ...recoveredCompletion, completedAt: undefined }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          completionRecords: [{ ...recoveredCompletion, evidenceHash: " " }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          participantRecords: [{ ...recoveredParticipant, rank: 0 }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          participantRecords: [{ ...recoveredParticipant, riskFlags: ["duplicate", "duplicate"] }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          participantRecords: [{ ...recoveredParticipant, walletVerifiedAt: "not-a-timestamp" }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          records: [{ ...recoveredDraft, startTime: recoveredDraft.endTime }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          referralBindingRecords: [{
+            ...recoveredReferral,
+            referrerWalletAddress: recoveredReferral.inviteeWalletAddress,
+          }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          referralBindingRecords: [{ ...recoveredReferral, qualifiedActionCompletedAt: undefined }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          referralBindingRecords: [{ ...recoveredReferral, status: "pending" }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          referralBindingRecords: [{ ...recoveredReferral, qualifiedActionEvidenceHash: " " }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          taskEvidenceRecords: [{ ...recoveredEvidence, evidenceHash: " " }],
+        })}\n`,
+        `${JSON.stringify({
+          ...validDocument,
+          taskEvidenceRecords: [{ ...recoveredEvidence, diagnosticCodes: Array(101).fill("diagnostic") }],
+        })}\n`,
+        ...[
+          ["records", recoveredDraft],
+          ["taskRecords", recoveredTask],
+          ["participantRecords", recoveredParticipant],
+          ["completionRecords", recoveredCompletion],
+          ["taskEvidenceRecords", recoveredEvidence],
+          ["referralBindingRecords", recoveredReferral],
+        ].map(([collectionName, record]) => `${JSON.stringify({
+          ...validDocument,
+          [collectionName as string]: [{
+            ...(record as Record<string, unknown>),
+            createdAt: "2026-07-08T00:00:00.000Z",
+            updatedAt: "2026-07-07T00:00:00.000Z",
+          }],
+        })}\n`),
         ...optionalCollectionNames.flatMap((collectionName) => [
           `${JSON.stringify({ ...validDocument, [collectionName]: {} })}\n`,
           `${JSON.stringify({ ...validDocument, [collectionName]: [{}] })}\n`,

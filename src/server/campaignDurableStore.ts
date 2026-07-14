@@ -363,131 +363,176 @@ const isRecord = (value: unknown): value is UnknownRecord =>
 const isString = (value: unknown): value is string => typeof value === "string";
 const isNonEmptyString = (value: unknown): value is string =>
   isString(value) && value.trim().length > 0;
-const isOptionalString = (value: unknown) => value === undefined || isString(value);
-const isFiniteNonNegativeNumber = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0;
-const isOptionalNonNegativeInteger = (value: unknown) =>
-  value === undefined || (isFiniteNonNegativeNumber(value) && Number.isInteger(value));
-const isStringArray = (value: unknown): value is string[] =>
-  Array.isArray(value) && value.every(isString);
+const isOptionalNonEmptyString = (value: unknown) => value === undefined || isNonEmptyString(value);
+const isTimestamp = (value: unknown): value is string =>
+  isNonEmptyString(value) && Number.isFinite(new Date(value).getTime());
+const isOptionalTimestamp = (value: unknown) => value === undefined || isTimestamp(value);
+const isSafeNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isOptionalPositiveInteger = (value: unknown) =>
+  value === undefined || (typeof value === "number" && Number.isSafeInteger(value) && value > 0);
 const isEnumValue = <TValue extends string>(
   value: unknown,
   values: readonly TValue[],
 ): value is TValue => isString(value) && (values as readonly string[]).includes(value);
 
+const hasExactKeys = (value: UnknownRecord, expectedKeys: readonly string[]) => {
+  const actualKeys = Object.keys(value).sort();
+  const sortedExpectedKeys = [...expectedKeys].sort();
+
+  return actualKeys.length === sortedExpectedKeys.length
+    && actualKeys.every((key, index) => key === sortedExpectedKeys[index]);
+};
+
+const isBoundedUniqueStringArray = <TValue extends string = string>(
+  value: unknown,
+  maximum: number,
+  allowed?: readonly TValue[],
+  minimum = 0,
+): value is TValue[] => {
+  if (!Array.isArray(value) || value.length < minimum || value.length > maximum) {
+    return false;
+  }
+
+  const seen = new Set<string>();
+
+  for (const entry of value) {
+    if (
+      !isNonEmptyString(entry)
+      || seen.has(entry)
+      || (allowed && !allowed.includes(entry as TValue))
+    ) {
+      return false;
+    }
+
+    seen.add(entry);
+  }
+
+  return true;
+};
+
+const isUpdatedAfterCreated = (value: UnknownRecord) =>
+  isTimestamp(value.createdAt)
+  && isTimestamp(value.updatedAt)
+  && new Date(value.updatedAt).getTime() >= new Date(value.createdAt).getTime();
+
 const isPublishReadiness = (value: unknown) => isRecord(value)
-  && isStringArray(value.blockers)
+  && hasExactKeys(value, ["blockers", "ready", "warnings"])
+  && isBoundedUniqueStringArray(value.blockers, 100)
   && typeof value.ready === "boolean"
-  && isStringArray(value.warnings);
+  && isBoundedUniqueStringArray(value.warnings, 100);
 
 const isEvidenceRule = (value: unknown) => isRecord(value)
-  && Object.values(value).every((entry) =>
-    isString(entry)
-    || typeof entry === "boolean"
-    || (typeof entry === "number" && Number.isFinite(entry)));
+  && Object.keys(value).length <= 100
+  && Object.entries(value).every(([key, entry]) =>
+    isNonEmptyString(key)
+    && (
+      isString(entry)
+      || typeof entry === "boolean"
+      || (typeof entry === "number" && Number.isFinite(entry))
+    ));
 
 const isCampaignDraft = (value: unknown): value is CampaignDbDraft => isRecord(value)
   && isEnumValue(value.contractMode, contractModes)
-  && isString(value.createdAt)
+  && isUpdatedAfterCreated(value)
   && value.defaultLocale === "en-US"
-  && isString(value.duration)
-  && isString(value.endTime)
-  && isString(value.goal)
+  && isNonEmptyString(value.duration)
+  && isTimestamp(value.endTime)
+  && isNonEmptyString(value.goal)
   && isNonEmptyString(value.id)
-  && isOptionalString(value.metadataHash)
-  && isOptionalString(value.metadataUri)
+  && isOptionalNonEmptyString(value.metadataHash)
+  && isOptionalNonEmptyString(value.metadataUri)
   && isNonEmptyString(value.ownerAddress)
   && isNonEmptyString(value.projectId)
   && isPublishReadiness(value.publishReadiness)
-  && isString(value.rewardDescription)
-  && isOptionalString(value.rewardDisclaimerHash)
-  && isString(value.startTime)
+  && isNonEmptyString(value.rewardDescription)
+  && isOptionalNonEmptyString(value.rewardDisclaimerHash)
+  && isTimestamp(value.startTime)
+  && new Date(value.startTime).getTime() < new Date(value.endTime).getTime()
   && isEnumValue(value.status, campaignLifecycleStatuses)
-  && Array.isArray(value.supportedLocales)
-  && value.supportedLocales.every((locale) => isEnumValue(locale, supportedLocales))
-  && isString(value.updatedAt)
+  && isBoundedUniqueStringArray(value.supportedLocales, supportedLocales.length, supportedLocales, 1)
+  && value.supportedLocales.includes("en-US")
   && isEnumValue(value.walletPolicy, walletPolicies);
 
 const isTaskDraft = (value: unknown): value is CampaignDbTaskDraft => isRecord(value)
   && isNonEmptyString(value.campaignId)
-  && isString(value.createdAt)
+  && isUpdatedAfterCreated(value)
   && isEvidenceRule(value.evidenceRule)
   && isNonEmptyString(value.id)
-  && isFiniteNonNegativeNumber(value.points)
+  && isSafeNonNegativeInteger(value.points)
   && typeof value.required === "boolean"
   && isNonEmptyString(value.templateCode)
-  && isString(value.updatedAt)
   && isEnumValue(value.verificationType, verificationTypes)
   && isEnumValue(value.walletCompatibility, walletPolicies);
 
 const isTaskCompletion = (value: unknown): value is CampaignDbTaskCompletion => isRecord(value)
   && isEnumValue(value.accountType, accountTypes)
   && isNonEmptyString(value.campaignId)
-  && isOptionalString(value.completedAt)
-  && isString(value.createdAt)
-  && isOptionalString(value.evidenceId)
-  && isOptionalString(value.evidenceHash)
+  && isOptionalTimestamp(value.completedAt)
+  && isUpdatedAfterCreated(value)
+  && isOptionalNonEmptyString(value.evidenceId)
+  && isOptionalNonEmptyString(value.evidenceHash)
   && isEnumValue(value.evidenceSource, completionEvidenceSources)
   && isNonEmptyString(value.id)
-  && isFiniteNonNegativeNumber(value.pointsAwarded)
+  && isSafeNonNegativeInteger(value.pointsAwarded)
   && isEnumValue(value.status, completionStatuses)
+  && (value.status !== "completed" || value.completedAt !== undefined)
   && isNonEmptyString(value.taskId)
-  && isString(value.updatedAt)
   && isNonEmptyString(value.walletAddress)
   && isEnumValue(value.walletSource, walletSources);
 
 const isParticipantRecord = (value: unknown): value is CampaignDbParticipantRecord => isRecord(value)
   && isEnumValue(value.accountType, accountTypes)
   && isNonEmptyString(value.campaignId)
-  && isString(value.createdAt)
+  && isUpdatedAfterCreated(value)
   && isNonEmptyString(value.id)
   && isEnumValue(value.localePreference, supportedLocales)
-  && isOptionalNonNegativeInteger(value.rank)
-  && isStringArray(value.riskFlags)
-  && isFiniteNonNegativeNumber(value.totalPoints)
-  && isString(value.updatedAt)
+  && isOptionalPositiveInteger(value.rank)
+  && isBoundedUniqueStringArray(value.riskFlags, 100)
+  && isSafeNonNegativeInteger(value.totalPoints)
   && isNonEmptyString(value.walletAddress)
   && isEnumValue(value.walletSignatureStatus, walletSignatureStatuses)
   && isEnumValue(value.walletSource, walletSources)
   && typeof value.walletTypeVerified === "boolean"
-  && isOptionalString(value.walletVerifiedAt);
+  && isOptionalTimestamp(value.walletVerifiedAt);
 
 const isReferralBindingRecord = (value: unknown): value is CampaignDbReferralBindingRecord => isRecord(value)
   && isNonEmptyString(value.campaignId)
-  && isString(value.createdAt)
+  && isUpdatedAfterCreated(value)
   && isNonEmptyString(value.id)
   && isEnumValue(value.inviteeAccountType, accountTypes)
   && isNonEmptyString(value.inviteeWalletAddress)
   && isEnumValue(value.inviteeWalletSource, walletSources)
   && typeof value.qualifiedActionCompleted === "boolean"
-  && isOptionalString(value.qualifiedActionCompletedAt)
-  && isOptionalString(value.qualifiedActionEvidenceHash)
+  && isOptionalTimestamp(value.qualifiedActionCompletedAt)
+  && isOptionalNonEmptyString(value.qualifiedActionEvidenceHash)
   && isEnumValue(value.referrerAccountType, accountTypes)
   && isNonEmptyString(value.referrerWalletAddress)
+  && value.inviteeWalletAddress !== value.referrerWalletAddress
   && isEnumValue(value.referrerWalletSource, walletSources)
-  && isStringArray(value.riskFlags)
+  && isBoundedUniqueStringArray(value.riskFlags, 100)
   && isEnumValue(value.status, referralBindingStatuses)
-  && isString(value.updatedAt);
+  && value.qualifiedActionCompleted === (value.qualifiedActionCompletedAt !== undefined)
+  && (value.status === "qualified") === value.qualifiedActionCompleted;
 
 const isTaskEvidenceRecord = (value: unknown): value is CampaignDbTaskEvidenceRecord => isRecord(value)
   && isEnumValue(value.accountType, accountTypes)
   && isNonEmptyString(value.campaignId)
-  && isString(value.capturedAt)
-  && isOptionalString(value.completionId)
-  && isString(value.createdAt)
-  && isStringArray(value.diagnosticCodes)
-  && isString(value.evidenceHash)
-  && isOptionalString(value.evidenceRef)
+  && isTimestamp(value.capturedAt)
+  && isOptionalNonEmptyString(value.completionId)
+  && isUpdatedAfterCreated(value)
+  && isBoundedUniqueStringArray(value.diagnosticCodes, 100)
+  && isNonEmptyString(value.evidenceHash)
+  && isOptionalNonEmptyString(value.evidenceRef)
   && isEnumValue(value.evidenceSource, completionEvidenceSources)
   && isNonEmptyString(value.id)
   && value.liveContractExecuted === false
   && value.liveProviderExecuted === false
   && value.liveRewardExecuted === false
   && value.liveStorageExecuted === false
-  && isFiniteNonNegativeNumber(value.pointsAwarded)
+  && isSafeNonNegativeInteger(value.pointsAwarded)
   && isEnumValue(value.status, completionStatuses)
   && isNonEmptyString(value.taskId)
-  && isString(value.updatedAt)
   && isNonEmptyString(value.walletAddress)
   && isEnumValue(value.walletSource, walletSources);
 
@@ -565,7 +610,7 @@ const parseDocument = (raw: string): CampaignDurableStoreDocument => {
   if (
     !isRecord(parsed)
     || parsed.version !== 1
-    || (parsed.updatedAt !== undefined && !isString(parsed.updatedAt))
+    || (parsed.updatedAt !== undefined && !isTimestamp(parsed.updatedAt))
   ) {
     throw new TypeError("Campaign durable store document is invalid.");
   }
