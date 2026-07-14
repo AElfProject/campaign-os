@@ -578,8 +578,8 @@ export const TaskTemplateLibrary = ({
     && Boolean(ownerWorkflow.error?.retryable);
   const showReconnect = !ownerWorkflow.issuedSessionReady
     || Boolean(ownerWorkflow.error?.reconnectRequired);
-  const commandDispatchGuardRef = useRef<OwnerCampaignTaskPendingTargetKey | null>(
-    ownerWorkflow.pendingTargetKey,
+  const commandDispatchGuardsRef = useRef<Set<OwnerCampaignTaskPendingTargetKey>>(
+    new Set(ownerWorkflow.pendingTargetKey ? [ownerWorkflow.pendingTargetKey] : []),
   );
   const controlledPendingObservedRef = useRef(Boolean(
     ownerWorkflow.pendingCommand || ownerWorkflow.pendingTargetKey,
@@ -588,13 +588,14 @@ export const TaskTemplateLibrary = ({
   useEffect(() => {
     if (ownerWorkflow.pendingCommand || ownerWorkflow.pendingTargetKey) {
       controlledPendingObservedRef.current = true;
-      commandDispatchGuardRef.current = ownerWorkflow.pendingTargetKey
-        ?? commandDispatchGuardRef.current;
+      if (ownerWorkflow.pendingTargetKey) {
+        commandDispatchGuardsRef.current.add(ownerWorkflow.pendingTargetKey);
+      }
       return;
     }
 
     if (controlledPendingObservedRef.current) {
-      commandDispatchGuardRef.current = null;
+      commandDispatchGuardsRef.current.clear();
       controlledPendingObservedRef.current = false;
     }
   }, [ownerWorkflow.pendingCommand, ownerWorkflow.pendingTargetKey]);
@@ -603,16 +604,16 @@ export const TaskTemplateLibrary = ({
     targetKey: OwnerCampaignTaskPendingTargetKey,
     dispatch: () => void,
   ) => {
-    if (globalDisabledReason || commandDispatchGuardRef.current) {
+    if (globalDisabledReason || commandDispatchGuardsRef.current.has(targetKey)) {
       return;
     }
 
-    commandDispatchGuardRef.current = targetKey;
+    commandDispatchGuardsRef.current.add(targetKey);
 
     try {
       dispatch();
     } catch (error) {
-      commandDispatchGuardRef.current = null;
+      commandDispatchGuardsRef.current.delete(targetKey);
       throw error;
     }
   };

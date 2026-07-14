@@ -469,6 +469,36 @@ describe("TaskTemplateLibrary", () => {
     expect(onAdopt).toHaveBeenCalledTimes(1);
   });
 
+  it("guards each command target without blocking unrelated controls in the same render", () => {
+    const onAdd = vi.fn();
+    const onAdopt = vi.fn();
+    const onGenerate = vi.fn();
+    renderLibrary(createWorkflow({
+      onAdd,
+      onAdopt,
+      onGenerate,
+      preview: preview([suggestion()]),
+    }));
+    fillGenerateForm();
+    const connectButton = screen.getByRole("button", { name: "Add Connect wallet" });
+    const bridgeButton = screen.getByRole("button", { name: "Add Bridge with eBridge" });
+    const generateButton = screen.getByRole("button", { name: "Generate task preview" });
+    const adoptButton = screen.getByRole("button", { name: "Adopt wallet-connect" });
+
+    for (const button of [connectButton, bridgeButton, generateButton, adoptButton]) {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    }
+
+    expect(onAdd).toHaveBeenCalledTimes(2);
+    expect(onAdd.mock.calls.map(([input]) => input.templateCode)).toEqual([
+      "wallet-connect",
+      "bridge-ebridge",
+    ]);
+    expect(onGenerate).toHaveBeenCalledTimes(1);
+    expect(onAdopt).toHaveBeenCalledTimes(1);
+  });
+
   it("disables REFERRAL and unknown suggestions with stable reasons", () => {
     const referral = suggestion({
       adoptable: false,
