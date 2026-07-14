@@ -253,6 +253,20 @@ interface ApiResult<T> {
   status: number;
 }
 
+interface NegativeApiContract {
+  diagnosticCode: string;
+  field: string;
+  outerCode: string;
+  status: number;
+  traceId: string;
+}
+
+interface ParticipantJourneyRowCounts {
+  completionRows: number;
+  evidenceRows: number;
+  participantRows: number;
+}
+
 interface IssuedWalletSession {
   data: WalletSessionData;
   headers: (
@@ -490,6 +504,59 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     }
 
     return new pg.Pool(config.pool);
+  };
+
+  const readParticipantJourneyRowCounts = async (): Promise<ParticipantJourneyRowCounts> => {
+    const pool = createAuditPool();
+
+    try {
+      const result = await pool.query<{
+        completion_count: string;
+        evidence_count: string;
+        participant_count: string;
+      }>(`
+        SELECT
+          (SELECT COUNT(*)::text FROM campaign_os.campaign_participants) AS participant_count,
+          (SELECT COUNT(*)::text FROM campaign_os.campaign_task_completions) AS completion_count,
+          (SELECT COUNT(*)::text FROM campaign_os.campaign_task_evidence) AS evidence_count
+      `);
+      const row = result.rows[0];
+
+      if (!row) {
+        throw new Error("PostgreSQL acceptance row-count query returned no row.");
+      }
+
+      return {
+        completionRows: Number(row.completion_count),
+        evidenceRows: Number(row.evidence_count),
+        participantRows: Number(row.participant_count),
+      };
+    } finally {
+      await pool.end();
+    }
+  };
+
+  const expectNegativeCaseNoParticipantJourneyWrite = async <T>(
+    caseName: string,
+    expected: NegativeApiContract,
+    request: () => Promise<ApiResult<T>>,
+  ) => {
+    const before = await readParticipantJourneyRowCounts();
+    const result = await request();
+    const after = await readParticipantJourneyRowCounts();
+
+    expect.soft(after, `${caseName}: Participant/Completion/Evidence row counts`).toEqual(before);
+    expect.soft(result.status, `${caseName}: HTTP status`).toBe(expected.status);
+    expect.soft(result.envelope.ok, `${caseName}: envelope ok`).toBe(false);
+    expect.soft(result.envelope.error?.code, `${caseName}: outer code`).toBe(expected.outerCode);
+    expect.soft(
+      result.envelope.error?.details?.diagnosticCode,
+      `${caseName}: diagnostic code`,
+    ).toBe(expected.diagnosticCode);
+    expect.soft(result.envelope.traceId, `${caseName}: Trace ID`).toBe(expected.traceId);
+    expect.soft(result.envelope.error?.details?.field, `${caseName}: field`).toBe(expected.field);
+
+    return result;
   };
 
   const readCampaignSnapshot = async (pool: pg.Pool, campaignId: string) => {
@@ -767,21 +834,31 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       unsupportedReason: "REFERRAL_TASK_ADD_UNSUPPORTED",
     });
 
-    const referralBypass = await requestApi(
-      firstServer,
-      `/api/campaigns/${campaignId}/tasks`,
+    const referralBypass = await expectNegativeCaseNoParticipantJourneyWrite(
+      "unsupported referral Task bypass",
       {
-        body: JSON.stringify({
-          evidenceRule: referralSuggestion?.evidenceRule ?? { source: "REFERRAL" },
-          points: referralSuggestion?.points ?? 25,
-          required: referralSuggestion?.required ?? false,
-          templateCode: referralSuggestion?.templateCode ?? "invite_friend",
-          verificationType: "REFERRAL",
-          walletCompatibility: referralSuggestion?.walletCompatibility ?? "ANY",
-        }),
-        headers: sessionA.headers("trace-pg-runtime-referral-bypass"),
-        method: "POST",
+        diagnosticCode: "INVALID_REQUEST",
+        field: "verificationType",
+        outerCode: "INVALID_REQUEST",
+        status: 400,
+        traceId: "trace-pg-runtime-referral-bypass",
       },
+      () => requestApi(
+        firstServer,
+        `/api/campaigns/${campaignId}/tasks`,
+        {
+          body: JSON.stringify({
+            evidenceRule: referralSuggestion?.evidenceRule ?? { source: "REFERRAL" },
+            points: referralSuggestion?.points ?? 25,
+            required: referralSuggestion?.required ?? false,
+            templateCode: referralSuggestion?.templateCode ?? "invite_friend",
+            verificationType: "REFERRAL",
+            walletCompatibility: referralSuggestion?.walletCompatibility ?? "ANY",
+          }),
+          headers: sessionA.headers("trace-pg-runtime-referral-bypass"),
+          method: "POST",
+        },
+      ),
     );
     const previewHealthAfter = await requestJson<HealthData>(firstServer, "/api/health");
     const previewDbAfter = await (async () => {
@@ -872,13 +949,29 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       },
     );
     const anonymousFeed = await requestJson<CampaignListData>(firstServer, "/api/campaigns");
-    const anonymousDetail = await requestApi<DetailData>(firstServer, `/api/campaigns/${campaignId}`);
+    const anonymousDetail = await expectNegativeCaseNoParticipantJourneyWrite(
+      "anonymous repository draft detail",
+      {
+        diagnosticCode: "INVALID_CAMPAIGN",
+        field: "campaignId",
+        outerCode: "INVALID_CAMPAIGN",
+        status: 404,
+        traceId: "trace-pg-anonymous-draft-detail",
+      },
+      () => requestApi<DetailData>(firstServer, `/api/campaigns/${campaignId}`, {
+        headers: { "x-campaign-os-trace-id": "trace-pg-anonymous-draft-detail" },
+      }),
+    );
 
     expect(anonymousFeed.payload.items.map((item) => item.id)).not.toContain(campaignId);
     expect(anonymousFeed.payload.items.map((item) => item.id)).not.toContain(hiddenCampaign.payload.id);
     expect(anonymousDetail).toMatchObject({
       status: 404,
-      envelope: { ok: false, error: { code: "INVALID_CAMPAIGN" } },
+      envelope: {
+        ok: false,
+        traceId: "trace-pg-anonymous-draft-detail",
+        error: { code: "INVALID_CAMPAIGN" },
+      },
     });
 
     participantPreviewCampaignIds = campaignId;
@@ -968,159 +1061,180 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         && item.status === "not_started")).toBe(true);
     }
 
-    const beforeParticipantNegativeSnapshot = await (async () => {
-      const pool = createAuditPool();
-
-      try {
-        const [primary, hidden] = await Promise.all([
-          readCampaignSnapshot(pool, campaignId),
-          readCampaignSnapshot(pool, hiddenCampaign.payload.id),
-        ]);
-
-        return { hidden, primary };
-      } finally {
-        await pool.end();
-      }
-    })();
-    const subjectSubstitution = await requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
-      body: JSON.stringify({ campaignId, walletAddress: walletBAddress }),
-      headers: participantSessionA1.headers("trace-pg-participant-substitution"),
-      method: "POST",
-    });
-    const caseVariantSubstitution = await requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
-      body: JSON.stringify({ campaignId, walletAddress: walletAddress.toLowerCase() }),
-      headers: participantSessionA1.headers("trace-pg-participant-case-variant"),
-      method: "POST",
-    });
-    const missingParticipantSession = await requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
-      body: JSON.stringify({ campaignId }),
-      headers: {
-        "content-type": "application/json",
-        "x-campaign-os-trace-id": "trace-pg-participant-missing-session",
-      },
-      method: "POST",
-    });
-    const unknownParticipantSession = await requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
-      body: JSON.stringify({ campaignId }),
-      headers: participantSessionA1.headers("trace-pg-participant-unknown-session", {
-        "x-campaign-os-session-id": "unissued-participant-session",
-      }),
-      method: "POST",
-    });
-    const internalParticipantCredential = await requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
-      body: JSON.stringify({ campaignId }),
-      headers: internalAgentSession.headers("trace-pg-participant-internal-credential", {
-        "x-campaign-os-credential-boundary": "internal_agent_credential",
-      }),
-      method: "POST",
-    });
-    participantPreviewCampaignIds = [campaignId, hiddenCampaign.payload.id].join(",");
-    const walletPolicyMismatch = await requestApi(
-      firstServer,
-      `/api/tasks/${hiddenTask.campaignDbTask.taskId}/verify`,
+    const bodyWalletSubstitution = await expectNegativeCaseNoParticipantJourneyWrite(
+      "body wallet substitution",
       {
-        body: JSON.stringify({ campaignId: hiddenCampaign.payload.id }),
-        headers: aaParticipantSession.headers("trace-pg-participant-wallet-policy-mismatch"),
-        method: "POST",
+        diagnosticCode: "AUTH_SUBJECT_MISMATCH",
+        field: "walletAddress",
+        outerCode: "AUTH_SUBJECT_MISMATCH",
+        status: 403,
+        traceId: "trace-pg-participant-body-substitution",
       },
+      () => requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
+        body: JSON.stringify({ campaignId, walletAddress: walletBAddress }),
+        headers: participantSessionA1.headers("trace-pg-participant-body-substitution"),
+        method: "POST",
+      }),
+    );
+    const queryWalletSubstitution = await expectNegativeCaseNoParticipantJourneyWrite(
+      "query wallet substitution",
+      {
+        diagnosticCode: "AUTH_SUBJECT_MISMATCH",
+        field: "walletAddress",
+        outerCode: "AUTH_SUBJECT_MISMATCH",
+        status: 403,
+        traceId: "trace-pg-participant-query-substitution",
+      },
+      () => requestApi(
+        firstServer,
+        `/api/tasks/${taskId}/verify?walletAddress=${encodeURIComponent(walletBAddress)}`,
+        {
+          body: JSON.stringify({ campaignId }),
+          headers: participantSessionA1.headers("trace-pg-participant-query-substitution"),
+          method: "POST",
+        },
+      ),
+    );
+    const caseVariantSubstitution = await expectNegativeCaseNoParticipantJourneyWrite(
+      "case-variant wallet substitution",
+      {
+        diagnosticCode: "AUTH_SUBJECT_MISMATCH",
+        field: "walletAddress",
+        outerCode: "AUTH_SUBJECT_MISMATCH",
+        status: 403,
+        traceId: "trace-pg-participant-case-variant",
+      },
+      () => requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
+        body: JSON.stringify({ campaignId, walletAddress: walletAddress.toLowerCase() }),
+        headers: participantSessionA1.headers("trace-pg-participant-case-variant"),
+        method: "POST",
+      }),
+    );
+    const missingParticipantSession = await expectNegativeCaseNoParticipantJourneyWrite(
+      "missing Participant session",
+      {
+        diagnosticCode: "AUTH_SESSION_REQUIRED",
+        field: "x-campaign-os-session-id",
+        outerCode: "AUTH_SESSION_REQUIRED",
+        status: 401,
+        traceId: "trace-pg-participant-missing-session",
+      },
+      () => requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
+        body: JSON.stringify({ campaignId }),
+        headers: {
+          "content-type": "application/json",
+          "x-campaign-os-trace-id": "trace-pg-participant-missing-session",
+        },
+        method: "POST",
+      }),
+    );
+    const unknownParticipantSession = await expectNegativeCaseNoParticipantJourneyWrite(
+      "unknown Participant session",
+      {
+        diagnosticCode: "AUTH_SESSION_INVALID",
+        field: "x-campaign-os-session-id",
+        outerCode: "AUTH_SESSION_INVALID",
+        status: 401,
+        traceId: "trace-pg-participant-unknown-session",
+      },
+      () => requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
+        body: JSON.stringify({ campaignId }),
+        headers: participantSessionA1.headers("trace-pg-participant-unknown-session", {
+          "x-campaign-os-session-id": "unissued-participant-session",
+        }),
+        method: "POST",
+      }),
+    );
+    const internalParticipantCredential = await expectNegativeCaseNoParticipantJourneyWrite(
+      "internal Participant credential",
+      {
+        diagnosticCode: "AUTH_FORBIDDEN",
+        field: "authSession.credentialBoundary",
+        outerCode: "AUTH_FORBIDDEN",
+        status: 403,
+        traceId: "trace-pg-participant-internal-credential",
+      },
+      () => requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
+        body: JSON.stringify({ campaignId }),
+        headers: internalAgentSession.headers("trace-pg-participant-internal-credential", {
+          "x-campaign-os-credential-boundary": "internal_agent_credential",
+        }),
+        method: "POST",
+      }),
+    );
+    participantPreviewCampaignIds = [campaignId, hiddenCampaign.payload.id].join(",");
+    const walletPolicyMismatch = await expectNegativeCaseNoParticipantJourneyWrite(
+      "wallet policy mismatch",
+      {
+        diagnosticCode: "INVALID_REQUEST",
+        field: "accountType",
+        outerCode: "INVALID_REQUEST",
+        status: 400,
+        traceId: "trace-pg-participant-wallet-policy-mismatch",
+      },
+      () => requestApi(
+        firstServer,
+        `/api/tasks/${hiddenTask.campaignDbTask.taskId}/verify`,
+        {
+          body: JSON.stringify({ campaignId: hiddenCampaign.payload.id }),
+          headers: aaParticipantSession.headers("trace-pg-participant-wallet-policy-mismatch"),
+          method: "POST",
+        },
+      ),
     );
     participantPreviewCampaignIds = campaignId;
-    const crossCampaignTask = await requestApi(
-      firstServer,
-      `/api/tasks/${hiddenTask.campaignDbTask.taskId}/verify`,
+    const crossCampaignTask = await expectNegativeCaseNoParticipantJourneyWrite(
+      "cross-Campaign Task",
       {
-        body: JSON.stringify({ campaignId }),
-        headers: participantSessionA1.headers("trace-pg-participant-cross-campaign"),
-        method: "POST",
+        diagnosticCode: "INVALID_TASK",
+        field: "taskId",
+        outerCode: "INVALID_TASK",
+        status: 404,
+        traceId: "trace-pg-participant-cross-campaign",
       },
+      () => requestApi(
+        firstServer,
+        `/api/tasks/${hiddenTask.campaignDbTask.taskId}/verify`,
+        {
+          body: JSON.stringify({ campaignId }),
+          headers: participantSessionA1.headers("trace-pg-participant-cross-campaign"),
+          method: "POST",
+        },
+      ),
     );
-    const clientAllowlistEscalation = await requestApi(
-      firstServer,
-      `/api/participant/campaigns/${hiddenCampaign.payload.id}/journey?previewCampaignId=${hiddenCampaign.payload.id}`,
+    const clientAllowlistEscalation = await expectNegativeCaseNoParticipantJourneyWrite(
+      "client preview allowlist escalation",
       {
-        headers: participantSessionA1.headers("trace-pg-participant-client-allowlist", {
-          "x-campaign-os-participant-preview-campaign-ids": hiddenCampaign.payload.id,
-        }),
+        diagnosticCode: "INVALID_CAMPAIGN",
+        field: "campaignId",
+        outerCode: "INVALID_CAMPAIGN",
+        status: 404,
+        traceId: "trace-pg-participant-client-allowlist",
       },
+      () => requestApi(
+        firstServer,
+        `/api/participant/campaigns/${hiddenCampaign.payload.id}/journey?previewCampaignId=${hiddenCampaign.payload.id}`,
+        {
+          headers: participantSessionA1.headers("trace-pg-participant-client-allowlist", {
+            "x-campaign-os-participant-preview-campaign-ids": hiddenCampaign.payload.id,
+          }),
+        },
+      ),
     );
 
-    expect(subjectSubstitution).toMatchObject({
-      status: 403,
-      envelope: {
-        ok: false,
-        traceId: "trace-pg-participant-substitution",
-        error: {
-          code: "AUTH_FORBIDDEN",
-          details: {
-            diagnosticCode: "AUTH_SUBJECT_MISMATCH",
-            field: "walletAddress",
-          },
-        },
-      },
-    });
-    expect(caseVariantSubstitution).toMatchObject({
-      status: 403,
-      envelope: {
-        ok: false,
-        traceId: "trace-pg-participant-case-variant",
-        error: {
-          code: "AUTH_FORBIDDEN",
-          details: {
-            diagnosticCode: "AUTH_SUBJECT_MISMATCH",
-            field: "walletAddress",
-          },
-        },
-      },
-    });
-    expect(internalParticipantCredential).toMatchObject({
-      status: 403,
-      envelope: {
-        ok: false,
-        traceId: "trace-pg-participant-internal-credential",
-        error: {
-          code: "AUTH_FORBIDDEN",
-          details: {
-            diagnosticCode: "AUTH_FORBIDDEN",
-            field: "authSession.credentialBoundary",
-          },
-        },
-      },
-    });
-    expect(missingParticipantSession).toMatchObject({
-      status: 401,
-      envelope: { ok: false, error: { code: "AUTH_SESSION_REQUIRED" } },
-    });
-    expect(unknownParticipantSession).toMatchObject({
-      status: 401,
-      envelope: { ok: false, error: { code: "AUTH_SESSION_INVALID" } },
-    });
-    expect(crossCampaignTask).toMatchObject({
-      status: 404,
-      envelope: { ok: false, error: { code: "INVALID_TASK" } },
-    });
-    expect(clientAllowlistEscalation).toMatchObject({
-      status: 404,
-      envelope: { ok: false, error: { code: "INVALID_CAMPAIGN" } },
-    });
-    expect(walletPolicyMismatch).toMatchObject({
-      status: 400,
-      envelope: { ok: false, error: { code: "INVALID_REQUEST" } },
-    });
-    const afterParticipantNegativeSnapshot = await (async () => {
-      const pool = createAuditPool();
-
-      try {
-        const [primary, hidden] = await Promise.all([
-          readCampaignSnapshot(pool, campaignId),
-          readCampaignSnapshot(pool, hiddenCampaign.payload.id),
-        ]);
-
-        return { hidden, primary };
-      } finally {
-        await pool.end();
-      }
-    })();
-    expect(afterParticipantNegativeSnapshot).toEqual(beforeParticipantNegativeSnapshot);
+    for (const result of [
+      bodyWalletSubstitution,
+      queryWalletSubstitution,
+      caseVariantSubstitution,
+      missingParticipantSession,
+      unknownParticipantSession,
+      internalParticipantCredential,
+      walletPolicyMismatch,
+      crossCampaignTask,
+      clientAllowlistEscalation,
+    ]) {
+      expect(result.envelope.data).toBeUndefined();
+    }
 
     const firstVerification = await requestJson<VerificationData>(firstServer, `/api/tasks/${taskId}/verify`, {
       body: JSON.stringify({
@@ -1375,6 +1489,51 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
 
     const secondServer = await startServer();
+    const oldParticipantAAfterRestart = await expectNegativeCaseNoParticipantJourneyWrite(
+      "Runtime B rejects stale Participant A1",
+      {
+        diagnosticCode: "AUTH_SESSION_INVALID",
+        field: "x-campaign-os-session-id",
+        outerCode: "AUTH_SESSION_INVALID",
+        status: 401,
+        traceId: "trace-pg-old-participant-a-after-restart",
+      },
+      () => requestApi(
+        secondServer,
+        `/api/participant/campaigns/${campaignId}/journey`,
+        { headers: participantSessionA1.headers("trace-pg-old-participant-a-after-restart") },
+      ),
+    );
+    const oldParticipantBAfterRestart = await expectNegativeCaseNoParticipantJourneyWrite(
+      "Runtime B rejects stale Participant B1",
+      {
+        diagnosticCode: "AUTH_SESSION_INVALID",
+        field: "x-campaign-os-session-id",
+        outerCode: "AUTH_SESSION_INVALID",
+        status: 401,
+        traceId: "trace-pg-old-participant-b-after-restart",
+      },
+      () => requestApi(
+        secondServer,
+        `/api/participant/campaigns/${campaignId}/journey`,
+        { headers: participantSessionB1.headers("trace-pg-old-participant-b-after-restart") },
+      ),
+    );
+    const oldSessionAfterRestart = await expectNegativeCaseNoParticipantJourneyWrite(
+      "Runtime B rejects stale Owner session",
+      {
+        diagnosticCode: "AUTH_SESSION_INVALID",
+        field: "x-campaign-os-session-id",
+        outerCode: "AUTH_SESSION_INVALID",
+        status: 401,
+        traceId: "trace-pg-old-session-after-restart",
+      },
+      () => requestApi(
+        secondServer,
+        "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+        { headers: sessionA.headers("trace-pg-old-session-after-restart") },
+      ),
+    );
     const sessionB = await issueProjectOwnerSession(
       secondServer,
       { fixtureId: "sess-aa-001" },
@@ -1400,27 +1559,18 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       { fixtureId: "sess-eoa-app-001" },
       "trace-pg-participant-b2-session",
     );
-    expect(participantSessionA2.data.payload.sessionId).not.toBe(
-      participantSessionA1.data.payload.sessionId,
-    );
-    expect(participantSessionB2.data.payload.sessionId).not.toBe(
-      participantSessionB1.data.payload.sessionId,
-    );
-    const oldSessionAfterRestart = await requestApi(
-      secondServer,
-      "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
-      { headers: sessionA.headers("trace-pg-old-session-after-restart") },
-    );
-    const oldParticipantAAfterRestart = await requestApi(
-      secondServer,
-      `/api/participant/campaigns/${campaignId}/journey`,
-      { headers: participantSessionA1.headers("trace-pg-old-participant-a-after-restart") },
-    );
-    const oldParticipantBAfterRestart = await requestApi(
-      secondServer,
-      `/api/participant/campaigns/${campaignId}/journey`,
-      { headers: participantSessionB1.headers("trace-pg-old-participant-b-after-restart") },
-    );
+
+    for (const [freshSession, staleSession, address] of [
+      [participantSessionA2, participantSessionA1, walletAddress],
+      [participantSessionB2, participantSessionB1, walletBAddress],
+    ] as const) {
+      expect(freshSession.data.payload).toMatchObject({
+        accountType: staleSession.data.payload.accountType,
+        address,
+        walletSource: staleSession.data.payload.walletSource,
+      });
+      expect(freshSession.data.payload.sessionId).not.toBe(staleSession.data.payload.sessionId);
+    }
     const health = await requestJson<HealthData>(secondServer, "/api/health");
     const list = await requestJson<CampaignListData>(
       secondServer,
@@ -1442,15 +1592,25 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       `/api/participant/campaigns/${campaignId}/journey`,
       { headers: participantSessionB2.headers("trace-pg-participant-b-recovery") },
     );
-    const restartedEligibility = await requestJson<EligibilityData>(
+    const restartedEligibilityA = await requestJson<EligibilityData>(
       secondServer,
       `/api/campaigns/${campaignId}/eligibility`,
       { headers: participantSessionA2.headers("trace-pg-participant-a-recovered-eligibility") },
     );
-    const restartedRanking = await requestJson<RankingData>(
+    const restartedEligibilityB = await requestJson<EligibilityData>(
+      secondServer,
+      `/api/campaigns/${campaignId}/eligibility`,
+      { headers: participantSessionB2.headers("trace-pg-participant-b-recovered-eligibility") },
+    );
+    const restartedRankingA = await requestJson<RankingData>(
       secondServer,
       `/api/campaigns/${campaignId}/points-ranking-ledger-runtime`,
       { headers: participantSessionA2.headers("trace-pg-participant-a-recovered-ranking") },
+    );
+    const restartedRankingB = await requestJson<RankingData>(
+      secondServer,
+      `/api/campaigns/${campaignId}/points-ranking-ledger-runtime`,
+      { headers: participantSessionB2.headers("trace-pg-participant-b-recovered-ranking") },
     );
     const restartedExport = await requestJson<ExportData>(secondServer, `/api/campaigns/${campaignId}/export`, {
       body: JSON.stringify({ contractRootMode: "none", format: "json" }),
@@ -1458,33 +1618,9 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       method: "POST",
     });
 
-    expect(oldSessionAfterRestart).toMatchObject({
-      status: 401,
-      envelope: {
-        ok: false,
-        traceId: "trace-pg-old-session-after-restart",
-        error: {
-          code: "AUTH_SESSION_INVALID",
-          details: { diagnosticCode: "AUTH_SESSION_INVALID" },
-        },
-      },
-    });
-    for (const [result, traceId] of [
-      [oldParticipantAAfterRestart, "trace-pg-old-participant-a-after-restart"],
-      [oldParticipantBAfterRestart, "trace-pg-old-participant-b-after-restart"],
-    ] as const) {
-      expect(result).toMatchObject({
-        status: 401,
-        envelope: {
-          ok: false,
-          traceId,
-          error: {
-            code: "AUTH_SESSION_INVALID",
-            details: { diagnosticCode: "AUTH_SESSION_INVALID" },
-          },
-        },
-      });
-    }
+    expect(oldSessionAfterRestart.envelope.data).toBeUndefined();
+    expect(oldParticipantAAfterRestart.envelope.data).toBeUndefined();
+    expect(oldParticipantBAfterRestart.envelope.data).toBeUndefined();
     expect(health.campaignDatabase).toMatchObject({
       liveConnectionAttempted: true,
       liveQueryExecutionEnabled: true,
@@ -1516,13 +1652,48 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     });
     expect(recoveredParticipantJourneyA.payload).toEqual(participantJourneyA.payload);
     expect(recoveredParticipantJourneyB.payload).toEqual(participantJourneyB.payload);
-    expect(restartedEligibility.payload).toEqual(expect.objectContaining({ eligible: true, score: 120 }));
-    expect(restartedRanking.payload).toMatchObject({
-      campaignId,
-      participant: recoveredParticipantJourneyA.payload.participant,
-      ranking: recoveredParticipantJourneyA.payload.ranking,
-      source: "repository_projection",
-    });
+    for (const [journey, eligibilityAfterRestart, rankingAfterRestart, address] of [
+      [recoveredParticipantJourneyA, restartedEligibilityA, restartedRankingA, walletAddress],
+      [recoveredParticipantJourneyB, restartedEligibilityB, restartedRankingB, walletBAddress],
+    ] as const) {
+      expect(journey.payload.campaign.campaignId).toBe(campaignId);
+      expect(new Set(journey.payload.tasks.map((item) => item.taskId))).toEqual(
+        new Set([taskId, adoptedTaskId]),
+      );
+      expect(journey.payload.tasks.every((item) => item.campaignId === campaignId)).toBe(true);
+      expect(journey.payload.participant).toMatchObject({
+        totalPoints: task.payload.points,
+        walletAddress: address,
+      });
+      expect(journey.payload.ranking).toMatchObject({
+        participantCount: 2,
+        totalPoints: task.payload.points,
+        walletAddress: address,
+      });
+      expect(journey.payload.participant.totalPoints).toBe(journey.payload.ranking.totalPoints);
+      expect(eligibilityAfterRestart.payload).toMatchObject(journey.payload.eligibility);
+      expect(rankingAfterRestart.payload).toMatchObject({
+        campaignId,
+        eligibility: journey.payload.eligibility,
+        participant: journey.payload.participant,
+        ranking: journey.payload.ranking,
+        source: "repository_projection",
+      });
+    }
+    expect(recoveredParticipantJourneyA.payload.ranking.rank).toBe(1);
+    expect(recoveredParticipantJourneyB.payload.ranking.rank).toBe(2);
+    expect(JSON.stringify(recoveredParticipantJourneyA.payload)).not.toContain(
+      participantBVerification.campaignDbCompletion.completionId,
+    );
+    expect(JSON.stringify(recoveredParticipantJourneyA.payload)).not.toContain(
+      participantBVerification.campaignDbEvidence.evidenceId,
+    );
+    expect(JSON.stringify(recoveredParticipantJourneyB.payload)).not.toContain(
+      firstVerification.campaignDbCompletion.completionId,
+    );
+    expect(JSON.stringify(recoveredParticipantJourneyB.payload)).not.toContain(
+      firstVerification.campaignDbEvidence.evidenceId,
+    );
     expect(restartedExport.payload).toEqual(expect.objectContaining({ campaignId, readyRows: 2 }));
     expect(restartedExport.payload.rows).toContainEqual(expect.objectContaining({
       referrerAddress: "2F4PostgresReferrerWallet",
@@ -1561,53 +1732,93 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
       { headers: otherWalletSession.headers("trace-pg-other-wallet-recovery") },
     );
-    const otherWalletAdd = await requestApi(
-      secondServer,
-      `/api/campaigns/${campaignId}/tasks`,
+    const otherWalletAdd = await expectNegativeCaseNoParticipantJourneyWrite(
+      "non-owner Task mutation",
       {
-        body: JSON.stringify({
-          evidenceRule: { source: "MANUAL" },
-          points: 10,
-          required: false,
-          templateCode: "forbidden_other_wallet_add",
-          verificationType: "MANUAL",
-          walletCompatibility: "ANY",
-        }),
-        headers: otherWalletSession.headers("trace-pg-other-wallet-add"),
-        method: "POST",
+        diagnosticCode: "AUTH_OWNER_MISMATCH",
+        field: "ownerAddress",
+        outerCode: "AUTH_FORBIDDEN",
+        status: 403,
+        traceId: "trace-pg-other-wallet-add",
       },
+      () => requestApi(
+        secondServer,
+        `/api/campaigns/${campaignId}/tasks`,
+        {
+          body: JSON.stringify({
+            evidenceRule: { source: "MANUAL" },
+            points: 10,
+            required: false,
+            templateCode: "forbidden_other_wallet_add",
+            verificationType: "MANUAL",
+            walletCompatibility: "ANY",
+          }),
+          headers: otherWalletSession.headers("trace-pg-other-wallet-add"),
+          method: "POST",
+        },
+      ),
     );
-    const otherWalletGenerate = await requestApi(
-      secondServer,
-      `/api/campaigns/${campaignId}/tasks/generate`,
+    const otherWalletGenerate = await expectNegativeCaseNoParticipantJourneyWrite(
+      "non-owner Task generation",
       {
-        body: JSON.stringify({
-          goal: created.payload.goal,
-          product: "Campaign OS",
-          targetUsers: ["project owners"],
-          walletPolicy: created.payload.walletPolicy,
-        }),
-        headers: otherWalletSession.headers("trace-pg-other-wallet-generate"),
-        method: "POST",
+        diagnosticCode: "AUTH_OWNER_MISMATCH",
+        field: "ownerAddress",
+        outerCode: "AUTH_FORBIDDEN",
+        status: 403,
+        traceId: "trace-pg-other-wallet-generate",
       },
+      () => requestApi(
+        secondServer,
+        `/api/campaigns/${campaignId}/tasks/generate`,
+        {
+          body: JSON.stringify({
+            goal: created.payload.goal,
+            product: "Campaign OS",
+            targetUsers: ["project owners"],
+            walletPolicy: created.payload.walletPolicy,
+          }),
+          headers: otherWalletSession.headers("trace-pg-other-wallet-generate"),
+          method: "POST",
+        },
+      ),
     );
-    const unknownSession = await requestApi(
-      secondServer,
-      "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+    const unknownSession = await expectNegativeCaseNoParticipantJourneyWrite(
+      "unknown Owner session",
       {
-        headers: sessionB.headers("trace-pg-unknown-session", {
-          "x-campaign-os-session-id": "unissued-wp05-session",
-        }),
+        diagnosticCode: "AUTH_SESSION_INVALID",
+        field: "x-campaign-os-session-id",
+        outerCode: "AUTH_SESSION_INVALID",
+        status: 401,
+        traceId: "trace-pg-unknown-session",
       },
+      () => requestApi(
+        secondServer,
+        "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+        {
+          headers: sessionB.headers("trace-pg-unknown-session", {
+            "x-campaign-os-session-id": "unissued-wp05-session",
+          }),
+        },
+      ),
     );
-    const mismatchedSession = await requestApi(
-      secondServer,
-      "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+    const mismatchedSession = await expectNegativeCaseNoParticipantJourneyWrite(
+      "mismatched Owner wallet header",
       {
-        headers: sessionB.headers("trace-pg-mismatched-session", {
-          "x-campaign-os-wallet-address": "2F4MismatchedOwnerClaim",
-        }),
+        diagnosticCode: "AUTH_SESSION_INVALID",
+        field: "x-campaign-os-wallet-address",
+        outerCode: "AUTH_SESSION_INVALID",
+        status: 401,
+        traceId: "trace-pg-mismatched-session",
       },
+      () => requestApi(
+        secondServer,
+        "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+        {
+          headers: sessionB.headers("trace-pg-mismatched-session", {
+            "x-campaign-os-wallet-address": "2F4MismatchedOwnerClaim",
+          }),
+        },
+      ),
     );
     const invalidIssuerSession = await issueProjectOwnerSession(
       secondServer,
@@ -1621,91 +1832,69 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       issuerMode: "production_blocked",
       valid: false,
     });
-    const invalidIssuer = await requestApi(
-      secondServer,
-      "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
-      { headers: invalidIssuerSession.headers("trace-pg-invalid-issuer") },
-    );
-    const forbiddenRole = await requestApi(
-      secondServer,
-      "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+    const invalidIssuer = await expectNegativeCaseNoParticipantJourneyWrite(
+      "invalid Owner session issuer",
       {
-        headers: sessionB.headers("trace-pg-forbidden-role", {
-          "x-campaign-os-roles": "participant",
-        }),
+        diagnosticCode: "AUTH_SESSION_INVALID",
+        field: "authSession.issuer",
+        outerCode: "AUTH_SESSION_INVALID",
+        status: 401,
+        traceId: "trace-pg-invalid-issuer",
       },
+      () => requestApi(
+        secondServer,
+        "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+        { headers: invalidIssuerSession.headers("trace-pg-invalid-issuer") },
+      ),
     );
-    const missingCampaign = await requestApi(
-      secondServer,
-      "/api/campaigns/campaign-missing-wp05/tasks/generate",
+    const forbiddenRole = await expectNegativeCaseNoParticipantJourneyWrite(
+      "forbidden Owner route role",
       {
-        body: JSON.stringify({
-          goal: "Do not leak missing Campaign ownership",
-          product: "Campaign OS",
-          targetUsers: ["project owners"],
-          walletPolicy: "ANY",
-        }),
-        headers: sessionB.headers("trace-pg-missing-campaign"),
-        method: "POST",
+        diagnosticCode: "AUTH_ROLE_FORBIDDEN",
+        field: "authSession.roleIds",
+        outerCode: "AUTH_FORBIDDEN",
+        status: 403,
+        traceId: "trace-pg-forbidden-role",
       },
+      () => requestApi(
+        secondServer,
+        "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
+        {
+          headers: sessionB.headers("trace-pg-forbidden-role", {
+            "x-campaign-os-roles": "participant",
+          }),
+        },
+      ),
+    );
+    const missingCampaign = await expectNegativeCaseNoParticipantJourneyWrite(
+      "missing Campaign",
+      {
+        diagnosticCode: "INVALID_CAMPAIGN",
+        field: "campaignId",
+        outerCode: "INVALID_CAMPAIGN",
+        status: 404,
+        traceId: "trace-pg-missing-campaign",
+      },
+      () => requestApi(
+        secondServer,
+        "/api/campaigns/campaign-missing-wp05/tasks/generate",
+        {
+          body: JSON.stringify({
+            goal: "Do not leak missing Campaign ownership",
+            product: "Campaign OS",
+            targetUsers: ["project owners"],
+            walletPolicy: "ANY",
+          }),
+          headers: sessionB.headers("trace-pg-missing-campaign"),
+          method: "POST",
+        },
+      ),
     );
 
     expect(otherWalletRecovery.payload).toMatchObject({
       campaignDb: { draftCount: 0 },
       items: [],
       summary: { totalCampaigns: 0 },
-    });
-    for (const [result, traceId] of [
-      [otherWalletAdd, "trace-pg-other-wallet-add"],
-      [otherWalletGenerate, "trace-pg-other-wallet-generate"],
-    ] as const) {
-      expect(result).toMatchObject({
-        status: 403,
-        envelope: {
-          ok: false,
-          traceId,
-          error: {
-            code: "AUTH_FORBIDDEN",
-            details: { diagnosticCode: "AUTH_OWNER_MISMATCH" },
-          },
-        },
-      });
-    }
-    for (const [result, traceId] of [
-      [unknownSession, "trace-pg-unknown-session"],
-      [mismatchedSession, "trace-pg-mismatched-session"],
-      [invalidIssuer, "trace-pg-invalid-issuer"],
-    ] as const) {
-      expect(result).toMatchObject({
-        status: 401,
-        envelope: {
-          ok: false,
-          traceId,
-          error: {
-            code: "AUTH_SESSION_INVALID",
-            details: { diagnosticCode: "AUTH_SESSION_INVALID" },
-          },
-        },
-      });
-    }
-    expect(forbiddenRole).toMatchObject({
-      status: 403,
-      envelope: {
-        ok: false,
-        traceId: "trace-pg-forbidden-role",
-        error: {
-          code: "AUTH_FORBIDDEN",
-          details: { diagnosticCode: "AUTH_ROLE_FORBIDDEN" },
-        },
-      },
-    });
-    expect(missingCampaign).toMatchObject({
-      status: 404,
-      envelope: {
-        ok: false,
-        traceId: "trace-pg-missing-campaign",
-        error: { code: "INVALID_CAMPAIGN" },
-      },
     });
     expect(JSON.stringify(missingCampaign.envelope)).not.toContain(ownerAddress);
     expect(JSON.stringify(missingCampaign.envelope)).not.toContain(otherWalletSession.data.payload.address);
@@ -1746,31 +1935,33 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       { address: "2F4UnavailableDatabaseOwner" },
       "trace-pg-unavailable-session",
     );
-    const unavailableCreate = await requestApi(
-      unavailableServer,
-      "/api/campaigns",
+    const unavailableCreate = await expectNegativeCaseNoParticipantJourneyWrite(
+      "PostgreSQL-unavailable Campaign create",
       {
-        body: JSON.stringify({
-          duration: "2026-09-01/2026-09-14",
-          endTime: "2026-09-14T23:59:59Z",
-          goal: "Fail closed without PostgreSQL",
-          ownerAddress: unavailableOwnerSession.data.payload.address,
-          projectId: "postgres-unavailable-project",
-          rewardDescription: "No fallback write is allowed.",
-          startTime: "2026-09-01T00:00:00Z",
-        }),
-        headers: unavailableOwnerSession.headers("trace-pg-unavailable-create"),
-        method: "POST",
-      },
-    );
-    expect(unavailableCreate).toMatchObject({
-      status: 503,
-      envelope: {
-        ok: false,
+        diagnosticCode: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+        field: "campaignDb",
+        outerCode: "PERSISTENCE_UNAVAILABLE",
+        status: 503,
         traceId: "trace-pg-unavailable-create",
-        error: { code: "PERSISTENCE_UNAVAILABLE" },
       },
-    });
+      () => requestApi(
+        unavailableServer,
+        "/api/campaigns",
+        {
+          body: JSON.stringify({
+            duration: "2026-09-01/2026-09-14",
+            endTime: "2026-09-14T23:59:59Z",
+            goal: "Fail closed without PostgreSQL",
+            ownerAddress: unavailableOwnerSession.data.payload.address,
+            projectId: "postgres-unavailable-project",
+            rewardDescription: "No fallback write is allowed.",
+            startTime: "2026-09-01T00:00:00Z",
+          }),
+          headers: unavailableOwnerSession.headers("trace-pg-unavailable-create"),
+          method: "POST",
+        },
+      ),
+    );
     expect(unavailableCreate.envelope.data).toBeUndefined();
     expect(JSON.stringify(unavailableCreate.envelope).toLowerCase()).not.toContain("local-task-");
     const unavailableParticipantSession = await issueParticipantSession(
@@ -1778,19 +1969,21 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       { adapterName: "PortkeyExtensionWallet", address: walletAddress },
       "trace-pg-unavailable-participant-session",
     );
-    const unavailableJourney = await requestApi(
-      unavailableServer,
-      `/api/participant/campaigns/${campaignId}/journey`,
-      { headers: unavailableParticipantSession.headers("trace-pg-unavailable-participant-journey") },
-    );
-    expect(unavailableJourney).toMatchObject({
-      status: 503,
-      envelope: {
-        ok: false,
+    const unavailableJourney = await expectNegativeCaseNoParticipantJourneyWrite(
+      "PostgreSQL-unavailable Participant journey",
+      {
+        diagnosticCode: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+        field: "campaignDb",
+        outerCode: "PERSISTENCE_UNAVAILABLE",
+        status: 503,
         traceId: "trace-pg-unavailable-participant-journey",
-        error: { code: "PERSISTENCE_UNAVAILABLE" },
       },
-    });
+      () => requestApi(
+        unavailableServer,
+        `/api/participant/campaigns/${campaignId}/journey`,
+        { headers: unavailableParticipantSession.headers("trace-pg-unavailable-participant-journey") },
+      ),
+    );
     expect(JSON.stringify(unavailableJourney.envelope).toLowerCase()).not.toContain("local-task-");
     await stopServer(unavailableServer);
     const afterUnavailableSnapshot = await (async () => {
