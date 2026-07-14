@@ -136,6 +136,7 @@ interface EligibilityData {
     eligible: boolean;
     missingTasks: string[];
     repository?: ParticipantJourneyProjection["repository"];
+    riskFlags: string[];
     score: number;
     status?: string;
     walletAddress?: string;
@@ -1301,6 +1302,11 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       `/api/participant/campaigns/${campaignId}/journey`,
       { headers: participantSessionB1.headers("trace-pg-participant-b-final") },
     );
+    const participantBEligibility = await requestJson<EligibilityData>(
+      firstServer,
+      `/api/campaigns/${campaignId}/eligibility`,
+      { headers: participantSessionB1.headers("trace-pg-participant-b-eligibility") },
+    );
     expect(participantBVerification.campaignDbCompletion.completionId).not.toBe(
       firstVerification.campaignDbCompletion.completionId,
     );
@@ -1319,6 +1325,42 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     expect(JSON.stringify(participantJourneyB.payload)).not.toContain(
       firstVerification.campaignDbEvidence.evidenceId,
     );
+    expect(participantBVerification.payload).toMatchObject({
+      campaignId,
+      pointsAwarded: task.payload.points,
+      status: "completed",
+      taskId,
+      walletAddress: walletBAddress,
+    });
+    expect(participantJourneyB.payload.participant).toMatchObject({
+      riskFlags: [],
+      totalPoints: task.payload.points,
+      walletAddress: walletBAddress,
+    });
+    expect(participantJourneyB.payload.eligibility).toMatchObject({
+      eligible: true,
+      missingTasks: [],
+      riskFlags: [],
+      score: task.payload.points,
+      status: "eligible",
+      walletAddress: walletBAddress,
+    });
+    expect(participantJourneyB.payload.tasks.find((item) => item.taskId === taskId)).toMatchObject({
+      action: "completed",
+      completionId: participantBVerification.campaignDbCompletion.completionId,
+      evidenceId: participantBVerification.campaignDbEvidence.evidenceId,
+      pointsAwarded: task.payload.points,
+      status: "completed",
+    });
+    expect(participantBEligibility.payload).toMatchObject({
+      campaignId,
+      eligible: true,
+      missingTasks: [],
+      riskFlags: [],
+      score: task.payload.points,
+      status: "eligible",
+      walletAddress: walletBAddress,
+    });
     expect(participantJourneyA.payload.ranking).toMatchObject({ participantCount: 2, rank: 1 });
     expect(participantJourneyB.payload.ranking).toMatchObject({ participantCount: 2, rank: 2 });
     expect(participantJourneyA.payload.participant.totalPoints).toBe(participantJourneyA.payload.ranking.totalPoints);
@@ -1682,6 +1724,22 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     }
     expect(recoveredParticipantJourneyA.payload.ranking.rank).toBe(1);
     expect(recoveredParticipantJourneyB.payload.ranking.rank).toBe(2);
+    expect(recoveredParticipantJourneyB.payload.tasks.find((item) => item.taskId === taskId)).toMatchObject({
+      action: "completed",
+      completionId: participantBVerification.campaignDbCompletion.completionId,
+      evidenceId: participantBVerification.campaignDbEvidence.evidenceId,
+      pointsAwarded: task.payload.points,
+      status: "completed",
+    });
+    expect(restartedEligibilityB.payload).toMatchObject({
+      campaignId,
+      eligible: true,
+      missingTasks: [],
+      riskFlags: [],
+      score: task.payload.points,
+      status: "eligible",
+      walletAddress: walletBAddress,
+    });
     expect(JSON.stringify(recoveredParticipantJourneyA.payload)).not.toContain(
       participantBVerification.campaignDbCompletion.completionId,
     );
