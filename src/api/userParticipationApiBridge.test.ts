@@ -53,11 +53,11 @@ describe("user participation API bridge", () => {
     expect(state.boundary["en-US"]).toContain("Local user participation API review only");
   });
 
-  it("treats missing API config as seeded fallback and does not fetch", async () => {
+  it("uses seeded fallback only for explicit seeded_preview mode", async () => {
     const fetchImpl = vi.fn() as unknown as UserParticipationApiFetch;
 
     const state = await submitUserParticipationApiReview({
-      config: { baseUrl: "   " },
+      config: { baseUrl: "   ", mode: "seeded_preview" },
       fetchImpl,
       request,
     });
@@ -72,10 +72,35 @@ describe("user participation API bridge", () => {
     });
   });
 
+  it("routes every durable request away from the legacy bridge without touching the network", async () => {
+    const fetchImpl = vi.fn() as unknown as UserParticipationApiFetch;
+
+    const state = await submitUserParticipationApiReview({
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        headers: { "x-campaign-os-wallet-address": "caller-controlled" },
+        mode: "durable",
+      },
+      fetchImpl,
+      request,
+    });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      diagnostics: [{ code: "API_DURABLE_FACADE_REQUIRED" }],
+      loading: false,
+      source: "api_runtime",
+      status: "error",
+    });
+    expect(state.verification).toBeUndefined();
+    expect(state.eligibility).toBeUndefined();
+  });
+
   it("redacts malformed config and token query fragments from diagnostics", async () => {
     const state = await submitUserParticipationApiReview({
       config: {
         baseUrl: "ftp://api.invalid/path?token=sample-token&api_key=private-key-sample",
+        mode: "seeded_preview",
       },
       fetchImpl: vi.fn() as unknown as UserParticipationApiFetch,
       request,
@@ -178,6 +203,7 @@ describe("user participation API bridge", () => {
         headers: {
           "x-campaign-os-roles": "participant",
         },
+        mode: "seeded_preview",
         tracePrefix: "user-participation-review",
       },
       fetchImpl,
@@ -281,7 +307,7 @@ describe("user participation API bridge", () => {
       }, { ok: false, status: 500, traceId: "trace-eligibility-failed" })) as unknown as UserParticipationApiFetch;
 
     const state = await submitUserParticipationApiReview({
-      config: { baseUrl: "http://127.0.0.1:5184" },
+      config: { baseUrl: "http://127.0.0.1:5184", mode: "seeded_preview" },
       fetchImpl,
       request,
     });
@@ -313,7 +339,26 @@ describe("user participation API bridge", () => {
     expect(serialized).not.toContain("campaign-os-kitty");
   });
 
-  it("keeps seeded fallback when task verification fails with unsafe details", async () => {
+  it("does not submit or refresh through the legacy bridge in durable mode", async () => {
+    const fetchImpl = vi.fn() as unknown as UserParticipationApiFetch;
+
+    const state = await submitUserParticipationApiReview({
+      config: { baseUrl: "http://127.0.0.1:5184", mode: "durable" },
+      fetchImpl,
+      request,
+    });
+
+    expect(state).toMatchObject({
+      diagnostics: [{ code: "API_DURABLE_FACADE_REQUIRED" }],
+      source: "api_runtime",
+      status: "error",
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(state.verification).toBeUndefined();
+    expect(state.eligibility).toBeUndefined();
+  });
+
+  it("fails safely when seeded preview task verification fails", async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(response({
       error: {
         code: "INVALID_REQUEST",
@@ -324,7 +369,7 @@ describe("user participation API bridge", () => {
     }, { ok: false, status: 400, traceId: "trace-verify-failed" })) as unknown as UserParticipationApiFetch;
 
     const state = await submitUserParticipationApiReview({
-      config: { baseUrl: "http://127.0.0.1:5184" },
+      config: { baseUrl: "http://127.0.0.1:5184", mode: "seeded_preview" },
       fetchImpl,
       request,
     });
@@ -359,7 +404,7 @@ describe("user participation API bridge", () => {
     })) as unknown as UserParticipationApiFetch;
 
     const state = await submitUserParticipationApiReview({
-      config: { baseUrl: "http://127.0.0.1:5184" },
+      config: { baseUrl: "http://127.0.0.1:5184", mode: "seeded_preview" },
       fetchImpl,
       request,
     });
@@ -382,7 +427,7 @@ describe("user participation API bridge", () => {
     ) as unknown as UserParticipationApiFetch;
 
     const state = await submitUserParticipationApiReview({
-      config: { baseUrl: "http://127.0.0.1:5184", timeoutMs: 250 },
+      config: { baseUrl: "http://127.0.0.1:5184", mode: "seeded_preview", timeoutMs: 250 },
       fetchImpl,
       request,
     });
@@ -400,5 +445,19 @@ describe("user participation API bridge", () => {
         "Authorization: Bearer abc.def.ghi seed phrase private key raw signature provider payload stack trace https://secret.example/raw?token=secret /Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/evidence?token=secret",
       ).toLowerCase(),
     ).not.toMatch(/bearer abc|seed phrase|private key|raw signature|provider payload|stack trace|campaign-os-kitty|token=secret/);
+  });
+
+  it("sanitizes cyclic unknown values and generic service paths without throwing", () => {
+    const cyclic: Record<string, unknown> = {
+      path: "/Users/example/private/report.json",
+      service: "postgresql://user:secret@localhost/campaign",
+      token: "token=secret-value",
+    };
+    cyclic.self = cyclic;
+
+    expect(() => sanitizeUserParticipationApiText(cyclic)).not.toThrow();
+    const sanitized = sanitizeUserParticipationApiText(cyclic).toLowerCase();
+
+    expect(sanitized).not.toMatch(/secret-value|postgresql:\/\/|\/users\/example/);
   });
 });

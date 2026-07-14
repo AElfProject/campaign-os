@@ -251,7 +251,7 @@ type RequestAdapterResult =
   | RequestAdapterSuccess
   | OwnerCampaignFailure;
 
-type ProofStatusHeader = "blocked" | "proof_required" | "signature_unverified" | "verified";
+type ProofStatusHeader = "blocked" | "proof_required" | "signature_unverified" | "stale" | "verified";
 type CredentialBoundaryHeader = "internal_agent_credential" | "ordinary_user_wallet";
 
 const defaultTimeoutMs = 2_000;
@@ -597,7 +597,7 @@ const toPreviewSuggestionId = (value: string): OwnerTaskPreviewSuggestionId =>
   value as OwnerTaskPreviewSuggestionId;
 
 const sameIdentity = (left: string, right: string) =>
-  left.trim().toLowerCase() === right.trim().toLowerCase();
+  left.trim() === right.trim();
 
 const isCanonicalCampaignId = (value: string | undefined): value is string =>
   typeof value === "string" && value.trim().length > 0;
@@ -781,6 +781,7 @@ const normalizeProofStatus = (session: NormalizedWalletSession): ProofStatusHead
     proofStatus === "blocked"
     || proofStatus === "proof_required"
     || proofStatus === "signature_unverified"
+    || proofStatus === "stale"
     || proofStatus === "verified"
   ) {
     return proofStatus;
@@ -877,6 +878,32 @@ const createManagedAbortSignal = (callerSignal: AbortSignal | undefined, timeout
     signal: controller.signal,
   };
 };
+
+const raceWithAbort = <T>(promise: PromiseLike<T>, signal: AbortSignal): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve(promise).then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 
 const isAbortError = (error: unknown) => {
   try {
@@ -1152,21 +1179,22 @@ const requestAdapter = async (
   }
 
   const timeout = createManagedAbortSignal(input.context.signal, config.timeoutMs);
+  let response: Response | undefined;
 
   try {
-    const response = await fetchImpl(url, {
+    response = await raceWithAbort(fetchImpl(url, {
       ...(serializedBody !== undefined ? { body: serializedBody } : {}),
       headers,
       method: input.method,
       signal: timeout.signal,
-    });
-    const parsed = await parseResponseBody(
+    }), timeout.signal);
+    const parsed = await raceWithAbort(parseResponseBody(
       response,
       config.maxResponseBytes,
       traceId,
       input.path,
       input.method,
-    );
+    ), timeout.signal);
 
     if (!parsed.ok) {
       return parsed;
@@ -1191,6 +1219,9 @@ const requestAdapter = async (
       traceId: parsed.traceId,
     };
   } catch (error) {
+    if (response && timeout.signal.aborted) {
+      await cancelResponseBody(response);
+    }
     const bridgeCode = isAbortError(error) ? timeout.abortCode() : "BRIDGE_REQUEST_FAILED";
     const retryable = bridgeCode !== "BRIDGE_REQUEST_ABORTED";
 
@@ -1464,6 +1495,7 @@ const normalizeRecoverCampaigns = (
 const normalizeCampaignDetail = (
   result: RequestAdapterResult,
   campaignId: string,
+  ownerAddress: string,
 ): OwnerCampaignDetailResult => {
   if (!result.ok) {
     return result;
@@ -1471,7 +1503,11 @@ const normalizeCampaignDetail = (
 
   const payload = payloadRecord(result.body);
   const item = payload?.item;
-  const campaign = campaignProjectionFromValue(item, { campaignId });
+  const campaign = campaignProjectionFromValue(item, {
+    campaignId,
+    ownerAddress,
+    requireOwnerAddress: true,
+  });
   const taskValues = Array.isArray(payload?.tasks)
     ? payload.tasks
     : isRecord(item) && Array.isArray(item.tasks)
@@ -1482,7 +1518,12 @@ const normalizeCampaignDetail = (
     : undefined;
 
   if (!campaign || !tasks || tasks.some((task) => !task)) {
-    return invalidResponseFailure(result.traceId, result.httpStatus, "/api/campaigns/:campaignId", "detail_payload");
+    return invalidResponseFailure(
+      result.traceId,
+      result.httpStatus,
+      "/api/owner/campaigns/:campaignId",
+      "detail_payload",
+    );
   }
 
   return {
@@ -1719,11 +1760,11 @@ export const createProjectOwnerCampaignApiBridge = (
         context,
         method: "GET",
         operation: "getCampaignDetail",
-        path: `/api/campaigns/${pathSegment(normalizedCampaignId)}`,
-        requiresAuth: false,
+        path: `/api/owner/campaigns/${pathSegment(normalizedCampaignId)}`,
+        requiresAuth: true,
       }, config, fetchImpl, options.traceIdGenerator);
 
-      return normalizeCampaignDetail(result, normalizedCampaignId);
+      return normalizeCampaignDetail(result, normalizedCampaignId, context.session.address);
     },
 
     recoverCampaigns: async (projectId, context, input) => {

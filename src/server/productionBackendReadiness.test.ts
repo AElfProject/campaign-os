@@ -7,7 +7,7 @@ import {
   productionBackendReadinessRequiredConfigKeys,
   type ProductionDependencyBlockerSummary,
 } from "./productionBackendReadiness";
-import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
+import { apiRuntimeContractRoutes, createApiRuntimeContractCoverage } from "./routes";
 
 const secretFragments = [
   "bearer sample-token",
@@ -58,6 +58,10 @@ describe("production backend readiness summary", () => {
     expect(summary.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       "PRODUCTION_BACKEND_NO_LIVE_SIDE_EFFECTS",
     );
+    expect(summary.routeCoverage).toMatchObject({
+      routeCount: apiRuntimeContractRoutes.length,
+      routeIds: apiRuntimeContractRoutes.map((route) => route.id),
+    });
   });
 
   it("distinguishes staging-scaffold as review-safe scaffold mode", () => {
@@ -150,18 +154,21 @@ describe("production backend readiness summary", () => {
   });
 
   it("derives route coverage and required API skill parity from route contracts", () => {
-    const coverage = createProductionBackendRouteCoverage(apiRuntimeRoutes, createApiRuntimeContractCoverage());
+    const coverage = createProductionBackendRouteCoverage(
+      apiRuntimeContractRoutes,
+      createApiRuntimeContractCoverage(),
+    );
 
-    expect(coverage.routeCount).toBe(apiRuntimeRoutes.length);
-    expect(coverage.routeIds).toEqual(apiRuntimeRoutes.map((runtimeRoute) => runtimeRoute.id));
+    expect(coverage.routeCount).toBe(apiRuntimeContractRoutes.length);
+    expect(coverage.routeIds).toEqual(apiRuntimeContractRoutes.map((runtimeRoute) => runtimeRoute.id));
     expect(coverage.runtimeRouteCount).toBe(
-      apiRuntimeRoutes.filter((runtimeRoute) => runtimeRoute.serviceGroup === "runtime").length,
+      apiRuntimeContractRoutes.filter((runtimeRoute) => runtimeRoute.serviceGroup === "runtime").length,
     );
     expect(coverage.requiredApiSkillCount).toBe(requiredApiSkillIds.length);
     expect(coverage.coveredApiSkillCount).toBe(requiredApiSkillIds.length);
     expect(coverage.missingApiSkillIds).toEqual([]);
     expect(coverage.readyCount + coverage.localOnlyCount + coverage.reviewRequiredCount + coverage.blockedCount).toBe(
-      apiRuntimeRoutes.length,
+      apiRuntimeContractRoutes.length,
     );
   });
 

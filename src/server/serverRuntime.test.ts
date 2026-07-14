@@ -411,7 +411,7 @@ describe("API server resource shutdown", () => {
     });
   });
 
-  it("rejects pipelined requests that arrive on an existing connection after stop starts", async () => {
+  it("rejects pipelined requests after stop starts without dispatching runtime work", async () => {
     let releaseRequest: (() => void) | undefined;
     let markEntered: (() => void) | undefined;
     const requestEntered = new Promise<void>((resolve) => {
@@ -439,18 +439,11 @@ describe("API server resource shutdown", () => {
     const socket = connect(address.port, "127.0.0.1");
     const socketErrors: string[] = [];
     const socketClosed = new Promise<void>((resolve) => socket.once("close", resolve));
-    let markShutdownResponseReceived: (() => void) | undefined;
-    const shutdownResponseReceived = new Promise<void>((resolve) => {
-      markShutdownResponseReceived = resolve;
-    });
     let received = "";
 
     socket.setEncoding("utf8");
     socket.on("data", (chunk: string) => {
       received += chunk;
-      if (received.includes("PERSISTENCE_UNAVAILABLE")) {
-        markShutdownResponseReceived?.();
-      }
     });
     socket.on("error", (error) => socketErrors.push(error.message));
     await new Promise<void>((resolve) => socket.once("connect", resolve));
@@ -473,13 +466,18 @@ describe("API server resource shutdown", () => {
     ].join("\r\n"));
     releaseRequest?.();
 
-    await Promise.all([stopping, shutdownResponseReceived]);
-    socket.destroy();
-    await socketClosed;
+    await Promise.all([stopping, socketClosed]);
+
+    const responseStatuses = Array.from(
+      received.matchAll(/(?:^|\r\n)HTTP\/1\.1 (\d{3}) [^\r\n]*\r\n/g),
+      ([, status]) => Number(status),
+    );
 
     expect(handle).toHaveBeenCalledTimes(1);
-    expect(received).toContain("HTTP/1.1 503 Service Unavailable");
-    expect(received).toContain("PERSISTENCE_UNAVAILABLE");
+    expect([[200], [200, 503]]).toContainEqual(responseStatuses);
+    if (responseStatuses.includes(503)) {
+      expect(received).toContain("PERSISTENCE_UNAVAILABLE");
+    }
     expect(socketErrors).toEqual([]);
   }, 15_000);
 

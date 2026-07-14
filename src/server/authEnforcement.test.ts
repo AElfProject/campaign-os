@@ -7,6 +7,7 @@ import {
   rbacOwnershipRoutePolicyMatrix,
   sanitizeAuthEnforcementDetails,
   type AuthRuntimeHeaders,
+  type ParticipantCompatibilitySubject,
 } from "./authEnforcement";
 import type { WalletSessionRecord } from "./walletSessionRepository";
 
@@ -26,6 +27,17 @@ const projectOwnerHeaders = (overrides: AuthRuntimeHeaders = {}): AuthRuntimeHea
   "x-campaign-os-roles": "project_owner",
   "x-campaign-os-session-id": "sess-project-owner-local",
   "x-campaign-os-wallet-address": "ELF_project_owner_local",
+  "x-campaign-os-wallet-source": "PORTKEY_AA",
+  ...overrides,
+});
+
+const participantHeaders = (overrides: AuthRuntimeHeaders = {}): AuthRuntimeHeaders => ({
+  "x-campaign-os-account-type": "AA",
+  "x-campaign-os-credential-boundary": "ordinary_user_wallet",
+  "x-campaign-os-proof-status": "verified",
+  "x-campaign-os-roles": "participant",
+  "x-campaign-os-session-id": "sess-participant-local",
+  "x-campaign-os-wallet-address": "2YVwParticipantCaseSensitive",
   "x-campaign-os-wallet-source": "PORTKEY_AA",
   ...overrides,
 });
@@ -86,6 +98,35 @@ const issuedWalletSession = (overrides: Partial<WalletSessionRecord> = {}): Wall
 const issuedLookup = (record: WalletSessionRecord | undefined = issuedWalletSession()) =>
   async (sessionId: string) => record?.sessionId === sessionId ? record : undefined;
 
+const issuedParticipantSession = (
+  overrides: Partial<WalletSessionRecord> = {},
+): WalletSessionRecord => issuedWalletSession({
+  displayAddress: "2YVwParticipantCaseSensitive",
+  recordId: "wallet-session:sess-participant-local",
+  sessionId: "sess-participant-local",
+  walletAddress: "2YVwParticipantCaseSensitive",
+  ...overrides,
+});
+
+const enforceThenMutate = async (
+  options: Parameters<typeof evaluateIssuedAuthEnforcement>[0],
+) => {
+  let mutationCount = 0;
+  const decision = await evaluateIssuedAuthEnforcement(options);
+
+  if (decision.allowed) {
+    mutationCount += 1;
+  }
+
+  return { decision, mutationCount };
+};
+
+const compatibilitySubstitutionCases = [
+  ["walletAddress", { walletAddress: "2YVwOtherParticipant" }],
+  ["accountType", { accountType: "EOA" }],
+  ["walletSource", { walletSource: "NIGHTELF" }],
+] satisfies [keyof ParticipantCompatibilitySubject, ParticipantCompatibilitySubject][];
+
 const expectNoSensitiveFragments = (value: unknown) => {
   const serialized = JSON.stringify(value).toLowerCase();
 
@@ -114,7 +155,7 @@ describe("auth enforcement", () => {
       locallyEnforced: true,
       ownerMatchRequired: true,
       requiredRoles: ["project_owner"],
-      routeIds: ["campaigns.create", "campaigns.owner.list"],
+      routeIds: ["campaigns.create", "campaigns.owner.list", "campaigns.owner.detail"],
     });
     expect(rbacOwnershipRoutePolicyMatrix.find((entry) => entry.routeGroup === "task_builder")).toMatchObject({
       locallyEnforced: true,
@@ -307,9 +348,9 @@ describe("auth enforcement", () => {
       status: "forbidden",
     });
     expect(internalCredential).toMatchObject({
-      diagnostic: { code: "AUTH_AGENT_CREDENTIAL_FORBIDDEN" },
-      httpStatus: 403,
-      status: "forbidden",
+      diagnostic: { code: "AUTH_SESSION_INVALID" },
+      httpStatus: 401,
+      status: "unauthenticated",
     });
     expect(missingCapability).toMatchObject({
       diagnostic: { code: "AUTH_FORBIDDEN" },
@@ -318,15 +359,28 @@ describe("auth enforcement", () => {
     });
   });
 
-  it("lets the runtime persistence wrapper serialize issued session repository failures", async () => {
-    await expect(evaluateIssuedAuthEnforcement({
+  it("fails closed and sanitizes issued session repository failures", async () => {
+    const decision = await evaluateIssuedAuthEnforcement({
       headers: projectOwnerHeaders(),
       ownerAddress: "ELF_project_owner_local",
       routeId: "campaigns.create",
       issuedSessionLookup: async () => {
-        throw new Error("database URL should not leak");
+        throw new Error("postgres://runtime-user:runtime-password@db.internal/campaign");
       },
-    })).rejects.toThrow("database URL should not leak");
+      traceId: "trace-issued-lookup-failure",
+    });
+
+    expect(decision).toMatchObject({
+      diagnostic: { code: "AUTH_SESSION_INVALID" },
+      httpStatus: 401,
+      safeDetails: {
+        reason: "issued_session_lookup_failed",
+        traceId: "trace-issued-lookup-failure",
+      },
+      status: "unauthenticated",
+    });
+    expect(JSON.stringify(decision)).not.toContain("runtime-password");
+    expect(JSON.stringify(decision)).not.toContain("db.internal");
   });
 
   it("returns not_required for runtime metadata and read routes without local sessions", () => {
@@ -481,7 +535,7 @@ describe("auth enforcement", () => {
     });
 
     expect(internalOperator).toMatchObject({
-      diagnostic: { code: "AUTH_AGENT_CREDENTIAL_FORBIDDEN" },
+      diagnostic: { code: "AUTH_FORBIDDEN" },
       httpStatus: 403,
       status: "forbidden",
     });
@@ -491,6 +545,394 @@ describe("auth enforcement", () => {
       status: "forbidden",
     });
   });
+
+  it("uses stable required versus invalid 401 decisions before any mutation", async () => {
+    const missingAll = await enforceThenMutate({
+      issuedSessionLookup: issuedLookup(issuedParticipantSession()),
+      routeId: "tasks.verify",
+      traceId: "trace-missing-all",
+    });
+    const missingSessionId = await enforceThenMutate({
+      headers: participantHeaders({ "x-campaign-os-session-id": undefined }),
+      issuedSessionLookup: issuedLookup(issuedParticipantSession()),
+      routeId: "tasks.verify",
+      traceId: "trace-missing-id",
+    });
+
+    for (const result of [missingAll, missingSessionId]) {
+      expect(result).toMatchObject({
+        decision: {
+          diagnostic: { code: "AUTH_SESSION_REQUIRED" },
+          httpStatus: 401,
+          status: "unauthenticated",
+        },
+        mutationCount: 0,
+      });
+      expect(result.decision.safeDetails.traceId).toMatch(/^trace-missing-/);
+    }
+  });
+
+  it("rejects unknown, invalid, and header-mismatched issued sessions before mutation", async () => {
+    const validRecord = issuedParticipantSession();
+    const cases = [
+      {
+        headers: participantHeaders({ "x-campaign-os-session-id": "sess-unknown" }),
+        lookup: issuedLookup(validRecord),
+        traceId: "trace-unknown",
+      },
+      {
+        headers: participantHeaders(),
+        lookup: issuedLookup(issuedParticipantSession({
+          issuer: { ...validRecord.issuer!, valid: false },
+        })),
+        traceId: "trace-invalid-issuer",
+      },
+      {
+        headers: participantHeaders({
+          "x-campaign-os-wallet-address": "2yVwParticipantCaseSensitive",
+        }),
+        lookup: issuedLookup(validRecord),
+        traceId: "trace-address-case",
+      },
+      {
+        headers: participantHeaders({ "x-campaign-os-account-type": "EOA" }),
+        lookup: issuedLookup(validRecord),
+        traceId: "trace-account",
+      },
+      {
+        headers: participantHeaders({ "x-campaign-os-wallet-source": "NIGHTELF" }),
+        lookup: issuedLookup(validRecord),
+        traceId: "trace-source",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const result = await enforceThenMutate({
+        headers: testCase.headers,
+        issuedSessionLookup: testCase.lookup,
+        routeId: "tasks.verify",
+        traceId: testCase.traceId,
+      });
+
+      expect(result).toMatchObject({
+        decision: {
+          diagnostic: { code: "AUTH_SESSION_INVALID" },
+          httpStatus: 401,
+          safeDetails: { traceId: testCase.traceId },
+          status: "unauthenticated",
+        },
+        mutationCount: 0,
+      });
+    }
+  });
+
+  it("derives Participant credential boundaries from issued source and capabilities", async () => {
+    const cases = [
+      {
+        headers: participantHeaders({
+          "x-campaign-os-account-type": "EOA",
+          "x-campaign-os-wallet-source": "AGENT_SKILL",
+        }),
+        record: issuedParticipantSession({
+          accountType: "EOA",
+          capabilities: ["SIGN_MESSAGE", "INTERNAL_AUTOMATION"],
+          walletSource: "AGENT_SKILL",
+        }),
+        traceId: "trace-agent-source",
+      },
+      {
+        headers: participantHeaders(),
+        record: issuedParticipantSession({
+          capabilities: ["SIGN_MESSAGE", "CONTRACT_VIEW", "INTERNAL_AUTOMATION"],
+        }),
+        traceId: "trace-agent-capability",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const result = await enforceThenMutate({
+        headers: testCase.headers,
+        issuedSessionLookup: issuedLookup(testCase.record),
+        routeId: "tasks.verify",
+        traceId: testCase.traceId,
+      });
+
+      expect(result).toMatchObject({
+        decision: {
+          diagnostic: { code: "AUTH_FORBIDDEN" },
+          httpStatus: 403,
+          safeDetails: { traceId: testCase.traceId },
+          status: "forbidden",
+        },
+        mutationCount: 0,
+      });
+    }
+  });
+
+  it("rejects Participant role, proof, and capability failures before mutation", async () => {
+    const validRecord = issuedParticipantSession();
+    const cases = [
+      {
+        code: "AUTH_FORBIDDEN",
+        headers: participantHeaders({ "x-campaign-os-roles": "project_owner" }),
+        record: validRecord,
+        traceId: "trace-participant-role",
+      },
+      {
+        code: "AUTH_FORBIDDEN",
+        headers: participantHeaders(),
+        record: issuedParticipantSession({
+          proof: {
+            ...validRecord.proof!,
+            status: "signature_unverified",
+            trustLevel: "untrusted",
+          },
+        }),
+        traceId: "trace-participant-proof",
+      },
+      {
+        code: "AUTH_FORBIDDEN",
+        headers: participantHeaders(),
+        record: issuedParticipantSession({ capabilities: ["CONTRACT_VIEW"] }),
+        traceId: "trace-participant-capability",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const result = await enforceThenMutate({
+        headers: testCase.headers,
+        issuedSessionLookup: issuedLookup(testCase.record),
+        routeId: "tasks.verify",
+        traceId: testCase.traceId,
+      });
+
+      expect(result).toMatchObject({
+        decision: {
+          diagnostic: { code: testCase.code },
+          httpStatus: 403,
+          safeDetails: { traceId: testCase.traceId },
+          status: "forbidden",
+        },
+        mutationCount: 0,
+      });
+      expect(result.decision).not.toHaveProperty("session");
+    }
+  });
+
+  it("does not promote an explicit stale issued proof from top-level verification status", async () => {
+    const validRecord = issuedParticipantSession();
+    const result = await enforceThenMutate({
+      headers: participantHeaders(),
+      issuedSessionLookup: issuedLookup(issuedParticipantSession({
+        proof: {
+          ...validRecord.proof!,
+          status: "stale",
+          trustLevel: "untrusted",
+        },
+        verificationStatus: "verified",
+      })),
+      routeId: "tasks.verify",
+      traceId: "trace-participant-stale-proof",
+    });
+
+    expect(result).toMatchObject({
+      decision: {
+        diagnostic: { code: "AUTH_FORBIDDEN" },
+        httpStatus: 403,
+        safeDetails: {
+          proofStatus: "stale",
+          traceId: "trace-participant-stale-proof",
+        },
+        status: "forbidden",
+      },
+      mutationCount: 0,
+    });
+  });
+
+  it.each([
+    [
+      "stale proof",
+      issuedParticipantSession({
+        proof: {
+          ...issuedParticipantSession().proof!,
+          status: "stale",
+          trustLevel: "untrusted",
+        },
+        verificationStatus: "verified",
+      }),
+    ],
+    [
+      "unverified proof",
+      issuedParticipantSession({
+        proof: {
+          ...issuedParticipantSession().proof!,
+          status: "signature_unverified",
+          trustLevel: "untrusted",
+        },
+      }),
+    ],
+    [
+      "internal credential",
+      issuedParticipantSession({
+        capabilities: ["SIGN_MESSAGE", "CONTRACT_VIEW", "INTERNAL_AUTOMATION"],
+      }),
+    ],
+  ])("rejects %s before a compatibility subject mismatch", async (caseName, record) => {
+    const traceId = `trace-combined-${caseName.replace(/ /g, "-")}`;
+    const result = await enforceThenMutate({
+      compatibilitySubject: { walletAddress: "2YVwOtherParticipant" },
+      headers: participantHeaders(),
+      issuedSessionLookup: issuedLookup(record),
+      routeId: "tasks.verify",
+      traceId,
+    });
+
+    expect(result).toMatchObject({
+      decision: {
+        diagnostic: { code: "AUTH_FORBIDDEN" },
+        httpStatus: 403,
+        safeDetails: {
+          traceId,
+        },
+        status: "forbidden",
+      },
+      mutationCount: 0,
+    });
+  });
+
+  it("keeps missing and unknown sessions ahead of compatibility subject checks", async () => {
+    const compatibilitySubject = { walletAddress: "2YVwOtherParticipant" };
+    const missing = await enforceThenMutate({
+      compatibilitySubject,
+      issuedSessionLookup: issuedLookup(issuedParticipantSession()),
+      routeId: "tasks.verify",
+      traceId: "trace-combined-missing-session",
+    });
+    const unknown = await enforceThenMutate({
+      compatibilitySubject,
+      headers: participantHeaders({ "x-campaign-os-session-id": "sess-unknown" }),
+      issuedSessionLookup: issuedLookup(issuedParticipantSession()),
+      routeId: "tasks.verify",
+      traceId: "trace-combined-unknown-session",
+    });
+
+    expect(missing).toMatchObject({
+      decision: {
+        diagnostic: { code: "AUTH_SESSION_REQUIRED" },
+        httpStatus: 401,
+        safeDetails: { traceId: "trace-combined-missing-session" },
+      },
+      mutationCount: 0,
+    });
+    expect(unknown).toMatchObject({
+      decision: {
+        diagnostic: { code: "AUTH_SESSION_INVALID" },
+        httpStatus: 401,
+        safeDetails: { traceId: "trace-combined-unknown-session" },
+      },
+      mutationCount: 0,
+    });
+  });
+
+  it.each(["AELF", "tDVV", "tDVW"])(
+    "uses trimmed exact Base58 identity for %s",
+    async (chainId) => {
+      const record = issuedParticipantSession({ chainId });
+      const allowed = await evaluateIssuedAuthEnforcement({
+        compatibilitySubject: { walletAddress: "  2YVwParticipantCaseSensitive  " },
+        headers: participantHeaders({
+          "x-campaign-os-wallet-address": "  2YVwParticipantCaseSensitive  ",
+        }),
+        issuedSessionLookup: issuedLookup(record),
+        routeId: "tasks.verify",
+        traceId: `trace-${chainId}-exact`,
+      });
+      const mismatch = await enforceThenMutate({
+        compatibilitySubject: { walletAddress: "2yVwParticipantCaseSensitive" },
+        headers: participantHeaders(),
+        issuedSessionLookup: issuedLookup(record),
+        routeId: "tasks.verify",
+        traceId: `trace-${chainId}-case-mismatch`,
+      });
+
+      expect(allowed).toMatchObject({
+        allowed: true,
+        session: {
+          chainId,
+          network: "mainnet",
+          walletSource: "PORTKEY_AA",
+        },
+        status: "allowed",
+      });
+      expect(mismatch).toMatchObject({
+        decision: {
+          diagnostic: {
+            code: "AUTH_SUBJECT_MISMATCH",
+            field: "walletAddress",
+          },
+          httpStatus: 403,
+          status: "forbidden",
+        },
+        mutationCount: 0,
+      });
+      expect(JSON.stringify(mismatch)).not.toContain("2yVwParticipantCaseSensitive");
+    },
+  );
+
+  it("does not lowercase non-aelf issued canonical subjects", async () => {
+    const record = issuedParticipantSession({
+      chainId: "ETH",
+      walletAddress: "0xAbCdCanonical",
+    });
+    const result = await enforceThenMutate({
+      compatibilitySubject: { walletAddress: "0xabcdcanonical" },
+      headers: participantHeaders({
+        "x-campaign-os-wallet-address": "0xAbCdCanonical",
+      }),
+      issuedSessionLookup: issuedLookup(record),
+      routeId: "campaigns.participant.journey",
+      traceId: "trace-non-aelf-case",
+    });
+
+    expect(result).toMatchObject({
+      decision: {
+        diagnostic: { code: "AUTH_SUBJECT_MISMATCH" },
+        httpStatus: 403,
+      },
+      mutationCount: 0,
+    });
+  });
+
+  it.each(compatibilitySubstitutionCases)(
+    "rejects compatibility %s substitution with safe details",
+    async (field, compatibilitySubject) => {
+      const result = await enforceThenMutate({
+        compatibilitySubject,
+        headers: participantHeaders(),
+        issuedSessionLookup: issuedLookup(issuedParticipantSession()),
+        routeId: "campaigns.eligibility",
+        traceId: `trace-subject-${field}`,
+      });
+
+      expect(result).toMatchObject({
+        decision: {
+          diagnostic: {
+            code: "AUTH_SUBJECT_MISMATCH",
+            field,
+          },
+          httpStatus: 403,
+          safeDetails: {
+            reason: "compatibility_subject_mismatch",
+            traceId: `trace-subject-${field}`,
+          },
+          status: "forbidden",
+        },
+        mutationCount: 0,
+      });
+      expect(result.decision.safeDetails).not.toHaveProperty("issuedValue");
+      expect(result.decision.safeDetails).not.toHaveProperty("claimedValue");
+    },
+  );
 
   it("redacts secret-like denial diagnostic details", () => {
     const sanitized = sanitizeAuthEnforcementDetails({

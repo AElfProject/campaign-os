@@ -31,11 +31,17 @@ import type {
   CampaignDurableStoreListOptions,
   CampaignDurableStoreManifest,
   CampaignDurableStoreOperationContext,
+  CampaignDurableStoreParticipantJourneySnapshot,
+  CampaignDurableStoreParticipantJourneySnapshotInput,
   CampaignDurableStoreParticipantListOptions,
   CampaignDurableStoreReferralListOptions,
   CampaignDurableStoreTaskVerificationResult,
   CampaignDurableStoreTaskVerificationWrite,
 } from "./campaignDurableStore";
+import {
+  withoutParticipantRank,
+  type ParticipantRankRow,
+} from "./participantJourney";
 
 const DEFAULT_BOUNDED_LIST_LIMIT = 100;
 const MAX_BOUNDED_LIST_LIMIT = 100;
@@ -143,6 +149,14 @@ const PARTICIPANT_COLUMNS = `
   updated_at
 `;
 
+const PARTICIPANT_RANK_COLUMNS = `
+  campaign_id,
+  created_at,
+  id,
+  total_points,
+  wallet_address
+`;
+
 const COMPLETION_COLUMNS = `
   id,
   campaign_id,
@@ -228,6 +242,7 @@ export type PostgresCampaignStoreOperation =
   | "createTaskDraft"
   | "getById"
   | "getParticipant"
+  | "getParticipantJourneySnapshot"
   | "getReferralBinding"
   | "list"
   | "listParticipantsByCampaignId"
@@ -607,6 +622,18 @@ const mapParticipantRow = (raw: unknown): CampaignDbParticipantRecord => {
   };
 };
 
+const mapParticipantRankRow = (raw: unknown): ParticipantRankRow => {
+  const row = decodeRow(raw);
+
+  return {
+    campaignId: decodeString(row, "campaign_id"),
+    createdAt: decodeTimestamp(row, "created_at"),
+    id: decodeString(row, "id"),
+    totalPoints: decodeInteger(row, "total_points"),
+    walletAddress: decodeString(row, "wallet_address"),
+  };
+};
+
 const mapCompletionRow = (raw: unknown): CampaignDbTaskCompletion => {
   const row = decodeRow(raw);
   const completedAt = decodeOptionalTimestamp(row, "completed_at");
@@ -977,13 +1004,15 @@ export const createPostgresCampaignDurableStore = ({
     context?: CampaignDurableStoreOperationContext,
     operation: PostgresCampaignStoreOperation = "upsertParticipant",
   ) => {
-    const result = await queryWith(
-      queryable,
-      operation,
-      `
-        INSERT INTO campaign_os.campaign_participants (${PARTICIPANT_COLUMNS})
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
-        ON CONFLICT (campaign_id, wallet_address) DO UPDATE SET
+    const conflictAssignments = operation === "upsertTaskVerification"
+      ? `
+          account_type = EXCLUDED.account_type,
+          wallet_source = EXCLUDED.wallet_source,
+          wallet_type_verified = EXCLUDED.wallet_type_verified,
+          total_points = EXCLUDED.total_points,
+          updated_at = EXCLUDED.updated_at
+        `
+      : `
           account_type = EXCLUDED.account_type,
           wallet_source = EXCLUDED.wallet_source,
           wallet_type_verified = EXCLUDED.wallet_type_verified,
@@ -991,9 +1020,17 @@ export const createPostgresCampaignDurableStore = ({
           wallet_verified_at = EXCLUDED.wallet_verified_at,
           locale_preference = EXCLUDED.locale_preference,
           total_points = EXCLUDED.total_points,
-          rank = EXCLUDED.rank,
           risk_flags = EXCLUDED.risk_flags,
           updated_at = EXCLUDED.updated_at
+        `;
+    const result = await queryWith(
+      queryable,
+      operation,
+      `
+        INSERT INTO campaign_os.campaign_participants (${PARTICIPANT_COLUMNS})
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
+        ON CONFLICT (campaign_id, wallet_address) DO UPDATE SET
+          ${conflictAssignments}
         RETURNING ${PARTICIPANT_COLUMNS}
       `,
       [
@@ -1125,14 +1162,219 @@ export const createPostgresCampaignDurableStore = ({
     return requiredOne(result.rows, mapEvidenceRow, operation, result.traceId);
   };
 
-  const cleanupError = (
+  const transactionCleanupError = (
+    operation: Extract<PostgresCampaignStoreOperation, "getParticipantJourneySnapshot" | "upsertTaskVerification">,
     traceId: string,
   ) => new PostgresCampaignStoreError({
     code: "POSTGRES_CAMPAIGN_STORE_CLEANUP_FAILED",
     field: "transaction",
-    operation: "upsertTaskVerification",
+    operation,
     traceId,
   });
+
+  const getParticipantJourneySnapshot = async (
+    input: CampaignDurableStoreParticipantJourneySnapshotInput,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDurableStoreParticipantJourneySnapshot> => {
+    const operation = "getParticipantJourneySnapshot" as const;
+    const traceId = resolveTraceId(context, operation);
+    ensureOpen(operation, traceId);
+
+    if (
+      typeof input.campaignId !== "string"
+      || input.campaignId.trim().length === 0
+      || input.campaignId !== input.campaignId.trim()
+      || typeof input.walletAddress !== "string"
+      || input.walletAddress.trim().length === 0
+      || input.walletAddress !== input.walletAddress.trim()
+    ) {
+      throw new PostgresCampaignStoreError({
+        code: "POSTGRES_CAMPAIGN_STORE_ARGUMENT_INVALID",
+        field: "snapshot",
+        operation,
+        traceId,
+      });
+    }
+
+    if (!pool.connect) {
+      throw new PostgresCampaignStoreError({
+        code: "POSTGRES_CAMPAIGN_STORE_ARGUMENT_INVALID",
+        field: "pool.connect",
+        operation,
+        traceId,
+      });
+    }
+
+    let client: PostgresCampaignStoreClient;
+
+    try {
+      client = await pool.connect();
+    } catch {
+      throw new PostgresCampaignStoreError({
+        code: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+        field: "database",
+        operation,
+        traceId,
+      });
+    }
+
+    try {
+      await queryWith(
+        client,
+        operation,
+        "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+        [],
+        { traceId },
+      );
+      const campaignResult = await queryWith(
+        client,
+        operation,
+        `SELECT ${CAMPAIGN_COLUMNS} FROM campaign_os.campaigns WHERE id = $1 LIMIT 1`,
+        [input.campaignId],
+        { traceId },
+      );
+      const campaign = optionalOne(campaignResult.rows, mapCampaignRow, operation, traceId);
+
+      if (!campaign) {
+        await queryWith(client, operation, "COMMIT", [], { traceId });
+
+        return {
+          campaign: undefined,
+          completions: [],
+          evidence: [],
+          participant: undefined,
+          rankingParticipants: [],
+          tasks: [],
+        };
+      }
+
+      const readSnapshotPages = async <T>(
+        readPage: (offset: number) => Promise<PostgresCampaignStoreQueryResult & { traceId: string }>,
+        mapper: (row: unknown) => T,
+      ): Promise<T[]> => {
+        const records: T[] = [];
+        let offset = 0;
+
+        while (true) {
+          const pageResult = await readPage(offset);
+          const page = mapRows(pageResult.rows, mapper, operation, traceId);
+          records.push(...page);
+
+          if (pageResult.rows.length < boundedListLimit) {
+            return records;
+          }
+
+          offset += pageResult.rows.length;
+        }
+      };
+      const tasks = await readSnapshotPages(
+        (offset) => queryWith(
+          client,
+          operation,
+          `
+            SELECT ${TASK_COLUMNS}
+            FROM campaign_os.campaign_tasks
+            WHERE campaign_id = $1
+            ORDER BY id COLLATE "C" ASC
+            LIMIT $2 OFFSET $3
+          `,
+          [input.campaignId, boundedListLimit, offset],
+          { traceId },
+        ),
+        mapTaskRow,
+      );
+      const participantResult = await queryWith(
+        client,
+        operation,
+        `
+          SELECT ${PARTICIPANT_COLUMNS}
+          FROM campaign_os.campaign_participants
+          WHERE campaign_id = $1 AND wallet_address = $2
+          LIMIT 1
+        `,
+        [input.campaignId, input.walletAddress],
+        { traceId },
+      );
+      const completions = await readSnapshotPages(
+        (offset) => queryWith(
+          client,
+          operation,
+          `
+            SELECT ${COMPLETION_COLUMNS}
+            FROM campaign_os.campaign_task_completions
+            WHERE campaign_id = $1 AND wallet_address = $2
+            ORDER BY task_id COLLATE "C" ASC, id COLLATE "C" ASC
+            LIMIT $3 OFFSET $4
+          `,
+          [input.campaignId, input.walletAddress, boundedListLimit, offset],
+          { traceId },
+        ),
+        mapCompletionRow,
+      );
+      const evidence = await readSnapshotPages(
+        (offset) => queryWith(
+          client,
+          operation,
+          `
+            SELECT ${EVIDENCE_COLUMNS}
+            FROM campaign_os.campaign_task_evidence
+            WHERE campaign_id = $1 AND wallet_address = $2
+            ORDER BY task_id COLLATE "C" ASC, id COLLATE "C" ASC
+            LIMIT $3 OFFSET $4
+          `,
+          [input.campaignId, input.walletAddress, boundedListLimit, offset],
+          { traceId },
+        ),
+        mapEvidenceRow,
+      );
+      const rankingParticipants = await readSnapshotPages(
+        (offset) => queryWith(
+          client,
+          operation,
+          `
+            SELECT ${PARTICIPANT_RANK_COLUMNS}
+            FROM campaign_os.campaign_participants
+            WHERE campaign_id = $1
+            ORDER BY
+              total_points DESC,
+              created_at ASC,
+              id COLLATE "C" ASC,
+              wallet_address COLLATE "C" ASC
+            LIMIT $2 OFFSET $3
+          `,
+          [input.campaignId, boundedListLimit, offset],
+          { traceId },
+        ),
+        mapParticipantRankRow,
+      );
+      const snapshot: CampaignDurableStoreParticipantJourneySnapshot = {
+        campaign,
+        completions,
+        evidence,
+        participant: optionalOne(participantResult.rows, mapParticipantRow, operation, traceId),
+        rankingParticipants,
+        tasks,
+      };
+
+      await queryWith(client, operation, "COMMIT", [], { traceId });
+
+      return snapshot;
+    } catch (error) {
+      try {
+        await queryWith(client, operation, "ROLLBACK", [], { traceId });
+      } catch {
+        throw transactionCleanupError(operation, traceId);
+      }
+
+      throw error;
+    } finally {
+      try {
+        client.release();
+      } catch {
+        throw transactionCleanupError(operation, traceId);
+      }
+    }
+  };
 
   const upsertTaskVerification = async (
     input: CampaignDurableStoreTaskVerificationWrite,
@@ -1217,10 +1459,10 @@ export const createPostgresCampaignDurableStore = ({
         { traceId },
       );
       const pointsRow = requiredOne(pointsResult.rows, decodeRow, operation, traceId);
-      const participant = await upsertParticipantWith(
+      const persistedParticipant = await upsertParticipantWith(
         client,
         {
-          ...input.participant,
+          ...withoutParticipantRank(input.participant),
           totalPoints: decodeCount(pointsRow, "total_points"),
         },
         { traceId },
@@ -1229,12 +1471,16 @@ export const createPostgresCampaignDurableStore = ({
 
       await queryWith(client, operation, "COMMIT", [], { traceId });
 
-      return { completion, evidence, participant };
+      return {
+        completion,
+        evidence,
+        participant: withoutParticipantRank(persistedParticipant),
+      };
     } catch (error) {
       try {
         await queryWith(client, operation, "ROLLBACK", [], { traceId });
       } catch {
-        throw cleanupError(traceId);
+        throw transactionCleanupError(operation, traceId);
       }
 
       throw error;
@@ -1242,7 +1488,7 @@ export const createPostgresCampaignDurableStore = ({
       try {
         client.release();
       } catch {
-        throw cleanupError(traceId);
+        throw transactionCleanupError(operation, traceId);
       }
     }
   };
@@ -1336,6 +1582,7 @@ export const createPostgresCampaignDurableStore = ({
 
       return optionalOne(result.rows, mapParticipantRow, "getParticipant", result.traceId);
     },
+    getParticipantJourneySnapshot,
     getReferralBinding: async (campaignId, inviteeWalletAddress, context) => {
       const result = await query(
         "getReferralBinding",

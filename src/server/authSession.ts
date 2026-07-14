@@ -20,6 +20,7 @@ export type SessionProofStatus =
   | "local_seeded"
   | "proof_required"
   | "signature_unverified"
+  | "stale"
   | "verified"
   | "blocked";
 export type SessionProofType =
@@ -443,13 +444,6 @@ const createAuthSessionContractReadiness = ({
   };
 };
 
-export const locallyEnforcedAuthRouteIds = [
-  "campaigns.create",
-  "campaigns.owner.list",
-  "campaigns.tasks.add",
-  "campaigns.tasks.generate",
-] as const;
-
 const normalizeSensitiveKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 const isSensitiveKey = (key: string) => {
@@ -738,6 +732,17 @@ export const protectedRouteAuthMap = [
   }),
   routeAuth({
     enforcementStatus: "local_enforced",
+    note: "Owner Campaign detail requires an issued project owner session; resource ownership is checked by the handler integration.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["project_owner"],
+    routeGroup: "campaign_write",
+    routeId: "campaigns.owner.detail",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "local_enforced",
     note: "Task builder mutation requires an issued project owner session and matching Campaign owner relation.",
     productionDependencyIds: [...authSessionDeferredDependencyIds],
     proofRequired: true,
@@ -759,6 +764,50 @@ export const protectedRouteAuthMap = [
     sessionRequired: true,
   }),
   routeAuth({
+    enforcementStatus: "local_enforced",
+    note: "Participant Campaign feed requires an issued ordinary user wallet session.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["participant"],
+    routeGroup: "campaign_read",
+    routeId: "campaigns.participant.list",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "local_enforced",
+    note: "Participant Campaign journey requires an issued ordinary user wallet session.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["participant"],
+    routeGroup: "campaign_read",
+    routeId: "campaigns.participant.journey",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "local_enforced",
+    note: "Repository eligibility requires an issued Participant subject.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["participant"],
+    routeGroup: "eligibility",
+    routeId: "campaigns.eligibility",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "local_enforced",
+    note: "Repository ranking for preview Campaigns requires an issued Participant subject.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["participant"],
+    routeGroup: "campaign_read",
+    routeId: "campaigns.points.ranking.ledger.runtime",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
     enforcementStatus: "enforcement_deferred",
     note: "Export previews require project owner or internal operator review in production.",
     productionDependencyIds: [...authSessionDeferredDependencyIds],
@@ -770,8 +819,8 @@ export const protectedRouteAuthMap = [
     sessionRequired: true,
   }),
   routeAuth({
-    enforcementStatus: "enforcement_deferred",
-    note: "Task verification requires participant proof before production trust.",
+    enforcementStatus: "local_enforced",
+    note: "Task verification requires an issued Participant subject before Campaign or Task mutation.",
     productionDependencyIds: [...authSessionDeferredDependencyIds],
     proofRequired: true,
     requiredRoles: ["participant"],
@@ -803,6 +852,12 @@ export const protectedRouteAuthMap = [
     sessionRequired: true,
   }),
 ] as const satisfies readonly ProtectedRouteAuthMapEntry[];
+
+export const locallyEnforcedAuthRouteIds = Object.freeze(
+  protectedRouteAuthMap
+    .filter((entry) => entry.enforcementStatus === "local_enforced")
+    .map((entry) => entry.routeId),
+);
 
 export const protectedRouteAuthById = Object.fromEntries(
   protectedRouteAuthMap.map((entry) => [entry.routeId, entry]),

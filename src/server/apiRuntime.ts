@@ -4,10 +4,14 @@ import { join } from "node:path";
 import { createCampaignOsLocalService, type CampaignOsLocalService } from "../domain/campaignService";
 import {
   CampaignOsCampaignDbConfigError,
+  CampaignOsParticipantPreviewConfigError,
   resolveCampaignOsCampaignDbConfig,
+  resolveCampaignOsParticipantPreviewConfig,
   resolveCampaignOsRuntimeConfig,
   type CampaignOsCampaignDbConfig,
   type CampaignOsCampaignDbPoolConfig,
+  type CampaignOsParticipantPreviewConfig,
+  type CampaignOsParticipantPreviewConfigOptions,
   type CampaignOsRuntimeConfig,
   type CampaignOsRuntimeConfigOptions,
 } from "./config";
@@ -21,6 +25,7 @@ import {
   authForbidden,
   authSessionInvalid,
   authSessionRequired,
+  authSubjectMismatch,
   invalidRequest,
   malformedJson,
   methodNotAllowed,
@@ -29,7 +34,7 @@ import {
   toApiRuntimeErrorBody,
 } from "./errors";
 import type { ApiRuntimeRouteContract } from "./contracts";
-import { apiRuntimeRoutes } from "./routes";
+import { apiRuntimeContractRoutes } from "./routes";
 import { createApiRuntimeHandlers } from "./handlers";
 import {
   createBackendDatabaseAdapterRuntimeSummary,
@@ -63,6 +68,7 @@ import {
 import {
   evaluateIssuedAuthEnforcement,
   type AuthEnforcementDecision,
+  type ParticipantCompatibilitySubject,
 } from "./authEnforcement";
 import { getProtectedRouteAuth } from "./authSession";
 import {
@@ -91,6 +97,7 @@ export interface ApiRuntimeHandlerContext {
   campaignDbRepository: CampaignDbRepository;
   exportArtifactRegistry: ExportArtifactRegistry;
   params: Record<string, string>;
+  participantPreviewConfig: ParticipantPreviewConfigFactory;
   repository: CampaignOsRepository;
   query: Record<string, string>;
   route: ApiRuntimeRouteContract;
@@ -103,6 +110,7 @@ export interface ApiRuntimeHandlerContext {
 
 export type ApiRuntimeHandler = (context: ApiRuntimeHandlerContext) => unknown | Promise<unknown>;
 export type BackendServiceReadinessFactory = () => BackendServiceReadinessReport;
+export type ParticipantPreviewConfigFactory = () => CampaignOsParticipantPreviewConfig;
 
 export interface CampaignOsApiRuntime {
   close(): Promise<void>;
@@ -202,14 +210,21 @@ export interface CreateCampaignOsApiRuntimeOptions {
   campaignDbRepositoryOptions?: CreateCampaignDbRepositoryOptions;
   exportArtifactRegistry?: ExportArtifactRegistry;
   logger?: Pick<Console, "error"> | false;
+  participantPreviewConfigOptions?: CampaignOsParticipantPreviewConfigOptions;
   repository?: CampaignOsRepository;
   runtimeConfig?: CampaignOsRuntimeConfig;
   runtimeConfigOptions?: CampaignOsRuntimeConfigOptions;
   service?: CampaignOsLocalService;
   version?: string;
+  walletSessionActivationPolicy?: WalletSessionActivationPolicy;
   walletSessionRepository?: WalletSessionRepository;
   walletSessionRepositoryOptions?: CreateWalletSessionRepositoryOptions;
 }
+
+export type WalletSessionActivationPolicy =
+  | "runtime_issued_only"
+  // Explicit compatibility mode for repositories that provide pre-issued test fixtures.
+  | "repository_trusted";
 
 const createPgCampaignPool: CampaignDbPoolFactory = (config) => {
   const { Pool } = campaignDbRequire("pg") as typeof import("pg");
@@ -312,8 +327,14 @@ const getHeader = (headers: ApiRuntimeHeaders | undefined, name: string): string
 
 const createTraceId = (headers?: ApiRuntimeHeaders) => {
   const callerTraceId = getHeader(headers, "x-campaign-os-trace-id")?.trim();
+  const callerTraceIdIsSafe = Boolean(
+    callerTraceId
+    && callerTraceId.length <= 128
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(callerTraceId)
+    && !/(?:bearer|password|private|raw[_-]?signature|secret|token)/i.test(callerTraceId)
+  );
 
-  if (callerTraceId) {
+  if (callerTraceIdIsSafe && callerTraceId) {
     return callerTraceId;
   }
 
@@ -322,8 +343,34 @@ const createTraceId = (headers?: ApiRuntimeHeaders) => {
   return `campaign-os-trace-${Date.now().toString(36)}-${generatedTraceSequence}`;
 };
 
-const parseQuery = (searchParams: URLSearchParams): Record<string, string> =>
-  Object.fromEntries(Array.from(searchParams.entries()));
+const participantCompatibilityQueryClaimFields = new Map<string, string>([
+  ["accountType", "accountType"],
+  ["address", "walletAddress"],
+  ["chainId", "chainId"],
+  ["network", "network"],
+  ["walletAddress", "walletAddress"],
+  ["walletSource", "walletSource"],
+]);
+
+const parseQuery = (searchParams: URLSearchParams): Record<string, string> => {
+  const query = new Map<string, string>();
+
+  for (const [key, value] of searchParams.entries()) {
+    const existingValue = query.get(key);
+    const compatibilityField = participantCompatibilityQueryClaimFields.get(key);
+
+    if (compatibilityField && existingValue !== undefined && existingValue !== value) {
+      throw authSubjectMismatch({
+        diagnosticCode: "AUTH_SUBJECT_MISMATCH",
+        field: compatibilityField,
+      });
+    }
+
+    query.set(key, value);
+  }
+
+  return Object.fromEntries(query);
+};
 
 const parseRequestTarget = (path: string) => {
   const url = new URL(path || "/", "http://127.0.0.1");
@@ -445,10 +492,172 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const ownerAddressFromBody = (body: unknown) =>
   isRecord(body) && typeof body.ownerAddress === "string" ? body.ownerAddress : undefined;
 
+const participantCompatibilityRouteIds = new Set([
+  "tasks.verify",
+  "campaigns.eligibility",
+  "campaigns.points.ranking.ledger.runtime",
+]);
+
+const hasOwn = (record: Record<string, unknown> | Record<string, string>, key: string) =>
+  Object.prototype.hasOwnProperty.call(record, key);
+
+const compatibilityClaim = (
+  field: string,
+  candidates: readonly unknown[],
+): string | undefined => {
+  if (candidates.length === 0) {
+    return undefined;
+  }
+
+  const values = candidates.map((value) => {
+    if (typeof value !== "string" || value.trim().length === 0) {
+      throw invalidRequest(field, `Participant compatibility claim '${field}' must be a non-empty string.`);
+    }
+
+    return value.trim();
+  });
+  const first = values[0];
+
+  if (values.some((value) => value !== first)) {
+    throw authSubjectMismatch({
+      diagnosticCode: "AUTH_SUBJECT_MISMATCH",
+      field,
+    });
+  }
+
+  return first;
+};
+
+const compatibilityCandidates = (
+  body: Record<string, unknown>,
+  bodyField: string,
+  query: Record<string, string>,
+  queryFields: readonly string[],
+) => [
+  ...(hasOwn(body, bodyField) ? [body[bodyField]] : []),
+  ...queryFields.flatMap((field) => hasOwn(query, field) ? [query[field]] : []),
+];
+
+const participantCompatibilitySubjectFromRequest = (
+  routeId: string,
+  body: unknown,
+  query: Record<string, string>,
+): ParticipantCompatibilitySubject | undefined => {
+  if (!participantCompatibilityRouteIds.has(routeId)) {
+    return undefined;
+  }
+
+  const bodyClaims = isRecord(body) ? body : {};
+  const walletAddress = compatibilityClaim(
+    "walletAddress",
+    compatibilityCandidates(bodyClaims, "walletAddress", query, ["walletAddress", "address"]),
+  );
+  const accountType = compatibilityClaim(
+    "accountType",
+    compatibilityCandidates(bodyClaims, "accountType", query, ["accountType"]),
+  );
+  const walletSource = compatibilityClaim(
+    "walletSource",
+    compatibilityCandidates(bodyClaims, "walletSource", query, ["walletSource"]),
+  );
+  const chainId = compatibilityClaim(
+    "chainId",
+    compatibilityCandidates(bodyClaims, "chainId", query, ["chainId"]),
+  );
+  const network = compatibilityClaim(
+    "network",
+    compatibilityCandidates(bodyClaims, "network", query, ["network"]),
+  );
+
+  if (!walletAddress && !accountType && !walletSource && !chainId && !network) {
+    return undefined;
+  }
+
+  return {
+    ...(accountType ? { accountType: accountType as ParticipantCompatibilitySubject["accountType"] } : {}),
+    ...(chainId ? { chainId } : {}),
+    ...(network ? { network: network as ParticipantCompatibilitySubject["network"] } : {}),
+    ...(walletAddress ? { walletAddress } : {}),
+    ...(walletSource ? { walletSource: walletSource as ParticipantCompatibilitySubject["walletSource"] } : {}),
+  };
+};
+
+const evaluateRuntimeIssuedAuth = async ({
+  activeWalletSessionIds,
+  compatibilitySubject,
+  headers,
+  ownerAddress,
+  routeId,
+  traceId,
+  walletSessionActivationPolicy,
+  walletSessionRepository,
+}: {
+  activeWalletSessionIds: ReadonlySet<string>;
+  compatibilitySubject?: ParticipantCompatibilitySubject;
+  headers?: ApiRuntimeHeaders;
+  ownerAddress?: string;
+  routeId: string;
+  traceId: string;
+  walletSessionActivationPolicy: WalletSessionActivationPolicy;
+  walletSessionRepository: WalletSessionRepository;
+}) => {
+  let lookupFailure: unknown;
+  const authDecision = await evaluateIssuedAuthEnforcement({
+    compatibilitySubject,
+    headers,
+    issuedSessionLookup: async (sessionId, context) => {
+      if (
+        walletSessionActivationPolicy === "runtime_issued_only"
+        && !activeWalletSessionIds.has(sessionId)
+      ) {
+        return undefined;
+      }
+
+      try {
+        return await walletSessionRepository.getBySessionId(sessionId, context);
+      } catch (error) {
+        lookupFailure = error;
+        throw error;
+      }
+    },
+    ownerAddress,
+    routeId,
+    traceId,
+  });
+
+  if (lookupFailure) {
+    throw lookupFailure;
+  }
+
+  return authDecision;
+};
+
+const createParticipantPreviewConfigFactory = (
+  options: CampaignOsParticipantPreviewConfigOptions | undefined,
+  runtimeConfigOptions: CampaignOsRuntimeConfigOptions | undefined,
+): ParticipantPreviewConfigFactory => () => {
+  try {
+    return resolveCampaignOsParticipantPreviewConfig({
+      ...options,
+      env: options?.env ?? runtimeConfigOptions?.env,
+    });
+  } catch (error) {
+    if (error instanceof CampaignOsParticipantPreviewConfigError) {
+      throw invalidRequest(
+        error.field,
+        `Participant Campaign preview configuration was rejected (${error.code}).`,
+      );
+    }
+
+    throw error;
+  }
+};
+
 const shouldEvaluateLocalAuth = (routeId: string) =>
   getProtectedRouteAuth(routeId)?.enforcementStatus === "local_enforced";
 
 const campaignOwnerRouteIds = new Set([
+  "campaigns.owner.detail",
   "campaigns.tasks.add",
   "campaigns.tasks.generate",
 ]);
@@ -465,6 +674,10 @@ const authErrorFromDecision = (decision: AuthEnforcementDecision) => {
     return decision.diagnostic?.code === "AUTH_SESSION_REQUIRED"
       ? authSessionRequired(details)
       : authSessionInvalid(details);
+  }
+
+  if (decision.diagnostic?.code === "AUTH_SUBJECT_MISMATCH") {
+    return authSubjectMismatch(details);
   }
 
   return authForbidden(details);
@@ -823,15 +1036,29 @@ const createSafeRepository = (repository: CampaignOsRepository): CampaignOsRepos
 const createSafeCampaignDbRepository = (
   repository: CampaignDbRepository,
 ): CampaignDbRepository => {
+  const safeDiagnosticCode = (code: string | undefined) =>
+    code
+    && code.length <= 100
+    && /^[A-Z][A-Z0-9_]*$/.test(code)
+      ? code
+      : undefined;
+  const safeDiagnosticField = (field: string | undefined, fallback: string) =>
+    field
+    && field.length <= 80
+    && /^[A-Za-z][A-Za-z0-9.[\]_-]*$/.test(field)
+      ? field
+      : fallback;
   const unavailable = (operation: string, diagnosticCode?: string) => {
     const error = persistenceUnavailable(operation);
+    const normalizedDiagnosticCode = safeDiagnosticCode(diagnosticCode);
 
-    return diagnosticCode
+    return normalizedDiagnosticCode
       ? new ApiRuntimeError({
         ...error.body,
         details: {
           ...error.body.details,
-          diagnosticCode,
+          diagnosticCode: normalizedDiagnosticCode,
+          field: "campaignDb",
         },
       })
       : error;
@@ -865,8 +1092,10 @@ const createSafeCampaignDbRepository = (
           && !firstDiagnostic?.code.startsWith("POSTGRES_CAMPAIGN_STORE_")
         ) {
           throw invalidRequest(
-            firstDiagnostic?.field ?? "campaignDb",
-            firstDiagnostic?.message ?? "Campaign DB repository rejected the request.",
+            safeDiagnosticField(firstDiagnostic?.field, "campaignDb"),
+            safeDiagnosticCode(firstDiagnostic?.code)
+              ? `Campaign DB repository rejected the request (${safeDiagnosticCode(firstDiagnostic?.code)}).`
+              : "Campaign DB repository rejected the request.",
           );
         }
 
@@ -906,6 +1135,11 @@ const createSafeCampaignDbRepository = (
         "campaignDb.getParticipant",
         () => repository.getParticipant!(campaignId, walletAddress, context),
       ),
+    getParticipantJourney: (input, context) =>
+      wrap(
+        "campaignDb.getParticipantJourney",
+        () => repository.getParticipantJourney!(input, context),
+      ),
     getReferralBinding: (campaignId, inviteeWalletAddress, context) =>
       wrap(
         "campaignDb.getReferralBinding",
@@ -944,6 +1178,7 @@ const createSafeCampaignDbRepository = (
 
 const createSafeWalletSessionRepository = (
   repository: WalletSessionRepository,
+  onSessionActivated?: (sessionId: string) => void,
 ): WalletSessionRepository => {
   const wrap = async <TResult>(operation: string, run: () => Promise<TResult>) => {
     try {
@@ -954,8 +1189,11 @@ const createSafeWalletSessionRepository = (
 
         if (firstDiagnostic?.code === "WALLET_SESSION_REQUIRED_FIELD_MISSING") {
           throw invalidRequest(
-            firstDiagnostic.field,
-            firstDiagnostic.message,
+            firstDiagnostic.field.length <= 80
+              && /^[A-Za-z][A-Za-z0-9.[\]_-]*$/.test(firstDiagnostic.field)
+              ? firstDiagnostic.field
+              : "walletSession",
+            "Wallet session repository rejected a required field.",
           );
         }
       }
@@ -972,8 +1210,15 @@ const createSafeWalletSessionRepository = (
     list: (filter, context) =>
       wrap("walletSessionRepository.list", () => repository.list(filter, context)),
     reset: () => wrap("walletSessionRepository.reset", () => repository.reset()),
-    upsertSession: (session, context) =>
-      wrap("walletSessionRepository.upsertSession", () => repository.upsertSession(session, context)),
+    upsertSession: async (session, context) => {
+      const result = await wrap(
+        "walletSessionRepository.upsertSession",
+        () => repository.upsertSession(session, context),
+      );
+      onSessionActivated?.(result.record.sessionId);
+
+      return result;
+    },
   };
 };
 
@@ -985,11 +1230,13 @@ export const createCampaignOsApiRuntime = ({
   campaignDbRepositoryOptions,
   exportArtifactRegistry = createExportArtifactRegistry(),
   logger = console,
+  participantPreviewConfigOptions,
   repository,
   runtimeConfig,
   runtimeConfigOptions,
   service = createCampaignOsLocalService(),
   version,
+  walletSessionActivationPolicy = "runtime_issued_only",
   walletSessionRepository,
   walletSessionRepositoryOptions,
 }: CreateCampaignOsApiRuntimeOptions = {}): CampaignOsApiRuntime => {
@@ -1062,12 +1309,18 @@ export const createCampaignOsApiRuntime = ({
   const safeCampaignDbRepository = createSafeCampaignDbRepository(
     composedCampaignDbRepository,
   );
+  const activeWalletSessionIds = new Set<string>();
   const safeWalletSessionRepository = createSafeWalletSessionRepository(
     walletSessionRepository ?? createWalletSessionRepository(walletSessionRepositoryOptions),
+    (sessionId) => activeWalletSessionIds.add(sessionId),
   );
   const handlers = createApiRuntimeHandlers();
-  const matchers = apiRuntimeRoutes.map(compileRouteMatcher);
+  const matchers = apiRuntimeContractRoutes.map(compileRouteMatcher);
   const runtimeVersion = version ?? resolvedConfig.version;
+  const participantPreviewConfig = createParticipantPreviewConfigFactory(
+    participantPreviewConfigOptions,
+    runtimeConfigOptions,
+  );
   const getBackendServiceReadiness =
     backendServiceReadiness
     ?? createBackendServiceReadinessFactory({
@@ -1086,6 +1339,7 @@ export const createCampaignOsApiRuntime = ({
       safeCampaignDbRepository.close?.() ?? Promise.resolve(),
       safeWalletSessionRepository.close(),
     ]).then((results) => {
+      activeWalletSessionIds.clear();
       const failures = results
         .filter((result): result is PromiseRejectedResult => result.status === "rejected")
         .map((result) => result.reason as unknown);
@@ -1118,12 +1372,19 @@ export const createCampaignOsApiRuntime = ({
         const body = parseBody(request, method);
         let authDecision: AuthEnforcementDecision | undefined;
         if (shouldEvaluateLocalAuth(matcher.route.id)) {
-          authDecision = await evaluateIssuedAuthEnforcement({
+          authDecision = await evaluateRuntimeIssuedAuth({
+            activeWalletSessionIds,
+            compatibilitySubject: participantCompatibilitySubjectFromRequest(
+              matcher.route.id,
+              body,
+              query,
+            ),
             headers: request.headers,
-            issuedSessionLookup: safeWalletSessionRepository.getBySessionId,
             ownerAddress: ownerAddressFromBody(body),
             routeId: matcher.route.id,
             traceId,
+            walletSessionActivationPolicy,
+            walletSessionRepository: safeWalletSessionRepository,
           });
 
           if (!authDecision.allowed) {
@@ -1138,12 +1399,14 @@ export const createCampaignOsApiRuntime = ({
             });
 
             if (ownerAddress) {
-              authDecision = await evaluateIssuedAuthEnforcement({
+              authDecision = await evaluateRuntimeIssuedAuth({
+                activeWalletSessionIds,
                 headers: request.headers,
-                issuedSessionLookup: safeWalletSessionRepository.getBySessionId,
                 ownerAddress,
                 routeId: matcher.route.id,
                 traceId,
+                walletSessionActivationPolicy,
+                walletSessionRepository: safeWalletSessionRepository,
               });
 
               if (!authDecision.allowed) {
@@ -1166,6 +1429,7 @@ export const createCampaignOsApiRuntime = ({
           campaignDbRepository: safeCampaignDbRepository,
           exportArtifactRegistry,
           params,
+          participantPreviewConfig,
           repository: safeRepository,
           query,
           route: matcher.route,
@@ -1191,7 +1455,7 @@ export const createCampaignOsApiRuntime = ({
         return {
           body: createSuccessEnvelope({
             data: responseData,
-            routeCount: apiRuntimeRoutes.length,
+            routeCount: apiRuntimeContractRoutes.length,
             traceId,
             version: runtimeVersion,
           }),
@@ -1204,7 +1468,7 @@ export const createCampaignOsApiRuntime = ({
         return {
           body: createFailureEnvelope({
             error: runtimeError,
-            routeCount: apiRuntimeRoutes.length,
+            routeCount: apiRuntimeContractRoutes.length,
             traceId,
             version: runtimeVersion,
           }),

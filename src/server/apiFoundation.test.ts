@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   apiRuntimeCapabilities,
+  apiRuntimeContractRoutes,
   apiRuntimeRoutes,
   backendServiceBoundaries,
 } from "./index";
@@ -33,8 +34,8 @@ describe("API foundation registry", () => {
     const registry = createApiFoundationRegistry();
     const routeIds = registry.routes.map((route) => route.routeId);
 
-    expect(routeIds).toEqual(apiRuntimeRoutes.map((route) => route.id));
-    expect(new Set(routeIds).size).toBe(apiRuntimeRoutes.length);
+    expect(routeIds).toEqual(apiRuntimeContractRoutes.map((route) => route.id));
+    expect(new Set(routeIds).size).toBe(apiRuntimeContractRoutes.length);
     expect(routeIds).not.toEqual(
       expect.arrayContaining(["workers.list", "schedules.list", "worker.queue.publish", "worker.lease.claim"]),
     );
@@ -85,6 +86,24 @@ describe("API foundation registry", () => {
     });
     expect(registry.routes.find((route) => route.routeId === "campaigns.owner.list")).toMatchObject({
       operationId: "listOwnerCampaigns",
+      serviceId: "campaign-service",
+    });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.owner.detail")).toMatchObject({
+      method: "GET",
+      operationId: "getOwnerCampaignDetail",
+      path: "/api/owner/campaigns/:campaignId",
+      serviceId: "campaign-service",
+    });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.participant.list")).toMatchObject({
+      method: "GET",
+      operationId: "listParticipantCampaigns",
+      path: "/api/participant/campaigns",
+      serviceId: "campaign-service",
+    });
+    expect(registry.routes.find((route) => route.routeId === "campaigns.participant.journey")).toMatchObject({
+      method: "GET",
+      operationId: "getParticipantCampaignJourney",
+      path: "/api/participant/campaigns/:campaignId/journey",
       serviceId: "campaign-service",
     });
     expect(registry.routes.find((route) => route.routeId === "campaigns.launch.readiness")).toMatchObject({
@@ -192,6 +211,17 @@ describe("API foundation registry", () => {
         }),
       ]),
     );
+    for (const routeId of ["campaigns.owner.detail", "campaigns.participant.journey"]) {
+      expect(requestFieldsByRoute.get(routeId)).toEqual([
+        expect.objectContaining({
+          location: "path",
+          name: "campaignId",
+          required: true,
+          valueType: "string",
+        }),
+      ]);
+    }
+    expect(requestFieldsByRoute.get("campaigns.participant.list")).toEqual([]);
     for (const routeId of [
       "campaigns.delivery.readiness",
       "campaigns.publish.delivery.review",
@@ -209,9 +239,35 @@ describe("API foundation registry", () => {
         ]),
       );
     }
+    const rankingCompatibilityFields = requestFieldsByRoute
+      .get("campaigns.points.ranking.ledger.runtime")
+      ?.filter((field) => [
+        "accountType",
+        "address",
+        "chainId",
+        "network",
+        "walletAddress",
+        "walletSource",
+      ].includes(field?.name ?? ""));
+    expect(rankingCompatibilityFields?.map((field) => field?.name)).toEqual(expect.arrayContaining([
+      "accountType",
+      "address",
+      "chainId",
+      "network",
+      "walletAddress",
+      "walletSource",
+    ]));
+    expect(rankingCompatibilityFields?.every((field) =>
+      field?.location === "query" && field.required === false)).toBe(true);
     expect(requestFieldsByRoute.get("tasks.verify")?.map((field) => field?.name)).toEqual(
       expect.arrayContaining(["accountType", "campaignId", "taskId", "walletAddress", "walletSource"]),
     );
+    expect(
+      requestFieldsByRoute
+        .get("tasks.verify")
+        ?.filter((field) => ["accountType", "walletAddress", "walletSource"].includes(field?.name ?? ""))
+        .every((field) => field?.required === false),
+    ).toBe(true);
     expect(requestFieldsByRoute.get("campaigns.eligibility")?.map((field) => field?.name)).toEqual(
       expect.arrayContaining(["accountType", "address", "campaignId", "walletAddress", "walletSource"]),
     );
@@ -245,7 +301,7 @@ describe("API foundation registry", () => {
       implementedLocalCount: 12,
       notYetImplementedCount: 0,
       productionShapedDeferredCount: 2,
-      routeCount: apiRuntimeRoutes.length,
+      routeCount: apiRuntimeContractRoutes.length,
       surfaceCount: expectedSurfaceIds.length,
       validationIssueCount: 0,
     });
@@ -264,6 +320,9 @@ describe("API foundation registry", () => {
       notes: expect.stringContaining("campaign participant repository/read model"),
       routeIds: expect.arrayContaining([
         "campaigns.owner.list",
+        "campaigns.owner.detail",
+        "campaigns.participant.list",
+        "campaigns.participant.journey",
         "campaigns.lifecycle",
         "campaigns.launch.readiness",
         "campaigns.delivery.readiness",

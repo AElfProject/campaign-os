@@ -7,6 +7,7 @@ export type ApiRuntimeErrorCode =
   | "AUTH_SESSION_REQUIRED"
   | "AUTH_SESSION_INVALID"
   | "AUTH_FORBIDDEN"
+  | "AUTH_SUBJECT_MISMATCH"
   | "INVALID_REQUEST"
   | "INVALID_CAMPAIGN"
   | "INVALID_TASK"
@@ -83,7 +84,7 @@ export const invalidRequest = (field: string, reason: string) =>
     400,
     "The request does not match the local Campaign OS API contract.",
     "请求不符合本地 Campaign OS API contract。",
-    { field, reason },
+    { diagnosticCode: "INVALID_REQUEST", field, reason },
   );
 
 export const authSessionRequired = (details?: Record<string, unknown>) =>
@@ -113,13 +114,22 @@ export const authForbidden = (details?: Record<string, unknown>) =>
     details,
   );
 
+export const authSubjectMismatch = (details?: Record<string, unknown>) =>
+  runtimeError(
+    "AUTH_SUBJECT_MISMATCH",
+    403,
+    "The participant compatibility subject does not match the issued wallet session.",
+    "Participant compatibility subject 与已签发 wallet session 不一致。",
+    details,
+  );
+
 export const invalidCampaign = (campaignId: string) =>
   runtimeError(
     "INVALID_CAMPAIGN",
     404,
     "The requested campaign is not available in the seeded local runtime.",
     "本地 seeded runtime 中不存在请求的活动。",
-    { campaignId },
+    { campaignId, diagnosticCode: "INVALID_CAMPAIGN", field: "campaignId" },
   );
 
 export const invalidTask = (taskId: string) =>
@@ -128,7 +138,7 @@ export const invalidTask = (taskId: string) =>
     404,
     "The requested task is not available in the seeded local runtime.",
     "本地 seeded runtime 中不存在请求的任务。",
-    { taskId },
+    { diagnosticCode: "INVALID_TASK", field: "taskId", taskId },
   );
 
 export const unsupportedLocale = (locale: string) =>

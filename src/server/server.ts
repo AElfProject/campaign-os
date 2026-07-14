@@ -14,7 +14,7 @@ import {
 import { createFailureEnvelope } from "./envelope";
 import { internalRuntimeError, persistenceUnavailable } from "./errors";
 import { createBackendServiceReadinessReport } from "./backendService";
-import { apiRuntimeRoutes } from "./routes";
+import { apiRuntimeContractRoutes } from "./routes";
 import { evaluateServerRequestGuard } from "./serverRequestGuard";
 import {
   createServerRuntimeReadiness,
@@ -81,6 +81,34 @@ const toRuntimeHeaders = (request: IncomingMessage): ApiRuntimeHeaders =>
       Array.isArray(value) || typeof value === "string" ? value : undefined,
     ]),
   ) as ApiRuntimeHeaders;
+
+const toGuardHeaders = (
+  request: IncomingMessage,
+  traceHeaderName: string,
+) => {
+  const headers = { ...request.headers };
+  const traceHeaderKey = Object.keys(headers).find(
+    (key) => key.toLowerCase() === traceHeaderName.toLowerCase(),
+  );
+  const rawTraceId = traceHeaderKey
+    ? Array.isArray(headers[traceHeaderKey])
+      ? headers[traceHeaderKey]?.[0]
+      : headers[traceHeaderKey]
+    : undefined;
+  const traceId = typeof rawTraceId === "string" ? rawTraceId.trim() : undefined;
+  const safe = Boolean(
+    traceId
+    && traceId.length <= 128
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(traceId)
+    && !/(?:bearer|password|private|raw[_-]?signature|secret|token)/i.test(traceId)
+  );
+
+  if (traceHeaderKey && !safe) {
+    delete headers[traceHeaderKey];
+  }
+
+  return headers;
+};
 
 const readRequestBody = (
   request: IncomingMessage,
@@ -228,7 +256,7 @@ export const startCampaignOsApiServer = async ({
           },
           createFailureEnvelope({
             error: persistenceUnavailable("server.shutdown").body,
-            routeCount: apiRuntimeRoutes.length,
+            routeCount: apiRuntimeContractRoutes.length,
             traceId,
             version: runtimeContract.runtimeVersion,
           }),
@@ -248,10 +276,10 @@ export const startCampaignOsApiServer = async ({
         const guardDecision = evaluateServerRequestGuard({
           body: requestBody.body,
           bodyBytes: requestBody.bodyBytes,
-          headers: request.headers,
+          headers: toGuardHeaders(request, runtimeContract.requestGuard.traceHeaderName),
           method: request.method ?? "GET",
           path: request.url ?? "/",
-        }, runtimeContract, apiRuntimeRoutes.length);
+        }, runtimeContract, apiRuntimeContractRoutes.length);
 
         if (guardDecision.kind === "preflight") {
           writeJsonResponse(response, guardDecision.status, guardDecision.headers, guardDecision.body);
@@ -305,7 +333,7 @@ export const startCampaignOsApiServer = async ({
               },
               createFailureEnvelope({
                 error: internalRuntimeError().body,
-                routeCount: apiRuntimeRoutes.length,
+                routeCount: apiRuntimeContractRoutes.length,
                 traceId,
                 version: runtimeContract.runtimeVersion,
               }),

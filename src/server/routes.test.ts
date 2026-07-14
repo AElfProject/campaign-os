@@ -3,6 +3,7 @@ import { apiSkillContractRegistry, requiredApiSkillIds } from "../domain/apiSkil
 import type { ApiSkillId } from "../domain/types";
 import {
   apiRuntimeRouteById,
+  apiRuntimeContractRoutes,
   apiRuntimeRoutes,
   apiRuntimeServiceGroupById,
   apiRuntimeServiceGroups,
@@ -13,11 +14,13 @@ import {
   createRuntimeSafety,
   createSuccessEnvelope,
   invalidRequest,
+  participantCampaignRouteContracts,
   routeNotFound,
   runtimeBoundary,
   toApiRuntimeErrorBody,
 } from "./index";
 import { createApiFoundationReport } from "./apiFoundation";
+import { getProtectedRouteAuth } from "./authSession";
 import { createApiServicePortReport } from "./servicePorts";
 import { createProductionBackendRouteCoverage } from "./productionBackendReadiness";
 
@@ -199,6 +202,77 @@ describe("API runtime route catalog", () => {
     }
   });
 
+  it("defines public, Owner, and Participant Campaign route contracts with auth coverage", () => {
+    const contractRouteIds = apiRuntimeContractRoutes.map((route) => route.id);
+
+    expect(new Set(contractRouteIds).size).toBe(apiRuntimeContractRoutes.length);
+    expect(apiRuntimeRouteById["campaigns.list"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns",
+      serviceGroup: "campaign",
+    });
+    expect(apiRuntimeRouteById["campaigns.detail"]).toMatchObject({
+      method: "GET",
+      path: "/api/campaigns/:campaignId",
+      serviceGroup: "campaign",
+    });
+
+    expect(participantCampaignRouteContracts.map((route) => route.id)).toEqual([
+      "campaigns.owner.detail",
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
+    ]);
+    expect(contractRouteIds).toEqual(expect.arrayContaining([
+      "campaigns.list",
+      "campaigns.detail",
+      "campaigns.owner.detail",
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
+    ]));
+    expect(apiRuntimeRouteById["campaigns.owner.detail"]).toMatchObject({
+      method: "GET",
+      path: "/api/owner/campaigns/:campaignId",
+      readiness: "blocked",
+      serviceGroup: "campaign",
+    });
+    expect(apiRuntimeRouteById["campaigns.participant.list"]).toMatchObject({
+      method: "GET",
+      path: "/api/participant/campaigns",
+      readiness: "blocked",
+      serviceGroup: "campaign",
+    });
+    expect(apiRuntimeRouteById["campaigns.participant.journey"]).toMatchObject({
+      method: "GET",
+      path: "/api/participant/campaigns/:campaignId/journey",
+      readiness: "blocked",
+      serviceGroup: "campaign",
+    });
+
+    for (const routeId of [
+      "campaigns.owner.detail",
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
+    ]) {
+      expect(getProtectedRouteAuth(routeId)).toMatchObject({
+        enforcementStatus: "local_enforced",
+        proofRequired: true,
+        sessionRequired: true,
+      });
+    }
+
+    for (const routeId of [
+      "tasks.verify",
+      "campaigns.eligibility",
+      "campaigns.points.ranking.ledger.runtime",
+    ]) {
+      expect(apiRuntimeRoutes.some((route) => route.id === routeId)).toBe(true);
+      expect(getProtectedRouteAuth(routeId)).toMatchObject({
+        enforcementStatus: "local_enforced",
+        requiredRoles: ["participant"],
+      });
+    }
+  });
+
   it("covers every backend service group with route metadata", () => {
     const routeServiceGroups = new Set(apiRuntimeRoutes.map((runtimeRoute) => runtimeRoute.serviceGroup));
 
@@ -209,13 +283,13 @@ describe("API runtime route catalog", () => {
 
   it("accounts for every runtime route in backend topology metadata", () => {
     const report = createBackendTopologyReport({
-      knownRouteIds: apiRuntimeRoutes.map((runtimeRoute) => runtimeRoute.id),
+      knownRouteIds: apiRuntimeContractRoutes.map((runtimeRoute) => runtimeRoute.id),
     });
 
     expect(report.coverage.unassignedRouteIds).toEqual([]);
     expect(report.validation.valid).toBe(true);
 
-    for (const runtimeRoute of apiRuntimeRoutes) {
+    for (const runtimeRoute of apiRuntimeContractRoutes) {
       const owners = report.services.filter((service) => service.routeIds.includes(runtimeRoute.id));
       expect(owners).toHaveLength(1);
     }
@@ -378,11 +452,11 @@ describe("API runtime route catalog", () => {
       implementedLocalCount: 12,
       notYetImplementedCount: 0,
       productionShapedDeferredCount: 2,
-      routeCount: apiRuntimeRoutes.length,
+      routeCount: apiRuntimeContractRoutes.length,
       validationIssueCount: 0,
     });
-    expect(foundationRouteIds).toEqual(apiRuntimeRoutes.map((route) => route.id));
-    expect(new Set(servicePortRouteIds).size).toBe(apiRuntimeRoutes.length);
+    expect(foundationRouteIds).toEqual(apiRuntimeContractRoutes.map((route) => route.id));
+    expect(new Set(servicePortRouteIds).size).toBe(apiRuntimeContractRoutes.length);
     expect(servicePortRouteIds.sort()).toEqual(foundationRouteIds.sort());
 
     for (const route of foundation.routes) {

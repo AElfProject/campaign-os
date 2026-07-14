@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { campaignLifecycleStatuses, supportedLocales } from "../domain/types";
 import type {
   CampaignDbDraft,
   CampaignDbDiagnostic,
@@ -10,6 +11,12 @@ import type {
   CampaignDbTaskEvidenceRecord,
   CampaignDbTaskDraft,
 } from "./campaignDbRepository";
+import {
+  compareParticipantRankRows,
+  toParticipantRankRow,
+  withoutParticipantRank,
+  type ParticipantRankRow,
+} from "./participantJourney";
 
 export type CampaignDurableStoreMode =
   | "local_seeded"
@@ -115,6 +122,20 @@ export interface CampaignDurableStoreTaskVerificationResult {
   participant: CampaignDbParticipantRecord;
 }
 
+export interface CampaignDurableStoreParticipantJourneySnapshotInput {
+  campaignId: string;
+  walletAddress: string;
+}
+
+export interface CampaignDurableStoreParticipantJourneySnapshot {
+  campaign: CampaignDbDraft | undefined;
+  completions: CampaignDbTaskCompletion[];
+  evidence: CampaignDbTaskEvidenceRecord[];
+  participant: CampaignDbParticipantRecord | undefined;
+  rankingParticipants: ParticipantRankRow[];
+  tasks: CampaignDbTaskDraft[];
+}
+
 export interface CampaignDurableStore {
   close(): Promise<void>;
   create(
@@ -134,6 +155,10 @@ export interface CampaignDurableStore {
     walletAddress: string,
     context?: CampaignDurableStoreOperationContext,
   ): Promise<CampaignDbParticipantRecord | undefined>;
+  getParticipantJourneySnapshot(
+    input: CampaignDurableStoreParticipantJourneySnapshotInput,
+    context?: CampaignDurableStoreOperationContext,
+  ): Promise<CampaignDurableStoreParticipantJourneySnapshot>;
   getReferralBinding(
     campaignId: string,
     inviteeWalletAddress: string,
@@ -255,6 +280,8 @@ const applyOptionalLimit = <T>(
   maximum: number,
 ) => limit === undefined ? records : records.slice(0, clampLimit(limit, maximum));
 
+const cloneRecord = <T>(value: T): T => structuredClone(value);
+
 const sortDrafts = (records: readonly CampaignDbDraft[]) =>
   [...records].sort((left, right) => {
     const createdAtComparison = left.createdAt.localeCompare(right.createdAt);
@@ -311,23 +338,297 @@ const sortReferralBindings = (records: readonly CampaignDbReferralBindingRecord[
       : campaignComparison;
   });
 
-const parseDocument = (raw: string): CampaignDurableStoreDocument => {
-  const parsed = JSON.parse(raw) as Partial<CampaignDurableStoreDocument>;
+type UnknownRecord = Record<string, unknown>;
 
-  if (parsed.version !== 1 || !Array.isArray(parsed.records)) {
-    return { ...EMPTY_DOCUMENT };
+const accountTypes = ["AA", "EOA", "UNKNOWN"] as const;
+const completionEvidenceSources = ["AEFINDER", "AELFSCAN", "DAPP_API", "SOCIAL_API", "MANUAL"] as const;
+const completionStatuses = ["pending", "completed", "failed", "manual_review"] as const;
+const contractModes = ["OFF_CHAIN_MVP", "V2_COMPANION", "CONTRACT_CLAIM"] as const;
+const referralBindingStatuses = ["pending", "qualified", "risk_review"] as const;
+const verificationTypes = ["WALLET", "ON_CHAIN", "DAPP_API", "SOCIAL", "MANUAL"] as const;
+const walletPolicies = ["ANY", "AA_ONLY", "EOA_ONLY"] as const;
+const walletSignatureStatuses = ["signed", "missing", "not_required", "not_available"] as const;
+const walletSources = [
+  "PORTKEY_AA",
+  "PORTKEY_EOA_APP",
+  "PORTKEY_EOA_EXTENSION",
+  "NIGHTELF",
+  "AGENT_SKILL",
+  "OTHER",
+] as const;
+
+const isRecord = (value: unknown): value is UnknownRecord =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isString = (value: unknown): value is string => typeof value === "string";
+const isNonEmptyString = (value: unknown): value is string =>
+  isString(value) && value.trim().length > 0;
+const isOptionalNonEmptyString = (value: unknown) => value === undefined || isNonEmptyString(value);
+const isTimestamp = (value: unknown): value is string =>
+  isNonEmptyString(value) && Number.isFinite(new Date(value).getTime());
+const isOptionalTimestamp = (value: unknown) => value === undefined || isTimestamp(value);
+const isSafeNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isOptionalPositiveInteger = (value: unknown) =>
+  value === undefined || (typeof value === "number" && Number.isSafeInteger(value) && value > 0);
+const isEnumValue = <TValue extends string>(
+  value: unknown,
+  values: readonly TValue[],
+): value is TValue => isString(value) && (values as readonly string[]).includes(value);
+
+const hasExactKeys = (value: UnknownRecord, expectedKeys: readonly string[]) => {
+  const actualKeys = Object.keys(value).sort();
+  const sortedExpectedKeys = [...expectedKeys].sort();
+
+  return actualKeys.length === sortedExpectedKeys.length
+    && actualKeys.every((key, index) => key === sortedExpectedKeys[index]);
+};
+
+const isBoundedUniqueStringArray = <TValue extends string = string>(
+  value: unknown,
+  maximum: number,
+  allowed?: readonly TValue[],
+  minimum = 0,
+): value is TValue[] => {
+  if (!Array.isArray(value) || value.length < minimum || value.length > maximum) {
+    return false;
   }
 
-  return {
-    completionRecords: Array.isArray(parsed.completionRecords) ? parsed.completionRecords : [],
-    participantRecords: Array.isArray(parsed.participantRecords) ? parsed.participantRecords : [],
-    referralBindingRecords: Array.isArray(parsed.referralBindingRecords) ? parsed.referralBindingRecords : [],
-    records: parsed.records,
-    taskEvidenceRecords: Array.isArray(parsed.taskEvidenceRecords) ? parsed.taskEvidenceRecords : [],
-    taskRecords: Array.isArray(parsed.taskRecords) ? parsed.taskRecords : [],
-    updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : EMPTY_DOCUMENT.updatedAt,
+  const seen = new Set<string>();
+
+  for (const entry of value) {
+    if (
+      !isNonEmptyString(entry)
+      || seen.has(entry)
+      || (allowed && !allowed.includes(entry as TValue))
+    ) {
+      return false;
+    }
+
+    seen.add(entry);
+  }
+
+  return true;
+};
+
+const isUpdatedAfterCreated = (value: UnknownRecord) =>
+  isTimestamp(value.createdAt)
+  && isTimestamp(value.updatedAt)
+  && new Date(value.updatedAt).getTime() >= new Date(value.createdAt).getTime();
+
+const isPublishReadiness = (value: unknown) => isRecord(value)
+  && hasExactKeys(value, ["blockers", "ready", "warnings"])
+  && isBoundedUniqueStringArray(value.blockers, 100)
+  && typeof value.ready === "boolean"
+  && isBoundedUniqueStringArray(value.warnings, 100);
+
+const isEvidenceRule = (value: unknown) => isRecord(value)
+  && Object.keys(value).length <= 100
+  && Object.entries(value).every(([key, entry]) =>
+    isNonEmptyString(key)
+    && (
+      isString(entry)
+      || typeof entry === "boolean"
+      || (typeof entry === "number" && Number.isFinite(entry))
+    ));
+
+const isCampaignDraft = (value: unknown): value is CampaignDbDraft => isRecord(value)
+  && isEnumValue(value.contractMode, contractModes)
+  && isUpdatedAfterCreated(value)
+  && value.defaultLocale === "en-US"
+  && isNonEmptyString(value.duration)
+  && isTimestamp(value.endTime)
+  && isNonEmptyString(value.goal)
+  && isNonEmptyString(value.id)
+  && isOptionalNonEmptyString(value.metadataHash)
+  && isOptionalNonEmptyString(value.metadataUri)
+  && isNonEmptyString(value.ownerAddress)
+  && isNonEmptyString(value.projectId)
+  && isPublishReadiness(value.publishReadiness)
+  && isNonEmptyString(value.rewardDescription)
+  && isOptionalNonEmptyString(value.rewardDisclaimerHash)
+  && isTimestamp(value.startTime)
+  && new Date(value.startTime).getTime() < new Date(value.endTime).getTime()
+  && isEnumValue(value.status, campaignLifecycleStatuses)
+  && isBoundedUniqueStringArray(value.supportedLocales, supportedLocales.length, supportedLocales, 1)
+  && value.supportedLocales.includes("en-US")
+  && isEnumValue(value.walletPolicy, walletPolicies);
+
+const isTaskDraft = (value: unknown): value is CampaignDbTaskDraft => isRecord(value)
+  && isNonEmptyString(value.campaignId)
+  && isUpdatedAfterCreated(value)
+  && isEvidenceRule(value.evidenceRule)
+  && isNonEmptyString(value.id)
+  && isSafeNonNegativeInteger(value.points)
+  && typeof value.required === "boolean"
+  && isNonEmptyString(value.templateCode)
+  && isEnumValue(value.verificationType, verificationTypes)
+  && isEnumValue(value.walletCompatibility, walletPolicies);
+
+const isTaskCompletion = (value: unknown): value is CampaignDbTaskCompletion => isRecord(value)
+  && isEnumValue(value.accountType, accountTypes)
+  && isNonEmptyString(value.campaignId)
+  && isOptionalTimestamp(value.completedAt)
+  && isUpdatedAfterCreated(value)
+  && isOptionalNonEmptyString(value.evidenceId)
+  && isOptionalNonEmptyString(value.evidenceHash)
+  && isEnumValue(value.evidenceSource, completionEvidenceSources)
+  && isNonEmptyString(value.id)
+  && isSafeNonNegativeInteger(value.pointsAwarded)
+  && isEnumValue(value.status, completionStatuses)
+  && (value.status !== "completed" || value.completedAt !== undefined)
+  && isNonEmptyString(value.taskId)
+  && isNonEmptyString(value.walletAddress)
+  && isEnumValue(value.walletSource, walletSources);
+
+const isParticipantRecord = (value: unknown): value is CampaignDbParticipantRecord => isRecord(value)
+  && isEnumValue(value.accountType, accountTypes)
+  && isNonEmptyString(value.campaignId)
+  && isUpdatedAfterCreated(value)
+  && isNonEmptyString(value.id)
+  && isEnumValue(value.localePreference, supportedLocales)
+  && isOptionalPositiveInteger(value.rank)
+  && isBoundedUniqueStringArray(value.riskFlags, 100)
+  && isSafeNonNegativeInteger(value.totalPoints)
+  && isNonEmptyString(value.walletAddress)
+  && isEnumValue(value.walletSignatureStatus, walletSignatureStatuses)
+  && isEnumValue(value.walletSource, walletSources)
+  && typeof value.walletTypeVerified === "boolean"
+  && isOptionalTimestamp(value.walletVerifiedAt);
+
+const isReferralBindingRecord = (value: unknown): value is CampaignDbReferralBindingRecord => isRecord(value)
+  && isNonEmptyString(value.campaignId)
+  && isUpdatedAfterCreated(value)
+  && isNonEmptyString(value.id)
+  && isEnumValue(value.inviteeAccountType, accountTypes)
+  && isNonEmptyString(value.inviteeWalletAddress)
+  && isEnumValue(value.inviteeWalletSource, walletSources)
+  && typeof value.qualifiedActionCompleted === "boolean"
+  && isOptionalTimestamp(value.qualifiedActionCompletedAt)
+  && isOptionalNonEmptyString(value.qualifiedActionEvidenceHash)
+  && isEnumValue(value.referrerAccountType, accountTypes)
+  && isNonEmptyString(value.referrerWalletAddress)
+  && value.inviteeWalletAddress !== value.referrerWalletAddress
+  && isEnumValue(value.referrerWalletSource, walletSources)
+  && isBoundedUniqueStringArray(value.riskFlags, 100)
+  && isEnumValue(value.status, referralBindingStatuses)
+  && value.qualifiedActionCompleted === (value.qualifiedActionCompletedAt !== undefined)
+  && (value.status === "qualified") === value.qualifiedActionCompleted;
+
+const isTaskEvidenceRecord = (value: unknown): value is CampaignDbTaskEvidenceRecord => isRecord(value)
+  && isEnumValue(value.accountType, accountTypes)
+  && isNonEmptyString(value.campaignId)
+  && isTimestamp(value.capturedAt)
+  && isOptionalNonEmptyString(value.completionId)
+  && isUpdatedAfterCreated(value)
+  && isBoundedUniqueStringArray(value.diagnosticCodes, 100)
+  && isNonEmptyString(value.evidenceHash)
+  && isOptionalNonEmptyString(value.evidenceRef)
+  && isEnumValue(value.evidenceSource, completionEvidenceSources)
+  && isNonEmptyString(value.id)
+  && value.liveContractExecuted === false
+  && value.liveProviderExecuted === false
+  && value.liveRewardExecuted === false
+  && value.liveStorageExecuted === false
+  && isSafeNonNegativeInteger(value.pointsAwarded)
+  && isEnumValue(value.status, completionStatuses)
+  && isNonEmptyString(value.taskId)
+  && isNonEmptyString(value.walletAddress)
+  && isEnumValue(value.walletSource, walletSources);
+
+const parseCollection = <TValue>(
+  document: UnknownRecord,
+  field: string,
+  isValue: (value: unknown) => value is TValue,
+  required = false,
+): TValue[] => {
+  const value = document[field];
+
+  if (value === undefined && !required) {
+    return [];
+  }
+
+  if (!Array.isArray(value) || !value.every(isValue)) {
+    throw new TypeError(`Campaign durable store collection '${field}' is invalid.`);
+  }
+
+  return value;
+};
+
+const assertUniqueKeys = <TValue>(
+  values: readonly TValue[],
+  keyFor: (value: TValue) => string,
+  field: string,
+) => {
+  const keys = new Set<string>();
+
+  for (const value of values) {
+    const key = keyFor(value);
+
+    if (keys.has(key)) {
+      throw new TypeError(`Campaign durable store identity '${field}' is duplicated.`);
+    }
+
+    keys.add(key);
+  }
+};
+
+const tupleKey = (...values: readonly string[]) => JSON.stringify(values);
+
+const assertDocumentIdentityConsistency = (document: CampaignDurableStoreDocument) => {
+  assertUniqueKeys(document.records, (record) => record.id, "records.id");
+  assertUniqueKeys(document.taskRecords, (record) => record.id, "taskRecords.id");
+  assertUniqueKeys(document.participantRecords, (record) => record.id, "participantRecords.id");
+  assertUniqueKeys(
+    document.participantRecords,
+    (record) => tupleKey(record.campaignId, record.walletAddress),
+    "participantRecords.campaignId+walletAddress",
+  );
+  assertUniqueKeys(document.referralBindingRecords, (record) => record.id, "referralBindingRecords.id");
+  assertUniqueKeys(
+    document.referralBindingRecords,
+    (record) => tupleKey(record.campaignId, record.inviteeWalletAddress),
+    "referralBindingRecords.campaignId+inviteeWalletAddress",
+  );
+  assertUniqueKeys(document.completionRecords, (record) => record.id, "completionRecords.id");
+  assertUniqueKeys(
+    document.completionRecords,
+    (record) => tupleKey(record.campaignId, record.taskId, record.walletAddress),
+    "completionRecords.campaignId+taskId+walletAddress",
+  );
+  assertUniqueKeys(document.taskEvidenceRecords, (record) => record.id, "taskEvidenceRecords.id");
+  assertUniqueKeys(
+    document.taskEvidenceRecords,
+    (record) => tupleKey(record.campaignId, record.taskId, record.walletAddress),
+    "taskEvidenceRecords.campaignId+taskId+walletAddress",
+  );
+};
+
+const parseDocument = (raw: string): CampaignDurableStoreDocument => {
+  const parsed = JSON.parse(raw) as unknown;
+
+  if (
+    !isRecord(parsed)
+    || parsed.version !== 1
+    || (parsed.updatedAt !== undefined && !isTimestamp(parsed.updatedAt))
+  ) {
+    throw new TypeError("Campaign durable store document is invalid.");
+  }
+
+  const document: CampaignDurableStoreDocument = {
+    completionRecords: parseCollection(parsed, "completionRecords", isTaskCompletion),
+    participantRecords: parseCollection(parsed, "participantRecords", isParticipantRecord),
+    referralBindingRecords: parseCollection(parsed, "referralBindingRecords", isReferralBindingRecord),
+    records: parseCollection(parsed, "records", isCampaignDraft, true),
+    taskEvidenceRecords: parseCollection(parsed, "taskEvidenceRecords", isTaskEvidenceRecord),
+    taskRecords: parseCollection(parsed, "taskRecords", isTaskDraft),
+    updatedAt: parsed.updatedAt ?? EMPTY_DOCUMENT.updatedAt,
     version: 1,
   };
+
+  assertDocumentIdentityConsistency(document);
+
+  return document;
 };
 
 export const createCampaignDurableStore = ({
@@ -335,14 +636,18 @@ export const createCampaignDurableStore = ({
   filePath,
   mode = "local_seeded",
 }: CreateCampaignDurableStoreOptions = {}): CampaignDurableStore => {
-  const recordsById = new Map<string, CampaignDbDraft>();
-  const participantRecordsById = new Map<string, CampaignDbParticipantRecord>();
-  const referralBindingRecordsById = new Map<string, CampaignDbReferralBindingRecord>();
-  const taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
-  const taskEvidenceById = new Map<string, CampaignDbTaskEvidenceRecord>();
-  const taskRecordsById = new Map<string, CampaignDbTaskDraft>();
+  let recordsById = new Map<string, CampaignDbDraft>();
+  let participantRecordsById = new Map<string, CampaignDbParticipantRecord>();
+  let participantRecordIds = new Set<string>();
+  let referralBindingRecordsById = new Map<string, CampaignDbReferralBindingRecord>();
+  let taskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
+  let taskEvidenceById = new Map<string, CampaignDbTaskEvidenceRecord>();
+  let taskRecordsById = new Map<string, CampaignDbTaskDraft>();
   const startupDiagnostics: CampaignDurableStoreDiagnostic[] = [];
+  let hydrationDiagnostic: CampaignDurableStoreDiagnostic | undefined;
   let initialized = false;
+  let initializationPromise: Promise<void> | undefined;
+  let journeyOperationTail = Promise.resolve();
   const durable = mode === "durable_test" || mode === "production_required";
 
   if (durable && !filePath) {
@@ -352,6 +657,17 @@ export const createCampaignDurableStore = ({
       "Campaign durable store requires an explicit file path in durable modes.",
     ));
   }
+
+  const hydrationError = () => {
+    const issue = diagnostic(
+      "CAMPAIGN_DURABLE_STORE_READ_FAILED",
+      "filePath",
+      "Campaign durable store could not read persisted campaign drafts.",
+    );
+    hydrationDiagnostic = issue;
+
+    return new CampaignDurableStoreError("Campaign durable store read failed.", [issue]);
+  };
 
   const readDocument = async () => {
     if (!filePath || !durable) {
@@ -365,14 +681,53 @@ export const createCampaignDurableStore = ({
         return { ...EMPTY_DOCUMENT };
       }
 
-      startupDiagnostics.push(diagnostic(
-        "CAMPAIGN_DURABLE_STORE_READ_FAILED",
-        "filePath",
-        "Campaign durable store could not read persisted campaign drafts.",
-      ));
-
-      return { ...EMPTY_DOCUMENT };
+      throw hydrationError();
     }
+  };
+
+  const hydrateDocument = async () => {
+    const document = await readDocument();
+    const hydratedRecordsById = new Map<string, CampaignDbDraft>();
+    const hydratedParticipantRecordsById = new Map<string, CampaignDbParticipantRecord>();
+    const hydratedParticipantRecordIds = new Set<string>();
+    const hydratedReferralBindingRecordsById = new Map<string, CampaignDbReferralBindingRecord>();
+    const hydratedTaskCompletionsById = new Map<string, CampaignDbTaskCompletion>();
+    const hydratedTaskEvidenceById = new Map<string, CampaignDbTaskEvidenceRecord>();
+    const hydratedTaskRecordsById = new Map<string, CampaignDbTaskDraft>();
+
+    for (const draft of document.records) {
+      hydratedRecordsById.set(draft.id, draft);
+    }
+
+    for (const participant of document.participantRecords) {
+      hydratedParticipantRecordsById.set(`${participant.campaignId}::${participant.walletAddress}`, participant);
+      hydratedParticipantRecordIds.add(participant.id);
+    }
+
+    for (const binding of document.referralBindingRecords) {
+      hydratedReferralBindingRecordsById.set(`${binding.campaignId}::${binding.inviteeWalletAddress}`, binding);
+    }
+
+    for (const taskDraft of document.taskRecords) {
+      hydratedTaskRecordsById.set(taskDraft.id, taskDraft);
+    }
+
+    for (const completion of document.completionRecords) {
+      hydratedTaskCompletionsById.set(completion.id, completion);
+    }
+
+    for (const evidence of document.taskEvidenceRecords) {
+      hydratedTaskEvidenceById.set(evidence.id, evidence);
+    }
+
+    recordsById = hydratedRecordsById;
+    participantRecordsById = hydratedParticipantRecordsById;
+    participantRecordIds = hydratedParticipantRecordIds;
+    referralBindingRecordsById = hydratedReferralBindingRecordsById;
+    taskCompletionsById = hydratedTaskCompletionsById;
+    taskEvidenceById = hydratedTaskEvidenceById;
+    taskRecordsById = hydratedTaskRecordsById;
+    hydrationDiagnostic = undefined;
   };
 
   const ensureInitialized = async () => {
@@ -380,38 +735,24 @@ export const createCampaignDurableStore = ({
       return;
     }
 
-    initialized = true;
-    const document = await readDocument();
-    recordsById.clear();
-    participantRecordsById.clear();
-    referralBindingRecordsById.clear();
-    taskCompletionsById.clear();
-    taskEvidenceById.clear();
-    taskRecordsById.clear();
+    initializationPromise ??= (async () => {
+      try {
+        await hydrateDocument();
+        initialized = true;
+      } catch (error) {
+        initialized = false;
 
-    for (const draft of document.records) {
-      recordsById.set(draft.id, draft);
-    }
+        if (error instanceof CampaignDurableStoreError) {
+          throw error;
+        }
 
-    for (const participant of document.participantRecords) {
-      participantRecordsById.set(`${participant.campaignId}::${participant.walletAddress}`, participant);
-    }
+        throw hydrationError();
+      } finally {
+        initializationPromise = undefined;
+      }
+    })();
 
-    for (const binding of document.referralBindingRecords) {
-      referralBindingRecordsById.set(`${binding.campaignId}::${binding.inviteeWalletAddress}`, binding);
-    }
-
-    for (const taskDraft of document.taskRecords) {
-      taskRecordsById.set(taskDraft.id, taskDraft);
-    }
-
-    for (const completion of document.completionRecords) {
-      taskCompletionsById.set(completion.id, completion);
-    }
-
-    for (const evidence of document.taskEvidenceRecords) {
-      taskEvidenceById.set(evidence.id, evidence);
-    }
+    await initializationPromise;
   };
 
   const writeDocument = async () => {
@@ -458,13 +799,185 @@ export const createCampaignDurableStore = ({
 
   const currentDiagnostics = () => [
     ...startupDiagnostics,
+    ...(hydrationDiagnostic ? [hydrationDiagnostic] : []),
     ...productionRequiredDiagnostics(),
   ];
 
-  return {
-    close: async () => {
+  const runJourneyExclusive = async <T>(operation: () => Promise<T>): Promise<T> => {
+    const previous = journeyOperationTail;
+    let release: () => void = () => undefined;
+    journeyOperationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  };
+
+  const findCompletionByLogicalKey = (
+    campaignId: string,
+    taskId: string,
+    walletAddress: string,
+  ) => Array.from(taskCompletionsById.values()).find((completion) =>
+    completion.campaignId === campaignId
+    && completion.taskId === taskId
+    && completion.walletAddress === walletAddress);
+
+  const findEvidenceByLogicalKey = (
+    campaignId: string,
+    taskId: string,
+    walletAddress: string,
+  ) => Array.from(taskEvidenceById.values()).find((evidence) =>
+    evidence.campaignId === campaignId
+    && evidence.taskId === taskId
+    && evidence.walletAddress === walletAddress);
+
+  const completedPointsForWallet = (campaignId: string, walletAddress: string) => {
+    const byTaskId = new Map<string, CampaignDbTaskCompletion>();
+
+    for (const completion of sortTaskCompletions(Array.from(taskCompletionsById.values()))) {
+      if (
+        completion.campaignId === campaignId
+        && completion.walletAddress === walletAddress
+        && completion.status === "completed"
+        && !byTaskId.has(completion.taskId)
+      ) {
+        byTaskId.set(completion.taskId, completion);
+      }
+    }
+
+    return Array.from(byTaskId.values()).reduce(
+      (total, completion) => total + completion.pointsAwarded,
+      0,
+    );
+  };
+
+  const availableVerificationId = (
+    requestedId: string,
+    prefix: string,
+    ids: Pick<Map<string, unknown> | Set<string>, "has" | "size">,
+  ) => {
+    if (!ids.has(requestedId)) {
+      return requestedId;
+    }
+
+    let sequence = ids.size + 1;
+    let candidate = `${prefix}${sequence.toString().padStart(4, "0")}`;
+
+    while (ids.has(candidate)) {
+      sequence += 1;
+      candidate = `${prefix}${sequence.toString().padStart(4, "0")}`;
+    }
+
+    return candidate;
+  };
+
+  const upsertTaskVerification = (
+    input: CampaignDurableStoreTaskVerificationWrite,
+  ): Promise<CampaignDurableStoreTaskVerificationResult> => runJourneyExclusive(async () => {
+    await ensureInitialized();
+    const previousCompletions = new Map(taskCompletionsById);
+    const previousEvidence = new Map(taskEvidenceById);
+    const previousParticipants = new Map(participantRecordsById);
+    const previousParticipantIds = new Set(participantRecordIds);
+    const existingCompletion = findCompletionByLogicalKey(
+      input.completion.campaignId,
+      input.completion.taskId,
+      input.completion.walletAddress,
+    );
+    const existingEvidence = findEvidenceByLogicalKey(
+      input.evidence.campaignId,
+      input.evidence.taskId,
+      input.evidence.walletAddress,
+    );
+    const participantRecordKey = `${input.participant.campaignId}::${input.participant.walletAddress}`;
+    const existingParticipant = participantRecordsById.get(participantRecordKey);
+    const evidenceId = existingEvidence?.id ?? availableVerificationId(
+      input.evidence.id,
+      "campaign-db-task-evidence-",
+      taskEvidenceById,
+    );
+    const completionId = existingCompletion?.id ?? availableVerificationId(
+      input.completion.id,
+      "campaign-db-task-completion-",
+      taskCompletionsById,
+    );
+    const completion: CampaignDbTaskCompletion = {
+      ...input.completion,
+      createdAt: existingCompletion?.createdAt ?? input.completion.createdAt,
+      evidenceHash: input.evidence.evidenceHash,
+      evidenceId,
+      id: completionId,
+    };
+    const evidence: CampaignDbTaskEvidenceRecord = {
+      ...input.evidence,
+      completionId,
+      createdAt: existingEvidence?.createdAt ?? input.evidence.createdAt,
+      id: evidenceId,
+      pointsAwarded: completion.pointsAwarded,
+    };
+
+    taskCompletionsById.set(completion.id, completion);
+    taskEvidenceById.set(evidence.id, evidence);
+
+    const participant: CampaignDbParticipantRecord = {
+      ...withoutParticipantRank(input.participant),
+      createdAt: existingParticipant?.createdAt ?? input.participant.createdAt,
+      id: existingParticipant?.id ?? availableVerificationId(
+        input.participant.id,
+        "campaign-db-participant-",
+        participantRecordIds,
+      ),
+      localePreference: existingParticipant?.localePreference ?? input.participant.localePreference,
+      riskFlags: existingParticipant?.riskFlags ?? input.participant.riskFlags,
+      totalPoints: completedPointsForWallet(completion.campaignId, completion.walletAddress),
+      walletSignatureStatus: existingParticipant?.walletSignatureStatus
+        ?? input.participant.walletSignatureStatus,
+      ...(existingParticipant?.walletVerifiedAt === undefined
+        ? {}
+        : { walletVerifiedAt: existingParticipant.walletVerifiedAt }),
+    };
+    participantRecordsById.set(participantRecordKey, participant);
+    participantRecordIds.add(participant.id);
+
+    try {
       await writeDocument();
-    },
+    } catch (error) {
+      taskCompletionsById.clear();
+      taskEvidenceById.clear();
+      participantRecordsById.clear();
+      participantRecordIds.clear();
+      for (const [id, record] of previousCompletions) {
+        taskCompletionsById.set(id, record);
+      }
+      for (const [id, record] of previousEvidence) {
+        taskEvidenceById.set(id, record);
+      }
+      for (const [id, record] of previousParticipants) {
+        participantRecordsById.set(id, record);
+      }
+      for (const id of previousParticipantIds) {
+        participantRecordIds.add(id);
+      }
+      throw error;
+    }
+
+    return {
+      completion: cloneRecord(completion),
+      evidence: cloneRecord(evidence),
+      participant: cloneRecord(participant),
+    };
+  });
+
+  return {
+    close: () => runJourneyExclusive(async () => {
+      await ensureInitialized();
+      await writeDocument();
+    }),
     create: async (draft) => {
       await ensureInitialized();
       recordsById.set(draft.id, draft);
@@ -489,6 +1002,43 @@ export const createCampaignDurableStore = ({
 
       return participantRecordsById.get(`${campaignId}::${walletAddress}`);
     },
+    getParticipantJourneySnapshot: ({ campaignId, walletAddress }) => runJourneyExclusive(async () => {
+      await ensureInitialized();
+      const campaign = recordsById.get(campaignId);
+
+      if (!campaign) {
+        return {
+          campaign: undefined,
+          completions: [],
+          evidence: [],
+          participant: undefined,
+          rankingParticipants: [],
+          tasks: [],
+        };
+      }
+
+      const tasks = sortTaskDrafts(Array.from(taskRecordsById.values()))
+        .filter((task) => task.campaignId === campaignId);
+      const completions = sortTaskCompletions(Array.from(taskCompletionsById.values()))
+        .filter((completion) => completion.campaignId === campaignId)
+        .filter((completion) => completion.walletAddress === walletAddress);
+      const evidence = sortTaskEvidence(Array.from(taskEvidenceById.values()))
+        .filter((record) => record.campaignId === campaignId)
+        .filter((record) => record.walletAddress === walletAddress);
+      const rankingParticipants = Array.from(participantRecordsById.values())
+        .filter((participant) => participant.campaignId === campaignId)
+        .map(toParticipantRankRow)
+        .sort(compareParticipantRankRows);
+
+      return cloneRecord({
+        campaign,
+        completions,
+        evidence,
+        participant: participantRecordsById.get(`${campaignId}::${walletAddress}`),
+        rankingParticipants,
+        tasks,
+      });
+    }),
     getReferralBinding: async (campaignId, inviteeWalletAddress) => {
       await ensureInitialized();
 
@@ -596,9 +1146,11 @@ export const createCampaignDurableStore = ({
         taskRecordCount: taskRecordsById.size,
       };
     },
-    reset: async () => {
+    reset: () => runJourneyExclusive(async () => {
+      await ensureInitialized();
       recordsById.clear();
       participantRecordsById.clear();
+      participantRecordIds.clear();
       referralBindingRecordsById.clear();
       taskCompletionsById.clear();
       taskEvidenceById.clear();
@@ -608,7 +1160,7 @@ export const createCampaignDurableStore = ({
       if (filePath && durable) {
         await rm(filePath, { force: true });
       }
-    },
+    }),
     upsertTaskCompletion: async (completion) => {
       await ensureInitialized();
       taskCompletionsById.set(completion.id, completion);
@@ -623,6 +1175,7 @@ export const createCampaignDurableStore = ({
 
       return evidence;
     },
+    upsertTaskVerification,
     upsertReferralBinding: async (binding) => {
       await ensureInitialized();
       referralBindingRecordsById.set(`${binding.campaignId}::${binding.inviteeWalletAddress}`, binding);
@@ -633,6 +1186,7 @@ export const createCampaignDurableStore = ({
     upsertParticipant: async (participant) => {
       await ensureInitialized();
       participantRecordsById.set(`${participant.campaignId}::${participant.walletAddress}`, participant);
+      participantRecordIds.add(participant.id);
       await writeDocument();
 
       return participant;

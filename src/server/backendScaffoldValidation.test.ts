@@ -249,18 +249,31 @@ describe("backend scaffold public guardrails", () => {
     ).toEqual([
       "campaigns.create",
       "campaigns.owner.list",
+      "campaigns.owner.detail",
       "campaigns.tasks.add",
       "campaigns.tasks.generate",
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
+      "campaigns.eligibility",
+      "campaigns.points.ranking.ledger.runtime",
+      "tasks.verify",
     ]);
+    expect(new Set(report.authEnforcement.locallyEnforcedRouteIds).size).toBe(10);
     expect(report.authEnforcement).toMatchObject({
       agentCredentialSubstitutionDisabled: true,
       campaignMutationRouteCount: 1,
-      localEnforcedRouteCount: 4,
+      localEnforcedRouteCount: 10,
       locallyEnforcedRouteIds: [
         "campaigns.create",
         "campaigns.owner.list",
+        "campaigns.owner.detail",
         "campaigns.tasks.add",
         "campaigns.tasks.generate",
+        "campaigns.participant.list",
+        "campaigns.participant.journey",
+        "campaigns.eligibility",
+        "campaigns.points.ranking.ledger.runtime",
+        "tasks.verify",
       ],
       mode: "local_enforced",
       productionProofVerifierReady: false,

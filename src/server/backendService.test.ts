@@ -9,7 +9,7 @@ import {
   validateOwnerRouteDurableEffectRegistry,
 } from "./backendService";
 import { protectedRouteAuthMap } from "./authSession";
-import { apiRuntimeRoutes } from "./routes";
+import { apiRuntimeContractRoutes } from "./routes";
 
 const productionAreas = [
   "production-persistence",
@@ -114,13 +114,25 @@ const expectNoSchedulerSecretLeak = (value: unknown) => {
 
 describe("backend service readiness report", () => {
   it("classifies Campaign mutations by durable effect instead of HTTP method", () => {
-    expect(apiRuntimeRoutes.find((route) => route.id === "campaigns.tasks.generate")).toMatchObject({
+    expect(apiRuntimeContractRoutes.find((route) => route.id === "campaigns.tasks.generate")).toMatchObject({
       method: "POST",
     });
     expect(ownerRouteDurableEffectById["campaigns.create"]).toBe("campaign_create");
+    expect(ownerRouteDurableEffectById["campaigns.owner.detail"]).toBe("none");
     expect(ownerRouteDurableEffectById["campaigns.owner.list"]).toBe("none");
     expect(ownerRouteDurableEffectById["campaigns.tasks.add"]).toBe("task_create");
     expect(ownerRouteDurableEffectById["campaigns.tasks.generate"]).toBe("none");
+    expect(Object.keys(ownerRouteDurableEffectById).sort()).toEqual([
+      "campaigns.create",
+      "campaigns.owner.detail",
+      "campaigns.owner.list",
+      "campaigns.tasks.add",
+      "campaigns.tasks.generate",
+    ]);
+    expect(() => validateOwnerRouteDurableEffectRegistry({
+      durableEffectByRouteId: ownerRouteDurableEffectById,
+      protectedRoutes: protectedRouteAuthMap,
+    })).not.toThrow();
     expect(createBackendServiceReadinessReport().authEnforcement.campaignMutationRouteCount).toBe(1);
   });
 
@@ -163,6 +175,10 @@ describe("backend service readiness report", () => {
       version: "0.2.0-local",
     });
     expect(report.entrypoint.routeCount).toBe(report.apiFoundation.coverage.routeCount);
+    expect(report.entrypoint.routeCount).toBe(apiRuntimeContractRoutes.length);
+    expect(report.entrypoint.routeIds).toEqual(apiRuntimeContractRoutes.map((route) => route.id));
+    expect(report.apiFoundation.servicePorts.coverage.routeOwnershipCount).toBe(apiRuntimeContractRoutes.length);
+    expect(report.topology.coverage.unassignedRouteIds).toEqual([]);
     expect(report.authSession).toMatchObject({
       profileId: "local-review",
       status: "local_seeded",
@@ -193,8 +209,14 @@ describe("backend service readiness report", () => {
         locallyEnforcedRouteIds: [
           "campaigns.create",
           "campaigns.owner.list",
+          "campaigns.owner.detail",
           "campaigns.tasks.add",
           "campaigns.tasks.generate",
+          "campaigns.participant.list",
+          "campaigns.participant.journey",
+          "campaigns.eligibility",
+          "campaigns.points.ranking.ledger.runtime",
+          "tasks.verify",
         ],
         protectedRouteCount: expect.any(Number),
         routeGroupCount: expect.any(Number),
@@ -223,14 +245,20 @@ describe("backend service readiness report", () => {
       campaignMutationRouteCount: 1,
       liveSigningExecuted: false,
       liveVerificationExecuted: false,
-      localEnforcedRouteCount: 4,
+      localEnforcedRouteCount: 10,
       localProofVerifierContractReady: true,
       localSessionIssuerContractReady: true,
       locallyEnforcedRouteIds: [
         "campaigns.create",
         "campaigns.owner.list",
+        "campaigns.owner.detail",
         "campaigns.tasks.add",
         "campaigns.tasks.generate",
+        "campaigns.participant.list",
+        "campaigns.participant.journey",
+        "campaigns.eligibility",
+        "campaigns.points.ranking.ledger.runtime",
+        "tasks.verify",
       ],
       mode: "local_enforced",
       productionProofVerifierReady: false,
@@ -1872,12 +1900,18 @@ describe("backend service readiness report", () => {
     expect(report.authEnforcement).toMatchObject({
       agentCredentialSubstitutionDisabled: true,
       campaignMutationRouteCount: 1,
-      localEnforcedRouteCount: 4,
+      localEnforcedRouteCount: 10,
       locallyEnforcedRouteIds: [
         "campaigns.create",
         "campaigns.owner.list",
+        "campaigns.owner.detail",
         "campaigns.tasks.add",
         "campaigns.tasks.generate",
+        "campaigns.participant.list",
+        "campaigns.participant.journey",
+        "campaigns.eligibility",
+        "campaigns.points.ranking.ledger.runtime",
+        "tasks.verify",
       ],
       mode: "blocked",
       productionProofVerifierReady: false,

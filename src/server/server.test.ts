@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NormalizedWalletSession } from "../domain/types";
+import { apiRuntimeContractRoutes } from "./routes";
 import { startCampaignOsApiServer } from "./server";
 
 const unsafeLogFragments = [
@@ -136,6 +137,8 @@ describe("Campaign OS API server entrypoint", () => {
         composition: {
           apiRuntime: {
             metadataRouteIds: expect.arrayContaining(["runtime.health", "runtime.contracts"]),
+            routeCount: apiRuntimeContractRoutes.length,
+            routeIds: apiRuntimeContractRoutes.map((route) => route.id),
           },
           backendService: {
             entrypointId: "campaign-os-backend-service",
@@ -413,7 +416,7 @@ describe("Campaign OS API server entrypoint", () => {
         ok: false,
         runtime: expect.objectContaining({
           name: "campaign-os-api-runtime",
-          routeCount: expect.any(Number),
+          routeCount: apiRuntimeContractRoutes.length,
         }),
         safety: expect.objectContaining({
           noContractWrite: true,
@@ -446,7 +449,7 @@ describe("Campaign OS API server entrypoint", () => {
         ok: false,
         runtime: expect.objectContaining({
           name: "campaign-os-api-runtime",
-          routeCount: expect.any(Number),
+          routeCount: apiRuntimeContractRoutes.length,
         }),
         safety: expect.objectContaining({
           noLiveApi: true,
@@ -477,7 +480,7 @@ describe("Campaign OS API server entrypoint", () => {
         ok: false,
         runtime: expect.objectContaining({
           name: "campaign-os-api-runtime",
-          routeCount: expect.any(Number),
+          routeCount: apiRuntimeContractRoutes.length,
         }),
         safety: expect.objectContaining({
           noLiveApi: true,
@@ -488,6 +491,23 @@ describe("Campaign OS API server entrypoint", () => {
           code: "MALFORMED_JSON",
         },
       });
+
+      const unsafeTraceId = "/Users/example/private?token=secret raw_signature";
+      const unsafeTrace = await fetch(`${server.url}/api/campaigns`, {
+        body: "{bad",
+        headers: {
+          "content-type": "application/json",
+          "x-campaign-os-trace-id": unsafeTraceId,
+        },
+        method: "POST",
+      });
+      const unsafeTracePayload = await unsafeTrace.json();
+      const normalizedTraceId = unsafeTrace.headers.get("x-campaign-os-trace-id");
+
+      expect(unsafeTrace.status).toBe(400);
+      expect(normalizedTraceId).toMatch(/^campaign-os-server-trace-/);
+      expect(unsafeTracePayload.traceId).toBe(normalizedTraceId);
+      expect(JSON.stringify(unsafeTracePayload)).not.toContain(unsafeTraceId);
 
       const unsupportedMethod = await fetch(`${server.url}/api/health?token=raw-secret-query`, {
         headers: {

@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import {
+  createParticipantJourneyApiBridge,
+  type ParticipantJourneyApiBridge,
+  type ParticipantJourneyMode,
+} from "../../../api/participantJourneyApiBridge";
+import {
   campaignDiscoveryApiBoundary,
   createCampaignDiscoveryApiLoadingState,
   loadCampaignDiscoveryApiBridgeState,
@@ -77,16 +82,26 @@ import {
 } from "../../badges/Badges";
 import { WalletOptionCards } from "../../wallet/WalletOptionCards";
 import { WalletConnectModal } from "../../wallet/WalletConnectModal";
+import { DurableParticipantJourneyPanel } from "./DurableParticipantJourneyPanel";
 import { userAppCopy } from "./copy";
+import { createParticipantSessionKey } from "./participantJourneyWorkflow";
 
 type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
 
-interface UserAppPanelProps {
+interface SeededUserAppPanelProps {
   campaign?: CampaignShellDetail;
   locale: BusinessContentLocale;
   participant?: ParticipantSnapshot;
   shareLocale?: SupportedLocale;
   walletModalLocale?: BusinessContentLocale;
+}
+
+export interface UserAppPanelProps extends SeededUserAppPanelProps {
+  bridge?: ParticipantJourneyApiBridge;
+  mode?: ParticipantJourneyMode;
+  onReconnect?: () => void;
+  session?: NormalizedWalletSession | null;
+  sessionReady?: boolean;
 }
 
 const panelStyle: CSSProperties = {
@@ -1542,13 +1557,13 @@ const PortfolioHistoryCard = ({
   </article>
 );
 
-export const UserAppPanel = ({
+const SeededUserAppPanel = ({
   campaign = campaignDetail,
   locale,
   participant = campaignDetail.participants[1],
   shareLocale = locale,
   walletModalLocale = locale,
-}: UserAppPanelProps) => {
+}: SeededUserAppPanelProps) => {
   const [isWalletModalOpen, setWalletModalOpen] = useState(false);
   const [eligibilityAddressInput, setEligibilityAddressInput] = useState(participant.walletAddress);
   const [checkedEligibilityAddress, setCheckedEligibilityAddress] = useState(participant.walletAddress);
@@ -3305,5 +3320,47 @@ export const UserAppPanel = ({
         </p>
       </section>
     </div>
+  );
+};
+
+const unavailableParticipantJourneyBridge = createParticipantJourneyApiBridge();
+
+export const UserAppPanel = ({
+  bridge,
+  campaign,
+  locale,
+  mode = "seeded_preview",
+  onReconnect = () => undefined,
+  participant,
+  session = null,
+  sessionReady = false,
+  shareLocale,
+  walletModalLocale,
+}: UserAppPanelProps) => {
+  if (mode === "durable") {
+    const authoritySession = sessionReady ? session : null;
+    const sessionKey = createParticipantSessionKey(authoritySession) ?? "no-session";
+
+    return (
+      <DurableParticipantJourneyPanel
+        bridge={bridge ?? unavailableParticipantJourneyBridge}
+        key={`durable:${sessionKey}`}
+        locale={locale}
+        mode="durable"
+        onReconnect={onReconnect}
+        session={authoritySession}
+        sessionReady={Boolean(authoritySession)}
+      />
+    );
+  }
+
+  return (
+    <SeededUserAppPanel
+      campaign={campaign}
+      locale={locale}
+      participant={participant}
+      shareLocale={shareLocale}
+      walletModalLocale={walletModalLocale}
+    />
   );
 };

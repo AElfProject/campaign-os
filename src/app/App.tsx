@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  createParticipantJourneyApiBridge,
+  type ParticipantJourneyApiBridge,
+  type ParticipantJourneyMode,
+} from "../api/participantJourneyApiBridge";
 import type { ProjectOwnerCampaignApiBridge } from "../api/projectOwnerCampaignApiBridge";
 import {
   createWalletSessionApiLoadingState,
@@ -206,9 +211,20 @@ const workspaceProductDestinationMap: Partial<Record<ProjectWorkspaceKey, Produc
 
 const walletSessionApiBaseUrl = () => import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
-const headerWalletPreviewRequest: WalletSessionPreviewRequest = {
+const headerWalletPreviewFixtureRequest: WalletSessionPreviewRequest = {
   adapterName: "PortkeyAAWallet",
   fixtureId: "sess-aa-001",
+};
+
+const createHeaderWalletPreviewRequest = (): WalletSessionPreviewRequest => {
+  const proofEvaluatedAt = Date.now();
+
+  return {
+    ...headerWalletPreviewFixtureRequest,
+    proofEvaluatedAt: new Date(proofEvaluatedAt).toISOString(),
+    proofIssuedAt: new Date(proofEvaluatedAt - 1_000).toISOString(),
+    signature: globalThis.crypto.randomUUID(),
+  };
 };
 
 const isIssuedOwnerSessionReady = (
@@ -220,6 +236,22 @@ const isIssuedOwnerSessionReady = (
   && state.status === "connected"
   && state.repository?.sessionId === session.sessionId
   && session.issuer?.valid === true,
+);
+
+const isIssuedParticipantSessionReady = (
+  state: WalletSessionApiBridgeState,
+  session: NormalizedWalletSession | null,
+) => Boolean(
+  isIssuedOwnerSessionReady(state, session)
+  && session
+  && (session.accountType === "AA" || session.accountType === "EOA")
+  && session.verificationStatus === "verified"
+  && session.walletTypeVerified
+  && session.walletSource !== "AGENT_SKILL"
+  && !session.capabilities.includes("INTERNAL_AUTOMATION")
+  && session.proof?.proofType === "wallet_signature"
+  && session.proof.status === "verified"
+  && session.proof.trustLevel === "verified_local",
 );
 
 const readBrowserPathname = () => {
@@ -264,9 +296,10 @@ const applyCampaignMetadata = (fields: readonly CampaignMetadataField[]) => {
 
 export interface AppProps {
   ownerCampaignBridge?: ProjectOwnerCampaignApiBridge;
+  participantJourneyBridge?: ParticipantJourneyApiBridge;
 }
 
-export const App = ({ ownerCampaignBridge }: AppProps = {}) => {
+export const App = ({ ownerCampaignBridge, participantJourneyBridge }: AppProps = {}) => {
   const routeContext = useMemo(
     () => parseCampaignRoutePath(readBrowserPathname()),
     [],
@@ -286,13 +319,30 @@ export const App = ({ ownerCampaignBridge }: AppProps = {}) => {
   const [headerWalletModalOpen, setHeaderWalletModalOpen] = useState(false);
   const [headerWalletSessionBridgeState, setHeaderWalletSessionBridgeState] =
     useState<WalletSessionApiBridgeState>(() => createWalletSessionApiSeededFallbackState(
-      headerWalletPreviewRequest,
+      headerWalletPreviewFixtureRequest,
     ));
   const [headerWalletSession, setHeaderWalletSession] =
     useState<NormalizedWalletSession | null>(null);
   const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
   const [activeCampaignSessionKey, setActiveCampaignSessionKey] = useState<string | null>(null);
+  const apiBaseUrl = walletSessionApiBaseUrl();
+  const participantJourneyMode: ParticipantJourneyMode = apiBaseUrl?.trim()
+    ? "durable"
+    : "seeded_preview";
+  const resolvedParticipantJourneyBridge = useMemo(
+    () => participantJourneyBridge ?? createParticipantJourneyApiBridge({
+      config: {
+        baseUrl: apiBaseUrl,
+        tracePrefix: "participant-user-app",
+      },
+    }),
+    [apiBaseUrl, participantJourneyBridge],
+  );
   const ownerSessionReady = isIssuedOwnerSessionReady(
+    headerWalletSessionBridgeState,
+    headerWalletSession,
+  );
+  const participantSessionReady = isIssuedParticipantSessionReady(
     headerWalletSessionBridgeState,
     headerWalletSession,
   );
@@ -359,15 +409,21 @@ export const App = ({ ownerCampaignBridge }: AppProps = {}) => {
     }
   };
 
+  const openHeaderWalletModal = useCallback(() => {
+    setHeaderWalletModalOpen(true);
+  }, []);
+
   const connectHeaderPreviewWallet = async () => {
-    setHeaderWalletSessionBridgeState(createWalletSessionApiLoadingState(headerWalletPreviewRequest));
+    const request = createHeaderWalletPreviewRequest();
+
+    setHeaderWalletSessionBridgeState(createWalletSessionApiLoadingState(request));
 
     const nextState = await submitWalletSessionApiPreview({
       config: {
         baseUrl: walletSessionApiBaseUrl(),
         tracePrefix: "header-wallet-session",
       },
-      request: headerWalletPreviewRequest,
+      request,
     });
 
     setHeaderWalletSessionBridgeState(nextState);
@@ -400,7 +456,7 @@ export const App = ({ ownerCampaignBridge }: AppProps = {}) => {
         onLocaleChange={setLocale}
         onProductDestinationChange={selectProductDestination}
         onSurfaceChange={setActiveSurface}
-        onWalletAction={() => setHeaderWalletModalOpen(true)}
+        onWalletAction={openHeaderWalletModal}
         productNavigation={productNavigation}
         shellTitle={copy.shellTitle}
         surfaces={surfaces}
@@ -414,14 +470,23 @@ export const App = ({ ownerCampaignBridge }: AppProps = {}) => {
             activeWorkspace={activeProjectWorkspace}
             locale={contentLocale}
             onActiveCampaignIdChange={changeActiveCampaignId}
-            onOwnerReconnect={() => setHeaderWalletModalOpen(true)}
+            onOwnerReconnect={openHeaderWalletModal}
             onWorkspaceChange={selectProjectWorkspace}
             ownerCampaignBridge={ownerCampaignBridge}
             ownerSession={headerWalletSession}
             ownerSessionReady={ownerSessionReady}
           />
         ) : activeSurface === "user" ? (
-          <UserAppPanel locale={contentLocale} shareLocale={locale} walletModalLocale={walletModalLocale} />
+          <UserAppPanel
+            bridge={resolvedParticipantJourneyBridge}
+            locale={contentLocale}
+            mode={participantJourneyMode}
+            onReconnect={openHeaderWalletModal}
+            session={headerWalletSession}
+            sessionReady={participantSessionReady}
+            shareLocale={locale}
+            walletModalLocale={walletModalLocale}
+          />
         ) : (
           <AdminOpsPanel locale={contentLocale} />
         )}

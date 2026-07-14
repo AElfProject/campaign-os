@@ -5,7 +5,7 @@ import {
 } from "./backendService";
 import type { BackendRuntimeBootstrapContract } from "./backendRuntimeBootstrap";
 import type { BackendRuntimeActivationContract, RuntimeReleaseScope } from "./backendRuntimeActivation";
-import { apiRuntimeRoutes } from "./routes";
+import { apiRuntimeContractRoutes } from "./routes";
 import {
   resolveApiServerRuntimeContract,
   type ApiServerRuntimeContract,
@@ -352,11 +352,11 @@ const createComposition = (
   activation: backendReadiness.backendRuntimeBootstrap.activation,
   apiRuntime: {
     handlerSource: "createCampaignOsApiRuntime",
-    metadataRouteIds: apiRuntimeRoutes
+    metadataRouteIds: apiRuntimeContractRoutes
       .filter((route) => route.serviceGroup === "runtime")
       .map((route) => route.id),
-    routeCount: apiRuntimeRoutes.length,
-    routeIds: apiRuntimeRoutes.map((route) => route.id),
+    routeCount: apiRuntimeContractRoutes.length,
+    routeIds: apiRuntimeContractRoutes.map((route) => route.id),
   },
   authEnforcement: {
     liveSigningExecuted: backendReadiness.authEnforcement.liveSigningExecuted,

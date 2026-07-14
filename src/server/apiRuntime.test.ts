@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
+import { createCampaignOsLocalService } from "../domain/campaignService";
 import { campaignDetail } from "../domain/fixtures";
 import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectOwnerFundingProofReviewBridge";
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
@@ -10,6 +11,7 @@ import type { NormalizedWalletSession } from "../domain/types";
 import {
   createCampaignOsApiRuntime as createCampaignOsApiRuntimeBase,
   type ApiRuntimeResponse,
+  type CampaignOsApiRuntime,
   type CreateCampaignOsApiRuntimeOptions,
 } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
@@ -91,8 +93,13 @@ interface EligibilityPayload {
     taskId: string;
   }>;
   eligible: boolean;
+  repository?: {
+    createdViaRepository: true;
+    storeId: "campaign-db";
+  };
   score?: number;
   status?: string;
+  visibility?: "public" | "participant_preview";
   walletAddress: string;
 }
 
@@ -103,6 +110,9 @@ interface AnalyticsPayload {
 }
 
 interface WalletSessionPayload {
+  accountType: string;
+  address: string;
+  id: string;
   issuer?: {
     cookieIssued: false;
     issuerMode: string;
@@ -746,23 +756,6 @@ interface ProductionDatabaseHandoffReadinessPayload {
   valid: true;
 }
 
-interface CampaignDbLimitedLifecyclePayload {
-  campaignId: string;
-  code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED";
-  diagnostic: {
-    code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED";
-    fullSeededLifecycleAvailable: false;
-  };
-  fullSeededLifecycleAvailable: false;
-  publishReadiness: {
-    ready: boolean;
-  };
-  source: "campaign_db_draft";
-  status: string;
-  supportedLocales: string[];
-  walletPolicy: string;
-}
-
 interface AgentWalletActionPayload {
   actionState: string;
   allowedOperation: string;
@@ -1120,6 +1113,8 @@ const createCampaignOsApiRuntime = (options: CreateCampaignOsApiRuntimeOptions =
       ? { walletSessionRepository: createIssuedSessionLookupRepository() }
       : {}),
     ...options,
+    walletSessionActivationPolicy:
+      options.walletSessionActivationPolicy ?? "repository_trusted",
   });
 
 const expectSuccessData = <TPayload = unknown>(response: ApiRuntimeResponse<unknown>) => {
@@ -1170,6 +1165,32 @@ const projectOwnerAuthHeaders = (
   "x-campaign-os-wallet-address": ownerAddress,
   "x-campaign-os-wallet-source": "PORTKEY_AA",
   ...extraHeaders,
+});
+
+const participantAuthHeaders = (
+  walletAddress: string,
+  extraHeaders: Record<string, string> = {},
+  issuedSessionOverrides: Partial<NormalizedWalletSession> = {},
+) => projectOwnerAuthHeaders(
+  walletAddress,
+  {
+    "x-campaign-os-roles": "participant",
+    ...extraHeaders,
+  },
+  issuedSessionOverrides,
+);
+
+const eoaParticipantAuthHeaders = (
+  walletAddress: string,
+  extraHeaders: Record<string, string> = {},
+) => participantAuthHeaders(walletAddress, {
+  "x-campaign-os-account-type": "EOA",
+  "x-campaign-os-wallet-source": "PORTKEY_EOA_EXTENSION",
+  ...extraHeaders,
+}, {
+  accountType: "EOA",
+  walletName: "Portkey EOA Extension",
+  walletSource: "PORTKEY_EOA_EXTENSION",
 });
 
 const createFailingRepository = (): CampaignOsRepository => ({
@@ -1253,9 +1274,15 @@ describe("Campaign OS API runtime", () => {
     const healthData = expectSuccessData(health);
     const contractData = expectSuccessData(contracts);
     const serviceData = expectSuccessData(services);
+    const contractInventory = contractData as {
+      coverage: { routeCount: number; routeIds: string[] };
+      routes: Array<{ id: string }>;
+    };
 
     expect(health.body.traceId).toBe("trace-health");
     expect(health.headers["x-campaign-os-trace-id"]).toBe("trace-health");
+    expect(contractInventory.coverage.routeCount).toBe(contractInventory.routes.length);
+    expect(contractInventory.coverage.routeIds).toEqual(contractInventory.routes.map((route) => route.id));
     const expectedLocalProductionBackendReadiness = expect.objectContaining({
       deployHandoff: expect.objectContaining({
         contractsEndpoint: "/api/contracts",
@@ -1830,8 +1857,14 @@ describe("Campaign OS API runtime", () => {
               locallyEnforcedRouteIds: [
                 "campaigns.create",
                 "campaigns.owner.list",
+                "campaigns.owner.detail",
                 "campaigns.tasks.add",
                 "campaigns.tasks.generate",
+                "campaigns.participant.list",
+                "campaigns.participant.journey",
+                "campaigns.eligibility",
+                "campaigns.points.ranking.ledger.runtime",
+                "tasks.verify",
               ],
             }),
             status: "local_ready",
@@ -1854,7 +1887,7 @@ describe("Campaign OS API runtime", () => {
               routeId: "campaigns.export.preview",
             }),
             expect.objectContaining({
-              enforcementStatus: "enforcement_deferred",
+              enforcementStatus: "local_enforced",
               requiredRoles: ["participant"],
               routeId: "tasks.verify",
             }),
@@ -2109,6 +2142,7 @@ describe("Campaign OS API runtime", () => {
     const eligibility = await runtimeWithoutHotPathReadiness.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/eligibility?address=${encodeURIComponent("2F4...9aB")}`,
+      headers: participantAuthHeaders("2F4...9aB"),
     });
     const exportPreview = await runtimeWithoutHotPathReadiness.handle({
       method: "POST",
@@ -2122,9 +2156,12 @@ describe("Campaign OS API runtime", () => {
     expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload>>(detail).payload.item.id).toBe(
       campaignDetail.id,
     );
-    expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(eligibility).payload).toMatchObject({
-      eligible: true,
-      walletAddress: "2F4...9aB",
+    expect(eligibility).toMatchObject({
+      status: 404,
+      body: {
+        ok: false,
+        error: { code: "INVALID_CAMPAIGN" },
+      },
     });
     expect(expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload>>(exportPreview).payload).toMatchObject({
       campaignId: campaignDetail.id,
@@ -2963,7 +3000,7 @@ describe("Campaign OS API runtime", () => {
     expectNoForbiddenResponseKeys(contracts.body);
   });
 
-  it("calls seeded campaign read endpoints through the local service facade", async () => {
+  it("keeps public seeded reads while protected eligibility requires a repository Campaign", async () => {
     const list = await runtime.handle({
       method: "GET",
       path: `/api/campaigns?walletAddress=${encodeURIComponent("3E9...7cD")}`,
@@ -2975,6 +3012,7 @@ describe("Campaign OS API runtime", () => {
     const eligibility = await runtime.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/eligibility?address=${encodeURIComponent("2F4...9aB")}`,
+      headers: participantAuthHeaders("2F4...9aB"),
     });
     const analytics = await runtime.handle({
       method: "GET",
@@ -2983,9 +3021,12 @@ describe("Campaign OS API runtime", () => {
 
     expect(expectSuccessData<LocalServiceEnvelope<CampaignListPayload>>(list).payload.summary.totalCampaigns).toBe(3);
     expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload>>(detail).payload.item.id).toBe(campaignDetail.id);
-    expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(eligibility).payload).toMatchObject({
-      eligible: true,
-      walletAddress: "2F4...9aB",
+    expect(eligibility).toMatchObject({
+      status: 404,
+      body: {
+        ok: false,
+        error: { code: "INVALID_CAMPAIGN" },
+      },
     });
     expect(expectSuccessData<LocalServiceEnvelope<AnalyticsPayload>>(analytics).payload).toMatchObject({
       exportBatchId: "export-awaken-sprint-preview",
@@ -3017,7 +3058,9 @@ describe("Campaign OS API runtime", () => {
     const pointsRankingLedgerRuntime = await runtimeWithPersistence.handle({
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/points-ranking-ledger-runtime`,
-      headers: { "x-campaign-os-trace-id": "trace-points-ranking-ledger-runtime" },
+      headers: participantAuthHeaders("2F4...9aB", {
+        "x-campaign-os-trace-id": "trace-points-ranking-ledger-runtime",
+      }),
     });
     const companionContractReadiness = await runtimeWithPersistence.handle({
       method: "GET",
@@ -3195,62 +3238,14 @@ describe("Campaign OS API runtime", () => {
       expectSuccessData<LocalServiceEnvelope<PublishDeliveryReviewPayload>>(publishDeliveryReview)
         .payload.backendRuntime.noLiveSideEffects,
     ).every((value) => value === false)).toBe(true);
-    expect(expectSuccessData<LocalServiceEnvelope<PointsRankingLedgerRuntimePayload>>(
-      pointsRankingLedgerRuntime,
-    )).toMatchObject({
-      boundary: expect.objectContaining({
-        "en-US": expect.stringContaining("Local points/ranking ledger runtime review route"),
-      }),
-      payload: {
-        campaignId: campaignDetail.id,
-        eligibilityRoot: expect.objectContaining({
-          contractRootMode: "none",
-          generationMode: "local_preview",
-          totalRows: 4,
-        }),
-        ledger: expect.objectContaining({
-          events: expect.arrayContaining([
-            expect.objectContaining({
-              accountType: "EOA",
-              evidenceHash: expect.any(String),
-              evidenceSource: "SOCIAL_API",
-              localePreference: "zh-CN",
-              riskFlags: ["referral_velocity_review"],
-              status: "failed",
-              taskId: "task-social",
-              verificationType: "SOCIAL",
-              walletAddress: "3E9...7cD",
-              walletSource: "PORTKEY_EOA_EXTENSION",
-            }),
-          ]),
-          totalEvents: 20,
-        }),
-        ranking: expect.objectContaining({
-          rows: expect.arrayContaining([
-            expect.objectContaining({
-              accountType: "AA",
-              eligible: true,
-              localePreference: "en-US",
-              rank: 1,
-              totalPoints: 270,
-              walletSource: "PORTKEY_AA",
-            }),
-          ]),
-        }),
-        source: "api_runtime",
-        summary: expect.objectContaining({
-          eligibleWallets: 1,
-          rankedWallets: 4,
-          totalLedgerEvents: 20,
-          totalPoints: 740,
-        }),
+    expect(pointsRankingLedgerRuntime).toMatchObject({
+      status: 404,
+      body: {
+        ok: false,
         traceId: "trace-points-ranking-ledger-runtime",
+        error: { code: "INVALID_CAMPAIGN" },
       },
     });
-    expect(Object.values(
-      expectSuccessData<LocalServiceEnvelope<PointsRankingLedgerRuntimePayload>>(pointsRankingLedgerRuntime)
-        .payload.noLiveSideEffects,
-    ).every((value) => value === false)).toBe(true);
     expect(expectSuccessData<LocalServiceEnvelope<{
       blockerCount: number;
       campaignId: string;
@@ -3832,6 +3827,7 @@ describe("Campaign OS API runtime", () => {
       runtime.handle({
         method: "GET",
         path: "/api/campaigns/missing-campaign/points-ranking-ledger-runtime",
+        headers: participantAuthHeaders("2F4...9aB"),
       }),
       runtime.handle({
         method: "GET",
@@ -3987,6 +3983,781 @@ describe("Campaign OS API runtime", () => {
     });
   });
 
+  it("keeps repository drafts hidden from anonymous discovery and direct detail", async () => {
+    const campaignDbRepository = createCampaignDbRepository();
+    const hiddenDraft = await campaignDbRepository.createDraft({
+      duration: "2026-09-01/2026-09-14",
+      endTime: "2026-09-14T23:59:59Z",
+      goal: "private-draft-goal-must-not-leak",
+      ownerAddress: "private-draft-owner-must-not-leak",
+      projectId: "private-draft-project",
+      rewardDescription: "Private draft reward description.",
+      startTime: "2026-09-01T00:00:00Z",
+      status: "human_review",
+    });
+    const publicCampaign = await campaignDbRepository.createDraft({
+      duration: "2026-09-15/2026-09-30",
+      endTime: "2026-09-30T23:59:59Z",
+      goal: "Public scheduled Campaign",
+      ownerAddress: "public-owner",
+      projectId: "public-project",
+      rewardDescription: "Public scheduled reward description.",
+      startTime: "2026-09-15T00:00:00Z",
+      status: "scheduled",
+    });
+    const accessRuntime = createCampaignOsApiRuntime({ campaignDbRepository });
+
+    const list = await accessRuntime.handle({
+      method: "GET",
+      path: "/api/campaigns",
+      headers: { "x-campaign-os-trace-id": "trace-anonymous-public-campaigns" },
+    });
+    const detail = await accessRuntime.handle({
+      method: "GET",
+      path: `/api/campaigns/${hiddenDraft.id}`,
+      headers: { "x-campaign-os-trace-id": "trace-anonymous-hidden-detail" },
+    });
+    const lifecycle = await accessRuntime.handle({
+      method: "GET",
+      path: `/api/campaigns/${hiddenDraft.id}/lifecycle`,
+      headers: { "x-campaign-os-trace-id": "trace-anonymous-hidden-lifecycle" },
+    });
+    const publishDelivery = await accessRuntime.handle({
+      method: "GET",
+      path: `/api/campaigns/${hiddenDraft.id}/publish-delivery-review`,
+      headers: { "x-campaign-os-trace-id": "trace-anonymous-hidden-publish" },
+    });
+    const exportReadiness = await accessRuntime.handle({
+      method: "GET",
+      path: `/api/campaigns/${hiddenDraft.id}/export-readiness`,
+      headers: { "x-campaign-os-trace-id": "trace-anonymous-hidden-export" },
+    });
+    const listPayload = expectSuccessData<LocalServiceEnvelope<CampaignListPayload>>(list).payload;
+
+    expect(listPayload.items?.map((item) => item.id)).toContain(publicCampaign.id);
+    expect(listPayload.items?.map((item) => item.id)).not.toContain(hiddenDraft.id);
+    expect(detail).toMatchObject({
+      status: 404,
+      body: {
+        ok: false,
+        traceId: "trace-anonymous-hidden-detail",
+        error: { code: "INVALID_CAMPAIGN" },
+      },
+      headers: { "x-campaign-os-trace-id": "trace-anonymous-hidden-detail" },
+    });
+    expect(lifecycle).toMatchObject({
+      status: 404,
+      body: {
+        ok: false,
+        traceId: "trace-anonymous-hidden-lifecycle",
+        error: { code: "INVALID_CAMPAIGN" },
+      },
+    });
+    for (const hiddenReadiness of [publishDelivery, exportReadiness]) {
+      expect(hiddenReadiness).toMatchObject({
+        status: 404,
+        body: { ok: false, error: { code: "INVALID_CAMPAIGN" } },
+      });
+    }
+    expectNoForbiddenFragments([detail.body, lifecycle.body, publishDelivery.body, exportReadiness.body], [
+      "private-draft-goal-must-not-leak",
+      "private-draft-owner-must-not-leak",
+      "/Users/",
+      "database_url",
+      "raw_signature",
+    ]);
+    await accessRuntime.close();
+  });
+
+  it("authorizes repository Owner detail through the issued session and persisted owner", async () => {
+    const campaignDbRepository = createCampaignDbRepository();
+    const draft = await campaignDbRepository.createDraft({
+      duration: "2026-10-01/2026-10-14",
+      endTime: "2026-10-14T23:59:59Z",
+      goal: "Owner protected detail",
+      ownerAddress: "2F4OwnerCaseExact",
+      projectId: "owner-detail-project",
+      rewardDescription: "Owner detail reward description.",
+      startTime: "2026-10-01T00:00:00Z",
+      status: "ai_draft",
+    });
+    const ownerRuntime = createCampaignOsApiRuntime({ campaignDbRepository });
+
+    const authorized = await ownerRuntime.handle({
+      method: "GET",
+      path: `/api/owner/campaigns/${draft.id}`,
+      headers: projectOwnerAuthHeaders("2F4OwnerCaseExact", {
+        "x-campaign-os-trace-id": "trace-owner-detail-authorized",
+      }),
+    });
+    const missing = await ownerRuntime.handle({
+      method: "GET",
+      path: `/api/owner/campaigns/${draft.id}`,
+      headers: { "x-campaign-os-trace-id": "trace-owner-detail-missing" },
+    });
+    const unknownHeaders = projectOwnerAuthHeaders("2F4OwnerCaseExact", {
+      "x-campaign-os-trace-id": "trace-owner-detail-unknown",
+    });
+    unknownHeaders["x-campaign-os-session-id"] = "missing-owner-session";
+    const unknown = await ownerRuntime.handle({
+      method: "GET",
+      path: `/api/owner/campaigns/${draft.id}`,
+      headers: unknownHeaders,
+    });
+    const mismatch = await ownerRuntime.handle({
+      method: "GET",
+      path: `/api/owner/campaigns/${draft.id}`,
+      headers: projectOwnerAuthHeaders("2F4OwnerCaseVariant", {
+        "x-campaign-os-trace-id": "trace-owner-detail-mismatch",
+      }),
+    });
+
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload>>(authorized).payload.item).toMatchObject({
+      id: draft.id,
+      status: "ai_draft",
+    });
+    expect(missing).toMatchObject({
+      status: 401,
+      body: { ok: false, error: { code: "AUTH_SESSION_REQUIRED" } },
+    });
+    expect(unknown).toMatchObject({
+      status: 401,
+      body: { ok: false, error: { code: "AUTH_SESSION_INVALID" } },
+    });
+    expect(mismatch).toMatchObject({
+      status: 403,
+      body: { ok: false, error: { code: "AUTH_FORBIDDEN" } },
+    });
+    expectNoForbiddenResponseKeys(missing.body);
+    expectNoForbiddenResponseKeys(unknown.body);
+    expectNoForbiddenResponseKeys(mismatch.body);
+    await ownerRuntime.close();
+  });
+
+  it("serves one coherent allowlisted Participant journey from the issued subject and revokes access immediately", async () => {
+    const campaignDbRepository = createCampaignDbRepository();
+    const previewCampaign = await campaignDbRepository.createDraft({
+      duration: "2026-11-01/2026-11-14",
+      endTime: "2026-11-14T23:59:59Z",
+      goal: "Participant preview journey",
+      ownerAddress: "participant-preview-owner",
+      projectId: "participant-preview-project",
+      rewardDescription: "Participant preview reward description.",
+      startTime: "2026-11-01T00:00:00Z",
+      status: "draft",
+      walletPolicy: "ANY",
+    });
+    const task = await campaignDbRepository.addTaskDraft({
+      campaignId: previewCampaign.id,
+      evidenceRule: { source: "AELFSCAN" },
+      points: 75,
+      required: true,
+      templateCode: "participant_preview_task",
+      verificationType: "ON_CHAIN",
+      walletCompatibility: "ANY",
+    });
+    const publicCampaign = await campaignDbRepository.createDraft({
+      duration: "2026-11-15/2026-11-30",
+      endTime: "2026-11-30T23:59:59Z",
+      goal: "Participant public journey",
+      ownerAddress: "participant-public-owner",
+      projectId: "participant-public-project",
+      rewardDescription: "Participant public reward description.",
+      startTime: "2026-11-15T00:00:00Z",
+      status: "scheduled",
+      walletPolicy: "ANY",
+    });
+    const upsertTaskVerification = vi.fn((
+      ...args: Parameters<NonNullable<CampaignDbRepository["upsertTaskVerification"]>>
+    ) => campaignDbRepository.upsertTaskVerification!(...args));
+    let configuredPreviewCampaignIds = previewCampaign.id;
+    let previewConfigReadCount = 0;
+    const previewEnv: Record<string, string | undefined> = {};
+    Object.defineProperty(previewEnv, "CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS", {
+      enumerable: true,
+      get: () => {
+        previewConfigReadCount += 1;
+        return configuredPreviewCampaignIds;
+      },
+    });
+    const participantRuntime = createCampaignOsApiRuntime({
+      campaignDbRepository: {
+        ...campaignDbRepository,
+        upsertTaskVerification,
+      },
+      runtimeConfigOptions: { env: previewEnv },
+    });
+    const walletAddress = "2F4ParticipantCaseExact";
+    const headers = participantAuthHeaders(walletAddress, {
+      "x-campaign-os-account-type": "EOA",
+      "x-campaign-os-trace-id": "trace-participant-feed",
+      "x-campaign-os-wallet-source": "PORTKEY_EOA_EXTENSION",
+    }, {
+      accountType: "EOA",
+      walletName: "Portkey EOA Extension",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
+    previewConfigReadCount = 0;
+
+    const feed = await participantRuntime.handle({
+      method: "GET",
+      path: "/api/participant/campaigns",
+      headers,
+    });
+    expect(previewConfigReadCount).toBe(1);
+
+    const zeroState = await participantRuntime.handle({
+      method: "GET",
+      path: `/api/participant/campaigns/${previewCampaign.id}/journey`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-zero-state" },
+    });
+    const substitution = await participantRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-substitution" },
+      body: JSON.stringify({
+        campaignId: previewCampaign.id,
+        walletAddress: "2F4ParticipantcaseExact",
+      }),
+    });
+    const accountMismatch = await participantRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-account-mismatch" },
+      body: JSON.stringify({
+        accountType: "AA",
+        campaignId: previewCampaign.id,
+      }),
+    });
+    const sourceMismatch = await participantRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-source-mismatch" },
+      body: JSON.stringify({
+        campaignId: previewCampaign.id,
+        walletSource: "PORTKEY_AA",
+      }),
+    });
+    const malformedClaim = await participantRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-malformed-claim" },
+      body: JSON.stringify({
+        campaignId: previewCampaign.id,
+        walletAddress: { value: walletAddress },
+      }),
+    });
+    const conflictingClaims = await participantRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify?address=2F4ParticipantConflict`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-conflicting-claims" },
+      body: JSON.stringify({
+        campaignId: previewCampaign.id,
+        walletAddress,
+      }),
+    });
+    const duplicateConflictingQueryClaims = await participantRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify?address=2F4ParticipantConflict&address=${walletAddress}`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-duplicate-query-claims" },
+      body: JSON.stringify({ campaignId: previewCampaign.id }),
+    });
+    const duplicateIdenticalQueryClaims = await participantRuntime.handle({
+      method: "GET",
+      path: `/api/campaigns/${previewCampaign.id}/eligibility?address=${walletAddress}&address=${walletAddress}`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-identical-query-claims" },
+    });
+    const internalCredential = await participantRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: participantAuthHeaders("2F4ParticipantInternal", {
+        "x-campaign-os-account-type": "EOA",
+        "x-campaign-os-credential-boundary": "internal_agent_credential",
+        "x-campaign-os-trace-id": "trace-participant-internal-credential",
+        "x-campaign-os-wallet-source": "AGENT_SKILL",
+      }, {
+        accountType: "EOA",
+        capabilities: ["INTERNAL_AUTOMATION"],
+        walletName: "Internal Agent Skill",
+        walletSource: "AGENT_SKILL",
+      }),
+      body: JSON.stringify({ campaignId: previewCampaign.id }),
+    });
+    const crossCampaignTask = await participantRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-cross-campaign-task" },
+      body: JSON.stringify({ campaignId: publicCampaign.id }),
+    });
+
+    expect(upsertTaskVerification).not.toHaveBeenCalled();
+
+    const verification = await participantRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-verify" },
+      body: JSON.stringify({ campaignId: previewCampaign.id }),
+    });
+    const populated = await participantRuntime.handle({
+      method: "GET",
+      path: `/api/participant/campaigns/${previewCampaign.id}/journey`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-populated" },
+    });
+
+    const participantFeedItems = expectSuccessData<LocalServiceEnvelope<{ items: Array<{
+      id: string;
+      repository?: {
+        createdViaRepository: boolean;
+        repositoryId: string;
+        storeId: string;
+      };
+      status: string;
+      visibility: string;
+    }> }>>(feed).payload.items;
+    expect(participantFeedItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: previewCampaign.id,
+        repository: expect.objectContaining({
+          createdViaRepository: true,
+          repositoryId: "campaign-db-repository-runtime",
+          storeId: "campaign-db",
+        }),
+        status: "draft",
+        visibility: "participant_preview",
+      }),
+    ]));
+    expect(participantFeedItems.map((item) => item.id)).not.toContain(campaignDetail.id);
+    expect(participantFeedItems.every((item) => item.repository?.createdViaRepository === true)).toBe(true);
+    for (const item of participantFeedItems) {
+      const itemJourney = await participantRuntime.handle({
+        method: "GET",
+        path: `/api/participant/campaigns/${item.id}/journey`,
+        headers: { ...headers, "x-campaign-os-trace-id": `trace-participant-feed-${item.id}` },
+      });
+      expect(expectSuccessData<LocalServiceEnvelope<{
+        campaign: { campaignId: string };
+        repository: { createdViaRepository: true; repositoryId: string; storeId: "campaign-db" };
+      }>>(itemJourney).payload).toMatchObject({
+        campaign: { campaignId: item.id },
+        repository: {
+          createdViaRepository: true,
+          repositoryId: "campaign-db-repository-runtime",
+          storeId: "campaign-db",
+        },
+      });
+    }
+    expect(expectSuccessData<LocalServiceEnvelope<{
+      campaign: { campaignId: string };
+      participant: { totalPoints: number; walletAddress: string };
+      ranking: { totalPoints: number; walletAddress: string };
+      tasks: Array<{ campaignId: string; status: string; taskId: string }>;
+      visibility: string;
+    }>>(zeroState).payload).toMatchObject({
+      campaign: { campaignId: previewCampaign.id },
+      participant: { totalPoints: 0, walletAddress },
+      ranking: { totalPoints: 0, walletAddress },
+      tasks: [{ campaignId: previewCampaign.id, status: "not_started", taskId: task.id }],
+      visibility: "participant_preview",
+    });
+    for (const rejected of [substitution, accountMismatch, sourceMismatch]) {
+      expect(rejected).toMatchObject({
+        status: 403,
+        body: {
+          ok: false,
+          error: {
+            code: "AUTH_SUBJECT_MISMATCH",
+            details: { diagnosticCode: "AUTH_SUBJECT_MISMATCH" },
+          },
+        },
+      });
+      expectNoForbiddenResponseKeys(rejected.body);
+    }
+    expect(internalCredential).toMatchObject({
+      status: 403,
+      body: { ok: false, error: { code: "AUTH_FORBIDDEN" } },
+    });
+    expect(malformedClaim).toMatchObject({
+      status: 400,
+      body: { ok: false, error: { code: "INVALID_REQUEST" } },
+    });
+    expect(conflictingClaims).toMatchObject({
+      status: 403,
+      body: {
+        ok: false,
+        error: {
+          code: "AUTH_SUBJECT_MISMATCH",
+          details: { diagnosticCode: "AUTH_SUBJECT_MISMATCH" },
+        },
+      },
+    });
+    expect(duplicateConflictingQueryClaims).toMatchObject({
+      status: 403,
+      body: {
+        ok: false,
+        error: {
+          code: "AUTH_SUBJECT_MISMATCH",
+          details: { diagnosticCode: "AUTH_SUBJECT_MISMATCH" },
+        },
+      },
+    });
+    expect(duplicateIdenticalQueryClaims).toMatchObject({
+      status: 200,
+      body: { ok: true },
+    });
+    expect(crossCampaignTask).toMatchObject({
+      status: 404,
+      body: { ok: false, error: { code: "INVALID_TASK" } },
+    });
+    const verificationData = expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
+      campaignDb: {
+        adapterId: string;
+        createdViaRepository: true;
+        repositoryId: string;
+        storeId: "campaign-db";
+      };
+      campaignDbCompletion: {
+        completionId: string;
+        createdViaRepository: true;
+        evidenceId: string;
+        repositoryId: string;
+        storeId: "campaign-db";
+        taskId: string;
+      };
+      campaignDbEvidence: {
+        completionId: string;
+        createdViaRepository: true;
+        evidenceId: string;
+        repositoryId: string;
+        storeId: "campaign-db";
+        taskId: string;
+      };
+    }>(verification);
+    expect(verificationData.payload).toMatchObject({
+      pointsAwarded: 75,
+      taskId: task.id,
+      walletAddress,
+    });
+    expect(verificationData).toMatchObject({
+      campaignDb: {
+        createdViaRepository: true,
+        repositoryId: "campaign-db-repository-runtime",
+        storeId: "campaign-db",
+      },
+      campaignDbCompletion: {
+        createdViaRepository: true,
+        taskId: task.id,
+      },
+      campaignDbEvidence: {
+        createdViaRepository: true,
+        taskId: task.id,
+      },
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<{
+      participant: { totalPoints: number };
+      ranking: { totalPoints: number };
+      tasks: Array<{ status: string; taskId: string }>;
+    }>>(populated).payload).toMatchObject({
+      participant: { totalPoints: 75 },
+      ranking: { totalPoints: 75 },
+      tasks: [expect.objectContaining({ status: "completed", taskId: task.id })],
+    });
+    expect(upsertTaskVerification).toHaveBeenCalledTimes(1);
+
+    configuredPreviewCampaignIds = "";
+    const revokedFeed = await participantRuntime.handle({
+      method: "GET",
+      path: "/api/participant/campaigns",
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-revoked-feed" },
+    });
+    const revokedJourney = await participantRuntime.handle({
+      method: "GET",
+      path: `/api/participant/campaigns/${previewCampaign.id}/journey`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-revoked" },
+    });
+    const revokedEligibility = await participantRuntime.handle({
+      method: "GET",
+      path: `/api/campaigns/${previewCampaign.id}/eligibility`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-revoked-eligibility" },
+    });
+    const revokedRanking = await participantRuntime.handle({
+      method: "GET",
+      path: `/api/campaigns/${previewCampaign.id}/points-ranking-ledger-runtime`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-revoked-ranking" },
+    });
+    const revokedVerification = await participantRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-revoked-verify" },
+      body: JSON.stringify({ campaignId: previewCampaign.id }),
+    });
+    const revokedFeedItems = expectSuccessData<LocalServiceEnvelope<{
+      items: Array<{ id: string }>;
+    }>>(revokedFeed).payload.items;
+
+    expect(revokedFeedItems.map((item) => item.id)).toContain(publicCampaign.id);
+    expect(revokedFeedItems.map((item) => item.id)).not.toContain(previewCampaign.id);
+    for (const revoked of [revokedJourney, revokedEligibility, revokedRanking, revokedVerification]) {
+      expect(revoked).toMatchObject({
+        status: 404,
+        body: {
+          ok: false,
+          error: { code: "INVALID_CAMPAIGN" },
+        },
+      });
+      expect(revoked.headers["x-campaign-os-trace-id"]).toBe(revoked.body.traceId);
+      expectNoForbiddenResponseKeys(revoked.body);
+    }
+    expect(upsertTaskVerification).toHaveBeenCalledTimes(1);
+    await participantRuntime.close();
+  });
+
+  it("fails closed without local reads, verification, or audit writes when the Participant Campaign is absent from the repository", async () => {
+    const localService = createCampaignOsLocalService();
+    const checkEligibility = vi.fn(localService.checkEligibility);
+    const getCampaignDetail = vi.fn(localService.getCampaignDetail);
+    const listCampaigns = vi.fn(localService.listCampaigns);
+    const verifyTask = vi.fn(localService.verifyTask);
+    const auditRepository = createCampaignOsMemoryRepository();
+    const record = vi.fn(auditRepository.record);
+    const participantRuntime = createCampaignOsApiRuntime({
+      campaignDbRepository: createCampaignDbRepository(),
+      repository: { ...auditRepository, record },
+      service: {
+        ...localService,
+        checkEligibility,
+        getCampaignDetail,
+        listCampaigns,
+        verifyTask,
+      },
+    });
+    const headers = participantAuthHeaders("2F4RepositoryOnlyParticipant");
+    const taskId = campaignDetail.tasks[0]?.id ?? "missing-seeded-task";
+
+    const feed = await participantRuntime.handle({
+      method: "GET",
+      path: "/api/participant/campaigns",
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-repository-only-feed" },
+    });
+    const ranking = await participantRuntime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/points-ranking-ledger-runtime`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-repository-only-ranking" },
+    });
+    const eligibility = await participantRuntime.handle({
+      method: "GET",
+      path: `/api/campaigns/${campaignDetail.id}/eligibility`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-repository-only-eligibility" },
+    });
+    const verification = await participantRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${taskId}/verify`,
+      headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-repository-only-verify" },
+      body: JSON.stringify({ campaignId: campaignDetail.id }),
+    });
+
+    for (const response of [ranking, eligibility, verification]) {
+      expect(response).toMatchObject({
+        status: 404,
+        body: { ok: false, error: { code: "INVALID_CAMPAIGN" } },
+      });
+      expectNoForbiddenResponseKeys(response.body);
+    }
+    expect(expectSuccessData<LocalServiceEnvelope<{ items: unknown[] }>>(feed).payload.items).toEqual([]);
+    expect(listCampaigns).not.toHaveBeenCalled();
+    expect(getCampaignDetail).not.toHaveBeenCalled();
+    expect(checkEligibility).not.toHaveBeenCalled();
+    expect(verifyTask).not.toHaveBeenCalled();
+    expect(record).not.toHaveBeenCalled();
+    expect(await auditRepository.snapshot()).toMatchObject({ recordCount: 0 });
+    await participantRuntime.close();
+  });
+
+  it("rejects wallet-incompatible Participant verification before invoking the repository command", async () => {
+    const campaignDbRepository = createCampaignDbRepository();
+    const campaign = await campaignDbRepository.createDraft({
+      duration: "2026-11-01/2026-11-14",
+      endTime: "2026-11-14T23:59:59Z",
+      goal: "EOA-only Participant Campaign",
+      ownerAddress: "wallet-policy-owner",
+      projectId: "wallet-policy-project",
+      rewardDescription: "Wallet policy review.",
+      startTime: "2026-11-01T00:00:00Z",
+      status: "scheduled",
+      walletPolicy: "EOA_ONLY",
+    });
+    const task = await campaignDbRepository.addTaskDraft({
+      campaignId: campaign.id,
+      evidenceRule: { source: "AELFSCAN" },
+      points: 10,
+      required: true,
+      templateCode: "eoa_only_task",
+      verificationType: "ON_CHAIN",
+      walletCompatibility: "ANY",
+    });
+    const upsertTaskVerification = vi.fn((
+      ...args: Parameters<NonNullable<CampaignDbRepository["upsertTaskVerification"]>>
+    ) => campaignDbRepository.upsertTaskVerification!(...args));
+    const policyRuntime = createCampaignOsApiRuntime({
+      campaignDbRepository: { ...campaignDbRepository, upsertTaskVerification },
+    });
+
+    const response = await policyRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: participantAuthHeaders("2F4AaParticipant", {
+        "x-campaign-os-trace-id": "trace-participant-wallet-incompatible",
+      }),
+      body: JSON.stringify({ campaignId: campaign.id }),
+    });
+
+    expect(response).toMatchObject({
+      status: 400,
+      body: { ok: false, error: { code: "INVALID_REQUEST" } },
+    });
+    expect(upsertTaskVerification).not.toHaveBeenCalled();
+    expectNoForbiddenResponseKeys(response.body);
+    await policyRuntime.close();
+  });
+
+  it("fails closed before Participant writes when Campaign DB reads are unavailable", async () => {
+    const campaignDbRepository = createCampaignDbRepository();
+    const campaign = await campaignDbRepository.createDraft({
+      duration: "2026-12-01/2026-12-14",
+      endTime: "2026-12-14T23:59:59Z",
+      goal: "Participant repository failure boundary",
+      ownerAddress: "participant-failure-owner",
+      projectId: "participant-failure-project",
+      rewardDescription: "Participant repository failure reward description.",
+      startTime: "2026-12-01T00:00:00Z",
+      status: "scheduled",
+      walletPolicy: "ANY",
+    });
+    const task = await campaignDbRepository.addTaskDraft({
+      campaignId: campaign.id,
+      evidenceRule: { source: "AELFSCAN" },
+      points: 25,
+      required: true,
+      templateCode: "participant_failure_task",
+      verificationType: "ON_CHAIN",
+      walletCompatibility: "ANY",
+    });
+    const upsertTaskVerification = vi.fn((
+      ...args: Parameters<NonNullable<CampaignDbRepository["upsertTaskVerification"]>>
+    ) => campaignDbRepository.upsertTaskVerification!(...args));
+    const unavailableReadRuntime = createCampaignOsApiRuntime({
+      campaignDbRepository: {
+        ...campaignDbRepository,
+        getById: vi.fn(async () => {
+          throw new Error("postgres://user:password@db.internal/campaign /Users/aelf/private raw_signature");
+        }),
+        upsertTaskVerification,
+      },
+    });
+    const headers = eoaParticipantAuthHeaders("2F4ParticipantFailure", {
+      "x-campaign-os-trace-id": "trace-participant-read-unavailable",
+    });
+    const verification = await unavailableReadRuntime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers,
+      body: JSON.stringify({ campaignId: campaign.id }),
+    });
+
+    expect(verification).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        traceId: "trace-participant-read-unavailable",
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: { operation: "campaignDb.getById" },
+        },
+      },
+    });
+    expect(upsertTaskVerification).not.toHaveBeenCalled();
+    expectNoForbiddenResponseKeys(verification.body);
+    expectNoForbiddenFragments(verification.body, ["db.internal", "/Users/", "raw_signature", "password"]);
+    await unavailableReadRuntime.close();
+
+    const unavailableJourneyRuntime = createCampaignOsApiRuntime({
+      campaignDbRepository: {
+        ...campaignDbRepository,
+        getParticipantJourney: vi.fn(async () => {
+          const opaque: Record<string, unknown> = { token: "secret-token" };
+          opaque.self = opaque;
+          throw opaque;
+        }),
+        upsertTaskVerification,
+      },
+    });
+    const journey = await unavailableJourneyRuntime.handle({
+      method: "GET",
+      path: `/api/participant/campaigns/${campaign.id}/journey`,
+      headers: eoaParticipantAuthHeaders("2F4ParticipantFailure", {
+        "x-campaign-os-trace-id": "trace-participant-journey-unavailable",
+      }),
+    });
+
+    expect(journey).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        traceId: "trace-participant-journey-unavailable",
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: { operation: "campaignDb.getParticipantJourney" },
+        },
+      },
+    });
+    expect(upsertTaskVerification).not.toHaveBeenCalled();
+    expectNoForbiddenResponseKeys(journey.body);
+    expectNoForbiddenFragments(journey.body, ["secret-token", "token", "/Users/"]);
+    await unavailableJourneyRuntime.close();
+  });
+
+  it("normalizes caller Trace IDs and repository domain diagnostics before returning an error", async () => {
+    const campaignDbRepository = createCampaignDbRepository();
+    const diagnosticRuntime = createCampaignOsApiRuntime({
+      campaignDbRepository: {
+        ...campaignDbRepository,
+        getById: vi.fn(async () => {
+          throw new CampaignDbRepositoryError("unsafe repository error", [{
+            code: "/Users/example/private?token=diagnostic-secret" as never,
+            field: "/Users/example/private/campaign.json",
+            message: "postgresql://user:password@db.internal/campaign?token=secret raw_signature",
+            severity: "error",
+          }]);
+        }),
+      },
+    });
+    const unsafeTraceId = "/Users/example/private?token=secret raw_signature";
+    const response = await diagnosticRuntime.handle({
+      method: "POST",
+      path: "/api/tasks/task-diagnostic/verify",
+      headers: eoaParticipantAuthHeaders("2F4DiagnosticParticipant", {
+        "x-campaign-os-trace-id": unsafeTraceId,
+      }),
+      body: JSON.stringify({ campaignId: "campaign-diagnostic" }),
+    });
+
+    expect(response).toMatchObject({
+      status: 400,
+      body: { ok: false, error: { code: "INVALID_REQUEST" } },
+    });
+    expect(response.body.traceId).toMatch(/^campaign-os-trace-/);
+    expect(response.headers["x-campaign-os-trace-id"]).toBe(response.body.traceId);
+    expectNoForbiddenFragments(response, [
+      unsafeTraceId,
+      "/Users/",
+      "db.internal",
+      "password",
+      "token=secret",
+      "diagnostic-secret",
+      "raw_signature",
+    ]);
+    await diagnosticRuntime.close();
+  });
+
   it("routes campaign create, detail, and list through the Campaign DB repository in one runtime", async () => {
     let readinessCallCount = 0;
     const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({
@@ -4023,8 +4794,10 @@ describe("Campaign OS API runtime", () => {
     }>(create);
     const detail = await runtimeWithCampaignDbRepository.handle({
       method: "GET",
-      path: `/api/campaigns/${created.payload.id}`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-detail" },
+      path: `/api/owner/campaigns/${created.payload.id}`,
+      headers: projectOwnerAuthHeaders("repo-owner-001", {
+        "x-campaign-os-trace-id": "trace-campaign-db-detail",
+      }),
     });
     const list = await runtimeWithCampaignDbRepository.handle({
       method: "GET",
@@ -4088,16 +4861,11 @@ describe("Campaign OS API runtime", () => {
       };
     }>(list).payload).toMatchObject({
       campaignDb: {
-        draftCount: 1,
+        draftCount: 0,
       },
-      items: expect.arrayContaining([
-        expect.objectContaining({
-          id: "campaign-db-draft-0001",
-          status: "draft",
-        }),
-      ]),
+      items: [],
       summary: {
-        totalCampaigns: 1,
+        totalCampaigns: 0,
       },
     });
     expect(expectSuccessData<LocalServiceEnvelope<CampaignListPayload> & {
@@ -4288,7 +5056,7 @@ describe("Campaign OS API runtime", () => {
     expect(snapshot.countsByKind.i18n_draft).toBe(0);
   });
 
-  it("returns limited lifecycle/readiness projections for repository-created drafts", async () => {
+  it("returns limited lifecycle projections for public repository Campaigns", async () => {
     const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime();
     const create = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
@@ -4306,6 +5074,7 @@ describe("Campaign OS API runtime", () => {
         projectId: "repo-project-lifecycle",
         rewardDescription: "Repository-backed lifecycle remains limited.",
         startTime: "2026-08-01T00:00:00Z",
+        status: "scheduled",
         supportedLocales: ["en-US", "zh-CN"],
         walletPolicy: "AA_ONLY",
       }),
@@ -4334,30 +5103,14 @@ describe("Campaign OS API runtime", () => {
     });
 
     for (const response of [lifecycle, launchReadiness, providerReadiness]) {
-      expect(expectSuccessData<LocalServiceEnvelope<CampaignDbLimitedLifecyclePayload> & {
-        campaignDb: {
-          createdViaRepository: true;
-          storeId: string;
-        };
-      }>(response)).toMatchObject({
-        campaignDb: {
-          createdViaRepository: true,
-          storeId: "campaign-db",
-        },
-        payload: {
-          campaignId: "campaign-db-draft-0001",
-          code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED",
-          diagnostic: {
-            code: "CAMPAIGN_DB_DRAFT_LIFECYCLE_LIMITED",
-            fullSeededLifecycleAvailable: false,
-          },
-          fullSeededLifecycleAvailable: false,
-          publishReadiness: { ready: true },
-          source: "campaign_db_draft",
-          status: "draft",
-          supportedLocales: ["en-US", "zh-CN"],
-          walletPolicy: "AA_ONLY",
-        },
+      expect(expectSuccessData<LocalServiceEnvelope<{
+        campaignId: string;
+        source: string;
+        status: string;
+      }>>(response).payload).toMatchObject({
+        campaignId: created.payload.id,
+        source: "campaign_db_draft",
+        status: "scheduled",
       });
       expectNoForbiddenResponseKeys(response.body);
       expectNoForbiddenFragments(response.body, ["fileUrl", "mutationId", "signedUrl", "transactionId"]);
@@ -4469,13 +5222,17 @@ describe("Campaign OS API runtime", () => {
     });
     const detail = await runtimeWithCampaignDbRepository.handle({
       method: "GET",
-      path: `/api/campaigns/${created.payload.id}`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-task-detail" },
+      path: `/api/owner/campaigns/${created.payload.id}`,
+      headers: projectOwnerAuthHeaders("repo-owner-task", {
+        "x-campaign-os-trace-id": "trace-campaign-db-task-detail",
+      }),
     });
     const list = await runtimeWithCampaignDbRepository.handle({
       method: "GET",
-      path: "/api/campaigns?projectId=repo-project-task&ownerAddress=repo-owner-task&status=draft",
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-task-list" },
+      path: "/api/projects/repo-project-task/campaigns?status=draft",
+      headers: projectOwnerAuthHeaders("repo-owner-task", {
+        "x-campaign-os-trace-id": "trace-campaign-db-task-list",
+      }),
     });
 
     expect(expectSuccessData<LocalServiceEnvelope<TaskDraftPayload> & {
@@ -4694,7 +5451,9 @@ describe("Campaign OS API runtime", () => {
   });
 
   it("persists repository task completion and projects eligibility through API runtime", async () => {
-    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime();
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({
+      participantPreviewConfigOptions: { campaignIds: ["campaign-db-draft-0001"] },
+    });
     const create = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: "/api/campaigns",
@@ -4751,12 +5510,16 @@ describe("Campaign OS API runtime", () => {
     const missingEligibility = await runtimeWithCampaignDbRepository.handle({
       method: "GET",
       path: `/api/campaigns/${created.payload.id}/eligibility?address=${encodeURIComponent("2F4CompletionWallet")}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-completion-missing-eligibility" },
+      headers: eoaParticipantAuthHeaders("2F4CompletionWallet", {
+        "x-campaign-os-trace-id": "trace-campaign-db-completion-missing-eligibility",
+      }),
     });
     const optionalVerification = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: `/api/tasks/${optionalTaskPayload.campaignDbTask.taskId}/verify`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-completion-optional-verify" },
+      headers: eoaParticipantAuthHeaders("2F4CompletionWallet", {
+        "x-campaign-os-trace-id": "trace-campaign-db-completion-optional-verify",
+      }),
       body: JSON.stringify({
         accountType: "EOA",
         campaignId: created.payload.id,
@@ -4767,11 +5530,14 @@ describe("Campaign OS API runtime", () => {
     const optionalEligibility = await runtimeWithCampaignDbRepository.handle({
       method: "GET",
       path: `/api/campaigns/${created.payload.id}/eligibility?address=${encodeURIComponent("2F4CompletionWallet")}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
+      headers: eoaParticipantAuthHeaders("2F4CompletionWallet"),
     });
     const requiredVerification = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: `/api/tasks/${requiredTaskPayload.campaignDbTask.taskId}/verify`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-completion-required-verify" },
+      headers: eoaParticipantAuthHeaders("2F4CompletionWallet", {
+        "x-campaign-os-trace-id": "trace-campaign-db-completion-required-verify",
+      }),
       body: JSON.stringify({
         accountType: "EOA",
         campaignId: created.payload.id,
@@ -4782,7 +5548,9 @@ describe("Campaign OS API runtime", () => {
     const eligible = await runtimeWithCampaignDbRepository.handle({
       method: "GET",
       path: `/api/campaigns/${created.payload.id}/eligibility?address=${encodeURIComponent("2F4CompletionWallet")}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-completion-eligible" },
+      headers: eoaParticipantAuthHeaders("2F4CompletionWallet", {
+        "x-campaign-os-trace-id": "trace-campaign-db-completion-eligible",
+      }),
     });
 
     expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(missingEligibility).payload).toMatchObject({
@@ -4849,22 +5617,15 @@ describe("Campaign OS API runtime", () => {
       persistence: { kind: "verification_attempt" },
     });
     expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(optionalEligibility).payload).toMatchObject({
-      campaignDbEvidence: [
-        expect.objectContaining({
-          completionId: "campaign-db-task-completion-0001",
-          evidenceHash: `evidence-hash:${optionalTaskPayload.campaignDbTask.taskId}`,
-          evidenceId: "campaign-db-task-evidence-0001",
-          liveContractExecuted: false,
-          liveProviderExecuted: false,
-          liveRewardExecuted: false,
-          liveStorageExecuted: false,
-          taskId: optionalTaskPayload.campaignDbTask.taskId,
-        }),
-      ],
       eligible: false,
       missingTasks: ["bridge_ebridge"],
+      repository: expect.objectContaining({
+        createdViaRepository: true,
+        storeId: "campaign-db",
+      }),
       score: 50,
       status: "not_eligible",
+      visibility: "participant_preview",
     });
     expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
       campaignDbCompletion: { completionId: string; evidenceId: string };
@@ -4888,22 +5649,15 @@ describe("Campaign OS API runtime", () => {
       },
     });
     expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(eligible).payload).toMatchObject({
-      campaignDbEvidence: expect.arrayContaining([
-        expect.objectContaining({
-          completionId: "campaign-db-task-completion-0001",
-          evidenceId: "campaign-db-task-evidence-0001",
-          taskId: optionalTaskPayload.campaignDbTask.taskId,
-        }),
-        expect.objectContaining({
-          completionId: "campaign-db-task-completion-0002",
-          evidenceId: "campaign-db-task-evidence-0002",
-          taskId: requiredTaskPayload.campaignDbTask.taskId,
-        }),
-      ]),
       eligible: true,
       missingTasks: [],
+      repository: expect.objectContaining({
+        createdViaRepository: true,
+        storeId: "campaign-db",
+      }),
       score: 170,
       status: "eligible",
+      visibility: "participant_preview",
     });
     expectNoForbiddenResponseKeys(optionalVerification.body);
     expectNoForbiddenFragments(optionalVerification.body, ["raw-secret", "privateKey", "signedUrl"]);
@@ -4911,7 +5665,10 @@ describe("Campaign OS API runtime", () => {
 
   it("projects repository campaign export preview and readiness through API runtime", async () => {
     const repository = createCampaignOsMemoryRepository();
-    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({ repository });
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({
+      participantPreviewConfigOptions: { campaignIds: ["campaign-db-draft-0001"] },
+      repository,
+    });
     const create = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: "/api/campaigns",
@@ -4926,6 +5683,7 @@ describe("Campaign OS API runtime", () => {
         projectId: "repo-project-export",
         rewardDescription: "Repository export rewards remain local-review only.",
         startTime: "2026-08-01T00:00:00Z",
+        status: "scheduled",
       }),
     });
     const created = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload>>(create);
@@ -4969,7 +5727,9 @@ describe("Campaign OS API runtime", () => {
     await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: `/api/tasks/${optionalTaskPayload.campaignDbTask.taskId}/verify`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-optional-verify" },
+      headers: eoaParticipantAuthHeaders("2F4ExportWallet", {
+        "x-campaign-os-trace-id": "trace-campaign-db-export-optional-verify",
+      }),
       body: JSON.stringify({
         accountType: "EOA",
         campaignId: created.payload.id,
@@ -4993,7 +5753,9 @@ describe("Campaign OS API runtime", () => {
     const requiredVerification = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: `/api/tasks/${requiredTaskPayload.campaignDbTask.taskId}/verify`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-required-verify" },
+      headers: eoaParticipantAuthHeaders("2F4ExportWallet", {
+        "x-campaign-os-trace-id": "trace-campaign-db-export-required-verify",
+      }),
       body: JSON.stringify({
         accountType: "EOA",
         campaignId: created.payload.id,
@@ -5004,7 +5766,9 @@ describe("Campaign OS API runtime", () => {
     const repeatedRequiredVerification = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: `/api/tasks/${requiredTaskPayload.campaignDbTask.taskId}/verify`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-export-required-reverify" },
+      headers: eoaParticipantAuthHeaders("2F4ExportWallet", {
+        "x-campaign-os-trace-id": "trace-campaign-db-export-required-reverify",
+      }),
       body: JSON.stringify({
         accountType: "EOA",
         campaignId: created.payload.id,
@@ -5329,7 +6093,9 @@ describe("Campaign OS API runtime", () => {
   });
 
   it("returns structured errors for unknown repository task verification", async () => {
-    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime();
+    const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({
+      participantPreviewConfigOptions: { campaignIds: ["campaign-db-draft-0001"] },
+    });
     const create = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: "/api/campaigns",
@@ -5348,6 +6114,7 @@ describe("Campaign OS API runtime", () => {
     const missingTask = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: "/api/tasks/missing-repository-task/verify",
+      headers: eoaParticipantAuthHeaders("2F4CompletionWallet"),
       body: JSON.stringify({
         accountType: "EOA",
         campaignId: created.payload.id,
@@ -5373,7 +6140,9 @@ describe("Campaign OS API runtime", () => {
     const verification = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: "/api/tasks/missing-repository-task/verify",
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-missing-campaign-verify" },
+      headers: eoaParticipantAuthHeaders("2F4CompletionWallet", {
+        "x-campaign-os-trace-id": "trace-campaign-db-missing-campaign-verify",
+      }),
       body: JSON.stringify({
         accountType: "EOA",
         campaignId: missingCampaignId,
@@ -5384,7 +6153,9 @@ describe("Campaign OS API runtime", () => {
     const eligibility = await runtimeWithCampaignDbRepository.handle({
       method: "GET",
       path: `/api/campaigns/${missingCampaignId}/eligibility?address=${encodeURIComponent("2F4CompletionWallet")}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
-      headers: { "x-campaign-os-trace-id": "trace-campaign-db-missing-campaign-eligibility" },
+      headers: eoaParticipantAuthHeaders("2F4CompletionWallet", {
+        "x-campaign-os-trace-id": "trace-campaign-db-missing-campaign-eligibility",
+      }),
     });
 
     expect(verification).toMatchObject({
@@ -5459,13 +6230,17 @@ describe("Campaign OS API runtime", () => {
       });
       const detail = await secondRuntime.handle({
         method: "GET",
-        path: `/api/campaigns/${created.payload.id}`,
-        headers: { "x-campaign-os-trace-id": "trace-durable-campaign-detail" },
+        path: `/api/owner/campaigns/${created.payload.id}`,
+        headers: projectOwnerAuthHeaders("repo-owner-durable", {
+          "x-campaign-os-trace-id": "trace-durable-campaign-detail",
+        }),
       });
       const list = await secondRuntime.handle({
         method: "GET",
-        path: "/api/campaigns?projectId=repo-project-durable&ownerAddress=repo-owner-durable&status=draft",
-        headers: { "x-campaign-os-trace-id": "trace-durable-campaign-list" },
+        path: "/api/projects/repo-project-durable/campaigns?status=draft",
+        headers: projectOwnerAuthHeaders("repo-owner-durable", {
+          "x-campaign-os-trace-id": "trace-durable-campaign-list",
+        }),
       });
 
       expect(create.body.traceId).toBe("trace-durable-campaign-create");
@@ -5898,9 +6673,12 @@ describe("Campaign OS API runtime", () => {
     }
   });
 
-  it("calls seeded POST endpoints with sanitized local persistence records", async () => {
+  it("persists local POST records through a repository-backed Participant verification", async () => {
     const repository = createCampaignOsMemoryRepository();
-    const runtimeWithPersistence = createCampaignOsApiRuntime({ repository });
+    const runtimeWithPersistence = createCampaignOsApiRuntime({
+      participantPreviewConfigOptions: { campaignIds: ["campaign-db-draft-0001"] },
+      repository,
+    });
     const walletSession = await runtime.handle({
       method: "POST",
       path: "/api/wallet/session",
@@ -5940,9 +6718,10 @@ describe("Campaign OS API runtime", () => {
         startTime: "2026-07-01T00:00:00Z",
       }),
     });
+    const persistedCampaignDraft = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload>>(campaignDraft);
     const taskDraft = await runtimeWithPersistence.handle({
       method: "POST",
-      path: `/api/campaigns/${campaignDetail.id}/tasks`,
+      path: `/api/campaigns/${persistedCampaignDraft.payload.id}/tasks`,
       headers: projectOwnerAuthHeaders("2F4...9aB"),
       body: JSON.stringify({
         evidenceRule: { source: "AELFSCAN", minAmount: 1 },
@@ -5953,12 +6732,16 @@ describe("Campaign OS API runtime", () => {
         walletCompatibility: "ANY",
       }),
     });
+    const persistedTaskDraft = expectSuccessData<LocalServiceEnvelope<TaskDraftPayload> & {
+      campaignDbTask: { taskId: string };
+    }>(taskDraft);
     const verification = await runtimeWithPersistence.handle({
       method: "POST",
-      path: "/api/tasks/task-bridge/verify",
+      path: `/api/tasks/${persistedTaskDraft.campaignDbTask.taskId}/verify`,
+      headers: participantAuthHeaders("2F4...9aB"),
       body: JSON.stringify({
         accountType: "AA",
-        campaignId: campaignDetail.id,
+        campaignId: persistedCampaignDraft.payload.id,
         walletAddress: "2F4...9aB",
         walletSource: "PORTKEY_AA",
       }),
@@ -5988,8 +6771,17 @@ describe("Campaign OS API runtime", () => {
       path: "/api/health",
     });
     const snapshot = await repository.snapshot();
+    const walletSessionPayload = expectSuccessData<LocalServiceEnvelope<WalletSessionPayload>>(
+      walletSession,
+    ).payload;
+    const persistedWalletSessionPayload = expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & {
+      persistence: unknown;
+      walletSessionRepository: WalletSessionRepositoryMetadataPayload;
+    }>(persistedWalletSession);
 
-    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload>>(walletSession).payload).toMatchObject({
+    expect(walletSessionPayload.id).toBe(walletSessionPayload.sessionId);
+    expect(walletSessionPayload.sessionId).not.toBe("sess-eoa-app-001");
+    expect(walletSessionPayload).toMatchObject({
       issuer: {
         cookieIssued: false,
         issuerMode: "local_opaque",
@@ -6011,15 +6803,14 @@ describe("Campaign OS API runtime", () => {
         status: "verified",
         trustLevel: "verified_local",
       },
-      sessionId: "sess-eoa-app-001",
+      sessionId: expect.any(String),
       walletSource: "PORTKEY_EOA_APP",
     });
-    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & {
-      persistence: unknown;
-      walletSessionRepository: WalletSessionRepositoryMetadataPayload;
-    }>(
-      persistedWalletSession,
-    )).toMatchObject({
+    expect(persistedWalletSessionPayload.payload.id).toBe(
+      persistedWalletSessionPayload.payload.sessionId,
+    );
+    expect(persistedWalletSessionPayload.payload.sessionId).not.toBe("sess-eoa-app-001");
+    expect(persistedWalletSessionPayload).toMatchObject({
       payload: {
         issuer: expect.objectContaining({
           issuerMode: "local_opaque",
@@ -6030,7 +6821,7 @@ describe("Campaign OS API runtime", () => {
           status: "verified",
           trustLevel: "verified_local",
         }),
-        sessionId: "sess-eoa-app-001",
+        sessionId: expect.any(String),
         walletSource: "PORTKEY_EOA_APP",
       },
       persistence: {
@@ -6040,24 +6831,24 @@ describe("Campaign OS API runtime", () => {
       walletSessionRepository: {
         adapterId: "wallet-session-deterministic-adapter",
         created: true,
-        recordId: "wallet-session:sess-eoa-app-001",
+        recordId: `wallet-session:${persistedWalletSessionPayload.payload.sessionId}`,
         repositoryId: "wallet-session-repository-runtime",
-        sessionId: "sess-eoa-app-001",
+        sessionId: persistedWalletSessionPayload.payload.sessionId,
         storeId: "wallet-sessions",
         upserted: true,
         walletAddress: "8A2...1eF",
       },
     });
-    expect(expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload>>(campaignDraft).payload).toMatchObject({
+    expect(persistedCampaignDraft.payload).toMatchObject({
       id: "campaign-db-draft-0001",
       publishReadiness: { ready: true },
     });
-    expect(expectSuccessData<LocalServiceEnvelope<TaskDraftPayload>>(taskDraft).payload).toMatchObject({
-      campaignId: campaignDetail.id,
-      id: "local-task-bridge_ebridge",
+    expect(persistedTaskDraft.payload).toMatchObject({
+      campaignId: persistedCampaignDraft.payload.id,
+      id: persistedTaskDraft.campaignDbTask.taskId,
     });
     expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload>>(verification).payload).toMatchObject({
-      evidenceSource: "aelfscan",
+      evidenceSource: "AELFSCAN",
       pointsAwarded: 120,
       status: "completed",
     });
@@ -6156,7 +6947,7 @@ describe("Campaign OS API runtime", () => {
     });
   });
 
-  it("stores wallet sessions in the dedicated repository with upsert semantics", async () => {
+  it("issues a fresh opaque identity for every wallet session request", async () => {
     const walletSessionRepository = createWalletSessionRepository();
     const runtimeWithWalletSessionRepository = createCampaignOsApiRuntime({
       walletSessionRepository,
@@ -6184,35 +6975,43 @@ describe("Campaign OS API runtime", () => {
         signature: "raw-route-signature-refresh",
       }),
     });
-    const health = await walletSessionRepository.health();
-    const record = await walletSessionRepository.getBySessionId("sess-eoa-app-001");
-
-    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & {
+    const firstPayload = expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & {
       walletSessionRepository: WalletSessionRepositoryMetadataPayload;
-    }>(first).walletSessionRepository).toMatchObject({
+    }>(first);
+    const secondPayload = expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & {
+      walletSessionRepository: WalletSessionRepositoryMetadataPayload;
+    }>(second);
+    const health = await walletSessionRepository.health();
+    const firstRecord = await walletSessionRepository.getBySessionId(firstPayload.payload.sessionId);
+    const secondRecord = await walletSessionRepository.getBySessionId(secondPayload.payload.sessionId);
+
+    expect(firstPayload.payload.id).toBe(firstPayload.payload.sessionId);
+    expect(secondPayload.payload.id).toBe(secondPayload.payload.sessionId);
+    expect(firstPayload.payload.sessionId).not.toBe(secondPayload.payload.sessionId);
+    expect(firstPayload.payload.sessionId).not.toBe("sess-eoa-app-001");
+    expect(secondPayload.payload.sessionId).not.toBe("sess-eoa-app-001");
+    expect(firstPayload.walletSessionRepository).toMatchObject({
       created: true,
-      recordId: "wallet-session:sess-eoa-app-001",
+      recordId: `wallet-session:${firstPayload.payload.sessionId}`,
       repositoryId: "wallet-session-repository-runtime",
-      sessionId: "sess-eoa-app-001",
+      sessionId: firstPayload.payload.sessionId,
       storeId: "wallet-sessions",
       upserted: true,
       walletAddress: "8A2...1eF",
     });
-    expect(expectSuccessData<LocalServiceEnvelope<WalletSessionPayload> & {
-      walletSessionRepository: WalletSessionRepositoryMetadataPayload;
-    }>(second).walletSessionRepository).toMatchObject({
-      created: false,
-      recordId: "wallet-session:sess-eoa-app-001",
-      sessionId: "sess-eoa-app-001",
+    expect(secondPayload.walletSessionRepository).toMatchObject({
+      created: true,
+      recordId: `wallet-session:${secondPayload.payload.sessionId}`,
+      sessionId: secondPayload.payload.sessionId,
     });
     expect(health).toMatchObject({
-      recordCount: 1,
+      recordCount: 2,
       selectedMode: "deterministic_test",
       status: "ready",
     });
-    expect(record).toMatchObject({
+    expect(firstRecord).toMatchObject({
       connectedAt: "2026-06-21T08:00:00.000Z",
-      lastSeenAt: "2026-07-07T04:05:00.000Z",
+      lastSeenAt: "2026-07-07T04:00:00.000Z",
       productionReadiness: {
         productionReady: false,
       },
@@ -6220,14 +7019,119 @@ describe("Campaign OS API runtime", () => {
         liveVerificationExecuted: false,
         status: "verified",
       },
-      sessionId: "sess-eoa-app-001",
+      sessionId: firstPayload.payload.sessionId,
       walletAddress: "8A2...1eF",
       walletSource: "PORTKEY_EOA_APP",
     });
-    expectNoForbiddenFragments(record, [
+    expect(secondRecord).toMatchObject({
+      lastSeenAt: "2026-07-07T04:05:00.000Z",
+      sessionId: secondPayload.payload.sessionId,
+      walletAddress: "8A2...1eF",
+      walletSource: "PORTKEY_EOA_APP",
+    });
+    expectNoForbiddenFragments([firstRecord, secondRecord], [
       "raw-route-signature",
       "raw-route-signature-refresh",
     ]);
+  });
+
+  it("keeps durable session audit records without reactivating pre-restart authority", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-active-wallet-session-"));
+    const filePath = join(tempDir, "wallet-sessions.json");
+    const issueSession = async (runtimeToUse: CampaignOsApiRuntime) => {
+      const response = await runtimeToUse.handle({
+        method: "POST",
+        path: "/api/wallet/session",
+        body: JSON.stringify({
+          adapterName: "PortkeyDiscoverWallet",
+          fixtureId: "sess-eoa-app-001",
+          proofEvaluatedAt: "2026-07-07T04:00:00.000Z",
+          proofIssuedAt: "2026-07-07T03:59:00.000Z",
+          signature: "raw-restart-signature",
+        }),
+      });
+
+      return expectSuccessData<LocalServiceEnvelope<WalletSessionPayload>>(response).payload;
+    };
+    const participantHeaders = (session: WalletSessionPayload, traceId: string) => ({
+      "x-campaign-os-account-type": session.accountType,
+      "x-campaign-os-credential-boundary": "ordinary_user_wallet",
+      "x-campaign-os-proof-status": session.proof?.status ?? "proof_required",
+      "x-campaign-os-roles": "participant",
+      "x-campaign-os-session-id": session.sessionId,
+      "x-campaign-os-trace-id": traceId,
+      "x-campaign-os-wallet-address": session.address,
+      "x-campaign-os-wallet-source": session.walletSource,
+    });
+    const firstRepository = createWalletSessionRepository({
+      durableStoreFilePath: filePath,
+      mode: "durable_test",
+    });
+    const firstRuntime = createCampaignOsApiRuntimeBase({
+      walletSessionRepository: firstRepository,
+    });
+    let restartedRuntime: CampaignOsApiRuntime | undefined;
+
+    try {
+      const oldSession = await issueSession(firstRuntime);
+      const activeBeforeRestart = await firstRuntime.handle({
+        method: "GET",
+        path: "/api/participant/campaigns",
+        headers: participantHeaders(oldSession, "trace-active-session-before-restart"),
+      });
+      expectSuccessData(activeBeforeRestart);
+      await firstRuntime.close();
+
+      const restartedRepository = createWalletSessionRepository({
+        durableStoreFilePath: filePath,
+        mode: "durable_test",
+      });
+      restartedRuntime = createCampaignOsApiRuntimeBase({
+        walletSessionRepository: restartedRepository,
+      });
+      const staleAccessBeforeFreshIssuance = await restartedRuntime.handle({
+        method: "GET",
+        path: "/api/participant/campaigns",
+        headers: participantHeaders(oldSession, "trace-stale-session-before-fresh-issuance"),
+      });
+      const freshSession = await issueSession(restartedRuntime);
+      const staleAccessAfterFreshIssuance = await restartedRuntime.handle({
+        method: "GET",
+        path: "/api/participant/campaigns",
+        headers: participantHeaders(oldSession, "trace-stale-session-after-restart"),
+      });
+      const freshAccess = await restartedRuntime.handle({
+        method: "GET",
+        path: "/api/participant/campaigns",
+        headers: participantHeaders(freshSession, "trace-fresh-session-after-restart"),
+      });
+
+      expect(freshSession.sessionId).not.toBe(oldSession.sessionId);
+      for (const [response, traceId] of [
+        [staleAccessBeforeFreshIssuance, "trace-stale-session-before-fresh-issuance"],
+        [staleAccessAfterFreshIssuance, "trace-stale-session-after-restart"],
+      ] as const) {
+        expect(response).toMatchObject({
+          status: 401,
+          body: {
+            error: { code: "AUTH_SESSION_INVALID" },
+            ok: false,
+            traceId,
+          },
+        });
+      }
+      expectSuccessData(freshAccess);
+      await expect(restartedRepository.getBySessionId(oldSession.sessionId)).resolves.toMatchObject({
+        sessionId: oldSession.sessionId,
+      });
+      await expect(restartedRepository.health()).resolves.toMatchObject({ recordCount: 2 });
+    } finally {
+      await Promise.allSettled([
+        firstRuntime.close(),
+        restartedRuntime?.close() ?? Promise.resolve(),
+      ]);
+      await rm(tempDir, { force: true, recursive: true });
+    }
   });
 
   it("stores unsupported wallet sessions as sanitized repository review records", async () => {
@@ -6289,7 +7193,7 @@ describe("Campaign OS API runtime", () => {
         },
       });
 
-      await firstRuntime.handle({
+      const issued = await firstRuntime.handle({
         method: "POST",
         path: "/api/wallet/session",
         body: JSON.stringify({
@@ -6298,15 +7202,18 @@ describe("Campaign OS API runtime", () => {
           signature: "durable-raw-signature",
         }),
       });
+      const issuedSessionId = expectSuccessData<LocalServiceEnvelope<WalletSessionPayload>>(
+        issued,
+      ).payload.sessionId;
 
       const reopenedRepository = createWalletSessionRepository({
         durableStoreFilePath: filePath,
         mode: "durable_test",
       });
 
-      await expect(reopenedRepository.getBySessionId("sess-eoa-app-001")).resolves.toMatchObject({
-        recordId: "wallet-session:sess-eoa-app-001",
-        sessionId: "sess-eoa-app-001",
+      await expect(reopenedRepository.getBySessionId(issuedSessionId)).resolves.toMatchObject({
+        recordId: `wallet-session:${issuedSessionId}`,
+        sessionId: issuedSessionId,
         walletAddress: "8A2...1eF",
       });
       await expect(reopenedRepository.health()).resolves.toMatchObject({
@@ -6315,7 +7222,7 @@ describe("Campaign OS API runtime", () => {
         status: "ready",
       });
       expectNoForbiddenFragments(
-        await reopenedRepository.getBySessionId("sess-eoa-app-001"),
+        await reopenedRepository.getBySessionId(issuedSessionId),
         ["durable-raw-signature"],
       );
     } finally {
@@ -6375,7 +7282,10 @@ describe("Campaign OS API runtime", () => {
           mode: "local_json" as const,
         },
       };
-      const firstRuntime = createCampaignOsApiRuntime({ runtimeConfigOptions });
+      const firstRuntime = createCampaignOsApiRuntime({
+        participantPreviewConfigOptions: { campaignIds: ["campaign-db-draft-0001"] },
+        runtimeConfigOptions,
+      });
 
       const walletSession = await firstRuntime.handle({
         method: "POST",
@@ -6388,13 +7298,53 @@ describe("Campaign OS API runtime", () => {
           signature: "raw-durable-health-signature",
         }),
       });
+      const campaignDraft = await firstRuntime.handle({
+        method: "POST",
+        path: "/api/campaigns",
+        headers: projectOwnerAuthHeaders("2F4...9aB", {
+          "x-campaign-os-trace-id": "trace-durable-campaign-draft",
+        }),
+        body: JSON.stringify({
+          duration: "2026-07-01/2026-07-14",
+          endTime: "2026-07-14T23:59:59Z",
+          goal: "Exercise repository-backed durable verification",
+          ownerAddress: "2F4...9aB",
+          projectId: "durable-health-project",
+          rewardDescription: "Durable local smoke rewards remain review-only.",
+          startTime: "2026-07-01T00:00:00Z",
+        }),
+      });
+      const persistedCampaignDraft = expectSuccessData<LocalServiceEnvelope<CampaignDraftPayload> & {
+        persistence: unknown;
+      }>(campaignDraft);
+      const taskDraft = await firstRuntime.handle({
+        method: "POST",
+        path: `/api/campaigns/${persistedCampaignDraft.payload.id}/tasks`,
+        headers: projectOwnerAuthHeaders("2F4...9aB", {
+          "x-campaign-os-trace-id": "trace-durable-task-draft",
+        }),
+        body: JSON.stringify({
+          evidenceRule: { minAmount: 1, source: "AELFSCAN" },
+          points: 120,
+          required: true,
+          templateCode: "bridge_ebridge",
+          verificationType: "ON_CHAIN",
+          walletCompatibility: "ANY",
+        }),
+      });
+      const persistedTaskDraft = expectSuccessData<LocalServiceEnvelope<TaskDraftPayload> & {
+        campaignDbTask: { taskId: string };
+        persistence: unknown;
+      }>(taskDraft);
       const verification = await firstRuntime.handle({
         method: "POST",
-        path: "/api/tasks/task-bridge/verify",
-        headers: { "x-campaign-os-trace-id": "trace-durable-verification" },
+        path: `/api/tasks/${persistedTaskDraft.campaignDbTask.taskId}/verify`,
+        headers: participantAuthHeaders("2F4...9aB", {
+          "x-campaign-os-trace-id": "trace-durable-verification",
+        }),
         body: JSON.stringify({
           accountType: "AA",
-          campaignId: campaignDetail.id,
+          campaignId: persistedCampaignDraft.payload.id,
           walletAddress: "2F4...9aB",
           walletSource: "PORTKEY_AA",
         }),
@@ -6428,6 +7378,8 @@ describe("Campaign OS API runtime", () => {
       }>(walletSession).persistence).toMatchObject({
         kind: "wallet_session",
       });
+      expect(persistedCampaignDraft.persistence).toMatchObject({ kind: "campaign_draft" });
+      expect(persistedTaskDraft.persistence).toMatchObject({ kind: "task_draft" });
       expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
         persistence: unknown;
       }>(verification).persistence).toMatchObject({
@@ -6458,7 +7410,9 @@ describe("Campaign OS API runtime", () => {
         adapterLabel: expect.stringMatching(/^local_json:/),
         adapterPortId: "campaign-os-local-json-adapter",
         countsByKind: expect.objectContaining({
+          campaign_draft: 1,
           export_preview: 1,
+          task_draft: 1,
           verification_attempt: 1,
           wallet_session: 1,
         }),
@@ -6468,7 +7422,7 @@ describe("Campaign OS API runtime", () => {
         noMigrationRunner: true,
         noProductionDatabase: true,
         noSecretHandling: true,
-        recordCount: 3,
+        recordCount: 5,
         status: "ok",
       };
 
@@ -6496,7 +7450,13 @@ describe("Campaign OS API runtime", () => {
           latestRecords: Array<{ kind: string }>;
         };
       }>(recreatedHealth).persistence.latestRecords.map((record) => record.kind)).toEqual(
-        expect.arrayContaining(["wallet_session", "verification_attempt", "export_preview"]),
+        expect.arrayContaining([
+          "wallet_session",
+          "campaign_draft",
+          "task_draft",
+          "verification_attempt",
+          "export_preview",
+        ]),
       );
       expectNoForbiddenFragments(recreatedHealth.body, [
         tempDir,
@@ -6731,6 +7691,7 @@ describe("Campaign OS API runtime", () => {
 
   it("keeps committed Campaign DB writes successful when the independent audit repository is unavailable", async () => {
     const runtimeWithFailingAudit = createCampaignOsApiRuntime({
+      participantPreviewConfigOptions: { campaignIds: ["campaign-db-draft-0001"] },
       repository: createFailingRepository(),
     });
     const create = await runtimeWithFailingAudit.handle({
@@ -6780,7 +7741,9 @@ describe("Campaign OS API runtime", () => {
     const verification = await runtimeWithFailingAudit.handle({
       method: "POST",
       path: `/api/tasks/${taskResult.campaignDbTask.taskId}/verify`,
-      headers: { "x-campaign-os-trace-id": "trace-audit-verification-unavailable" },
+      headers: eoaParticipantAuthHeaders("2F4AuditWallet", {
+        "x-campaign-os-trace-id": "trace-audit-verification-unavailable",
+      }),
       body: JSON.stringify({
         accountType: "EOA",
         campaignId: created.payload.id,
@@ -6790,8 +7753,10 @@ describe("Campaign OS API runtime", () => {
     });
     const detail = await runtimeWithFailingAudit.handle({
       method: "GET",
-      path: `/api/campaigns/${created.payload.id}`,
-      headers: { "x-campaign-os-trace-id": "trace-audit-detail" },
+      path: `/api/owner/campaigns/${created.payload.id}`,
+      headers: projectOwnerAuthHeaders("audit-owner-001", {
+        "x-campaign-os-trace-id": "trace-audit-detail",
+      }),
     });
 
     expect(created.persistence).toEqual({
@@ -6969,6 +7934,7 @@ describe("Campaign OS API runtime", () => {
     const missingTask = await runtime.handle({
       method: "POST",
       path: "/api/tasks/missing-task/verify",
+      headers: participantAuthHeaders("2F4...9aB"),
       body: JSON.stringify({
         accountType: "AA",
         campaignId: campaignDetail.id,
@@ -7004,6 +7970,7 @@ describe("Campaign OS API runtime", () => {
     const invalidWalletSource = await runtime.handle({
       method: "POST",
       path: "/api/tasks/task-bridge/verify",
+      headers: participantAuthHeaders("2F4...9aB"),
       body: JSON.stringify({
         accountType: "AA",
         campaignId: campaignDetail.id,
@@ -7014,6 +7981,7 @@ describe("Campaign OS API runtime", () => {
     const invalidPersistedWalletSource = await validationRuntime.handle({
       method: "POST",
       path: "/api/tasks/task-bridge/verify",
+      headers: participantAuthHeaders("2F4...9aB"),
       body: JSON.stringify({
         accountType: "AA",
         campaignId: campaignDetail.id,
@@ -7103,7 +8071,7 @@ describe("Campaign OS API runtime", () => {
       status: 404,
       body: {
         ok: false,
-        error: { code: "INVALID_TASK" },
+        error: { code: "INVALID_CAMPAIGN" },
       },
     });
     expect(invalidCreate).toMatchObject({
@@ -7126,24 +8094,26 @@ describe("Campaign OS API runtime", () => {
       },
     });
     expect(invalidWalletSource).toMatchObject({
-      status: 400,
+      status: 403,
       body: {
         ok: false,
         error: {
-          code: "INVALID_REQUEST",
+          code: "AUTH_SUBJECT_MISMATCH",
           details: {
+            diagnosticCode: "AUTH_SUBJECT_MISMATCH",
             field: "walletSource",
           },
         },
       },
     });
     expect(invalidPersistedWalletSource).toMatchObject({
-      status: 400,
+      status: 403,
       body: {
         ok: false,
         error: {
-          code: "INVALID_REQUEST",
+          code: "AUTH_SUBJECT_MISMATCH",
           details: {
+            diagnosticCode: "AUTH_SUBJECT_MISMATCH",
             field: "walletSource",
           },
         },
@@ -7424,7 +8394,9 @@ describe("Campaign OS API runtime", () => {
       path: `/api/campaigns/${campaignDetail.id}/tasks`,
     });
     const eligibility = await authoritativeRuntime.handle({
-      headers: { "x-campaign-os-trace-id": "trace-postgres-authoritative-eligibility" },
+      headers: eoaParticipantAuthHeaders("2F4SeededShadow", {
+        "x-campaign-os-trace-id": "trace-postgres-authoritative-eligibility",
+      }),
       method: "GET",
       path: `/api/campaigns/${campaignDetail.id}/eligibility?address=${encodeURIComponent("2F4SeededShadow")}&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION`,
     });

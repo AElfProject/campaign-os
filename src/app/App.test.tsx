@@ -12,6 +12,14 @@ import type {
   OwnerTaskResult,
   ProjectOwnerCampaignApiBridge,
 } from "../api/projectOwnerCampaignApiBridge";
+import type {
+  ParticipantCampaignListResult,
+  ParticipantJourneyApiBridge,
+  ParticipantJourneyFailure,
+  ParticipantJourneyProjection,
+  ParticipantJourneyResult,
+  ParticipantVerifyResult,
+} from "../api/participantJourneyApiBridge";
 import {
   EXPORT_CSV_COLUMNS,
   walletSessions,
@@ -48,6 +56,26 @@ describe("Campaign OS app shell", () => {
     const buttons = screen.getAllByRole("button", { name: "Connect Wallet" });
 
     return buttons[buttons.length - 1];
+  };
+  const expectFreshHeaderWalletPreviewRequest = (
+    request: Parameters<typeof submitWalletSessionApiPreview>[0]["request"],
+  ) => {
+    expect(request).toMatchObject({
+      adapterName: "PortkeyAAWallet",
+      fixtureId: "sess-aa-001",
+      proofEvaluatedAt: expect.any(String),
+      proofIssuedAt: expect.any(String),
+      signature: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      ),
+    });
+
+    const evaluatedAt = Date.parse(request?.proofEvaluatedAt ?? "");
+    const issuedAt = Date.parse(request?.proofIssuedAt ?? "");
+
+    expect(Number.isFinite(evaluatedAt)).toBe(true);
+    expect(evaluatedAt - issuedAt).toBe(1_000);
+    expect(Math.abs(Date.now() - evaluatedAt)).toBeLessThan(10_000);
   };
 
   const setNavigatorLanguages = (languages: readonly string[]) => {
@@ -204,16 +232,25 @@ describe("Campaign OS app shell", () => {
         baseUrl: "",
         tracePrefix: "header-wallet-session",
       }),
-      request: {
-        adapterName: "PortkeyAAWallet",
-        fixtureId: "sess-aa-001",
-      },
+      request: expect.any(Object),
     }));
+    const firstRequest = mockedSubmitWalletSessionApiPreview.mock.calls[0]?.[0].request;
+
+    expectFreshHeaderWalletPreviewRequest(firstRequest);
     expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
 
     fireEvent.click(connectedWallet);
 
     expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Use seeded wallet preview" }));
+    });
+
+    const secondRequest = mockedSubmitWalletSessionApiPreview.mock.calls[1]?.[0].request;
+
+    expectFreshHeaderWalletPreviewRequest(secondRequest);
+    expect(secondRequest?.signature).not.toBe(firstRequest?.signature);
   });
 
   it("connects the Header wallet through the local API runtime and renders review metadata", async () => {
@@ -237,11 +274,11 @@ describe("Campaign OS app shell", () => {
         baseUrl: "http://127.0.0.1:5184",
         tracePrefix: "header-wallet-session",
       }),
-      request: {
-        adapterName: "PortkeyAAWallet",
-        fixtureId: "sess-aa-001",
-      },
+      request: expect.any(Object),
     })));
+    expectFreshHeaderWalletPreviewRequest(
+      mockedSubmitWalletSessionApiPreview.mock.calls[0]?.[0].request,
+    );
     expect(within(getHeader()).getByRole("button", {
       name: "Manage wallet connection: AA · Portkey 2F4...9aB",
     })).toBeInTheDocument();
@@ -1047,6 +1084,13 @@ const appOwnerSessionA: NormalizedWalletSession = {
     ttlSeconds: 900,
     valid: true,
   },
+  proof: {
+    diagnosticCodes: [],
+    liveVerificationExecuted: false,
+    proofType: "wallet_signature",
+    status: "verified",
+    trustLevel: "verified_local",
+  },
 };
 const appOwnerSessionB: NormalizedWalletSession = {
   ...appOwnerSessionA,
@@ -1130,6 +1174,195 @@ const appOwnerBridge = (
   ...overrides,
 });
 
+const appParticipantFailure = (): ParticipantJourneyFailure => ({
+  code: "BRIDGE_INVALID_INPUT",
+  httpStatus: 400,
+  ok: false,
+  phase: "config",
+  reconnectRequired: false,
+  retryable: false,
+  source: "durable",
+  status: "blocked",
+  traceId: "trace-app-participant-unused",
+});
+
+const appParticipantFeed = (
+  campaignId: string,
+  title: string,
+): ParticipantCampaignListResult => ({
+  campaigns: [{
+    campaignId,
+    projectId: "awaken",
+    repository: {
+      adapterId: "campaign-db-adapter",
+      createdViaRepository: true,
+      repositoryId: "campaign-db-repository-runtime",
+      storeId: "campaign-db",
+    },
+    status: "draft",
+    taskCount: 0,
+    title: { "en-US": title, "zh-CN": title, "zh-TW": title },
+    visibility: "participant_preview",
+  }],
+  httpStatus: 200,
+  ok: true,
+  source: "durable",
+  status: "success",
+  traceId: `trace-app-participant-${campaignId}`,
+});
+
+const appParticipantJourney = (
+  campaignId: string,
+  session: NormalizedWalletSession,
+  completed = false,
+): ParticipantJourneyProjection => {
+  const taskId = `task-${campaignId}`;
+
+  return {
+    campaign: {
+      campaignId,
+      endTime: "2026-08-31T00:00:00.000Z",
+      goal: "Exercise session authority rotation",
+      projectId: "awaken",
+      rewardDescription: "Review points",
+      startTime: "2026-07-01T00:00:00.000Z",
+      status: "draft",
+      taskCount: 1,
+      walletPolicy: "ANY",
+    },
+    diagnostics: [],
+    eligibility: {
+      accountType: session.accountType,
+      campaignId,
+      eligible: completed,
+      localePreference: "en-US",
+      missingTasks: completed ? [] : [taskId],
+      riskFlags: [],
+      score: completed ? 25 : 0,
+      status: completed ? "eligible" : "pending",
+      walletAddress: session.address,
+      walletSource: session.walletSource,
+      walletTypeVerified: true,
+    },
+    participant: {
+      accountType: session.accountType,
+      campaignId,
+      localePreference: "en-US",
+      participantId: completed ? `participant-${campaignId}` : null,
+      riskFlags: [],
+      totalPoints: completed ? 25 : 0,
+      walletAddress: session.address,
+      walletSource: session.walletSource,
+      walletTypeVerified: true,
+    },
+    ranking: {
+      campaignId,
+      participantCount: completed ? 1 : 0,
+      rank: completed ? 1 : null,
+      source: "repository_projection",
+      totalPoints: completed ? 25 : 0,
+      walletAddress: session.address,
+    },
+    repository: {
+      adapterId: "campaign-db-adapter",
+      createdViaRepository: true,
+      repositoryId: "campaign-db-repository-runtime",
+      storeId: "campaign-db",
+    },
+    tasks: [{
+      action: completed ? "completed" : "verify",
+      blockedReason: null,
+      campaignId,
+      completionId: completed ? `completion-${campaignId}` : null,
+      evidenceId: completed ? `evidence-${campaignId}` : null,
+      evidenceSource: completed ? "DAPP_API" : null,
+      pointsAvailable: 25,
+      pointsAwarded: completed ? 25 : 0,
+      required: true,
+      status: completed ? "completed" : "not_started",
+      taskId,
+      templateCode: "APP_SESSION_ROTATION",
+      updatedAt: completed ? "2026-07-15T00:00:00.000Z" : null,
+      verificationType: "DAPP_API",
+      walletCompatibility: "ANY",
+    }],
+  };
+};
+
+const appParticipantJourneyResult = (
+  campaignId: string,
+  session: NormalizedWalletSession,
+  completed = false,
+): ParticipantJourneyResult => ({
+  httpStatus: 200,
+  journey: appParticipantJourney(campaignId, session, completed),
+  ok: true,
+  source: "durable",
+  status: "success",
+  traceId: `trace-app-journey-${campaignId}-${completed ? "completed" : "initial"}`,
+});
+
+const appParticipantVerifyResult = (
+  campaignId: string,
+  session: NormalizedWalletSession,
+): ParticipantVerifyResult => {
+  const taskId = `task-${campaignId}`;
+
+  return {
+    httpStatus: 200,
+    ok: true,
+    source: "durable",
+    status: "success",
+    traceId: `trace-app-verify-${campaignId}`,
+    verification: {
+      completion: {
+        accountType: session.accountType,
+        campaignId,
+        evidenceId: `evidence-${campaignId}`,
+        id: `completion-${campaignId}`,
+        pointsAwarded: 25,
+        status: "completed",
+        taskId,
+        walletAddress: session.address,
+        walletSource: session.walletSource,
+      },
+      evidence: {
+        accountType: session.accountType,
+        campaignId,
+        completionId: `completion-${campaignId}`,
+        id: `evidence-${campaignId}`,
+        pointsAwarded: 25,
+        status: "completed",
+        taskId,
+        walletAddress: session.address,
+        walletSource: session.walletSource,
+      },
+      repository: {
+        adapterId: "campaign-db-adapter",
+        createdViaRepository: true,
+        repositoryId: "campaign-db-repository-runtime",
+        storeId: "campaign-db",
+      },
+    },
+  };
+};
+
+const appParticipantBridge = (
+  overrides: Partial<ParticipantJourneyApiBridge> = {},
+): ParticipantJourneyApiBridge => ({
+  getJourney: vi.fn(async () => appParticipantFailure()),
+  listCampaigns: vi.fn<ParticipantJourneyApiBridge["listCampaigns"]>(async () => ({
+    campaigns: [],
+    httpStatus: 200,
+    ok: true,
+    source: "durable",
+    status: "success",
+    traceId: "trace-app-participant-feed",
+  })),
+  verifyTask: vi.fn(async () => appParticipantFailure()),
+  ...overrides,
+});
+
 describe("App Owner campaign authority", () => {
   const submitWalletSession = vi.mocked(submitWalletSessionApiPreview);
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
@@ -1165,6 +1398,215 @@ describe("App Owner campaign authority", () => {
       "awaken",
       expect.objectContaining({ session: appOwnerSessionA }),
     );
+  });
+
+  it("passes the same API-issued wallet session and durable mode to User App", async () => {
+    submitWalletSession.mockResolvedValueOnce(appWalletSessionState(appOwnerSessionA));
+    const participantBridge = appParticipantBridge();
+
+    render(<App participantJourneyBridge={participantBridge} />);
+    await connectHeaderWallet();
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    await waitFor(() => expect(participantBridge.listCampaigns).toHaveBeenCalledTimes(1));
+    expect(participantBridge.listCampaigns).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "durable",
+      selectedCampaignId: null,
+      session: appOwnerSessionA,
+      signal: expect.any(AbortSignal),
+    }));
+  });
+
+  it("clears session A journey diagnostics before session B feed resolves", async () => {
+    let resolveSessionBFeed!: (result: ParticipantCampaignListResult) => void;
+    const sessionBFeed = new Promise<ParticipantCampaignListResult>((resolve) => {
+      resolveSessionBFeed = resolve;
+    });
+    submitWalletSession
+      .mockResolvedValueOnce(appWalletSessionState(appOwnerSessionA))
+      .mockResolvedValueOnce(appWalletSessionState(appOwnerSessionB));
+    const listCampaigns = vi.fn<ParticipantJourneyApiBridge["listCampaigns"]>((context) =>
+      context.session?.sessionId === appOwnerSessionA.sessionId
+        ? Promise.resolve(appParticipantFeed("campaign-session-a", "Session A Campaign"))
+        : sessionBFeed);
+    const getJourney = vi.fn<ParticipantJourneyApiBridge["getJourney"]>(async () =>
+      appParticipantJourneyResult("campaign-session-a", appOwnerSessionA));
+    const verifyTask = vi.fn<ParticipantJourneyApiBridge["verifyTask"]>(async () => ({
+      code: "AUTH_SESSION_INVALID",
+      httpStatus: 401,
+      ok: false,
+      phase: "auth",
+      reconnectRequired: true,
+      retryable: false,
+      source: "durable",
+      status: "blocked",
+      traceId: "trace-app-session-a-invalid",
+    }));
+    const participantBridge = appParticipantBridge({ getJourney, listCampaigns, verifyTask });
+
+    render(<App participantJourneyBridge={participantBridge} />);
+    await connectHeaderWallet();
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+    expect(await screen.findByRole("button", {
+      name: "Select Session A Campaign (campaign-session-a)",
+    })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {
+      name: "Select Session A Campaign (campaign-session-a)",
+    }));
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Verify Task task-campaign-session-a",
+    }));
+    expect(await screen.findByText("AUTH_SESSION_INVALID")).toBeInTheDocument();
+    expect(screen.getByText("trace-app-session-a-invalid")).toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: /Manage wallet connection/,
+    }));
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Use seeded wallet preview" }));
+    });
+
+    await waitFor(() => expect(listCampaigns).toHaveBeenCalledTimes(2));
+    expect(listCampaigns.mock.calls[1][0].session).toBe(appOwnerSessionB);
+    expect(screen.queryByRole("button", {
+      name: "Select Session A Campaign (campaign-session-a)",
+    })).not.toBeInTheDocument();
+    expect(screen.queryByText("AUTH_SESSION_INVALID")).not.toBeInTheDocument();
+    expect(screen.queryByText("trace-app-session-a-invalid")).not.toBeInTheDocument();
+    expect(screen.getByText("Loading Campaign feed")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSessionBFeed(appParticipantFeed("campaign-session-b", "Session B Campaign"));
+      await sessionBFeed;
+    });
+
+    expect(await screen.findByRole("button", {
+      name: "Select Session B Campaign (campaign-session-b)",
+    })).toBeInTheDocument();
+  });
+
+  it("aborts and ignores session A read-after-write refresh after session B connects", async () => {
+    let resolveSessionARefresh!: (result: ParticipantJourneyResult) => void;
+    let resolveSessionBFeed!: (result: ParticipantCampaignListResult) => void;
+    const sessionARefresh = new Promise<ParticipantJourneyResult>((resolve) => {
+      resolveSessionARefresh = resolve;
+    });
+    const sessionBFeed = new Promise<ParticipantCampaignListResult>((resolve) => {
+      resolveSessionBFeed = resolve;
+    });
+    submitWalletSession
+      .mockResolvedValueOnce(appWalletSessionState(appOwnerSessionA))
+      .mockResolvedValueOnce(appWalletSessionState(appOwnerSessionB));
+    const listCampaigns = vi.fn<ParticipantJourneyApiBridge["listCampaigns"]>((context) =>
+      context.session?.sessionId === appOwnerSessionA.sessionId
+        ? Promise.resolve(appParticipantFeed("campaign-session-a", "Session A Campaign"))
+        : sessionBFeed);
+    const getJourney = vi
+      .fn<ParticipantJourneyApiBridge["getJourney"]>()
+      .mockResolvedValueOnce(appParticipantJourneyResult("campaign-session-a", appOwnerSessionA))
+      .mockImplementationOnce(() => sessionARefresh);
+    const verifyTask = vi.fn<ParticipantJourneyApiBridge["verifyTask"]>(async () =>
+      appParticipantVerifyResult("campaign-session-a", appOwnerSessionA));
+    const participantBridge = appParticipantBridge({ getJourney, listCampaigns, verifyTask });
+
+    render(<App participantJourneyBridge={participantBridge} />);
+    await connectHeaderWallet();
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Select Session A Campaign (campaign-session-a)",
+    }));
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Verify Task task-campaign-session-a",
+    }));
+
+    await waitFor(() => expect(verifyTask).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getJourney).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", {
+      name: "Refreshing journey (task-campaign-session-a)",
+    })).toBeDisabled();
+    expect(screen.getByText("trace-app-verify-campaign-session-a")).toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: /Manage wallet connection/,
+    }));
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Use seeded wallet preview" }));
+    });
+
+    await waitFor(() => expect(listCampaigns).toHaveBeenCalledTimes(2));
+    expect(getJourney.mock.calls[1][0].signal?.aborted).toBe(true);
+    expect(screen.queryByText("trace-app-verify-campaign-session-a")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Participant journey" })).not.toBeInTheDocument();
+    expect(screen.getByText("Loading Campaign feed")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSessionARefresh(appParticipantJourneyResult(
+        "campaign-session-a",
+        appOwnerSessionA,
+        true,
+      ));
+      await sessionARefresh;
+    });
+    expect(screen.queryByText("completion-campaign-session-a")).not.toBeInTheDocument();
+    expect(screen.queryByText("campaign-session-a")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveSessionBFeed(appParticipantFeed("campaign-session-b", "Session B Campaign"));
+      await sessionBFeed;
+    });
+    expect(await screen.findByRole("button", {
+      name: "Select Session B Campaign (campaign-session-b)",
+    })).toBeInTheDocument();
+    expect(screen.queryByText("completion-campaign-session-a")).not.toBeInTheDocument();
+  });
+
+  it("keeps protected Participant feed blocked until an issued session is ready", () => {
+    const participantBridge = appParticipantBridge();
+
+    render(<App participantJourneyBridge={participantBridge} />);
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect wallet" }));
+    expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "stale proof",
+      (): NormalizedWalletSession => ({
+        ...appOwnerSessionA,
+        proof: { ...appOwnerSessionA.proof!, status: "stale", trustLevel: "untrusted" },
+      }),
+    ],
+    [
+      "internal agent credential",
+      (): NormalizedWalletSession => ({
+        ...appOwnerSessionA,
+        capabilities: ["CONTRACT_VIEW", "INTERNAL_AUTOMATION"],
+        proof: {
+          ...appOwnerSessionA.proof!,
+          proofType: "agent_context",
+          trustLevel: "internal_only",
+        },
+        verificationStatus: "internal_agent",
+        walletSource: "AGENT_SKILL",
+        walletTypeVerified: false,
+      }),
+    ],
+  ])("does not start the protected Participant feed for %s", async (_name, sessionFactory) => {
+    const invalidParticipantSession = sessionFactory();
+    submitWalletSession.mockResolvedValueOnce(appWalletSessionState(invalidParticipantSession));
+    const participantBridge = appParticipantBridge();
+
+    render(<App participantJourneyBridge={participantBridge} />);
+    await connectHeaderWallet();
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    expect(await screen.findByRole("button", { name: "Reconnect wallet" })).toBeInTheDocument();
+    expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
   });
 
   it("does not grant Owner workflow authority to an invalid issued-session projection", async () => {
