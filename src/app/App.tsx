@@ -211,9 +211,20 @@ const workspaceProductDestinationMap: Partial<Record<ProjectWorkspaceKey, Produc
 
 const walletSessionApiBaseUrl = () => import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
-const headerWalletPreviewRequest: WalletSessionPreviewRequest = {
+const headerWalletPreviewFixtureRequest: WalletSessionPreviewRequest = {
   adapterName: "PortkeyAAWallet",
   fixtureId: "sess-aa-001",
+};
+
+const createHeaderWalletPreviewRequest = (): WalletSessionPreviewRequest => {
+  const proofEvaluatedAt = Date.now();
+
+  return {
+    ...headerWalletPreviewFixtureRequest,
+    proofEvaluatedAt: new Date(proofEvaluatedAt).toISOString(),
+    proofIssuedAt: new Date(proofEvaluatedAt - 1_000).toISOString(),
+    signature: globalThis.crypto.randomUUID(),
+  };
 };
 
 const isIssuedOwnerSessionReady = (
@@ -308,7 +319,7 @@ export const App = ({ ownerCampaignBridge, participantJourneyBridge }: AppProps 
   const [headerWalletModalOpen, setHeaderWalletModalOpen] = useState(false);
   const [headerWalletSessionBridgeState, setHeaderWalletSessionBridgeState] =
     useState<WalletSessionApiBridgeState>(() => createWalletSessionApiSeededFallbackState(
-      headerWalletPreviewRequest,
+      headerWalletPreviewFixtureRequest,
     ));
   const [headerWalletSession, setHeaderWalletSession] =
     useState<NormalizedWalletSession | null>(null);
@@ -403,14 +414,16 @@ export const App = ({ ownerCampaignBridge, participantJourneyBridge }: AppProps 
   }, []);
 
   const connectHeaderPreviewWallet = async () => {
-    setHeaderWalletSessionBridgeState(createWalletSessionApiLoadingState(headerWalletPreviewRequest));
+    const request = createHeaderWalletPreviewRequest();
+
+    setHeaderWalletSessionBridgeState(createWalletSessionApiLoadingState(request));
 
     const nextState = await submitWalletSessionApiPreview({
       config: {
         baseUrl: walletSessionApiBaseUrl(),
         tracePrefix: "header-wallet-session",
       },
-      request: headerWalletPreviewRequest,
+      request,
     });
 
     setHeaderWalletSessionBridgeState(nextState);

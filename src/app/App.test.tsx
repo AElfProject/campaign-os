@@ -53,6 +53,26 @@ describe("Campaign OS app shell", () => {
 
     return buttons[buttons.length - 1];
   };
+  const expectFreshHeaderWalletPreviewRequest = (
+    request: Parameters<typeof submitWalletSessionApiPreview>[0]["request"],
+  ) => {
+    expect(request).toMatchObject({
+      adapterName: "PortkeyAAWallet",
+      fixtureId: "sess-aa-001",
+      proofEvaluatedAt: expect.any(String),
+      proofIssuedAt: expect.any(String),
+      signature: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      ),
+    });
+
+    const evaluatedAt = Date.parse(request?.proofEvaluatedAt ?? "");
+    const issuedAt = Date.parse(request?.proofIssuedAt ?? "");
+
+    expect(Number.isFinite(evaluatedAt)).toBe(true);
+    expect(evaluatedAt - issuedAt).toBe(1_000);
+    expect(Math.abs(Date.now() - evaluatedAt)).toBeLessThan(10_000);
+  };
 
   const setNavigatorLanguages = (languages: readonly string[]) => {
     Object.defineProperty(window.navigator, "languages", {
@@ -208,16 +228,25 @@ describe("Campaign OS app shell", () => {
         baseUrl: "",
         tracePrefix: "header-wallet-session",
       }),
-      request: {
-        adapterName: "PortkeyAAWallet",
-        fixtureId: "sess-aa-001",
-      },
+      request: expect.any(Object),
     }));
+    const firstRequest = mockedSubmitWalletSessionApiPreview.mock.calls[0]?.[0].request;
+
+    expectFreshHeaderWalletPreviewRequest(firstRequest);
     expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
 
     fireEvent.click(connectedWallet);
 
     expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Use seeded wallet preview" }));
+    });
+
+    const secondRequest = mockedSubmitWalletSessionApiPreview.mock.calls[1]?.[0].request;
+
+    expectFreshHeaderWalletPreviewRequest(secondRequest);
+    expect(secondRequest?.signature).not.toBe(firstRequest?.signature);
   });
 
   it("connects the Header wallet through the local API runtime and renders review metadata", async () => {
@@ -241,11 +270,11 @@ describe("Campaign OS app shell", () => {
         baseUrl: "http://127.0.0.1:5184",
         tracePrefix: "header-wallet-session",
       }),
-      request: {
-        adapterName: "PortkeyAAWallet",
-        fixtureId: "sess-aa-001",
-      },
+      request: expect.any(Object),
     })));
+    expectFreshHeaderWalletPreviewRequest(
+      mockedSubmitWalletSessionApiPreview.mock.calls[0]?.[0].request,
+    );
     expect(within(getHeader()).getByRole("button", {
       name: "Manage wallet connection: AA · Portkey 2F4...9aB",
     })).toBeInTheDocument();
