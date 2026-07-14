@@ -74,7 +74,7 @@ export interface ParticipantCampaignFeedItem {
   endTime?: string;
   goal?: string;
   projectId?: string;
-  repository?: ParticipantJourneyRepositoryMetadata;
+  repository: ParticipantJourneyRepositoryMetadata;
   rewardDescription?: string;
   startTime?: string;
   status: CampaignStatus;
@@ -423,6 +423,40 @@ export const sanitizeParticipantJourneyApiText = (value: unknown): string => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
+const abortSignalAbortedGetter = Object.getOwnPropertyDescriptor(
+  AbortSignal.prototype,
+  "aborted",
+)?.get;
+
+type ContextSignalResult =
+  | { aborted: boolean; ok: true; signal?: AbortSignal }
+  | { ok: false };
+
+const normalizeContextSignal = (context: Record<string, unknown>): ContextSignalResult => {
+  try {
+    const candidate = context.signal;
+    if (candidate === undefined) {
+      return { aborted: false, ok: true };
+    }
+    if (
+      !candidate
+      || typeof candidate !== "object"
+      || !abortSignalAbortedGetter
+      || typeof (candidate as AbortSignal).addEventListener !== "function"
+      || typeof (candidate as AbortSignal).removeEventListener !== "function"
+    ) {
+      return { ok: false };
+    }
+
+    const aborted = abortSignalAbortedGetter.call(candidate);
+    return typeof aborted === "boolean"
+      ? { aborted, ok: true, signal: candidate as AbortSignal }
+      : { ok: false };
+  } catch {
+    return { ok: false };
+  }
+};
+
 const text = (value: unknown, maxLength = maxTextLength): string | undefined => {
   if (typeof value !== "string") {
     return undefined;
@@ -667,6 +701,14 @@ class ResponseReadFailure extends Error {
   }
 }
 
+const cancelResponseBody = async (response: Response): Promise<void> => {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Preserve the protocol failure when best-effort stream cleanup also fails.
+  }
+};
+
 const boundedResponseText = async (
   response: Response,
   maxBytes: number,
@@ -677,6 +719,7 @@ const boundedResponseText = async (
   if (rawContentLength !== null) {
     const contentLength = Number(rawContentLength);
     if (!Number.isSafeInteger(contentLength) || contentLength < 0 || contentLength > maxBytes) {
+      await cancelResponseBody(response);
       throw new ResponseReadFailure("BRIDGE_RESPONSE_OVERSIZE");
     }
   }
@@ -878,6 +921,13 @@ const executeRequest = async (
     return bridgeFailure("BRIDGE_INVALID_INPUT", "config", traceId);
   }
 
+  const contextSignal = normalizeContextSignal(input.context);
+  if (!contextSignal.ok) {
+    return bridgeFailure("BRIDGE_INVALID_INPUT", "config", traceId, {
+      safeDetails: Object.freeze({ field: "signal" }),
+    });
+  }
+
   const auth = createWalletSessionAuthHeaders(input.context.session);
   if (!auth.ok) {
     return bridgeFailure("BRIDGE_SESSION_INVALID", "auth", traceId, {
@@ -920,11 +970,11 @@ const executeRequest = async (
     });
   }
 
-  if (input.context.signal?.aborted) {
+  if (contextSignal.aborted) {
     return bridgeFailure("BRIDGE_REQUEST_ABORTED", "request", traceId);
   }
 
-  const managedAbort = createManagedAbort(input.context.signal, config.timeoutMs);
+  const managedAbort = createManagedAbort(contextSignal.signal, config.timeoutMs);
 
   try {
     const response = await raceWithAbort(Promise.resolve(fetchImpl(url, {
@@ -941,12 +991,13 @@ const executeRequest = async (
       return bridgeFailure("BRIDGE_REQUEST_ABORTED", "request", traceId);
     }
 
+    const responseFailureTraceId = responseTraceId(response, undefined, traceId);
     let parsed: Record<string, unknown>;
     try {
       parsed = await parseBoundedResponse(response, config.maxResponseBytes, managedAbort.controller.signal);
     } catch (error) {
       if (managedAbort.timedOut()) {
-        return bridgeFailure("BRIDGE_REQUEST_TIMEOUT", "request", traceId);
+        return bridgeFailure("BRIDGE_REQUEST_TIMEOUT", "request", responseFailureTraceId);
       }
       if (managedAbort.externalAborted()) {
         return bridgeFailure("BRIDGE_REQUEST_ABORTED", "request", traceId);
@@ -954,9 +1005,14 @@ const executeRequest = async (
       const code = error instanceof ResponseReadFailure
         ? error.code
         : "BRIDGE_RESPONSE_NON_JSON";
-      return bridgeFailure(code, code === "BRIDGE_REQUEST_ABORTED" ? "request" : "response", traceId, {
-        httpStatus: response.status,
-      });
+      return bridgeFailure(
+        code,
+        code === "BRIDGE_REQUEST_ABORTED" ? "request" : "response",
+        responseFailureTraceId,
+        {
+          httpStatus: response.status,
+        },
+      );
     }
 
     const resolvedTraceId = responseTraceId(response, parsed, traceId);
@@ -985,7 +1041,7 @@ const executeRequest = async (
     if (managedAbort.timedOut()) {
       return bridgeFailure("BRIDGE_REQUEST_TIMEOUT", "request", traceId);
     }
-    if (managedAbort.externalAborted() || input.context.signal?.aborted) {
+    if (managedAbort.externalAborted()) {
       return bridgeFailure("BRIDGE_REQUEST_ABORTED", "request", traceId);
     }
     return bridgeFailure("BRIDGE_REQUEST_FAILED", "request", traceId);
@@ -1022,13 +1078,13 @@ const normalizeFeedItem = (value: unknown): NormalizationResult<ParticipantCampa
     return { ok: false, reason: "invalid" };
   }
 
-  const repository = value.repository === undefined ? undefined : normalizeRepository(value.repository);
-  if (value.repository !== undefined && !repository) {
+  const repository = normalizeRepository(value.repository);
+  if (!repository) {
     return { ok: false, reason: "invalid" };
   }
 
   const optionalTextFields = ["endTime", "goal", "projectId", "rewardDescription", "startTime"] as const;
-  const output: ParticipantCampaignFeedItem = { campaignId, status, visibility };
+  const output: ParticipantCampaignFeedItem = { campaignId, repository, status, visibility };
   for (const field of optionalTextFields) {
     if (value[field] !== undefined) {
       const normalized = text(value[field]);
@@ -1062,10 +1118,6 @@ const normalizeFeedItem = (value: unknown): NormalizationResult<ParticipantCampa
       output[field] = localized;
     }
   }
-  if (repository) {
-    output.repository = repository;
-  }
-
   return { ok: true, value: output };
 };
 

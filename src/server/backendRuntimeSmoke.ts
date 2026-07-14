@@ -84,9 +84,11 @@ export interface BackendRuntimeSmokeDurableLocalPersistenceSummary {
   restartedRecordCount: number;
   status: "passed";
   traceIds: {
+    campaignDraft: string;
     exportPreview: string;
     firstHealth: string;
     restartedHealth: string;
+    taskDraft: string;
     verification: string;
     walletSession: string;
   };
@@ -2297,12 +2299,15 @@ const isReleaseScopeSmokeReady = (
 };
 
 const durableLocalSmokeTraceIds = {
+  campaignDraft: "campaign-os-smoke-durable-campaign-draft",
   exportPreview: "campaign-os-smoke-durable-export-preview",
   firstHealth: "campaign-os-smoke-durable-health-first",
   restartedHealth: "campaign-os-smoke-durable-health-restarted",
+  taskDraft: "campaign-os-smoke-durable-task-draft",
   verification: "campaign-os-smoke-durable-verification",
   walletSession: "campaign-os-smoke-durable-wallet-session",
 } as const;
+const durableLocalSmokeCampaignId = "campaign-db-draft-0001";
 
 interface DurableLocalParticipantSession {
   accountType: string;
@@ -2310,6 +2315,11 @@ interface DurableLocalParticipantSession {
   recordKind: string;
   walletAddress: string;
   walletSource: string;
+}
+
+interface DurableLocalSmokeWriteResult {
+  data: Record<string, unknown>;
+  kind: string;
 }
 
 const withDurableLocalPersistenceEnv = async (
@@ -2322,6 +2332,7 @@ const withDurableLocalPersistenceEnv = async (
     return {
       env: {
         ...env,
+        CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS: durableLocalSmokeCampaignId,
         CAMPAIGN_OS_PERSISTENCE_MODE: "local_json",
       },
     };
@@ -2333,6 +2344,7 @@ const withDurableLocalPersistenceEnv = async (
     cleanupDir,
     env: {
       ...env,
+      CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS: durableLocalSmokeCampaignId,
       CAMPAIGN_OS_PERSISTENCE_DIR: cleanupDir,
       CAMPAIGN_OS_PERSISTENCE_MODE: "local_json",
     },
@@ -2442,7 +2454,7 @@ const postDurableLocalSmokeRecord = async ({
   path: string;
   traceId: string;
   trustedHeaders?: Record<string, string>;
-}): Promise<string> => {
+}): Promise<DurableLocalSmokeWriteResult> => {
   const response = await fetchImpl(`${baseUrl}${path}`, {
     body: JSON.stringify(body),
     headers: {
@@ -2453,14 +2465,15 @@ const postDurableLocalSmokeRecord = async ({
     method: "POST",
   });
   const payload = await readJson(response);
+  const data = isRecord(payload.data) ? payload.data : undefined;
   const persistence = readNestedRecord(payload.data, ["persistence"]);
   const kind = getString(persistence, "kind");
 
-  if (response.status !== 200 || payload.ok !== true || payload.traceId !== traceId || !kind) {
+  if (response.status !== 200 || payload.ok !== true || payload.traceId !== traceId || !data || !kind) {
     throw new Error("Campaign OS durable local persistence write smoke check failed.");
   }
 
-  return kind;
+  return { data, kind };
 };
 
 const readDurableHealth = async (
@@ -2504,7 +2517,13 @@ const assertDurableLocalPersistenceHealth = (
   persistence: Record<string, unknown>,
   expectedRecordCount: number,
 ) => {
-  const expectedKinds = ["wallet_session", "verification_attempt", "export_preview"];
+  const expectedKinds = [
+    "wallet_session",
+    "campaign_draft",
+    "task_draft",
+    "verification_attempt",
+    "export_preview",
+  ];
 
   if (
     getString(persistence, "mode") !== "local_json"
@@ -2548,34 +2567,85 @@ const runDurableLocalPersistenceSmoke = async ({
     baseUrl: server.url,
     fetchImpl,
   });
+  const projectOwnerHeaders = {
+    ...participantSession.headers,
+    "x-campaign-os-roles": "project_owner",
+  };
+  const campaignDraft = await postDurableLocalSmokeRecord({
+    baseUrl: server.url,
+    body: {
+      duration: "2026-07-01/2026-07-14",
+      endTime: "2026-07-14T23:59:59Z",
+      goal: "Exercise the durable Participant Campaign journey",
+      ownerAddress: participantSession.walletAddress,
+      projectId: "campaign-os-smoke-durable-project",
+      rewardDescription: "Durable smoke rewards remain local-review only.",
+      startTime: "2026-07-01T00:00:00Z",
+    },
+    fetchImpl,
+    path: "/api/campaigns",
+    traceId: durableLocalSmokeTraceIds.campaignDraft,
+    trustedHeaders: projectOwnerHeaders,
+  });
+  const campaignId = getString(readNestedRecord(campaignDraft.data, ["payload"]), "id");
+
+  if (campaignId !== durableLocalSmokeCampaignId) {
+    throw new Error("Campaign OS durable local Campaign smoke check failed.");
+  }
+
+  const taskDraft = await postDurableLocalSmokeRecord({
+    baseUrl: server.url,
+    body: {
+      evidenceRule: { minAmount: 1, source: "AELFSCAN" },
+      points: 120,
+      required: true,
+      templateCode: "bridge_ebridge",
+      verificationType: "ON_CHAIN",
+      walletCompatibility: "ANY",
+    },
+    fetchImpl,
+    path: `/api/campaigns/${campaignId}/tasks`,
+    traceId: durableLocalSmokeTraceIds.taskDraft,
+    trustedHeaders: projectOwnerHeaders,
+  });
+  const taskId = getString(readNestedRecord(taskDraft.data, ["campaignDbTask"]), "taskId");
+
+  if (!taskId) {
+    throw new Error("Campaign OS durable local Task smoke check failed.");
+  }
+
+  const verification = await postDurableLocalSmokeRecord({
+    baseUrl: server.url,
+    body: {
+      accountType: participantSession.accountType,
+      campaignId,
+      walletAddress: participantSession.walletAddress,
+      walletSource: participantSession.walletSource,
+    },
+    fetchImpl,
+    path: `/api/tasks/${taskId}/verify`,
+    traceId: durableLocalSmokeTraceIds.verification,
+    trustedHeaders: participantSession.headers,
+  });
+  const exportPreview = await postDurableLocalSmokeRecord({
+    baseUrl: server.url,
+    body: {
+      contractRootMode: "none",
+      format: "json",
+      includeLocalePreference: true,
+      includeRiskFlags: true,
+      includeWalletType: true,
+    },
+    fetchImpl,
+    path: `/api/campaigns/${campaignId}/export`,
+    traceId: durableLocalSmokeTraceIds.exportPreview,
+  });
   const wroteRecordKinds = [
     participantSession.recordKind,
-    await postDurableLocalSmokeRecord({
-      baseUrl: server.url,
-      body: {
-        accountType: participantSession.accountType,
-        campaignId: campaignDetail.id,
-        walletAddress: participantSession.walletAddress,
-        walletSource: participantSession.walletSource,
-      },
-      fetchImpl,
-      path: "/api/tasks/task-bridge/verify",
-      traceId: durableLocalSmokeTraceIds.verification,
-      trustedHeaders: participantSession.headers,
-    }),
-    await postDurableLocalSmokeRecord({
-      baseUrl: server.url,
-      body: {
-        contractRootMode: "none",
-        format: "json",
-        includeLocalePreference: true,
-        includeRiskFlags: true,
-        includeWalletType: true,
-      },
-      fetchImpl,
-      path: `/api/campaigns/${campaignDetail.id}/export`,
-      traceId: durableLocalSmokeTraceIds.exportPreview,
-    }),
+    campaignDraft.kind,
+    taskDraft.kind,
+    verification.kind,
+    exportPreview.kind,
   ];
   const firstPersistence = await readDurableHealth(
     server.url,
@@ -2583,7 +2653,7 @@ const runDurableLocalPersistenceSmoke = async ({
     durableLocalSmokeTraceIds.firstHealth,
   );
 
-  assertDurableLocalPersistenceHealth(firstPersistence, 3);
+  assertDurableLocalPersistenceHealth(firstPersistence, 5);
   await server.stop();
 
   const restartedServer = await startCampaignOsApiServer({

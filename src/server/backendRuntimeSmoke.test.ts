@@ -836,21 +836,35 @@ describe("backend runtime smoke command", () => {
       durableLocalPersistence: {
         adapterLabel: expect.stringMatching(/^local_json:/),
         countsByKind: expect.objectContaining({
+          campaign_draft: 1,
           export_preview: 1,
+          task_draft: 1,
           verification_attempt: 1,
           wallet_session: 1,
         }),
         durable: true,
-        latestRecordKinds: expect.arrayContaining(["wallet_session", "verification_attempt", "export_preview"]),
+        latestRecordKinds: expect.arrayContaining([
+          "wallet_session",
+          "campaign_draft",
+          "task_draft",
+          "verification_attempt",
+          "export_preview",
+        ]),
         localOnly: true,
         mode: "local_json",
         noMigrationRunner: true,
         noProductionDatabase: true,
         noSecretHandling: true,
-        recordCount: 3,
-        restartedRecordCount: 3,
+        recordCount: 5,
+        restartedRecordCount: 5,
         status: "passed",
-        wroteRecordKinds: expect.arrayContaining(["wallet_session", "verification_attempt", "export_preview"]),
+        wroteRecordKinds: expect.arrayContaining([
+          "wallet_session",
+          "campaign_draft",
+          "task_draft",
+          "verification_attempt",
+          "export_preview",
+        ]),
       },
       liveSideEffectsEnabled: false,
       futureProduction: expect.arrayContaining(["reward-custody", "reward-distribution"]),
@@ -1029,16 +1043,34 @@ describe("backend runtime smoke command", () => {
       request.pathname === "/api/wallet/session"
       && request.headers.get("x-campaign-os-trace-id") === summary.durableLocalPersistence.traceIds.walletSession
     );
-    const verificationRequestIndex = requests.findIndex((request) =>
-      request.pathname === "/api/tasks/task-bridge/verify"
-      && request.headers.get("x-campaign-os-trace-id") === summary.durableLocalPersistence.traceIds.verification
+    const campaignDraftRequestIndex = requests.findIndex((request) =>
+      request.pathname === "/api/campaigns"
+      && request.headers.get("x-campaign-os-trace-id") === summary.durableLocalPersistence.traceIds.campaignDraft
     );
+    const taskDraftRequestIndex = requests.findIndex((request) =>
+      request.headers.get("x-campaign-os-trace-id") === summary.durableLocalPersistence.traceIds.taskDraft
+    );
+    const verificationRequestIndex = requests.findIndex((request) =>
+      request.headers.get("x-campaign-os-trace-id") === summary.durableLocalPersistence.traceIds.verification
+    );
+    const exportRequestIndex = requests.findIndex((request) =>
+      request.headers.get("x-campaign-os-trace-id") === summary.durableLocalPersistence.traceIds.exportPreview
+    );
+    const campaignDraftRequest = requests[campaignDraftRequestIndex];
+    const taskDraftRequest = requests[taskDraftRequestIndex];
     const verificationRequest = requests[verificationRequestIndex];
     const verificationBody = JSON.parse(verificationRequest?.body ?? "{}") as Record<string, unknown>;
 
     expect(walletSessionRequestIndex).toBeGreaterThanOrEqual(0);
-    expect(verificationRequestIndex).toBeGreaterThan(walletSessionRequestIndex);
+    expect(campaignDraftRequestIndex).toBeGreaterThan(walletSessionRequestIndex);
+    expect(taskDraftRequestIndex).toBeGreaterThan(campaignDraftRequestIndex);
+    expect(verificationRequestIndex).toBeGreaterThan(taskDraftRequestIndex);
+    expect(exportRequestIndex).toBeGreaterThan(verificationRequestIndex);
+    expect(campaignDraftRequest?.headers.get("x-campaign-os-roles")).toBe("project_owner");
+    expect(taskDraftRequest?.headers.get("x-campaign-os-roles")).toBe("project_owner");
+    expect(taskDraftRequest?.pathname).toBe(`/api/campaigns/${String(verificationBody.campaignId)}/tasks`);
     expect(verificationRequest?.method).toBe("POST");
+    expect(verificationRequest?.pathname).toMatch(/^\/api\/tasks\/campaign-db-task-[^/]+\/verify$/);
     expect(verificationRequest?.headers.get("x-campaign-os-session-id")).not.toBeNull();
     expect(verificationRequest?.headers.get("x-campaign-os-credential-boundary")).toBe("ordinary_user_wallet");
     expect(verificationRequest?.headers.get("x-campaign-os-proof-status")).toBe("verified");
@@ -1064,8 +1096,8 @@ describe("backend runtime smoke command", () => {
 
       expect(summary.durableLocalPersistence).toMatchObject({
         mode: "local_json",
-        recordCount: 3,
-        restartedRecordCount: 3,
+        recordCount: 5,
+        restartedRecordCount: 5,
         status: "passed",
       });
       expect(JSON.stringify(summary)).not.toContain(tempDir);

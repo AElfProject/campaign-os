@@ -213,6 +213,21 @@ const response = (
   });
 };
 
+const bodyReadFailureResponse = (traceId: string): Response => new Response(
+  new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.error(new Error("body read failed"));
+    },
+  }),
+  {
+    headers: {
+      "content-type": "application/json",
+      "x-campaign-os-trace-id": traceId,
+    },
+    status: 200,
+  },
+);
+
 const context = (
   overrides: Partial<ParticipantJourneyContext> = {},
 ): ParticipantJourneyContext => ({
@@ -305,13 +320,14 @@ describe("Participant journey API bridge", () => {
     });
   });
 
-  it("normalizes the runtime feed id and flattened verify metadata without inventing repository fields", async () => {
+  it("normalizes the runtime feed id and flattened verify metadata with repository provenance", async () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce(response(envelope({
         items: [{
           endTime: "2026-08-01T00:00:00.000Z",
           id: campaignId,
+          repository,
           startTime: "2026-07-14T00:00:00.000Z",
           status: "draft",
           subtitle: { "en-US": "Project-owned rewards" },
@@ -362,6 +378,7 @@ describe("Participant journey API bridge", () => {
     expect(feed).toMatchObject({
       campaigns: [{
         campaignId,
+        repository,
         subtitle: { "en-US": "Project-owned rewards" },
         title: { "en-US": "Runtime participant campaign" },
       }],
@@ -518,6 +535,20 @@ describe("Participant journey API bridge", () => {
     expect(JSON.stringify(result)).not.toContain("private");
   });
 
+  it("rejects feed items missing repository metadata", async () => {
+    const { repository: _repository, ...feedItemWithoutRepository } = feedItem;
+
+    const result = await bridge(vi.fn().mockResolvedValue(response(envelope({
+      items: [feedItemWithoutRepository],
+    })))).listCampaigns(context({ selectedCampaignId: null }));
+
+    expect(result).toMatchObject({
+      code: "BRIDGE_RESPONSE_INVALID",
+      ok: false,
+      phase: "response",
+    });
+  });
+
   it.each([400, 401, 403, 404, 422, 503])("maps HTTP %s into a typed fail-closed result", async (status) => {
     const fetchImpl = vi.fn().mockResolvedValue(response({
       error: {
@@ -559,19 +590,45 @@ describe("Participant journey API bridge", () => {
     expect(serialized).not.toMatch(/raw_signature|private_key|stack|token|secret/);
   });
 
-  it("rejects non-JSON, empty, declared oversize, and actual oversize bodies", async () => {
-    const cases: Array<[Response, string]> = [
-      [response("not-json"), "BRIDGE_RESPONSE_NON_JSON"],
-      [response(""), "BRIDGE_RESPONSE_EMPTY"],
-      [response(envelope({ items: [] }), { contentLength: 10_000 }), "BRIDGE_RESPONSE_OVERSIZE"],
-      [response(envelope({ items: [{ ...feedItem, goal: "x".repeat(1_000) }] })), "BRIDGE_RESPONSE_OVERSIZE"],
+  it("uses a safe response header trace for body parsing failures", async () => {
+    const cases: Array<[Response, string, string]> = [
+      [response("not-json", { traceId: "trace-non-json-header" }), "BRIDGE_RESPONSE_NON_JSON", "trace-non-json-header"],
+      [response("", { traceId: "trace-empty-header" }), "BRIDGE_RESPONSE_EMPTY", "trace-empty-header"],
+      [
+        response(envelope({ items: [] }), { contentLength: 10_000, traceId: "trace-declared-oversize-header" }),
+        "BRIDGE_RESPONSE_OVERSIZE",
+        "trace-declared-oversize-header",
+      ],
+      [
+        response(envelope({ items: [{ ...feedItem, goal: "x".repeat(1_000) }] }), {
+          traceId: "trace-actual-oversize-header",
+        }),
+        "BRIDGE_RESPONSE_OVERSIZE",
+        "trace-actual-oversize-header",
+      ],
+      [
+        bodyReadFailureResponse("trace-read-failure-header"),
+        "BRIDGE_RESPONSE_NON_JSON",
+        "trace-read-failure-header",
+      ],
     ];
 
-    for (const [fetchResponse, code] of cases) {
+    for (const [fetchResponse, code, traceId] of cases) {
       const result = await bridge(vi.fn().mockResolvedValue(fetchResponse), { maxResponseBytes: 128 })
         .listCampaigns(context({ selectedCampaignId: null }));
-      expect(result).toMatchObject({ code, ok: false });
+      expect(result).toMatchObject({ code, ok: false, traceId });
     }
+  });
+
+  it("cancels a declared oversize response body exactly once", async () => {
+    const fetchResponse = response(envelope({ items: [feedItem] }), { contentLength: 10_000 });
+    const cancel = vi.spyOn(fetchResponse.body!, "cancel");
+
+    const result = await bridge(vi.fn().mockResolvedValue(fetchResponse), { maxResponseBytes: 128 })
+      .listCampaigns(context({ selectedCampaignId: null }));
+
+    expect(result).toMatchObject({ code: "BRIDGE_RESPONSE_OVERSIZE", ok: false });
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it("cleans timer and caller abort listener after success", async () => {
@@ -618,6 +675,59 @@ describe("Participant journey API bridge", () => {
     }));
     expect(preResult).toMatchObject({ code: "BRIDGE_REQUEST_ABORTED", ok: false });
     expect(preFetch).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("rejects malformed or opaque signals without fetch, timers, or listeners", async () => {
+    vi.useFakeTimers();
+    const addEventListener = vi.fn();
+    const malformedSignals = [
+      { aborted: false },
+      { aborted: false, addEventListener },
+      new Proxy({}, {
+        get() {
+          throw new Error("opaque signal");
+        },
+      }),
+    ];
+    const fetchImpl = vi.fn();
+    const api = bridge(fetchImpl);
+
+    for (const signal of malformedSignals) {
+      const result = await api.listCampaigns(context({
+        selectedCampaignId: null,
+        signal: signal as unknown as AbortSignal,
+      }));
+
+      expect(result).toMatchObject({
+        code: "BRIDGE_INVALID_INPUT",
+        ok: false,
+      });
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(addEventListener).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("uses the response header trace when response body reading times out", async () => {
+    vi.useFakeTimers();
+    const fetchResponse = new Response(new ReadableStream<Uint8Array>(), {
+      headers: {
+        "content-type": "application/json",
+        "x-campaign-os-trace-id": "trace-body-timeout-header",
+      },
+      status: 200,
+    });
+    const resultPromise = bridge(vi.fn().mockResolvedValue(fetchResponse), { timeoutMs: 250 })
+      .listCampaigns(context({ selectedCampaignId: null }));
+
+    await vi.advanceTimersByTimeAsync(250);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      code: "BRIDGE_REQUEST_TIMEOUT",
+      ok: false,
+      traceId: "trace-body-timeout-header",
+    });
     expect(vi.getTimerCount()).toBe(0);
   });
 

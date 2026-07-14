@@ -47,7 +47,6 @@ import {
   type PublishDeliveryReviewBackendRuntimeInput,
   type PublishDeliveryReviewRepositoryEvidenceInput,
 } from "../domain/publishDeliveryReview";
-import { createPointsRankingLedgerRuntime } from "../domain/pointsRankingLedgerRuntime";
 import { createServerAnalyticsIngestionRuntimeReadiness } from "./analyticsIngestionRuntime";
 import { createServerContractWriterRuntimeReadiness } from "./contractWriterRuntime";
 import {
@@ -1224,7 +1223,6 @@ const requireParticipantCampaignAccess = (
 
 const createParticipantCampaignDiscovery = (
   context: ApiRuntimeHandlerContext,
-  discovery: CampaignDiscoveryReadModel,
   campaigns: readonly CampaignDbReadProjection[],
 ) => {
   const previewConfig = context.participantPreviewConfig();
@@ -1236,6 +1234,7 @@ const createParticipantCampaignDiscovery = (
     }
 
     const detail = campaignDbDraftToDiscoveryDetail(campaign);
+    const repository = createCampaignDbMetadata(campaign.repository);
 
     return [{
       campaign,
@@ -1243,46 +1242,30 @@ const createParticipantCampaignDiscovery = (
         ...detail,
         item: {
           ...detail.item,
+          repository,
           visibility: access.visibility,
         },
       },
       item: {
         ...detail.item,
+        repository,
         visibility: access.visibility,
       },
     }];
   });
-  const repositoryCampaignIds = new Set(repositoryRows.map(({ campaign }) => campaign.id));
-  const seededRows = discovery.details.flatMap((detail) => {
-    const access = evaluateParticipantCampaignAccess({
-      audience: "issued_participant",
-      campaign: {
-        campaignId: detail.item.id,
-        status: detail.item.status,
-      },
-      previewCampaignIds: [],
-    });
-
-    if (access.outcome !== "allowed" || !access.visibility || repositoryCampaignIds.has(detail.item.id)) {
-      return [];
-    }
-
-    return [{
-      detail: {
-        ...detail,
-        item: { ...detail.item, visibility: access.visibility },
-      },
-      item: { ...detail.item, visibility: access.visibility },
-    }];
-  });
-  const items = [...repositoryRows.map(({ item }) => item), ...seededRows.map(({ item }) => item)];
-  const details = [...repositoryRows.map(({ detail }) => detail), ...seededRows.map(({ detail }) => detail)];
+  const items = repositoryRows.map(({ item }) => item);
+  const details = repositoryRows.map(({ detail }) => detail);
 
   return {
-    ...discovery,
+    boundary: campaignDbBoundary,
     campaignDb: createCampaignDbSummary(repositoryRows.map(({ campaign }) => campaign)),
+    campaignId: "campaign-db-participant-feed",
     details,
     items,
+    nextAction: localized(
+      "Select a repository-backed Campaign to continue.",
+      "选择 repository-backed 活动后继续。",
+    ),
     participantPreview: createCampaignOsParticipantPreviewMetadata(previewConfig),
     summary: createCampaignDiscoverySummary(items),
   };
@@ -1721,20 +1704,7 @@ const createPointsRankingLedgerRuntimePayload = async (
     };
   }
 
-  const detailResult = context.service.getCampaignDetail({ campaignId });
-
-  if (!detailResult.ok) {
-    unwrapLocalResult(detailResult, context);
-    throw invalidCampaign(campaignId);
-  }
-
-  return {
-    boundary: context.route.boundary,
-    payload: createPointsRankingLedgerRuntime(campaignDetail, {
-      source: "api_runtime",
-      traceId: context.traceId,
-    }),
-  };
+  throw invalidCampaign(campaignId);
 };
 
 const createObjectStorageExportRuntimeManifest = () => ({
@@ -2404,17 +2374,13 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
     };
   },
   "campaigns.participant.list": async (context) => {
-    const discovery = unwrapLocalResult(
-      context.service.listCampaigns({ consumerSurface: "user_app" }),
-      context,
-    );
     const campaigns = await context.campaignDbRepository.list({}, {
       traceId: context.traceId,
     });
 
     return {
-      ...discovery,
-      payload: createParticipantCampaignDiscovery(context, discovery.payload, campaigns),
+      boundary: campaignDbBoundary,
+      payload: createParticipantCampaignDiscovery(context, campaigns),
     };
   },
   "campaigns.participant.journey": async (context) => {
@@ -2680,7 +2646,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
         payload: createRepositoryCompletionResponse(campaignDbCompletion, campaignDbTask, campaignDbEvidence),
       };
     } else {
-      result = context.service.verifyTask(request);
+      throw invalidCampaign(request.campaignId);
     }
 
     const response = await persistLocalResult(
@@ -2719,7 +2685,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
     });
 
     if (!campaignDbDraft) {
-      return unwrapLocalResult(context.service.checkEligibility(request), context);
+      throw invalidCampaign(request.campaignId);
     }
 
     const { access, journey } = await loadParticipantJourney(context, campaignDbDraft);

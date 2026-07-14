@@ -239,6 +239,26 @@ describe("API foundation registry", () => {
         ]),
       );
     }
+    const rankingCompatibilityFields = requestFieldsByRoute
+      .get("campaigns.points.ranking.ledger.runtime")
+      ?.filter((field) => [
+        "accountType",
+        "address",
+        "chainId",
+        "network",
+        "walletAddress",
+        "walletSource",
+      ].includes(field?.name ?? ""));
+    expect(rankingCompatibilityFields?.map((field) => field?.name)).toEqual(expect.arrayContaining([
+      "accountType",
+      "address",
+      "chainId",
+      "network",
+      "walletAddress",
+      "walletSource",
+    ]));
+    expect(rankingCompatibilityFields?.every((field) =>
+      field?.location === "query" && field.required === false)).toBe(true);
     expect(requestFieldsByRoute.get("tasks.verify")?.map((field) => field?.name)).toEqual(
       expect.arrayContaining(["accountType", "campaignId", "taskId", "walletAddress", "walletSource"]),
     );
