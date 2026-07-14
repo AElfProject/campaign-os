@@ -1,13 +1,14 @@
 import type {
   ApiRuntimeCapabilityId,
   ApiRuntimeMethod,
+  ApiRuntimeRouteContract,
   ApiRuntimeSupportMode,
 } from "./contracts";
 import { apiRuntimeCapabilities } from "./capabilities";
 import {
   apiRuntimeRouteById,
-  apiRuntimeRoutes,
-  type ApiRuntimeRouteId,
+  apiRuntimeContractRoutes,
+  type ApiRuntimeContractRouteId,
 } from "./routes";
 import {
   backendServiceBoundaries,
@@ -144,7 +145,7 @@ export interface ApiFoundationReportOptions {
 }
 
 export interface ApiFoundationRegistryOptions {
-  routes?: readonly typeof apiRuntimeRoutes[number][];
+  routes?: readonly ApiRuntimeRouteContract[];
   topology?: BackendTopology;
 }
 
@@ -257,6 +258,18 @@ const routeFoundationMetadata = {
     operationId: "listOwnerCampaigns",
     serviceId: "campaign-service",
   },
+  "campaigns.owner.detail": {
+    operationId: "getOwnerCampaignDetail",
+    serviceId: "campaign-service",
+  },
+  "campaigns.participant.list": {
+    operationId: "listParticipantCampaigns",
+    serviceId: "campaign-service",
+  },
+  "campaigns.participant.journey": {
+    operationId: "getParticipantCampaignJourney",
+    serviceId: "campaign-service",
+  },
   "campaigns.lifecycle": {
     operationId: "getCampaignLifecycle",
     serviceId: "campaign-service",
@@ -305,7 +318,7 @@ const routeFoundationMetadata = {
     operationId: "createWalletSession",
     serviceId: "wallet-session-service",
   },
-} as const satisfies Record<ApiRuntimeRouteId, RouteFoundationMetadata>;
+} as const satisfies Record<ApiRuntimeContractRouteId, RouteFoundationMetadata>;
 const routeFoundationMetadataById: Record<string, RouteFoundationMetadata> = routeFoundationMetadata;
 
 const field = (item: ApiRequestFieldContract): ApiRequestFieldContract => item;
@@ -419,6 +432,24 @@ const requestFieldContracts = [
     required: false,
     routeId: "campaigns.owner.list",
     valueType: "number",
+  }),
+  field({
+    description: "Campaign identifier for issued-owner protected detail.",
+    id: "campaigns.owner.detail.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.owner.detail",
+    valueType: "string",
+  }),
+  field({
+    description: "Campaign identifier for the issued Participant journey.",
+    id: "campaigns.participant.journey.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.participant.journey",
+    valueType: "string",
   }),
   field({
     description: "Project identifier that owns the local campaign draft.",
@@ -725,7 +756,7 @@ const requestFieldContracts = [
     id: "tasks.verify.body.walletAddress",
     location: "body",
     name: "walletAddress",
-    required: true,
+    required: false,
     routeId: "tasks.verify",
     valueType: "string",
   }),
@@ -735,7 +766,7 @@ const requestFieldContracts = [
     id: "tasks.verify.body.accountType",
     location: "body",
     name: "accountType",
-    required: true,
+    required: false,
     routeId: "tasks.verify",
     valueType: "enum",
   }),
@@ -752,7 +783,7 @@ const requestFieldContracts = [
     id: "tasks.verify.body.walletSource",
     location: "body",
     name: "walletSource",
-    required: true,
+    required: false,
     routeId: "tasks.verify",
     valueType: "enum",
   }),
@@ -1222,6 +1253,9 @@ const backendSurfaceReadiness = [
     routeIds: [
       "campaigns.list",
       "campaigns.owner.list",
+      "campaigns.owner.detail",
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
       "campaigns.create",
       "campaigns.detail",
       "campaigns.lifecycle",
@@ -1369,7 +1403,7 @@ const extractPathParams = (path: string) =>
   [...path.matchAll(/:([A-Za-z0-9_]+)/g)].map((match) => match[1]);
 
 const createRequestContracts = (
-  routes: readonly typeof apiRuntimeRoutes[number][],
+  routes: readonly ApiRuntimeRouteContract[],
   fields: readonly ApiRequestFieldContract[],
 ): ApiRequestContract[] => {
   const fieldsByRoute = new Map<string, string[]>();
@@ -1389,7 +1423,7 @@ const createRequestContracts = (
 };
 
 const createFoundationRoutes = (
-  routes: readonly typeof apiRuntimeRoutes[number][],
+  routes: readonly ApiRuntimeRouteContract[],
 ): ApiFoundationRoute[] =>
   routes.map((route) => {
     const metadata = routeFoundationMetadataById[route.id];
@@ -1412,7 +1446,7 @@ const createFoundationRoutes = (
   });
 
 export const createApiFoundationRegistry = ({
-  routes = apiRuntimeRoutes,
+  routes = apiRuntimeContractRoutes,
 }: ApiFoundationRegistryOptions = {}): ApiFoundationRegistry => ({
   errorEnvelopes: [...errorEnvelopeContracts],
   requestContracts: createRequestContracts(routes, requestFieldContracts),
@@ -1427,7 +1461,7 @@ export const validateApiFoundationRegistry = (
   { topology = backendTopology }: { topology?: BackendTopology } = {},
 ): ApiFoundationValidationResult => {
   const issues: ApiFoundationValidationIssue[] = [];
-  const knownRouteIds = createIdSet(apiRuntimeRoutes);
+  const knownRouteIds = createIdSet(apiRuntimeContractRoutes);
   const knownServiceIds = createIdSet(topology.services);
   const capabilityIds = createIdSet(apiRuntimeCapabilities);
   const requestContractIds = createIdSet(registry.requestContracts);
@@ -1567,7 +1601,7 @@ export const validateApiFoundationRegistry = (
     }
     operationIds.add(route.operationId);
 
-    const runtimeRoute = apiRuntimeRouteById[route.routeId as ApiRuntimeRouteId];
+    const runtimeRoute = apiRuntimeRouteById[route.routeId as ApiRuntimeContractRouteId];
     if (runtimeRoute) {
       const pathFields = requestFieldsByRoute.get(route.routeId) ?? [];
       for (const pathParam of extractPathParams(runtimeRoute.path)) {

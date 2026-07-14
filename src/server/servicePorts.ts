@@ -175,6 +175,9 @@ export const apiServicePorts = [
     routeIds: [
       "campaigns.list",
       "campaigns.owner.list",
+      "campaigns.owner.detail",
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
       "campaigns.create",
       "campaigns.detail",
       "campaigns.lifecycle",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  apiRuntimeRoutes,
+  apiRuntimeContractRoutes,
   backendAdapterGroups,
   backendDataStores,
   backendDeploymentUnits,
@@ -91,7 +91,7 @@ const forbiddenFragments = [
 const flattenForScan = (value: unknown): string => JSON.stringify(value).toLowerCase().replace(/[^a-z0-9]/g, "");
 
 describe("backend service topology", () => {
-  const knownRouteIds = apiRuntimeRoutes.map((route) => route.id);
+  const knownRouteIds = apiRuntimeContractRoutes.map((route) => route.id);
 
   it("declares expected backend services, data stores, adapter groups, profiles, and deployments", () => {
     expect(backendServiceBoundaries.map((service) => service.id)).toEqual(expectedServiceIds);
@@ -113,6 +113,9 @@ describe("backend service topology", () => {
       ]),
       routeIds: expect.arrayContaining([
         "campaigns.owner.list",
+        "campaigns.owner.detail",
+        "campaigns.participant.list",
+        "campaigns.participant.journey",
         "campaigns.lifecycle",
         "campaigns.launch.readiness",
         "campaigns.delivery.readiness",

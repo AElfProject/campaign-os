@@ -4,6 +4,7 @@ import {
   createCampaignOsApiServiceContract,
 } from "./apiService";
 import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
+import { apiRuntimeContractRoutes } from "./routes";
 
 const secretFragments = [
   "bearer sample-token",
@@ -125,7 +126,15 @@ describe("Campaign OS API service bootstrap contract", () => {
         valid: true,
       },
     });
-    expect(service.composition.apiRuntime.routeCount).toBeGreaterThanOrEqual(10);
+    expect(service.composition.apiRuntime.routeCount).toBe(apiRuntimeContractRoutes.length);
+    expect(service.composition.apiRuntime.routeIds).toEqual(
+      apiRuntimeContractRoutes.map((route) => route.id),
+    );
+    expect(service.composition.apiRuntime.routeIds).toEqual(expect.arrayContaining([
+      "campaigns.owner.detail",
+      "campaigns.participant.list",
+      "campaigns.participant.journey",
+    ]));
     expect(service.attachMap.find((attachPoint) => attachPoint.id === "contract-writer")).toMatchObject({
       blockedBy: expect.arrayContaining([...contractWriterRequiredConfigKeys]),
       status: "blocked",

@@ -24,6 +24,7 @@ export interface UserParticipationApiDiagnostic {
   code:
     | "API_BASE_URL_INVALID"
     | "API_BASE_URL_MISSING"
+    | "API_DURABLE_FACADE_REQUIRED"
     | "API_ELIGIBILITY_FAILED"
     | "API_REQUEST_FAILED"
     | "API_REQUEST_TIMEOUT"
@@ -37,6 +38,7 @@ export interface UserParticipationApiDiagnostic {
 export interface UserParticipationApiConfig {
   baseUrl?: string;
   headers?: Record<string, string>;
+  mode?: "durable" | "seeded_preview";
   timeoutMs?: number;
   tracePrefix?: string;
 }
@@ -134,6 +136,7 @@ interface NormalizedConfig {
   configured: boolean;
   diagnostic?: UserParticipationApiDiagnostic;
   headers: Record<string, string>;
+  mode: "durable" | "seeded_preview";
   normalizedTracePrefix: string;
   timeoutMs: number;
 }
@@ -168,14 +171,19 @@ export const userParticipationApiBoundary: LocalizedText = {
 
 const diagnosticMessages: Record<UserParticipationApiDiagnostic["code"], LocalizedText> = {
   API_BASE_URL_INVALID: {
-    "en-US": "The local participation API base URL is invalid, so the seeded User App remains visible.",
-    "zh-CN": "本地参与 API base URL 无效，因此继续显示 seeded User App。",
-    "zh-TW": "本地參與 API base URL 無效，因此繼續顯示 seeded User App。",
+    "en-US": "The local participation API base URL is invalid.",
+    "zh-CN": "本地参与 API base URL 无效。",
+    "zh-TW": "本地參與 API base URL 無效。",
   },
   API_BASE_URL_MISSING: {
-    "en-US": "No local participation API base URL is configured, so the seeded User App remains visible.",
-    "zh-CN": "未配置本地参与 API base URL，因此继续显示 seeded User App。",
-    "zh-TW": "未設定本地參與 API base URL，因此繼續顯示 seeded User App。",
+    "en-US": "No local participation API base URL is configured.",
+    "zh-CN": "未配置本地参与 API base URL。",
+    "zh-TW": "未設定本地參與 API base URL。",
+  },
+  API_DURABLE_FACADE_REQUIRED: {
+    "en-US": "Durable participation requests must use the issued-session Participant journey facade.",
+    "zh-CN": "Durable 参与请求必须使用基于 issued session 的 Participant journey facade。",
+    "zh-TW": "Durable 參與請求必須使用基於 issued session 的 Participant journey facade。",
   },
   API_ELIGIBILITY_FAILED: {
     "en-US": "Task verification completed, but the local eligibility refresh did not return a usable result.",
@@ -183,14 +191,14 @@ const diagnosticMessages: Record<UserParticipationApiDiagnostic["code"], Localiz
     "zh-TW": "任務驗證已完成，但本地資格刷新未回傳可用結果。",
   },
   API_REQUEST_FAILED: {
-    "en-US": "The local participation API request failed, so the seeded User App remains visible.",
-    "zh-CN": "本地参与 API 请求失败，因此继续显示 seeded User App。",
-    "zh-TW": "本地參與 API 請求失敗，因此繼續顯示 seeded User App。",
+    "en-US": "The local participation API request failed.",
+    "zh-CN": "本地参与 API 请求失败。",
+    "zh-TW": "本地參與 API 請求失敗。",
   },
   API_REQUEST_TIMEOUT: {
-    "en-US": "The local participation API request timed out, so the seeded User App remains visible.",
-    "zh-CN": "本地参与 API 请求超时，因此继续显示 seeded User App。",
-    "zh-TW": "本地參與 API 請求逾時，因此繼續顯示 seeded User App。",
+    "en-US": "The local participation API request timed out.",
+    "zh-CN": "本地参与 API 请求超时。",
+    "zh-TW": "本地參與 API 請求逾時。",
   },
   API_RESPONSE_INVALID: {
     "en-US": "The local participation API response shape was not recognized.",
@@ -213,7 +221,10 @@ const unsafePatterns: Array<[RegExp, string]> = [
   [/\bpassword\s*[=:]\s*[^&\s"'<>]+/gi, "password=redacted"],
   [/\bapi[-_\s]*key\b/gi, "redacted credential"],
   [/\b(token|access_token|refresh_token|api_key|apikey)=([^&\s"'<>]+)/gi, "redacted query credential"],
-  [/\/Users\/[^"'\s<>]*campaign-os-kitty[^"'\s<>]*/gi, "redacted private path"],
+  [/\b(postgres|postgresql|redis):\/\/[^"'\s<>]+/gi, "redacted service URL"],
+  [/(?:\/home\/[^/"'\s<>]+|\/Users\/[^/"'\s<>]+)(?:\/[^"'\s<>]*)?/gi, "redacted private path"],
+  [/(?:\/private\/(?:tmp|var\/folders)|\/tmp|\/var\/folders)(?:\/[^"'\s<>]*)?/gi, "redacted private path"],
+  [/[A-Za-z]:\\(?:Users\\[^\\/"'\s<>]+|Documents and Settings\\[^\\/"'\s<>]+|Windows\\Temp|Temp)(?:\\[^"'\s<>]*)*/gi, "redacted private path"],
   [/\bprovider[-_\s]*payload\b/gi, "redacted provider data"],
   [/\bstack\s*trace\b/gi, "redacted stack"],
 ];
@@ -222,7 +233,33 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 export const sanitizeUserParticipationApiText = (value: unknown): string => {
-  const raw = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  let raw: string;
+
+  if (typeof value === "string") {
+    raw = value;
+  } else {
+    try {
+      const seen = new WeakSet<object>();
+      raw = JSON.stringify(value ?? "", (_key, candidate: unknown) => {
+        if (typeof candidate === "bigint" || typeof candidate === "symbol") {
+          return String(candidate);
+        }
+        if (candidate && typeof candidate === "object") {
+          if (seen.has(candidate)) {
+            return "[circular]";
+          }
+          seen.add(candidate);
+        }
+        return candidate;
+      }) ?? "";
+    } catch {
+      try {
+        raw = String(value);
+      } catch {
+        raw = "[unserializable]";
+      }
+    }
+  }
   const strippedUrlQuery = raw.replace(/\?[^"'\s<>]*/g, "?redacted-query");
 
   return unsafePatterns.reduce(
@@ -292,6 +329,7 @@ const normalizeConfig = (config: UserParticipationApiConfig | undefined): Normal
   const timeoutMs = clampTimeout(config?.timeoutMs);
   const normalizedTracePrefix = normalizeTracePrefix(config?.tracePrefix);
   const headers = normalizeHeaders(config?.headers);
+  const mode = config?.mode === "seeded_preview" ? "seeded_preview" : "durable";
   const rawBaseUrl = config?.baseUrl?.trim();
 
   if (!rawBaseUrl) {
@@ -299,6 +337,7 @@ const normalizeConfig = (config: UserParticipationApiConfig | undefined): Normal
       configured: false,
       diagnostic: diagnostic("API_BASE_URL_MISSING", "info"),
       headers,
+      mode,
       normalizedTracePrefix,
       timeoutMs,
     };
@@ -312,17 +351,19 @@ const normalizeConfig = (config: UserParticipationApiConfig | undefined): Normal
         configured: true,
         diagnostic: diagnostic("API_BASE_URL_INVALID", "warning", { protocol: baseUrl.protocol }),
         headers,
+        mode,
         normalizedTracePrefix,
         timeoutMs,
       };
     }
 
-    return { baseUrl, configured: true, headers, normalizedTracePrefix, timeoutMs };
+    return { baseUrl, configured: true, headers, mode, normalizedTracePrefix, timeoutMs };
   } catch (error) {
     return {
       configured: true,
       diagnostic: diagnostic("API_BASE_URL_INVALID", "warning", { error }),
       headers,
+      mode,
       normalizedTracePrefix,
       timeoutMs,
     };
@@ -419,7 +460,7 @@ const safeFetchJson = async (
 const fallbackState = (
   request: UserParticipationReviewRequest,
   normalizedConfig: NormalizedConfig,
-  source: Extract<UserParticipationApiSource, "error_fallback" | "seeded_fallback">,
+  source: Extract<UserParticipationApiSource, "api_runtime" | "error_fallback" | "seeded_fallback">,
   status: Extract<UserParticipationApiStatus, "error" | "fallback">,
   diagnostics: readonly UserParticipationApiDiagnostic[],
   traceIdValue?: string,
@@ -433,6 +474,11 @@ const fallbackState = (
   status,
   ...(traceIdValue ? { traceId: traceIdValue } : {}),
 });
+
+const runtimeFailureSource = (
+  normalizedConfig: NormalizedConfig,
+): Extract<UserParticipationApiSource, "api_runtime" | "error_fallback"> =>
+  normalizedConfig.mode === "seeded_preview" ? "error_fallback" : "api_runtime";
 
 export const createUserParticipationApiLoadingState = (
   request: UserParticipationReviewRequest,
@@ -754,12 +800,24 @@ export const submitUserParticipationApiReview = async ({
 }: SubmitUserParticipationApiReviewInput): Promise<UserParticipationApiBridgeState> => {
   const normalizedConfig = normalizeConfig(config);
 
-  if (!normalizedConfig.baseUrl) {
+  if (normalizedConfig.mode === "durable") {
     return fallbackState(
       request,
       normalizedConfig,
-      "seeded_fallback",
-      "fallback",
+      "api_runtime",
+      "error",
+      [diagnostic("API_DURABLE_FACADE_REQUIRED", "error")],
+    );
+  }
+
+  if (!normalizedConfig.baseUrl) {
+    const seededPreview = normalizedConfig.mode === "seeded_preview";
+
+    return fallbackState(
+      request,
+      normalizedConfig,
+      seededPreview ? "seeded_fallback" : "api_runtime",
+      seededPreview ? "fallback" : "error",
       [normalizedConfig.diagnostic ?? diagnostic("API_BASE_URL_MISSING", "info")],
     );
   }
@@ -787,7 +845,7 @@ export const submitUserParticipationApiReview = async ({
     return fallbackState(
       request,
       normalizedConfig,
-      "error_fallback",
+      runtimeFailureSource(normalizedConfig),
       "error",
       [verify.diagnostic ?? diagnostic("API_VERIFY_FAILED", "error", { endpoint: verifyEndpoint, status: verify.status })],
       verify.traceId,
@@ -801,7 +859,7 @@ export const submitUserParticipationApiReview = async ({
     return fallbackState(
       request,
       normalizedConfig,
-      "error_fallback",
+      runtimeFailureSource(normalizedConfig),
       "error",
       [diagnostic("API_RESPONSE_INVALID", "error", { endpoint: verifyEndpoint })],
       verify.traceId,
@@ -830,13 +888,16 @@ export const submitUserParticipationApiReview = async ({
   const repository = normalizeRepository(metadataPayload(eligibility.body, "campaignDb"));
 
   if (!eligibility.ok) {
+    const eligibilityDiagnostic = eligibility.diagnostic
+      ?? diagnostic("API_ELIGIBILITY_FAILED", "error", {
+        endpoint: eligibilityEndpoint,
+        status: eligibility.status,
+      });
+
     return {
       boundary: userParticipationApiBoundary,
       configured: true,
-      diagnostics: [
-        eligibility.diagnostic ??
-        diagnostic("API_ELIGIBILITY_FAILED", "error", { endpoint: eligibilityEndpoint, status: eligibility.status }),
-      ],
+      diagnostics: [eligibilityDiagnostic],
       loading: false,
       ...(persistence ? { persistence } : {}),
       request,
@@ -851,10 +912,16 @@ export const submitUserParticipationApiReview = async ({
   const normalizedEligibility = normalizeEligibility(dataPayload(eligibility.body), eligibilityRepositoryEvidence);
 
   if (!normalizedEligibility) {
+    const invalidEligibilityDiagnostic = diagnostic(
+      "API_RESPONSE_INVALID",
+      "error",
+      { endpoint: eligibilityEndpoint },
+    );
+
     return {
       boundary: userParticipationApiBoundary,
       configured: true,
-      diagnostics: [diagnostic("API_RESPONSE_INVALID", "error", { endpoint: eligibilityEndpoint })],
+      diagnostics: [invalidEligibilityDiagnostic],
       loading: false,
       ...(persistence ? { persistence } : {}),
       request,

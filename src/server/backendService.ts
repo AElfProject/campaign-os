@@ -9,7 +9,7 @@ import {
 } from "./backendRuntimeBootstrap";
 import { createApiFoundationReport, type ApiFoundationReport } from "./apiFoundation";
 import { createApiServicePortReport, type ApiServicePortReport } from "./servicePorts";
-import { apiRuntimeRoutes } from "./routes";
+import { apiRuntimeContractRoutes } from "./routes";
 import { createBackendTopologyReport, type BackendTopologyReport } from "./topology";
 import {
   createMigrationManifest,
@@ -1260,7 +1260,7 @@ const createBackendAuthEnforcementReadinessSummary = (
   const runtimeMetadataRoutes = authSession.protectedRoutes.filter(
     (route) => route.routeGroup === "runtime_metadata",
   );
-  const readOnlyRouteIds = apiRuntimeRoutes
+  const readOnlyRouteIds = apiRuntimeContractRoutes
     .filter((route) => route.method === "GET" && route.serviceGroup === "campaign")
     .map((route) => route.id);
 
@@ -2448,7 +2448,7 @@ export const createBackendServiceReadinessReport = ({
   const servicePorts = createApiServicePortReport({ foundation: apiFoundation });
   const topology = createBackendTopologyReport({
     generatedAt,
-    knownRouteIds: apiRuntimeRoutes.map((route) => route.id),
+    knownRouteIds: apiRuntimeContractRoutes.map((route) => route.id),
   });
   const persistenceAdapters = createPersistenceAdapterPortReport({
     activeDriverId: config.productionPersistence.requestedDriverId,
@@ -2551,8 +2551,8 @@ export const createBackendServiceReadinessReport = ({
     id: "campaign-os-backend-service",
     label: "Campaign OS Backend Service",
     profileId: config.profileId,
-    routeCount: apiRuntimeRoutes.length,
-    routeIds: apiRuntimeRoutes.map((route) => route.id),
+    routeCount: apiRuntimeContractRoutes.length,
+    routeIds: apiRuntimeContractRoutes.map((route) => route.id),
     runtimeName: "campaign-os-api-runtime",
     supportMode: "local_seeded",
     version: config.version,

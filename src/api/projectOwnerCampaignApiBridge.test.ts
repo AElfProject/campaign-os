@@ -359,11 +359,16 @@ describe("project owner campaign API bridge", () => {
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
       3,
-      `http://127.0.0.1:5184/api/campaigns/${campaignId}`,
+      `http://127.0.0.1:5184/api/owner/campaigns/${campaignId}`,
       expect.objectContaining({
-        headers: expect.not.objectContaining({
-          "content-type": expect.any(String),
-          "x-campaign-os-session-id": expect.any(String),
+        headers: expect.objectContaining({
+          "x-campaign-os-account-type": session.accountType,
+          "x-campaign-os-credential-boundary": "ordinary_user_wallet",
+          "x-campaign-os-proof-status": "verified",
+          "x-campaign-os-roles": "project_owner",
+          "x-campaign-os-session-id": session.sessionId,
+          "x-campaign-os-wallet-address": session.address,
+          "x-campaign-os-wallet-source": session.walletSource,
         }),
         method: "GET",
       }),
@@ -412,7 +417,13 @@ describe("project owner campaign API bridge", () => {
         boundary: { "en-US": "Repository boundary" },
         campaignDb: { createdViaRepository: true },
         payload: {
-          item: { coreTasks: [], id: campaignId, status: "draft" },
+          item: {
+            coreTasks: [],
+            id: campaignId,
+            ownerAddress: session.address,
+            projectId: createInput.projectId,
+            status: "draft",
+          },
           tasks: [{
             points: 50,
             required: true,
@@ -484,7 +495,12 @@ describe("project owner campaign API bridge", () => {
       traceId: "trace-runtime-recover",
     });
     expect(detailResult).toEqual({
-      campaign: { id: campaignId, status: "draft" },
+      campaign: {
+        id: campaignId,
+        ownerAddress: session.address,
+        projectId: createInput.projectId,
+        status: "draft",
+      },
       httpStatus: 200,
       ok: true,
       tasks: [{
@@ -879,6 +895,56 @@ describe("project owner campaign API bridge", () => {
     });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("settles at timeout when fetch ignores AbortSignal", async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn(() => new Promise<Response>(() => undefined));
+    const bridge = createProjectOwnerCampaignApiBridge({
+      config: { baseUrl: "http://127.0.0.1:5184", timeoutMs: 250 },
+      fetchImpl: fetchImpl as unknown as ProjectOwnerCampaignApiFetch,
+      traceIdGenerator: () => "trace-ignored-abort",
+    });
+
+    const resultPromise = bridge.getCampaignDetail("campaign-db-draft-0001", { session });
+    await vi.advanceTimersByTimeAsync(250);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      code: "BRIDGE_REQUEST_TIMEOUT",
+      ok: false,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("preserves stale proof claims and rejects wrong or case-variant response owners", async () => {
+    const staleSession: NormalizedWalletSession = {
+      ...session,
+      proof: { ...session.proof!, status: "stale", trustLevel: "untrusted" },
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response(successEnvelope({
+        payload: {
+          item: { ...approvedCampaign("campaign-db-draft-0001"), ownerAddress: session.address.toLowerCase() },
+          tasks: [],
+        },
+      })))
+      .mockResolvedValueOnce(response(successEnvelope({
+        payload: {
+          item: { ...approvedCampaign("campaign-db-draft-0001"), ownerAddress: "ELF_different_owner" },
+          tasks: [],
+        },
+      })));
+    const bridge = createBridge(fetchImpl);
+
+    const caseVariant = await bridge.getCampaignDetail("campaign-db-draft-0001", { session: staleSession });
+    const wrongOwner = await bridge.getCampaignDetail("campaign-db-draft-0001", { session });
+
+    expect(fetchImpl.mock.calls[0][1]?.headers).toEqual(expect.objectContaining({
+      "x-campaign-os-proof-status": "stale",
+    }));
+    expect(caseVariant).toMatchObject({ code: "BRIDGE_RESPONSE_INVALID", ok: false });
+    expect(wrongOwner).toMatchObject({ code: "BRIDGE_RESPONSE_INVALID", ok: false });
   });
 
   it("sanitizes arbitrary unknown values and generic private filesystem paths without throwing", () => {

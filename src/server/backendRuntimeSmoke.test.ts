@@ -7,6 +7,7 @@ import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntim
 import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectOwnerFundingProofReviewBridge";
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
 import { runBackendRuntimeSmoke } from "./backendRuntimeSmoke";
+import { apiRuntimeContractRoutes } from "./routes";
 import { startCampaignOsApiServer } from "./server";
 
 const productionDatabaseRequiredReferenceKeys = [
@@ -629,6 +630,27 @@ const expectedProductionDatabaseHandoffReadinessMetadata = {
 
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
+    const requests: Array<{
+      body?: string;
+      headers: Headers;
+      method: string;
+      pathname: string;
+    }> = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      requests.push({
+        body: typeof init?.body === "string" ? init.body : undefined,
+        headers: new Headers(init?.headers),
+        method: init?.method ?? "GET",
+        pathname: new URL(url).pathname,
+      });
+
+      return fetch(input, init);
+    };
     const summary = await runBackendRuntimeSmoke({
       env: {
         AUTHORIZATION: "Bearer sample-token",
@@ -641,6 +663,7 @@ describe("backend runtime smoke command", () => {
         CAMPAIGN_OS_SCHEDULER_TOKEN_SAMPLE: "Bearer scheduler-token-sample",
         CAMPAIGN_OS_WORKER_QUEUE_URL: "https://queue-user:queue-pass@queue.invalid/jobs?token=queue-secret",
       },
+      fetchImpl,
     });
 
     expect(summary).toMatchObject({
@@ -677,7 +700,7 @@ describe("backend runtime smoke command", () => {
             noLiveSideEffectsAllFalse: true,
             productionReady: false,
             profileId: "local-review",
-            routeCount: expect.any(Number),
+            routeCount: apiRuntimeContractRoutes.length,
             smokeCommand: "npm run server:smoke",
             startCommand: "npm run server:start",
             status: "ready",
@@ -753,7 +776,7 @@ describe("backend runtime smoke command", () => {
             noLiveSideEffectsAllFalse: true,
             productionReady: false,
             profileId: "local-review",
-            routeCount: expect.any(Number),
+            routeCount: apiRuntimeContractRoutes.length,
             smokeCommand: "npm run server:smoke",
             startCommand: "npm run server:start",
             status: "ready",
@@ -880,7 +903,7 @@ describe("backend runtime smoke command", () => {
         noLiveSideEffectsAllFalse: true,
         productionReady: false,
         profileId: "local-review",
-        routeCount: expect.any(Number),
+        routeCount: apiRuntimeContractRoutes.length,
         smokeCommand: "npm run server:smoke",
         startCommand: "npm run server:start",
         status: "ready",
@@ -1002,6 +1025,29 @@ describe("backend runtime smoke command", () => {
         "reward-distribution",
       ]),
     );
+    const walletSessionRequestIndex = requests.findIndex((request) =>
+      request.pathname === "/api/wallet/session"
+      && request.headers.get("x-campaign-os-trace-id") === summary.durableLocalPersistence.traceIds.walletSession
+    );
+    const verificationRequestIndex = requests.findIndex((request) =>
+      request.pathname === "/api/tasks/task-bridge/verify"
+      && request.headers.get("x-campaign-os-trace-id") === summary.durableLocalPersistence.traceIds.verification
+    );
+    const verificationRequest = requests[verificationRequestIndex];
+    const verificationBody = JSON.parse(verificationRequest?.body ?? "{}") as Record<string, unknown>;
+
+    expect(walletSessionRequestIndex).toBeGreaterThanOrEqual(0);
+    expect(verificationRequestIndex).toBeGreaterThan(walletSessionRequestIndex);
+    expect(verificationRequest?.method).toBe("POST");
+    expect(verificationRequest?.headers.get("x-campaign-os-session-id")).not.toBeNull();
+    expect(verificationRequest?.headers.get("x-campaign-os-credential-boundary")).toBe("ordinary_user_wallet");
+    expect(verificationRequest?.headers.get("x-campaign-os-proof-status")).toBe("verified");
+    expect(verificationRequest?.headers.get("x-campaign-os-roles")).toBe("participant");
+    expect(verificationBody).toMatchObject({
+      accountType: verificationRequest?.headers.get("x-campaign-os-account-type"),
+      walletAddress: verificationRequest?.headers.get("x-campaign-os-wallet-address"),
+      walletSource: verificationRequest?.headers.get("x-campaign-os-wallet-source"),
+    });
     expectNoSecretLeak(summary);
   });
 

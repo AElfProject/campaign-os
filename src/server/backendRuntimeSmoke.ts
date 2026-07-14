@@ -2304,6 +2304,14 @@ const durableLocalSmokeTraceIds = {
   walletSession: "campaign-os-smoke-durable-wallet-session",
 } as const;
 
+interface DurableLocalParticipantSession {
+  accountType: string;
+  headers: Record<string, string>;
+  recordKind: string;
+  walletAddress: string;
+  walletSource: string;
+}
+
 const withDurableLocalPersistenceEnv = async (
   env: Record<string, string | undefined> | undefined,
 ): Promise<{
@@ -2351,23 +2359,95 @@ const requirePersistenceHealth = (
   return persistence;
 };
 
+const issueDurableLocalParticipantSession = async ({
+  baseUrl,
+  fetchImpl,
+}: {
+  baseUrl: string;
+  fetchImpl: typeof fetch;
+}): Promise<DurableLocalParticipantSession> => {
+  const response = await fetchImpl(`${baseUrl}/api/wallet/session`, {
+    body: JSON.stringify({
+      adapterName: "PortkeyAAWallet",
+      fixtureId: "sess-aa-001",
+      nonce: "campaign-os-smoke-durable-participant",
+      proofEvaluatedAt: "2026-07-07T04:00:00.000Z",
+      proofIssuedAt: "2026-07-07T03:59:00.000Z",
+    }),
+    headers: {
+      "content-type": "application/json",
+      "x-campaign-os-trace-id": durableLocalSmokeTraceIds.walletSession,
+    },
+    method: "POST",
+  });
+  const payload = await readJson(response);
+  const persistence = readNestedRecord(payload.data, ["persistence"]);
+  const session = readNestedRecord(payload.data, ["payload"]);
+  const issuer = readNestedRecord(session, ["issuer"]);
+  const proof = readNestedRecord(session, ["proof"]);
+  const accountType = getString(session, "accountType");
+  const recordKind = getString(persistence, "kind");
+  const sessionId = getString(session, "sessionId");
+  const walletAddress = getString(session, "address");
+  const walletSource = getString(session, "walletSource");
+  const capabilities = Array.isArray(session?.capabilities)
+    ? session.capabilities.filter((capability): capability is string => typeof capability === "string")
+    : [];
+
+  if (
+    response.status !== 200
+    || payload.ok !== true
+    || payload.traceId !== durableLocalSmokeTraceIds.walletSession
+    || !accountType
+    || !recordKind
+    || !sessionId
+    || !walletAddress
+    || !walletSource
+    || proof?.status !== "verified"
+    || issuer?.valid !== true
+    || walletSource === "AGENT_SKILL"
+    || capabilities.includes("INTERNAL_AUTOMATION")
+  ) {
+    throw new Error("Campaign OS durable local Participant session smoke check failed.");
+  }
+
+  return {
+    accountType,
+    headers: {
+      "x-campaign-os-account-type": accountType,
+      "x-campaign-os-credential-boundary": "ordinary_user_wallet",
+      "x-campaign-os-proof-status": "verified",
+      "x-campaign-os-roles": "participant",
+      "x-campaign-os-session-id": sessionId,
+      "x-campaign-os-wallet-address": walletAddress,
+      "x-campaign-os-wallet-source": walletSource,
+    },
+    recordKind,
+    walletAddress,
+    walletSource,
+  };
+};
+
 const postDurableLocalSmokeRecord = async ({
   baseUrl,
   body,
   fetchImpl,
   path,
   traceId,
+  trustedHeaders,
 }: {
   baseUrl: string;
   body: Record<string, unknown>;
   fetchImpl: typeof fetch;
   path: string;
   traceId: string;
+  trustedHeaders?: Record<string, string>;
 }): Promise<string> => {
   const response = await fetchImpl(`${baseUrl}${path}`, {
     body: JSON.stringify(body),
     headers: {
       "content-type": "application/json",
+      ...trustedHeaders,
       "x-campaign-os-trace-id": traceId,
     },
     method: "POST",
@@ -2464,28 +2544,24 @@ const runDurableLocalPersistenceSmoke = async ({
   server: CampaignOsApiServerHandle;
   shutdownTimeoutMs?: number;
 }): Promise<BackendRuntimeSmokeDurableLocalPersistenceSummary> => {
+  const participantSession = await issueDurableLocalParticipantSession({
+    baseUrl: server.url,
+    fetchImpl,
+  });
   const wroteRecordKinds = [
+    participantSession.recordKind,
     await postDurableLocalSmokeRecord({
       baseUrl: server.url,
       body: {
-        adapterName: "PortkeyDiscoverWallet",
-        fixtureId: "sess-eoa-app-001",
-      },
-      fetchImpl,
-      path: "/api/wallet/session",
-      traceId: durableLocalSmokeTraceIds.walletSession,
-    }),
-    await postDurableLocalSmokeRecord({
-      baseUrl: server.url,
-      body: {
-        accountType: "AA",
+        accountType: participantSession.accountType,
         campaignId: campaignDetail.id,
-        walletAddress: "2F4...9aB",
-        walletSource: "PORTKEY_AA",
+        walletAddress: participantSession.walletAddress,
+        walletSource: participantSession.walletSource,
       },
       fetchImpl,
       path: "/api/tasks/task-bridge/verify",
       traceId: durableLocalSmokeTraceIds.verification,
+      trustedHeaders: participantSession.headers,
     }),
     await postDurableLocalSmokeRecord({
       baseUrl: server.url,

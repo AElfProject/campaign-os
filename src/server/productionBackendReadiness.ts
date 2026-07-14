@@ -14,7 +14,7 @@ import {
   type ProductionRuntimeDependencyStatus,
 } from "./backendRuntimeActivation";
 import type { ApiRuntimeContractCoverage, ApiRuntimeRouteContract } from "./contracts";
-import { apiRuntimeRoutes, createApiRuntimeContractCoverage } from "./routes";
+import { apiRuntimeContractRoutes, createApiRuntimeContractCoverage } from "./routes";
 import { resolveApiServerRuntimeContract, type ApiServerRuntimeContract } from "./serverRuntime";
 
 export type ProductionBackendReadinessStatus = "blocked" | "ready" | "scaffold";
@@ -180,7 +180,7 @@ export const createProductionBackendReadinessProfile = (
 };
 
 export const createProductionBackendRouteCoverage = (
-  routes: readonly ApiRuntimeRouteContract[] = apiRuntimeRoutes,
+  routes: readonly ApiRuntimeRouteContract[] = apiRuntimeContractRoutes,
   coverage: ApiRuntimeContractCoverage = createApiRuntimeContractCoverage(),
 ): ProductionBackendRouteCoverage => {
   const countByReadiness = routes.reduce(
@@ -334,7 +334,7 @@ export const createProductionBackendReadinessSummary = ({
   env = {},
   generatedAt,
   routeCoverage,
-  routes = apiRuntimeRoutes,
+  routes = apiRuntimeContractRoutes,
   runtime,
 }: CreateProductionBackendReadinessSummaryOptions = {}): ProductionBackendReadinessSummary => {
   const resolvedRuntime = runtime ?? resolveApiServerRuntimeContract({ env });

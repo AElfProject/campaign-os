@@ -82,9 +82,9 @@ import type {
   LocalExportFileHandoff,
 } from "../domain/types";
 import {
-  apiRuntimeRoutes,
+  apiRuntimeContractRoutes,
   createApiRuntimeContractCoverage,
-  type ApiRuntimeRouteId,
+  type ApiRuntimeContractRouteId,
 } from "./routes";
 import {
   createBackendDatabaseAdapterRuntimeSummary,
@@ -101,7 +101,6 @@ import {
   type CampaignDbAddTaskDraftInput,
   type CampaignDbCreateDraftInput,
   type CampaignDbDraft,
-  type CampaignDbEligibilityProjection,
   type CampaignDbExportArtifact,
   type CampaignDbExportProjection,
   type CampaignDbExportReadinessProjection,
@@ -144,11 +143,9 @@ import {
   exportContractRootMode,
   exportFormat,
   isJsonRecord,
-  optionalAccountType,
   optionalLocaleArray,
   optionalLocale,
   optionalString,
-  optionalWalletSource,
   requiredAgentWalletHumanApprovalState,
   requiredAccountType,
   requiredBoolean,
@@ -173,6 +170,14 @@ import {
   verifyWalletProofLocally,
   type WalletProofVerificationResult,
 } from "./walletProofVerifier";
+import { createCampaignOsParticipantPreviewMetadata } from "./config";
+import {
+  evaluateOwnerCampaignDetailAccess,
+  evaluateParticipantCampaignAccess,
+  resolveParticipantCampaignTaskAccess,
+  type ParticipantCampaignAccessDecision,
+} from "./participantCampaignAccess";
+import { isParticipantAccountTypeCompatible } from "./participantJourney";
 
 const localErrorToRuntimeError = (
   error: LocalServiceError,
@@ -290,8 +295,12 @@ const campaignDbI18nDiagnosticToRuntimeError = (
   }
 
   return invalidRequest(
-    diagnostic?.field ?? "request",
-    diagnostic?.message ?? "Campaign DB i18n draft request is invalid.",
+    diagnostic?.field
+      && diagnostic.field.length <= 80
+      && /^[A-Za-z][A-Za-z0-9.[\]_-]*$/.test(diagnostic.field)
+      ? diagnostic.field
+      : "request",
+    "Campaign DB i18n draft request is invalid.",
   );
 };
 
@@ -347,15 +356,30 @@ const campaignDbTaskDraftInput = (request: AddTaskRequest): CampaignDbAddTaskDra
   walletCompatibility: request.walletCompatibility,
 });
 
-const verifyTaskRequest = (context: ApiRuntimeHandlerContext): VerifyTaskRequest => {
-  const body = bodyRecord(context.body);
+const issuedParticipantSubject = (context: ApiRuntimeHandlerContext) => {
+  const session = context.auth?.session;
+
+  if (!session) {
+    throw invalidRequest("authSession", "Issued Participant session is required for this route.");
+  }
 
   return {
-    accountType: requiredAccountType(body),
+    accountType: session.accountType,
+    walletAddress: session.address,
+    walletSource: session.walletSource,
+  };
+};
+
+const verifyTaskRequest = (context: ApiRuntimeHandlerContext): VerifyTaskRequest => {
+  const body = bodyRecord(context.body);
+  const subject = issuedParticipantSubject(context);
+
+  return {
+    accountType: subject.accountType,
     campaignId: requiredString(body, "campaignId"),
     taskId: requiredRouteParam(context.params, "taskId"),
-    walletAddress: requiredString(body, "walletAddress"),
-    walletSource: requiredWalletSource(body),
+    walletAddress: subject.walletAddress,
+    walletSource: subject.walletSource,
   };
 };
 
@@ -750,31 +774,6 @@ const createRepositoryCompletionResponse = (
   taskId: completion.taskId,
   walletAddress: completion.walletAddress,
   walletSource: completion.walletSource,
-});
-
-const createRepositoryEligibilityResponse = (
-  projection: CampaignDbEligibilityProjection,
-) => ({
-  accountType: projection.accountType,
-  campaignId: projection.campaignId,
-  eligible: projection.eligible,
-  localePreference: projection.localePreference,
-  missingTasks: projection.missingTasks,
-  campaignDbEvidence: projection.evidence.map(createCampaignDbEvidenceMetadata),
-  nextAction: localized(
-    projection.eligible
-      ? "Repository campaign eligibility is satisfied locally."
-      : "Complete the missing repository campaign tasks before eligibility review.",
-    projection.eligible
-      ? "Repository campaign eligibility is satisfied locally."
-      : "Complete the missing repository campaign tasks before eligibility review.",
-  ),
-  riskFlags: projection.riskFlags,
-  score: projection.score,
-  status: projection.status,
-  walletAddress: projection.walletAddress,
-  walletSource: projection.walletSource,
-  walletTypeVerified: projection.walletTypeVerified,
 });
 
 const createRepositoryI18nDraftResponse = (
@@ -1185,6 +1184,128 @@ const mergeCampaignDbDraftsIntoDiscovery = (
   };
 };
 
+const campaignAccessRecord = (campaign: CampaignDbReadProjection) => ({
+  campaignId: campaign.id,
+  status: campaign.status,
+});
+
+const publicCampaignDbRecords = (
+  campaigns: readonly CampaignDbReadProjection[],
+) => campaigns.filter((campaign) => evaluateParticipantCampaignAccess({
+  audience: "anonymous",
+  campaign: campaignAccessRecord(campaign),
+  previewCampaignIds: [],
+}).outcome === "allowed");
+
+const participantCampaignAccess = (
+  campaign: CampaignDbReadProjection,
+  previewCampaignIds: readonly string[],
+): ParticipantCampaignAccessDecision => evaluateParticipantCampaignAccess({
+  audience: "issued_participant",
+  campaign: campaignAccessRecord(campaign),
+  previewCampaignIds,
+});
+
+const requireParticipantCampaignAccess = (
+  context: ApiRuntimeHandlerContext,
+  campaign: CampaignDbReadProjection,
+) => {
+  const access = participantCampaignAccess(
+    campaign,
+    context.participantPreviewConfig().campaignIds,
+  );
+
+  if (access.outcome !== "allowed" || !access.visibility) {
+    throw invalidCampaign(campaign.id);
+  }
+
+  return access;
+};
+
+const createParticipantCampaignDiscovery = (
+  context: ApiRuntimeHandlerContext,
+  discovery: CampaignDiscoveryReadModel,
+  campaigns: readonly CampaignDbReadProjection[],
+) => {
+  const previewConfig = context.participantPreviewConfig();
+  const repositoryRows = campaigns.flatMap((campaign) => {
+    const access = participantCampaignAccess(campaign, previewConfig.campaignIds);
+
+    if (access.outcome !== "allowed" || !access.visibility) {
+      return [];
+    }
+
+    const detail = campaignDbDraftToDiscoveryDetail(campaign);
+
+    return [{
+      campaign,
+      detail: {
+        ...detail,
+        item: {
+          ...detail.item,
+          visibility: access.visibility,
+        },
+      },
+      item: {
+        ...detail.item,
+        visibility: access.visibility,
+      },
+    }];
+  });
+  const repositoryCampaignIds = new Set(repositoryRows.map(({ campaign }) => campaign.id));
+  const seededRows = discovery.details.flatMap((detail) => {
+    const access = evaluateParticipantCampaignAccess({
+      audience: "issued_participant",
+      campaign: {
+        campaignId: detail.item.id,
+        status: detail.item.status,
+      },
+      previewCampaignIds: [],
+    });
+
+    if (access.outcome !== "allowed" || !access.visibility || repositoryCampaignIds.has(detail.item.id)) {
+      return [];
+    }
+
+    return [{
+      detail: {
+        ...detail,
+        item: { ...detail.item, visibility: access.visibility },
+      },
+      item: { ...detail.item, visibility: access.visibility },
+    }];
+  });
+  const items = [...repositoryRows.map(({ item }) => item), ...seededRows.map(({ item }) => item)];
+  const details = [...repositoryRows.map(({ detail }) => detail), ...seededRows.map(({ detail }) => detail)];
+
+  return {
+    ...discovery,
+    campaignDb: createCampaignDbSummary(repositoryRows.map(({ campaign }) => campaign)),
+    details,
+    items,
+    participantPreview: createCampaignOsParticipantPreviewMetadata(previewConfig),
+    summary: createCampaignDiscoverySummary(items),
+  };
+};
+
+const loadParticipantJourney = async (
+  context: ApiRuntimeHandlerContext,
+  campaign: CampaignDbReadProjection,
+) => {
+  const access = requireParticipantCampaignAccess(context, campaign);
+  const subject = issuedParticipantSubject(context);
+  const journey = await context.campaignDbRepository.getParticipantJourney!({
+    accountType: subject.accountType,
+    campaignId: campaign.id,
+    walletAddress: subject.walletAddress,
+    walletSource: subject.walletSource,
+  }, {
+    traceId: context.traceId,
+  });
+
+  return { access, journey };
+};
+
 const campaignDbDraftsToOwnerDiscovery = (
   drafts: readonly CampaignDbReadProjection[],
 ): CampaignDiscoveryReadModel & {
@@ -1345,6 +1466,16 @@ const unwrapCampaignReadinessOrDraft = async <TPayload>(
   });
 
   if (campaignDbDraft) {
+    const access = evaluateParticipantCampaignAccess({
+      audience: "anonymous",
+      campaign: campaignAccessRecord(campaignDbDraft),
+      previewCampaignIds: [],
+    });
+
+    if (access.outcome !== "allowed") {
+      throw invalidCampaign(campaignId);
+    }
+
     return {
       boundary: campaignDbLifecycleLimitedBoundary,
       campaignDb: {
@@ -1364,7 +1495,7 @@ const createPublishDeliveryReviewBackendRuntimeInput = (
   report: BackendServiceReadinessReport,
 ): PublishDeliveryReviewBackendRuntimeInput => {
   const routeCountByReadiness = (readiness: "ready" | "review_required" | "blocked") =>
-    apiRuntimeRoutes.filter((route) => route.readiness === readiness).length;
+    apiRuntimeContractRoutes.filter((route) => route.readiness === readiness).length;
   const validationBlockers = report.validation.issues.map((issue) => ({
     code: issue.code,
     field: issue.field,
@@ -1402,7 +1533,7 @@ const createPublishDeliveryReviewBackendRuntimeInput = (
       blockedCount: routeCountByReadiness("blocked"),
       readyCount: routeCountByReadiness("ready"),
       reviewRequiredCount: routeCountByReadiness("review_required"),
-      routeCount: apiRuntimeRoutes.length,
+      routeCount: apiRuntimeContractRoutes.length,
     },
     status: report.apiService.productionReady
       ? "ready"
@@ -1495,6 +1626,18 @@ const createPublishDeliveryReviewPayload = async (
     traceId: context.traceId,
   });
 
+  if (campaignDbDraft) {
+    const access = evaluateParticipantCampaignAccess({
+      audience: "anonymous",
+      campaign: campaignAccessRecord(campaignDbDraft),
+      previewCampaignIds: [],
+    });
+
+    if (access.outcome !== "allowed") {
+      throw invalidCampaign(campaignId);
+    }
+  }
+
   if (!detailResult.ok && !campaignDbDraft) {
     unwrapLocalResult(detailResult, context);
     throw invalidCampaign(campaignId);
@@ -1551,10 +1694,33 @@ const createPublishDeliveryReviewPayload = async (
   };
 };
 
-const createPointsRankingLedgerRuntimePayload = (
+const createPointsRankingLedgerRuntimePayload = async (
   context: ApiRuntimeHandlerContext,
-): { boundary: LocalizedText; payload: PointsRankingLedgerRuntime } => {
+) => {
   const campaignId = requiredRouteParam(context.params, "campaignId");
+  const campaign = await context.campaignDbRepository.getById(campaignId, {
+    traceId: context.traceId,
+  });
+
+  if (campaign) {
+    const { access, journey } = await loadParticipantJourney(context, campaign);
+
+    return {
+      boundary: campaignDbBoundary,
+      payload: {
+        campaignId,
+        eligibility: journey.eligibility,
+        participant: journey.participant,
+        ranking: journey.ranking,
+        repository: journey.repository,
+        source: "repository_projection" as const,
+        status: "ready" as const,
+        traceId: context.traceId,
+        visibility: access.visibility,
+      },
+    };
+  }
+
   const detailResult = context.service.getCampaignDetail({ campaignId });
 
   if (!detailResult.ok) {
@@ -1734,17 +1900,13 @@ const canUseCampaignDbCreateFallback = (error: LocalServiceError) =>
   error.code === "UNSUPPORTED_LOCALE" && error.field === "supportedLocales";
 
 const eligibilityRequest = (context: ApiRuntimeHandlerContext): CheckEligibilityRequest => {
-  const walletAddress = context.query.walletAddress ?? context.query.address;
-
-  if (!walletAddress) {
-    throw invalidRequest("walletAddress", "Eligibility checks require walletAddress or address query.");
-  }
+  const subject = issuedParticipantSubject(context);
 
   return {
-    accountType: optionalAccountType(context.query.accountType),
+    accountType: subject.accountType,
     campaignId: requiredRouteParam(context.params, "campaignId"),
-    walletAddress,
-    walletSource: optionalWalletSource(context.query.walletSource),
+    walletAddress: subject.walletAddress,
+    walletSource: subject.walletSource,
   };
 };
 
@@ -2037,7 +2199,7 @@ const createProductionBackendReadinessMetadata = (
     activation: report.backendRuntimeBootstrap.activation,
     env,
     generatedAt: report.backendRuntimeBootstrap.startup.startedAt,
-    routeCoverage: createApiRuntimeContractCoverage(),
+    routeCoverage: createCombinedApiRuntimeContractCoverage(),
     runtime: resolveApiServerRuntimeContract({
       env,
       host: report.config.host,
@@ -2050,7 +2212,13 @@ const createProductionBackendReadinessMetadata = (
   });
 };
 
-export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntimeHandler> => ({
+const createCombinedApiRuntimeContractCoverage = () => ({
+  ...createApiRuntimeContractCoverage(),
+  routeCount: apiRuntimeContractRoutes.length,
+  routeIds: apiRuntimeContractRoutes.map((route) => route.id),
+});
+
+export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, ApiRuntimeHandler> => ({
   "runtime.health": async (context) => {
     const apiFoundation = createApiFoundationRuntimeMetadata();
     const backendService = context.backendServiceReadiness();
@@ -2059,7 +2227,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     const services = createServiceDegradationGovernance();
     const persistence = await context.repository.health();
     const topology = createBackendTopologyReport({
-      knownRouteIds: apiRuntimeRoutes.map((route) => route.id),
+      knownRouteIds: apiRuntimeContractRoutes.map((route) => route.id),
     });
 
     return {
@@ -2070,7 +2238,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       capabilities: createApiRuntimeCapabilityCatalog(),
       persistence,
       productionBackendReadiness,
-      routeCount: apiRuntimeRoutes.length,
+      routeCount: apiRuntimeContractRoutes.length,
       safety: createRuntimeSafety(),
       serviceGroups: apiRuntimeServiceGroups,
       serviceReadiness: coverage.ok
@@ -2098,7 +2266,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     const productionBackendReadiness = createProductionBackendReadinessMetadata(backendService);
     const persistence = await context.repository.health();
     const topology = createBackendTopologyReport({
-      knownRouteIds: apiRuntimeRoutes.map((route) => route.id),
+      knownRouteIds: apiRuntimeContractRoutes.map((route) => route.id),
     });
 
     return {
@@ -2106,14 +2274,14 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
       apiSkillContracts: apiSkillContractRegistry,
       apiSkillSurface: createApiSkillContractSurface(),
       backendService: createBackendServiceContractMetadata(backendService),
-      coverage: createApiRuntimeContractCoverage(),
+      coverage: createCombinedApiRuntimeContractCoverage(),
       capabilities: createApiRuntimeCapabilityCatalog(),
       persistence: {
         boundary: persistenceBoundary,
         health: persistence,
       },
       productionBackendReadiness,
-      routes: apiRuntimeRoutes,
+      routes: apiRuntimeContractRoutes,
       serviceGroups: apiRuntimeServiceGroups,
       topology,
     };
@@ -2193,10 +2361,11 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     const drafts = await context.campaignDbRepository.list(campaignDbListFilter(context), {
       traceId: context.traceId,
     });
+    const publicCampaigns = publicCampaignDbRecords(drafts);
 
     return {
       ...response,
-      payload: mergeCampaignDbDraftsIntoDiscovery(response.payload, drafts),
+      payload: mergeCampaignDbDraftsIntoDiscovery(response.payload, publicCampaigns),
     };
   },
   "campaigns.owner.list": async (context) => {
@@ -2207,6 +2376,65 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     return {
       boundary: campaignDbBoundary,
       payload: campaignDbDraftsToOwnerDiscovery(drafts),
+    };
+  },
+  "campaigns.owner.detail": async (context) => {
+    const campaignId = requiredRouteParam(context.params, "campaignId");
+    const campaign = await context.campaignDbRepository.getById(campaignId, {
+      traceId: context.traceId,
+    });
+
+    if (!campaign) {
+      throw invalidCampaign(campaignId);
+    }
+
+    const ownerAccess = evaluateOwnerCampaignDetailAccess({
+      authenticatedOwner: context.auth?.session?.address === campaign.ownerAddress,
+      campaign: campaignAccessRecord(campaign),
+    });
+
+    if (ownerAccess.outcome !== "allowed") {
+      throw invalidCampaign(campaignId);
+    }
+
+    return {
+      boundary: campaignDbBoundary,
+      campaignDb: createCampaignDbMetadata(campaign.repository),
+      payload: campaignDbDraftToDiscoveryDetail(campaign),
+    };
+  },
+  "campaigns.participant.list": async (context) => {
+    const discovery = unwrapLocalResult(
+      context.service.listCampaigns({ consumerSurface: "user_app" }),
+      context,
+    );
+    const campaigns = await context.campaignDbRepository.list({}, {
+      traceId: context.traceId,
+    });
+
+    return {
+      ...discovery,
+      payload: createParticipantCampaignDiscovery(context, discovery.payload, campaigns),
+    };
+  },
+  "campaigns.participant.journey": async (context) => {
+    const campaignId = requiredRouteParam(context.params, "campaignId");
+    const campaign = await context.campaignDbRepository.getById(campaignId, {
+      traceId: context.traceId,
+    });
+
+    if (!campaign) {
+      throw invalidCampaign(campaignId);
+    }
+
+    const { access, journey } = await loadParticipantJourney(context, campaign);
+
+    return {
+      boundary: campaignDbBoundary,
+      payload: {
+        ...journey,
+        visibility: access.visibility,
+      },
     };
   },
   "campaigns.create": async (context) => {
@@ -2263,6 +2491,16 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     });
 
     if (campaignDbDraft) {
+      const access = evaluateParticipantCampaignAccess({
+        audience: "anonymous",
+        campaign: campaignAccessRecord(campaignDbDraft),
+        previewCampaignIds: [],
+      });
+
+      if (access.outcome !== "allowed") {
+        throw invalidCampaign(request.campaignId);
+      }
+
       return {
         boundary: campaignDbBoundary,
         campaignDb: {
@@ -2389,40 +2627,60 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
   },
   "tasks.verify": async (context) => {
     const request = verifyTaskRequest(context);
-    const localResult = context.service.verifyTask(request);
+    const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
+      traceId: context.traceId,
+    });
     let campaignDbCompletion: CampaignDbTaskCompletion | undefined;
     let campaignDbEvidence: CampaignDbTaskEvidenceRecord | undefined;
-    let result: LocalServiceResult<VerifyTaskResponse> = localResult;
+    let campaignDbRepository: CampaignDbTaskVerificationProjection["repository"] | undefined;
+    let result: LocalServiceResult<VerifyTaskResponse>;
 
-    if (!localResult.ok && localResult.error.code === "CAMPAIGN_NOT_FOUND") {
-      const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
-        traceId: context.traceId,
+    if (campaignDbDraft) {
+      const access = requireParticipantCampaignAccess(context, campaignDbDraft);
+      const campaignDbTask = campaignDbDraft.tasks.find((task) => task.id === request.taskId);
+      const taskAccess = resolveParticipantCampaignTaskAccess({
+        campaignAccess: access,
+        campaignId: request.campaignId,
+        loadTask: () => campaignDbTask
+          ? { campaignId: campaignDbTask.campaignId, taskId: campaignDbTask.id }
+          : undefined,
+        taskId: request.taskId,
       });
-      const campaignDbTask = campaignDbDraft?.tasks.find((task) => task.id === request.taskId);
 
-      if (campaignDbDraft && !campaignDbTask) {
+      if (taskAccess.outcome !== "allowed" || !campaignDbTask) {
         throw invalidTask(request.taskId);
       }
 
-      if (campaignDbDraft && campaignDbTask) {
-        const verification = await context.campaignDbRepository.upsertTaskVerification!({
-          accountType: request.accountType,
-          campaignId: request.campaignId,
-          evidenceHash: `evidence-hash:${campaignDbTask.id}`,
-          taskId: request.taskId,
-          walletAddress: request.walletAddress,
-          walletSource: request.walletSource,
-        }, {
-          traceId: context.traceId,
-        }) satisfies CampaignDbTaskVerificationProjection;
-        campaignDbCompletion = verification.completion;
-        campaignDbEvidence = verification.evidence;
-        result = {
-          boundary: campaignDbBoundary,
-          ok: true,
-          payload: createRepositoryCompletionResponse(campaignDbCompletion, campaignDbTask, campaignDbEvidence),
-        };
+      if (
+        !isParticipantAccountTypeCompatible(campaignDbDraft.walletPolicy, request.accountType)
+        || !isParticipantAccountTypeCompatible(campaignDbTask.walletCompatibility, request.accountType)
+      ) {
+        throw invalidRequest(
+          "accountType",
+          "Issued Participant wallet type is incompatible with the Campaign or Task policy.",
+        );
       }
+
+      const verification = await context.campaignDbRepository.upsertTaskVerification!({
+        accountType: request.accountType,
+        campaignId: request.campaignId,
+        evidenceHash: `evidence-hash:${campaignDbTask.id}`,
+        taskId: request.taskId,
+        walletAddress: request.walletAddress,
+        walletSource: request.walletSource,
+      }, {
+        traceId: context.traceId,
+      }) satisfies CampaignDbTaskVerificationProjection;
+      campaignDbCompletion = verification.completion;
+      campaignDbEvidence = verification.evidence;
+      campaignDbRepository = verification.repository;
+      result = {
+        boundary: campaignDbBoundary,
+        ok: true,
+        payload: createRepositoryCompletionResponse(campaignDbCompletion, campaignDbTask, campaignDbEvidence),
+      };
+    } else {
+      result = context.service.verifyTask(request);
     }
 
     const response = await persistLocalResult(
@@ -2448,6 +2706,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
     return campaignDbCompletion
       ? {
         ...response,
+        ...(campaignDbRepository ? { campaignDb: createCampaignDbMetadata(campaignDbRepository) } : {}),
         campaignDbCompletion: createCampaignDbCompletionMetadata(campaignDbCompletion),
         ...(campaignDbEvidence ? { campaignDbEvidence: createCampaignDbEvidenceMetadata(campaignDbEvidence) } : {}),
       }
@@ -2455,38 +2714,24 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
   },
   "campaigns.eligibility": async (context) => {
     const request = eligibilityRequest(context);
-    const localResult = context.service.checkEligibility(request);
-
-    if (localResult.ok || localResult.error.code !== "CAMPAIGN_NOT_FOUND") {
-      return unwrapLocalResult(localResult, context);
-    }
-
     const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
       traceId: context.traceId,
     });
 
     if (!campaignDbDraft) {
-      return unwrapLocalResult(localResult, context);
+      return unwrapLocalResult(context.service.checkEligibility(request), context);
     }
 
-    const projection = await context.campaignDbRepository.checkEligibility!({
-      accountType: request.accountType,
-      campaignId: request.campaignId,
-      walletAddress: request.walletAddress,
-      walletSource: request.walletSource,
-    }, {
-      traceId: context.traceId,
-    });
+    const { access, journey } = await loadParticipantJourney(context, campaignDbDraft);
 
     return {
       boundary: campaignDbBoundary,
-      campaignDb: {
-        adapterId: projection.repository.adapterId,
-        createdViaRepository: projection.repository.createdViaRepository,
-        repositoryId: projection.repository.repositoryId,
-        storeId: projection.repository.storeId,
+      campaignDb: createCampaignDbMetadata(journey.repository),
+      payload: {
+        ...journey.eligibility,
+        repository: journey.repository,
+        visibility: access.visibility,
       },
-      payload: createRepositoryEligibilityResponse(projection),
     };
   },
   "campaigns.analytics": (context) =>
@@ -2632,6 +2877,16 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeRouteId, ApiRuntime
 
     if (!campaignDbDraft) {
       return unwrapLocalResult(localResult, context);
+    }
+
+    const access = evaluateParticipantCampaignAccess({
+      audience: "anonymous",
+      campaign: campaignAccessRecord(campaignDbDraft),
+      previewCampaignIds: [],
+    });
+
+    if (access.outcome !== "allowed") {
+      throw invalidCampaign(request.campaignId);
     }
 
     if (!context.campaignDbRepository.getExportReadiness) {

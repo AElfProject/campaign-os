@@ -8,6 +8,7 @@ import {
   validateApiServicePorts,
   type ApiServicePort,
 } from "./servicePorts";
+import { apiRuntimeContractRoutes } from "./routes";
 
 describe("API service ports", () => {
   it("owns every current API foundation route exactly once", () => {
@@ -19,6 +20,9 @@ describe("API service ports", () => {
       issues: [],
       valid: true,
     });
+    expect(foundation.routes.map((route) => route.routeId)).toEqual(
+      apiRuntimeContractRoutes.map((route) => route.id),
+    );
     expect(new Set(ownedRouteIds).size).toBe(foundation.routes.length);
     expect(ownedRouteIds.sort()).toEqual(foundation.routes.map((route) => route.routeId).sort());
     expect(report.coverage.routeOwnershipCount).toBe(foundation.routes.length);
@@ -97,6 +101,9 @@ describe("API service ports", () => {
       requiresSecret: false,
       routeIds: expect.arrayContaining([
         "campaigns.owner.list",
+        "campaigns.owner.detail",
+        "campaigns.participant.list",
+        "campaigns.participant.journey",
         "campaigns.lifecycle",
         "campaigns.launch.readiness",
         "campaigns.delivery.readiness",

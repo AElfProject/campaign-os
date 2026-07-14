@@ -9,7 +9,7 @@ import {
   validateOwnerRouteDurableEffectRegistry,
 } from "./backendService";
 import { protectedRouteAuthMap } from "./authSession";
-import { apiRuntimeRoutes } from "./routes";
+import { apiRuntimeContractRoutes } from "./routes";
 
 const productionAreas = [
   "production-persistence",
@@ -114,7 +114,7 @@ const expectNoSchedulerSecretLeak = (value: unknown) => {
 
 describe("backend service readiness report", () => {
   it("classifies Campaign mutations by durable effect instead of HTTP method", () => {
-    expect(apiRuntimeRoutes.find((route) => route.id === "campaigns.tasks.generate")).toMatchObject({
+    expect(apiRuntimeContractRoutes.find((route) => route.id === "campaigns.tasks.generate")).toMatchObject({
       method: "POST",
     });
     expect(ownerRouteDurableEffectById["campaigns.create"]).toBe("campaign_create");
@@ -175,6 +175,10 @@ describe("backend service readiness report", () => {
       version: "0.2.0-local",
     });
     expect(report.entrypoint.routeCount).toBe(report.apiFoundation.coverage.routeCount);
+    expect(report.entrypoint.routeCount).toBe(apiRuntimeContractRoutes.length);
+    expect(report.entrypoint.routeIds).toEqual(apiRuntimeContractRoutes.map((route) => route.id));
+    expect(report.apiFoundation.servicePorts.coverage.routeOwnershipCount).toBe(apiRuntimeContractRoutes.length);
+    expect(report.topology.coverage.unassignedRouteIds).toEqual([]);
     expect(report.authSession).toMatchObject({
       profileId: "local-review",
       status: "local_seeded",
