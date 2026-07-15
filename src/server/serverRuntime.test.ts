@@ -451,37 +451,84 @@ describe("API server resource shutdown", () => {
     const socket = connect(address.port, "127.0.0.1");
     const socketErrors: string[] = [];
     const socketClosed = new Promise<void>((resolve) => socket.once("close", resolve));
+    let markFirstResponseReceived: (() => void) | undefined;
+    const firstResponseReceived = new Promise<void>((resolve) => {
+      markFirstResponseReceived = resolve;
+    });
     let received = "";
 
     socket.setEncoding("utf8");
     socket.on("data", (chunk: string) => {
       received += chunk;
+      if (received.includes("HTTP/1.1 200")) {
+        markFirstResponseReceived?.();
+      }
     });
     socket.on("error", (error) => socketErrors.push(error.message));
     await new Promise<void>((resolve) => socket.once("connect", resolve));
-    const writeRequest = (lines: readonly string[]) => new Promise<void>((resolve, reject) => {
-      socket.write(lines.join("\r\n"), (error) => error ? reject(error) : resolve());
+    const waitForSignal = async (signal: Promise<void>, label: string, timeoutMs: number) => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+
+      try {
+        await Promise.race([
+          signal,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+    const writeRequestOrClose = (lines: readonly string[]) => new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const settle = (error?: Error | null) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        socket.off("close", onClose);
+        error ? reject(error) : resolve();
+      };
+      const onClose = () => settle();
+      const timeout = setTimeout(
+        () => settle(new Error("Timed out waiting for the pipelined request to flush or close")),
+        2_000,
+      );
+
+      socket.once("close", onClose);
+      socket.write(lines.join("\r\n"), (error) => settle(error));
     });
-    await writeRequest([
+    socket.write([
       "GET /api/health HTTP/1.1",
       `Host: 127.0.0.1:${address.port}`,
       "Connection: keep-alive",
       "",
       "",
-    ]);
-    await requestEntered;
+    ].join("\r\n"));
+    await waitForSignal(requestEntered, "the initial request to enter the runtime", 2_000);
 
     const stopping = server.stop();
-    await writeRequest([
-      "GET /api/contracts HTTP/1.1",
-      `Host: 127.0.0.1:${address.port}`,
-      "Connection: close",
-      "",
-      "",
-    ]);
-    releaseRequest?.();
+    const pipelinedWriteSettled = (() => {
+      try {
+        return writeRequestOrClose([
+          "GET /api/contracts HTTP/1.1",
+          `Host: 127.0.0.1:${address.port}`,
+          "Connection: close",
+          "",
+          "",
+        ]);
+      } finally {
+        releaseRequest?.();
+      }
+    })();
 
-    await Promise.all([stopping, socketClosed]);
+    await waitForSignal(stopping, "the server to stop", 2_000);
+    await waitForSignal(pipelinedWriteSettled, "the pipelined write to settle", 2_000);
+    await waitForSignal(firstResponseReceived, "the initial response", 2_000);
+    socket.destroy();
+    await waitForSignal(socketClosed, "the pipelined socket to close", 1_000);
 
     const responseStatuses = Array.from(
       received.matchAll(/(?:^|\r\n)HTTP\/1\.1 (\d{3}) [^\r\n]*\r\n/g),
