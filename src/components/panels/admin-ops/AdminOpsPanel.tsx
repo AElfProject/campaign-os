@@ -134,6 +134,7 @@ interface AdminOpsPanelProps {
   locale: SupportedLocale;
   onDurableReviewReconnect?: () => void;
   session?: NormalizedWalletSession | null;
+  stageReviewMode?: boolean;
 }
 
 type PublishState = "blocker" | "warning" | "ready";
@@ -2025,6 +2026,7 @@ export const AdminOpsPanel = ({
   locale,
   onDurableReviewReconnect,
   session = null,
+  stageReviewMode = false,
 }: AdminOpsPanelProps) => {
   const copy = adminOpsCopy[locale];
   const adminOps = createAdminOpsReadModel(campaign);
@@ -3537,14 +3539,22 @@ export const AdminOpsPanel = ({
     </section>
   );
 
+  const durableReviewWorkspace = (
+    <AdminDurableReviewWorkspace
+      bridge={durableReviewBridge}
+      locale={locale}
+      onReconnect={onDurableReviewReconnect}
+      session={session}
+    />
+  );
+
+  if (stageReviewMode) {
+    return durableReviewWorkspace;
+  }
+
   return (
     <div style={{ display: "grid", gap: 18 }}>
-      <AdminDurableReviewWorkspace
-        bridge={durableReviewBridge}
-        locale={locale}
-        onReconnect={onDurableReviewReconnect}
-        session={session}
-      />
+      {durableReviewWorkspace}
       <div aria-label="Legacy Admin preview" className="admin-ops-legacy-preview">
         <p className="admin-ops-legacy-preview__label">{copy.durableLegacyPreview}</p>
         <section style={panelStyle}>

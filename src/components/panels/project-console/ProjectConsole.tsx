@@ -271,6 +271,7 @@ export interface ProjectConsoleProps {
   ownerSession?: NormalizedWalletSession | null;
   ownerSessionReady?: boolean;
   projectId?: string;
+  stageReviewMode?: boolean;
 }
 
 const panelStyle: CSSProperties = {
@@ -1975,6 +1976,15 @@ const walletAdapterLiveEvidenceState = (status: AelfWebLoginAdapterLiveEvidenceS
   return status === "ready" ? "ready" : "warning";
 };
 
+const stageReviewOwnerCreateStyle = `
+button[aria-describedby="owner-campaign-create-disabled-reason"]:disabled {
+  background: #e2e8f0 !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #64748b !important;
+  opacity: 1 !important;
+}
+`;
+
 const liveConnectorReadinessState = (readiness: LiveWalletConnectorReadiness) => {
   if (readiness === "blocked") {
     return "blocker";
@@ -2160,6 +2170,12 @@ const projectWorkspaceKeys = [
 ] as const;
 
 export type ProjectWorkspaceKey = (typeof projectWorkspaceKeys)[number];
+
+const stageReviewWorkspaceKeys = [
+  "campaigns",
+  "create",
+  "templates",
+] as const satisfies readonly ProjectWorkspaceKey[];
 
 const workspaceShellStyle: CSSProperties = {
   background: "#f8fbff",
@@ -2688,6 +2704,7 @@ export const ProjectConsole = ({
   ownerSession = null,
   ownerSessionReady = false,
   projectId: configuredProjectId,
+  stageReviewMode = false,
 }: ProjectConsoleProps) => {
   const copy = projectConsoleCopy[locale];
   const defaultOwnerCampaignBridge = useMemo(
@@ -2716,7 +2733,14 @@ export const ProjectConsole = ({
   const productionDatabaseHandoffReadinessApiRequestSeq = useRef(0);
   const exportDeliveryApiRequestSeq = useRef(0);
   const backendReadinessApiRequestSeq = useRef(0);
-  const activeWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
+  const requestedActiveWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
+  const activeWorkspace = stageReviewMode
+    && !stageReviewWorkspaceKeys.some((workspace) => workspace === requestedActiveWorkspace)
+    ? "campaigns"
+    : requestedActiveWorkspace;
+  const visibleWorkspaceKeys = stageReviewMode
+    ? stageReviewWorkspaceKeys
+    : projectWorkspaceKeys;
   const title = getLocalizedText(campaign.title, locale);
   const subtitle = getLocalizedText(campaign.subtitle, locale);
   const firstParticipant = campaign.participants[0];
@@ -3539,26 +3563,31 @@ export const ProjectConsole = ({
 
   return (
     <div style={{ display: "grid", gap: 18, maxWidth: "100%", minWidth: 0 }}>
+      {stageReviewMode ? (
+        <style data-testid="stage-review-owner-create-style">{stageReviewOwnerCreateStyle}</style>
+      ) : null}
       <section aria-label={copy.projectWorkspace} style={workspaceShellStyle}>
-        <div style={headingRowStyle}>
-          <div>
-            <p style={statLabelStyle}>{copy.dashboardTitle}</p>
-            <strong style={{ color: "#071426", display: "block", fontSize: 30, lineHeight: 1.1, margin: "4px 0" }}>
-              {title}
-            </strong>
-            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>{subtitle}</p>
+        {!stageReviewMode ? (
+          <div style={headingRowStyle}>
+            <div>
+              <p style={statLabelStyle}>{copy.dashboardTitle}</p>
+              <strong style={{ color: "#071426", display: "block", fontSize: 30, lineHeight: 1.1, margin: "4px 0" }}>
+                {title}
+              </strong>
+              <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>{subtitle}</p>
+            </div>
+            <span style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <PublishStateBadge label={copy.active} state="ready" />
+              <ContractModeBadge
+                label={contractModeLabel(campaign.contractMode, copy)}
+                mode={campaign.contractMode}
+              />
+            </span>
           </div>
-          <span style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <PublishStateBadge label={copy.active} state="ready" />
-            <ContractModeBadge
-              label={contractModeLabel(campaign.contractMode, copy)}
-              mode={campaign.contractMode}
-            />
-          </span>
-        </div>
+        ) : null}
 
         <nav aria-label={copy.projectWorkspaceNavigation} style={workspaceNavStyle}>
-          {projectWorkspaceKeys.map((workspaceKey) => (
+          {visibleWorkspaceKeys.map((workspaceKey) => (
             <button
               aria-pressed={activeWorkspace === workspaceKey}
               key={workspaceKey}
@@ -3571,18 +3600,21 @@ export const ProjectConsole = ({
           ))}
         </nav>
 
-        <article style={workspaceIntroStyle}>
-          <p style={statLabelStyle}>{copy.activeWorkspace}</p>
-          <h3 style={{ fontSize: 20, lineHeight: 1.2, margin: 0 }}>
-            {workspaceLabels[activeWorkspace]}
-          </h3>
-          <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
-            {workspaceSummaries[activeWorkspace]}
-          </p>
-        </article>
+        {!stageReviewMode ? (
+          <article style={workspaceIntroStyle}>
+            <p style={statLabelStyle}>{copy.activeWorkspace}</p>
+            <h3 style={{ fontSize: 20, lineHeight: 1.2, margin: 0 }}>
+              {workspaceLabels[activeWorkspace]}
+            </h3>
+            <p style={{ color: "#475569", lineHeight: 1.5, margin: 0 }}>
+              {workspaceSummaries[activeWorkspace]}
+            </p>
+          </article>
+        ) : null}
       </section>
 
-      <section aria-label={ownerLabels.region} role="region" style={panelStyle}>
+      {(!stageReviewMode || activeWorkspace === "campaigns") && (
+        <section aria-label={ownerLabels.region} role="region" style={panelStyle}>
         <div style={headingRowStyle}>
           <div style={{ minWidth: 0 }}>
             <p style={statLabelStyle}>{ownerLabels.owner}</p>
@@ -3711,9 +3743,10 @@ export const ProjectConsole = ({
             </span>
           </div>
         ) : null}
-      </section>
+        </section>
+      )}
 
-      {activeWorkspace === "campaigns" && (
+      {!stageReviewMode && activeWorkspace === "campaigns" && (
         <>
       <section style={panelStyle}>
         <div style={headingRowStyle}>
@@ -5400,6 +5433,8 @@ export const ProjectConsole = ({
 
       {activeWorkspace === "create" && (
         <>
+      {!stageReviewMode && (
+        <>
       <section aria-label={copy.createWorkspaceStepper} style={panelStyle}>
         <div style={headingRowStyle}>
           <div>
@@ -5781,6 +5816,8 @@ export const ProjectConsole = ({
           </article>
         </div>
       </section>
+        </>
+      )}
 
       <OwnerCampaignBuilderPanel
         copy={copy}
@@ -5789,22 +5826,26 @@ export const ProjectConsole = ({
         ownerWorkflow={ownerBuilderIntents}
       />
 
-      <div
-        aria-label={
-          locale === "en-US" ? "Campaign Builder detail sections" : "活动构建器详情区块"
-        }
-        style={builderDetailsStyle}
-      >
-        <RewardsEligibilityBuilder draft={builderDraft} locale={locale} />
-        <I18nContractReadiness campaign={campaign} locale={locale} />
-        <PublishReadinessPanel draft={builderDraft} locale={locale} />
-        <PublishGateDecisionCenter draft={builderDraft} locale={locale} />
-      </div>
+      {!stageReviewMode ? (
+        <div
+          aria-label={
+            locale === "en-US" ? "Campaign Builder detail sections" : "活动构建器详情区块"
+          }
+          style={builderDetailsStyle}
+        >
+          <RewardsEligibilityBuilder draft={builderDraft} locale={locale} />
+          <I18nContractReadiness campaign={campaign} locale={locale} />
+          <PublishReadinessPanel draft={builderDraft} locale={locale} />
+          <PublishGateDecisionCenter draft={builderDraft} locale={locale} />
+        </div>
+      ) : null}
         </>
       )}
 
       {activeWorkspace === "templates" && (
         <>
+          {!stageReviewMode && (
+            <>
           <section aria-label={copy.workspaceTemplates} style={panelStyle}>
             <div style={headingRowStyle}>
               <div>
@@ -5920,12 +5961,16 @@ export const ProjectConsole = ({
               ))}
             </div>
           </section>
+            </>
+          )}
 
           <OwnerTaskTemplateLibrary
             locale={locale}
             ownerWorkflow={ownerTaskIntents}
           />
 
+          {!stageReviewMode && (
+            <>
           <section aria-label={copy.forestTaskReadiness} style={panelStyle}>
             <div style={headingRowStyle}>
               <div>
@@ -6828,6 +6873,8 @@ export const ProjectConsole = ({
               ))}
             </ul>
           </section>
+            </>
+          )}
         </>
       )}
 
@@ -9125,7 +9172,7 @@ export const ProjectConsole = ({
         </section>
       )}
 
-      {activeWorkspace === "create" && (
+      {!stageReviewMode && activeWorkspace === "create" && (
       <section aria-label="Project Console workflow sections" style={sectionGridStyle}>
         {workflows.map((workflow) => (
           <article key={workflow.title} style={workflowStyle}>

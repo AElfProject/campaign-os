@@ -45,6 +45,7 @@ describe("Campaign OS app shell", () => {
   const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
   const defaultDocumentTitle = "aelf Campaign OS";
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
+  const originalStageReviewEnabled = import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED;
   const mockedSubmitWalletSessionApiPreview = vi.mocked(submitWalletSessionApiPreview);
   const getProductNavigation = () =>
     screen.getByRole("navigation", { name: "Campaign OS product navigation" });
@@ -60,10 +61,13 @@ describe("Campaign OS app shell", () => {
   };
   const expectFreshHeaderWalletPreviewRequest = (
     request: Parameters<typeof submitWalletSessionApiPreview>[0]["request"],
-  ) => {
-    expect(request).toMatchObject({
+    expectedFixture: { adapterName: string; fixtureId: string } = {
       adapterName: "PortkeyAAWallet",
       fixtureId: "sess-aa-001",
+    },
+  ) => {
+    expect(request).toMatchObject({
+      ...expectedFixture,
       proofEvaluatedAt: expect.any(String),
       proofIssuedAt: expect.any(String),
       signature: expect.stringMatching(
@@ -119,6 +123,36 @@ describe("Campaign OS app shell", () => {
     }
   };
 
+  const issuedWalletSession = (sessionId: string): NormalizedWalletSession => {
+    const session = walletSessions.find((candidate) => candidate.sessionId === sessionId);
+
+    if (!session) {
+      throw new Error(`Missing wallet session fixture: ${sessionId}`);
+    }
+
+    return {
+      ...session,
+      issuer: {
+        artifactType: "local_session_reference",
+        cookieIssued: false,
+        diagnosticCodes: [],
+        issuerMode: "local_opaque",
+        jwtIssued: false,
+        liveSigningExecuted: false,
+        referenceId: `issued-${sessionId}`,
+        ttlSeconds: 900,
+        valid: true,
+      },
+      proof: {
+        diagnosticCodes: [],
+        liveVerificationExecuted: false,
+        proofType: "wallet_signature",
+        status: "verified",
+        trustLevel: "verified_local",
+      },
+    };
+  };
+
   const walletSessionBridgeState = (overrides: Partial<WalletSessionApiBridgeState> = {}): WalletSessionApiBridgeState => ({
     boundary: {
       "en-US": "Local wallet session API bridge only. No live wallet SDK connection is executed.",
@@ -138,7 +172,7 @@ describe("Campaign OS app shell", () => {
       adapterName: "PortkeyAAWallet",
       fixtureId: "sess-aa-001",
     },
-    session: walletSessions[0],
+    session: issuedWalletSession("sess-aa-001"),
     source: "api_runtime",
     status: "connected",
     traceId: "trace-header-wallet",
@@ -147,6 +181,7 @@ describe("Campaign OS app shell", () => {
 
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "0";
     mockedSubmitWalletSessionApiPreview.mockReset();
     mockedSubmitWalletSessionApiPreview.mockImplementation(async (input) => {
       const actual = await vi.importActual<typeof import("../api/walletSessionApiBridge")>(
@@ -163,6 +198,7 @@ describe("Campaign OS app shell", () => {
     pushRoute("/");
     removeDynamicMetadata();
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = originalApiBaseUrl;
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = originalStageReviewEnabled;
   });
 
   it("renders the default English shell with all surfaces exposed", () => {
@@ -202,6 +238,224 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("heading", { name: "Campaign Command Center" })).toBeInTheDocument();
     expect(getHeaderConnectWalletButton()).toBeInTheDocument();
     expect(within(getHeader()).queryByText("AA · Portkey")).not.toBeInTheDocument();
+  });
+
+  it("keeps the single seeded preview flow for unknown stage review flag values", () => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "true";
+    render(<App />);
+
+    fireEvent.click(getHeaderConnectWalletButton());
+
+    expect(screen.queryByRole("combobox", { name: "Review identity" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use seeded wallet preview" })).toBeInTheDocument();
+  });
+
+  it("keeps stage review navigation on durable product destinations only", () => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    render(<App />);
+
+    const productNavigation = getProductNavigation();
+
+    expect(within(productNavigation).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "Campaigns",
+      "Create",
+    ]);
+    expect(within(productNavigation).queryByRole("button", { name: "Analytics" })).not.toBeInTheDocument();
+    expect(within(productNavigation).queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
+  });
+
+  it("fails stage review closed when the API runtime is unavailable", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    render(<App />);
+
+    fireEvent.click(getHeaderConnectWalletButton());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Connect as Owner" }));
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Connect Wallet" });
+
+    expect(within(dialog).getByRole("region", { name: "Wallet session API review" })).toBeInTheDocument();
+    expect(within(getHeader()).queryByRole("button", { name: /Manage wallet connection/ })).not.toBeInTheDocument();
+    expect(getHeaderConnectWalletButton()).toBeInTheDocument();
+  });
+
+  it("accepts an API-issued opaque session only when its wallet projection matches the selected fixture", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    const opaqueOwnerSession: NormalizedWalletSession = {
+      ...issuedWalletSession("sess-aa-001"),
+      id: "opaque-owner-session",
+      sessionId: "opaque-owner-session",
+    };
+    mockedSubmitWalletSessionApiPreview.mockResolvedValueOnce(walletSessionBridgeState({
+      repository: {
+        recordId: "wallet-session:opaque-owner-session",
+        repositoryId: "wallet-session-repository-runtime",
+        sessionId: opaqueOwnerSession.sessionId,
+        upserted: true,
+      },
+      session: opaqueOwnerSession,
+    }));
+    render(<App />);
+
+    fireEvent.click(getHeaderConnectWalletButton());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Connect as Owner" }));
+    });
+
+    expect(await within(getHeader()).findByRole("button", {
+      name: "Manage wallet connection: AA · Portkey 2F4...9aB",
+    })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Owner", "owner", "PortkeyAAWallet", "sess-aa-001"],
+    ["Participant A", "participant-a", "PortkeyDiscoverWallet", "sess-eoa-app-001"],
+    ["Participant B", "participant-b", "PortkeyExtensionWallet", "sess-eoa-001"],
+    ["Admin", "admin", "PortkeyAAWallet", "sess-aa-001"],
+  ])(
+    "maps the %s stage identity only to its approved fixture",
+    async (label, identity, adapterName, fixtureId) => {
+      import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+      render(<App />);
+
+      fireEvent.click(getHeaderConnectWalletButton());
+      const identityMenu = screen.getByRole("combobox", { name: "Review identity" });
+
+      if (identity !== "owner") {
+        fireEvent.change(identityMenu, { target: { value: identity } });
+      }
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: `Connect as ${label}` }));
+      });
+
+      const request = mockedSubmitWalletSessionApiPreview.mock.calls[0]?.[0].request;
+
+      expectFreshHeaderWalletPreviewRequest(request, { adapterName, fixtureId });
+      expect(Object.keys(request ?? {}).sort()).toEqual([
+        "adapterName",
+        "fixtureId",
+        "proofEvaluatedAt",
+        "proofIssuedAt",
+        "signature",
+      ]);
+    },
+  );
+
+  it("clears the connected identity when switching and creates fresh Owner/Admin proofs", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedSubmitWalletSessionApiPreview
+      .mockResolvedValueOnce(walletSessionBridgeState())
+      .mockResolvedValueOnce(walletSessionBridgeState({ traceId: "trace-admin-wallet" }));
+    render(<App />);
+
+    fireEvent.click(getHeaderConnectWalletButton());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Connect as Owner" }));
+    });
+
+    const connectedOwner = await within(getHeader()).findByRole("button", {
+      name: "Manage wallet connection: AA · Portkey 2F4...9aB",
+    });
+    const ownerRequest = mockedSubmitWalletSessionApiPreview.mock.calls[0]?.[0].request;
+
+    fireEvent.click(connectedOwner);
+    fireEvent.change(screen.getByRole("combobox", { name: "Review identity" }), {
+      target: { value: "admin" },
+    });
+
+    expect(within(getHeader()).queryByRole("button", { name: /Manage wallet connection/ })).not.toBeInTheDocument();
+    expect(getHeaderConnectWalletButton()).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Connect as Admin" }));
+    });
+
+    const adminRequest = mockedSubmitWalletSessionApiPreview.mock.calls[1]?.[0].request;
+
+    expectFreshHeaderWalletPreviewRequest(ownerRequest);
+    expectFreshHeaderWalletPreviewRequest(adminRequest);
+    expect(adminRequest?.signature).not.toBe(ownerRequest?.signature);
+    expect(adminRequest?.proofEvaluatedAt).not.toBe(ownerRequest?.proofEvaluatedAt);
+    expect(screen.getByRole("button", { name: "Admin/Ops" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("ignores a late identity response after switching to a newer stage connection", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    let resolveOwnerResponse!: (state: WalletSessionApiBridgeState) => void;
+    const ownerResponse = new Promise<WalletSessionApiBridgeState>((resolve) => {
+      resolveOwnerResponse = resolve;
+    });
+    const participantSession = issuedWalletSession("sess-eoa-app-001");
+    const participantState = walletSessionBridgeState({
+      repository: {
+        recordId: "wallet-session:issued-participant-a",
+        repositoryId: "wallet-session-repository-runtime",
+        sessionId: participantSession.sessionId,
+        upserted: true,
+      },
+      request: {
+        adapterName: "PortkeyDiscoverWallet",
+        fixtureId: "sess-eoa-app-001",
+      },
+      session: participantSession,
+      traceId: "trace-participant-a",
+    });
+    mockedSubmitWalletSessionApiPreview
+      .mockImplementationOnce(async () => ownerResponse)
+      .mockResolvedValueOnce(participantState);
+
+    render(<App />);
+    fireEvent.click(getHeaderConnectWalletButton());
+    fireEvent.click(screen.getByRole("button", { name: "Connect as Owner" }));
+
+    await waitFor(() => expect(mockedSubmitWalletSessionApiPreview).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByRole("combobox", { name: "Review identity" }), {
+      target: { value: "participant-a" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Connect as Participant A" }));
+    });
+
+    const participantWallet = await within(getHeader()).findByRole("button", {
+      name: "Manage wallet connection: EOA · Portkey App 8A2...1eF",
+    });
+
+    const headerStyle = screen.getByTestId("stage-review-header-style") as HTMLStyleElement;
+    const headerRules = Array.from(headerStyle.sheet?.cssRules ?? []) as CSSStyleRule[];
+    const walletRule = headerRules.find(
+      (rule) => rule.selectorText === "[data-app-controls] > button",
+    );
+    const identityRule = headerRules.find(
+      (rule) => rule.selectorText === "[data-app-controls] > button > span",
+    );
+    const separatorRule = headerRules.find(
+      (rule) => rule.selectorText === '[data-app-controls] > button > span[aria-hidden="true"]',
+    );
+
+    expect(walletRule?.style.getPropertyValue("flex-direction")).toBe("column");
+    expect(walletRule?.style.getPropertyValue("gap")).toBe("2px");
+    expect(walletRule?.style.getPropertyPriority("flex-direction")).toBe("important");
+    expect(identityRule?.style.getPropertyValue("white-space")).toBe("nowrap");
+    expect(separatorRule?.style.getPropertyValue("display")).toBe("none");
+    expect(participantWallet.querySelector('span[aria-hidden="true"]')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveOwnerResponse(walletSessionBridgeState());
+      await ownerResponse;
+    });
+
+    expect(within(getHeader()).getByRole("button", {
+      name: "Manage wallet connection: EOA · Portkey App 8A2...1eF",
+    })).toBeInTheDocument();
+    expect(within(getHeader()).queryByRole("button", {
+      name: "Manage wallet connection: AA · Portkey 2F4...9aB",
+    })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "User App" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("opens the Header wallet modal and connects the local seeded preview wallet", async () => {

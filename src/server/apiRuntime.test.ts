@@ -86,6 +86,8 @@ interface CampaignListPayload {
 interface CampaignDetailPayload {
   item: {
     id: string;
+    ownerAddress?: string;
+    projectId?: string;
     status?: string;
   };
   tasks?: Array<{
@@ -4485,6 +4487,8 @@ describe("Campaign OS API runtime", () => {
 
     expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload>>(authorized).payload.item).toMatchObject({
       id: draft.id,
+      ownerAddress: "2F4OwnerCaseExact",
+      projectId: "owner-detail-project",
       status: "ai_draft",
     });
     expect(missing).toMatchObject({
@@ -4502,6 +4506,10 @@ describe("Campaign OS API runtime", () => {
     expectNoForbiddenResponseKeys(missing.body);
     expectNoForbiddenResponseKeys(unknown.body);
     expectNoForbiddenResponseKeys(mismatch.body);
+    expectNoForbiddenFragments([missing.body, unknown.body, mismatch.body], [
+      "2F4OwnerCaseExact",
+      "owner-detail-project",
+    ]);
     await ownerRuntime.close();
   });
 
@@ -5220,6 +5228,8 @@ describe("Campaign OS API runtime", () => {
       payload: {
         item: {
           id: "campaign-db-draft-0001",
+          ownerAddress: "repo-owner-001",
+          projectId: "repo-project",
           status: "draft",
         },
       },

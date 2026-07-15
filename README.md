@@ -72,6 +72,47 @@ Membership 默认空且 deny-all。每个 entry 必须显式配置 `active`、bo
 
 Membership is empty and deny-all by default. Every entry must explicitly define `active`, a bounded Campaign scope, an allowed operator role, and the case-sensitive issued subject address. Invalid configuration, an unavailable PostgreSQL database, or a missing `0002` migration fails closed without falling back to seeded or local Admin data.
 
+## Controlled Stage Product Review
+
+阶段产品验收可以显式启用受控身份选择和全部 draft Participant preview，使一个新建 Campaign 无需预知 ID 即可连续完成
+Owner、Participant A/B 与 Admin 流程。两项配置默认关闭，只能用于隔离的 local/stage 环境；生产环境不得使用 `*` scope。
+
+Controlled stage product acceptance can explicitly enable the bounded identity selector and all-draft Participant preview so a newly created
+Campaign can move through Owner, Participant A/B, and Admin flows without a pre-known ID. Both settings are disabled by default and are for an
+isolated local/stage environment only; production must never use the `*` scope.
+
+API runtime：
+
+API runtime:
+
+```bash
+export CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS='*'
+export CAMPAIGN_OS_API_CORS_ORIGINS=http://127.0.0.1:5173
+```
+
+`*` 必须单独配置，不能与显式 Campaign IDs 混用。它只影响 issued Participant 对 draft Campaign 的 preview access；anonymous、
+deleted/invalid Campaign、Owner authorization 和 Admin server-side membership 仍保持原有边界。
+
+`*` must be configured alone and cannot be mixed with explicit Campaign IDs. It only affects issued Participant preview access to draft
+Campaigns; anonymous access, deleted or invalid Campaigns, Owner authorization, and server-side Admin membership keep their existing boundaries.
+
+Frontend：
+
+Frontend:
+
+```bash
+VITE_CAMPAIGN_OS_API_BASE_URL=http://127.0.0.1:5174 \
+VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED=1 \
+npm run dev
+```
+
+Stage mode只提供allowlisted safe fixtures，并隔离legacy seeded Project/Admin success surfaces。关闭frontend flag会恢复普通UI；清空
+Participant preview env会立即恢复draft deny-all。回滚不得删除已持久化的Campaign、Completion、Decision或Artifact。
+
+Stage mode exposes only allowlisted safe fixtures and isolates legacy seeded Project/Admin success surfaces. Disabling the frontend flag restores
+the normal UI; clearing the Participant preview environment value restores draft deny-all immediately. Rollback must not delete persisted
+Campaigns, Completions, Decisions, or Artifacts.
+
 ## Migrations
 
 Migration runner 按顺序加载 `0001_campaign_runtime` 和 additive `0002_admin_review_export`。先执行只读 plan/validate；`apply` 必须通过独立 approval flag 显式授权。API server 启动不会自动执行 migration。

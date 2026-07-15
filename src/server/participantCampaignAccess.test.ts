@@ -106,6 +106,42 @@ describe("Participant Campaign access policy", () => {
     },
   );
 
+  it.each(["draft", "ai_draft", "human_review"])(
+    "allows issued Participant wildcard preview for %s without rewriting persisted status",
+    (status) => {
+      const decision = participantAccess(status, ["*"]);
+
+      expect(decision).toEqual({
+        campaignId: "campaign-preview-A",
+        code: "CAMPAIGN_ACCESS_PREVIEW",
+        outcome: "allowed",
+        persistedStatus: status,
+        visibility: "participant_preview",
+      });
+      expect(decision.persistedStatus).not.toBe("live");
+    },
+  );
+
+  it("keeps wildcard preview closed to anonymous, deleted, invalid-status, and mixed policy input", () => {
+    const anonymous = evaluateParticipantCampaignAccess({
+      audience: "anonymous",
+      campaign: campaign("draft"),
+      previewCampaignIds: ["*"],
+    });
+    const deleted = evaluateParticipantCampaignAccess({
+      audience: "issued_participant",
+      campaign: campaign("draft", { deleted: true }),
+      previewCampaignIds: ["*"],
+    });
+    const invalidStatus = participantAccess("future_unreviewed_status", ["*"]);
+    const mixed = participantAccess("draft", ["*", "campaign-preview-A"]);
+
+    expect(anonymous).toEqual({ code: "INVALID_CAMPAIGN", outcome: "hidden" });
+    expect(deleted).toEqual({ code: "INVALID_CAMPAIGN", outcome: "invalid" });
+    expect(invalidStatus).toEqual({ code: "INVALID_CAMPAIGN", outcome: "hidden" });
+    expect(mixed).toEqual({ code: "INVALID_CAMPAIGN", outcome: "hidden" });
+  });
+
   it("ignores client preview claims outside the narrow server policy input", () => {
     const untrustedInput = {
       audience: "issued_participant",

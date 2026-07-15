@@ -14,6 +14,7 @@ import {
   CampaignOsCampaignDbConfigError,
   CampaignOsParticipantPreviewConfigError,
   createCampaignOsParticipantPreviewMetadata,
+  isCanonicalCampaignId,
   resolveCampaignOsAdminReviewConfig,
   resolveBackendConfigContract,
   resolveCampaignOsCampaignDbConfig,
@@ -859,6 +860,35 @@ describe("Participant Campaign preview config", () => {
       "campaign-preview-b",
       "campaign-preview-a",
     ]);
+  });
+
+  it("accepts a standalone wildcard without broadening canonical API Campaign IDs", () => {
+    const config = resolveCampaignOsParticipantPreviewConfig({
+      env: { [envKey]: "  *  " },
+    });
+
+    expect(config.campaignIds).toEqual(["*"]);
+    expect(isCanonicalCampaignId("*")).toBe(false);
+  });
+
+  it.each([
+    ["wildcard first", "*,campaign-preview-a"],
+    ["wildcard last", "campaign-preview-a,*"],
+    ["array option", ["campaign-preview-a", "*"]],
+  ])("fails closed with a typed error when %s mixes wildcard and explicit IDs", (_case, campaignIds) => {
+    let thrown: unknown;
+
+    try {
+      resolveCampaignOsParticipantPreviewConfig({ campaignIds });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(CampaignOsParticipantPreviewConfigError);
+    expect(thrown).toMatchObject({
+      code: "CAMPAIGN_PREVIEW_CONFIG_ID_INVALID",
+      field: envKey,
+    });
   });
 
   it.each([

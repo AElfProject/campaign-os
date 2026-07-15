@@ -1214,6 +1214,19 @@ const campaignDbDraftToDiscoveryDetail = (
   };
 };
 
+const campaignDbDraftToOwnerDetail = (draft: CampaignDbReadProjection) => {
+  const detail = campaignDbDraftToDiscoveryDetail(draft);
+
+  return {
+    ...detail,
+    item: {
+      ...detail.item,
+      ownerAddress: draft.ownerAddress,
+      projectId: draft.projectId,
+    },
+  };
+};
+
 const mergeCampaignDbDraftsIntoDiscovery = (
   discovery: CampaignDiscoveryReadModel,
   drafts: readonly CampaignDbReadProjection[],
@@ -3128,7 +3141,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
     return {
       boundary: campaignDbBoundary,
       campaignDb: createCampaignDbMetadata(campaign.repository),
-      payload: campaignDbDraftToDiscoveryDetail(campaign),
+      payload: campaignDbDraftToOwnerDetail(campaign),
     };
   },
   "campaigns.participant.list": async (context) => {

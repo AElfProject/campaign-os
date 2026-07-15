@@ -1105,7 +1105,7 @@ describe("Project Console shell", () => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = originalApiBaseUrl;
   });
 
-  it("renders Campaigns as the default workspace with seeded operational data", () => {
+  it("defaults stage review mode off and renders Campaigns with seeded operational data", () => {
     render(<App />);
 
     expect(screen.getByRole("button", { name: "Project Console" })).toHaveAttribute(
@@ -3696,6 +3696,7 @@ interface OwnerConsoleHarnessProps {
   onReconnect?: () => void;
   session?: NormalizedWalletSession | null;
   sessionReady?: boolean;
+  stageReviewMode?: boolean;
   workspace?: ProjectWorkspaceKey;
 }
 
@@ -3706,6 +3707,7 @@ const OwnerConsoleHarness = ({
   onReconnect,
   session = ownerSessionA,
   sessionReady = Boolean(session),
+  stageReviewMode = false,
   workspace = "campaigns",
 }: OwnerConsoleHarnessProps) => {
   const [activeCampaignId, setActiveCampaignId] = useState<string | null>(initialCampaignId);
@@ -3724,6 +3726,7 @@ const OwnerConsoleHarness = ({
       ownerSession={session}
       ownerSessionReady={sessionReady}
       projectId="awaken"
+      stageReviewMode={stageReviewMode}
     />
   );
 };
@@ -4001,6 +4004,169 @@ describe("Project Console Owner campaign orchestration", () => {
     mockedRepositoryWorkflow.mockClear();
     ownerWorkflowCapture.builder.length = 0;
     ownerWorkflowCapture.task.length = 0;
+  });
+
+  it("isolates stage review navigation and exposes one accessible active workspace", async () => {
+    const bridge = createOwnerBridge();
+    const view = render(
+      <ProjectConsole
+        locale="en-US"
+        ownerCampaignBridge={bridge}
+        ownerSession={ownerSessionA}
+        ownerSessionReady
+        stageReviewMode
+      />,
+    );
+
+    await waitFor(() => expect(bridge.recoverCampaigns).toHaveBeenCalledTimes(1));
+    let navigation = getProjectWorkspaceNav();
+    expect(navigation).toHaveAccessibleName("Project Console workspace navigation");
+    expect(
+      within(navigation).getAllByRole("button").map((button) => button.textContent),
+    ).toEqual(["Campaigns", "Create", "Templates"]);
+    expect(within(navigation).getByRole("button", { name: "Campaigns" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(within(navigation).getAllByRole("button", { pressed: true })).toHaveLength(1);
+    expect(getOwnerWorkflow()).toBeInTheDocument();
+    expect(screen.queryByLabelText("Project Console dashboard metrics")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Project portfolio readiness")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Campaign Command Center" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(navigation).getByRole("button", { name: "Create" }));
+    navigation = getProjectWorkspaceNav();
+    expect(within(navigation).getByRole("button", { name: "Create" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.queryByRole("region", { name: "Owner campaign workflow" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create campaign" })).toBeInTheDocument();
+
+    fireEvent.click(within(navigation).getByRole("button", { name: "Templates" }));
+    navigation = getProjectWorkspaceNav();
+    expect(within(navigation).getByRole("button", { name: "Templates" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("heading", { name: "Task template library" })).toBeInTheDocument();
+
+    view.rerender(
+      <ProjectConsole
+        activeWorkspace="export"
+        locale="en-US"
+        ownerCampaignBridge={bridge}
+        ownerSession={ownerSessionA}
+        ownerSessionReady
+        stageReviewMode
+      />,
+    );
+    navigation = getProjectWorkspaceNav();
+    expect(within(navigation).queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
+    expect(within(navigation).getByRole("button", { name: "Campaigns" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(getOwnerWorkflow()).toBeInTheDocument();
+  });
+
+  it("completes the real Owner create intent from the stage Create workspace", async () => {
+    const createCampaign = vi.fn(async (): Promise<OwnerCampaignResult> =>
+      ownerCreateSuccess("campaign-stage-created"));
+    const bridge = createOwnerBridge({ createCampaign });
+
+    render(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        stageReviewMode
+        workspace="create"
+      />,
+    );
+
+    const createButton = await screen.findByRole("button", { name: "Create campaign" });
+    await waitFor(() => expect(createButton).toBeEnabled());
+    fireEvent.click(createButton);
+
+    await waitFor(() => expect(bridge.getCampaignDetail).toHaveBeenCalledWith(
+      "campaign-stage-created",
+      expect.objectContaining({ session: ownerSessionA }),
+    ));
+    expect(createCampaign).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerAddress: ownerSessionA.address }),
+      expect.objectContaining({ session: ownerSessionA }),
+    );
+    expect(screen.getAllByText("campaign-stage-created").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("region", { name: "Owner campaign workflow" })).not.toBeInTheDocument();
+  });
+
+  it("completes a real Owner task intent from the stage Templates workspace", async () => {
+    const taskId = "task-stage-added" as OwnerTaskId;
+    const addTask = vi.fn(async (
+      campaignId: string,
+      input: AddOwnerCampaignTaskInput,
+    ): Promise<OwnerTaskResult> => ({
+      httpStatus: 201,
+      ok: true,
+      task: {
+        ...input,
+        campaignId: campaignId as OwnerCampaignId,
+        id: taskId,
+      },
+      taskId,
+      traceId: "trace-stage-task-added",
+    }));
+    const getCampaignDetail = vi.fn(async (campaignId: string): Promise<OwnerCampaignDetailResult> =>
+      ownerDetailSuccess(campaignId, addTask.mock.calls.length > 0 ? [taskId] : []));
+    const bridge = createOwnerBridge({ addTask, getCampaignDetail });
+
+    render(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        initialCampaignId="campaign-a"
+        stageReviewMode
+        workspace="templates"
+      />,
+    );
+
+    const addButton = await screen.findByRole("button", { name: "Add Connect wallet" });
+    await waitFor(() => expect(addButton).toBeEnabled());
+    fireEvent.click(addButton);
+
+    await waitFor(() => expect(getCampaignDetail).toHaveBeenCalledTimes(2));
+    expect(addTask).toHaveBeenCalledWith(
+      "campaign-a",
+      expect.objectContaining({ templateCode: "wallet-connect" }),
+      expect.objectContaining({ session: ownerSessionA }),
+    );
+    expect(screen.getByText(taskId)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Owner campaign workflow" })).not.toBeInTheDocument();
+  });
+
+  it("renders an active-Campaign stage create command with an unambiguous disabled treatment", async () => {
+    render(
+      <OwnerConsoleHarness
+        bridge={createOwnerBridge()}
+        initialCampaignId="campaign-a"
+        stageReviewMode
+        workspace="create"
+      />,
+    );
+
+    const createButton = await screen.findByRole("button", { name: "Create campaign" });
+
+    await waitFor(() => expect(createButton).toBeDisabled());
+    const stageStyle = screen.getByTestId("stage-review-owner-create-style") as HTMLStyleElement;
+    const rules = Array.from(stageStyle.sheet?.cssRules ?? []) as CSSStyleRule[];
+    const disabledRule = rules.find(
+      (rule) => rule.selectorText
+        === 'button[aria-describedby="owner-campaign-create-disabled-reason"]:disabled',
+    );
+
+    expect(disabledRule?.style.getPropertyValue("background")).toBe("#e2e8f0");
+    expect(disabledRule?.style.getPropertyValue("border")).toBe("1px solid #cbd5e1");
+    expect(disabledRule?.style.getPropertyValue("color")).toBe("#64748b");
+    expect(disabledRule?.style.getPropertyValue("opacity")).toBe("1");
+    expect(disabledRule?.style.getPropertyPriority("background")).toBe("important");
   });
 
   it("keeps Owner mutation commands disabled without a normalized session", () => {

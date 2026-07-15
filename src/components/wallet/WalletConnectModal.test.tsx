@@ -243,4 +243,100 @@ describe("WalletConnectModal locale coverage", () => {
     expect(dialog.textContent?.toLowerCase()).not.toContain("raw signature");
     expect(dialog.textContent?.toLowerCase()).not.toContain("private key in");
   });
+
+  it("renders a controlled stage review identity menu with only the approved identities", () => {
+    const onReviewIdentityChange = vi.fn();
+    const onPreviewConnect = vi.fn();
+    const { rerender } = render(
+      <WalletConnectModal
+        locale="en-US"
+        onClose={vi.fn()}
+        onPreviewConnect={onPreviewConnect}
+        onReviewIdentityChange={onReviewIdentityChange}
+        options={walletOptions}
+        selectedReviewIdentity="owner"
+        stageReviewMode
+      />,
+    );
+
+    const identityMenu = screen.getByRole("combobox", { name: "Review identity" });
+
+    expect(identityMenu).toHaveValue("owner");
+    expect(within(identityMenu).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Owner",
+      "Participant A",
+      "Participant B",
+      "Admin",
+    ]);
+    expect(screen.queryByRole("textbox", { name: /fixture|address|role/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("wallet-modal-live-connector-boundary")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("wallet-modal-adapter-recommended")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("wallet-modal-group-recommended")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Seeded wallet recovery guidance")).not.toBeInTheDocument();
+
+    identityMenu.focus();
+    fireEvent.keyDown(identityMenu, { key: "ArrowDown" });
+    fireEvent.change(identityMenu, { target: { value: "participant-a" } });
+
+    expect(identityMenu).toHaveFocus();
+    expect(onReviewIdentityChange).toHaveBeenCalledWith("participant-a");
+
+    rerender(
+      <WalletConnectModal
+        locale="en-US"
+        onClose={vi.fn()}
+        onPreviewConnect={onPreviewConnect}
+        onReviewIdentityChange={onReviewIdentityChange}
+        options={walletOptions}
+        selectedReviewIdentity="participant-a"
+        stageReviewMode
+      />,
+    );
+
+    expect(screen.getByRole("combobox", { name: "Review identity" })).toHaveValue("participant-a");
+    fireEvent.click(screen.getByRole("button", { name: "Connect as Participant A" }));
+    expect(onPreviewConnect).toHaveBeenCalledWith("participant-a");
+  });
+
+  it("defaults unknown stage identities to Owner without exposing arbitrary values", () => {
+    const onReviewIdentityChange = vi.fn();
+
+    render(
+      <WalletConnectModal
+        locale="en-US"
+        onClose={vi.fn()}
+        onPreviewConnect={vi.fn()}
+        onReviewIdentityChange={onReviewIdentityChange}
+        options={walletOptions}
+        selectedReviewIdentity={"operator" as "owner"}
+        stageReviewMode
+      />,
+    );
+
+    const identityMenu = screen.getByRole("combobox", { name: "Review identity" });
+
+    expect(identityMenu).toHaveValue("owner");
+    fireEvent.change(identityMenu, { target: { value: "arbitrary-role" } });
+    expect(onReviewIdentityChange).toHaveBeenCalledWith("owner");
+  });
+
+  it("keeps the legacy preview action when stage review mode is off and supports Escape", () => {
+    const onClose = vi.fn();
+
+    render(
+      <WalletConnectModal
+        locale="en-US"
+        onClose={onClose}
+        onPreviewConnect={vi.fn()}
+        options={walletOptions}
+        stageReviewMode={false}
+      />,
+    );
+
+    expect(screen.queryByRole("combobox", { name: "Review identity" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use seeded wallet preview" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

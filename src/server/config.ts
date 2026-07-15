@@ -18,6 +18,7 @@ import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 import { workerIdempotencyStoreProductionPreconditions } from "./workerIdempotencyStore";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
+import { participantCampaignPreviewAllDraftsSentinel } from "./participantCampaignAccess";
 
 export type CampaignOsPersistenceMode = "memory" | "local_json";
 
@@ -493,11 +494,19 @@ const splitParticipantPreviewCampaignIds = (
 const parseParticipantPreviewCampaignIds = (
   source: string | readonly string[] | undefined,
 ): readonly string[] => {
+  const campaignIds = splitParticipantPreviewCampaignIds(source).map((segment) => segment.trim());
+
+  if (campaignIds.includes(participantCampaignPreviewAllDraftsSentinel)) {
+    if (campaignIds.some((campaignId) => campaignId !== participantCampaignPreviewAllDraftsSentinel)) {
+      throw participantPreviewConfigError("CAMPAIGN_PREVIEW_CONFIG_ID_INVALID");
+    }
+
+    return Object.freeze([participantCampaignPreviewAllDraftsSentinel]);
+  }
+
   const uniqueCampaignIds = new Set<string>();
 
-  for (const segment of splitParticipantPreviewCampaignIds(source)) {
-    const campaignId = segment.trim();
-
+  for (const campaignId of campaignIds) {
     if (!isCanonicalCampaignId(campaignId)) {
       throw participantPreviewConfigError("CAMPAIGN_PREVIEW_CONFIG_ID_INVALID");
     }

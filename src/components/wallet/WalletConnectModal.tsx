@@ -22,10 +22,27 @@ interface WalletConnectModalProps {
   connectorBoundary?: LiveWalletConnectorBoundary;
   locale: BusinessContentLocale;
   onClose: () => void;
-  onPreviewConnect?: () => void;
+  onPreviewConnect?: (reviewIdentity?: StageReviewIdentity) => void;
+  onReviewIdentityChange?: (reviewIdentity: StageReviewIdentity) => void;
   options: WalletOption[];
+  selectedReviewIdentity?: StageReviewIdentity;
+  stageReviewMode?: boolean;
   walletSessionBridgeState?: WalletSessionApiBridgeState;
 }
+
+const stageReviewIdentityOptions = [
+  { label: "Owner", value: "owner" },
+  { label: "Participant A", value: "participant-a" },
+  { label: "Participant B", value: "participant-b" },
+  { label: "Admin", value: "admin" },
+] as const;
+
+export type StageReviewIdentity = (typeof stageReviewIdentityOptions)[number]["value"];
+
+export const normalizeStageReviewIdentity = (value: unknown): StageReviewIdentity =>
+  stageReviewIdentityOptions.some((option) => option.value === value)
+    ? (value as StageReviewIdentity)
+    : "owner";
 
 const modalCopy = {
   "en-US": {
@@ -37,6 +54,7 @@ const modalCopy = {
     advancedGroup: "Advanced / Agent",
     capability: "Capabilities",
     close: "Close wallet connect modal",
+    connectAs: "Connect as",
     connectorBoundary: "Live connector boundary",
     connectorCandidates: "Connector candidates",
     connectorDisabled: "Disabled/review-required",
@@ -67,6 +85,7 @@ const modalCopy = {
     recommended: "Recommended",
     recommendedGroup: "Recommended",
     repository: "Repository",
+    reviewIdentity: "Review identity",
     seededFallback: "Seeded fallback",
     sessionId: "Session ID",
     source: "Source",
@@ -92,6 +111,7 @@ const modalCopy = {
     advancedGroup: "高级 / Agent",
     capability: "能力",
     close: "关闭钱包连接弹窗",
+    connectAs: "连接身份",
     connectorBoundary: "Live connector boundary",
     connectorCandidates: "Connector candidates",
     connectorDisabled: "已关闭/待审核",
@@ -122,6 +142,7 @@ const modalCopy = {
     recommended: "推荐",
     recommendedGroup: "推荐",
     repository: "Repository",
+    reviewIdentity: "评审身份",
     seededFallback: "Seeded fallback",
     sessionId: "Session ID",
     source: "来源",
@@ -147,6 +168,7 @@ const modalCopy = {
     advancedGroup: "進階 / Agent",
     capability: "能力",
     close: "關閉錢包連接彈窗",
+    connectAs: "連接身份",
     connectorBoundary: "Live connector boundary",
     connectorCandidates: "Connector candidates",
     connectorDisabled: "已關閉/待審核",
@@ -177,6 +199,7 @@ const modalCopy = {
     recommended: "推薦",
     recommendedGroup: "推薦",
     repository: "Repository",
+    reviewIdentity: "評審身份",
     seededFallback: "Seeded fallback",
     sessionId: "Session ID",
     source: "來源",
@@ -349,6 +372,26 @@ const bridgeMetaValueStyle: CSSProperties = {
   fontWeight: 800,
   lineHeight: 1.35,
   overflowWrap: "anywhere",
+};
+
+const reviewIdentityFieldStyle: CSSProperties = {
+  color: "#071426",
+  display: "grid",
+  fontSize: 13,
+  fontWeight: 800,
+  gap: 6,
+  maxWidth: 320,
+};
+
+const reviewIdentitySelectStyle: CSSProperties = {
+  background: "#ffffff",
+  border: "1px solid #94a3b8",
+  borderRadius: 8,
+  color: "#071426",
+  font: "inherit",
+  minHeight: 40,
+  padding: "0 36px 0 12px",
+  width: "min(100%, 320px)",
 };
 
 const groupWalletOptions = (options: WalletOption[]) => ({
@@ -654,12 +697,22 @@ export const WalletConnectModal = ({
   locale,
   onClose,
   onPreviewConnect,
+  onReviewIdentityChange,
   options,
+  selectedReviewIdentity = "owner",
+  stageReviewMode = false,
   walletSessionBridgeState,
 }: WalletConnectModalProps) => {
   const copy = modalCopy[locale];
   const groupedOptions = groupWalletOptions(options);
   const groupedAdapters = groupAdapterEntries(adapterReadiness.entries);
+  const reviewIdentity = normalizeStageReviewIdentity(selectedReviewIdentity);
+  const reviewIdentityLabel = stageReviewIdentityOptions.find(
+    (option) => option.value === reviewIdentity,
+  )?.label ?? stageReviewIdentityOptions[0].label;
+  const stageReviewConnectionAttempted = Boolean(
+    walletSessionBridgeState?.request.proofEvaluatedAt,
+  );
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -705,96 +758,141 @@ export const WalletConnectModal = ({
           </button>
         </div>
 
-        <div role="note" style={alertStyle}>
-          <span>{copy.privateKeySafety}</span>
-          <span>{copy.nonLiveBoundary}</span>
-          <span>{getLocalizedText(adapterReadiness.boundary, locale)}</span>
-          <span>{getLocalizedText(connectorBoundary.boundary, locale)}</span>
-        </div>
+        {stageReviewMode ? (
+          <>
+            <label style={reviewIdentityFieldStyle}>
+              <span>{copy.reviewIdentity}</span>
+              <select
+                aria-label={copy.reviewIdentity}
+                disabled={!onReviewIdentityChange}
+                onChange={(event) => onReviewIdentityChange?.(
+                  normalizeStageReviewIdentity(event.currentTarget.value),
+                )}
+                style={reviewIdentitySelectStyle}
+                value={reviewIdentity}
+              >
+                {stageReviewIdentityOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-        <ConnectorBoundarySection boundary={connectorBoundary} copy={copy} locale={locale} />
+            {onPreviewConnect ? (
+              <button
+                disabled={walletSessionBridgeState?.loading}
+                onClick={() => onPreviewConnect(reviewIdentity)}
+                style={{
+                  ...previewConnectButtonStyle,
+                  ...(walletSessionBridgeState?.loading ? { cursor: "progress", opacity: 0.72 } : {}),
+                }}
+                type="button"
+              >
+                {walletSessionBridgeState?.loading
+                  ? copy.loadingPreview
+                  : `${copy.connectAs} ${reviewIdentityLabel}`}
+              </button>
+            ) : null}
 
-        {walletSessionBridgeState ? (
-          <WalletSessionBridgeSection copy={copy} locale={locale} state={walletSessionBridgeState} />
-        ) : null}
+            {walletSessionBridgeState && stageReviewConnectionAttempted ? (
+              <WalletSessionBridgeSection copy={copy} locale={locale} state={walletSessionBridgeState} />
+            ) : null}
+          </>
+        ) : (
+          <>
+            <div role="note" style={alertStyle}>
+              <span>{copy.privateKeySafety}</span>
+              <span>{copy.nonLiveBoundary}</span>
+              <span>{getLocalizedText(adapterReadiness.boundary, locale)}</span>
+              <span>{getLocalizedText(connectorBoundary.boundary, locale)}</span>
+            </div>
 
-        <AdapterEntryGroup
-          copy={copy}
-          entries={groupedAdapters.recommended}
-          locale={locale}
-          testId="wallet-modal-adapter-recommended"
-          title={copy.recommendedGroup}
-        />
-        <AdapterEntryGroup
-          copy={copy}
-          entries={groupedAdapters.eoa}
-          locale={locale}
-          testId="wallet-modal-adapter-eoa"
-          title={copy.eoaGroup}
-        />
-        <AdapterEntryGroup
-          copy={copy}
-          entries={groupedAdapters.degraded}
-          locale={locale}
-          testId="wallet-modal-adapter-degraded"
-          title={copy.degradedGroup}
-        />
-        <AdapterEntryGroup
-          copy={copy}
-          entries={groupedAdapters.internal}
-          locale={locale}
-          testId="wallet-modal-adapter-internal"
-          title={copy.advancedGroup}
-        />
+            <ConnectorBoundarySection boundary={connectorBoundary} copy={copy} locale={locale} />
 
-        <WalletOptionGroup
-          copy={copy}
-          options={groupedOptions.recommended}
-          testId="wallet-modal-group-recommended"
-          title={copy.recommendedGroup}
-        />
-        <WalletOptionGroup
-          copy={copy}
-          options={groupedOptions.eoa}
-          testId="wallet-modal-group-eoa"
-          title={copy.eoaGroup}
-        />
-        <WalletOptionGroup
-          copy={copy}
-          options={groupedOptions.advanced}
-          testId="wallet-modal-group-advanced"
-          title={copy.advancedGroup}
-        />
+            {walletSessionBridgeState ? (
+              <WalletSessionBridgeSection copy={copy} locale={locale} state={walletSessionBridgeState} />
+            ) : null}
 
-        {onPreviewConnect ? (
-          <button
-            disabled={walletSessionBridgeState?.loading}
-            onClick={onPreviewConnect}
-            style={{
-              ...previewConnectButtonStyle,
-              ...(walletSessionBridgeState?.loading ? { cursor: "progress", opacity: 0.72 } : {}),
-            }}
-            type="button"
-          >
-            {walletSessionBridgeState?.loading ? copy.loadingPreview : copy.previewConnect}
-          </button>
-        ) : null}
+            <AdapterEntryGroup
+              copy={copy}
+              entries={groupedAdapters.recommended}
+              locale={locale}
+              testId="wallet-modal-adapter-recommended"
+              title={copy.recommendedGroup}
+            />
+            <AdapterEntryGroup
+              copy={copy}
+              entries={groupedAdapters.eoa}
+              locale={locale}
+              testId="wallet-modal-adapter-eoa"
+              title={copy.eoaGroup}
+            />
+            <AdapterEntryGroup
+              copy={copy}
+              entries={groupedAdapters.degraded}
+              locale={locale}
+              testId="wallet-modal-adapter-degraded"
+              title={copy.degradedGroup}
+            />
+            <AdapterEntryGroup
+              copy={copy}
+              entries={groupedAdapters.internal}
+              locale={locale}
+              testId="wallet-modal-adapter-internal"
+              title={copy.advancedGroup}
+            />
 
-        <section aria-label="Seeded wallet recovery guidance" style={cardStyle}>
-          <h3 style={{ fontSize: 18, margin: 0 }}>{copy.nonLiveBoundary}</h3>
-          <ul style={issueListStyle}>
-            <li>{copy.wrongChain}</li>
-            <li>{copy.unsupportedWallet}</li>
-            <li>{copy.extensionNotInstalled}</li>
-            <li>{copy.missingSignature}</li>
-            <li>{copy.accountRestriction}</li>
-          </ul>
-        </section>
+            <WalletOptionGroup
+              copy={copy}
+              options={groupedOptions.recommended}
+              testId="wallet-modal-group-recommended"
+              title={copy.recommendedGroup}
+            />
+            <WalletOptionGroup
+              copy={copy}
+              options={groupedOptions.eoa}
+              testId="wallet-modal-group-eoa"
+              title={copy.eoaGroup}
+            />
+            <WalletOptionGroup
+              copy={copy}
+              options={groupedOptions.advanced}
+              testId="wallet-modal-group-advanced"
+              title={copy.advancedGroup}
+            />
 
-        <footer aria-label="Wallet connection safety agreement" role="note" style={alertStyle}>
-          <span>{copy.verificationOnlyFooter}</span>
-          <span>{copy.privateKeyFooter}</span>
-        </footer>
+            {onPreviewConnect ? (
+              <button
+                disabled={walletSessionBridgeState?.loading}
+                onClick={() => onPreviewConnect()}
+                style={{
+                  ...previewConnectButtonStyle,
+                  ...(walletSessionBridgeState?.loading ? { cursor: "progress", opacity: 0.72 } : {}),
+                }}
+                type="button"
+              >
+                {walletSessionBridgeState?.loading ? copy.loadingPreview : copy.previewConnect}
+              </button>
+            ) : null}
+
+            <section aria-label="Seeded wallet recovery guidance" style={cardStyle}>
+              <h3 style={{ fontSize: 18, margin: 0 }}>{copy.nonLiveBoundary}</h3>
+              <ul style={issueListStyle}>
+                <li>{copy.wrongChain}</li>
+                <li>{copy.unsupportedWallet}</li>
+                <li>{copy.extensionNotInstalled}</li>
+                <li>{copy.missingSignature}</li>
+                <li>{copy.accountRestriction}</li>
+              </ul>
+            </section>
+
+            <footer aria-label="Wallet connection safety agreement" role="note" style={alertStyle}>
+              <span>{copy.verificationOnlyFooter}</span>
+              <span>{copy.privateKeyFooter}</span>
+            </footer>
+          </>
+        )}
       </section>
     </div>
   );
